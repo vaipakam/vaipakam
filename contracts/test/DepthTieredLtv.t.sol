@@ -384,6 +384,7 @@ contract DepthTieredLtv is Test {
 
     function test_setDepthTieredLtvEnabled_toggles() public {
         assertFalse(ConfigFacet(address(diamond)).getDepthTieredLtvEnabled());
+        _setPaa2(mockWeth, mockAsset); // #2747 — a quote other than WETH
         ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
         assertTrue(ConfigFacet(address(diamond)).getDepthTieredLtvEnabled());
         ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(false);
@@ -483,15 +484,82 @@ contract DepthTieredLtv is Test {
         assertEq(cb, LibVaipakam.TWAP_CONSISTENCY_BPS_DEFAULT);
     }
 
-    // ─── ConfigFacet — PAA list management ──────────────────────────
+    // ─── #2747 — depth tiers need a quote asset other than WETH ──────
 
-    function test_setPaaAssets_emptyResolvesToWeth() public {
-        address[] memory empty = new address[](0);
-        ConfigFacet(address(diamond)).setPaaAssets(empty);
+    function _setPaa2(address a, address b) internal {
+        address[] memory paa = new address[](2);
+        paa[0] = a;
+        paa[1] = b;
+        ConfigFacet(address(diamond)).setPaaAssets(paa);
+    }
+
+    /// @dev A fresh Diamond's list is empty and resolves to `[WETH]`:
+    ///      switching on would leave WETH with no route (tier 0), so the
+    ///      switch refuses.
+    function test_enable_refusedWithUnconfiguredList() public {
         address[] memory got = ConfigFacet(address(diamond)).getPaaAssets();
         assertEq(got.length, 1);
         assertEq(got[0], mockWeth);
+        vm.expectRevert(IVaipakamErrors.PaaNeedsNonWethQuote.selector);
+        ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
+        _setPaa2(mockWeth, mockAsset);
+        ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
     }
+
+    /// @dev Switching OFF is never refused, even on an unconfigured list.
+    function test_disable_neverRefused() public {
+        ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(false);
+        _setPaa2(mockWeth, mockAsset);
+        ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
+        ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(false);
+    }
+
+    /// @dev The list must keep a quote other than WETH whatever the switch
+    ///      says, because the tier is stamped as every liquid loan's
+    ///      liquidation threshold either way. WETH alone and the empty list
+    ///      (which resolves to WETH alone) are both refused.
+    function test_paaList_refusedWithoutANonWethQuote() public {
+        address[] memory onlyWeth = new address[](1);
+        onlyWeth[0] = mockWeth;
+        vm.expectRevert(IVaipakamErrors.PaaNeedsNonWethQuote.selector);
+        ConfigFacet(address(diamond)).setPaaAssets(onlyWeth);
+        address[] memory empty = new address[](0);
+        vm.expectRevert(IVaipakamErrors.PaaNeedsNonWethQuote.selector);
+        ConfigFacet(address(diamond)).setPaaAssets(empty);
+
+        // Same once a list is set and the switch is on: no way back.
+        _setPaa2(mockWeth, mockAsset);
+        ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
+        vm.expectRevert(IVaipakamErrors.PaaNeedsNonWethQuote.selector);
+        ConfigFacet(address(diamond)).setPaaAssets(onlyWeth);
+        vm.expectRevert(IVaipakamErrors.PaaNeedsNonWethQuote.selector);
+        ConfigFacet(address(diamond)).setPaaAssets(empty);
+    }
+
+    /// @dev WETH cannot be re-pointed at a set list's only other member,
+    ///      which would leave the new WETH with no route.
+    function test_wethCannotBecomeTheListsOnlyQuote() public {
+        _setPaa2(mockWeth, mockAsset);
+        // [WETH, asset]: re-pointing WETH to `asset` leaves [old WETH,
+        // asset] — still a member other than the new WETH, so allowed.
+        OracleAdminFacet(address(diamond)).setWethContract(mockAsset);
+        OracleAdminFacet(address(diamond)).setWethContract(mockWeth);
+        // With [asset] alone, re-pointing WETH to `asset` is refused.
+        address[] memory onlyAsset = new address[](1);
+        onlyAsset[0] = mockAsset;
+        ConfigFacet(address(diamond)).setPaaAssets(onlyAsset);
+        vm.expectRevert(IVaipakamErrors.PaaNeedsNonWethQuote.selector);
+        OracleAdminFacet(address(diamond)).setWethContract(mockAsset);
+    }
+
+    /// @dev A fresh Diamond sets WETH before its list, so an unconfigured
+    ///      (empty) list never blocks a WETH write.
+    function test_wethWriteAllowedOnUnconfiguredList() public {
+        OracleAdminFacet(address(diamond)).setWethContract(mockAsset);
+        OracleAdminFacet(address(diamond)).setWethContract(mockWeth);
+    }
+
+    // ─── ConfigFacet — PAA list management ──────────────────────────
 
     function test_setPaaAssets_storesAndReflectsInRouteSearch() public {
         // Configure PAA = [mockAsset2] (a token *other* than WETH) — and

@@ -701,6 +701,11 @@ contract LenderIntentMatchTest is SetupTest {
             ),
             abi.encode(uint8(0))
         );
+        // #2747 — the switch needs a non-WETH quote; the tier is mocked above.
+        address[] memory quotes = new address[](1);
+        quotes[0] = mockERC20;
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setPaaAssets(quotes);
         vm.prank(owner);
         ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
 

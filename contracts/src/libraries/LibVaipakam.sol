@@ -10698,8 +10698,10 @@ library LibVaipakam {
 
     /// @dev The "predominantly available assets" the liquidity check
     ///      probes pools against (see `Storage.paaAssets`). Empty
-    ///      config ⇒ `[wethContract]` — so an un-configured deploy
-    ///      behaves like today's WETH-only probe. Returns a fresh
+    ///      config ⇒ `[wethContract]`, the state of a fresh Diamond before
+    ///      its configure phase: non-WETH assets still find a WETH route, but
+    ///      WETH itself has none (#2747), so the launch readiness check
+    ///      refuses an empty list and `setPaaAssets` never writes one. Returns a fresh
     ///      memory array; callers must tolerate a single-element fallback
     ///      (and a zero element if `wethContract` itself is unset, which
     ///      `OracleFacet` already skips).
@@ -10714,6 +10716,38 @@ library LibVaipakam {
         address[] memory out = new address[](n);
         for (uint256 i; i < n; ++i) out[i] = s.paaAssets[i];
         return out;
+    }
+
+    /// @dev #2747 — whether the configured quote-asset (PAA) list names an
+    ///      asset other than the configured WETH. The tier search skips the
+    ///      quote equal to the asset being tiered, so with only WETH to quote
+    ///      against (an explicit `[WETH]`, or the empty list's implicit
+    ///      `[wethContract]` fallback) WETH has no route and resolves to tier
+    ///      0. The tier is read whatever the depth-tier switch says: it is
+    ///      stamped as every liquid loan's liquidation threshold, it decides
+    ///      the discounted-liquidation discount (which refuses tier 0), and it
+    ///      caps new loans while depth-tiered LTV is on. Reads the stored list,
+    ///      never the fallback: an empty list answers false.
+    function paaHasNonWethQuote() internal view returns (bool) {
+        Storage storage s = storageSlot();
+        address weth = s.wethContract;
+        uint256 n = s.paaAssets.length;
+        for (uint256 i; i < n; ++i) {
+            if (s.paaAssets[i] != weth) return true;
+        }
+        return false;
+    }
+
+    /// @dev #2747 — the invariant "a configured quote list keeps a quote
+    ///      other than WETH". An empty list is the not-yet-configured state
+    ///      of a fresh Diamond, which the launch readiness check refuses and
+    ///      which nothing can return to once a list is set: `setPaaAssets`
+    ///      refuses any list without such a quote, empty included, and
+    ///      `setWethContract` refuses re-pointing WETH at a set list's only
+    ///      other member. Switching depth-tiered LTV on refuses an empty
+    ///      list too ({ConfigFacet.setDepthTieredLtvEnabled}).
+    function assertPaaHasNonWethQuote() internal view {
+        if (!paaHasNonWethQuote()) revert IVaipakamErrors.PaaNeedsNonWethQuote();
     }
 
     /// @dev Returns the four tier thresholds (T1 min, T2 min, T3 min, T4 min-exclusive).
@@ -10877,9 +10911,22 @@ library LibVaipakam {
     }
 
     /// @notice #901 — the rental days that have ACCRUED and are not yet paid,
-    ///         as of now: days elapsed since `startTime`, capped at the agreed
-    ///         term, minus the days already consumed (`consumedRentalDays`).
-    /// @dev    The single rule for in-term rent owed at a close. Rent is never
+    ///         as of now: the rental days USED since `startTime` (any part of a
+    ///         day counts as the whole day, and at least one day is owed),
+    ///         capped at the agreed term, minus the days already consumed
+    ///         (`consumedRentalDays`).
+    /// @dev    #2741 — counting only COMPLETED days let a renter accept, use
+    ///         what the user right unlocks, and return the NFT the same day
+    ///         (or in the same transaction) for nothing. So elapsed time rounds
+    ///         UP to whole days, with a one-day minimum for a close in the
+    ///         acceptance block. Rounding up, rather than counting every day
+    ///         that has begun, keeps an exact day boundary from billing a day
+    ///         nobody used, which matters at an obligation handover, where the
+    ///         incoming renter's own days start at that instant. A day already
+    ///         paid by the daily deduction or a rental partial is consumed and
+    ///         is not billed twice.
+    ///
+    ///         The single rule for in-term rent owed at a close. Rent is never
     ///         billed past the agreed term: a rental closed after maturity owes
     ///         at most its remaining prepaid days, and the overdue time is
     ///         charged as the rental late fee (drawn from the buffer), not as
@@ -10893,11 +10940,15 @@ library LibVaipakam {
     ///         Never exceeds `remainingRentalDays`.
     function accruedUnpaidRentalDays(Loan storage loan) internal view returns (uint256) {
         uint256 st = uint256(loan.startTime);
-        uint256 elapsed = block.timestamp > st ? (block.timestamp - st) / 1 days : 0;
+        uint256 used = 0;
+        if (block.timestamp >= st) {
+            used = (block.timestamp - st + 1 days - 1) / 1 days;
+            if (used == 0) used = 1;
+        }
         uint256 term = uint256(loan.durationDays);
-        if (elapsed > term) elapsed = term;
+        if (used > term) used = term;
         uint256 consumed = consumedRentalDays(loan);
-        return elapsed > consumed ? elapsed - consumed : 0;
+        return used > consumed ? used - consumed : 0;
     }
 
     /// @notice #641 — a loan's interest-accrual ORIGIN: the dedicated
@@ -11226,6 +11277,10 @@ library LibVaipakam {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
         s.wethContract = newWethContract;
+        // #2747 — once a quote list is set, re-pointing WETH at its only
+        // other member would leave the new WETH with no tier route. A fresh
+        // Diamond sets WETH before its list, so an empty list is not checked.
+        if (s.paaAssets.length != 0) assertPaaHasNonWethQuote();
     }
 
     /// @dev Set the direct Chainlink ETH/USD AggregatorV3 feed. Owner-only.

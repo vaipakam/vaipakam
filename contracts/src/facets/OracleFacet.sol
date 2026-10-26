@@ -1856,14 +1856,40 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         uint256[4] memory sizes,
         uint256[4] memory best
     ) private view {
-        (PriceStatus stQ, uint256 pQ, uint8 dQ) = getAssetPriceStatus(q);
-        if (stQ != PriceStatus.Priced || pQ == 0) return;
-        // A quote whose `decimals()` cannot be read cannot value its leg
-        // either (#2419): skip it like an unpriced one.
-        (bool okDecQ, uint8 tdQ) = LibNumeraireValue.tryTokenDecimals(q);
-        if (!okDecQ) return;
-        uint256 scaleQ = 10 ** (uint256(dQ) + uint256(tdQ));
+        (bool usable, uint256 pQ, uint256 scaleQ) = _quoteLeg(q);
+        if (!usable) return;
         _foldRoutes(asset, q, s, ctx, pQ, scaleQ, sizes, best);
+    }
+
+    /// @notice #2747 — whether the tier search can route over `quote`: the
+    ///         same test {_routeOverQuote} applies before it inspects any
+    ///         pool, exposed so the launch readiness check asks the Diamond
+    ///         the question the tier search asks instead of keeping its own
+    ///         copy. A quote that fails it is skipped whatever the depth of
+    ///         its pools, so a quote-asset list naming only such quotes
+    ///         leaves every asset it would tier at tier 0.
+    /// @dev    Says nothing about depth: a usable quote with shallow pools
+    ///         still tiers an asset low. Reads the price live, so a stale
+    ///         or distrusted round answers false until it recovers.
+    /// @param  quote The quote asset to test.
+    /// @return usable True iff `quote` has a trusted, positive price and a
+    ///         readable `decimals()`.
+    function isLiquidityQuoteUsable(address quote) external view returns (bool usable) {
+        (usable, , ) = _quoteLeg(quote);
+    }
+
+    /// @dev The one rule for a quote leg (#2747): Priced (an unavailable
+    ///      quote cannot value its leg, and a distrusted one, #666, is
+    ///      weighed only by {_distrustedQuoteThatClears}), a positive price,
+    ///      and a readable `decimals()` (#2419). `scaleQ` is
+    ///      `10**(feedDecimals + tokenDecimals)`; both values are zero when
+    ///      the quote is not usable.
+    function _quoteLeg(address q) private view returns (bool usable, uint256 pQ, uint256 scaleQ) {
+        (PriceStatus stQ, uint256 p, uint8 dQ) = getAssetPriceStatus(q);
+        if (stQ != PriceStatus.Priced || p == 0) return (false, 0, 0);
+        (bool okDecQ, uint8 tdQ) = LibNumeraireValue.tryTokenDecimals(q);
+        if (!okDecQ) return (false, 0, 0);
+        return (true, p, 10 ** (uint256(dQ) + uint256(tdQ)));
     }
 
     /// @dev The pool walk {_routeOverQuote} and {_distrustedQuoteThatClears}

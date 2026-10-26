@@ -2,9 +2,9 @@
 /**
  * Table-classification guardrail (#1481).
  *
- * Every D1 table any Worker WRITES must carry an explicit
- * restore-treatment classification, because the two main classes get
- * OPPOSITE restore treatment (docs/ops/OffChainRestore.md §4 vs §6):
+ * Every D1 table any Worker WRITES must carry a DECIDED restore
+ * treatment, because the classes get OPPOSITE restore treatment
+ * (docs/ops/OffChainRestore.md §4 vs §6):
  *
  *   born-off-chain  → archived nightly, imported from the archive on
  *                     restore. Missing from the archive = unrecoverable
@@ -12,19 +12,27 @@
  *   replay-derived  → cleared before the block-zero replay. NOT cleared
  *                     = attacker-fabricated rows survive recovery
  *                     (the #1450 r30/r31 class of bug).
+ *   hybrid          → born off chain WITH columns the replay projects
+ *                     (#1481): archived and imported like born-off-chain,
+ *                     but through the restore converter's
+ *                     RESTORE_PROJECTIONS, which hands the projected part
+ *                     back to the replay instead of restoring it.
  *
  * A table in the wrong bucket is a P1 either way — and the historical
  * failure mode is not misclassification but SILENCE: a new migration
  * adds a table, nothing forces a classification, and the gap surfaces
  * during an incident. This script closes the silent path: it extracts
  * every table written by `apps/{indexer,keeper,agent}/src` and FAILS
- * when one has no entry below. `decision-needed` is an acceptable
- * entry — the point is that it is explicit and lands on #1481's
- * docket, not that every decision is already made.
+ * when one has no entry below. There is no "undecided" entry any more:
+ * #1481 decided the last of them, and a table added since must be
+ * decided in the change that adds it.
  *
- * It also cross-checks the `born-off-chain` class against the archive
- * Worker's own list (`ops/offchain-data-warm/src/backup.ts`), so
- * the classification and the backup cannot drift apart silently.
+ * It also cross-checks the classes against everything that carries them
+ * out: the archive Worker's own list (`ops/offchain-data-warm/src/
+ * backup.ts`), the restore converter's allowlist and projections
+ * (`ops/offchain-data-warm/scripts/restore-from-archive.mjs`) and the
+ * runbook's import list and clear commands, so none of them can drift
+ * from the classification silently.
  *
  * TWO DATABASES SINCE #2450. Most tables live in the shared `vaipakam-warm`;
  * the keeper's private operational tables live in `vaipakam-keeper-db`
@@ -57,6 +65,10 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import process from 'node:process';
 import { PRIVATE_DATABASES, privateTables } from './lib/d1-workers.mjs';
+import {
+  BORN_OFF_CHAIN_TABLES as CONVERTER_IMPORTS,
+  RESTORE_PROJECTIONS,
+} from '../../../ops/offchain-data-warm/scripts/restore-from-archive.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..', '..', '..');
@@ -69,9 +81,9 @@ const SHARED_DATABASE = 'vaipakam-warm';
 //   'born-off-chain'   — archived nightly; §4 import on restore.
 //   'replay-derived'   — cleared in §6 before the replay (or, for
 //                        producer-state, cleared WITH its projection).
-//   'decision-needed'  — writers known, restore treatment NOT yet
-//                        decided; tracked on #1481. Explicit on
-//                        purpose: visible debt beats silent debt.
+//   'hybrid'           — archived nightly; §4 import through the
+//                        converter's RESTORE_PROJECTIONS, the projected
+//                        part re-derived by the §6 replay (#1481).
 const CLASSIFICATION = {
   // born-off-chain (mirrors backup.ts ARCHIVE_TABLES_REQUIRED[_ONCE_MIGRATED])
   diag_errors: { class: 'born-off-chain', reason: 'frontend error captures' },
@@ -98,13 +110,6 @@ const CLASSIFICATION = {
     reason:
       'the Diamond each chain\'s rows were indexed from (#1566, Codex #2545 r1); a block-zero ' +
       'replay re-adopts the bundle\'s Diamond on its first pass, so nothing is born here',
-  },
-  prenotify_scan_cursor: {
-    class: 'replay-derived',
-    reason:
-      'pre-notify scan watermark — a deadline to resume at (#2219). Nothing ' +
-      'is born here: a cleared row restarts the scan at the nearest deadline, ' +
-      'which re-reads rather than skips',
   },
   prenotify_pass: {
     class: 'replay-derived',
@@ -140,28 +145,66 @@ const CLASSIFICATION = {
       "reminders for a row that no longer exists in that shape (#2212)",
   },
 
-  // decision-needed — every entry here is #1481 scope. Do NOT clear
-  // these in §6 and do NOT assume the archive covers them.
+  // hybrid (#1481) — born off chain, with columns the replay projects.
+  // Archived like born-off-chain and imported by §4, but through the
+  // converter's RESTORE_PROJECTIONS, which hands the projected part back to
+  // the §6 replay instead of restoring it from the archive.
   signed_offers: {
-    class: 'decision-needed',
-    reason: 'HYBRID: user-submitted via HTTP, chain-updated by replay; NOT archived — #1481',
-  },
-  prepay_listings: {
-    class: 'decision-needed',
-    reason: 'chainIndexer-only writes BUT replay handlers invoke OpenSea publishing — side-effect question, #1481',
+    class: 'hybrid',
+    reason:
+      'EIP-712 offers users POSTed (signedOfferRoutes.ts) that exist nowhere on chain until filled; ' +
+      'status and filled_amount are the projection of the SignedOffer* events, each handler updating ' +
+      'only an active row, so they are imported as active/0 and the replay re-derives them',
   },
   prepay_listing_match_breadcrumbs: {
-    class: 'decision-needed',
-    reason: 'written by HTTP routes too (loanRoutes.ts) — #1481',
+    class: 'hybrid',
+    reason:
+      "v1-twostep rows are the app's POST of which OpenSea offer a match answered (loanRoutes.ts), " +
+      'carried by no chain event; atomic rows are written from PrepayListingMatched, so only the ' +
+      'two-step rows are imported and the replay writes the atomic ones again',
+  },
+
+  // replay-derived, settled by #1481's audit.
+  prepay_listings: {
+    class: 'replay-derived',
+    reason:
+      'chainIndexer-only writes from the PrepayListing* events; the OpenSea republish the handlers ' +
+      'trigger publishes only an order that is still the loan\'s live listing at the head (#1481), ' +
+      'so a replay over cancelled or settled listings publishes nothing stale',
   },
   keeper_commitment_reconciled: {
-    class: 'decision-needed',
-    reason: 'written by indexer AND keeper — #1481',
+    class: 'replay-derived',
+    reason:
+      'rows come from CommitmentRemitEligibilityReconciled (chainIndexer.ts); the keeper only stamps ' +
+      'consumed_at, which it re-stamps after one on-chain read (or with no read, for a day its ' +
+      'resolved marker already skips), so a replayed row costs a re-check, never a report',
   },
-  market_summary: { class: 'decision-needed', reason: 'derived summary, multiple derived writers — #1481' },
-  protocol_config: { class: 'decision-needed', reason: 'chain-read snapshot via its own cron, not the replay — #1481' },
-  webhook_deliveries: { class: 'decision-needed', reason: 'webhook dedupe state — #1481' },
-  reward_loop_totals: { class: 'decision-needed', reason: 'reward ledger; day-bucketing vs replay unverified — #1481' },
+  market_summary: {
+    class: 'replay-derived',
+    reason:
+      'an aggregate of offers + signed_offers; with indexer_cursor cleared the sweep has no watermark ' +
+      'and recomputes every market from both tables on its first pass, and a row for a market with ' +
+      'no source rows would otherwise never be touched again',
+  },
+  protocol_config: {
+    class: 'replay-derived',
+    reason:
+      'a snapshot of live contract state; a missing row is refreshed on the next scan, and a restored ' +
+      'copy would serve an old grace schedule or pause log to the reminder sweep as current',
+  },
+  webhook_deliveries: {
+    class: 'replay-derived',
+    reason:
+      'exact-seen dedupe of webhook deliveries, a latency hint only (the cron converges without it); ' +
+      'an empty table costs one duplicate forward, a kept row can only suppress a hint',
+  },
+  reward_loop_totals: {
+    class: 'replay-derived',
+    reason:
+      'RL-2 ledger: a fold of reward events in (block, log) order, days from block timestamps; the ' +
+      'activity_events backfill finds nothing on an empty replay and stamps itself done, which is ' +
+      'exact for a Diamond that emitted VaultVpfiDebited from its first debit (every fresh deploy)',
+  },
   // M5 (#1218 / #1349) recycling transparency series. Classified rather
   // than deferred: every column is a fold of chain logs and nothing else,
   // so a block-zero replay rebuilds both tables exactly. The pre-cutover
@@ -181,8 +224,7 @@ const CLASSIFICATION = {
   // reading that is stale by definition, and importing that on restore
   // would republish an old backing verdict as current — the exact
   // failure `snapshot-stale` exists to prevent. Clearing it is both the
-  // cheaper and the SAFER treatment, which is why it is here rather than
-  // in decision-needed.
+  // cheaper and the SAFER treatment.
   // #2667 — not a chain projection, but the same treatment as a snapshot of
   // live state: the keeper republishes it each watcher run, and a restored
   // copy would answer for a configuration the keeper may no longer have.
@@ -196,66 +238,87 @@ const CLASSIFICATION = {
   recycle_series_state: { class: 'replay-derived', reason: 'one-time activity_events backfill marker; meaningless without the projection it guards' },
   recycle_series_events: { class: 'replay-derived', reason: 'chain-log dedup keyed (chain, block, logIndex); regenerated by replay' },
   recycle_day_pool: { class: 'replay-derived', reason: 'per-reward-day fold of GovernorDayPoolStamped / VpfiRecycled / ChainRecycledReported; no off-chain input' },
-  reward_loop_events: { class: 'decision-needed', reason: 'reward ledger; day-bucketing vs replay unverified — #1481' },
-  reward_loop_day: { class: 'decision-needed', reason: 'reward ledger; day-bucketing vs replay unverified — #1481' },
-  reward_day_user: { class: 'decision-needed', reason: 'reward ledger; day-bucketing vs replay unverified — #1481' },
-  reward_retention: { class: 'decision-needed', reason: 'reward ledger; day-bucketing vs replay unverified — #1481' },
-  // Found by this script's first run — missed by every manual sweep,
-  // including the #1450 review's. Which is the point of the script.
-  // The five below are keeper-PRIVATE since #2450 (vaipakam-keeper-db): the
-  // nightly archive does not reach them, so whichever class #1481 settles on,
-  // it cannot be born-off-chain without a backup of that database first.
+  reward_loop_events: { class: 'replay-derived', reason: 'RL-2 ledger, rebuilt by the replay with reward_loop_totals (see there)' },
+  reward_loop_day: { class: 'replay-derived', reason: 'RL-2 ledger, rebuilt by the replay with reward_loop_totals (see there)' },
+  reward_day_user: { class: 'replay-derived', reason: 'RL-2 ledger, rebuilt by the replay with reward_loop_totals (see there)' },
+  reward_retention: { class: 'replay-derived', reason: 'RL-2 ledger, rebuilt by the replay with reward_loop_totals (see there)' },
+  // Keeper state. Every table below except the lease is keeper-PRIVATE
+  // (vaipakam-keeper-db, #2450), which the nightly archive does not bind, so a
+  // restore into a fresh account starts each one EMPTY (OffChainRestore.md
+  // §1 step 3). #1481 checked each for that: none holds anything the keeper
+  // cannot re-derive from the chain or the shared database, at the stated
+  // cost. They are therefore replay-derived, and §6 clears them in the
+  // keeper's database too, so a recovery in place starts from the same state
+  // a fresh account does instead of keeping rows nobody can vouch for (a
+  // forged frontier or completion marker makes the keeper skip work). The
+  // keeper is stopped through §6 (§7a re-arms it), so nothing races the
+  // clear.
   keeper_commitment_day: {
-    class: 'decision-needed',
-    reason: 'keeper commitment-reporting state (apps/keeper/src/db.ts), keeper-private; derivation unaudited — #1481',
+    class: 'replay-derived',
+    reason:
+      'commitment-report completion marker; an empty table re-checks each day in range with one isCommitmentReportSent read, and a sent day is never sent again',
   },
   keeper_commitment_scan: {
-    class: 'decision-needed',
-    reason: 'keeper commitment scan cursor, keeper-private; derivation unaudited — #1481',
+    class: 'replay-derived',
+    reason:
+      'commitment-report scan frontier; an empty table re-reads the entry pages, which submit nothing already accumulated on chain',
   },
   keeper_remit_ack: {
-    class: 'decision-needed',
-    reason: 'keeper remit acknowledgement state, keeper-private; derivation unaudited — #1481',
+    class: 'replay-derived',
+    reason:
+      'remit-ack attempt log; an empty table re-sends one acknowledgement per reservation still Pending on Base (a paid CCIP message, rate-limited from then on), which §1 step 3 already states',
   },
   keeper_remit_ack_frontier: {
-    class: 'decision-needed',
-    reason: 'keeper remit-ack frontier cursor, keeper-private; derivation unaudited — #1481',
+    class: 'replay-derived',
+    reason:
+      'remit-ack frontier and rotating cursor; an empty table rescans from reservation 1, where a forged frontier would leave reservations below it unacknowledged',
   },
   keeper_deployment: {
-    class: 'decision-needed',
-    reason: "keeper-private deployment epoch per chain (#2497 r10); disposable — an empty table adopts the indexer's adopted Diamond, so it resets nothing — #1481",
+    class: 'replay-derived',
+    reason:
+      'deployment epoch per chain (#2497 r10); an empty table adopts the indexer\'s adopted Diamond and resets nothing',
   },
   keeper_ops_alert: {
-    class: 'decision-needed',
-    reason: 'keeper ops-alert de-duplication (#2450), keeper-private; disposable — an empty table re-sends at most one line per live condition — #1481',
+    class: 'replay-derived',
+    reason:
+      'ops-alert de-duplication (#2450); an empty table re-sends at most one line per live condition',
   },
   keeper_sanctions_screen: {
-    class: 'decision-needed',
-    reason: 'keeper sanctions-hold screen cursor (#2489), keeper-private; disposable — an empty table restarts the screen from the first loan party — #1481',
+    class: 'replay-derived',
+    reason:
+      'sanctions-hold screen cursor (#2489); an empty table restarts the screen from the first loan party',
   },
   keeper_sanctions_watch: {
-    class: 'decision-needed',
-    reason: "keeper sanctions-hold watch list (#2497 r11), keeper-private; disposable — an empty table re-finds each held owner on the screen's next cycle, which is what it was before the list existed — #1481",
+    class: 'replay-derived',
+    reason:
+      'sanctions-hold watch list (#2497 r11); an empty table re-finds each held owner on the screen\'s next cycle',
   },
   keeper_work_open: {
-    class: 'decision-needed',
-    reason: "keeper open-work queue (#2489, #2497 r8), keeper-private; disposable ONLY together with keeper_work_cursor — clearing both re-discovers from the active Diamond's deploy block and drops each finished item after one on-chain read; clearing this one alone loses the items behind the cursor — #1481",
+    class: 'replay-derived',
+    reason:
+      'open-work queue (#2489, #2497 r8), cleared WITH keeper_work_cursor: both empty re-discover from the active Diamond\'s deploy block and drop each finished item after one on-chain read',
   },
   keeper_work_cursor: {
-    class: 'decision-needed',
-    reason: "keeper open-work discovery cursor (#2497 r8), keeper-private; disposable — an empty table re-discovers from the active Diamond's deploy block, and re-queuing an item is a no-op — #1481",
+    class: 'replay-derived',
+    reason:
+      'open-work discovery cursor (#2497 r8), cleared WITH keeper_work_open; re-queuing an item is a no-op',
   },
   keeper_horizon_entry: {
-    class: 'decision-needed',
-    reason: "keeper claim-horizon heartbeat queue (#2517), keeper-private; disposable ONLY together with keeper_horizon_cursor — clearing both re-discovers from entry id 1 and drops each settled entry after one on-chain read, at the cost of the stuck-clock and overdue history; clearing this one alone loses the entries behind the cursor — #1481",
+    class: 'replay-derived',
+    reason:
+      'claim-horizon heartbeat queue (#2517), cleared WITH keeper_horizon_cursor: both empty re-discover from entry id 1, losing only the stuck-clock and overdue history',
   },
   keeper_horizon_cursor: {
-    class: 'decision-needed',
-    reason: 'keeper claim-horizon discovery cursor (#2517), keeper-private; disposable — an empty table re-discovers from entry id 1, and re-queuing an entry is a no-op — #1481',
+    class: 'replay-derived',
+    reason:
+      'claim-horizon discovery cursor (#2517), cleared WITH keeper_horizon_entry; re-queuing an entry is a no-op',
   },
   keeper_runner_lease: {
-    class: 'decision-needed',
-    reason: 'one-runner keeper lease (#2503); self-expires within 10 min, so restore needs no step either way — moves to the keeper DB with #2497',
+    class: 'replay-derived',
+    reason:
+      'one-runner keeper lease (#2503), in the SHARED database (migration 0059); it self-expires ' +
+      'within 10 minutes, and §6 clears it while the keeper is stopped, so a forged lease cannot ' +
+      'hold the restored keeper off',
   },
 };
 
@@ -435,7 +498,9 @@ for (const app of ['indexer', 'keeper', 'agent']) {
 // A typo'd class ('born-of-chain') must not count as classified — it
 // would pass the presence check while silently escaping the archive
 // cross-check (Codex #1485 r1).
-const VALID_CLASSES = new Set(['born-off-chain', 'replay-derived', 'decision-needed']);
+const VALID_CLASSES = new Set(['born-off-chain', 'replay-derived', 'hybrid']);
+/** The classes the nightly archives and §4 imports. */
+const ARCHIVED_CLASSES = new Set(['born-off-chain', 'hybrid']);
 const malformed = Object.entries(CLASSIFICATION)
   .filter(
     ([, c]) =>
@@ -584,7 +649,7 @@ const backupSrc = backupLex.codeWithStrings;
 const backupCode = backupLex.code;
 const archivedSet = archivedTablesFrom(backupSrc);
 const unarchived = Object.entries(CLASSIFICATION)
-  .filter(([t, c]) => c.class === 'born-off-chain' && !archivedSet.has(t))
+  .filter(([t, c]) => ARCHIVED_CLASSES.has(c.class) && !archivedSet.has(t))
   .map(([t]) => t);
 
 // ── Check 3b: no PRIVATE table is born-off-chain (#2450) ──────────────
@@ -595,7 +660,7 @@ const unarchived = Object.entries(CLASSIFICATION)
 const PRIVATE = privateTables(REPO_ROOT);
 const databaseOf = (t) => PRIVATE.get(t)?.name ?? SHARED_DATABASE;
 const privateBorn = Object.entries(CLASSIFICATION)
-  .filter(([t, c]) => c.class === 'born-off-chain' && PRIVATE.has(t))
+  .filter(([t, c]) => ARCHIVED_CLASSES.has(c.class) && PRIVATE.has(t))
   .map(([t]) => `${t} (in ${databaseOf(t)})`);
 
 // ── Check 4: replay-derived == the runbook's §6 clear command ─────────
@@ -644,7 +709,7 @@ const importList = importTablesFrom(runbookSrc);
 const importSet = new Set(importList);
 const bornSet = new Set(
   Object.entries(CLASSIFICATION)
-    .filter(([, c]) => c.class === 'born-off-chain')
+    .filter(([, c]) => ARCHIVED_CLASSES.has(c.class))
     .map(([t]) => t),
 );
 const notImported = [...bornSet].filter((t) => !importSet.has(t)).sort();
@@ -680,6 +745,30 @@ const unconsumed = consumption
   .filter((re) => !re.test(backupCode))
   .map((re) => re.source);
 
+// ── Check 7: the restore converter carries out the classification (#1481) ─
+// The converter is what §4 actually runs. Its allowlist decides which
+// archived tables it will emit an import for at all (anything else is
+// refused as hostile), and RESTORE_PROJECTIONS decides how a hybrid table's
+// rows are imported. A hybrid table without a projection would be restored
+// whole, keeping the archive's copy of a chain projection the replay should
+// have rebuilt; a projection on a table that is not hybrid would drop or
+// rewrite rows of a table whose whole row is the user's.
+const archivedClassified = new Set(
+  Object.entries(CLASSIFICATION)
+    .filter(([, c]) => ARCHIVED_CLASSES.has(c.class))
+    .map(([t]) => t),
+);
+const converterMissing = [...archivedClassified].filter((t) => !CONVERTER_IMPORTS.has(t)).sort();
+const converterExtra = [...CONVERTER_IMPORTS].filter((t) => !archivedClassified.has(t)).sort();
+const hybridSet = new Set(
+  Object.entries(CLASSIFICATION)
+    .filter(([, c]) => c.class === 'hybrid')
+    .map(([t]) => t),
+);
+const projected = new Set(Object.keys(RESTORE_PROJECTIONS));
+const hybridUnprojected = [...hybridSet].filter((t) => !projected.has(t)).sort();
+const projectedNotHybrid = [...projected].filter((t) => !hybridSet.has(t)).sort();
+
 let failed = false;
 if (malformed.length > 0) {
   failed = true;
@@ -690,19 +779,19 @@ if (malformed.length > 0) {
 if (unclassified.length > 0) {
   failed = true;
   console.error('✗ Written tables with NO classification entry (add one to');
-  console.error('  check-table-classification.mjs — decision-needed is fine, silence is not):');
+  console.error('  check-table-classification.mjs: decide born-off-chain, hybrid or replay-derived in this change):');
   for (const t of unclassified) {
     console.error(`    ${t}  (written by: ${[...writers.get(t)].join(', ')})`);
   }
 }
 if (unarchived.length > 0) {
   failed = true;
-  console.error('✗ Classified born-off-chain but absent from backup.ts:');
+  console.error('✗ Classified born-off-chain or hybrid but absent from backup.ts:');
   for (const t of unarchived) console.error(`    ${t}`);
 }
 if (privateBorn.length > 0) {
   failed = true;
-  console.error('✗ Classified born-off-chain but lives in a PRIVATE database the nightly');
+  console.error('✗ Classified born-off-chain or hybrid but lives in a PRIVATE database the nightly');
   console.error('  archive does not bind — it could never be backed up (#2450):');
   for (const t of privateBorn) console.error(`    ${t}`);
 }
@@ -719,13 +808,13 @@ if (clearedUnclassified.length > 0) {
 }
 if (notImported.length > 0) {
   failed = true;
-  console.error("✗ Classified born-off-chain but missing from OffChainRestore.md §4's");
+  console.error("✗ Classified born-off-chain or hybrid but missing from OffChainRestore.md §4's");
   console.error('  import list (an operator following §4 would never restore it):');
   for (const t of notImported) console.error(`    ${t}`);
 }
 if (importedUnclassified.length > 0) {
   failed = true;
-  console.error("✗ In §4's import list but not classified born-off-chain:");
+  console.error("✗ In §4's import list but not classified born-off-chain or hybrid:");
   for (const t of importedUnclassified) console.error(`    ${t}`);
 }
 if (misordered.length > 0) {
@@ -741,6 +830,20 @@ if (unconsumed.length > 0) {
   console.error('  restructured legitimately, update check 6 consciously:');
   for (const u of unconsumed) console.error(`    missing consumption pattern: ${u}`);
 }
+if (converterMissing.length > 0 || converterExtra.length > 0) {
+  failed = true;
+  console.error("✗ The restore converter's import allowlist (BORN_OFF_CHAIN_TABLES in");
+  console.error('  ops/offchain-data-warm/scripts/restore-from-archive.mjs) differs from the');
+  console.error('  tables classified born-off-chain or hybrid:');
+  for (const t of converterMissing) console.error(`    ${t}  (classified archived; the converter refuses it)`);
+  for (const t of converterExtra) console.error(`    ${t}  (the converter imports it; not classified archived)`);
+}
+if (hybridUnprojected.length > 0 || projectedNotHybrid.length > 0) {
+  failed = true;
+  console.error("✗ The restore converter's RESTORE_PROJECTIONS must cover exactly the hybrid tables:");
+  for (const t of hybridUnprojected) console.error(`    ${t}  (hybrid, but imported whole)`);
+  for (const t of projectedNotHybrid) console.error(`    ${t}  (projected, but not classified hybrid)`);
+}
 if (missingExternal.length > 0) {
   failed = true;
   console.error('✗ EXTERNAL_WRITERS entry resolves to nothing real (needs an\n  existing script, or `pending: "#NNNN"` with a reason):');
@@ -751,11 +854,12 @@ if (dead.length > 0) {
   console.warn(`⚠ Classification entries no Worker writes any more: ${dead.join(', ')}`);
 }
 
-const decisions = Object.values(CLASSIFICATION).filter((c) => c.class === 'decision-needed').length;
 if (!failed) {
+  const count = (k) => Object.values(CLASSIFICATION).filter((c) => c.class === k).length;
   console.log(
     `✓ table classification: ${writers.size} written tables all classified ` +
-      `(${decisions} still decision-needed — see #1481).`,
+      `(${count('born-off-chain')} born-off-chain, ${count('hybrid')} hybrid, ` +
+      `${count('replay-derived')} replay-derived).`,
   );
 }
 process.exit(failed ? 1 : 0);
@@ -834,15 +938,15 @@ export function clearedTablesFrom(runbookSrc, database = SHARED_DATABASE, { requ
   return cleared;
 }
 
-/** Table names in the runbook §4 born-off-chain import list — the
- *  backticked names after the "**`vaipakam-warm` tables**
- *  (born-off-chain):" marker, up to the end of that sentence.
+/** Table names in the runbook §4 import list — the backticked names
+ *  after the "**`vaipakam-warm` tables** (born-off-chain and hybrid):"
+ *  marker, up to the end of that sentence.
  *  Returns them IN LIST ORDER: §4's order is load-bearing (parent
  *  before cascade children), so callers check sequence, not just
  *  membership. */
 export function importTablesFrom(runbookSrc) {
   const m = runbookSrc.match(
-    /\*\*`vaipakam-warm` tables\*\* \(born-off-chain\):([\s\S]*?)\.\n/,
+    /\*\*`vaipakam-warm` tables\*\* \(born-off-chain and hybrid\):([\s\S]*?)\.\n/,
   );
   if (!m) {
     throw new Error('could not locate the §4 born-off-chain import list in OffChainRestore.md');

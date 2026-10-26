@@ -62,15 +62,16 @@ describe('the listing sweep asks before each row (#2194)', () => {
     }
   };
 
-  it('does not start a row the invocation cannot finish — seven external requests', async () => {
-    const r = await run(6);
+  it('does not start a row the invocation cannot finish — eight external requests', async () => {
+    // Eight since #1481: the live-listing read joins the seven before it.
+    const r = await run(7);
     expect(r.sent).toBe(0);
     expect(r.marker).toBeNull();
     expect(r.warned.some((w) => w.includes('listing sweep stopped at loan 1'))).toBe(true);
   });
 
-  it('starts it when the seven are there', async () => {
-    const r = await run(7);
+  it('starts it when the eight are there', async () => {
+    const r = await run(8);
     expect(r.marker).toBe(0);
   });
 });

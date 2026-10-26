@@ -1,4 +1,4 @@
-## Thread — Discounted liquidation respects the internal-match window and sells only through governed venues (PR #TBD)
+## Thread — Discounted liquidation respects the internal-match window and sells only through governed venues (PR #2898)
 
 The liquidator-buys-at-discount route now waits for an internal match the
 same way the other external liquidation routes do. While the internal-match

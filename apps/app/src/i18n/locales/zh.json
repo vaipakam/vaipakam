@@ -2673,6 +2673,7 @@
       "advancedOptions": "高级选项",
       "allowPartialRepay": "允许借款人分批还款",
       "proRataInterest": "只按使用时间收取利息（按比例），而不是按完整期限",
+      "rentalWholeDaysNote": "租金按整天计算：不足一天按一天计，且始终至少收取一天租金。",
       "continueToReview": "继续 review",
       "retry": "重试",
       "beforeYouSign": "签名前",

@@ -1520,9 +1520,9 @@ contract RepayFacetTest is Test {
         );
     }
 
-    /// @dev In-term behaviour is unchanged: a close at day 5 owes the 5
-    ///      elapsed days (50) and no late fee.
-    function test_901_rentalRepaidInTerm_owesElapsedDaysOnly() public {
+    /// @dev In term, a close owes every rental day USED, a part day counting
+    ///      whole (#2741): one second into day 6 owes 6 days (60), no late fee.
+    function test_901_rentalRepaidInTerm_owesUsedDaysOnly() public {
         helperOfferLoan();
         address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
         uint256 vaultBefore = ERC20Mock(mockERC20).balanceOf(borrowerVault);
@@ -1533,8 +1533,84 @@ contract RepayFacetTest is Test {
 
         assertEq(
             vaultBefore - ERC20Mock(mockERC20).balanceOf(borrowerVault),
+            60,
+            "6 used days, no fee"
+        );
+    }
+
+    /// @dev #2741 — a pro-rata rental returned within its first day owes one
+    ///      day of rent (10), not nothing.
+    function test_2741_rentalReturnedSameDayOwesOneDay() public {
+        helperOfferLoan();
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        uint256 vaultBefore = ERC20Mock(mockERC20).balanceOf(borrowerVault);
+
+        vm.warp(block.timestamp + 1 hours);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(2);
+
+        assertEq(
+            vaultBefore - ERC20Mock(mockERC20).balanceOf(borrowerVault),
+            10,
+            "a part day is a whole day"
+        );
+    }
+
+    /// @dev #2741 — even a return in the acceptance block owes one day,
+    ///      so the user right cannot be used for free inside one transaction.
+    function test_2741_rentalReturnedInTheAcceptanceBlockOwesOneDay() public {
+        helperOfferLoan();
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        uint256 vaultBefore = ERC20Mock(mockERC20).balanceOf(borrowerVault);
+
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(2);
+
+        assertEq(
+            vaultBefore - ERC20Mock(mockERC20).balanceOf(borrowerVault),
+            10,
+            "no elapsed time still owes the one-day minimum"
+        );
+    }
+
+    /// @dev #2741 — rounding up never bills a day nobody used: a close at
+    ///      exactly five days owes five.
+    function test_2741_exactDayBoundaryBillsNoUnusedDay() public {
+        helperOfferLoan();
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        uint256 vaultBefore = ERC20Mock(mockERC20).balanceOf(borrowerVault);
+
+        vm.warp(LoanFacet(address(diamond)).getLoanDetails(2).startTime + 5 days);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(2);
+
+        assertEq(
+            vaultBefore - ERC20Mock(mockERC20).balanceOf(borrowerVault),
             50,
-            "5 elapsed days, no fee"
+            "exactly 5 days used owes 5, not a sixth nobody used"
+        );
+    }
+
+    /// @dev #2741 — days the daily deduction already paid are not billed
+    ///      again: after 3 deductions, an hour into day 4 owes that one day.
+    function test_2741_deductedDaysAreNotBilledAgain() public {
+        helperOfferLoan();
+        uint256 start = LoanFacet(address(diamond)).getLoanDetails(2).startTime;
+        for (uint256 d = 0; d < 3; d++) {
+            vm.warp(start + (d + 1) * 1 days);
+            RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
+        }
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        uint256 vaultBefore = ERC20Mock(mockERC20).balanceOf(borrowerVault);
+
+        vm.warp(start + 3 days + 1 hours);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(2);
+
+        assertEq(
+            vaultBefore - ERC20Mock(mockERC20).balanceOf(borrowerVault),
+            10,
+            "only the part-used fourth day"
         );
     }
 

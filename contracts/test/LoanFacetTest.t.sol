@@ -1340,11 +1340,21 @@ contract LoanFacetTest is Test {
     // mock `getEffectiveLiquidityTier` to control the tier, exercise a
     // full `createOffer` + `acceptOffer` flow against the binding gate.
 
+    /// @dev #2747 — switching depth-tiered LTV on needs a quote asset other
+    ///      than WETH in the PAA list. These tests mock the tier, so any
+    ///      non-WETH quote satisfies the invariant.
+    function _enableDepthTiers() internal {
+        address[] memory quotes = new address[](1);
+        quotes[0] = mockERC20;
+        ConfigFacet(address(diamond)).setPaaAssets(quotes);
+        ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
+    }
+
     /// @dev Borrowing above the Tier-1 50% cap (but inside the
     ///      per-asset `loanInitMaxLtvBps = 8000`) reverts `InitLtvAboveTier`
     ///      with the precise `(ltv, cap)` payload.
     function testDepthTier_initGate_revertsAboveTier1Cap() public {
-        ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
+        _enableDepthTiers();
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(
@@ -1391,7 +1401,7 @@ contract LoanFacetTest is Test {
     ///      cap → the loan goes Active. Confirms the cap is the only
     ///      thing rejecting in the prior case.
     function testDepthTier_initGate_acceptsBelowTier1Cap() public {
-        ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
+        _enableDepthTiers();
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(
@@ -1430,7 +1440,7 @@ contract LoanFacetTest is Test {
     ///      floor → succeeds. (Switch off, same HF would revert
     ///      `HealthFactorTooLow` — see `testInitiateLoanRevertsLowHF`.)
     function testDepthTier_initGate_hfFloorRelaxedToOne() public {
-        ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
+        _enableDepthTiers();
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(
@@ -1474,7 +1484,7 @@ contract LoanFacetTest is Test {
     ///      relaxed floor is `≥ 1e18` (not-born-already-liquidatable),
     ///      not "no floor".
     function testDepthTier_initGate_hfFloorBelowOneStillReverts() public {
-        ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
+        _enableDepthTiers();
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(
@@ -1525,7 +1535,7 @@ contract LoanFacetTest is Test {
     ///      assertion is now on the CREATE-time `MinCollateralBelowFloor`
     ///      rejection rather than the accept-time `InitLtvAboveTier`.
     function testDepthTier_initGate_tier0CollateralRejected() public {
-        ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
+        _enableDepthTiers();
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(
@@ -1559,7 +1569,7 @@ contract LoanFacetTest is Test {
     ///      Tier-2 boundary explicitly so a future cap change shows up as a
     ///      failed assertion.
     function testDepthTier_initGate_revertsAboveTier2Cap() public {
-        ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
+        _enableDepthTiers();
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(
@@ -1607,7 +1617,7 @@ contract LoanFacetTest is Test {
     ///      assertion. (`effectiveTierMaxInitLtvBps(3)` reads the autonomous
     ///      tier-LTV cache if fresh, else the 6500 library default.)
     function testDepthTier_initGate_revertsAboveTier3Cap() public {
-        ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
+        _enableDepthTiers();
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(

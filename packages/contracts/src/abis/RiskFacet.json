@@ -2644,6 +2644,11 @@
   },
   {
     "type": "error",
+    "name": "PaaNeedsNonWethQuote",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "PadNumeraireRateFeedStale",
     "inputs": []
   },

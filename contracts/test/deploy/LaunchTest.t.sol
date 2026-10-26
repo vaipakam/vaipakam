@@ -7,6 +7,8 @@ import {Launch} from "../../script/Launch.s.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {ProfileFacet} from "../../src/facets/ProfileFacet.sol";
 import {OracleAdminFacet} from "../../src/facets/OracleAdminFacet.sol";
+import {OracleFacet} from "../../src/facets/OracleFacet.sol";
+import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {VPFITokenFacet} from "../../src/facets/VPFITokenFacet.sol";
 import {IVaipakamErrors} from "../../src/interfaces/IVaipakamErrors.sol";
@@ -285,6 +287,53 @@ contract LaunchWethStub {
     }
 }
 
+/// @dev #2747 — a Diamond stand-in answering only the reads the WETH
+///      quote-route check makes, so the check can be read against a list the
+///      real setter would refuse to write, and against a Diamond whose
+///      quote-leg read fails.
+contract LaunchPaaDiamondStub {
+    address public getWethContract;
+    address[] internal paa;
+    bool internal quoteReadReverts;
+
+    constructor(address weth_, address[] memory paa_, bool quoteReadReverts_) {
+        getWethContract = weth_;
+        paa = paa_;
+        quoteReadReverts = quoteReadReverts_;
+    }
+
+    function getPaaAssets() external view returns (address[] memory) {
+        return paa;
+    }
+
+    function isLiquidityQuoteUsable(address) external view returns (bool) {
+        require(!quoteReadReverts, "no quote-leg read");
+        return true;
+    }
+}
+
+/// @dev #2747 — a stable quote stand-in: a contract answering `decimals()`
+///      with 6, as USDC does.
+contract LaunchQuoteStub {
+    function decimals() external pure returns (uint8) {
+        return 6;
+    }
+}
+
+/// @dev #2747 — a feed registry stand-in answering `getFeed(base, quote)`
+///      from a per-base table, whatever the quote denomination.
+contract LaunchFeedRegistryStub {
+    mapping(address => address) internal feedOf;
+
+    function setFeed(address base, address feed) external {
+        feedOf[base] = feed;
+    }
+
+    function getFeed(address base, address) external view returns (address) {
+        return feedOf[base];
+    }
+}
+
 /// @dev A price feed stand-in: answers `decimals()` and `latestRoundData()`
 ///      with a price.
 contract LaunchFeedStub {
@@ -369,12 +418,19 @@ contract LaunchTest is Test {
     address internal constant PROPOSER = address(0x5AFE);
     address internal constant TREASURY = address(0xBEEF);
     address internal constant VPFI = address(0xF1F1);
+    /// @dev #2747 — the Chainlink feed-registry USD denominator.
+    address internal constant USD_DENOMINATOR = address(0x0000000000000000000000000000000000000348);
     /// @dev The Pauser Safe stand-in the handover appoints.
     address internal constant GUARDIAN = address(0x6A2D);
 
     address internal diamond;
     address internal admin;
     address internal weth;
+    /// @dev #2747 — the quote asset besides WETH every configured Diamond
+    ///      here carries, priced through `quoteRegistry`, so WETH has a
+    ///      liquidity-tier route.
+    address internal stableQuote;
+    LaunchFeedRegistryStub internal quoteRegistry;
     Launch internal launcher;
 
     function setUp() public {
@@ -387,6 +443,22 @@ contract LaunchTest is Test {
         launcher = new Launch();
         new DeployLaunchGate().deploy(DEPLOYER_KEY);
         weth = address(new LaunchWethStub());
+        // #2747 — the configure phase's quote-asset list: WETH plus a quote
+        // besides it that the Diamond prices through the feed registry. A
+        // Diamond born paused still takes config writes.
+        stableQuote = address(new LaunchQuoteStub());
+        LaunchFeedStub quoteFeed = new LaunchFeedStub();
+        quoteFeed.setPrice(1e8);
+        quoteRegistry = new LaunchFeedRegistryStub();
+        quoteRegistry.setFeed(stableQuote, address(quoteFeed));
+        address[] memory paa = new address[](2);
+        paa[0] = weth;
+        paa[1] = stableQuote;
+        vm.startPrank(admin);
+        ConfigFacet(diamond).setPaaAssets(paa);
+        OracleAdminFacet(diamond).setChainlinkRegistry(address(quoteRegistry));
+        OracleAdminFacet(diamond).setUsdChainlinkDenominator(USD_DENOMINATOR);
+        vm.stopPrank();
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────
@@ -1400,6 +1472,89 @@ contract LaunchTest is Test {
         );
         tl.executeBatch(targets, values, payloads, bytes32(0), salt);
         assertTrue(AdminFacet(diamond).paused());
+    }
+
+    /// @dev #2747 — the configured Diamond's list names a quote besides
+    ///      WETH, so the quote-route check is met.
+    function test_WethQuoteRoute_MetWithAQuoteBesidesWeth() public {
+        _configure();
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
+        assertEq(c[6].label, "WETH has a liquidity-tier quote route");
+        assertTrue(c[6].checkable && c[6].met);
+        assertEq(
+            c[6].detail,
+            "the quote-asset list names an asset besides WETH that the Diamond prices, so WETH can be tiered (its tier still depends on that pool's depth)"
+        );
+    }
+
+    /// @dev Codex #2890 r1 — a listed quote the Diamond cannot price is no
+    ///      route: the tier search skips it before looking at any pool, so
+    ///      WETH would still resolve to tier 0. NOT MET, and the gate refuses.
+    function test_WethQuoteRoute_NotMetWhenTheQuoteIsUnpriced() public {
+        _configure();
+        quoteRegistry.setFeed(stableQuote, address(0));
+        assertFalse(OracleFacet(diamond).isLiquidityQuoteUsable(stableQuote));
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
+        assertTrue(c[6].checkable);
+        assertFalse(c[6].met);
+        assertEq(
+            c[6].detail,
+            "the quote-asset list names assets besides WETH, but the Diamond prices none of them now (no feed for it in the feed registry, a stale or distrusted round, or unreadable decimals), and the tier search skips a quote it cannot price, so WETH would resolve to liquidity tier 0: wire the quote's price feed in the configure phase"
+        );
+    }
+
+    /// @dev Codex #2890 r1 — a quote whose decimals cannot be read cannot
+    ///      value its leg either: the same rule the tier search applies.
+    function test_WethQuoteRoute_NotMetWhenTheQuoteHasNoDecimals() public {
+        _configure();
+        address codeless = address(0x05DC);
+        LaunchFeedStub feed = new LaunchFeedStub();
+        feed.setPrice(1e8);
+        quoteRegistry.setFeed(codeless, address(feed));
+        address[] memory paa = new address[](2);
+        paa[0] = weth;
+        paa[1] = codeless;
+        vm.prank(admin);
+        ConfigFacet(diamond).setPaaAssets(paa);
+        assertFalse(OracleFacet(diamond).isLiquidityQuoteUsable(codeless));
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
+        assertTrue(c[6].checkable);
+        assertFalse(c[6].met);
+    }
+
+    /// @dev A Diamond that cannot answer the quote-leg read is not checked,
+    ///      never met.
+    function test_WethQuoteRoute_NotCheckableWhenTheQuoteReadFails() public {
+        address[] memory paa = new address[](2);
+        paa[0] = weth;
+        paa[1] = address(0x05DC);
+        address stub = address(new LaunchPaaDiamondStub(weth, paa, true));
+        LibLaunchReadiness.Check[] memory c = _gate().checks(stub, _d(address(0)));
+        assertFalse(c[6].checkable);
+        assertFalse(c[6].met);
+        assertEq(c[6].detail, "isLiquidityQuoteUsable() unreadable");
+    }
+
+    /// @dev #2747 — an unconfigured list (empty, which the Diamond reports as
+    ///      WETH alone) and an explicit WETH-only list both leave WETH with no
+    ///      tier route: NOT MET, so a testnet launch refuses and the gate
+    ///      refuses.
+    function test_WethQuoteRoute_NotMetWithWethAlone() public {
+        address[] memory onlyWeth = new address[](1);
+        onlyWeth[0] = weth;
+        address stub = address(new LaunchPaaDiamondStub(weth, onlyWeth, false));
+        LibLaunchReadiness.Check[] memory c = _gate().checks(stub, _d(address(0)));
+        assertTrue(c[6].checkable);
+        assertFalse(c[6].met);
+        assertEq(
+            c[6].detail,
+            "the quote-asset list names no asset besides WETH, so WETH would resolve to liquidity tier 0: run the configure phase with a stable quote (<CHAIN>_PAA_QUOTE_ASSETS)"
+        );
+        address[] memory none = new address[](0);
+        stub = address(new LaunchPaaDiamondStub(weth, none, false));
+        c = _gate().checks(stub, _d(address(0)));
+        assertTrue(c[6].checkable);
+        assertFalse(c[6].met);
     }
 
     /// @dev `--skip-vpfi`: no VPFI token and none declared. Both CCIP checks

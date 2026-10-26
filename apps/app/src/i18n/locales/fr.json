@@ -2673,6 +2673,7 @@
       "advancedOptions": "Options avancées",
       "allowPartialRepay": "Autoriser l’emprunteur à rembourser en plusieurs fois",
       "proRataInterest": "Facturer les intérêts seulement pour le temps utilisé (au prorata), plutôt que pour toute la durée",
+      "rentalWholeDaysNote": "Le loyer est compté en jours entiers : une partie de journée compte comme une journée complète, et au moins un jour est toujours facturé.",
       "continueToReview": "Continuer vers la revue",
       "retry": "Réessayer",
       "beforeYouSign": "Avant de signer",
