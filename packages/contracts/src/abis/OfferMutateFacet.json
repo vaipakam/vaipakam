@@ -1202,17 +1202,6 @@
   },
   {
     "type": "error",
-    "name": "DayHasNoLapseClock",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "DayNotReadyToFinalize",
     "inputs": []
   },
@@ -2076,11 +2065,6 @@
   },
   {
     "type": "error",
-    "name": "MessengerPredatesV3",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "MinCollateralBelowFloor",
     "inputs": [
       {
@@ -2274,66 +2258,6 @@
       },
       {
         "name": "max",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ParkedBroadcastDigestMismatch",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ParkedBroadcastNotParked",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "status",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ParkedBroadcastQuarantineOnly",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ParkedBroadcastStillUnroutable",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ParkedBroadcastUnknown",
-    "inputs": [
-      {
-        "name": "id",
         "type": "uint256",
         "internalType": "uint256"
       }
