@@ -14,7 +14,11 @@ WETH. Governance cannot set a list without one (an empty list included), cannot
 re-point WETH at the list's only other quote, and cannot switch depth-tiered
 LTV on while the list is still unset. The launch step gains a seventh
 readiness requirement that refuses a chain whose list names no quote besides
-WETH, so no chain opens with WETH at tier 0. The configure step writes the
+WETH that the Diamond can price at that moment, so no chain opens with WETH at
+tier 0. The tier search skips a quote it cannot price before it looks at any
+pool, so the requirement asks the Diamond that same question through a new
+read, rather than keeping its own copy of the rule: a listed stablecoin with a
+peg reference but no asset price feed is not a route. The configure step writes the
 list: the testnet mock rig's stable stand-in where the rig is recorded, and
 the chain's canonical stablecoin from a new per-chain setting elsewhere.
 Whether that quote's pools are deep enough for a higher tier is still measured

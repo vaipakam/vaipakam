@@ -634,14 +634,18 @@ even for the gap between the deploy and the handover.
      token's own mint and burn authority (`tokenPool()`) must be that same
      routed pool, and the token must be owned by the Diamond's owner with no
      transfer pending: whoever that slot names can mint mirror VPFI;
-   - a quote-asset (PAA) list naming an asset besides WETH (#2747). The
+   - a quote-asset (PAA) list naming an asset besides WETH that the
+     Diamond prices now (#2747). The
      liquidity-tier search never quotes WETH against itself, so without
      another quote WETH resolves to tier 0 whatever its depth: the most
      conservative liquidation threshold on every WETH-collateral loan, no
      discounted liquidation, and no new WETH-collateral loan once
      depth-tiered LTV is on. The `configure` phase writes the list from
      `<CHAIN>_PAA_QUOTE_ASSETS` (the chain's canonical stablecoin), and the
-     setter never accepts a list without such a quote. Whether that pool is
+     setter never accepts a list without such a quote. The tier search
+     skips a quote it cannot price, so the check asks the Diamond's own
+     quote test (`isLiquidityQuoteUsable`): a stablecoin with a peg
+     reference but no asset price feed is NOT MET. Whether that pool is
      deep enough for a higher tier is measured per loan, not here.
 
    The launch checks the chain against these DECLARED values rather than
