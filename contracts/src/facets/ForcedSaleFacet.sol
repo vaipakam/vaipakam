@@ -23,6 +23,7 @@ import {LibDiscountedLiquidation} from "../libraries/LibDiscountedLiquidation.so
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
+import {LibInternalMatchPriority} from "../libraries/LibInternalMatchPriority.sol";
 
 /**
  * @title ForcedSaleFacet
@@ -323,6 +324,13 @@ contract ForcedSaleFacet is IVaipakamErrors {
         }
         if (RiskFacet(address(this)).calculateHealthFactor(loanId) >= LibVaipakam.HF_SCALE) {
             p.status = LibDiscountedLiquidation.Status.Healthy;
+            return p;
+        }
+        // #2734 — the liquidation defers to an internal match inside the
+        // priority window; the preview asks the same rule.
+        (bool inWindow,,) = LibInternalMatchPriority.window(loanId, loan);
+        if (inWindow) {
+            p.status = LibDiscountedLiquidation.Status.InternalMatchWindow;
             return p;
         }
         (p.tier, p.discountBps) = LibDiscountedLiquidation.discountFor(loan.collateralAsset);
