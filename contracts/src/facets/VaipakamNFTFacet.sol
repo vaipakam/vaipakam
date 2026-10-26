@@ -6,9 +6,9 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibRevert} from "../libraries/LibRevert.sol";
+import {LibJsonText} from "../libraries/LibJsonText.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
-import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IERC721Metadata} from "@openzeppelin/contracts/token/ERC721/extensions/IERC721Metadata.sol";
@@ -87,7 +87,9 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         string memory defaultIpfs =
             "https://ipfs.io/ipfs/QmahNt61bcS6dySxy2qszmXC3AsRMoUxapttrj4WLHNc7k";
         LibERC721.initialize("Vaipakam NFT", "VAIPAK", defaultIpfs, defaultIpfs);
-        _registerNftInterfaces();
+        // The ERC-165 claims (ERC-721 family, EIP-2981 and the rest of the
+        // Diamond's) are recorded by `DiamondInterfacesInit`, the one list
+        // (#2752), not here.
     }
 
     /// @notice Emitted when the image URI for a (status, isLender) pair
@@ -181,14 +183,6 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         if (bytes(sideDefault).length > 0) return sideDefault;
         if (bytes(es.contractImageURI).length > 0) return es.contractImageURI;
         return "";
-    }
-
-    function _registerNftInterfaces() internal {
-        LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
-        ds.supportedInterfaces[type(IERC721).interfaceId] = true;
-        ds.supportedInterfaces[type(IERC721Metadata).interfaceId] = true;
-        ds.supportedInterfaces[type(IERC721Enumerable).interfaceId] = true;
-        ds.supportedInterfaces[0x2a55205a] = true; // EIP-2981 royaltyInfo
     }
 
     // ==================== ERC721 Interface ====================
@@ -469,6 +463,12 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         // symbol/decimals lookup, and claim state in one shot.
         MetricsFacet.NFTPositionSummary memory s =
             MetricsFacet(address(this)).getNFTPositionSummary(tokenId);
+        // #2750 — the token symbols are the only strings in this JSON that a
+        // third party controls (each token's own contract chooses its
+        // symbol). Made JSON-safe and bounded once, here, before any part of
+        // the metadata is assembled from them.
+        s.principalSymbol = LibJsonText.safeText(s.principalSymbol, LibJsonText.MAX_SYMBOL_BYTES);
+        s.collateralSymbol = LibJsonText.safeText(s.collateralSymbol, LibJsonText.MAX_SYMBOL_BYTES);
 
         // Image lookup walks the per-(status, isLender) → per-side
         // default → contractImageURI chain. Granular over the prior

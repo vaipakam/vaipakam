@@ -7,7 +7,6 @@ import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibPrepayOrder} from "../libraries/LibPrepayOrder.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibPrepayListingWiring} from "../libraries/LibPrepayListingWiring.sol";
-import {LibFacet} from "../libraries/LibFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -76,6 +75,19 @@ contract OfferParallelSaleFacet is
     ///         card without the parallel listing.
     /// @custom:event-category state-change/offer-mutation
     event ParallelSaleLockReleased(uint96 indexed offerId, address indexed borrower);
+
+    /// @notice #2735 — a parallel-sale lock was released but the follow-on
+    ///         consolidation of the borrower side to the current holder did
+    ///         not complete (`reason` is its revert data). The release stands:
+    ///         cancelling a listing must never depend on a collateral move.
+    ///         Nothing is lost; the holder can run the same move later with
+    ///         `ConsolidationFacet.consolidateCollateralToHolder(loanId)`.
+    /// @custom:event-category informational/settlement
+    event ParallelSaleReleaseConsolidationDeferred(
+        uint96 indexed offerId,
+        uint256 indexed loanId,
+        bytes reason
+    );
 
     /// @notice #1144 (S10 Invariant B) — emitted by `syncPrepaySaleOffer`. When
     ///         `flaggedFound` is true, at least one live consideration recipient
@@ -332,16 +344,30 @@ contract OfferParallelSaleFacet is
         // No-op when no loan yet (pre-acceptance) or the loan is terminal
         // (`consolidateToHolder` status-gate). Cross-facet eager entry (Tier2
         // skip-not-block).
+        //
+        // #2735 — BEST-EFFORT here, unlike the listing-CREATION paths (which
+        // must consolidate first, because the listing binds the holder's
+        // vault). A release is the holder withdrawing exposure: if the move
+        // reverts (a vault withdrawal, a non-standard NFT transfer), a
+        // bubbling call would roll the clear back with it and leave the
+        // collateral listed against a stale fill. So a failed move is
+        // recorded and the release stands. Safe to swallow because the only
+        // party able to make it fail — the caller, by gas or otherwise — is
+        // the holder themselves, nothing is lost, and the same move stays
+        // available standalone (`consolidateCollateralToHolder`) now that the
+        // listing no longer excludes it.
         uint256 saleLoanId = s.offerIdToLoanId[uint256(offerId)];
         if (saleLoanId != 0) {
-            LibFacet.crossFacetCall(
+            (bool moved, bytes memory reason) = address(this).call(
                 abi.encodeWithSelector(
                     ConsolidationFacet.eagerConsolidateToHolder.selector,
                     saleLoanId,
                     /* isLenderSide */ false
-                ),
-                bytes4(0)
+                )
             );
+            if (!moved) {
+                emit ParallelSaleReleaseConsolidationDeferred(offerId, saleLoanId, reason);
+            }
         }
 
         emit ParallelSaleLockReleased(offerId, msg.sender);

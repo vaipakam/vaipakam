@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
 import {DeployDiamond} from "../../script/DeployDiamond.s.sol";
+import {DiamondInterfacesInit} from "../../src/DiamondInterfacesInit.sol";
 import {DiamondFacetNames} from "./DiamondFacetNames.sol";
 import {DiamondLoupeFacet} from "../../src/facets/DiamondLoupeFacet.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
@@ -306,6 +307,83 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
             TREASURY,
             "treasury address must match TREASURY_ADDRESS env"
         );
+    }
+
+    /// @notice #2752 — the Diamond advertises every interface on the one
+    ///         list (`DiamondInterfacesInit`), ERC-165 itself included, and
+    ///         every function each claim names is routed. A claim added to
+    ///         the list without its functions here fails, so no interface is
+    ///         advertised on the strength of the list alone.
+    function test_DeployedDiamond_AdvertisesEveryInterfaceItRoutes() public {
+        (address diamond,,) = _deploy(true);
+        DiamondLoupeFacet loupe = DiamondLoupeFacet(diamond);
+        bytes4[] memory ids = new DiamondInterfacesInit().interfaceIds();
+        for (uint256 i; i < ids.length; ++i) {
+            assertTrue(loupe.supportsInterface(ids[i]), "listed interface not advertised");
+            bytes4[] memory fns = _interfaceFunctions(ids[i]);
+            assertGt(fns.length, 0, "listed interface has no function table in this test");
+            bytes4 xorId;
+            for (uint256 j; j < fns.length; ++j) {
+                xorId ^= fns[j];
+                assertTrue(
+                    loupe.facetAddress(fns[j]) != address(0),
+                    "advertised interface names an unrouted function"
+                );
+            }
+            assertEq(xorId, ids[i], "function table does not make up the interface id");
+        }
+        // ERC-165: a compliant contract denies 0xffffffff.
+        assertFalse(loupe.supportsInterface(0xffffffff), "0xffffffff must be denied");
+    }
+
+    /// @dev The functions of each interface the Diamond may advertise,
+    ///      written out independently of `DiamondInterfacesInit`.
+    function _interfaceFunctions(bytes4 id) internal pure returns (bytes4[] memory f) {
+        if (id == 0x01ffc9a7) { // IERC165
+            f = new bytes4[](1);
+            f[0] = bytes4(keccak256("supportsInterface(bytes4)"));
+        } else if (id == 0x1f931c1c) { // IDiamondCut
+            f = new bytes4[](1);
+            f[0] = bytes4(keccak256("diamondCut((address,uint8,bytes4[])[],address,bytes)"));
+        } else if (id == 0x48e2b093) { // IDiamondLoupe
+            f = new bytes4[](4);
+            f[0] = bytes4(keccak256("facets()"));
+            f[1] = bytes4(keccak256("facetFunctionSelectors(address)"));
+            f[2] = bytes4(keccak256("facetAddresses()"));
+            f[3] = bytes4(keccak256("facetAddress(bytes4)"));
+        } else if (id == 0x7f5828d0) { // IERC173
+            f = new bytes4[](2);
+            f[0] = bytes4(keccak256("owner()"));
+            f[1] = bytes4(keccak256("transferOwnership(address)"));
+        } else if (id == 0x80ac58cd) { // IERC721
+            f = new bytes4[](9);
+            f[0] = bytes4(keccak256("balanceOf(address)"));
+            f[1] = bytes4(keccak256("ownerOf(uint256)"));
+            f[2] = bytes4(keccak256("safeTransferFrom(address,address,uint256,bytes)"));
+            f[3] = bytes4(keccak256("safeTransferFrom(address,address,uint256)"));
+            f[4] = bytes4(keccak256("transferFrom(address,address,uint256)"));
+            f[5] = bytes4(keccak256("approve(address,uint256)"));
+            f[6] = bytes4(keccak256("setApprovalForAll(address,bool)"));
+            f[7] = bytes4(keccak256("getApproved(uint256)"));
+            f[8] = bytes4(keccak256("isApprovedForAll(address,address)"));
+        } else if (id == 0x5b5e139f) { // IERC721Metadata
+            f = new bytes4[](3);
+            f[0] = bytes4(keccak256("name()"));
+            f[1] = bytes4(keccak256("symbol()"));
+            f[2] = bytes4(keccak256("tokenURI(uint256)"));
+        } else if (id == 0x780e9d63) { // IERC721Enumerable
+            f = new bytes4[](3);
+            f[0] = bytes4(keccak256("totalSupply()"));
+            f[1] = bytes4(keccak256("tokenOfOwnerByIndex(address,uint256)"));
+            f[2] = bytes4(keccak256("tokenByIndex(uint256)"));
+        } else if (id == 0x2a55205a) { // IERC2981
+            f = new bytes4[](1);
+            f[0] = bytes4(keccak256("royaltyInfo(uint256,uint256)"));
+        } else if (id == 0x4e2312e0) { // IERC1155Receiver
+            f = new bytes4[](2);
+            f[0] = bytes4(keccak256("onERC1155Received(address,address,uint256,uint256,bytes)"));
+            f[1] = bytes4(keccak256("onERC1155BatchReceived(address,address,uint256[],uint256[],bytes)"));
+        }
     }
 
     /// @notice Vault implementation was deployed by Step 5c (factory's

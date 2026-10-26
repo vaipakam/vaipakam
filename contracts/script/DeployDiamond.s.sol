@@ -6,6 +6,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
+import {DiamondInterfacesInit} from "../src/DiamondInterfacesInit.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {DiamondLoupeFacet} from "../src/facets/DiamondLoupeFacet.sol";
 import {OwnershipFacet} from "../src/facets/OwnershipFacet.sol";
@@ -914,6 +915,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
             }
         }
 
+        // 4c. #2752 — record the Diamond's ERC-165 claims, now that every
+        //     function they name is routed and verified above.
+        _recordInterfaces(diamond);
+
         // ── Step 5: Post-deployment initialization ──────────────────────
         // 5a. Initialize access control (grants all roles to admin)
         AccessControlFacet(diamond).initializeAccessControl();
@@ -1303,6 +1308,21 @@ contract DeployDiamond is Script, ArtifactRootBase {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: selectors
         });
+    }
+
+    /// @dev #2752 — one empty `diamondCut` whose initializer,
+    ///      `DiamondInterfacesInit.init`, writes the Diamond's ERC-165 table
+    ///      from the one list of interfaces it advertises. The standard
+    ///      EIP-2535 init route: the initializer runs by delegatecall in the
+    ///      Diamond's storage and is never routed, so it adds no selector.
+    function _recordInterfaces(address diamond) internal {
+        address interfacesInit = ArtifactDeploy.deploy(type(DiamondInterfacesInit).name);
+        IDiamondCut(diamond).diamondCut(
+            new IDiamondCut.FacetCut[](0),
+            interfacesInit,
+            abi.encodeCall(DiamondInterfacesInit.init, ())
+        );
+        console.log("ERC-165 interfaces recorded.");
     }
 
     // ── Selector arrays (mirrors HelperTest.sol) ────────────────────────

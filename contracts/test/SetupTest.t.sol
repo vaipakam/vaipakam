@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {Test} from "forge-std/Test.sol";
 import {console} from "forge-std/console.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
+import {DiamondInterfacesInit} from "../src/DiamondInterfacesInit.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
@@ -1184,6 +1185,12 @@ contract SetupTest is Test {
         // slot 33 (see the #687-B note above).
 
         _applyDiamondCut(cuts);
+        // #2752 — the ERC-165 claims, recorded as DeployDiamond records them.
+        IDiamondCut(address(diamond)).diamondCut(
+            new IDiamondCut.FacetCut[](0),
+            ArtifactDeploy.deploy(type(DiamondInterfacesInit).name),
+            abi.encodeCall(DiamondInterfacesInit.init, ())
+        );
 
         // Initialize AccessControl roles (must be first — all admin calls require roles)
         AccessControlFacet(address(diamond)).initializeAccessControl();

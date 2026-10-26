@@ -1846,9 +1846,10 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             if (uint256(d) > ctx.band) return;
         }
         // Fold the price-impact at each test size into the running best.
-        // `priceImpactBps` is monotone in `amountIn`, so for one pool
-        // best[0] ≤ best[1] ≤ best[2] ≤ best[3]; taking the min over
-        // pools preserves that order.
+        // Each size keeps its own best (lowest) impact over every pool. The
+        // tiering walks the sizes upward and assumes no order between them
+        // (#2752: at dust sizes the fee's base-unit rounding makes a smaller
+        // trade read worse than a larger one).
         for (uint256 si; si < 4; ++si) {
             if (best[si] == 0 || sizes[si] == 0) continue;
             uint256 amountIn = Math.mulDiv(sizes[si], ctx.scaleA, ctx.pA * 1e6); // asset base units
@@ -2060,9 +2061,13 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             }
         }
         uint256 slipBound = LibVaipakam.cfgLiquiditySlippageBps();
+        // A tier is earned only by clearing EVERY probe size up to its own,
+        // walked upward (#2752). The rule assumes nothing about how impact
+        // grows with size: the swap fee's base-unit rounding makes a
+        // dust-sized probe read WORSE than a larger one, so reading the
+        // largest cleared size alone could rank an asset above a smaller
+        // size it failed.
         if (best[0] > slipBound) return 0; // can't clear `floorSizePad` ($5k) ⇒ untierable
-        if (best[3] <= slipBound) return 3; // clears $5M ⇒ deepest
-        if (best[2] <= slipBound) return 2; // clears $500k
         // #1007 (S11) — Tier 1 requires clearing the $50k `tier1SizePad` probe
         // (`best[1]`), not merely the $5k floor. Pre-#1007 `best[1]` was computed
         // but never read, so an asset that absorbed $5k but not $50k was silently
@@ -2070,8 +2075,10 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         // an asset now falls to tier 0 (untierable) → the conservative tier-0 caps
         // (0% init-LTV, the Tier-1 liquidation floor), and the `tier1SizePad`
         // governance knob becomes live.
-        if (best[1] <= slipBound) return 1; // clears $50k ⇒ Tier 1
-        return 0; // cleared $5k but not $50k ⇒ untierable
+        if (best[1] > slipBound) return 0; // cleared $5k but not $50k ⇒ untierable
+        if (best[2] > slipBound) return 1; // clears $50k ⇒ Tier 1
+        if (best[3] > slipBound) return 2; // clears $500k
+        return 3; // clears $5M ⇒ deepest
     }
 
     /// @notice What a price read found (#666). `Priced`: {getAssetPrice}

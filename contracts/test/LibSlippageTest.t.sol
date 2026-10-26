@@ -82,16 +82,37 @@ contract LibSlippageTest is Test {
 
     // ─── priceImpactBps ──────────────────────────────────────────────
 
-    function test_impact_dustTrade_isJustTheFee() public view {
-        // A trade negligible vs the reserve eats essentially only the
-        // swap fee: 0.30% → 30 bps, 0.05% → 5 bps (exact — `dxNet` rounds
-        // to 0 against a 1e30 reserve, leaving ratio = (1−fee)·BPS).
-        assertEq(h.impactBps(1, 1e30, FEE_03), 30);
-        assertEq(h.impactBps(1, 1e30, FEE_005), 5);
+    function test_impact_smallTrade_isJustTheFee() public view {
+        // A trade negligible vs the reserve, but whose fee rounds exactly,
+        // eats essentially only the swap fee: 0.30% → 30 bps, 0.05% → 5
+        // bps (plus the documented ≤ 1 bp floor bias).
+        uint256 a = h.impactBps(1e6, 1e30, FEE_03);
+        assertGe(a, 30);
+        assertLe(a, 31);
+        uint256 b = h.impactBps(1e6, 1e30, FEE_005);
+        assertGe(b, 5);
+        assertLe(b, 6);
         // Fee-free, `dxNet == amountIn` (no fee floor to 0), so the
         // sub-wei impact rounds *up* to 1 bp — a deliberate conservative
         // bias (the tier check must never *over*-state liquidity).
         assertLe(h.impactBps(1, 1e30, FEE_0), 1);
+    }
+
+    /// @dev #2752 — the fee factor is the REALISED `dxNet / amountIn`. A
+    ///      trade whose fee-net input floors to 0 receives nothing, so its
+    ///      impact is total (it read as just the fee, 30 bps, before), in
+    ///      agreement with {constantProductAmountOut}.
+    function test_impact_dustThatFloorsToZero_isTotal() public view {
+        assertEq(h.amountOut(1, 1e30, 1e30, FEE_03), 0);
+        assertEq(h.impactBps(1, 1e30, FEE_03), 10_000);
+        assertEq(h.impactBps(1, 1e30, FEE_005), 10_000);
+    }
+
+    /// @dev #2752 — where the fee's base-unit rounding is a visible share of
+    ///      the trade, the impact reports it: 3 units at 0.30% net 2, a
+    ///      third lost to the floor.
+    function test_impact_feeRoundingOnDust_isReported() public view {
+        assertEq(h.impactBps(3, 1e30, FEE_03), 3_334);
     }
 
     function test_impact_onePercentOfReserve_isAboutOnePercent() public view {
@@ -138,18 +159,29 @@ contract LibSlippageTest is Test {
         assertEq(a, b);
     }
 
-    /// @dev Monotonicity: impact is non-decreasing in `amountIn`.
+    /// @dev Monotonicity above dust: from 1e6 base units up, the fee's
+    ///      base-unit rounding moves the realised fee factor by under 1e-6,
+    ///      so impact is non-decreasing in `amountIn` to within the 1 bp
+    ///      floor. Below that it is NOT monotone (#2752): a smaller trade
+    ///      loses a larger share to the rounding and reads worse, which is
+    ///      why the oracle's tiering walks every size upward instead of
+    ///      assuming an order (see {test_impact_feeRoundingOnDust_isReported}).
     function testFuzz_impact_monotoneInAmountIn(uint256 a1, uint256 delta, uint256 reserveIn)
         public
         view
     {
         reserveIn = bound(reserveIn, 1e6, 1e30);
-        a1 = bound(a1, 0, 1e30);
+        a1 = bound(a1, 1e6, 1e30);
         delta = bound(delta, 0, 1e30);
         uint256 i1 = h.impactBps(a1, reserveIn, FEE_03);
         uint256 i2 = h.impactBps(a1 + delta, reserveIn, FEE_03);
-        assertGe(i2, i1);
+        assertGe(i2 + 1, i1);
         assertLe(i2, 10000);
+    }
+
+    /// @dev #2752 — at dust sizes a SMALLER trade can read worse.
+    function test_impact_notMonotoneAtDust() public view {
+        assertGt(h.impactBps(3, 1e30, FEE_03), h.impactBps(4, 1e30, FEE_03));
     }
 
     // ─── v3VirtualReserves ───────────────────────────────────────────
