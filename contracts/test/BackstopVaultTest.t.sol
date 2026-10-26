@@ -313,7 +313,7 @@ contract BackstopVaultTest is SetupTest {
                 OracleFacet.countLiveSecondaryOracleFeeds.selector,
                 mockCollateralERC20
             ),
-            abi.encode(uint8(0))
+            abi.encode(uint8(0), uint8(0))
         );
         (uint256 offerId, ) = _eligibleOffer();
         vm.prank(makeAddr("poker"));
@@ -336,7 +336,7 @@ contract BackstopVaultTest is SetupTest {
                 OracleFacet.countLiveSecondaryOracleFeeds.selector,
                 mockCollateralERC20
             ),
-            abi.encode(uint8(1))
+            abi.encode(uint8(1), uint8(0))
         );
         (uint256 offerId, ) = _eligibleOffer();
         vm.prank(makeAddr("poker"));
@@ -362,7 +362,7 @@ contract BackstopVaultTest is SetupTest {
                 OracleFacet.countLiveSecondaryOracleFeeds.selector,
                 mockCollateralERC20
             ),
-            abi.encode(uint8(2))
+            abi.encode(uint8(2), uint8(0))
         );
         (uint256 offerId, ) = _eligibleOffer();
         vm.prank(makeAddr("poker"));
@@ -372,6 +372,59 @@ contract BackstopVaultTest is SetupTest {
             vault,
             "fill proceeds when coverage met"
         );
+    }
+
+    /// @dev #2737 — one agreeing and one disagreeing secondary with the knob
+    ///      at 2 used to pass (the dissent counted as coverage). Any dissent
+    ///      now refuses outright, ahead of the coverage count.
+    function test_backstopFill_anyDisagreement_reverts() public {
+        vm.prank(owner);
+        BackstopFacet(address(diamond))
+            .setBackstopMinSecondaryOracleCoverage(2);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.countLiveSecondaryOracleFeeds.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(uint8(1), uint8(1))
+        );
+        (uint256 offerId, ) = _eligibleOffer();
+        vm.prank(makeAddr("poker"));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibBackstopOracleGate.BackstopOracleDisagreement.selector,
+                mockCollateralERC20,
+                uint8(1)
+            )
+        );
+        BackstopFacet(address(diamond)).backstopFill(offerId);
+    }
+
+    /// @dev #2737 — dissent refuses even when the agreeing feeds alone meet
+    ///      the minimum.
+    function test_backstopFill_disagreementWithCoverageMet_reverts() public {
+        vm.prank(owner);
+        BackstopFacet(address(diamond))
+            .setBackstopMinSecondaryOracleCoverage(2);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.countLiveSecondaryOracleFeeds.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(uint8(2), uint8(1))
+        );
+        (uint256 offerId, ) = _eligibleOffer();
+        vm.prank(makeAddr("poker"));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibBackstopOracleGate.BackstopOracleDisagreement.selector,
+                mockCollateralERC20,
+                uint8(1)
+            )
+        );
+        BackstopFacet(address(diamond)).backstopFill(offerId);
     }
 
     // ─── #638 — setter / getter / range bound ───────────────────────────────

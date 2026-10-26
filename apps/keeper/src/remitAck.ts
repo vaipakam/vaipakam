@@ -82,6 +82,7 @@ import {
   type RemitPath,
   type UndeliveredReason,
 } from './remitRoute';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 // #1660 r9 - quoteRemitAckFee moved to the LENS facet for EIP-170
 // headroom on the mutating facet; viem resolves functions from the
@@ -141,7 +142,7 @@ export async function runRemitAck(env: Env, tick: PassTick): Promise<void> {
       try {
         await ackFromBaseLedger(env, chain, deadline, run);
       } catch (err) {
-        console.error(`[keeper] remitAck chain=${chain.id} failed:`, err);
+        console.error(`[keeper] remitAck chain=${chain.id} failed:`, redactedError(err));
       }
     }),
   );
@@ -245,7 +246,7 @@ async function pendingPath(
       cleared: clearSettledPendingAlerts(env, baseChainId, diamond, w.contiguousTerminal, w.terminalInWindow),
     };
   } catch (err) {
-    console.error(`[keeper] remitAck ledger scan failed this tick (late deliveries continue): ${(err as Error).message}`);
+    console.error(`[keeper] remitAck ledger scan failed this tick (late deliveries continue): ${redactedError(err, { stack: false })}`);
     return none;
   }
 }
@@ -449,7 +450,7 @@ async function alertAndSend(
     return [...allotted].map(([mirrorId, sends]) => {
       const tail = (lanes.get(mirrorId) ?? Promise.resolve())
         .then(() => sendLane(env, p!, sends, baseChainId, diamond, ackBudget.deadline))
-        .catch((err) => console.error(`[keeper] remitAck${p!.late ? ' late' : ''} sends to mirror=${mirrorId} failed this tick: ${(err as Error).message}`));
+        .catch((err) => console.error(`[keeper] remitAck${p!.late ? ' late' : ''} sends to mirror=${mirrorId} failed this tick: ${redactedError(err, { stack: false })}`));
       lanes.set(mirrorId, tail);
       return tail;
     });
@@ -498,7 +499,7 @@ async function readAttempts(env: Env, baseChainId: number, diamond: Address, ids
   try {
     return await getRemitAckAttempts(env.KEEPER_DB, baseChainId, diamond, ids);
   } catch (err) {
-    console.error(`[keeper] remitAck${path === 'late' ? ' late' : ''} attempt log unread; this run classifies and alerts but sends nothing: ${(err as Error).message}`);
+    console.error(`[keeper] remitAck${path === 'late' ? ' late' : ''} attempt log unread; this run classifies and alerts but sends nothing: ${redactedError(err, { stack: false })}`);
     return null;
   }
 }
@@ -634,7 +635,7 @@ async function sendLane(
       // eslint-disable-next-line no-await-in-loop
       await recordAttemptBestEffort(env, baseChainId, diamond, q.c.remitId, dst);
     } catch (err) {
-      reportSendError(`[keeper] remitAck${plan.late ? ' late' : ''} remit=${q.c.remitId} dst=${dst}`, err, `skipped: ${(err as Error).message}`, console.log);
+      reportSendError(`[keeper] remitAck${plan.late ? ' late' : ''} remit=${q.c.remitId} dst=${dst}`, err, `skipped: ${redactedError(err, { stack: false })}`, console.log);
     }
   }
 }
@@ -795,7 +796,7 @@ async function classifyUndelivered(
     }
     return { path, holding, entries };
   } catch (err) {
-    console.error(`[keeper] remitAck${path === 'late' ? ' late' : ''} undelivered classification failed this run: ${(err as Error).message}`);
+    console.error(`[keeper] remitAck${path === 'late' ? ' late' : ''} undelivered classification failed this run: ${redactedError(err, { stack: false })}`);
     return undefined;
   }
 }
@@ -853,7 +854,7 @@ async function deliverUndelivered(
         await resolveOpsAlert(env, key);
       }
     } catch (err) {
-      console.error(`[keeper] remitAck${r.path === 'late' ? ' late' : ''} alert reconciliation failed this run (new alerts were still sent): ${(err as Error).message}`);
+      console.error(`[keeper] remitAck${r.path === 'late' ? ' late' : ''} alert reconciliation failed this run (new alerts were still sent): ${redactedError(err, { stack: false })}`);
     }
   }
 }
@@ -882,7 +883,7 @@ async function clearSettledPendingAlerts(
       await resolveOpsAlert(env, key);
     }
   } catch (err) {
-    console.error(`[keeper] remitAck settled undelivered alerts not cleared this run: ${(err as Error).message}`);
+    console.error(`[keeper] remitAck settled undelivered alerts not cleared this run: ${redactedError(err, { stack: false })}`);
   }
 }
 
@@ -947,7 +948,7 @@ async function recordAttemptBestEffort(
   try {
     await recordRemitAckAttempt(env.KEEPER_DB, baseChainId, diamond, remitId, dstChainId);
   } catch (err) {
-    console.error(`[keeper] remitAck remit=${remitId} sent but its attempt was not recorded: ${(err as Error).message}`);
+    console.error(`[keeper] remitAck remit=${remitId} sent but its attempt was not recorded: ${redactedError(err, { stack: false })}`);
   }
 }
 
@@ -979,7 +980,7 @@ async function planPendingContained(...args: Parameters<typeof planPending>): Pr
   try {
     return await planPending(...args);
   } catch (err) {
-    console.error(`[keeper] remitAck pending plan failed this tick (late deliveries continue): ${(err as Error).message}`);
+    console.error(`[keeper] remitAck pending plan failed this tick (late deliveries continue): ${redactedError(err, { stack: false })}`);
     return undefined;
   }
 }
@@ -988,7 +989,7 @@ async function planLateDeliveriesContained(...args: Parameters<typeof planLateDe
   try {
     return await planLateDeliveries(...args);
   } catch (err) {
-    console.error(`[keeper] remitAck late deliveries failed this tick (pending acks continue): ${(err as Error).message}`);
+    console.error(`[keeper] remitAck late deliveries failed this tick (pending acks continue): ${redactedError(err, { stack: false })}`);
     return undefined;
   }
 }
@@ -1128,7 +1129,7 @@ async function resolveFinishedLateAlerts(
       if (k && done.has(k.remitId)) await resolveOpsAlert(env, key);
     }
   } catch (err) {
-    console.error(`[keeper] remitAck late undelivered alerts not cleared this run: ${(err as Error).message}`);
+    console.error(`[keeper] remitAck late undelivered alerts not cleared this run: ${redactedError(err, { stack: false })}`);
   }
 }
 

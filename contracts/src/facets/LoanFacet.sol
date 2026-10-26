@@ -829,22 +829,17 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
                 ),
                 (uint8)
             );
-            // Phase 5 of AutonomousLtvAndOracleFallback.md — read the
-            // autonomous tier-LTV cache (peer-protocol-derived, bounded
-            // per-tier, refreshable permissionlessly via
-            // `OracleFacet.refreshTierLtvCache`) instead of the
-            // governance-set `cfgTierMaxInitLtvBps`. When the cache is
-            // hard-stale (> 14d since last refresh) or has never been
-            // refreshed on this chain, `effectiveTierMaxInitLtvBps` falls
-            // back to the per-tier library defaults — so the gate stays
-            // operational even when nobody has called the refresh yet.
-            //
-            // The legacy `cfgTier1/2/3MaxInitLtvBps` governance setters
-            // are intentionally still wired (their selectors stay on
-            // the diamond + ConfigFacet); they're soft-deprecated and
-            // can be removed in a follow-up sweep once the cache has
-            // baked in production. Today they have no effect because
-            // this read no longer consults them.
+            // Phase 5 of AutonomousLtvAndOracleFallback.md — the tier cap is
+            // the autonomous tier-LTV cache (peer-protocol-derived,
+            // refreshable permissionlessly via
+            // `OracleFacet.refreshTierLtvCache`) while that entry is fresh
+            // (≤ 14d) and inside the tier's CURRENT safety box
+            // (`ConfigFacet.setTierLtvParams`, re-checked at read, #2736).
+            // Otherwise — stale, never refreshed, outside a box governance
+            // has since moved, or peer reads paused (#633) — it is the
+            // governance tier cap `cfgTierMaxInitLtvBps`. So the
+            // `cfgTier1/2/3MaxInitLtvBps` setters are live: they decide the
+            // cap whenever the cache is not trusted.
             uint256 tierCap = uint256(
                 LibVaipakam.effectiveTierMaxInitLtvBps(effTier)
             );

@@ -65,6 +65,7 @@
  */
 import { INDEXER_DEPLOYMENTS_SQL, indexerAdopted } from '../scripts/lib/indexer-adoption.mjs';
 import type { ChainConfig } from './env';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 /** One `indexer_deployment` row, as `INDEXER_DEPLOYMENTS_SQL` selects it. */
 export interface IndexerAdoptionRow {
@@ -126,7 +127,7 @@ export async function assertEpochsHold(): Promise<void> {
   try {
     rows = await armed.read();
   } catch (err) {
-    throw new EpochFenceRefusal(`could not re-read the indexer's adoptions (${String(err)})`);
+    throw new EpochFenceRefusal(`could not re-read the indexer's adoptions (${redactedError(err, { stack: false })})`);
   }
   const settled = new Map<number, string | null>();
   for (const row of rows) settled.set(Number(row.chain_id), indexerAdopted(row));

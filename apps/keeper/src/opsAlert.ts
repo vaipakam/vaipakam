@@ -24,6 +24,7 @@ import type { Env } from './env';
 import { clearOpsAlert, clearOpsAlerts, getOpsAlert, getOpsAlertsSentAt, recordOpsAlertSent, recordOpsAlertsSent } from './db';
 import { settleBy } from './batchRead';
 import { assertEpochsHold, EpochFenceRefusal } from './epochFence';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 const TELEGRAM_API = 'https://api.telegram.org';
 const TELEGRAM_MAX_CHARS = 4096;
@@ -69,10 +70,10 @@ export async function sendOpsAlert(
     return 'sent';
   } catch (err) {
     if (err instanceof EpochFenceRefusal) {
-      console.warn(`[keeper] ops alert ${key} refused: ${err.message}`);
+      console.warn(`[keeper] ops alert ${key} refused: ${redactedError(err, { stack: false })}`);
       return 'refused';
     }
-    console.error(`[keeper] ops alert ${key} failed: ${redact(String(err), token)}`);
+    console.error(`[keeper] ops alert ${key} failed: ${redact(redactedError(err, { stack: false }), token)}`);
     return 'failed';
   }
 }
@@ -133,7 +134,7 @@ export async function sendOpsAlertDigest(
     try {
       prior = await byDeadline(getOpsAlertsSentAt(env.KEEPER_DB, entries.map((e) => e.key)), deadline, 'sent-state read');
     } catch (err) {
-      console.error(`[keeper] ops alert digest: sent-state unread, sending every entry: ${String(err)}`);
+      console.error(`[keeper] ops alert digest: sent-state unread, sending every entry: ${redactedError(err, { stack: false })}`);
     }
     const due = entries.filter((e) => {
       const at = prior.get(e.key);
@@ -152,15 +153,15 @@ export async function sendOpsAlertDigest(
     try {
       await byDeadline(recordOpsAlertsSent(env.KEEPER_DB, due.map((e) => e.key), nowSec, chainId), deadline, 'delivery record');
     } catch (err) {
-      console.error(`[keeper] ops alert digest delivered but not recorded; it may repeat: ${String(err)}`);
+      console.error(`[keeper] ops alert digest delivered but not recorded; it may repeat: ${redactedError(err, { stack: false })}`);
     }
     return 'sent';
   } catch (err) {
     if (err instanceof EpochFenceRefusal) {
-      console.warn(`[keeper] ops alert digest refused: ${err.message}`);
+      console.warn(`[keeper] ops alert digest refused: ${redactedError(err, { stack: false })}`);
       return 'refused';
     }
-    console.error(`[keeper] ops alert digest failed: ${redact(String(err), token)}`);
+    console.error(`[keeper] ops alert digest failed: ${redact(redactedError(err, { stack: false }), token)}`);
     return 'failed';
   }
 }
@@ -274,10 +275,10 @@ export async function sendOpsNoticeDigest(
     return (await postToTelegram(token, chatId, digestText(header, lines, footer))) ? 'sent' : 'failed';
   } catch (err) {
     if (err instanceof EpochFenceRefusal) {
-      console.warn(`[keeper] ops notice digest refused: ${err.message}`);
+      console.warn(`[keeper] ops notice digest refused: ${redactedError(err, { stack: false })}`);
       return 'refused';
     }
-    console.error(`[keeper] ops notice digest failed: ${redact(String(err), token)}`);
+    console.error(`[keeper] ops notice digest failed: ${redact(redactedError(err, { stack: false }), token)}`);
     return 'failed';
   }
 }
@@ -301,7 +302,7 @@ export async function resolveOpsAlerts(env: Env, keys: readonly string[], deadli
   try {
     await byDeadline(clearOpsAlerts(env.KEEPER_DB, keys), deadline, 'clear');
   } catch (err) {
-    console.error(`[keeper] ops alert clear of ${keys.length} key(s) failed: ${String(err)}`);
+    console.error(`[keeper] ops alert clear of ${keys.length} key(s) failed: ${redactedError(err, { stack: false })}`);
   }
 }
 
@@ -310,7 +311,7 @@ export async function resolveOpsAlert(env: Env, key: string): Promise<void> {
   try {
     await clearOpsAlert(env.KEEPER_DB, key);
   } catch (err) {
-    console.error(`[keeper] ops alert ${key} clear failed: ${String(err)}`);
+    console.error(`[keeper] ops alert ${key} clear failed: ${redactedError(err, { stack: false })}`);
   }
 }
 

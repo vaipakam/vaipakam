@@ -18,6 +18,8 @@
  *     is a too-small refusal like the health-factor floor.
  */
 
+import { redactedError } from '@vaipakam/lib/errorDescription';
+
 /** `PartialMustCoverInterest(uint256,uint256)`, matched by selector too, so the
  *  refusal is recognised when the ABI the error is decoded against predates it. */
 const PARTIAL_MUST_COVER_INTEREST_SELECTOR = '0xef4f2518';
@@ -218,7 +220,7 @@ export async function runPartialAttempts<Q extends { calls: readonly unknown[] }
       return { kind: 'submitted', hash, fractionBps, attempt, quotes };
     } catch (err) {
       if (deps.isFatal(err)) throw err;
-      const msg = String(err);
+      const msg = redactedError(err, { stack: false });
 
       if (
         msg.includes('InternalMatchOnlyBand') ||
