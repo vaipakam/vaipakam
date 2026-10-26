@@ -46,7 +46,8 @@ describe('cspViolationVerdict', () => {
 
   it('names each distinct violation once however often it repeats', () => {
     const v = cspViolationVerdict(0, [reported, reported, { ...reported }, refused]);
-    expect(v?.message.match(/pulse\.walletconnect\.org/g)).toHaveLength(1);
+    // Counted as a plain substring: the message names the blocked URL once.
+    expect(v?.message.split(reported.blocked)).toHaveLength(2);
   });
 
   it('says what an inline refusal blocked', () => {
