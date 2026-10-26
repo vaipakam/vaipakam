@@ -1,4 +1,4 @@
-## Thread — A collateral sale settles as a repayment does (PR #TBD)
+## Thread — A collateral sale settles as a repayment does (PR #2891)
 
 A loan closed by selling its collateral (a prepay or parallel marketplace
 listing, or a swap-to-repay intent fill) now owes exactly what a full
