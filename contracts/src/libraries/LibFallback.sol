@@ -121,18 +121,20 @@ library LibFallback {
     ///      collateral NEEDED to cover an amount owed (it never falls short of
     ///      the amount at this rate), `Floor` for the collateral an amount is
     ///      WORTH.
+    ///      The product is taken at full width ({Math.mulDiv}), so the
+    ///      conversion holds at any price scale whose result fits.
     function toCollateral(Rate memory r, uint256 principalAmount, Math.Rounding rounding)
         internal
         pure
         returns (uint256)
     {
-        uint256 scaled = principalAmount * r.num;
-        return Math.unsignedRoundsUp(rounding) ? Math.ceilDiv(scaled, r.den) : scaled / r.den;
+        return Math.mulDiv(principalAmount, r.num, r.den, rounding);
     }
 
-    /// @dev Principal-asset value of `collateralAmount` at `r`, rounded down.
+    /// @dev Principal-asset value of `collateralAmount` at `r`, rounded down,
+    ///      at full width like {toCollateral}.
     function toPrincipal(Rate memory r, uint256 collateralAmount) internal pure returns (uint256) {
-        return (collateralAmount * r.den) / r.num;
+        return Math.mulDiv(collateralAmount, r.den, r.num);
     }
 
     /// @dev Oracle-derived expected swap output in principal-asset token
@@ -188,7 +190,12 @@ library LibFallback {
         if (priced) principalValue = toPrincipal(r, collateralAmount);
     }
 
-    /// @dev The fraction from two positive prices and both tokens' decimals.
+    /// @dev The fraction from two positive prices and both tokens' decimals:
+    ///      `prinPrice·10^(colTokenDec+colFeedDec) / colPrice·10^(prinTokenDec+prinFeedDec)`,
+    ///      with the power of ten the two sides share cancelled, so each side
+    ///      carries only its price and the difference in scale. The ratio is
+    ///      exactly the same; the terms stay small whatever precision the
+    ///      feeds report.
     function _rate(
         uint256 colPrice,
         uint8 colFeedDec,
@@ -197,8 +204,15 @@ library LibFallback {
         uint8 prinFeedDec,
         uint8 prinTokenDec
     ) private pure returns (Rate memory r) {
-        r.num = prinPrice * (10 ** colTokenDec) * (10 ** colFeedDec);
-        r.den = colPrice * (10 ** prinTokenDec) * (10 ** prinFeedDec);
+        uint256 colScale = uint256(colTokenDec) + uint256(colFeedDec);
+        uint256 prinScale = uint256(prinTokenDec) + uint256(prinFeedDec);
+        if (colScale >= prinScale) {
+            r.num = prinPrice * (10 ** (colScale - prinScale));
+            r.den = colPrice;
+        } else {
+            r.num = prinPrice;
+            r.den = colPrice * (10 ** (prinScale - colScale));
+        }
     }
 
     /// @dev README §7 three-way split: lender gets collateral equivalent of

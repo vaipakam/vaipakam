@@ -4,8 +4,6 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFallback} from "./LibFallback.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {OracleFacet} from "../facets/OracleFacet.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 /**
  * @title  LibSaleSizing
@@ -39,8 +37,10 @@ library LibSaleSizing {
      *         could overshoot by far more than "a few base units" when the
      *         principal token is coarse, e.g. auctioning 149 collateral units
      *         where 100 already met the same floor). With
-     *           A = colPrice · 10^prinTokenDec · 10^prinFeedDec
-     *           B = prinPrice · 10^colTokenDec · 10^colFeedDec
+     *           A / B = colPrice · 10^(prinTokenDec + prinFeedDec)
+     *                 / prinPrice · 10^(colTokenDec + colFeedDec)
+     *           (the oracle rate's `den / num`, {LibFallback.oracleRate},
+     *           with the shared power of ten cancelled)
      *           E(x) = ⌊x·A / B⌋                      (= expectedSwapOutput)
      *           floor(x) = ⌊E(x)·K / BPS⌋,  K = BPS − cap
      *         both floors are monotone, so
@@ -48,10 +48,10 @@ library LibSaleSizing {
      *                         ⇔  x·A ≥ Emin·B
      *                         ⇔  x ≥ ⌈Emin·B / A⌉,
      *         and the least covering amount is that ceiling. The prices and
-     *         decimals are read once, with the same getters and the same
-     *         arithmetic as `LibFallback.expectedSwapOutput`, so the answer
-     *         agrees with the floor enforcement checks. `mulDiv` keeps every
-     *         product exact.
+     *         decimals are read once, as the one oracle rate
+     *         ({LibFallback.oracleRate}) that `LibFallback.expectedSwapOutput`
+     *         also reads, so the answer agrees with the floor enforcement
+     *         checks. `mulDiv` keeps every product exact.
      * @param collateralAsset The asset being sold.
      * @param principalAsset  The asset the sale must raise.
      * @param required        Principal the worst-case proceeds must cover.
@@ -71,8 +71,9 @@ library LibSaleSizing {
         uint256 maxIn,
         uint256 capBps
     ) internal view returns (bool covers, uint256 sell, uint256 floor) {
-        (uint256 a, uint256 b) = _conversion(collateralAsset, principalAsset);
-        return _size(a, b, required, maxIn, capBps);
+        return sizeSaleAtRate(
+            LibFallback.oracleRate(address(this), collateralAsset, principalAsset), required, maxIn, capBps
+        );
     }
 
     /// @notice {sizeSale} at a rate the caller already read
@@ -115,22 +116,5 @@ library LibSaleSizing {
         if (sell > maxIn) return (false, 0, 0);
         floor = (Math.mulDiv(sell, a, b) * k) / LibVaipakam.BASIS_POINTS;
         covers = true;
-    }
-
-    /// @dev The two sides of the oracle conversion `expectedSwapOutput`
-    ///      applies (`x · a / b`), read once. `b == 0` (a zero principal
-    ///      price) and `a == 0` (a zero collateral price) both mean the sale
-    ///      cannot be valued, and {sizeSale} refuses.
-    function _conversion(address collateralAsset, address principalAsset)
-        private
-        view
-        returns (uint256 a, uint256 b)
-    {
-        (uint256 colPrice, uint8 colFeedDec) = OracleFacet(address(this)).getAssetPrice(collateralAsset);
-        (uint256 prinPrice, uint8 prinFeedDec) = OracleFacet(address(this)).getAssetPrice(principalAsset);
-        uint8 colTokenDec = IERC20Metadata(collateralAsset).decimals();
-        uint8 prinTokenDec = IERC20Metadata(principalAsset).decimals();
-        a = colPrice * (10 ** prinTokenDec) * (10 ** prinFeedDec);
-        b = prinPrice * (10 ** colTokenDec) * (10 ** colFeedDec);
     }
 }
