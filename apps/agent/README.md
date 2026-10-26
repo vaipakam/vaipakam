@@ -11,7 +11,7 @@ The **proactive-notifications + public-Frame + operator-services Worker**. Stage
 - **Proactive notifications** — periodic interest pre-notify; Push + Telegram dispatchers (`PUSH_CHANNEL_PK` + `TG_BOT_TOKEN`).
 <!-- #1651: a "Cross-chain monitoring — buy-watchdog reconciliation across the CCIP buy flow" bullet stood here. #687-A removed that surface and its watchdog, and this Worker has no other cross-chain-monitoring concern, so the responsibility is gone rather than renamed. -->
 - **Public Farcaster Frame** — `/frames/active-loans` GET + POST + image rendering.
-- **Operator services** — server-side aggregator quote proxies at `/quote/{0x,1inch}`. (#1651: a Blockaid scan proxy at `/scan/blockaid` was listed here; ET-001 dropped it — `index.ts` documents that no transaction-scan proxy exists and the pre-sign preview is a frontend `eth_call`.)
+- **Operator services** — the server-side 1inch quote proxy at `/quote/1inch`, the 1inch order-book post at `/intent/fusion/post`, and the `/opensea/*` proxies; all spend operator-held keys (see "Key-spending routes" below). (#1651: a Blockaid scan proxy at `/scan/blockaid` was listed here; ET-001 dropped it — `index.ts` documents that no transaction-scan proxy exists and the pre-sign preview is a frontend `eth_call`. #2755 removed `/quote/0x`, which had no caller.)
 - **Frontend-facing endpoints** — Telegram-bot webhook `/tg/webhook`; diagnostics record capture `/diag/record`; settings endpoints `/thresholds PUT` + `/link/telegram POST`; support-ticket capture `/support/ticket POST` (#1040 phase 1 — D1 row + ops-Telegram notify via `TG_OPS_BOT_TOKEN`/`TG_OPS_CHAT_ID`, plain `wrangler secret put` secrets; while unset the notify skips and tickets still land in D1).
 
 **This Worker holds no ON-CHAIN transaction key.** The Stage 3 architectural-rebalance moved `KEEPER_PRIVATE_KEY` (and the daily oracle snapshot signer it powered) to `apps/keeper`, so this Worker **can't move funds directly** — that part of the staging plan §2 contract holds. Note the qualifier: it is not fund-safe. Via the shared database-scoped D1 binding it can corrupt state the signing Worker acts on (#1722), so the absence of its own transaction key establishes only the *direct* case.
@@ -37,8 +37,8 @@ Two things it used to say alongside that are **withdrawn**:
 | Diagnostics administration (legal-hold / erasure) | signature- or role-gated |
 | `POST /support/ticket` | **none** — deliberately accepts no wallet identity |
 | `POST /diag/record` | **none** — CORS + rate limiting only |
-| `POST /intent/fusion/post` | **none at request level** — origin + rate-limit are the enforced controls. The on-chain commitment check is **best-effort, not a control**: it runs only when `ONEINCH_API_KEY` is set and the chain has an RPC URL, and when the receipt fetch or the `getIntentCommit` read errors, `preflightCommitOnChain` returns `degraded` and the handler deliberately proceeds to Fusion. Only an affirmative `reject` stops a request. Reading it as authentication would credit this route with a gate that opens on RPC trouble. Mutates external resolver state |
-| `POST /opensea/listing` | **none at request level** — origin + rate-limit. Publishes to a live marketplace under the project's `OPENSEA_API_KEY`; the vault's ERC-1271 check over a borrower-bound order hash is what actually authorises it |
+| `POST /intent/fusion/post` | **none at request level** — the Origin gate, the caller budget and the 1inch credential budget are the enforced controls (#2755). The on-chain commitment check is **best-effort, not a control**: it runs only when `ONEINCH_API_KEY` is set and the chain has an RPC URL, and when the receipt fetch or the `getIntentCommit` read errors, `preflightCommitOnChain` returns `degraded` and the handler deliberately proceeds to Fusion. Only an affirmative `reject` stops a request. Reading it as authentication would credit this route with a gate that opens on RPC trouble. Mutates external resolver state |
+| `POST /opensea/listing` | **none at request level, but bound to protocol state** (#2755) — the Origin gate and both budgets, and the order is published only when Seaport's hash of the submitted components is one the Diamond's listing executor reports live (`src/openseaListingBinding.ts`); a chain read that fails refuses the post. Publishes to a live marketplace under the project's `OPENSEA_API_KEY`; the vault's ERC-1271 check over a borrower-bound order hash is what authorises the order itself |
 
 An earlier version of this paragraph swung the other way and called the whole set "not wallet-signature-gated", which erased the real controls on the gated routes — `PUT /thresholds` (since #2754), `POST /link/telegram`, `POST /unlink/telegram`, `POST /telegram/test` and diagnostics administration. Name them rather than counting them: an earlier draft said "the first two", which silently went stale the moment the table grew.
 
@@ -51,6 +51,20 @@ the two routes whose controls differ most from the rest.
 **The four signed alert routes share one entry and two more controls** (#2754, #2753). `PUT /thresholds`, `POST /link/telegram`, `POST /unlink/telegram` and `POST /telegram/test` all authorise through `authoriseAlertRequest` (`src/linkAuth.ts`): it verifies the signature, then claims the exact signed message once in the shared D1 ledger `signed_request_use`, so a captured request cannot be presented a second time (409 `request-already-used`; 503 while that table's migration is pending, never an unrecorded acceptance). A per-IP limiter (`ALERT_WRITE_RATELIMIT`, 20 a minute) runs at the router before any signature work. Until #2754 `PUT /thresholds` had no limiter and no signature, so any caller could rewrite any wallet's bands and Push opt-in.
 
 **The unsigned routes are not uniformly protected either.** `POST /support/ticket`, `POST /diag/record`, `POST /intent/fusion/post` and `POST /opensea/listing` each have a rate-limit binding. An earlier draft said the unsigned routes were protected by "origin checks and rate limits" while one of them had no limiter, which asserted a control that did not exist on that route. Check the specific route.
+
+### Key-spending routes and the one limiter rule (#2755)
+
+`/quote/1inch`, `/intent/fusion/post` and the four `/opensea/*` proxies call a third party with a key this Worker holds. Each is gated three ways, in order:
+
+1. **The Origin gate** (`FRONTEND_ORIGIN`). It stops another site's page from spending the key through a visitor's browser. It does NOT stop a scripted caller, which can send any `Origin` header, so it is not authentication.
+2. **A caller budget** per client IP, taken at the router before the route does any work (`callerBudgetFor` in `src/index.ts`).
+3. **A credential budget** per key — `ONEINCH_UPSTREAM_RATELIMIT` (shared by both 1inch routes) and `OPENSEA_UPSTREAM_RATELIMIT` (shared by every OpenSea route) — charged one slot immediately before each upstream call, so a request pays for the calls it makes. The OpenSea offers walk used to charge `1 + 2 × MAX_PAGES` slots before its first call; it now charges per call and marks a list it had to cut short `truncated`.
+
+Every limiter in this Worker, these and the others, goes through one rule in `src/rateLimit.ts`: a binding that is missing or throws REFUSES (503 `rate-limit-binding-missing` / `rate-limit-unavailable`), a spent budget answers 429. Before #2755 most routes let a request through in both cases. `test/rateLimit.test.ts` pins that every binding the code reads is declared in `wrangler.jsonc` and that no other source file calls a limiter.
+
+What the budgets do not do: Cloudflare counts each namespace per location, eventually consistently, so a credential budget bounds the key's spend per location; it is not an exact global meter. The 1inch key is the same Secrets Store entry the keeper quotes liquidations with, which is why this Worker's 1inch budget sits well below the key's tier.
+
+`POST /opensea/listing` is also bound to protocol state (table above). None of the `/opensea/*` routes has a caller today: OpenSea serves mainnets only, Vaipakam has no mainnet deployment, and `apps/app` has not ported the OpenSea surfaces from the retired `apps/defi`.
 
 ## How to run
 
@@ -91,7 +105,7 @@ Worker secrets (via `wrangler secret put`):
 | `TG_OPS_BOT_TOKEN` | Ops-internal bot credential — instant new-support-ticket alert (#1040 phase 1). While unset the alert skips (warn-logged) and tickets still land in D1; the nightly ops report's open-ticket count is the backstop. |
 | `TG_OPS_CHAT_ID` | Operator chat the ops bot posts to. Same skip-while-unset behaviour. |
 | `PUSH_CHANNEL_PK` | Push channel signing key — **an Ethereum private key**, loaded as an ethers `Wallet` by the shared Push rail (`packages/push`). This row used to say "not a chain key — a push protocol identity"; it is a real key, which is not the same thing. It carries no **protocol** authority (no Diamond role, no fund movement), but it is not authority-free: the channel-owner wallet holds the 50 PUSH staking deposit and ~$50 of native gas (`docs/ops/AdminKeysAndPause.md`). A revision of this row said "no on-chain authority", which tells a responder there is nothing on-chain at stake — there is. |
-| `ZEROEX_API_KEY` / `ONEINCH_API_KEY` | Aggregator quote proxy credentials. |
+| `ONEINCH_API_KEY` | 1inch credential for `/quote/1inch` and `/intent/fusion/post`. The agent holds no 0x key since #2755 (the keeper has its own). |
 
 No `KEEPER_PRIVATE_KEY` here — that's `apps/keeper` exclusively.
 
@@ -112,8 +126,9 @@ Agent reads-only: `push_rail_status` (#2667 — the keeper's published Push rail
 - `apps/indexer` — sibling read-API Worker; this Worker reads from there for stats it doesn't compute locally.
 - `apps/app` — consumes `/thresholds`, `/link/telegram` and the
   support-ticket endpoint.
-- `/quote/*` and `/diag/record` have NO consumer in `apps/app`: their
-  only clients were in the retired `apps/defi`, so those endpoints are
-  currently unused by any shipping surface. Check that before
-  reconfiguring or retiring them (#1854).
+- `apps/app` calls `/quote/readiness` and `/quote/1inch` from the
+  forced-close card (`src/data/closeOutRoute.ts`). `/diag/record`,
+  `/intent/fusion/post` and the `/opensea/*` routes have NO consumer in
+  `apps/app`: their only clients were in the retired `apps/defi`. Check
+  that before reconfiguring or retiring them (#1854).
 - `packages/contracts` — ABI / deployment source.

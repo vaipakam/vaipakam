@@ -30,10 +30,18 @@
  * Request body:
  *   {
  *     chainId:          number;         // EVM chain id (e.g. 8453)
- *     parameters:       OpenSeaOrderParameters; // canonical OrderComponents
- *     signature:        string;         // "0x" for ERC-1271 vault offerer
+ *     parameters:       OrderComponents; // canonical, incl. `counter`
+ *     signature:        "0x";           // the vault signs by ERC-1271
  *     protocol_address: string;         // Seaport address on the chain
  *   }
+ *
+ * #2755 — the order must be a live Vaipakam listing before the key is
+ * spent on it: `openseaListingBinding.ts` has Seaport hash the parsed
+ * components and the Diamond's listing executor confirm the hash, and
+ * only the parsed components (never the raw body) are forwarded. The
+ * signature must be the empty `0x`: a Vaipakam listing is authorised by
+ * the vault's ERC-1271 check, so a body carrying a real signature is an
+ * order of someone else's.
  *
  * Response: pass-through of the OpenSea API's JSON body, plus our
  * own CORS header. Consumers care about:
@@ -43,25 +51,35 @@
  *     contract; the frontend builds it (cheaper than parsing the
  *     OpenSea response shape)
  *
- * Rate-limit: same Cloudflare built-in `RateLimitBinding` pattern as
- * `/quote/*`. The frontend's natural call rate is one POST per
- * `postPrepayListing` / `updatePrepayListing` tx, so the budget
- * doesn't need to be tight — the IP-keyed limit is a safety net
- * against an attacker scripting the endpoint, not against normal
- * use.
+ * Rate-limit (#2755, `rateLimit.ts`): the router takes the per-IP caller
+ * budget (`OPENSEA_LISTING_RATELIMIT`) before this runs, and one slot of
+ * the shared OpenSea credential budget is taken right before the
+ * upstream call. Both fail closed. The natural call rate is one POST per
+ * `postPrepayListing` / `updatePrepayListing` tx.
+ *
+ * No consumer today, stated: OpenSea serves mainnets only and Vaipakam
+ * has no mainnet deployment, and the connected app has not ported the
+ * publish step from the retired `apps/defi`. So every post is refused at
+ * the chain checks for now; the route is kept, bound, for that port.
  */
 
+import type { Address } from 'viem';
 import type { Env } from './env';
+import {
+  bindListingToProtocol,
+  openSeaParameters,
+  parseOrderComponents,
+  type OrderComponents,
+} from './openseaListingBinding';
+import { slotRefusal, takeCredentialSlot } from './rateLimit';
 
 interface OpenSeaListingRequest {
   chainId: number;
-  parameters: Record<string, unknown>;
-  signature: string;
-  protocol_address: string;
+  components: OrderComponents;
+  protocol_address: Address;
 }
 
 const HEX_ADDR = /^0x[0-9a-fA-F]{40}$/;
-const HEX_ANY = /^0x[0-9a-fA-F]*$/;
 
 /**
  * OpenSea chain slug + API host per supported chain id. Mainnet
@@ -100,9 +118,7 @@ export async function handleOpenSeaListingPost(
    *  for non-browser callers. Codex round-1 P2 fix on PR #312. */
   corsOrigin: string,
 ): Promise<Response> {
-  if (!(await checkRateLimit(req, env.OPENSEA_LISTING_RATELIMIT))) {
-    return jsonErr(corsOrigin, 429, 'rate-limited');
-  }
+  // The caller budget was taken at the router (#2755).
   const body = await parseBody(req);
   if (!body) return jsonErr(corsOrigin, 400, 'invalid-payload');
   if (!env.OPENSEA_API_KEY) {
@@ -112,6 +128,12 @@ export async function handleOpenSeaListingPost(
   const chain = OPENSEA_CHAINS[body.chainId];
   if (!chain) return jsonErr(corsOrigin, 400, 'unsupported-chain');
 
+  const binding = await bindListingToProtocol(env, body.chainId, body.components, body.protocol_address);
+  if (binding.kind === 'refused') return jsonErr(corsOrigin, binding.status, binding.error);
+
+  // Charged as spent: one slot of the OpenSea budget for this one call.
+  const refused = slotRefusal(await takeCredentialSlot(env, 'opensea'), corsOrigin, 'upstream-quota');
+  if (refused) return refused;
   const url = `https://${chain.host}/api/v2/orders/${chain.slug}/seaport/listings`;
   const upstream = await fetch(url, {
     method: 'POST',
@@ -121,31 +143,15 @@ export async function handleOpenSeaListingPost(
       Accept: 'application/json',
     },
     body: JSON.stringify({
-      parameters: body.parameters,
-      signature: body.signature,
-      protocol_address: body.protocol_address,
+      parameters: openSeaParameters(body.components),
+      signature: '0x',
+      protocol_address: binding.seaport,
     }),
   });
   return passthrough(upstream, corsOrigin);
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────
-
-async function checkRateLimit(
-  req: Request,
-  binding:
-    | { limit(input: { key: string }): Promise<{ success: boolean }> }
-    | undefined,
-): Promise<boolean> {
-  if (!binding) return true;
-  const ip = req.headers.get('cf-connecting-ip') ?? 'unknown';
-  try {
-    const { success } = await binding.limit({ key: ip });
-    return success;
-  } catch {
-    return true;
-  }
-}
 
 async function parseBody(req: Request): Promise<OpenSeaListingRequest | null> {
   let raw: unknown;
@@ -163,19 +169,19 @@ async function parseBody(req: Request): Promise<OpenSeaListingRequest | null> {
   ) {
     return null;
   }
-  if (!o.parameters || typeof o.parameters !== 'object') return null;
-  if (typeof o.signature !== 'string' || !HEX_ANY.test(o.signature)) return null;
+  if (o.signature !== '0x') return null;
   if (
     typeof o.protocol_address !== 'string' ||
     !HEX_ADDR.test(o.protocol_address)
   ) {
     return null;
   }
+  const components = parseOrderComponents(o.parameters);
+  if (!components) return null;
   return {
     chainId: o.chainId,
-    parameters: o.parameters as Record<string, unknown>,
-    signature: o.signature,
-    protocol_address: o.protocol_address,
+    components,
+    protocol_address: o.protocol_address as Address,
   };
 }
 

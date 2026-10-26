@@ -46,6 +46,7 @@
  */
 
 import type { Env } from './env';
+import { slotRefusal, takeCredentialSlot } from './rateLimit';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { createPublicClient, http, keccak256, toBytes } from 'viem';
 
@@ -204,48 +205,12 @@ export async function handleIntentFusionPost(
    *  endpoint on this Worker uses. */
   corsOrigin: string,
 ): Promise<Response> {
-  // Codex round-4 PR #423 P2 — frontend-origin gate. CORS-echo
-  // (`corsOrigin`) is not authentication: a simple POST from
-  // any site or non-browser caller still reaches this handler.
-  // Without an Origin allow-list check, arbitrary callers could
-  // inject fake `queued` telemetry today + burn the server-side
-  // Fusion-pickup quota once the upstream `fetch` lands.
-  //
-  // Mirror the OpenSea listing route's gate (per docstring: CORS
-  // origin is resolved by `resolveAllowedOrigin` which falls back
-  // to FRONTEND_ORIGIN's first entry when the request has no
-  // matching Origin header — meaning anything with a foreign /
-  // missing Origin is implicitly mismatch-flagged here).
-  const reqOrigin = req.headers.get('Origin');
-  const allowed = (env as unknown as { FRONTEND_ORIGIN?: string })
-    .FRONTEND_ORIGIN ?? '';
-  const allowList = allowed.split(',').map((s) => s.trim()).filter(Boolean);
-  if (!reqOrigin || !allowList.includes(reqOrigin)) {
-    return jsonErr(corsOrigin, 403, 'origin-not-allowed');
-  }
-
-  // Codex round-1 PR #430 P2 — per-IP rate limit bounds the
-  // request rate that can spend the shared Fusion API key. The
-  // Origin gate above stops the browser-misconfigured noise; the
-  // rate-limit stops a malicious caller from spoofing Origin +
-  // burning the Vaipakam-side quota.
-  //
-  // Codex round-6 PR #430 P2 — fail-closed when the operator has
-  // bound the API key but NOT bound the rate-limit. The pair must
-  // be activated together; binding the key alone exposes the
-  // shared quota to ungated spend. When both are unbound (pre-
-  // activation), the no-API-key short-circuit below kicks in and
-  // we never reach the upstream `fetch`, so this gate only
-  // matters in the half-activated state.
-  if (env.ONEINCH_API_KEY && !env.INTENT_FUSION_POST_RATELIMIT) {
-    console.error(
-      '[intent/fusion/post] half-activated: API key bound but rate-limit unbound; refusing request',
-    );
-    return jsonErr(corsOrigin, 503, 'rate-limit-not-configured');
-  }
-  if (!(await checkRateLimit(req, env.INTENT_FUSION_POST_RATELIMIT))) {
-    return jsonErr(corsOrigin, 429, 'rate-limited');
-  }
+  // #2755 — the Origin gate and the caller budget
+  // (`INTENT_FUSION_POST_RATELIMIT`) run at the router, ahead of every
+  // key-spending route, and both fail closed (`rateLimit.ts`). They used to
+  // be re-implemented here, with a limiter of their own that let a request
+  // through when the binding was missing. The 1inch credential budget is
+  // taken below, immediately before the one upstream call.
 
   let raw: unknown;
   try {
@@ -423,6 +388,10 @@ export async function handleIntentFusionPost(
   };
 
   const upstreamUrl = `${LOP_ORDERBOOK_BASE_URL}/${parsed.chainId}`;
+  // Charged as spent: one slot of the 1inch budget, shared with
+  // `/quote/1inch`, for this one call (#2755).
+  const refused = slotRefusal(await takeCredentialSlot(env, 'oneinch'), corsOrigin, 'upstream-quota');
+  if (refused) return refused;
   try {
     const upstream = await fetch(upstreamUrl, {
       method: 'POST',
@@ -437,33 +406,6 @@ export async function handleIntentFusionPost(
   } catch (err) {
     console.error('[intent/fusion/post] upstream fetch failed', err);
     return jsonErr(corsOrigin, 502, 'fusion-upstream-failed');
-  }
-}
-
-async function checkRateLimit(
-  req: Request,
-  binding:
-    | { limit(input: { key: string }): Promise<{ success: boolean }> }
-    | undefined,
-): Promise<boolean> {
-  // No binding → the half-activated check at the top of the
-  // handler has already returned 503 if the API key is bound,
-  // so reaching here with `!binding` means the key is unbound +
-  // we're in the queued-ack fallback path: allow.
-  if (!binding) return true;
-  const ip = req.headers.get('cf-connecting-ip') ?? 'unknown';
-  try {
-    const { success } = await binding.limit({ key: ip });
-    return success;
-  } catch (err) {
-    // Codex round-7 PR #430 P2 — fail-closed on limiter
-    // exception. The API key is bound (otherwise we never reach
-    // here per the comment above), so an opaque limiter failure
-    // would re-expose ungated spend to the shared Fusion quota.
-    // Better to reject the request with a clear log than to
-    // silently allow.
-    console.error('[intent/fusion/post] rate-limit binding threw', err);
-    return false;
   }
 }
 

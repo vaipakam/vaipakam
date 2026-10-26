@@ -33,7 +33,8 @@
  *
  * Defenses:
  *   - CORS-locked to FRONTEND_ORIGIN (env var).
- *   - Per-IP rate limit via DIAG_RECORD_RATELIMIT binding.
+ *   - Per-IP rate limit via DIAG_RECORD_RATELIMIT binding, fail closed
+ *     (`rateLimit.ts`, #2755).
  *   - Random sampling via DIAG_SAMPLE_RATE env var.
  *   - Server-side dedup: skip writes when the last 5 records for the
  *     same fingerprint were identical with no different fingerprint
@@ -61,6 +62,7 @@
  */
 
 import type { Env } from './env';
+import { takeCallerSlot } from './rateLimit';
 import { isHexAddress, walletHash } from './diagHash';
 import { DIAG_RECORD_NOT_HELD } from './diagRetention';
 
@@ -257,9 +259,6 @@ function corsHeaders(env: Env, origin: string | null): HeadersInit {
   };
 }
 
-function clientIp(req: Request): string {
-  return req.headers.get('cf-connecting-ip') ?? 'unknown';
-}
 
 function clampSampleRate(raw: string | undefined): number {
   if (!raw) return 1.0;
@@ -284,21 +283,21 @@ export async function handleDiagRecord(
     return new Response('method not allowed', { status: 405, headers });
   }
 
-  // Per-IP rate limit. Skipped silently if the binding isn't
-  // configured (e.g. local dev without the unsafe binding) so the
-  // dev path still works.
-  const limiter = env.DIAG_RECORD_RATELIMIT;
-  if (limiter) {
-    const result = await limiter.limit({ key: clientIp(req) });
-    if (!result.success) {
-      return new Response(
-        JSON.stringify({ recorded: false, reason: 'rate_limited' }),
-        {
-          status: 429,
-          headers: { ...headers, 'content-type': 'application/json' },
-        },
-      );
-    }
+  // Per-IP rate limit, under the one fail-closed rule in `rateLimit.ts`
+  // (#2755): a missing or failing binding refuses the write rather than
+  // letting an unmetered stream into D1.
+  const slot = await takeCallerSlot(req, env.DIAG_RECORD_RATELIMIT);
+  if (slot !== 'taken') {
+    return new Response(
+      JSON.stringify({
+        recorded: false,
+        reason: slot === 'refused' ? 'rate_limited' : 'rate_limit_unavailable',
+      }),
+      {
+        status: slot === 'refused' ? 429 : 503,
+        headers: { ...headers, 'content-type': 'application/json' },
+      },
+    );
   }
 
   // Random sampling. Drops the request entirely (200 OK, no row)

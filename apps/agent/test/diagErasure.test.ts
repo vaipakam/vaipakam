@@ -200,6 +200,10 @@ function makeEnv(
     DIAG_WALLET_HMAC_KEY: HMAC_KEY,
     DIAG_LEGAL_DOCS: new FakeR2() as unknown as R2Bucket,
     FRONTEND_ORIGIN: CORS,
+    // Every deployment carries the chain-path limiter, and a missing one
+    // closes the chain path (#2755), so the default env has one that
+    // admits everything; the rate-limit case overrides it.
+    SIG_VERIFY_RATELIMIT: { limit: async () => ({ success: true }) },
     ...overrides,
   } as Env;
 }

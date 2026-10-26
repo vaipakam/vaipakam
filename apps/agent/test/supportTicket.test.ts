@@ -291,24 +291,15 @@ describe('handleSupportTicket', () => {
     vi.useRealTimers();
   });
 
-  it('rejects invalid bodies with 400 and rate-limited callers with 429', async () => {
+  it('rejects invalid bodies with 400', async () => {
+    // The 429 for a caller over budget is the router's now (#2755) and is
+    // covered with the other routes in `rateLimit.test.ts`.
     const bad = await handleSupportTicket(
       req({ message: '' }),
       envWith({}),
       'https://app.vaipakam.com',
     );
     expect(bad.status).toBe(400);
-
-    const limited = await handleSupportTicket(
-      req({ message: 'm' }),
-      envWith({
-        SUPPORT_TICKET_RATELIMIT: {
-          limit: async () => ({ success: false }),
-        },
-      }),
-      'https://app.vaipakam.com',
-    );
-    expect(limited.status).toBe(429);
   });
 });
 

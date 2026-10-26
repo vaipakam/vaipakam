@@ -37,7 +37,6 @@
  *   GET  /frames/active-loans               — Farcaster Frame initial
  *   POST /frames/active-loans               — Frame button click
  *   GET  /frames/active-loans/image         — Frame SVG image
- *   POST /quote/0x                          — 0x v2 aggregator proxy
  *   POST /quote/1inch                       — 1inch v6 aggregator proxy
  *   GET  /quote/readiness                   — which aggregator keys this Worker holds
  *   GET  /push/status                       — whether this Worker can send Push,
@@ -73,10 +72,14 @@
  * `apps/defi` deployment, not ported in #1854 (see #1959) — so it is a
  * browser-facing endpoint; its authorization is the signer's
  * on-chain `ADMIN_ROLE`, checked inside the handler. The Telegram
- * webhook + Frames + quote proxies have their own CORS posture (no
- * origin gate — Telegram and Farcaster post from arbitrary
- * infrastructure, and the proxies are paired to the aggregator
- * origins they wrap).
+ * webhook and Frames have their own posture (no origin gate — Telegram
+ * and Farcaster post from arbitrary infrastructure). Every route that
+ * spends an operator-held API key (`/quote/1inch`,
+ * `/intent/fusion/post`, the `/opensea/*` proxies) sits behind the
+ * Origin gate and a caller budget taken at the router, and draws one
+ * slot of its key's credential budget per upstream call; every limiter
+ * fails closed (`rateLimit.ts`, #2755). There is no `/quote/0x`: it had
+ * no caller and was removed in #2755.
  *
  * ET-001 — there is no transaction-scan proxy. The pre-sign
  * transaction preview runs entirely in the frontend as a viem
@@ -97,7 +100,8 @@ import {
 import { createSchemaGate, schemaDeclineNotice } from '@vaipakam/lib/d1SchemaGate';
 import { runPeriodicPreNotify } from './periodicPreNotify';
 import { decidePushOptIn, handlePushStatus, servicePushStatus } from './pushRail';
-import { handle0xQuote, handle1inchQuote, handleQuoteReadiness } from './quoteProxy';
+import { handle1inchQuote, handleQuoteReadiness } from './quoteProxy';
+import { slotRefusal, takeCallerSlot } from './rateLimit';
 import { handleOpenSeaListingPost } from './openseaProxy';
 import { handleIntentFusionPost } from './intentFusionPost';
 import { handleOpenSeaCollection } from './openseaCollectionProxy';
@@ -345,14 +349,9 @@ export default {
       return handleActiveLoansFrameImage(req);
     }
 
-    // Aggregator quote proxies — CORS handled inside the route
-    // handlers (paired to the aggregator origin policy). Frontend
-    // posts the (chain, tokens, amount, taker) tuple; worker
-    // injects the operator-held API key server-side and returns the
-    // aggregator JSON pass-through.
-    if (url.pathname === '/quote/0x' && req.method === 'POST') {
-      return handle0xQuote(req, resolved, resolveAllowedOrigin(req, resolved));
-    }
+    // #2463 round 15 — which aggregator keys this Worker holds. A read
+    // that spends no key; an origin outside the allow-list cannot read the
+    // answer (see `handleQuoteReadiness`).
     if (url.pathname === '/quote/readiness' && req.method === 'GET') {
       return handleQuoteReadiness(resolved, resolveAllowedOrigin(req, resolved));
     }
@@ -361,23 +360,6 @@ export default {
     // shape and CORS handling as the readiness probe above.
     if (url.pathname === '/push/status' && req.method === 'GET') {
       return await handlePushStatus(resolved, resolveAllowedOrigin(req, resolved));
-    }
-    if (url.pathname === '/quote/1inch' && req.method === 'POST') {
-      return handle1inchQuote(req, resolved, resolveAllowedOrigin(req, resolved));
-    }
-    // T-090 v1.1 (#389) Sub 3 (#418) — Fusion resolver-pickup proxy.
-    // Dapp posts the orderHash + structured Fusion order + commit
-    // tx hash after the borrower's `commitSwapToRepayIntent` lands.
-    // Worker forwards to 1inch Fusion's resolver-pickup endpoint
-    // server-side (key stays Vaipakam-side) and returns the
-    // upstream JSON pass-through. v1.1 launch: handler validates +
-    // queues; real upstream `fetch` lands in the v1.1 GA card.
-    if (url.pathname === '/intent/fusion/post' && req.method === 'POST') {
-      return handleIntentFusionPost(
-        req,
-        resolved,
-        resolveAllowedOrigin(req, resolved),
-      );
     }
 
     // Diagnostics record. CORS-locked + per-IP rate-limited inside
@@ -395,13 +377,30 @@ export default {
       return new Response('Forbidden', { status: 403 });
     }
 
-    // #2754 — the signed alert writes share one per-IP limiter, taken
-    // before any signature work, so a caller spraying bodies is turned
-    // away at the cost of one counter.
-    if (ALERT_WRITE_ROUTES.has(`${req.method} ${url.pathname}`)) {
-      if (!(await alertWriteAllowed(resolved, req))) {
-        return json({ error: 'rate-limited' }, 429, resolveAllowedOrigin(req, resolved));
-      }
+    // One caller budget per limited route, taken here before the route
+    // does any work (signature checks, chain reads, upstream calls), under
+    // the one fail-closed rule in `rateLimit.ts` (#2754, #2755).
+    const budget = callerBudgetFor(req.method, url.pathname);
+    if (budget !== null) {
+      const refused = slotRefusal(
+        await takeCallerSlot(req, resolved[budget]),
+        resolveAllowedOrigin(req, resolved),
+      );
+      if (refused) return refused;
+    }
+    // Aggregator proxies (#2755): behind the Origin gate like every other
+    // route the app calls, since only the app calls them. The worker
+    // injects the operator-held key server-side.
+    if (url.pathname === '/quote/1inch' && req.method === 'POST') {
+      return handle1inchQuote(req, resolved, resolveAllowedOrigin(req, resolved));
+    }
+    // T-090 v1.1 (#389) Sub 3 (#418) — Fusion resolver-pickup proxy.
+    // The app posts the orderHash + structured Fusion order + commit tx
+    // hash after the borrower's `commitSwapToRepayIntent` lands; the
+    // handler binds the order to the on-chain commit before it spends the
+    // 1inch key.
+    if (url.pathname === '/intent/fusion/post' && req.method === 'POST') {
+      return handleIntentFusionPost(req, resolved, resolveAllowedOrigin(req, resolved));
     }
     if (url.pathname === '/thresholds' && req.method === 'PUT') {
       return handlePutThresholds(req, resolved);
@@ -535,23 +534,46 @@ export default {
 
 // ─── HTTP handlers ─────────────────────────────────────────────────
 
-/** The alert-family writes, each signed by the wallet (#2754). */
-const ALERT_WRITE_ROUTES = new Set([
-  'PUT /thresholds',
-  'POST /link/telegram',
-  'POST /unlink/telegram',
-  'POST /telegram/test',
-]);
+/** The caller-budget bindings a route can be metered by. */
+type CallerBudget =
+  | 'ALERT_WRITE_RATELIMIT'
+  | 'SUPPORT_TICKET_RATELIMIT'
+  | 'QUOTE_1INCH_RATELIMIT'
+  | 'INTENT_FUSION_POST_RATELIMIT'
+  | 'OPENSEA_LISTING_RATELIMIT'
+  | 'OPENSEA_COLLECTION_RATELIMIT'
+  | 'OPENSEA_OFFERS_RATELIMIT'
+  | 'OPENSEA_SIGNED_OFFER_RATELIMIT';
 
-/** Per-IP gate on the alert writes (#2754). The binding is declared in
- *  wrangler.jsonc; it is absent only in unit tests, where nothing is
- *  limited. The signature is the real gate; this bounds the cost of
- *  bodies that fail it. */
-async function alertWriteAllowed(env: Env, req: Request): Promise<boolean> {
-  const limiter = env.ALERT_WRITE_RATELIMIT;
-  if (!limiter) return true;
-  const ip = req.headers.get('CF-Connecting-IP') ?? 'unknown';
-  return (await limiter.limit({ key: ip })).success;
+/**
+ * The caller budget that meters a route behind the Origin gate, or `null`
+ * for a route with none (#2754, #2755). One table, read once by the
+ * router, so no route keeps a limiter of its own.
+ *
+ *   - The four signed alert writes share `ALERT_WRITE_RATELIMIT`. The
+ *     signature is the real gate; this bounds the cost of bodies that
+ *     fail it.
+ *   - Every route that spends an operator-held API key has its own
+ *     budget. The Origin gate before it stops another site's page; for a
+ *     scripted caller, which can forge an Origin, these budgets and the
+ *     per-key credential budgets (`rateLimit.ts`) are the bound.
+ *
+ * `/diag/record` meters itself, because it is served ahead of the Origin
+ * gate with its own CORS handling; it uses the same `rateLimit.ts` rule.
+ */
+export function callerBudgetFor(method: string, path: string): CallerBudget | null {
+  if (method === 'PUT' && path === '/thresholds') return 'ALERT_WRITE_RATELIMIT';
+  if (method === 'POST' && (path === '/link/telegram' || path === '/unlink/telegram' || path === '/telegram/test')) {
+    return 'ALERT_WRITE_RATELIMIT';
+  }
+  if (method === 'POST' && path === '/support/ticket') return 'SUPPORT_TICKET_RATELIMIT';
+  if (method === 'POST' && path === '/quote/1inch') return 'QUOTE_1INCH_RATELIMIT';
+  if (method === 'POST' && path === '/intent/fusion/post') return 'INTENT_FUSION_POST_RATELIMIT';
+  if (method === 'POST' && path === '/opensea/listing') return 'OPENSEA_LISTING_RATELIMIT';
+  if (method === 'GET' && path.startsWith('/opensea/collection/')) return 'OPENSEA_COLLECTION_RATELIMIT';
+  if (method === 'GET' && path.startsWith('/opensea/offers/')) return 'OPENSEA_OFFERS_RATELIMIT';
+  if (method === 'GET' && path.startsWith('/opensea/signed-offer/')) return 'OPENSEA_SIGNED_OFFER_RATELIMIT';
+  return null;
 }
 
 /** The answer to a signed alert request that was not authorised. A

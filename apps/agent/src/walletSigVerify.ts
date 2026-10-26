@@ -60,6 +60,7 @@ import {
   type Hex,
 } from 'viem';
 import { getRpcChains, type Env } from './env';
+import { takeCallerSlot } from './rateLimit';
 
 /**
  * Signature shape: 0x-prefixed, even-length hex. NOT fixed at 65
@@ -127,24 +128,17 @@ export const MAX_CHAINS_PER_REQUEST = 3;
  * Build the pre-chain-path gate from the Worker's rate-limit binding
  * (#2013 round 1 P1): the chain path spends RPC subrequests before
  * the caller has proven anything, so it is metered per client IP
- * like the other abusable endpoints (`DIAG_RECORD_RATELIMIT`
- * pattern). The ECDSA fast path stays free — it costs nothing.
- * Skipped silently when the binding is not configured (local dev),
- * matching every other rate-limit binding in this Worker.
+ * like the other abusable endpoints. The ECDSA fast path stays free —
+ * it costs nothing. The binding follows the one fail-closed rule in
+ * `rateLimit.ts` (#2755): a missing or failing binding closes the chain
+ * path like a spent budget does, which the verifier reports as `limited`,
+ * never as a bad signature.
  */
 export function chainVerifyGate(
   env: Env,
   req: Request,
 ): () => Promise<boolean> {
-  return async () => {
-    const limiter = env.SIG_VERIFY_RATELIMIT;
-    if (!limiter) return true;
-    const ip =
-      req.headers.get('CF-Connecting-IP') ??
-      req.headers.get('X-Forwarded-For') ??
-      'unknown';
-    return (await limiter.limit({ key: ip })).success;
-  };
+  return async () => (await takeCallerSlot(req, env.SIG_VERIFY_RATELIMIT)) === 'taken';
 }
 
 /**

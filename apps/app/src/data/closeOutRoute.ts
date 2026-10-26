@@ -14,10 +14,10 @@
  *  - **Which adapters exist, and at which index, is READ from the Diamond**
  *    at the moment of building (`@vaipakam/lib/swapRoutes`). Nothing here
  *    keeps an index table.
- *  - **Aggregator quotes go through the agent's `/quote/0x` and
- *    `/quote/1inch` proxy**, which holds the API keys server-side. No key
- *    reaches the browser. Without `VITE_AGENT_ORIGIN` those two venues are
- *    simply not asked.
+ *  - **1inch is quoted through the agent's `/quote/1inch` proxy**, which
+ *    holds the API key server-side. No key reaches the browser. Without
+ *    `VITE_AGENT_ORIGIN` 1inch is simply not asked. 0x is never asked
+ *    (`origin-bound`, below), and the agent serves no 0x route (#2755).
  *  - **Uniswap V3 is quoted on-chain**, through the chain's QuoterV2.
  *  - **The testnet mock adapter** is used only where the chain's own
  *    deployment record declares it, and only after reading that it would
@@ -132,8 +132,10 @@ export function agentAggregatorSource(
       return quoteProxy.oneinch ? 'askable' : 'unconfigured';
     },
     quote(kind, req) {
-      if (agentOrigin === null) return Promise.resolve('unconfigured');
-      return agentQuote(fetchImpl, agentOrigin, kind, {
+      // `askability` keeps 0x off the list, and the agent has no 0x route
+      // to ask (#2755), so only 1inch is ever quoted here.
+      if (agentOrigin === null || kind !== 'oneinch') return Promise.resolve('unconfigured');
+      return agentQuote(fetchImpl, agentOrigin, {
         chainId: req.chainId,
         sellToken: req.sellToken,
         buyToken: req.buyToken,
@@ -206,13 +208,12 @@ type AgentAnswer = AggregatorAnswer;
 async function agentQuote(
   fetchImpl: typeof fetch,
   origin: string,
-  venue: 'zeroex' | 'oneinch',
   body: Record<string, unknown>,
 ): Promise<AgentAnswer> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), QUOTE_TIMEOUT_MS);
   try {
-    const res = await fetchImpl(`${origin}/quote/${venue === 'zeroex' ? '0x' : '1inch'}`, {
+    const res = await fetchImpl(`${origin}/quote/1inch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -227,8 +228,9 @@ async function agentQuote(
         parsed !== null && typeof parsed === 'object' && 'error' in (parsed as object);
       return parsed === undefined || envelope ? 'unanswered' : { body: parsed };
     }
-    // `quoteProxy.ts` answers 503 `<venue>-not-configured` when its key is
-    // absent.
+    // `quoteProxy.ts` answers 503 `oneinch-not-configured` when its key is
+    // absent. Its rate-limit refusals carry other names on purpose
+    // (`apps/agent/src/rateLimit.ts`), so they read as no answer.
     if (res.status === 503) {
       const err = ((await res.json().catch(() => null)) as { error?: unknown } | null)?.error;
       if (typeof err === 'string' && err.endsWith('-not-configured')) return 'unconfigured';

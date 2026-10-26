@@ -30,22 +30,20 @@
  * `apps/agent/src/index.ts` doesn't accidentally swallow this
  * route — design doc §17.3 + §17.18 D.2.
  *
- * **Per-IP rate-limit** (60 req/min/IP via
- * `OPENSEA_SIGNED_OFFER_RATELIMIT`): matches the per-IP shape the
- * other agent proxies use. Volume is small in practice — one fetch
- * per Match click — but the cap defends against scripted iteration.
- *
- * **No upstream-aggregate rate-limit binding here** — the
- * single-request lookup is 1 RTT per inbound, so the per-IP cap
- * directly bounds aggregate upstream load. Distinct from the
- * paginated offers-list endpoint where the
- * `1 + 2 × MAX_PAGES` upstream cost necessitates a global cap.
+ * **Two budgets, both fail closed** (#2755, `rateLimit.ts`): the
+ * router takes the per-IP caller budget
+ * (`OPENSEA_SIGNED_OFFER_RATELIMIT`) before this runs, and one slot of
+ * the OpenSea credential budget, shared by every route that spends
+ * `OPENSEA_API_KEY`, is taken right before the one upstream call. A
+ * per-IP cap alone bounds each caller, not the sum across many IPs, which
+ * is why the credential budget exists for this route too.
  *
  * Mainnet only. The OpenSea API does not surface testnets after
  * the 2025-07-23 sunset.
  */
 
 import type { Env } from './env';
+import { slotRefusal, takeCredentialSlot } from './rateLimit';
 
 const OPENSEA_HOST: Record<number, string> = {
   1: 'api.opensea.io',
@@ -158,10 +156,8 @@ export async function handleOpenSeaSignedOffer(
     unitsToFill = quantityRaw;
   }
 
-  // Per-IP rate-limit BEFORE the upstream call.
-  if (!(await checkRateLimit(req, env.OPENSEA_SIGNED_OFFER_RATELIMIT))) {
-    return jsonResponse({ error: 'rate-limited' }, 429, resolvedOrigin);
-  }
+  // The caller budget (`OPENSEA_SIGNED_OFFER_RATELIMIT`) was taken at the
+  // router (#2755).
 
   // Unsupported-chain + API-key gates BEFORE the OpenSea fetch, so a
   // distributed flood of valid-shape-but-wrong-chain requests can't
@@ -223,6 +219,9 @@ export async function handleOpenSeaSignedOffer(
     units_to_fill: unitsToFill,
   };
 
+  // Charged as spent: one slot of the OpenSea budget for this one call.
+  const refused = slotRefusal(await takeCredentialSlot(env, 'opensea'), resolvedOrigin, 'upstream-quota');
+  if (refused) return refused;
   let upstream: Response;
   try {
     upstream = await fetch(upstreamUrl, {
@@ -396,17 +395,6 @@ function jsonResponse(
   });
 }
 
-async function checkRateLimit(
-  req: Request,
-  binding:
-    | undefined
-    | { limit: (args: { key: string }) => Promise<{ success: boolean }> },
-): Promise<boolean> {
-  if (!binding) return true;
-  const ip = req.headers.get('CF-Connecting-IP') ?? 'unknown';
-  const r = await binding.limit({ key: ip });
-  return r.success;
-}
 
 async function safeReadJson(res: Response): Promise<unknown | null> {
   try {

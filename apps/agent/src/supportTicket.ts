@@ -128,9 +128,6 @@ export function newTicketId(): string {
   return `VPK-${out}`;
 }
 
-function clientIp(req: Request): string {
-  return req.headers.get('cf-connecting-ip') ?? 'unknown';
-}
 
 const json = (data: unknown, status: number, corsOrigin: string) =>
   new Response(JSON.stringify(data), {
@@ -147,19 +144,8 @@ export async function handleSupportTicket(
   corsOrigin: string,
   ctx?: ExecutionContext,
 ): Promise<Response> {
-  // Per-IP rate limit — skipped silently when the binding isn't
-  // configured (local dev), same posture as the other agent gates.
-  const limiter = env.SUPPORT_TICKET_RATELIMIT;
-  if (limiter) {
-    try {
-      const result = await limiter.limit({ key: clientIp(req) });
-      if (!result.success) {
-        return json({ error: 'rate_limited' }, 429, corsOrigin);
-      }
-    } catch {
-      /* fail open — the limiter is an abuse net, not a gate */
-    }
-  }
+  // The caller budget (`SUPPORT_TICKET_RATELIMIT`) was taken at the router
+  // under the one fail-closed rule in `rateLimit.ts` (#2755).
 
   let raw: unknown;
   try {

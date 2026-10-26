@@ -168,24 +168,42 @@
     },
   ],
 
-  // Cloudflare built-in rate-limit bindings — one per upstream
-  // service so a noisy /quote/0x caller can't drain the
-  // /quote/1inch budget. 60 reqs / 60 seconds per IP each.
-  // namespace_id values are arbitrary unique integers per Worker;
-  // operator may renumber to match their account-level scheme.
+  // Cloudflare built-in rate-limit bindings. Every one is read through
+  // the single rule in `src/rateLimit.ts` (#2755): a route whose binding
+  // is missing or throws is REFUSED, never let through, so every binding
+  // the code asks for must be declared here (`test/rateLimit.test.ts`
+  // pins that). Two kinds:
+  //   - caller budgets, per client IP, one per limited route, taken at
+  //     the router before the route does any work;
+  //   - credential budgets, one per operator-held API key, keyed by a
+  //     constant and charged one slot per upstream call as it is made.
+  // Cloudflare counts each namespace per location and eventually
+  // consistently, so these bound spend, not meter it exactly.
+  // namespace_id values are arbitrary unique integers per account.
+  // (1001 was `/quote/0x`'s, retired with that route in #2755; do not
+  // reuse it.)
   "unsafe": {
     "bindings": [
       {
-        "name": "QUOTE_0X_RATELIMIT",
-        "type": "ratelimit",
-        "namespace_id": "1001",
-        "simple": { "limit": 60, "period": 60 },
-      },
-      {
+        // POST /quote/1inch — the forced-close card asks for a handful of
+        // quotes per lender action. 20/min/IP is ample for that and keeps
+        // one caller from emptying the 1inch credential budget below.
         "name": "QUOTE_1INCH_RATELIMIT",
         "type": "ratelimit",
         "namespace_id": "1002",
-        "simple": { "limit": 60, "period": 60 },
+        "simple": { "limit": 20, "period": 60 },
+      },
+      {
+        // #2755 — credential budget for ONEINCH_API_KEY, shared by
+        // POST /quote/1inch and POST /intent/fusion/post. The key is the
+        // same Secrets Store entry the keeper quotes liquidations with,
+        // so what this Worker may spend is capped well below the key's
+        // tier, leaving the keeper's liquidation path its share. A
+        // starting value; raise it with the key's tier, not past it.
+        "name": "ONEINCH_UPSTREAM_RATELIMIT",
+        "type": "ratelimit",
+        "namespace_id": "1013",
+        "simple": { "limit": 30, "period": 60 },
       },
       {
         "name": "DIAG_RECORD_RATELIMIT",
@@ -226,44 +244,11 @@
         "namespace_id": "1005",
         "simple": { "limit": 30, "period": 60 },
       },
-      // T-090 v1.1 GA (#430) — operator-registered rate-limit
-      // binding for POST /intent/fusion/post. Not auto-declared
-      // here because Cloudflare's deploy validates that every
-      // `namespace_id` is registered with the account, and the
-      // dev account this checks-in against has 1001-1005 only.
-      //
-      // ** Required, not optional, when ONEINCH_API_KEY is bound. **
-      // The handler's half-activation gate returns
-      // `503 rate-limit-not-configured` when the API key is bound
-      // but this rate-limit binding is missing, so the bridge stays
-      // in the half-activated reject state until BOTH are present
-      // (Codex round-7 PR #430 P2). Skipping this step leaves the
-      // API key spend ungated to Origin-spoofed callers; binding
-      // the limiter without the key is harmless but doesn't
-      // activate anything.
-      //
-      // Note (PR #436): the API key is the existing shared
-      // ONEINCH_API_KEY entry in `secrets_store_secrets` below
-      // (the same key `quoteProxy.ts` uses), with the LOP
-      // Orderbook scope enabled at portal.1inch.dev. No separate
-      // INTENT_FUSION_API_KEY secret is needed.
-      //
-      // To enable the gate in production:
-      //   1. Register a new rate-limit namespace in the
-      //      Cloudflare dashboard for this Worker.
-      //   2. Add the binding back to this file with the chosen
-      //      namespace_id under the name `INTENT_FUSION_POST_RATELIMIT`:
-      //        { "name": "INTENT_FUSION_POST_RATELIMIT",
-      //          "type": "ratelimit",
-      //          "namespace_id": "<chosen-id>",
-      //          "simple": { "limit": 30, "period": 60 } }
-      //
-      // While this binding is absent (the as-merged state),
-      // `checkRateLimit` no-ops because the no-API-key
-      // short-circuit at the top of the handler returns the
-      // queued-ack before any spend happens — the endpoint still
-      // serves traffic. The Origin gate above remains in place
-      // regardless.
+      // T-090 v1.1 GA (#430) — caller budget for POST /intent/fusion/post.
+      // One POST per borrower commit tx in normal flow. Like every binding
+      // here it fails closed (#2755); the handler no longer carries the
+      // half-activation special case it once needed when this binding was
+      // optional.
       {
         "name": "INTENT_FUSION_POST_RATELIMIT",
         "type": "ratelimit",
@@ -296,22 +281,14 @@
         "simple": { "limit": 60, "period": 60 },
       },
       {
-        // T-086 Round-5 Block C v1.1 (#334) — global upstream
-        // rate-limit for the offers proxy, keyed by a constant
-        // string ('opensea-offers-upstream') rather than per-IP.
-        // The per-IP OPENSEA_OFFERS_RATELIMIT above bounds each
-        // caller individually but doesn't cap aggregate calls
-        // to the shared OPENSEA_API_KEY across many distinct
-        // IPs polling hot tokens at a raised
-        // OPENSEA_OFFERS_MAX_PAGES. At MAX_PAGES_CEILING = 24,
-        // worst-case is 1 + 2 × 24 = 49 upstream RTs per
-        // inbound. 60 requests/minute × 49 = 2,940 / min /
-        // single-IP — fits the typical OpenSea API tier. The
-        // aggregate cap below sets a hard ceiling at 3,000
-        // upstream RTs / minute across ALL caller IPs combined,
-        // so a multi-IP distributed scrape can't blow the
-        // shared key's tier limit even at peak.
-        "name": "OPENSEA_OFFERS_UPSTREAM_RATELIMIT",
+        // #2755 — credential budget for OPENSEA_API_KEY, shared by every
+        // /opensea/* route that calls OpenSea (listing, collection,
+        // offers, signed-offer). Charged one slot per upstream call as
+        // it is made: an offers poll pays for its slug lookup and for
+        // each page it actually fetches, not for the worst case up front
+        // (#334 charged `1 + 2 × MAX_PAGES` before the slug lookup). The
+        // namespace is #334's offers-only budget, widened to the key.
+        "name": "OPENSEA_UPSTREAM_RATELIMIT",
         "type": "ratelimit",
         "namespace_id": "1008",
         "simple": { "limit": 3000, "period": 60 },
@@ -324,12 +301,10 @@
         // (components + signature + SIP-7 extraData + resolvers)
         // for atomic match-rotation via
         // NFTPrepayListingAtomicFacet.matchOpenSeaOffer. One RTT
-        // per inbound (no pagination), so per-IP gates aggregate
-        // upstream load directly — no separate upstream binding
-        // needed. 60 req/min/IP matches the per-IP shape of the
-        // other agent proxies and is generous for the real
-        // Match-click cadence (1 fetch per click, typically 1-2
-        // clicks per loan).
+        // per inbound (no pagination), charged to the OpenSea credential
+        // budget above like every other OpenSea call (#2755). 60
+        // req/min/IP is generous for the real Match-click cadence (1
+        // fetch per click, typically 1-2 clicks per loan).
         "name": "OPENSEA_SIGNED_OFFER_RATELIMIT",
         "type": "ratelimit",
         "namespace_id": "1009",
@@ -376,8 +351,9 @@
   //                            binds RPC_POLYGON_AMOY as well.
   //   - TG_BOT_TOKEN         — Telegram bot (handshake + notifications).
   //   - PUSH_CHANNEL_PK      — Push channel signer.
-  //   - ZEROEX_API_KEY,
-  //     ONEINCH_API_KEY      — public quote-proxy aggregator keys.
+  //   - ONEINCH_API_KEY      — 1inch key for /quote/1inch and
+  //                            /intent/fusion/post. (No 0x key: #2755
+  //                            removed /quote/0x, which had no caller.)
   //   - OPENSEA_API_KEY      — T-086 step 14: OpenSea Listings API
   //                            key for `POST /opensea/listing`.
   //                            Server-side only.
@@ -463,11 +439,6 @@
       "binding": "PUSH_CHANNEL_PK",
       "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
       "secret_name": "PUSH_CHANNEL_PK",
-    },
-    {
-      "binding": "ZEROEX_API_KEY",
-      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
-      "secret_name": "ZEROEX_API_KEY",
     },
     {
       "binding": "ONEINCH_API_KEY",

@@ -30,17 +30,19 @@
  * return the item-specific offers — collection offers are skipped
  * gracefully.
  *
- * **Rate-limit + CORS** (matches the established pattern):
- * per-IP rate-limit via `OPENSEA_OFFERS_RATELIMIT`; CORS echoes
- * the resolved single origin. The dapp polls every ~30s while the
- * loan card is open, so the rate-limit needs reasonable headroom
- * (~60 req/min/IP is the v1 starting value).
+ * **Rate-limit + CORS** (#2755, `rateLimit.ts`): the router takes the
+ * per-IP caller budget (`OPENSEA_OFFERS_RATELIMIT`, ~60 req/min/IP, since
+ * the dapp polls every ~30s while the loan card is open), and each
+ * upstream call takes one slot of the shared OpenSea credential budget
+ * as it is made. Both fail closed. CORS echoes the resolved single
+ * origin.
  *
  * Mainnet only (matches the existing OpenSea host map — testnet
  * sunset 2025-07-23).
  */
 
 import type { Env } from './env';
+import { slotRefusal, takeCredentialSlot } from './rateLimit';
 
 const OPENSEA_HOST: Record<number, string> = {
   1: 'api.opensea.io',
@@ -91,21 +93,9 @@ export async function handleOpenSeaOffers(
   if (!/^\d+$/.test(tokenId)) {
     return jsonResponse({ error: 'invalid tokenId' }, 400, resolvedOrigin);
   }
-  // Per-IP rate-limit BEFORE the upstream calls, so a scripted
-  // iterator can't burn the OpenSea quota even on rejected inputs.
-  if (!(await checkRateLimit(req, env.OPENSEA_OFFERS_RATELIMIT))) {
-    return jsonResponse({ error: 'rate-limited' }, 429, resolvedOrigin);
-  }
-
-  // Validate everything that determines whether an upstream call can
-  // actually happen BEFORE consuming the global upstream rate-limit
-  // budget. Without this ordering, a distributed flood of
-  // syntactically-valid-but-functionally-invalid requests (e.g.
-  // /opensea/offers/999/...) would burn the shared upstream cap
-  // even though no OpenSea request will be attempted, returning
-  // `upstream-quota` to valid borrowers — Codex round-2 P2 on
-  // #341. The unsupported-chain + API-key gates below MUST stay
-  // ahead of the upstream-rate-limit consumption.
+  // The caller budget (`OPENSEA_OFFERS_RATELIMIT`) was taken at the router
+  // (#2755). Nothing below takes a slot of the OpenSea credential budget
+  // until it is about to make the call that slot pays for.
   const host = OPENSEA_HOST[chainId];
   const chainSlug = OPENSEA_CHAIN_SLUG[chainId];
   if (!host || !chainSlug) {
@@ -124,51 +114,17 @@ export async function handleOpenSeaOffers(
     );
   }
 
-  // Parse the configurable pagination depth up front; we need
-  // it for the upstream-budget calculation below as well as the
-  // pagination loops further down.
   const MAX_PAGES = parseMaxPages(env.OPENSEA_OFFERS_MAX_PAGES);
 
-  // #334 Codex round-1 P2 + round-3 P2 — global upstream rate-
-  // limit keyed by a constant. Caps aggregate calls to the
-  // shared `OPENSEA_API_KEY` across all caller IPs (the per-IP
-  // gate above caps each caller individually but doesn't bound
-  // the sum). Placed AFTER the validation gates so only requests
-  // that will actually reach OpenSea consume the upstream
-  // budget.
-  //
-  // Codex round-3 P2 — budget is consumed UPFRONT once per
-  // worst-case upstream RT this request will make (not once per
-  // inbound). With `MAX_PAGES = 24` that's `1 + 2 × 24 = 49`
-  // slots per inbound; with the binding's 3,000/min cap that
-  // sustains ~61 max-depth concurrent inbounds/min across all
-  // IPs combined — a hard ceiling on the OpenSea API key's RT
-  // volume. The single-call earlier rev consumed only 1 slot
-  // per inbound, so the cap was effectively `3,000 inbound/min
-  // × 49 RTs = 147k RTs/min`, blowing the intended guardrail.
-  // Per-RT consumption is the only way the aggregate cap
-  // actually bounds OpenSea calls.
-  //
-  // Cost trade-off (intentional): if pagination ends early
-  // (OpenSea's `next` cursor runs out before page MAX_PAGES),
-  // the reserved-but-unused slots are NOT released — Cloudflare
-  // rate-limit bindings don't have an undo. This makes the
-  // budget conservative under intermittent / non-paginated
-  // traffic, which is the safer side of the trade.
-  //
-  // When the binding isn't provisioned (operator hasn't added
-  // it yet) this is a no-op; per-IP gating still applies.
-  if (env.OPENSEA_OFFERS_UPSTREAM_RATELIMIT) {
-    const upstreamBudget = 1 + 2 * MAX_PAGES;
-    for (let i = 0; i < upstreamBudget; i++) {
-      const { success } = await env.OPENSEA_OFFERS_UPSTREAM_RATELIMIT.limit({
-        key: 'opensea-offers-upstream',
-      });
-      if (!success) {
-        return jsonResponse({ error: 'upstream-quota' }, 429, resolvedOrigin);
-      }
-    }
-  }
+  // #2755 — the OpenSea credential budget is charged AS SPENT: one slot
+  // immediately before each upstream call. It used to be charged up front
+  // for the worst case (`1 + 2 × MAX_PAGES` slots) before the slug lookup,
+  // so a request for an NFT OpenSea does not know cost seven slots for one
+  // real call, and a stream of those emptied the shared budget for every
+  // borrower. A refused slot stops the walk; what was already fetched is
+  // returned and marked `truncated`, never presented as the whole list.
+  const spend = async (): Promise<boolean> =>
+    (await takeCredentialSlot(env, 'opensea')) === 'taken';
 
   const headers = {
     'X-API-KEY': apiKey,
@@ -196,6 +152,10 @@ export async function handleOpenSeaOffers(
   // lookup doesn't surface a slug, BOTH offer fetches are
   // skipped and the response carries `null` for each (the panel
   // treats this as an empty list cleanly).
+  // The slug lookup is the first call; a budget that cannot pay for it
+  // answers the way every other route's budget does.
+  const refused = slotRefusal(await takeCredentialSlot(env, 'opensea'), resolvedOrigin, 'upstream-quota');
+  if (refused) return refused;
   const slugP = (async () => {
     try {
       const slugRes = await fetch(
@@ -244,10 +204,11 @@ export async function handleOpenSeaOffers(
   // the clamp + foot-gun-safety rationale.
   const fetchPaginated = async (
     initialUrl: string | null,
-  ): Promise<{ status: number; body: string } | null> => {
+  ): Promise<{ status: number; body: string; truncated: boolean } | null> => {
     if (!initialUrl) return null;
     const all: unknown[] = [];
     let lastStatus = 0;
+    let truncated = false;
     // Codex round-16 P2 review #328 — track whether ANY page
     // succeeded. If page 1 succeeds and page 2 fails, we want
     // to return the page-1 offers + a synthetic 200 status so
@@ -259,6 +220,13 @@ export async function handleOpenSeaOffers(
       ? `${initialUrl}&limit=100`
       : `${initialUrl}?limit=100`;
     for (let i = 0; i < MAX_PAGES && url; i++) {
+      if (!(await spend())) {
+        // The budget ran out mid-walk: with no page yet the leg reports
+        // the quota; otherwise it keeps what it has and says it stopped.
+        if (anyPageSucceeded) truncated = true;
+        else lastStatus = 429;
+        break;
+      }
       const page = await fetch(url, { headers })
         .then(r => r.text().then(body => ({ status: r.status, body })))
         .catch(err => ({ status: 0, body: String(err) }));
@@ -290,6 +258,7 @@ export async function handleOpenSeaOffers(
     return {
       status: lastStatus,
       body: JSON.stringify({ offers: all }),
+      truncated,
     };
   };
 
@@ -316,12 +285,12 @@ export async function handleOpenSeaOffers(
 }
 
 function tryParseUpstream(
-  res: { status: number; body: string },
-): { status: number; body: unknown } {
+  res: { status: number; body: string; truncated: boolean },
+): { status: number; body: unknown; truncated: boolean } {
   try {
-    return { status: res.status, body: JSON.parse(res.body) };
+    return { status: res.status, body: JSON.parse(res.body), truncated: res.truncated };
   } catch {
-    return { status: res.status, body: res.body };
+    return { status: res.status, body: res.body, truncated: res.truncated };
   }
 }
 
@@ -341,16 +310,6 @@ function jsonResponse(
   });
 }
 
-async function checkRateLimit(
-  req: Request,
-  binding: undefined | { limit: (args: { key: string }) => Promise<{ success: boolean }> },
-): Promise<boolean> {
-  if (!binding) return true;
-  const ip = req.headers.get('CF-Connecting-IP') ?? 'unknown';
-  const r = await binding.limit({ key: ip });
-  return r.success;
-}
-
 /** #334 — parse the `OPENSEA_OFFERS_MAX_PAGES` wrangler var into a
  *  bounded integer. Default 3; clamp to `[1, 24]` so a misconfigured
  *  value can't blow the OpenSea API quota.
@@ -364,17 +323,10 @@ async function checkRateLimit(
  *  **Ceiling math** (Codex round-1 P3): the per-inbound worst-case
  *  upstream cost is `1 + 2 × MAX_PAGES` round-trips (one NFT-detail
  *  slug lookup + paginated collection leg + paginated item leg).
- *  With the 60/min/IP inbound cap, ceiling 24 yields
- *  `60 × (1 + 48) = 2,940` upstream/min/IP — under the 3,000-call
- *  guardrail. Bumping the ceiling means either reducing the
- *  inbound cap or accepting a wider upstream budget.
- *
- *  **Aggregate-key concern** (Codex round-1 P2): the per-IP cap
- *  doesn't bound aggregate upstream load to the shared
- *  `OPENSEA_API_KEY`. The new optional
- *  `OPENSEA_OFFERS_UPSTREAM_RATELIMIT` binding (consumed below)
- *  caps the global upstream rate; when present it gates the
- *  proxy in addition to the per-IP rate-limit.
+ *  Each round-trip takes one slot of the OpenSea credential budget
+ *  (`OPENSEA_UPSTREAM_RATELIMIT`, shared by every route spending
+ *  `OPENSEA_API_KEY`, #2755) as it is made, so the ceiling bounds one
+ *  request's spend and the credential budget bounds the sum.
  */
 const MAX_PAGES_DEFAULT = 3;
 const MAX_PAGES_CEILING = 24;
