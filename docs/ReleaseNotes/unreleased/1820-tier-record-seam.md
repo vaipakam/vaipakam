@@ -1,4 +1,4 @@
-## Thread — VPFI tier record refreshed at the balance, pushed once per action (PR #TBD)
+## Thread — VPFI tier record refreshed at the balance, pushed once per action (PR #2862)
 
 A user's VPFI fee-discount tier record on Base used to be refreshed by each
 facet that moved their VPFI, one call site at a time. A path that nobody
