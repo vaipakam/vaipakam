@@ -20,6 +20,15 @@
 // the messenger its report left through, and one other than the one checked
 // is recorded.
 //
+// The live testnets still run Diamonds and messengers deployed before that
+// shape (#2790), which send the B4 report instead. B4 is the one older shape
+// Base applies after finalization, so such a chain's days are closed too, but
+// only while its Diamond is known to send B4 (`diamondSendsB4`): its messenger
+// would also take an older shape from an older reporter, and an older report
+// reaching a finalized day is refused on Base after its fee is paid. On those
+// chains the route to Base is the messenger's own configuration, not a rule
+// the contract holds. This path goes with the all-waves fresh deploy.
+//
 // A close refused because the interest fold has not reached the day
 // (`ChainReportFrontierShort`) is preceded by `advanceInterestFrontiers`.
 
@@ -27,10 +36,14 @@ import type { Address } from 'viem';
 import { FRONTIER_SHORT } from './constants';
 import type { ChainRun } from './deps';
 import { shortErr } from './errors';
-import { reportFee } from './reads';
+import type { Fact } from './fact';
+import { diamondSendsB4, reportFee } from './reads';
 import { reportSentVia } from './plan';
 import type { Sender } from './sender';
 import type { DayStore, DispatchRecord } from './store';
+
+const DIAMOND_PRE_B4 =
+  "its messenger takes only the B4 report and older shapes, and its Diamond's reporter facet predates the B4 send (closeDay is not routed to the facet that hosts getInterestFrontiers); an older report reaching a day Base has finalized is refused there after its fee is paid, so none is sent";
 
 /** Close `days` (each unreported here), oldest first. Mirror only: `mirror`
  *  carries the messenger the checks read and the chain this Diamond names as
@@ -46,6 +59,8 @@ export async function closeDays(
 ): Promise<{ closed: number[]; dispatched: Map<number, DispatchRecord> }> {
   const closed: number[] = [];
   const dispatched = new Map<number, DispatchRecord>();
+  // Read once, on the first day whose messenger quotes only the B4 report.
+  let diamondB4: Fact<boolean> | null = null;
   for (const d of days) {
     if (sender.stopped) break;
     let fee = 0n;
@@ -60,6 +75,19 @@ export async function closeDays(
       if ('refused' in q) {
         sender.refused.set(`close:${d}`, q.refused);
         continue;
+      }
+      if (q.shape === 'b4') {
+        // eslint-disable-next-line no-await-in-loop
+        diamondB4 ??= await diamondSendsB4(c);
+        if (!diamondB4.known) {
+          console.error(`[keeper] rewardDayClose ${c.where}: day ${d} not closed: whether this Diamond sends the B4 report is unread; left for the next run`);
+          sender.noteUnread(`close:${d}`, `whether this Diamond sends the B4 report: ${diamondB4.why}`);
+          continue;
+        }
+        if (!diamondB4.value) {
+          sender.refused.set(`close:${d}`, DIAMOND_PRE_B4);
+          continue;
+        }
       }
       fee = q.fee;
     }

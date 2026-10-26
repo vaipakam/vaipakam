@@ -208,6 +208,15 @@ class FakeDiamond {
   refuse = new Map<string, string>();
   /** The messenger predates the one report shape (#2621): its quote is an unknown selector. */
   quotePredatesReport = false;
+  /** A pre-#2790 messenger, as on the live testnets: it quotes the B4 report. */
+  quotesB4 = false;
+  /** The B4 quote's fee, when different from the one shape's. */
+  b4Fee = LANE_FEE;
+  /** Whether this Diamond's reporter sends B4 (closeDay and getInterestFrontiers
+   *  routed to one facet); 'unread' = the loupe read fails. */
+  sendsB4: boolean | 'unread' = true;
+  /** The loupe reads asked of this Diamond. */
+  loupeReads = 0;
   /** Single-destination quotes refuse with this, when set. */
   refuseTo: string | null = null;
   /** Single-destination quotes refuse with this error, by destination. */
@@ -323,6 +332,11 @@ class FakeDiamond {
         return functionName === 'messenger' ? TRANSPORT_OF[this.chainId] : functionName === 'isCanonical' ? this.role === ROLE_CANONICAL : this.diamond;
       }
       if (functionName === 'quoteSendChainReport') {
+        // The B4 report's quote: eight positional words, no route.
+        if (args!.length === 8) {
+          if (!this.quotesB4) throw new ContractFunctionRevertedError({ abi: ERRORS_ABI, functionName: 'quoteSendChainReport' });
+          return this.b4Fee;
+        }
         // A messenger without the report shape: the contract answers with an unnamed revert.
         if (this.quotePredatesReport) throw new ContractFunctionRevertedError({ abi: ERRORS_ABI, functionName: 'quoteSendChainReport' });
         // The route the caller names must be the messenger's own Base (#2621).
@@ -346,6 +360,13 @@ class FakeDiamond {
       throw new Error(`unexpected messenger read ${functionName}`);
     }
     switch (functionName) {
+      case 'facetAddress': {
+        this.loupeReads += 1;
+        if (this.sendsB4 === 'unread') throw new Error('rpc down');
+        const reporter = '0x00000000000000000000000000000000000000f1';
+        // closeDay(uint256) is 0x…; any other selector is getInterestFrontiers here.
+        return this.sendsB4 || args![0] === toFunctionSelector('closeDay(uint256)') ? reporter : '0x00000000000000000000000000000000000000f2';
+      }
       case 'getRewardRole':
         if (this.roleUnread) throw new Error('rpc down');
         return this.role;
@@ -1583,7 +1604,53 @@ describe('a run', () => {
     mirror.quotePredatesReport = true;
     await run(mirror);
     expect(mirror.sent).toEqual([]);
-    expect(alerts(/is refused \(the messenger has no quote for the report closeDay sends \(it predates the one report shape\)\)/).length).toBeGreaterThan(0);
+    expect(alerts(/is refused \(the messenger quotes neither the one report shape nor the B4 report/).length).toBeGreaterThan(0);
+  });
+
+  describe('a mirror still on the B4 report (deployed before #2790, as the live testnets are)', () => {
+    beforeEach(() => {
+      mirror.quotePredatesReport = true;
+      mirror.quotesB4 = true;
+      mirror.b4Fee = LANE_FEE + 7n;
+    });
+
+    it('closes its days, paying the B4 quote, and reads the Diamond\'s reporter once', async () => {
+      await run(mirror);
+      expect(mirror.sent.length).toBeGreaterThan(1);
+      expect(mirror.sent.every((x) => x.fn === 'closeDay' && x.value === LANE_FEE + 7n)).toBe(true);
+      expect(mirror.loupeReads).toBe(2);
+      expect(alerts(/refused/)).toEqual([]);
+    });
+
+    it('closes a day Base has finalized: B4 is the older shape Base applies after finalization', async () => {
+      base.finalized.add(1);
+      mirror.sentAt.set(0, NOW - 86_400);
+      mirror.sentAt.set(2, NOW - 86_400);
+      await run(mirror);
+      expect(mirror.sent.map((x) => [x.fn, x.day, x.value])).toEqual([['closeDay', 1, LANE_FEE + 7n]]);
+    });
+
+    it('sends nothing when its Diamond\'s reporter predates the B4 send, and says why', async () => {
+      mirror.sendsB4 = false;
+      await run(mirror);
+      expect(mirror.sent).toEqual([]);
+      expect(alerts(/its Diamond's reporter facet predates the B4 send/).length).toBeGreaterThan(0);
+    });
+
+    it('leaves the days for the next run when whether its Diamond sends B4 is unread', async () => {
+      mirror.sendsB4 = 'unread';
+      await run(mirror);
+      expect(mirror.sent).toEqual([]);
+      expect(alerts(/predates the B4 send/)).toEqual([]);
+    });
+
+    it('prefers the one report shape when the messenger quotes both', async () => {
+      mirror.quotePredatesReport = false;
+      await run(mirror);
+      expect(mirror.sent.length).toBeGreaterThan(0);
+      expect(mirror.sent.every((x) => x.value === LANE_FEE)).toBe(true);
+      expect(mirror.loupeReads).toBe(0);
+    });
   });
   it('holds a day whose broadcast landed for one destination while another it is owed was refused', async () => {
     finalizedDayZero();

@@ -9,7 +9,7 @@
 
 import type { Abi, Address, PublicClient } from 'viem';
 import { boundedRead, PastRunDeadline } from '../batchRead';
-import { ABI, MESSENGER_ABI, NO_SELECTOR, READ_CHUNK, REASON_FINALIZED } from './constants';
+import { ABI, B4_QUOTE_ABI, B4_REPORTER_SELECTOR, CLOSE_DAY_SELECTOR, LOUPE_ABI, MESSENGER_ABI, NO_SELECTOR, READ_CHUNK, REASON_FINALIZED } from './constants';
 import type { ChainRun, PeerReader } from './deps';
 import { classify, revertName, shortErr } from './errors';
 import { known, unknown, type Fact, type PerDay } from './fact';
@@ -193,34 +193,70 @@ export async function destinationStates(c: ChainRun, destinations: readonly numb
   return out;
 }
 
-/** The messenger's fee for the report `closeDay` sends: the one report shape
- *  (#2621), sent to the chain this Diamond names as Base, which is the route
- *  `closeDay` asks the messenger for. The payload is fixed-width, so zero
- *  figures price it exactly. A refusal the messenger names is returned by name
- *  (a messenger routed to another Base refuses with `ReportRouteMismatch`, and
- *  so would the close); an unnamed one is a messenger without this report
- *  shape. */
-export async function reportFee(client: PublicClient, messenger: Address, baseChainId: number, day: number): Promise<{ fee: bigint } | { refused: string } | 'unread'> {
+/** The report shape a messenger quoted: the one shape (#2621) a fresh deploy
+ *  carries, or the B4 report the live testnets' messengers, deployed before
+ *  #2790, still take. */
+export type ReportShape = 'one' | 'b4';
+
+/** Whether this Diamond's `closeDay` sends the B4 report, asked only of a
+ *  chain whose messenger quotes B4 and not the one shape: a pre-#2790
+ *  messenger takes every older shape too, so its quote says what it can take,
+ *  while the shape that goes out is the reporter facet's. Read from the
+ *  Diamond's own routing: `closeDay` is hosted by a facet that also hosts
+ *  `getInterestFrontiers`, which the reporter gained in the change (#2459)
+ *  that gave it the B4 send. Retired with `B4_QUOTE_ABI`. */
+export async function diamondSendsB4(c: ChainRun): Promise<Fact<boolean>> {
+  const host = (sel: `0x${string}`, what: string) => readOne<Address>(c.deps.client, c.diamond, LOUPE_ABI, 'facetAddress', [sel], `${c.where}: the facet routed for ${what}`);
+  const close = await host(CLOSE_DAY_SELECTOR, 'closeDay');
+  if (!close.known) return unknown(`the facet this Diamond routes closeDay to (${close.why})`);
+  const frontiers = await host(B4_REPORTER_SELECTOR, 'getInterestFrontiers');
+  if (!frontiers.known) return unknown(`the facet this Diamond routes getInterestFrontiers to (${frontiers.why})`);
+  return known(BigInt(close.value) !== 0n && close.value.toLowerCase() === frontiers.value.toLowerCase());
+}
+
+/** The messenger's fee for the report `closeDay` sends, and which shape that
+ *  is. The one report shape (#2621) is asked first, sent to the chain this
+ *  Diamond names as Base, which is the route `closeDay` asks the messenger
+ *  for; a messenger that does not have it is asked for the B4 report, the
+ *  shape the live testnets' messengers (deployed before #2790) carry. The
+ *  payload is fixed-width, so zero figures price either exactly. A refusal the
+ *  messenger names is returned by name (a messenger routed to another Base
+ *  refuses with `ReportRouteMismatch`, and so would the close); a messenger
+ *  with neither shape is refused as such. The `closeDay` simulation stays the
+ *  judge: an underpaid send is refused there, never sent. */
+export async function reportFee(client: PublicClient, messenger: Address, baseChainId: number, day: number): Promise<{ fee: bigint; shape: ReportShape } | { refused: string } | 'unread'> {
+  const z = 0n;
+  const d = BigInt(day);
   const report = {
-    dayId: BigInt(day),
-    lenderNumeraire18: 0n,
-    borrowerNumeraire18: 0n,
-    recycledCumulative18: 0n,
-    recycledForDay18: 0n,
-    commitRetiredCumulative18: 0n,
-    commitReleasedCumulative18: 0n,
-    custodyEra: 0n,
-    rewardLaunchTimestamp: 0n,
+    dayId: d,
+    lenderNumeraire18: z,
+    borrowerNumeraire18: z,
+    recycledCumulative18: z,
+    recycledForDay18: z,
+    commitRetiredCumulative18: z,
+    commitReleasedCumulative18: z,
+    custodyEra: z,
+    rewardLaunchTimestamp: z,
   };
-  try {
-    const fee = (await client.readContract({ address: messenger, abi: MESSENGER_ABI, functionName: 'quoteSendChainReport', args: [BigInt(baseChainId), report] })) as bigint;
-    return { fee };
-  } catch (err) {
-    if (err instanceof PastRunDeadline) throw err;
-    if ('unread' in classify(err)) return 'unread';
-    const name = revertName(err);
-    return { refused: name === undefined ? 'the messenger has no quote for the report closeDay sends (it predates the one report shape)' : `the messenger would not quote the report fee (${name})` };
+  const asks: readonly { shape: ReportShape; abi: Abi; args: readonly unknown[] }[] = [
+    { shape: 'one', abi: MESSENGER_ABI, args: [BigInt(baseChainId), report] },
+    { shape: 'b4', abi: B4_QUOTE_ABI as Abi, args: [d, z, z, z, z, z, z, z] },
+  ];
+  for (const a of asks) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const fee = (await client.readContract({ address: messenger, abi: a.abi, functionName: 'quoteSendChainReport', args: a.args })) as bigint;
+      return { fee, shape: a.shape };
+    } catch (err) {
+      if (err instanceof PastRunDeadline) throw err;
+      if ('unread' in classify(err)) return 'unread';
+      // A named refusal is the messenger's answer; an unnamed one is a shape
+      // it does not have, so the next is asked.
+      const name = revertName(err);
+      if (name !== undefined) return { refused: `the messenger would not quote the report fee (${name})` };
+    }
   }
+  return { refused: 'the messenger quotes neither the one report shape nor the B4 report, so it cannot carry the report closeDay sends' };
 }
 
 export type Quote = { fee: bigint } | { refused: string } | { unread: string };
