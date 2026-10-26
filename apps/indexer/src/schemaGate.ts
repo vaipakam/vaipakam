@@ -25,8 +25,7 @@
  * manual cursor repair.
  *
  * WHAT IT DOES NOT COVER: HTTP. Every `fetch()` handler — the reads, and the
- * POST writes (`/signed-offers`, the prepay listing match-source, the
- * `/hooks/chain-event` webhook) — runs against whatever schema the database
+ * POST writes (`/signed-offers` and the `/hooks/chain-event` webhook) — runs against whatever schema the database
  * has, so a handler that reads or writes a new column must tolerate the
  * previous schema itself (or ship after its migration). The shared module
  * states the rest.

@@ -173,7 +173,9 @@ type Row = {
 };
 
 async function record(h: ReturnType<typeof createSqliteD1>, logs: ReturnType<typeof realLog>[]) {
-  await recordActivityEvents(logs as never, { DB: h.d1 } as unknown as Env, CHAIN, new Map());
+  // Every block's time, as the scan supplies it (#2757).
+  const times = new Map(logs.map((l) => [l.blockNumber, 1_700_000_000] as [bigint, number]));
+  await recordActivityEvents(logs as never, { DB: h.d1 } as unknown as Env, CHAIN, times);
   return h.db
     .prepare(
       'SELECT kind, log_index, asset, asset_type, amount, amount_max, token_id, quantity FROM activity_events ORDER BY log_index',

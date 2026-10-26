@@ -1065,9 +1065,7 @@ const keyOf = (row, key) => JSON.stringify(key.map((c) => row[c] ?? null));
  *     reads like a bearer token and is not one: nothing reads a ticket
  *     by id, the only query against that table is a retention DELETE.
  *     If a lookup-by-id surface is ever added, this becomes one.
- *   - `signed_offers.order_hash`,
- *     `prepay_listing_match_breadcrumbs.tx_hash` — public on-chain
- *     values.
+ *   - `signed_offers.order_hash` — a public on-chain value.
  *
  * A new table whose key is a secret has to be added here. That is the
  * residue of a declared list and it is stated rather than implied.

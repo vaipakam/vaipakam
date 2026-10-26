@@ -309,6 +309,19 @@ The app uses chain reads and indexed reads for different jobs.
   slice.
 - If the indexer is stalled or unavailable, the app should show a degraded
   data-source warning rather than a confident empty list.
+- Every time the index records about when something happened (a loan's
+  start, a settlement, a listing, a transfer) is the chain's own time for
+  that event. When the index cannot read that time it does not record the
+  event yet: it stops there and tries again, rather than dating the event by
+  its own clock. Where a time is genuinely unknown it is stored and shown as
+  unknown, never as a guess.
+- Index records come from the chain. The index takes no unauthenticated
+  client claim as a fact about a loan or offer that anyone else could
+  overwrite.
+- The list of offers a wallet holds is the list of its OPEN offers — the
+  same set the protocol's own view of a holder's offer positions returns.
+  An offer that has been accepted, cancelled or filled into a sale is no
+  longer one of the wallet's offers.
 - The index never runs ahead of its own storage layout. A release that
   changes how indexed data is stored updates that storage BEFORE the new
   indexing code goes live, and a release that reaches the indexer without

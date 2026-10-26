@@ -92,11 +92,11 @@ describe('LoanObligationTransferred writes the re-originated term (#2808)', () =
       [transferLog(4, 120n)] as never,
       { DB: h.d1 } as unknown as Env,
       CHAIN,
-      // A wall-clock sentinel for the block: the term must not come from it.
+      // The block's time is not the term's start: the term comes from the
+      // pinned chain read, whatever the block time says.
       new Map([[120n, 99_999]]),
       client,
       DIAMOND,
-      new Set([120n]),
     );
 
     expect(reads).toEqual([expect.objectContaining({ functionName: 'getLoanDetails', blockNumber: 120n })]);

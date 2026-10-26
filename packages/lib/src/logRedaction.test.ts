@@ -32,12 +32,21 @@ describe('the rule', () => {
     ['logged raw', `try { a() } catch (err) { console.error('failed', { err, chain }) }`],
     ['logged raw', `try { a() } catch (err) { console.error('failed', { cause: err }) }`],
     ['JSON.stringify()', `try { a() } catch (err) { send(JSON.stringify({ error: err })) }`],
+    // #2757 — a wrapper's cause is the wrapped error, key-bearing URL and all.
+    ['logged raw', `try { a() } catch (err) { console.error('failed', err.cause) }`],
+    ['logged raw', `try { a() } catch (err) { console.error('failed', (err as Error).cause) }`],
+    ['logged raw', `try { a() } catch (err) { console.error('failed', { c: err['cause'] }) }`],
+    ['.message', `try { a() } catch (err) { send(err.cause.message) }`],
+    ['String()', `try { a() } catch (err) { send(String(err.cause.cause)) }`],
+    ['logged raw', `try { a() } catch (err) { const c = err.cause; console.error(c) }`],
   ])('refuses %s', (form, src) => {
     expect(forms(src)).toContain(form);
   });
 
   it.each([
     ['a formatter', `try { a() } catch (err) { console.error('failed', redactedError(err)) }`],
+    ['a formatter on the cause', `try { a() } catch (err) { console.error('failed', redactedError(err.cause)) }`],
+    ['a scalar field of the cause', `try { a() } catch (err) { console.warn(err.cause?.code) }`],
     ['a formatter around text', `try { a() } catch (err) { send(redactSecrets(String(err))) }`],
     ['describeFailure', `try { a() } catch (err) { console.warn(describeFailure(err)) }`],
     ['a regex test', `try { a() } catch (err) { if (/no such table/i.test(String(err))) return }`],
@@ -69,9 +78,7 @@ const BROWSER = new Set(['apps/app', 'apps/www', 'packages/i18n']);
  * Sites not yet moved, each with the change that moves it. An entry must
  * still match, so it is removed in the change that clears it.
  */
-const PENDING: Array<{ path: RegExp; why: string }> = [
-  { path: /^apps\/indexer\/src\/loanRoutes\.ts$/, why: 'in flight under #2757; moved after it lands' },
-];
+const PENDING: Array<{ path: RegExp; why: string }> = [];
 
 function serverSourceFiles(): string[] {
   const out: string[] = [];
