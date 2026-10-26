@@ -692,6 +692,15 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 ),
                 bytes4(0)
             );
+            // Phase 5 / §5.2b — settle the OLD loan's borrower LIF here, after
+            // the borrower side is consolidated (so the rebate is priced for
+            // the current holder) and BEFORE the collateral return below: that
+            // withdraw refreshes the holder's tier record (#1820), and a return
+            // of VPFI collateral would otherwise price the rebate from the
+            // post-return tier, underpaying a borrower who held the VPFI for
+            // the whole term. The carry-over branch moves no collateral and
+            // settles at the end.
+            LibVPFIDiscount.settleBorrowerLifProper(oldLoan);
             // Legacy: release the old lien BEFORE the withdraw (the chokepoint
             // guard would otherwise block the legitimate refinance return).
             // The old collateral lives in `oldLoan.borrower`'s vault (the
@@ -711,15 +720,9 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                         ),
                         VaultWithdrawFailed.selector
                     );
-                    // #658 PR-B — the borrower-side consolidation above
-                    // checkpointed the current holder's VPFI at the FULL
-                    // pre-return balance; this withdraw just removed the VPFI
-                    // collateral from their vault, so a post-withdraw re-stamp is
-                    // owed. It is DEFERRED to after `settleBorrowerLifProper`
-                    // below (Codex #690 round-6 P2): re-stamping here would roll
-                    // the discount accumulator down to the post-return balance
-                    // before the LIF rebate is priced, underpaying a borrower who
-                    // held the VPFI for the whole old-loan term.
+                    // #1820 — the withdraw refreshes the holder's tier record
+                    // at the post-return balance; the LIF rebate was priced
+                    // above, before it (Codex #690 round-6 P2).
                 }
             } else if (oldLoan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
                 LibFacet.crossFacetCall(
@@ -809,12 +812,11 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // explanatory comment at the new call site.
 
         // Phase 5 / §5.2b — proper-close settlement for the OLD loan's
-        // borrower LIF VPFI path. The borrower earned the rebate over
-        // the old loan's live period; the new loan gets a fresh anchor
-        // via _snapshotBorrowerDiscount inside its own initiateLoan path
-        // (and, if the new loan also takes the VPFI fee path, that will
-        // register its own vpfiHeld against the new loan id).
-        LibVPFIDiscount.settleBorrowerLifProper(oldLoan);
+        // borrower LIF VPFI path on the carry-over branch (the
+        // non-carry-over branch settled it before its collateral return).
+        // The borrower earned the rebate over the old loan's live period;
+        // the new loan carries its own record.
+        if (bOffer.refinanceCarryOver) LibVPFIDiscount.settleBorrowerLifProper(oldLoan);
 
         // T-092 Phase 2a (Codex round-1 P2) — emit the current
         // borrower-NFT owner as the borrower (not msg.sender) so
