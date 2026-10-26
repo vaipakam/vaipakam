@@ -4708,6 +4708,17 @@
   },
   {
     "type": "error",
+    "name": "TokenDecimalsUnreadable",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "TokenDeliveryShort",
     "inputs": [
       {
