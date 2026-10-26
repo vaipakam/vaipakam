@@ -1,4 +1,4 @@
-## Thread — Rent is counted in whole days, with a one-day minimum (PR #TBD)
+## Thread — Rent is counted in whole days, with a one-day minimum (PR #2893)
 
 A rental that is closed early now pays for every day it has started, not
 only for the days that have fully passed. Before this change the rent
