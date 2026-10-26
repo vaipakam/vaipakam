@@ -1,4 +1,4 @@
-## Thread — a legal-hold action and its audit row are recorded together (PR #TBD)
+## Thread — a legal-hold action and its audit row are recorded together (PR #2894)
 
 Each legal-hold action (place, lift, or changing whether disclosure is allowed) used to write its change to the hold register and its row in the append-only audit trail as separate steps. A lift that landed between a disclosure change's check for a hold and its update could leave an audit row recording a disclosure change for a wallet that had no hold. The archive restore reads that as tampering, and because the trail is append-only, every later nightly archive would have failed to reconcile until someone fixed it by hand.
 
