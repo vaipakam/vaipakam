@@ -1461,7 +1461,7 @@ report, or storage corruption; it is never ordinary operation:
 `commit-identity`, `clamp-chain`, `attribution-ceiling`,
 `availability-formula`, `base-self-inert`, `base-ahead-of-chain`,
 `consumed-cap`, `bucket-coverage`, `bucket-composition`,
-`reported-derivation`, `role-consistency`. Plus
+`role-consistency`. Plus
 `watcher-state-unavailable`, the one CRITICAL that is not a ledger
 relation — see below.
 

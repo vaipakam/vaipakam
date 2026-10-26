@@ -104,6 +104,78 @@
       "from": "lapseTerminalsArmed",
       "to": "retiredLapseTerminalsArmed",
       "reason": "#2875 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the one-shot arm kept the lapse terminals off until the legacy compensation migration was attested, a migration a fresh deploy never runs; the terminals now work from deploy. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 404,
+      "offset": 0,
+      "from": "recycleAccountingSeeded",
+      "to": "retiredRecycleAccountingSeeded",
+      "reason": "#2875 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the #1448 upgrade-in-place seeding state (the recycled-accounting-seeded flag, and the released-remit stranded-seed ceremony's applied flag, scan state, race baselines and the release count it backfilled) migrated a Diamond refreshed over pre-#1222 / pre-#1448 state, which a fresh deploy never is; the flag and the ceremony are removed. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 404,
+      "offset": 1,
+      "from": "recycleStrandedSeedApplied",
+      "to": "retiredRecycleStrandedSeedApplied",
+      "reason": "#2875 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the #1448 upgrade-in-place seeding state (the recycled-accounting-seeded flag, and the released-remit stranded-seed ceremony's applied flag, scan state, race baselines and the release count it backfilled) migrated a Diamond refreshed over pre-#1222 / pre-#1448 state, which a fresh deploy never is; the flag and the ceremony are removed. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 405,
+      "offset": 0,
+      "from": "recycleStrandedSeedTarget",
+      "to": "retiredRecycleStrandedSeedTarget",
+      "reason": "#2875 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the #1448 upgrade-in-place seeding state (the recycled-accounting-seeded flag, and the released-remit stranded-seed ceremony's applied flag, scan state, race baselines and the release count it backfilled) migrated a Diamond refreshed over pre-#1222 / pre-#1448 state, which a fresh deploy never is; the flag and the ceremony are removed. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 406,
+      "offset": 0,
+      "from": "recycleStrandedSeedCursor",
+      "to": "retiredRecycleStrandedSeedCursor",
+      "reason": "#2875 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the #1448 upgrade-in-place seeding state (the recycled-accounting-seeded flag, and the released-remit stranded-seed ceremony's applied flag, scan state, race baselines and the release count it backfilled) migrated a Diamond refreshed over pre-#1222 / pre-#1448 state, which a fresh deploy never is; the flag and the ceremony are removed. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 407,
+      "offset": 0,
+      "from": "recycleStrandedSeedAccum",
+      "to": "retiredRecycleStrandedSeedAccum",
+      "reason": "#2875 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the #1448 upgrade-in-place seeding state (the recycled-accounting-seeded flag, and the released-remit stranded-seed ceremony's applied flag, scan state, race baselines and the release count it backfilled) migrated a Diamond refreshed over pre-#1222 / pre-#1448 state, which a fresh deploy never is; the flag and the ceremony are removed. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 408,
+      "offset": 0,
+      "from": "recycleStrandedSeedBaseline",
+      "to": "retiredRecycleStrandedSeedBaseline",
+      "reason": "#2875 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the #1448 upgrade-in-place seeding state (the recycled-accounting-seeded flag, and the released-remit stranded-seed ceremony's applied flag, scan state, race baselines and the release count it backfilled) migrated a Diamond refreshed over pre-#1222 / pre-#1448 state, which a fresh deploy never is; the flag and the ceremony are removed. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 409,
+      "offset": 0,
+      "from": "recycleStrandedSeedCounted",
+      "to": "retiredRecycleStrandedSeedCounted",
+      "reason": "#2875 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the #1448 upgrade-in-place seeding state (the recycled-accounting-seeded flag, and the released-remit stranded-seed ceremony's applied flag, scan state, race baselines and the release count it backfilled) migrated a Diamond refreshed over pre-#1222 / pre-#1448 state, which a fresh deploy never is; the flag and the ceremony are removed. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 410,
+      "offset": 0,
+      "from": "remitReleasedCount",
+      "to": "retiredRemitReleasedCount",
+      "reason": "#2875 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the #1448 upgrade-in-place seeding state (the recycled-accounting-seeded flag, and the released-remit stranded-seed ceremony's applied flag, scan state, race baselines and the release count it backfilled) migrated a Diamond refreshed over pre-#1222 / pre-#1448 state, which a fresh deploy never is; the flag and the ceremony are removed. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 411,
+      "offset": 0,
+      "from": "recycleStrandedSeedBaselineCount",
+      "to": "retiredRecycleStrandedSeedBaselineCount",
+      "reason": "#2875 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the #1448 upgrade-in-place seeding state (the recycled-accounting-seeded flag, and the released-remit stranded-seed ceremony's applied flag, scan state, race baselines and the release count it backfilled) migrated a Diamond refreshed over pre-#1222 / pre-#1448 state, which a fresh deploy never is; the flag and the ceremony are removed. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
     }
   ]
 }

@@ -431,15 +431,6 @@ library LibVpfiRecycle {
             if (bal < needed) revert InsufficientRecycleBacking(needed, bal);
         }
         (uint256 dayId, bool active) = LibInteractionRewards.currentDayOrZero();
-        // #1222 M3 B1 — monotonic cumulative of every credit on this chain,
-        // reported mirror→Base on each day-close so Base's per-chain
-        // availability ledger self-heals across missed reports. Counts
-        // inflow, never the live balance, so it never decrements on consume.
-        // Reading through {creditedCumulative} folds in the pre-upgrade
-        // floor, so the first post-refresh credit self-heals the counter —
-        // and MUST be read BEFORE the bucket write below, or this credit
-        // would be double-counted through the floor.
-        uint256 cumulativeBefore = creditedCumulative(s);
         s.recycleBucket = needed;
         // Pre-launch credits are kept OUT of the day series (#1504). They
         // used to land in day 0, which made that bucket the sum of an
@@ -453,107 +444,16 @@ library LibVpfiRecycle {
         } else {
             s.recycledCreditedPreLaunch += amount;
         }
-        s.recycleCreditedCumulative = cumulativeBefore + amount;
-        // #1448 r4 — see the storage docs: `recycleCreditedCumulative == 0`
-        // cannot by itself distinguish an un-seeded upgraded Diamond from a
-        // fresh chain that has absorbed nothing yet.
-        s.recycleAccountingSeeded = true;
+        // #1222 M3 B1 — monotonic cumulative of every credit on this chain,
+        // reported mirror→Base on each day-close so Base's per-chain
+        // availability ledger self-heals across missed reports. Counts
+        // inflow, never the live balance, so it never decrements on consume.
+        s.recycleCreditedCumulative += amount;
         if (active) {
             emit VpfiRecycled(uint8(source), refId, amount, dayId);
         } else {
             emit VpfiRecycledPreLaunch(uint8(source), refId, amount);
         }
-    }
-
-    /**
-     * @notice #1222 M3 B1 (Codex #1413 r5) — this chain's lifetime recycled
-     *         credit total, with the in-place-refresh seed folded in. The
-     *         stored counter starts at zero on a diamond refreshed over live
-     *         pre-#1222 state, but the true lifetime total is derivable:
-     *         `credit` only ever adds to the bucket and `consume` only ever
-     *         moves bucket → `paidOutRecycled`, so `recycleBucket +
-     *         paidOutRecycled` IS the historical Σ of credits (exact up to
-     *         the consume path's documented wei-scale cap-trim dust, which
-     *         can only overstate). Flooring the stored counter on that sum
-     *         means the first report after an upgrade already carries the
-     *         pre-upgrade absorption — B2/B3 funding never permanently
-     *         ignores VPFI absorbed before the cut, with no migration or
-     *         admin seeding step.
-     */
-    function creditedCumulative(LibVaipakam.Storage storage s)
-        internal
-        view
-        returns (uint256)
-    {
-        uint256 stored = s.recycleCreditedCumulative;
-        // #1222 M3 B2-d5 — net RELOCATED CUSTODY out of the derived floor.
-        // {creditCustodyRelocated} raises `recycleBucket` without advancing
-        // `recycleCreditedCumulative`, so without this subtraction those
-        // tokens would re-enter the reported figure through the floor and
-        // Base would read its own remit top-up back as the mirror's own
-        // absorption (design record §2f.3). Structurally cannot underflow —
-        // every custody credit adds to the bucket and `consume` only moves
-        // bucket → `paidOutRecycled` — but saturate anyway so a future path
-        // that decremented the bucket without this counter degrades to a
-        // conservative under-report instead of reverting every day-close.
-        // #1568 C2 — repatriated-out value stays IN the floor: it was
-        // credited (absorbed) here exactly once before leaving for Base, so
-        // a floor that dropped with the bucket on a healthy repatriation
-        // could fall BELOW an earlier report on an unseeded upgraded
-        // Diamond (§3.6a constraint 2a — the seed-before-debit step in
-        // {debitRepatriationSurplus} closes the same gap from the other
-        // side).
-        // #1566 closure 2 cutover PR 2 (Codex #2206 r1 P1) — a
-        // REATTRIBUTION is not absorption either: credit moved INTO the
-        // bucket by a reclassification raised the bucket (or `paidOut`)
-        // without absorbing anything, and credit moved OUT lowered them; net
-        // both out of the floor exactly as relocated custody is, or the
-        // first report after a correction on an unseeded Diamond would carry
-        // the moved amount as this chain's own absorption.
-        uint256 gross = s.recycleBucket +
-            s.paidOutRecycled +
-            s.recycleRepatriatedOutCumulative +
-            s.recycleReattributedOutCumulative;
-        uint256 relocated = s.recycleCustodyRelocatedCumulative + s.recycleReattributedInCumulative;
-        uint256 preUpgradeFloor = gross > relocated ? gross - relocated : 0;
-        return stored >= preUpgradeFloor ? stored : preUpgradeFloor;
-    }
-
-    /**
-     * @notice The bucket-composition identity's two sides, from the RAW
-     *         slots — its ONE implementation (#1566 closure 2 cutover PR 2,
-     *         Codex #2206 r9). Every recycled credit lands in the bucket
-     *         exactly once, so what the cumulatives CLAIM can never exceed
-     *         where the tokens WENT:
-     *
-     *           credited + custodyRelocated + reattributedIn
-     *             <= bucket + paidOut + releasedRemitStranded
-     *                + repatriatedOut + reattributedOut
-     *
-     *         `credit` and `creditCustodyRelocated` add to one term on each
-     *         side; `consume` moves bucket → paidOut; {restoreReleasedRemit}
-     *         moves paidOut → stranded; {debitRepatriationSurplus} moves
-     *         bucket → repatriatedOut (#1568 C2); a reclassification moves
-     *         credit between the bucket (or its payout figure) and the fresh
-     *         side, counted on the reattribution term of the side it left or
-     *         joined. The seed ceremony's postcondition reads this; the
-     *         external checkers (`ops/mesh-watcher`, the mesh invariants)
-     *         restate it from the published terms. The RAW credited counter
-     *         deliberately, never {creditedCumulative}: the derived floor
-     *         can manufacture out of `bucket + paidOut` the very value a
-     *         short counter is missing (#1448 r5).
-     * @return claimed      What the cumulatives claim landed in the bucket.
-     * @return destinations Where the tokens are, or went.
-     */
-    function compositionSides(LibVaipakam.Storage storage s)
-        internal
-        view
-        returns (uint256 claimed, uint256 destinations)
-    {
-        claimed = s.recycleCreditedCumulative + s.recycleCustodyRelocatedCumulative
-            + s.recycleReattributedInCumulative;
-        destinations = s.recycleBucket + s.paidOutRecycled + s.recycleReleasedRemitStrandedCumulative
-            + s.recycleRepatriatedOutCumulative + s.recycleReattributedOutCumulative;
     }
 
     /// @notice #1218 M5 — {backingPosition} cannot read a balance because the
@@ -1067,9 +967,8 @@ library LibVpfiRecycle {
      *            manufacture repeat reward budget with no new user activity
      *            behind it (plan §M3's geometric-inflation hazard).
      *         2. It does NOT advance `recycleCreditedCumulative`; instead it
-     *            advances `recycleCustodyRelocatedCumulative`, which
-     *            {creditedCumulative} subtracts. That keeps the tokens out of
-     *            the cumulative a mirror reports to Base, which after B2-d3
+     *            advances `recycleCustodyRelocatedCumulative`. That keeps the
+     *            tokens out of the cumulative a mirror reports to Base, which after B2-d3
      *            drives BOTH `_mirrorAvailable` (`reported` net of the claim
      *            and repatriation draws) and
      *            the `Ā` attribution headroom in {recordChainRecycled}.
@@ -1111,38 +1010,18 @@ library LibVpfiRecycle {
         // feeds `Ā` or the published per-day series. Nothing reads it as a
         // bucket. Revisit if a consumer ever buckets relocations by day.
         if (!active) dayId = 0;
-        // #1448 r3 — SEED the stored cumulative from the derived floor
-        // before relocating, on an in-place-upgraded Diamond whose slot is
-        // still unwritten. Same snapshot {restoreReleasedRemit} performs and
-        // for a related reason: while the slot is 0, no counter accounts for
-        // the historical bucket, so an external checker cannot verify the
-        // bucket's composition at all. Seeding at the first relocation makes
-        // that verifiable from then on, instead of leaving a permanent
-        // unverifiable window on exactly the class this exclusion protects.
-        //
-        // Read BEFORE the bucket write below, or this relocation would be
-        // folded into the seed as if it were absorption.
-        _seedCreditedCumulative(s);
         s.recycleBucket = needed;
         s.recycleCustodyRelocatedCumulative += amount;
-        // #1448 r4 — set on the RELOCATION path too, so a fresh chain whose
-        // first recycled event is an arrival is no longer indistinguishable
-        // from an un-seeded upgrade. Deliberately set even when the seed
-        // snapshot above wrote nothing (a genuinely empty chain): what this
-        // records is "recycled accounting has run here", not "the cumulative
-        // is non-zero".
-        s.recycleAccountingSeeded = true;
         emit VpfiCustodyRelocated(uint8(source), refId, amount, dayId);
     }
 
-    /// @dev The bookkeeping tail of {creditCustodyRelocated} — the seed, the
-    ///      bucket credit, the relocated cumulative, the seeded flag, the
-    ///      event — for the two in-holder forms of #1566 closure 2 cutover
+    /// @dev The bookkeeping tail of {creditCustodyRelocated} — the bucket
+    ///      credit, the relocated cumulative, the event — for the two in-holder forms of #1566 closure 2 cutover
     ///      PR 2 ({creditCustodyFromUnclassified}, {creditCustodyFundedInHolder}).
     ///      It is NOT shared with {creditCustodyRelocated} itself, on
     ///      purpose: that function inlines into `RewardRemittanceFacet` at
     ///      its EIP-170 budget, and routing it through this helper cost that
-    ///      facet ~300 bytes of its last 700 (viaIR keeps the call). The six
+    ///      facet ~300 bytes of its last 700 (viaIR keeps the call). The
     ///      writes are the same, in the same order; keep them so.
     ///      PRECONDITION: the caller has put `amount` of tokens behind the
     ///      recycled row in this frame.
@@ -1160,36 +1039,9 @@ library LibVpfiRecycle {
         // feeds `Ā` or the published per-day series. Nothing reads it as a
         // bucket. Revisit if a consumer ever buckets relocations by day.
         if (!active) dayId = 0;
-        // #1448 r3 — SEED the stored cumulative from the derived floor
-        // before relocating, on an in-place-upgraded Diamond whose slot is
-        // still unwritten. Same snapshot {restoreReleasedRemit} performs and
-        // for a related reason: while the slot is 0, no counter accounts for
-        // the historical bucket, so an external checker cannot verify the
-        // bucket's composition at all. Seeding at the first relocation makes
-        // that verifiable from then on, instead of leaving a permanent
-        // unverifiable window on exactly the class this exclusion protects.
-        //
-        // Read BEFORE the bucket write below, or this relocation would be
-        // folded into the seed as if it were absorption.
-        _seedCreditedCumulative(s);
         s.recycleBucket += amount;
         s.recycleCustodyRelocatedCumulative += amount;
-        // #1448 r4 — set on the RELOCATION path too, so a fresh chain whose
-        // first recycled event is an arrival is no longer indistinguishable
-        // from an un-seeded upgrade. Deliberately set even when the seed
-        // snapshot above wrote nothing (a genuinely empty chain): what this
-        // records is "recycled accounting has run here", not "the cumulative
-        // is non-zero".
-        s.recycleAccountingSeeded = true;
         emit VpfiCustodyRelocated(uint8(source), refId, amount, dayId);
-    }
-
-    /// @dev The #1448 r3 seed-before-write idiom, in one place.
-    function _seedCreditedCumulative(LibVaipakam.Storage storage s) private {
-        if (s.recycleCreditedCumulative == 0) {
-            uint256 cumulative = creditedCumulative(s);
-            if (cumulative != 0) s.recycleCreditedCumulative = cumulative;
-        }
     }
 
 
@@ -1230,18 +1082,17 @@ library LibVpfiRecycle {
     ///         untouched: the entry's own inherited figure is what reads it
     ///         as spent (Codex #2206 r1). Both count in
     ///         `recycleReattributedInCumulative`, the composition identity's
-    ///         term for them, netted out of the absorption floor.
+    ///         term for them; neither advances the credited (absorption)
+    ///         cumulative.
     function creditBucketReattributed(uint256 refId, uint256 amount, bool spent) internal {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        _seedCreditedCumulative(s);
         if (spent) {
             s.paidOutRecycled += amount;
         } else {
             s.recycleBucket += amount;
         }
         s.recycleReattributedInCumulative += amount;
-        s.recycleAccountingSeeded = true;
         emit VpfiCustodyReattributed(refId, amount, true, spent);
     }
 
@@ -1261,12 +1112,11 @@ library LibVpfiRecycle {
     ///         first in queue order, from the consumption counter); this
     ///         primitive keeps the aggregate floor — `paidOutRecycled` must
     ///         cover what it gives back. Both forms count in
-    ///         `recycleReattributedOutCumulative`, netted into the
-    ///         absorption floor.
+    ///         `recycleReattributedOutCumulative`, the composition identity's
+    ///         term for them.
     function debitBucketReattributed(uint256 refId, uint256 amount, bool spent) internal {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        _seedCreditedCumulative(s);
         if (spent) {
             uint256 consumed = s.paidOutRecycled;
             if (amount > consumed) revert IVaipakamErrors.ReconciliationRecycledConsumedShort(amount, consumed);
@@ -1280,7 +1130,6 @@ library LibVpfiRecycle {
             s.recycleBucket = bucket - amount;
         }
         s.recycleReattributedOutCumulative += amount;
-        s.recycleAccountingSeeded = true;
         emit VpfiCustodyReattributed(refId, amount, false, spent);
     }
 
@@ -1372,12 +1221,9 @@ library LibVpfiRecycle {
      *         happened (constraint 2 verbatim). This primitive touches
      *         exactly two ledger slots — the bucket, and the monotonic
      *         repatriated-outflow counter that carries the movement through
-     *         the §7 #8 composition identity and {creditedCumulative}'s
-     *         floor (constraint 2a) — after the same seed-before-debit
-     *         snapshot {creditCustodyRelocated} performs, and for the same
-     *         reason: debiting an unseeded upgraded Diamond's bucket first
-     *         would let the next derived cumulative fall below an earlier
-     *         report.
+     *         the §7 #8 composition identity (constraint 2a). The credited
+     *         cumulative is untouched: the value was absorbed here once,
+     *         before it left.
      *
      *         Reverts {RepatriationExceedsFundable} instead of flooring:
      *         unlike {consume}'s dust case, nothing authorizes spending
@@ -1396,14 +1242,6 @@ library LibVpfiRecycle {
         if (amount > fundable) {
             revert RepatriationExceedsFundable(amount, fundable);
         }
-        // Seed-before-debit (#1448 r3 idiom; constraint 2a). Read BEFORE
-        // the bucket write, or the departing value would be dropped from
-        // the seed.
-        if (s.recycleCreditedCumulative == 0) {
-            uint256 cumulative = creditedCumulative(s);
-            if (cumulative != 0) s.recycleCreditedCumulative = cumulative;
-        }
-        s.recycleAccountingSeeded = true;
         s.recycleBucket = bucket - amount;
         s.recycleRepatriatedOutCumulative += amount;
         // #1566 closure 2 cutover PR 2 (Codex #2206 r4, r5) — the ledger's
@@ -1531,9 +1369,9 @@ library LibVpfiRecycle {
      *         bucket debited pro-rata at claim/remit"): `consume` already
      *         runs at every claim on every chain, so debiting here too would
      *         charge the same tokens twice — draining the bucket ledger to
-     *         its floor and double-counting `paidOutRecycled`, which inflates
-     *         the derived `creditedCumulative` and over-states this chain's
-     *         availability to Base (see the design record §2e.1). Reserving
+     *         its floor and double-counting `paidOutRecycled`, which
+     *         over-states this chain's payouts (see the design record
+     *         §2e.1). Reserving
      *         instead gives the mirror the identical reserve → consume →
      *         release lifecycle Base already runs, with no new primitives:
      *         claims retire it via {consume}, forfeits/expiries via
@@ -1594,17 +1432,6 @@ library LibVpfiRecycle {
         if (recycledFull == 0 && recycledSent == 0) return 0;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.outstandingCommitRecycled += recycledFull;
-        // Codex #1426 r5 — on an in-place-upgraded Diamond whose
-        // `recycleCreditedCumulative` is still unseeded, the cumulative is
-        // DERIVED as `bucket + paidOutRecycled`; reversing paidOut below
-        // would shrink that supposedly-monotonic figure and a later seed
-        // would lock the under-report in. Snapshot the derived value into
-        // the stored slot first, so the reversal is invisible to the
-        // cumulative ledger.
-        if (s.recycleCreditedCumulative == 0) {
-            uint256 cumulative = creditedCumulative(s);
-            if (cumulative != 0) s.recycleCreditedCumulative = cumulative;
-        }
         // #1566 closure 2 cutover PR 2 (Codex #2206 r3, r5–r7, r9) — a
         // reversed payout is consumption that paid nobody: exactly THIS
         // remit's take of the classified queue, on exactly the records it

@@ -169,7 +169,26 @@ export async function launch({ role, startChainId = 84532, headless = true }) {
     }
   }
 
-  await ctx.exposeBinding('__walletRequest', async (_src, payload) => {
+  // The wallet answers the site under test and nothing else (#2765). A
+  // binding is exposed to every frame in the context, so a redirect or a
+  // third-party iframe could otherwise get signatures and transactions
+  // from the test key. The caller's frame origin is checked, as a real
+  // wallet scopes approval to an origin, and each refusal is logged.
+  const siteOrigin = new URL(SITE).origin;
+  await ctx.exposeBinding('__walletRequest', async (source, payload) => {
+    let origin = '';
+    try {
+      origin = new URL(source?.frame?.url() ?? '').origin;
+    } catch {
+      // Unparseable frame URL: treated as outside the site.
+    }
+    if (origin !== siteOrigin) {
+      console.warn(
+        `[driver] refused wallet rpc ${payload?.method ?? '(unknown)'} from ${origin || '(unknown origin)'}`,
+      );
+      // EIP-1193 4100: the requested method is not authorized for this origin.
+      return { error: { code: 4100, message: 'test wallet answers only the site under test' } };
+    }
     try {
       const result = await handle(payload);
       return { result: jsonSafe(result) };
@@ -183,7 +202,10 @@ export async function launch({ role, startChainId = 84532, headless = true }) {
     }
   });
 
-  await ctx.addInitScript(() => {
+  // Installed only in frames on the site's origin; the binding check above
+  // is the enforcement, this keeps other frames from seeing a wallet.
+  await ctx.addInitScript((allowedOrigin) => {
+    if (window.location.origin !== allowedOrigin) return;
     if (window.ethereum?.__vaipakamTest) return;
     const listeners = {};
     const provider = {
@@ -224,7 +246,7 @@ export async function launch({ role, startChainId = 84532, headless = true }) {
       );
     window.addEventListener('eip6963:requestProvider', announce);
     announce();
-  });
+  }, siteOrigin);
 
   const page = ctx.pages()[0] ?? (await ctx.newPage());
   page.setDefaultTimeout(20_000);

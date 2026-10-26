@@ -728,7 +728,7 @@ export async function captureBackingSnapshot(
         abi: RewardAggregatorFacetABI,
         functionName: 'getRecycleCompositionPosition',
         blockNumber,
-      }) as Promise<readonly [bigint, bigint, boolean, boolean]>,
+      }) as Promise<readonly [bigint, bigint, boolean, bigint]>,
       'RewardAggregatorFacet',
       'getRecycleCompositionPosition',
     ),
