@@ -1693,6 +1693,10 @@ driven by its own env var**:
 5. `RewardAggregatorFacet.setExpectedSourceChainIds([...])` from `REWARD_EXPECTED_SOURCE_CHAIN_IDS` — comma-separated chain ids, e.g. `8453,42161,10,137`, canonical included.
 6. `RewardCommitmentFacet.setMirrorRewardDeployment(<chainId>, <that chain's Diamond>)`, once per entry of `MIRROR_REWARD_DEPLOYMENTS` — format `chainId:0xaddr,chainId:0xaddr`, no whitespace. Until a chain is registered, the compensation-quote (kind-11) ingress is fail-closed for it (`CompQuoteMirrorEraUnset`) and zeroed-day compensation on that lane is unreachable.
 
+And one setting that is **not** optional, because it has defaults (#2909):
+
+7. `RewardCommitmentFacet.setLapseSchedule(<window>, <gap>)` — a zeroed day lapses `REWARD_LAPSE_WINDOW_SECONDS` after it is finalized (default 604800, 7 days; the contract allows 3–30 days), and manual compensation for it must be dispatched at least `REWARD_DISPATCH_CUTOFF_GAP_SECONDS` before that (default 86400, 24 hours; the contract allows 6 hours–7 days, and the window must be at least the gap plus 48 hours). Schedules are append-only versions, so the script skips the call when the version in force already carries these two values, and a rerun with the same values adds nothing. Until a schedule is set, every day finalized carries version 0: it never lapses and its compensation has no dispatch cutoff. Launch readiness refuses a canonical chain without one ("zeroed-day lapse schedule in force"). Read it back with `getCurrentLapseScheduleVersion()` and `getLapseSchedule(<version>)`.
+
 On **every reporter** (non-Base chain), one registration, driven the same way:
 
 5'. `RewardReporterFacet.setBaseRewardDeployment(<BASE_REWARD_DEPLOYMENT>)` — Base's Diamond address. Until it is set, the broadcast ingress (kind 10, the one broadcast wire since #1944) is DARK on this reporter: every broadcast is refused (`BroadcastEraUnauthenticated`) and stays a failed, re-executable CCIP message, so no day figures, day clock or arming day install until it is set. When set, the artifact also gains `baseRewardDeployment`.

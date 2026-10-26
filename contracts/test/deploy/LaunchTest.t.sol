@@ -9,6 +9,8 @@ import {ProfileFacet} from "../../src/facets/ProfileFacet.sol";
 import {OracleAdminFacet} from "../../src/facets/OracleAdminFacet.sol";
 import {OracleFacet} from "../../src/facets/OracleFacet.sol";
 import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
+import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
+import {RewardCommitmentFacet} from "../../src/facets/RewardCommitmentFacet.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {VPFITokenFacet} from "../../src/facets/VPFITokenFacet.sol";
 import {IVaipakamErrors} from "../../src/interfaces/IVaipakamErrors.sol";
@@ -1650,6 +1652,55 @@ contract LaunchTest is Test {
         assertEq(
             c[7].detail,
             "the registry files no quote under the oracle's primary key (the predominant or numeraire denominator), so every primary lookup misses"
+        );
+    }
+
+    /// @dev #2909 — off the canonical reward chain no lapse schedule is set
+    ///      here (Base's rides the broadcast), so the requirement is met as
+    ///      not applicable, and the detail names the role found.
+    function test_LapseSchedule_DoesNotApplyOffCanonical() public {
+        _configure();
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
+        assertEq(c[8].label, "zeroed-day lapse schedule in force");
+        assertTrue(c[8].checkable && c[8].met);
+        assertEq(
+            c[8].detail,
+            "does not apply: the reward role is Unconfigured, and only the canonical reward chain sets a lapse schedule"
+        );
+    }
+
+    /// @dev #2909 — a canonical chain with no schedule would finalize every
+    ///      day under version 0 (never lapses, no dispatch cutoff), which a
+    ///      later schedule cannot reach: NOT MET, and a testnet refuses.
+    function test_LapseSchedule_NotMetOnCanonicalWithoutOne() public {
+        vm.chainId(84532);
+        _configure();
+        vm.prank(admin);
+        RewardReporterFacet(diamond).setIsCanonicalRewardChain(true);
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
+        assertTrue(c[8].checkable);
+        assertFalse(c[8].met);
+        assertEq(
+            c[8].detail,
+            "no lapse schedule is set: every day finalized now would never lapse and carry no dispatch cutoff"
+        );
+        vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
+    }
+
+    /// @dev #2909 — with a schedule in force the canonical chain meets it,
+    ///      and the detail states the version and both values.
+    function test_LapseSchedule_MetOnCanonicalWithOne() public {
+        _configure();
+        vm.startPrank(admin);
+        RewardReporterFacet(diamond).setIsCanonicalRewardChain(true);
+        RewardCommitmentFacet(diamond).setLapseSchedule(7 days, 24 hours);
+        vm.stopPrank();
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
+        assertTrue(c[8].checkable && c[8].met);
+        assertEq(
+            c[8].detail,
+            "version 1: days lapse 604800s after finalizing, compensation dispatch closes 86400s before"
         );
     }
 

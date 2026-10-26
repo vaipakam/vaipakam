@@ -47,6 +47,11 @@ interface IPeerBoundMessenger {
  *        3. setRewardGraceSeconds(default 14400 unless env overrides)
  *        4. setIsCanonicalRewardChain(true on Base only)
  *        5. (Base only) setExpectedSourceChainIds(list of source chain ids)
+ *        6. (Base only) setMirrorRewardDeployment per mirror chain
+ *        7. (Base only, #2909) setLapseSchedule(window, cutoff gap) — only
+ *           when the version in force does not already carry exactly
+ *           these values. Versions are append-only, so a re-run with the
+ *           same values creates no new version.
  *
  *      Required env vars:
  *        - ADMIN_PRIVATE_KEY        : ADMIN_ROLE-holding EOA. The
@@ -65,6 +70,20 @@ interface IPeerBoundMessenger {
  *        - REWARD_EXPECTED_SOURCE_CHAIN_IDS : comma-separated EVM chain
  *                                      ids (only needed on Base). Example
  *                                      "8453,42161,10,137".
+ *        - REWARD_LAPSE_WINDOW_SECONDS : Base only, optional, default
+ *                                      604800 (7 days, design §7). How
+ *                                      long after finalization a zeroed
+ *                                      or short-compensated day lapses.
+ *                                      The facet refuses [< 3 days, > 30
+ *                                      days].
+ *        - REWARD_DISPATCH_CUTOFF_GAP_SECONDS : Base only, optional,
+ *                                      default 86400 (24 hours, design
+ *                                      §7). How long before a day's lapse
+ *                                      a manual compensation must be
+ *                                      dispatched. The facet refuses
+ *                                      [< 6 hours, > 7 days] and any pair
+ *                                      whose window is not at least this
+ *                                      gap + 48 hours.
  *        - BASE_REWARD_DEPLOYMENT   : mirror chains only (#1434 P2-w1) —
  *                                      the canonical BASE DIAMOND address,
  *                                      the era ground truth every V3
@@ -76,6 +95,13 @@ interface IPeerBoundMessenger {
  *                                      called.
  */
 contract ConfigureRewardReporter is Script {
+    /// @dev #2909 — the zeroed-day lapse schedule's deploy defaults, the
+    ///      values proposed in `Vpfi1434P2ZeroedDayMechanismsDesign.md` §7.
+    ///      The bounds are the facet's, not restated here: an out-of-range
+    ///      override reverts the simulation before anything is broadcast.
+    uint256 internal constant DEFAULT_LAPSE_WINDOW_SECONDS = 7 days;
+    uint256 internal constant DEFAULT_DISPATCH_CUTOFF_GAP_SECONDS = 24 hours;
+
     /// @dev Base chainIds (8453 mainnet, 84532 sepolia) are canonical.
     function _isCanonicalRewardChain() internal view returns (bool) {
         uint256 chainId = block.chainid;
@@ -184,9 +210,9 @@ contract ConfigureRewardReporter is Script {
         // name. Resolved OUTSIDE the broadcast so a missing value warns
         // before any tx lands. Without it the V3 (kind-10) ingress is
         // deliberately DARK on this mirror (fail-closed,
-        // `BroadcastEraUnauthenticated`; deliveries stay re-executable) —
-        // day figures still flow on the kind-5 wire, but no day clock
-        // installs, so none of the P2 lapse machinery can ever arm here.
+        // `BroadcastEraUnauthenticated`; deliveries stay re-executable).
+        // Kind 10 is the only broadcast wire (#1944), so until it is set no
+        // day figures or day clocks reach this mirror at all.
         // Canonical chains never receive broadcasts and need no value.
         address baseRewardDeployment =
             vm.envOr("BASE_REWARD_DEPLOYMENT", address(0));
@@ -194,8 +220,8 @@ contract ConfigureRewardReporter is Script {
             console.log(
                 "WARNING: BASE_REWARD_DEPLOYMENT unset - the V3 (kind-10) "
                 "broadcast ingress stays DARK on this mirror until "
-                "setBaseRewardDeployment is called (day clocks will not "
-                "install; the P2 lapse machinery cannot arm)."
+                "setBaseRewardDeployment is called (no broadcast day "
+                "applies here until then)."
             );
         }
 
@@ -213,6 +239,29 @@ contract ConfigureRewardReporter is Script {
                 "(e.g. 8453 / 84532) on a mirror. Zero would configure this "
                 "Diamond into the DETACHED role and stop reward claims."
             );
+        }
+
+        // #2909 — the zeroed-day lapse schedule (canonical only: it is
+        // authoritative on Base and rides the kind-10 broadcast to every
+        // mirror). A day freezes the version in force when it finalizes and
+        // keeps it for good, and version 0 means "never lapses, no dispatch
+        // cutoff", so a chain left without one would hold every
+        // uncompensated zeroed day open forever and enforce no R3 cutoff.
+        // Resolved here so the values are logged before anything lands.
+        uint64 lapseWindow;
+        uint64 dispatchCutoffGap;
+        if (canonical) {
+            lapseWindow = SafeCast.toUint64(
+                vm.envOr("REWARD_LAPSE_WINDOW_SECONDS", DEFAULT_LAPSE_WINDOW_SECONDS)
+            );
+            dispatchCutoffGap = SafeCast.toUint64(
+                vm.envOr(
+                    "REWARD_DISPATCH_CUTOFF_GAP_SECONDS",
+                    DEFAULT_DISPATCH_CUTOFF_GAP_SECONDS
+                )
+            );
+            console.log("Lapse window:  ", uint256(lapseWindow));
+            console.log("Cutoff gap:    ", uint256(dispatchCutoffGap));
         }
 
         vm.startBroadcast(deployerKey);
@@ -261,6 +310,10 @@ contract ConfigureRewardReporter is Script {
             } else {
                 _applyMirrorDeployments(diamond, mirrorCsv);
             }
+
+            // After setIsCanonicalRewardChain above: the setter is
+            // canonical-only.
+            _applyLapseSchedule(diamond, lapseWindow, dispatchCutoffGap);
         }
         vm.stopBroadcast();
 
@@ -282,6 +335,29 @@ contract ConfigureRewardReporter is Script {
         // custody activation ceremony, which is NOT run here: it needs the
         // manual pause and the operator's per-row answers.
         console.log("Next (#1566 slice 4 PR B): once the holder is bound, run the reward custody activation ceremony under the manual pause -- script/ActivateRewardCustody.s.sol (run()/stage() then record()); until it runs, a Canonical chain's reward claims and remittances are refused (delivered bound = received - paid = 0).");
+    }
+
+    /// @dev #2909 — make `(window, gap)` the schedule in force. A new
+    ///      version is created only when the current one differs (or none
+    ///      exists): versions are append-only and each finalized day keeps
+    ///      the one it froze, so re-running configure with the same values
+    ///      must not mint a duplicate version.
+    function _applyLapseSchedule(
+        address diamond,
+        uint64 window,
+        uint64 gap
+    ) internal {
+        RewardCommitmentFacet rc = RewardCommitmentFacet(diamond);
+        uint32 current = rc.getCurrentLapseScheduleVersion();
+        if (current != 0) {
+            (uint64 curWindow, uint64 curGap) = rc.getLapseSchedule(current);
+            if (curWindow == window && curGap == gap) {
+                console.log("Lapse schedule already in force, version", uint256(current));
+                return;
+            }
+        }
+        rc.setLapseSchedule(window, gap);
+        console.log("Lapse schedule set, version", uint256(current) + 1);
     }
 
     /// @dev #1636 r3 — parse "chainId:0xaddr,chainId:0xaddr" and register
