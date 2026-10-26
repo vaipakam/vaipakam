@@ -14,7 +14,7 @@ import {
   toFunctionSelector,
   type Abi,
 } from 'viem';
-import { describeFailure, redactAndBound, summarizeFailure } from './errorDescription';
+import { describeFailure, redactAndBound, redactedError, redactSecrets, summarizeFailure } from './errorDescription';
 
 /** What viem hands a catch block when an RPC rejects the request. */
 function viemHttpError(): Error {
@@ -212,5 +212,109 @@ describe('summarizeFailure', () => {
     const e = Object.assign(new Error('x'), { shortMessage: 'a'.repeat(500) });
     expect(summarizeFailure(e)).toHaveLength(200);
     expect(summarizeFailure(e, 10)).toHaveLength(10);
+  });
+});
+
+describe('redactSecrets', () => {
+  it('removes a URL whole, with or without its scheme', () => {
+    expect(redactSecrets('URL: https://base.example.com/v2/KEY1 then x')).toBe('URL: <redacted url> then x');
+    expect(redactSecrets('posting to KEY2.quiknode.pro/abc/ failed')).toBe('posting to <redacted url> failed');
+    expect(redactSecrets('wss://node.example/ws/KEY3')).not.toContain('KEY3');
+  });
+
+  it('removes key-like field values and bearer tokens outside a URL', () => {
+    const said = redactSecrets('apikey=K1 token: "K2" Authorization: Bearer K3 x-api-key=K4');
+    for (const k of ['K1', 'K2', 'K3', 'K4']) expect(said).not.toContain(k);
+  });
+
+  it('removes a host with a subdomain standing alone, as a DNS failure names it', () => {
+    expect(redactSecrets('getaddrinfo ENOTFOUND KEY2.quiknode.pro')).toBe('getaddrinfo ENOTFOUND <redacted host>');
+    expect(redactSecrets('connect ETIMEDOUT KEY2.quiknode.pro:443.')).toBe('connect ETIMEDOUT <redacted host>.');
+    expect(redactSecrets('to user@KEY5.rpc.example failed')).not.toContain('KEY5');
+  });
+
+  it('keeps a two-label name, a stack position and a name inside a path', () => {
+    for (const kept of [
+      'Object.keys is not a function',
+      'D1_ERROR: no such column: main.loans.grace_end',
+      '    at fetch (chunk.abc123.js:12:3)',
+      '    at run (/srv/app/node.modules.cache/x.js:1:2)',
+      'connect ECONNREFUSED 127.0.0.1:8545',
+    ]) {
+      expect(redactSecrets(kept)).toBe(kept);
+    }
+  });
+
+  it('removes a quoted credential value through its closing quote', () => {
+    expect(redactSecrets('{"password":"alpha&bravo charlie","n":1}')).toBe('{"password":"<redacted>","n":1}');
+    expect(redactSecrets(`secret: 'a, b; c' next`)).toBe(`secret: '<redacted>' next`);
+    expect(redactSecrets('{"token": "x\\"y z", "ok":true}')).toBe('{"token": "<redacted>", "ok":true}');
+    // A value cut off before its closing quote is removed to the end.
+    expect(redactSecrets('{"apiKey":"half of a k')).toBe('{"apiKey":"<redacted>"');
+  });
+
+  it('runs in linear time on long runs of name characters', () => {
+    // Each of these took 15-30 s under a rule that restarted at every word
+    // boundary; a Worker would have spent its CPU limit on one error.
+    for (const s of ['a.'.repeat(100_000), 'a-'.repeat(100_000), 'ab.cd.'.repeat(30_000)]) {
+      const t = performance.now();
+      redactSecrets(s);
+      expect(performance.now() - t).toBeLessThan(1_000);
+    }
+  });
+
+  it('is idempotent', () => {
+    const once = redactSecrets('apikey=K1 {"token":"a b"} KEY2.quiknode.pro https://x.example/K');
+    expect(redactSecrets(once)).toBe(once);
+  });
+
+  it('removes a Telegram bot token', () => {
+    expect(redactSecrets('bot 123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw0 failed')).not.toContain('AAHdq');
+  });
+
+  it('keeps hashes, ids and SQL errors an operator reads', () => {
+    const hash = `0x${'ab'.repeat(32)}`;
+    expect(redactSecrets(`tx ${hash} reverted`)).toBe(`tx ${hash} reverted`);
+    expect(redactSecrets('D1_ERROR: no such column: loans.grace_end')).toBe('D1_ERROR: no such column: loans.grace_end');
+  });
+});
+
+describe('redactedError', () => {
+  it('keeps the message and the cause chain, without the credential', () => {
+    const err = new Error('read failed', { cause: viemHttpError() });
+    const said = redactedError(err);
+    expect(said).toContain('Error: read failed ← HttpRequestError: HTTP request failed.');
+    expect(said).not.toContain('SUPERSECRETAPIKEY');
+    expect(said).not.toContain('base-sepolia.example.com');
+  });
+
+  it('keeps a DNS failure under a real viem error without its host', () => {
+    const dns = Object.assign(new Error('getaddrinfo ENOTFOUND KEY2.quiknode.pro'), {
+      code: 'ENOTFOUND',
+      hostname: 'KEY2.quiknode.pro',
+    });
+    const err = new HttpRequestError({ url: 'https://KEY2.quiknode.pro/TOKEN9/', cause: dns });
+    const said = redactedError(err);
+    expect(said).toContain('getaddrinfo ENOTFOUND <redacted host>');
+    expect(said).not.toContain('KEY2');
+    expect(said).not.toContain('TOKEN9');
+  });
+
+  it('keeps a bounded number of stack frames', () => {
+    const said = redactedError(new Error('boom'));
+    const frames = said.split('\n').filter((l) => /^\s*at\s/.test(l));
+    expect(frames.length).toBeGreaterThan(0);
+    expect(frames.length).toBeLessThanOrEqual(8);
+  });
+
+  it('describes a non-Error by its type, never by its fields', () => {
+    expect(redactedError({ url: 'https://x.example/KEY' })).toBe('a thrown object (not an Error)');
+    expect(redactedError('https://x.example/KEY failed')).toBe('<redacted url> failed');
+  });
+
+  it('stops on a cyclic cause and is bounded', () => {
+    const a = new Error('a'.repeat(5_000));
+    (a as { cause?: unknown }).cause = a;
+    expect(redactedError(a).length).toBeLessThanOrEqual(2_000);
   });
 });

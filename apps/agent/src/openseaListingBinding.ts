@@ -40,6 +40,7 @@ import { PrepayListingFacetABI } from '@vaipakam/contracts/abis';
 import { SEAPORT_VERIFY_ABI } from '@vaipakam/lib/prepayOrderShape';
 import { createPublicClient, http, type Address, type Hex } from 'viem';
 import { getRpcChains, type Env } from './env';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
@@ -287,7 +288,7 @@ export async function bindListingToProtocol(
     if (!(await chain.isOrderValid(executor, orderHash))) return refuse(400, 'order-not-live');
     return { kind: 'bound', seaport, orderHash };
   } catch (err) {
-    console.error('[opensea/listing] chain check failed; refusing the post', err);
+    console.error('[opensea/listing] chain check failed; refusing the post', redactedError(err));
     return refuse(503, 'listing-check-unavailable');
   }
 }

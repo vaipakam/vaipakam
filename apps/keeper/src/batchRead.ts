@@ -1,6 +1,7 @@
 import { createPublicClient } from 'viem';
 import { MULTICALL3_ADDRESS } from './multicall3';
 import { walkFrom } from './rotate';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 /** Result shape viem's `multicall` returns under `allowFailure: true`. */
 export type BatchResult = { status: 'success' | 'failure'; result?: unknown; error?: unknown };
@@ -71,7 +72,7 @@ export async function batchedRead(
     console.error(
       `[keeper] ${label} multicall failed, ${
         onAggregateFailure === 'serial' ? 'falling back to serial' : 'marking the chunk unread'
-      }: ${String(err).slice(0, 200)}`,
+      }: ${redactedError(err, { stack: false }).slice(0, 200)}`,
     );
     return degrade(err);
   }
@@ -256,7 +257,7 @@ export async function settleBy<T>(work: Promise<T>, deadline: number, onCut: () 
 export class PastRunDeadline extends Error {}
 
 /** The client READ methods a pass uses, each refused past the deadline. */
-const DEADLINE_GUARDED = new Set(['readContract', 'multicall', 'simulateContract', 'call', 'getLogs']);
+const DEADLINE_GUARDED = new Set(['readContract', 'multicall', 'simulateContract', 'call', 'getLogs', 'getCode', 'getBytecode', 'getStorageAt']);
 
 /**
  * `client` with every READ refused once `deadline` has passed — the ONE place

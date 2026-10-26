@@ -123,10 +123,9 @@ __lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #       Deploys apps/indexer (D1 indexer + read-only API) via
 #       wrangler, then applies any pending D1 migrations to the shared
 #       `vaipakam-warm` database. The indexer is the only Worker
-#       that owns migrations — keeper + agent are stateless. Seeds
-#       indexer_cursor at safe head if `--seed-cursor` is passed
-#       alongside this phase (skipped by default — mainnet redeploys
-#       almost always preserve the diamond and its prior cursor).
+#       that owns migrations — keeper + agent are stateless. It writes
+#       no cursor: the indexer adopts a fresh Diamond as a new epoch
+#       and scans from its deploy block (#2763).
 #
 #   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase cf-agent
 #       Deploys apps/agent (notifications + frames + agent surfaces)
@@ -210,6 +209,8 @@ CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/load-env.sh"
 # shellcheck source=lib/sentinel-reads.sh
 source "$SCRIPT_DIR/lib/sentinel-reads.sh"
+# The one Worker RPC-secret check (#2763, #1492).
+source "$SCRIPT_DIR/lib/worker-secrets.sh"
 # shellcheck source=lib/ccip-lanes.sh
 source "$SCRIPT_DIR/lib/ccip-lanes.sh"
 # shellcheck source=lib/artifact-code-check.sh
@@ -1930,56 +1931,14 @@ phase_cf_www() {
   mark_phase_done "cf-www"
 }
 
-# ── Worker RPC-secret helper ──────────────────────────────────────────
-# Fans the chain-specific RPC-secret presence check across the three
-# Workers (each Worker has its own Cloudflare secret store). Hard-fails
-# the phase if missing — the silent-drop failure mode (cron filters the
-# chain out of round-robin so D1 stays empty for ~50 min before the
-# operator notices) was exactly the May-2026 rehearsal pain point that
-# made this a hard gate.
+# ── Worker RPC-secret check ───────────────────────────────────────────
+# `verify_rpc_secret_on_worker` comes from lib/worker-secrets.sh (#2763,
+# #1492): it reads where each Worker's wrangler.jsonc binds the chain's
+# RPC secret (the account's Secrets Store, for every Stage 3 Worker) and
+# hard-fails the phase when that entry is missing — the silent-drop mode
+# (the Worker drops the chain from its round-robin, D1 stays empty) the
+# May-2026 rehearsal hit.
 
-verify_rpc_secret_on_worker() {
-  local worker_dir="$1"
-  local worker_name="$2"
-  local secret_name="$3"
-  local chain_id="$4"
-
-  local present=$(
-    cd "$worker_dir" && pnpm exec wrangler secret list 2>/dev/null \
-      | grep -c "\"$secret_name\"" \
-      || echo 0
-  )
-  if [ "$present" = "0" ]; then
-    echo "  ✗ FAIL: $secret_name is NOT set on $worker_name."
-    echo
-    echo "  The Worker's chain-config filter drops any chain whose RPC binding"
-    echo "  is empty, so chainId=$chain_id will silently never be queried."
-    echo "  Set the secret before re-running this phase:"
-    echo
-    echo "    cd $worker_dir"
-    echo "    echo -n '<your-paid-rpc-url>' | pnpm exec wrangler secret put $secret_name"
-    echo
-    echo "  Per CLAUDE.md mainnet hot-key policy, the RPC URL must carry"
-    echo "  an API key from a paid tier (Alchemy / Infura / QuickNode /"
-    echo "  DRPC) and live ONLY as a wrangler secret — never in the repo."
-    return 1
-  fi
-  echo "  ✓ $secret_name is set on $worker_name"
-  return 0
-}
-
-# Map mainnet chain-slug → expected RPC secret name. Same secret name
-# on each Worker (each Worker has its own copy in its own Cloudflare
-# secret store; the name is shared but the values are scoped per Worker).
-case "$CHAIN_SLUG" in
-  ethereum)      EXPECTED_RPC_SECRET="RPC_ETH" ;;
-  base)          EXPECTED_RPC_SECRET="RPC_BASE" ;;
-  arbitrum)      EXPECTED_RPC_SECRET="RPC_ARB" ;;
-  optimism)      EXPECTED_RPC_SECRET="RPC_OP" ;;
-  bnb)           EXPECTED_RPC_SECRET="RPC_BNB" ;;
-  polygon)       EXPECTED_RPC_SECRET="RPC_POLYGON" ;;
-  *)             EXPECTED_RPC_SECRET="" ;;
-esac
 
 # ── Phase: cf-keeper ──────────────────────────────────────────────────
 # Deploys apps/keeper — the autonomous HF-liquidation Worker. Stateless:
@@ -2012,12 +1971,7 @@ phase_cf_keeper() {
   # preserves the absence and arms liquidation on defaults.
   ( cd "$KEEPER_DIR" && pnpm run deploy )
 
-  if [ -n "$EXPECTED_RPC_SECRET" ]; then
-    echo
-    echo "[b] RPC-secret check for chainId=$CHAIN_ID"
-    verify_rpc_secret_on_worker "$KEEPER_DIR" "vaipakam-keeper" \
-      "$EXPECTED_RPC_SECRET" "$CHAIN_ID" || exit 1
-  fi
+  check_chain_rpc_secret "$KEEPER_DIR" "vaipakam-keeper" "$CHAIN_SLUG" "$CHAIN_ID" || exit 1
 
   mark_phase_done "cf-keeper"
 }
@@ -2036,15 +1990,13 @@ phase_cf_keeper() {
 #       run this phase FIRST.
 #   [b] RPC-secret check for this chain
 #
-# Note on cursor seeding: deploy-chain.sh and deploy-testnet.sh seed
-# `indexer_cursor` at safe head under `--fresh` to skip the empty
-# backfill window. On MAINNET we deliberately DO NOT auto-seed —
-# mainnet redeploys virtually always preserve the diamond and its
-# prior cursor, so re-seeding would lose indexed history. If a
-# mainnet operator ever genuinely needs to reset the cursor (e.g.
-# migration to a brand-new diamond, full-history reindex), do it
-# manually via `pnpm exec wrangler d1 execute vaipakam-warm
-# --remote --command "UPDATE indexer_cursor SET last_block = ..."`.
+# Note on the indexer cursor: no deploy script writes it (#2763). A fresh
+# Diamond is a new indexer epoch the indexer owns
+# (apps/indexer/src/deploymentEpoch.ts): its first pass on the new
+# Diamond resets the chain's rows and restarts the cursor from the
+# deploy block, so nothing emitted after the deploy is skipped. Do not
+# hand-edit `indexer_cursor` either: a cursor moved past blocks the
+# indexer has not read orphans their events.
 
 phase_cf_indexer() {
   if [ ! -d "$INDEXER_DIR" ]; then
@@ -2070,12 +2022,7 @@ phase_cf_indexer() {
   # holds scheduled ingest on any route that publishes without migrating.
   ( cd "$INDEXER_DIR" && pnpm run deploy )
 
-  if [ -n "$EXPECTED_RPC_SECRET" ]; then
-    echo
-    echo "[b] RPC-secret check for chainId=$CHAIN_ID"
-    verify_rpc_secret_on_worker "$INDEXER_DIR" "vaipakam-indexer" \
-      "$EXPECTED_RPC_SECRET" "$CHAIN_ID" || exit 1
-  fi
+  check_chain_rpc_secret "$INDEXER_DIR" "vaipakam-indexer" "$CHAIN_SLUG" "$CHAIN_ID" || exit 1
 
   mark_phase_done "cf-indexer"
 }
@@ -2111,12 +2058,7 @@ phase_cf_agent() {
   # this one was documented as fixed without being fixed.
   ( cd "$AGENT_DIR" && pnpm run deploy )
 
-  if [ -n "$EXPECTED_RPC_SECRET" ]; then
-    echo
-    echo "[b] RPC-secret check for chainId=$CHAIN_ID"
-    verify_rpc_secret_on_worker "$AGENT_DIR" "vaipakam-agent" \
-      "$EXPECTED_RPC_SECRET" "$CHAIN_ID" || exit 1
-  fi
+  check_chain_rpc_secret "$AGENT_DIR" "vaipakam-agent" "$CHAIN_SLUG" "$CHAIN_ID" || exit 1
 
   mark_phase_done "cf-agent"
 }

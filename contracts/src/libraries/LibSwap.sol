@@ -7,6 +7,7 @@ import {ISwapAdapter} from "../interfaces/ISwapAdapter.sol";
 import {ISwapAttemptHost} from "../interfaces/ISwapAttemptHost.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /**
  * @title LibSwap — Phase 7a liquidation-swap failover driver.
@@ -474,16 +475,17 @@ library LibSwap {
     ///         the retry path is {swapWithFailover} (`triggerLiquidation`)
     ///         which handles soft-failure cleanly.
     ///
-    ///         Per-leg `minOutputAmount = 0` (no per-leg slippage guard) —
-    ///         the *total* output is checked against the caller's
-    ///         `minOutputAmount` at the end, which is the only safe
-    ///         per-leg-asymmetry-tolerant check. Keeper-side: only use
-    ///         split routes for aggregator adapters (0x / 1inch) whose
-    ///         calldata bakes slippage tolerance into the route itself;
-    ///         raw V3 / Balancer adapters offer no slippage protection
-    ///         when called with `minOutputAmount = 0` and shouldn't be
-    ///         split-route legs without a future LibSwap hardening (a
-    ///         balance-delta check per leg).
+    ///         #2724 — every leg carries its OWN floor: the caller's floor
+    ///         scaled to the leg's share of the input
+    ///         (`minOutputAmount × splitAmount / inputAmount`, rounded up),
+    ///         measured at `recipient` like any other attempt. A total-only
+    ///         floor let one leg's calldata send its output elsewhere while
+    ///         an honest leg carried the whole floor; with a floor per leg,
+    ///         no leg can deliver less than the floor rate on its own
+    ///         share, so the split pays the lender and borrower at least
+    ///         what a single route at the floor would have. The total is
+    ///         still checked at the end (the rounded-up leg floors already
+    ///         cover it).
     ///
     ///         Approvals: exact-scope per-leg, zeroed before and after
     ///         each call. Each leg must spend exactly its `splitAmount` and
@@ -495,7 +497,8 @@ library LibSwap {
     /// @param inputAmount     Total exact input — `sum(splits[i].splitAmount)`
     ///                        must equal this or the call reverts.
     /// @param minOutputAmount Oracle-derived slippage floor on the *total*
-    ///                        output. Per-leg bounds are 0 (see dev note).
+    ///                        output; each leg is floored at its share
+    ///                        of it (see dev note).
     /// @param recipient       Destination for realized `outputToken` from
     ///                        every leg.
     /// @param splits          The split spec; empty list reverts
@@ -537,11 +540,11 @@ library LibSwap {
         // every leg — split settlement is all-or-nothing. The leg body is its
         // own frame ({_splitLeg}): this function is inlined into a
         // stack-tight facet, so the leg terms travel as one memory pointer
-        // whose `inputAmount` each leg sets to its own `splitAmount`, and
-        // whose per-leg floor stays 0 (only the total is floored, below).
+        // whose `inputAmount` and `minOutputAmount` each leg sets to its own
+        // share (#2724).
         Sale memory leg = Sale(loanId, inputToken, outputToken, 0, 0, recipient, true);
         for (uint256 i; i < n; ++i) {
-            totalOutput += _splitLeg(s, leg, splits[i]);
+            totalOutput += _splitLeg(s, leg, splits[i], inputAmount, minOutputAmount);
         }
 
         if (totalOutput < minOutputAmount) {
@@ -552,28 +555,30 @@ library LibSwap {
     /// @dev One leg of {swapWithSplit}. A leg revert MUST bubble, and
     ///      Solidity unwinds the earlier successful legs in the same
     ///      transaction, leaving `recipient` (and approvals) clean on the
-    ///      failure path. Per-leg `minOutputAmount` is 0 (see the
-    ///      {swapWithSplit} dev note); the leg is held to the exact-input
-    ///      delivery rule on its own `splitAmount` (#2472).
+    ///      failure path. The leg's floor is its share of the split's floor,
+    ///      rounded up (#2724, see the {swapWithSplit} dev note), and the leg
+    ///      is held to the exact-input delivery rule on its own `splitAmount`
+    ///      (#2472).
     /// @return out_ The leg's output measured at the recipient (never less
     ///              than it reported); 0 for a zero-amount leg, which
     ///              no-ops cleanly.
     function _splitLeg(
         LibVaipakam.Storage storage s,
         Sale memory leg,
-        SplitCall calldata call_
+        SplitCall calldata call_,
+        uint256 totalInput,
+        uint256 totalFloor
     ) private returns (uint256 out_) {
         uint256 amount = call_.splitAmount;
         if (amount == 0) return 0;
         uint256 idx = call_.adapterIdx;
         address adapter = s.swapAdapters[idx];
-        // #633 — split liquidation is atomic + its entry point is
-        // permissionless, and each leg carries minOutput=0 (only the
-        // *total* is floored), so a governance-disabled venue could
-        // otherwise be called here with an unprotected per-leg output.
-        // Reject it on-chain; reverting unwinds the earlier legs.
+        // #633 — split liquidation is atomic and its entry point is
+        // permissionless, so a governance-disabled venue is refused here
+        // as it is on the failover route; reverting unwinds the earlier legs.
         if (s.swapAdapterDisabled[adapter]) revert SwapVenuePaused();
         leg.inputAmount = amount;
+        leg.minOutputAmount = Math.mulDiv(totalFloor, amount, totalInput, Math.Rounding.Ceil);
         (out_, ) = _run(leg, idx, adapter, call_.data);
         emit SwapAdapterAttempted(leg.loanId, idx, adapter, true);
         emit SwapAdapterSucceeded(leg.loanId, idx, adapter, out_);

@@ -12,6 +12,7 @@ import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {LibNumeraireValueRead} from "../libraries/LibNumeraireValueRead.sol";
 import {LibOfferBounds} from "../libraries/LibOfferBounds.sol";
+import {LibOfferShape} from "../libraries/LibOfferShape.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -282,13 +283,11 @@ contract OfferCreateFacet is
     error OfferExpiryAboveCap(uint64 provided, uint256 cap);
 
     // ── #125 — Fill-mode validation errors ──────────────────────────────
-    /// `params.fillMode == Aon && params.amount != params.amountMax`.
-    /// An all-or-nothing offer with a non-trivial amount range is
-    /// structurally meaningless — only the full fill is ever reachable.
-    /// Forcing single-value at create lets the match-time AON gate be a
-    /// simple equality check without threading the AON-required-amount
-    /// through the matcher midpoint logic.
-    error AonRequiresSingleValueAmount();
+    // The offer-shape errors (amount, rate and collateral ranges, the rental
+    // and all-or-nothing single-value rules) are declared in {LibOfferShape},
+    // which both this facet and `OfferMutateFacet` check through (#2749). An
+    // error's selector is its name and parameter types, so each kept its
+    // selector when it moved.
     /// `params.fillMode == Ioc && params.expiresAt == 0`. IOC's defining
     /// knob is the time window; an IOC without an `expiresAt` is just a
     /// Partial offer with extra metadata. Reject loud rather than let
@@ -296,27 +295,6 @@ contract OfferCreateFacet is
     error IocRequiresExpiry();
 
     // ── Range Orders Phase 1 errors (docs/RangeOffersDesign.md §5.5) ─
-    /// Range invariant: `amountMin > amountMax`.
-    error InvalidAmountRange();
-    /// Range invariant: `interestRateBpsMin > interestRateBpsMax`.
-    error InvalidRateRange();
-    /// Range invariant: `interestRateBpsMax > MAX_INTEREST_BPS`.
-    error InterestRateAboveCeiling();
-    /// Issue #164 — borrower-side collateral range invariant:
-    /// `collateralAmount > collateralAmountMax`.
-    error InvalidCollateralAmountRange();
-    /// Issue #164 — lender offers must stay single-value on collateral:
-    /// `collateralAmountMax != 0 && collateralAmountMax != collateralAmount`
-    /// on a Lender offer. The lender's `collateralAmount` already
-    /// expresses their derived requirement; a max wouldn't add meaning.
-    error LenderCollateralRangeNotAllowed();
-    /// #1281 item 021 — an NFT-rental offer (`assetType` ERC721 / ERC1155)
-    /// must stay single-value on amount: `amount != amountMax` is refused.
-    /// A rental's `amount` is its DAILY FEE, and every rental path prices
-    /// the prepayment from `amount` (create, accept, cancel, edit, the
-    /// obligation handover) while the loan runs on the matched or accepted
-    /// fee, so a range lets the two differ and leaves the prepayment short.
-    error RentalAmountRangeNotAllowed();
     /// #902 — an ERC-1155 rental offer's `quantity` exceeds what the lender's
     /// vault can record for one rental (a `uint128`, the width of a rental
     /// row's quantity). Refused at create so no standing offer vaults units
@@ -324,21 +302,6 @@ contract OfferCreateFacet is
     error RentalQuantityAboveVaultRange();
     // ── Canonical Limit-Order Phase 2 errors (#183) — strict
     //    non-zero invariants replacing the dropped auto-collapse.
-    /// `params.amount == 0`. Every offer must have a positive minimum.
-    error AmountMustBePositive();
-    /// `params.amountMax == 0`. Under Phase 2 the canonical mapping
-    /// always carries an explicit max (lender's `lendingAmount`,
-    /// borrower's derived ceiling). The Phase 1 auto-collapse fallback
-    /// is gone — callers shipping 0 here get fail-loud.
-    error AmountMaxMustBePositive();
-    /// `params.collateralAmountMax == 0`. Strict requirement on the
-    /// collateral upper bound.
-    error CollateralAmountMaxMustBePositive();
-    /// `params.collateralAmount == 0`. Strict requirement on the
-    /// collateral lower bound — both lender (single-value required
-    /// collateral) and borrower (derived floor commit) need a
-    /// positive value.
-    error CollateralMustBePositive();
     /// Lender offer's `collateralAmount` is below the system-derived
     /// minimum needed to keep HF >= 1.5e18 at `amountMax` (worst case).
     /// Surfaces with `(provided, floor)` so the UI can show the gap.
@@ -1633,13 +1596,13 @@ contract OfferCreateFacet is
         //    slots are marked retired. `partialFillEnabled` keeps its runtime role
         //    in `OfferMatchFacet.matchOffers` (matching is the gated
         //    operation, not create).
-        if (params.amount == 0) revert AmountMustBePositive();
-        if (params.amountMax == 0) revert AmountMaxMustBePositive();
-        if (params.amountMax < params.amount) revert InvalidAmountRange();
-        if (
-            params.assetType != LibVaipakam.AssetType.ERC20 &&
-            params.amountMax != params.amount
-        ) revert RentalAmountRangeNotAllowed();
+        // #2749 — the principal-range rules (positive floor and ceiling,
+        // ordering, a rental's single-value daily fee, and an all-or-nothing
+        // offer's single value) live in {LibOfferShape}, the one definition
+        // `OfferMutateFacet` applies to every edit too.
+        LibOfferShape.assertAmount(
+            params.assetType, params.fillMode, params.amount, params.amountMax
+        );
         if (
             params.assetType == LibVaipakam.AssetType.ERC1155 &&
             params.quantity > type(uint128).max
@@ -1655,10 +1618,7 @@ contract OfferCreateFacet is
         // a zero rate is structurally meaningful. The only rate
         // checks that stay load-bearing are the range ordering and the
         // upper-sanity ceiling (`<= MAX_INTEREST_BPS`).
-        if (params.interestRateBpsMax < params.interestRateBps) revert InvalidRateRange();
-        if (params.interestRateBpsMax > LibVaipakam.MAX_INTEREST_BPS) {
-            revert InterestRateAboveCeiling();
-        }
+        LibOfferShape.assertRate(params.interestRateBps, params.interestRateBpsMax);
         offer.amountMax = params.amountMax;
         offer.interestRateBpsMax = params.interestRateBpsMax;
         // #400 — NOTE: the rate a human creator types is BINDING and is NOT
@@ -1725,11 +1685,9 @@ contract OfferCreateFacet is
         // shared with #195's GTT lazy-expiry gate (`isOfferExpired`
         // fires at every accept / match read), so we don't add a
         // separate runtime path here.
-        if (params.fillMode == LibVaipakam.FillMode.Aon) {
-            if (params.amount != params.amountMax) {
-                revert AonRequiresSingleValueAmount();
-            }
-        } else if (params.fillMode == LibVaipakam.FillMode.Ioc) {
+        // (The AON single-value rule is checked with the rest of the
+        // principal range in {LibOfferShape.assertAmount} above.)
+        if (params.fillMode == LibVaipakam.FillMode.Ioc) {
             if (params.expiresAt == 0) revert IocRequiresExpiry();
         }
         if (params.fillMode != LibVaipakam.FillMode.Partial) {
@@ -1842,45 +1800,25 @@ contract OfferCreateFacet is
         //    The `rangeCollateralEnabled` create-time kill-switch is
         //    removed (every Phase 2 borrower offer would be blocked
         //    under OFF since collateral is canonically ranged).
-        // #183 — `collateralAmount > 0` and `collateralAmountMax > 0`
-        // enforced ONLY for true ERC-20 LOANS (both legs ERC-20) AND
-        // not the lender-sale-vehicle / no-collateral pattern. Three
-        // cases get a pass:
-        //   1. NFT collateral (ERC721 / ERC1155) — the lock is the
-        //      `collateralTokenId` / `(tokenId, quantity)` pair, not
-        //      an "amount"; `collateralAmount` is structurally unused.
-        //   2. NFT-rental offers (`assetType` is ERC721 / ERC1155) —
-        //      the rental fee (`amount × durationDays`) IS the
-        //      economic commitment; collateral is optional.
-        //   3. Lender sale-vehicle / no-collateral lender offers
-        //      shipped as `collateralAmount == 0 == collateralAmountMax`
-        //      (BOTH zero, explicit). The actual collateral on these
-        //      flows comes from a linked loan via
-        //      `s.saleOfferToLoanId[offerId]` (read inline at accept
-        //      time, see OfferAcceptFacet `_calculateTransactionValueNumeraire`
-        //      and the EarlyWithdrawal sale-completion path). Mixed
-        //      shapes (one zero, the other positive) still revert.
-        // ERC-20 lending against ERC-20 collateral with at least one
-        // non-zero collateral field is the only shape where the auto-
-        // collapse fallback could mask a real silent-zero bug, so
-        // that's the only shape we strictly enforce.
-        if (
-            params.assetType == LibVaipakam.AssetType.ERC20
-            && params.collateralAssetType == LibVaipakam.AssetType.ERC20
-            && !(params.collateralAmount == 0 && params.collateralAmountMax == 0)
-        ) {
-            if (params.collateralAmount == 0) revert CollateralMustBePositive();
-            if (params.collateralAmountMax == 0) revert CollateralAmountMaxMustBePositive();
-        }
-        if (params.collateralAmountMax < params.collateralAmount) {
-            revert InvalidCollateralAmountRange();
-        }
-        if (
-            params.offerType == LibVaipakam.OfferType.Lender
-            && params.collateralAmountMax != params.collateralAmount
-        ) {
-            revert LenderCollateralRangeNotAllowed();
-        }
+        // #183 / #164 / #2729 — the collateral-range rules live in
+        // {LibOfferShape.assertCollateral}, shared with every mutation. An
+        // ERC-20 loan against ERC-20 collateral must post a positive floor and
+        // ceiling; the ONLY exception is the protocol's own lender-sale vehicle
+        // (`saleVehicleCreate`, set by `EarlyWithdrawalFacet` around its
+        // internal create), whose collateral lives on the linked live loan.
+        // Keyed on who is creating, not on the offer's shape: a shape-keyed
+        // exception let any creator post zero collateral, and against illiquid
+        // collateral nothing else refused it. NFT collateral (locked by token
+        // id / quantity) and NFT rentals (committed by the prepaid fee) carry
+        // no amount rule.
+        LibOfferShape.assertCollateral(
+            params.offerType,
+            params.assetType,
+            params.collateralAssetType,
+            params.collateralAmount,
+            params.collateralAmountMax,
+            LibVaipakam.storageSlot().saleVehicleCreate
+        );
         // Canonical Limit-Order Phase 2 (#183) — the Phase 1 #169
         // SSTORE-skip optimisation is retired. Under the strict
         // invariant `collateralAmountMax >= collateralAmount > 0`,

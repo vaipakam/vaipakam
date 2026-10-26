@@ -1022,34 +1022,47 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     }
 
     /// @notice #638 — count the LIVE secondary price feeds (Tellor / API3 /
-    ///         DIA) for `asset`: configured, fresh, and reporting a non-zero
-    ///         value — i.e. NOT `Unavailable` — regardless of whether they
-    ///         currently agree with Chainlink. Returns 0-3.
+    ///         DIA) for `asset` — configured, fresh, and reporting a non-zero
+    ///         value, i.e. NOT `Unavailable` — split by whether each agrees
+    ///         with Chainlink. `agreeing + disagreeing` is the live count;
+    ///         each is 0-3.
     /// @dev    Reuses the exact per-source probes the Soft-2-of-N quorum uses,
-    ///         so "live" here means precisely what the quorum treats as a
-    ///         contributing feed. This is a READ-ONLY helper consumed ONLY by
-    ///         the treasury backstop's opt-in oracle-coverage gate (#638); it
-    ///         does NOT change `getAssetPrice` / `checkLiquidity` or any general
-    ///         pricing / liquid-classification path — the general protocol stays
-    ///         permissionless on asset eligibility. Reverts only if the primary
-    ///         (Chainlink) read itself reverts (e.g. sequencer down), which the
-    ///         backstop callers are already gated against.
+    ///         so "live", "agree" and "disagree" mean precisely what the
+    ///         quorum means by them. This is a READ-ONLY helper consumed ONLY
+    ///         by the treasury backstop's opt-in oracle-coverage gate (#638);
+    ///         it does NOT change `getAssetPrice` / `checkLiquidity` or any
+    ///         general pricing / liquid-classification path — the general
+    ///         protocol stays permissionless on asset eligibility.
+    ///
+    ///         #2737 — it used to return one number counting every live feed,
+    ///         a disagreeing one included, so a minimum coverage of 2 passed
+    ///         with one secondary agreeing and one disagreeing: the evidence
+    ///         that the price was wrong counted toward trusting it. The split
+    ///         lets the gate count only agreement and refuse on any dissent.
+    ///         The selector is unchanged (a selector is the name and the
+    ///         parameter types). A gate compiled against the old one-word
+    ///         return would still decode this reply: it reads the first
+    ///         word, now the agreeing count, so it would count agreement
+    ///         only but would not refuse on dissent. The gate and this view
+    ///         are inlined into and hosted by facets of one fresh deploy, so
+    ///         no chain runs that mix.
+    ///
+    ///         Reverts only if the primary (Chainlink) read itself reverts
+    ///         (e.g. sequencer down), which the backstop callers are already
+    ///         gated against.
     function countLiveSecondaryOracleFeeds(
         address asset
-    ) external view returns (uint8 live) {
+    ) external view returns (uint8 agreeing, uint8 disagreeing) {
         (uint256 primaryPrice, uint8 primaryDec) = _primaryPrice(asset);
-        if (
-            _checkTellor(asset, primaryPrice, primaryDec) !=
-            SecondaryStatus.Unavailable
-        ) live++;
-        if (
-            _checkApi3(asset, primaryPrice, primaryDec) !=
-            SecondaryStatus.Unavailable
-        ) live++;
-        if (
-            _checkDia(asset, primaryPrice, primaryDec) !=
-            SecondaryStatus.Unavailable
-        ) live++;
+        SecondaryStatus[3] memory statuses = [
+            _checkTellor(asset, primaryPrice, primaryDec),
+            _checkApi3(asset, primaryPrice, primaryDec),
+            _checkDia(asset, primaryPrice, primaryDec)
+        ];
+        for (uint256 i; i < 3; ++i) {
+            if (statuses[i] == SecondaryStatus.Agree) agreeing++;
+            else if (statuses[i] == SecondaryStatus.Disagree) disagreeing++;
+        }
     }
 
     /// @dev Tellor probe — returns the per-source status against
@@ -1570,9 +1583,10 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     }
 
     /// @notice Read the *effective* per-tier max-init-LTV the
-    ///         loan-init gate will use. Returns the cached value if
-    ///         < 14 days stale; else returns the library default for
-    ///         that tier. Returns 0 for invalid tier indices.
+    ///         loan-init gate will use. Returns the cached value while it
+    ///         is under 14 days old, inside the tier's current safety box
+    ///         and peer reads are not paused; otherwise the governance tier
+    ///         cap. Returns 0 for invalid tier indices.
     function getEffectiveTierMaxInitLtvBps(uint8 tier) external view returns (uint16) {
         return LibVaipakam.effectiveTierMaxInitLtvBps(tier);
     }
@@ -2155,10 +2169,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         } catch {
             return (false, 0, 0);
         }
-        if (age > LibVaipakam.ORACLE_VOLATILE_STALENESS) {
-            if (!allowStablePeg) return (false, 0, 0);
-            if (!_answerWithinAnyPeg(answer, dec)) return (false, 0, 0);
-        }
+        if (!_freshEnough(feed, answer, age, dec, allowStablePeg)) return (false, 0, 0);
         // safe: `answer` is validated > 0 by `_readFreshUsdFeed`'s own
         // `if (answer <= 0 || updatedAt == 0 || ...) return (false, 0, 0);`
         // guard near the head of the function, before any cast path runs.
@@ -2166,11 +2177,9 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         return (true, uint256(answer), dec);
     }
 
-    /// @dev Read a Chainlink aggregator and enforce the staleness rule;
-    ///      reverts on failure. Used by the revert-on-failure getAssetPrice
-    ///      path. Consults the per-feed override first (Phase 3.1): when
-    ///      set, `maxStaleness` replaces the two-tier default and
-    ///      `minValidAnswer` imposes a hard floor on the returned answer.
+    /// @dev Read a Chainlink aggregator and enforce the freshness rule
+    ///      ({_freshEnough}); reverts on failure. Used by the
+    ///      revert-on-failure getAssetPrice path.
     function _readAggregatorStrict(address feed, bool allowStablePeg)
         private
         view
@@ -2192,52 +2201,14 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             revert StalePriceData();
         }
         uint256 age = block.timestamp - updatedAt;
-
-        LibVaipakam.FeedOverride storage ovr = LibVaipakam
-            .storageSlot()
-            .feedOverrides[feed];
-
-        // Minimum-valid-answer floor — if configured, reject below-floor
-        // readings regardless of other freshness bounds. Guards against
-        // incident-era near-zero prices entering the system.
-        if (ovr.minValidAnswer > 0 && answer < ovr.minValidAnswer) {
-            revert StalePriceData();
-        }
-
-        // Staleness enforcement is done BEFORE reading the feed's
-        // decimals so a stale feed reverts with the precise
-        // StalePriceData selector rather than tripping a secondary
-        // revert if `decimals()` itself behaves unexpectedly (empty
-        // return on a no-code address, stale nested call, etc).
-
-        if (ovr.maxStaleness > 0) {
-            // Override-enforced staleness. Deliberately bypasses the stable-
-            // peg branch — an operator that sets an override has taken
-            // explicit responsibility for the freshness budget on this feed,
-            // so the implicit "let a stable feed be 25h old if it's near
-            // $1" relaxation no longer applies. If the operator wants a
-            // long ceiling (e.g. 24h for a fiat-quoted feed that really
-            // does run 24h heartbeats), they set maxStaleness to that
-            // value.
-            if (age > ovr.maxStaleness) revert StalePriceData();
-            uint8 dec = AggregatorV3Interface(feed).decimals();
-            // safe: `answer` is validated > 0 by `_readAggregatorStrict`'s
-            // own head-of-function guard (`if (answer <= 0 || ...) revert
-            // StalePriceData();`), which runs immediately after
-            // `latestRoundData` and before the override branch.
-            // forge-lint: disable-next-line(unsafe-typecast)
-            return (uint256(answer), dec);
-        }
-
-        // No override — fall through to the existing two-tier defaults:
-        // volatile feeds must be fresh within 2h; stable feeds may be
-        // up to 25h old only if the answer is within peg tolerance of
-        // $1 or any registered fiat/commodity reference.
+        // The outer staleness bound is checked BEFORE reading the feed's
+        // decimals, so a stale feed reverts with the precise StalePriceData
+        // selector rather than tripping a secondary revert if `decimals()`
+        // itself behaves unexpectedly (empty return on a no-code address).
         if (age > LibVaipakam.ORACLE_STABLE_STALENESS) revert StalePriceData();
         uint8 dec2 = AggregatorV3Interface(feed).decimals();
-        if (age > LibVaipakam.ORACLE_VOLATILE_STALENESS) {
-            if (!allowStablePeg) revert StalePriceData();
-            if (!_answerWithinAnyPeg(answer, dec2)) revert StalePriceData();
+        if (!_freshEnough(feed, answer, age, dec2, allowStablePeg)) {
+            revert StalePriceData();
         }
         // safe: `answer` is validated > 0 by `_readAggregatorStrict`'s
         // own head-of-function guard (`if (answer <= 0 || ...) revert
@@ -2245,6 +2216,52 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         // branches reach this return path.
         // forge-lint: disable-next-line(unsafe-typecast)
         return (uint256(answer), dec2);
+    }
+
+    /// @dev The ONE freshness rule for a Chainlink answer, shared by the
+    ///      reverting read ({_readAggregatorStrict}) and the non-reverting
+    ///      one ({_readFreshUsdFeed}), so the price path and the liquidity
+    ///      check can never judge the same answer differently.
+    ///
+    ///      The two-tier defaults always apply: a volatile feed must be
+    ///      fresh within `ORACLE_VOLATILE_STALENESS` (2h); a stable feed may
+    ///      be up to `ORACLE_STABLE_STALENESS` (25h) old only when the answer
+    ///      sits within peg tolerance of $1 or of a registered fiat /
+    ///      commodity reference. A per-feed override (Phase 3.1) only ADDS
+    ///      bounds on top: a shorter staleness budget and a floor on the raw
+    ///      answer.
+    ///
+    ///      #2742 — before this the override REPLACED the defaults on the
+    ///      reverting read (skipping the stable-peg check too), so a 6h
+    ///      override let a 4h-old volatile price through, against
+    ///      SECURITY.md's "overrides can only make a feed stricter"; and the
+    ///      non-reverting read ignored overrides entirely, so a tightened
+    ///      feed still passed the liquidity check. Slow-heartbeat fiat and
+    ///      commodity feeds need no loosening: the stable branch already
+    ///      accepts a 25h-old answer at its reference.
+    /// @param feed            The aggregator (its override is looked up).
+    /// @param answer          The raw answer, already checked > 0.
+    /// @param age             Seconds since the answer's `updatedAt`.
+    /// @param dec             The aggregator's decimals.
+    /// @param allowStablePeg  Whether the stable-peg relaxation may apply.
+    function _freshEnough(
+        address feed,
+        int256 answer,
+        uint256 age,
+        uint8 dec,
+        bool allowStablePeg
+    ) private view returns (bool) {
+        LibVaipakam.FeedOverride storage ovr = LibVaipakam
+            .storageSlot()
+            .feedOverrides[feed];
+        if (ovr.minValidAnswer > 0 && answer < ovr.minValidAnswer) return false;
+        if (ovr.maxStaleness > 0 && age > ovr.maxStaleness) return false;
+        if (age > LibVaipakam.ORACLE_STABLE_STALENESS) return false;
+        if (age > LibVaipakam.ORACLE_VOLATILE_STALENESS) {
+            if (!allowStablePeg) return false;
+            if (!_answerWithinAnyPeg(answer, dec)) return false;
+        }
+        return true;
     }
 
     /// @dev Peg-aware stable branch. `answer` is accepted if it lies

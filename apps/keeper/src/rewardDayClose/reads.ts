@@ -9,11 +9,12 @@
 
 import type { Abi, Address, PublicClient } from 'viem';
 import { boundedRead, PastRunDeadline } from '../batchRead';
-import { ABI, MESSENGER_ABI, NO_SELECTOR, READ_CHUNK, REASON_FINALIZED } from './constants';
+import { ABI, B4_QUOTE_ABI, MESSENGER_ABI, NO_SELECTOR, READ_CHUNK, REASON_FINALIZED } from './constants';
 import type { ChainRun, PeerReader } from './deps';
 import { classify, revertName, shortErr } from './errors';
 import { known, unknown, type Fact, type PerDay } from './fact';
 import type { DestinationState } from './plan';
+import type { ReportShape } from './shape';
 
 /** One read, as a Fact. A failure is logged with `label`. */
 export async function readOne<T>(client: PublicClient, address: Address, abi: Abi, functionName: string, args: readonly unknown[], label: string, blockNumber?: bigint): Promise<Fact<T>> {
@@ -193,33 +194,40 @@ export async function destinationStates(c: ChainRun, destinations: readonly numb
   return out;
 }
 
-/** The messenger's fee for the report `closeDay` sends: the one report shape
- *  (#2621), sent to the chain this Diamond names as Base, which is the route
- *  `closeDay` asks the messenger for. The payload is fixed-width, so zero
- *  figures price it exactly. A refusal the messenger names is returned by name
- *  (a messenger routed to another Base refuses with `ReportRouteMismatch`, and
- *  so would the close); an unnamed one is a messenger without this report
- *  shape. */
-export async function reportFee(client: PublicClient, messenger: Address, baseChainId: number, day: number): Promise<{ fee: bigint } | { refused: string } | 'unread'> {
+/** The messenger's fee for the report `closeDay` sends, in the shape this
+ *  run read it carries (shape.ts; the report channel holds the close unless
+ *  Base takes the same one). The one report shape is quoted along the route
+ *  `closeDay` names, the chain this Diamond names as Base; the B4 report of a
+ *  pre-#2790 messenger carries no route. The payload is fixed-width, so zero
+ *  figures price either exactly. A refusal the messenger names is returned by
+ *  name (a messenger routed to another Base refuses with `ReportRouteMismatch`,
+ *  and so would the close). The `closeDay` simulation stays the judge: an
+ *  underpaid send is refused there, never sent. */
+export async function reportFee(client: PublicClient, messenger: Address, baseChainId: number, day: number, shape: ReportShape): Promise<{ fee: bigint } | { refused: string } | 'unread'> {
+  const z = 0n;
+  const d = BigInt(day);
   const report = {
-    dayId: BigInt(day),
-    lenderNumeraire18: 0n,
-    borrowerNumeraire18: 0n,
-    recycledCumulative18: 0n,
-    recycledForDay18: 0n,
-    commitRetiredCumulative18: 0n,
-    commitReleasedCumulative18: 0n,
-    custodyEra: 0n,
-    rewardLaunchTimestamp: 0n,
+    dayId: d,
+    lenderNumeraire18: z,
+    borrowerNumeraire18: z,
+    recycledCumulative18: z,
+    recycledForDay18: z,
+    commitRetiredCumulative18: z,
+    commitReleasedCumulative18: z,
+    custodyEra: z,
+    rewardLaunchTimestamp: z,
   };
+  const ask =
+    shape === 'one'
+      ? { abi: MESSENGER_ABI, args: [BigInt(baseChainId), report] as readonly unknown[] }
+      : { abi: B4_QUOTE_ABI as Abi, args: [d, z, z, z, z, z, z, z] as readonly unknown[] };
   try {
-    const fee = (await client.readContract({ address: messenger, abi: MESSENGER_ABI, functionName: 'quoteSendChainReport', args: [BigInt(baseChainId), report] })) as bigint;
-    return { fee };
+    return { fee: (await client.readContract({ address: messenger, abi: ask.abi, functionName: 'quoteSendChainReport', args: ask.args })) as bigint };
   } catch (err) {
     if (err instanceof PastRunDeadline) throw err;
     if ('unread' in classify(err)) return 'unread';
     const name = revertName(err);
-    return { refused: name === undefined ? 'the messenger has no quote for the report closeDay sends (it predates the one report shape)' : `the messenger would not quote the report fee (${name})` };
+    return { refused: `the messenger would not quote the report fee${name === undefined ? '' : ` (${name})`}` };
   }
 }
 

@@ -883,6 +883,22 @@
   },
   {
     "type": "error",
+    "name": "BackstopOracleDisagreement",
+    "inputs": [
+      {
+        "name": "collateral",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "disagreeing",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "BackstopRetryRequired",
     "inputs": []
   },

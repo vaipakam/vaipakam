@@ -52,6 +52,11 @@
  */
 
 import type { Env } from './env';
+import { readJsonBody } from '@vaipakam/lib/requestBody';
+
+/** A preflight names a token, a price and the listing's fee legs; a
+ *  listing has a handful of legs (#2756). */
+const MAX_PREFLIGHT_BODY_BYTES = 16 * 1024;
 
 interface FeeLegInput {
   recipient: `0x${string}`;
@@ -120,12 +125,9 @@ export async function handleFeeRecipientPreflight(
   if (req.method !== 'POST') {
     return jsonResponse({ error: 'method-not-allowed' }, 405, resolvedOrigin);
   }
-  let body: PreflightRequest;
-  try {
-    body = (await req.json()) as PreflightRequest;
-  } catch {
-    return jsonResponse({ error: 'invalid-json-body' }, 400, resolvedOrigin);
-  }
+  const read = await readJsonBody(req, MAX_PREFLIGHT_BODY_BYTES);
+  if (!read.ok) return jsonResponse({ error: read.error }, read.status, resolvedOrigin);
+  const body = read.value as PreflightRequest;
   const { chainId, principalAsset, askPrice, feeLegs } = body;
   if (!chainId || !principalAsset || !askPrice || !Array.isArray(feeLegs)) {
     return jsonResponse({ error: 'missing-required-fields' }, 400, resolvedOrigin);

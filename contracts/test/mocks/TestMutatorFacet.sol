@@ -452,6 +452,17 @@ contract TestMutatorFacet {
         c.tier3LiquidationLtvBps = t3;
     }
 
+    /// @notice #2736 — seed one tier's peer-derived LTV cache entry
+    ///         directly, so a test can place a fresh entry outside a box
+    ///         governance later moves without standing up Aave / Compound
+    ///         peer mocks for `OracleFacet.refreshTierLtvCache`.
+    function setTierLtvCacheRaw(uint8 tier, uint16 ltvBps, uint64 lastRefreshedAt) external {
+        LibVaipakam.storageSlot().tierLtvCache[tier] = LibVaipakam.TierLtvCacheEntry({
+            ltvBps: ltvBps,
+            lastRefreshedAt: lastRefreshedAt
+        });
+    }
+
     /// @notice #999 (S1) — read-through to the internal
     ///         `LibVaipakam.cfgTierLiquidationLtvBps(tier)` so a test can assert
     ///         the per-tier-INDEX mapping directly, including the tier-0

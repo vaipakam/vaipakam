@@ -27,6 +27,7 @@ import {Deployments} from "../lib/Deployments.sol";
 import {MockPoolPricing} from "../lib/MockPoolPricing.sol";
 import {FixedRateSwapAdapter} from "../mocks/FixedRateSwapAdapter.sol";
 import {RevertProbe} from "../lib/RevertProbe.sol";
+import {RehearsalChain} from "../lib/RehearsalChain.sol";
 
 /**
  * @title PositiveFlowsBase
@@ -82,8 +83,9 @@ import {RevertProbe} from "../lib/RevertProbe.sol";
  *         shared testnet Diamond, that replaces the chain's live price and
  *         sanctions sources. So a
  *         module refuses any chain but a local Anvil (31337) unless
- *         `POSITIVE_FLOWS_ALLOW_CHAIN_ID` names the chain it is pointed at,
- *         which is meant for a Diamond deployed for the rehearsal.
+ *         `REHEARSAL_ALLOW_CHAIN_ID` names the chain it is pointed at, which
+ *         is meant for a Diamond deployed for the rehearsal, and refuses a
+ *         production chain outright ({RehearsalChain}, #2763).
  *
  *         Broadcast rule (#1646): never wrap a call made under
  *         `vm.startBroadcast` in try/catch. Forge records every call the
@@ -99,7 +101,7 @@ import {RevertProbe} from "../lib/RevertProbe.sol";
  *         LENDER_PRIVATE_KEY, LENDER_ADDRESS, BORROWER_PRIVATE_KEY,
  *         BORROWER_ADDRESS, NEW_LENDER_PRIVATE_KEY, NEW_LENDER_ADDRESS,
  *         NEW_BORROWER_PRIVATE_KEY, NEW_BORROWER_ADDRESS. Optional:
- *         ONLY_SCENARIO, POSITIVE_FLOWS_ALLOW_CHAIN_ID. The Diamond is read
+ *         ONLY_SCENARIO, REHEARSAL_ALLOW_CHAIN_ID. The Diamond is read
  *         from the chain's deployment artifact via {Deployments}.
  */
 abstract contract PositiveFlowsBase is Script {
@@ -236,7 +238,7 @@ abstract contract PositiveFlowsBase is Script {
     ///      actors, the Diamond, and the module's header line. `stage` names a
     ///      staged run's stage in that header (empty for a one-pass run).
     function _beginModule(string memory stage) internal {
-        _requireRehearsalChain();
+        RehearsalChain.requireRehearsalChain(moduleName());
         _loadEnv();
         diamond = Deployments.readDiamond();
         console.log("");
@@ -286,23 +288,6 @@ abstract contract PositiveFlowsBase is Script {
     }
 
     // ─── Setup ────────────────────────────────────────────────────────────
-
-    /// @dev Refuses every chain but a local Anvil unless the operator names
-    ///      the target chain in `POSITIVE_FLOWS_ALLOW_CHAIN_ID`. See "WHERE IT
-    ///      MAY RUN" in the contract notice for what the fixture overwrites.
-    function _requireRehearsalChain() internal view {
-        if (block.chainid == 31337) return;
-        uint256 allowed = vm.envOr("POSITIVE_FLOWS_ALLOW_CHAIN_ID", uint256(0));
-        if (allowed != block.chainid) {
-            revert(string.concat(
-                "positive flows: chain ", vm.toString(block.chainid),
-                " is not a local Anvil. The fixture re-points the Diamond's oracle,",
-                " sanctions oracle and risk parameters at its own mocks; set",
-                " POSITIVE_FLOWS_ALLOW_CHAIN_ID to this chain id only for a Diamond",
-                " deployed for the rehearsal"
-            ));
-        }
-    }
 
     function _loadEnv() internal {
         deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");

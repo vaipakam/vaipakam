@@ -72,6 +72,7 @@ import {
   type OrderComponents,
 } from './openseaListingBinding';
 import { slotRefusal, takeCredentialSlot } from './rateLimit';
+import { readJsonBody } from '@vaipakam/lib/requestBody';
 
 interface OpenSeaListingRequest {
   chainId: number;
@@ -119,7 +120,9 @@ export async function handleOpenSeaListingPost(
   corsOrigin: string,
 ): Promise<Response> {
   // The caller budget was taken at the router (#2755).
-  const body = await parseBody(req);
+  const read = await readJsonBody(req, MAX_LISTING_BODY_BYTES);
+  if (!read.ok) return jsonErr(corsOrigin, read.status, read.error);
+  const body = parseBody(read.value);
   if (!body) return jsonErr(corsOrigin, 400, 'invalid-payload');
   if (!env.OPENSEA_API_KEY) {
     return jsonErr(corsOrigin, 503, 'opensea-not-configured');
@@ -153,13 +156,11 @@ export async function handleOpenSeaListingPost(
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 
-async function parseBody(req: Request): Promise<OpenSeaListingRequest | null> {
-  let raw: unknown;
-  try {
-    raw = await req.json();
-  } catch {
-    return null;
-  }
+/** A listing carries at most 32 offer and 32 consideration items
+ *  (`openseaListingBinding.ts`); this is well above that. */
+const MAX_LISTING_BODY_BYTES = 32 * 1024;
+
+function parseBody(raw: unknown): OpenSeaListingRequest | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
   if (

@@ -43,7 +43,8 @@ jobs:
             exit 0
           fi
 
-          CHANGED="$(git diff --name-only "$BEFORE" "$AFTER")"
+          # --no-renames: a rename counts at both paths (#2762).
+          CHANGED="$(git diff --no-renames --name-only "$BEFORE" "$AFTER")"
           SRC_CHANGED="$(echo "$CHANGED" | grep -c '^apps/app/src/' || true)"
           E2E_CHANGED="$(echo "$CHANGED" | grep -c '^apps/app/e2e/' || true)"
 

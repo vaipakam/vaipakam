@@ -77,6 +77,7 @@ import {
   type NotifKind,
   type NotifRow,
 } from './notifications';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 /** One governance grace bucket as snapshotted (decimal strings — the
  *  bigint-safe serialization `configSnapshot.serializeTuple` writes). */
@@ -764,7 +765,7 @@ export async function sweepCalendarNotifications(
       loanIds: [...new Set(rows.map((r) => r.loanId).filter((id): id is number => id !== null))],
     };
   } catch (err) {
-    console.error('[calendarNotifications] sweep failed', err);
+    console.error('[calendarNotifications] sweep failed', redactedError(err));
     return EMPTY_SWEEP;
   }
 }

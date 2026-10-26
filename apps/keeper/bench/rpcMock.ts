@@ -128,11 +128,11 @@ export function resetPages(): void {
 }
 
 const ADDRESS = '0x1111111111111111111111111111111111111111' as const;
-// A loan's asset pair must NOT collide with the generic offer-book asset
-// (`ADDRESS`), or preGraceWatcher's viable-lender pre-check finds a match and
-// skips the warning before `ownerOf` / dispatch — leaving the notification
-// half unmeasured (Codex #1945 r6). `getLoanDetails` is the only reader that
-// compares an asset it fetched against the offer book.
+// A loan's asset pair is kept off the generic offer-book asset (`ADDRESS`).
+// preGraceWatcher once skipped a loan's warning when a lender offer matched
+// its pair, which left the notification half unmeasured (Codex #1945 r6); it
+// no longer reads the book (#2761), but other passes' loan reads still take
+// this address.
 const ADDRESS_ALT = '0x2222222222222222222222222222222222222222' as const;
 // The pre-grace borrower resolved by `ownerOf` must be a SEEDED subscriber or
 // `checkLoan` returns at `subsByWallet.get(...)`. This is `WALLET(0)` from
@@ -298,8 +298,8 @@ function defaultFor(p: AbiParameter, fnName = '', chainKey = ''): unknown {
     // `ownerOf` resolves the borrower NFT holder; it must be a seeded
     // subscriber so preGraceWatcher's notification half runs (Codex #1945 r6).
     if (/ownerof/i.test(fnName)) return SUBSCRIBER;
-    // A loan's own asset pair is deliberately OFF the offer-book asset so the
-    // viable-lender pre-check does not skip the warning (Codex #1945 r6).
+    // A loan's own asset pair is deliberately OFF the offer-book asset (see
+    // ADDRESS_ALT).
     if (/getloandetails/i.test(fnName)) return ADDRESS_ALT;
     return ADDRESS;
   }

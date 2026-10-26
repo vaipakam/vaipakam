@@ -63,8 +63,15 @@
 
 import type { Env } from './env';
 import { slotRefusalStatus, takeCallerSlot } from './rateLimit';
+import { isListedOrigin } from '@vaipakam/lib/originAllowList';
 import { isHexAddress, walletHash } from './diagHash';
 import { DIAG_RECORD_NOT_HELD } from './diagRetention';
+import { readJsonBody } from '@vaipakam/lib/requestBody';
+
+/** A diagnostics record: its text fields are truncated at write, but the
+ *  body is refused before it is read when it is larger than any record the
+ *  app sends needs to be (#2756). */
+const MAX_RECORD_BODY_BYTES = 16 * 1024;
 
 const FRONTEND_TIMESTAMP_MAX_DRIFT_SECONDS = 6 * 60 * 60; // 6 hours
 
@@ -245,11 +252,7 @@ async function exceedsConsecutiveCap(
 }
 
 function corsHeaders(env: Env, origin: string | null): HeadersInit {
-  const allowed = env.FRONTEND_ORIGIN ?? '';
-  const matched = allowed
-    .split(',')
-    .map((s) => s.trim())
-    .some((o) => o.length > 0 && origin === o);
+  const matched = isListedOrigin(origin, env.FRONTEND_ORIGIN);
   return {
     'access-control-allow-origin': matched ? origin! : 'null',
     'access-control-allow-methods': 'POST, OPTIONS',
@@ -309,18 +312,14 @@ export async function handleDiagRecord(
     );
   }
 
-  let body: RecordBody;
-  try {
-    body = (await req.json()) as RecordBody;
-  } catch {
-    return new Response(
-      JSON.stringify({ recorded: false, reason: 'invalid_json' }),
-      {
-        status: 400,
-        headers: { ...headers, 'content-type': 'application/json' },
-      },
-    );
+  const read = await readJsonBody(req, MAX_RECORD_BODY_BYTES);
+  if (!read.ok) {
+    return new Response(JSON.stringify({ recorded: false, reason: read.error }), {
+      status: read.status,
+      headers: { ...headers, 'content-type': 'application/json' },
+    });
   }
+  const body = read.value as RecordBody;
 
   const nowSeconds = Math.floor(Date.now() / 1000);
   const validation = validate(body, nowSeconds);

@@ -38,6 +38,9 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *         NOT compatible (script needs to print to stdout). Output
  *         lines are prefixed `CENSUS,...` so a wrapper can
  *         `grep ^CENSUS, > census.csv` for downstream consumption.
+ *         The two free-text columns (the label and the token's own
+ *         `symbol()`) go through {_csvField}, so a token cannot add a
+ *         column, a row or a spreadsheet formula to that file (#2763).
  *
  *         Required env vars:
  *           - `DIAMOND_ADDRESS`     The deployed Vaipakam diamond on
@@ -182,6 +185,40 @@ contract SlippageCensus is Script {
         }
     }
 
+    /// @dev One free-text CSV field, safe for both consumers of the
+    ///      census: the line-based `grep ^CENSUS,` and a spreadsheet.
+    ///      A token's `symbol()` is whatever its deployer chose, so:
+    ///        - every control byte (CR and LF included) becomes a space,
+    ///          so the field cannot end the line or start a forged
+    ///          `CENSUS,` row;
+    ///        - a field starting with `=`, `+`, `-` or an at sign gets a leading
+    ///          `'`, so a spreadsheet reads it as text, not a formula;
+    ///        - a field holding `,` or `"` is quoted with each `"`
+    ///          doubled (RFC 4180), so it stays one column.
+    function _csvField(string memory raw) internal pure returns (string memory) {
+        bytes memory b = bytes(raw);
+        bool quote;
+        uint256 quotes;
+        for (uint256 i = 0; i < b.length; ++i) {
+            if (uint8(b[i]) < 0x20 || uint8(b[i]) == 0x7f) b[i] = " ";
+            else if (b[i] == ",") quote = true;
+            else if (b[i] == '"') { quote = true; ++quotes; }
+        }
+        bool formula = b.length > 0 && (b[0] == "=" || b[0] == "+" || b[0] == "-" || b[0] == "@");
+        if (!quote && !formula) return string(b);
+
+        bytes memory out = new bytes(b.length + quotes + (formula ? 1 : 0) + (quote ? 2 : 0));
+        uint256 j;
+        if (quote) out[j++] = '"';
+        if (formula) out[j++] = "'";
+        for (uint256 i = 0; i < b.length; ++i) {
+            if (b[i] == '"') out[j++] = '"';
+            out[j++] = b[i];
+        }
+        if (quote) out[j++] = '"';
+        return string(out);
+    }
+
     /// @dev `OracleFacet.checkLiquidity` returns the enum
     ///      `LibVaipakam.LiquidityStatus`. Stringify for CSV output.
     function _liquidityLabel(LibVaipakam.LiquidityStatus s)
@@ -229,6 +266,8 @@ contract SlippageCensus is Script {
         // copy-paste-free per chain; the env-var override stays
         // available for one-off audits / pre-flip rehearsals against a
         // narrowed list.
+        label = _csvField(label);
+
         address[] memory assets;
         try vm.envString("CENSUS_ASSETS") returns (string memory csv) {
             assets = _parseAssets(csv);
@@ -275,7 +314,7 @@ contract SlippageCensus is Script {
                 effStr = "?";
             }
 
-            string memory sym = _trySymbol(asset);
+            string memory sym = _csvField(_trySymbol(asset));
 
             console.log(
                 string.concat(

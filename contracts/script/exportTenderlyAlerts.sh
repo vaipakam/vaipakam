@@ -3,10 +3,11 @@
 # exportTenderlyAlerts.sh — generate per-chain Tenderly alerts.yaml
 # files from the single template at `ops/tenderly/alerts.yaml`.
 #
-# `ops/tenderly/alerts.yaml` carries `${CHAIN}` and `${DIAMOND_ADDRESS}`
-# placeholders by design — one source of truth for the alert SHAPES
-# (severity, signal, runbook link), but the per-chain Diamond address
-# has to come from `contracts/deployments/<slug>/addresses.json`. This
+# `ops/tenderly/alerts.yaml` carries `${CHAIN}`, `${CHAIN_ID}`,
+# `${DIAMOND_ADDRESS}` and `${TIMELOCK_ADDRESS}` placeholders by design —
+# one source of truth for the alert SHAPES (severity, signal, runbook
+# link), but the per-chain values have to come from
+# `contracts/deployments/<slug>/addresses.json`. This
 # script does the substitution: walks every chain's addresses.json,
 # emits `ops/tenderly/generated/alerts-<slug>.yaml`, and prints the
 # `tenderly alerts apply` invocation.
@@ -30,8 +31,14 @@
 # Required tools:
 #   - jq (already a project dependency)
 #   - envsubst (from the `gettext` package on Linux / Mac).
-#     If unavailable, the script falls back to a sed loop that
-#     handles only the two placeholders we care about.
+#     If unavailable, the script falls back to sed over the same four
+#     placeholders.
+#
+# Every placeholder the template uses must be one of those four. A
+# generated file that still carries a `${NAME}` refuses the whole run
+# before anything is published (#2763): until then `${CHAIN_ID}` and
+# `${TIMELOCK_ADDRESS}` reached Tenderly literally, so the timelock alert
+# watched no contract and the HF/fallback alerts carried no chain id.
 
 set -euo pipefail
 
@@ -168,8 +175,23 @@ for slug in "${CHAINS[@]}"; do
   fi
 
   DIAMOND=$(jq -r '.diamond // empty' "$ADDR_FILE")
-  if [ -z "$DIAMOND" ] || [ "$DIAMOND" = "null" ]; then
-    SKIPPED+=("$slug (addresses.json has no diamond key)")
+  if ! [[ "$DIAMOND" =~ ^0x[0-9a-fA-F]{40}$ ]]; then
+    SKIPPED+=("$slug (addresses.json has no diamond address)")
+    continue
+  fi
+
+  CHAIN_ID_VALUE=$(jq -r '.chainId // empty' "$ADDR_FILE")
+  if ! [[ "$CHAIN_ID_VALUE" =~ ^[0-9]+$ ]]; then
+    SKIPPED+=("$slug (addresses.json has no numeric chainId)")
+    continue
+  fi
+
+  # The governance alert watches the chain's TimelockController. A chain
+  # with none recorded is skipped, by name, rather than emitted with an
+  # alert that watches nothing.
+  TIMELOCK=$(jq -r '.timelock // empty' "$ADDR_FILE")
+  if ! [[ "$TIMELOCK" =~ ^0x[0-9a-fA-F]{40}$ ]]; then
+    SKIPPED+=("$slug (addresses.json has no timelock; the timelock-call-scheduled alert would watch nothing)")
     continue
   fi
 
@@ -185,21 +207,37 @@ for slug in "${CHAINS[@]}"; do
     echo "# generatedAt:    $GENERATED_AT"
     echo "# chainSlug:      $slug"
     echo "# tenderlyNet:    $TENDERLY_NETWORK"
+    echo "# chainId:        $CHAIN_ID_VALUE"
     echo "# diamond:        $DIAMOND"
+    echo "# timelock:       $TIMELOCK"
     echo "# DO NOT EDIT — regenerate via the export script."
     echo
   } > "$OUT_FILE"
 
   if [ "$HAVE_ENVSUBST" = "1" ]; then
-    CHAIN="$TENDERLY_NETWORK" DIAMOND_ADDRESS="$DIAMOND" \
-      envsubst '${CHAIN} ${DIAMOND_ADDRESS}' < "$TEMPLATE" >> "$OUT_FILE"
+    CHAIN="$TENDERLY_NETWORK" CHAIN_ID="$CHAIN_ID_VALUE" \
+    DIAMOND_ADDRESS="$DIAMOND" TIMELOCK_ADDRESS="$TIMELOCK" \
+      envsubst '${CHAIN} ${CHAIN_ID} ${DIAMOND_ADDRESS} ${TIMELOCK_ADDRESS}' \
+      < "$TEMPLATE" >> "$OUT_FILE"
   else
-    # envsubst-less fallback. Only handles the two known placeholders;
-    # any other ${VAR} in the template stays literal — by design,
-    # because the template should ONLY use these two.
+    # envsubst-less fallback over the same four placeholders. Every value
+    # was validated above (a network name, digits, two addresses), so none
+    # carries a sed metacharacter.
     sed -e "s|\${CHAIN}|$TENDERLY_NETWORK|g" \
+        -e "s|\${CHAIN_ID}|$CHAIN_ID_VALUE|g" \
         -e "s|\${DIAMOND_ADDRESS}|$DIAMOND|g" \
+        -e "s|\${TIMELOCK_ADDRESS}|$TIMELOCK|g" \
         "$TEMPLATE" >> "$OUT_FILE"
+  fi
+
+  # A placeholder this script does not fill would reach Tenderly as text.
+  # Refuse the run; the stage is discarded and nothing is published.
+  if LEFT=$(grep -noE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' "$OUT_FILE"); then
+    echo "Error: $TEMPLATE uses a placeholder this script does not fill:" >&2
+    printf '%s\n' "$LEFT" | sed "s|^|  alerts-$slug.yaml:|" >&2
+    echo "Add it to the substitution above (and to its source in addresses.json)." >&2
+    echo "Nothing was published — the previous manifests are untouched." >&2
+    exit 1
   fi
 
 done

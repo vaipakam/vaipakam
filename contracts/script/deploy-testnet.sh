@@ -211,6 +211,8 @@ CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/load-env.sh"
 # shellcheck source=lib/sentinel-reads.sh
 source "$SCRIPT_DIR/lib/sentinel-reads.sh"
+# The one Worker RPC-secret check (#2763, #1492).
+source "$SCRIPT_DIR/lib/worker-secrets.sh"
 # shellcheck source=lib/ccip-lanes.sh
 source "$SCRIPT_DIR/lib/ccip-lanes.sh"
 # shellcheck source=lib/artifact-code-check.sh
@@ -762,43 +764,6 @@ record_retired_diamond_for_indexer() {
   seed_retired_deployments_now "$REPO_ROOT"
 }
 
-# Helper: re-seed indexer_cursor at the chain's safe head. Called
-# at the END of phase_contracts under --fresh so the indexer cron's
-# next tick starts at head instead of replaying the empty pre-deploy
-# block range. Misses any events emitted between deployBlock and
-# seed-time, which on a fresh deploy is just admin role-grant /
-# init calls — not user-facing offer/loan events. Trade-off
-# matches deploy-chain.sh's [8d] step.
-seed_indexer_cursor_safe_head() {
-  local chain_id="$1"
-  local rpc="$2"
-  local indexer_dir="$REPO_ROOT/apps/indexer"
-  if [ ! -d "$indexer_dir" ]; then
-    return 0
-  fi
-  if [ -z "$chain_id" ] || [ -z "$rpc" ]; then
-    return 0
-  fi
-  local head
-  head=$(cast block-number --rpc-url "$rpc" --tag safe 2>/dev/null \
-    || cast block-number --rpc-url "$rpc" 2>/dev/null \
-    || echo "")
-  if [ -z "$head" ]; then
-    echo "    ⚠ cast block-number failed for chainId=$chain_id — skipping cursor seed"
-    return 0
-  fi
-  local now_ts
-  now_ts=$(date +%s)
-  ( cd "$indexer_dir" && pnpm exec wrangler d1 execute vaipakam-warm --remote --command \
-    "INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
-     VALUES ($chain_id, 'diamond', $head, $now_ts)
-     ON CONFLICT(chain_id, kind) DO UPDATE SET
-       last_block = excluded.last_block,
-       updated_at = excluded.updated_at;" 2>&1 | grep -E "Executed|Error" | head -1 ) || \
-    echo "    ⚠ wrangler d1 execute failed — cursor not seeded for chainId=$chain_id"
-  echo "  ✓ indexer_cursor seeded at safe-head=$head for chainId=$chain_id"
-}
-
 # ── Phase: contracts ──────────────────────────────────────────────────
 
 phase_contracts() {
@@ -1137,36 +1102,14 @@ EOF
     echo "  Final partial-fill flag: $(cast call $DIAMOND_FOR_FLAGS 'getPartialFillEnabled()(bool)' --rpc-url $RPC | tr '\n' ' ')"
   fi
 
-  # ── Indexer-cursor: trust the natural fallback ──────────────────
-  # archive_chain_state above wiped the prior `indexer_cursor` row.
-  # The next indexer cron tick will see no cursor row and fall back
-  # to `lastBlock = deployBlock - 1n` (apps/indexer/src/chainIndexer.ts:242),
-  # then scan forward from deployBlock. Two reasons we no longer
-  # auto-seed at safe-head here:
-  #
-  #   1. The natural fallback is correct on a TRUE fresh deploy too:
-  #      deployBlock ≈ current safe-head (only the deploy txns sit
-  #      between them), so the cron's `scanFrom > head` short-circuit
-  #      fires and the chain is reported caught-up after one ~30-block
-  #      scan that picks up admin role-grants + init calls. Zero
-  #      wasted work; previously the seed-step's claim of "skipping
-  #      empty backfill" was over-stated.
-  #
-  #   2. Auto-seed-at-safe-head is ACTIVELY HARMFUL when --fresh runs
-  #      against a chain that has pre-existing on-chain state from a
-  #      previous deploy / flow-test session — the seed jumps the
-  #      cursor PAST any events emitted before now, orphaning them
-  #      to that indexer instance forever. Hit on 2026-05-11: 8
-  #      arb-sepolia offers + 14 loans from yesterday's F2 rehearsal
-  #      went invisible to the indexer after this step ran following
-  #      a manual D1 purge. Diagnosis in
-  #      docs/ReleaseNotes/ReleaseNotes-2026-05-11.md.
-  #
-  # If a future operator genuinely wants the seed-at-safe-head shape
-  # for a deploy where they're CERTAIN no orphan-able events exist,
-  # the `seed_indexer_cursor_safe_head` helper below is still in the
-  # script — call it manually. The default --fresh path no longer
-  # auto-invokes it.
+  # ── Indexer cursor: the indexer owns it ─────────────────────────
+  # A fresh Diamond is a new indexer EPOCH (apps/indexer/src/
+  # deploymentEpoch.ts): the first pass that sees the bundle's new Diamond
+  # resets the chain's rows and restarts its cursor from the deploy block.
+  # No deploy script seeds the cursor. The safe-head seed helper that used
+  # to sit in this file is gone (#2763): a seed skips every event between
+  # the deploy and the seed, and on 2026-05-11 it orphaned 8 offers and 14
+  # loans (docs/ReleaseNotes/ReleaseNotes-2026-05-11.md).
 
   echo
   echo "✓ contracts phase done."
@@ -1953,59 +1896,14 @@ phase_cf_www() {
   mark_phase_done "cf-www"
 }
 
-# ── Worker RPC-secret helper ──────────────────────────────────────────
-# Fans the chain-specific RPC-secret presence check across the three
-# Workers (each Worker has its own Cloudflare secret store). Hard-fails
-# the phase if missing — the silent-drop failure mode (cron filters the
-# chain out of round-robin so D1 stays empty for ~50 min before the
-# operator notices) was exactly the May-2026 rehearsal pain point that
-# made this a hard gate.
+# ── Worker RPC-secret check ───────────────────────────────────────────
+# `verify_rpc_secret_on_worker` comes from lib/worker-secrets.sh (#2763,
+# #1492): it reads where each Worker's wrangler.jsonc binds the chain's
+# RPC secret (the account's Secrets Store, for every Stage 3 Worker) and
+# hard-fails the phase when that entry is missing — the silent-drop mode
+# (the Worker drops the chain from its round-robin, D1 stays empty) the
+# May-2026 rehearsal hit.
 
-verify_rpc_secret_on_worker() {
-  local worker_dir="$1"
-  local worker_name="$2"
-  local secret_name="$3"
-  local chain_id="$4"
-
-  local present=$(
-    cd "$worker_dir" && pnpm exec wrangler secret list 2>/dev/null \
-      | grep -c "\"$secret_name\"" \
-      || echo 0
-  )
-  if [ "$present" = "0" ]; then
-    echo "  ✗ FAIL: $secret_name is NOT set on $worker_name."
-    echo
-    echo "  The Worker's chain-config filter drops any chain whose RPC binding"
-    echo "  is empty, so chainId=$chain_id will silently never be queried."
-    echo "  Set the secret before re-running this phase:"
-    echo
-    echo "    cd $worker_dir"
-    echo "    echo -n '<your-paid-rpc-url>' | pnpm exec wrangler secret put $secret_name"
-    echo
-    echo "  RPC secrets are operator-curated wrangler secrets, never in the repo."
-    echo "  For testnet rehearsals a free-tier RPC URL is acceptable (Alchemy /"
-    echo "  Infura free tier work fine); on mainnet, paid-tier API keys are"
-    echo "  required per CLAUDE.md so the cron isn't throttled mid-broadcast."
-    return 1
-  fi
-  echo "  ✓ $secret_name is set on $worker_name"
-  return 0
-}
-
-# Map testnet chain-slug → expected RPC secret name. Same secret name
-# on each Worker (each Worker has its own copy in its own Cloudflare
-# secret store; the name is shared but the values are scoped per Worker).
-# Mirrors deploy-chain.sh's mapping so a Worker's secret store is the
-# same shape no matter which deploy script populates it.
-case "$CHAIN_SLUG" in
-  base-sepolia)  EXPECTED_RPC_SECRET="RPC_BASE_SEPOLIA" ;;
-  sepolia)       EXPECTED_RPC_SECRET="RPC_SEPOLIA" ;;
-  arb-sepolia)   EXPECTED_RPC_SECRET="RPC_ARB_SEPOLIA" ;;
-  op-sepolia)    EXPECTED_RPC_SECRET="RPC_OP_SEPOLIA" ;;
-  bnb-testnet)   EXPECTED_RPC_SECRET="RPC_BNB_TESTNET" ;;
-  polygon-amoy)  EXPECTED_RPC_SECRET="RPC_POLYGON_AMOY" ;;
-  *)             EXPECTED_RPC_SECRET="" ;;
-esac
 
 # ── Phase: cf-keeper ──────────────────────────────────────────────────
 # Deploys apps/keeper — the autonomous HF-liquidation Worker. Stateless:
@@ -2038,12 +1936,7 @@ phase_cf_keeper() {
   # preserves the absence and arms liquidation on defaults.
   ( cd "$KEEPER_DIR" && pnpm run deploy )
 
-  if [ -n "$EXPECTED_RPC_SECRET" ]; then
-    echo
-    echo "[b] RPC-secret check for chainId=$CHAIN_ID"
-    verify_rpc_secret_on_worker "$KEEPER_DIR" "vaipakam-keeper" \
-      "$EXPECTED_RPC_SECRET" "$CHAIN_ID" || exit 1
-  fi
+  check_chain_rpc_secret "$KEEPER_DIR" "vaipakam-keeper" "$CHAIN_SLUG" "$CHAIN_ID" || exit 1
 
   mark_phase_done "cf-keeper"
 }
@@ -2062,15 +1955,13 @@ phase_cf_keeper() {
 #       run this phase FIRST.
 #   [b] RPC-secret check for this chain
 #
-# Note on cursor seeding: deploy-chain.sh and deploy-testnet.sh seed
-# `indexer_cursor` at safe head under `--fresh` to skip the empty
-# backfill window. On MAINNET we deliberately DO NOT auto-seed —
-# mainnet redeploys virtually always preserve the diamond and its
-# prior cursor, so re-seeding would lose indexed history. If a
-# mainnet operator ever genuinely needs to reset the cursor (e.g.
-# migration to a brand-new diamond, full-history reindex), do it
-# manually via `pnpm exec wrangler d1 execute vaipakam-warm
-# --remote --command "UPDATE indexer_cursor SET last_block = ..."`.
+# Note on the indexer cursor: no deploy script writes it (#2763). A fresh
+# Diamond is a new indexer epoch the indexer owns
+# (apps/indexer/src/deploymentEpoch.ts): its first pass on the new
+# Diamond resets the chain's rows and restarts the cursor from the
+# deploy block, so nothing emitted after the deploy is skipped. Do not
+# hand-edit `indexer_cursor` either: a cursor moved past blocks the
+# indexer has not read orphans their events.
 
 phase_cf_indexer() {
   if [ ! -d "$INDEXER_DIR" ]; then
@@ -2100,12 +1991,7 @@ phase_cf_indexer() {
   # chain rather than adopting the new one blind (#1566, Codex #2545 r3/r6).
   ( cd "$INDEXER_DIR" && pnpm run deploy )
 
-  if [ -n "$EXPECTED_RPC_SECRET" ]; then
-    echo
-    echo "[b] RPC-secret check for chainId=$CHAIN_ID"
-    verify_rpc_secret_on_worker "$INDEXER_DIR" "vaipakam-indexer" \
-      "$EXPECTED_RPC_SECRET" "$CHAIN_ID" || exit 1
-  fi
+  check_chain_rpc_secret "$INDEXER_DIR" "vaipakam-indexer" "$CHAIN_SLUG" "$CHAIN_ID" || exit 1
 
   # [d] Fresh-deploy D1 hygiene — automated so operators don't hand-run it.
   # After a `--fresh` contract redeploy the Diamond changed; the indexer
@@ -2152,12 +2038,7 @@ phase_cf_agent() {
   # this one was documented as fixed without being fixed.
   ( cd "$AGENT_DIR" && pnpm run deploy )
 
-  if [ -n "$EXPECTED_RPC_SECRET" ]; then
-    echo
-    echo "[b] RPC-secret check for chainId=$CHAIN_ID"
-    verify_rpc_secret_on_worker "$AGENT_DIR" "vaipakam-agent" \
-      "$EXPECTED_RPC_SECRET" "$CHAIN_ID" || exit 1
-  fi
+  check_chain_rpc_secret "$AGENT_DIR" "vaipakam-agent" "$CHAIN_SLUG" "$CHAIN_ID" || exit 1
 
   mark_phase_done "cf-agent"
 }

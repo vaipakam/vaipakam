@@ -48,7 +48,7 @@ import { attemptCloseOut } from './closeOut';
 import { parseLiquidationLoan } from './liquidationLoan';
 import { tryMatchLiquidation } from './matchLiquidation';
 import { orchestrateDexDirectQuotes } from './dexDirectQuotes';
-import { describeFailure } from '@vaipakam/lib/errorDescription';
+import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { inTermOnLoanClock } from './loanClockReads';
 import {
   FORCED_SALE_KIND,
@@ -203,19 +203,32 @@ export function liquidationSaleSizes(
   return { fullAmount, splitTotal, halfAmount, otherHalf: (splitTotal ?? 0n) - halfAmount };
 }
 
-/** Decide whether splitting the liquidation swap 50/50 across two
- *  distinct adapters beats running the full size through a single
- *  adapter via failover. Returns the chosen `{a, b}` half-quote pair
- *  + the projected total + the bps improvement vs the full-size
- *  top-1, or `null` if splitting doesn't help (no two distinct
- *  adapters at the half size, or the improvement is below
- *  `minImprovementBps` — gas + tx complexity isn't worth it).
+/** The least a split-liquidation leg selling `legInput` must deliver (#2724):
+ *  its share of the split's floor, rounded up, as the contract sets it
+ *  (`ceil(totalFloor × legInput / totalInput)`). `plan` is the split kind's
+ *  `previewForcedSale`, whose floor is for `plan.sell`; the floor is linear in
+ *  what is sold, so the share is taken at that rate. A pre-check, not the
+ *  rule: the contract measures each leg at the recipient and is the judge, and
+ *  a refused split falls through to the full liquidation. */
+export function splitLegFloor(plan: { floor: bigint; sell: bigint }, legInput: bigint): bigint {
+  if (plan.sell === 0n) return 0n;
+  return (plan.floor * legInput + plan.sell - 1n) / plan.sell;
+}
+
+/** Decide whether splitting the liquidation swap across two distinct
+ *  aggregators beats running the full size through a single adapter via
+ *  failover. Returns the chosen `{a, b}` leg pair + the projected total + the
+ *  bps improvement vs the full-size top-1, or `null` if splitting doesn't help
+ *  (no pair of distinct aggregators whose legs each clear their own floor, or
+ *  the improvement is below `minImprovementBps` — gas + tx complexity isn't
+ *  worth it).
  *
- *  The on-chain split is atomic-revert-on-leg-failure, so we only
- *  return non-null when both halves have a successful aggregator
- *  quote at the smaller size. Picks the top-2 *distinct-adapter*
- *  half-quotes (which is usually 0x and 1inch, since each tends to
- *  win when the other doesn't).
+ *  The on-chain split is atomic-revert-on-leg-failure, and since #2724 every
+ *  leg must deliver its own share of the floor (a leg below it reverts the
+ *  whole split), so a pair is chosen only when EACH leg's quote clears its
+ *  share, not merely the two together. Among such pairs the best combined
+ *  output wins (usually 0x and 1inch, since each tends to win when the other
+ *  doesn't).
  */
 export function pickSplitLegs(
   halfQuotes: ServerOrchestrationResult,
@@ -223,33 +236,41 @@ export function pickSplitLegs(
   minImprovementBps: number,
   /** Collateral the split sells (both legs) and the full sale sells. Since
    *  #2796 each sale is sized by its own `previewForcedSale` kind, so the
-   *  two can differ and their outputs are compared per unit sold. */
-  sizes: { split: bigint; full: bigint },
+   *  two can differ and their outputs are compared per unit sold. `legs` is
+   *  what each leg sells (`a` then `b`), and `splitPlan` the split kind's
+   *  preview, whose floor sets each leg's share (`splitLegFloor`). */
+  sizes: { split: bigint; full: bigint; legs: readonly [bigint, bigint]; splitPlan: { floor: bigint; sell: bigint } },
 ): { a: ServerRankedQuote; b: ServerRankedQuote; totalExpected: bigint; gainBps: number } | null {
   if (fullQuotes.ranked.length === 0 || sizes.split === 0n || sizes.full === 0n) return null;
-  // AGGREGATOR LEGS ONLY (#2480 r1 `4267324333`). `swapSplit` gives every
-  // leg `minOutputAmount = 0` and checks only the total, so a leg must
-  // carry its own slippage bound — which aggregator calldata does and a raw
-  // UniV3 / mock call does not (`LibSwap.sol`, swapSplit's dev note). And
-  // two UniV3 adapters during an adapter replacement quote the SAME pools,
-  // so their half-size quotes are not independent liquidity — and the same
-  // holds for two instances of ONE aggregator (an old and a new 0x adapter
-  // during a replacement route to the same venue), so the two legs must be
-  // different aggregators, not merely different indexes (#2480 r2).
+  // AGGREGATOR LEGS ONLY (#2480 r1 `4267324333`). A leg must carry its own
+  // slippage bound in its calldata — which aggregator calldata does and a raw
+  // UniV3 / mock call does not (`LibSwap.sol`, swapSplit's dev note); the
+  // contract's per-leg floor (#2724) bounds what a leg delivers, not how the
+  // venue executes it. And two UniV3 adapters during an adapter replacement
+  // quote the SAME pools, so their half-size quotes are not independent
+  // liquidity — and the same holds for two instances of ONE aggregator (an
+  // old and a new 0x adapter during a replacement route to the same venue),
+  // so the two legs must be different aggregators, not merely different
+  // indexes (#2480 r2).
   const legs = halfQuotes.ranked.filter((q) => q.kind === 'zeroex' || q.kind === 'oneinch');
   if (legs.length < 2) return null;
-  // Find the top-2 quotes from distinct aggregators. `ranked` is
-  // already best-first by expectedOutput.
-  const a = legs[0];
-  let b: ServerRankedQuote | null = null;
-  for (let i = 1; i < legs.length; i++) {
-    if (legs[i].kind !== a.kind) {
-      b = legs[i];
-      break;
+  const [sizeA, sizeB] = sizes.legs;
+  const floorA = splitLegFloor(sizes.splitPlan, sizeA);
+  const floorB = splitLegFloor(sizes.splitPlan, sizeB);
+  // The best pair from distinct aggregators whose legs each clear their own
+  // floor. `ranked` is best-first by expectedOutput.
+  let best: { a: ServerRankedQuote; b: ServerRankedQuote; total: bigint } | null = null;
+  for (const a of legs) {
+    if (a.expectedOutput < floorA) continue;
+    for (const b of legs) {
+      if (b === a || b.kind === a.kind || b.expectedOutput < floorB) continue;
+      const total = a.expectedOutput + b.expectedOutput;
+      if (best === null || total > best.total) best = { a, b, total };
     }
   }
-  if (!b) return null;
-  const totalExpected = a.expectedOutput + b.expectedOutput;
+  if (best === null) return null;
+  const { a, b } = best;
+  const totalExpected = best.total;
   const fullTop = fullQuotes.ranked[0].expectedOutput;
   // Output per unit of collateral sold, cross-multiplied so nothing is
   // divided before the comparison: the split's rate is totalExpected /
@@ -750,12 +771,13 @@ export async function maybeAutonomousLiquidate(
     // 100 = 1%), use
     // `triggerLiquidationSplit`. Below the threshold the gas + tx
     // complexity isn't worth it. The split is atomic-revert-on-leg-
-    // failure on-chain, so we only invoke it when both legs are
-    // independently OK at quote time.
+    // failure on-chain, and each leg must deliver its own share of the
+    // floor (#2724), so we only invoke it when both legs are
+    // independently OK at quote time, each clearing its share.
     const minImprovementBps = parsePosIntEnv(env.SPLIT_MIN_IMPROVEMENT_BPS, 100);
     const split =
       halfQuotes && splitTotal !== null
-        ? pickSplitLegs(halfQuotes, quotes, minImprovementBps, { split: splitTotal, full: fullAmount })
+        ? pickSplitLegs(halfQuotes, quotes, minImprovementBps, { split: splitTotal, full: fullAmount, legs: [halfAmount, otherHalf], splitPlan })
         : null;
     if (split) {
       const splits = [
@@ -789,7 +811,7 @@ export async function maybeAutonomousLiquidate(
         // as a deferral rather than as this route's failure.
         if (isSendPastDeadline(splitErr)) throw splitErr;
         console.log(
-          `[keeper] loan=${loanId} chain=${chain.name} split-reverted (${String(splitErr).slice(0, 140)}) — falling back to full liquidation`,
+          `[keeper] loan=${loanId} chain=${chain.name} split-reverted (${redactedError(splitErr, { stack: false }).slice(0, 140)}) — falling back to full liquidation`,
         );
         // do NOT return — fall through to the full `triggerLiquidation` below.
       }
@@ -815,7 +837,7 @@ export async function maybeAutonomousLiquidate(
     // loan in this tick. The most common cause is "another keeper got there
     // first" or "MEV bot front-ran us", both of which are fine — the loan is
     // liquidated.
-    reportSendError(`[keeper] loan=${loanId} chain=${chain.name}`, err, `err=${String(err).slice(0, 250)}`);
+    reportSendError(`[keeper] loan=${loanId} chain=${chain.name}`, err, `err=${redactedError(err, { stack: false }).slice(0, 250)}`);
     return false;
   }
 }
@@ -1205,7 +1227,7 @@ async function tryFlashLoanDiscountedPath(
     if (isSendPastDeadline(err)) throw err;
     console.error(
       `[keeper] loan=${loanId} chain=${chain.name} flash-loan-submit-failed ` +
-        `err=${String(err).slice(0, 250)}`,
+        `err=${redactedError(err, { stack: false }).slice(0, 250)}`,
     );
     // Fall through to legacy branches so the loan still gets
     // liquidated somehow.

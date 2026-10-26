@@ -72,7 +72,8 @@ jobs:
             exit 0
           fi
 
-          changed="$(git diff --name-only "$BEFORE" "$AFTER")"
+          # --no-renames: a rename counts at both paths (#2762).
+          changed="$(git diff --no-renames --name-only "$BEFORE" "$AFTER")"
           work="$(printf '%s\n' "$changed" | grep -E '^(contracts/src/|apps/)' || true)"
           notes="$(printf '%s\n' "$changed" | grep -E '^docs/ReleaseNotes/' || true)"
           specs="$(printf '%s\n' "$changed" | grep -E '^docs/FunctionalSpecs/' || true)"

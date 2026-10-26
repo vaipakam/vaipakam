@@ -42,6 +42,13 @@ import {
   verifySignedOfferSignature,
   type SignedOrderWire,
 } from './signedOfferEip712';
+import { slotRefusalStatus, takeCallerSlot } from '@vaipakam/lib/rateLimit';
+import { readJsonBody } from '@vaipakam/lib/requestBody';
+import { redactedError } from '@vaipakam/lib/errorDescription';
+
+/** A signed offer: the order struct and its signature, which for a smart
+ *  account (ERC-6492) can run to a few kilobytes (#2756). */
+export const MAX_SIGNED_OFFER_BODY_BYTES = 16 * 1024;
 
 /** Open CORS. `no-store` (Codex #1145 r8 P3) — the desk's mutation flows
  *  (gasless post / cancel / fill) invalidate their react-query caches and
@@ -533,23 +540,18 @@ export async function handleSignedOfferPost(
   req: Request,
   env: Env,
 ): Promise<Response> {
-  // Rate-limit BEFORE the validation gates (the loanRoutes #335 posture) so
-  // a scripted attacker spamming malformed payloads can't burn the D1/CPU
-  // budget on invalid-input branches. No-op when unprovisioned.
-  if (env.SIGNED_OFFERS_RATELIMIT) {
-    const ip = req.headers.get('CF-Connecting-IP') ?? 'unknown';
-    const { success } = await env.SIGNED_OFFERS_RATELIMIT.limit({ key: ip });
-    if (!success) {
-      return jsonResponse({ error: 'rate-limited' }, 429);
-    }
-  }
+  // Rate-limit BEFORE the validation gates so a scripted caller spamming
+  // malformed payloads can't burn the D1/CPU budget on invalid-input
+  // branches, under the one fail-closed rule (`@vaipakam/lib/rateLimit`,
+  // #2756): a missing or failing binding refuses, it no longer lets the
+  // post through.
+  const refusal = slotRefusalStatus(await takeCallerSlot(req, env.SIGNED_OFFERS_RATELIMIT));
+  if (refusal) return jsonResponse({ error: refusal.error }, refusal.status);
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return jsonResponse({ error: 'invalid-json' }, 400);
-  }
+  // The body is read only up to a cap (#2756).
+  const read = await readJsonBody(req, MAX_SIGNED_OFFER_BODY_BYTES);
+  if (!read.ok) return jsonResponse({ error: read.error }, read.status);
+  const body = read.value;
   if (body === null || typeof body !== 'object') {
     return jsonResponse({ error: 'invalid-body' }, 400);
   }
@@ -643,7 +645,7 @@ export async function handleSignedOfferPost(
       );
     }
   } catch (err) {
-    console.error('[signedOfferRoutes] existing-row lookup failed', err);
+    console.error('[signedOfferRoutes] existing-row lookup failed', redactedError(err));
     return jsonResponse({ error: 'lookup-failed' }, 500);
   }
 
@@ -738,7 +740,7 @@ export async function handleSignedOfferPost(
   } catch (err) {
     console.warn(
       '[signedOfferRoutes] chain-state ingest check failed; accepting (lifecycle handlers reconcile)',
-      err,
+      redactedError(err),
     );
   }
 
@@ -811,11 +813,11 @@ export async function handleSignedOfferPost(
       // fail-open block as the refresh.
       await seedMarketSweepCursorIfAbsent(env.DB, chainId, now);
     } catch (err) {
-      console.error('[signedOfferRoutes] market_summary refresh failed', err);
+      console.error('[signedOfferRoutes] market_summary refresh failed', redactedError(err));
     }
     return jsonResponse({ chainId, orderHash }, 201);
   } catch (err) {
-    console.error('[signedOfferRoutes] insert failed', err);
+    console.error('[signedOfferRoutes] insert failed', redactedError(err));
     return jsonResponse({ error: 'insert-failed' }, 500);
   }
 }
@@ -987,7 +989,7 @@ export async function handleSignedOffersGet(
     }));
     return jsonResponse({ chainId, offers, truncated });
   } catch (err) {
-    console.error('[signedOfferRoutes] book read failed', err);
+    console.error('[signedOfferRoutes] book read failed', redactedError(err));
     return jsonResponse({ error: 'book-failed' }, 500);
   }
 }

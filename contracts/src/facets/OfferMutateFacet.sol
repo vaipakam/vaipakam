@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibOfferBounds} from "../libraries/LibOfferBounds.sol";
+import {LibOfferShape} from "../libraries/LibOfferShape.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibNumeraireValueRead} from "../libraries/LibNumeraireValueRead.sol";
@@ -91,6 +92,15 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 collateralAmountMax
     );
 
+    /// @notice #2737 — re-declared byte-identical from `BackstopFacet`, so
+    ///         the topic hash is the same one the opt-in emits. Emitted here
+    ///         with `eligibleAfter == 0` when an edit clears an offer's
+    ///         backstop eligibility.
+    event OfferBackstopEligibilitySet(
+        uint256 indexed offerId,
+        uint64 eligibleAfter
+    );
+
     // ── Errors ──────────────────────────────────────────────────────
 
     /// Re-declared locally for ABI continuity with the other lifecycle
@@ -169,7 +179,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // below would return the new values.
         uint256 oldAmount = offer.amount;
         uint256 oldAmountMax = offer.amountMax;
-        _assertAmountInvariants(offer.assetType, newAmount, newAmountMax, offer.amountFilled);
+        _assertAmountInvariants(offer, newAmount, newAmountMax);
         // Codex round-3 P2 — re-validate the T-034 cadence threshold
         // against the NEW amount. createOffer rejects (amount, cadence)
         // pairs that violate the principal-vs-threshold rule; modify
@@ -323,12 +333,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             if (offer.refinanceTargetLoanId != 0) {
                 revert AmountMutationUnsupportedForShape();
             }
-            _assertAmountInvariants(
-                offer.assetType,
-                params.amount,
-                params.amountMax,
-                offer.amountFilled
-            );
+            _assertAmountInvariants(offer, params.amount, params.amountMax);
             // Codex round-3 P2 — same revalidation hook as
             // `setOfferAmount`; the new amount must still satisfy the
             // (amount, cadence) compatibility rule createOffer enforces.
@@ -525,22 +530,21 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ///         the offer. Borrower must release the lock first.
     error OfferLockedByParallelSale();
 
-    /// @dev Reuses the OfferCreateFacet revert types so the modify
-    ///      surface and the create surface speak the same revert ABI.
+    /// @dev #2749 — the offer-shape rules are {LibOfferShape}'s, the same
+    ///      definition `createOffer` applies, so the edited offer satisfies
+    ///      every create-time shape rule by construction. Before, this helper
+    ///      kept its own copy and never read `fillMode`: an all-or-nothing
+    ///      offer could be edited from 1000/1000 to 1/1000, a match for 1 then
+    ///      passed the AON gate (which compares against `amount`), and the
+    ///      rest of the vaulted principal was stranded until cancel.
     function _assertAmountInvariants(
-        LibVaipakam.AssetType assetType,
+        LibVaipakam.Offer storage offer,
         uint256 newAmount,
-        uint256 newAmountMax,
-        uint256 alreadyFilled
-    ) private pure {
-        if (newAmount == 0) revert OfferCreateFacet.AmountMustBePositive();
-        if (newAmountMax == 0) revert OfferCreateFacet.AmountMaxMustBePositive();
-        if (newAmountMax < newAmount) revert OfferCreateFacet.InvalidAmountRange();
-        // #1281 item 021 — an NFT rental stays single-value on amount (its
-        // daily fee), exactly as `createOffer` requires.
-        if (assetType != LibVaipakam.AssetType.ERC20 && newAmountMax != newAmount) {
-            revert OfferCreateFacet.RentalAmountRangeNotAllowed();
-        }
+        uint256 newAmountMax
+    ) private view {
+        LibOfferShape.assertAmount(
+            offer.assetType, offer.fillMode, newAmount, newAmountMax
+        );
         // Modify-specific bound: the new ceiling cannot fall below the
         // portion already committed to live loans. Without this, a
         // creator could shrink amountMax to amountFilled-1 and the
@@ -548,8 +552,8 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // stated cap — a divergence the matching path's
         // `lenderRemaining = amountMax - amountFilled` computation
         // would underflow on.
-        if (newAmountMax < alreadyFilled) {
-            revert ModifyBelowFilledFloor(newAmountMax, alreadyFilled);
+        if (newAmountMax < offer.amountFilled) {
+            revert ModifyBelowFilledFloor(newAmountMax, offer.amountFilled);
         }
     }
 
@@ -557,13 +561,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 newRateBps,
         uint256 newRateBpsMax
     ) private pure {
-        // Mirrors `_writeOfferPrincipalFields` — rate may legitimately
-        // be zero on both ends (NFT-rental APR has no economic
-        // meaning; zero-interest ERC-20 loans are a real shape too).
-        if (newRateBpsMax < newRateBps) revert OfferCreateFacet.InvalidRateRange();
-        if (newRateBpsMax > LibVaipakam.MAX_INTEREST_BPS) {
-            revert OfferCreateFacet.InterestRateAboveCeiling();
-        }
+        LibOfferShape.assertRate(newRateBps, newRateBpsMax);
     }
 
     /// @dev Borrower NFT-rental offers have no creator-side collateral
@@ -601,48 +599,19 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             revert CollateralMutationUnsupportedForShape();
         }
 
-        // Codex round-2 P2 — mirror `_writeOfferCollateralFields`'s
-        // strict-collateral rule: only enforce `collateralAmount > 0`
-        // and `collateralAmountMax > 0` for true ERC-20 LOANS (both
-        // legs ERC-20) AND not the lender-sale-vehicle "both zero"
-        // pattern. Three create-time exceptions get the same pass:
-        //   1. NFT collateral (`collateralAssetType` ERC-721 / ERC-1155):
-        //      lock is by `collateralTokenId` / quantity, not an amount.
-        //   2. NFT-rental offers (`assetType` ERC-721 / ERC-1155):
-        //      the rental fee × duration IS the commitment; collateral
-        //      is optional.
-        //   3. Lender sale-vehicle / no-collateral lender offers
-        //      shipped as `collateralAmount == 0 == collateralAmountMax`
-        //      (BOTH zero, explicit). The actual collateral comes from
-        //      a linked loan via `s.saleOfferToLoanId[offerId]`.
-        // Mixed shapes (one zero, the other positive) still revert.
-        bool enforceStrictCollateral =
-            offer.assetType == LibVaipakam.AssetType.ERC20
-            && offer.collateralAssetType == LibVaipakam.AssetType.ERC20
-            && !(newCollateralAmount == 0 && newCollateralAmountMax == 0);
-        if (enforceStrictCollateral) {
-            if (newCollateralAmount == 0) {
-                revert OfferCreateFacet.CollateralMustBePositive();
-            }
-            if (newCollateralAmountMax == 0) {
-                revert OfferCreateFacet.CollateralAmountMaxMustBePositive();
-            }
-        }
-        if (newCollateralAmountMax < newCollateralAmount) {
-            revert OfferCreateFacet.InvalidCollateralAmountRange();
-        }
-
-        // Lender-side single-value invariant: a lender's
-        // `collateralAmount` already expresses their derived
-        // requirement at `amountMax`; a max wouldn't add meaning.
-        // Mirrors `_writeOfferCollateralFields` so the post-mutation
-        // shape passes the same check `createOffer` enforces.
-        if (
-            offer.offerType == LibVaipakam.OfferType.Lender
-            && newCollateralAmountMax != newCollateralAmount
-        ) {
-            revert OfferCreateFacet.LenderCollateralRangeNotAllowed();
-        }
+        // #2729 / #2749 — the collateral-range rules are {LibOfferShape}'s,
+        // shared with create. An edit is never the lender-sale vehicle (that
+        // offer is frozen by {_assertMutableBy}), so it gets no zero-collateral
+        // exception: an ERC-20 loan against ERC-20 collateral keeps a positive
+        // floor and ceiling through every edit.
+        LibOfferShape.assertCollateral(
+            offer.offerType,
+            offer.assetType,
+            offer.collateralAssetType,
+            newCollateralAmount,
+            newCollateralAmountMax,
+            false
+        );
 
         // Modify-specific bound on the partial-filled portion (only
         // borrower offers track collateralAmountFilled today). Same
@@ -946,6 +915,17 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ///      three per-setter entries + the combined `modifyOffer` all
     ///      lay down identical events. Indexers filter by topic0.
     function _emitModified(uint256 offerId, LibVaipakam.Offer storage offer) private {
+        // #2737 — every mutator changes the offer's economics (amount, rate
+        // or collateral), so a standing backstop opt-in no longer describes
+        // the offer that would be filled: the borrower could opt a small offer
+        // in, wait out the mandatory delay, then edit it to the terms they
+        // want and fill against treasury capital in the same block, so the
+        // final terms never sat in the market. The edit clears the opt-in;
+        // the borrower opts in again and waits the delay out on the new terms.
+        if (offer.backstopEligibleAfter != 0) {
+            offer.backstopEligibleAfter = 0;
+            emit OfferBackstopEligibilitySet(offerId, 0);
+        }
         emit OfferModified(
             offerId,
             offer.creator,

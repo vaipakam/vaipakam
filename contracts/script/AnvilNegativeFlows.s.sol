@@ -18,6 +18,7 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
 import {MockUniswapV3Factory} from "./mocks/MockUniswapV3.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {RehearsalChain} from "./lib/RehearsalChain.sol";
 import {RevertProbe} from "./lib/RevertProbe.sol";
 
 /**
@@ -86,6 +87,8 @@ contract AnvilNegativeFlows is Script {
     uint256 constant DURATION_DAYS = 30;
 
     function run() external {
+        // Points the Diamond at mocks it deploys: never on a shared Diamond (#2763).
+        RehearsalChain.requireRehearsalChain("AnvilNegativeFlows");
         _loadEnv();
         diamond = Deployments.readDiamond();
 

@@ -40,14 +40,70 @@
 import { extractRevertName } from './decodeContractError';
 
 /**
- * Strip anything URL-shaped and cap the length.
+ * The field names whose value is a credential wherever it appears: a query
+ * parameter, a header, a JSON or form field.
+ */
+const CREDENTIAL_FIELD =
+  '(?:api[-_]?key|apikey|access[-_]?token|token|secret|password|passwd|authorization|auth|key|x-api-key)';
+
+/**
+ * Remove every URL, every host with a subdomain and every credential-shaped
+ * token from `text` (#2759).
+ *
+ * The one redaction rule every formatter here applies. Three things are
+ * removed whole, each by its SHAPE rather than by where it appears:
+ *
+ * - **A URL**, host included, with or without its scheme (`host.tld/path`).
+ * - **A host with a subdomain** (`KEY.quiknode.pro`), standing alone. A
+ *   provider issues the labels in front of its own domain per customer, and
+ *   some put the key there, so a DNS or connect failure that names only the
+ *   host (`getaddrinfo ENOTFOUND KEY.quiknode.pro`) carries the key with no
+ *   URL around it. A two-label name (`loans.grace_end`, `Object.keys`,
+ *   `index.js`) is not a host with a subdomain and stays, and so does a file
+ *   position in a stack frame (`chunk.abc.js:12:3`) or a name inside a path.
+ * - **The value of a credential field** (`apikey=`, `token:`,
+ *   `"password":"…"`, `Authorization: Bearer …`). A quoted value is removed
+ *   through its closing quote, escaped quotes and all, so a value holding a
+ *   space, `&` or `,` does not leave its tail behind; an unquoted one ends
+ *   where a query, header or JSON value ends.
+ *
+ * A Telegram bot token is removed too. It does not remove 32-byte hex
+ * values: transaction and order hashes are what an operator searches a log
+ * for.
+ */
+export function redactSecrets(text: string): string {
+  return text
+    // Every rule that starts on a run of name characters starts only at the
+    // run's first character (the lookbehinds), so a long run is scanned once:
+    // starting at each `\b` instead made `a.a.a.…` quadratic, 30 s of CPU
+    // for 200 KB of error text.
+    .replace(/(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\/\/\S*/gi, '<redacted url>')
+    .replace(/(?<![\w./\\-])(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?\/[^\s"'<>)]*/gi, '<redacted url>')
+    .replace(
+      /(?<![\w./\\-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.){2,}[a-z]{2,}(?![\w-]|\.[a-z0-9])(?::\d+(?![\d:]))?(?!:\d)/gi,
+      '<redacted host>',
+    )
+    .replace(/\b(bearer|basic)\s+[a-z0-9._~+/=-]+/gi, '$1 <redacted>')
+    .replace(
+      new RegExp(`\\b(${CREDENTIAL_FIELD}["']?\\s*[:=]\\s*)(["'])(?:\\\\[\\s\\S]|(?!\\2)[^\\\\])*(?:\\2|$)`, 'gi'),
+      '$1$2<redacted>$2',
+    )
+    .replace(
+      new RegExp(`\\b(${CREDENTIAL_FIELD}["']?\\s*[:=]\\s*)(?!["']|<redacted)[^\\s"'&,;}]+`, 'gi'),
+      '$1<redacted>',
+    )
+    .replace(/\b\d{6,}:[a-z0-9_-]{30,}\b/gi, '<redacted token>');
+}
+
+/**
+ * Strip anything URL-shaped or credential-shaped and cap the length.
  *
  * Applied even to fields that are conventionally bare identifiers: "an error
  * class is a single word" is a convention of the libraries we happen to use,
  * not a property of a value arriving from a dependency.
  */
 export function redactAndBound(text: string): string {
-  return text.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S*/gi, '<redacted url>').slice(0, 80);
+  return redactSecrets(text).slice(0, 80);
 }
 
 /**
@@ -105,14 +161,64 @@ export function describeFailure(err: unknown): string {
  * `The contract function "x" reverted.` So the summary is that name, found by
  * walking the causes ({@link extractRevertName}), followed by viem's
  * `shortMessage`, which, unlike `message`, carries no request URL. Both are
- * values from a dependency, so anything URL-shaped in them is stripped as
- * {@link redactAndBound} does. Without a `shortMessage` the bounded
+ * values from a dependency, so anything URL-shaped in them is stripped by
+ * {@link redactSecrets}. Without a `shortMessage` the bounded
  * description stands in. Never the raw message.
  */
 export function summarizeFailure(err: unknown, max = 200): string {
-  const stripUrls = (t: string) => t.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S*/gi, '<redacted url>');
+  const stripUrls = redactSecrets;
   const short = (err as { shortMessage?: unknown } | null)?.shortMessage;
   const body = typeof short === 'string' && short.length > 0 ? stripUrls(short) : describeFailure(err);
   const name = extractRevertName(err);
   return (name ? `${stripUrls(name)}: ${body}` : body).slice(0, max);
+}
+
+/** How many stack frames {@link redactedError} keeps. */
+const MAX_STACK_FRAMES = 8;
+/** How long a {@link redactedError} line may run. */
+const MAX_REDACTED_ERROR_CHARS = 2_000;
+
+/**
+ * A failure as text for a log, an alert or a response, with every URL and
+ * credential removed (#2759).
+ *
+ * {@link describeFailure} keeps only identifiers, which is right for an RPC
+ * failure but loses what a database or a third-party error says (`no such
+ * column: x`, a Telegram `chat not found`). This keeps the message, and the
+ * message of each cause (`Name: message ← Name: message`, at most five
+ * deep, cycles stopped), then the first eight frames of the outermost stack,
+ * all passed through {@link redactSecrets} and bounded. It is what
+ * `console.error(label, err)` printed before, minus the secrets. Pass
+ * `{ stack: false }` where the text is a field (a result, a stored row)
+ * rather than a log line.
+ *
+ * A thrown value that is not an Error is described by its type, never
+ * stringified: an object can carry anything in its fields.
+ */
+export function redactedError(err: unknown, opts: { stack?: boolean } = {}): string {
+  if (typeof err === 'string') return redactSecrets(err).slice(0, MAX_REDACTED_ERROR_CHARS);
+  if (!(err instanceof Error)) {
+    return `a thrown ${err === null ? 'null' : typeof err} (not an Error)`;
+  }
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  let cur: unknown = err;
+  for (let depth = 0; depth < MAX_CAUSE_DEPTH && cur !== undefined && cur !== null; depth += 1) {
+    if (seen.has(cur)) break;
+    seen.add(cur);
+    if (cur instanceof Error) {
+      parts.push(`${cur.name || 'Error'}: ${cur.message}`);
+      cur = (cur as { cause?: unknown }).cause;
+    } else {
+      parts.push(typeof cur === 'string' ? cur : `a ${typeof cur} cause`);
+      break;
+    }
+  }
+  const frames = (opts.stack === false ? '' : err.stack ?? '')
+    .split('\n')
+    .filter((l) => /^\s*at\s/.test(l))
+    .slice(0, MAX_STACK_FRAMES)
+    .map((l) => l.trim());
+  const text = [parts.join(' ← '), ...frames].join('\n    ');
+  return redactSecrets(text).slice(0, MAX_REDACTED_ERROR_CHARS);
 }

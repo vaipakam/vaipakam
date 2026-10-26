@@ -95,12 +95,15 @@ import {
   pruneOldWebhookDeliveries,
 } from './cancelledOfferRetention';
 import {
-  readCappedBody,
+  MAX_WEBHOOK_BODY,
   verifyAlchemySignature,
   parseChainEventPayload,
   sha256Hex,
-  WebhookBodyTooLargeError,
 } from './webhookAuth';
+import { readBodyText } from '@vaipakam/lib/requestBody';
+import { isListedOrigin } from '@vaipakam/lib/originAllowList';
+import { slotRefusalStatus, takeCallerSlot } from '@vaipakam/lib/rateLimit';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 // #757 — the per-chain ingest Durable Object. Re-exported from the Worker
 // entry so `wrangler.jsonc`'s `durable_objects` binding can resolve the class.
@@ -282,7 +285,7 @@ export default {
             body: JSON.stringify({ chainId: chain.id, targetBlock: '0' }),
           }).catch((err) => {
             // eslint-disable-next-line no-console
-            console.error(`[indexer] DO ping failed for chain ${chain.id}:`, err);
+            console.error(`[indexer] DO ping failed for chain ${chain.id}:`, redactedError(err));
           }),
         );
       }
@@ -292,7 +295,7 @@ export default {
       ingest.push(
         runChainIndexer(resolved, budget).catch((err) => {
           // eslint-disable-next-line no-console
-          console.error('[indexer] runChainIndexer pass failed:', err);
+          console.error('[indexer] runChainIndexer pass failed:', redactedError(err));
         }),
       );
     }
@@ -353,7 +356,7 @@ export default {
         return captureBackingSnapshot(resolved, target.id, tickMinutes).catch((err) => {
           // One chain's RPC blip must not wedge the tick.
           // eslint-disable-next-line no-console
-          console.error(`[indexer] backing snapshot failed for ${target.id}:`, err);
+          console.error(`[indexer] backing snapshot failed for ${target.id}:`, redactedError(err));
         });
       });
     }
@@ -361,14 +364,14 @@ export default {
     runPass(
       pruneOldCancelledOffers(resolved).catch((err) => {
         // eslint-disable-next-line no-console
-        console.error('[indexer] pruneOldCancelledOffers pass failed:', err);
+        console.error('[indexer] pruneOldCancelledOffers pass failed:', redactedError(err));
       }),
     );
     // #757 — prune the webhook delivery dedupe table (short retention window).
     runPass(
       pruneOldWebhookDeliveries(resolved).catch((err) => {
         // eslint-disable-next-line no-console
-        console.error('[indexer] pruneOldWebhookDeliveries pass failed:', err);
+        console.error('[indexer] pruneOldWebhookDeliveries pass failed:', redactedError(err));
       }),
     );
     // T-086 step 14 round 2 — retry the OpenSea publish for rows whose inline
@@ -391,7 +394,7 @@ export default {
     afterIngestPass(() =>
       sweepUnpublishedListings(resolved, budget).catch((err) => {
         // eslint-disable-next-line no-console
-        console.error('[indexer] sweepUnpublishedListings pass failed:', err);
+        console.error('[indexer] sweepUnpublishedListings pass failed:', redactedError(err));
       }),
     );
     // WHAT THE TICK ACTUALLY SPENT, once every pass has settled. `allSettled`
@@ -463,6 +466,14 @@ export default {
       if (req.headers.get('Upgrade') !== 'websocket') {
         return new Response('expected websocket upgrade', { status: 426 });
       }
+      // #2756 — only the app's own pages subscribe. A WebSocket upgrade is
+      // not subject to CORS, so without this any site could hold sockets
+      // open on the ingest DO through its visitors' browsers. A script can
+      // forge the header, which is what the per-IP budget below and the
+      // DO's subscriber caps bound.
+      if (!isListedOrigin(req.headers.get('Origin'), env.FRONTEND_ORIGIN)) {
+        return new Response('origin not allowed', { status: 403 });
+      }
       // Reject inactive subscriptions BEFORE touching the DO (Codex P2). While
       // DO ingest is off (the default rollout state) there's no push channel —
       // returning 503 keeps the client honestly on polling and avoids the DO
@@ -477,6 +488,12 @@ export default {
       if (!getDeployment(chainId)) {
         return new Response('unknown chain', { status: 404 });
       }
+      // The per-IP subscribe budget, last of the Worker's checks because it
+      // is the one that costs a binding call (`@vaipakam/lib/rateLimit`;
+      // fails closed). The DO then applies its own caps on how many sockets
+      // it holds (`chainIngestDO.ts`).
+      const refusal = slotRefusalStatus(await takeCallerSlot(req, env.WS_SUBSCRIBE_RATELIMIT));
+      if (refusal) return new Response(refusal.error, { status: refusal.status });
       const ns = env.CHAIN_INGEST_DO;
       const stub = ns.get(ns.idFromName(String(chainId)));
       // Reconstruct the request against the DO-internal URL so the DO can read
@@ -735,16 +752,10 @@ async function handleChainEventWebhook(
   req: Request,
   env: WorkerEnv,
 ): Promise<Response> {
-  // 1. Cap the body before any hashing.
-  let rawBody: string;
-  try {
-    rawBody = await readCappedBody(req);
-  } catch (err) {
-    if (err instanceof WebhookBodyTooLargeError) {
-      return new Response('payload too large', { status: 413 });
-    }
-    return new Response('bad request', { status: 400 });
-  }
+  // 1. Cap the body before any hashing (`@vaipakam/lib/requestBody`).
+  const read = await readBodyText(req, MAX_WEBHOOK_BODY);
+  if (!read.ok) return new Response(read.error, { status: read.status });
+  const rawBody = read.text;
 
   // Resolve the chain from the TRUSTED `?chain=<chainId>` URL param FIRST — it's
   // operator-configured on the webhook target (not payload-derived), so it can
@@ -828,7 +839,7 @@ async function handleChainEventWebhook(
     });
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error('[indexer] webhook DO forward threw:', err);
+    console.error('[indexer] webhook DO forward threw:', redactedError(err));
     // Don't record the dedupe row → Alchemy's retry re-forwards (5xx).
     return new Response('forward failed', { status: 502 });
   }

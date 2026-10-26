@@ -575,7 +575,7 @@ Keeper-bot reference UX / ops requirements:
 - keeper and operator surfaces should show flash-loan discounted-path readiness per chain: receiver deployed address, Aave / Balancer provider availability, keeper-owner match, keeper-side enable flag, DEX-direct quote health, last submitted flash-loan liquidation, and fallback reason when the keeper chooses partial / split / atomic instead.
 - the public bot documentation should describe setup, chain coverage, optional aggregator API keys, logging, MEV-protection options, and clear scope limits
 - the production keeper and public reference bot should include an auto-lifecycle pass or detector for auto-extend where enabled: scan active loans, read both sides' caps, respect the admin kill switch and per-tick caps, submit only terms the contract will enforce, and continue past per-loan failures without stopping the whole cron tick
-- the production keeper should include a pre-grace watcher for loans with refinance caps enabled: scan active loans near the grace boundary, check for compatible in-book lender offers where practical, suppress warnings when a viable counterparty is visible, throttle repeat sends, and dispatch warnings through the user's configured Telegram / Push rails when no compatible offer is found or the watcher cannot prove one exists
+- the production keeper should include a pre-grace watcher for loans with refinance caps enabled: scan active loans near the grace boundary, throttle repeat sends, and dispatch warnings through the user's configured Telegram / Push rails for every such loan not yet refinanced; no offer in the book suppresses the warning, since an offer that only looks compatible can fail to fill and anyone can post one
 - bot ABI files should be generated from the monorepo contract surface rather than maintained as hand-written selector strings
 
 VPFI vault and discount UX:
@@ -604,7 +604,7 @@ Alerts and notification preferences:
 
 - `/app/alerts` should let borrowers configure per-loan HF threshold alerts and delivery rails
 - HF threshold notifications stay compulsory once any delivery rail is enabled
-- borrowers with refinance-offer posting caps enabled should be prompted from Loan Details to configure Telegram or Push alerts so the pre-grace watcher can warn them when no compatible lender offer is found before grace expiry
+- borrowers with refinance-offer posting caps enabled should be prompted from Loan Details to configure Telegram or Push alerts so the pre-grace watcher can warn them before grace expiry while the loan has not been refinanced
 - paid Push notification event types should be individually toggleable, defaulting on for new subscribers: claim available, loan settled / defaulted, offer matched, maturity approaching, and partial repayment received
 - periodic-interest checkpoint reminders should reuse the loan-alert rail. Borrower reminders are priority notifications, lender reminders are courtesy notifications, and the lead time should come from the live `preNotifyDays` governance setting shared with maturity reminders.
 - the Push rail should disclose the current flat notification fee in the active protocol numeraire, explain that Telegram remains free, and make clear that the VPFI fee is deducted from the user's Vaipakam Vault only on the first paid Push notification per loan side

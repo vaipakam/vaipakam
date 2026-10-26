@@ -102,6 +102,7 @@ import { runPeriodicPreNotify } from './periodicPreNotify';
 import { decidePushOptIn, handlePushStatus, servicePushStatus } from './pushRail';
 import { handle1inchQuote, handleQuoteReadiness } from './quoteProxy';
 import { slotRefusal, takeCallerSlot } from './rateLimit';
+import { parseOriginList } from '@vaipakam/lib/originAllowList';
 import { handleOpenSeaListingPost } from './openseaProxy';
 import { handleIntentFusionPost } from './intentFusionPost';
 import { handleOpenSeaCollection } from './openseaCollectionProxy';
@@ -143,6 +144,16 @@ import {
 import type { AlertSettingsChange } from '@vaipakam/lib/alertsMessage';
 import { isTickDue } from '@vaipakam/lib/cronCadence';
 import { AGENT_TICK_CADENCE_MINUTES } from './tickCadence';
+import { readJsonBody } from '@vaipakam/lib/requestBody';
+import { redactedError } from '@vaipakam/lib/errorDescription';
+
+/** A signed alert request: a few fields plus a wallet signature. A
+ *  smart-account (ERC-6492) signature can run to a few kilobytes, so the
+ *  cap leaves room for one (#2756). */
+const MAX_SIGNED_REQUEST_BODY_BYTES = 16 * 1024;
+/** A Telegram update: a message is at most 4,096 characters, plus its
+ *  entities and the sender and chat records. */
+const MAX_TELEGRAM_UPDATE_BYTES = 256 * 1024;
 
 /**
  * The shared-D1 schema gate (#2410). The agent auto-deploys on merge through
@@ -211,19 +222,19 @@ export default {
     ctx.waitUntil(
       runPeriodicPreNotify(resolved).catch((err) => {
         // eslint-disable-next-line no-console
-        console.error('[agent] runPeriodicPreNotify pass failed:', err);
+        console.error('[agent] runPeriodicPreNotify pass failed:', redactedError(err));
       }),
     );
     ctx.waitUntil(
       pruneOldDiagErrors(resolved).catch((err) => {
         // eslint-disable-next-line no-console
-        console.error('[agent] pruneOldDiagErrors pass failed:', err);
+        console.error('[agent] pruneOldDiagErrors pass failed:', redactedError(err));
       }),
     );
     ctx.waitUntil(
       pruneOldSupportTickets(resolved).catch((err) => {
         // eslint-disable-next-line no-console
-        console.error('[agent] pruneOldSupportTickets pass failed:', err);
+        console.error('[agent] pruneOldSupportTickets pass failed:', redactedError(err));
       }),
     );
     // #1896 — expired Telegram handshake codes. This sweep used to run
@@ -277,7 +288,7 @@ export default {
     ctx.waitUntil(
       sweepExpiredLinks(resolved.DB).catch((err) => {
         // eslint-disable-next-line no-console
-        console.error('[agent] sweepExpiredLinks pass failed:', err);
+        console.error('[agent] sweepExpiredLinks pass failed:', redactedError(err));
       }),
     );
 
@@ -623,12 +634,9 @@ export function settingsChangeOf(parsed: PutThresholdsBody): AlertSettingsChange
 
 async function handlePutThresholds(req: Request, env: Env): Promise<Response> {
   const corsOrigin = resolveAllowedOrigin(req, env);
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return json({ error: 'invalid-json' }, 400, corsOrigin);
-  }
+  const read = await readJsonBody(req, MAX_SIGNED_REQUEST_BODY_BYTES);
+  if (!read.ok) return json({ error: read.error }, read.status, corsOrigin);
+  const body = read.value;
   const parsed = parsePutThresholds(body);
   if (!parsed) return json({ error: 'invalid-payload' }, 400, corsOrigin);
 
@@ -717,12 +725,9 @@ async function handleIssueTelegramLink(
   env: Env,
 ): Promise<Response> {
   const corsOrigin = resolveAllowedOrigin(req, env);
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return json({ error: 'invalid-json' }, 400, corsOrigin);
-  }
+  const read = await readJsonBody(req, MAX_SIGNED_REQUEST_BODY_BYTES);
+  if (!read.ok) return json({ error: read.error }, read.status, corsOrigin);
+  const body = read.value;
   // Unlike the other settings endpoints, issuing a link code REQUIRES
   // wallet-ownership proof: completing the handshake redirects the
   // wallet's whole alert stream to whichever chat sends the code (and
@@ -772,12 +777,9 @@ async function handleUnlinkTelegram(
   env: Env,
 ): Promise<Response> {
   const corsOrigin = resolveAllowedOrigin(req, env);
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return json({ error: 'invalid-json' }, 400, corsOrigin);
-  }
+  const read = await readJsonBody(req, MAX_SIGNED_REQUEST_BODY_BYTES);
+  if (!read.ok) return json({ error: read.error }, read.status, corsOrigin);
+  const body = read.value;
   const parsed = parseSignedLinkRequest(body);
   if (!parsed.ok) {
     return json(
@@ -833,12 +835,9 @@ async function handleTestTelegram(req: Request, env: Env): Promise<Response> {
   if (!env.TG_BOT_TOKEN) {
     return json({ error: 'bot-not-configured' }, 503, corsOrigin);
   }
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return json({ error: 'invalid-json' }, 400, corsOrigin);
-  }
+  const read = await readJsonBody(req, MAX_SIGNED_REQUEST_BODY_BYTES);
+  if (!read.ok) return json({ error: read.error }, read.status, corsOrigin);
+  const body = read.value;
   const parsed = parseSignedLinkRequest(body);
   if (!parsed.ok) {
     return json(
@@ -911,12 +910,9 @@ async function handleTelegramWebhook(
     return new Response('unauthorized', { status: 401 });
   }
 
-  let update: TelegramUpdate;
-  try {
-    update = (await req.json()) as TelegramUpdate;
-  } catch {
-    return new Response('bad-json', { status: 400 });
-  }
+  const read = await readJsonBody(req, MAX_TELEGRAM_UPDATE_BYTES);
+  if (!read.ok) return new Response(read.error, { status: read.status });
+  const update = read.value as TelegramUpdate;
 
   const extracted = extractLinkCode(update);
   if (!extracted) {
@@ -992,13 +988,12 @@ function isOriginMatch(origin: string, env: CorsEnv): boolean {
  * all — which is also what a maintenance build can look like.
  *
  * Empty entries are dropped so a trailing comma cannot put `''` in the list
- * and make an empty `Origin` header match.
+ * and make an empty `Origin` header match. The parse is the shared one
+ * (`@vaipakam/lib/originAllowList`), which the indexer's push channel
+ * reads too (#2756).
  */
 function allowList(env: CorsEnv): string[] {
-  return (env.FRONTEND_ORIGIN ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  return parseOriginList(env.FRONTEND_ORIGIN);
 }
 
 /**

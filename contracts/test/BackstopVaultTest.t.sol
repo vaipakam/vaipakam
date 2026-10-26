@@ -12,6 +12,8 @@ import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
+import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -311,7 +313,7 @@ contract BackstopVaultTest is SetupTest {
                 OracleFacet.countLiveSecondaryOracleFeeds.selector,
                 mockCollateralERC20
             ),
-            abi.encode(uint8(0))
+            abi.encode(uint8(0), uint8(0))
         );
         (uint256 offerId, ) = _eligibleOffer();
         vm.prank(makeAddr("poker"));
@@ -334,7 +336,7 @@ contract BackstopVaultTest is SetupTest {
                 OracleFacet.countLiveSecondaryOracleFeeds.selector,
                 mockCollateralERC20
             ),
-            abi.encode(uint8(1))
+            abi.encode(uint8(1), uint8(0))
         );
         (uint256 offerId, ) = _eligibleOffer();
         vm.prank(makeAddr("poker"));
@@ -360,7 +362,7 @@ contract BackstopVaultTest is SetupTest {
                 OracleFacet.countLiveSecondaryOracleFeeds.selector,
                 mockCollateralERC20
             ),
-            abi.encode(uint8(2))
+            abi.encode(uint8(2), uint8(0))
         );
         (uint256 offerId, ) = _eligibleOffer();
         vm.prank(makeAddr("poker"));
@@ -370,6 +372,59 @@ contract BackstopVaultTest is SetupTest {
             vault,
             "fill proceeds when coverage met"
         );
+    }
+
+    /// @dev #2737 — one agreeing and one disagreeing secondary with the knob
+    ///      at 2 used to pass (the dissent counted as coverage). Any dissent
+    ///      now refuses outright, ahead of the coverage count.
+    function test_backstopFill_anyDisagreement_reverts() public {
+        vm.prank(owner);
+        BackstopFacet(address(diamond))
+            .setBackstopMinSecondaryOracleCoverage(2);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.countLiveSecondaryOracleFeeds.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(uint8(1), uint8(1))
+        );
+        (uint256 offerId, ) = _eligibleOffer();
+        vm.prank(makeAddr("poker"));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibBackstopOracleGate.BackstopOracleDisagreement.selector,
+                mockCollateralERC20,
+                uint8(1)
+            )
+        );
+        BackstopFacet(address(diamond)).backstopFill(offerId);
+    }
+
+    /// @dev #2737 — dissent refuses even when the agreeing feeds alone meet
+    ///      the minimum.
+    function test_backstopFill_disagreementWithCoverageMet_reverts() public {
+        vm.prank(owner);
+        BackstopFacet(address(diamond))
+            .setBackstopMinSecondaryOracleCoverage(2);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.countLiveSecondaryOracleFeeds.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(uint8(2), uint8(1))
+        );
+        (uint256 offerId, ) = _eligibleOffer();
+        vm.prank(makeAddr("poker"));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibBackstopOracleGate.BackstopOracleDisagreement.selector,
+                mockCollateralERC20,
+                uint8(1)
+            )
+        );
+        BackstopFacet(address(diamond)).backstopFill(offerId);
     }
 
     // ─── #638 — setter / getter / range bound ───────────────────────────────
@@ -765,5 +820,81 @@ contract BackstopVaultTest is SetupTest {
             before + arrived,
             "treasury credited what arrived, not what the vault sent"
         );
+    }
+    // ─── #2737 — an edit clears the backstop opt-in ─────────────────────────
+
+    event OfferBackstopEligibilitySet(uint256 indexed offerId, uint64 eligibleAfter);
+
+    /// @dev The bypass the issue names: opt in, wait out the delay, then edit
+    ///      the offer and fill in the same block. The edit must clear the
+    ///      opt-in (with the event an indexer reads), so the fill refuses.
+    function test_mutateAfterOptIn_clearsEligibility_andFillRefuses() public {
+        (uint256 offerId, address borrower) = _eligibleOffer();
+        vm.expectEmit(true, false, false, true, address(diamond));
+        emit OfferBackstopEligibilitySet(offerId, 0);
+        vm.prank(borrower);
+        OfferMutateFacet(address(diamond)).setOfferRate(offerId, MIN_RATE, MIN_RATE + 50);
+
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(offerId);
+        assertEq(o.backstopEligibleAfter, 0, "edit cleared the opt-in");
+
+        vm.prank(makeAddr("poker"));
+        vm.expectRevert(BackstopFacet.OfferNotBackstopFillable.selector);
+        BackstopFacet(address(diamond)).backstopFill(offerId);
+    }
+
+    /// @dev Every economic setter clears it, not only the rate one.
+    function test_everyMutator_clearsEligibility() public {
+        for (uint256 i; i < 3; ++i) {
+            address borrower = _newBorrower(string.concat("mutatorBorrower", vm.toString(i)));
+            uint256 offerId = _postOfferAs(borrower, base + 7 days);
+            vm.prank(borrower);
+            BackstopFacet(address(diamond)).setOfferBackstopEligible(offerId, base + 2 days);
+            vm.startPrank(borrower);
+            if (i == 0) {
+                OfferMutateFacet(address(diamond)).setOfferAmount(
+                    offerId, PRINCIPAL - 1 ether, PRINCIPAL - 1 ether
+                );
+            } else if (i == 1) {
+                OfferMutateFacet(address(diamond)).setOfferCollateral(
+                    offerId, 2 * PRINCIPAL, 3 * PRINCIPAL
+                );
+            } else {
+                OfferMutateFacet(address(diamond)).modifyOffer(
+                    offerId,
+                    LibVaipakam.OfferModifyParams({
+                        amount: PRINCIPAL,
+                        amountMax: PRINCIPAL,
+                        interestRateBps: MIN_RATE + 10,
+                        interestRateBpsMax: MIN_RATE + 100,
+                        collateralAmount: 2 * PRINCIPAL,
+                        collateralAmountMax: 2 * PRINCIPAL
+                    })
+                );
+            }
+            vm.stopPrank();
+            LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(offerId);
+            assertEq(o.backstopEligibleAfter, 0, "mutator cleared the opt-in");
+        }
+    }
+
+    /// @dev Opting in again after the edit restarts the mandatory delay on the
+    ///      new terms, and the fill works once it has passed.
+    function test_reOptInAfterEdit_waitsTheDelayAgain() public {
+        (uint256 offerId, address borrower) = _eligibleOffer();
+        vm.prank(borrower);
+        OfferMutateFacet(address(diamond)).setOfferRate(offerId, MIN_RATE, MIN_RATE + 50);
+        uint64 now_ = uint64(block.timestamp);
+        vm.prank(borrower);
+        BackstopFacet(address(diamond)).setOfferBackstopEligible(offerId, now_ + 2 days);
+
+        vm.prank(makeAddr("poker"));
+        vm.expectRevert(BackstopFacet.OfferNotBackstopFillable.selector);
+        BackstopFacet(address(diamond)).backstopFill(offerId);
+
+        vm.warp(now_ + 2 days + 1);
+        vm.prank(makeAddr("poker"));
+        uint256 loanId = BackstopFacet(address(diamond)).backstopFill(offerId);
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).lender, vault, "filled after the new delay");
     }
 }

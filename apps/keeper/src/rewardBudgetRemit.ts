@@ -36,6 +36,7 @@ import { reportSendError } from './submissionQueue';
 import { readCutoffMs, runIndex } from './runWindow';
 import { rotate } from './rotate';
 import { owedButBlocked, readRemitDayStatuses } from './remitDayStatus';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 const REMIT_ABI = RewardRemittanceFacetABI as Abi;
 /** `getDayClosedByRemitId` lives on the read-only lens facet. */
@@ -240,7 +241,7 @@ export async function runRewardBudgetRemit(env: Env, tick: PassTick): Promise<vo
       try {
         await remitFromCanonical(env, chain, tick.deadlineMs, run);
       } catch (err) {
-        console.error(`[keeper] rewardBudgetRemit chain=${chain.id} failed:`, err);
+        console.error(`[keeper] rewardBudgetRemit chain=${chain.id} failed:`, redactedError(err));
       }
     }),
   );
@@ -317,7 +318,7 @@ async function remitFromCanonical(env: Env, chain: ChainConfig, deadlineMs: numb
       // Benign reverts (RewardPoolCapExceeded near exhaustion, NotRewardRemitter
       // if the keeper isn't authorized yet, etc.) — log at info and continue.
       // The failure marker `skipped Base-><id>:` is the one the runbook names.
-      reportSendError(`[keeper] rewardBudgetRemit`, err, `skipped Base->${mirrorId}: ${(err as Error).message}`, console.log);
+      reportSendError(`[keeper] rewardBudgetRemit`, err, `skipped Base->${mirrorId}: ${redactedError(err, { stack: false })}`, console.log);
     }
   }
   // #1896 — POSITIVE coverage evidence, for the same reason the liquidator
@@ -661,7 +662,7 @@ async function reportUnclosedDays(
       });
     } catch (err) {
       console.warn(
-        `[keeper] rewardBudgetRemit Base->${mirrorId} closure probe failed: ${(err as Error).message}`,
+        `[keeper] rewardBudgetRemit Base->${mirrorId} closure probe failed: ${redactedError(err, { stack: false })}`,
       );
       openDays.push(...ambiguous);
     }

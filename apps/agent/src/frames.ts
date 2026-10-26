@@ -23,6 +23,12 @@ import { createPublicClient, http, type Address } from 'viem';
 import { MetricsFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
 import type { Env } from './env';
 import { getChainConfigs } from './env';
+import { readJsonBody } from '@vaipakam/lib/requestBody';
+import { redactedError } from '@vaipakam/lib/errorDescription';
+
+/** A Farcaster Frame action: the untrusted fields plus the signed
+ *  `trustedData` message (#2756). */
+const MAX_FRAME_POST_BYTES = 16 * 1024;
 
 // Diamond ABIs sourced from `@vaipakam/contracts/abis` — the same
 // per-facet JSONs the indexer Worker imports. Avoids the
@@ -79,12 +85,9 @@ export async function handleActiveLoansFramePost(
   env: Env,
 ): Promise<Response> {
   const baseUrl = _baseUrl(req);
-  let body: FramePostBody;
-  try {
-    body = (await req.json()) as FramePostBody;
-  } catch {
-    return _errorFrame(baseUrl, env, 'Invalid Frame payload.');
-  }
+  const read = await readJsonBody(req, MAX_FRAME_POST_BYTES);
+  if (!read.ok) return _errorFrame(baseUrl, env, 'Invalid Frame payload.');
+  const body = read.value as FramePostBody;
   const inputText = (body.untrustedData?.inputText ?? '').trim();
   if (!HEX_ADDR.test(inputText)) {
     return _errorFrame(
@@ -132,9 +135,7 @@ export async function handleActiveLoansFramePost(
         }
         return { chain: chain.name, count: loanIds.length, lowestHf };
       } catch (err) {
-        console.error(
-          `[frames] chain=${chain.name} err=${String(err).slice(0, 200)}`,
-        );
+        console.error(`[frames] chain=${chain.name}`, redactedError(err));
         return { chain: chain.name, count: 0, lowestHf: null as number | null };
       }
     }),

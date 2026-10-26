@@ -23,6 +23,13 @@ import { redactText } from '@vaipakam/lib/redactAddresses';
 
 import type { Env } from './env';
 import { insertSupportTicket } from './db';
+import { readJsonBody } from '@vaipakam/lib/requestBody';
+import { redactedError } from '@vaipakam/lib/errorDescription';
+
+/** The ticket's fields are capped in characters below; a character can
+ *  take up to six bytes once JSON-escaped, so the body cap is set from
+ *  those field caps with room to spare (#2756). */
+const MAX_TICKET_BODY_BYTES = 64 * 1024;
 
 const MAX_MESSAGE_CHARS = 2_000;
 const MAX_DIAGNOSTICS_CHARS = 4_000;
@@ -147,12 +154,9 @@ export async function handleSupportTicket(
   // The caller budget (`SUPPORT_TICKET_RATELIMIT`) was taken at the router
   // under the one fail-closed rule in `rateLimit.ts` (#2755).
 
-  let raw: unknown;
-  try {
-    raw = await req.json();
-  } catch {
-    return json({ error: 'invalid-json' }, 400, corsOrigin);
-  }
+  const read = await readJsonBody(req, MAX_TICKET_BODY_BYTES);
+  if (!read.ok) return json({ error: read.error }, read.status, corsOrigin);
+  const raw = read.value;
   const body = parseSupportTicket(raw);
   if (body === null) {
     return json({ error: 'invalid-ticket' }, 400, corsOrigin);
@@ -171,7 +175,7 @@ export async function handleSupportTicket(
   } catch (e) {
     // Includes the migration-not-applied case on a fresh env — an
     // honest 503 lets the widget steer the user to the mailto path.
-    console.error('[support] ticket insert failed', e);
+    console.error('[support] ticket insert failed', redactedError(e));
     return json({ error: 'unavailable' }, 503, corsOrigin);
   }
 
@@ -248,7 +252,7 @@ export async function notifyOpsNewTicket(
       console.error('[support] ops notify failed after retry', res.status);
     }
   } catch (e) {
-    console.error('[support] ops notify failed', e);
+    console.error('[support] ops notify failed', redactedError(e));
   }
 }
 

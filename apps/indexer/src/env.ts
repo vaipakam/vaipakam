@@ -1,6 +1,8 @@
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { resolveD1Binding } from '@vaipakam/lib/d1Maintenance';
+import type { RateLimitBinding } from '@vaipakam/lib/rateLimit';
 import { spendInternal, type TickBudget } from './subrequestBudget';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 /**
  * This Worker's deployed name, used as the label on a D1 refusal so an
@@ -54,7 +56,8 @@ export const WORKER_NAME = 'vaipakam-indexer';
  *     agent (notification dispatch)
  *   - KEEPER_PRIVATE_KEY / KEEPER_ENABLED — keeper
  *   - ZEROEX_API_KEY / ONEINCH_API_KEY — keeper + agent
- *   - FRONTEND_ORIGIN — indexer routes use OPEN CORS (T-041)
+ *   - FRONTEND_ORIGIN — the REST routes use OPEN CORS (T-041); the
+ *     indexer reads it only to gate its WebSocket push channel (#2756)
  *
  * Diamond addresses come from `@vaipakam/contracts/deployments`.
  */
@@ -109,11 +112,9 @@ export interface WorkerEnv {
     limit: (args: { key: string }) => Promise<{ success: boolean }>;
   };
   // #1131 Rate Desk phase 3 — per-IP rate-limit on `POST /signed-offers`
-  // (the signed-offer book ingest). Same shape + no-op-when-unprovisioned
-  // posture as the #335 binding above.
-  SIGNED_OFFERS_RATELIMIT?: {
-    limit: (args: { key: string }) => Promise<{ success: boolean }>;
-  };
+  // (the signed-offer book ingest), under the one fail-closed rule in
+  // `@vaipakam/lib/rateLimit` (#2756): a missing binding refuses the post.
+  SIGNED_OFFERS_RATELIMIT?: RateLimitBinding;
   // #757 Phase A — Alchemy webhook HMAC signing key. Read DIRECTLY from this
   // raw `WorkerEnv` in the `/hooks/chain-event` route (which is dispatched
   // BEFORE the global `resolveEnv`, so an unauthenticated POST never triggers
@@ -146,6 +147,12 @@ export interface WorkerEnv {
   // itself. Plain `var`, read from the raw env (the route runs before
   // `resolveEnv`).
   CHAIN_INGEST_VIA_DO?: string;
+  // #2756 — the WebSocket push channel's gates, read from the raw env (the
+  // route runs before `resolveEnv`): the browser origins it serves (the
+  // agent's list, `@vaipakam/lib/originAllowList`) and the per-IP subscribe
+  // budget (`@vaipakam/lib/rateLimit`, fails closed).
+  FRONTEND_ORIGIN?: string;
+  WS_SUBSCRIBE_RATELIMIT?: RateLimitBinding;
 
   /** Cloudflare version-metadata binding — makes "what's actually
    *  deployed?" a one-curl question (surfaced on the stats routes).
@@ -299,14 +306,10 @@ export interface Env {
   };
 
   // #1131 Rate Desk phase 3 — per-IP rate-limit binding for
-  // `POST /signed-offers` (signed-offer book ingest). No-op when the
-  // operator hasn't provisioned the wrangler.jsonc binding yet; the
-  // strict field validation + local EIP-712 signature verification
-  // keep the endpoint defensible without it, but provisioning it is
-  // the expected operator action post-merge.
-  SIGNED_OFFERS_RATELIMIT?: {
-    limit: (args: { key: string }) => Promise<{ success: boolean }>;
-  };
+  // `POST /signed-offers` (signed-offer book ingest). Fails closed
+  // (`@vaipakam/lib/rateLimit`, #2756): a deployment without it refuses
+  // every post, so `wrangler.jsonc` declares it.
+  SIGNED_OFFERS_RATELIMIT?: RateLimitBinding;
 }
 
 /**
@@ -345,7 +348,7 @@ export async function readSecret(
     return await b.get();
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error('[env] Secrets Store fetch failed; treating as unset:', err);
+    console.error('[env] Secrets Store fetch failed; treating as unset:', redactedError(err));
     return undefined;
   }
 }

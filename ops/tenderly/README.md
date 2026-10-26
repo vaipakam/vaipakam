@@ -10,21 +10,20 @@ Presets live in [`alerts.yaml`](./alerts.yaml). Scheduled actions are TypeScript
 
 ## Apply (per chain)
 
-Tenderly alerts are scoped per contract, so every chain the Diamond runs on needs its own copy of each preset with the chain-specific `${DIAMOND_ADDRESS}` and `${TIMELOCK_ADDRESS}`.
+Tenderly alerts are scoped per contract, so every chain the Diamond runs on needs its own copy of each preset with that chain's `${CHAIN}`, `${CHAIN_ID}`, `${DIAMOND_ADDRESS}` and `${TIMELOCK_ADDRESS}`. Generate the copies with the export script, which reads each chain's `contracts/deployments/<slug>/addresses.json`:
 
 ```bash
 # Install once
 npm install -g @tenderly/cli
 tenderly login
 
-# For each chain:
-export CHAIN=base-sepolia
-export CHAIN_ID=84532
-export DIAMOND_ADDRESS=0x...
-export TIMELOCK_ADDRESS=0x...
-envsubst < alerts.yaml > alerts.${CHAIN}.yaml
-tenderly alerts apply --file alerts.${CHAIN}.yaml --project vaipakam
+# From the repo root: every chain, or name the ones you want
+bash contracts/script/exportTenderlyAlerts.sh base-sepolia arb-sepolia
+cd ops/tenderly
+for f in generated/alerts-*.yaml; do tenderly alerts apply --file "$f" --project vaipakam; done
 ```
+
+The script fills all four placeholders and refuses the whole run, publishing nothing, if the template uses any other one (#2763: `${CHAIN_ID}` and `${TIMELOCK_ADDRESS}` used to reach Tenderly as literal text). A chain with no `timelock` in its artifact is skipped by name rather than given a governance alert that watches nothing. Address placeholders are quoted in the template, so a YAML 1.1 parser reads them as strings, not integers.
 
 ## Secrets
 

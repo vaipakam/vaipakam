@@ -120,6 +120,25 @@
   },
   {
     "type": "event",
+    "name": "OfferBackstopEligibilitySet",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "eligibleAfter",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "OfferModified",
     "inputs": [
       {
@@ -191,6 +210,11 @@
   {
     "type": "error",
     "name": "AmountMutationUnsupportedForShape",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AonRequiresSingleValueAmount",
     "inputs": []
   },
   {
