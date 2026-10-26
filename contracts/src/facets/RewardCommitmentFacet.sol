@@ -294,21 +294,11 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
      *      manual-budget path, designed WITH the delivered-backing ledger —
      *      a manual send that bypassed the pendingRemitted reservation + ack
      *      would be exactly the unbacked-remit class that ledger exists to
-     *      prevent. That vehicle HAS landed —
-     *      {RewardCompensationDispatchFacet.remitManualBudget} — so a zeroed
-     *      chain-day's compensation no longer falls back to the pre-mesh
-     *      out-of-band governance posture
-     *      ({RewardAggregatorFacet.forceFinalizeDay}'s documented recovery)
-     *      for any day that HAS a lapse clock. That posture is NOT merely
-     *      historical: a pre-w1 zeroed day with no clock cannot use the
-     *      evidenced vehicle at all (`_remitManualBudget` reverts
-     *      {CompensationDayHasNoClock}; on a fresh deploy no such day can
-     *      exist, since finalization freezes the clock and #1944 retired
-     *      the clockless broadcast wires), and {stampLegacyCompensation}
-     *      only migrates a receipt already
-     *      delivered — so it cannot fund a day that never was. For that
-     *      legacy state the out-of-band posture remains the supported
-     *      route.
+     *      prevent. That vehicle is
+     *      {RewardCompensationDispatchFacet.remitManualBudget}, and it is
+     *      the one funding route for a zeroed chain-day: every finalized
+     *      day carries the lapse clock the vehicle reads, because
+     *      finalization writes the flag and the clock in the same call.
      *
      *      ORDERING IS LOAD-BEARING: send the manual compensation BEFORE
      *      clearing `remitIneligible`. The flag is the vehicle's on-chain
@@ -1004,7 +994,7 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         return LibVaipakam.storageSlot().dayResolvedZero[dayId];
     }
 
-    // ─── #1434 P2-w4 — the lapse terminals (§3, §2.5) + legacy stamp ────────
+    // ─── #1434 P2-w4 — the lapse terminals (§3, §2.5) ─────────────────────
 
     /// @notice #1434 P2-w4 (§3 R2) — a never-compensated zeroed day passed
     ///         its frozen expiry and retired at zero; the loss was recorded.
@@ -1023,17 +1013,6 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         uint256 indexed dayId,
         uint256 shortfallLender18,
         uint256 shortfallBorrower18
-    );
-
-    /// @notice #1434 P2-w4 (constraint-19) — a pre-P2 legacy receipt was
-    ///         allocated pro-rata to the day's quoted sides and stamped as
-    ///         its compensation.
-    /// @custom:event-category informational/reward-compensation
-    event LegacyCompensationStamped(
-        uint256 indexed dayId,
-        bytes32 indexed receiptKey,
-        uint256 lenderShare18,
-        uint256 borrowerShare18
     );
 
     /// @dev Shared terminal-standing gate: every w4 terminal is monotone
@@ -1125,11 +1104,6 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
     function lapseZeroedDay(uint256 dayId) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         _assertMirror(s);
-        // #1656 r2 — DARK until the ADMIN arms (the constraint-19
-        // activation gate, enforced on-chain): an upgrade window's
-        // expired day must not be lapsed out from under an unstamped
-        // legacy delivery by a permissionless caller.
-        if (!s.lapseTerminalsArmed) revert LapseTerminalsNotArmed();
         if (!s.dayDeliberatelyZeroed[dayId]) {
             revert LapseDayNotZeroed(dayId);
         }
@@ -1179,8 +1153,6 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
     function lapseShortCompensatedDay(uint256 dayId) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         _assertMirror(s);
-        // #1656 r2 — same activation gate as the full lapse.
-        if (!s.lapseTerminalsArmed) revert LapseTerminalsNotArmed();
         LibVaipakam.DayCompensation storage dc = s.dayCompensation[dayId];
         if (!dc.compensated || dc.provisional) {
             revert ShortLapseNotCompensated(dayId);
@@ -1190,7 +1162,7 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         // (compensated days are quoted on every honest path — r5's
         // funding gate — so this is a fail-closed belt).
         if (s.compQuoteSentAt[dayId] == 0) {
-            revert LegacyStampQuoteMissing(dayId);
+            revert ShortLapseQuoteMissing(dayId);
         }
         {
             uint256 qL = s.compQuoteAccum18[
@@ -1210,13 +1182,6 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         if (clk.finalizedAt == 0 || clk.scheduleVersion == 0) {
             revert LapseDayClockMissing(dayId);
         }
-        // #1656 r1 — a compensated day whose receipt clocks predate the
-        // w4 upgrade (both zero) must not read a deadline one window past
-        // the epoch: the terminal waits until {armShortLapseClock} starts
-        // its bounded window.
-        if (s.firstCompReceiptAt[dayId] == 0) {
-            revert ShortLapseClockUnarmed(dayId);
-        }
         uint256 deadline = _shortLapseDeadline(s, dayId, clk);
         if (block.timestamp <= deadline) {
             revert ShortLapseDeadlineNotReached(dayId, deadline);
@@ -1229,8 +1194,10 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
     }
 
     /// @dev §2.5 — `min(lastQualifying + window, first + 3 × window)`.
-    ///      `firstCompReceiptAt` is stamped at the day's first credit, so
-    ///      it is nonzero for every compensated day.
+    ///      `firstCompReceiptAt` is stamped at the day's first settled
+    ///      credit (or when a provisional credit is confirmed), so it is
+    ///      nonzero for every confirmed compensated day, the only kind
+    ///      {lapseShortCompensatedDay} takes.
     function _shortLapseDeadline(
         LibVaipakam.Storage storage s,
         uint256 dayId,
@@ -1242,137 +1209,6 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         uint256 absolute =
             uint256(s.firstCompReceiptAt[dayId]) + 3 * window;
         return rolling < absolute ? rolling : absolute;
-    }
-
-    /**
-     * @notice #1434 P2-w4 (constraint-19) — stamp a PRE-P2 legacy manual
-     *         remit's delivered value as the day's compensation: the
-     *         legacy wire carried neither the P2 tag nor a per-side
-     *         split, so the upgraded machinery could ACK it and close the
-     *         Base day while the mirror never priced the compensated
-     *         pool. Allocation is deterministic pro-rata over the day's
-     *         COMPLETED quote (`sideShare = amount × quotedSide / (qL +
-     *         qB)`, remainder to the borrower side), bounded by the
-     *         receipt amount; one receipt stamps one day.
-     * @dev    ADMIN-evidenced, deliberately NOT permissionless (design
-     *         deviation, recorded): the mirror's legacy receipt records
-     *         carry no day binding (`ReceivedRemit` predates it), so the
-     *         receipt↔day association is verified operator-side against
-     *         Base's reservation record (`RemitReservation.dayIds`) —
-     *         a permissionless surface could bind any legacy receipt to
-     *         any zeroed day. Pre-live there are ZERO legacy receipts on
-     *         any deployment; this surface exists for the §8 activation
-     *         checklist, whose gate is Base's legacy inventory reading
-     *         empty. No armed-fresh counting here — the value was
-     *         counted at its ORIGINAL d5 ingress; recounting would
-     *         double it.
-     */
-    function stampLegacyCompensation(
-        uint256 dayId,
-        address remitter,
-        uint256 remitId
-    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        _assertMirror(s);
-        bytes32 key = keccak256(abi.encode(remitter, remitId));
-        LibVaipakam.ReceivedRemit storage rec = s.receivedRemits[key];
-        if (rec.receivedAt == 0 || s.legacyReceiptStamped[key]) {
-            revert LegacyReceiptUnusable(key);
-        }
-        if (!s.dayDeliberatelyZeroed[dayId]) {
-            revert LegacyDayNotStampable(dayId);
-        }
-        LibVaipakam.DayCompensation storage dc = s.dayCompensation[dayId];
-        if (
-            dc.compensated || s.dayLapsed[dayId] || s.dayShortLapsed[dayId]
-                || s.dayResolvedZero[dayId]
-        ) {
-            revert LegacyDayNotStampable(dayId);
-        }
-        if (s.compQuoteSentAt[dayId] == 0) {
-            revert LegacyStampQuoteMissing(dayId);
-        }
-        uint256 qL =
-            s.compQuoteAccum18[dayId][uint8(LibVaipakam.RewardSide.Lender)];
-        uint256 qB =
-            s.compQuoteAccum18[dayId][uint8(LibVaipakam.RewardSide.Borrower)];
-        uint256 qSum = qL + qB;
-        // A zero quote is the resolved-zero shape — nothing to stamp
-        // (and the dispatch already marked the day resolved).
-        if (qSum == 0) revert LegacyStampQuoteMissing(dayId);
-
-        uint256 amount = rec.amount;
-        uint256 lenderShare = (amount * qL) / qSum;
-        uint256 borrowerShare = amount - lenderShare;
-
-        s.legacyReceiptStamped[key] = true;
-        dc.lenderPool18 += SafeCast.toUint128(lenderShare);
-        dc.borrowerPool18 += SafeCast.toUint128(borrowerShare);
-        dc.creditedAmount += SafeCast.toUint128(amount);
-        dc.compensated = true;
-        dc.remitId = remitId;
-        // The §2.5 deadline inputs: a legacy stamp is the day's first
-        // (and only pre-supplement) credit.
-        if (s.firstCompReceiptAt[dayId] == 0) {
-            s.firstCompReceiptAt[dayId] = uint64(block.timestamp);
-            s.lastQualifyingCompReceiptAt[dayId] = uint64(block.timestamp);
-        }
-        emit LegacyCompensationStamped(dayId, key, lenderShare, borrowerShare);
-    }
-
-    /// @notice #1434 P2-w4 (#1656 r2) — the lapse terminals were armed
-    ///         (the constraint-19 activation attestation).
-    /// @custom:event-category informational/reward-compensation
-    event LapseTerminalsArmed();
-
-    /// @notice ADMIN, one-shot, MIRROR — arm the two permissionless lapse
-    ///         terminals. The §8 activation checklist runs FIRST: Base's
-    ///         legacy inventory reads empty and every delivered legacy
-    ///         receipt is stamped ({stampLegacyCompensation}); this call
-    ///         is that checklist's on-chain attestation, so the terminals
-    ///         cannot race the migration on an upgrade window.
-    function armLapseTerminals()
-        external
-        onlyRole(LibAccessControl.ADMIN_ROLE)
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        _assertMirror(s);
-        if (s.lapseTerminalsArmed) revert LapseTerminalsAlreadyArmed();
-        s.lapseTerminalsArmed = true;
-        emit LapseTerminalsArmed();
-    }
-
-    /// @notice #1434 P2-w4 (#1656 r2) — whether the lapse terminals are
-    ///         armed on this mirror.
-    function getLapseTerminalsArmed() external view returns (bool) {
-        return LibVaipakam.storageSlot().lapseTerminalsArmed;
-    }
-
-    /// @notice #1434 P2-w4 (#1656 r1) — a pre-upgrade compensated day's
-    ///         short-lapse window was armed (its receipt clocks were
-    ///         stamped from now).
-    /// @custom:event-category informational/reward-compensation
-    event ShortLapseClockArmed(uint256 indexed dayId);
-
-    /// @notice Start the bounded short-lapse window for a compensated day
-    ///         whose receipt clocks predate the w4 upgrade (both zero).
-    ///         PERMISSIONLESS and one-shot: the window runs from NOW —
-    ///         the fair post-upgrade equivalent of the credit-time stamp
-    ///         every new compensation gets.
-    function armShortLapseClock(uint256 dayId) external {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        _assertMirror(s);
-        LibVaipakam.DayCompensation storage dc = s.dayCompensation[dayId];
-        if (!dc.compensated || dc.provisional) {
-            revert ShortLapseNotCompensated(dayId);
-        }
-        _assertNoTerminal(s, dayId);
-        if (s.firstCompReceiptAt[dayId] != 0) {
-            revert ShortLapseClockAlreadyArmed(dayId);
-        }
-        s.firstCompReceiptAt[dayId] = uint64(block.timestamp);
-        s.lastQualifyingCompReceiptAt[dayId] = uint64(block.timestamp);
-        emit ShortLapseClockArmed(dayId);
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss.

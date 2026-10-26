@@ -951,13 +951,6 @@ interface IVaipakamErrors {
     ///         Diamond-internal (the reporter facet invokes it through the
     ///         Diamond's own fallback); any other caller is rejected.
     error CompensationHookNotSelf(address caller);
-    /// @notice #1634 r2 — a P2 compensation cannot dispatch for a day with
-    ///         no frozen lapse clock: such a day can never emit the V3
-    ///         broadcast that settles the mirror's classification, so the
-    ///         credit would sit provisional forever (or quarantine
-    ///         wrongly). On a fresh deploy a finalized day always has its
-    ///         clock, so this is a fail-closed check rather than a route.
-    error CompensationDayHasNoClock(uint256 dayId);
     /// @notice #1634 r3 — the R3 dispatch cutoff: a compensation must not
     ///         dispatch within `dispatchCutoffGap` of the day's frozen
     ///         expiry — bridge latency could carry it past expiry, where
@@ -1186,38 +1179,16 @@ interface IVaipakamErrors {
     /// @notice The closing reservation must be ACKED (value consumed) —
     ///         for a dead reservation, release is the tool.
     error SupplementalReservationNotAcked(uint256 remitId, uint8 status);
-    /// @notice Constraint-19 — the legacy stamp needs the day's COMPLETED
-    ///         quote first (the legacy wire carried no per-side split; the
-    ///         stamp cannot invent one).
-    error LegacyStampQuoteMissing(uint256 dayId);
-    /// @notice Constraint-19 — the named receipt does not exist, or was
-    ///         already spent on a day (one receipt stamps one day).
-    error LegacyReceiptUnusable(bytes32 receiptKey);
-    /// @notice Constraint-19 — the day is not stampable: not zeroed,
-    ///         already terminal, or already compensated.
-    error LegacyDayNotStampable(uint256 dayId);
-    /// @notice #1434 P2-w4 (#1656 r1) — a compensated day whose receipt
-    ///         clocks predate the w4 upgrade (both zero) is not
-    ///         short-lapse-eligible until {armShortLapseClock} starts its
-    ///         bounded window — without this, the deadline formula would
-    ///         read one window past the epoch and fire immediately.
-    error ShortLapseClockUnarmed(uint256 dayId);
-    /// @notice The clock armer is one-shot per day.
-    error ShortLapseClockAlreadyArmed(uint256 dayId);
-    /// @notice #1434 P2-w4 (#1656 r1) — the supplemental needs the
-    ///         per-side funded record its bound reads; a pre-w4 funded day
-    ///         has none until the ADMIN seed backfills it.
+    /// @notice #1434 P2-w4 — the short-compensated terminal measures the
+    ///         shortfall against the day's COMPLETED quote, and this mirror
+    ///         has sent none for the day. Every honest compensation is
+    ///         quoted first, so this is a fail-closed check.
+    error ShortLapseQuoteMissing(uint256 dayId);
+    /// @notice #1434 P2-w4 — the supplemental's bound reads the per-side
+    ///         funded record that every manual compensation dispatch
+    ///         stamps. A day closed by any other remit has none, so it is
+    ///         not a compensation day to top up.
     error SupplementalFundedRecordMissing(uint256 dayId, uint32 chainId);
-    /// @notice #1434 P2-w4 (#1656 r1) — the seed's figures must fit the
-    ///         day's recorded scalar funding and the standing quote.
-    error CompFundedSeedInvalid(uint256 dayId, uint32 chainId);
-    /// @notice #1434 P2-w4 (#1656 r2) — the lapse terminals are DARK until
-    ///         the ADMIN arms them (the constraint-19 activation gate,
-    ///         on-chain): arming attests the legacy inventory read empty
-    ///         and every delivered legacy receipt was stamped.
-    error LapseTerminalsNotArmed();
-    /// @notice The terminals arm once.
-    error LapseTerminalsAlreadyArmed();
 
     // ─── Per-Asset Pause ────────────────────────────────────────────────────
     /// @notice Creation path touched an asset that has been paused by

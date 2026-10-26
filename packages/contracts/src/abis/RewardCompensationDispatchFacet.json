@@ -314,34 +314,6 @@
   },
   {
     "type": "function",
-    "name": "seedCompFunded",
-    "inputs": [
-      {
-        "name": "dstChainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "lenderAmount18",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrowerAmount18",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "seedReleasedRemitStranded",
     "inputs": [
       {
@@ -352,37 +324,6 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "event",
-    "name": "CompFundedSeeded",
-    "inputs": [
-      {
-        "name": "dstChainId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "lender18",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrower18",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
   },
   {
     "type": "event",
@@ -1384,22 +1325,6 @@
   },
   {
     "type": "error",
-    "name": "CompFundedSeedInvalid",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "chainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "CompQuoteAlreadyDispatched",
     "inputs": [
       {
@@ -1583,17 +1508,6 @@
         "name": "chainId",
         "type": "uint32",
         "internalType": "uint32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "CompensationDayHasNoClock",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ]
   },
@@ -2454,16 +2368,6 @@
   },
   {
     "type": "error",
-    "name": "LapseTerminalsAlreadyArmed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "LapseTerminalsNotArmed",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "LapseWindowOutOfBounds",
     "inputs": [
       {
@@ -2477,17 +2381,6 @@
     "type": "error",
     "name": "LaunchGateCallInvalid",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "LegacyDayNotStampable",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",
@@ -2534,32 +2427,10 @@
   },
   {
     "type": "error",
-    "name": "LegacyReceiptUnusable",
-    "inputs": [
-      {
-        "name": "receiptKey",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "LegacySliceNotPending",
     "inputs": [
       {
         "name": "entryId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "LegacyStampQuoteMissing",
-    "inputs": [
-      {
-        "name": "dayId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -4830,28 +4701,6 @@
   },
   {
     "type": "error",
-    "name": "ShortLapseClockAlreadyArmed",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ShortLapseClockUnarmed",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "ShortLapseDeadlineNotReached",
     "inputs": [
       {
@@ -4880,6 +4729,17 @@
   {
     "type": "error",
     "name": "ShortLapseNotShort",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ShortLapseQuoteMissing",
     "inputs": [
       {
         "name": "dayId",

@@ -82,63 +82,6 @@ contract RewardRemittanceLensFacet {
         );
     }
 
-    /**
-     * @notice #1434 P2-w4 (constraint-19) — paginated inventory of
-     *         reservation ids that LOOK like pre-P2 legacy manual
-     *         compensations: single-day, fresh-only, the day frozen-zeroed
-     *         for the destination, and no per-side funded record (every
-     *         post-w4 compensation stamps one). The §8 activation gate is
-     *         this inventory reading EMPTY over the full id range; a
-     *         Pending hit is released or allowed to resolve, a delivered
-     *         one is healed mirror-side via {stampLegacyCompensation}.
-     * @param  startId First reservation id to scan (ids begin at 1).
-     * @param  maxCount Ids to scan this page (bounded by the nonce).
-     */
-    function getLegacyManualReservations(
-        uint256 startId,
-        uint256 maxCount
-    ) external view returns (uint256[] memory ids, uint256 nextStartId) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 last = s.remitReservationNonce;
-        uint256 end = startId + maxCount - 1;
-        if (end > last) end = last;
-        uint256[] memory buf = new uint256[](maxCount);
-        uint256 n;
-        for (uint256 id = startId; id <= end; ) {
-            LibVaipakam.RemitReservation storage r = s.remitReservations[id];
-            if (
-                // #1656 r1 - Pending (1) and Acked (2) only: a RELEASED
-                // reservation (3) is the documented remedy for a pending
-                // legacy hit, and listing it forever would make the
-                // empty-inventory activation gate unreachable.
-                (r.status == 1 || r.status == 2) && r.dayIds.length == 1
-                    && r.fresh == r.total && r.total != 0
-            ) {
-                uint256 d = r.dayIds[0];
-                if (
-                    s.dayZeroedForDest[d][r.dstChainId]
-                        // #1656 r3 — the EXISTENCE flag, never the value
-                        // pair: a post-w4 day whose severe short delivery
-                        // reconciled both sides to zero is a recorded
-                        // compensation, not a legacy hit (and it could
-                        // never be cleared — Acked reservations cannot
-                        // release and the seed refuses recorded days).
-                        && !s.compFundedRecorded[r.dstChainId][d]
-                ) {
-                    buf[n] = id;
-                    unchecked { ++n; }
-                }
-            }
-            unchecked { ++id; }
-        }
-        ids = new uint256[](n);
-        for (uint256 i; i < n; ) {
-            ids[i] = buf[i];
-            unchecked { ++i; }
-        }
-        nextStartId = end + 1;
-    }
-
     /// @notice The delivered-backing reservation for `remitId` (status 0 =
     ///         never issued, 1 = Pending, 2 = Acked, 3 = Released).
     function getRemitReservation(
