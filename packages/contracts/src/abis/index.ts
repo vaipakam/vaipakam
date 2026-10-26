@@ -171,6 +171,8 @@ import SanctionsDelistingTimelockABI from './SanctionsDelistingTimelock.json';
 import SanctionsClearanceAttestorABI from './SanctionsClearanceAttestor.json';
 // #2443 — the testnet stand-in for RedStone's oracle (standalone, testnets only).
 import TestnetSanctionsOracleStandInABI from './TestnetSanctionsOracleStandIn.json';
+// #2880 — the chain's feed registry (standalone; NOT a diamond facet).
+import VaipakamFeedRegistryABI from './VaipakamFeedRegistry.json';
 // #2612 — the CCIP transport adapter (standalone; NOT a diamond facet): the
 // keeper's day-close pass reads both ends of a mirror's report channel from it.
 import CcipMessengerABI from './CcipMessenger.json';
@@ -290,6 +292,7 @@ export {
   SanctionsDelistingTimelockABI,
   SanctionsClearanceAttestorABI,
   TestnetSanctionsOracleStandInABI,
+  VaipakamFeedRegistryABI,
   CcipMessengerABI,
   VaipakamRewardMessengerABI,
 };

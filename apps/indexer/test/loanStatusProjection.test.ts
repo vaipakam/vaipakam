@@ -371,19 +371,18 @@ describe('processLoanLogs — LoanSettled is authoritative (#2464)', () => {
     expect(at(47)).toEqual({ b: 999, t: null });
   });
 
-  it('treats the scan’s wall-clock SENTINEL for a failed block read as unknown, not as the settlement time', async () => {
+  it('records a block time not in hand as unknown, not as the settlement time', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 48, 'internal_matched');
-    // What the production caller does when getBlock fails: the map holds
-    // now() for the block, and the block is named in the fallback set.
+    // The scan never hands in a block without its time (#2757); a direct
+    // caller that does gets an unknown settlement time, never a guess.
     await processLoanLogs(
       [settledLog(48, 100, 0)] as never,
       { DB: h.d1 } as unknown as Env,
       CHAIN,
-      new Map([[100n, 1_999_999_999]]),
+      new Map(),
       stubClient,
       DIAMOND,
-      new Set([100n]),
     );
     const r = h.db.prepare('SELECT status, terminal_at AS t FROM loans WHERE chain_id = ? AND loan_id = ?').get(CHAIN, 48) as {
       status: string;
@@ -894,7 +893,7 @@ describe('PrepayCollateralSaleSettled — a close the ledger heal can never date
   const verified = (h: SqliteD1, id: number) =>
     h.db.prepare('SELECT terminal_at AS t, terminal_at_verified AS v FROM loans WHERE chain_id = ? AND loan_id = ?').get(CHAIN, id);
 
-  it('stamps the block time as verified, and a failed block read as unknown — never the scan clock', async () => {
+  it('stamps the block time as verified, and a block time not in hand as unknown — never the scan clock', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 60, 'active');
     seedLoan(h, 61, 'active');
@@ -902,10 +901,9 @@ describe('PrepayCollateralSaleSettled — a close the ledger heal can never date
       [prepayLog(60, 100), prepayLog(61, 200)] as never,
       { DB: h.d1 } as unknown as Env,
       CHAIN,
-      new Map([[100n, 500], [200n, 1_999_999_999]]),
+      new Map([[100n, 500]]),
       stubClient,
       DIAMOND,
-      new Set([200n]),
     );
     expect(verified(h, 60)).toEqual({ t: 500, v: 1 });
     expect(verified(h, 61)).toEqual({ t: null, v: 0 });

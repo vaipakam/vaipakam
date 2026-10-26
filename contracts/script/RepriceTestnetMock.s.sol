@@ -5,7 +5,8 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
+import {MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
+import {VaipakamFeedRegistry} from "../src/oracle/VaipakamFeedRegistry.sol";
 import {MockUniswapV3Factory, MockUniswapV3Pool} from "./mocks/MockUniswapV3.sol";
 import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
 import {Deployments} from "./lib/Deployments.sol";
@@ -254,7 +255,7 @@ contract RepriceTestnetMock is Script {
         t.feed = _required(base, "UsdFeed");
         t.pool = _required(base, "WethPool");
         t.venue = _required(".testnetMocks.mockSwapAdapter", "");
-        t.registry = _required(".testnetMocks.feedRegistry", "");
+        t.registry = _required(".feedRegistry", "");
         t.factory = _required(".testnetMocks.uniswapV3Factory", "");
         t.quote = Deployments.readWethOptional();
         require(t.quote != address(0), "RepriceTestnetMock: artifact has no .weth");
@@ -288,11 +289,11 @@ contract RepriceTestnetMock is Script {
             "RepriceTestnetMock: recorded pool is not the factory's live asset/WETH pool"
         );
         require(
-            MockChainlinkRegistry(t.registry).getFeed(t.asset, REPRICE_USD_DENOM) == t.feed,
+            VaipakamFeedRegistry(t.registry).getFeed(t.asset, REPRICE_USD_DENOM) == t.feed,
             "RepriceTestnetMock: recorded feed is not the registry's live asset/USD feed"
         );
         require(
-            MockChainlinkRegistry(t.registry).getFeed(t.quote, REPRICE_USD_DENOM) != t.feed,
+            VaipakamFeedRegistry(t.registry).getFeed(t.quote, REPRICE_USD_DENOM) != t.feed,
             "RepriceTestnetMock: the asset shares its feed with WETH - repricing it moves every pool's quote leg"
         );
 

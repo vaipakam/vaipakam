@@ -156,15 +156,15 @@ const CLASSIFICATION = {
       'status and filled_amount are the projection of the SignedOffer* events, each handler updating ' +
       'only an active row, so they are imported as active/0 and the replay re-derives them',
   },
-  prepay_listing_match_breadcrumbs: {
-    class: 'hybrid',
-    reason:
-      "v1-twostep rows are the app's POST of which OpenSea offer a match answered (loanRoutes.ts), " +
-      'carried by no chain event; atomic rows are written from PrepayListingMatched, so only the ' +
-      'two-step rows are imported and the replay writes the atomic ones again',
-  },
 
   // replay-derived, settled by #1481's audit.
+  prepay_listing_match_breadcrumbs: {
+    class: 'replay-derived',
+    reason:
+      'chainIndexer-only writes from PrepayListingMatched since #2757 retired the unauthenticated ' +
+      "app POST that wrote 'v1-twostep' rows; every row is the event's own record, so the replay " +
+      'writes it again',
+  },
   prepay_listings: {
     class: 'replay-derived',
     reason:

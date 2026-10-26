@@ -442,6 +442,10 @@ library Deployments {
     ///         `SanctionsList` `DeploySanctionsList` last deployed on this
     ///         chain. Zero where none was deployed.
     function readSanctionsListOptional() internal view returns (address) { return _tryReadAddr(".sanctionsList"); }
+    /// @notice #2880 — optional, non-reverting read of `.feedRegistry`, the
+    ///         `VaipakamFeedRegistry` `DeployFeedRegistry` deployed on this
+    ///         chain. Zero where none was deployed.
+    function readFeedRegistryOptional() internal view returns (address) { return _tryReadAddr(".feedRegistry"); }
     /// @notice #2443 — optional, non-reverting read of
     ///         `.sanctionsDelistingTimelock`, the delisting timelock
     ///         `DeploySanctionsDelisting` last deployed on this chain. Zero
@@ -624,6 +628,8 @@ library Deployments {
     /// @notice #2443 — the `SanctionsList` deployed on this chain, recorded
     ///         when deployed and independently of what the Diamond screens.
     function writeSanctionsList(address a) internal { _writeAddr(".sanctionsList", a); }
+    /// @notice #2880 — the `VaipakamFeedRegistry` deployed on this chain.
+    function writeFeedRegistry(address a) internal { _writeAddr(".feedRegistry", a); }
     /// @notice #2443 — the `SanctionsDelistingTimelock` deployed on this
     ///         chain for the recorded `SanctionsList`.
     function writeSanctionsDelistingTimelock(address a) internal { _writeAddr(".sanctionsDelistingTimelock", a); }

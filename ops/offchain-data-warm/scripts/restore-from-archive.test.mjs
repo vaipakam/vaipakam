@@ -486,21 +486,12 @@ function signedOfferRow(over = {}, order = signedOrder()) {
     ...over,
   };
 }
-const BREADCRUMB_COLUMNS = ['chain_id', 'tx_hash', 'loan_id', 'order_hash', 'bidder', 'matched_at', 'match_mode'];
-function breadcrumbRow(txByte, match_mode) {
-  return {
-    chain_id: 8453, tx_hash: `0x${txByte.repeat(64)}`, loan_id: 4,
-    order_hash: `0x${'e'.repeat(64)}`, bidder: `0x${'f'.repeat(40)}`, matched_at: 99, match_mode,
-  };
-}
-
 test('signed_offers: the signed order is restored, its lifecycle is reset for the replay (#1481)', () => {
   const batch = tableToBatch(tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [
     signedOfferRow(),
     signedOfferRow({ order_hash: `0x${'a'.repeat(64)}`, status: 'cancelled', filled_amount: '400' }),
   ]));
   assert.equal(batch.imported, 2);
-  assert.equal(batch.leftToReplay, 0);
   // Every row goes in as an unfilled live offer; the order and signature verbatim.
   assert.equal((batch.sql.match(/'active', '0', 10, 20\);/g) ?? []).length, 2);
   assert.doesNotMatch(batch.sql, /'filled'|'cancelled'|'1000', 10|'400'/);
@@ -549,30 +540,7 @@ test('signed_offers: only an order a taker can replay, in the form the route sto
   assert.match(restore(signedOfferRow()), /VALUES/);
 });
 
-test('prepay_listing_match_breadcrumbs: two-step rows are restored, atomic rows are left to the replay (#1481)', () => {
-  const batch = tableToBatch(tableFixture('prepay_listing_match_breadcrumbs', BREADCRUMB_COLUMNS, [
-    breadcrumbRow('1', 'v1-twostep'),
-    breadcrumbRow('2', 'atomic'),
-  ]));
-  assert.equal(batch.imported, 1);
-  assert.equal(batch.leftToReplay, 1);
-  assert.match(batch.sql, /'v1-twostep'\);/);
-  assert.doesNotMatch(batch.sql, /'atomic'/);
-  // A row the replay will rebuild is still validated: a malformed one is
-  // evidence about the archive.
-  const bad = breadcrumbRow('3', 'atomic');
-  bad.bidder = 'not-an-address';
-  assert.throws(
-    () => tableToSql(tableFixture('prepay_listing_match_breadcrumbs', BREADCRUMB_COLUMNS, [bad])),
-    /bidder is not the shape/,
-  );
-  assert.throws(
-    () => tableToSql(tableFixture('prepay_listing_match_breadcrumbs', BREADCRUMB_COLUMNS, [breadcrumbRow('4', 'manual')])),
-    /match_mode is not the shape/,
-  );
-});
-
-test('convertD1 counts what it imports, and an archive without the hybrid tables clears them (#1481)', () => {
+test('convertD1 counts what it imports, and an archive without the hybrid table clears it (#1481)', () => {
   const dir = outDir();
   const entries = convertD1(
     {
@@ -580,24 +548,37 @@ test('convertD1 counts what it imports, and an archive without the hybrid tables
       d1: {
         archive: [
           ...baselineArchive(),
-          tableFixture('prepay_listing_match_breadcrumbs', BREADCRUMB_COLUMNS, [
-            breadcrumbRow('1', 'v1-twostep'),
-            breadcrumbRow('2', 'atomic'),
-          ]),
+          tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [signedOfferRow()]),
         ],
       },
     },
     dir,
   );
-  const crumbs = entries.find((e) => e.name === 'prepay_listing_match_breadcrumbs');
-  assert.equal(crumbs.rowCount, 1);
-  assert.equal(crumbs.leftToReplay, 1);
-  assert.equal(crumbs.tier, 'born-off-chain');
+  const signed = entries.find((e) => e.name === 'signed_offers');
+  assert.equal(signed.rowCount, 1);
+  assert.equal(signed.tier, 'born-off-chain');
   // An archive from before #1481 carries no signed offers: the live table is
   // cleared rather than kept unvouched for.
-  const signed = entries.find((e) => e.name === 'signed_offers');
-  assert.equal(signed.eraLoss, true);
-  assert.match(readFileSync(signed.file, 'utf8'), /DELETE FROM "signed_offers";/);
+  const older = convertD1({ version: 1, d1: { archive: baselineArchive() } }, outDir());
+  const cleared = older.find((e) => e.name === 'signed_offers');
+  assert.equal(cleared.eraLoss, true);
+  assert.match(readFileSync(cleared.file, 'utf8'), /DELETE FROM "signed_offers";/);
+});
+
+test('prepay_listing_match_breadcrumbs is not archived: the replay writes every row from its event (#2757)', () => {
+  // Since #2757 the PrepayListingMatched handler is the table's only writer,
+  // so an archive that carries it is not one this backup produces.
+  assert.throws(
+    () =>
+      convertD1(
+        {
+          version: 1,
+          d1: { archive: [...baselineArchive(), tableFixture('prepay_listing_match_breadcrumbs', ['chain_id', 'tx_hash'], [])] },
+        },
+        outDir(),
+      ),
+    /prepay_listing_match_breadcrumbs/,
+  );
 });
 
 test('duplicate archived primary keys are rejected before any batch is emitted (r12)', () => {

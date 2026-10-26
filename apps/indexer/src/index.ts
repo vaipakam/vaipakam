@@ -41,18 +41,17 @@
  * The indexer is free of on-chain transaction keys (NOT credential-free — it binds OPENSEA_API_KEY, which authorises upstream publication, plus three Alchemy webhook verification keys).
  *
  * **Not read-only.** This block used to say the Worker accepts ONE
- * write surface. There are THREE POST routes below —
- * `/hooks/chain-event` (HMAC-verified Alchemy webhook ingest),
- * the signed-offer POST, and
- * `/loans/:loanId/prepay-listing/match-source` — plus authenticated
+ * write surface. There are TWO POST routes below —
+ * `/hooks/chain-event` (HMAC-verified Alchemy webhook ingest) and
+ * the signed-offer POST — plus authenticated
  * outbound publication of borrower-authorised, on-chain-bound Seaport
  * listings to OpenSea — posted with an EMPTY `0x` signature; the vault's
  * ERC-1271 check validates an order hash the borrower bound on-chain.
  *
- * The match-source endpoint is rate-limited per-IP via the
- * `OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT` binding (matching the
- * defensive posture apps/agent's POST proxies use) and stores
- * non-financial metadata only. No on-chain signing key is held here —
+ * A third, `/loans/:loanId/prepay-listing/match-source`, took an
+ * unauthenticated breadcrumb no client still sent and anyone could
+ * overwrite; it was retired in #2757 (the match breadcrumb now comes only
+ * from the `PrepayListingMatched` event). No on-chain signing key is held here —
  * but that is not an isolation boundary: the D1 binding is
  * database-scoped, so writes from this Worker land in tables the
  * signing Worker reads (#1722). The GET surface stays public-read.
@@ -150,7 +149,6 @@ import {
   handleClaimCandidates,
   handleNotifications,
   handleLoansPreflight,
-  handleLoanPrepayMatchSource,
 } from './loanRoutes';
 
 export default {
@@ -624,20 +622,6 @@ export default {
     // ─── /loans/* ───────────────────────────────────────────────
     if (url.pathname.startsWith('/loans')) {
       if (req.method === 'OPTIONS') return handleLoansPreflight();
-      // #335 — POST /loans/:loanId/prepay-listing/match-source.
-      // Dapp records the OpenSea offer that triggered a Match-
-      // rotation so analytics can distinguish offer-driven
-      // rotations from manual repricings. Match the regex BEFORE
-      // the GET tree below.
-      if (req.method === 'POST') {
-        const matchSource = url.pathname.match(
-          /^\/loans\/(\d+)\/prepay-listing\/match-source$/,
-        );
-        if (matchSource) {
-          return handleLoanPrepayMatchSource(req, resolved, matchSource[1]);
-        }
-        return new Response('Not found', { status: 404 });
-      }
       if (req.method === 'GET') {
         if (url.pathname === '/loans/active') {
           return handleLoansActive(req, resolved);

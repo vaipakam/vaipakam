@@ -10,10 +10,9 @@
  * bodies of any size. These cases walk every Worker's source and refuse a
  * file that does either outside this package.
  *
- * The one exemption is `apps/indexer/src/loanRoutes.ts`, whose OpenSea
- * match-source handler #2757 deletes outright. It is listed with that
- * reason, and it must still match: once the handler is gone the exemption
- * fails as stale and has to be removed with it.
+ * There is no exemption. The one file that had one,
+ * `apps/indexer/src/loanRoutes.ts`, lost the OpenSea match-source handler
+ * that needed it in #2757.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -52,9 +51,6 @@ function code(file: string): string {
   return readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
 }
 
-/** Deleted by #2757 (its OpenSea match-source handler). Remove with it. */
-const PENDING_DELETION = 'apps/indexer/src/loanRoutes.ts';
-
 const FILES = workerSourceFiles();
 const rel = (f: string) => relative(REPO, f).split('\\').join('/');
 
@@ -74,7 +70,6 @@ describe('one rate-limit rule, one body reader, across every Worker', () => {
 
   it('no Worker calls a limiter binding itself', () => {
     for (const f of FILES) {
-      if (rel(f) === PENDING_DELETION) continue;
       expect(code(f), rel(f)).not.toMatch(LIMIT_CALL);
     }
   });
@@ -87,16 +82,8 @@ describe('one rate-limit rule, one body reader, across every Worker', () => {
 
   it('no Worker reads a request body except through requestBody.ts', () => {
     for (const f of FILES) {
-      if (rel(f) === PENDING_DELETION) continue;
       expect(code(f), rel(f)).not.toMatch(RAW_BODY_READ);
     }
-  });
-
-  it('the pending-deletion exemption is still needed', () => {
-    // When #2757 deletes the handler this fails: drop PENDING_DELETION and
-    // its two skips above in the same change.
-    const text = code(resolve(REPO, PENDING_DELETION));
-    expect(LIMIT_CALL.test(text) || RAW_BODY_READ.test(text)).toBe(true);
   });
 
   it('the shared modules are where the rules live', () => {

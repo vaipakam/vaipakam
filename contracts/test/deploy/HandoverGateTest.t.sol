@@ -27,6 +27,7 @@ import {
 } from "../mocks/GovernanceHarnesses.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {ZeroExAggregatorAdapter} from "../../src/adapters/ZeroExAggregatorAdapter.sol";
+import {VaipakamFeedRegistry} from "../../src/oracle/VaipakamFeedRegistry.sol";
 
 /// @dev Exposes the real handover body with an in-memory config, so the test
 ///      runs exactly what `--phase handover` runs without touching the
@@ -83,6 +84,10 @@ contract HandoverGateTest is Test {
     /// @dev A registered swap adapter: a FOUND target (#2743), owned by the
     ///      Diamond's owner as `DeploySwapAdapters` builds it.
     ZeroExAggregatorAdapter internal swapAdapter;
+    /// @dev The REAL feed registry (#2880), deployed as a testnet without a
+    ///      Pauser Safe leaves it: the admin holds the veto, and the
+    ///      handover's own leg rotates it.
+    VaipakamFeedRegistry internal feedRegistry;
 
     HandoverGate internal gate;
 
@@ -392,13 +397,34 @@ contract HandoverGateTest is Test {
     function test_PlanListsRequiredSlotsOnAnEmptyArtifact() public {
         vm.chainId(421614); // a mirror
         HandoverPlan.Target[] memory m = HandoverPlan.read("{}");
-        assertEq(m.length, 7, "mirror: 4 shared + mirror token, reward receiver, return sender");
+        assertEq(m.length, 8, "mirror: 4 shared + mirror token, reward receiver, return sender + feed registry");
         for (uint256 i; i < m.length; ++i) {
             assertTrue(m[i].required && m[i].addr == address(0), "every listed slot is a required gap");
         }
         vm.chainId(84532); // canonical
         HandoverPlan.Target[] memory c = HandoverPlan.read("{}");
-        assertEq(c.length, 7, "canonical: 4 shared + buyback receiver, return receiver, token");
+        assertEq(c.length, 8, "canonical: 4 shared + buyback receiver, return receiver, feed registry, token");
+    }
+
+    /// @notice #2880 — the handover rotates the feed registry's veto from the
+    ///         admin to the Pauser Safe before ownership leaves the admin,
+    ///         and the gate then passes it.
+    function test_FeedRegistry_VetoRotatedToThePauserSafe() public {
+        HandoverGate.Inputs memory inp = _build(_none());
+        assertEq(feedRegistry.guardian(), pauserSafe, "rotated by the handover");
+        assertEq(feedRegistry.owner(), address(timelock), "owned by the Timelock");
+        (string[] memory failures,) = gate.evaluate(inp, _logs());
+        _assertNoFailures(failures);
+    }
+
+    /// @notice A feed registry whose veto is held by anyone but the Pauser
+    ///         Safe fails the gate.
+    function test_FeedRegistry_WrongGuardianFails() public {
+        HandoverGate.Inputs memory inp = _build(_none());
+        vm.prank(address(timelock));
+        feedRegistry.setGuardian(stranger);
+        (string[] memory failures,) = gate.evaluate(inp, _logs());
+        _assertContains(failures, "feedRegistry: guardian() is");
     }
 
     /// @notice Unset CCIP registry: the CCT administrator is reported as not
@@ -496,6 +522,7 @@ contract HandoverGateTest is Test {
         settlers[0] = makeAddr("settler");
         swapAdapter =
             new ZeroExAggregatorAdapter(t.adapterOnDeployer ? deployer : admin, makeAddr("allowanceHolder"), settlers);
+        feedRegistry = new VaipakamFeedRegistry(admin, admin);
         cctRegistry = new TokenAdminRegistryStub();
         cctRegistry.seed(address(vpfiToken), admin);
         cctRegistry.setPool(address(vpfiToken), address(tokenPool));
@@ -530,6 +557,7 @@ contract HandoverGateTest is Test {
         _accept(address(rateGovernor), abi.encodeWithSignature("acceptOwnership()"));
         if (!t.skipPoolAccept) _accept(address(tokenPool), abi.encodeWithSignature("acceptOwnership()"));
         _accept(address(vpfiToken), abi.encodeWithSignature("acceptOwnership()"));
+        _accept(address(feedRegistry), abi.encodeWithSignature("acceptOwnership()"));
         if (!t.adapterOnDeployer) _accept(address(swapAdapter), abi.encodeWithSignature("acceptOwnership()"));
         if (!t.skipCctAccept) {
             _accept(address(cctRegistry), abi.encodeWithSignature("acceptAdminRole(address)", address(vpfiToken)));
@@ -551,7 +579,7 @@ contract HandoverGateTest is Test {
     }
 
     function _targets() internal view returns (HandoverPlan.Target[] memory t) {
-        t = new HandoverPlan.Target[](5);
+        t = new HandoverPlan.Target[](6);
         t[0] = HandoverPlan.Target("ccipMessenger", address(messenger), HandoverPlan.OwnableKind.OpenZeppelin, true, true);
         t[1] = HandoverPlan.Target("vpfiTokenPool", address(tokenPool), HandoverPlan.OwnableKind.Chainlink, true, false);
         t[2] = HandoverPlan.Target(
@@ -562,6 +590,8 @@ contract HandoverGateTest is Test {
         t[4] = HandoverPlan.Target(
             "getSwapAdapters()[0]", address(swapAdapter), HandoverPlan.OwnableKind.OpenZeppelin, false, false
         );
+        t[5] =
+            HandoverPlan.Target("feedRegistry", address(feedRegistry), HandoverPlan.OwnableKind.OpenZeppelin, true, true);
     }
 
     function _accept(address target, bytes memory data) internal {

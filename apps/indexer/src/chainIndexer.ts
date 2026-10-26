@@ -239,6 +239,32 @@ export function logsByBlock<T extends { blockNumber: bigint; logIndex: number }>
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([blockNumber, list]) => ({ blockNumber, logs: list.sort((x, y) => x.logIndex - y.logIndex) }));
 }
+
+/** #2757 — a block whose chain time could not be read. The scan stops before
+ *  that block (nothing of it is written) and reports an RPC error, so the
+ *  ingest loop retries; a handler is never handed a block without its time. */
+export class BlockTimeUnavailable extends Error {
+  constructor(
+    readonly blockNumber: bigint,
+    cause?: unknown,
+  ) {
+    super(`block ${blockNumber}'s time is not in hand`, { cause });
+    this.name = 'BlockTimeUnavailable';
+  }
+}
+
+/** The chain time of a log's block, for any value stored as a fact about WHEN
+ *  something happened (#2757). The scan reads every block's time before its
+ *  handlers run, so a missing one is a caller handing in a block it did not
+ *  read: refused, never dated by the indexer's own clock, which is the value
+ *  the loan insert used to store as a start time. A handler that can record a
+ *  time as unknown reads the map directly and stores null instead. */
+export function chainTimeOf(blockTimestamps: ReadonlyMap<bigint, number>, blockNumber: bigint): number {
+  const t = blockTimestamps.get(blockNumber);
+  if (t === undefined) throw new BlockTimeUnavailable(blockNumber);
+  return t;
+}
+
 const DETAILS_REFRESH_BATCH = 50;
 
 /** Single shared cursor across every domain handler. Adding a new
@@ -2613,26 +2639,25 @@ async function runChainPass(
   //
   // Block timestamps are read one per block, as they always were (never one
   // per log: a single LoanInitiated tx can carry 3+ events in the same block).
+  //
+  // #2757 — a block whose time cannot be read is NOT processed. Until #2757 a
+  // failed read stamped the indexer's wall clock in its place, and every
+  // handler then had to know that this one value was invented: the loan
+  // insert did not, and wrote it as the loan's start and last-settled time on
+  // a row nothing later healed. Now the block stops the scan before any
+  // handler sees it (`BlockTimeUnavailable`, caught in the block loop below),
+  // the cursor records the block below it, and the pass reports an RPC error
+  // so the ingest loop retries. Every time a handler reads is chain time.
   const blockTimestamps = new Map<bigint, number>();
-  // RL-2 (Codex #1310 P2) — blocks whose timestamp below is the wall-clock
-  // SENTINEL, not the real chain time. Consumers that BUCKET BY DAY and
-  // dedup permanently (the reward loop-closure ledger) must skip these so
-  // a later scan can apply the event under its true claim day; consumers
-  // that only display block_at (activity_events) keep using the sentinel.
-  const fallbackTimestampBlocks = new Set<bigint>();
 
   const scanBlock = async (blockNumber: bigint, logs: DecodedLog[]) => {
     try {
       const block = await client.getBlock({ blockNumber });
       blockTimestamps.set(blockNumber, Number(block.timestamp));
-    } catch {
-      // On RPC hiccup just stamp now() as a sentinel — the block
-      // ordering still works because activity_events keys on
-      // (block_number, log_index), not block_at. (A REFUSED read lands
-      // here too, and is harmless: the refusal is sticky, so nothing in
-      // this block is written with the sentinel, and the block is replayed.)
-      blockTimestamps.set(blockNumber, Math.floor(Date.now() / 1000));
-      fallbackTimestampBlocks.add(blockNumber);
+    } catch (err) {
+      // A REFUSED read is the budget stop, handled as one below.
+      if (isRefusing(budget)) throw err;
+      throw new BlockTimeUnavailable(blockNumber, err);
     }
 
     const offer = await processOfferLogs(
@@ -2649,7 +2674,6 @@ async function runChainPass(
       blockTimestamps,
       client,
       diamond,
-      fallbackTimestampBlocks,
     );
     // #1131 Rate Desk phase 3 — signed-offer book lifecycle. Reconciles the
     // off-chain `signed_offers` rows against the on-chain fill/cancel/nonce
@@ -2670,27 +2694,11 @@ async function runChainPass(
     // via the reward_loop_events dedup table, so overlapping scan ranges
     // never double-count. Runs BEFORE recordActivityEvents so its one-time
     // backfill can never consume a sentinel-stamped row this scan is about
-    // to insert (Codex #1310 r2 P2). A reward log whose block timestamp
-    // fell back to the wall-clock sentinel gets one in-place retry; if the
-    // chain timestamp is still unavailable the ledger THROWS and the scan
-    // fails without advancing the cursor (Codex #1310 r2 P1 — the cron
-    // path has no guaranteed overlapping scan, so a silent skip would lose
-    // the event forever).
-    await applyRewardLoopLedger(
-      logs,
-      env,
-      chainId,
-      blockTimestamps,
-      fallbackTimestampBlocks,
-      async (blockNumber) => {
-        try {
-          const block = await client.getBlock({ blockNumber });
-          return Number(block.timestamp);
-        } catch {
-          return null;
-        }
-      },
-    );
+    // to insert (Codex #1310 r2 P2). Every block reaching here carries its
+    // chain time (#2757), so the ledger's own sentinel retry has nothing to
+    // retry and is not wired; its refusal of a log with no time stays as the
+    // guard.
+    await applyRewardLoopLedger(logs, env, chainId, blockTimestamps);
 
     // M5 (#1218 / #1349) — recycling transparency day series behind
     // /metrics/recycling. Exactly-once via its own recycle_series_events
@@ -2744,6 +2752,10 @@ async function runChainPass(
   const scannedLogs: DecodedLog[] = [];
   const blocks = logsByBlock(allLogs);
   let stoppedAt: bigint | null = null;
+  /** #2757 — the stop was a block whose time could not be read, not the
+   *  budget: nothing of that block was written, and the pass is a failure
+   *  the ingest loop retries, not progress. */
+  let stoppedForBlockTime = false;
   try {
     for (const [i, { blockNumber, logs }] of blocks.entries()) {
       if (i === 1) holdBack(budget, SCAN_TAIL_RESERVE);
@@ -2751,6 +2763,16 @@ async function runChainPass(
       try {
         done = await scanBlock(blockNumber, logs);
       } catch (err) {
+        if (err instanceof BlockTimeUnavailable && err.blockNumber === blockNumber) {
+          console.error(
+            `[chainIndexer] chain ${chainId}: block ${blockNumber}'s time could not be read; ` +
+              `the scan stops before it and the next pass retries`,
+            redactedError(err.cause),
+          );
+          stoppedAt = blockNumber;
+          stoppedForBlockTime = true;
+          break;
+        }
         if (!isRefusing(budget)) throw err;
         stoppedAt = blockNumber;
         break;
@@ -2778,7 +2800,7 @@ async function runChainPass(
   // Every block below the one that stopped is finished, and so is every block
   // between the last finished one and it, since those carry no logs of ours.
   const scanTo = stoppedAt === null ? windowTo : stoppedAt - 1n;
-  if (stoppedAt !== null) {
+  if (stoppedAt !== null && !stoppedForBlockTime) {
     const finished = blocks.findIndex((b) => b.blockNumber === stoppedAt);
     console.warn(
       `[chainIndexer] chain ${chainId}: scan stopped at block ${stoppedAt} to keep ` +
@@ -3054,9 +3076,12 @@ async function runChainPass(
     // (#2476 r4): merged in, and the set truncated.
     // A pass that stopped inside a block (#2221) cannot list what that
     // block's committed writes touched either, so its set is truncated too.
-    ...(stoppedAt === null ? {} : { unfinishedBlock: stoppedAt }),
+    // A block-time stop wrote nothing of its block, so it is no unfinished
+    // block; it is an RPC failure, retried like any other (#2757).
+    ...(stoppedAt === null || stoppedForBlockTime ? {} : { unfinishedBlock: stoppedAt }),
+    ...(stoppedForBlockTime ? { skipped: 'rpc-error' } : {}),
     hints: mergeHintLoanIds(
-      stoppedAt !== null ||
+      (stoppedAt !== null && !stoppedForBlockTime) ||
         detailRefreshes > 0 ||
         loanDetailRefreshes > 0 ||
         reconciledLoanIds.length > 0 ||
@@ -5158,10 +5183,6 @@ export async function processLoanLogs(
   blockTimestamps: Map<bigint, number>,
   client: PublicClient,
   diamond: Address,
-  /** Blocks whose `blockTimestamps` entry is the wall-clock SENTINEL (the
-   *  block read failed), not chain time. A value persisted as a fact about
-   *  WHEN something happened must treat these as unknown (#2476 r2). */
-  fallbackTimestampBlocks: ReadonlySet<bigint> = new Set(),
 ): Promise<{
   newLoans: number;
   statusUpdates: number;
@@ -5257,7 +5278,7 @@ export async function processLoanLogs(
       const loanId = Number(a.loanId as bigint);
       const offerId = Number(a.offerId as bigint);
       initiatedPairs.push({ loanId, offerId });
-      const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
+      const blockAt = chainTimeOf(blockTimestamps, log.blockNumber);
       const lender = (a.lender as string).toLowerCase();
       const borrower = (a.borrower as string).toLowerCase();
       // Bare LoanInitiated carries (loanId, offerId, lender, borrower,
@@ -5616,7 +5637,7 @@ export async function processLoanLogs(
       // PR #421 P2 — on a cold-start backfill the worker's `now` is
       // far ahead of the actual on-chain commit time and would make
       // backfilled pending intents look newly committed).
-      const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
+      const blockAt = chainTimeOf(blockTimestamps, log.blockNumber);
       await env.DB.prepare(
         `INSERT OR REPLACE INTO swap_to_repay_intents
            (chain_id, loan_id, order_hash, committed_by,
@@ -5976,7 +5997,7 @@ export async function processLoanLogs(
         transferredLoanId,
         String(a.newBorrower as string),
         'borrower',
-        blockTimestamps.get(log.blockNumber) ?? now,
+        chainTimeOf(blockTimestamps, log.blockNumber),
       );
     } else if (log.eventName === 'LoanSaleOfferLinked') {
       // Rate Desk (#1129) — mark the borrower-style SALE offer so the temp
@@ -6062,7 +6083,7 @@ export async function processLoanLogs(
         Number(a.loanId as bigint),
         String(a.newLender as string),
         'lender',
-        blockTimestamps.get(log.blockNumber) ?? now,
+        chainTimeOf(blockTimestamps, log.blockNumber),
       );
     } else if (log.eventName === 'LoanSaleCompleted') {
       // EarlyWithdrawal TWO-STEP sale-offer flow (`completeLoanSale`): like the
@@ -6121,7 +6142,7 @@ export async function processLoanLogs(
         loanId,
         newLender,
         'lender',
-        blockTimestamps.get(log.blockNumber) ?? now,
+        chainTimeOf(blockTimestamps, log.blockNumber),
       );
     } else if (log.eventName === 'LoanDefaulted') {
       const r = await flipLoanStatus(env, chainId, a, log, 'defaulted');
@@ -6231,11 +6252,9 @@ export async function processLoanLogs(
         // #2476 r1 — WHEN it settled is the event's block time, not the
         // scan's (a catch-up after downtime would otherwise date the
         // settlement by when the indexer noticed it). Null when the block
-        // time is not in hand — absent, or the scan's wall-clock SENTINEL
-        // for a block whose read failed (#2476 r2): unknown, never a guess.
-        fallbackTimestampBlocks.has(log.blockNumber)
-          ? null
-          : (blockTimestamps.get(log.blockNumber) ?? null),
+        // time is not in hand: unknown, never a guess. (The scan never hands
+        // in a block without its time, #2757.)
+        blockTimestamps.get(log.blockNumber) ?? null,
       );
       if (settled) statusUpdates++;
     } else if (
@@ -6473,7 +6492,7 @@ export async function processLoanLogs(
       // updated_at — backfills processed minutes later still
       // anchor to when the listing actually went on-chain. Codex
       // P3 round-1 on PR #304.
-      const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
+      const blockAt = chainTimeOf(blockTimestamps, log.blockNumber);
       // T-086 step 14 — try the autonomous OpenSea publish BEFORE
       // the INSERT so the `opensea_published_at` flag can be set
       // in the same row write. The publish call is best-effort —
@@ -6568,7 +6587,7 @@ export async function processLoanLogs(
       const newConduitKey = String(a.newConduitKey as `0x${string}`).toLowerCase();
       const newSalt = String(a.newSalt as bigint);
       const newPinnedExecutor = String(a.executor as Address).toLowerCase();
-      const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
+      const blockAt = chainTimeOf(blockTimestamps, log.blockNumber);
       // T-086 Round-5 Block A (#313) — decode the new fee legs +
       // re-derive borrower remainder (same shape as the Posted
       // handler above; the update path re-signs the order with a
@@ -6748,12 +6767,10 @@ export async function processLoanLogs(
       // same call — so the shared close-out cleanup applies.
       await _clearClosedLoanSideTables(env, chainId, loanId);
       // #2476 r16 — the event block's chain time, VERIFIED (0060), or unknown
-      // when that block's read failed — never the scan's clock. This close
-      // emits no LoanSettled, so the ledger heal can never date it later; a
-      // time written here is the only one it will get.
-      const blockAt = fallbackTimestampBlocks.has(log.blockNumber)
-        ? null
-        : (blockTimestamps.get(log.blockNumber) ?? null);
+      // when it is not in hand — never the scan's clock. This close emits no
+      // LoanSettled, so the ledger heal can never date it later; a time
+      // written here is the only one it will get.
+      const blockAt = blockTimestamps.get(log.blockNumber) ?? null;
       const r = await env.DB.prepare(
         `UPDATE loans
            SET status = 'settled', terminal_block = ?, terminal_at = ?, terminal_at_verified = ?,
@@ -6785,10 +6802,9 @@ export async function processLoanLogs(
       // downstream reader sees it (Round-6 design doc §17.18 D.3 +
       // Codex round-9 P3 #344 durability fix).
       //
-      // The atomic path explicitly does NOT fire the #335 dapp-side
-      // POST (race-window prevention per §17.13), so this handler is
-      // the SOLE signal source for atomic matches — there is no
-      // overwrite race with the default 'v1-twostep' value.
+      // This handler is the SOLE writer of the breadcrumbs table: the
+      // #335 dapp-side POST that wrote 'v1-twostep' rows, unauthenticated
+      // and overwritable by anyone, was retired in #2757.
       //
       // The bidder's per-fee-recipient breakdown comes from
       // Seaport's canonical `OrderFulfilled(bidderOrderHash, ...)`
@@ -6797,7 +6813,7 @@ export async function processLoanLogs(
       const loanId = Number(a.loanId as bigint);
       const bidderOrderHash = (a.bidderOrderHash as string).toLowerCase();
       const bidder = (a.bidder as string).toLowerCase();
-      const matchedAt = blockTimestamps.get(log.blockNumber) ?? now;
+      const matchedAt = chainTimeOf(blockTimestamps, log.blockNumber);
       await env.DB.prepare(
         `INSERT INTO prepay_listing_match_breadcrumbs
             (chain_id, tx_hash, loan_id, order_hash, bidder, matched_at, match_mode)
@@ -6919,7 +6935,7 @@ export async function processLoanLogs(
             .bind(chainId, tokenId)
             .all<{ loan_id: number; role: 'lender' | 'borrower' }>()
         ).results ?? [];
-        const transferAt = blockTimestamps.get(log.blockNumber) ?? now;
+        const transferAt = chainTimeOf(blockTimestamps, log.blockNumber);
         for (const m of sideMatches) {
           await recordLoanParticipant(env, chainId, m.loan_id, to, m.role, transferAt);
         }
@@ -7086,7 +7102,7 @@ export async function recordActivityEvents(
     const { actor, loanId, offerId } = pluckActivityRefs(log.eventName, args);
     const v = activityValue(log.eventName, args as Record<string, unknown>, valueCtx);
     const argsJson = serializeArgs(args);
-    const blockAt = blockTimestamps.get(log.blockNumber) ?? Math.floor(Date.now() / 1000);
+    const blockAt = chainTimeOf(blockTimestamps, log.blockNumber);
     const result = await env.DB.prepare(
       `INSERT OR IGNORE INTO activity_events
         (chain_id, block_number, log_index, tx_hash, kind,

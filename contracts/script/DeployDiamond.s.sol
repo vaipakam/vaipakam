@@ -1557,7 +1557,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getOracleAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](35);
+        s = new bytes4[](36);
         s[0] = OracleAdminFacet.setChainlinkRegistry.selector;
         s[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
         s[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
@@ -1613,6 +1613,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #945 — the launch readiness check prices WETH through the
         // Diamond's own oracle, so it reads which WETH is configured.
         s[34] = OracleAdminFacet.getWethContract.selector;
+        // #2880 — the launch readiness check reads the feed registry the
+        // oracle prices through and the two quote keys it asks it under.
+        s[35] = OracleAdminFacet.getFeedRegistryLookup.selector;
     }
 
     function _getNftSelectors() internal pure returns (bytes4[] memory s) {

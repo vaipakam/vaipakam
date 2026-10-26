@@ -852,6 +852,14 @@ echo
 echo "[3a] DeployLaunchGate.s.sol"
 forge script script/DeployLaunchGate.s.sol --rpc-url "$RPC" --broadcast --slow
 
+# ── 3a'. Feed registry (#2880) ────────────────────────────────────────
+# The Diamond's oracle prices every asset but WETH through it, so it lands
+# before any mock rig registers feeds into it and before configure points the
+# Diamond at it. A recorded registry the admin controls is reused.
+echo
+echo "[3a'] DeployFeedRegistry.s.sol"
+forge script script/DeployFeedRegistry.s.sol --rpc-url "$RPC" --broadcast --slow
+
 # ── 3b. Canonical VPFI token ──────────────────────────────────────────
 # MUST land BEFORE DeployCrosschain, whose canonical branch (Base) reads
 # `.vpfiToken` to wrap the existing token in the CCIP LockRelease pool; nothing

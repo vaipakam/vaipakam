@@ -204,6 +204,7 @@ contract Handover is Script {
     function _execute(Config memory c) internal {
         _preflight(c);
         _rotateDiamond(c);
+        _rotateFeedRegistryGuardian(c);
 
         // ── Owned contracts → Timelock ──────────────────────────────────
         // The whole CCIP stack is ADMIN-owned two-step: `DeployCrosschain`
@@ -234,6 +235,26 @@ contract Handover is Script {
         bool cctRotated = _transferCctAdmin(c.adminKey, c.cctRegistry, c.vpfiToken, c.timelock);
 
         _printAcceptSteps(c, cctRotated);
+    }
+
+    /// @dev #2880 — the feed registry's veto belongs to the Pauser Safe. A
+    ///      testnet deploy without a Pauser Safe left it with the admin; it
+    ///      moves here, while the admin still owns the registry and before
+    ///      ownership goes to the Timelock. The gate refuses any other holder.
+    function _rotateFeedRegistryGuardian(Config memory c) internal {
+        for (uint256 i; i < c.targets.length; ++i) {
+            HandoverPlan.Target memory t = c.targets[i];
+            if (t.addr == address(0) || keccak256(bytes(t.label)) != keccak256("feedRegistry")) continue;
+            if (IFeedRegistryGuardian(t.addr).guardian() == c.pauserSafe) return;
+            require(
+                IOwnable2Step(t.addr).owner() == c.admin,
+                "feedRegistry: its guardian is not the Pauser Safe and the admin no longer owns it to rotate it"
+            );
+            vm.broadcast(c.adminKey);
+            IFeedRegistryGuardian(t.addr).setGuardian(c.pauserSafe);
+            console.log("feedRegistry guardian -> Pauser Safe:", c.pauserSafe);
+            return;
+        }
     }
 
     /// @dev Every refusal happens here, before the admin gives anything up.
@@ -580,6 +601,11 @@ interface ITimelockRoles {
 
 interface IOwnership {
     function transferOwnership(address newOwner) external;
+}
+
+interface IFeedRegistryGuardian {
+    function guardian() external view returns (address);
+    function setGuardian(address guardian_) external;
 }
 
 interface IOwnable2Step {
