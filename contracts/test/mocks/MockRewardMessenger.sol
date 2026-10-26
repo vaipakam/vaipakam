@@ -24,7 +24,7 @@ import {RewardCommitmentFacet} from "../../src/facets/RewardCommitmentFacet.sol"
 ///        1. Diamond.rewardMessenger() == address(this). Then the facet allows
 ///           this contract to deliver messages via {deliverChainReport}
 ///           (mirror→Base) and {deliverBroadcast} (Base→mirror).
-///        2. {sendChainReport} / {broadcastGlobal} are the sender-side
+///        2. {sendChainReport} / {broadcastDayV3} are the sender-side
 ///           interface methods called by the Diamond from within
 ///           `closeDay` / `broadcastGlobal` on mirror / canonical chains
 ///           respectively. We record the last payload so tests can assert
@@ -56,18 +56,10 @@ contract MockRewardMessenger is IRewardMessenger {
     uint256 public lastSendValue;
     uint256 public sendCount;
 
-    // ─── Last-call spies for broadcastGlobal ──────────────────────────────
+    // ─── Last-call spies shared by the V3 broadcast sends ────────────────
     uint256 public lastBroadcastDay;
-    uint256 public lastBroadcastLenderNumeraire18;
-    uint256 public lastBroadcastBorrowerNumeraire18;
-    uint256 public lastBroadcastCapThreshold18;
-    // PR-3c composition + arming spies.
-    uint256 public lastBroadcastScheduleFloorHalf;
-    uint256 public lastBroadcastRecycledHalf;
-    uint256 public lastBroadcastArmedFromDay;
     address public lastBroadcastRefund;
     uint256 public lastBroadcastValue;
-    uint256 public broadcastCount;
 
     // ─── #1222 M3 B2-d1 — commitment-report spies ─────────────────────────
     uint256 public lastCommitSendDay;
@@ -80,11 +72,8 @@ contract MockRewardMessenger is IRewardMessenger {
     ///         test can assert the facet surfaces it verbatim).
     bytes32 public commitMessageId = bytes32(uint256(0xC0117171));
 
-    // ─── #1222 M3 B2-b — V2 broadcast spies + destination config ──────────
+    // ─── Broadcast destination config ─────────────────────────────────────
     uint256[] internal destsConfig;
-    IRewardMessenger.BroadcastV2Shared public lastV2Shared;
-    IRewardMessenger.BroadcastV2PerDest[] public lastV2Dests;
-    uint256 public broadcastV2Count;
 
     // ─── #1434 P2-w1 — V3 broadcast spies ─────────────────────────────────
     IRewardMessenger.BroadcastV2Shared public lastV3Shared;
@@ -101,16 +90,6 @@ contract MockRewardMessenger is IRewardMessenger {
     uint256 public quoteNative;
     bool public revertOnSend;
     bool public revertOnBroadcast;
-    /// @notice B2-b — simulate a pre-B2-b messenger proxy: the V2 send
-    ///         reverts EMPTY (missing selector), which must trip the
-    ///         facet's legacy-fallback shim.
-    bool public v2Unsupported;
-    /// @notice #1434 P2-w1 — simulate a pre-V3 messenger proxy: every V3
-    ///         surface reverts EMPTY (missing selector), which must trip
-    ///         the aggregator's V3 → V2 fallback (and turn the heal into
-    ///         `MessengerPredatesV3`).
-    bool public v3Unsupported;
-
     constructor(address diamond_) {
         diamond = diamond_;
     }
@@ -127,14 +106,6 @@ contract MockRewardMessenger is IRewardMessenger {
         revertOnBroadcast = v;
     }
 
-    function setV2Unsupported(bool v) external {
-        v2Unsupported = v;
-    }
-
-    function setV3Unsupported(bool v) external {
-        v3Unsupported = v;
-    }
-
     function lastV3DestsLength() external view returns (uint256) {
         return lastV3Dests.length;
     }
@@ -149,10 +120,6 @@ contract MockRewardMessenger is IRewardMessenger {
 
     function setBroadcastDestinations(uint256[] calldata d) external {
         destsConfig = d;
-    }
-
-    function lastV2DestsLength() external view returns (uint256) {
-        return lastV2Dests.length;
     }
 
     // ─── IRewardMessenger — sender-side (called by Diamond) ───────────────
@@ -188,31 +155,6 @@ contract MockRewardMessenger is IRewardMessenger {
         returns (uint256)
     {
         return quoteNative;
-    }
-
-    function broadcastGlobal(
-        uint256 dayId,
-        uint256 globalLenderNumeraire18,
-        uint256 globalBorrowerNumeraire18,
-        uint256 capThreshold18,
-        uint256 scheduleFloorHalf,
-        uint256 recycledHalf,
-        uint256 armedFromDay,
-        address payable refundAddress
-    ) external payable override {
-        require(msg.sender == diamond, "MockMessenger: only diamond");
-        if (revertOnBroadcast) revert("MockMessenger: broadcast revert");
-        lastBroadcastDay = dayId;
-        lastBroadcastLenderNumeraire18 = globalLenderNumeraire18;
-        lastBroadcastBorrowerNumeraire18 = globalBorrowerNumeraire18;
-        lastBroadcastCapThreshold18 = capThreshold18;
-        // PR-3c — composition + arming spies.
-        lastBroadcastScheduleFloorHalf = scheduleFloorHalf;
-        lastBroadcastRecycledHalf = recycledHalf;
-        lastBroadcastArmedFromDay = armedFromDay;
-        lastBroadcastRefund = refundAddress;
-        lastBroadcastValue = msg.value;
-        broadcastCount += 1;
     }
 
     // ─── #1222 M3 B2-d1 — commitment-report surface ───────────────────────
@@ -375,56 +317,6 @@ contract MockRewardMessenger is IRewardMessenger {
         );
     }
 
-    function quoteBroadcastGlobal(
-        uint256,
-        uint256,
-        uint256
-    ) external view override returns (uint256) {
-        return quoteNative;
-    }
-
-    // ─── #1222 M3 B2-b — V2 broadcast surface ─────────────────────────────
-
-    function broadcastDayV2(
-        IRewardMessenger.BroadcastV2Shared calldata shared,
-        IRewardMessenger.BroadcastV2PerDest[] calldata dests,
-        address payable refundAddress
-    ) external payable override {
-        require(msg.sender == diamond, "MockMessenger: only diamond");
-        if (v2Unsupported) {
-            // Missing-selector analog: revert with EMPTY returndata.
-            assembly ("memory-safe") {
-                revert(0, 0)
-            }
-        }
-        if (revertOnBroadcast) revert("MockMessenger: broadcast revert");
-        lastV2Shared = shared;
-        delete lastV2Dests;
-        for (uint256 i; i < dests.length; ++i) {
-            lastV2Dests.push(dests[i]);
-        }
-        lastBroadcastDay = shared.dayId;
-        lastBroadcastRefund = refundAddress;
-        lastBroadcastValue = msg.value;
-        broadcastV2Count += 1;
-    }
-
-    function quoteBroadcastDayV2(
-        IRewardMessenger.BroadcastV2Shared calldata,
-        IRewardMessenger.BroadcastV2PerDest[] calldata dests
-    ) external view override returns (uint256) {
-        if (v2Unsupported) {
-            // Missing-selector analog for the quote path too.
-            assembly ("memory-safe") {
-                revert(0, 0)
-            }
-        }
-        // Per-destination pricing (one lane per entry) — deliberately
-        // DIFFERENT from the flat legacy quote so a facet-level quote test
-        // can discriminate which messenger path priced it.
-        return quoteNative * dests.length;
-    }
-
     function getBroadcastDestinations()
         external
         view
@@ -434,10 +326,14 @@ contract MockRewardMessenger is IRewardMessenger {
         return destsConfig;
     }
 
-    /// @notice B2-b — simulate a kind-5 delivery landing on the mirror
-    ///         reporter ingress.
+    /// @notice Deliver Base's per-destination figures `b` to the mirror as
+    ///         the one broadcast wire (kind 10). #1944 retired the kind-5
+    ///         ingress this used to call; the packet now travels inside a
+    ///         V3 envelope built by {_v3Envelope}.
     function deliverBroadcastV2(RewardBroadcastV2 calldata b) external {
-        RewardReporterFacet(diamond).onRewardBroadcastV2Received(b);
+        RewardReporterFacet(diamond).onRewardBroadcastV3Received(
+            _v3Envelope(b, b.freshLenderHalf, 0)
+        );
     }
 
     // ─── #1434 P2-w1 — V3 broadcast surface ───────────────────────────────
@@ -449,12 +345,6 @@ contract MockRewardMessenger is IRewardMessenger {
         address payable refundAddress
     ) external payable override {
         require(msg.sender == diamond, "MockMessenger: only diamond");
-        if (v3Unsupported) {
-            // Missing-selector analog: revert with EMPTY returndata.
-            assembly ("memory-safe") {
-                revert(0, 0)
-            }
-        }
         if (revertOnBroadcast) revert("MockMessenger: broadcast revert");
         lastV3Shared = shared;
         lastV3Extras = extras;
@@ -473,14 +363,9 @@ contract MockRewardMessenger is IRewardMessenger {
         IRewardMessenger.BroadcastV3Extras calldata,
         IRewardMessenger.BroadcastV3PerDest[] calldata dests
     ) external view override returns (uint256) {
-        if (v3Unsupported) {
-            assembly ("memory-safe") {
-                revert(0, 0)
-            }
-        }
-        // Per-destination pricing, deliberately DIFFERENT from both the
-        // flat legacy quote and the V2 per-lane price so a facet-level
-        // quote test can discriminate which messenger generation priced it.
+        // Per-destination pricing, deliberately DIFFERENT from the flat
+        // single-lane quote so a facet-level quote test can tell which
+        // surface priced it.
         return quoteNative * dests.length * 3;
     }
 
@@ -491,11 +376,6 @@ contract MockRewardMessenger is IRewardMessenger {
         address payable refundAddress
     ) external payable override returns (bytes32) {
         require(msg.sender == diamond, "MockMessenger: only diamond");
-        if (v3Unsupported) {
-            assembly ("memory-safe") {
-                revert(0, 0)
-            }
-        }
         if (revertOnBroadcast) revert("MockMessenger: broadcast revert");
         lastV3SingleShared = shared;
         lastV3SingleExtras = extras;
@@ -511,11 +391,6 @@ contract MockRewardMessenger is IRewardMessenger {
         IRewardMessenger.BroadcastV3Extras calldata,
         IRewardMessenger.BroadcastV3PerDest calldata
     ) external view override returns (uint256) {
-        if (v3Unsupported) {
-            assembly ("memory-safe") {
-                revert(0, 0)
-            }
-        }
         return quoteNative * 3;
     }
 
@@ -788,30 +663,33 @@ contract MockRewardMessenger is IRewardMessenger {
         );
     }
 
-    /// @notice Simulate a Base broadcast landing on a mirror reporter.
-    ///         Legacy 4-arg shape kept for the pre-PR-3c tests: composition
-    ///         halves zero, unarmed.
+    // ─── Broadcast delivery shorthands (#1944: all ride kind 10) ──────────
+
+    /// @dev The clock every shorthand stamps. Fixed so a re-delivery of the
+    ///      same day replays rather than diverges. Lapse schedule version 0
+    ///      means "not lapse-eligible", which keeps these shorthands out of
+    ///      the P2 lapse machinery a test did not ask for.
+    uint64 public constant SHORTHAND_FINALIZED_AT = 1;
+
+    /// @notice Simulate a Base broadcast landing on a mirror reporter:
+    ///         the consensus pair and the §4 cap threshold, unarmed, funded
+    ///         at the day's schedule floor (what Base ships an included
+    ///         destination below the 69M cap).
     function deliverBroadcast(
         uint256 dayId,
         uint256 globalLenderNumeraire18,
         uint256 globalBorrowerNumeraire18,
         uint256 capThreshold18
     ) external {
-        RewardReporterFacet(diamond).onRewardBroadcastReceived(
-            dayId,
-            globalLenderNumeraire18,
-            globalBorrowerNumeraire18,
-            capThreshold18,
-            0,
-            0,
-            0
+        _deliverShorthand(
+            dayId, globalLenderNumeraire18, globalBorrowerNumeraire18,
+            capThreshold18, 0, 0, 0
         );
     }
 
-    /// @dev #1636 r2 — legacy kind-2 delivery carrying the full frozen
-    ///      tuple, for mixed-generation consistency tests: a V3 for the
-    ///      same day must agree on the day-pool figures (production sends
-    ///      the SAME finalize-frozen values on both wires).
+    /// @notice The full frozen tuple: composition halves and the arming
+    ///         day too. A zero `scheduleFloorHalf` means "the day's
+    ///         schedule half", as in {deliverBroadcast}.
     function deliverBroadcastFull(
         uint256 dayId,
         uint256 globalLenderNumeraire18,
@@ -821,18 +699,13 @@ contract MockRewardMessenger is IRewardMessenger {
         uint256 recycledHalf,
         uint256 armedFromDay
     ) external {
-        RewardReporterFacet(diamond).onRewardBroadcastReceived(
-            dayId,
-            globalLenderNumeraire18,
-            globalBorrowerNumeraire18,
-            capThreshold18,
-            scheduleFloorHalf,
-            recycledHalf,
-            armedFromDay
+        _deliverShorthand(
+            dayId, globalLenderNumeraire18, globalBorrowerNumeraire18,
+            capThreshold18, scheduleFloorHalf, recycledHalf, armedFromDay
         );
     }
 
-    /// @notice PR-3c — full-shape broadcast delivery (composition + arming).
+    /// @notice Alias of {deliverBroadcastFull}, kept for the PR-3c suites.
     function deliverBroadcastWithComposition(
         uint256 dayId,
         uint256 globalLenderNumeraire18,
@@ -842,15 +715,68 @@ contract MockRewardMessenger is IRewardMessenger {
         uint256 recycledHalf,
         uint256 armedFromDay
     ) external {
-        RewardReporterFacet(diamond).onRewardBroadcastReceived(
-            dayId,
-            globalLenderNumeraire18,
-            globalBorrowerNumeraire18,
-            capThreshold18,
-            scheduleFloorHalf,
-            recycledHalf,
-            armedFromDay
+        _deliverShorthand(
+            dayId, globalLenderNumeraire18, globalBorrowerNumeraire18,
+            capThreshold18, scheduleFloorHalf, recycledHalf, armedFromDay
         );
+    }
+
+    /// @dev Builds the per-destination packet Base's `_perDestFields` ships
+    ///      an included, unstamped destination: the floor half on both
+    ///      sides, nothing recycled, nothing consumed or earmarked.
+    function _deliverShorthand(
+        uint256 dayId,
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18,
+        uint256 capThreshold18,
+        uint256 scheduleFloorHalf,
+        uint256 recycledHalf,
+        uint256 armedFromDay
+    ) internal {
+        uint256 floorHalf = scheduleFloorHalf != 0
+            ? scheduleFloorHalf
+            : InteractionRewardsLensFacet(diamond).getInteractionHalfPoolForDay(dayId);
+        RewardBroadcastV2 memory v2 = RewardBroadcastV2({
+            dayId: dayId,
+            globalLenderNumeraire18: globalLenderNumeraire18,
+            globalBorrowerNumeraire18: globalBorrowerNumeraire18,
+            capMode: 0, // CapMode.LegacyEthRatio
+            capPayloadLender: capThreshold18,
+            capPayloadBorrower: 0,
+            armedFromDay: armedFromDay,
+            freshLenderHalf: floorHalf,
+            freshBorrowerHalf: floorHalf,
+            recycledLenderHalfEquiv: 0,
+            recycledBorrowerHalfEquiv: 0,
+            recycleConsume: 0,
+            keeperAllocate: 0,
+            destChainId: block.chainid
+        });
+        RewardReporterFacet(diamond).onRewardBroadcastV3Received(
+            _v3Envelope(v2, floorHalf, recycledHalf)
+        );
+    }
+
+    /// @dev Wraps `v2` in the V3 envelope a correctly bound Base messenger
+    ///      sends: the mirror's own configured era (a test that has not set
+    ///      one gets `BroadcastEraUnauthenticated`, as production would),
+    ///      the fixed shorthand clock and the day-level pool halves.
+    function _v3Envelope(
+        RewardBroadcastV2 memory v2,
+        uint256 dayScheduleFloorHalf,
+        uint256 dayRecycledBudgetHalf
+    ) internal view returns (RewardBroadcastV3 memory) {
+        return RewardBroadcastV3({
+            v2: v2,
+            finalizedAt: SHORTHAND_FINALIZED_AT,
+            lapseScheduleVersion: 0,
+            lapseWindowSeconds: 0,
+            dispatchCutoffGap: 0,
+            zeroedForDest: false,
+            baseDeployment: RewardReporterFacet(diamond).getBaseRewardDeployment(),
+            dayScheduleFloorHalf: dayScheduleFloorHalf,
+            dayRecycledBudgetHalf: dayRecycledBudgetHalf
+        });
     }
 
     receive() external payable {}

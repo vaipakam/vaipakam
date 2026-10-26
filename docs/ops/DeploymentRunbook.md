@@ -1686,7 +1686,7 @@ driven by its own env var**:
 
 On **every reporter** (non-Base chain), one registration, driven the same way:
 
-5'. `RewardReporterFacet.setBaseRewardDeployment(<BASE_REWARD_DEPLOYMENT>)` — Base's Diamond address. Until it is set, the V3 (kind-10) broadcast ingress is DARK on this reporter: day figures still arrive on the kind-5 wire, but no day clock installs and the P2 lapse machinery can never arm. When set, the artifact also gains `baseRewardDeployment`.
+5'. `RewardReporterFacet.setBaseRewardDeployment(<BASE_REWARD_DEPLOYMENT>)` — Base's Diamond address. Until it is set, the broadcast ingress (kind 10, the one broadcast wire since #1944) is DARK on this reporter: every broadcast is refused (`BroadcastEraUnauthenticated`) and stays a failed, re-executable CCIP message, so no day figures, day clock or arming day install until it is set. When set, the artifact also gains `baseRewardDeployment`.
 
 **What an unset var does depends on which entry point you used — and on
 whether the Diamond was configured before.**
@@ -1832,7 +1832,7 @@ forge script script/SepoliaActiveLoan.s.sol   --rpc-url $RPC_URL --broadcast
 Manual checks post-smoke:
 - At least one `ChainInterestReported` event on Base from the smoke-run chain.
 - `RewardAggregatorFacet.isDayReadyToFinalize(day)` progresses through states 2 → 3 → 1 across the grace window.
-- One user claim succeeds after `finalizeDay` + `broadcastGlobal` + `onRewardBroadcastReceived`.
+- One user claim succeeds after `finalizeDay` + `broadcastGlobal` + `onRewardBroadcastV3Received`.
 
 ### 5c. Chain-agnostic full-flow wrappers (preferred for any chain)
 

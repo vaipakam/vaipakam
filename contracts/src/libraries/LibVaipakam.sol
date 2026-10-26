@@ -3366,7 +3366,7 @@ library LibVaipakam {
         // legacy-name comment below). Only that address may invoke
         // the trusted ingress handlers
         // (RewardAggregatorFacet.onChainReportReceived on Base,
-        // RewardReporterFacet.onRewardBroadcastReceived on mirrors).
+        // RewardReporterFacet.onRewardBroadcastV3Received on mirrors).
 
         /// @dev True exactly on the canonical reward chain (Base mainnet
         ///      chainId 8453 / Base Sepolia 84532). Gates the aggregator
@@ -3460,7 +3460,7 @@ library LibVaipakam {
         /// @dev Finalized global lender denominator known on this chain
         ///      for day `D`. On Base it is set directly by
         ///      {RewardAggregatorFacet.finalizeDay}; on mirrors it is
-        ///      set by {RewardReporterFacet.onRewardBroadcastReceived}.
+        ///      set by {RewardReporterFacet.onRewardBroadcastV3Received}.
         ///      Zero means "not yet known locally" — claims for `D`
         ///      revert until the broadcast lands.
         mapping(uint256 => uint256) knownGlobalLenderInterestNumeraire18;
@@ -6022,11 +6022,11 @@ library LibVaipakam {
         // ─── #1222 M3 B2-b — broadcast V2 + canonical consumer flip ─────────
         // APPEND-ONLY TAIL.
         //
-        // Mirror-side whole-day idempotency stamp for the V2 broadcast
-        //   ingress: covers every stamped field, so a re-delivered kind-5
-        //   packet can never double-apply the per-chain funding stamp or
-        //   the cap-family write. (Mirror bucket consumption arms in B2-d;
-        //   in B2-b the ingress is store-only.)
+        // Mirror-side whole-day idempotency stamp for the broadcast
+        //   ingress's V2 fields: covers every stamped field, so a
+        //   re-delivered broadcast can never double-apply the per-chain
+        //   funding stamp, the cap-family write, the keeper earmark or the
+        //   arrival reservation.
         mapping(uint256 => bool) broadcastV2Applied;
         // Per-SIDE D1 ceilings for armed days (supersede the single
         //   `dayUserSideCapVpfi18` post-`D*`): under per-chain funding the
@@ -6118,18 +6118,14 @@ library LibVaipakam {
         //   distinct keys: no collision, no supersession ordering, and the
         //   ack echoes the recorded remitter for Base's self-check.
         mapping(bytes32 => ReceivedRemit) receivedRemits;
-        // ─── #1222 M3 B2-d3 — mirror arrival-reservation idempotency ────────
-        // APPEND-ONLY TAIL. Per day: has this MIRROR reserved the recycled
-        // commit Base instructed it to fund locally? Kept SEPARATE from
-        // `broadcastV2Applied` deliberately (Codex #1430 r4): on a Base-first
-        // / non-atomic rollout a pre-d3 mirror can apply a broadcast that
-        // already carries a non-zero `recycleConsume` — storing the stamp and
-        // setting `broadcastV2Applied` WITHOUT reserving — and once upgraded,
-        // every replay would take the whole-day idempotency early-return, so
-        // the reservation would be missed forever while Base has already
-        // booked and netted that local share. With its own flag a replay
-        // completes the missed reservation exactly once.
-        mapping(uint256 => bool) mirrorRecycleCommitReserved;
+        // ─── #1222 M3 B2-d3 — RETIRED (#1944) ───────────────────────────────
+        // APPEND-ONLY TAIL. Was the per-day "reservation done" flag that let
+        // a replay complete a reservation a pre-d3 receiver had missed. Every
+        // chain is a fresh deploy (owner decision O1 = A), so no day is ever
+        // applied without its reservation: the reservation runs once, under
+        // `broadcastV2Applied`. Kept for the append-only layout; nothing
+        // reads or writes it.
+        mapping(uint256 => bool) retiredMirrorRecycleCommitReserved;
         // ─── #1222 M3 B2-d5 — relocated-custody counter ──────────────────────
         // APPEND-ONLY TAIL. Lifetime Σ of RECYCLED VPFI that arrived on this
         // chain as a Base-funded remit top-up and was credited to
@@ -6696,14 +6692,12 @@ library LibVaipakam {
         //   `_finalizeAndWrite` (never read live at send — R2a: two sends of
         //   the same finalized day must carry byte-identical clock facts); a
         //   mirror installs it only from an authenticated V3 broadcast
-        //   (`RewardReporterFacet.onRewardBroadcastV3Received`), including the
-        //   clock-backfill branch for a day applied via kind-5 before the
-        //   upgrade. `finalizedAt == 0` ⇒ no clock: the day is neither
-        //   lapse-eligible nor priceable as a zeroed day (design §1.1 — both
-        //   P2 machines gate on it), and Base keeps broadcasting such a day on
-        //   the V2 wire (a pre-upgrade-finalized day has no authentic
-        //   finalization timestamp to freeze, and inventing one would forge
-        //   the very evidence the permissionless lapse trusts).
+        //   (`RewardReporterFacet.onRewardBroadcastV3Received`), in the same
+        //   call that applies the day's figures. `finalizedAt == 0` ⇒ no
+        //   clock: the day is not finalized on Base, or its broadcast has
+        //   not landed on a mirror, and it is neither lapse-eligible nor
+        //   priceable as a zeroed day (design §1.1 — both P2 machines gate
+        //   on it).
         mapping(uint256 => DayLapseClock) dayLapseClock;
         // BASE-ONLY: frozen per-(day, destination) R1 zeroed marker — the
         //   value of `chainDayCommitments[d][dest].remitIneligible` AT
@@ -6747,19 +6741,18 @@ library LibVaipakam {
         //   endpoint posture). Rotated by the same ceremony that rotates
         //   the Base deployment.
         address baseRewardDeployment;
-        // MIRROR-ONLY (#1632 r2): the last NONZERO era ever configured,
-        //   and whether a true era ROTATION has occurred (a second,
-        //   different nonzero value). One-way: once rotated, the LEGACY
-        //   broadcast wires (kind-5 / kind-2) refuse FRESH applies forever
-        //   — those packets carry no deployment identity, so a retired
-        //   era's in-flight or manually re-executed delivery is
-        //   indistinguishable from a legitimate one, and after a rotation
-        //   the only legitimate sender speaks V3. Replays of
-        //   already-applied days stay idempotent. Tracked against the last
-        //   NONZERO value (not the live config) so a disarm/re-arm cycle
-        //   cannot smuggle a rotation past the detector.
+        // MIRROR-ONLY (#1632 r2): the last NONZERO era ever configured —
+        //   the yardstick {RewardReporterFacet.setBaseRewardDeployment}'s
+        //   rebind check reads (#1566 slice 4 PR B), tracked against the
+        //   last NONZERO value (not the live config) so a disarm/re-arm
+        //   cycle cannot smuggle a rebind past it.
         address rewardEraLastNonzero;
-        bool rewardEraRotated;
+        // RETIRED (#1944): was the one-way "an era rotation happened" flag
+        //   that closed the identity-less kind-2 / kind-5 broadcast wires.
+        //   Those wires are gone, and every day is applied with its era
+        //   recorded, so nothing is left for it to gate. Kept for the
+        //   append-only layout; nothing reads or writes it.
+        bool retiredRewardEraRotated;
         // ─── #1434 P2-w2 — compensation ingress + arrival reservation ────
         // MIRROR-ONLY: Σ of quarantined compensation arrivals (§2.2's
         //   token-safe rejection + §4.1). The ONE ratified subtrahend added
@@ -7510,19 +7503,12 @@ library LibVaipakam {
         ///         Zero until `chainKeeperAllocateBps` is armed, so the term
         ///         is inert on every deployment built before then.
         mapping(uint32 => uint256) chainKeeperAllocDebited;
-        /// @notice MIRROR-ONLY: whether this day's Base-instructed keeper
-        ///         earmark has been applied to `recycleKeeperBudget`.
-        ///
-        ///         Its OWN flag rather than `broadcastV2Applied`, for exactly
-        ///         the reason `mirrorRecycleCommitReserved` has one (Codex
-        ///         #2031 r5): a non-atomic rollout leaves days that a
-        ///         PRE-#1569 receiver applied — it stored `keeperAllocate` on
-        ///         the day record and set the applied flag, but the budget
-        ///         write did not exist yet. Keyed on the applied flag, the
-        ///         repair could never run, and Base would have charged
-        ///         `chainKeeperAllocDebited` while the mirror still treated
-        ///         those tokens as fundable for claims and repatriation.
-        mapping(uint256 => bool) mirrorKeeperEarmarkApplied;
+        /// @dev RETIRED (#1944): was the per-day "keeper earmark applied"
+        ///      flag that let a replay complete an earmark a pre-#1569
+        ///      receiver had missed. Every chain is a fresh deploy, so the
+        ///      earmark is applied once, under `broadcastV2Applied`. Kept for
+        ///      the append-only layout; nothing reads or writes it.
+        mapping(uint256 => bool) retiredMirrorKeeperEarmarkApplied;
         /// @notice #1566 closure 3 — TRUE once either role setter has
         ///         recorded a role TRANSITION: any
         ///         {RewardReporterFacet.setBaseChainId} write, or
@@ -7959,11 +7945,13 @@ library LibVaipakam {
         /// @dev PR C-2 — Σ fresh absorbed into the recycle bucket that a RETIRED
         ///      era's row funded (counted apart from live-funded absorption).
         uint256 recycleEraFundedCumulative;
-        /// @dev PR C-4 — the parked-message lane, by local id (1-based), and
-        ///      how many parked entries each custody era still carries open.
-        mapping(uint256 => ParkedBroadcast) parkedBroadcasts;
-        uint256 parkedBroadcastCount;
-        mapping(uint64 => uint256) custodyEraParkedOpen;
+        /// @dev RETIRED (#1944): PR C-4's parked-message lane for kind-2 /
+        ///      kind-5 broadcasts the era-rotation gate refused. Both wires
+        ///      are gone, so nothing parks. Kept for the append-only layout;
+        ///      nothing reads or writes them.
+        mapping(uint256 => ParkedBroadcast) retiredParkedBroadcasts;
+        uint256 retiredParkedBroadcastCount;
+        mapping(uint64 => uint256) retiredCustodyEraParkedOpen;
         /// @dev RETIRED with the backfill (#1566 PR C revision): the packet list
         ///      and the backfill's record. Kept for the append-only layout;
         ///      nothing reads or writes them.
@@ -8484,13 +8472,10 @@ library LibVaipakam {
         uint256 stagedFresh;
     }
 
-    /// @notice Slice 4 PR C-4 (#1566) — one PARKED legacy broadcast: an era-less
-    ///         kind-2 or kind-5 wire the deployment-rotation gate refused, kept as
-    ///         a record with a disposition instead of a transport-side revert.
-    /// @dev    `status`: 0 parked, 1 tombstoned (operator-recorded disposition),
-    ///         2 applied (a retry passed the gate). `quarantineOnly`: first
-    ///         received after era 0 — exits by tombstone alone (design §5c: the
-    ///         next era's opening never certifies a later arrival).
+    /// @notice RETIRED (#1944) — the record type of the retired parked-message
+    ///         lane (`retiredParkedBroadcasts`): one era-less kind-2 or kind-5
+    ///         broadcast the deployment-rotation gate refused. Kept only
+    ///         because that retained mapping names it; nothing builds one.
     struct ParkedBroadcast {
         uint8 kind;
         uint8 status;

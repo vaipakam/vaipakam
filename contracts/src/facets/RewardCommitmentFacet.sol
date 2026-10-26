@@ -302,9 +302,10 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
      *      for any day that HAS a lapse clock. That posture is NOT merely
      *      historical: a pre-w1 zeroed day with no clock cannot use the
      *      evidenced vehicle at all (`_remitManualBudget` reverts
-     *      {CompensationDayHasNoClock}, `broadcastGlobalTo` rejects it, and
-     *      `broadcastGlobal` falls back to the clockless wire permanently),
-     *      and {stampLegacyCompensation} only migrates a receipt already
+     *      {CompensationDayHasNoClock}; on a fresh deploy no such day can
+     *      exist, since finalization freezes the clock and #1944 retired
+     *      the clockless broadcast wires), and {stampLegacyCompensation}
+     *      only migrates a receipt already
      *      delivered — so it cannot fund a day that never was. For that
      *      legacy state the out-of-band posture remains the supported
      *      route.

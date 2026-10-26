@@ -49,7 +49,8 @@ import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
  *         `proveDeliveryDayChunk`.
  * @dev    The fixture is the epoch-draw suites' mirror (Arbitrum chain id,
  *         Base as the reward chain, this contract as the remittance receiver).
- *         Days are stamped by REAL V2 broadcasts through
+ *         Days are stamped by REAL broadcasts (the per-destination fields
+ *         inside the kind-10 envelope) through
  *         {MockRewardMessenger.deliverBroadcastV2} and closed locally (the
  *         chain's interest totals and `chainReportSentAt`) BEFORE the
  *         broadcast -- the order the production cycle runs in, close then
@@ -131,6 +132,8 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
         vm.chainId(CHAIN_ARB);
         RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(false);
         RewardReporterFacet(address(diamond)).setBaseChainId(CHAIN_BASE);
+        // #1944 — the one broadcast wire authenticates Base's era.
+        RewardReporterFacet(address(diamond)).setBaseRewardDeployment(address(0xBA5E0E7A));
         RewardRemittanceFacet(address(diamond)).setRewardRemittanceReceiver(address(this));
         if (_custodyActive()) activateRewardCustodyForTest(address(vpfi), 0);
         messenger = new MockRewardMessenger(address(diamond));

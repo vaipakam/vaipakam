@@ -938,15 +938,13 @@ contract InteractionRewardsLensFacet {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // #1218 M5 (Codex #1487 r1 P2) — these are GLOBAL figures and only
         // the canonical chain computes them. A mirror is not merely missing
-        // data, it answers WRONGLY in two different ways: under the V2
-        // broadcast it never receives `dayPoolStamp` at all, so a globally
-        // finalized day reads `stamped == false`; under the legacy broadcast
-        // it DOES get a stamp, but `dailyGlobal*InterestNumeraire18` is
-        // written only by Base's `finalizeDay`, so `committableForDay` reads
-        // unset denominators and returns a `freshDrawdown` of zero next to a
-        // real floor. The second is the dangerous shape — a plausible number
-        // rather than an obviously absent one, which is precisely the failure
-        // this PR fixes for `absorbed[D]`.
+        // data, it would answer WRONGLY: the broadcast DOES install a
+        // `dayPoolStamp` there, but `dailyGlobal*InterestNumeraire18` is
+        // written only by Base's `finalizeDay`, so `committableForDay` would
+        // read unset denominators and return a `freshDrawdown` of zero next
+        // to a real floor — a plausible number rather than an obviously
+        // absent one, which is precisely the failure this PR fixes for
+        // `absorbed[D]`.
         //
         // Failing loudly is the right answer and costs a mirror nothing: its
         // own local absorption is already readable through

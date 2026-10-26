@@ -112,7 +112,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](266); // #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](265); // #1944 -setMirrorCommitReservedRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -190,7 +190,6 @@ contract HelperTest {
             TestMutatorFacet.setChainDayFundingKeeperAllocateRaw.selector;
         // #1222 M3 B2-d3 — reconstruct a pre-d3 applied broadcast.
         selectors[n++] = TestMutatorFacet.setBroadcastV2AppliedRaw.selector;
-        selectors[n++] = TestMutatorFacet.setMirrorCommitReservedRaw.selector;
         // #1222 M3 B4-d — place the remitted term at the fresh-cap boundary.
         // Slot 147, not 146: #1448 r14 claimed 146 for
         // `setRemitReleasedCountRaw` on the base branch. Both branches picked
@@ -2300,42 +2299,36 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](25);
+        selectors = new bytes4[](21);
         selectors[0] = RewardReporterFacet.closeDay.selector;
-        selectors[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
-        // #1222 M3 B2-b — per-destination V2 broadcast ingress.
-        selectors[11] = RewardReporterFacet.onRewardBroadcastV2Received.selector;
         // #1434 P2-w1 — V3 (kind-10) ingress + the mirror-side clock reads
         // + the era ground truth (#1632 r1).
-        selectors[12] =
+        selectors[1] =
             RewardReporterFacet.onRewardBroadcastV3Received.selector;
-        selectors[13] = RewardReporterFacet.getDayClockEra.selector;
-        selectors[14] =
+        selectors[2] = RewardReporterFacet.getDayClockEra.selector;
+        selectors[3] =
             RewardReporterFacet.getDayDeliberatelyZeroed.selector;
-        selectors[15] = RewardReporterFacet.setBaseRewardDeployment.selector;
-        selectors[16] = RewardReporterFacet.getBaseRewardDeployment.selector;
-        selectors[2] = RewardReporterFacet.setRewardMessenger.selector;
+        selectors[4] = RewardReporterFacet.setBaseRewardDeployment.selector;
+        selectors[5] = RewardReporterFacet.getBaseRewardDeployment.selector;
+        selectors[6] = RewardReporterFacet.setRewardMessenger.selector;
         // T-068: `setLocalEid` removed — chain identity is `block.chainid`.
-        selectors[3] = RewardReporterFacet.setBaseChainId.selector;
-        selectors[4] = RewardReporterFacet.setIsCanonicalRewardChain.selector;
-        selectors[17] = RewardReporterFacet.seedArmedFreshPaid.selector;
-        selectors[18] = RewardReporterFacet.armedFreshPaidSeeded.selector;
-        selectors[5] = RewardReporterFacet.setRewardGraceSeconds.selector;
-        selectors[6] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
-        selectors[7] = RewardReporterFacet.getChainReportSentAt.selector;
-        selectors[8] = RewardReporterFacet.getRewardReporterConfig.selector;
-        selectors[9] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
+        selectors[7] = RewardReporterFacet.setBaseChainId.selector;
+        selectors[8] = RewardReporterFacet.setIsCanonicalRewardChain.selector;
+        selectors[9] = RewardReporterFacet.seedArmedFreshPaid.selector;
+        selectors[10] = RewardReporterFacet.armedFreshPaidSeeded.selector;
+        selectors[11] = RewardReporterFacet.setRewardGraceSeconds.selector;
+        selectors[12] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
+        selectors[13] = RewardReporterFacet.getChainReportSentAt.selector;
+        selectors[14] = RewardReporterFacet.getRewardReporterConfig.selector;
+        selectors[15] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
         // Single-field getter for the protocol-console knob registry.
-        selectors[10] = RewardReporterFacet.getRewardGraceSeconds.selector;
-        selectors[19] = RewardReporterFacet.getBroadcastV2Applied.selector;
+        selectors[16] = RewardReporterFacet.getRewardGraceSeconds.selector;
+        selectors[17] = RewardReporterFacet.getBroadcastV2Applied.selector;
         // #1566 closure 3 — the resolved role.
-        selectors[20] = RewardReporterFacet.getRewardRole.selector;
+        selectors[18] = RewardReporterFacet.getRewardRole.selector;
         // #2277 — the permissionless frontier catch-up and its view.
-        selectors[21] = RewardReporterFacet.advanceInterestFrontiers.selector;
-        selectors[22] = RewardReporterFacet.getInterestFrontiers.selector;
-        // PR C-4 — the parked-message lane's retries.
-        selectors[23] = RewardReporterFacet.retryParkedBroadcastV1.selector;
-        selectors[24] = RewardReporterFacet.retryParkedBroadcastV2.selector;
+        selectors[19] = RewardReporterFacet.advanceInterestFrontiers.selector;
+        selectors[20] = RewardReporterFacet.getInterestFrontiers.selector;
         return selectors;
     }
 
@@ -2344,7 +2337,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](36);
+        selectors = new bytes4[](35);
         // #1434 P2-w1 — the V3 broadcast heal (single-destination). The
         // lapse-schedule setter + day-clock reads live on
         // RewardCommitmentFacet (EIP-170 headroom).
@@ -2394,26 +2387,25 @@ contract HelperTest {
         selectors[21] = RewardAggregatorFacet.getDailyGlobalInterest.selector;
         selectors[22] = RewardAggregatorFacet.getExpectedSourceChainIds.selector;
         selectors[23] = RewardAggregatorFacet.isDayReadyToFinalize.selector;
-        selectors[24] = RewardAggregatorFacet.backfillDayInclusion.selector;
         // Governor PR-3b (#1217) — day-pool stamp + commitment-state reads.
-        selectors[25] = RewardAggregatorFacet.getDayPoolStamp.selector;
-        selectors[26] = RewardAggregatorFacet.getGovernorCommitState.selector;
+        selectors[24] = RewardAggregatorFacet.getDayPoolStamp.selector;
+        selectors[25] = RewardAggregatorFacet.getGovernorCommitState.selector;
         // Governor PR-3c (#1217) — the D* cutover arming (one-shot admin).
-        selectors[27] = RewardAggregatorFacet.setGovernorCommitArmedFromDay.selector;
+        selectors[26] = RewardAggregatorFacet.setGovernorCommitArmedFromDay.selector;
         // #1222 M3 B2-d1 — mirror→Base commitment-report ingress (Base side).
-        selectors[28] = RewardAggregatorFacet.onCommitmentReportReceived.selector;
+        selectors[27] = RewardAggregatorFacet.onCommitmentReportReceived.selector;
         // #1222 M4 C3 (#1569) — the Base-authorized per-chain keeper
         // allocation instruction.
-        selectors[29] =
+        selectors[28] =
             RewardAggregatorFacet.setChainKeeperAllocateBps.selector;
-        selectors[30] =
+        selectors[29] =
             RewardAggregatorFacet.getChainKeeperAllocateBps.selector;
-        selectors[31] =
+        selectors[30] =
             RewardAggregatorFacet.getChainKeeperDraw.selector;
-        selectors[32] = RewardAggregatorFacet.getChainAttributionBacklog.selector;
-        selectors[33] = RewardAggregatorFacet.getChainCustodyEraReported.selector;
-        selectors[34] = RewardAggregatorFacet.setChainDailyAttributionCap.selector;
-        selectors[35] = RewardAggregatorFacet.getChainDailyAttributionCap.selector;
+        selectors[31] = RewardAggregatorFacet.getChainAttributionBacklog.selector;
+        selectors[32] = RewardAggregatorFacet.getChainCustodyEraReported.selector;
+        selectors[33] = RewardAggregatorFacet.setChainDailyAttributionCap.selector;
+        selectors[34] = RewardAggregatorFacet.getChainDailyAttributionCap.selector;
         return selectors;
     }
 
@@ -2661,7 +2653,7 @@ contract HelperTest {
     /// `DeployDiamond._getRewardStagingSettleSelectors`.
     /// slice 4 PR C-1 (#1566) — the custody era registry. Mirrors `DeployDiamond._getRewardEraSelectors`.
     function getRewardEraFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](13);
+        selectors = new bytes4[](10);
         selectors[0] = RewardEraFacet.getCustodyEraCurrent.selector;
         selectors[1] = RewardEraFacet.getCustodyEra.selector;
         selectors[2] = RewardEraFacet.getCustodyEraRowsTotal.selector;
@@ -2674,10 +2666,6 @@ contract HelperTest {
         selectors[7] = RewardEraFacet.eraCreditFreshFromRow.selector;
         selectors[8] = RewardEraFacet.eraRelocateFreshIngress.selector;
         selectors[9] = RewardEraFacet.eraHoldProvisional.selector;
-        // PR C-4 — the parked-message lane.
-        selectors[10] = RewardEraFacet.getParkedBroadcast.selector;
-        selectors[11] = RewardEraFacet.getCustodyEraParkedOpen.selector;
-        selectors[12] = RewardEraFacet.tombstoneParkedBroadcast.selector;
     }
 
     /// #1219 (S-4) — service capacity deposits. Mirrors `DeployDiamond._getServiceCapacitySelectors`.

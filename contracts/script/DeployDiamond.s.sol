@@ -2724,43 +2724,37 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](25);
+        s = new bytes4[](21);
         s[0] = RewardReporterFacet.closeDay.selector;
-        s[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
-        // #1222 M3 B2-b — per-destination V2 broadcast ingress.
-        s[11] = RewardReporterFacet.onRewardBroadcastV2Received.selector;
         // #1434 P2-w1 — V3 (kind-10) ingress + the mirror-side clock reads
         // + the era ground truth (#1632 r1).
-        s[12] = RewardReporterFacet.onRewardBroadcastV3Received.selector;
-        s[13] = RewardReporterFacet.getDayClockEra.selector;
-        s[14] = RewardReporterFacet.getDayDeliberatelyZeroed.selector;
-        s[15] = RewardReporterFacet.setBaseRewardDeployment.selector;
-        s[16] = RewardReporterFacet.getBaseRewardDeployment.selector;
-        s[2] = RewardReporterFacet.setRewardMessenger.selector;
+        s[1] = RewardReporterFacet.onRewardBroadcastV3Received.selector;
+        s[2] = RewardReporterFacet.getDayClockEra.selector;
+        s[3] = RewardReporterFacet.getDayDeliberatelyZeroed.selector;
+        s[4] = RewardReporterFacet.setBaseRewardDeployment.selector;
+        s[5] = RewardReporterFacet.getBaseRewardDeployment.selector;
+        s[6] = RewardReporterFacet.setRewardMessenger.selector;
         // T-068: `setLocalEid` removed — a chain's own identity is
         // `block.chainid`, no longer a settable endpoint id.
-        s[3] = RewardReporterFacet.setBaseChainId.selector;
-        s[4] = RewardReporterFacet.setIsCanonicalRewardChain.selector;
-        s[17] = RewardReporterFacet.seedArmedFreshPaid.selector;
-        s[18] = RewardReporterFacet.armedFreshPaidSeeded.selector;
-        s[5] = RewardReporterFacet.setRewardGraceSeconds.selector;
-        s[6] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
-        s[7] = RewardReporterFacet.getChainReportSentAt.selector;
-        s[8] = RewardReporterFacet.getRewardReporterConfig.selector;
-        s[9] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
+        s[7] = RewardReporterFacet.setBaseChainId.selector;
+        s[8] = RewardReporterFacet.setIsCanonicalRewardChain.selector;
+        s[9] = RewardReporterFacet.seedArmedFreshPaid.selector;
+        s[10] = RewardReporterFacet.armedFreshPaidSeeded.selector;
+        s[11] = RewardReporterFacet.setRewardGraceSeconds.selector;
+        s[12] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
+        s[13] = RewardReporterFacet.getChainReportSentAt.selector;
+        s[14] = RewardReporterFacet.getRewardReporterConfig.selector;
+        s[15] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
         // Single-field getter for the protocol-console knob registry.
-        s[10] = RewardReporterFacet.getRewardGraceSeconds.selector;
+        s[16] = RewardReporterFacet.getRewardGraceSeconds.selector;
         // #1944 — per-mirror readback the M7 arming ceremony needs.
-        s[19] = RewardReporterFacet.getBroadcastV2Applied.selector;
+        s[17] = RewardReporterFacet.getBroadcastV2Applied.selector;
         // #1566 closure 3 — the resolved role. The two raw fields above
         // cannot distinguish Detached from Unconfigured.
-        s[20] = RewardReporterFacet.getRewardRole.selector;
+        s[18] = RewardReporterFacet.getRewardRole.selector;
         // #2277 — the permissionless frontier catch-up and its view.
-        s[21] = RewardReporterFacet.advanceInterestFrontiers.selector;
-        s[22] = RewardReporterFacet.getInterestFrontiers.selector;
-        // PR C-4 — the parked-message lane's retries.
-        s[23] = RewardReporterFacet.retryParkedBroadcastV1.selector;
-        s[24] = RewardReporterFacet.retryParkedBroadcastV2.selector;
+        s[19] = RewardReporterFacet.advanceInterestFrontiers.selector;
+        s[20] = RewardReporterFacet.getInterestFrontiers.selector;
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.
@@ -3148,7 +3142,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](36);
+        s = new bytes4[](35);
         // The lapse-schedule setter + day-clock reads live on
         // RewardCommitmentFacet for EIP-170 reasons. #1569 then split the
         // broadcast cluster out entirely (this facet had reached 32 bytes of
@@ -3196,31 +3190,30 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[21] = RewardAggregatorFacet.getDailyGlobalInterest.selector;
         s[22] = RewardAggregatorFacet.getExpectedSourceChainIds.selector;
         s[23] = RewardAggregatorFacet.isDayReadyToFinalize.selector;
-        s[24] = RewardAggregatorFacet.backfillDayInclusion.selector;
         // Governor PR-3b (#1217) — day-pool stamp + commitment-state reads.
-        s[25] = RewardAggregatorFacet.getDayPoolStamp.selector;
-        s[26] = RewardAggregatorFacet.getGovernorCommitState.selector;
+        s[24] = RewardAggregatorFacet.getDayPoolStamp.selector;
+        s[25] = RewardAggregatorFacet.getGovernorCommitState.selector;
         // Governor PR-3c (#1217) — the D* cutover arming (one-shot admin).
-        s[27] = RewardAggregatorFacet.setGovernorCommitArmedFromDay.selector;
+        s[26] = RewardAggregatorFacet.setGovernorCommitArmedFromDay.selector;
         // #1222 M3 B2-d1 — mirror→Base commitment-report ingress (Base side).
-        s[28] = RewardAggregatorFacet.onCommitmentReportReceived.selector;
+        s[27] = RewardAggregatorFacet.onCommitmentReportReceived.selector;
         // #1222 M4 C3 (#1569) — the Base-authorized per-chain keeper
         // allocation instruction.
-        s[29] =
+        s[28] =
             RewardAggregatorFacet.setChainKeeperAllocateBps.selector;
-        s[30] =
+        s[29] =
             RewardAggregatorFacet.getChainKeeperAllocateBps.selector;
-        s[31] =
+        s[30] =
             RewardAggregatorFacet.getChainKeeperDraw.selector;
         // #2047 — the per-day attribution ceiling's backlog read (its setter
         // and getter are s[34] / s[35]).
-        s[32] = RewardAggregatorFacet.getChainAttributionBacklog.selector;
+        s[31] = RewardAggregatorFacet.getChainAttributionBacklog.selector;
         // #1566 PR C revision — the reported-era read.
-        s[33] = RewardAggregatorFacet.getChainCustodyEraReported.selector;
+        s[32] = RewardAggregatorFacet.getChainCustodyEraReported.selector;
 
         // #2047 — the per-day attribution ceiling the earmark is armed behind.
-        s[34] = RewardAggregatorFacet.setChainDailyAttributionCap.selector;
-        s[35] = RewardAggregatorFacet.getChainDailyAttributionCap.selector;
+        s[33] = RewardAggregatorFacet.setChainDailyAttributionCap.selector;
+        s[34] = RewardAggregatorFacet.getChainDailyAttributionCap.selector;
     }
 
     function _getRewardRemittanceSelectors()
@@ -3332,7 +3325,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev 3b-ii-A2 (#2305) — the staging record's settlement half.
     /// @dev slice 4 PR C-1 (#1566) — the custody era registry.
     function _getRewardEraSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](13);
+        s = new bytes4[](10);
         s[0] = RewardEraFacet.getCustodyEraCurrent.selector;
         s[1] = RewardEraFacet.getCustodyEra.selector;
         s[2] = RewardEraFacet.getCustodyEraRowsTotal.selector;
@@ -3345,10 +3338,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[7] = RewardEraFacet.eraCreditFreshFromRow.selector;
         s[8] = RewardEraFacet.eraRelocateFreshIngress.selector;
         s[9] = RewardEraFacet.eraHoldProvisional.selector;
-        // PR C-4 — the parked-message lane.
-        s[10] = RewardEraFacet.getParkedBroadcast.selector;
-        s[11] = RewardEraFacet.getCustodyEraParkedOpen.selector;
-        s[12] = RewardEraFacet.tombstoneParkedBroadcast.selector;
     }
 
     /// #1219 (S-4) — service capacity deposits (slice 1).

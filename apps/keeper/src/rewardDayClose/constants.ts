@@ -80,13 +80,14 @@ export const RACES = new Set(['ChainDayAlreadyReported', 'DayAlreadyFinalized', 
 export const PAUSED_REFUSAL = 'EnforcedPause';
 export const FRONTIER_SHORT = 'ChainReportFrontierShort';
 /** Refusals of the single-destination send (`broadcastGlobalTo`) that mean
- *  this day, this messenger or this Diamond cannot take one: the send then
- *  goes to every destination (`broadcastGlobal`) instead. A Diamond that
- *  routes no single-destination quote or send at all (a partial upgrade)
- *  answers `FunctionDoesNotExist`. */
+ *  this destination or this Diamond cannot take one: the send then goes to
+ *  every destination (`broadcastGlobal`) instead. A Diamond that routes no
+ *  single-destination quote or send at all (a partial upgrade) answers
+ *  `FunctionDoesNotExist`. (The pre-V3-messenger and clockless-day refusals
+ *  are gone with the older broadcast wires, #1944.) */
 export const NO_STANDING = 'DestinationHasNoDayStanding';
 export const NO_SELECTOR = 'FunctionDoesNotExist';
-export const RESEND_TO_ALL = new Set(['MessengerPredatesV3', 'DayHasNoLapseClock', NO_STANDING, NO_SELECTOR]);
+export const RESEND_TO_ALL = new Set([NO_STANDING, NO_SELECTOR]);
 
 /** A step that exists only to let another through: its refusal is over once
  *  the step it serves is done, by anyone. On Base the day's own close serves
@@ -95,12 +96,9 @@ export const RESEND_TO_ALL = new Set(['MessengerPredatesV3', 'DayHasNoLapseClock
 export const SERVES: Readonly<Record<string, string>> = { advance: 'close' };
 export const SERVES_ON_BASE: Readonly<Record<string, string>> = { advance: 'close', close: 'finalize' };
 
-/** The messenger's per-destination "broadcast left" events, every version:
- *  each indexes the destination chain id second and the day third. */
-export const BROADCAST_SENT_TOPICS = new Set<string>(
-  ['BroadcastSent(bytes32,uint256,uint256,uint256,uint256)', 'BroadcastV2Sent(bytes32,uint256,uint256)', 'BroadcastV3Sent(bytes32,uint256,uint256)'].map((sig) =>
-    toEventSelector(sig).toLowerCase(),
-  ),
-);
+/** The messenger's per-destination "broadcast left" event: the one broadcast
+ *  wire (kind 10, #1944). It indexes the destination chain id second and the
+ *  day third. */
+export const BROADCAST_SENT_TOPICS = new Set<string>([toEventSelector('BroadcastV3Sent(bytes32,uint256,uint256)').toLowerCase()]);
 /** The messenger's "report left" event. */
 export const REPORT_SENT_TOPIC = toEventSelector('ReportSent(bytes32,uint256,uint256,uint256)').toLowerCase();

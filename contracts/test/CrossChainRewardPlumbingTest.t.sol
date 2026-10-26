@@ -13,7 +13,7 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
-import {RewardBroadcastV2, ChainDayReport} from "../src/interfaces/IRewardMessenger.sol";
+import {RewardBroadcastV2, RewardBroadcastV3, ChainDayReport} from "../src/interfaces/IRewardMessenger.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibRewardDayReport} from "../src/libraries/LibRewardDayReport.sol";
 
@@ -60,8 +60,8 @@ contract LegacyOnlyRewardMessenger {
 ///           - `finalizeDay` preconditions (coverage vs grace, replay)
 ///           - `forceFinalizeDay` (admin-only, even with zero reports)
 ///           - `broadcastGlobal` (only-after-finalize, refund, retry)
-///           - `onRewardBroadcastReceived` (auth + idempotent replay
-///             + divergent-payload revert)
+///           - `onRewardBroadcastV3Received`, the one broadcast ingress
+///             (auth + idempotent replay + divergent-payload revert)
 ///           - `isDayReadyToFinalize` return codes
 ///           - Canonical-flag forks (Base path refunds msg.value, mirror
 ///             path forwards to the messenger, aggregator-only funcs
@@ -145,7 +145,13 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _rep().setBaseChainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(false);
         _rep().setRewardMessenger(address(messenger));
+        // The broadcast ingress authenticates Base's era (#1944: kind 10 is
+        // the only broadcast wire, and it always carries the era word).
+        _rep().setBaseRewardDeployment(BASE_ERA);
     }
+
+    /// @dev The Base deployment every mirror in this suite is bound to.
+    address internal constant BASE_ERA = address(0xBA5E0E7A);
 
     // ════════════════════════════════════════════════════════════════════════
     // Admin-setter coverage — revert-path + success-path
@@ -807,9 +813,9 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _bcast().broadcastGlobal(1);
     }
 
-    /// @dev B2-b — the trigger now assembles the kind-5 per-destination
-    ///      broadcast (one entry per configured mirror) with the shared
-    ///      consensus fields; the legacy kind-2 spy must stay untouched.
+    /// @dev The trigger assembles the kind-10 per-destination broadcast
+    ///      (one entry per configured mirror) with the shared consensus
+    ///      fields and the frozen clock facts.
     function testBroadcastForwardsFinalizedPairToMessenger() public {
         _configureCanonical();
         uint256[] memory dests = new uint256[](2);
@@ -825,14 +831,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         vm.prank(alice);
         _bcast().broadcastGlobal{value: 0.2 ether}(1);
 
-        // #1434 P2-w1 — the current sender generation is the kind-10 V3
-        // wire (same per-destination shape + the frozen clock facts); the
-        // V2 and legacy spies must stay untouched. The V2 fallback itself
-        // is covered in RewardBroadcastV3Test (pre-V3 messenger + clockless
-        // day).
         assertEq(messenger.broadcastV3Count(), 1, "one V3 broadcast");
-        assertEq(messenger.broadcastV2Count(), 0, "V2 send not used");
-        assertEq(messenger.broadcastCount(), 0, "legacy send not used");
         (uint256 vDay, uint256 vGL, uint256 vGB, , , , ) =
             messenger.lastV3Shared();
         assertEq(vDay, 1);
@@ -843,40 +842,11 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         assertEq(messenger.lastBroadcastValue(), 0.2 ether);
     }
 
-    /// @dev B2-b rollout shim — a pre-B2-b messenger proxy has no V2
-    ///      selector (empty revert), so the SAME facet trigger falls back
-    ///      to the legacy kind-2 send with the full composition payload.
-    function testBroadcastFallsBackToLegacySendOnPreB2bMessenger() public {
-        _configureCanonical();
-        // A pre-B2-b proxy predates BOTH newer generations — model it by
-        // removing the V3 selector too (#1434 P2-w1 ladder head).
-        messenger.setV3Unsupported(true);
-        messenger.setV2Unsupported(true);
-        messenger.deliverChainReport(CHAIN_BASE, 1, 7e18, 3e18);
-        messenger.deliverChainReport(CHAIN_ARB, 1, 5e18, 2e18);
-        messenger.deliverChainReport(CHAIN_OP, 1, 3e18, 1e18);
-        _agg().finalizeDay(1);
-
-        vm.deal(alice, 1 ether);
-        vm.prank(alice);
-        _bcast().broadcastGlobal{value: 0.2 ether}(1);
-
-        assertEq(messenger.broadcastV3Count(), 0, "V3 send unavailable");
-        assertEq(messenger.broadcastV2Count(), 0, "V2 send unavailable");
-        assertEq(messenger.broadcastCount(), 1, "legacy fallback used");
-        assertEq(messenger.lastBroadcastDay(), 1);
-        assertEq(messenger.lastBroadcastLenderNumeraire18(), 15e18);
-        assertEq(messenger.lastBroadcastBorrowerNumeraire18(), 6e18);
-        assertEq(messenger.lastBroadcastRefund(), alice);
-        assertEq(messenger.lastBroadcastValue(), 0.2 ether);
-    }
-
     /// @dev B2-b (Codex #1417 r1) — the facet-level quote prices the SAME
-    ///      per-destination V2 payloads the send will dispatch (the mock
-    ///      prices per lane, the legacy quote flat — so the 2x value proves
-    ///      which messenger path ran), and falls back to the legacy quote
-    ///      on a pre-B2-b messenger exactly like the send does.
-    function testQuoteBroadcastGlobalPricesV2PayloadsWithLegacyFallback()
+    ///      per-destination payloads the send will dispatch (the mock prices
+    ///      the batch per lane with a x3 marker, the single lane flat, so the
+    ///      value proves which messenger surface ran).
+    function testQuoteBroadcastGlobalPricesThePerDestinationPayloads()
         public
     {
         _configureCanonical();
@@ -890,34 +860,16 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         messenger.deliverChainReport(CHAIN_OP, 1, 3e18, 1e18);
         _agg().finalizeDay(1);
 
-        // #1434 P2-w1 — the quote walks the same three-step ladder as the
-        // send. The mock prices each generation distinctly (V3 = lane×3,
-        // V2 = lane×1, legacy = flat), so the value proves which messenger
-        // path ran.
         assertEq(
             _bcast().quoteBroadcastGlobal(1),
             0.3 ether,
-            "V3 quote: one lane per destination, x3 marker"
-        );
-
-        messenger.setV3Unsupported(true);
-        assertEq(
-            _bcast().quoteBroadcastGlobal(1),
-            0.1 ether,
-            "pre-V3 messenger: V2 quote, one lane per destination"
-        );
-
-        messenger.setV2Unsupported(true);
-        assertEq(
-            _bcast().quoteBroadcastGlobal(1),
-            0.05 ether,
-            "pre-B2-b messenger: legacy flat quote"
+            "batch quote: one lane per destination, x3 marker"
         );
     }
 
-    /// @dev B2-b — a REASONED messenger revert must bubble, never trip the
-    ///      legacy fallback (only the missing-selector empty revert may).
-    function testBroadcastReasonedRevertBubblesWithoutFallback() public {
+    /// @dev A messenger revert bubbles unchanged: there is no older wire
+    ///      to fall back to (#1944).
+    function testBroadcastMessengerRevertBubbles() public {
         _configureCanonical();
         messenger.setRevertOnBroadcast(true);
         messenger.deliverChainReport(CHAIN_BASE, 1, 7e18, 3e18);
@@ -927,7 +879,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
         vm.expectRevert(bytes("MockMessenger: broadcast revert"));
         _bcast().broadcastGlobal(1);
-        assertEq(messenger.broadcastCount(), 0, "no legacy fallback");
+        assertEq(messenger.broadcastV3Count(), 0, "nothing sent");
     }
 
     function testBroadcastIsRetryFriendly() public {
@@ -944,14 +896,15 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // onRewardBroadcastReceived — mirror-side ingress
+    // onRewardBroadcastV3Received — the mirror-side broadcast ingress
     // ════════════════════════════════════════════════════════════════════════
 
     function testBroadcastReceivedRevertsWhenNotMessenger() public {
         _configureMirror(CHAIN_ARB);
         vm.prank(alice);
         vm.expectRevert(NotAuthorizedRewardMessenger.selector);
-        _rep().onRewardBroadcastReceived(1, 10e18, 5e18, type(uint256).max, 0, 0, 0);
+        RewardBroadcastV3 memory b;
+        _rep().onRewardBroadcastV3Received(b);
     }
 
     function testBroadcastReceivedRevertsWhenMessengerUnset() public {
@@ -1575,7 +1528,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // #1222 M3 B2-b — onRewardBroadcastV2Received (mirror-side V2 ingress)
+    // #1222 M3 B2-b — the per-destination fields the kind-10 ingress applies
     // ════════════════════════════════════════════════════════════════════════
 
     function _v2Packet(uint256 destChainId)
@@ -1676,37 +1629,6 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         messenger.deliverBroadcastV2(diverged);
     }
 
-    /// Codex #1430 r4 — a PRE-d3 implementation could apply a broadcast that
-    /// already carried a non-zero `recycleConsume`: it stored the stamp and
-    /// set the whole-day flag WITHOUT reserving. After the upgrade every
-    /// replay takes the idempotency early-return, so the reservation must be
-    /// completed there — otherwise the mirror under-reserves forever while
-    /// Base has already booked and netted that local share.
-    function testBroadcastV2ReplayBackfillsAPreUpgradeReservation() public {
-        _configureMirror(CHAIN_ARB);
-        _mut().setRecycleBucketRaw(12e18);
-
-        // Reconstruct the pre-d3 state FAITHFULLY: apply the broadcast
-        // normally so every stamped field is exactly as a pre-d3 receiver
-        // would have left it, then undo ONLY the reservation.
-        RewardBroadcastV2 memory b = _v2Packet(CHAIN_ARB);
-        messenger.deliverBroadcastV2(b);
-        _mut().setOutstandingCommitRaw(0, 0);
-        _mut().setMirrorCommitReservedRaw(b.dayId, false);
-        (, , uint256 outBefore, ) = _agg().getGovernorCommitState();
-        assertEq(outBefore, 0, "pre-upgrade state has no reservation");
-
-        // A replay under the upgraded implementation completes it exactly
-        // once — and a further replay does not double-reserve.
-        messenger.deliverBroadcastV2(b);
-        (, , uint256 outAfter, ) = _agg().getGovernorCommitState();
-        assertEq(outAfter, 5e18, "missed reservation backfilled on replay");
-        messenger.deliverBroadcastV2(b);
-        (, , uint256 outAgain, ) = _agg().getGovernorCommitState();
-        assertEq(outAgain, 5e18, "still exactly once");
-        assertEq(_cfg().getRecycleBucket(), 12e18, "bucket never debited");
-    }
-
     /// The embedded destination id is the replay-stable binding: a packet
     /// built for another chain must never apply its figures here.
     function testBroadcastV2RejectsWrongDestination() public {
@@ -1721,9 +1643,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
     }
 
     /// #1944 — `getBroadcastV2Applied` is the readback the M7 arming ceremony
-    /// needs: `_applyBroadcastV2Core` returns early on an already-applied day
-    /// BEFORE installing `armedFromDay`, so arming through a day a mirror has
-    /// already applied silently no-ops, and `D*` is one-shot. Until this getter
+    /// needs: whether a mirror has already applied a candidate day. Until this getter
     /// the question was answerable only by scanning `RewardBroadcastV2Applied`
     /// logs, where a missed page reads as "not applied" — the exact wrong
     /// answer under ceremony pressure.
@@ -1751,19 +1671,18 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         );
 
         // MAPPING DISCRIMINATION, and this is the assertion that earns the
-        // test. The V2 ingress sets `knownGlobalSet` ALONGSIDE
+        // test. The ingress sets `knownGlobalSet` ALONGSIDE
         // `broadcastV2Applied`, so both flip together on day 3 and a getter
         // pointed at the wrong mapping satisfies every assertion above. That
         // is not hypothetical: mutating the getter to read `knownGlobalSet`
         // PASSED the first draft of this test.
         //
-        // The legacy kind-2 ingress (`onRewardBroadcastReceived`) sets
-        // `knownGlobalSet` ONLY and never touches `broadcastV2Applied`, so a
-        // day delivered that way separates them.
-        messenger.deliverBroadcast(7, 30e18, 15e18, type(uint256).max);
+        // With the kind-2 wire retired (#1944) no production path sets one
+        // without the other, so the separation is staged raw.
+        _mut().setKnownGlobalSet(7, true);
         assertFalse(
             _rep().getBroadcastV2Applied(7),
-            "a legacy-only day is NOT V2-applied - getter reads broadcastV2Applied, not knownGlobalSet"
+            "a known-global-only day is NOT applied - getter reads broadcastV2Applied, not knownGlobalSet"
         );
     }
 
@@ -1771,28 +1690,9 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _configureMirror(CHAIN_ARB);
         vm.prank(alice);
         vm.expectRevert(NotAuthorizedRewardMessenger.selector);
-        _rep().onRewardBroadcastV2Received(_v2Packet(CHAIN_ARB));
-    }
-
-    /// Mixed-generation day: a delayed legacy kind-2 already set the
-    /// consensus pair — an agreeing V2 layers its records on top; a
-    /// disagreeing one is rejected.
-    function testBroadcastV2LayersOverLegacyDeliveryWhenAgreeing() public {
-        _configureMirror(CHAIN_ARB);
-        _mut().setRecycleBucketRaw(12e18);
-        messenger.deliverBroadcast(3, 30e18, 15e18, type(uint256).max);
-
-        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
-        LibVaipakam.ChainDayFunding memory f =
-            _agg().getChainDayRecycledFunding(3, CHAIN_ARB);
-        assertTrue(f.stamped, "V2 records layered over legacy consensus");
-        assertEq(_cfg().getRecycleBucket(), 12e18, "bucket untouched (store-only)");
-
-        messenger.deliverBroadcast(4, 1e18, 1e18, type(uint256).max);
-        RewardBroadcastV2 memory divergent = _v2Packet(CHAIN_ARB);
-        divergent.dayId = 4;
-        vm.expectRevert(IVaipakamErrors.KnownGlobalAlreadySet.selector);
-        messenger.deliverBroadcastV2(divergent);
+        RewardBroadcastV3 memory b;
+        b.v2 = _v2Packet(CHAIN_ARB);
+        _rep().onRewardBroadcastV3Received(b);
     }
 
     /// Legacy-mode packets (pre-cutover days) carry the §4 threshold in the

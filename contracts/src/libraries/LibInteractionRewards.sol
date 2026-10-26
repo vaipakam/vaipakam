@@ -1237,8 +1237,8 @@ library LibInteractionRewards {
     ///        - **An unarmed day prices from the stamp once one has landed**
     ///          ({_sideFreshHalf}). "Pre-cutover days keep the legacy
     ///          schedule" above now holds only where no stamp exists: Base,
-    ///          which never stamps its own unarmed records; a mirror before
-    ///          the V2 broadcast; a kind-2-only day. On a mirror the stamp is
+    ///          which never stamps its own unarmed records, and a mirror
+    ///          before the day's broadcast lands. On a mirror the stamp is
     ///          what Base funds — ZERO for a destination excluded from the
     ///          day's denominator, the exhausted floor at the 69M cap — and
     ///          the schedule priced there paid a day the chain was never
@@ -1372,8 +1372,7 @@ library LibInteractionRewards {
     ///      excluded, the exhausted floor at the 69M cap. Pricing
     ///      `halfPoolForDay` there — as every unarmed route did — paid a day
     ///      the destination was never funded for. Base never stamps its own
-    ///      unarmed records and a kind-2-only broadcast writes no per-chain
-    ///      stamp, so those read the schedule exactly as before.
+    ///      unarmed records, so those read the schedule exactly as before.
     ///
     ///      NOT dark: with the delivery gate off this still changes mirror
     ///      pricing on excluded and exhausted unarmed days, deliberately — a

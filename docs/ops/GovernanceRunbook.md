@@ -1929,9 +1929,10 @@ broadcast reaches it after arming.
 paragraph said the opposite until 2026-09-01, and the change was deliberate:
 the old behaviour let any third party burn a mirror's propagation days by
 applying them first, leaving that mirror unarmable through this path
-entirely. Both the V2 replay branch and the V3 clock-backfill branch install
-`D*` when the mirror has none — never re-choosing one already set, and never
-from a retired era's legacy wire.
+entirely. The replay branch installs `D*` when the mirror has none — never
+re-choosing one already set. (A V3 clock-backfill branch did too, until #1944
+retired it with the older wires; a retired era's broadcast never applies, since
+the one remaining wire authenticates its era.)
 
 ### Step 5 — DRIVE the propagation and verify it (M3 / active-mirror branch only)
 
@@ -1981,21 +1982,19 @@ list acquires standing on its next accepted report and becomes targetable
 through `broadcastGlobalTo` afterwards — being absent from the destination list
 and having no history today does not make it safe tomorrow.
 
-The historical disjunct needs one more qualifier: `broadcastGlobalTo` checks
-`dayLapseClock[dayId].finalizedAt` FIRST and reverts `DayHasNoLapseClock`, so
-standing that exists only on days finalized before the V3 lapse-clock upgrade
-does not make a REMOVED mirror targetable at all. Require a standing day that can
-pass that gate; otherwise a mirror with nothing but pre-upgrade history would
-hold the mesh paused over a broadcast that cannot be sent.
+(The historical disjunct used to need a qualifier: `broadcastGlobalTo` refused a
+day finalized before the V3 lapse-clock upgrade with `DayHasNoLapseClock`. #1944
+retired that refusal with the older broadcast wires: every chain reaches kind 10
+by fresh deploy, and finalization writes every day's clock, so every standing day
+is sendable.)
 
 **SUPERSEDED — an APPLIED day is no longer spent for arming (#1944 / #1569,
 2026-09-01).** This paragraph used to say that a removed mirror whose every
 V3-clock standing day had already been applied could not be reopened, because
 `_applyBroadcastV2Core` took the idempotent replay branch *before* installing
 `armedFromDay`. That premise was removed on purpose: the replay branch now
-installs `D*` when the mirror has none, and so does the V3 clock-backfill
-branch, because the old behaviour left a mirror permanently unarmable once a
-third party had applied its days first.
+installs `D*` when the mirror has none, because the old behaviour left a mirror
+permanently unarmable once a third party had applied its days first.
 
 The consequence for THIS gate is the dangerous direction. A permissionless
 `broadcastGlobalTo` of an ALREADY-APPLIED day still passes historical standing
@@ -2286,10 +2285,7 @@ before `D*`" admits today or a future day; finalizing one of those publishes a
 day whose activity is still accruing. Require `day < currentRewardDay` as well as
 `day < D*`.
 
-**The per-destination form is not always available.** It also reverts
-`DayHasNoLapseClock` on a day finalized before the V3 lapse-clock upgrade, whose
-`dayLapseClock.finalizedAt` is zero — likely for exactly the old pre-`D*` days
-this step reaches for. Check the clock before choosing the per-destination form. If the chosen pre-`D*` day
+**The per-destination form is not always available.** If the chosen pre-`D*` day
 was grace- or force-finalized without a particular mirror's daily report, that
 mirror has no day standing for it — and being pre-cutover, it has no armed-day
 zeroed marker either — so `broadcastGlobalTo` reverts
@@ -2345,8 +2341,7 @@ paragraph said it did, and the whole "exhaust the day set" worry below follows
 from that premise. If the day is applied on a mirror while Base is still
 unarmed, that mirror records `broadcastV2Applied[dayId]` — and
 `_applyBroadcastV2Core`'s replay branch now INSTALLS `armedFromDay` when the
-mirror has none, so rebroadcasting *that same day* after arming works. The V3
-clock-backfill branch installs it too.
+mirror has none, so rebroadcasting *that same day* after arming works.
 
 Any other eligible day also still works, as it always did:
 `_assembleDayV2` stamps the CURRENT `s.governorCommitArmedFromDay` into every
@@ -2387,10 +2382,10 @@ collateral is safe.
 **An ARMED day delivery gate (#1944 consequence 1) IS that property** for every day
 Base stamped, from the gate's first day: such a day cannot be priced on that mirror
 for a side Base priced fresh funding for until a delivery proven to list it has
-landed. Its stated residuals stay outside it — a day applied only by the legacy
-kind-2 broadcast (no stamp), days before the gate's first day, and a late Base-side
-inclusion backfill on a day the mirror stamped zero-halved (that late delivery then
-lands as ordinary value). A mirror carrying the facets with the gate DARK does NOT
+landed. Its one stated residual stays outside it: days before the gate's first day.
+(Two more stood here until #1944 closed them: a day applied only by the kind-2
+broadcast, which no longer exists, and a late Base-side inclusion backfill, which
+was removed — finalization is now the only writer of a day's inclusion.) A mirror carrying the facets with the gate DARK does NOT
 have the property.
 
 **Sequence the pause AFTER report coverage, or the ceremony stalls.**

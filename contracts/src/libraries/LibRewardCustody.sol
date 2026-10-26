@@ -124,15 +124,6 @@ library LibRewardCustody {
     ///         earliest listed day's era, a compensation's day's era).
     /// @custom:event-category state-change/reward-custody
     event IngressPacketEraStamped(bytes32 indexed packetHash, uint64 indexed era);
-    /// @notice PR C-4 — an era-less broadcast the rotation gate refused was PARKED under `id`, counted against era `era`.
-    /// @custom:event-category state-change/reward-custody
-    event BroadcastParked(uint256 indexed id, uint8 kind, uint256 indexed dayId, uint64 indexed era, bool quarantineOnly);
-    /// @notice PR C-4 — parked broadcast `id` was tombstoned by the operator with `reason`.
-    /// @custom:event-category state-change/reward-custody
-    event ParkedBroadcastTombstoned(uint256 indexed id, bytes32 reason);
-    /// @notice PR C-4 — parked broadcast `id` passed the gate on retry and was applied.
-    /// @custom:event-category state-change/reward-custody
-    event ParkedBroadcastApplied(uint256 indexed id);
 
     /// @notice Fresh funding was credited to the delivered ledger's received
     ///         side, and its custody attributed under the §5c deficit split.
@@ -1087,8 +1078,7 @@ library LibRewardCustody {
     ///         per-day closure proof — which anyone may run — and nothing staged
     ///         holding its row (#1566 PR C revision: no manual step). A closed era
     ///         owes nothing; value a packet of it still holds exits later by the
-    ///         era routing rule ({creditFreshToEraFromRow}), and a parked copy of a
-    ///         closed day's broadcast installs nothing that prices an obligation.
+    ///         era routing rule ({creditFreshToEraFromRow}).
     function finalizeCustodyEra(LibVaipakam.Storage storage s, uint64 era, LibVaipakam.RewardRole role)
         internal
         returns (uint256 amount, bool toPending)
@@ -1405,56 +1395,6 @@ library LibRewardCustody {
         if (p.custodyEra == era) return;
         p.custodyEra = era;
         emit IngressPacketEraStamped(h, era);
-    }
-
-    // ── Slice 4 PR C-4 — the parked-message lane ──
-
-    /// @notice Park an era-less broadcast the rotation gate refused: a record
-    ///         with a disposition in place of a transport-side revert, counted
-    ///         against the custody era live at receipt.
-    function parkBroadcast(LibVaipakam.Storage storage s, uint8 kind, uint256 dayId, bytes32 digest)
-        internal
-        returns (uint256 id)
-    {
-        id = ++s.parkedBroadcastCount;
-        uint64 era = s.custodyEraCurrent;
-        LibVaipakam.ParkedBroadcast storage pb = s.parkedBroadcasts[id];
-        pb.kind = kind;
-        pb.receivedAt = uint64(block.timestamp);
-        pb.custodyEraAtReceipt = era;
-        pb.dayId = dayId;
-        pb.digest = digest;
-        pb.quarantineOnly = era != 0;
-        ++s.custodyEraParkedOpen[era];
-        emit BroadcastParked(id, kind, dayId, era, pb.quarantineOnly);
-    }
-
-    /// @notice The retry guard: the entry exists, is parked, is the broadcast
-    ///         re-supplied, and is not quarantine-only.
-    function requireParkedRetryable(LibVaipakam.Storage storage s, uint256 id, bytes32 digest) internal view {
-        LibVaipakam.ParkedBroadcast storage pb = s.parkedBroadcasts[id];
-        if (pb.receivedAt == 0) revert IVaipakamErrors.ParkedBroadcastUnknown(id);
-        if (pb.status != 0) revert IVaipakamErrors.ParkedBroadcastNotParked(id, pb.status);
-        if (pb.digest != digest) revert IVaipakamErrors.ParkedBroadcastDigestMismatch(id);
-        if (pb.quarantineOnly) revert IVaipakamErrors.ParkedBroadcastQuarantineOnly(id);
-    }
-
-    /// @notice A retry passed the gate: the entry is applied and leaves its era's open count.
-    function parkedBroadcastApplied(LibVaipakam.Storage storage s, uint256 id) internal {
-        LibVaipakam.ParkedBroadcast storage pb = s.parkedBroadcasts[id];
-        pb.status = 2;
-        --s.custodyEraParkedOpen[pb.custodyEraAtReceipt];
-        emit ParkedBroadcastApplied(id);
-    }
-
-    /// @notice The operator's recorded disposition of a parked entry the gate refuses.
-    function tombstoneParkedBroadcast(LibVaipakam.Storage storage s, uint256 id, bytes32 reason) internal {
-        LibVaipakam.ParkedBroadcast storage pb = s.parkedBroadcasts[id];
-        if (pb.receivedAt == 0) revert IVaipakamErrors.ParkedBroadcastUnknown(id);
-        if (pb.status != 0) revert IVaipakamErrors.ParkedBroadcastNotParked(id, pb.status);
-        pb.status = 1;
-        --s.custodyEraParkedOpen[pb.custodyEraAtReceipt];
-        emit ParkedBroadcastTombstoned(id, reason);
     }
 
     /// @notice The §5c deficit split, in ONE place: of a fresh credit of
@@ -4186,8 +4126,11 @@ library LibRewardCustody {
     ///          2. not a Mirror — Base funds itself; Unconfigured / Detached are
     ///             bounded elsewhere.
     ///          3. landed — the wait is over.
-    ///          4. no stamp — a kind-2-only day carries no inclusion to read;
-    ///             it stays as today (stated residual).
+    ///          4. no stamp — the day's broadcast has not landed here. Every
+    ///             broadcast stamps the day in the same call that sets its
+    ///             denominator (#1944 retired the kind-2 wire, which did
+    ///             not), and the fold already halts on the missing
+    ///             denominator (`knownGlobalSet`), so nothing prices it yet.
     ///          5. never reported — Base's interest figure for this chain is 0,
     ///             so nothing is owed. `chainReportSentAt` is write-once in the
     ///             transaction that reads the totals, which also freezes step 8.
