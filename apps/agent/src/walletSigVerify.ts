@@ -153,14 +153,15 @@ export function chainVerifyGate(
 /**
  * The HTTP answer for a `limited` verdict, shared by every handler that
  * verifies a wallet signature. A spent budget is 429 (try again shortly);
- * a limiter that is missing or could not count is 503, because waiting
- * does not help the caller and the operator needs to see it (#2755).
+ * a limiter that is missing or could not count is 503 with the shared
+ * mapping's own name for which it was, because waiting does not help the
+ * caller and the operator needs to see it (#2755).
  */
 export function limitedRefusal(slot: Exclude<SlotOutcome, 'taken'>): { status: 429 | 503; reason: string } {
-  const { status } = slotRefusalStatus(slot)!;
+  const { status, error } = slotRefusalStatus(slot)!;
   return status === 429
     ? { status, reason: 'too many verification attempts — try again shortly' }
-    : { status, reason: 'signature verification rate limit unavailable' };
+    : { status, reason: error };
 }
 
 /**

@@ -12,6 +12,8 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker, { callerBudgetFor } from '../src/index';
+import { handleDiagRecord } from '../src/diagRecord';
+import type { Env } from '../src/env';
 import type { WorkerEnv } from '../src/env';
 import { CREDENTIAL_BUDGETS, slotRefusal, takeSlot, type RateLimitBinding } from '../src/rateLimit';
 
@@ -317,6 +319,31 @@ describe('the OpenSea offers walk is charged as spent', () => {
   });
 });
 
+describe('the diagnostics record names which limiter failure it was', () => {
+  it('answers a missing binding and a failing one apart, and a spent budget 429', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const record = (binding: RateLimitBinding | undefined) =>
+      handleDiagRecord(
+        new Request('https://agent.example/diag/record', {
+          method: 'POST',
+          headers: { origin: ORIGIN, 'CF-Connecting-IP': '203.0.113.7' },
+          body: '{}',
+        }),
+        { FRONTEND_ORIGIN: ORIGIN, DIAG_RECORD_RATELIMIT: binding } as unknown as Env,
+      );
+    const cases: [RateLimitBinding | undefined, number, string][] = [
+      [refuse(), 429, 'rate-limited'],
+      [undefined, 503, 'rate-limit-binding-missing'],
+      [broken(), 503, 'rate-limit-unavailable'],
+    ];
+    for (const [binding, status, reason] of cases) {
+      const res = await record(binding);
+      expect(res.status).toBe(status);
+      expect(await res.json()).toEqual({ recorded: false, reason });
+    }
+  });
+});
+
 describe('wrangler.jsonc declares every limiter the code reads', () => {
   // A missing binding refuses its route, so a binding named in code and
   // absent from the config is a route that is always down; one declared
@@ -346,6 +373,18 @@ describe('wrangler.jsonc declares every limiter the code reads', () => {
     expect(files.length).toBeGreaterThan(10);
     for (const f of files) {
       expect(readFileSync(resolve(src, f), 'utf8'), f).not.toMatch(/\.limit\(\s*\{/);
+    }
+  });
+
+  it('no source file names a limiter failure of its own', () => {
+    // Every refusal for a slot not taken is named by `slotRefusalStatus`,
+    // so a missing binding and a failing one cannot be folded together
+    // locally. A literal for either outside rateLimit.ts is a local
+    // mapping, which is what the rule replaces.
+    const src = resolve(HERE, '..', 'src');
+    for (const f of readdirSync(src).filter((n) => n.endsWith('.ts') && n !== 'rateLimit.ts')) {
+      const text = readFileSync(resolve(src, f), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+      expect(text, f).not.toMatch(/['"`]rate[-_]limit[-_](unavailable|binding[-_]missing|not[-_]configured)['"`]/);
     }
   });
 });

@@ -226,6 +226,8 @@ describe('verifyWalletSignature', () => {
       expect(verdict).toEqual({ ok: false, reason: 'limited', slot });
       expect(limitedRefusal(slot).status).toBe(503);
     }
+    expect(limitedRefusal('unconfigured').reason).toBe('rate-limit-binding-missing');
+    expect(limitedRefusal('unavailable').reason).toBe('rate-limit-unavailable');
     expect(limitedRefusal('refused').status).toBe(429);
   });
 

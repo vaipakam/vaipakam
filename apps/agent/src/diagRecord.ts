@@ -62,7 +62,7 @@
  */
 
 import type { Env } from './env';
-import { takeCallerSlot } from './rateLimit';
+import { slotRefusalStatus, takeCallerSlot } from './rateLimit';
 import { isHexAddress, walletHash } from './diagHash';
 import { DIAG_RECORD_NOT_HELD } from './diagRetention';
 
@@ -286,18 +286,14 @@ export async function handleDiagRecord(
   // Per-IP rate limit, under the one fail-closed rule in `rateLimit.ts`
   // (#2755): a missing or failing binding refuses the write rather than
   // letting an unmetered stream into D1.
-  const slot = await takeCallerSlot(req, env.DIAG_RECORD_RATELIMIT);
-  if (slot !== 'taken') {
-    return new Response(
-      JSON.stringify({
-        recorded: false,
-        reason: slot === 'refused' ? 'rate_limited' : 'rate_limit_unavailable',
-      }),
-      {
-        status: slot === 'refused' ? 429 : 503,
-        headers: { ...headers, 'content-type': 'application/json' },
-      },
-    );
+  // The status and reason come from the shared mapping, so a missing
+  // binding and a failing one are named apart.
+  const refusal = slotRefusalStatus(await takeCallerSlot(req, env.DIAG_RECORD_RATELIMIT));
+  if (refusal) {
+    return new Response(JSON.stringify({ recorded: false, reason: refusal.error }), {
+      status: refusal.status,
+      headers: { ...headers, 'content-type': 'application/json' },
+    });
   }
 
   // Random sampling. Drops the request entirely (200 OK, no row)
