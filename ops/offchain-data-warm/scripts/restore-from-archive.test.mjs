@@ -28,6 +28,7 @@ import {
   reconcileLegalHolds,
   shQuote,
   sqlLiteral,
+  tableToBatch,
   tableToSql,
   uploadR2,
   validateR2Key,
@@ -447,6 +448,108 @@ test('loan_orphans: a duplicate move_id or a move_id of any other shape is refus
     { related_json: JSON.stringify({ activity_events: [], loan_participants: [{ orphan_rowid: 1, chain_id: 84532, loan_id: 9 }], notifications: [] }) },
     /different chain or loan/,
   );
+});
+
+// #1481 — the hybrid tables: the user's part is restored, the chain
+// projection is the §6 replay's.
+const SIGNED_OFFER_COLUMNS = [
+  'chain_id', 'order_hash', 'signer', 'order_json', 'signature',
+  'offer_type', 'lending_asset', 'collateral_asset', 'duration_days',
+  'asset_type', 'collateral_asset_type', 'interest_rate_bps', 'interest_rate_bps_max',
+  'amount', 'amount_max', 'collateral_amount', 'collateral_amount_max',
+  'fill_mode', 'expires_at', 'deadline', 'nonce',
+  'status', 'filled_amount', 'created_at', 'updated_at',
+];
+function signedOfferRow(over = {}) {
+  return {
+    chain_id: 84532, order_hash: `0x${'b'.repeat(64)}`, signer: `0x${'c'.repeat(40)}`,
+    order_json: '{"amount":"1"}', signature: `0x${'D'.repeat(130)}`,
+    offer_type: 0, lending_asset: `0x${'1'.repeat(40)}`, collateral_asset: `0x${'2'.repeat(40)}`,
+    duration_days: 30, asset_type: 0, collateral_asset_type: 0,
+    interest_rate_bps: 500, interest_rate_bps_max: 0,
+    amount: '1000', amount_max: '0', collateral_amount: '2000', collateral_amount_max: '0',
+    fill_mode: 0, expires_at: 0, deadline: 0, nonce: '0',
+    status: 'filled', filled_amount: '1000', created_at: 10, updated_at: 20,
+    ...over,
+  };
+}
+const BREADCRUMB_COLUMNS = ['chain_id', 'tx_hash', 'loan_id', 'order_hash', 'bidder', 'matched_at', 'match_mode'];
+function breadcrumbRow(txByte, match_mode) {
+  return {
+    chain_id: 8453, tx_hash: `0x${txByte.repeat(64)}`, loan_id: 4,
+    order_hash: `0x${'e'.repeat(64)}`, bidder: `0x${'f'.repeat(40)}`, matched_at: 99, match_mode,
+  };
+}
+
+test('signed_offers: the signed order is restored, its lifecycle is reset for the replay (#1481)', () => {
+  const batch = tableToBatch(tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [
+    signedOfferRow(),
+    signedOfferRow({ order_hash: `0x${'a'.repeat(64)}`, status: 'cancelled', filled_amount: '400' }),
+  ]));
+  assert.equal(batch.imported, 2);
+  assert.equal(batch.leftToReplay, 0);
+  // Every row goes in as an unfilled live offer; the order and signature verbatim.
+  assert.equal((batch.sql.match(/'active', '0', 10, 20\);/g) ?? []).length, 2);
+  assert.doesNotMatch(batch.sql, /'filled'|'cancelled'|'1000', 10|'400'/);
+  assert.match(batch.sql, new RegExp(`'0x${'D'.repeat(130)}'`));
+  // Shapes the route writes, and nothing else.
+  const bad = (over, re) =>
+    assert.throws(() => tableToSql(tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [signedOfferRow(over)])), re);
+  bad({ order_hash: `0x${'B'.repeat(64)}` }, /order_hash is not the shape/);
+  bad({ signer: "x' OR 1=1 --" }, /signer is not the shape/);
+  bad({ signature: `0x${'d'.repeat(131)}` }, /signature is not the shape/);
+  assert.match(tableToSql(tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [signedOfferRow({ signature: `0x${'d'.repeat(128)}` })])), /VALUES/);
+});
+
+test('prepay_listing_match_breadcrumbs: two-step rows are restored, atomic rows are left to the replay (#1481)', () => {
+  const batch = tableToBatch(tableFixture('prepay_listing_match_breadcrumbs', BREADCRUMB_COLUMNS, [
+    breadcrumbRow('1', 'v1-twostep'),
+    breadcrumbRow('2', 'atomic'),
+  ]));
+  assert.equal(batch.imported, 1);
+  assert.equal(batch.leftToReplay, 1);
+  assert.match(batch.sql, /'v1-twostep'\);/);
+  assert.doesNotMatch(batch.sql, /'atomic'/);
+  // A row the replay will rebuild is still validated: a malformed one is
+  // evidence about the archive.
+  const bad = breadcrumbRow('3', 'atomic');
+  bad.bidder = 'not-an-address';
+  assert.throws(
+    () => tableToSql(tableFixture('prepay_listing_match_breadcrumbs', BREADCRUMB_COLUMNS, [bad])),
+    /bidder is not the shape/,
+  );
+  assert.throws(
+    () => tableToSql(tableFixture('prepay_listing_match_breadcrumbs', BREADCRUMB_COLUMNS, [breadcrumbRow('4', 'manual')])),
+    /match_mode is not the shape/,
+  );
+});
+
+test('convertD1 counts what it imports, and an archive without the hybrid tables clears them (#1481)', () => {
+  const dir = outDir();
+  const entries = convertD1(
+    {
+      version: 1,
+      d1: {
+        archive: [
+          ...baselineArchive(),
+          tableFixture('prepay_listing_match_breadcrumbs', BREADCRUMB_COLUMNS, [
+            breadcrumbRow('1', 'v1-twostep'),
+            breadcrumbRow('2', 'atomic'),
+          ]),
+        ],
+      },
+    },
+    dir,
+  );
+  const crumbs = entries.find((e) => e.name === 'prepay_listing_match_breadcrumbs');
+  assert.equal(crumbs.rowCount, 1);
+  assert.equal(crumbs.leftToReplay, 1);
+  assert.equal(crumbs.tier, 'born-off-chain');
+  // An archive from before #1481 carries no signed offers: the live table is
+  // cleared rather than kept unvouched for.
+  const signed = entries.find((e) => e.name === 'signed_offers');
+  assert.equal(signed.eraLoss, true);
+  assert.match(readFileSync(signed.file, 'utf8'), /DELETE FROM "signed_offers";/);
 });
 
 test('duplicate archived primary keys are rejected before any batch is emitted (r12)', () => {

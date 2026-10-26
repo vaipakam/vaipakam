@@ -188,8 +188,11 @@ then deploy.
    other) and the cutover's completion record,
    which nothing else reads. **The archive does not carry
    it** — the backup Worker binds only the shared database — so after a
-   restore it starts EMPTY, exactly as these tables always did (none was
-   ever archived; their restore treatment is #1481). Expect the keeper to
+   restore it starts EMPTY. That is the decided treatment, not a gap: #1481
+   checked every one of these tables and found nothing the keeper cannot
+   re-derive from the chain or the shared database, at the costs listed
+   here, and §6 clears the same tables in a recovery in place so both kinds
+   of restore start the keeper from the same state. Expect the keeper to
    rescan its remit-ack and commitment frontiers from the start, re-send an
    acknowledgement for each reservation still Pending on Base (paid CCIP
    messages, rate-limited per reservation from then on), and re-mint one
@@ -1398,12 +1401,43 @@ For each table:
 
 3. Apply via wrangler — targeting the matching D1 binding:
 
-   **`vaipakam-warm` tables** (born-off-chain): `diag_errors`,
+   **`vaipakam-warm` tables** (born-off-chain and hybrid): `diag_errors`,
    `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`,
    `notify_state`, `pre_grace_notify_state` (absent from pre-#1480
    archives), `telegram_links`, `support_tickets`,
    `recycle_day_backfill` (absent from pre-#1349-M5 archives),
-   `loan_orphans` (absent from pre-#2197 archives).
+   `loan_orphans` (absent from pre-#2197 archives), `signed_offers` and
+   `prepay_listing_match_breadcrumbs` (both absent from pre-#1481 archives).
+
+   > **`signed_offers` and `prepay_listing_match_breadcrumbs` are HYBRID**
+   > (#1481): each row is something a user created off chain, with columns
+   > the indexer then maintains from chain events. The converter imports the
+   > user's part and leaves the rest to §6's replay, which runs after this
+   > import:
+   >
+   > - a **signed offer** is imported with its order and signature exactly
+   >   as archived, and with its lifecycle reset to a live, unfilled offer.
+   >   The replay then applies every fill, match, cancellation and nonce burn
+   >   from the chain, so each offer ends in its true state, and a status the
+   >   archive carries for an offer no chain event touched is not kept. The
+   >   converter checks the shapes the route writes; it does NOT re-verify
+   >   signatures. A forged row cannot be filled, because the Diamond checks
+   >   the signature at fill, but it would be listed in the book until it
+   >   expires (#2899 tracks re-verifying at restore);
+   > - a **match note** is imported only when the app wrote it (a two-step
+   >   match: which OpenSea offer the reprice answered, which no chain event
+   >   carries). A note the indexer wrote from an atomic match's own event is
+   >   left out, and the replay writes it again from that event, so a note
+   >   for a match that never happened cannot survive.
+   >
+   > The converter prints the imported count, which is the figure step 4
+   > checks, and says how many archived rows it left to the replay. An
+   > archive written before #1481 carries neither table; the converter then
+   > emits a clear for each, as for any table an archive predates. On a
+   > fresh account that loses nothing. A selective restore into a live
+   > database from such an archive loses the live signed offers: they cannot
+   > be vouched for by that archive, and their signers would have to post
+   > them again.
 
    > **`loan_orphans` is restored, not replayed** (#2197, #2636). It holds
    > `loans` rows the indexer proved the chain has no loan for, each moved
@@ -1527,10 +1561,9 @@ intact (compare against `wrangler r2 object get … --pipe | sha256sum`).
 
 ## 6. Re-bootstrap the indexer
 
-For the re-derivable tables (`offers`, `loans`, `activity_events`,
-`oracle_snapshot_state`, `liquidity_confidence`, `indexer_cursor`,
-`prenotify_scan_cursor`, `prenotify_pass`, `indexer_deployment`),
-the design doc favours **re-indexing from block 0** over restoring
+For the replay-derived tables (every table the two commands below clear;
+`apps/indexer/scripts/check-table-classification.mjs` holds the reason for
+each), the design doc favours **re-indexing from block 0** over restoring
 from the archive. Why:
 
 - Re-indexing produces the canonically-correct state from chain logs.
@@ -1544,8 +1577,23 @@ from the archive. Why:
 # producer state for the inbox rows the shared command below clears, and
 # it lives in vaipakam-keeper-db now, not in the shared database. Run it
 # BEFORE the shared command — see "notifications is cleared with its
-# producer state" below for why the order matters.
-( cd apps/keeper && wrangler d1 execute vaipakam-keeper-db --remote --command="DELETE FROM hf_band_state" )
+# producer state" below for why the order matters. The rest of the
+# keeper's state goes with it (#1481), so a recovery in place starts the
+# keeper exactly where a fresh account's empty database does.
+( cd apps/keeper && wrangler d1 execute vaipakam-keeper-db --remote --command="\
+DELETE FROM hf_band_state; \
+DELETE FROM keeper_commitment_day; \
+DELETE FROM keeper_commitment_scan; \
+DELETE FROM keeper_remit_ack; \
+DELETE FROM keeper_remit_ack_frontier; \
+DELETE FROM keeper_work_open; \
+DELETE FROM keeper_work_cursor; \
+DELETE FROM keeper_horizon_entry; \
+DELETE FROM keeper_horizon_cursor; \
+DELETE FROM keeper_sanctions_screen; \
+DELETE FROM keeper_sanctions_watch; \
+DELETE FROM keeper_ops_alert; \
+DELETE FROM keeper_deployment" )
 ```
 
 ```bash
@@ -1567,7 +1615,17 @@ DELETE FROM recycle_series_state; \
 DELETE FROM recycle_prelaunch; \
 DELETE FROM recycle_chain_reported; \
 DELETE FROM recycle_backing_snapshot; \
-DELETE FROM prenotify_scan_cursor; \
+DELETE FROM reward_loop_events; \
+DELETE FROM reward_loop_day; \
+DELETE FROM reward_day_user; \
+DELETE FROM reward_retention; \
+DELETE FROM reward_loop_totals; \
+DELETE FROM prepay_listings; \
+DELETE FROM keeper_commitment_reconciled; \
+DELETE FROM market_summary; \
+DELETE FROM protocol_config; \
+DELETE FROM webhook_deliveries; \
+DELETE FROM keeper_runner_lease; \
 DELETE FROM prenotify_pass; \
 DELETE FROM push_rail_status; \
 DELETE FROM signed_request_use; \
@@ -1611,9 +1669,39 @@ notification window. The single statement of what a pass does and does not
 promise is in `docs/FunctionalSpecs/Alpha02ConnectedApp.md` under the
 reminder-run bullets; this note does not restate it.
 
-`prenotify_scan_cursor` (#2219) held the lane's previous record, a deadline
-to resume at. Nothing reads it since #2230, and a later migration drops it.
-Until then the command above still clears it, which is harmless.
+What the #1481 audit added to the shared command, and what each costs:
+
+- **`prepay_listings`** comes back from the replay's `PrepayListing*`
+  events. Those handlers also publish the listing to OpenSea, and a replay
+  walks listings that have since been cancelled, replaced or settled. The
+  publish therefore goes out only while the order is still the loan's live
+  listing at the chain head (`getPrepayListingOrderHash`), so the replay
+  publishes nothing stale; the live ones are published again, which OpenSea
+  de-duplicates by order hash.
+- **The five `reward_*` tables** are the reward loop-closure ledger, a fold
+  of reward events in chain order, with days taken from block timestamps.
+  On its first pass the ledger's one-time backfill from `activity_events`
+  finds that table empty (it was cleared too) and marks itself done, and the
+  replay then applies every event in order. That is exact for a Diamond that
+  emitted `VaultVpfiDebited` from its first vault debit, which every fresh
+  deploy does. On an older Diamond whose early unstakes emitted only
+  `VPFIWithdrawnFromVault`, the rebuilt ledger would leave those early
+  debits out and read retention higher than it was.
+- **`keeper_commitment_reconciled`** comes back from the
+  `CommitmentRemitEligibilityReconciled` events with nothing consumed; the
+  keeper consumes each again after one on-chain read, and sends nothing a
+  day already sent.
+- **`market_summary`** is rebuilt from `offers` and the imported
+  `signed_offers`: with `indexer_cursor` cleared, the summary sweep has no
+  watermark and recomputes every market on its first pass. Left in place,
+  a row for a market with no offers behind it would never be recomputed.
+- **`protocol_config`** is re-read from the chain on the next scan; a kept
+  row could feed the reminder sweep an old grace schedule or pause log.
+- **`webhook_deliveries`** only de-duplicates webhook hints; an empty table
+  costs a duplicate forward.
+- **`keeper_runner_lease`** expires by itself within ten minutes; it is
+  cleared while the keeper is stopped so a forged lease cannot hold the
+  restored keeper off.
 
 Clearing the tables is not optional, and resetting only the cursor
 is NOT equivalent: the replay handlers upsert by key and **never
@@ -1671,26 +1759,17 @@ direction. The reverse order, interrupted, leaves exactly the worst
 combination above. Re-run whichever command did not complete before
 moving on.
 
-**This list is the archive's re-derivable set plus the two tables
-above, and it is NOT proven complete** — the schema has grown past
-the lists `backup.ts` carries, and the full born-off-chain vs
-replay-derived classification of every indexer table is **#1481**.
-Until that audit lands, two rules bound the risk:
-
-- clear ONLY tables you have confirmed are written by the replay
-  path (`chainIndexer.ts` and the modules it invokes). If a table's
-  provenance is unclear, resolve it before touching it;
-- NEVER clear a table that HTTP routes populate — `signed_offers`
-  (user-submitted, chain-updated, and currently not archived at
-  all — see #1481) is the standing example: clearing it destroys
-  user data no replay can regenerate. Two more resolved-NOT-clearable
-  while verifying this round: `prepay_listing_match_breadcrumbs`
-  (HTTP-written via `loanRoutes.ts`) and
-  `keeper_commitment_reconciled` (also written by the keeper).
-  `prepay_listings` stays with #1481 for a different reason: its
-  replay handlers invoke OpenSea publishing, so whether a
-  clear-and-replay is side-effect-free is an open audit question,
-  not a grep.
+**These two commands are complete, and a check keeps them so** (#1481).
+`apps/indexer/scripts/check-table-classification.mjs` (run by the
+indexer's `typecheck`) finds every table any Worker writes and refuses a
+tree where one has no decided treatment, where a replay-derived table is
+missing from the command for the database it lives in, where a command
+clears a table that is not replay-derived, or where §4's list, the
+nightly archive or the restore converter disagrees with the
+classification. The tables a user creates off chain are never in these
+commands: `signed_offers` and `prepay_listing_match_breadcrumbs` are
+imported in §4 and only their chain-maintained part is left to the
+replay.
 
 **Only now re-arm the indexer's ingest — BOTH of its writers.** The cursor
 reset above is exactly the precondition §1 step 9 held them back for.
