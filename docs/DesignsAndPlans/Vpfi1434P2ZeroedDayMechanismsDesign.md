@@ -962,6 +962,17 @@ the bounds are the design's actual commitment.
    non-zero quote is the DRAIN case: the value stays ordinary
    delivered-fresh backing and the day proceeds to its lapse terminal. The
    activation gate is the inventory reading empty.
+
+   > **Retired (#2875, 2026-10-26).** The constraint-19 migration above,
+   > and everything that existed only for it, is removed: the legacy
+   > receipt stamp, the pre-w4 funded-record seed (`seedCompFunded`), the
+   > legacy-reservation inventory, the one-shot `armLapseTerminals` gate,
+   > the pre-w4 short-lapse clock armer and Base's clockless-day dispatch
+   > refusal. Each served only a Diamond upgraded in place across w4.
+   > Every chain reaches this build by fresh deploy (owner decision
+   > O1 = A), where no legacy receipt, unstamped funded record or
+   > clockless finalized day can exist, so the lapse terminals work from
+   > deploy. The text above is kept as the record of the design.
 5. **P2-w5 — R4 return over #1568's channel + recovery position +
    uncharged re-dispatch** (§4.2) — downstream of #1568's shared slice,
    before M7 arming (plan §4 `SHAREDWIRE --> MODEBWIRE -.-> ARMGATE`).

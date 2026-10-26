@@ -88,6 +88,22 @@
       "from": "dayDeliveryGateFromDay",
       "to": "retiredDayDeliveryGateFromDay",
       "reason": "#1944 (owner decision 2026-10-26, 'Retire all three'): the mirror-side delivery gate binds by role from a mirror's first day, so the admin-armed first-day latch is removed with its setter. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 452,
+      "offset": 0,
+      "from": "legacyReceiptStamped",
+      "to": "retiredLegacyReceiptStamped",
+      "reason": "#2875 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the per-receipt flag marked a pre-P2 receipt the removed legacy compensation stamp had spent; a fresh deploy holds no such receipt. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 458,
+      "offset": 0,
+      "from": "lapseTerminalsArmed",
+      "to": "retiredLapseTerminalsArmed",
+      "reason": "#2875 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the one-shot arm kept the lapse terminals off until the legacy compensation migration was attested, a migration a fresh deploy never runs; the terminals now work from deploy. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
     }
   ]
 }
