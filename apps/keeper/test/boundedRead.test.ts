@@ -100,6 +100,15 @@ describe('deadlineClient — every read of a deadline-bound pass, one guard (#24
     expect(reads, 'nothing issued past the deadline').toBe(1);
     expect(await closed.getChainId(), 'an unguarded method is untouched').toBe(1);
   });
+
+  it('refuses the code and storage reads a report-shape probe makes', () => {
+    let reads = 0;
+    const base = { getCode: async () => { reads += 1; return '0x'; }, getStorageAt: async () => { reads += 1; return '0x'; } };
+    const closed = deadlineClient(base, Date.now() - 1);
+    expect(() => closed.getCode()).toThrow(PastRunDeadline);
+    expect(() => closed.getStorageAt()).toThrow(PastRunDeadline);
+    expect(reads).toBe(0);
+  });
 });
 
 describe('the submission queue honours a run deadline at the send\'s turn (#2571 r1)', () => {
