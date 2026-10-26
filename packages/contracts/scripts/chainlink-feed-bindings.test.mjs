@@ -186,6 +186,20 @@ test('on-chain reads: the feed description becomes the pair, and any disagreemen
   assert.equal(renamed.kept.length, 0, 'a description the registry would refuse as quote-less is review');
 });
 
+test('a feed that prices a different symbol than the one resolved is review, not a binding', () => {
+  // The directory files the FXS / USD feed under FRAX (FXS's new name), and
+  // every source agrees on the token they still call FRAX: the old stablecoin.
+  const r = resolveBindings(
+    selectFeeds([feed('FXS / USD', 'fxs-usd', { baseAsset: 'FRAX' })]).kept,
+    sources({ cg: [['frax', USDC]], cmc: [['FRAX', USDC]], list: [['FRAX', USDC, 18]] }),
+  );
+  assert.equal(r.bindings.length, 1, 'symbol agreement alone drafts it');
+  const now = 10n;
+  const c = applyChainReads(r.bindings, new Map([[r.bindings[0], { description: 'FXS / USD', feedDecimals: 8, answer: 1n, updatedAt: now, tokenDecimals: 18 }]]), now);
+  assert.equal(c.kept.length, 0);
+  assert.match(c.review[0].reason, /feed prices "FXS" but the token was resolved as "FRAX"/);
+});
+
 test('a directory name that differs from the feed description is kept as directoryName', () => {
   const r = resolveBindings(kept('TBTC / USD'), sources({ cg: [['tbtc', LINK]], cmc: [['TBTC', LINK]], list: [['tBTC', LINK, 18]] }));
   const now = 10n;

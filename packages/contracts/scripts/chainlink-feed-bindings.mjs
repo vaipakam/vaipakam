@@ -390,6 +390,15 @@ export function applyChainReads(bindings, reads, nowSec) {
     else {
       if (r.feedDecimals !== b.feedDecimals) problems.push(`feed decimals ${r.feedDecimals}, directory says ${b.feedDecimals}`);
       if (!r.description.endsWith(` / ${b.quote}`)) problems.push(`feed description "${r.description}" is not quoted in ${b.quote}`);
+      // The token was resolved by the directory's base-asset symbol; the feed
+      // must price that same symbol. They part when an asset is renamed (the
+      // directory files FXS / USD under FRAX, the new name of FXS, while the
+      // token lists still give FRAX to the old stablecoin), and a symbol
+      // match would then bind the wrong token.
+      const feedBase = r.description.split(' / ')[0];
+      if (lower(feedBase) !== lower(b.symbol)) {
+        problems.push(`feed prices "${feedBase}" but the token was resolved as "${b.symbol}" (a renamed asset? settle the identity with the issuer)`);
+      }
       if (!(r.answer > 0n)) problems.push('feed answer is not positive');
       if (nowSec - r.updatedAt > BigInt(b.heartbeat)) problems.push(`feed answer is older than its ${b.heartbeat}s heartbeat`);
       if (b.tokenDecimals !== undefined && r.tokenDecimals !== b.tokenDecimals) {

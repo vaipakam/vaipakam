@@ -542,32 +542,6 @@
       }
     },
     {
-      "token": "0x853d955aCEf822Db058eb8505911ED77F175b99e",
-      "symbol": "FRAX",
-      "tokenDecimals": 18,
-      "quote": "USD",
-      "quoteAddress": "0x0000000000000000000000000000000000000348",
-      "feed": "0x6Ebc52C8C1089be9eB3945C4350B68B8E4C2233f",
-      "feedDecimals": 8,
-      "pair": "FXS / USD",
-      "heartbeat": 86400,
-      "category": "medium",
-      "directoryPath": "fxs-usd",
-      "agreedBy": [
-        "coingecko",
-        "coinmarketcap",
-        "tokenList"
-      ],
-      "otherCandidates": {
-        "coingecko": [
-          "0x3432B6A60D23Ca0dFCa7761B7ab56459D9C964D0"
-        ],
-        "coinmarketcap": [
-          "0x3432B6A60D23Ca0dFCa7761B7ab56459D9C964D0"
-        ]
-      }
-    },
-    {
       "token": "0xc944E90C64B2c07662A292be6244BDf05Cda44a7",
       "symbol": "GRT",
       "tokenDecimals": 18,
@@ -1556,6 +1530,18 @@
           "0xc5f0f7b66764F6ec8C8Dff7BA683102295E16409"
         ],
         "tokenList": []
+      }
+    },
+    {
+      "pair": "FXS / USD",
+      "directoryPath": "fxs-usd",
+      "feed": "0x6Ebc52C8C1089be9eB3945C4350B68B8E4C2233f",
+      "quote": "USD",
+      "reason": "feed prices \"FXS\" but the token was resolved as \"FRAX\" (a renamed asset? settle the identity with the issuer)",
+      "candidates": {
+        "token": [
+          "0x853d955aCEf822Db058eb8505911ED77F175b99e"
+        ]
       }
     },
     {
