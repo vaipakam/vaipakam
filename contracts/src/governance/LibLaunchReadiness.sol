@@ -25,6 +25,12 @@ interface ILaunchReadableDiamond {
     function hasRole(bytes32 role, address account) external view returns (bool);
     function owner() external view returns (address);
     function roleEpoch() external view returns (uint64);
+    function getRewardRole() external view returns (uint8 role);
+    function getCurrentLapseScheduleVersion() external view returns (uint32);
+    function getLapseSchedule(uint32 version)
+        external
+        view
+        returns (uint64 lapseWindowSeconds, uint64 dispatchCutoffGap);
 }
 
 /**
@@ -174,7 +180,7 @@ library LibLaunchReadiness {
     ///        no pool address is ever taken on trust.
     function check(address diamond, Declared memory declared) internal view returns (Check[] memory checks) {
         VpfiRoute memory route = _vpfiRoute(diamond, declared.tokenAdminRegistry);
-        checks = new Check[](8);
+        checks = new Check[](9);
         checks[0] = _treasury(diamond);
         checks[1] = _sanctions(diamond);
         checks[2] = _priceFeed(diamond, declared.weth);
@@ -183,6 +189,7 @@ library LibLaunchReadiness {
         checks[5] = _ccipLanes(route, declared);
         checks[6] = _wethQuoteRoute(diamond);
         checks[7] = _feedRegistry(diamond, declared.feedRegistry);
+        checks[8] = _lapseSchedule(diamond);
     }
 
     /// @notice Whether every check was answered and met.
@@ -228,6 +235,63 @@ library LibLaunchReadiness {
             c.detail = c.met ? "getTreasury() is set" : "getTreasury() is the zero address";
         } catch {
             c.detail = "getTreasury() unreadable";
+        }
+    }
+
+    /// @dev #2909 — on the canonical reward chain every day freezes the lapse
+    ///      schedule in force when it finalizes, and keeps it. Version 0
+    ///      means "never lapses, no dispatch cutoff": a zeroed day nobody
+    ///      compensates would stay open for good, holding the claim cursor
+    ///      behind it, and Base would enforce no cutoff on manual
+    ///      compensation. A schedule set after launch cannot reach the days
+    ///      already finalized, so it is a launch requirement, not a tuning
+    ///      step. Only Base sets one (it rides the kind-10 broadcast to
+    ///      every mirror), so on any other role the requirement does not
+    ///      apply, and the detail names the role it found.
+    function _lapseSchedule(address diamond) private view returns (Check memory c) {
+        c.label = "zeroed-day lapse schedule in force";
+        uint8 role;
+        try ILaunchReadableDiamond(diamond).getRewardRole() returns (uint8 r) {
+            role = r;
+        } catch {
+            c.detail = "getRewardRole() unreadable";
+            return c;
+        }
+        // LibVaipakam.RewardRole: 0 Canonical, 1 Mirror, 2 Unconfigured,
+        // 3 Detached (RewardReporterFacet.getRewardRole).
+        if (role != 0) {
+            c.checkable = true;
+            c.met = true;
+            c.detail = string.concat(
+                "does not apply: the reward role is ",
+                role == 1 ? "Mirror" : role == 2 ? "Unconfigured" : role == 3 ? "Detached" : "unknown",
+                ", and only the canonical reward chain sets a lapse schedule"
+            );
+            return c;
+        }
+        try ILaunchReadableDiamond(diamond).getCurrentLapseScheduleVersion() returns (uint32 v) {
+            if (v == 0) {
+                c.checkable = true;
+                c.detail = "no lapse schedule is set: every day finalized now would never lapse and carry no dispatch cutoff";
+                return c;
+            }
+            try ILaunchReadableDiamond(diamond).getLapseSchedule(v) returns (uint64 window, uint64 gap) {
+                c.checkable = true;
+                c.met = true;
+                c.detail = string.concat(
+                    "version ",
+                    Strings.toString(v),
+                    ": days lapse ",
+                    Strings.toString(window),
+                    "s after finalizing, compensation dispatch closes ",
+                    Strings.toString(gap),
+                    "s before"
+                );
+            } catch {
+                c.detail = "getLapseSchedule(version) unreadable";
+            }
+        } catch {
+            c.detail = "getCurrentLapseScheduleVersion() unreadable";
         }
     }
 
