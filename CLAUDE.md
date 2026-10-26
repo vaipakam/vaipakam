@@ -1046,8 +1046,8 @@ resume by itself once it is (the keeper Worker's `scheduled` handler declines
 every invocation anyway). **A new migration must be listed in
 `packages/lib/src/sharedD1Migrations.json`** — `check-schema-gate.mjs` in the
 indexer's `typecheck` fails otherwise. The gate covers SCHEDULED work only: every HTTP
-handler — reads and the POST writes (signed offers, prepay match-source, the
-chain-event webhook), and every agent route — must tolerate the previous
+handler — reads and the POST writes (signed offers and the chain-event
+webhook), and every agent route — must tolerate the previous
 schema.
 
 **A fresh Diamond on a chain is a new indexer EPOCH, and the indexer owns

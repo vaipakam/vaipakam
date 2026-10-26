@@ -106,11 +106,6 @@ export interface WorkerEnv {
   // so a key rotation can happen one Worker at a time without
   // dropping coverage.
   OPENSEA_API_KEY?: SecretBinding;
-  // #335 — per-IP rate-limit on the new POST endpoint. Resolves
-  // through to the `Env` shape verbatim (no .get() async hop).
-  OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT?: {
-    limit: (args: { key: string }) => Promise<{ success: boolean }>;
-  };
   // #1131 Rate Desk phase 3 — per-IP rate-limit on `POST /signed-offers`
   // (the signed-offer book ingest), under the one fail-closed rule in
   // `@vaipakam/lib/rateLimit` (#2756): a missing binding refuses the post.
@@ -292,19 +287,6 @@ export interface Env {
   // T-086 step 14 — resolved OpenSea Listings API key.
   OPENSEA_API_KEY?: string;
 
-  // #335 — per-IP rate-limit binding for the one POST surface
-  // this Worker exposes (`POST /loans/:loanId/prepay-listing/
-  // match-source`). Cloudflare's built-in `ratelimit` binding,
-  // keyed by `CF-Connecting-IP` at request time. When absent
-  // (operator hasn't deployed the wrangler.jsonc binding yet)
-  // the rate-limit is a no-op; the strict hex validation + the
-  // INSERT OR REPLACE conflict policy keep the endpoint
-  // defensible without it, but provisioning it is the
-  // expected operator action post-merge.
-  OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT?: {
-    limit: (args: { key: string }) => Promise<{ success: boolean }>;
-  };
-
   // #1131 Rate Desk phase 3 — per-IP rate-limit binding for
   // `POST /signed-offers` (signed-offer book ingest). Fails closed
   // (`@vaipakam/lib/rateLimit`, #2756): a deployment without it refuses
@@ -400,11 +382,6 @@ export async function resolveEnv(
     CF_VERSION_METADATA: raw.CF_VERSION_METADATA,
     CANCELLED_OFFER_RETENTION_DAYS: raw.CANCELLED_OFFER_RETENTION_DAYS,
     OPENSEA_API_KEY: openSea,
-    // #335 — pass through the rate-limit binding from the raw
-    // env. Without this the resolved Env never sees the binding
-    // even when operators provision it in wrangler.jsonc.
-    OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT:
-      raw.OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT,
     // #1131 — pass through the signed-offer book rate-limit binding.
     SIGNED_OFFERS_RATELIMIT: raw.SIGNED_OFFERS_RATELIMIT,
     RPC_BASE: base,

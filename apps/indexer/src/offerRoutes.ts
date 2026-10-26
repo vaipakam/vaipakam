@@ -634,16 +634,20 @@ export async function handleOffersByCreator(
 /**
  * GET /offers/by-current-holder/:addr?chainId=8453&limit=50&before=<offer_id>
  *
- * Returns offers where `addr` CURRENTLY holds the creator-position NFT.
- * Pure D1 lookup on the `creator_current_owner` column maintained by
- * chainIndexer.ts's ERC721 Transfer handler. Covers secondary-market
- * recipients whose `creator` (LoanInitiated-time participant) wouldn't
- * match the connected wallet — unlike `/offers/by-creator/:addr` which
- * filters on the immutable `creator` column.
+ * Returns the OPEN offers (status `active`, expired or not) whose
+ * creator-position NFT `addr` CURRENTLY holds. Pure D1 lookup on the
+ * `creator_current_owner` column maintained by chainIndexer.ts's ERC721
+ * Transfer handler. Covers secondary-market recipients whose `creator`
+ * wouldn't match the connected wallet — unlike `/offers/by-creator/:addr`
+ * which filters on the immutable `creator` column.
  *
- * Pairs with the on-chain authoritative fallback
- * `MetricsFacet.getUserPositionOffers(user)` for the rare case where
- * the indexer's cursor hasn't caught up to the latest Transfer.
+ * The same set as the on-chain `MetricsFacet.getUserPositionOffers(user)`,
+ * which this pairs with for the rare case where the indexer's cursor hasn't
+ * caught up to the latest Transfer: the contract drops an offer from that
+ * view when it stops being an offer (accepted, cancelled, filled into a
+ * sale), so this route does too (#2757). Until #2757 it returned every
+ * status, including an accepted offer whose position token now belongs to a
+ * loan, and relied on each caller to filter.
  */
 export async function handleOffersByCurrentHolder(
   req: Request,
@@ -664,12 +668,12 @@ export async function handleOffersByCurrentHolder(
     const stmt = before
       ? env.DB.prepare(
           `SELECT * FROM offers
-           WHERE chain_id = ? AND creator_current_owner = ? AND offer_id < ?
+           WHERE chain_id = ? AND creator_current_owner = ? AND status = 'active' AND offer_id < ?
            ORDER BY offer_id DESC LIMIT ?`,
         ).bind(chainId, addr, before, limit)
       : env.DB.prepare(
           `SELECT * FROM offers
-           WHERE chain_id = ? AND creator_current_owner = ?
+           WHERE chain_id = ? AND creator_current_owner = ? AND status = 'active'
            ORDER BY offer_id DESC LIMIT ?`,
         ).bind(chainId, addr, limit);
     const rows = await stmt.all<OfferRow>();

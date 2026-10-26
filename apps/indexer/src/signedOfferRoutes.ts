@@ -16,8 +16,8 @@
  *     (pair, tenor) market. Returns the order JSON + signature verbatim so a
  *     taker can replay them into `acceptSignedOffer` / `matchSignedOffer`.
  *
- * Posture mirrors the one existing app-facing POST
- * (`handleLoanPrepayMatchSource`, loanRoutes.ts): per-IP rate-limit FIRST
+ * Posture (the shape #335's since-retired prepay match-source POST set):
+ * per-IP rate-limit FIRST
  * (no-op when the binding isn't provisioned), strict per-field validation
  * with per-field 400s, open CORS, `jsonResponse` idioms. The book is public
  * data by design — anyone can verify any row's signature themselves, and the
@@ -983,7 +983,7 @@ export async function handleSignedOffersGet(
 }
 
 /** Preflight echo for /signed-offers — open CORS, GET + POST (this surface
- *  carries the Worker's second POST endpoint after #335's match-source). */
+ *  carries the Worker's app-facing POST endpoint). */
 export function handleSignedOffersPreflight(): Response {
   return new Response(null, {
     status: 204,
