@@ -130,6 +130,14 @@ interface IVaipakamErrors {
     ///         push a tunable beyond the policy range without a
     ///         contract upgrade.
     error ParameterOutOfRange(bytes32 name, uint256 value, uint256 min, uint256 max);
+    /// @notice #2747 — the quote-asset (PAA) list would name no asset other
+    ///         than WETH. The tier search never quotes an asset against
+    ///         itself, so WETH would have no route and resolve to liquidity
+    ///         tier 0: the most conservative liquidation threshold for every
+    ///         WETH-collateral loan whatever its market depth, no discounted
+    ///         liquidation, and no new WETH-collateral loan at all while
+    ///         depth-tiered LTV is on.
+    error PaaNeedsNonWethQuote();
 
     // ─── Loan State ──────────────────────────────────────────────────────────
     error LoanNotActive();

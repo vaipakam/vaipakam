@@ -550,9 +550,9 @@ Diamond's oracle), then:
 bash script/deploy-testnet.sh base-sepolia --phase launch
 ```
 
-It reads the six launch requirements off the chain (treasury, sanctions
+It reads the seven launch requirements off the chain (treasury, sanctions
 oracle, priced WETH, an enabled swap adapter, the VPFI pool route and its
-exact CCIP lanes) and refuses while any is NOT MET. The admin key then
+exact CCIP lanes, and a quote-asset list naming an asset besides WETH that the Diamond prices) and refuses while any is NOT MET. The admin key then
 unpauses. After a rehearsal handover the phase prints the Timelock call
 instead (see DeploymentRunbook, `launch` row). Never unpause with `cast`: an
 unpause outside this phase leaves no launch-gate record, and the launch step

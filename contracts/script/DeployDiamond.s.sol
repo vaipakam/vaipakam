@@ -1515,7 +1515,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getOracleSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](19);
+        s = new bytes4[](20);
         s[0] = OracleFacet.checkLiquidity.selector;
         s[1] = OracleFacet.getAssetPrice.selector;
         s[2] = OracleFacet.calculateLTV.selector;
@@ -1551,6 +1551,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #666 — the price read that tells a missing price from a
         // distrusted one (LibFallback's failed-swap split reads it).
         s[18] = OracleFacet.getAssetPriceStatus.selector;
+        // #2747 — the tier search's quote-leg test, read by the launch
+        // readiness check's WETH quote-route gate.
+        s[19] = OracleFacet.isLiquidityQuoteUsable.selector;
     }
 
     function _getOracleAdminSelectors() internal pure returns (bytes4[] memory s) {

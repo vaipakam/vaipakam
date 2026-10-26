@@ -10698,8 +10698,10 @@ library LibVaipakam {
 
     /// @dev The "predominantly available assets" the liquidity check
     ///      probes pools against (see `Storage.paaAssets`). Empty
-    ///      config ⇒ `[wethContract]` — so an un-configured deploy
-    ///      behaves like today's WETH-only probe. Returns a fresh
+    ///      config ⇒ `[wethContract]`, the state of a fresh Diamond before
+    ///      its configure phase: non-WETH assets still find a WETH route, but
+    ///      WETH itself has none (#2747), so the launch readiness check
+    ///      refuses an empty list and `setPaaAssets` never writes one. Returns a fresh
     ///      memory array; callers must tolerate a single-element fallback
     ///      (and a zero element if `wethContract` itself is unset, which
     ///      `OracleFacet` already skips).
@@ -10714,6 +10716,38 @@ library LibVaipakam {
         address[] memory out = new address[](n);
         for (uint256 i; i < n; ++i) out[i] = s.paaAssets[i];
         return out;
+    }
+
+    /// @dev #2747 — whether the configured quote-asset (PAA) list names an
+    ///      asset other than the configured WETH. The tier search skips the
+    ///      quote equal to the asset being tiered, so with only WETH to quote
+    ///      against (an explicit `[WETH]`, or the empty list's implicit
+    ///      `[wethContract]` fallback) WETH has no route and resolves to tier
+    ///      0. The tier is read whatever the depth-tier switch says: it is
+    ///      stamped as every liquid loan's liquidation threshold, it decides
+    ///      the discounted-liquidation discount (which refuses tier 0), and it
+    ///      caps new loans while depth-tiered LTV is on. Reads the stored list,
+    ///      never the fallback: an empty list answers false.
+    function paaHasNonWethQuote() internal view returns (bool) {
+        Storage storage s = storageSlot();
+        address weth = s.wethContract;
+        uint256 n = s.paaAssets.length;
+        for (uint256 i; i < n; ++i) {
+            if (s.paaAssets[i] != weth) return true;
+        }
+        return false;
+    }
+
+    /// @dev #2747 — the invariant "a configured quote list keeps a quote
+    ///      other than WETH". An empty list is the not-yet-configured state
+    ///      of a fresh Diamond, which the launch readiness check refuses and
+    ///      which nothing can return to once a list is set: `setPaaAssets`
+    ///      refuses any list without such a quote, empty included, and
+    ///      `setWethContract` refuses re-pointing WETH at a set list's only
+    ///      other member. Switching depth-tiered LTV on refuses an empty
+    ///      list too ({ConfigFacet.setDepthTieredLtvEnabled}).
+    function assertPaaHasNonWethQuote() internal view {
+        if (!paaHasNonWethQuote()) revert IVaipakamErrors.PaaNeedsNonWethQuote();
     }
 
     /// @dev Returns the four tier thresholds (T1 min, T2 min, T3 min, T4 min-exclusive).
@@ -11243,6 +11277,10 @@ library LibVaipakam {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
         s.wethContract = newWethContract;
+        // #2747 — once a quote list is set, re-pointing WETH at its only
+        // other member would leave the new WETH with no tier route. A fresh
+        // Diamond sets WETH before its list, so an empty list is not checked.
+        if (s.paaAssets.length != 0) assertPaaHasNonWethQuote();
     }
 
     /// @dev Set the direct Chainlink ETH/USD AggregatorV3 feed. Owner-only.

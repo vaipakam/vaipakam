@@ -42,9 +42,9 @@ import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
  *         mechanical follow-up (noted in #778/#779).
  */
 library FacetSelectors {
-    /// @notice Full external selector surface of {OracleFacet} (19).
+    /// @notice Full external selector surface of {OracleFacet} (20).
     function oracle() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](19);
+        s = new bytes4[](20);
         s[0] = OracleFacet.checkLiquidity.selector;
         s[1] = OracleFacet.getAssetPrice.selector;
         s[2] = OracleFacet.calculateLTV.selector;
@@ -64,6 +64,7 @@ library FacetSelectors {
         s[16] = OracleFacet.getEffectiveTierMaxInitLtvBps.selector;
         s[17] = OracleFacet.countLiveSecondaryOracleFeeds.selector;
         s[18] = OracleFacet.getAssetPriceStatus.selector;
+        s[19] = OracleFacet.isLiquidityQuoteUsable.selector;
     }
 
     /// @notice Full external selector surface of {VaultFactoryFacet} (34).
