@@ -29,6 +29,10 @@
       "types": "./src/devKeys.ts",
       "default": "./src/devKeys.ts"
     },
+    "./minedRevert": {
+      "types": "./src/minedRevert.ts",
+      "default": "./src/minedRevert.ts"
+    },
     "./scenarioChain": {
       "types": "./src/scenarioChain.ts",
       "default": "./src/scenarioChain.ts"

@@ -39,6 +39,7 @@ import {
 import { privateKeyToAccount } from 'viem/accounts';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import type { SpawnedAnvil } from './process';
+import { explainMinedRevert } from './minedRevert';
 import { ANVIL_DEV_KEYS } from './devKeys';
 
 export type Party = keyof typeof ANVIL_DEV_KEYS | 'admin';
@@ -143,6 +144,9 @@ export class ScenarioChain<F extends ChainFixture = ChainFixture> {
     value?: bigint,
   ): Promise<TransactionReceipt> {
     const w = this.wallet(who);
+    // The head the simulation runs against, so a mined revert can say how
+    // far the chain moved in between (#2892).
+    const simulatedAt = await this.blockNumber();
     // Simulate first, so a revert surfaces as the contract's own error.
     const { request } = await this.pub.simulateContract({
       account: this.accounts[who],
@@ -154,7 +158,12 @@ export class ScenarioChain<F extends ChainFixture = ChainFixture> {
     } as never);
     const hash = await w.writeContract(request as never);
     const receipt = await this.pub.waitForTransactionReceipt({ hash, timeout: 60_000 });
-    if (receipt.status !== 'success') throw new Error(`${functionName} reverted (tx ${hash})`);
+    if (receipt.status !== 'success') {
+      // It simulated clean and reverted only when mined, so the simulation's
+      // error never surfaced. Read the cause from the node before it is gone.
+      const why = await explainMinedRevert(this.pub, this.node.control.rpc, receipt, abi);
+      throw new Error(`${functionName} reverted when mined (tx ${hash}, simulated against block ${simulatedAt}): ${why}`);
+    }
     return receipt;
   }
 
@@ -247,3 +256,4 @@ export class ScenarioChain<F extends ChainFixture = ChainFixture> {
     await this.node.stop();
   }
 }
+
