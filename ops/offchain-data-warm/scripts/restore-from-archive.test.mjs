@@ -15,6 +15,7 @@ import {
   openSync, readFileSync, statSync, symlinkSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { canonicalOrderJson, signedOfferColumns } from '../../../packages/lib/src/signedOfferWire.mjs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
@@ -460,15 +461,27 @@ const SIGNED_OFFER_COLUMNS = [
   'fill_mode', 'expires_at', 'deadline', 'nonce',
   'status', 'filled_amount', 'created_at', 'updated_at',
 ];
-function signedOfferRow(over = {}) {
+/** A well-formed order in wire form, and the row the indexer route stores
+ *  for it (the shared rule, packages/lib/src/signedOfferWire.mjs). */
+function signedOrder(over = {}) {
   return {
-    chain_id: 84532, order_hash: `0x${'b'.repeat(64)}`, signer: `0x${'c'.repeat(40)}`,
-    order_json: '{"amount":"1"}', signature: `0x${'D'.repeat(130)}`,
-    offer_type: 0, lending_asset: `0x${'1'.repeat(40)}`, collateral_asset: `0x${'2'.repeat(40)}`,
-    duration_days: 30, asset_type: 0, collateral_asset_type: 0,
-    interest_rate_bps: 500, interest_rate_bps_max: 0,
-    amount: '1000', amount_max: '0', collateral_amount: '2000', collateral_amount_max: '0',
-    fill_mode: 0, expires_at: 0, deadline: 0, nonce: '0',
+    offerType: '0', lendingAsset: `0x${'1'.repeat(40)}`, amount: '1000', amountMax: '0',
+    interestRateBps: '500', interestRateBpsMax: '0', collateralAsset: `0x${'2'.repeat(40)}`,
+    collateralAmount: '2000', collateralAmountMax: '0', durationDays: '30', assetType: '0',
+    collateralAssetType: '0', tokenId: '0', quantity: '0', collateralTokenId: '0',
+    collateralQuantity: '0', prepayAsset: `0x${'0'.repeat(40)}`, allowsPartialRepay: true,
+    allowsPrepayListing: false, allowsParallelSale: false, expiresAt: '0', fillMode: '0',
+    periodicInterestCadence: '0', refinanceTargetLoanId: '0', useFullTermInterest: false,
+    creatorFull: false, creatorMaxCStar: '0', creatorAllowFullDowngrade: false,
+    signer: `0x${'c'.repeat(40)}`, nonce: '0', deadline: '0',
+    ...over,
+  };
+}
+function signedOfferRow(over = {}, order = signedOrder()) {
+  return {
+    chain_id: 84532, order_hash: `0x${'b'.repeat(64)}`,
+    order_json: canonicalOrderJson(order), signature: `0x${'D'.repeat(130)}`,
+    ...signedOfferColumns(order),
     status: 'filled', filled_amount: '1000', created_at: 10, updated_at: 20,
     ...over,
   };
@@ -499,6 +512,41 @@ test('signed_offers: the signed order is restored, its lifecycle is reset for th
   bad({ signer: "x' OR 1=1 --" }, /signer is not the shape/);
   bad({ signature: `0x${'d'.repeat(131)}` }, /signature is not the shape/);
   assert.match(tableToSql(tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [signedOfferRow({ signature: `0x${'d'.repeat(128)}` })])), /VALUES/);
+});
+
+test('signed_offers: only an order a taker can replay, in the form the route stores it, is restored (#1481)', () => {
+  const restore = (row) => tableToSql(tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [row]));
+  const order = signedOrder();
+  const json = canonicalOrderJson(order);
+  // Codex #2900 r1: malformed JSON would make the book's json_extract throw.
+  assert.throws(() => restore(signedOfferRow({ order_json: 'not-json' })), /order_json is not JSON/);
+  assert.throws(() => restore(signedOfferRow({ order_json: '[1]' })), /order_json is not an object/);
+  assert.throws(() => restore(signedOfferRow({ order_json: '{"amount":"1"}' })), /order_json lacks offerType/);
+  assert.throws(
+    () => restore(signedOfferRow({ order_json: json.replace('{', '{"extra":1,') })),
+    /unknown field extra/,
+  );
+  // Each field in its wire form.
+  const withField = (field, value) => signedOfferRow({}, { ...order, [field]: value });
+  assert.throws(() => restore(withField('amount', 1000)), /amount is not a canonical decimal string/);
+  assert.throws(() => restore(withField('amount', '01000')), /amount is not a canonical decimal string/);
+  assert.throws(() => restore(withField('offerType', '256')), /offerType is not within uint8/);
+  assert.throws(() => restore(withField('allowsPartialRepay', 'true')), /allowsPartialRepay is not a boolean/);
+  assert.throws(
+    () => restore(signedOfferRow({ order_json: json.replace(`0x${'1'.repeat(40)}`, `0x${'A'.repeat(40)}`) })),
+    /lendingAsset is not a lowercase address/,
+  );
+  // The canonical bytes, not merely an equivalent object.
+  assert.throws(() => restore(signedOfferRow({ order_json: JSON.stringify(JSON.parse(json), null, 1) })), /canonical form/);
+  const reordered = JSON.stringify({ lendingAsset: order.lendingAsset, ...order });
+  assert.throws(() => restore(signedOfferRow({ order_json: reordered })), /canonical form/);
+  // A market column must be the order's own field, or the book shows one
+  // offer and the taker fills another.
+  assert.throws(() => restore(signedOfferRow({ amount: '9999' })), /amount is "9999" but the order says "1000"/);
+  assert.throws(() => restore(signedOfferRow({ signer: `0x${'d'.repeat(40)}` })), /signer is .* but the order says/);
+  assert.throws(() => restore(signedOfferRow({ duration_days: '30' })), /duration_days is "30" but the order says 30/);
+  // The fixture itself is the route's form.
+  assert.match(restore(signedOfferRow()), /VALUES/);
 });
 
 test('prepay_listing_match_breadcrumbs: two-step rows are restored, atomic rows are left to the replay (#1481)', () => {

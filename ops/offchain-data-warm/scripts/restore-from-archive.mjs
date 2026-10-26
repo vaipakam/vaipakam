@@ -44,6 +44,9 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
+// The indexer's statement of a stored signed offer (#1481). A relative path:
+// this script runs under plain Node outside the pnpm workspace.
+import { signedOfferRowProblem } from '../../../packages/lib/src/signedOfferWire.mjs';
 
 // ── Constants ─────────────────────────────────────────────────────────
 
@@ -357,6 +360,13 @@ function loanOrphanRowProblem(row) {
 }
 const TRUSTED_ROW_CHECKS = {
   loan_orphans: loanOrphanRowProblem,
+  // #1481 — the stored order must be one a taker can replay and the book can
+  // read: `order_json` the canonical serialization of a well-formed order, and
+  // every market column the field it copies. The rule is the indexer POST
+  // route's own (`packages/lib/src/signedOfferWire.mjs`), so an archived row
+  // is re-admitted only in the form the route would have written. Whether the
+  // signature is the signer's is #2899.
+  signed_offers: signedOfferRowProblem,
 };
 
 // The archived legal-hold tables whose rows carry `legal_doc_ref`

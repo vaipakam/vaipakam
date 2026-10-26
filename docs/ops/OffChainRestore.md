@@ -1420,10 +1420,14 @@ For each table:
    >   The replay then applies every fill, match, cancellation and nonce burn
    >   from the chain, so each offer ends in its true state, and a status the
    >   archive carries for an offer no chain event touched is not kept. The
-   >   converter checks the shapes the route writes; it does NOT re-verify
-   >   signatures. A forged row cannot be filled, because the Diamond checks
-   >   the signature at fill, but it would be listed in the book until it
-   >   expires (#2899 tracks re-verifying at restore);
+   >   converter re-admits a row only in the form the indexer's own route
+   >   writes it: the order is the canonical serialization of a well-formed
+   >   order, and every market column the book filters on is that order's
+   >   field (both writers read one rule, `packages/lib/src/signedOfferWire.mjs`).
+   >   It does NOT re-verify signatures. A forged row cannot be filled,
+   >   because the Diamond checks the signature at fill, but it would be
+   >   listed in the book until it expires (#2899 tracks re-verifying at
+   >   restore);
    > - a **match note** is imported only when the app wrote it (a two-step
    >   match: which OpenSea offer the reprice answered, which no chain event
    >   carries). A note the indexer wrote from an atomic match's own event is

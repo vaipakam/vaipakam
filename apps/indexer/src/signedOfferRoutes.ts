@@ -45,6 +45,7 @@ import {
 import { slotRefusalStatus, takeCallerSlot } from '@vaipakam/lib/rateLimit';
 import { readJsonBody } from '@vaipakam/lib/requestBody';
 import { redactedError } from '@vaipakam/lib/errorDescription';
+import { canonicalOrderJson, signedOfferColumns } from '@vaipakam/lib/signedOfferWire';
 
 /** A signed offer: the order struct and its signature, which for a smart
  *  account (ERC-6492) can run to a few kilobytes (#2756). */
@@ -499,17 +500,6 @@ function validateOrder(
   return { order: out as unknown as SignedOrderWire };
 }
 
-/** Build the canonical order_json — the 31 fields in struct order, addresses
- *  already lowercased by validateOrder. Stable key order means byte-identical
- *  JSON for the same order, so idempotent re-posts are trivially comparable. */
-function canonicalOrderJson(order: SignedOrderWire): string {
-  const o: Record<string, unknown> = {};
-  for (const f of SIGNED_OFFER_FIELD_NAMES) {
-    o[f] = (order as unknown as Record<string, unknown>)[f];
-  }
-  return JSON.stringify(o);
-}
-
 // ── POST /signed-offers ─────────────────────────────────────────────
 
 /**
@@ -744,6 +734,9 @@ export async function handleSignedOfferPost(
     );
   }
 
+  // The stored row is the shared statement of it (`@vaipakam/lib/signedOfferWire`),
+  // the same one the off-chain restore re-admits archived rows against (#1481).
+  const columns = signedOfferColumns(order);
   try {
     await env.DB.prepare(
       `INSERT OR IGNORE INTO signed_offers
@@ -759,25 +752,25 @@ export async function handleSignedOfferPost(
       .bind(
         chainId,
         orderHash,
-        order.signer,
+        columns.signer,
         canonicalOrderJson(order),
         signature,
-        Number(order.offerType),
-        order.lendingAsset,
-        order.collateralAsset,
-        Number(order.durationDays),
-        Number(order.assetType),
-        Number(order.collateralAssetType),
-        Number(order.interestRateBps),
-        Number(order.interestRateBpsMax),
-        order.amount,
-        order.amountMax,
-        order.collateralAmount,
-        order.collateralAmountMax,
-        Number(order.fillMode),
-        Number(order.expiresAt),
-        Number(order.deadline),
-        order.nonce,
+        columns.offer_type,
+        columns.lending_asset,
+        columns.collateral_asset,
+        columns.duration_days,
+        columns.asset_type,
+        columns.collateral_asset_type,
+        columns.interest_rate_bps,
+        columns.interest_rate_bps_max,
+        columns.amount,
+        columns.amount_max,
+        columns.collateral_amount,
+        columns.collateral_amount_max,
+        columns.fill_mode,
+        columns.expires_at,
+        columns.deadline,
+        columns.nonce,
         // '0' on a fresh order; the observed on-chain cumulative when the
         // ingest gate saw a live below-ceiling remainder (Codex #1145 r7).
         initialFilledAmount,
@@ -1010,4 +1003,4 @@ export function handleSignedOffersPreflight(): Response {
 
 // Re-exported for the unit tests (shape validation is pure logic worth
 // pinning independently of the route plumbing).
-export { validateOrder, canonicalOrderJson };
+export { validateOrder };

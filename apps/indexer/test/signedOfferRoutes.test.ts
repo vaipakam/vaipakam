@@ -33,6 +33,7 @@ import {
   MAX_SIGNED_OFFER_BODY_BYTES,
 } from '../src/signedOfferRoutes';
 import { createSqliteD1 } from './helpers/sqliteD1';
+import { signedOfferRowProblem } from '@vaipakam/lib/signedOfferWire';
 import {
   SIGNED_OFFER_TYPES,
   orderHashOf,
@@ -851,6 +852,31 @@ function rangedPartialOrder(
     ...overrides,
   });
 }
+
+describe('POST /signed-offers — the stored row is the one a restore re-admits (#1481)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ['a single-value order', () => makeOrder()],
+    ['a ranged order with a GTT window', () =>
+      rangedPartialOrder({ fillMode: '2', expiresAt: String(Math.floor(Date.now() / 1000) + 10 * 86_400) })],
+  ])('%s passes the restore converter\'s row check as written', async (_label, build) => {
+    // The restore converter refuses an archived row unless its order_json is
+    // the canonical form of a well-formed order and every market column is
+    // that order's field. Both writers read one rule; this pins that what
+    // the route writes is what the restore accepts.
+    stubRpc({ nonceUsed: false, filled: 0n });
+    const { env, db } = makeChainEnv();
+    const order = build();
+    expect((await post(env, order)).status).toBe(201);
+    const row = db
+      .prepare(`SELECT * FROM signed_offers WHERE order_hash = ?`)
+      .get(orderHashOf(order)) as Record<string, unknown>;
+    expect(signedOfferRowProblem(row)).toBeNull();
+  });
+});
 
 describe('POST /signed-offers — chain-state ingest gate (Codex #1145 r7)', () => {
   afterEach(() => {
