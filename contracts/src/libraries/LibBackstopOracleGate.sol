@@ -22,32 +22,47 @@ import {OracleFacet} from "../facets/OracleFacet.sol";
  *         unconfigured backstop behaves exactly as before.
  */
 library LibBackstopOracleGate {
-    /// @notice The backstop requires `required` live secondary feeds for
-    ///         `collateral` but only `available` are live.
+    /// @notice The backstop requires `required` secondary feeds that AGREE
+    ///         with Chainlink for `collateral`, but only `available` do.
     error BackstopOracleCoverageInsufficient(
         address collateral,
         uint8 available,
         uint8 required
     );
 
-    /// @dev Reverts if the configured minimum number of live secondary oracle
-    ///      feeds for `collateral` is not met. No-op when the knob is 0 (the
-    ///      default — preserves general permissionless behaviour; the
-    ///      Soft-2-of-N quorum's single-feed soft fallback still governs
-    ///      pricing). Cross-calls the read-only
-    ///      {OracleFacet.countLiveSecondaryOracleFeeds} view through the Diamond.
+    /// @notice At least one live secondary feed for `collateral` DISAGREES
+    ///         with Chainlink, so the treasury refuses to price on it.
+    error BackstopOracleDisagreement(address collateral, uint8 disagreeing);
+
+    /// @dev Reverts unless `collateral` has at least the configured number of
+    ///      secondary oracle feeds AGREEING with Chainlink and none
+    ///      disagreeing. No-op when the knob is 0 (the default — preserves
+    ///      general permissionless behaviour; the Soft-2-of-N quorum's
+    ///      single-feed soft fallback still governs pricing). Cross-calls the
+    ///      read-only {OracleFacet.countLiveSecondaryOracleFeeds} view
+    ///      through the Diamond.
+    ///
+    ///      #2737 — only agreement counts toward coverage, and any dissent
+    ///      refuses outright. The general quorum accepts a price when one
+    ///      secondary agrees even if another disagrees; that is a reasonable
+    ///      bar for a retail price read, but treasury capital deployed as
+    ///      lender or buyer of last resort is held to the stricter one. The
+    ///      dissent check is taken first, so the refusal names the stronger
+    ///      reason.
     function assertCoverage(address collateral) internal view {
         uint8 required = LibVaipakam
             .storageSlot()
             .backstopMinSecondaryOracleCoverage;
         if (required == 0) return;
-        uint8 live = OracleFacet(address(this)).countLiveSecondaryOracleFeeds(
-            collateral
-        );
-        if (live < required) {
+        (uint8 agreeing, uint8 disagreeing) = OracleFacet(address(this))
+            .countLiveSecondaryOracleFeeds(collateral);
+        if (disagreeing != 0) {
+            revert BackstopOracleDisagreement(collateral, disagreeing);
+        }
+        if (agreeing < required) {
             revert BackstopOracleCoverageInsufficient(
                 collateral,
-                live,
+                agreeing,
                 required
             );
         }

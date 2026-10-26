@@ -303,7 +303,7 @@ contract BackstopAbsorbTest is SetupTest {
                 OracleFacet.countLiveSecondaryOracleFeeds.selector,
                 mockCollateralERC20
             ),
-            abi.encode(uint8(1))
+            abi.encode(uint8(1), uint8(0))
         );
         _fallbackOptedIn(makeAddr("lender7"), makeAddr("borrower7"));
         vm.prank(owner);

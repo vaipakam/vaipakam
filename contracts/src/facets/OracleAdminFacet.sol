@@ -271,14 +271,13 @@ contract OracleAdminFacet {
      * @notice Sets a per-feed staleness override + minimum-valid-answer
      *         floor for a specific Chainlink aggregator.
      * @dev Owner-only (enforced inside `LibVaipakam.setFeedOverride`).
-     *      The two-tier global defaults (ORACLE_VOLATILE_STALENESS,
-     *      ORACLE_STABLE_STALENESS) apply as the fallback — an override
-     *      is consulted only when `maxStaleness > 0`.
-     *
-     *      When the override is active:
-     *        - `maxStaleness` bounds the allowable age (seconds). The
-     *          stable-peg branch is bypassed — operators take explicit
-     *          responsibility for the freshness budget on this feed.
+     *      An override can only make a feed STRICTER (#2742): the two-tier
+     *      global defaults (ORACLE_VOLATILE_STALENESS, ORACLE_STABLE_STALENESS
+     *      and the stable-peg check) always apply, and the override adds
+     *      bounds on top of them, on both the price read and the liquidity
+     *      check:
+     *        - `maxStaleness` is a shorter age budget (seconds), at most
+     *          `ORACLE_STABLE_STALENESS`; a larger value is refused.
      *        - `minValidAnswer` imposes a hard floor on the aggregator's
      *          returned answer, in the aggregator's own decimals. A
      *          reading below this floor triggers `StalePriceData`.
@@ -288,7 +287,7 @@ contract OracleAdminFacet {
      *      {LibVaipakam.FeedOverrideSet}.
      *
      * @param feed           The Chainlink aggregator address.
-     * @param maxStaleness   Max age in seconds. 0 = clear the override.
+     * @param maxStaleness   Max age in seconds, at most 25h. 0 = clear.
      * @param minValidAnswer Minimum acceptable raw answer from this feed.
      *                       0 or negative = no floor (only the baseline
      *                       `answer > 0` sanity check applies).
