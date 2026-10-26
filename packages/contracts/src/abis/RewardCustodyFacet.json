@@ -382,24 +382,6 @@
   },
   {
     "type": "function",
-    "name": "custodyUnclassifiedReturn",
-    "inputs": [
-      {
-        "name": "h",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "fundRewardCustodyRow",
     "inputs": [
       {
@@ -1896,11 +1878,6 @@
   {
     "type": "error",
     "name": "RewardCustodyActivationRequiresRebase",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RewardCustodyActivationRequiresRecoveryArming",
     "inputs": []
   },
   {

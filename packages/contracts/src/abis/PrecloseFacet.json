@@ -2781,11 +2781,6 @@
   },
   {
     "type": "error",
-    "name": "RecoveryAttributionAlreadyArmed",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "RecoveryDeadlineExpired",
     "inputs": []
   },
@@ -2821,17 +2816,6 @@
       },
       {
         "name": "unspent",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "RecoveryReceiptPredatesAttribution",
-    "inputs": [
-      {
-        "name": "sourceRemitId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -3228,11 +3212,6 @@
   {
     "type": "error",
     "name": "RewardCustodyActivationRequiresRebase",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RewardCustodyActivationRequiresRecoveryArming",
     "inputs": []
   },
   {
