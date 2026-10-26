@@ -1632,6 +1632,7 @@ considers it finished.
   - The 5% buffer from the prepayment is returned to the borrower.
   - The accumulated rental fees (minus treasury fee) are made available for the lender to claim.
 - Late fees apply if the NFT 'rental closure' (user status revocation) is delayed beyond the agreed duration.
+- A pro-rata rental (one not charged the full term) owes rent for every day the renter used, and any part of a day counts as a whole day. A rental closed in its first day, even in the same transaction that opened it, owes one day of rent. Without this a renter could take the NFT, use whatever the user right unlocks, and hand it back within a day for nothing. A day already paid by the daily deduction or a partial prepayment is never billed again, and a close at an exact day boundary owes no extra day. The offer form states this rule where the lender chooses pro-rata.
 - Rent is never billed past the agreed term. A rental closed after its maturity, inside the grace period, owes at most its remaining prepaid rental days (the whole remaining prepayment); the time past maturity is charged only as the late fee, drawn from the buffer. A borrower who closes inside grace can therefore always settle, whether or not the daily deductions ran, and every path that settles a rental's accrued rent (repayment, and handing the rental over to a replacement borrower) counts the owed days by this one rule.
 
 ### Late Fees

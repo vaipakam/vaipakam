@@ -2736,6 +2736,15 @@ export function OfferFlow({ side }: { side: Side }) {
                 />
                 {copy.offerFlow.proRataInterest}
               </label>
+              {/* #2741 — a rental's rent is counted in whole days on every
+                  close (repay and obligation handover alike): a part day is
+                  a full day and at least one day is charged. Stated here
+                  because it changes what the borrower pays. */}
+              {form.assetType !== 'erc20' ? (
+                <p className="muted" style={{ fontSize: '0.85rem', margin: 0 }}>
+                  {copy.offerFlow.rentalWholeDaysNote}
+                </p>
+              ) : null}
             </fieldset>
           ) : null}
 

@@ -2673,6 +2673,7 @@
       "advancedOptions": "Erweiterte Optionen",
       "allowPartialRepay": "Dem Kreditnehmer erlauben, in Teilen zurückzuzahlen",
       "proRataInterest": "Zinsen nur für die genutzte Zeit berechnen (anteilig) statt für die volle Laufzeit",
+      "rentalWholeDaysNote": "Die Miete wird in ganzen Tagen berechnet: Ein angefangener Tag zählt als voller Tag, und mindestens ein Tag wird immer berechnet.",
       "continueToReview": "Weiter zur Prüfung",
       "retry": "Erneut versuchen",
       "beforeYouSign": "Vor dem Signieren",

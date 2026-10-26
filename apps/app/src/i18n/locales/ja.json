@@ -2673,6 +2673,7 @@
       "advancedOptions": "詳細オプション",
       "allowPartialRepay": "借り手に分割返済を許可する",
       "proRataInterest": "全期間ではなく、使った時間分だけ利息を請求する（日割り）",
+      "rentalWholeDaysNote": "賃料は日単位で計算されます。1日未満も1日として数え、最低1日分は必ず請求されます。",
       "continueToReview": "確認へ進む",
       "retry": "再試行",
       "beforeYouSign": "署名前に確認",
