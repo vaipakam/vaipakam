@@ -7,10 +7,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  MAX_WEBHOOK_BODY,
-  WebhookBodyTooLargeError,
   parseChainEventPayload,
-  readCappedBody,
   sha256Hex,
   verifyAlchemySignature,
 } from '../src/webhookAuth';
@@ -58,40 +55,6 @@ describe('verifyAlchemySignature', () => {
     expect(await verifyAlchemySignature(body, null, key)).toBe(false);
     expect(await verifyAlchemySignature(body, 'not-hex-at-all', key)).toBe(false);
     expect(await verifyAlchemySignature(body, 'abc', key)).toBe(false); // odd length
-  });
-});
-
-describe('readCappedBody', () => {
-  it('returns a small body unchanged', async () => {
-    const req = new Request('http://localhost/', { method: 'POST', body: 'hello' });
-    expect(await readCappedBody(req)).toBe('hello');
-  });
-
-  it('rejects via Content-Length before reading the stream', async () => {
-    const req = new Request('http://localhost/', {
-      method: 'POST',
-      body: 'tiny',
-      headers: { 'content-length': String(MAX_WEBHOOK_BODY + 1) },
-    });
-    await expect(readCappedBody(req)).rejects.toBeInstanceOf(WebhookBodyTooLargeError);
-  });
-
-  it('rejects an oversized stream even without a Content-Length hint', async () => {
-    const big = 'x'.repeat(MAX_WEBHOOK_BODY + 1024);
-    const req = new Request('http://localhost/', {
-      method: 'POST',
-      // A ReadableStream carries no automatic content-length, so the
-      // cap must trip on the streamed bytes themselves.
-      body: new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode(big));
-          controller.close();
-        },
-      }),
-      // @ts-expect-error — duplex is required by undici for stream bodies
-      duplex: 'half',
-    });
-    await expect(readCappedBody(req)).rejects.toBeInstanceOf(WebhookBodyTooLargeError);
   });
 });
 

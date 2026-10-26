@@ -7,7 +7,7 @@
  * or threw. These cases drive the Worker's own entry point with the
  * bindings on the RAW env, the way Cloudflare delivers them.
  */
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -366,25 +366,7 @@ describe('wrangler.jsonc declares every limiter the code reads', () => {
     }
   });
 
-  it('no source file keeps a limiter of its own', () => {
-    // The only `.limit(` call in the Worker is the one in rateLimit.ts.
-    const src = resolve(HERE, '..', 'src');
-    const files = readdirSync(src).filter((f) => f.endsWith('.ts') && f !== 'rateLimit.ts');
-    expect(files.length).toBeGreaterThan(10);
-    for (const f of files) {
-      expect(readFileSync(resolve(src, f), 'utf8'), f).not.toMatch(/\.limit\(\s*\{/);
-    }
-  });
-
-  it('no source file names a limiter failure of its own', () => {
-    // Every refusal for a slot not taken is named by `slotRefusalStatus`,
-    // so a missing binding and a failing one cannot be folded together
-    // locally. A literal for either outside rateLimit.ts is a local
-    // mapping, which is what the rule replaces.
-    const src = resolve(HERE, '..', 'src');
-    for (const f of readdirSync(src).filter((n) => n.endsWith('.ts') && n !== 'rateLimit.ts')) {
-      const text = readFileSync(resolve(src, f), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
-      expect(text, f).not.toMatch(/['"`]rate[-_]limit[-_](unavailable|binding[-_]missing|not[-_]configured)['"`]/);
-    }
-  });
+  // That no source file calls a binding or names a limiter failure itself
+  // is pinned tree-wide, for every Worker, in
+  // packages/lib/src/publicEndpointRules.test.ts (#2756).
 });

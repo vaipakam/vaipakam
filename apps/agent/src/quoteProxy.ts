@@ -46,6 +46,7 @@
 
 import type { Env } from './env';
 import { slotRefusal, takeCredentialSlot } from './rateLimit';
+import { readJsonBody } from '@vaipakam/lib/requestBody';
 
 interface QuoteRequest {
   chainId: number;
@@ -87,7 +88,9 @@ export async function handle1inchQuote(
   corsOrigin: string,
 ): Promise<Response> {
   // The caller budget was taken at the router (#2755).
-  const body = await parseBody(req);
+  const read = await readJsonBody(req, MAX_QUOTE_BODY_BYTES);
+  if (!read.ok) return jsonErr(corsOrigin, read.status, read.error);
+  const body = parseBody(read.value);
   if (!body) return jsonErr(corsOrigin, 400, 'invalid-payload');
   if (!env.ONEINCH_API_KEY) return jsonErr(corsOrigin, 503, 'oneinch-not-configured');
 
@@ -121,13 +124,10 @@ export async function handle1inchQuote(
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 
-async function parseBody(req: Request): Promise<QuoteRequest | null> {
-  let raw: unknown;
-  try {
-    raw = await req.json();
-  } catch {
-    return null;
-  }
+/** A quote request is a handful of addresses and numbers. */
+export const MAX_QUOTE_BODY_BYTES = 4 * 1024;
+
+function parseBody(raw: unknown): QuoteRequest | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
   if (

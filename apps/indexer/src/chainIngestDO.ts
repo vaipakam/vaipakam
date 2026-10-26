@@ -59,6 +59,20 @@ import {
   runChainIndexerForChain,
   type ChainIndexerResult,
 } from './chainIndexer';
+import { readJsonBody } from '@vaipakam/lib/requestBody';
+import { callerKey } from '@vaipakam/lib/rateLimit';
+
+/** The scan trigger the Worker posts: a chain id and an optional target
+ *  block (#2756). */
+export const MAX_TRIGGER_BODY_BYTES = 4 * 1024;
+
+/** The most push subscribers one chain's ingest object holds (#2756).
+ *  `broadcast()` writes to each of them after a scan, inside the object
+ *  that runs the ingest, so this bounds that fan-out. */
+export const MAX_SUBSCRIBERS_PER_CHAIN = 1_000;
+/** The most push subscribers one client IP holds on one chain (#2756):
+ *  one per open app tab, with room for several. */
+export const MAX_SUBSCRIBERS_PER_IP = 8;
 
 /** Max FAST alarm iterations per single-flight session (3s apart) —
  *  bounds subrequest/wall cost on the hot retry path. */
@@ -517,12 +531,13 @@ export class ChainIngestDO {
       return await this.handleWebSocketUpgrade(req);
     }
 
-    let body: TriggerBody = {};
-    try {
-      body = (await req.json()) as TriggerBody;
-    } catch {
+    // The trigger comes from this Worker, but the DO reads every body the
+    // same capped way (#2756).
+    const read = await readJsonBody(req, MAX_TRIGGER_BODY_BYTES);
+    if (!read.ok || read.value === null || typeof read.value !== 'object') {
       return new Response('bad trigger', { status: 400 });
     }
+    const body = read.value as TriggerBody;
     if (typeof body.chainId !== 'number') {
       return new Response('missing chainId', { status: 400 });
     }
@@ -775,6 +790,21 @@ export class ChainIngestDO {
   }
 
   /**
+   * #2756 — the refusal for a subscribe this object has no room for, or
+   * null. Synchronous on purpose: the caller that accepts a socket calls it
+   * with no await between this and `acceptWebSocket`.
+   */
+  private subscriberCapRefusal(ipTag: string): Response | null {
+    if (this.state.getWebSockets().length >= MAX_SUBSCRIBERS_PER_CHAIN) {
+      return new Response('subscriber-limit', { status: 503 });
+    }
+    if (this.state.getWebSockets(ipTag).length >= MAX_SUBSCRIBERS_PER_IP) {
+      return new Response('subscriber-limit-per-ip', { status: 429 });
+    }
+    return null;
+  }
+
+  /**
    * #757 Phase B — accept a browser WebSocket as a Hibernatable subscriber.
    * `acceptWebSocket` hands the socket to the runtime, so an idle subscriber
    * costs nothing (the DO can evict from memory and is re-instantiated on the
@@ -784,6 +814,19 @@ export class ChainIngestDO {
    * the client keeps polling and shows "Polling", never a false "Live").
    */
   private async handleWebSocketUpgrade(req: Request): Promise<Response> {
+    // #2756 — this object runs the chain's ingest, and `broadcast()` writes
+    // to every socket it holds inside the same object, so how many it holds
+    // is bounded: a cap on the whole chain and a cap per client IP (the
+    // Worker forwards the request's headers, `CF-Connecting-IP` among them).
+    // Each socket is tagged with its IP so the runtime can count them,
+    // hibernated or not. The caps are checked here, before any env or D1
+    // read, and again with no await before the accept below, which is the
+    // check that holds. A refused subscribe is an ordinary HTTP answer; the
+    // app stays on polling and retries with its backoff.
+    const ipTag = `ip:${callerKey(req)}`;
+    const early = this.subscriberCapRefusal(ipTag);
+    if (early) return early;
+
     const chainParam = Number(new URL(req.url).searchParams.get('chain'));
     const chainId =
       Number.isInteger(chainParam) && chainParam > 0 ? chainParam : null;
@@ -831,10 +874,18 @@ export class ChainIngestDO {
       }
     }
 
+    // The authoritative check. The awaits above let other upgrades
+    // interleave, so the counts read before them may be stale; from here to
+    // `acceptWebSocket` there is no await, so the object's single thread
+    // checks and accepts as one step and no two upgrades can both take the
+    // last slot (#2756). The check above only spares a capped caller the
+    // env and D1 reads.
+    const refusal = this.subscriberCapRefusal(ipTag);
+    if (refusal) return refusal;
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
-    this.state.acceptWebSocket(server);
+    this.state.acceptWebSocket(server, [ipTag]);
 
     const hello: PushFrame = {
       t: 'hello',

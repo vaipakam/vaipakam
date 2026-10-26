@@ -11,47 +11,11 @@
  * forward to the DO). Each step fails closed.
  */
 
-/** Alchemy payloads are a few KB; reject anything larger before hashing. */
+/** Alchemy payloads are a few KB; the route reads at most this much
+ *  (`readBodyText` from `@vaipakam/lib/requestBody`) before hashing, so
+ *  an unauthenticated caller can't force unbounded allocation or CPU just
+ *  to be 401'd. */
 export const MAX_WEBHOOK_BODY = 64 * 1024;
-
-/**
- * Read the request body as text with a hard size cap, BEFORE any HMAC work, so
- * an unauthenticated caller can't force unbounded allocation/CPU just to be
- * 401'd. Rejects (throws {@link WebhookBodyTooLargeError}) if `Content-Length`
- * exceeds the cap, or — when the length header is absent/lying — if the
- * streamed bytes exceed it.
- */
-export class WebhookBodyTooLargeError extends Error {}
-
-export async function readCappedBody(req: Request): Promise<string> {
-  const declared = Number(req.headers.get('content-length') ?? '');
-  if (Number.isFinite(declared) && declared > MAX_WEBHOOK_BODY) {
-    throw new WebhookBodyTooLargeError(`content-length ${declared} > cap`);
-  }
-  if (!req.body) return await req.text(); // no stream → tiny/empty body
-  const reader = req.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) {
-      total += value.byteLength;
-      if (total > MAX_WEBHOOK_BODY) {
-        await reader.cancel();
-        throw new WebhookBodyTooLargeError(`streamed ${total} bytes > cap`);
-      }
-      chunks.push(value);
-    }
-  }
-  const joined = new Uint8Array(total);
-  let off = 0;
-  for (const c of chunks) {
-    joined.set(c, off);
-    off += c.byteLength;
-  }
-  return new TextDecoder().decode(joined);
-}
 
 /** Decode a hex string (optionally `0x`-prefixed) to bytes; null if malformed. */
 function hexToBytes(hex: string): Uint8Array<ArrayBuffer> | null {

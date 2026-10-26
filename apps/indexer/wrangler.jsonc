@@ -199,6 +199,12 @@
   //                                      from string + clamped >= 1.
   "vars": {
     "CANCELLED_OFFER_RETENTION_DAYS": "30",
+    // #2756 — the browser origins the WebSocket push channel serves
+    // (`/ws/chain/:id`). The REST API stays open-CORS (T-041); only the
+    // push channel, which the app alone uses and which fans out from the
+    // ingest Durable Object, is gated. The SAME list as the agent's
+    // `FRONTEND_ORIGIN`, which `test/wsSubscribe.test.ts` pins.
+    "FRONTEND_ORIGIN": "https://defi.vaipakam.com,https://app.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com,https://alpha02.vaipakam.com,https://vaipakam-app.dawn-fire-139e.workers.dev",
     // #757 Phase A — enable the DO ingest path (cron→DO AND the webhook→DO
     // forward). While unset/not "true" the cron keeps the legacy inline scan and
     // the webhook 200-no-ops, so deploying the DO never re-routes live ingest by
@@ -225,14 +231,25 @@
         "simple": { "limit": 60, "period": 60 },
       },
       // #1131 Rate Desk phase 3 — per-IP cap on `POST /signed-offers`
-      // (signed-offer book ingest). Same 60/min shape; the route also
-      // no-ops the limit when this binding is absent, so a deploy
-      // without it degrades to validation-only defense.
+      // (signed-offer book ingest). Same 60/min shape. Fails closed
+      // (`@vaipakam/lib/rateLimit`, #2756): a deploy without this binding
+      // refuses every post, so it is never optional.
       {
         "name": "SIGNED_OFFERS_RATELIMIT",
         "type": "ratelimit",
         "namespace_id": "2002",
         "simple": { "limit": 60, "period": 60 },
+      },
+      // #2756 — per-IP cap on WebSocket subscribes (`GET /ws/chain/:id`),
+      // taken before the upgrade reaches the chain's ingest Durable Object.
+      // The app opens one socket per chain per tab and reconnects with a
+      // 1 s to 30 s backoff, so 30 a minute covers several tabs and a
+      // reconnect storm. Fails closed like every limiter here.
+      {
+        "name": "WS_SUBSCRIBE_RATELIMIT",
+        "type": "ratelimit",
+        "namespace_id": "2003",
+        "simple": { "limit": 30, "period": 60 },
       },
     ],
   },

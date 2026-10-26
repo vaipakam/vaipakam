@@ -82,10 +82,21 @@ import {
   type ChainSigChecker,
 } from './walletSigVerify';
 import {
+  MAX_LEGAL_DOC_BYTES,
   sha256Hex,
   storeLegalDocument,
   validateLegalDocument,
 } from './diagLegalDoc';
+import { readFormBody, readJsonBody } from '@vaipakam/lib/requestBody';
+
+/** A signed erasure or status request: a few fields plus a wallet
+ *  signature, which for a smart account (ERC-6492) can run to a few
+ *  kilobytes (#2756). */
+const MAX_SIGNED_REQUEST_BODY_BYTES = 16 * 1024;
+/** A legal-hold placement: the signed payload plus one PDF of at most
+ *  `MAX_LEGAL_DOC_BYTES`, with room for the multipart framing. The
+ *  document's own limit is still checked on the parsed part. */
+const MAX_LEGAL_HOLD_BODY_BYTES = MAX_LEGAL_DOC_BYTES + 64 * 1024;
 
 // ─── Tunables ──────────────────────────────────────────────────────
 
@@ -295,12 +306,9 @@ export async function handleDiagErasure(
     return json({ error: 'erasure_not_configured' }, 503, corsOrigin);
   }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return json({ error: 'invalid_json' }, 400, corsOrigin);
-  }
+  const read = await readJsonBody(req, MAX_SIGNED_REQUEST_BODY_BYTES);
+  if (!read.ok) return json({ error: read.error }, read.status, corsOrigin);
+  const body = read.value;
   const parsed = parseSignedRequest(body);
   if (!parsed.ok) {
     return json({ error: 'invalid_request', reason: parsed.reason }, 400, corsOrigin);
@@ -397,12 +405,9 @@ export async function handleDiagErasureStatus(
     return json({ error: 'erasure_not_configured' }, 503, corsOrigin);
   }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return json({ error: 'invalid_json' }, 400, corsOrigin);
-  }
+  const read = await readJsonBody(req, MAX_SIGNED_REQUEST_BODY_BYTES);
+  if (!read.ok) return json({ error: read.error }, read.status, corsOrigin);
+  const body = read.value;
   const parsed = parseSignedRequest(body);
   if (!parsed.ok) {
     return json({ error: 'invalid_request', reason: parsed.reason }, 400, corsOrigin);
@@ -654,12 +659,10 @@ export async function handleDiagLegalHold(
   let payloadRaw: unknown;
   let documentBytes: ArrayBuffer | null = null;
   if ((req.headers.get('content-type') ?? '').includes('multipart/form-data')) {
-    let form: FormData;
-    try {
-      form = await req.formData();
-    } catch {
-      return json({ error: 'invalid_form' }, 400, corsOrigin);
-    }
+    const read = await readFormBody(req, MAX_LEGAL_HOLD_BODY_BYTES);
+    if (!read.ok) return json({ error: read.error }, read.status, corsOrigin);
+    const form = read.form;
+    if (!form) return json({ error: 'invalid_form' }, 400, corsOrigin);
     const payloadField = form.get('payload');
     if (typeof payloadField !== 'string') {
       return json(
@@ -678,11 +681,9 @@ export async function handleDiagLegalHold(
       documentBytes = await docField.arrayBuffer();
     }
   } else {
-    try {
-      payloadRaw = await req.json();
-    } catch {
-      return json({ error: 'invalid_json' }, 400, corsOrigin);
-    }
+    const read = await readJsonBody(req, MAX_SIGNED_REQUEST_BODY_BYTES);
+    if (!read.ok) return json({ error: read.error }, read.status, corsOrigin);
+    payloadRaw = read.value;
   }
 
   const parsed = parseLegalHoldRequest(payloadRaw);

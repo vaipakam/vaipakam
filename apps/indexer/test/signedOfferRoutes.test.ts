@@ -30,6 +30,7 @@ import { DIAMOND_SIGNED_OFFER_ABI } from '../src/diamondAbi';
 import {
   handleSignedOfferPost,
   handleSignedOffersGet,
+  MAX_SIGNED_OFFER_BODY_BYTES,
 } from '../src/signedOfferRoutes';
 import { createSqliteD1 } from './helpers/sqliteD1';
 import {
@@ -93,6 +94,10 @@ function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
   };
 }
 
+/** A limiter that always grants. The POST route fails closed without a
+ *  bound limiter (#2756), so every POST env carries one. */
+const OPEN_LIMITER = { limit: async () => ({ success: true }) };
+
 /** Minimal D1 stub: the existing-row SELECT answers `existingStatus`
  *  (null = no row), every write reports one changed row. */
 function makeEnv(existingStatus: string | null): Env {
@@ -112,6 +117,7 @@ function makeEnv(existingStatus: string | null): Env {
   } as unknown as D1Database;
   return {
     DB: db,
+    SIGNED_OFFERS_RATELIMIT: OPEN_LIMITER,
     // Unroutable on purpose — only the 201 path's BEST-EFFORT chain-state
     // gate touches it, and a failed read is accept-and-warn by design.
     RPC_BASE_SEPOLIA: 'http://127.0.0.1:9',
@@ -164,6 +170,49 @@ describe('POST /signed-offers — re-post status branching (Codex #1145 r2)', ()
     expect(res.status).toBe(201);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body).toEqual({ chainId: CHAIN_ID, orderHash: orderHashOf(order) });
+  });
+});
+
+describe('POST /signed-offers — bounded work before any read (#2756)', () => {
+  it('a missing limiter binding refuses 503 instead of serving unthrottled', async () => {
+    const env = makeEnv(null);
+    delete (env as Partial<Env>).SIGNED_OFFERS_RATELIMIT;
+    const res = await post(env, makeOrder());
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'rate-limit-binding-missing' });
+  });
+
+  it('a refused slot answers 429 before the body is read', async () => {
+    const env = {
+      ...makeEnv(null),
+      SIGNED_OFFERS_RATELIMIT: { limit: async () => ({ success: false }) },
+    } as Env;
+    const res = await post(env, makeOrder());
+    expect(res.status).toBe(429);
+    expect(await res.json()).toEqual({ error: 'rate-limited' });
+  });
+
+  it('a body declared over the cap is refused 413 without parsing', async () => {
+    const big = 'x'.repeat(MAX_SIGNED_OFFER_BODY_BYTES + 1);
+    const req = new Request('http://indexer.test/signed-offers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: big,
+    });
+    const res = await handleSignedOfferPost(req, makeEnv(null));
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: 'body-too-large' });
+  });
+
+  it('malformed JSON is the shared 400 invalid-json', async () => {
+    const req = new Request('http://indexer.test/signed-offers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{not json',
+    });
+    const res = await handleSignedOfferPost(req, makeEnv(null));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'invalid-json' });
   });
 });
 
@@ -780,7 +829,11 @@ function stubRpc(state: { nonceUsed: boolean; filled: bigint }): void {
 /** Real-SQLite env pointed at the fetch-stubbed RPC. */
 function makeChainEnv() {
   const { db, d1 } = createSqliteD1([MIGRATION_0033]);
-  const env = { DB: d1, RPC_BASE_SEPOLIA: RPC_MOCK } as unknown as Env;
+  const env = {
+    DB: d1,
+    RPC_BASE_SEPOLIA: RPC_MOCK,
+    SIGNED_OFFERS_RATELIMIT: OPEN_LIMITER,
+  } as unknown as Env;
   return { env, db };
 }
 
