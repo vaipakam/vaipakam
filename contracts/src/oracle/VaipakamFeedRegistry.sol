@@ -26,8 +26,8 @@ import {TestnetChains} from "../compliance/TestnetChains.sol";
  *            pair name, whose quote is the symbol registered for the quote
  *            denomination (so an ETH-quoted feed cannot be filed as a USD
  *            price); and the feed's latest answer is positive and no older
- *            than its declared heartbeat. What it cannot prove is which token
- *            a pair name means (native USDC or bridged USDbC both trade near
+ *            than its declared heartbeat plus {LIVENESS_GRACE}. What it
+ *            cannot prove is which token a pair name means (native USDC or bridged USDbC both trade near
  *            one dollar). That binding is decided off-chain, from the
  *            reviewed bindings file, and every change carries the SHA-256 and
  *            date of the Chainlink directory file it was checked against.
@@ -160,6 +160,16 @@ contract VaipakamFeedRegistry is Ownable2Step {
     uint8 public constant MAX_DECIMALS = 36;
     /// @dev Gas each probe of a token or feed may spend.
     uint256 internal constant PROBE_GAS = 100_000;
+    /// @notice How late a feed's round may be, past its heartbeat, and the
+    ///         feed still count as live. The probe asks whether the feed is
+    ///         alive, not whether its price is fresh enough to use (the
+    ///         OracleFacet's own staleness rule decides that): a heartbeat is
+    ///         when the next round is triggered, and the round lands some
+    ///         time after, so a 27-second Polygon feed is routinely a few
+    ///         seconds past it. Without a grace such a change would fail or
+    ///         pass by chance on the block it landed in. A feed that has
+    ///         stopped is late by far more than this.
+    uint256 public constant LIVENESS_GRACE = 1 hours;
 
     /// @notice Whether this chain may set a delay below {MIN_DELAY}.
     bool public immutable testnet;
@@ -565,7 +575,8 @@ contract VaipakamFeedRegistry is Ownable2Step {
     }
 
     /// @dev `latestRoundData()` answered with a positive answer updated no
-    ///      later than now and no more than `heartbeat` seconds ago.
+    ///      later than now and no more than `heartbeat` + {LIVENESS_GRACE}
+    ///      seconds ago.
     function _liveWithin(address feed, uint32 heartbeat) private view returns (bool) {
         (bool success, bytes memory ret) =
             feed.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("latestRoundData()"));
@@ -574,6 +585,6 @@ contract VaipakamFeedRegistry is Ownable2Step {
         // malformed round id instead of reading the feed as not live.
         (, int256 answer,, uint256 updatedAt,) = abi.decode(ret, (uint256, int256, uint256, uint256, uint256));
         if (answer <= 0 || updatedAt == 0 || updatedAt > block.timestamp) return false;
-        return block.timestamp - updatedAt <= heartbeat;
+        return block.timestamp - updatedAt <= uint256(heartbeat) + LIVENESS_GRACE;
     }
 }

@@ -189,10 +189,19 @@ contract VaipakamFeedRegistryTest is Test {
     }
 
     function test_StaleFeedRefused() public {
-        linkUsd.set(2000e8, block.timestamp - 86401);
+        linkUsd.set(2000e8, block.timestamp - 86400 - reg.LIVENESS_GRACE() - 1);
         VaipakamFeedRegistry.Change[] memory cs = _change(link, USD, address(0), address(linkUsd), "LINK / USD");
         vm.prank(BOT);
         vm.expectRevert(abi.encodeWithSelector(VaipakamFeedRegistry.FeedNotLive.selector, 0, address(linkUsd)));
+        reg.propose(cs, DIR, DIR_DATE);
+    }
+
+    /// A round that lands after its heartbeat is late, not dead: up to the
+    /// grace the feed still counts as live.
+    function test_FeedLatePastItsHeartbeatWithinTheGraceIsLive() public {
+        linkUsd.set(2000e8, block.timestamp - 86400 - reg.LIVENESS_GRACE());
+        VaipakamFeedRegistry.Change[] memory cs = _change(link, USD, address(0), address(linkUsd), "LINK / USD");
+        vm.prank(BOT);
         reg.propose(cs, DIR, DIR_DATE);
     }
 

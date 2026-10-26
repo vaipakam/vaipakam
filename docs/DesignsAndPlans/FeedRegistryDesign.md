@@ -64,7 +64,13 @@ date of the directory file it was checked against.
 - the feed answers `decimals()` with the declared value;
 - the feed answers `description()` with the declared pair name;
 - the feed answers `latestRoundData()` with a positive answer updated within
-  its declared heartbeat.
+  its declared heartbeat plus a one-hour grace. The check asks whether the
+  feed is alive, not whether its price is fresh enough to use (the oracle's
+  own staleness rule decides that). A heartbeat is when the next round is
+  triggered and the round lands some time after, so a feed with a
+  27-second heartbeat (several on Polygon) is routinely a few seconds past
+  it; without the grace such a change would pass or fail by chance on the
+  block it landed in. A feed that has stopped is late by far more.
 
 The contract cannot prove which token a pair name means. That is the binding,
 section 5.
@@ -135,7 +141,7 @@ writes the file:
    `skipped` instead, with every other feed the tool did not draft and why.
 4. It reads each drafted binding on chain the way the registry will check
    it: the feed's `description()` becomes the binding's pair name, and the
-   feed's decimals, the age of its latest answer against its heartbeat and
+   feed's decimals, the age of its latest answer against its heartbeat plus the grace, and
    the token's decimals must all agree. A binding that fails a read moves to
    `review`, so the file never carries one the registry would refuse.
 

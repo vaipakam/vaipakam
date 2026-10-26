@@ -2,8 +2,10 @@
 // hand-written inputs. The network and the chain are not touched.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { getAddress } from 'viem';
 import {
+  LIVENESS_GRACE_SEC,
   QUOTES,
   applyChainReads,
   checkManual,
@@ -166,11 +168,15 @@ test('on-chain reads: the feed description becomes the pair, and any disagreemen
   const now = 1_000_000n;
   const reads = new Map([
     [usdc, { description: 'USDC / USD', feedDecimals: 8, answer: 100_000_000n, updatedAt: now - 60n, tokenDecimals: 6 }],
-    [link, { description: 'LINK / USD', feedDecimals: 8, answer: 1n, updatedAt: now - 86_401n, tokenDecimals: 18 }],
+    [link, { description: 'LINK / USD', feedDecimals: 8, answer: 1n, updatedAt: now - 86_400n - LIVENESS_GRACE_SEC - 1n, tokenDecimals: 18 }],
   ]);
   const c = applyChainReads(r.bindings, reads, now);
   assert.deepEqual(c.kept.map((b) => b.symbol), ['USDC']);
-  assert.match(c.review[0].reason, /older than its 86400s heartbeat/);
+  assert.match(c.review[0].reason, /older than its 86400s heartbeat plus the registry's 3600s grace/);
+
+  // A round past its heartbeat but inside the grace is late, not dead.
+  const late = new Map([[link, { description: 'LINK / USD', feedDecimals: 8, answer: 1n, updatedAt: now - 86_400n - LIVENESS_GRACE_SEC, tokenDecimals: 18 }]]);
+  assert.equal(applyChainReads([link], late, now).kept.length, 1);
 
   const wrong = new Map([[usdc, { description: 'USD Coin / ETH', feedDecimals: 18, answer: 1n, updatedAt: now, tokenDecimals: 18 }]]);
   const w = applyChainReads([usdc], wrong, now);
@@ -220,4 +226,11 @@ test('arguments: a chain is required, unknown flags and bad dates are refused', 
   assert.throws(() => parseArgs(['--chain', 'base', '--date', '2026-10-26']), /YYYYMMDD/);
   assert.throws(() => parseArgs(['--chain', 'base', '--rpc']), /needs a value/);
   assert.deepEqual(parseArgs(['--chain', 'base', '--date', '20261026']), { chain: 'base', date: '20261026' });
+});
+
+test("the tool's liveness grace is the registry's", () => {
+  const sol = readFileSync(new URL('../../../contracts/src/oracle/VaipakamFeedRegistry.sol', import.meta.url), 'utf8');
+  const m = sol.match(/uint256 public constant LIVENESS_GRACE = (\d+) hours;/);
+  assert.ok(m, 'LIVENESS_GRACE declaration not found in VaipakamFeedRegistry.sol');
+  assert.equal(BigInt(m[1]) * 3600n, LIVENESS_GRACE_SEC);
 });

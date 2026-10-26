@@ -36,7 +36,8 @@
  *      chain by default) the way the registry will check it: the feed's
  *      `description()` (which becomes the binding's `pair`), its
  *      `decimals()` against the directory, its latest answer against the
- *      heartbeat, and the token's `decimals()` against the token list. A
+ *      heartbeat (plus the registry's one-hour grace), and the token's
+ *      `decimals()` against the token list. A
  *      binding that fails a read moves to `review`, so the file carries no
  *      binding the registry would refuse.
  *
@@ -375,6 +376,11 @@ export function resolveBindings(kept, { coingecko, coinmarketcap, tokenList }, m
 
 // ---------------------------------------------------------------- step 4
 
+/** The registry's `LIVENESS_GRACE`: how late past its heartbeat a feed's
+ * round may be and the feed still count as live. Kept equal to the contract's
+ * constant so the file carries no binding the registry would refuse. */
+export const LIVENESS_GRACE_SEC = 3600n;
+
 /**
  * Applies the on-chain reads to the drafted bindings: a binding whose reads
  * fail or disagree moves to review; the rest take the feed's own
@@ -401,7 +407,9 @@ export function applyChainReads(bindings, reads, nowSec) {
         problems.push(`feed prices "${feedBase}" but the token was resolved as "${b.symbol}" (a renamed asset? settle the identity with the issuer)`);
       }
       if (!(r.answer > 0n)) problems.push('feed answer is not positive');
-      if (nowSec - r.updatedAt > BigInt(b.heartbeat)) problems.push(`feed answer is older than its ${b.heartbeat}s heartbeat`);
+      if (nowSec - r.updatedAt > BigInt(b.heartbeat) + LIVENESS_GRACE_SEC) {
+        problems.push(`feed answer is older than its ${b.heartbeat}s heartbeat plus the registry's ${LIVENESS_GRACE_SEC}s grace`);
+      }
       if (b.tokenDecimals !== undefined && r.tokenDecimals !== b.tokenDecimals) {
         problems.push(`token decimals ${r.tokenDecimals}, token list says ${b.tokenDecimals}`);
       }
