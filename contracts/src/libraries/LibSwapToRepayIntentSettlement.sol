@@ -5,7 +5,6 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {LibCloseoutFreeze} from "./LibCloseoutFreeze.sol";
-import {LibCollateralSettlement} from "./LibCollateralSettlement.sol";
 import {LibSettlement} from "./LibSettlement.sol";
 import {LibPrepayCleanup} from "./LibPrepayCleanup.sol";
 import {LibVPFIDiscount} from "./LibVPFIDiscount.sol";
@@ -235,19 +234,13 @@ library LibSwapToRepayIntentSettlement {
             }
         }
 
-        // ── Step 4: live floor re-check (Codex round-2 P1 #8 +
-        //    round-10 P1 #5 + round-11 P1 #3 — add `lateFee`) ───────
+        // ── Step 4: the live floor (Codex round-2 P1 #8) is checked by
+        //    the waterfall itself: `_runSettlement` refuses a delivery
+        //    below `lenderDue + treasuryShare` of the same repayment plan
+        //    that pays out, which is `LibCollateralSettlement.liveFloor`
+        //    (#2740 — one split, so the floor and the payout cannot
+        //    disagree). The late fee is in that plan.
         uint256 lateFee = LibVaipakam.calculateLateFee(loanId);
-        uint256 liveLenderLeg = LibCollateralSettlement.principalPlusAccruedInterest(
-            loanId, block.timestamp
-        );
-        uint256 liveTreasuryLeg = LibCollateralSettlement.treasuryAndPrecloseFee(
-            loanId, block.timestamp
-        );
-        uint256 liveFloor = liveLenderLeg + liveTreasuryLeg + lateFee;
-        if (actualDelivered < liveFloor) {
-            revert IntentDeliveredBelowLiveFloor(actualDelivered, liveFloor);
-        }
 
         // ── Step 5 (#1566 slice 3): the whole lot is consumed ───────
         // The LOP took exactly the committed lot from the vault to the

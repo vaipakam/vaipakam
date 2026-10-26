@@ -1161,6 +1161,21 @@ sale proceeds, without weakening the lender's default rights.
   treasury entitlement, and any required marketplace fee legs. The
   borrower may ask for more; the excess belongs to the current borrower
   position holder after the lender and treasury are satisfied.
+- A sale that closes the loan owes exactly what a full repayment at the
+  same moment would owe, and splits it the same way: principal plus
+  interest (the full-term coupon on a full-term loan), plus the late fee
+  when the sale lands after the due date but inside grace. The
+  treasury's share is its usual cut of that interest and late fee, paid
+  out of it, so the lender receives the rest. The treasury share is never
+  charged on top of the lender's whole interest. So selling the
+  collateral never costs the borrower more than repaying. Every listing
+  floor, every fill-time check and every payout reads this one split, so
+  a floor and the payout it protects cannot disagree. A listing whose
+  legs are fixed for a later moment (a Dutch listing fixes them at the
+  auction's end) prices interest and the late fee at that moment. A
+  borrow-or-sell listing posted before any lender accepts hedges the most
+  this amount can reach before the grace boundary: the worst-case interest
+  over the term and grace, plus the late fee at the boundary.
 - Settlement recipients must follow the current Vaipakam position NFT
   owners at fill time, not only the original lender and borrower
   wallets. This preserves secondary-transfer semantics for both

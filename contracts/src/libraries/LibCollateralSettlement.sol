@@ -3,160 +3,80 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
-import {LibEntitlement} from "./LibEntitlement.sol";
+import {LibSettlement} from "./LibSettlement.sol";
 
 /**
  * @title LibCollateralSettlement
- * @notice Closed-form math for the live debt + settlement waterfall on a
- *         T-086 prepay collateral listing (Seaport-mediated sale of the
- *         borrower's locked collateral NFT while the loan is still active).
+ * @notice The lender and treasury legs a collateral-sale close-out owes:
+ *         a T-086 prepay or parallel collateral listing (a Seaport sale of
+ *         the borrower's locked collateral while the loan is live) and a
+ *         swap-to-repay intent fill.
  *
- *         Formula (per
- *         `docs/DesignsAndPlans/NFTCollateralSaleAndAuction.md` §5.2):
+ *         A sale that closes the loan is a proper close, so it owes what a
+ *         full repayment owes at the same instant and splits it the same
+ *         way. The legs are therefore read from {LibSettlement.computeRepayment},
+ *         the plan `RepayFacet.repayLoan` settles with, and never computed
+ *         here:
  *
  *         ```
- *         liveFloor(loanId, asOfTimestamp)
- *             = principal + accruedInterest(asOfTimestamp)
- *             + (treasuryFeeBps + precloseFeeBps) × accruedInterest(asOfTimestamp) / 10000
+ *         lenderLeg   = principal + lender share of (interest + late fee)
+ *         treasuryLeg = treasury share of (interest + late fee)
+ *         liveFloor   = lenderLeg + treasuryLeg
+ *                     = principal + interest + late fee
  *         ```
  *
- *         The three exposed helpers correspond to the three Seaport
- *         consideration items the listing executor will construct + the
- *         zone callback will re-verify at fill time:
+ *         where `interest` is {LibEntitlement.settlementInterestNet} (the
+ *         full-term coupon on a full-term loan, the accrual otherwise, net
+ *         of interest already paid) and the treasury share is a cut OF that
+ *         amount at the loan's snapshotted rate, not a charge on top of it.
  *
- *         | helper                            | maps to                              |
- *         |-----------------------------------|--------------------------------------|
- *         | {principalPlusAccruedInterest}    | `consideration[0]` (lender amount)   |
- *         | {treasuryAndPrecloseFee}          | `consideration[1]` (treasury amount) |
- *         | {liveFloor}                       | sum (minimum aggregate floor price)  |
+ *         | helper       | maps to                                          |
+ *         |--------------|--------------------------------------------------|
+ *         | {saleLegs}   | `consideration[0]` (lender), `consideration[1]` (treasury) |
+ *         | {liveFloor}  | their sum: the least the sale must deliver       |
  *
- *         The borrower's residual (`consideration[2]`) is whatever the
- *         signed `askPrice` is above `liveFloor`; the executor computes
- *         that directly from the order, not via this library.
+ *         The borrower's residual (`consideration[2]`) is whatever the sale
+ *         raises above {liveFloor}; the executor computes it from the order.
  *
- * @dev    Pure-math view library. No state writes; no events. The library
- *         reads the loan record + the protocol's treasury-fee config via
- *         {LibVaipakam} and the canonical pro-rata interest helper via
- *         {LibEntitlement.accruedInterestToTime} — same accrual model the
- *         RepayFacet / PrecloseFacet flows use today, so the floor math
- *         can never disagree with what those facets credit.
+ *         Not applied here: the lender's VPFI yield-fee discount, which
+ *         repayment resolves at settlement by shifting value from the
+ *         treasury leg to the lender leg. It never changes {liveFloor}.
  *
- *         The preclose-fee summand defaults to `0` while
- *         `cfgPrecloseFeeBps` is not yet wired to {LibVaipakam}; the
- *         executor PR (design doc §13 step 5) adds the config slot +
- *         setter, at which point {treasuryAndPrecloseFee} starts
- *         summing it in without an API change here. The formula
- *         structure matches §5.2 today; only the fee summand widens
- *         later.
+ * @dev    View library; no state writes, no events.
  */
 library LibCollateralSettlement {
-    /// @notice Lender's settlement entitlement at `asOfTimestamp`:
-    ///         `loan.principal + settlementInterest(asOfTimestamp)`.
-    /// @dev    Routes through {LibEntitlement.settlementInterest}, NOT
-    ///         the raw {accruedInterestToTime} primitive. This is the
-    ///         load-bearing distinction for loans created with
-    ///         `loan.useFullTermInterest == true` (lender promised the
-    ///         full coupon regardless of early close): `settlementInterest`
-    ///         returns `fullTermInterest(principal, rateBps, durationDays)`
-    ///         for those loans and `accruedInterestToTime` (whole-day
-    ///         pro-rata) otherwise. Using only `accruedInterestToTime`
-    ///         here would understate the lender's floor on full-term
-    ///         loans and let a Seaport prepay sale close the loan below
-    ///         the lender's contracted entitlement.
-    ///
-    ///         Same helper is the canonical source RepayFacet,
-    ///         PrecloseFacet, RefinanceFacet, and PartialWithdrawalFacet
-    ///         already use at settlement, so the floor we sign here
-    ///         can never disagree with what those facets credit on a
-    ///         parallel proper close.
-    function principalPlusAccruedInterest(uint256 loanId, uint256 asOfTimestamp)
+    /// @notice The lender and treasury legs of a sale that closes `loanId`
+    ///         at `asOfTimestamp`: the repayment plan's `lenderDue` and
+    ///         `treasuryShare` at that instant, with the late fee the loan
+    ///         would owe then.
+    /// @dev    Monotonic non-decreasing in `asOfTimestamp` for a fixed loan
+    ///         (interest and the late fee only grow), which is what lets a
+    ///         Dutch listing fix its legs at the auction's end and still
+    ///         cover every earlier fill.
+    function saleLegs(uint256 loanId, uint256 asOfTimestamp)
         internal
         view
-        returns (uint256)
+        returns (uint256 lenderLeg, uint256 treasuryLeg)
     {
         LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
-        // #408 / #410 (2026-06-12) — route through `settlementInterestNet`
-        // so partial-repay and periodic-settlement credits (held in
-        // `loan.interestSettled`) net against the gross floor. Pre-#410
-        // this used the bare `settlementInterest`, which on a partial-
-        // repay-then-parallel-sale path would have OVER-charged the
-        // buyer (the buyer's settlement should not re-pay interest
-        // the borrower already paid). The floor model + credit pair
-        // collapses every settlement entry point to the same formula.
-        return loan.principal + LibEntitlement.settlementInterestNet(loan, asOfTimestamp);
+        LibSettlement.ERC20Settlement memory plan = LibSettlement.computeRepayment(
+            loan,
+            LibVaipakam.calculateLateFeeAt(loanId, asOfTimestamp),
+            asOfTimestamp
+        );
+        return (plan.lenderDue, plan.treasuryShare);
     }
 
-    /// @notice Treasury + preclose fee entitlement at `asOfTimestamp`:
-    ///         `settlementInterest × (treasuryFeeBps + precloseFeeBps) / 10000`.
-    /// @dev    Uses the same `settlementInterest` value as the lender
-    ///         leg — the treasury cut is a fraction of the lender's
-    ///         owed interest, so the two amounts MUST share the same
-    ///         interest basis. For pro-rata loans this is whole-day-
-    ///         rounded accrual; for `useFullTermInterest == true` loans
-    ///         it's the full promised coupon, even at a pre-maturity
-    ///         sale.
-    ///
-    ///         `precloseFeeBps` is currently treated as `0`; the
-    ///         {NFTPrepayListingFacet} / {CollateralListingExecutor} PR
-    ///         (design doc §13 step 5) adds `cfgPrecloseFeeBps()` to
-    ///         {LibVaipakam} and threads it into the sum here. The
-    ///         structure of the formula matches §5.2 of the design doc.
-    ///
-    ///         Returns `0` when the loan has no settlement-interest
-    ///         obligation yet — `asOfTimestamp <= loan.startTime` AND
-    ///         `useFullTermInterest == false` (full-term loans owe the
-    ///         full coupon from the first moment).
-    function treasuryAndPrecloseFee(uint256 loanId, uint256 asOfTimestamp)
-        internal
-        view
-        returns (uint256)
-    {
-        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
-        // #408 / #410 (2026-06-12) — must use the SAME interest basis
-        // as `principalPlusAccruedInterest` above, which now nets
-        // against `interestSettled`. Symmetry is load-bearing: a
-        // partial-repaid loan's parallel-sale would otherwise charge
-        // treasury on the FULL gross while the lender receives only
-        // the net — accounting drift.
-        uint256 interestOwed = LibEntitlement.settlementInterestNet(loan, asOfTimestamp);
-        if (interestOwed == 0) return 0;
-
-        // Preclose fee summand kept explicit at 0 here so that:
-        //  (a) the formula structure exactly mirrors design doc §5.2;
-        //  (b) the §13 step-5 PR can drop in a single `cfgPrecloseFeeBps()`
-        //      read with a one-line diff, no surrounding shape changes.
-        uint256 precloseFeeBps = 0;
-        // #957 (#921 item 6) — read the loan's snapshotted treasury BPS, NOT
-        // the live knob, so a parallel-sale floor / settlement reflects the
-        // economics the loan was originated under.
-        uint256 feeBpsSum = LibVaipakam.effectiveTreasuryFeeBps(loan) + precloseFeeBps;
-
-        return (interestOwed * feeBpsSum) / LibVaipakam.BASIS_POINTS;
-    }
-
-    /// @notice The minimum aggregate sale price for a Seaport prepay
-    ///         listing at `asOfTimestamp`. Equals
-    ///         `principalPlusAccruedInterest + treasuryAndPrecloseFee`.
-    ///         Any signed listing whose total of `consideration[0..2]` is
-    ///         below this floor MUST be rejected by the ERC-1271 delegate
-    ///         (sign-time) and by the zone `validateOrder` callback
-    ///         (fill-time, defence against `Seaport.validate()`
-    ///         pre-registration per design doc §5.7).
-    /// @dev    The function is monotonic non-decreasing in `asOfTimestamp`
-    ///         for a fixed loan (interest only accrues, never reverses) —
-    ///         a Seaport order signed at `t0` and filled at `t1 > t0` will
-    ///         see an equal-or-higher floor at fill time. The 2% buffer
-    ///         documented in the design doc (§5.2 closing paragraph) is
-    ///         the borrower-side workaround for that drift; this library
-    ///         neither imposes nor relaxes the buffer — it just reports
-    ///         the exact floor at the queried timestamp.
+    /// @notice The least a sale closing `loanId` at `asOfTimestamp` must
+    ///         deliver: `lenderLeg + treasuryLeg`, which is principal plus
+    ///         interest plus the late fee. Any listing below it is refused
+    ///         at sign time and again at fill time.
     function liveFloor(uint256 loanId, uint256 asOfTimestamp)
         internal
         view
         returns (uint256)
     {
-        return
-            principalPlusAccruedInterest(loanId, asOfTimestamp) +
-            treasuryAndPrecloseFee(loanId, asOfTimestamp);
+        (uint256 lenderLeg, uint256 treasuryLeg) = saleLegs(loanId, asOfTimestamp);
+        return lenderLeg + treasuryLeg;
     }
 }

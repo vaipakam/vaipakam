@@ -7,23 +7,21 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /// @title LibCollateralSettlementTest
-/// @notice Unit tests for the closed-form floor formula library
-///         (`LibCollateralSettlement`) introduced as T-086 step 3 of
+/// @notice Unit tests for the collateral-sale legs
+///         (`LibCollateralSettlement`), T-086 step 3 of
 ///         `docs/DesignsAndPlans/NFTCollateralSaleAndAuction.md`.
 ///
-///         The library provides three view helpers:
+///         The library provides two view helpers:
 ///
-///           - `principalPlusAccruedInterest(loanId, asOfTimestamp)`
-///           - `treasuryAndPrecloseFee(loanId, asOfTimestamp)`
-///           - `liveFloor(loanId, asOfTimestamp)` (sum of the above)
+///           - `saleLegs(loanId, asOfTimestamp)` → (lender leg, treasury leg)
+///           - `liveFloor(loanId, asOfTimestamp)` (their sum)
 ///
-///         These map 1:1 to the three Seaport consideration items the
-///         step-5 executor will sign + the zone callback will re-verify
-///         at fill time. The accrued-interest math uses the same
-///         `LibEntitlement.accruedInterestToTime` path RepayFacet +
-///         PrecloseFacet already use, so a Seaport prepay-listing close
-///         can never disagree with a parallel proper close on the same
-///         loan.
+///         #2740 — both are the full-repayment split at that instant
+///         (`LibSettlement.computeRepayment`): the lender leg is principal
+///         plus the lender's share of interest and late fee, the treasury
+///         leg is the treasury's share, and the floor is principal +
+///         interest + late fee. The treasury's share is a cut OF the
+///         interest, never a charge on top of it.
 ///
 /// @dev    The library is `view`, not `pure`: it reads `loan.principal`
 ///         + `loan.startTime` + `loan.interestRateBps` from
@@ -108,6 +106,14 @@ contract LibCollateralSettlementTest is SetupTest {
         return (principal * rateBps * elapsedDays) / (LCS_DAYS_PER_YEAR * BASIS_POINTS);
     }
 
+    function _lenderLeg(uint256 id, uint256 asOf) internal view returns (uint256 lenderLeg) {
+        (lenderLeg,) = TestMutatorFacet(address(diamond)).getSaleLegs(id, asOf);
+    }
+
+    function _treasuryLeg(uint256 id, uint256 asOf) internal view returns (uint256 treasuryLeg) {
+        (, treasuryLeg) = TestMutatorFacet(address(diamond)).getSaleLegs(id, asOf);
+    }
+
     // ─── 1. Day-zero: no accrued interest yet ───────────────────────────
 
     function test_liveFloor_atStartTime_returnsPrincipalOnly() public view {
@@ -116,14 +122,13 @@ contract LibCollateralSettlementTest is SetupTest {
         );
         assertEq(floor, PRINCIPAL, "floor at t=startTime is just principal");
 
-        uint256 principalLeg = TestMutatorFacet(address(diamond))
-            .getPrincipalPlusAccruedInterest(TEST_LOAN_ID, block.timestamp);
+        uint256 principalLeg = _lenderLeg(TEST_LOAN_ID, block.timestamp);
         assertEq(principalLeg, PRINCIPAL, "lender leg is principal alone");
 
-        uint256 feeLeg = TestMutatorFacet(address(diamond)).getTreasuryAndPrecloseFee(
+        uint256 feeLeg = _treasuryLeg(
             TEST_LOAN_ID, block.timestamp
         );
-        assertEq(feeLeg, 0, "treasury+preclose fee zero when accrued=0");
+        assertEq(feeLeg, 0, "treasury leg zero when accrued=0");
     }
 
     function test_liveFloor_beforeStartTime_returnsPrincipalOnly() public view {
@@ -150,30 +155,32 @@ contract LibCollateralSettlementTest is SetupTest {
         assertGt(accrued, 328e18);
         assertLt(accrued, 329e18);
 
-        uint256 expectedPrincipalLeg = PRINCIPAL + accrued;
+        // #2740 — the treasury leg is a cut OF the interest: the lender
+        // gets the rest, and the floor is principal + interest.
         uint256 expectedFeeLeg = (accrued * DEFAULT_TREASURY_FEE_BPS) / BASIS_POINTS;
-        uint256 expectedFloor = expectedPrincipalLeg + expectedFeeLeg;
+        uint256 expectedPrincipalLeg = PRINCIPAL + accrued - expectedFeeLeg;
+        uint256 expectedFloor = PRINCIPAL + accrued;
 
         assertEq(
-            TestMutatorFacet(address(diamond)).getPrincipalPlusAccruedInterest(
+            _lenderLeg(
                 TEST_LOAN_ID, block.timestamp
             ),
             expectedPrincipalLeg,
-            "lender leg = principal + accrued"
+            "lender leg = principal + accrued - treasury share"
         );
         assertEq(
-            TestMutatorFacet(address(diamond)).getTreasuryAndPrecloseFee(
+            _treasuryLeg(
                 TEST_LOAN_ID, block.timestamp
             ),
             expectedFeeLeg,
-            "treasury+preclose leg = accrued * 100bps / 10000"
+            "treasury leg = accrued * 100bps / 10000"
         );
         assertEq(
             TestMutatorFacet(address(diamond)).getLiveFloor(
                 TEST_LOAN_ID, block.timestamp
             ),
             expectedFloor,
-            "liveFloor = principalLeg + feeLeg"
+            "liveFloor = principal + accrued, the legs' sum"
         );
     }
 
@@ -238,10 +245,11 @@ contract LibCollateralSettlementTest is SetupTest {
 
         uint256 accrued = _expectedAccrued(PRINCIPAL, RATE_BPS, 30);
         uint256 expectedFeeLeg = (accrued * 500) / BASIS_POINTS;
-        uint256 expectedFloor = PRINCIPAL + accrued + expectedFeeLeg;
+        // The rate moves value between lender and treasury, never the floor.
+        uint256 expectedFloor = PRINCIPAL + accrued;
 
         assertEq(
-            TestMutatorFacet(address(diamond)).getTreasuryAndPrecloseFee(
+            _treasuryLeg(
                 id, block.timestamp
             ),
             expectedFeeLeg,
@@ -268,7 +276,7 @@ contract LibCollateralSettlementTest is SetupTest {
         uint256 expectedFeeLeg = (accrued * DEFAULT_TREASURY_FEE_BPS) / BASIS_POINTS;
 
         assertEq(
-            TestMutatorFacet(address(diamond)).getTreasuryAndPrecloseFee(
+            _treasuryLeg(
                 TEST_LOAN_ID, block.timestamp
             ),
             expectedFeeLeg,
@@ -282,7 +290,7 @@ contract LibCollateralSettlementTest is SetupTest {
     // THAT rate regardless of a later governance retune — the whole point of
     // #957. A `0` snapshot (pre-#957 loan) falls back to the live knob. These
     // guard `LibVaipakam.effectiveTreasuryFeeBps`, which every settlement
-    // treasury split (here: `treasuryAndPrecloseFee`) now routes through.
+    // treasury split (here: the treasury leg of `saleLegs`) now routes through.
 
     /// @dev Scaffold a loan whose `treasuryFeeBpsAtInit` is stamped, so the
     ///      library reads the snapshot instead of the live knob.
@@ -330,7 +338,7 @@ contract LibCollateralSettlementTest is SetupTest {
         assertGt(liveFee, snapshotFee, "sanity: retune would change the fee");
 
         assertEq(
-            TestMutatorFacet(address(diamond)).getTreasuryAndPrecloseFee(id, block.timestamp),
+            _treasuryLeg(id, block.timestamp),
             snapshotFee,
             "settlement uses the loan's snapshotted 100bps, NOT the retuned 500bps"
         );
@@ -362,7 +370,7 @@ contract LibCollateralSettlementTest is SetupTest {
         uint256 expectedFeeLeg = (accrued * DEFAULT_TREASURY_FEE_BPS) / BASIS_POINTS;
 
         assertEq(
-            TestMutatorFacet(address(diamond)).getTreasuryAndPrecloseFee(id, block.timestamp),
+            _treasuryLeg(id, block.timestamp),
             expectedFeeLeg,
             "zero snapshot (legacy loan) pins to the 100bps legacy constant, ignoring the live 500bps knob"
         );
@@ -436,7 +444,7 @@ contract LibCollateralSettlementTest is SetupTest {
     ///         early a Seaport prepay sale closes the loan. The floor
     ///         therefore prices off `fullTermInterest`, not pro-rata
     ///         accrual — otherwise a buyer at T+1day could close the loan
-    ///         paying only `principal + 1d_accrued + fee` and skip the
+    ///         paying only `principal + 1d_accrued` and skip the
     ///         lender's contracted-but-not-yet-accrued interest.
     function test_liveFloor_useFullTermInterest_atDayZero() public {
         _scaffoldLoanFull({
@@ -452,19 +460,19 @@ contract LibCollateralSettlementTest is SetupTest {
             PRINCIPAL, RATE_BPS, DURATION_DAYS
         );
         uint256 expectedFeeLeg = (expectedFullTerm * DEFAULT_TREASURY_FEE_BPS) / BASIS_POINTS;
-        uint256 expectedFloor = PRINCIPAL + expectedFullTerm + expectedFeeLeg;
+        uint256 expectedFloor = PRINCIPAL + expectedFullTerm;
 
         // At day zero, a `useFullTermInterest` loan ALREADY owes the
         // full coupon. Pro-rata would say 0.
         assertEq(
-            TestMutatorFacet(address(diamond)).getPrincipalPlusAccruedInterest(
+            _lenderLeg(
                 TEST_LOAN_ID + 4, block.timestamp
             ),
-            PRINCIPAL + expectedFullTerm,
-            "lender leg = principal + full-term interest, even at t=startTime"
+            PRINCIPAL + expectedFullTerm - expectedFeeLeg,
+            "lender leg = principal + full-term interest net of the treasury share, even at t=startTime"
         );
         assertEq(
-            TestMutatorFacet(address(diamond)).getTreasuryAndPrecloseFee(
+            _treasuryLeg(
                 TEST_LOAN_ID + 4, block.timestamp
             ),
             expectedFeeLeg,
@@ -542,6 +550,64 @@ contract LibCollateralSettlementTest is SetupTest {
             floorProRata,
             floorFullTerm,
             "at natural maturity, pro-rata and full-term floors converge"
+        );
+    }
+
+    // ─── 9. #2740 — one split with repayment, late fee included ────────
+
+    /// @notice The two legs always sum to principal + interest: the treasury
+    ///         is paid out of the interest, not on top of it, so a sale never
+    ///         costs the borrower more than repaying would.
+    function test_2740_legsSumToPrincipalPlusInterest() public {
+        vm.warp(block.timestamp + 17 * ONE_DAY);
+        uint256 accrued = _expectedAccrued(PRINCIPAL, RATE_BPS, 17);
+        (uint256 lenderLeg, uint256 treasuryLeg) =
+            TestMutatorFacet(address(diamond)).getSaleLegs(TEST_LOAN_ID, block.timestamp);
+        assertEq(treasuryLeg, (accrued * DEFAULT_TREASURY_FEE_BPS) / BASIS_POINTS, "treasury = its cut of the interest");
+        assertEq(lenderLeg + treasuryLeg, PRINCIPAL + accrued, "legs sum to principal + interest");
+    }
+
+    /// @notice A sale inside grace closes the loan as a late repayment: the
+    ///         floor carries the late fee, and the treasury takes its cut of
+    ///         interest + late fee as a late repay does.
+    function test_2740_saleInsideGraceOwesTheLateFee() public {
+        uint256 maturity = block.timestamp + DURATION_DAYS * ONE_DAY;
+        vm.warp(maturity + 2 * ONE_DAY + 1 hours);
+
+        uint256 accrued = _expectedAccrued(PRINCIPAL, RATE_BPS, DURATION_DAYS + 2);
+        // Two whole days late: 1% + 2 × 0.5%.
+        uint256 lateFee = (PRINCIPAL * 200) / BASIS_POINTS;
+        uint256 treasury = ((accrued + lateFee) * DEFAULT_TREASURY_FEE_BPS) / BASIS_POINTS;
+
+        (uint256 lenderLeg, uint256 treasuryLeg) =
+            TestMutatorFacet(address(diamond)).getSaleLegs(TEST_LOAN_ID, block.timestamp);
+        assertEq(treasuryLeg, treasury, "treasury cut of interest + late fee");
+        assertEq(lenderLeg, PRINCIPAL + accrued + lateFee - treasury, "lender gets the rest");
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLiveFloor(TEST_LOAN_ID, block.timestamp),
+            PRINCIPAL + accrued + lateFee,
+            "floor = principal + interest + late fee"
+        );
+    }
+
+    /// @notice Legs read for a later instant (a Dutch listing fixes its legs
+    ///         at the auction's end) price the late fee at that instant, not
+    ///         at the block the read runs in.
+    function test_2740_projectedLegsPriceTheLateFeeAtTheProjection() public view {
+        uint256 maturity = block.timestamp + DURATION_DAYS * ONE_DAY;
+        uint256 asOf = maturity + 3 * ONE_DAY;
+
+        uint256 accrued = _expectedAccrued(PRINCIPAL, RATE_BPS, DURATION_DAYS + 3);
+        uint256 lateFee = (PRINCIPAL * 250) / BASIS_POINTS;
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLiveFloor(TEST_LOAN_ID, asOf),
+            PRINCIPAL + accrued + lateFee,
+            "projected floor carries the late fee due at the projection"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLiveFloor(TEST_LOAN_ID, maturity),
+            PRINCIPAL + _expectedAccrued(PRINCIPAL, RATE_BPS, DURATION_DAYS),
+            "no late fee at maturity itself"
         );
     }
 }

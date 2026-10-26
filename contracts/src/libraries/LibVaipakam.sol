@@ -2323,44 +2323,22 @@ library LibVaipakam {
         // BELOW the frozen 1% for an override of 1..99. Neither direction is
         // bounded at 2×.
         //
-        // WHO IT MOVES VALUE BETWEEN — and it depends on the path, which
-        // three earlier revisions of this comment each got wrong in a
-        // different way.
-        //
-        // On the INTEREST-SPLIT paths (`LibEntitlement.splitTreasury`:
-        // repay, rental settlement) the rate divides a fixed amount —
+        // WHO IT MOVES VALUE BETWEEN. Every settlement divides a fixed
+        // amount through `LibEntitlement.splitTreasury` —
         //   `treasuryShare = interest × bps / BPS;
         //    lenderShare  = interest − treasuryShare`
         // so the borrower's outlay is identical at any rate and the value
         // moves between LENDER and treasury. Above the frozen rate the
         // lender is paid less than the receipt they signed; below it the
-        // treasury is.
+        // treasury is. The collateral-sale close-outs (prepay and parallel
+        // listings, swap-to-repay intents) read the same split through
+        // `LibCollateralSettlement.saleLegs` since #2740; before that the
+        // sale legs added the treasury cut on top of the lender's whole
+        // interest, so on those paths the rate moved value from the
+        // BORROWER's sale remainder instead.
         //
-        // On the T-086 PARALLEL-SALE path it is additive, not a split:
-        // `LibCollateralSettlement.treasuryAndPrecloseFee` adds
-        // `interest × (treasuryBps + precloseBps) / BPS` on TOP of
-        // `principalPlusAccruedInterest` to form the minimum sale floor, the
-        // lender's interest leg is preserved whole, and `PrepayListingFacet`
-        // routes the remainder to `ownerOf(loan.borrowerTokenId)`. At a
-        // fixed sale price a higher rate therefore shrinks the BORROWER
-        // remainder. So "the borrower is never affected" — an earlier
-        // revision's wording — is true of the split paths and false here.
-        //
-        // That helper is NOT confined to the sale path, and its other use
-        // behaves differently again: `SwapToRepayIntentFacet` and
-        // `LibSwapToRepayIntentSettlement` call it for a commit-time
-        // minimum-output and a fill-time live floor, but the actual
-        // distribution is recomputed by `LibSettlement.computeRepayment`,
-        // where `lenderDue + treasuryShare` is the fixed
-        // principal + interest + late-fee amount. So on that path the rate
-        // moves the ACCEPTANCE THRESHOLD, not the split: a change can cause
-        // the intent or fill to be rejected outright, and cannot shrink the
-        // borrower's surplus on a fill that passes. Three call shapes, three
-        // different answers — which is why this comment names the path
-        // rather than a party.
-        //
-        // Either way the downward direction is the easier to miss, because
-        // an under-paid treasury complains to nobody.
+        // The downward direction is the easier to miss, because an
+        // under-paid treasury complains to nobody.
         // This comment
         // previously said the fallback was "the live knob", which described
         // exactly the change CLAUDE.md warns must never be made. Both fees are bounded by `MAX_FEE_BPS`
@@ -10281,26 +10259,12 @@ library LibVaipakam {
     ///      pre-#957 open loan at repay, in EITHER DIRECTION: `setFeesConfig`
     ///      bounds the override only from above, so the live knob is any
     ///      value in 1..`MAX_FEE_BPS`, and an override below 100 would
-    ///      reprice a grandfathered loan DOWNWARD. WHICH PARTY is repriced
-    ///      depends on the caller, and there are four: on the interest-SPLIT
-    ///      paths (`LibEntitlement.splitTreasury`, and the sizing read in
-    ///      `LibVPFIDiscount`) the borrower's outlay is fixed and the value
-    ///      moves between LENDER and treasury; on the T-086 parallel-sale
-    ///      path (`LibCollateralSettlement.treasuryAndPrecloseFee`) the fee
-    ///      is an ADDITIVE leg in the sale floor whose remainder
-    ///      `PrepayListingFacet` routes to the borrower-position holder, so
-    ///      at a fixed price it moves value between treasury and the
-    ///      BORROWER instead. That same helper has a THIRD shape:
-    ///      `SwapToRepayIntentFacet` / `LibSwapToRepayIntentSettlement` use
-    ///      it as a commit-time minimum output and a fill-time floor, and
-    ///      `LibSettlement.computeRepayment` then recomputes the split with
-    ///      `lenderDue + treasuryShare` fixed — so there the rate moves the
-    ///      ACCEPTANCE THRESHOLD (it can reject an intent or fill) and
-    ///      cannot shrink the borrower's surplus on a fill that passes.
-    ///      `RiskPreviewFacet` only compares. This duplicate explanation
-    ///      classified the helper by its sale consumer alone until #1349,
-    ///      one round after the field comment above had been corrected —
-    ///      the same fix landing on one of two copies. This line
+    ///      reprice a grandfathered loan DOWNWARD. Every caller splits a
+    ///      fixed amount (`LibEntitlement.splitTreasury`, the sizing read in
+    ///      `LibVPFIDiscount`, and since #2740 the collateral-sale legs in
+    ///      `LibCollateralSettlement.saleLegs`), so the borrower's outlay is
+    ///      fixed and the value moves between LENDER and treasury;
+    ///      `RiskPreviewFacet` only compares. This line
     ///      "1% → 2%" until #1349, which
     ///      named only the untuned-deploy case; {RiskPreviewFacet}'s
     ///      inherited-fee gate has always reasoned about the sub-legacy
@@ -11065,8 +11029,21 @@ library LibVaipakam {
     /// @param loanId  Loan id.
     /// @return fee    Late fee in principal units (BPS-scaled).
     function calculateLateFee(uint256 loanId) internal view returns (uint256 fee) {
+        return calculateLateFeeAt(loanId, block.timestamp);
+    }
+
+    /// @dev #2740 — {calculateLateFee} priced at `asOfTimestamp` instead of
+    ///      now. The collateral-sale floor reads a loan's settlement at a
+    ///      chosen instant (a Dutch listing's legs are fixed at the auction's
+    ///      end), and a sale that closes the loan inside grace is a repayment
+    ///      that owes the late fee like any other.
+    function calculateLateFeeAt(uint256 loanId, uint256 asOfTimestamp)
+        internal
+        view
+        returns (uint256 fee)
+    {
         Loan storage loan = storageSlot().loans[loanId];
-        return (loan.principal * lateFeeBps(LibLoanClock.maturity(loan))) / 10000; // Basis points
+        return (loan.principal * lateFeeBpsAt(LibLoanClock.maturity(loan), asOfTimestamp)) / 10000; // Basis points
     }
 
     /// @dev #2427 — the late-fee rate {calculateLateFee} applies, in BPS of
@@ -11074,9 +11051,14 @@ library LibVaipakam {
     ///      +0.5% each subsequent day, capped at 5%. Split out so a caller can
     ///      price the fee on a principal other than the loan's stored one.
     function lateFeeBps(uint256 endTime) internal view returns (uint256) {
-        if (block.timestamp <= endTime) return 0;
+        return lateFeeBpsAt(endTime, block.timestamp);
+    }
 
-        uint256 daysLate = (block.timestamp - endTime) / 1 days;
+    /// @dev #2740 — {lateFeeBps} at `asOfTimestamp` instead of now.
+    function lateFeeBpsAt(uint256 endTime, uint256 asOfTimestamp) internal pure returns (uint256) {
+        if (asOfTimestamp <= endTime) return 0;
+
+        uint256 daysLate = (asOfTimestamp - endTime) / 1 days;
         uint256 feePercent = 100 + (daysLate * 50); // 1% + 0.5% per day (in basis points)
         if (feePercent > 500) feePercent = 500; // Cap 5%
         return feePercent;
