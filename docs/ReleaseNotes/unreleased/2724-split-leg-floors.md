@@ -1,4 +1,4 @@
-## Thread — every split-liquidation leg carries its own floor (PR #TBD)
+## Thread — every split-liquidation leg carries its own floor (PR #2871)
 
 A split liquidation sells a loan's collateral over two or more routes the
 caller chooses, in one transaction. Until now only the combined output was
