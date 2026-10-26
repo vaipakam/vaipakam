@@ -76,7 +76,7 @@ import {
 } from './db';
 import { batchedRead } from './batchRead';
 import { AlertDelivery } from './alertDelivery';
-import { describeFailure } from '@vaipakam/lib/errorDescription';
+import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { loanMaturity, pauseInForceAt, readPauseLog, type PauseLog } from '@vaipakam/lib/loanClock';
 
 const METRICS_ABI: Abi = MetricsFacetABI as Abi;
@@ -177,7 +177,7 @@ export async function runPreGraceWatcher(env: Env): Promise<void> {
     } catch (err) {
       console.error(
         `[keeper] preGraceWatcher chain=${chain.id} failed:`,
-        err,
+        redactedError(err),
       );
     }
   }
@@ -201,7 +201,7 @@ async function watchChain(env: Env, chain: ChainConfig, alerts: AlertDelivery): 
     })) as bigint;
   } catch (err) {
     console.warn(
-      `[keeper] preGraceWatcher count failed chain=${chain.id}: ${String(err).slice(0, 200)}`,
+      `[keeper] preGraceWatcher count failed chain=${chain.id}: ${redactedError(err, { stack: false }).slice(0, 200)}`,
     );
     return;
   }
@@ -221,7 +221,7 @@ async function watchChain(env: Env, chain: ChainConfig, alerts: AlertDelivery): 
       loanIds.push(...page);
     } catch (err) {
       console.warn(
-        `[keeper] preGraceWatcher page failed chain=${chain.id}: ${String(err).slice(0, 200)}`,
+        `[keeper] preGraceWatcher page failed chain=${chain.id}: ${redactedError(err, { stack: false }).slice(0, 200)}`,
       );
       return;
     }
@@ -397,7 +397,7 @@ async function watchChain(env: Env, chain: ChainConfig, alerts: AlertDelivery): 
       );
     } catch (err) {
       console.warn(
-        `[keeper] preGraceWatcher loan=${loanIdBig} chain=${chain.id}: ${String(err).slice(0, 200)}`,
+        `[keeper] preGraceWatcher loan=${loanIdBig} chain=${chain.id}: ${redactedError(err, { stack: false }).slice(0, 200)}`,
       );
     }
   }
@@ -429,7 +429,7 @@ async function _scanLenderOfferBook(
     })) as bigint;
   } catch (err) {
     console.warn(
-      `[keeper] preGraceWatcher offer-count failed chain=${chainId}: ${String(err).slice(0, 200)}`,
+      `[keeper] preGraceWatcher offer-count failed chain=${chainId}: ${redactedError(err, { stack: false }).slice(0, 200)}`,
     );
     return null;
   }
@@ -455,7 +455,7 @@ async function _scanLenderOfferBook(
       offerIds.push(...page);
     } catch (err) {
       console.warn(
-        `[keeper] preGraceWatcher offer-page failed chain=${chainId}: ${String(err).slice(0, 200)}`,
+        `[keeper] preGraceWatcher offer-page failed chain=${chainId}: ${redactedError(err, { stack: false }).slice(0, 200)}`,
       );
       return null;
     }

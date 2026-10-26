@@ -23,6 +23,7 @@ import { publishPushRailStatus } from './db';
 import type { Env } from './env';
 import { assertEpochsHold } from './epochFence';
 import { sendMessage as sendTelegramMessage } from './telegram';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 export interface Alert {
   /** The subscriber's Telegram chat, when they linked one. */
@@ -55,7 +56,7 @@ export async function publishRailStatus(
   try {
     await publishPushRailStatus(env.DB, publishedRailRow(pushRailStatus(pushRailConfigOf(env)), nowSec));
   } catch (err) {
-    console.warn(`[keeper] Push rail status not published this run: ${String(err).slice(0, 200)}`);
+    console.warn(`[keeper] Push rail status not published this run: ${redactedError(err, { stack: false }).slice(0, 200)}`);
   }
 }
 

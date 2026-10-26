@@ -61,6 +61,7 @@
 
 import type { Env } from './env';
 import { assertEpochsHold, epochWriteGuard } from './epochFence';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 export type HfBand = 'healthy' | 'warn' | 'alert' | 'critical';
 
@@ -474,7 +475,7 @@ export async function recordHfBandNotifications(
     return { inserted, stateWrites };
   } catch (err) {
     console.error(
-      `[keeper] hfBandNotifications chain=${chainId} failed (fail-open): ${String(err).slice(0, 250)}`,
+      `[keeper] hfBandNotifications chain=${chainId} failed (fail-open): ${redactedError(err, { stack: false }).slice(0, 250)}`,
     );
     return empty;
   }

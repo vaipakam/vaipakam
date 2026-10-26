@@ -31,6 +31,7 @@ import type { PassTick } from './passSchedule';
 import { getChainConfigs } from './env';
 import { resolveKeeperAccount } from './keeper';
 import { assertGuardedWriteLanded, epochWriteGuard } from './epochFence';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 const CAPTURE_ABI = [
   {
@@ -210,7 +211,7 @@ async function captureForChain(env: Env, chain: ChainConfig): Promise<void> {
       `[dailyOracle] chain=${chain.name} day=${todayIndex} assets=${assets.length} tx=${hash}`,
     );
   } catch (err) {
-    reportSendError(`[dailyOracle] chain=${chain.name}`, err, `err=${String(err).slice(0, 250)}`);
+    reportSendError(`[dailyOracle] chain=${chain.name}`, err, `err=${redactedError(err, { stack: false }).slice(0, 250)}`);
   }
 }
 

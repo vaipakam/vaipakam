@@ -75,6 +75,7 @@ import {
   upsertLiquidityConfidence,
   type LiquidityConfidenceRow,
 } from './db';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 /** ConfigFacet hosts `getDepthTierConfigBundle` / `getPaaAssets` /
  *  `getKeeperTier` / `setKeeperTier`; OracleFacet `getAssetPrice`;
@@ -710,7 +711,7 @@ async function signalCollateralListing(env: Env, chainId: number, asset: Address
   try {
     pools = await fetchCollateralPoolsCached();
   } catch (err) {
-    console.log(`[keeper] tier3 ① DeFiLlama fetch failed: ${String(err).slice(0, 200)}`);
+    console.log(`[keeper] tier3 ① DeFiLlama fetch failed: ${redactedError(err, { stack: false }).slice(0, 200)}`);
     return false;
   }
   return collateralListed(pools, chainName, asset, minTvl);
@@ -758,7 +759,7 @@ async function fetchCoinGeckoMarketCached(
   try {
     res = await fetch(url);
   } catch (err) {
-    console.log(`[keeper] tier3 ②③ CoinGecko fetch failed: ${String(err).slice(0, 200)}`);
+    console.log(`[keeper] tier3 ②③ CoinGecko fetch failed: ${redactedError(err, { stack: false }).slice(0, 200)}`);
     coinGeckoCache.set(key, null);
     return null;
   }
@@ -1035,7 +1036,7 @@ async function runRelayForChain(
       reportSendError(
         `[keeper] liq-confidence chain=${chain.name} asset=${key} setKeeperTier ${currentOnChainTier}→${target}`,
         err,
-        `failed: ${String(err).slice(0, 250)}`,
+        `failed: ${redactedError(err, { stack: false }).slice(0, 250)}`,
       );
       await upsertLiquidityConfidence(env.DB, held);
       continue;
@@ -1052,7 +1053,7 @@ async function runRelayForChain(
       await upsertLiquidityConfidence(env.DB, row);
     } catch (err) {
       console.error(
-        `[keeper] liq-confidence chain=${chain.name} asset=${key} tx=${hash} sent but its counter was not recorded: ${String(err).slice(0, 200)}`,
+        `[keeper] liq-confidence chain=${chain.name} asset=${key} tx=${hash} sent but its counter was not recorded: ${redactedError(err, { stack: false }).slice(0, 200)}`,
       );
     }
   }
@@ -1072,7 +1073,7 @@ export async function runLiquidityConfidence(env: Env, tick: PassTick): Promise<
         await runRelayForChain(env, chain, client, tick.deadlineMs, run);
       } catch (err) {
         console.error(
-          `[keeper] runLiquidityConfidence chain=${chain.name} failed: ${String(err).slice(0, 250)}`,
+          `[keeper] runLiquidityConfidence chain=${chain.name} failed: ${redactedError(err, { stack: false }).slice(0, 250)}`,
         );
       }
     }),
