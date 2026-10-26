@@ -949,12 +949,15 @@ const LOUPE_FACET_ADDRESS_ABI = [
 
 /** A Diamond that routes neither surface whole: some of each, or neither. */
 export class MixedForcedSaleSurface extends Error {
-  constructor(readonly routed: Readonly<Record<string, boolean>>) {
+  readonly routed: Readonly<Record<string, boolean>>;
+
+  constructor(routed: Readonly<Record<string, boolean>>) {
     super(
       `the Diamond routes neither forced-sale surface whole (${Object.entries(routed)
         .map(([name, on]) => `${name}=${on ? 'routed' : 'absent'}`)
         .join(' ')})`,
     );
+    this.routed = routed;
     this.name = 'MixedForcedSaleSurface';
   }
 }
