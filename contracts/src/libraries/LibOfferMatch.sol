@@ -105,7 +105,7 @@ library LibOfferMatch {
         IntentDisabled,          // lenderIntentEnabled OFF → FunctionDisabled(4)
         AggregatorPaused,        // aggregator-adapter intent frozen (#633)
         Inactive,                // LenderIntentInactive
-        VpfiLendingUnsupported,  // LenderIntentVpfiLendingUnsupported
+        RetiredVpfiLending,      // never returned since #2860 (VPFI may be an intent's lending asset); kept so later ordinals stay stable
         KeeperUnauthorized,      // requiresKeeperAuth + this solver not delegated
         BelowMinFill,            // LenderIntentFillBelowMin
         ExposureExceeded,        // LenderIntentExposureExceeded
@@ -769,9 +769,6 @@ library LibOfferMatch {
         LibVaipakam.LenderIntent memory intent =
             s.lenderIntent[lender][lendingAsset][collateralAsset];
         if (!intent.active) return _intentFail(res, IntentError.Inactive);
-        if (lendingAsset == s.vpfiToken) {
-            return _intentFail(res, IntentError.VpfiLendingUnsupported);
-        }
         if (
             intent.requiresKeeperAuth &&
             !LibAuth.isKeeperForPrincipal(

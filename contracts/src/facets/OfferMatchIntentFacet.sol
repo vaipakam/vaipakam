@@ -78,13 +78,6 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         price / illiquid collateral), so the intent's LTV ceiling can't be
     ///         enforced — refuse rather than open a loan blind to the bound.
     error LenderIntentCollateralUnresolvable();
-    /// @notice VPFI cannot be filled as an intent's lending asset (#393 v1-d.1
-    ///         Codex round-3). Catches the rotation/pre-gate edge where a row's
-    ///         `lendingAsset` became `vpfiToken` after it was funded — filling
-    ///         it would disburse VPFI through the generic path, bypassing the
-    ///         discount/staking rollup. Same selector as
-    ///         `LenderIntentFacet.LenderIntentVpfiLendingUnsupported`.
-    error LenderIntentVpfiLendingUnsupported();
     /// @notice #633 — the #398 aggregator-adapter feature is paused by governance,
     ///         so an aggregator's intent cannot be filled (user intents still can).
     error AggregatorAdaptersPaused();
@@ -128,16 +121,6 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.LenderIntent memory intent =
             s.lenderIntent[lender][lendingAsset][collateralAsset];
         if (!intent.active) revert LenderIntentInactive();
-        // #393 v1-d.1 (Codex round-3 P2) — block a VPFI-lending FILL even for a
-        // pre-existing intent whose `lendingAsset` became `vpfiToken` via a
-        // post-funding rotation (the fund/root gates can't catch a row funded
-        // before the rotation). Without this, the unlien + materialize below
-        // would disburse VPFI through the generic vault/offer path, bypassing
-        // the discount/staking rollup. Leaves only the wind-down exit
-        // (`withdrawLenderIntentCapital`, which checkpoints the rollup).
-        if (lendingAsset == s.vpfiToken) {
-            revert LenderIntentVpfiLendingUnsupported();
-        }
         // #393 v1-c — permissioned-solver gate. A `requiresKeeperAuth` intent may
         // only be filled by the lender themselves or a solver the lender has
         // authorized for `KEEPER_ACTION_SIGNED_FILL` (pre-loan, principal-keyed).

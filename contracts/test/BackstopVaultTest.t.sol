@@ -685,9 +685,9 @@ contract BackstopVaultTest is SetupTest {
         );
     }
 
-    /// @dev If `vpfiToken` is rotated onto the seed's `lend` asset AFTER the intent
-    ///      row was created, the direct treasury seed must reject it (VPFI can't
-    ///      back generic intent capital — mirrors fundLenderIntent/matchIntent).
+    /// @dev The direct treasury seed refuses VPFI as backstop capital: lending
+    ///      the protocol's own VPFI through the backstop is a separate treasury
+    ///      decision (#2860 opened VPFI to user lender intents only).
     function test_seedBackstopOrigination_vpfiLending_reverts() public {
         vm.startPrank(owner);
         VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20); // rotate onto lend
