@@ -1140,4 +1140,91 @@ contract SwapAdapterTest is Test {
         assertEq(total, 1000 ether);
         assertEq(tokenIn.balanceOf(address(h)), 0);
     }
+
+    /// @notice #2724 — a leg whose route sends its output somewhere else
+    ///         reverts the whole split on its own floor, even when an honest
+    ///         leg delivers enough to cover the total floor by itself.
+    function test_Split_RevertsWhenALegDivertsItsOutput() public {
+        SwapFailoverHarness h = new SwapFailoverHarness();
+        MockSwapAdapter honest = new MockSwapAdapter("honest");
+        honest.setOutputMultiplierBps(20_000); // 500 in, 1,000 out: alone it covers the 900 total floor
+        DivertingSwapAdapter diverter = new DivertingSwapAdapter(makeAddr("thief"));
+        tokenOut.mint(address(honest), 10_000 ether);
+        tokenOut.mint(address(diverter), 10_000 ether);
+        address[] memory adapters = new address[](2);
+        adapters[0] = address(honest);
+        adapters[1] = address(diverter);
+        h.setAdapters(adapters);
+        tokenIn.mint(address(h), 1000 ether);
+
+        LibSwap.SplitCall[] memory splits = new LibSwap.SplitCall[](2);
+        splits[0] = LibSwap.SplitCall({adapterIdx: 0, splitAmount: 500 ether, data: ""});
+        splits[1] = LibSwap.SplitCall({adapterIdx: 1, splitAmount: 500 ether, data: ""});
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSwap.SwapOutputBelowFloor.selector, uint256(7), uint256(1), uint256(0), uint256(450 ether)
+            )
+        );
+        h.doSplit(7, address(tokenIn), address(tokenOut), 1000 ether, 900 ether, recipient, splits);
+    }
+
+    /// @notice #2724 — each leg's floor is its share of the total floor,
+    ///         rounded up: a leg one wei short of its share reverts, a leg at
+    ///         exactly its share commits.
+    function test_Split_EachLegIsFlooredAtItsShare() public {
+        SwapFailoverHarness h = new SwapFailoverHarness();
+        PartialFillSwapAdapter a = new PartialFillSwapAdapter();
+        PartialFillSwapAdapter b = new PartialFillSwapAdapter();
+        tokenOut.mint(address(a), 10_000 ether);
+        tokenOut.mint(address(b), 10_000 ether);
+        a.setOutputPerInputBps(9_000); // 300 in -> 270 out, exactly its 270 share of 900
+        b.setOutputPerInputBps(12_000); // 700 in -> 840 out, above its 630 share
+        address[] memory adapters = new address[](2);
+        adapters[0] = address(a);
+        adapters[1] = address(b);
+        h.setAdapters(adapters);
+        tokenIn.mint(address(h), 1000 ether);
+
+        LibSwap.SplitCall[] memory splits = new LibSwap.SplitCall[](2);
+        splits[0] = LibSwap.SplitCall({adapterIdx: 0, splitAmount: 300 ether, data: ""});
+        splits[1] = LibSwap.SplitCall({adapterIdx: 1, splitAmount: 700 ether, data: ""});
+        uint256 total = h.doSplit(7, address(tokenIn), address(tokenOut), 1000 ether, 900 ether, recipient, splits);
+        assertEq(total, 1110 ether, "both legs at or above their share commit");
+
+        // One wei more on the floor puts leg 0's share (rounded up) one wei
+        // above what it delivers. The mock refuses its own min-out first,
+        // which is the floor LibSwap handed it.
+        tokenIn.mint(address(h), 1000 ether);
+        vm.expectRevert(bytes("PartialFillSwapAdapter: min-out"));
+        h.doSplit(7, address(tokenIn), address(tokenOut), 1000 ether, 900 ether + 1, recipient, splits);
+    }
+}
+
+/// @dev A route whose calldata pays its output to someone other than the
+///      caller (what a permissionless liquidator could encode in aggregator
+///      calldata): it takes the input, pays a third party, and reports 0.
+contract DivertingSwapAdapter {
+    address public immutable thief;
+
+    constructor(address thief_) {
+        thief = thief_;
+    }
+
+    function adapterName() external pure returns (string memory) {
+        return "diverting";
+    }
+
+    function execute(
+        address inputToken,
+        address outputToken,
+        uint256 inputAmount,
+        uint256, /* minOutputAmount: ignored, like calldata the caller wrote */
+        address, /* recipient: ignored */
+        bytes calldata /* adapterData */
+    ) external returns (uint256) {
+        ERC20Mock(inputToken).transferFrom(msg.sender, address(this), inputAmount);
+        ERC20Mock(outputToken).transfer(thief, inputAmount);
+        return 0;
+    }
 }
