@@ -1,4 +1,4 @@
-## Thread — Lender intents may lend VPFI (PR #<n>)
+## Thread — Lender intents may lend VPFI (PR #2914)
 
 A lender's standing intent now accepts the platform's own VPFI as its lending
 asset. Registering, funding, filling, previewing and withdrawing a VPFI intent
