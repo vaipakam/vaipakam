@@ -536,6 +536,9 @@ contract VaipakamRewardMessenger is
     error ReportRouteMismatch(uint256 requested, uint256 baseChainId);
     /// @notice The broadcast destination list is empty.
     error NoBroadcastDestinations();
+    /// @notice A single-lane tier push named a chain that is not on the
+    ///         broadcast destination list (#911).
+    error NotBroadcastDestination(uint256 chainId);
     /// @notice A REPORT arrived on a mirror instance (only canonical
     ///         accepts REPORTs).
     error ReportOnMirror();
@@ -1023,14 +1026,19 @@ contract VaipakamRewardMessenger is
 
     // ─── Sender side — T-087 Sub 2.B tier-push surface ──────────────────────
 
-    /// @notice T-087 Sub 2.B — Base → every configured mirror per-user
-    ///         tier push. Diamond-only. `msg.value` must cover the SUM
-    ///         of per-destination quotes; the surplus is refunded.
-    /// @dev    Slither's `msg-value-loop` is intentional + bounded by the
-    ///         same `spent` cumulator pattern as {broadcastGlobal} (see
-    ///         that function's natspec for the rationale).
-    // slither-disable-start msg-value-loop
-    function sendTierUpdate(
+    /// @notice Base → ONE configured mirror per-user tier push (#898,
+    ///         #911). Diamond-only. The Diamond delivers each broadcast
+    ///         lane on its own, so a lane the router no longer supports or
+    ///         a half-wired destination fails only that lane's push and
+    ///         never the user's action (`TierPushDeliveryDesign.md`).
+    ///         `msg.value` must cover the lane's quote; the surplus is
+    ///         refunded to `refundAddress`.
+    /// @dev    Refuses a destination that is not on the broadcast list:
+    ///         the Diamond reads the list from this contract, and this
+    ///         check keeps the send from reaching any chain the owner did
+    ///         not configure.
+    function sendTierUpdateTo(
+        uint256 destChainId,
         address user,
         uint8 effectiveTier,
         uint16 effectiveBps,
@@ -1039,13 +1047,25 @@ contract VaipakamRewardMessenger is
         uint40 tierExpirySec,
         uint16 tierTableVersion,
         address payable refundAddress
-    ) external payable onlyDiamond whenNotPaused nonReentrant {
+    ) external payable onlyDiamond whenNotPaused nonReentrant returns (bytes32 messageId) {
         if (messenger == address(0)) revert MessengerNotSet();
-        uint256 n = broadcastDestinationChainIds.length;
-        if (n == 0) revert NoBroadcastDestinations();
+        if (!_isBroadcastDestination(destChainId)) revert NotBroadcastDestination(destChainId);
 
-        bytes memory payload = abi.encode(
-            MSG_TYPE_TIER_UPDATED,
+        bytes memory payload = _tierUpdatePayload(
+            user, effectiveTier, effectiveBps, computedAt, nonce, tierExpirySec, tierTableVersion
+        );
+        uint256 fee = ICrossChainMessenger(messenger).quoteMessageFee(
+            destChainId, payload, _noTokens(), destGasLimit
+        );
+        if (msg.value < fee) revert InsufficientFee(msg.value, fee);
+        // slither-disable-next-line arbitrary-send-eth
+        messageId = ICrossChainMessenger(messenger).sendMessage{value: fee}(
+            destChainId, payload, _noTokens(), destGasLimit
+        );
+
+        emit TierUpdateSent(
+            messageId,
+            destChainId,
             user,
             effectiveTier,
             effectiveBps,
@@ -1055,37 +1075,8 @@ contract VaipakamRewardMessenger is
             tierTableVersion
         );
 
-        uint256 spent;
-        for (uint256 i; i < n; ++i) {
-            uint256 dst = broadcastDestinationChainIds[i];
-            uint256 fee = ICrossChainMessenger(messenger).quoteMessageFee(
-                dst, payload, _noTokens(), destGasLimit
-            );
-            if (msg.value - spent < fee) {
-                revert InsufficientFee(msg.value - spent, fee);
-            }
-            // slither-disable-next-line arbitrary-send-eth,msg-value-loop
-            bytes32 messageId = ICrossChainMessenger(messenger).sendMessage{
-                value: fee
-            }(dst, payload, _noTokens(), destGasLimit);
-            spent += fee;
-
-            emit TierUpdateSent(
-                messageId,
-                dst,
-                user,
-                effectiveTier,
-                effectiveBps,
-                computedAt,
-                nonce,
-                tierExpirySec,
-                tierTableVersion
-            );
-        }
-
-        _refund(refundAddress, msg.value - spent);
+        _refund(refundAddress, msg.value - fee);
     }
-    // slither-disable-end msg-value-loop
 
     /// @notice T-087 Sub 2.B — Base → every configured mirror eager
     ///         tier-table-version bump on governance threshold / BPS
@@ -1123,8 +1114,12 @@ contract VaipakamRewardMessenger is
     }
     // slither-disable-end msg-value-loop
 
-    /// @notice T-087 Sub 2.B — quote total fee for a {sendTierUpdate}.
-    function quoteSendTierUpdate(
+    /// @notice Quote the native fee for a {sendTierUpdateTo} to one lane.
+    ///         Reverts `NotBroadcastDestination` for a chain off the list,
+    ///         and whatever the CCIP adapter raises for a lane it cannot
+    ///         route (the Diamond reads that as an owed lane).
+    function quoteSendTierUpdateTo(
+        uint256 destChainId,
         address user,
         uint8 effectiveTier,
         uint16 effectiveBps,
@@ -1133,8 +1128,28 @@ contract VaipakamRewardMessenger is
         uint40 tierExpirySec,
         uint16 tierTableVersion
     ) external view returns (uint256 nativeFee) {
-        uint256 n = broadcastDestinationChainIds.length;
-        bytes memory payload = abi.encode(
+        if (!_isBroadcastDestination(destChainId)) revert NotBroadcastDestination(destChainId);
+        nativeFee = ICrossChainMessenger(messenger).quoteMessageFee(
+            destChainId,
+            _tierUpdatePayload(
+                user, effectiveTier, effectiveBps, computedAt, nonce, tierExpirySec, tierTableVersion
+            ),
+            _noTokens(),
+            destGasLimit
+        );
+    }
+
+    /// @dev The kind-tier-update payload, one encoding for send and quote.
+    function _tierUpdatePayload(
+        address user,
+        uint8 effectiveTier,
+        uint16 effectiveBps,
+        uint40 computedAt,
+        uint256 nonce,
+        uint40 tierExpirySec,
+        uint16 tierTableVersion
+    ) private pure returns (bytes memory) {
+        return abi.encode(
             MSG_TYPE_TIER_UPDATED,
             user,
             effectiveTier,
@@ -1144,14 +1159,15 @@ contract VaipakamRewardMessenger is
             tierExpirySec,
             tierTableVersion
         );
+    }
+
+    /// @dev Whether `chainId` is on the configured broadcast list.
+    function _isBroadcastDestination(uint256 chainId) private view returns (bool) {
+        uint256 n = broadcastDestinationChainIds.length;
         for (uint256 i; i < n; ++i) {
-            nativeFee += ICrossChainMessenger(messenger).quoteMessageFee(
-                broadcastDestinationChainIds[i],
-                payload,
-                _noTokens(),
-                destGasLimit
-            );
+            if (broadcastDestinationChainIds[i] == chainId) return true;
         }
+        return false;
     }
 
     /// @notice T-087 Sub 2.B — quote total fee for a {sendVersionBumped}.

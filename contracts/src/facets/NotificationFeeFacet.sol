@@ -77,56 +77,19 @@ contract NotificationFeeFacet is DiamondPausable, DiamondAccessControl, IVaipaka
      *             withdrawal and BEFORE the recycle credit, the billed
      *             flag, the accrual and the event, `bill` calls
      *             `LibVPFIDiscount.rollupUserDiscount` — the BROADCASTING
-     *             wrapper, not `rollupUserDiscountLocal` — so
-     *             on a Diamond with `rewardMessenger` set, a
-     *             {ProtocolBroadcastFacet} failure bubbles and reverts the
-     *             whole bill. `ProtocolBudgetExhausted` is the one an
-     *             operator will actually meet — but it hits only the
-     *             payers whose rollup NEEDS an outbound send.
-     *             `protocolBroadcastTierUpdate` returns early, before
-     *             touching the budget, for a zero-tier-no-change user and
-     *             for an unchanged push tuple, so while the budget is
-     *             empty those payers keep billing normally. The symptom is
-     *             therefore MIXED success and failure across payers, not a
-     *             clean stop — which is precisely what makes it hard to
-     *             read. Sorting the causes by BLAST RADIUS is what makes
-     *             them separable — as a way of THINKING about a report, not
-     *             as a lookup table, since each attempt to make it one has
-     *             been incomplete:
-     *               · uniform across every payer — a protocol PAUSE, a
-     *                 missing `NOTIF_BILLER_ROLE` (the CALLER's state), an
-     *                 unset VPFI token (Diamond-wide config), and a
-     *                 broadcast-leg failure IF every payer in the batch
-     *                 needs an outbound send;
-     *               · payer-by-payer — an underfunded vault;
-     *               · SHARED but conditional — the broadcast leg in the
-     *                 ordinary case. It bites only the payers whose rollup
-     *                 needs a send, so a global cause presents as partial
-     *                 failure.
-     *             Note the broadcast leg appears TWICE on purpose: its
-     *             blast radius depends on the batch, so it is the one cause
-     *             that can imitate either pattern. A uniform outage
-     *             therefore does not identify a cause either, and
-     *             partial failure does not: it
-     *             is equally consistent with vault-side causes and with
-     *             any failure on the broadcast leg. Check the failing
-     *             payer's VPFI balance first — but a SUFFICIENT balance
-     *             does not move the diagnosis off the vault, which an
-     *             earlier revision of this note claimed it did. `bill`
-     *             withdraws through `vaultWithdrawERC20`, which resolves
-     *             the vault via `getOrCreateUserVault` (a sanctions screen
-     *             and an upgrade requirement both live there) and then
-     *             spends UNENCUMBERED balance, so a fully funded vault
-     *             still reverts `WithdrawWouldUnderflowLien` when the
-     *             balance is liened. Only once vault state is cleared does
-     *             the broadcast leg become the place to look, and the
-     *             budget is one candidate there among several. `sendTierUpdate` runs AFTER the budget
-     *             check and reverts `NoBroadcastDestinations` on an empty
-     *             destination list, and the messenger is `GuardianPausable`,
-     *             so a pause or a misconfigured messenger reverts the bill
-     *             just as an empty budget does. Two earlier revisions of
-     *             this note each narrowed it wrongly — first ruling the
-     *             vault out, then naming the budget as the sole remainder.
+     *             wrapper. Since #898 / #911 its cross-chain tier push
+     *             never reverts the bill: an empty budget, a down or paused
+     *             lane, or an empty destination list leaves the payer's
+     *             lane OWED (`ProtocolBroadcastFacet.TierPushDeferred`).
+     *             The one push failure that still reverts is a call sent
+     *             with too little gas (`TierPushOutOfGas`). So a bill that
+     *             reverts with a sufficient VPFI balance points at the
+     *             vault first: `bill` withdraws through
+     *             `vaultWithdrawERC20`, which resolves the vault via
+     *             `getOrCreateUserVault` (a sanctions screen and an upgrade
+     *             requirement both live there) and spends UNENCUMBERED
+     *             balance, so a fully funded vault still reverts
+     *             `WithdrawWouldUnderflowLien` when the balance is liened.
      *
      *         The watcher fires this at notification-send time
      *         **only on PaidPush tier** subscribers — FreeTelegram

@@ -2795,6 +2795,22 @@ library LibVaipakam {
      *      `tierTableVersion` lets mirrors detect governance
      *      threshold-table changes (Codex round-6 P1 #10).
      */
+    /**
+     * @notice #898 / #911 — what Base last delivered to ONE broadcast lane
+     *         for one user: the push nonce, the tuple it carried and when
+     *         it was sent. `sentAt` is the last time a message actually
+     *         went out on this lane; a lane settled without a message keeps
+     *         its previous `sentAt`.
+     */
+    struct TierLanePush {
+        uint64 nonce;
+        uint8 tier;
+        uint16 bps;
+        uint40 tierExpirySec;
+        uint16 tierTableVersion;
+        uint40 sentAt;
+    }
+
     struct CachedTier {
         uint8 effectiveTier;
         uint40 lastUpdateSec;
@@ -4492,7 +4508,10 @@ library LibVaipakam {
         // destinations already current AND lets the catchup path
         // bootstrap new destinations added between mutations
         // without manual sweep (Codex round-1 P2 #11 + round-2
-        // P1 #2).
+        // P1 #2). NEVER WRITTEN OR READ: the per-lane record that
+        // ships is `tierLanePush` (#898 / #911), keyed by the
+        // destination chain id the messenger's list uses. Kept only
+        // because the layout is append-only.
         mapping(address => mapping(uint64 => uint64)) userTierLastPushedNonce;
         // ── Tier table versioning (governance) ──────────────────────────
         //
@@ -4512,11 +4531,10 @@ library LibVaipakam {
         mapping(address => mapping(uint16 => mapping(uint64 => bool))) tierTableSweepDone;
         // Protocol-funded CCIP broadcast budget — native gas
         // balance held by the diamond on Base and topped up by
-        // treasury allocation. Consumed by the in-tx auto-broadcast
-        // helper on every nonce-bumping rollup pass; if exhausted,
-        // the whole step-1 transaction reverts (fail-closed) so
-        // there is no window where a balance-mutation lands without
-        // mirror propagation (Codex round-5 P1 #3 + round-6 P1 #2).
+        // anyone. Debited by one lane's quoted fee each time
+        // `ProtocolBroadcastFacet` sends a protocol-funded tier push.
+        // A shortfall never reverts the user's action: the lane stays
+        // owed (#898 / #911, `TierPushDeliveryDesign.md`).
         uint256 protocolBroadcastBudget;
         // Enumerable registry of users with non-zero tracked stake.
         // Populated on 0→positive, removed on positive→0. Lets the
@@ -4665,12 +4683,12 @@ library LibVaipakam {
         // unauthorised caller can inflate `baseBuybackBudget` by
         // forging remittance call data (Codex round-11 P1 #5).
         address buybackRemittanceReceiver;
-        // T-087 Sub 1.B — last-computed EFFECTIVE_TIER / EFFECTIVE_BPS
-        // for the user, written at the end of every rollup. The
-        // nonce-bump heuristic compares the post-rollup effective
-        // state against these snapshots; a mismatch increments
-        // `userTierPushNonce` so the Sub 2 broadcast helper fans
-        // the change out to every destination. Appended at the END
+        // T-087 Sub 1.B — the EFFECTIVE_TIER / EFFECTIVE_BPS of the
+        // user's latest committed push (nonce `userTierPushNonce`).
+        // A rollup whose resolution differs commits a new push: the
+        // nonce goes up and these are rewritten, and every broadcast
+        // lane is then owed that push until it is delivered
+        // (`tierLanePush`, #898 / #911). Appended at the END
         // of the struct (NOT inserted near `tierExpirySec` as the
         // first revision did) to keep the storage layout
         // append-only per Codex Sub 1.B P1 #1.
@@ -4685,9 +4703,10 @@ library LibVaipakam {
         // gating the rollup-time broadcast at the Diamond level;
         // Codex caught it as a fail-OPEN drift surface (operator
         // syncs the messenger's list but forgets the Diamond knob
-        // → every rollup silently returns). Replaced by the
-        // messenger's own `NoBroadcastDestinations` revert
-        // bubbling up through the accumulator. Slot retained as
+        // → every rollup silently returns). Replaced by reading
+        // the messenger's own list; since #898 / #911 an empty list
+        // is announced as a `TierPushDeferred(NoDestinations)`
+        // rather than reverting the user's action. Slot retained as
         // `__reservedSub2D1` so any future slot append doesn't
         // shift mainnet storage offsets.
         uint8 __reservedSub2D1;
@@ -4698,8 +4717,9 @@ library LibVaipakam {
         // change expiry (e.g., a partial withdrawal that accelerates
         // decay) OR change version (governance table bump) still
         // need to propagate to mirrors. Each of these slots tracks
-        // the LAST PUSHED value next to its `lastEffectiveTier` /
-        // `lastEffectiveBps` siblings.
+        // the latest COMMITTED value next to its `lastEffectiveTier`
+        // / `lastEffectiveBps` siblings (delivered per lane through
+        // `tierLanePush`).
         mapping(address => uint40) lastTierExpirySec;
         mapping(address => uint16) lastTierTableVersion;
 
@@ -8257,6 +8277,22 @@ library LibVaipakam {
         ///      by a numeraire rotation (the value was denominated in the old
         ///      unit). Appended — append-only.
         uint256 minIntentFillNumeraire;
+        /// @dev #898 / #911 — what Base last delivered to each broadcast
+        ///      lane for each user (user => destination chain id => lane).
+        ///      A lane is owed while its `nonce` is below the user's
+        ///      `userTierPushNonce`; `ProtocolBroadcastFacet` delivers each
+        ///      owed lane on its own and writes this row only after a send
+        ///      succeeds (or when the lane already holds the same effect, so
+        ///      no message is needed). Appended — append-only.
+        mapping(address => mapping(uint256 => TierLanePush)) tierLanePush;
+        /// @dev #898 / #1277 — the protocol budget pays a push that does not
+        ///      lower a lane's tier at most once per this many seconds per
+        ///      lane. Zero reads as {DEFAULT_TIER_PUSH_SPACING_SEC}; read
+        ///      through {cfgTierPushSpacingSecEffective}; written only by
+        ///      `ProtocolBroadcastFacet.setTierPushSpacingSec` within
+        ///      [{MIN_TIER_PUSH_SPACING_SEC}, {MAX_TIER_PUSH_SPACING_SEC}].
+        ///      Appended — append-only.
+        uint32 cfgTierPushSpacingSec;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -12487,6 +12523,18 @@ library LibVaipakam {
     function cfgMirrorTierMaxAgeSecEffective() internal view returns (uint32) {
         uint32 v = storageSlot().cfgMirrorTierMaxAgeSec;
         return v == 0 ? DEFAULT_MIRROR_TIER_MAX_AGE_SEC : v;
+    }
+
+    /// @dev #898 / #1277 — the protocol budget's per-lane spacing for a tier
+    ///      push that does not lower the lane's tier. A lowered tier and a
+    ///      lane's first push are never spaced (`TierPushDeliveryDesign.md`).
+    uint32 internal constant DEFAULT_TIER_PUSH_SPACING_SEC = 1 days;
+    uint32 internal constant MIN_TIER_PUSH_SPACING_SEC = 1 hours;
+    uint32 internal constant MAX_TIER_PUSH_SPACING_SEC = 7 days;
+
+    function cfgTierPushSpacingSecEffective() internal view returns (uint32) {
+        uint32 v = storageSlot().cfgTierPushSpacingSec;
+        return v == 0 ? DEFAULT_TIER_PUSH_SPACING_SEC : v;
     }
 
     /**

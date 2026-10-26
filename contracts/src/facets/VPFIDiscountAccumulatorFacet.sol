@@ -65,25 +65,15 @@ contract VPFIDiscountAccumulatorFacet {
         _rollupCore(s, user, balPostMutation);
 
         // T-087 Sub 2.D — protocol-funded mirror broadcast via cross-
-        // facet call to `ProtocolBroadcastFacet`.
-        //
-        // Codex Sub 2.D round-2 P1 #2 — the previous failure-mode
-        // discriminator (swallow `FunctionDoesNotExist()`, bubble
-        // everything else) was unsafe: the same selector is returned
-        // when a misconfigured `rewardMessenger` is pointed at a
-        // contract that doesn't implement `sendTierUpdate` — exactly
-        // the case where we MUST bubble to surface the misconfig.
-        //
-        // Replaced by a direct on-chain configuration check: if
-        // `rewardMessenger == address(0)` the broadcast surface
-        // isn't wired (the deploy-time default + every minimal-
-        // fixture test), so we skip the call entirely. Once a
-        // messenger IS set, the call goes through and ANY revert
-        // from inside the broadcast facet (including
-        // `ProtocolBudgetExhausted`) bubbles correctly. This makes
-        // a missing `ProtocolBroadcastFacet` cut a deploy-time
-        // mistake the predeploy sanity catches rather than a
-        // silent runtime degrade.
+        // facet call to `ProtocolBroadcastFacet`. Skipped entirely while
+        // `rewardMessenger` is unset (the deploy-time default and every
+        // minimal-fixture test). Once set, the call goes through and any
+        // revert bubbles — but since #898 / #911 the push itself never
+        // reverts on the budget, a lane or the destination list (those
+        // leave the lane owed); what can still bubble is a missing
+        // ProtocolBroadcastFacet cut (a deploy mistake the predeploy
+        // sanity catches) and `TierPushOutOfGas` (a starved call, which
+        // must fail the action rather than skip its push).
         if (s.rewardMessenger != address(0)) {
             // slither-disable-next-line low-level-calls
             (bool ok, bytes memory returnData) = address(this).call(
@@ -106,7 +96,7 @@ contract VPFIDiscountAccumulatorFacet {
     /// @dev    Used by the Diamond-funded vault credit primitive
     ///         ({VaultFactoryFacet.vaultCreditFromDiamondERC20}) on the
     ///         reward claim-to-vault path: a claim must never inherit the
-    ///         broadcast path's failure modes (`ProtocolBudgetExhausted`,
+    ///         broadcast path's failure modes (before #898 / #911: `ProtocolBudgetExhausted`,
     ///         messenger misconfig) when today's wallet claim would have
     ///         succeeded. The push is an optimization, not a correctness
     ///         requirement — the user's NEXT balance mutation (or any
