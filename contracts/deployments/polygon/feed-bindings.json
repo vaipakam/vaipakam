@@ -48,6 +48,24 @@
       ]
     },
     {
+      "token": "0xD6DF932A45C0f255f85145f286eA0b292B21C90B",
+      "symbol": "AAVE",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0x72484B12719E23115761D5DA1646945632979bB6",
+      "feedDecimals": 8,
+      "pair": "AAVE / USD",
+      "heartbeat": 27,
+      "category": "low",
+      "directoryPath": "aave-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
       "token": "0x9a71012B13CA4d3D0Cdc72A177DF3ef03b0E76A3",
       "symbol": "BAL",
       "tokenDecimals": 18,
@@ -95,6 +113,24 @@
       "heartbeat": 86400,
       "category": "medium",
       "directoryPath": "crv-eth",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0x172370d5Cd63279eFa6d502DAB29171933a610AF",
+      "symbol": "CRV",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0x336584C8E6Dc19637A5b36206B1c79923111b405",
+      "feedDecimals": 8,
+      "pair": "CRV / USD",
+      "heartbeat": 300,
+      "category": "low",
+      "directoryPath": "crv-usd",
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
@@ -354,6 +390,24 @@
       ]
     },
     {
+      "token": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+      "symbol": "USDC",
+      "tokenDecimals": 6,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0xfE4A8cc5b5B2366C1B58Bea3858e81843581b2F7",
+      "feedDecimals": 8,
+      "pair": "USDC / USD",
+      "heartbeat": 27,
+      "category": "low",
+      "directoryPath": "usdc-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
       "token": "0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6",
       "symbol": "WBTC",
       "tokenDecimals": 8,
@@ -413,18 +467,6 @@
         "coinmarketcap": [],
         "tokenList": [
           "0x9c2C5fd7b07E95EE044DDeba0E97a665F142394f"
-        ]
-      }
-    },
-    {
-      "pair": "AAVE / USD",
-      "directoryPath": "aave-usd",
-      "feed": "0x72484B12719E23115761D5DA1646945632979bB6",
-      "quote": "USD",
-      "reason": "feed answer is older than its 27s heartbeat",
-      "candidates": {
-        "token": [
-          "0xD6DF932A45C0f255f85145f286eA0b292B21C90B"
         ]
       }
     },
@@ -530,18 +572,6 @@
         "coinmarketcap": [],
         "tokenList": [
           "0x8505b9d2254A7Ae468c0E9dd10Ccea3A837aef5c"
-        ]
-      }
-    },
-    {
-      "pair": "CRV / USD",
-      "directoryPath": "crv-usd",
-      "feed": "0x336584C8E6Dc19637A5b36206B1c79923111b405",
-      "quote": "USD",
-      "reason": "feed answer is older than its 300s heartbeat",
-      "candidates": {
-        "token": [
-          "0x172370d5Cd63279eFa6d502DAB29171933a610AF"
         ]
       }
     },
@@ -661,18 +691,6 @@
           "0xd93f7E271cB87c23AaA73edC008A79646d1F9912"
         ],
         "tokenList": []
-      }
-    },
-    {
-      "pair": "USDC / USD",
-      "directoryPath": "usdc-usd",
-      "feed": "0xfE4A8cc5b5B2366C1B58Bea3858e81843581b2F7",
-      "quote": "USD",
-      "reason": "feed answer is older than its 27s heartbeat",
-      "candidates": {
-        "token": [
-          "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
-        ]
       }
     },
     {
