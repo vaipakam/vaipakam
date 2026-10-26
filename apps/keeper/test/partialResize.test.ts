@@ -8,6 +8,8 @@ import {
   normalizeCloseFactorCapBps,
   MAX_PARTIAL_FRACTION_BPS,
   runPartialAttempts,
+  interestShortfall,
+  sizeToCover,
   type PartialAttemptDeps,
 } from '../src/partialResize';
 
@@ -217,6 +219,90 @@ describe('#642 partial-liquidation re-size helpers', () => {
         ...deps().d,
         submit: async () => {
           throw revert('PartialAfterMaturity');
+        },
+      });
+      expect(out).toEqual({ kind: 'escalate' });
+    });
+
+    it('grows a slice refused for not covering accrued interest (#2731)', async () => {
+      // A Diamond whose slices below 3,000 bps do not cover the interest due.
+      const sent: bigint[] = [];
+      const out = await runPartialAttempts(2_000n, route, {
+        ...deps().d,
+        submit: async (f) => {
+          sent.push(f);
+          if (f < 3_000n) throw revert('PartialMustCoverInterest');
+          return '0xabc';
+        },
+      });
+      expect(sent).toEqual([2_000n, 2_667n, 3_556n]);
+      expect(out).toMatchObject({ kind: 'submitted', fractionBps: 3_556n });
+    });
+
+    it('sizes straight to the interest a decoded refusal names (#2886)', async () => {
+      // The refused 2,000 bps slice repaid 40 against 70 due: 3,500 bps covers it.
+      const decoded = (repaid: bigint, interestDue: bigint) =>
+        Object.assign(new Error('The contract function reverted: PartialMustCoverInterest'), {
+          cause: { data: { errorName: 'PartialMustCoverInterest', args: [repaid, interestDue] } },
+        });
+      const sent: bigint[] = [];
+      const out = await runPartialAttempts(2_000n, route, {
+        ...deps().d,
+        submit: async (f) => {
+          sent.push(f);
+          if (f < 3_500n) throw decoded((f * 40n) / 2_000n, 70n);
+          return '0xabc';
+        },
+      });
+      expect(sent).toEqual([2_000n, 3_500n]);
+      expect(out).toMatchObject({ kind: 'submitted', fractionBps: 3_500n });
+    });
+
+    it('caps a named size at the top of the open interval', async () => {
+      const decoded = Object.assign(new Error('PartialMustCoverInterest'), {
+        cause: { data: { errorName: 'PartialMustCoverInterest', args: [10n, 1_000n] } },
+      });
+      const sent: bigint[] = [];
+      await runPartialAttempts(2_000n, route, {
+        ...deps().d,
+        submit: async (f) => {
+          sent.push(f);
+          throw decoded;
+        },
+      });
+      // 200,000 bps named; the partial band ends below 7,500, so 7,499 is tried
+      // once and the search escalates.
+      expect(sent).toEqual([2_000n, 7_499n]);
+    });
+
+    it('interestShortfall / sizeToCover read and scale the refusal', () => {
+      const err = { cause: { cause: { data: { errorName: 'PartialMustCoverInterest', args: [3n, 10n] } } } };
+      expect(interestShortfall(err)).toEqual({ repaid: 3n, interestDue: 10n });
+      expect(interestShortfall(new Error('PartialMustCoverInterest'))).toBeNull();
+      expect(sizeToCover(1_000n, { repaid: 3n, interestDue: 10n })).toBe(3_334n);
+      expect(sizeToCover(1_000n, { repaid: 0n, interestDue: 10n })).toBeNull();
+    });
+
+    it('recognises the interest refusal by its selector when the ABI cannot name it', async () => {
+      const sent: bigint[] = [];
+      const out = await runPartialAttempts(2_000n, route, {
+        ...deps().d,
+        submit: async (f) => {
+          sent.push(f);
+          if (f < 3_000n) throw new Error('execution reverted with signature 0xef4f2518');
+          return '0xabc';
+        },
+      });
+      expect(sent[1]).toBeGreaterThan(2_000n);
+      expect(out).toMatchObject({ kind: 'submitted' });
+    });
+
+    it('escalates when no partial both covers the interest and stays under the ceiling', async () => {
+      const out = await runPartialAttempts(2_000n, route, {
+        ...deps({ ceilingBps: 2_500n }).d,
+        submit: async (f) => {
+          if (f > 2_500n) throw revert('PartialOverLiquidates');
+          throw revert('PartialMustCoverInterest');
         },
       });
       expect(out).toEqual({ kind: 'escalate' });

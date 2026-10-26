@@ -11,9 +11,18 @@
  *   - `InvalidPartialFraction`  — the slice exceeds the governance close-factor
  *     cap (`maxPartialLiquidationCloseFactorBps`). The keeper reads the live cap
  *     and CLAMPS to it rather than escalating straight to full.
+ *   - `PartialMustCoverInterest` — the slice's proceeds after fees do not cover
+ *     the interest accrued since the loan's interest clock last started (#2731).
+ *     The clock restarts at a partial, so a short slice would write that
+ *     interest off at the lender's expense; a LARGER slice can cover it, so it
+ *     is a too-small refusal like the health-factor floor.
  */
 
 import { redactedError } from '@vaipakam/lib/errorDescription';
+
+/** `PartialMustCoverInterest(uint256,uint256)`, matched by selector too, so the
+ *  refusal is recognised when the ABI the error is decoded against predates it. */
+const PARTIAL_MUST_COVER_INTEREST_SELECTOR = '0xef4f2518';
 
 /** Basis-point denominator (100% == 10_000 BPS). */
 export const BPS = 10_000n;
@@ -74,6 +83,35 @@ export function normalizeCloseFactorCapBps(raw: bigint): bigint {
  */
 export const MAX_PARTIAL_FRACTION_BPS = 7_500n;
 
+/** The figures a `PartialMustCoverInterest` refusal carries, read from the
+ *  decoded revert anywhere on the error's cause chain (viem puts it on a
+ *  `ContractFunctionRevertedError` cause), or null when the error was not
+ *  decoded against an ABI that names it. */
+export function interestShortfall(err: unknown): { repaid: bigint; interestDue: bigint } | null {
+  const seen = new Set<unknown>();
+  let cur: unknown = err;
+  for (let depth = 0; depth < 8 && cur !== null && typeof cur === 'object' && !seen.has(cur); depth += 1) {
+    seen.add(cur);
+    const data = (cur as { data?: { errorName?: unknown; args?: unknown } }).data;
+    if (data?.errorName === 'PartialMustCoverInterest' && Array.isArray(data.args) && data.args.length >= 2) {
+      const [repaid, interestDue] = data.args;
+      if (typeof repaid === 'bigint' && typeof interestDue === 'bigint') return { repaid, interestDue };
+    }
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return null;
+}
+
+/** The least slice whose proceeds reach `interestDue`, at the rate the refused
+ *  slice paid (`repaid` for `fractionBps`), rounded up. Proceeds are close to
+ *  linear in the slice, and the contract stays the judge: a slice this sizes
+ *  short is refused again and the search grows it from there. Null when the
+ *  refused slice paid nothing, which gives no rate to scale by. */
+export function sizeToCover(fractionBps: bigint, short: { repaid: bigint; interestDue: bigint }): bigint | null {
+  if (short.repaid <= 0n) return null;
+  return (fractionBps * short.interestDue + short.repaid - 1n) / short.repaid;
+}
+
 /** What the partial-liquidation attempt ended in. */
 export type PartialAttemptOutcome<Q> =
   | { kind: 'submitted'; hash: `0x${string}`; fractionBps: bigint; attempt: number; quotes: Q }
@@ -103,7 +141,8 @@ export interface PartialAttemptDeps<Q> {
  * A partial must land the loan's health factor in a band: at least 1.0
  * (`PartialMustRestoreHF` / `PartialMustImproveHF` below it) and at most the
  * governance ceiling (`PartialOverLiquidates` above it), within the close-factor
- * cap (`InvalidPartialFraction`). Each refusal says which side of the band the
+ * cap (`InvalidPartialFraction`), and it must pay at least the interest accrued
+ * since the interest clock last started (`PartialMustCoverInterest` below it). Each refusal says which side of the band the
  * slice fell, so the search keeps a bracket — the largest size known too small
  * and the smallest known too big — and sends only sizes strictly inside it:
  *
@@ -155,10 +194,14 @@ export async function runPartialAttempts<Q extends { calls: readonly unknown[] }
    * step from 6,000 past a 7,000-7,200 band still tries 7,499, and a shrink
    * below the floor still tries the floor.
    */
-  const nextSize = (step: 'down' | 'up' | 'cap'): bigint | null => {
+  const nextSize = (step: 'down' | 'up' | 'cap', atLeast: bigint | null = null): bigint | null => {
     const lower = tooSmall ?? MIN_PARTIAL_FRACTION_BPS - 1n;
     const upper = tooBig !== null && tooBig < limit ? tooBig : limit;
     if (upper - lower <= 1n) return null;
+    // A refusal that names the size it needs (#2886) is taken at its word,
+    // within the open interval: the least size it names, or the interval's
+    // top when that is past it.
+    if (atLeast !== null && atLeast > lower + 1n) return atLeast < upper ? atLeast : upper - 1n;
     if (tooSmall !== null && tooBig !== null) return (lower + upper) / 2n;
     if (step === 'cap') return upper - 1n;
     if (step === 'down') {
@@ -212,6 +255,13 @@ export async function runPartialAttempts<Q extends { calls: readonly unknown[] }
         refusal = 'too small to restore HF';
         if (tooSmall === null || fractionBps > tooSmall) tooSmall = fractionBps;
         next = nextSize('up');
+      } else if (msg.includes('PartialMustCoverInterest') || msg.includes(PARTIAL_MUST_COVER_INTEREST_SELECTOR)) {
+        const short = interestShortfall(err);
+        refusal = short
+          ? `too small to cover the accrued interest (repaid ${short.repaid}, due ${short.interestDue})`
+          : 'too small to cover the accrued interest';
+        if (tooSmall === null || fractionBps > tooSmall) tooSmall = fractionBps;
+        next = nextSize('up', short ? sizeToCover(fractionBps, short) : null);
       } else {
         deps.log(`partial-reverted-resize (${msg.slice(0, 140)}) — skipping; recompute slice next tick`);
         return { kind: 'skip' };
