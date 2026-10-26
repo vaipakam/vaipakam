@@ -96,7 +96,12 @@
     ],
     "outputs": [
       {
-        "name": "live",
+        "name": "agreeing",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "disagreeing",
         "type": "uint8",
         "internalType": "uint8"
       }

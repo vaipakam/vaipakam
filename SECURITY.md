@@ -73,7 +73,7 @@ Any read past its applicable staleness window reverts `StalePrice`. Callers do n
 
 ### Per-feed overrides
 
-`ORACLE_ADMIN_ROLE` may tighten staleness or set a minimum-valid-answer floor for a specific Chainlink aggregator via `OracleAdminFacet.setFeedOverride(feed, maxStaleness, minValidAnswer)`. A configured override takes precedence over the global volatile / stable defaults. Setting `maxStaleness = 0` clears the override. Overrides can only make a feed *stricter*, never more permissive.
+The Diamond owner (the governance Timelock after handover) may tighten staleness or set a minimum-valid-answer floor for a specific Chainlink aggregator via `OracleAdminFacet.setFeedOverride(feed, maxStaleness, minValidAnswer)`. Overrides can only make a feed *stricter*, never more permissive: an override is applied **on top of** the global volatile / stable defaults and the peg rule, never instead of them, on both the reverting price read and the non-reverting liquidity-check read, and a `maxStaleness` above the 25h outer default is refused because it could never bind. Setting `maxStaleness = 0` clears the override.
 
 ---
 

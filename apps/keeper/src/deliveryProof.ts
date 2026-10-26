@@ -58,7 +58,7 @@ import {
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
-import { summarizeFailure } from '@vaipakam/lib/errorDescription';
+import { summarizeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { digestText, resolveOpsAlert, sendOpsAlert, sendOpsAlertDigest } from './opsAlert';
 import { boundedRead, deadlineClient, PastRunDeadline } from './batchRead';
 import { reportSendError } from './submissionQueue';
@@ -208,7 +208,7 @@ export async function runDeliveryProof(env: Env, tick: PassTick): Promise<void> 
       try {
         await proveOnMirror(env, chain, byId, deadline, tick.deadlineMs);
       } catch (err) {
-        console.error(`[keeper] deliveryProof chain=${chain.id} failed:`, err);
+        console.error(`[keeper] deliveryProof chain=${chain.id} failed:`, redactedError(err));
       }
     }),
   );

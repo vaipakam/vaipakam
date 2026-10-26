@@ -224,7 +224,7 @@ async function main(): Promise<void> {
     }
 
     // BOTH streams. Several passes report caught RPC failures through
-    // console.WARN — preGraceWatcher warns on count, page and offer-hydration
+    // console.WARN — preGraceWatcher warns on count, page and per-loan read
     // failures — so intercepting only console.error let a partially executed
     // pass print its failures and still report err/run = 0.0 with no floor
     // marker (Codex #1945 r1).

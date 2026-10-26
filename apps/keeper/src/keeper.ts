@@ -48,7 +48,7 @@ import { attemptCloseOut } from './closeOut';
 import { parseLiquidationLoan } from './liquidationLoan';
 import { tryMatchLiquidation } from './matchLiquidation';
 import { orchestrateDexDirectQuotes } from './dexDirectQuotes';
-import { describeFailure } from '@vaipakam/lib/errorDescription';
+import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { inTermOnLoanClock } from './loanClockReads';
 import {
   FORCED_SALE_KIND,
@@ -811,7 +811,7 @@ export async function maybeAutonomousLiquidate(
         // as a deferral rather than as this route's failure.
         if (isSendPastDeadline(splitErr)) throw splitErr;
         console.log(
-          `[keeper] loan=${loanId} chain=${chain.name} split-reverted (${String(splitErr).slice(0, 140)}) — falling back to full liquidation`,
+          `[keeper] loan=${loanId} chain=${chain.name} split-reverted (${redactedError(splitErr, { stack: false }).slice(0, 140)}) — falling back to full liquidation`,
         );
         // do NOT return — fall through to the full `triggerLiquidation` below.
       }
@@ -837,7 +837,7 @@ export async function maybeAutonomousLiquidate(
     // loan in this tick. The most common cause is "another keeper got there
     // first" or "MEV bot front-ran us", both of which are fine — the loan is
     // liquidated.
-    reportSendError(`[keeper] loan=${loanId} chain=${chain.name}`, err, `err=${String(err).slice(0, 250)}`);
+    reportSendError(`[keeper] loan=${loanId} chain=${chain.name}`, err, `err=${redactedError(err, { stack: false }).slice(0, 250)}`);
     return false;
   }
 }
@@ -1227,7 +1227,7 @@ async function tryFlashLoanDiscountedPath(
     if (isSendPastDeadline(err)) throw err;
     console.error(
       `[keeper] loan=${loanId} chain=${chain.name} flash-loan-submit-failed ` +
-        `err=${String(err).slice(0, 250)}`,
+        `err=${redactedError(err, { stack: false }).slice(0, 250)}`,
     );
     // Fall through to legacy branches so the loan still gets
     // liquidated somehow.

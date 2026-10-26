@@ -13,6 +13,8 @@
  *     and CLAMPS to it rather than escalating straight to full.
  */
 
+import { redactedError } from '@vaipakam/lib/errorDescription';
+
 /** Basis-point denominator (100% == 10_000 BPS). */
 export const BPS = 10_000n;
 
@@ -175,7 +177,7 @@ export async function runPartialAttempts<Q extends { calls: readonly unknown[] }
       return { kind: 'submitted', hash, fractionBps, attempt, quotes };
     } catch (err) {
       if (deps.isFatal(err)) throw err;
-      const msg = String(err);
+      const msg = redactedError(err, { stack: false });
 
       if (
         msg.includes('InternalMatchOnlyBand') ||
