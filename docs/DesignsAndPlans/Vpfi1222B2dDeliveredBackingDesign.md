@@ -585,6 +585,12 @@ following either literally now would reintroduce an over-statement.
    Both are the over-statement direction — the same class as the d2 r5
    finding and §2e.1's arrival-COMMITS correction.
 
+> **Superseded in part (#2875).** The derived floor this item reasons about
+> is retired: every chain is a fresh deploy (owner decision O1 = A), so the
+> reported cumulative is the stored `recycleCreditedCumulative` alone. The
+> custody credit still advances only the bucket and the relocated counter,
+> which is what keeps it out of that figure now.
+
 3. **Mechanism: a `recycleCustodyRelocatedCumulative` counter subtracted from
    the derived floor.** `creditedCumulative()` is
    `max(stored, recycleBucket + paidOutRecycled)`, so a custody credit that

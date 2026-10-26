@@ -387,7 +387,7 @@ contract MeshThreeChainE2ETest is Test {
     ///      `closeDay`, so what Base ingests is still that chain's real book.
     function _seedRecycled(uint256 chainId, uint256 throughDay) private {
         uint256 perDay = _absorbFor(chainId);
-        _mut(chainId).setRecycleBucketRaw(BUCKET_SEED);
+        _mut(chainId).setRecycleBucketAbsorbedRaw(BUCKET_SEED);
         for (uint256 d = 1; d <= throughDay; ++d) {
             _mut(chainId).setRecycledCreditedByDayRaw(d, perDay);
         }
@@ -396,8 +396,8 @@ contract MeshThreeChainE2ETest is Test {
     /// @dev #1442 — as `_seedRecycled`, but with an explicit bucket so a
     ///      mirror can be given real absorption it cannot fully self-fund.
     ///      The two are COUPLED and that is the whole difficulty of this
-    ///      fixture: a chain's reported cumulative derives from
-    ///      `bucket + paidOut`, and Base clamps its day attribution to
+    ///      fixture: a chain's reported cumulative is the absorption the
+    ///      bucket was seeded with (its lifetime credited counter), and Base clamps its day attribution to
     ///      `min(forDay, reported - attributed)` — so lowering the bucket to
     ///      create a shortfall also shrinks that chain's contribution to `Ā`,
     ///      which shrinks the very target the shortfall is measured against.
@@ -409,7 +409,7 @@ contract MeshThreeChainE2ETest is Test {
         uint256 bucket
     ) private {
         uint256 perDay = _absorbFor(chainId);
-        _mut(chainId).setRecycleBucketRaw(bucket);
+        _mut(chainId).setRecycleBucketAbsorbedRaw(bucket);
         for (uint256 d = 1; d <= throughDay; ++d) {
             _mut(chainId).setRecycledCreditedByDayRaw(d, perDay);
         }
@@ -1113,7 +1113,8 @@ contract MeshThreeChainE2ETest is Test {
         // `creditedCumulative` to reporting the LIVE `recycleBucket` would be
         // indistinguishable while nothing had ever been consumed, because the
         // two figures coincide (Codex #1439 r3). After a spend they diverge —
-        // `creditedCumulative = recycleBucket + paidOutRecycled` — so only a
+        // the lifetime credited counter stays put while the bucket falls by
+        // what `paidOutRecycled` rises — so only a
         // report carrying the true lifetime figure can heal Base to the value
         // asserted below.
         _mut(ARB).consumeRecycleRaw(40_000 ether);
@@ -1123,7 +1124,7 @@ contract MeshThreeChainE2ETest is Test {
             "the spend really left the bucket"
         );
         // Absorb 25k on top of the POST-SPEND balance.
-        _mut(ARB).setRecycleBucketRaw(BUCKET_SEED - 40_000 ether + 25_000 ether);
+        _mut(ARB).setRecycleBucketAbsorbedRaw(BUCKET_SEED - 40_000 ether + 25_000 ether);
         _seedAllInterest(5);
         _allChainsCloseDay(5);
         _deliverPendingReports();
@@ -1497,7 +1498,7 @@ contract MeshThreeChainE2ETest is Test {
         assertEq(opReported, BUCKET_SEED, "OP reported its own bucket");
 
         // OP absorbs more; ARB does not.
-        _mut(OP).setRecycleBucketRaw(BUCKET_SEED + 40_000 ether);
+        _mut(OP).setRecycleBucketAbsorbedRaw(BUCKET_SEED + 40_000 ether);
         _seedAllInterest(5);
         _allChainsCloseDay(5);
         _deliverPendingReports();
@@ -1644,7 +1645,7 @@ contract MeshThreeChainE2ETest is Test {
         _allChainsCloseDay(4);
 
         // ARB absorbs more, then closes a LATER day.
-        _mut(ARB).setRecycleBucketRaw(BUCKET_SEED + 30_000 ether);
+        _mut(ARB).setRecycleBucketAbsorbedRaw(BUCKET_SEED + 30_000 ether);
         _seedAllInterest(5);
         _allChainsCloseDay(5);
 

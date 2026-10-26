@@ -133,7 +133,7 @@ zero adapters reverts every liquidation — this step blocks any
 Populate in `.env`:
 - `BASE_SEPOLIA_WETH_ADDRESS` · `BASE_SEPOLIA_UNISWAP_V3_FACTORY`
 - `BASE_SEPOLIA_PANCAKESWAP_V3_FACTORY` · `BASE_SEPOLIA_SUSHISWAP_V3_FACTORY` (Phase 7b.1; leave blank where the chain has no deployment)
-- `BASE_SEPOLIA_ETH_USD_FEED` · `BASE_SEPOLIA_USD_DENOMINATOR` · `BASE_SEPOLIA_ETH_DENOMINATOR`
+- `BASE_SEPOLIA_ETH_USD_FEED`. The USD and ETH denominators and the feed registry are not env settings: configure reads `.feedRegistry` (deployed by `DeployFeedRegistry` in the contracts phase, #2880) and takes both denominators from it. Configure refuses a chain with no recorded registry.
 - `BASE_SEPOLIA_SEQUENCER_UPTIME_FEED`
 - `BASE_SEPOLIA_TELLOR_ORACLE` · `BASE_SEPOLIA_API3_SERVER_V1` · `BASE_SEPOLIA_DIA_ORACLE_V2` (Phase 7b.2; leave blank where the chain has no deployment)
 - (optional) `VPFI_STABLE_FEED_SYMBOLS=USDC` and `BASE_SEPOLIA_USDC_FEED`
@@ -177,11 +177,13 @@ cast call $BASE_SEPOLIA_DIAMOND_ADDRESS "getSwapAdapters()(address[])" --rpc-url
 
 Base Sepolia has only nine real Chainlink feeds (ETH/USD, BTC/USD,
 USDC/USD, USDT/USD, DAI/USD, LINK/USD, LINK/ETH, CBETH/ETH, CBETH/USD)
-and no Chainlink Feed Registry, so a fresh deploy can't classify
+and no Chainlink Feed Registry. Every chain's Diamond prices through its own
+`VaipakamFeedRegistry` instead (#2880), but on a testnet the real feeds cover
+few tokens, so a fresh deploy can't classify
 arbitrary ERC-20s as **liquid** out of the box. For end-to-end testing
 without depending on real Base Sepolia DEX liquidity, deploy the
 mock infrastructure that surfaces TWO fully-liquid mock ERC-20s
-(`mUSDC` / `mWBTC`) along with a mock Feed Registry, mock per-asset
+(`mUSDC` / `mWBTC`) along with mock per-asset
 feeds, and a mock UniswapV3 factory whose pool depth clears the
 $1M `MIN_LIQUIDITY_USD` floor:
 
@@ -193,9 +195,10 @@ forge script script/DeployTestnetLiquidityMocks.s.sol \
 The script:
 - Deploys `mUSDC` (6 dec, $1.00) + `mWBTC` (8 dec, $60,000) ERC-20s
   with 100M / 1k initial supply on the deployer.
-- Deploys `MockChainlinkRegistry` + per-asset feeds (`mUSDC/USD`,
-  `mWBTC/USD`, `WETH/USD` at $2,000) registered under the canonical
-  Chainlink Denomination sentinels.
+- Deploys per-asset mock feeds (`mUSDC/USD`, `mWBTC/USD`, `WETH/USD` at
+  $2,000) and registers them in the chain's real feed registry under
+  Chainlink's USD sentinel, by one owner proposal executed at once (the
+  registry's delay is 0 on a testnet). Run `DeployFeedRegistry` first.
 - Deploys `MockUniswapV3Factory` + pools `mUSDC/WETH` and
   `mWBTC/WETH` at fee=3000, `liquidity()=1e24` (well above the $1M
   floor under any sane ETH/USD price).
@@ -550,9 +553,11 @@ Diamond's oracle), then:
 bash script/deploy-testnet.sh base-sepolia --phase launch
 ```
 
-It reads the seven launch requirements off the chain (treasury, sanctions
+It reads the eight launch requirements off the chain (treasury, sanctions
 oracle, priced WETH, an enabled swap adapter, the VPFI pool route and its
-exact CCIP lanes, and a quote-asset list naming an asset besides WETH that the Diamond prices) and refuses while any is NOT MET. The admin key then
+exact CCIP lanes, a quote-asset list naming an asset besides WETH that the Diamond prices,
+and the
+recorded feed registry keying every price lookup) and refuses while any is NOT MET. The admin key then
 unpauses. After a rehearsal handover the phase prints the Timelock call
 instead (see DeploymentRunbook, `launch` row). Never unpause with `cast`: an
 unpause outside this phase leaves no launch-gate record, and the launch step

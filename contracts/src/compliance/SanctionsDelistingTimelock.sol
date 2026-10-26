@@ -46,9 +46,10 @@ import {LibFeeRefund} from "./LibFeeRefund.sol";
  *            cannot propose it again until the Safe or the owner lifts it
  *            ({setVetoed}), so a vetoed wallet does not come back every
  *            window. The Safe may also veto before any proposal. A proposal
- *            executes only while its proposer is still appointed, so
- *            removing a proposer voids all its pending proposals in one
- *            call ({discard} then frees what they held). The Safe also
+ *            executes only while its proposer still holds the authority it
+ *            proposed under, so removing a proposer voids all its pending
+ *            proposals in one call, for good: reappointing the same key
+ *            later does not revive them ({discard} frees what they held). The Safe also
  *            keeps its own direct delist through `SanctionsList.applyUpdate`
  *            for emergencies; this contract changes nothing about the
  *            Safe's powers.
@@ -129,6 +130,7 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     struct Proposal {
         Status status;
         address proposer;
+        uint64 generation;
         uint32 publicationDate;
         uint64 createdAt;
         uint64 eta;
@@ -214,6 +216,13 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     /// @notice Who may propose and reconfirm (the delister bot).
     mapping(address account => bool enabled) public isProposer;
 
+    /// @notice How many times each account has lost proposing authority.
+    ///         Every proposal records its proposer's generation, and acts
+    ///         only while it is unchanged, so a removal voids the key's
+    ///         pending proposals for good: reappointing the key starts a
+    ///         new generation and does not revive them.
+    mapping(address account => uint64 generation) public authGeneration;
+
     /// @notice The waiting window applied to NEW proposals, in seconds.
     uint32 public delay = DEFAULT_DELAY;
 
@@ -273,6 +282,10 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
 
     /// @custom:event-category informational/admin
     event ProposerSet(address indexed account, bool enabled);
+    /// @notice `account` lost proposing authority; its proposals made
+    ///         under earlier generations are void, even if it is
+    ///         reappointed.
+    event AuthorityLapsed(address indexed account, uint64 generation);
     /// @custom:event-category informational/admin
     event DelaySet(uint32 previousDelay, uint32 newDelay);
     /// @custom:event-category informational/admin
@@ -357,10 +370,11 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     /// @notice The publication's additions are not all applied yet; nothing
     ///         is delisted until they are.
     error AdditionsOutstanding(uint32 pendingAdditions);
-    /// @notice The proposal's proposer has been removed; it can only be
-    ///         {discard}ed.
+    /// @notice The proposal's proposer has been removed since it proposed
+    ///         (even if reappointed after); it can only be {discard}ed.
     error ProposerRemoved(uint256 id, address proposer);
-    /// @notice Only a proposal whose proposer was removed may be discarded.
+    /// @notice Only a proposal whose proposer was removed since it proposed
+    ///         may be discarded.
     error ProposerStillAppointed(uint256 id, address proposer);
     error NotListedByOwnList(address account);
     error AlreadyProposed(address account, uint256 id);
@@ -421,10 +435,15 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     }
 
     /// @notice Appoint or remove a proposer. Removing one voids every
-    ///         pending proposal it made: none can execute, and anyone may
-    ///         {discard} them.
+    ///         pending proposal it made, for good: none can execute, anyone
+    ///         may {discard} them, and reappointing the key does not revive
+    ///         them.
     function setProposer(address account, bool enabled) external onlyOwner {
         if (account == address(0)) revert ZeroAddress();
+        if (isProposer[account] && !enabled) {
+            uint64 g = ++authGeneration[account];
+            emit AuthorityLapsed(account, g);
+        }
         isProposer[account] = enabled;
         emit ProposerSet(account, enabled);
     }
@@ -519,6 +538,7 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
         Proposal storage p = _proposals[id];
         p.status = Status.Pending;
         p.proposer = msg.sender;
+        p.generation = authGeneration[msg.sender];
         p.publicationDate = publicationDate;
         p.createdAt = uint64(block.timestamp);
         p.eta = eta;
@@ -572,7 +592,7 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     function discard(uint256 id) external {
         Proposal storage p = _pending(id);
         address proposer = p.proposer;
-        if (isProposer[proposer]) revert ProposerStillAppointed(id, proposer);
+        if (_holdsAuthority(p)) revert ProposerStillAppointed(id, proposer);
         p.status = Status.Cancelled;
         _release(p.accounts);
         emit DelistingDiscarded(id, proposer, msg.sender);
@@ -760,6 +780,16 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
         return _proposals[id];
     }
 
+    /// @notice Whether proposal `id`'s authority still stands: its proposer
+    ///         is appointed and has not been removed since it proposed. A
+    ///         pending proposal for which this is false can only be
+    ///         {discard}ed. The rule {execute}, {discard} and the proposer's
+    ///         own actions apply, published so a reader never rebuilds it
+    ///         from `isProposer` alone (which a reappointment turns back on).
+    function holdsAuthority(uint256 id) external view returns (bool) {
+        return _holdsAuthority(_proposals[id]);
+    }
+
     /// @notice Which RedStone check applies to executions now. The one
     ///         answer for every reader — {execute}, bots, deploy scripts and
     ///         surfaces — so none reports a posture the contract does not
@@ -793,7 +823,8 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     // ── Internals ─────────────────────────────────────────────────────
 
     /// @dev Every check {execute} makes before it writes, in order:
-    ///      pending; matured; proposer still appointed; publication
+    ///      pending; matured; proposer still holding the authority it
+    ///      proposed under; publication
     ///      unchanged; its additions all applied; within its outstanding
     ///      delistings; not vetoed; a current RedStone clears every address.
     ///      One sequence for {execute} and {checkExecutable}, so the view
@@ -801,7 +832,7 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     function _checkExecutable(uint256 id) private view returns (Proposal storage p, Route route) {
         p = _pending(id);
         if (block.timestamp < p.eta) revert TooEarly(id, p.eta);
-        if (!isProposer[p.proposer]) revert ProposerRemoved(id, p.proposer);
+        if (!_holdsAuthority(p)) revert ProposerRemoved(id, p.proposer);
         bytes32 recordedHash = list.sourceHash();
         uint32 recordedDate = list.sourcePublicationDate();
         if (recordedHash != p.sourceHash || recordedDate != p.publicationDate) {
@@ -839,7 +870,16 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     ///      proposer key cannot withdraw it (and refill the freed share
     ///      itself) or move it to a new publication it has not re-checked.
     function _requireItsProposer(uint256 id, Proposal storage p) private view {
-        if (msg.sender != p.proposer || !isProposer[msg.sender]) revert NotItsProposer(id, msg.sender);
+        if (msg.sender != p.proposer || !_holdsAuthority(p)) revert NotItsProposer(id, msg.sender);
+    }
+
+    /// @dev The ONE statement of "this proposal's authority still stands":
+    ///      its proposer is appointed now AND has not lost the role since it
+    ///      proposed. Read by execution, by the proposer's own actions and by
+    ///      {discard}, so a removed-then-reappointed key's old proposals are
+    ///      void on every path.
+    function _holdsAuthority(Proposal storage p) private view returns (bool) {
+        return isProposer[p.proposer] && p.generation == authGeneration[p.proposer];
     }
 
     function _isVetoer(address who) private view returns (bool) {

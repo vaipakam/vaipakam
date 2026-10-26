@@ -112,7 +112,7 @@ const facts = (entries) => new Map(Object.entries(entries).map(([a, f]) => [a.to
 const proposal = (o) => ({
   id: 1n,
   proposer: KEY,
-  proposerAppointed: true,
+  authorityHolds: true,
   sourceHash: adv.sourceHash,
   publicationDate: 20260307,
   eta: 500_000n,
@@ -214,7 +214,7 @@ test('no route or no remover role: nothing is proposed, and the reason is stated
 test('moves pending proposals on: discard, withdraw, reconfirm, execute, request, relay', () => {
   const ev = evaluatePublication(snapOf(), PUBLICATION);
   const proposals = [
-    proposal({ id: 1n, proposer: OTHER, proposerAppointed: false }),
+    proposal({ id: 1n, proposer: OTHER, authorityHolds: false }),
     proposal({ id: 2n, unlisted: [D1] }),
     proposal({ id: 3n, sourceHash: OLD_HASH, accounts: [D1, D3] }),
     proposal({ id: 4n, sourceHash: OLD_HASH, accounts: [A1] }),
@@ -966,4 +966,10 @@ test('an oracle is the stand-in only on its own answer, and never RedStone', asy
   assert.equal((await identifyOracle(answering(true, 2n ** 64n - 1n), ORACLE, [])).updatedAt, null, 'a future time is unknown');
   assert.equal((await identifyOracle(answering(true, 1_000n), ORACLE, [])).updatedAt, 1_000n, 'the current block itself is fine');
   assert.equal((await identifyOracle(answering(true, 123n, new Error('rpc down')), ORACLE, [])).updatedAt, null);
+});
+
+test("the bot's own proposal made before its key was removed and reappointed is discarded, never acted on as its own (#2902)", () => {
+  const ev = evaluatePublication(snapOf(), PUBLICATION);
+  const plan = planChain(snapOf({ proposals: [proposal({ id: 1n, unlisted: [D1], authorityHolds: false })] }), KEY, ev, facts({ [D1]: {} }));
+  assert.deepEqual(plan.actions.filter((a) => a.id === 1n).map((a) => a.kind), ['discard']);
 });

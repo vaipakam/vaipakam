@@ -1557,7 +1557,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getOracleAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](35);
+        s = new bytes4[](36);
         s[0] = OracleAdminFacet.setChainlinkRegistry.selector;
         s[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
         s[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
@@ -1613,6 +1613,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #945 — the launch readiness check prices WETH through the
         // Diamond's own oracle, so it reads which WETH is configured.
         s[34] = OracleAdminFacet.getWethContract.selector;
+        // #2880 — the launch readiness check reads the feed registry the
+        // oracle prices through and the two quote keys it asks it under.
+        s[35] = OracleAdminFacet.getFeedRegistryLookup.selector;
     }
 
     function _getNftSelectors() internal pure returns (bytes4[] memory s) {
@@ -1947,7 +1950,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         Setters + readers for auto-lend / auto-opt-in / per-loan
     ///         refinance caps + per-loan + per-side extend caps.
     function _getAutoLifecycleFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](13);
+        s = new bytes4[](14);
         s[0] = AutoLifecycleFacet.setAutoLendConsent.selector;
         s[1] = AutoLifecycleFacet.getAutoLendConsent.selector;
         s[2] = AutoLifecycleFacet.setAutoOptInOnNewLoan.selector;
@@ -1962,6 +1965,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[11] = AutoLifecycleFacet.getAutoExtendLenderCaps.selector;
         // T-092 Phase 3 (#503) — extendLoanInPlace executor.
         s[12] = AutoLifecycleFacet.extendLoanInPlace.selector;
+        // #2738 — when a loan may be extended (the keeper reads it).
+        s[13] = AutoLifecycleFacet.getAutoExtendWindow.selector;
     }
 
     /// @notice #407 PR 2 (2026-06-12) — encumbrance mutate facet
@@ -3501,7 +3506,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](13);
+        s = new bytes4[](11);
         s[0] = RewardCompensationDispatchFacet.remitManualBudget.selector;
         s[1] =
             RewardCompensationDispatchFacet.remitSupplementalBudget.selector;
@@ -3513,31 +3518,23 @@ contract DeployDiamond is Script, ArtifactRootBase {
             .selector;
         s[4] =
             RewardCompensationDispatchFacet.onStrandedReturnReceived.selector;
-        // #1660 r11 - the B2-d5 seed ceremony pair, moved here for
-        // EIP-170 headroom on the mutating remittance facet.
-        s[5] = RewardCompensationDispatchFacet
-            .seedReleasedRemitStranded
-            .selector;
-        s[6] = RewardCompensationDispatchFacet
-            .resetReleasedRemitStrandedSeed
-            .selector;
         // #1434 P2-w6 - the recovery ceremony + R6e rotation.
-        s[7] =
+        s[5] =
             RewardCompensationDispatchFacet.recordRecoveryCeremony.selector;
-        s[8] = RewardCompensationDispatchFacet
+        s[6] = RewardCompensationDispatchFacet
             .recordRecoveryTerminalLoss
             .selector;
-        s[9] = RewardCompensationDispatchFacet
+        s[7] = RewardCompensationDispatchFacet
             .importOutstandingCompensation
             .selector;
-        s[10] = RewardCompensationDispatchFacet
+        s[8] = RewardCompensationDispatchFacet
             .clearImportedOutstanding
             .selector;
         // #1662 r4 - relocated off the remittance facet (EIP-170).
-        s[11] =
+        s[9] =
             RewardCompensationDispatchFacet.releaseRemitReservation.selector;
         // #1662 r7 - the one-shot attribution watermark.
-        s[12] =
+        s[10] =
             RewardCompensationDispatchFacet.armRecoveryAttribution.selector;
     }
 
@@ -3635,7 +3632,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](45);
+        s = new bytes4[](44);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -3645,63 +3642,62 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[6] = RewardRemittanceLensFacet.getRemitReservation.selector;
         s[7] = RewardRemittanceLensFacet.getRemitIdByMessageId.selector;
         s[8] = RewardRemittanceLensFacet.getRemitReservationNonce.selector;
-        s[9] = RewardRemittanceLensFacet.getReleasedRemitStrandedSeedState.selector;
-        s[10] = RewardRemittanceLensFacet.getRemitPendingTotal.selector;
-        s[11] = RewardRemittanceLensFacet.getRemitAckedTotal.selector;
-        s[12] = RewardRemittanceLensFacet.getDayClosedByRemitId.selector;
-        s[13] = RewardRemittanceLensFacet.getReceivedRemit.selector;
-        s[14] = RewardRemittanceLensFacet.getRewardBudgetRemitted.selector;
-        s[15] = RewardRemittanceLensFacet.getRewardBudgetRemittedTotal.selector;
-        s[16] = RewardRemittanceLensFacet.getRewardBudgetRemittedGlobal.selector;
-        s[17] = RewardRemittanceLensFacet.getRewardRemittanceKeeper.selector;
-        s[18] = RewardRemittanceLensFacet.getRewardRemittanceReceiver.selector;
-        s[19] = RewardRemittanceLensFacet.getRewardBudgetReceivedTotal.selector;
-        s[20] = RewardRemittanceLensFacet.getDeliveredFreshPosition.selector;
-        s[33] = RewardRemittanceLensFacet.getDeliveredFreshBound.selector;
+        s[9] = RewardRemittanceLensFacet.getRemitPendingTotal.selector;
+        s[10] = RewardRemittanceLensFacet.getRemitAckedTotal.selector;
+        s[11] = RewardRemittanceLensFacet.getDayClosedByRemitId.selector;
+        s[12] = RewardRemittanceLensFacet.getReceivedRemit.selector;
+        s[13] = RewardRemittanceLensFacet.getRewardBudgetRemitted.selector;
+        s[14] = RewardRemittanceLensFacet.getRewardBudgetRemittedTotal.selector;
+        s[15] = RewardRemittanceLensFacet.getRewardBudgetRemittedGlobal.selector;
+        s[16] = RewardRemittanceLensFacet.getRewardRemittanceKeeper.selector;
+        s[17] = RewardRemittanceLensFacet.getRewardRemittanceReceiver.selector;
+        s[18] = RewardRemittanceLensFacet.getRewardBudgetReceivedTotal.selector;
+        s[19] = RewardRemittanceLensFacet.getDeliveredFreshPosition.selector;
+        s[32] = RewardRemittanceLensFacet.getDeliveredFreshBound.selector;
         // #1434 P2-w5 — the recovery-position reads.
-        s[21] = RewardRemittanceLensFacet.getRecoveryPosition.selector;
-        s[22] =
+        s[20] = RewardRemittanceLensFacet.getRecoveryPosition.selector;
+        s[21] =
             RewardRemittanceLensFacet.getRecoveredForReceipt.selector;
-        s[23] = RewardRemittanceLensFacet
+        s[22] = RewardRemittanceLensFacet
             .getStrandedReturnedCumulative
             .selector;
-        s[24] =
+        s[23] =
             RewardRemittanceLensFacet.getStrandedReturnShortfall.selector;
         // #1566 closure 2 cutover PR 1 — the ingress-stamped packet record and
         // the UNCLASSIFIED attribution's figures.
-        s[34] = RewardRemittanceLensFacet.getIngressPacket.selector;
-        s[35] = RewardRemittanceLensFacet.getUnclassifiedPosition.selector;
+        s[33] = RewardRemittanceLensFacet.getIngressPacket.selector;
+        s[34] = RewardRemittanceLensFacet.getUnclassifiedPosition.selector;
         // #1660 r8 - moved off the mutating facet for EIP-170 headroom.
-        s[25] = RewardRemittanceLensFacet.quoteRemitAckFee.selector;
-        s[26] =
+        s[24] = RewardRemittanceLensFacet.quoteRemitAckFee.selector;
+        s[25] =
             RewardRemittanceLensFacet.getCeremonyTerminalLoss.selector;
-        s[27] =
+        s[26] =
             RewardRemittanceLensFacet.getImportedOutstanding.selector;
-        s[28] =
+        s[27] =
             RewardRemittanceLensFacet.getCeremonyRecovered.selector;
-        s[29] =
+        s[28] =
             RewardRemittanceLensFacet.getCeremonyLoss.selector;
-        s[30] = RewardRemittanceLensFacet
+        s[29] = RewardRemittanceLensFacet
             .getRecoveryCreditForReceipt
             .selector;
         // #1662 r8 - the attribution watermark, read by the refresh.
-        s[31] =
+        s[30] =
             RewardRemittanceLensFacet.recoveryAttributionArmed.selector;
-        s[32] =
+        s[31] =
             RewardRemittanceLensFacet.recoveryAttributionArmedAt.selector;
         // #2459 r5 — the provisional compensation value held apart.
-        s[37] = RewardRemittanceLensFacet.getProvisionalFreshHeld.selector;
+        s[36] = RewardRemittanceLensFacet.getProvisionalFreshHeld.selector;
         // #1944 consequence 1 — the delivery gate's rule (the self-staticcall
         // target) and its two operator reads.
-        s[38] = RewardRemittanceLensFacet.dayAwaitsFreshDelivery.selector;
-        s[39] = RewardRemittanceLensFacet.getDayDeliveryState.selector;
-        s[40] = RewardRemittanceLensFacet.getPacketDeliveryProof.selector;
+        s[37] = RewardRemittanceLensFacet.dayAwaitsFreshDelivery.selector;
+        s[38] = RewardRemittanceLensFacet.getDayDeliveryState.selector;
+        s[39] = RewardRemittanceLensFacet.getPacketDeliveryProof.selector;
         // #1452 — the acknowledged recycled share per destination.
-        s[41] = RewardRemittanceLensFacet.getChainRemittedRecycled.selector;
-        s[42] = RewardRemittanceLensFacet.getRemitHistoryPending.selector; // #2489 r7
-        s[43] = RewardRemittanceLensFacet.getChainRemittedRecycledHistory.selector; // #2489 r9
-        s[44] = RewardRemittanceLensFacet.getRemitHistoryBooked.selector; // #2489 r10
-        s[36] = RewardRemittanceLensFacet.getRemitRoute.selector; // #2561
+        s[40] = RewardRemittanceLensFacet.getChainRemittedRecycled.selector;
+        s[41] = RewardRemittanceLensFacet.getRemitHistoryPending.selector; // #2489 r7
+        s[42] = RewardRemittanceLensFacet.getChainRemittedRecycledHistory.selector; // #2489 r9
+        s[43] = RewardRemittanceLensFacet.getRemitHistoryBooked.selector; // #2489 r10
+        s[35] = RewardRemittanceLensFacet.getRemitRoute.selector; // #2561
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {

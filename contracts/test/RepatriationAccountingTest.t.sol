@@ -437,21 +437,17 @@ contract RepatriationAccountingTest is SetupTest {
         assertEq(repatriatedOut, 50 ether, "outflow counter advances");
     }
 
-    function test_DebitSurplus_FloorSurvivesRepatriation() public {
-        // §3.6a constraint 2a: the derived credited floor must NOT drop when
-        // the bucket is debited for repatriation — the outflow term keeps
-        // repatriated value in the floor, and the seed-before-debit step
-        // stamps the pre-debit cumulative on an unseeded Diamond.
+    function test_DebitSurplus_CreditedCumulativeSurvivesRepatriation() public {
+        // §3.6a constraint 2a: the credited cumulative must NOT drop when
+        // the bucket is debited for repatriation — the value was absorbed
+        // here once, before it left, and the outflow counter records where
+        // it went.
         _mut().setRecycleBucketRaw(100 ether);
-        _mut().setRecycleCreditedCumulativeRaw(0); // unseeded upgrade shape
+        _mut().setRecycleCreditedCumulativeRaw(100 ether);
         _mut().debitRepatriationSurplusRaw(60 ether);
-        (uint256 creditedRaw, , bool seeded, , ) =
-            _agg().getRecycleCompositionPosition();
-        assertTrue(seeded, "seed-before-debit stamps the seeded flag");
-        assertEq(
-            creditedRaw,
-            100 ether,
-            "the pre-debit cumulative was seeded before the bucket dropped"
-        );
+        (uint256 credited, , , ) = _agg().getRecycleCompositionPosition();
+        assertEq(credited, 100 ether, "the debit leaves the absorption counter alone");
+        (uint256 repatriatedOut, , , ) = _repat().getRepatriationPosition();
+        assertEq(repatriatedOut, 60 ether, "the outflow counter carries the debit");
     }
 }

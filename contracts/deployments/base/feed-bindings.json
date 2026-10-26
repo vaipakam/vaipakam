@@ -1,0 +1,1516 @@
+{
+  "schema": 1,
+  "chain": {
+    "slug": "base",
+    "chainId": 8453
+  },
+  "directory": {
+    "url": "https://reference-data-directory.vercel.app/feeds-ethereum-mainnet-base-1.json",
+    "sha256": "0x37e41779fbafec3d57a536c040c9c1132149a07053294625742ffea2bec0e482",
+    "date": 20261026
+  },
+  "sources": {
+    "coingecko": {
+      "platform": "base"
+    },
+    "coinmarketcap": {
+      "platforms": [
+        "Base"
+      ]
+    },
+    "tokenLists": [
+      {
+        "url": "https://static.optimism.io/optimism.tokenlist.json",
+        "name": "Superchain Token List",
+        "version": "10.0.1770",
+        "sha256": "0x04daa3fff6c486946a7312685180f3297fe6545f489dadb5f70a128967bdedf3"
+      },
+      {
+        "url": "https://tokens.uniswap.org",
+        "name": "Uniswap Labs Default",
+        "version": "22.32.0",
+        "sha256": "0x132cfa159d9ec36717cfd128b85d8a209baea67ed2b0862aa2edfe812878f522"
+      }
+    ]
+  },
+  "checkedAtBlock": 53117851,
+  "bindings": [
+    {
+      "token": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
+      "symbol": "CBBTC",
+      "tokenDecimals": 8,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0x07DA0E54543a844a80ABE69c8A12F22B3aA59f9D",
+      "feedDecimals": 8,
+      "pair": "cbBTC / USD",
+      "heartbeat": 1200,
+      "category": "low",
+      "directoryPath": "cbbtc-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ],
+      "otherCandidates": {
+        "coinmarketcap": [
+          "0x805aF152eebc7e280628A0Bb30Dd916b5B7716fb"
+        ]
+      }
+    },
+    {
+      "token": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
+      "symbol": "CBETH",
+      "tokenDecimals": 18,
+      "quote": "ETH",
+      "quoteAddress": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+      "feed": "0x806b4Ac04501c29769051e42783cF04dCE41440b",
+      "feedDecimals": 18,
+      "pair": "CBETH / ETH",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "cbeth-eth",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
+      "symbol": "CBETH",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0xd7818272B9e248357d13057AAb0B417aF31E817d",
+      "feedDecimals": 8,
+      "pair": "CBETH / USD",
+      "heartbeat": 1200,
+      "category": "medium",
+      "directoryPath": "cbeth-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
+      "symbol": "DAI",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0x591e79239a7d679378eC8c847e5038150364C78F",
+      "feedDecimals": 8,
+      "pair": "DAI / USD",
+      "heartbeat": 86400,
+      "category": "low",
+      "directoryPath": "dai-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed",
+      "symbol": "DEGEN",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0xE62BcE5D7CB9d16AB8b4D622538bc0A50A5799c2",
+      "feedDecimals": 8,
+      "pair": "DEGEN / USD",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "degen-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42",
+      "symbol": "EURC",
+      "tokenDecimals": 6,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0xDAe398520e2B67cd3f27aeF9Cf14D93D927f8250",
+      "feedDecimals": 8,
+      "pair": "EURC / USD",
+      "heartbeat": 86400,
+      "category": "low",
+      "directoryPath": "eurc-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0x4BfAa776991E85e5f8b1255461cbbd216cFc714f",
+      "symbol": "HOME",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0x121934C415937863d64ef93436169444633EE0d8",
+      "feedDecimals": 18,
+      "pair": "HOME / USD",
+      "heartbeat": 86400,
+      "category": "low",
+      "directoryPath": "home-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0x97bE14Dd8f994A5364573BC035D85309E7CB34de",
+      "symbol": "JITOSOL",
+      "tokenDecimals": 9,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0x0ca181015d21A5ed19baFC17F2138883C2b16D54",
+      "feedDecimals": 18,
+      "pair": "JITOSOL / USD",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "jitosol-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0x2Da56AcB9Ea78330f947bD57C54119Debda7AF71",
+      "symbol": "MOG",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0x4aeb6D15769EaD32D0c5Be2940F40c7CFf53801d",
+      "feedDecimals": 18,
+      "pair": "MOG / USD",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "mog-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ],
+      "otherCandidates": {
+        "coingecko": [
+          "0x0BA5ED329d073A847Ec3D54aC767f7E099c29bb2"
+        ]
+      }
+    },
+    {
+      "token": "0xBAa5CC21fd487B8Fcc2F632f3F4E8D37262a0842",
+      "symbol": "MORPHO",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0xe95e258bb6615d47515Fc849f8542dA651f12bF6",
+      "feedDecimals": 8,
+      "pair": "MORPHO / USD",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "morpho-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0xaB36452DbAC151bE02b16Ca17d8919826072f64a",
+      "symbol": "RSR",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0xAa98aE504658766Dfe11F31c5D95a0bdcABDe0b1",
+      "feedDecimals": 8,
+      "pair": "RSR / USD",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "rsr-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0x236aa50979D5f3De3Bd1Eeb40E81137F22ab794b",
+      "symbol": "tBTC",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0x6D75BFB5A5885f841b132198C9f0bE8c872057BF",
+      "feedDecimals": 8,
+      "pair": "TBTC / USD",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "tbtc-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "symbol": "USDC",
+      "tokenDecimals": 6,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0x7e860098F58bBFC8648a4311b374B1D669a2bc6B",
+      "feedDecimals": 8,
+      "pair": "USDC / USD",
+      "heartbeat": 86400,
+      "category": "low",
+      "directoryPath": "usdc-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2",
+      "symbol": "USDT",
+      "tokenDecimals": 6,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0xf19d560eB8d2ADf07BD6D13ed03e1D11215721F9",
+      "feedDecimals": 8,
+      "pair": "USDT / USD",
+      "heartbeat": 86400,
+      "category": "low",
+      "directoryPath": "usdt-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b",
+      "symbol": "VIRTUAL",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0xEaf310161c9eF7c813A14f8FEF6Fb271434019F7",
+      "feedDecimals": 8,
+      "pair": "VIRTUAL / USD",
+      "heartbeat": 86400,
+      "category": "low",
+      "directoryPath": "virtual-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0xA88594D404727625A9437C3f886C7643872296AE",
+      "symbol": "WELL",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0xc15d9944dAefE2dB03e53bef8DDA25a56832C5fe",
+      "feedDecimals": 8,
+      "pair": "WELL / USD",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "well-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452",
+      "symbol": "WSTETH",
+      "tokenDecimals": 18,
+      "quote": "ETH",
+      "quoteAddress": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+      "feed": "0x43a5C292A453A3bF3606fa856197f09D7B74251a",
+      "feedDecimals": 18,
+      "pair": "WSTETH / ETH",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "wsteth-eth",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0x6985884C4392D348587B19cb9eAAf157F13271cd",
+      "symbol": "ZRO",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0xdc31a4CCfCA039BeC6222e20BE7770E12581bfEB",
+      "feedDecimals": 8,
+      "pair": "ZRO / USD",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "zro-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    }
+  ],
+  "manual": [],
+  "review": [
+    {
+      "pair": "AAVE / USD",
+      "directoryPath": "aave-usd",
+      "feed": "0x3d6774EF702A10b20FCa8Ed40FC022f7E4938e07",
+      "quote": "USD",
+      "reason": "no address from coinmarketcap",
+      "candidates": {
+        "coingecko": [
+          "0x63706e401c06ac8513145b7687A14804d17f814b"
+        ],
+        "coinmarketcap": [],
+        "tokenList": [
+          "0x63706e401c06ac8513145b7687A14804d17f814b"
+        ]
+      }
+    },
+    {
+      "pair": "AERO / USD",
+      "directoryPath": "aero-usd",
+      "feed": "0x4EC5970fC728C5f65ba413992CD5fF6FD70fcfF0",
+      "quote": "USD",
+      "reason": "the sources name different addresses",
+      "candidates": {
+        "coingecko": [
+          "0x3f5bF3EdAc59d650D8fDf9657a71F2f904A3a4Ee",
+          "0x940181a94A35A4569E4529A3CDfB74e38FD98631"
+        ],
+        "coinmarketcap": [
+          "0x3f5bF3EdAc59d650D8fDf9657a71F2f904A3a4Ee"
+        ],
+        "tokenList": [
+          "0x940181a94A35A4569E4529A3CDfB74e38FD98631"
+        ]
+      }
+    },
+    {
+      "pair": "AMP / USD",
+      "directoryPath": "amp-usd",
+      "feed": "0x1688e4B274a4CC9fD398EbA6Ae4dfb6528A9D2bc",
+      "quote": "USD",
+      "reason": "no address from coingecko and coinmarketcap",
+      "candidates": {
+        "coingecko": [],
+        "coinmarketcap": [],
+        "tokenList": [
+          "0xb358489D5d92641EdB4D8eE8063f8005964346Ba"
+        ]
+      }
+    },
+    {
+      "pair": "AXL / USD",
+      "directoryPath": "axl-usd",
+      "feed": "0x676C4C6C31D97A5581D3204C04A8125B350E2F9D",
+      "quote": "USD",
+      "reason": "no address from tokenList",
+      "candidates": {
+        "coingecko": [
+          "0x23ee2343B892b1BB63503a4FAbc840E0e2C6810f"
+        ],
+        "coinmarketcap": [
+          "0x23ee2343B892b1BB63503a4FAbc840E0e2C6810f"
+        ],
+        "tokenList": []
+      }
+    },
+    {
+      "pair": "COMP / USD",
+      "directoryPath": "comp-usd",
+      "feed": "0x9DDa783DE64A9d1A60c49ca761EbE528C35BA428",
+      "quote": "USD",
+      "reason": "no address from coinmarketcap",
+      "candidates": {
+        "coingecko": [
+          "0x9e1028F5F1D5eDE59748FFceE5532509976840E0"
+        ],
+        "coinmarketcap": [],
+        "tokenList": [
+          "0x9e1028F5F1D5eDE59748FFceE5532509976840E0"
+        ]
+      }
+    },
+    {
+      "pair": "GHO / USD",
+      "directoryPath": "gho-usd",
+      "feed": "0x42868EFcee13C0E71af89c04fF7d96f5bec479b0",
+      "quote": "USD",
+      "reason": "no address from coinmarketcap and tokenList",
+      "candidates": {
+        "coingecko": [
+          "0x6Bb7a212910682DCFdbd5BCBb3e28FB4E8da10Ee"
+        ],
+        "coinmarketcap": [],
+        "tokenList": []
+      }
+    },
+    {
+      "pair": "LBTC / USD",
+      "directoryPath": "lbtc-usd",
+      "feed": "0x9e07546c9Fe8868855CD04B26051a26D1599E270",
+      "quote": "USD",
+      "reason": "no address from tokenList",
+      "candidates": {
+        "coingecko": [
+          "0xecAc9C5F704e954931349Da37F60E39f515c11c1"
+        ],
+        "coinmarketcap": [
+          "0xecAc9C5F704e954931349Da37F60E39f515c11c1"
+        ],
+        "tokenList": []
+      }
+    },
+    {
+      "pair": "LINK / ETH",
+      "directoryPath": "link-eth",
+      "feed": "0xc5E65227fe3385B88468F9A01600017cDC9F3A12",
+      "quote": "ETH",
+      "reason": "no address from tokenList",
+      "candidates": {
+        "coingecko": [
+          "0x88Fb150BDc53A65fe94Dea0c9BA0a6dAf8C6e196"
+        ],
+        "coinmarketcap": [
+          "0x88Fb150BDc53A65fe94Dea0c9BA0a6dAf8C6e196"
+        ],
+        "tokenList": []
+      }
+    },
+    {
+      "pair": "LINK / USD",
+      "directoryPath": "link-usd",
+      "feed": "0x17CAb8FE31E32f08326e5E27412894e49B0f9D65",
+      "quote": "USD",
+      "reason": "no address from tokenList",
+      "candidates": {
+        "coingecko": [
+          "0x88Fb150BDc53A65fe94Dea0c9BA0a6dAf8C6e196"
+        ],
+        "coinmarketcap": [
+          "0x88Fb150BDc53A65fe94Dea0c9BA0a6dAf8C6e196"
+        ],
+        "tokenList": []
+      }
+    },
+    {
+      "pair": "MLN / USD",
+      "directoryPath": "mln-usd",
+      "feed": "0x122b5334A8b55861dBc6729c294451471FbF318D",
+      "quote": "USD",
+      "reason": "no address from coingecko and coinmarketcap",
+      "candidates": {
+        "coingecko": [],
+        "coinmarketcap": [],
+        "tokenList": [
+          "0x7C298664BD6582f6f264c2Cb5a4B9cC09b6E3889"
+        ]
+      }
+    },
+    {
+      "pair": "OP / USD",
+      "directoryPath": "op-usd",
+      "feed": "0x3E3A6bD129A63564FE7abde85FA67c3950569060",
+      "quote": "USD",
+      "reason": "no address from coinmarketcap and tokenList",
+      "candidates": {
+        "coingecko": [
+          "0x5b8a884496792F754dB6F92F6EacCEb376ed8e40"
+        ],
+        "coinmarketcap": [],
+        "tokenList": []
+      }
+    },
+    {
+      "pair": "PEPE / USD",
+      "directoryPath": "pepe-usd",
+      "feed": "0xB48ac6409C0c3718b956089b0fFE295A10ACDdad",
+      "quote": "USD",
+      "reason": "the sources name different addresses",
+      "candidates": {
+        "coingecko": [
+          "0x52b492a33E447Cdb854c7FC19F1e57E8BfA1777D",
+          "0x698DC45e4F10966f6D1D98e3bFd7071d8144C233",
+          "0xB5068Ad7E4AD8f7fE2FcF5abe2c043ab8866569c"
+        ],
+        "coinmarketcap": [
+          "0x52b492a33E447Cdb854c7FC19F1e57E8BfA1777D",
+          "0x698DC45e4F10966f6D1D98e3bFd7071d8144C233",
+          "0x80f45EaCF6537498ecc660e4e4A2D2F99e195Cf4"
+        ],
+        "tokenList": [
+          "0xB4fDe59a779991bfB6a52253B51947828b982be3",
+          "0xB5068Ad7E4AD8f7fE2FcF5abe2c043ab8866569c"
+        ]
+      }
+    },
+    {
+      "pair": "RETH / ETH",
+      "directoryPath": "reth-eth",
+      "feed": "0xf397bF97280B488cA19ee3093E81C0a77F02e9a5",
+      "quote": "ETH",
+      "reason": "no address from coinmarketcap",
+      "candidates": {
+        "coingecko": [
+          "0xB6fe221Fe9EeF5aBa221c348bA20A1Bf5e73624c"
+        ],
+        "coinmarketcap": [],
+        "tokenList": [
+          "0xB6fe221Fe9EeF5aBa221c348bA20A1Bf5e73624c"
+        ]
+      }
+    },
+    {
+      "pair": "RLUSD / USD",
+      "directoryPath": "rlusd-usd",
+      "feed": "0x900E653c6b25eCf1eF43525fcCC5263E654085cc",
+      "quote": "USD",
+      "reason": "no address from coingecko and tokenList",
+      "candidates": {
+        "coingecko": [],
+        "coinmarketcap": [
+          "0x8d58C0C60B8D6b88Fa98B291a646dB34d0F98258"
+        ],
+        "tokenList": []
+      }
+    },
+    {
+      "pair": "SHIB / USD",
+      "directoryPath": "shib-usd",
+      "feed": "0xC8D5D660bb585b68fa0263EeD7B4224a5FC99669",
+      "quote": "USD",
+      "reason": "no address from tokenList",
+      "candidates": {
+        "coingecko": [
+          "0xFCa95aeb5bF44aE355806A5ad14659c940dC6BF7"
+        ],
+        "coinmarketcap": [
+          "0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE",
+          "0xFCa95aeb5bF44aE355806A5ad14659c940dC6BF7",
+          "0xbfFb921F1a95727E5Db5c36bCb9080056f0C5761"
+        ],
+        "tokenList": []
+      }
+    },
+    {
+      "pair": "SNX / USD",
+      "directoryPath": "snx-usd",
+      "feed": "0xe3971Ed6F1A5903321479Ef3148B5950c0612075",
+      "quote": "USD",
+      "reason": "no address from coinmarketcap",
+      "candidates": {
+        "coingecko": [
+          "0x22e6966B799c4D5B13BE962E1D117b56327FDa66"
+        ],
+        "coinmarketcap": [],
+        "tokenList": [
+          "0x22e6966B799c4D5B13BE962E1D117b56327FDa66"
+        ]
+      }
+    },
+    {
+      "pair": "STETH / ETH",
+      "directoryPath": "steth-eth",
+      "feed": "0xf586d0728a47229e747d824a939000Cf21dEF5A0",
+      "quote": "ETH",
+      "reason": "no address from coingecko and tokenList",
+      "candidates": {
+        "coingecko": [],
+        "coinmarketcap": [
+          "0x000000000493a27D6c7e4a6745B1f800013e2AcA"
+        ],
+        "tokenList": []
+      }
+    },
+    {
+      "pair": "STG / USD",
+      "directoryPath": "stg-usd",
+      "feed": "0x63Af8341b62E683B87bB540896bF283D96B4D385",
+      "quote": "USD",
+      "reason": "no address from coinmarketcap and tokenList",
+      "candidates": {
+        "coingecko": [
+          "0xE3B53AF74a4BF62Ae5511055290838050bf764Df"
+        ],
+        "coinmarketcap": [],
+        "tokenList": []
+      }
+    },
+    {
+      "pair": "sUSDe / USD",
+      "directoryPath": "susde-usd",
+      "feed": "0x79cf4a31B29D69191f0b6E97916eB93FEB81E533",
+      "quote": "USD",
+      "reason": "no address from coinmarketcap and tokenList",
+      "candidates": {
+        "coingecko": [
+          "0x211Cc4DD073734dA055fbF44a2b4667d5E5fE5d2"
+        ],
+        "coinmarketcap": [],
+        "tokenList": []
+      }
+    },
+    {
+      "pair": "TRUMP / USD",
+      "directoryPath": "trump-usd",
+      "feed": "0x7bAfa1Af54f17cC0775a1Cf813B9fF5dED2C51E5",
+      "quote": "USD",
+      "reason": "no address from tokenList",
+      "candidates": {
+        "coingecko": [
+          "0x57F5fbD3DE65DFC0bd3630F732969e5fb97E6d37"
+        ],
+        "coinmarketcap": [
+          "0x01177Faf5CEB245b02FA1F008bD11bfeFe6CEa68",
+          "0x06342c8681498b49Cb548c1b6E9213454290E707",
+          "0x0738a4D015e75D08B7f2395877a9404d2841A5d1",
+          "0x07c320c41f0c25E345d8971b24Ca19956bace1BB",
+          "0x0C61cD144B323E1eD680D296d33549Bb7e0F7F35",
+          "0x10516D77259ad7E744f24147162E33810F29abe8",
+          "0x11CD4268d952EBEe8cBbeded2a650F0C08BCdeC1",
+          "0x1C4f589c48fd3b707fb87c6b6ad5A362EF75c683",
+          "0x290b02A1a7161450837C6d55101c1973592941D3",
+          "0x2e1d332893Dc16124194E598a29866D2d5e8786b",
+          "0x4ce4079a01CEDc9549bFB16173A6f68119783676",
+          "0x57F5fbD3DE65DFC0bd3630F732969e5fb97E6d37",
+          "0x64aE9d680BE49504FDfa1FF41D486DAcb78cCa4D",
+          "0xC0Fc19ac729919B33650848a8689D114b9148890",
+          "0xCfbDAA56F1945e377fFdF38a5612c37f48819927",
+          "0xD2e52695004789140914a1550b22952cd69C765e",
+          "0xd2A7aca4E6337b1b74B52307ee712392f0FF89a8"
+        ],
+        "tokenList": []
+      }
+    },
+    {
+      "pair": "USDe / USD",
+      "directoryPath": "usde-usd",
+      "feed": "0x790181e93e9F4Eedb5b864860C12e4d2CffFe73B",
+      "quote": "USD",
+      "reason": "no address from tokenList",
+      "candidates": {
+        "coingecko": [
+          "0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34",
+          "0xb765203dCf134510Bd24D6C141298e88C1fCA0fA"
+        ],
+        "coinmarketcap": [
+          "0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34"
+        ],
+        "tokenList": []
+      }
+    },
+    {
+      "pair": "USDS / USD",
+      "directoryPath": "usds-usd",
+      "feed": "0x2330aaE3bca5F05169d5f4597964D44522F62930",
+      "quote": "USD",
+      "reason": "no address from tokenList",
+      "candidates": {
+        "coingecko": [
+          "0x820C137fa70C8691f0e44Dc420a5e53c168921Dc"
+        ],
+        "coinmarketcap": [
+          "0x820C137fa70C8691f0e44Dc420a5e53c168921Dc"
+        ],
+        "tokenList": []
+      }
+    },
+    {
+      "pair": "WBTC / USD",
+      "directoryPath": "wbtc-usd",
+      "feed": "0xCCADC697c55bbB68dc5bCdf8d3CBe83CdD4E071E",
+      "quote": "USD",
+      "reason": "no address from coinmarketcap and tokenList",
+      "candidates": {
+        "coingecko": [
+          "0x0555E30da8f98308EdB960aa94C0Db47230d2B9c"
+        ],
+        "coinmarketcap": [],
+        "tokenList": []
+      }
+    },
+    {
+      "pair": "weETH / ETH",
+      "directoryPath": "weeth-eth",
+      "feed": "0xFC1415403EbB0c693f9a7844b92aD2Ff24775C65",
+      "quote": "ETH",
+      "reason": "the sources name different addresses",
+      "candidates": {
+        "coingecko": [
+          "0x04C0599Ae5A44757c0af6F9eC3b93da8976c150A"
+        ],
+        "coinmarketcap": [
+          "0x04C0599Ae5A44757c0af6F9eC3b93da8976c150A"
+        ],
+        "tokenList": [
+          "0x4c94DE27c94962Dba6Ebb77924Ac54189db75EFA"
+        ]
+      }
+    },
+    {
+      "pair": "YFI / USD",
+      "directoryPath": "yfi-usd",
+      "feed": "0xD40e758b5eC80820B68DFC302fc5Ce1239083548",
+      "quote": "USD",
+      "reason": "no address from coinmarketcap",
+      "candidates": {
+        "coingecko": [
+          "0x9EaF8C1E34F05a589EDa6BAfdF391Cf6Ad3CB239"
+        ],
+        "coinmarketcap": [],
+        "tokenList": [
+          "0x9EaF8C1E34F05a589EDa6BAfdF391Cf6Ad3CB239"
+        ]
+      }
+    }
+  ],
+  "skipped": [
+    {
+      "pair": "AAVE / USD",
+      "directoryPath": "aave-usd-svr",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "AAVE Network Emergency Count (Base)",
+      "directoryPath": "aave-network-emergency-count-base",
+      "reason": "not a reference price feed (no type)"
+    },
+    {
+      "pair": "ADA / USD",
+      "directoryPath": "ada-usd-shared-svr",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "ADA / USD",
+      "directoryPath": "ada-usd-shared-svr-2",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "APT / USD",
+      "directoryPath": "apt-usd",
+      "reason": "no source names a APT token on this chain"
+    },
+    {
+      "pair": "APXUSD / USD Exchange Rate",
+      "directoryPath": "apxusd-usd-exchange-rate-shared-svr",
+      "reason": "not a reference price feed (Price / Exchange Rate)"
+    },
+    {
+      "pair": "ARKB Reserves",
+      "directoryPath": "arkb-reserves",
+      "reason": "not a reference price feed (Proof of Reserve)"
+    },
+    {
+      "pair": "ARSx Proof of Reserves",
+      "directoryPath": "arsx-base-por",
+      "reason": "not a reference price feed (Proof of Reserve)"
+    },
+    {
+      "pair": "AUD / USD",
+      "directoryPath": "aud-usd",
+      "reason": "a Fiat reference rate, not a token"
+    },
+    {
+      "pair": "AVAX / USD",
+      "directoryPath": "avax-usd",
+      "reason": "no source names a AVAX token on this chain"
+    },
+    {
+      "pair": "AVNT / USD",
+      "directoryPath": "avnt-usd",
+      "reason": "category new; enters only as a manual entry"
+    },
+    {
+      "pair": "BNB / USD",
+      "directoryPath": "bnb-usd",
+      "reason": "no source names a BNB token on this chain"
+    },
+    {
+      "pair": "BRL / USD",
+      "directoryPath": "brl-usd",
+      "reason": "a Fiat reference rate, not a token"
+    },
+    {
+      "pair": "BTC / USD",
+      "directoryPath": "btc-usd-shared-svr",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "BTC / USD",
+      "directoryPath": "btc-usd-shared-svr-2",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "BTC / USD",
+      "directoryPath": "btc-usd-svr",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "CAD / USD",
+      "directoryPath": "cad-usd",
+      "reason": "a Fiat reference rate, not a token"
+    },
+    {
+      "pair": "CBBTC / USD",
+      "directoryPath": "cbbtc-usd-shared-svr",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "cbBTC Reserves",
+      "directoryPath": "cbbtc-por",
+      "reason": "not a reference price feed (Proof of Reserve / Cross-chain / Bitcoin Network)"
+    },
+    {
+      "pair": "CBDOGE / USD",
+      "directoryPath": "cbdoge-usd",
+      "reason": "category high; enters only as a manual entry"
+    },
+    {
+      "pair": "cbETH-ETH Exchange Rate",
+      "directoryPath": "cbeth-eth-exchange",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "CBXRP / USD",
+      "directoryPath": "cbxrp-usd",
+      "reason": "category high; enters only as a manual entry"
+    },
+    {
+      "pair": "ccUSDC / USDC Exchange Rate",
+      "directoryPath": "ccusdc-usdc-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "CHF / USD",
+      "directoryPath": "chf-usd",
+      "reason": "a Fiat reference rate, not a token"
+    },
+    {
+      "pair": "Coinbase AAPL",
+      "directoryPath": "cbaapl-usd",
+      "reason": "not a reference price feed (Price / calculatedPrice)"
+    },
+    {
+      "pair": "Coinbase AMZN",
+      "directoryPath": "cbamzn-usd",
+      "reason": "not a reference price feed (Price / calculatedPrice)"
+    },
+    {
+      "pair": "Coinbase COIN",
+      "directoryPath": "cbcoin-usd",
+      "reason": "not a reference price feed (Price / calculatedPrice)"
+    },
+    {
+      "pair": "Coinbase CRCL",
+      "directoryPath": "cbcrcl-usd",
+      "reason": "not a reference price feed (Price / calculatedPrice)"
+    },
+    {
+      "pair": "Coinbase GOOGL",
+      "directoryPath": "cbgoogl-usd",
+      "reason": "not a reference price feed (Price / calculatedPrice)"
+    },
+    {
+      "pair": "Coinbase INTC",
+      "directoryPath": "cbintc-usd",
+      "reason": "not a reference price feed (Price / calculatedPrice)"
+    },
+    {
+      "pair": "Coinbase META",
+      "directoryPath": "cbmeta-usd",
+      "reason": "not a reference price feed (Price / calculatedPrice)"
+    },
+    {
+      "pair": "Coinbase MSFT",
+      "directoryPath": "cbmsft-usd",
+      "reason": "not a reference price feed (Price / calculatedPrice)"
+    },
+    {
+      "pair": "Coinbase MSTR",
+      "directoryPath": "cbmstr-usd",
+      "reason": "not a reference price feed (Price / calculatedPrice)"
+    },
+    {
+      "pair": "Coinbase NVDA",
+      "directoryPath": "cbnvda-usd",
+      "reason": "not a reference price feed (Price / calculatedPrice)"
+    },
+    {
+      "pair": "Coinbase SNDK",
+      "directoryPath": "cbsndk-usd",
+      "reason": "not a reference price feed (Price / calculatedPrice)"
+    },
+    {
+      "pair": "Coinbase SPCX",
+      "directoryPath": "cbspcx-usd",
+      "reason": "not a reference price feed (Price / calculatedPrice)"
+    },
+    {
+      "pair": "Coinbase TSLA",
+      "directoryPath": "cbtsla-usd",
+      "reason": "not a reference price feed (Price / calculatedPrice)"
+    },
+    {
+      "pair": "Coinshift USPC Reserves",
+      "directoryPath": "uspc-por",
+      "reason": "not a reference price feed (Proof of Reserve)"
+    },
+    {
+      "pair": "dlcBTC Proof of Reserves",
+      "directoryPath": "dlcbtc-por",
+      "reason": "not a reference price feed (Proof of Reserve / Cross-chain / Bitcoin Network)"
+    },
+    {
+      "pair": "DOGE / USD",
+      "directoryPath": "doge-usd-shared-svr",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "DOGE / USD",
+      "directoryPath": "doge-usd-shared-svr-2",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "ETH / USD",
+      "directoryPath": "eth-usd-shared-svr",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "ETH / USD",
+      "directoryPath": "eth-usd-shared-svr-2",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "ETH / USD",
+      "directoryPath": "eth-usd-svr",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "EUR / USD",
+      "directoryPath": "eur-usd",
+      "reason": "a Fiat reference rate, not a token"
+    },
+    {
+      "pair": "EURC / USD",
+      "directoryPath": "eurc-usd-shared-svr",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "EURC / USD",
+      "directoryPath": "eurc-usd-svr",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "ezETH / ETH",
+      "directoryPath": "ezeth-eth",
+      "reason": "category high; enters only as a manual entry"
+    },
+    {
+      "pair": "ezETH / ETH Exchange Rate",
+      "directoryPath": "ezeth-eth-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "EZETH / ETH Exchange Rate",
+      "directoryPath": "ezeth-eth-exchange-rate-svr",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "FRNT Proof of Reserves",
+      "directoryPath": "frnt-por",
+      "reason": "not a reference price feed (Proof of Reserve / Off-chain)"
+    },
+    {
+      "pair": "GBP / USD",
+      "directoryPath": "gbp-usd",
+      "reason": "a Fiat reference rate, not a token"
+    },
+    {
+      "pair": "GHO / USD",
+      "directoryPath": "gho-usd-svr",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "GLDY Reserves",
+      "directoryPath": "gldy-reserves",
+      "reason": "not a reference price feed (Proof of Reserve / Off-chain)"
+    },
+    {
+      "pair": "hBTC Reserves",
+      "directoryPath": "hbtc-por",
+      "reason": "not a reference price feed (no type)"
+    },
+    {
+      "pair": "HYPE / USD",
+      "directoryPath": "hype-usd-shared-svr",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "iBTC Proof of Reserves",
+      "directoryPath": "ibtc-por",
+      "reason": "not a reference price feed (Proof of Reserve / Cross-chain / Bitcoin Network)"
+    },
+    {
+      "pair": "IDR / USD",
+      "directoryPath": "idr-usd",
+      "reason": "a Fiat reference rate, not a token"
+    },
+    {
+      "pair": "inETH / ETH Exchange Rate",
+      "directoryPath": "ineth-eth-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "instETH / ETH Exchange Rate",
+      "directoryPath": "insteth-eth-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "inwstETH / wstETH Exchange Rate",
+      "directoryPath": "inwsteth-wsteth-exchange-rate",
+      "reason": "not a reference price feed (no type)"
+    },
+    {
+      "pair": "JITOSOL-SOL Calculated",
+      "directoryPath": "jitosol-sol-calculated",
+      "reason": "not a reference price feed (Price / Exchange Rate)"
+    },
+    {
+      "pair": "L2 Sequencer Uptime Status Feed",
+      "directoryPath": "l2-sequencer-uptime-status-feed",
+      "reason": "not a reference price feed (Blockchain / Health Check)"
+    },
+    {
+      "pair": "LBTC / BTC",
+      "directoryPath": "lbtc-btc",
+      "reason": "quoted in BTC; the registry takes USD and ETH"
+    },
+    {
+      "pair": "LBTC / BTC Exchange Rate",
+      "directoryPath": "lbtc-btc-exchange-rate-svr",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "LsETH / ETH Exchange Rate",
+      "directoryPath": "lseth-eth-exchange-rate",
+      "reason": "not a reference price feed (no type)"
+    },
+    {
+      "pair": "LTC / USD",
+      "directoryPath": "ltc-usd-shared-svr-2",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "MAMO / USD",
+      "directoryPath": "mamo-usd",
+      "reason": "category high; enters only as a manual entry"
+    },
+    {
+      "pair": "MEW / USD",
+      "directoryPath": "mew-usd",
+      "reason": "no source names a MEW token on this chain"
+    },
+    {
+      "pair": "MXN / USD",
+      "directoryPath": "mxn-usd",
+      "reason": "a Fiat reference rate, not a token"
+    },
+    {
+      "pair": "MXN / USD",
+      "directoryPath": "mxn-usd-shared-svr",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "NGN / USD",
+      "directoryPath": "ngn-usd",
+      "reason": "a Fiat reference rate, not a token"
+    },
+    {
+      "pair": "NZD / USD",
+      "directoryPath": "nzd-usd",
+      "reason": "a Fiat reference rate, not a token"
+    },
+    {
+      "pair": "OUSD / USD",
+      "directoryPath": "openusd-usd",
+      "reason": "category new; enters only as a manual entry"
+    },
+    {
+      "pair": "PAXG / USD",
+      "directoryPath": "paxg-usd-shared-svr",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "PCE Price Index — Level",
+      "directoryPath": "pce-price-index-level",
+      "reason": "not a reference price feed (Macroeconomics / Reference)"
+    },
+    {
+      "pair": "PCE Price Index — Percent Change (Annual Rate)",
+      "directoryPath": "pce-price-index-percentage",
+      "reason": "not a reference price feed (Macroeconomics / Reference)"
+    },
+    {
+      "pair": "PHP / USD",
+      "directoryPath": "php-usd",
+      "reason": "a Fiat reference rate, not a token"
+    },
+    {
+      "pair": "POL / USD",
+      "directoryPath": "pol-usd",
+      "reason": "no source names a POL token on this chain"
+    },
+    {
+      "pair": "pufETH / ETH Exchange Rate",
+      "directoryPath": "pufeth-eth-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "RDNT / USD",
+      "directoryPath": "rdnt-usd",
+      "reason": "category deprecating; enters only as a manual entry"
+    },
+    {
+      "pair": "Real Final Sales to Private Domestic Purchasers — Level",
+      "directoryPath": "real-final-sales-to-private-domestic-purchasers-level",
+      "reason": "not a reference price feed (Macroeconomics / Reference)"
+    },
+    {
+      "pair": "Real Final Sales to Private Domestic Purchasers — Percent Change (Annual Rate)",
+      "directoryPath": "real-final-sales-to-private-domestic-purchasers-percentage",
+      "reason": "not a reference price feed (Macroeconomics / Reference)"
+    },
+    {
+      "pair": "Real GDP — Level",
+      "directoryPath": "real-gdp-level",
+      "reason": "not a reference price feed (Macroeconomics / Reference)"
+    },
+    {
+      "pair": "Real GDP — Percent Change (Annual Rate)",
+      "directoryPath": "real-gdp-percentage",
+      "reason": "not a reference price feed (Macroeconomics / Reference)"
+    },
+    {
+      "pair": "rETH / ETH Exchange Rate",
+      "directoryPath": "reth-eth-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "RSETH / ETH",
+      "directoryPath": "rseth-eth",
+      "reason": "category high; enters only as a manual entry"
+    },
+    {
+      "pair": "rsETH / ETH Exchange Rate",
+      "directoryPath": "rseth-eth-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "rsETH / ETH Exchange Rate",
+      "directoryPath": "rseth-eth-exchange-rate-svr",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "rswETH / ETH Exchange Rate",
+      "directoryPath": "rsweth-eth-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "rwaUSD NAV",
+      "directoryPath": "rwausd-nav",
+      "reason": "not a reference price feed (NAVLink)"
+    },
+    {
+      "pair": "SAVUSD / AVUSD Exchange Rate",
+      "directoryPath": "savusd-avusd-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "sfrxETH-frxETH Exchange Rate",
+      "directoryPath": "sfrxETH-frxETH",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "SGD / USD",
+      "directoryPath": "sgd-usd",
+      "reason": "a Fiat reference rate, not a token"
+    },
+    {
+      "pair": "SOL / USD",
+      "directoryPath": "sol-usd-shared-svr",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "SOL / USD",
+      "directoryPath": "sol-usd-shared-svr-2",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "SolvBTC.BBN / SolvBTC Exchange Rate",
+      "directoryPath": "solvbtc.bbn-solvbtc-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "SUI / USD",
+      "directoryPath": "sui-usd",
+      "reason": "no source names a SUI token on this chain"
+    },
+    {
+      "pair": "SUPEROETHB / ETH",
+      "directoryPath": "superoethb-eth",
+      "reason": "category high; enters only as a manual entry"
+    },
+    {
+      "pair": "SUSDAI / USDAI Exchange Rate",
+      "directoryPath": "susdai-usdai-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "sUSDe / USDe Exchange Rate",
+      "directoryPath": "susde-usde-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange Rate)"
+    },
+    {
+      "pair": "sUSDS / USDS Exchange Rate",
+      "directoryPath": "susds-usds-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange Rate)"
+    },
+    {
+      "pair": "sUSDz / USDz Exchange Rate",
+      "directoryPath": "susdz-usdz-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "swBTC / WBTC Exchange Rate",
+      "directoryPath": "swbtc-wbtc-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "syrupUSDC-USDC Exchange Rate",
+      "directoryPath": "syrupusdc-usdc-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "Tenbin Aggregated Off-Chain Reserves",
+      "directoryPath": "tenbin-aggregated-off-chain-reserves",
+      "reason": "not a reference price feed (Proof of Reserve / Off-chain)"
+    },
+    {
+      "pair": "tETH / wstETH Exchange Rate",
+      "directoryPath": "teth-wsteth-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange Rate)"
+    },
+    {
+      "pair": "TETH Reserves",
+      "directoryPath": "teth-reserves",
+      "reason": "not a reference price feed (Proof of Reserve / Cross-chain / Ethereum Network)"
+    },
+    {
+      "pair": "Total Market Cap USD",
+      "directoryPath": "mcap-usd",
+      "reason": "not a reference price feed (no type)"
+    },
+    {
+      "pair": "TRY / USD",
+      "directoryPath": "try-usd",
+      "reason": "a Fiat reference rate, not a token"
+    },
+    {
+      "pair": "ultraETHs / ETH Exchange Rate",
+      "directoryPath": "ultraeths-eth-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "uniBTC / BTC Exchange Rate",
+      "directoryPath": "unibtc-btc-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "USD / ARS",
+      "directoryPath": "usd-ars",
+      "reason": "a Fiat reference rate, not a token"
+    },
+    {
+      "pair": "USDAI / USD",
+      "directoryPath": "usdai-usd",
+      "reason": "category high; enters only as a manual entry"
+    },
+    {
+      "pair": "USDC / USD",
+      "directoryPath": "usdc-usd-shared-svr",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "USDC / USD",
+      "directoryPath": "usdc-usd-svr",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "USDC / USD TEST CAPPED",
+      "directoryPath": "usdc-usd-capped-test",
+      "reason": "not a reference price feed (no type)"
+    },
+    {
+      "pair": "USDO Reserves",
+      "directoryPath": "usdo-por",
+      "reason": "not a reference price feed (Proof of Reserve / Cross-chain)"
+    },
+    {
+      "pair": "USDT / USD",
+      "directoryPath": "usdt-usd-shared-svr",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "USDT / USD",
+      "directoryPath": "usdt-usd-svr",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "USR / USD",
+      "directoryPath": "usr-usd",
+      "reason": "category deprecating; enters only as a manual entry"
+    },
+    {
+      "pair": "VVV / USD",
+      "directoryPath": "vvv-usd",
+      "reason": "category new; enters only as a manual entry"
+    },
+    {
+      "pair": "vyUSD-USD Exchange Rate",
+      "directoryPath": "vyusd-usd-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange Rate)"
+    },
+    {
+      "pair": "weETH / eETH Exchange Rate",
+      "directoryPath": "weeth-eeth-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "WEETH / EETH Exchange Rate",
+      "directoryPath": "weeth-eeth-exchange-rate-svr",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "wOETH / OETH Exchange Rate",
+      "directoryPath": "woeth-oeth-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "wrsETH-ETH Exchange Rate",
+      "directoryPath": "wrseth-eth-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "WSTETH / STETH Exchange Rate",
+      "directoryPath": "wsteth-steth-exchange-rate-svr",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "wstETH-ETH Exchange Rate",
+      "directoryPath": "weth-eth",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "wstETH-stETH Exchange Rate",
+      "directoryPath": "wsteth-steth exchangerate",
+      "reason": "not a reference price feed (Price / Exchange Rate)"
+    },
+    {
+      "pair": "wstUSR / stUSR Exchange Rate",
+      "directoryPath": "wstusr-stusr-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange Rate)"
+    },
+    {
+      "pair": "XAG / USD",
+      "directoryPath": "xag-usd",
+      "reason": "a Commodity reference rate, not a token"
+    },
+    {
+      "pair": "XAU / USD",
+      "directoryPath": "xau-usd",
+      "reason": "a Commodity reference rate, not a token"
+    },
+    {
+      "pair": "XDC / USD",
+      "directoryPath": "xdc-usd",
+      "reason": "no source names a XDC token on this chain"
+    },
+    {
+      "pair": "XGLD / XAUT Exchange Rate",
+      "directoryPath": "xgld-xaut-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "XRP / USD",
+      "directoryPath": "xrp-usd-shared-svr",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "XRP / USD",
+      "directoryPath": "xrp-usd-shared-svr-2",
+      "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "xSolvBTC NAV",
+      "directoryPath": "xsolvbtc-nav",
+      "reason": "not a reference price feed (NAVLink)"
+    },
+    {
+      "pair": "YBTC-BTC Exchange Rate",
+      "directoryPath": "ybtc-btc-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "YETH-ETH Exchange Rate",
+      "directoryPath": "yeth-eth-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "ynETH / ETH Exchange Rate",
+      "directoryPath": "yneth-eth-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "ynETHx / ETH Exchange Rate",
+      "directoryPath": "ynethx-eth-exchange-rate",
+      "reason": "not a reference price feed (Price / Exchange Rate)"
+    },
+    {
+      "pair": "yUSD / USD Exchange Rate",
+      "directoryPath": "yUSD-USD",
+      "reason": "not a reference price feed (Price / Exchange Rate)"
+    },
+    {
+      "pair": "ZAR / USD",
+      "directoryPath": "zar-usd",
+      "reason": "a Fiat reference rate, not a token"
+    },
+    {
+      "pair": "ZEC / USD",
+      "directoryPath": "zec-usd-shared-svr",
+      "reason": "an SVR variant; the standard proxy is used"
+    }
+  ]
+}

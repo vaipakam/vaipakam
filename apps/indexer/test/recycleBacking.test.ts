@@ -501,7 +501,7 @@ function fakeClient(v2: V2Figures | Error, block = SAFE_BLOCK) {
         case 'getRecycleBackingSnapshot':
           return legacy8;
         case 'getRecycleCompositionPosition':
-          return [0n, 3n, false, false];
+          return [0n, 3n, false, 0n];
         default:
           throw new Error(`unexpected read ${args.functionName}`);
       }

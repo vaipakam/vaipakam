@@ -10,6 +10,7 @@ import {TestnetSanctionsOverlay} from "../../src/compliance/TestnetSanctionsOver
 import {VPFITokenFacet} from "../../src/facets/VPFITokenFacet.sol";
 import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol";
+import {RewardCommitmentFacet} from "../../src/facets/RewardCommitmentFacet.sol";
 import {RewardCustodyFacet} from "../../src/facets/RewardCustodyFacet.sol";
 import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.sol";
 import {ProfileFacet} from "../../src/facets/ProfileFacet.sol";
@@ -34,7 +35,8 @@ import {LibPausable} from "../../src/libraries/LibPausable.sol";
  *              initial mint to the admin (it funds step 6);
  *           2. `ConfigureVPFIToken`: register it, canonical flag on;
  *           3. `ConfigureRewardReporter`: canonical reward role, this chain
- *              as the ONLY expected reporter, a one-hour grace;
+ *              as the ONLY expected reporter, a one-hour grace, and the
+ *              script's default zeroed-day lapse schedule (#2909);
  *           4. `SetInteractionLaunch`: the interaction-reward clock starts
  *              now (day 0 is the current day);
  *           5. `ActivateRewardCustody` (direct path): pause, activate custody
@@ -68,6 +70,11 @@ contract ConfigureKeeperRewardsFixture is Script {
     ///         this chain as the only expected reporter a day finalizes on
     ///         full coverage, so the grace is never what releases it.
     uint64 internal constant GRACE_SECONDS = 3600;
+    /// @notice `ConfigureRewardReporter`'s default lapse schedule (#2909):
+    ///         a zeroed day lapses 7 days after finalizing, and compensation
+    ///         dispatch closes 24 hours before that.
+    uint64 internal constant LAPSE_WINDOW_SECONDS = 7 days;
+    uint64 internal constant DISPATCH_CUTOFF_GAP_SECONDS = 24 hours;
 
     function run() external {
         require(block.chainid == 84532, "ConfigureKeeperRewardsFixture: run after the harness presents the chain as 84532");
@@ -95,6 +102,7 @@ contract ConfigureKeeperRewardsFixture is Script {
         uint32[] memory sources = new uint32[](1);
         sources[0] = uint32(block.chainid);
         RewardAggregatorFacet(diamond).setExpectedSourceChainIds(sources);
+        RewardCommitmentFacet(diamond).setLapseSchedule(LAPSE_WINDOW_SECONDS, DISPATCH_CUTOFF_GAP_SECONDS);
 
         // 4. SetInteractionLaunch.
         InteractionRewardsFacet(diamond).setInteractionLaunchTimestamp(block.timestamp);

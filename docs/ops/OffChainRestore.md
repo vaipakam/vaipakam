@@ -1406,16 +1406,13 @@ For each table:
    `notify_state`, `pre_grace_notify_state` (absent from pre-#1480
    archives), `telegram_links`, `support_tickets`,
    `recycle_day_backfill` (absent from pre-#1349-M5 archives),
-   `loan_orphans` (absent from pre-#2197 archives), `signed_offers` and
-   `prepay_listing_match_breadcrumbs` (both absent from pre-#1481 archives).
+   `loan_orphans` (absent from pre-#2197 archives) and `signed_offers`
+   (absent from pre-#1481 archives).
 
-   > **`signed_offers` and `prepay_listing_match_breadcrumbs` are HYBRID**
-   > (#1481): each row is something a user created off chain, with columns
-   > the indexer then maintains from chain events. The converter imports the
-   > user's part and leaves the rest to §6's replay, which runs after this
-   > import:
-   >
-   > - a **signed offer** is imported with its order and signature exactly
+   > **`signed_offers` is HYBRID** (#1481): each row is something a user
+   > created off chain, with columns the indexer then maintains from chain
+   > events. The converter imports the user's part and leaves the rest to
+   > §6's replay, which runs after this import. A **signed offer** is imported with its order and signature exactly
    >   as archived, and with its lifecycle reset to a live, unfilled offer.
    >   The replay then applies every fill, match, cancellation and nonce burn
    >   from the chain, so each offer ends in its true state, and a status the
@@ -1427,17 +1424,11 @@ For each table:
    >   It does NOT re-verify signatures. A forged row cannot be filled,
    >   because the Diamond checks the signature at fill, but it would be
    >   listed in the book until it expires (#2899 tracks re-verifying at
-   >   restore);
-   > - a **match note** is imported only when the app wrote it (a two-step
-   >   match: which OpenSea offer the reprice answered, which no chain event
-   >   carries). A note the indexer wrote from an atomic match's own event is
-   >   left out, and the replay writes it again from that event, so a note
-   >   for a match that never happened cannot survive.
+   >   restore).
    >
    > The converter prints the imported count, which is the figure step 4
-   > checks, and says how many archived rows it left to the replay. An
-   > archive written before #1481 carries neither table; the converter then
-   > emits a clear for each, as for any table an archive predates. On a
+   > checks. An archive written before #1481 carries no `signed_offers`; the
+   > converter then emits a clear, as for any table an archive predates. On a
    > fresh account that loses nothing. A selective restore into a live
    > database from such an archive loses the live signed offers: they cannot
    > be vouched for by that archive, and their signers would have to post
@@ -1625,6 +1616,7 @@ DELETE FROM reward_day_user; \
 DELETE FROM reward_retention; \
 DELETE FROM reward_loop_totals; \
 DELETE FROM prepay_listings; \
+DELETE FROM prepay_listing_match_breadcrumbs; \
 DELETE FROM keeper_commitment_reconciled; \
 DELETE FROM market_summary; \
 DELETE FROM protocol_config; \
@@ -1682,6 +1674,10 @@ What the #1481 audit added to the shared command, and what each costs:
   listing at the chain head (`getPrepayListingOrderHash`), so the replay
   publishes nothing stale; the live ones are published again, which OpenSea
   de-duplicates by order hash.
+- **`prepay_listing_match_breadcrumbs`** (moved here by #2757) comes back
+  from the replay's `PrepayListingMatched` events, its only writer since the
+  app's unauthenticated two-step POST was retired. Nothing in it was created
+  off chain, so nothing is archived or lost.
 - **The five `reward_*` tables** are the reward loop-closure ledger, a fold
   of reward events in chain order, with days taken from block timestamps.
   On its first pass the ledger's one-time backfill from `activity_events`
@@ -1771,9 +1767,8 @@ missing from the command for the database it lives in, where a command
 clears a table that is not replay-derived, or where §4's list, the
 nightly archive or the restore converter disagrees with the
 classification. The tables a user creates off chain are never in these
-commands: `signed_offers` and `prepay_listing_match_breadcrumbs` are
-imported in §4 and only their chain-maintained part is left to the
-replay.
+commands: `signed_offers` is imported in §4 and only its
+chain-maintained part is left to the replay.
 
 **Only now re-arm the indexer's ingest — BOTH of its writers.** The cursor
 reset above is exactly the precondition §1 step 9 held them back for.

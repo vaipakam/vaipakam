@@ -115,6 +115,11 @@ function makeLog(
   };
 }
 
+/** Every log's block time, as the scan supplies it (#2757: the ledger refuses
+ *  a block whose time it was not given, rather than dating it by the clock). */
+const timesOf = (logs: { blockNumber: bigint }[], at = 1_700_000_000) =>
+  new Map(logs.map((l) => [l.blockNumber, at] as [bigint, number]));
+
 const activityInserts = (statements: Recorded[]) =>
   statements.filter((s) => /INSERT[\s\S]*INTO\s+activity_events/i.test(s.sql));
 
@@ -132,7 +137,7 @@ describe('recordActivityEvents — executed against a recording DB', () => {
       logs,
       { DB: db } as never,
       CHAIN_ID,
-      new Map([[logs[0].blockNumber, 111]]),
+      new Map([...timesOf(logs), [logs[0].blockNumber, 111]]),
     );
 
     const inserts = activityInserts(executed);
@@ -180,7 +185,7 @@ describe('recordActivityEvents — executed against a recording DB', () => {
       logs,
       { DB: db } as never,
       CHAIN_ID,
-      new Map(),
+      timesOf(logs),
     );
     const inserts = activityInserts(executed);
     expect(inserts).toHaveLength(logs.length);
@@ -207,7 +212,7 @@ describe('recordActivityEvents — executed against a recording DB', () => {
     ];
     // the second insert is a replay the unique index swallows
     const { executed, db } = fakeDb({ changesFor: (n) => (n === 2 ? 0 : 1) });
-    const inserted = await recordActivityEvents(logs, { DB: db } as never, CHAIN_ID, new Map());
+    const inserted = await recordActivityEvents(logs, { DB: db } as never, CHAIN_ID, timesOf(logs));
     expect(activityInserts(executed)).toHaveLength(3); // still executed per log
     expect(inserted).toBe(2); // but only the landed rows are counted
   });
@@ -241,7 +246,7 @@ describe('recordActivityEvents — executed against a recording DB', () => {
     // so a rejected batch must REJECT — a swallowed failure here would let the
     // cursor advance past a log whose row never landed.
     await expect(
-      recordActivityEvents(logs, { DB: throwing } as never, CHAIN_ID, new Map()),
+      recordActivityEvents(logs, { DB: throwing } as never, CHAIN_ID, timesOf(logs)),
     ).rejects.toThrow('D1 write failed');
   });
 
@@ -250,7 +255,7 @@ describe('recordActivityEvents — executed against a recording DB', () => {
     const { executed, db } = fakeDb({
       selectResults: [{ offer_id: 9, creator: '0xborrower' }],
     });
-    await recordActivityEvents(logs, { DB: db } as never, CHAIN_ID, new Map());
+    await recordActivityEvents(logs, { DB: db } as never, CHAIN_ID, timesOf(logs));
     const [insert] = activityInserts(executed);
     expect(insert).toBeDefined();
     expect(String(insert.binds[8])).toContain('"creator":"0xborrower"');
@@ -292,7 +297,7 @@ describe('recordActivityEvents — executed against a recording DB', () => {
       selectResults: ids.map((id) => ({ offer_id: id, creator: `0xcreator${id}` })),
     });
 
-    await recordActivityEvents(logs, { DB: db } as never, CHAIN_ID, new Map());
+    await recordActivityEvents(logs, { DB: db } as never, CHAIN_ID, timesOf(logs));
 
     const selects = executed.filter((s) => /FROM offers/i.test(s.sql));
     expect(selects.length).toBeGreaterThan(1);

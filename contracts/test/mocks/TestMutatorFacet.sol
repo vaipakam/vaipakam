@@ -1032,7 +1032,24 @@ contract TestMutatorFacet {
     ///         credited series directly (bypasses the backing check — the
     ///         stamp tests exercise finalization math, not custody).
     function setRecycleBucketRaw(uint256 amount) external {
+        _setRecycleBucket(LibVaipakam.storageSlot(), amount);
+    }
+
+    /// @notice #2875 item 3 test-only — set the recycle bucket the way an
+    ///         ABSORPTION would leave it: any rise is also added to the
+    ///         lifetime credited counter, exactly as a real credit does. The
+    ///         reported cumulative is that counter and nothing else (the
+    ///         bucket-derived floor is retired), so a fixture modelling
+    ///         absorption with {setRecycleBucketRaw} alone would report no
+    ///         absorption at all. A fall is NOT a spend: it moves no counter.
+    function setRecycleBucketAbsorbedRaw(uint256 amount) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 prior = s.recycleBucket;
+        _setRecycleBucket(s, amount);
+        if (amount > prior) s.recycleCreditedCumulative += amount - prior;
+    }
+
+    function _setRecycleBucket(LibVaipakam.Storage storage s, uint256 amount) private {
         // #1566 slice 4 PR B — on an ACTIVATED deployment the bucket is an
         // attribution over the holder's recycled row, so a raw bucket write
         // keeps the custody consistent too: the difference is relocated
@@ -1121,41 +1138,13 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().recycleCreditedCumulative = amount;
     }
 
-    /// @notice #1448 r6 test-only — force the relocated-custody cumulative.
-    ///         Reproduces the PRE-seed-fold shape: a mirror that took a
-    ///         relocation credit while the old `creditCustodyRelocated`
-    ///         advanced only this counter and never snapshotted the
-    ///         historical floor into `recycleCreditedCumulative`.
-    function setRecycleCustodyRelocatedRaw(uint256 amount) external {
-        LibVaipakam.storageSlot().recycleCustodyRelocatedCumulative = amount;
-    }
-
-    /// @notice #1448 r3 test-only — force the released-remit stranded
-    ///         cumulative. Used to reproduce the PRE-UPGRADE state: a
-    ///         Diamond that released remittances before the counter
-    ///         existed, so the released state is real but the counter is 0.
-    function setReleasedRemitStrandedRaw(uint256 amount) external {
-        LibVaipakam.storageSlot().recycleReleasedRemitStrandedCumulative =
-            amount;
-    }
-
-    /// @notice #1448 r14 test-only — force the lifetime release COUNT. The
-    ///         other half of the pre-upgrade shape: `remitReleasedCount` is
-    ///         an appended slot too, so a Diamond upgraded in place starts it
-    ///         at zero with historical releases already behind it. Rewinding
-    ///         only the value would reproduce a state that cannot occur —
-    ///         a zero total alongside a count that somehow survived.
-    function setRemitReleasedCountRaw(uint256 count) external {
-        LibVaipakam.storageSlot().remitReleasedCount = count;
-    }
-
     /// @notice #1222 M3 B2-d5 test-only — drive the REAL consume path
     ///         (bucket → `paidOutRecycled`), which is what a mirror's claims
     ///         do. Deliberately the genuine {LibVpfiRecycle.consume} rather
     ///         than raw writes: the d5 exclusion has to hold across the
-    ///         value moving between the two terms of the derived floor
-    ///         (`recycleBucket + paidOutRecycled`), so a test that faked the
-    ///         move would not exercise the thing that matters.
+    ///         value moving from `recycleBucket` to `paidOutRecycled`, so a
+    ///         test that faked the move would not exercise the thing that
+    ///         matters.
     function consumeRecycleRaw(uint256 amount) external returns (uint256 classifiedTake) {
         return LibVpfiRecycle.consume(amount, true, 0);
     }

@@ -538,6 +538,14 @@ All address-only
 configs that wire the chain-specific oracle stack. No numeric range;
 zero disables the corresponding flow.
 
+The feed registry is the chain's own `VaipakamFeedRegistry` on every chain
+(#2880), never Chainlink's (which exists on Ethereum mainnet only), and the
+USD and ETH denominators are that registry's own keys. `ConfigureOracle`
+writes all three from the recorded `.feedRegistry`. Which feed prices which
+token is not a Diamond setting at all: it lives in the registry, where each
+change waits a delay (3 days by default on a production chain, 1 to 14
+allowed; 0 allowed on a testnet) that the Pauser Safe can veto.
+
 ## Reward subsystem (cross-chain interest aggregation)
 
 ### Reward grace seconds
@@ -549,6 +557,22 @@ reported. Range **[5 min, 30 days]**. The 5min floor prevents a
 transient outage from being confused with real grace; the 30-day
 ceiling prevents the window from being set to "indefinite" (defeats
 the purpose). Default is 4 hours.
+
+### Zeroed-day lapse schedule (`setLapseSchedule`)
+
+Canonical (Base) only; it reaches every mirror inside the day broadcast.
+Two values: the **lapse window**, how long after a day finalizes a
+zeroed or short-compensated day lapses (range **[3 days, 30 days]**),
+and the **dispatch-cutoff gap**, how long before that lapse a manual
+compensation must be dispatched (range **[6 hours, 7 days]**). The
+window must exceed the gap by at least 48 hours. Each change creates a
+new append-only version; a day keeps the version in force when it
+finalized, so a change never moves an already-finalized day's lapse.
+The deploy's configure step sets **7 days / 24 hours** unless the
+operator overrides them (`REWARD_LAPSE_WINDOW_SECONDS`,
+`REWARD_DISPATCH_CUTOFF_GAP_SECONDS`), and the launch readiness check
+refuses to open a canonical chain with no schedule, because a day
+finalized under none never lapses (#2909).
 
 ### Reward messenger / base chain id / canonical reward chain flag
 

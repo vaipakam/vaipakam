@@ -91,7 +91,11 @@ the owner revokes the timelock's remover role.
    addresses and their share of the outstanding delistings. A discard vetoes
    nothing: removing a key says the key is untrusted, not that every address
    it named was wrong. So revoking a compromised bot is one call, and nothing
-   it queued survives it. The same rule runs the other way: only the
+   it queued survives it, even if the same address is appointed again
+   later: each proposal records its proposer's `authGeneration`, a removal
+   raises it, and `execute`, `discard` and the proposer's own actions all
+   read one rule, `holdsAuthority` (appointed now AND unchanged
+   generation), which the delister bot reads too (#2902). The same rule runs the other way: only the
    proposer that made a proposal, while still appointed, may withdraw or
    `reconfirm` it (`NotItsProposer`). With several proposer keys, one cannot
    withdraw another's batches and refill the freed share itself, or move

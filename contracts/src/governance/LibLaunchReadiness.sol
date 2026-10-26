@@ -14,6 +14,10 @@ interface ILaunchReadableDiamond {
     function getWethContract() external view returns (address);
     function getSwapAdapters() external view returns (address[] memory);
     function getPaaAssets() external view returns (address[] memory);
+    function getFeedRegistryLookup()
+        external
+        view
+        returns (address registry, address padDenominator, address ethDenominator);
     function isSwapAdapterDisabled(address adapter) external view returns (bool);
     function isLiquidityQuoteUsable(address quote) external view returns (bool);
     // forge-lint: disable-next-line(mixed-case-function)
@@ -21,6 +25,12 @@ interface ILaunchReadableDiamond {
     function hasRole(bytes32 role, address account) external view returns (bool);
     function owner() external view returns (address);
     function roleEpoch() external view returns (uint64);
+    function getRewardRole() external view returns (uint8 role);
+    function getCurrentLapseScheduleVersion() external view returns (uint32);
+    function getLapseSchedule(uint32 version)
+        external
+        view
+        returns (uint64 lapseWindowSeconds, uint64 dispatchCutoffGap);
 }
 
 /**
@@ -119,6 +129,11 @@ library LibLaunchReadiness {
         ///      source), so its identity is the reviewers' to establish; the
         ///      check refuses any other configured WETH.
         address weth;
+        /// @dev The feed registry the artifact records (`feedRegistry`,
+        ///      #2880): the chain's `VaipakamFeedRegistry`, whose owner and
+        ///      veto the handover gate proved. The Diamond must price
+        ///      through it and no other. Zero declares none.
+        address feedRegistry;
         /// @dev The Diamond's VPFI is a burn/mint MIRROR (every chain but the
         ///      canonical one). A mirror token carries its own mint and burn
         ///      authority (`tokenPool()`), separate from the registry's
@@ -165,7 +180,7 @@ library LibLaunchReadiness {
     ///        no pool address is ever taken on trust.
     function check(address diamond, Declared memory declared) internal view returns (Check[] memory checks) {
         VpfiRoute memory route = _vpfiRoute(diamond, declared.tokenAdminRegistry);
-        checks = new Check[](7);
+        checks = new Check[](9);
         checks[0] = _treasury(diamond);
         checks[1] = _sanctions(diamond);
         checks[2] = _priceFeed(diamond, declared.weth);
@@ -173,6 +188,8 @@ library LibLaunchReadiness {
         checks[4] = _vpfiPool(diamond, route, declared);
         checks[5] = _ccipLanes(route, declared);
         checks[6] = _wethQuoteRoute(diamond);
+        checks[7] = _feedRegistry(diamond, declared.feedRegistry);
+        checks[8] = _lapseSchedule(diamond);
     }
 
     /// @notice Whether every check was answered and met.
@@ -218,6 +235,63 @@ library LibLaunchReadiness {
             c.detail = c.met ? "getTreasury() is set" : "getTreasury() is the zero address";
         } catch {
             c.detail = "getTreasury() unreadable";
+        }
+    }
+
+    /// @dev #2909 — on the canonical reward chain every day freezes the lapse
+    ///      schedule in force when it finalizes, and keeps it. Version 0
+    ///      means "never lapses, no dispatch cutoff": a zeroed day nobody
+    ///      compensates would stay open for good, holding the claim cursor
+    ///      behind it, and Base would enforce no cutoff on manual
+    ///      compensation. A schedule set after launch cannot reach the days
+    ///      already finalized, so it is a launch requirement, not a tuning
+    ///      step. Only Base sets one (it rides the kind-10 broadcast to
+    ///      every mirror), so on any other role the requirement does not
+    ///      apply, and the detail names the role it found.
+    function _lapseSchedule(address diamond) private view returns (Check memory c) {
+        c.label = "zeroed-day lapse schedule in force";
+        uint8 role;
+        try ILaunchReadableDiamond(diamond).getRewardRole() returns (uint8 r) {
+            role = r;
+        } catch {
+            c.detail = "getRewardRole() unreadable";
+            return c;
+        }
+        // LibVaipakam.RewardRole: 0 Canonical, 1 Mirror, 2 Unconfigured,
+        // 3 Detached (RewardReporterFacet.getRewardRole).
+        if (role != 0) {
+            c.checkable = true;
+            c.met = true;
+            c.detail = string.concat(
+                "does not apply: the reward role is ",
+                role == 1 ? "Mirror" : role == 2 ? "Unconfigured" : role == 3 ? "Detached" : "unknown",
+                ", and only the canonical reward chain sets a lapse schedule"
+            );
+            return c;
+        }
+        try ILaunchReadableDiamond(diamond).getCurrentLapseScheduleVersion() returns (uint32 v) {
+            if (v == 0) {
+                c.checkable = true;
+                c.detail = "no lapse schedule is set: every day finalized now would never lapse and carry no dispatch cutoff";
+                return c;
+            }
+            try ILaunchReadableDiamond(diamond).getLapseSchedule(v) returns (uint64 window, uint64 gap) {
+                c.checkable = true;
+                c.met = true;
+                c.detail = string.concat(
+                    "version ",
+                    Strings.toString(v),
+                    ": days lapse ",
+                    Strings.toString(window),
+                    "s after finalizing, compensation dispatch closes ",
+                    Strings.toString(gap),
+                    "s before"
+                );
+            } catch {
+                c.detail = "getLapseSchedule(version) unreadable";
+            }
+        } catch {
+            c.detail = "getCurrentLapseScheduleVersion() unreadable";
         }
     }
 
@@ -397,6 +471,70 @@ library LibLaunchReadiness {
         c.detail = listed
             ? "the quote-asset list names assets besides WETH, but the Diamond prices none of them now (no feed for it in the feed registry, a stale or distrusted round, or unreadable decimals), and the tier search skips a quote it cannot price, so WETH would resolve to liquidity tier 0: wire the quote's price feed in the configure phase"
             : "the quote-asset list names no asset besides WETH, so WETH would resolve to liquidity tier 0: run the configure phase with a stable quote (<CHAIN>_PAA_QUOTE_ASSETS)";
+    }
+
+    /// @dev #2880 — every asset but WETH is priced through the chain's feed
+    ///      registry, so a Diamond pointed at no registry, or at one other
+    ///      than the chain's own, prices WETH alone or prices through feeds
+    ///      nobody reviewed. The registry must be the declared one and must
+    ///      have a quote registered under each key the oracle asks it under
+    ///      (the primary key and the ETH key of the asset/ETH fallback), or
+    ///      every lookup under that key misses. How many feeds it holds is
+    ///      reported, not required: WETH prices without it, and the feed
+    ///      service fills it under the registry's own delay.
+    function _feedRegistry(address diamond, address declaredRegistry) private view returns (Check memory c) {
+        c.label = "the declared feed registry keys every price lookup";
+        address registry;
+        address padKey;
+        address ethKey;
+        try ILaunchReadableDiamond(diamond).getFeedRegistryLookup() returns (address r, address p, address e) {
+            (registry, padKey, ethKey) = (r, p, e);
+        } catch {
+            c.detail = "getFeedRegistryLookup() unreadable";
+            return c;
+        }
+        if (registry == address(0)) {
+            c.checkable = true;
+            c.detail = "no feed registry configured (setChainlinkRegistry), so only WETH is priced: run the configure phase";
+            return c;
+        }
+        if (declaredRegistry == address(0)) {
+            c.detail = "no feed registry declared to compare the configured one against";
+            return c;
+        }
+        c.checkable = true;
+        if (registry != declaredRegistry) {
+            c.detail = "the configured feed registry is not the declared one";
+            return c;
+        }
+        if (!_quoteRegistered(registry, padKey)) {
+            c.detail = "the registry files no quote under the oracle's primary key (the predominant or numeraire denominator), so every primary lookup misses";
+            return c;
+        }
+        if (!_quoteRegistered(registry, ethKey)) {
+            c.detail = "the registry files no quote under the oracle's ETH key, so every asset/ETH lookup misses";
+            return c;
+        }
+        c.met = true;
+        (bool ok, bytes memory ret) = registry.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("entryCount()"));
+        c.detail = ok && ret.length == 32
+            ? string.concat(
+                "the Diamond prices through the declared registry, which files a quote under both keys and holds ",
+                Strings.toString(abi.decode(ret, (uint256))),
+                " feed(s)"
+            )
+            : "the Diamond prices through the declared registry, which files a quote under both keys (its feed count is unreadable)";
+    }
+
+    /// @dev Whether `registry` answers `quoteSymbol(quote)` with a
+    ///      well-formed, non-empty string. A zero key is never registered.
+    function _quoteRegistered(address registry, address quote) private view returns (bool) {
+        if (quote == address(0) || registry.code.length == 0) return false;
+        (bool ok, bytes memory ret) =
+            registry.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("quoteSymbol(address)", quote));
+        if (!ok) return false;
+        (bool wellFormed, uint256 len) = _dynamicLength(ret, false);
+        return wellFormed && len != 0;
     }
 
     /// @dev The Diamond's VPFI token and the pool the CCIP registry routes it

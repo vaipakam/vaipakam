@@ -603,7 +603,7 @@ export function repatPositionUnavailableGap(
     source: 'own-ledger-repat',
     detail:
       `getRepatriationPosition() could not be read on chain ${chainId} — ${describeFailure(failure)}.\n\n` +
-      `The repatriated-out cumulative is UNKNOWN this tick, so bucket composition and the reported-cumulative re-derivation for this chain did NOT run (substituting zero would page a false CRITICAL after any real repatriation).\n\n` +
+      `The repatriated-out cumulative is UNKNOWN this tick, so bucket composition for this chain did NOT run (substituting zero would page a false CRITICAL after any real repatriation).\n\n` +
       (preC2
         ? `The selector does not exist in this Diamond's CURRENT CUT — either a pre-C2 deployment, or a partial facet refresh that dropped the RepatriationFacet while its storage (possibly nonzero) persists; selector absence cannot distinguish the two. Cut the facet (back) in to close this gap.`
         : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
@@ -628,7 +628,7 @@ export function reattributionUnavailableGap(
     source: 'own-ledger-reattribution',
     detail:
       `getReconciliationTotals() could not be read on chain ${chainId} — ${describeFailure(failure)}.\n\n` +
-      `The two reattribution cumulatives are UNKNOWN this tick, so bucket composition and the reported-cumulative re-derivation for this chain did NOT run (substituting zero would page a false CRITICAL after any real correction of a classification).\n\n` +
+      `The two reattribution cumulatives are UNKNOWN this tick, so bucket composition for this chain did NOT run (substituting zero would page a false CRITICAL after any real correction of a classification).\n\n` +
       (missing
         ? `The selector does not exist in this Diamond's CURRENT CUT — either a deployment predating the reconciliation epoch, or a partial facet refresh that dropped the RewardReconciliationFacet while its storage (possibly nonzero) persists; selector absence cannot distinguish the two. Cut the facet (back) in to close this gap.`
         : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
@@ -671,7 +671,7 @@ export function compositionUnavailableGap(
     source: 'own-ledger-composition',
     detail:
       `getRecycleCompositionPosition() could not be read on chain ${chainId} — ${describeFailure(failure)}.\n\n` +
-      `Most likely a chain missed during a facet refresh. For this chain THIS TICK: bucket composition, the reported-cumulative derivation and the canonical-role cross-check did NOT run, and bucket coverage fell back to the pre-#1444 rule (strict on a mirror; not evaluated on the canonical chain, where a released remittance legitimately produces a shortfall and the figure that would explain it is the one missing).`,
+      `Most likely a chain missed during a facet refresh. For this chain THIS TICK: bucket composition and the canonical-role cross-check did NOT run, and bucket coverage fell back to the pre-#1444 rule (strict on a mirror; not evaluated on the canonical chain, where a released remittance legitimately produces a shortfall and the figure that would explain it is the one missing).`,
   };
 }
 
@@ -717,21 +717,20 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
   // checks into one non-paging coverage gap. Its absence must cost only the
   // checks that need it.
   //
-  // Same pinned block is still load-bearing: both new checks compare a raw
-  // counter against the derived figures, so a mixed-block tuple would show a
-  // mid-transaction state as a violation.
+  // Same pinned block is still load-bearing: the composition and coverage
+  // checks compare these counters against the bucket and payout figures, so
+  // a mixed-block tuple would show a mid-transaction state as a violation.
   let composition:
     | {
-        creditedRaw: bigint;
+        credited: bigint;
         releasedRemitStranded: bigint;
-        accountingSeeded: boolean;
         isCanonicalRewardChain: boolean;
         releasedRemitResolved: bigint;
       }
     | undefined;
   try {
     const c = await readView<
-      readonly [bigint, bigint, boolean, boolean, bigint]
+      readonly [bigint, bigint, boolean, bigint]
     >(
       target.client,
       target.diamond,
@@ -740,11 +739,10 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
       blockNumber,
     );
     composition = {
-      creditedRaw: c[0],
+      credited: c[0],
       releasedRemitStranded: c[1],
-      accountingSeeded: c[2],
-      isCanonicalRewardChain: c[3],
-      releasedRemitResolved: c[4],
+      isCanonicalRewardChain: c[2],
+      releasedRemitResolved: c[3],
     };
   } catch (err) {
     composition = undefined;
@@ -770,7 +768,7 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
   } catch (err) {
     // UNKNOWN on ANY failure, missing selector included — same partial-
     // refresh reasoning as the Base-side draw read (Codex #1618 r5). The
-    // composition / derivation checks skip for this chain.
+    // composition check skips for this chain.
     repatriatedOut = undefined;
     viewGaps.push(repatPositionUnavailableGap(target.chainId, err));
   }

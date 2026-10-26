@@ -325,7 +325,8 @@ contract HandoverGate is Script {
                 );
             }
 
-            // Every GuardianPausable contract's guardian is the Pauser Safe,
+            // Every guardian-flagged contract's guardian is the Pauser Safe
+            // (a GuardianPausable contract's pause, the feed registry's veto),
             // and an unreadable getter there is a failure, not a skip: the
             // artifact names the wrong contract or its implementation lost
             // the fast pause. The rate governor and the CCIP pool carry no
@@ -334,7 +335,7 @@ contract HandoverGate is Script {
             if (t.guardian) {
                 (ok, ret) = t.addr.staticcall(abi.encodeWithSignature("guardian()"));
                 if (!ok || ret.length < 32) {
-                    _fail(string.concat(t.label, ": guardian() unreadable - it must be GuardianPausable"));
+                    _fail(string.concat(t.label, ": guardian() unreadable - it must carry a guardian (GuardianPausable, or the feed registry)"));
                 } else {
                     address guardian = abi.decode(ret, (address));
                     if (guardian != inp.pauserSafe) {

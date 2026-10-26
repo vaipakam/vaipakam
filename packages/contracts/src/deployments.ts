@@ -368,6 +368,12 @@ export interface Deployment {
    *  rehearsal target and is NOT what the Diamond screens against
    *  (`sanctions.oracle` says what it does). */
   sanctionsList?: HexAddress;
+  /** #2880 — the chain's `VaipakamFeedRegistry`, deployed by
+   *  `DeployFeedRegistry` in the contracts phase. The Diamond's oracle prices
+   *  every asset but WETH through it (`getFeed(asset, USD | ETH)`), on every
+   *  chain; its entries are official Chainlink feeds, added under a delay the
+   *  Pauser Safe can veto. Absent only on an artifact that predates it. */
+  feedRegistry?: HexAddress;
   /** #2443 — the `SanctionsDelistingTimelock` `DeploySanctionsDelisting`
    *  deployed for `sanctionsList` on this chain: the bot-proposes,
    *  Safe-vetoes delisting route, appointed as one of the list's removers. */
@@ -448,7 +454,11 @@ export interface TestnetMocks {
   liquidToken2UsdFeed?: HexAddress;
   /** MockChainlinkAggregator mWeth/USD. */
   mWethUsdFeed?: HexAddress;
-  /** Mock Chainlink FeedRegistry resolving the above. */
+  /** The rig's own `MockChainlinkRegistry`, recorded by a rig deployed
+   *  before #2880. A chain deployed since has none here: its rig registers
+   *  its feeds in the chain's real registry, the top-level `feedRegistry`.
+   *  Still present on a testnet until its fresh deploy, and the Diamond there
+   *  still prices through it. */
   feedRegistry?: HexAddress;
   /** Mock Uniswap-V3 factory + liquidToken/WETH pool (liquidity gate). */
   uniswapV3Factory?: HexAddress;

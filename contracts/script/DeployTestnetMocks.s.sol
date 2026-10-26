@@ -11,7 +11,9 @@ import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
-import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
+import {MockChainlinkPairFeed} from "./mocks/MockChainlinkRegistry.sol";
+import {VaipakamFeedRegistry} from "../src/oracle/VaipakamFeedRegistry.sol";
+import {TestnetFeedRegistration} from "./lib/TestnetFeedRegistration.sol";
 import {MockUniswapV3Factory} from "./mocks/MockUniswapV3.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {MockPoolPricing} from "./lib/MockPoolPricing.sol";
@@ -147,9 +149,8 @@ interface IAggregatorV3Like {
 }
 
 contract DeployTestnetMocks is Script {
-    /// @dev Canonical Chainlink Denominations sentinels (chain-universal).
+    /// @dev Chainlink's USD sentinel, as the chain's feed registry keys it.
     address constant USD_DENOM = 0x0000000000000000000000000000000000000348;
-    address constant ETH_DENOM = 0x000000000000000000000000000000000000000E;
 
     // ── Canonical wrapped-native per testnet (quote asset for the v3
     //    depth check). Mirrors DeployTestnetLiquidityMocks. ──
@@ -425,9 +426,8 @@ contract DeployTestnetMocks is Script {
         // re-derived from its legs' feed prices (see {_poolSqrtPriceX96}),
         // so the pool spot agrees with the feed ratio and the
         // value-balance guard admits it.
-        MockChainlinkRegistry registry = new MockChainlinkRegistry();
-        MockChainlinkFeed liquidFeed = new MockChainlinkFeed(TLIQ_USD_PRICE, 8);
-        MockChainlinkFeed liquid2Feed = new MockChainlinkFeed(MUSDC_USD_PRICE, 8);
+        MockChainlinkPairFeed liquidFeed = new MockChainlinkPairFeed(TLIQ_USD_PRICE, 8, "tLIQ / USD");
+        MockChainlinkPairFeed liquid2Feed = new MockChainlinkPairFeed(MUSDC_USD_PRICE, 8, "mUSDC / USD");
         // mWETH + WETH share a feed price. `wethQuotePrice8` was resolved
         // pre-broadcast (the live-feed snapshot on the MWETH_USD_FEED override
         // path, else `mWethUsdPrice`); deploy the STATIC snapshot feed and
@@ -441,14 +441,10 @@ contract DeployTestnetMocks is Script {
         // (the real ETH price AT DEPLOY, validated in the pre-flight above) AND
         // every pool consistent forever; an operator reruns the deploy to
         // refresh mWETH to the current ETH price.
-        address ethUsdFeedAddr = address(new MockChainlinkFeed(SafeCast.toInt256(wethQuotePrice8), 8));
+        address ethUsdFeedAddr = address(new MockChainlinkPairFeed(SafeCast.toInt256(wethQuotePrice8), 8, "ETH / USD"));
         if (mWethUsdFeedOverride != address(0)) {
             console.log("Seeded mWETH + WETH from live MWETH_USD_FEED (static snapshot):", ethUsdFeedAddr);
         }
-        registry.setFeed(liquidToken, USD_DENOM, address(liquidFeed));
-        registry.setFeed(liquidToken2, USD_DENOM, address(liquid2Feed));
-        registry.setFeed(mWeth, USD_DENOM, ethUsdFeedAddr);
-        registry.setFeed(weth, USD_DENOM, ethUsdFeedAddr);
 
         MockUniswapV3Factory univ3 = new MockUniswapV3Factory();
         // tLIQ ($2,000) / mUSDC ($1) / mWETH (== WETH) all quoted against
@@ -530,7 +526,6 @@ contract DeployTestnetMocks is Script {
 
         console.log("");
         console.log("Deployed oracle/swap mocks:");
-        console.log("  MockChainlinkRegistry: ", address(registry));
         console.log("  tLIQ/USD feed:         ", address(liquidFeed));
         console.log("  mUSDC/USD feed:        ", address(liquid2Feed));
         console.log("  mWETH+WETH/USD feed:   ", ethUsdFeedAddr);
@@ -540,11 +535,27 @@ contract DeployTestnetMocks is Script {
         console.log("  MockSwapAdapter:       ", address(swapAdapter));
 
         // ── Step 2: Admin-side — wire mocks into the Diamond ───────────
+        // The feeds go into the chain's real feed registry (#2880), by an
+        // owner proposal executed at once (a testnet's delay is 0), and the
+        // Diamond reads its denominators from that same registry.
+        VaipakamFeedRegistry registry = VaipakamFeedRegistry(Deployments.readFeedRegistryOptional());
+        require(
+            address(registry).code.length != 0,
+            "DeployTestnetMocks: no feedRegistry recorded for this chain - run DeployFeedRegistry (the contracts phase) first"
+        );
         vm.startBroadcast(adminKey);
+        {
+            TestnetFeedRegistration.Feed[] memory feeds = new TestnetFeedRegistration.Feed[](4);
+            feeds[0] = TestnetFeedRegistration.Feed(liquidToken, USD_DENOM, address(liquidFeed), "tLIQ / USD");
+            feeds[1] = TestnetFeedRegistration.Feed(liquidToken2, USD_DENOM, address(liquid2Feed), "mUSDC / USD");
+            feeds[2] = TestnetFeedRegistration.Feed(mWeth, USD_DENOM, ethUsdFeedAddr, "ETH / USD");
+            feeds[3] = TestnetFeedRegistration.Feed(weth, USD_DENOM, ethUsdFeedAddr, "ETH / USD");
+            TestnetFeedRegistration.register(registry, feeds);
+        }
         OracleAdminFacet oa = OracleAdminFacet(diamond);
         oa.setChainlinkRegistry(address(registry));
-        oa.setUsdChainlinkDenominator(USD_DENOM);
-        oa.setEthChainlinkDenominator(ETH_DENOM);
+        oa.setUsdChainlinkDenominator(registry.USD());
+        oa.setEthChainlinkDenominator(registry.ETH());
         oa.setWethContract(weth);
         oa.setEthUsdFeed(ethUsdFeedAddr);
         oa.setUniswapV3Factory(address(univ3));
@@ -628,7 +639,6 @@ contract DeployTestnetMocks is Script {
         vm.serializeAddress(obj, "illiquidToken2", illiquidToken2);
         vm.serializeAddress(obj, "rentalNft", rentalNft);
         vm.serializeAddress(obj, "rentalNft2", rentalNft2);
-        vm.serializeAddress(obj, "feedRegistry", address(registry));
         vm.serializeAddress(obj, "liquidTokenUsdFeed", address(liquidFeed));
         // liquidToken2UsdFeed now prices mUSDC at $1 (was tLQ2 at $2,000).
         vm.serializeAddress(obj, "liquidToken2UsdFeed", address(liquid2Feed));

@@ -1398,27 +1398,27 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         assertEq(borrower, 15e18);
     }
 
-    /// Codex #1413 r5 — a diamond refreshed in place over live pre-#1222
-    /// state (bucket populated, new cumulative slot zero) reports its
-    /// pre-upgrade absorption: the cumulative floors on
-    /// `recycleBucket + paidOutRecycled`, so B2/B3 never permanently
-    /// ignore VPFI absorbed before the cut. No migration step needed.
-    function testCloseDayReportsPreUpgradeFloorCumulative() public {
+    /// #2875 item 3 — the reported cumulative is the stored lifetime
+    /// counter and nothing else. A bucket with no credited counter behind
+    /// it (the shape an in-place refresh over pre-#1222 state left, which
+    /// a fresh deploy can never reach) used to be floored up to
+    /// `recycleBucket + paidOutRecycled`; the floor is retired, so neither
+    /// the view nor the report reads the bucket.
+    function testCloseDayReportsStoredCumulativeNotBucket() public {
         _configureMirror(CHAIN_ARB);
         InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
             block.timestamp
         );
         _mut().setDailyLenderInterest(1, alice, 25e18, 25e18);
         _mut().setKnownGlobalSet(1, false);
-        // Pre-upgrade state: bucket holds 50 absorbed VPFI; the new
-        // cumulative slot was never written.
         _mut().setRecycleBucketRaw(50e18);
+        _mut().setRecycleCreditedCumulativeRaw(20e18);
         vm.warp(block.timestamp + 2 days + 1);
 
         assertEq(
             _cfg().getRecycleCreditedCumulative(),
-            50e18,
-            "view floors on pre-upgrade custody"
+            20e18,
+            "view is the stored counter, not floored on the bucket"
         );
 
         vm.deal(alice, 1 ether);
@@ -1427,8 +1427,8 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
         assertEq(
             messenger.lastSendRecycledCumulative18(),
-            50e18,
-            "report carries the pre-upgrade absorption"
+            20e18,
+            "report carries the stored counter"
         );
     }
 

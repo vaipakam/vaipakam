@@ -3596,13 +3596,12 @@ library LibVaipakam {
         // chains), converts depth to USD via the ETH/USD feed, and
         // prices assets with a hybrid rule: prefer a direct asset/USD
         // Chainlink feed; fall back to asset/ETH × ETH/USD when no
-        // direct USD feed exists. On L2s where the Chainlink Feed
-        // Registry is not deployed, `chainlnkRegistry` is address(0)
-        // and both the USD and ETH Feed Registry lookups are skipped —
-        // pricing flows through the direct `ethNumeraireFeed` address for
-        // WETH and reverts with {NoPriceFeed} for other assets unless
-        // the admin wires a per-asset direct feed (not yet exposed;
-        // tracked in the follow-up).
+        // direct USD feed exists. Both lookups go through
+        // `chainlnkRegistry`, which on every chain is that chain's own
+        // `VaipakamFeedRegistry` (#2880): Chainlink runs its Feed
+        // Registry on Ethereum mainnet only, so without ours every
+        // asset but WETH (priced from `ethNumeraireFeed`) would revert
+        // {NoPriceFeed}.
         /// @dev AggregatorV3 address for ETH/USD (8 decimals). REQUIRED
         ///      for liquidity depth conversion and for pricing WETH
         ///      itself. Zero disables every ETH-quoted code path.
@@ -6108,12 +6107,12 @@ library LibVaipakam {
         // APPEND-ONLY TAIL. Lifetime Σ of RECYCLED VPFI that arrived on this
         // chain as a Base-funded remit top-up and was credited to
         // `recycleBucket` purely to give the claim path real backing — NOT
-        // first-time absorption. It is subtracted from the derived floor in
-        // {LibVpfiRecycle.creditedCumulative} so these tokens never reach the
+        // first-time absorption. A relocation advances this counter INSTEAD
+        // of `recycleCreditedCumulative`, so these tokens never reach the
         // figure a mirror REPORTS to Base.
         //
-        // Why the subtraction is load-bearing (design record §2f.2/§2f.3):
-        // the day-close reports `creditedCumulative`, `recordChainRecycled`
+        // Why the separation is load-bearing (design record §2f.2/§2f.3):
+        // the day-close reports `recycleCreditedCumulative`, `recordChainRecycled`
         // ratchets `chainReportedRecycled[c]` to it, and B2-d3's
         // `_mirrorAvailable` = `reported` net of the claim and repatriation
         // draws offers the remainder to
@@ -6122,15 +6121,11 @@ library LibVaipakam {
         // mirror-local availability, and would additionally widen the Ā
         // attribution headroom (`min(forDay, reported − attributed)`) — so
         // skipping the `recycledCreditedByDay` day-bucket alone is NOT
-        // sufficient. Leaving `recycleCreditedCumulative` merely unwritten is
-        // also not sufficient, because the floor derives from
-        // `recycleBucket + paidOutRecycled` and the custody credit raises the
-        // bucket.
+        // sufficient. The bucket-composition relation (see
+        // `recycleReleasedRemitStrandedCumulative`) is what lets an external
+        // checker see a relocation that advanced the wrong counter.
         //
-        // Never decremented: `consume` moves value bucket → `paidOutRecycled`
-        // and `releaseCommitment` moves neither, so `recycleBucket +
-        // paidOutRecycled` is monotonically non-decreasing and always
-        // dominates this counter — the subtraction cannot underflow.
+        // Never decremented.
         uint256 recycleCustodyRelocatedCumulative;
         // ─── #1222 M3 B3 — commitment-retirement signal + per-chain books ──
         // APPEND-ONLY TAIL. B2-d3 books a mirror's locally-funded slice into
@@ -6273,10 +6268,9 @@ library LibVaipakam {
         //          + recycleRepatriatedOutCumulative + recycleReattributedOutCumulative
         //          <= recycleCreditedCumulative + recycleCustodyRelocatedCumulative
         //             + recycleReattributedInCumulative + slack
-        //      The two sides have ONE implementation,
-        //      {LibVpfiRecycle.compositionSides}, which the seed ceremony's
-        //      postcondition reads; the external checkers restate it from
-        //      the published terms. #1568 C2 added the repatriated-out
+        //      The external checkers (`ops/mesh-watcher`, the mesh
+        //      invariants) restate it from the published terms. #1568 C2
+        //      added the repatriated-out
         //      destination; #1566 closure 2 cutover PR 2 the two
         //      reattribution terms of a reclassification (Codex #2206 r9).
         //
@@ -6319,97 +6313,25 @@ library LibVaipakam {
         //   ceremony must SPLIT them: keep this one for composition, and add
         //   a separate recovered total for coverage to net against.
         uint256 recycleReleasedRemitStrandedCumulative;
-        // `recycleAccountingSeeded` — #1448 r4. Set true by the FIRST recycled
-        // credit of any class on this chain (ordinary absorption or relocated
-        // custody), and never cleared.
-        //
-        // It exists because `recycleCreditedCumulative == 0` is ambiguous, and
-        // an external checker was reading it as "un-seeded" (Codex #1448 r4).
-        // Two states share that zero:
-        //   1. a Diamond refreshed over live pre-#1222 state, whose historical
-        //      bucket genuinely has no counter behind it — composition is
-        //      UNVERIFIABLE there, and must not page; and
-        //   2. a FRESH chain that has simply absorbed nothing yet — where a
-        //      first custody arrival crediting the bucket WITHOUT advancing
-        //      `recycleCustodyRelocatedCumulative` is exactly the regression
-        //      the exclusion exists to catch, and MUST page.
-        // Treating (2) as (1) downgraded that regression to a non-paging
-        // advisory and let the chain report a Base-funded top-up as its own
-        // absorption while the watcher still reported healthy.
-        //
-        // This flag distinguishes them: only (1) has it false.
-        bool recycleAccountingSeeded;
-        // `recycleStrandedSeedApplied` — #1448 r5. Records that the one-time
-        // `seedReleasedRemitStranded` ceremony has RUN, tracked separately
-        // from whether the counter is non-zero.
-        //
-        // Guarding on the value instead was a trap: a NEW release after the
-        // upgrade but before the ceremony makes the counter non-zero, which
-        // would have rejected the seed permanently and stranded the historical
-        // amount forever, with no recovery entry point. The redeploy script
-        // only PRINTS the ceremony after all refresh work, so that ordering is
-        // reachable by an operator doing nothing wrong.
-        bool recycleStrandedSeedApplied;
-        // ─── #1448 r7 — the seed ceremony is RESUMABLE ─────────────────────
-        // A single-transaction scan of `1..remitReservationNonce` can exceed
-        // the block gas limit on a Diamond with a long reservation history —
-        // and because the ceremony is one-shot, such an instance could then
-        // NEVER seed, leaving the watcher permanently reporting valid
-        // pre-upgrade state as CRITICAL. Liveness, not just cost.
-        //
-        // Splitting it into ranges is in tension with r4, which rejected a
-        // caller-supplied id LIST precisely because completeness could not be
-        // proved. These three fields resolve that: the caller chooses how far
-        // to go per call, but the ceremony only COMPLETES when the cursor has
-        // reached a target captured from the nonce at the start, so coverage
-        // of `1..target` is still structural.
-        //
-        // `recycleStrandedSeedTarget` — the nonce snapshotted on the first
-        //   call. 0 means "not started". Pinned so reservations created later
-        //   cannot move the finish line.
-        uint256 recycleStrandedSeedTarget;
-        // `recycleStrandedSeedCursor` — highest id scanned so far.
-        uint256 recycleStrandedSeedCursor;
-        // `recycleStrandedSeedAccum` — running Σ. Deliberately NOT written
-        //   into `recycleReleasedRemitStrandedCumulative` until completion:
-        //   a partial total would make bucket coverage MORE permissive
-        //   mid-ceremony, which is exactly the direction that hides a real
-        //   shortfall.
-        uint256 recycleStrandedSeedAccum;
-        // `recycleStrandedSeedBaseline` — the live counter at ceremony start.
-        //   Re-checked on every call: a release landing mid-ceremony records
-        //   organically AND may fall in an already-scanned range, so the two
-        //   sources would disagree. Cheaper and safer to detect it and make
-        //   the operator restart than to try to reconcile it.
-        uint256 recycleStrandedSeedBaseline;
-        // `recycleStrandedSeedCounted` — how many RELEASED reservations the
-        //   scan has found. Distinct from the target, which is the reservation
-        //   NONCE and therefore includes pending and acked entries; emitting
-        //   the latter as the released count would inflate what operational
-        //   and audit consumers read (#1448 r8).
-        uint256 recycleStrandedSeedCounted;
-        // `remitReleasedCount` — #1448 r10. A monotonic count of remittance
-        //   RELEASES, incremented on every release regardless of how much
-        //   recycled backing it stranded. The seed ceremony's race guard used
-        //   to pin only the stranded VALUE, which is blind to a release whose
-        //   recycled share is zero (a fresh-only remit, or one whose share
-        //   clamped to zero): the status flips to Released, the value counter
-        //   does not move, and the guard sees nothing. A release like that,
-        //   landing in an ALREADY-SCANNED range, is missed by the scan too, so
-        //   the completion event under-reports how many releases it found.
-        //   Counting every release makes the guard complete on that axis:
-        //   nothing can flip a status without moving this.
-        //
-        //   #1448 r14 — being an APPENDED slot, on a Diamond upgraded in place
-        //   this starts at zero and so counts post-upgrade releases only. The
-        //   seed ceremony BACKFILLS it from its full scan at completion, which
-        //   is what makes "lifetime" true rather than aspirational; before
-        //   that it is partial, and the published `applied` flag is how a
-        //   consumer tells the two apart.
-        uint256 remitReleasedCount;
-        // `recycleStrandedSeedBaselineCount` — the above, pinned when the
-        //   ceremony starts, so the guard compares like for like.
-        uint256 recycleStrandedSeedBaselineCount;
+        // ── RETIRED (#2875) — the #1448 upgrade-in-place seeding state ────
+        // Nine slots that existed only to migrate a Diamond refreshed over
+        // live pre-#1222 / pre-#1448 state: the "recycled accounting has
+        // run" flag (r4) and the released-remit stranded-seed ceremony's
+        // applied flag, scan state, race baselines and the release count it
+        // backfilled (r5–r14). Every chain reaches this build by fresh
+        // deploy (owner decision O1 = A), so every recycled counter starts
+        // at zero with the Diamond and is exact from the first credit; the
+        // ceremony and the flag are removed. Kept in place, never written
+        // and never read, so the layout is unchanged.
+        bool retiredRecycleAccountingSeeded;
+        bool retiredRecycleStrandedSeedApplied;
+        uint256 retiredRecycleStrandedSeedTarget;
+        uint256 retiredRecycleStrandedSeedCursor;
+        uint256 retiredRecycleStrandedSeedAccum;
+        uint256 retiredRecycleStrandedSeedBaseline;
+        uint256 retiredRecycleStrandedSeedCounted;
+        uint256 retiredRemitReleasedCount;
+        uint256 retiredRecycleStrandedSeedBaselineCount;
         // ── Lender-sale listing lifecycle (appended slots) ────────────────
         // `saleRelistCooldownUntil` — per-loan timestamp before which a new
         //   lender-sale listing may not be created. Stamped whenever a live
@@ -7028,14 +6950,9 @@ library LibVaipakam {
         //   cumulative, so netting it would under-recognise local backing
         //   and page a false CRITICAL shortfall.
         //
-        //   #1662 r3 — stored UNCAPPED, capped only where it is PUBLISHED.
-        //   On an in-place-upgraded Diamond the stranded cumulative stays
-        //   zero or partial until the one-time seed ceremony finishes, and
-        //   a resolution recorded in that window would have been saturated
-        //   away against a floor that had not been established yet — with
-        //   the seed's later assignment doing no recomputation, the
-        //   discarded portion would read as still-in-transit forever,
-        //   restoring the exact phantom allowance this counter removes.
+        //   #1662 r3 — stored UNCAPPED, capped only where it is PUBLISHED
+        //   (`RewardAggregatorFacet.getRecycleCompositionPosition`), so the
+        //   counter stays the whole record of what was resolved.
         uint256 recycleReleasedRemitResolvedCumulative;
         /// @dev #1503 item 28 — the point in time through which the CURRENT
         ///      lender-position holder has actually been PAID their interest.
@@ -11947,6 +11864,18 @@ library LibVaipakam {
         bytes32 v = storageSlot().predominantDenominatorSymbol;
         // forge-lint: disable-next-line(unsafe-typecast)
         return v == bytes32(0) ? bytes32("usd") : v;
+    }
+
+    /// @notice #2880 — the quote key the oracle's primary lookup passes to
+    ///         the feed registry: the predominant denominator, or, while it
+    ///         is unset (the pre-T-048 path), the numeraire's denominator.
+    ///         The ONE statement of that rule, read by the oracle's price
+    ///         path and by the launch readiness check, so the check asks the
+    ///         registry about the key the oracle actually uses.
+    function effectivePadDenominator() internal view returns (address pad) {
+        Storage storage s = storageSlot();
+        pad = s.predominantDenominator;
+        if (pad == address(0)) pad = s.numeraireChainlinkDenominator;
     }
 
     /// @notice T-048 — `true` when the active numeraire's Chainlink

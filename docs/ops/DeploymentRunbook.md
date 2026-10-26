@@ -75,7 +75,7 @@ Three deploy scripts after the 2026-05-10 modernization sweep
 | `configure` | — | `DiamondConfigSpell.s.sol` — composes ConfigureVPFIToken + ConfigureOracle + ConfigureRewardReporter + ConfigureNFTImageURIs into one operator-action. On a testnet the phase then runs `ConfigureSanctionsOracle.s.sol`, which sets the admin's test sanctions list as the Diamond's oracle (#946); without it the `launch` phase refuses. Requires per-chain Chainlink feed addresses + WETH. **ConfigureVPFIBuy is NOT in the launch path (#884)** — the VPFI discount peg stays unset. To opt in **through a wrapper**, pass `--configure-vpfi-peg`; the wrappers deliberately force the `CONFIGURE_VPFI_PEG` env var off, so exporting it does nothing there. The env var is for invoking `DiamondConfigSpell` directly. |
 | `handover` | `--confirm-i-have-multisig-ready` | `Handover.s.sol` — rotates DEFAULT_ADMIN_ROLE → Timelock (D1, #934), EMERGENCY_REVOKER_ROLE → governance Safe (`EMERGENCY_REVOKER_ADDRESS`, its only Diamond role), ADMIN/KYC/ORACLE/RISK/VAULT/UNPAUSER → Timelock, PAUSER → Pauser Safe (direct), ERC-173 → Timelock, ownership of every owned contract → Timelock: the cross-chain contracts and VPFI token, and every other contract `addresses.json` or the Diamond names (swap adapters, rate model, satellites, sanctions-list contracts) whose owner is not the Diamond (#2743). Two-step contracts get the first leg (the Timelock is the pending and final owner); a one-step `Ownable` moves at once. KEEPER / WATCHER / NOTIF_BILLER → the bot keys in `KEEPER_ADDRESS` / `WATCHER_ADDRESS` / `NOTIF_BILLER_ADDRESS` (all three required; the zero address leaves that role unheld), and ADMIN then renounces EVERY role and ends with none (#669). **Preflight runs first**: refuses if a bot variable is unset or names the admin, a Safe, the Timelock or the Diamond, if a contract this chain must hand over is missing from `addresses.json` on a production chain, if any owned contract is owned by a key other than the admin or the Timelock on a production chain (the admin could not move it, #2743), if a Safe address has zero bytecode on the target chain, if the Timelock does not grant `PROPOSER_ROLE` to the governance Safe and `CANCELLER_ROLE` to the Pauser Safe, or if its delay or floor is below 48h on any chain that is not a known testnet (BNB Chain included). The second ownership leg is `acceptOwnership()` called BY THE TIMELOCK: the governance Safe queues it as a Timelock operation (it is the proposer), and anyone executes it after the delay. Calling `acceptOwnership()` from the Safe directly reverts. |
 | `handover-gate` | — | `HandoverGate.s.sol` — the live exit gate (#944), run after the Timelock has accepted every pending two-step transfer. Read-only: no key, no broadcast. Rebuilds every holder of every Diamond and Timelock role from the chain's role events since `deployBlock`, compares each observed pair with `hasRole` in both directions, and fails on any holder the plan does not name; refuses a log range that does not reach both contracts' construction. Also checks the Diamond owner and role admins, the Timelock delay, floor, proposer, canceller and executor, every owned contract's owner and pending owner (the same found set `handover` moved, so a swap adapter or any other contract still on the deployer or admin key fails), each `guardian()`, and the VPFI CCT administrator. On a pass it prints the Diamond's role epoch (a count of every role-table change) as `HANDOVER_ROLE_EPOCH=<n>` and the Timelock's executed-call count as `HANDOVER_TIMELOCK_CALLS=<n>`, both read in the state it proved; the wrapper records the two together (`handover-gate.proof`, cleared before every run so a failing gate leaves no older proof), and the `launch` phase and the verify report both load that record and bind the Timelock call to it. Anything it cannot check fails on a production chain and is reported as not checked on a testnet. The chain is not handed off until it passes. A missing local `handover` marker is only a note: the chain decides. |
-| `launch` | — | `Launch.s.sol` — the ONE first unpause (#945, #946). The `contracts` phase leaves the Diamond **paused** (it used to unpause at the end of that phase, before any price feed, sanctions screen or swap route existed). This phase reads seven launch requirements off the chain and prints each as `met`, `NOT MET` or `NOT CHECKED`: treasury set, sanctions oracle set to a contract that answers `isSanctioned(address)` with a boolean (the Diamond reads a failing oracle as "not sanctioned"), the declared WETH configured, an 18-decimal token contract, and priced by the Diamond's own oracle from the ETH reference feed right now (`getAssetPriceStatus(getWethContract())` is `Priced`, so a missing, stale, malformed or distrusted feed is `NOT MET` by the oracle's own rules), at least one enabled swap adapter, VPFI routed through the declared pool, and exactly the declared lanes on that pool, with every lane's inbound and outbound rate limits enabled and inside the `VpfiPoolRateGovernor` bounds, and a quote-asset (PAA) list naming an asset besides WETH that the Diamond prices now (#2747: the tier search never quotes WETH against itself and skips a quote it cannot price, so without such a quote WETH resolves to liquidity tier 0; the check asks the Diamond's `isLiquidityQuoteUsable`, the tier search's own quote test, so a listed stablecoin with only a peg reference and no asset price feed is `NOT MET`; the `configure` phase writes the list from the mock rig's mUSDC, or from `<CHAIN>_PAA_QUOTE_ASSETS` elsewhere). The chain is checked against DECLARED values (`Launch.declaredFromEnv`), never against itself: the pool the chain's CCIP `TokenAdminRegistry` (`CCIP_TOKEN_ADMIN_REGISTRY`) maps the Diamond's VPFI token to must be the artifact's `vpfiTokenPool` (which `handover-gate` proves Timelock-owned, registry-routed and bound to the rate governor; the gate re-reads at execution that the registry administrator, pool owner and governor owner are the Diamond's owner and the pool's rate admin is the artifact's `vpfiPoolRateGovernor`), and its lanes must be exactly `CCIP_LANE_CHAIN_IDS` (resolved from `CCIP_LANE_CHAIN_IDS_<SLUG>` as `ccip-wire` does), none missing and none extra, each reaching exactly the peer the remote chain's artifact records: its VPFI token (`vpfiToken` on Base, `vpfiMirror` on a mirror) and its `vpfiTokenPool` as the only remote pool (read through the helper `ccip-wire` wires them with). On a mirror chain the VPFI token's own mint authority (`tokenPool()`) must be the routed pool and the token owned by the Diamond's owner with no transfer pending. The WETH is the configured one, printed in the proposal for the Safe to verify against the chain's bridge registry. With the registry unset both CCIP checks are `NOT CHECKED`; with no lane set declared the lane check is `NOT CHECKED`; with no VPFI token and nothing declared (`--skip-vpfi`) both are met as not applicable. **Testnet**: refuses on any `NOT MET`; `NOT CHECKED` (for example a chain with no VPFI pool) is reported and allowed. The admin key unpauses while it holds `UNPAUSER_ROLE` and the Diamond has never been live (it carries no first-unpause record); after a rehearsal handover the Timelock batch is printed instead, and then every check must be `met`. **Mainnet**: run AFTER `handover` and `handover-gate` (it refuses without the gate's marker). Every check must be `met` (`NOT CHECKED` refuses too), the Timelock must hold `UNPAUSER_ROLE` and own the Diamond, the admin key must hold no Diamond role at all, the role epoch and the Timelock's call count must still be the ones `handover-gate` recorded (refused without them, or once a role has changed hands or the Timelock has executed any call since: re-run `handover-gate`), and the LaunchGate must be deployed. It broadcasts nothing: it prints the Timelock `scheduleBatch` call for the governance Safe to propose, the `executeBatch` call for after the delay, and the operation's current state, so the first unpause waits out the same 48h window as any governance action. The operation is ONE call, `AdminFacet.launch(epoch, gate, LaunchGate.assertReady(diamond, declared, handover))`, with the declared registry, pool, rate governor, lanes and WETH and the handover (admin key, Diamond owner, proven role epoch, and the count of calls the Timelock had executed when `handover-gate` proved the topology) in the calldata. The Diamond makes the gate call itself, refuses one that is not `assertReady` for itself, and unpauses only when it returns: the seven checks, the owner, the admin key holding no Diamond role and the role epoch are read again on-chain inside the execution, so if one stopped holding during the delay (including a role granted to anyone) the execution reverts and the Diamond stays paused. The launch must also be the Timelock's NEXT call: any other Timelock call executed after `handover-gate` proved the topology (a `diamondCut`, a pool ownership transfer, a rate-governor upgrade, anything) refuses the proposal or, once it is scheduled, reverts it with `TimelockActedDuringDelay`, because not every such effect can be read back on-chain; execute or cancel other queued operations first, then run `handover-gate` and print the proposal. The Diamond records the gate its first unpause went through. The epoch is the pause count when the proposal was printed, so a Guardian pause or watcher auto-pause during the delay also makes it revert; re-run the phase for a fresh proposal after such an incident. Re-run the phase after `executeBatch` to mark it done. The phase is marked only when `Launch.s.sol --sig "requireLaunched()"` passes, never from the pause bit: the Diamond's own first-unpause record (on mainnet it must name the Timelock and this checkout's LaunchGate: a Timelock operation that only unpauses is refused, and so is a first unpause through any other contract answering `assertReady`, since what it checked is unknown), on a testnet a first unpause outside a launch gate counts only while no answered check is `NOT MET`, paused now or not. After the launch every check is still read, and one that is `NOT MET` now is reported beside the launch record rather than hidden. Otherwise the phase refuses, so an unpause outside this step is never recorded as a launch. The record is read first: once the Diamond has been live, a re-run during an incident pause reports the launch and proposes nothing. The verify phases print the same decision (`report()`), so they never call a deployment launchable that the launch would refuse, including before the handover. The swap-route check counts an adapter only when it is enabled, has code and answers `adapterName()`. The mainnet sanctions oracle comes from `ConfigureSanctionsOracle`, which refuses mainnets until the #2443 adder host is decided, so a mainnet launch refuses until then. |
+| `launch` | — | `Launch.s.sol` — the ONE first unpause (#945, #946). The `contracts` phase leaves the Diamond **paused** (it used to unpause at the end of that phase, before any price feed, sanctions screen or swap route existed). This phase reads eight launch requirements off the chain and prints each as `met`, `NOT MET` or `NOT CHECKED`: treasury set, sanctions oracle set to a contract that answers `isSanctioned(address)` with a boolean (the Diamond reads a failing oracle as "not sanctioned"), the declared WETH configured, an 18-decimal token contract, and priced by the Diamond's own oracle from the ETH reference feed right now (`getAssetPriceStatus(getWethContract())` is `Priced`, so a missing, stale, malformed or distrusted feed is `NOT MET` by the oracle's own rules), at least one enabled swap adapter, VPFI routed through the declared pool, and exactly the declared lanes on that pool, with every lane's inbound and outbound rate limits enabled and inside the `VpfiPoolRateGovernor` bounds, and a quote-asset (PAA) list naming an asset besides WETH that the Diamond prices now (#2747: the tier search never quotes WETH against itself and skips a quote it cannot price, so without such a quote WETH resolves to liquidity tier 0; the check asks the Diamond's `isLiquidityQuoteUsable`, the tier search's own quote test, so a listed stablecoin with only a peg reference and no asset price feed is `NOT MET`; the `configure` phase writes the list from the mock rig's mUSDC, or from `<CHAIN>_PAA_QUOTE_ASSETS` elsewhere), and the Diamond pricing through the artifact's `feedRegistry` (#2880), which must file a quote under both keys the oracle asks it under (its feed count is printed, not required). The chain is checked against DECLARED values (`Launch.declaredFromEnv`), never against itself: the pool the chain's CCIP `TokenAdminRegistry` (`CCIP_TOKEN_ADMIN_REGISTRY`) maps the Diamond's VPFI token to must be the artifact's `vpfiTokenPool` (which `handover-gate` proves Timelock-owned, registry-routed and bound to the rate governor; the gate re-reads at execution that the registry administrator, pool owner and governor owner are the Diamond's owner and the pool's rate admin is the artifact's `vpfiPoolRateGovernor`), and its lanes must be exactly `CCIP_LANE_CHAIN_IDS` (resolved from `CCIP_LANE_CHAIN_IDS_<SLUG>` as `ccip-wire` does), none missing and none extra, each reaching exactly the peer the remote chain's artifact records: its VPFI token (`vpfiToken` on Base, `vpfiMirror` on a mirror) and its `vpfiTokenPool` as the only remote pool (read through the helper `ccip-wire` wires them with). On a mirror chain the VPFI token's own mint authority (`tokenPool()`) must be the routed pool and the token owned by the Diamond's owner with no transfer pending. The WETH is the configured one, printed in the proposal for the Safe to verify against the chain's bridge registry. With the registry unset both CCIP checks are `NOT CHECKED`; with no lane set declared the lane check is `NOT CHECKED`; with no VPFI token and nothing declared (`--skip-vpfi`) both are met as not applicable. **Testnet**: refuses on any `NOT MET`; `NOT CHECKED` (for example a chain with no VPFI pool) is reported and allowed. The admin key unpauses while it holds `UNPAUSER_ROLE` and the Diamond has never been live (it carries no first-unpause record); after a rehearsal handover the Timelock batch is printed instead, and then every check must be `met`. **Mainnet**: run AFTER `handover` and `handover-gate` (it refuses without the gate's marker). Every check must be `met` (`NOT CHECKED` refuses too), the Timelock must hold `UNPAUSER_ROLE` and own the Diamond, the admin key must hold no Diamond role at all, the role epoch and the Timelock's call count must still be the ones `handover-gate` recorded (refused without them, or once a role has changed hands or the Timelock has executed any call since: re-run `handover-gate`), and the LaunchGate must be deployed. It broadcasts nothing: it prints the Timelock `scheduleBatch` call for the governance Safe to propose, the `executeBatch` call for after the delay, and the operation's current state, so the first unpause waits out the same 48h window as any governance action. The operation is ONE call, `AdminFacet.launch(epoch, gate, LaunchGate.assertReady(diamond, declared, handover))`, with the declared registry, pool, rate governor, lanes, WETH and feed registry and the handover (admin key, Diamond owner, proven role epoch, and the count of calls the Timelock had executed when `handover-gate` proved the topology) in the calldata. The Diamond makes the gate call itself, refuses one that is not `assertReady` for itself, and unpauses only when it returns: the eight checks, the owner, the admin key holding no Diamond role and the role epoch are read again on-chain inside the execution, so if one stopped holding during the delay (including a role granted to anyone) the execution reverts and the Diamond stays paused. The launch must also be the Timelock's NEXT call: any other Timelock call executed after `handover-gate` proved the topology (a `diamondCut`, a pool ownership transfer, a rate-governor upgrade, anything) refuses the proposal or, once it is scheduled, reverts it with `TimelockActedDuringDelay`, because not every such effect can be read back on-chain; execute or cancel other queued operations first, then run `handover-gate` and print the proposal. The Diamond records the gate its first unpause went through. The epoch is the pause count when the proposal was printed, so a Guardian pause or watcher auto-pause during the delay also makes it revert; re-run the phase for a fresh proposal after such an incident. Re-run the phase after `executeBatch` to mark it done. The phase is marked only when `Launch.s.sol --sig "requireLaunched()"` passes, never from the pause bit: the Diamond's own first-unpause record (on mainnet it must name the Timelock and this checkout's LaunchGate: a Timelock operation that only unpauses is refused, and so is a first unpause through any other contract answering `assertReady`, since what it checked is unknown), on a testnet a first unpause outside a launch gate counts only while no answered check is `NOT MET`, paused now or not. After the launch every check is still read, and one that is `NOT MET` now is reported beside the launch record rather than hidden. Otherwise the phase refuses, so an unpause outside this step is never recorded as a launch. The record is read first: once the Diamond has been live, a re-run during an incident pause reports the launch and proposes nothing. The verify phases print the same decision (`report()`), so they never call a deployment launchable that the launch would refuse, including before the handover. The swap-route check counts an adapter only when it is enabled, has code and answers `adapterName()`. The mainnet sanctions oracle comes from `ConfigureSanctionsOracle`, which refuses mainnets until the #2443 adder host is decided, so a mainnet launch refuses until then. |
 | `abi-sync` | — | Runs the export scripts: `exportFrontendAbis.sh` + `exportFrontendDeployments.sh` + `exportSubgraphAbis.sh` + `exportTenderlyAlerts.sh` + (sibling repo present) `exportAbis.sh` for the keeper-bot. |
 | `cf-app` / `cf-www` | — | Build + `wrangler deploy` apps/app (the dApp) / apps/www (marketing). |
 | `cf-keeper` / `cf-indexer` / `cf-agent` | — | `pnpm run deploy` of each Worker. All three bind the shared `vaipakam-warm` D1. Only `cf-indexer` APPLIES pending migrations (D1 Edit), verifies them, then publishes; `cf-keeper` / `cf-agent` verify the schema read-only and refuse to publish while a migration is pending — run `cf-indexer` first on a migration-bearing release (#2214 / #2409). Each checks the Worker can read the chain's `RPC_<CHAIN>`: the entry its `secrets_store_secrets` binds must exist in that store with the workers scope (hard-fail if missing or if the store cannot be listed). A chain the Worker's config binds no RPC for refuses on `cf-indexer` and `cf-agent`, and is reported and skipped on `cf-keeper`, whose chain set is what its config binds (#2763). |
@@ -1527,9 +1527,9 @@ For manual / multisig control, the underlying setters are:
 
 On `OracleAdminFacet`:
 
-1. `setChainlinkRegistry(<feed registry>)` — mainnet only; on testnets `ConfigureOracle` skips the registry and goes straight to per-symbol feeds
-2. `setUsdChainlinkDenominator(<USD denominator>)`
-3. `setEthChainlinkDenominator(<ETH denominator>)`
+1. `setChainlinkRegistry(<feed registry>)` — on every chain, the chain's own `VaipakamFeedRegistry` from `.feedRegistry` (#2880)
+2. `setUsdChainlinkDenominator(<USD denominator>)` — the registry's `USD()`
+3. `setEthChainlinkDenominator(<ETH denominator>)` — the registry's `ETH()`
 4. `setWethContract(<WETH on this chain>)`
 5. `setEthUsdFeed(<ETH/USD feed>)`
 6. `setStableTokenFeed("USDC" | "USDT" | ..., <feed>)` — once per stable symbol
@@ -1692,6 +1692,10 @@ driven by its own env var**:
 
 5. `RewardAggregatorFacet.setExpectedSourceChainIds([...])` from `REWARD_EXPECTED_SOURCE_CHAIN_IDS` — comma-separated chain ids, e.g. `8453,42161,10,137`, canonical included.
 6. `RewardCommitmentFacet.setMirrorRewardDeployment(<chainId>, <that chain's Diamond>)`, once per entry of `MIRROR_REWARD_DEPLOYMENTS` — format `chainId:0xaddr,chainId:0xaddr`, no whitespace. Until a chain is registered, the compensation-quote (kind-11) ingress is fail-closed for it (`CompQuoteMirrorEraUnset`) and zeroed-day compensation on that lane is unreachable.
+
+And one setting that is **not** optional, because it has defaults (#2909):
+
+7. `RewardCommitmentFacet.setLapseSchedule(<window>, <gap>)` — a zeroed day lapses `REWARD_LAPSE_WINDOW_SECONDS` after it is finalized (default 604800, 7 days; the contract allows 3–30 days), and manual compensation for it must be dispatched at least `REWARD_DISPATCH_CUTOFF_GAP_SECONDS` before that (default 86400, 24 hours; the contract allows 6 hours–7 days, and the window must be at least the gap plus 48 hours). Schedules are append-only versions, so the script skips the call when the version in force already carries these two values, and a rerun with the same values adds nothing. Until a schedule is set, every day finalized carries version 0: it never lapses and its compensation has no dispatch cutoff. Launch readiness refuses a canonical chain without one ("zeroed-day lapse schedule in force"). Read it back with `getCurrentLapseScheduleVersion()` and `getLapseSchedule(<version>)`.
 
 On **every reporter** (non-Base chain), one registration, driven the same way:
 
@@ -3156,113 +3160,3 @@ solver window) is tracked under Backlog card #389. No operator env
 config needed until that card lands — the operator-side change there
 will be one new aggregator API key, documented as part of that card
 when it ships.
-
-## #1448 Released-remit stranded seed — one-time, upgrade-only ceremony
-
-Applies when upgrading any Diamond that was already remitting before the
-recycle-composition counters existed. A fresh deployment never needs it.
-
-**Not scoped to the CURRENT canonical chain** — the ceremony is ADMIN-only
-and gated on recorded release history, deliberately, because the state it
-reconstructs is history and history does not change role. A Diamond that
-released remittances while canonical and was later demoted still holds
-those reservations and still needs them counted; calling it "a mirror that
-cannot run this" would make an operator skip the seed and leave its
-composition discrepancy unresolved. A chain that never was canonical has
-no reservations and simply reverts `SeedNothingToScan`, so the history gate
-is self-enforcing rather than something to check by hand.
-
-**Why it exists.** A remittance released before the counters shipped
-already restored its commitment and reversed its payout figure, but
-nothing recorded how much it stranded. Both composition relations would
-therefore read as broken from the first check after the upgrade — on
-state the supported path produced. The ceremony recovers that one figure
-from the platform's own reservation records.
-
-**Deciding whether you need it.** Do NOT decide from
-`accountingSeeded` — it does not answer this question. That flag reads
-true whenever ordinary recycled accounting has ever run on the chain,
-which says nothing about whether a remittance was released before the
-stranded counter existed. A Diamond can easily have both: active
-recycling (so `accountingSeeded == true`) and historical releases with
-nothing recorded against them.
-
-Nor from `releasedRemitStranded` being non-zero, which is the same
-mistake in different clothes: that counter reads non-zero as soon as ANY
-release lands after the upgrade — including one that arrives while you
-are still working through the refresh. A historical amount can sit
-unrecovered behind a perfectly non-zero counter, and that is precisely
-the state the ceremony exists for. The contract itself rejected
-value-keyed gating for this reason (its one-shot is an explicit applied
-flag, not a "counter is non-zero" test); do not reintroduce it here.
-
-**The rule is one condition:** run the ceremony if the reservation
-history contains at least one `Released` entry. Walk
-`getRemitReservation(i)` for `i` in `1..getRemitReservationNonce()`.
-
-Running it when the counter already happens to be complete is safe, not
-merely tolerable: the scan covers every id in the range and **assigns**
-the total rather than adding to it, so a redundant run recomputes the
-same figure rather than doubling it. What it does spend is the one-shot,
-so run it once, deliberately, rather than speculatively.
-
-To check whether it has already run, read
-`getReleasedRemitStrandedSeedState()`. Its `applied` flag is the only
-sound answer to "has this happened" — `target` non-zero means a ceremony
-is part-way through and `cursor` says how far. If no reservation exists
-at all, the call reverts `SeedNothingToScan`: nothing to recover.
-
-The mesh watcher's "composition unverifiable" advisory is a weaker
-signal than this and should not be used on its own: it clears at the
-first credit whether or not a pre-upgrade release was ever recorded.
-
-**It does not require the canonical role.** Deliberately: the state it
-reconstructs is HISTORY, so a Diamond that released remittances while
-canonical and was later demoted still needs them counted. Gating on the
-current role would leave such a chain permanently unseeded unless an
-operator re-promoted a mirror purely to run a migration. The real gate is
-recorded history and it is self-enforcing — only the canonical chain ever
-creates reservations, so a chain that never was canonical reverts
-`SeedNothingToScan`.
-
-**Running it.** `seedReleasedRemitStranded(upTo)` is ADMIN-only and
-**chunked**: the first call pins the range end at the current
-reservation nonce, and each subsequent call must advance strictly toward
-it. Pick a chunk size the chain's block gas limit comfortably accepts —
-a Diamond with a large reservation history cannot be scanned in one
-transaction, which is the whole reason the call takes a bound. Nothing
-is published until the final chunk reaches the pinned end, so a partial
-scan can never leave a half-counted figure visible.
-
-**If a release lands while the ceremony is in flight**, the next chunk
-reverts rather than mixing a pre- and post-release view of the same
-range. That is a stop, not a failure: call
-`resetReleasedRemitStrandedSeed()` (ADMIN-only) to discard the partial
-scan, then start again from the current state. Quiet periods make this
-less likely but nothing enforces one, so expect a restart on a busy
-canonical chain rather than treating it as an incident.
-
-**The completion event reports the amount recovered and the number of
-released reservations behind it** — the latter is the count of releases
-actually found, not the reservation nonce, so it can be reconciled
-against the release history independently.
-
-**It cannot be used to quiet a discrepancy the relations can see.** On
-completion the figure must reconcile both composition relations in both
-directions; if it does not, the whole ceremony reverts and publishes
-nothing. It also refuses to run twice — once a figure is published,
-`reset` refuses too, so there is no lever that edits an already-published
-number.
-
-There is one discrepancy the relations cannot see, so do not read a
-successful seed as proof that the bucket is backed. The allowance the
-scan derives is **gross**: a remittance that was released and then
-executed late — the message arriving after the release, which
-`onRemitAckReceived` leaves in the Released state — has already delivered
-its tokens, yet the scan still counts them as stranded backing. Both
-post-conditions can then pass over a bucket that is genuinely short by
-that amount. Tracked as [#1461](https://github.com/vaipakam/vaipakam/issues/1461);
-`ops/mesh-watcher`'s README records the same limitation on the allowance
-it reads. A seed proves the published figure is *consistent with the
-recorded reservation history*, which is what it is for — not that custody
-is present.

@@ -157,18 +157,17 @@ function mirrorLocal(): LocalLedger {
     armedFromDay: 3n,
     paidOutRecycled: 800n * E,
     composition: {
-      creditedRaw: 1000n * E,
+      credited: 1000n * E,
       releasedRemitStranded: 0n,
       releasedRemitResolved: 0n,
-      accountingSeeded: true,
       isCanonicalRewardChain: false,
     },
     // #1568 C2 — current deployment, view present, nothing repatriated
-    // (undefined would skip composition + derivation suite-wide).
+    // (undefined would skip composition suite-wide).
     repatriatedOut: 0n,
     // #1566 closure 2 cutover PR 2 (Codex #2206 r9) — the reconciliation
     // facet present, nothing reattributed (undefined would skip the same
-    // two checks suite-wide — the same anti-vacuity rule).
+    // check suite-wide — the same anti-vacuity rule).
     reattribution: { reattributedIn: 0n, reattributedOut: 0n },
     // #1434 P2-w2 — backing snapshot present with a healthy float and no
     // quarantine (undefined would skip the recovery-reservation check
@@ -189,11 +188,9 @@ function canonicalLocal(): LocalLedger {
     custodyRelocated: 0n,
     bucket: 800n * E,
     // #1444/#1446 — was 500e18, which is a state the contract CANNOT reach:
-    // the reported cumulative is floored by `bucket + paidOut`, so a chain
-    // holding 800 in its bucket can never report having absorbed only 500.
-    // The `reported-derivation` check found this the moment it was added,
-    // which is the point of cross-validating a published figure against the
-    // slots it is computed from.
+    // every token in the bucket was credited by some counter, so a chain
+    // holding 800 in its bucket with nothing paid out, relocated or
+    // reattributed has absorbed 800.
     reportedCumulative: 800n * E,
     localRetired: 0n,
     localReleased: 0n,
@@ -202,10 +199,9 @@ function canonicalLocal(): LocalLedger {
     armedFromDay: 3n,
     paidOutRecycled: 0n,
     composition: {
-      creditedRaw: 800n * E,
+      credited: 800n * E,
       releasedRemitStranded: 0n,
       releasedRemitResolved: 0n,
-      accountingSeeded: true,
       isCanonicalRewardChain: true,
     },
     repatriatedOut: 0n,
@@ -227,8 +223,8 @@ function canonicalLocal(): LocalLedger {
  * Fixtures used to be plain spreads, which let a test raise
  * `reportedCumulative` on its own to probe a cross-chain check. That was
  * harmless while every check read one field, and became wrong the moment
- * `bucket-composition` / `reported-derivation` started cross-validating the
- * published figures against the slots they derive from: an unreachable
+ * `bucket-composition` started cross-validating the published figures
+ * against where the tokens went: an unreachable
  * fixture would have produced findings that say more about the fixture than
  * the code.
  *
@@ -237,9 +233,9 @@ function canonicalLocal(): LocalLedger {
  * override `reportedCumulative` or `bucket` — and keeps future ones correct
  * by default:
  *
- * - `creditedRaw` tracks `reportedCumulative` (`credit` advances both).
+ * - `credited` tracks `reportedCumulative` (one slot on-chain, #2875).
  * - `paidOutRecycled` absorbs the slack so
- *   `bucket + paidOut − relocated == creditedRaw`, which is the identity
+ *   `bucket + paidOut − relocated == credited`, which is the identity
  *   normal operation maintains.
  *
  * A test that wants to VIOLATE either check overrides those fields
@@ -253,10 +249,9 @@ function canonicalLocal(): LocalLedger {
  * being unreadable.
  */
 type LocalOverrides = Partial<Omit<LocalLedger, 'composition'>> & {
-  creditedRaw?: bigint;
+  credited?: bigint;
   releasedRemitStranded?: bigint;
   releasedRemitResolved?: bigint;
-  accountingSeeded?: boolean;
   isCanonicalRewardChain?: boolean;
   /** `null` = the newer view could not be read on this chain. */
   composition?: null;
@@ -283,10 +278,9 @@ function coherent(
   over: LocalOverrides = {},
 ): Omit<LocalLedger, FRESH> {
   const {
-    creditedRaw,
+    credited,
     releasedRemitStranded,
     releasedRemitResolved,
-    accountingSeeded,
     isCanonicalRewardChain,
     composition,
     backingOverride,
@@ -320,17 +314,16 @@ function coherent(
   }
   const baseComp = base.composition!;
   const comp = {
-    creditedRaw: creditedRaw ?? l.reportedCumulative,
+    credited: credited ?? l.reportedCumulative,
     releasedRemitStranded:
       releasedRemitStranded ?? baseComp.releasedRemitStranded,
     releasedRemitResolved:
       releasedRemitResolved ?? baseComp.releasedRemitResolved,
-    accountingSeeded: accountingSeeded ?? baseComp.accountingSeeded,
     isCanonicalRewardChain:
       isCanonicalRewardChain ?? baseComp.isCanonicalRewardChain,
   };
   if (over.paidOutRecycled === undefined) {
-    // `bucket + paidOut + stranded + repatriatedOut == creditedRaw +
+    // `bucket + paidOut + stranded + repatriatedOut == credited +
     // relocated`. Subtracting the stranded total is load-bearing: a release
     // moves paidOut INTO it, so it never adds to the destinations side.
     // Omitting it invented tokens the chain never held and tripped the
@@ -340,7 +333,7 @@ function coherent(
     // The reattribution pair (Codex #2206 r9) likewise: what a correction
     // moved INTO the bucket is claimed, what it moved OUT is a destination.
     const destinations =
-      comp.creditedRaw +
+      comp.credited +
       l.custodyRelocated +
       (l.reattribution?.reattributedIn ?? 0n);
     const already =
@@ -969,8 +962,8 @@ describe('checkHardInvariants — bucket coverage', () => {
 describe('checkHardInvariants — bucket composition', () => {
   it('baseline fixtures carry a LIVE reattribution pair, so the check runs suite-wide', () => {
     // Anti-vacuity pin (the repatriatedOut precedent, Codex #2206 r9): if a
-    // refactor made the baseline pair undefined, every composition and
-    // derivation test would silently become a skip-path test.
+    // refactor made the baseline pair undefined, every composition test
+    // would silently become a skip-path test.
     expect(mirrorLocal().reattribution).toBeDefined();
     expect(canonicalLocal().reattribution).toBeDefined();
   });
@@ -1009,9 +1002,9 @@ describe('checkHardInvariants — bucket composition', () => {
     // The other direction: 50 of unspent fresh credit corrected to
     // recycled, with its tokens — the bucket rose to 250 and the
     // reattributed-in cumulative claims it, absorption unchanged (the
-    // reported figure nets it out like relocated custody). Without the
-    // claimed term the bucket holds 50 no cumulative claims (the REVERSE
-    // composition bound) AND the floor re-derivation comes out 50 high.
+    // absorption counter never sees it, like relocated custody). Without
+    // the claimed term the bucket holds 50 no cumulative claims (the
+    // REVERSE composition bound).
     expect(
       codes({
         mirrorLocal: {
@@ -1029,13 +1022,13 @@ describe('checkHardInvariants — bucket composition', () => {
           reattribution: { reattributedIn: 0n, reattributedOut: 0n },
         },
       }),
-    ).toEqual(['bucket-composition', 'reported-derivation']);
+    ).toEqual(['bucket-composition']);
   });
 
-  it('skips composition and derivation while the reattribution pair is UNKNOWN, never substituting zero', () => {
+  it('skips composition while the reattribution pair is UNKNOWN, never substituting zero', () => {
     // The chain corrected (bucket 160, 40 moved out) but the reconciliation
     // facet could not be read this tick. Zero-substitution would page
-    // over-credited on healthy state; the two consuming checks skip, and
+    // over-credited on healthy state; the consuming check skips, and
     // the read failure is reported as its own coverage gap.
     expect(
       codes({
@@ -1070,7 +1063,7 @@ describe('checkHardInvariants — bucket composition', () => {
         mirrorLocal: {
           bucket: 230n * E,
           custodyRelocated: 30n * E,
-          creditedRaw: 1030n * E,
+          credited: 1030n * E,
           reportedCumulative: 1030n * E,
           paidOutRecycled: 800n * E,
         },
@@ -1085,7 +1078,7 @@ describe('checkHardInvariants — bucket composition', () => {
         mirrorLocal: {
           bucket: 230n * E,
           custodyRelocated: 30n * E,
-          creditedRaw: 1000n * E,
+          credited: 1000n * E,
           paidOutRecycled: 800n * E,
         },
       }),
@@ -1098,7 +1091,7 @@ describe('checkHardInvariants — bucket composition', () => {
         mirrorLocal: {
           bucket: 230n * E,
           custodyRelocated: 30n * E,
-          creditedRaw: 1030n * E,
+          credited: 1030n * E,
           reportedCumulative: 1030n * E,
           paidOutRecycled: 800n * E,
         },
@@ -1114,16 +1107,14 @@ describe('checkHardInvariants — bucket composition', () => {
   it('fires when the bucket holds more than any counter claims', () => {
     // The regression the forward bound CANNOT see: a custody arrival credits
     // the bucket but omits `custodyRelocated`. `claimed` stays flat while
-    // `destinations` rises, so the forward bound gets LOOSER — and
-    // `reported-derivation` agrees with the chain, because it reads the same
-    // missing slot. Verified numbers from the finding: bucket 200 -> 223.
+    // `destinations` rises, so the forward bound gets LOOSER. Verified
+    // numbers from the finding: bucket 200 -> 223.
     expect(
       codes({
         mirrorLocal: {
           bucket: 223n * E,
           custodyRelocated: 0n,
-          creditedRaw: 1000n * E,
-          reportedCumulative: 1023n * E,
+          credited: 1000n * E,
           paidOutRecycled: 800n * E,
         },
       }),
@@ -1138,7 +1129,7 @@ describe('checkHardInvariants — bucket composition', () => {
         mirrorLocal: {
           bucket: 223n * E,
           custodyRelocated: 23n * E,
-          creditedRaw: 1000n * E,
+          credited: 1000n * E,
           paidOutRecycled: 800n * E,
         },
       }),
@@ -1151,8 +1142,7 @@ describe('checkHardInvariants — bucket composition', () => {
         mirrorLocal: {
           bucket: 223n * E,
           custodyRelocated: 0n,
-          creditedRaw: 1000n * E,
-          reportedCumulative: 1023n * E,
+          credited: 1000n * E,
           paidOutRecycled: 800n * E,
         },
       }),
@@ -1163,47 +1153,23 @@ describe('checkHardInvariants — bucket composition', () => {
     expect(finding?.detail).toContain('WITHOUT advancing the relocated');
   });
 
-  it('is ADVISORY, not silent, on a NEVER-SEEDED diamond', () => {
-    // A Diamond refreshed over live pre-#1222 state: the whole historical
-    // bucket legitimately has no counter behind it. Paging would alarm on
-    // correct behaviour; silence would hide that the relation is unverifiable.
-    const [finding] = checkHardInvariants(
-      observation({
-        mirrorLocal: {
-          creditedRaw: 0n,
-          accountingSeeded: false,
-          bucket: 200n * E,
-          paidOutRecycled: 800n * E,
-          reportedCumulative: 1000n * E,
-        },
-      }),
-      TOLERANCE,
-    );
-    expect(finding?.code).toBe('bucket-composition');
-    expect(finding?.severity).toBe('advisory');
-    expect(finding?.detail).toContain('UNVERIFIABLE');
-  });
-
-  // #1448 r4 — the state the old `creditedRaw === 0` discriminator got wrong.
-  it('PAGES on a fresh SEEDED chain with the same zero raw counter', () => {
-    // Identical figures, `accountingSeeded` true: a chain whose recycled
-    // accounting has run and whose first custody arrival credited the bucket
-    // without advancing the relocated counter. Reading the zero as
-    // "un-seeded" downgraded exactly this to a non-paging advisory and let
+  // #1448 r4 / #2875 — a zero counter beside a non-empty bucket always pages:
+  // every chain is a fresh deploy, so no bucket legitimately lacks a counter.
+  it('PAGES when the bucket has no counter behind it at all', () => {
+    // A chain whose first custody arrival credited the bucket without
+    // advancing the relocated counter, on a chain that absorbed nothing
+    // itself. The old un-seeded advisory read this as "unverifiable" and let
     // the chain report a Base-funded top-up as its own absorption.
-    const [finding] = checkHardInvariants(
+    const finding = checkHardInvariants(
       observation({
         mirrorLocal: {
-          creditedRaw: 0n,
-          accountingSeeded: true,
+          credited: 0n,
           bucket: 200n * E,
           paidOutRecycled: 800n * E,
-          reportedCumulative: 1000n * E,
         },
       }),
       TOLERANCE,
-    );
-    expect(finding?.code).toBe('bucket-composition');
+    ).find((f) => f.code === 'bucket-composition');
     expect(finding?.severity).toBe('critical');
     expect(finding?.variant).toBe('under-credited');
   });
@@ -1215,8 +1181,7 @@ describe('checkHardInvariants — bucket composition', () => {
       mirrorLocal: {
         bucket: 200n * E + TOLERANCE * 2n,
         custodyRelocated: 0n,
-        creditedRaw: 1000n * E,
-        reportedCumulative: 1000n * E + TOLERANCE * 2n,
+        credited: 1000n * E,
         paidOutRecycled: 800n * E,
       },
     });
@@ -1242,7 +1207,7 @@ describe('checkHardInvariants — bucket composition', () => {
     expect(
       codes({
         mirrorLocal: {
-          creditedRaw: 1000n * E + 1n,
+          credited: 1000n * E + 1n,
           reportedCumulative: 1000n * E + 1n,
           paidOutRecycled: 800n * E,
         },
@@ -1254,7 +1219,7 @@ describe('checkHardInvariants — bucket composition', () => {
     expect(
       codes({
         mirrorLocal: {
-          creditedRaw: 1000n * E + TOLERANCE,
+          credited: 1000n * E + TOLERANCE,
           reportedCumulative: 1000n * E + TOLERANCE,
           paidOutRecycled: 800n * E,
         },
@@ -1294,90 +1259,6 @@ describe('checkHardInvariants — canonical-role consistency', () => {
   });
 });
 
-describe('checkHardInvariants — reported-cumulative derivation', () => {
-  /**
-   * An UN-SEEDED (in-place-upgraded) diamond, which is the case that makes
-   * this check matter: `creditedRaw` is still 0, so the published figure
-   * comes from the DERIVED floor rather than the stored counter, and the
-   * relocation subtraction is the only thing keeping Base's own top-up out
-   * of it.
-   *
-   * `bucket + paidOut` = 1023, relocated = 23, so the correct report is
-   * 1000 — which is also Base's accepted copy, so nothing else fires and
-   * each case below differs only in the figure under test.
-   */
-  const unseeded = (reportedCumulative: bigint): LocalOverrides => ({
-    creditedRaw: 0n,
-    // Genuinely never seeded — otherwise this is a fresh chain whose bucket
-    // has no counter behind it, which composition correctly PAGES on (#1448 r4).
-    accountingSeeded: false,
-    custodyRelocated: 23n * E,
-    bucket: 223n * E,
-    paidOutRecycled: 800n * E,
-    reportedCumulative,
-  });
-
-  it('accepts the correctly-netted figure', () => {
-    // The lone `bucket-composition` here is the #1448 r3 ADVISORY: an
-    // un-seeded diamond's bucket has no counter behind it, so composition is
-    // unverifiable until the first credit seeds the cumulative. Reported so
-    // the gap is visible; `reported-derivation` itself stays silent, which is
-    // what this case is about.
-    expect(codes({ mirrorLocal: unseeded(1000n * E) })).toEqual([
-      'bucket-composition',
-    ]);
-  });
-
-  it('fires when the relocation subtraction is dropped from the floor', () => {
-    // Dropping `- relocated` publishes the full gross, 1023.
-    expect(codes({ mirrorLocal: unseeded(1023n * E) })).toEqual([
-      'bucket-composition', // the un-seeded advisory, as above
-      'reported-derivation',
-    ]);
-  });
-
-  it('is the ONLY check that sees that — composition stays green', () => {
-    // Load-bearing division of labour, asserted rather than assumed. With
-    // `creditedRaw` at 0 the composition bound (0 + 23 <= 1023) holds
-    // comfortably, so shipping composition alone would NOT have closed
-    // #1446 — and conversely composition catches the counter-inflation case
-    // that derivation cannot. Both are required.
-    const findings = checkHardInvariants(
-      observation({ mirrorLocal: unseeded(1023n * E) }),
-      TOLERANCE,
-    );
-    // By VARIANT, not code: the un-seeded ADVISORY shares the code but says
-    // the opposite thing ("cannot be verified"), so matching on the code
-    // alone would let it stand in for the over-credit finding.
-    const composition = findings.filter((f) => f.code === 'bucket-composition');
-    expect(composition.map((f) => f.variant)).not.toContain('over-credited');
-    expect(composition.every((f) => f.severity === 'advisory')).toBe(true);
-  });
-
-  it('is exact — no tolerance, because it is a computation not a balance', () => {
-    // Coverage and composition tolerate dust because each compares a ledger
-    // against a balance the contract deliberately floors. This one re-runs a
-    // pure function on the same inputs at the same block, so any difference
-    // at all is a real disagreement.
-    expect(codes({ mirrorLocal: unseeded(1000n * E + 1n) })).toEqual([
-      'bucket-composition', // the un-seeded advisory, as above
-      'reported-derivation',
-    ]);
-  });
-
-  it('names both figures so the operator can see which side moved', () => {
-    // Select by code: on an un-seeded fixture the composition ADVISORY is
-    // emitted first, and `[finding]` would silently pick that instead.
-    const finding = checkHardInvariants(
-      observation({ mirrorLocal: unseeded(1023n * E) }),
-      TOLERANCE,
-    ).find((f) => f.code === 'reported-derivation');
-    expect(finding?.severity).toBe('critical');
-    expect(finding?.detail).toContain('1023.000000 VPFI');
-    expect(finding?.detail).toContain('1000.000000 VPFI');
-  });
-});
-
 describe('checkHardInvariants — repatriation terms (#1568 C2)', () => {
   it('a healthy repatriation state produces zero findings', () => {
     // Base charged a 100 draw (avail drops to 600 = 1000 - 300 - 100), and
@@ -1387,8 +1268,8 @@ describe('checkHardInvariants — repatriation terms (#1568 C2)', () => {
     // bucket itself stays above the outstanding reservation, which the
     // real debit's fundable bound guarantees). Neither side may page: the
     // draw is within the remainder, the availability formula includes the
-    // new term, composition counts the outflow as a destination, and the
-    // reported floor keeps the departed value. Any of those missing fails
+    // new term, and composition counts the outflow as a destination. Any of
+    // those missing fails
     // THIS test, not a violation test — which is what pins the terms as
     // implemented, not just added.
     expect(
@@ -1455,9 +1336,8 @@ describe('checkHardInvariants — repatriation terms (#1568 C2)', () => {
     // ONLY incoherence is the missing counter; the debit (200→160) stays
     // above the 150 outstanding reservation so bucket coverage — which the
     // real debit's fundable bound genuinely preserves — cannot co-fire and
-    // mask which check caught it. `reported-derivation` stays green
-    // because the stored cumulative (not the floor) is the binding branch
-    // here — the composition bound is precisely the check that sees this.
+    // mask which check caught it — the composition bound is precisely the
+    // check that sees this.
     expect(
       codes({
         mirrorLocal: {
@@ -1571,11 +1451,11 @@ describe('checkHardInvariants — repatriation terms (#1568 C2)', () => {
     ).toEqual(['availability-formula']);
   });
 
-  it('SKIPS composition + derivation while repatriated-out is UNKNOWN', () => {
+  it('SKIPS composition while repatriated-out is UNKNOWN', () => {
     // The same one-view-transient-failure shape on the local side: the
     // bucket genuinely shrank by a repatriation this Worker could not
     // read. Zero-substitution would page over-credited on healthy state;
-    // the two consuming checks skip instead.
+    // the consuming check skips instead.
     expect(
       codes({
         mirrorLocal: {
@@ -3227,7 +3107,7 @@ describe('reattributionUnavailableGap (#1566 closure 2 cutover PR 2, Codex #2206
     const gap = reattributionUnavailableGap(10, new Error('boom'));
     expect(gap.detail).toContain('UNKNOWN');
     expect(gap.detail).toContain('bucket composition');
-    expect(gap.detail).toContain('re-derivation');
+    expect(gap.detail).not.toContain('derivation');
     expect(gap.detail).toContain('did NOT run');
     expect(gap.detail).toContain('transient');
   });
@@ -3247,7 +3127,7 @@ describe('compositionUnavailableGap', () => {
   it('names exactly which checks did not run, and the coverage fallback', () => {
     const gap = compositionUnavailableGap(10, new Error('boom'));
     expect(gap.detail).toContain('bucket composition');
-    expect(gap.detail).toContain('derivation');
+    expect(gap.detail).not.toContain('derivation');
     expect(gap.detail).toContain('canonical-role');
     expect(gap.detail).toContain('pre-#1444 rule');
   });
