@@ -55,8 +55,11 @@ import {TestnetChains} from "../compliance/TestnetChains.sol";
  *            all.** Each change names the feed it expects to replace (zero
  *            for a new pair), so a stale or conflicting proposal fails at
  *            execution instead of overwriting a newer entry. A proposal
- *            executes only while its proposer is still appointed, so
- *            removing a proposer voids its pending proposals.
+ *            executes only under the authority it was made under: its
+ *            proposer must still hold the same role (owner or proposer),
+ *            and must never have lost it since. Removing a proposer, or
+ *            ownership leaving an account, voids that account's pending
+ *            proposals for good; reappointing it does not revive them.
  *
  *         5. **Everything is stated.** Every proposal emits its full change
  *            list; every veto, withdrawal and execution, and every entry it
@@ -131,6 +134,11 @@ contract VaipakamFeedRegistry is Ownable2Step {
         uint64 executableAt;
         address proposer;
         State state;
+        /// @dev Whether the proposer proposed as the owner; the change
+        ///      scope it was checked under, and the role it must still hold.
+        bool byOwner;
+        /// @dev The proposer's {authGeneration} when it proposed.
+        uint64 generation;
     }
 
     /// @notice Chainlink's `Denominations` sentinels, the quote keys the
@@ -165,6 +173,12 @@ contract VaipakamFeedRegistry is Ownable2Step {
     /// @notice Accounts allowed to propose low- and medium-risk changes.
     mapping(address account => bool enabled) public isProposer;
 
+    /// @notice How many times each account has lost proposing authority
+    ///         (removed as a proposer, or ownership moved away from it). A
+    ///         pending proposal executes only while its proposer's count is
+    ///         the one it was made under, so a lapse voids it permanently.
+    mapping(address account => uint64 generation) public authGeneration;
+
     /// @notice The symbol a feed's pair name must end with for each quote
     ///         denomination, e.g. Chainlink's USD sentinel `0x…0348` → "USD".
     ///         A quote with no symbol registered cannot be used.
@@ -182,6 +196,10 @@ contract VaipakamFeedRegistry is Ownable2Step {
 
     /// @custom:event-category informational/admin
     event ProposerSet(address indexed account, bool enabled);
+    /// @notice `account` lost proposing authority; its proposals made before
+    ///         now can no longer execute.
+    /// @custom:event-category informational/admin
+    event AuthorityLapsed(address indexed account, uint64 generation);
     /// @custom:event-category informational/admin
     event GuardianSet(address indexed guardian);
     /// @custom:event-category informational/admin
@@ -303,6 +321,7 @@ contract VaipakamFeedRegistry is Ownable2Step {
 
     function setProposer(address account, bool enabled) external onlyOwner {
         if (account == address(0)) revert ZeroAddress();
+        if (isProposer[account] && !enabled) _lapse(account);
         isProposer[account] = enabled;
         emit ProposerSet(account, enabled);
     }
@@ -338,6 +357,14 @@ contract VaipakamFeedRegistry is Ownable2Step {
         revert RenounceDisabled();
     }
 
+    /// @dev Ownership leaving an account voids the proposals it made as the
+    ///      owner, even if ownership later returns to it.
+    function _transferOwnership(address newOwner) internal override {
+        address previous = owner();
+        if (previous != address(0) && previous != newOwner) _lapse(previous);
+        super._transferOwnership(newOwner);
+    }
+
     // ─── Proposals ─────────────────────────────────────────────────────
 
     /// @notice Propose a batch of changes, checked now and again when it
@@ -362,7 +389,9 @@ contract VaipakamFeedRegistry is Ownable2Step {
             directoryDate: directoryDate,
             executableAt: executableAt,
             proposer: msg.sender,
-            state: State.Pending
+            state: State.Pending,
+            byOwner: byOwner,
+            generation: authGeneration[msg.sender]
         });
         emit ChangesProposed(id, msg.sender, executableAt, directorySha256, directoryDate, changes);
     }
@@ -391,9 +420,9 @@ contract VaipakamFeedRegistry is Ownable2Step {
         if (block.timestamp < p.executableAt) revert ProposalNotReady(id, p.executableAt);
         if (keccak256(abi.encode(changes)) != p.changesHash) revert ChangesMismatch(id);
         address proposer = p.proposer;
-        bool byOwner = proposer == owner();
-        if (!byOwner && !isProposer[proposer]) revert ProposerRemoved(id, proposer);
-        _checkChanges(changes, byOwner);
+        bool stillHeld = p.byOwner ? proposer == owner() : isProposer[proposer];
+        if (!stillHeld || p.generation != authGeneration[proposer]) revert ProposerRemoved(id, proposer);
+        _checkChanges(changes, p.byOwner);
         p.state = State.Executed;
         for (uint256 i; i < changes.length; ++i) {
             _apply(changes[i], p.directorySha256, p.directoryDate, i, id);
@@ -402,6 +431,11 @@ contract VaipakamFeedRegistry is Ownable2Step {
     }
 
     // ─── Internals ─────────────────────────────────────────────────────
+
+    function _lapse(address account) private {
+        uint64 g = ++authGeneration[account];
+        emit AuthorityLapsed(account, g);
+    }
 
     function _pending(uint256 id) private view returns (Proposal storage p) {
         p = proposals[id];

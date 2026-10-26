@@ -276,6 +276,81 @@ contract VaipakamFeedRegistryTest is Test {
         reg.execute(id, cs);
     }
 
+    function test_ReappointingAProposerDoesNotReviveItsVoidedProposals() public {
+        VaipakamFeedRegistry.Change[] memory cs = _change(link, USD, address(0), address(linkUsd), "LINK / USD");
+        vm.prank(BOT);
+        uint256 id = reg.propose(cs, DIR, DIR_DATE);
+        vm.startPrank(OWNER);
+        reg.setProposer(BOT, false);
+        reg.setProposer(BOT, true);
+        vm.stopPrank();
+        assertEq(reg.authGeneration(BOT), 1, "the removal is counted");
+        vm.warp(block.timestamp + reg.DEFAULT_DELAY());
+        linkUsd.set(2000e8, block.timestamp);
+        vm.expectRevert(abi.encodeWithSelector(VaipakamFeedRegistry.ProposerRemoved.selector, id, BOT));
+        reg.execute(id, cs);
+
+        // A fresh proposal after reappointment waits the full delay again.
+        _proposeAndExecute(cs);
+        assertEq(reg.getFeed(link, USD), address(linkUsd));
+    }
+
+    function test_SettingAnEnabledProposerAgainVoidsNothing() public {
+        VaipakamFeedRegistry.Change[] memory cs = _change(link, USD, address(0), address(linkUsd), "LINK / USD");
+        vm.prank(BOT);
+        uint256 id = reg.propose(cs, DIR, DIR_DATE);
+        vm.prank(OWNER);
+        reg.setProposer(BOT, true);
+        assertEq(reg.authGeneration(BOT), 0);
+        vm.warp(block.timestamp + reg.DEFAULT_DELAY());
+        linkUsd.set(2000e8, block.timestamp);
+        reg.execute(id, cs);
+        assertEq(reg.getFeed(link, USD), address(linkUsd));
+    }
+
+    function test_OwnershipLeavingVoidsTheOwnersProposalsEvenIfItReturns() public {
+        VaipakamFeedRegistry.Change[] memory cs = _change(link, USD, address(0), address(linkUsd), "LINK / USD");
+        cs[0].category = VaipakamFeedRegistry.Category.High;
+        vm.prank(OWNER);
+        uint256 id = reg.propose(cs, DIR, DIR_DATE);
+
+        address next = address(0x7173);
+        vm.prank(OWNER);
+        reg.transferOwnership(next);
+        vm.prank(next);
+        reg.acceptOwnership();
+        vm.prank(next);
+        reg.transferOwnership(OWNER);
+        vm.prank(OWNER);
+        reg.acceptOwnership();
+        assertEq(reg.owner(), OWNER, "ownership is back");
+        assertEq(reg.authGeneration(OWNER), 1, "its departure is counted");
+
+        vm.warp(block.timestamp + reg.DEFAULT_DELAY());
+        linkUsd.set(2000e8, block.timestamp);
+        vm.expectRevert(abi.encodeWithSelector(VaipakamFeedRegistry.ProposerRemoved.selector, id, OWNER));
+        reg.execute(id, cs);
+    }
+
+    function test_AnOwnerProposalDoesNotRunAsAProposerOneAfterOwnershipMoves() public {
+        // The old owner is also a proposer; its owner-scoped proposal must not
+        // execute under that narrower role, nor under the new owner's.
+        VaipakamFeedRegistry.Change[] memory cs = _change(link, USD, address(0), address(linkUsd), "LINK / USD");
+        vm.prank(OWNER);
+        reg.setProposer(OWNER, true);
+        vm.prank(OWNER);
+        uint256 id = reg.propose(cs, DIR, DIR_DATE);
+        address next = address(0x7173);
+        vm.prank(OWNER);
+        reg.transferOwnership(next);
+        vm.prank(next);
+        reg.acceptOwnership();
+        vm.warp(block.timestamp + reg.DEFAULT_DELAY());
+        linkUsd.set(2000e8, block.timestamp);
+        vm.expectRevert(abi.encodeWithSelector(VaipakamFeedRegistry.ProposerRemoved.selector, id, OWNER));
+        reg.execute(id, cs);
+    }
+
     function test_ExecuteNeedsTheProposedListExactly() public {
         VaipakamFeedRegistry.Change[] memory cs = _change(link, USD, address(0), address(linkUsd), "LINK / USD");
         vm.prank(BOT);
