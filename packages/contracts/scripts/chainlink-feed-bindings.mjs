@@ -403,15 +403,18 @@ const FEED_ABI = parseAbi([
   'function latestRoundData() view returns (uint80, int256, uint256, uint256, uint80)',
 ]);
 
-async function readChain(client, bindings) {
+/** Every read is pinned to `blockNumber`, the block whose timestamp the
+ *  freshness check uses and whose number the file records, so the checks and
+ *  the recorded `checkedAtBlock` describe one snapshot. */
+async function readChain(client, bindings, blockNumber) {
   const reads = new Map();
   for (const b of bindings) {
     try {
       const [description, feedDecimals, round, tokenDecimals] = await Promise.all([
-        client.readContract({ address: b.feed, abi: FEED_ABI, functionName: 'description' }),
-        client.readContract({ address: b.feed, abi: FEED_ABI, functionName: 'decimals' }),
-        client.readContract({ address: b.feed, abi: FEED_ABI, functionName: 'latestRoundData' }),
-        client.readContract({ address: b.token, abi: FEED_ABI, functionName: 'decimals' }),
+        client.readContract({ address: b.feed, abi: FEED_ABI, functionName: 'description', blockNumber }),
+        client.readContract({ address: b.feed, abi: FEED_ABI, functionName: 'decimals', blockNumber }),
+        client.readContract({ address: b.feed, abi: FEED_ABI, functionName: 'latestRoundData', blockNumber }),
+        client.readContract({ address: b.token, abi: FEED_ABI, functionName: 'decimals', blockNumber }),
       ]);
       reads.set(b, { description, feedDecimals, answer: round[1], updatedAt: round[3], tokenDecimals });
     } catch (err) {
@@ -529,7 +532,7 @@ async function main(argv) {
   const chainId = await client.getChainId();
   if (chainId !== chain.chainId) throw new Error(`--rpc serves chain ${chainId}, not ${args.chain} (${chain.chainId})`);
   const block = await client.getBlock({ blockTag: 'latest' });
-  const reads = await readChain(client, resolved.bindings);
+  const reads = await readChain(client, resolved.bindings, block.number);
   const checked = applyChainReads(resolved.bindings, reads, block.timestamp);
 
   const byPair = (a, b) => a.pair.localeCompare(b.pair) || a.directoryPath.localeCompare(b.directoryPath);
