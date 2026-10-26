@@ -47,6 +47,15 @@ pnpm --filter @vaipakam/indexer check-event-coverage
 - Event-routing audit: [`scripts/check-event-coverage.mjs`](scripts/check-event-coverage.mjs).
 - Public read-API contract: T-041 (see release notes).
 
+### Public write routes and the push channel are bounded (#2756)
+
+The read API stays open (T-041). What a caller can make this Worker DO is bounded, under the same shared rules the agent uses:
+
+- **Bodies are read capped** through `@vaipakam/lib/requestBody`: 16 KiB for `POST /signed-offers`, the webhook's existing cap for `/hooks/chain-event`, 4 KiB for the internal trigger the ingest DO reads. Over the cap is 413 `body-too-large` (400 for the internal trigger), malformed JSON is 400 `invalid-json`.
+- **`SIGNED_OFFERS_RATELIMIT` fails closed** under `@vaipakam/lib/rateLimit`: a missing or failing binding refuses 503 (`rate-limit-binding-missing` / `rate-limit-unavailable`) instead of letting the post through, and a spent budget is 429.
+- **`GET /ws/chain/:chainId`** admits only an `Origin` listed in `FRONTEND_ORIGIN` (403 otherwise; a WebSocket upgrade is not subject to CORS, so this is the only thing stopping another site's page from holding sockets through its visitors), then takes a per-IP slot from `WS_SUBSCRIBE_RATELIMIT` (30 a minute). The chain's ingest DO then holds at most `MAX_SUBSCRIBERS_PER_CHAIN` (1,000) sockets, and `MAX_SUBSCRIBERS_PER_IP` (8) per client IP, counted from hibernation tags so hibernated sockets count too. A refused subscribe is an ordinary HTTP answer and the app keeps polling. A script can forge `Origin`; the per-IP budget and the DO caps are what bound it.
+- `FRONTEND_ORIGIN` must list the same hosts as the agent's; `test/wsSubscribe.test.ts` fails if the two `wrangler.jsonc` values differ. A local `wrangler dev` session needs its own origin in `.dev.vars` to subscribe.
+
 ## Configuration
 
 Worker secrets:

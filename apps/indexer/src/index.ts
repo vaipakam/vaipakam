@@ -95,12 +95,14 @@ import {
   pruneOldWebhookDeliveries,
 } from './cancelledOfferRetention';
 import {
-  readCappedBody,
+  MAX_WEBHOOK_BODY,
   verifyAlchemySignature,
   parseChainEventPayload,
   sha256Hex,
-  WebhookBodyTooLargeError,
 } from './webhookAuth';
+import { readBodyText } from '@vaipakam/lib/requestBody';
+import { isListedOrigin } from '@vaipakam/lib/originAllowList';
+import { slotRefusalStatus, takeCallerSlot } from '@vaipakam/lib/rateLimit';
 
 // #757 — the per-chain ingest Durable Object. Re-exported from the Worker
 // entry so `wrangler.jsonc`'s `durable_objects` binding can resolve the class.
@@ -463,6 +465,14 @@ export default {
       if (req.headers.get('Upgrade') !== 'websocket') {
         return new Response('expected websocket upgrade', { status: 426 });
       }
+      // #2756 — only the app's own pages subscribe. A WebSocket upgrade is
+      // not subject to CORS, so without this any site could hold sockets
+      // open on the ingest DO through its visitors' browsers. A script can
+      // forge the header, which is what the per-IP budget below and the
+      // DO's subscriber caps bound.
+      if (!isListedOrigin(req.headers.get('Origin'), env.FRONTEND_ORIGIN)) {
+        return new Response('origin not allowed', { status: 403 });
+      }
       // Reject inactive subscriptions BEFORE touching the DO (Codex P2). While
       // DO ingest is off (the default rollout state) there's no push channel —
       // returning 503 keeps the client honestly on polling and avoids the DO
@@ -477,6 +487,12 @@ export default {
       if (!getDeployment(chainId)) {
         return new Response('unknown chain', { status: 404 });
       }
+      // The per-IP subscribe budget, last of the Worker's checks because it
+      // is the one that costs a binding call (`@vaipakam/lib/rateLimit`;
+      // fails closed). The DO then applies its own caps on how many sockets
+      // it holds (`chainIngestDO.ts`).
+      const refusal = slotRefusalStatus(await takeCallerSlot(req, env.WS_SUBSCRIBE_RATELIMIT));
+      if (refusal) return new Response(refusal.error, { status: refusal.status });
       const ns = env.CHAIN_INGEST_DO;
       const stub = ns.get(ns.idFromName(String(chainId)));
       // Reconstruct the request against the DO-internal URL so the DO can read
@@ -735,16 +751,10 @@ async function handleChainEventWebhook(
   req: Request,
   env: WorkerEnv,
 ): Promise<Response> {
-  // 1. Cap the body before any hashing.
-  let rawBody: string;
-  try {
-    rawBody = await readCappedBody(req);
-  } catch (err) {
-    if (err instanceof WebhookBodyTooLargeError) {
-      return new Response('payload too large', { status: 413 });
-    }
-    return new Response('bad request', { status: 400 });
-  }
+  // 1. Cap the body before any hashing (`@vaipakam/lib/requestBody`).
+  const read = await readBodyText(req, MAX_WEBHOOK_BODY);
+  if (!read.ok) return new Response(read.error, { status: read.status });
+  const rawBody = read.text;
 
   // Resolve the chain from the TRUSTED `?chain=<chainId>` URL param FIRST — it's
   // operator-configured on the webhook target (not payload-derived), so it can

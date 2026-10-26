@@ -144,6 +144,18 @@
     "./markdownProse": {
       "types": "./src/markdownProse.d.mts",
       "default": "./src/markdownProse.mjs"
+    },
+    "./rateLimit": {
+      "types": "./src/rateLimit.ts",
+      "default": "./src/rateLimit.ts"
+    },
+    "./requestBody": {
+      "types": "./src/requestBody.ts",
+      "default": "./src/requestBody.ts"
+    },
+    "./originAllowList": {
+      "types": "./src/originAllowList.ts",
+      "default": "./src/originAllowList.ts"
     }
   },
   "scripts": {

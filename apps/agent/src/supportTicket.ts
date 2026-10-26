@@ -23,6 +23,12 @@ import { redactText } from '@vaipakam/lib/redactAddresses';
 
 import type { Env } from './env';
 import { insertSupportTicket } from './db';
+import { readJsonBody } from '@vaipakam/lib/requestBody';
+
+/** The ticket's fields are capped in characters below; a character can
+ *  take up to six bytes once JSON-escaped, so the body cap is set from
+ *  those field caps with room to spare (#2756). */
+const MAX_TICKET_BODY_BYTES = 64 * 1024;
 
 const MAX_MESSAGE_CHARS = 2_000;
 const MAX_DIAGNOSTICS_CHARS = 4_000;
@@ -147,12 +153,9 @@ export async function handleSupportTicket(
   // The caller budget (`SUPPORT_TICKET_RATELIMIT`) was taken at the router
   // under the one fail-closed rule in `rateLimit.ts` (#2755).
 
-  let raw: unknown;
-  try {
-    raw = await req.json();
-  } catch {
-    return json({ error: 'invalid-json' }, 400, corsOrigin);
-  }
+  const read = await readJsonBody(req, MAX_TICKET_BODY_BYTES);
+  if (!read.ok) return json({ error: read.error }, read.status, corsOrigin);
+  const raw = read.value;
   const body = parseSupportTicket(raw);
   if (body === null) {
     return json({ error: 'invalid-ticket' }, 400, corsOrigin);

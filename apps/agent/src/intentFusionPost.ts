@@ -49,6 +49,11 @@ import type { Env } from './env';
 import { slotRefusal, takeCredentialSlot } from './rateLimit';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { createPublicClient, http, keccak256, toBytes } from 'viem';
+import { readJsonBody } from '@vaipakam/lib/requestBody';
+
+/** A Fusion post: the order struct, its hash, the commit transaction hash
+ *  and a signature (#2756). */
+const MAX_FUSION_POST_BODY_BYTES = 16 * 1024;
 
 // T-090 v1.2 #428 — keccak256 of the canonical
 // `SwapToRepayIntentCommitted(uint256,bytes32,address,uint256,uint256,uint64)`
@@ -69,7 +74,9 @@ const BUYBACK_INTENT_VALIDATED_TOPIC0 = keccak256(
 );
 
 // T-090 v1.2 #428 — per-chain RPC binding lookup. Reuses the same
-// per-chain RPC secrets the other agent handlers read from.
+// per-chain RPC secrets the other agent handlers read from. Only the
+// Fusion-supported chains are listed: the preflight runs after the
+// unsupported-chain queued-ack (#2756), so no other chain reaches it.
 function rpcForChain(env: Env, chainId: number): string | undefined {
   if (chainId === 1) return env.RPC_ETH;
   if (chainId === 8453) return env.RPC_BASE;
@@ -77,16 +84,6 @@ function rpcForChain(env: Env, chainId: number): string | undefined {
   if (chainId === 10) return env.RPC_OP;
   if (chainId === 56) return env.RPC_BNB;
   if (chainId === 137) return env.RPC_POLYGON;
-  // Testnets — kept for parity with the chain-allow-list above
-  // (Fusion doesn't support them, but the preflight can still
-  // verify the commit landed on-chain for the rejected-chain
-  // queued-ack path).
-  if (chainId === 11155111) return env.RPC_SEPOLIA;
-  if (chainId === 84532) return env.RPC_BASE_SEPOLIA;
-  if (chainId === 421614) return env.RPC_ARB_SEPOLIA;
-  if (chainId === 11155420) return env.RPC_OP_SEPOLIA;
-  if (chainId === 80002) return env.RPC_POLYGON_AMOY;
-  if (chainId === 97) return env.RPC_BNB_TESTNET;
   return undefined;
 }
 
@@ -212,12 +209,9 @@ export async function handleIntentFusionPost(
   // through when the binding was missing. The 1inch credential budget is
   // taken below, immediately before the one upstream call.
 
-  let raw: unknown;
-  try {
-    raw = await req.json();
-  } catch {
-    return jsonErr(corsOrigin, 400, 'invalid-json');
-  }
+  const read = await readJsonBody(req, MAX_FUSION_POST_BODY_BYTES);
+  if (!read.ok) return jsonErr(corsOrigin, read.status, read.error);
+  const raw = read.value;
   const parsed = validateBody(raw);
   if (!parsed) return jsonErr(corsOrigin, 400, 'invalid-payload');
 
@@ -250,58 +244,6 @@ export async function handleIntentFusionPost(
   const partiesError = orderPartiesError(kind, parsed.order, expectedDiamond);
   if (partiesError) {
     return jsonErr(corsOrigin, 400, partiesError);
-  }
-
-  // T-090 v1.2 #428 — on-chain commit preflight. The Origin gate
-  // above stops the browser-misconfigured noise; the rate limit
-  // bounds spend; the party check above binds the receiver (and a
-  // buyback's maker) to the diamond. A swap order's maker is the
-  // borrower's vault (#1566 S3e), which only this preflight can
-  // confirm — so for a swap it is also what stops a foreign
-  // ERC-1271 contract from spending our key, and a swap post
-  // without an `ok` preflight is refused below. Beyond that, a
-  // non-browser caller that spoofs Origin + binds the body to our
-  // diamond could still spam shape-valid-but-fake commits + burn
-  // the Fusion quota at the upstream rejection.
-  //
-  // Defense: fetch the `commitTxHash` receipt + verify it
-  // contains a `SwapToRepayIntentCommitted` log whose indexed
-  // orderHash (topic[2]) matches the body's `orderHash` AND was
-  // emitted by the Vaipakam diamond on this chain. Then read
-  // `getIntentCommit(loanId)` to verify EVERY field of the
-  // submitted `order` body matches the on-chain record — without
-  // this second step the caller could replay a public commit tx
-  // hash + mutate the order fields (Codex round-1 P2 fix).
-  //
-  // Skip the preflight entirely when `ONEINCH_API_KEY` is
-  // unbound (the queued-ack path further below is the
-  // operator-pre-activation short-circuit; no Fusion spend
-  // happens, so the RPC quota the preflight would consume is
-  // pure waste — Codex round-1 P2 fix). The unsupported-chain
-  // queued-ack also short-circuits, but it sits below this gate
-  // because the chain-allow-list check is cheaper than the RPC.
-  //
-  // Cost when active: two RPC calls per request (one
-  // `eth_getTransactionReceipt` + one `eth_call` against the
-  // diamond). Bounded above by the rate-limit binding.
-  let preflightOutcome: 'ok' | 'degraded' | 'skipped' = 'skipped';
-  if (env.ONEINCH_API_KEY) {
-    const rpcUrl = rpcForChain(env, parsed.chainId);
-    if (rpcUrl) {
-      const preflight = await preflightCommitOnChain(
-        rpcUrl,
-        parsed,
-        expectedDiamond,
-      );
-      if (preflight.kind === 'reject') {
-        return jsonErr(corsOrigin, 400, preflight.reason);
-      }
-      // 'degraded' falls through for a buyback (its maker is
-      // bound offline above); the log line lets ops see when the
-      // preflight RPC degraded. A swap post stops short of Fusion
-      // instead (#1566 S3e — see `makerConfirmedBeforePost`).
-      preflightOutcome = preflight.kind;
-    }
   }
 
   // Codex round-1 PR #430 P2 — gate to chains 1inch Fusion
@@ -346,6 +288,53 @@ export async function handleIntentFusionPost(
       note:
         'ONEINCH_API_KEY is not configured on this Worker (operator-pre-activation state). No Fusion solver discovery happens until the secret is bound + the worker redeploys. Your collateral, the auction lot included, stays pledged in your vault; cancel after the auction deadline to withdraw the order — do not wait for a fill that will not arrive.',
     });
+  }
+
+  // T-090 v1.2 #428 — on-chain commit preflight. The Origin gate
+  // above stops the browser-misconfigured noise; the rate limit
+  // bounds spend; the party check above binds the receiver (and a
+  // buyback's maker) to the diamond. A swap order's maker is the
+  // borrower's vault (#1566 S3e), which only this preflight can
+  // confirm — so for a swap it is also what stops a foreign
+  // ERC-1271 contract from spending our key, and a swap post
+  // without an `ok` preflight is refused below. Beyond that, a
+  // non-browser caller that spoofs Origin + binds the body to our
+  // diamond could still spam shape-valid-but-fake commits + burn
+  // the Fusion quota at the upstream rejection.
+  //
+  // Defense: fetch the `commitTxHash` receipt + verify it
+  // contains a `SwapToRepayIntentCommitted` log whose indexed
+  // orderHash (topic[2]) matches the body's `orderHash` AND was
+  // emitted by the Vaipakam diamond on this chain. Then read
+  // `getIntentCommit(loanId)` to verify EVERY field of the
+  // submitted `order` body matches the on-chain record — without
+  // this second step the caller could replay a public commit tx
+  // hash + mutate the order fields (Codex round-1 P2 fix).
+  //
+  // It runs only once the two answers that spend nothing (an unsupported
+  // chain, an unset key) have been given above, so no caller can make
+  // this Worker spend RPC on a post that would never reach Fusion
+  // (#2756; it used to run first, although the chain check is the
+  // cheaper one).
+  //
+  // Cost: two RPC calls per request (one `eth_getTransactionReceipt` +
+  // one `eth_call` against the diamond), bounded by the caller budget.
+  let preflightOutcome: 'ok' | 'degraded' | 'skipped' = 'skipped';
+  const rpcUrl = rpcForChain(env, parsed.chainId);
+  if (rpcUrl) {
+    const preflight = await preflightCommitOnChain(
+      rpcUrl,
+      parsed,
+      expectedDiamond,
+    );
+    if (preflight.kind === 'reject') {
+      return jsonErr(corsOrigin, 400, preflight.reason);
+    }
+    // 'degraded' falls through for a buyback (its maker is
+    // bound offline above); the log line lets ops see when the
+    // preflight RPC degraded. A swap post stops short of Fusion
+    // instead (#1566 S3e — see `makerConfirmedBeforePost`).
+    preflightOutcome = preflight.kind;
   }
 
   // #1566 S3e — the key is spent only on an order whose maker is
