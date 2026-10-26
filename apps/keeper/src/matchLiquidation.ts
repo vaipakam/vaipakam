@@ -12,8 +12,9 @@
  *
  * On a Diamond deployed before #2796 (the live testnets, until the
  * all-waves fresh deploy) the call takes no sale size; the form is read
- * from the Diamond's loupe (`readForcedSaleSurface`), and a Diamond routing
- * part of each form is sent nothing.
+ * from the Diamond's loupe (`readForcedSaleSurface`), and the preview of
+ * the exact form is what decides: a form the Diamond does not route reverts
+ * there, and nothing is sent.
  *
  * The sale size (#2796) is passed as 0. The match returns before the size
  * is read, and with an empty list a call that does not match cannot sell

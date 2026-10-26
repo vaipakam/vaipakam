@@ -572,9 +572,10 @@ export async function maybeAutonomousLiquidate(
     // all-waves fresh deploy) has no plan: its `triggerLiquidation` sells
     // the whole collateral and returns the surplus to the borrower. There
     // the full sale is quoted for the whole collateral and no split is
-    // tried, since its legs would be sized by a plan it does not have. A
-    // Diamond routing part of each surface, or whose routing could not be
-    // read, is sent nothing.
+    // tried, since its legs would be sized by a plan it does not have. The
+    // surface is one loupe read; a Diamond routing part of each surface makes
+    // the call revert at its gas estimate, before broadcast, and one whose
+    // routing could not be read is sent nothing.
     const planBlock = await publicClient.getBlockNumber({ cacheTime: 0 });
     let surface: ForcedSaleSurface;
     try {
