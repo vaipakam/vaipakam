@@ -275,6 +275,12 @@ never through endpoint logic.
 **Audit trail.** Every place / lift / set-disclosure writes one
 immutable row to `diag_legal_hold_audit` (which admin, when, what) —
 the defensible record that the protocol acted on a genuine order.
+The hold change and its audit row are one transaction (#1488), so the
+trail never records an action that did not apply, never misses one
+that did, and a `set-disclosure` that finds no hold writes nothing and
+answers 404 even when a `lift` lands mid-request. The row's `when` is
+the database's clock at the write, so the trail's order is the order
+the actions took effect.
 
 ## 6. Privacy Policy + PIA update
 
