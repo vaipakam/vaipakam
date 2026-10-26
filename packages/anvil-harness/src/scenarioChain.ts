@@ -161,7 +161,7 @@ export class ScenarioChain<F extends ChainFixture = ChainFixture> {
     if (receipt.status !== 'success') {
       // It simulated clean and reverted only when mined, so the simulation's
       // error never surfaced. Read the cause from the node before it is gone.
-      const why = await explainMinedRevert(this.pub, this.node.control.rpc, receipt, abi);
+      const why = await explainMinedRevert(this.pub, this.node.control.rpc, receipt, [abi, DIAMOND_ABI_VIEM as Abi]);
       throw new Error(`${functionName} reverted when mined (tx ${hash}, simulated against block ${simulatedAt}): ${why}`);
     }
     return receipt;

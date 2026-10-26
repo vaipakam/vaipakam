@@ -7,9 +7,13 @@
  * node the suite throws away. {@link explainMinedRevert} reads the cause from
  * the node while it is still up. The scenario chain's writes and the CCIP
  * relay's deliveries both report through it, so the two cannot drift apart.
+ *
+ * It imports no ABI of its own: each caller names the ABIs to decode with.
+ * The deploy fixture is loaded by the connected app's Playwright suite, whose
+ * Node loader refuses the contracts package's bare JSON imports, so a module
+ * the fixture reaches must not pull in the Diamond union.
  */
 import { BaseError, decodeErrorResult, type Abi, type Hex, type PublicClient, type TransactionReceipt } from 'viem';
-import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import type { AnvilControl } from './rpc';
 /** Revert data of a call frame, where the node reports it. */
 interface CallTrace {
@@ -33,8 +37,9 @@ interface CallTrace {
  *      earlier block's timestamp and without any transaction mined before it
  *      in the same block.
  *
- * The data is decoded with the ABI the write used, then with the Diamond
- * union, so a revert raised by another facet still gets its name. The line
+ * The data is decoded with each of `abis` in turn (a Diamond write passes the
+ * facet's ABI and then the Diamond union, so a revert raised by another facet
+ * still gets its name). The line
  * also names the block, its timestamp and the gas used against the limit, so
  * an out-of-gas or a clock-dependent revert is visible without the node.
  *
@@ -44,7 +49,7 @@ export async function explainMinedRevert(
   pub: PublicClient,
   rpc: AnvilControl['rpc'],
   receipt: TransactionReceipt,
-  abi: Abi,
+  abis: readonly Abi[],
 ): Promise<string> {
   const parts: string[] = [];
   let block: { timestamp: bigint } | undefined;
@@ -86,15 +91,15 @@ export async function explainMinedRevert(
     }
   }
   if (source === '') return `${parts.join(', ')}: no trace and no replay were possible`;
-  return `${parts.join(', ')}; ${source}: ${describeRevertData(data, abi, nodeError)}`;
+  return `${parts.join(', ')}; ${source}: ${describeRevertData(data, abis, nodeError)}`;
 }
 
 /** A revert's data as `ErrorName(args)`, or what the node said when it has none. */
-function describeRevertData(data: Hex | undefined, abi: Abi, nodeError: string | undefined): string {
+function describeRevertData(data: Hex | undefined, abis: readonly Abi[], nodeError: string | undefined): string {
   if (!data || data === '0x') {
     return `no revert data${nodeError ? ` (node: ${nodeError})` : ''}, which is a bare revert or running out of gas`;
   }
-  for (const candidate of [abi, DIAMOND_ABI_VIEM as Abi]) {
+  for (const candidate of abis) {
     try {
       const d = decodeErrorResult({ abi: candidate, data });
       const args = (d.args ?? []).map((a) => (typeof a === 'bigint' ? a.toString() : JSON.stringify(a))).join(', ');

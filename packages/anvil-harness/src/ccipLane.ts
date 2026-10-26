@@ -245,7 +245,7 @@ export class CcipRelay {
       const receipt = await dstClient.waitForTransactionReceipt({ hash, timeout: 60_000 });
       if (receipt.status !== 'success') {
         // eslint-disable-next-line no-await-in-loop
-        const why = await explainMinedRevert(dstClient, anvilControl(dst.url).rpc, receipt, this.offRampAbi);
+        const why = await explainMinedRevert(dstClient, anvilControl(dst.url).rpc, receipt, [this.offRampAbi]);
         throw new Error(`relay: executing message ${message.header.messageId} on chain ${toChainId} reverted when mined (tx ${hash}): ${why}`);
       }
       delivered.push({

@@ -287,7 +287,7 @@ async function installCanonical(anvil: AnvilControl, c: Canonical, deployerKey: 
   const pub = createPublicClient({ transport: http(anvil.url) });
   const receipt = await pub.waitForTransactionReceipt({ hash, timeout: 60_000 });
   if (receipt.status !== 'success') {
-    const why = await explainMinedRevert(pub, anvil.rpc, receipt, compiledAbi(c.source, c.contract));
+    const why = await explainMinedRevert(pub, anvil.rpc, receipt, [compiledAbi(c.source, c.contract)]);
     throw new Error(`constructing ${c.name} for the canonical copy reverted when mined (tx ${hash}): ${why}`);
   }
   if (!receipt.contractAddress) {
