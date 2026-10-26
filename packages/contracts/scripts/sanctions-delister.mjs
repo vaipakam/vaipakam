@@ -28,7 +28,8 @@
  *      all (inclusion is not finality) leaves the next run to read the files
  *      again;
  *   3. moves every pending proposal on as far as it can go:
- *        - discards one whose proposer the owner removed (anyone may);
+ *        - discards one whose proposer the owner removed after it was made,
+ *          reappointed since or not (anyone may);
  *        - withdraws one of ITS OWN that can no longer execute: an address
  *          vetoed, flagged by RedStone, already delisted by other means, or
  *          no longer delisted by OFAC's newer file;
@@ -478,7 +479,7 @@ function proposalOfListPublication(snap, p) {
  * the relay's state when that reason is an unanswered clearance.
  */
 function stage(snap, p) {
-  if (!p.proposerAppointed) return 'unappointed';
+  if (!p.authorityHolds) return 'unappointed';
   if (p.unlisted.length) return 'unlisted';
   if (!proposalOfListPublication(snap, p)) return 'stale';
   if (BigInt(snap.now) < BigInt(p.eta)) return 'window';
@@ -513,7 +514,7 @@ function canPropose(snap) {
 
 /** This key's pending proposals left behind by a newer publication. */
 function ownStale(snap, key) {
-  return snap.proposals.filter((p) => sameAddress(p.proposer, key) && p.proposerAppointed && p.unlisted.length === 0 && !proposalOfListPublication(snap, p));
+  return snap.proposals.filter((p) => sameAddress(p.proposer, key) && p.authorityHolds && p.unlisted.length === 0 && !proposalOfListPublication(snap, p));
 }
 
 /**
@@ -613,7 +614,7 @@ export function planChain(snap, key, evaluation, facts = new Map(), { factsError
     const tag = `proposal ${p.id}`;
     const at = stage(snap, p);
     if (at === 'unappointed') {
-      actions.push({ kind: 'discard', id: p.id, why: `its proposer ${p.proposer} was removed` });
+      actions.push({ kind: 'discard', id: p.id, why: `its proposer ${p.proposer} was removed after making it` });
       continue;
     }
     if (at === 'unlisted') {
@@ -1445,8 +1446,8 @@ function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
       for (let id = 1n; id <= count; id++) {
         const p = await readTl('getProposal', [id]);
         if (Number(p.status) !== STATUS_PENDING) continue;
-        const [proposerAppointed, [ready, reasonSel], cl, listed] = await Promise.all([
-          readTl('isProposer', [p.proposer]),
+        const [authorityHolds, [ready, reasonSel], cl, listed] = await Promise.all([
+          readTl('holdsAuthority', [id]),
           readTl('readiness', [id]),
           readTl('clearanceOf', [id]),
           mapLimited(p.accounts, READ_CONCURRENCY, (a) => client.readContract({ address: c.list, abi: list, functionName: 'listedByOwnList', args: [a] })),
@@ -1455,7 +1456,7 @@ function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
         const entry = {
           id,
           proposer: getAddress(p.proposer),
-          proposerAppointed,
+          authorityHolds,
           sourceHash: p.sourceHash,
           publicationDate: Number(p.publicationDate),
           eta: p.eta,
