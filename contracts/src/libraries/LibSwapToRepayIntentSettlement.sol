@@ -157,16 +157,6 @@ library LibSwapToRepayIntentSettlement {
             ),
             bytes4(0)
         );
-        if (collateral == s.vpfiToken) {
-            // Through the Diamond-internal host, not inlined: the tier rollup is
-            // large and this facet hosts every LOP callback.
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    ConsolidationFacet.restampUserVpfiLocalInternal.selector, loan.borrower
-                ),
-                bytes4(0)
-            );
-        }
         {
             uint256 vaultBefore = IERC20(collateral).balanceOf(vault);
             bytes32 vaultKey = _vaultSnapshotKey(orderHash);

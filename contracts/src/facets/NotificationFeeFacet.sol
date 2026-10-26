@@ -73,11 +73,11 @@ contract NotificationFeeFacet is DiamondPausable, DiamondAccessControl, IVaipaka
      *             expected behaviour is to LOG this revert and skip
      *             the notification — the user's billed flag stays
      *             false until they top up VPFI)
-     *           - anything the discount RESTAMP raises. After the vault
-     *             withdrawal and BEFORE the recycle credit, the billed
-     *             flag, the accrual and the event, `bill` calls
-     *             `LibVPFIDiscount.rollupUserDiscount` — the BROADCASTING
-     *             wrapper. Since #898 / #911 its cross-chain tier push
+     *           - anything the payer's tier refresh raises. The vault
+     *             withdrawal refreshes the payer's tier record (#1820)
+     *             and, this entry holding no reentrancy guard, pushes the
+     *             tier then, BEFORE the recycle credit, the billed flag,
+     *             the accrual and the event. Since #898 / #911 that push
      *             never reverts the bill: an empty budget, a down or paused
      *             lane, or an empty destination list leaves the payer's
      *             lane OWED (`ProtocolBroadcastFacet.TierPushDeferred`).

@@ -488,99 +488,10 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         //     who OPTED INTO pro-rata must not be punished with full-term just
         //     because they refinance rather than repay directly.
         // `...Net` also credits any periodic `interestSettled` (paid once).
-        uint256 oldInterest = LibEntitlement.settlementInterestNet(
-            oldLoan,
-            block.timestamp
-        );
-
-        // #411 fix (2026-06-12) — DROPPED the rate-shortfall addend
-        // that previously over-compensated the exiting old lender at
-        // borrower expense. Spec §2127 / §2138 (the "Original Lender
-        // Protection Rule") historically required a shortfall =
-        // `oldFullTerm - newFullTerm` top-up on top of full-term
-        // interest. But full-term IS the lender's maximum possible
-        // earnings on this loan; paying ANY additional shortfall
-        // pushes them BEYOND their ceiling, funded by the borrower
-        // (`oldInterest + shortfall = P + 2·oldFullTerm − newFullTerm`).
-        //
-        // The Protection Rule is structurally satisfied by paying
-        // `principal + full-term interest` to an exiting lender —
-        // they are strictly whole at their maximum entitlement.
-        //
-        // The shortfall is still NECESSARY on the obligation-transfer
-        // / offset paths (`PrecloseFacet.transferObligationViaOffer`)
-        // where the lender STAYS on the loan and earns the NEW rate
-        // going forward — there the shortfall genuinely bridges back
-        // up to the original full-term. Refinance differs because the
-        // old lender exits (`s.lenderClaims[oldLoanId]` is set and the
-        // old loan closes). Refinance-path only fix; transfer/offset
-        // shortfall unchanged.
-        //
-        // Design doc:
-        // `docs/DesignsAndPlans/RefinanceOldLenderOverpayFix.md`
-        // (Option 1 selected 2026-06-07).
-        //
-        // The `shortfall` local is retained at 0 to keep the
-        // `LoanRefinanced` event signature byte-identical — indexers
-        // continue to decode the field, just always read 0 post-fix.
-
-        // Treasury fee on the interest portion, at the old loan's
-        // snapshotted rate.
-        // Lender Yield Fee discount (Tokenomics §6): when the old lender has
-        // platform-level VPFI-discount consent AND holds >= the required VPFI
-        // in vault, the treasury cut is paid in VPFI from the old lender's
-        // vault and the old lender keeps 100% of interestPortion in the
-        // lending asset. tryApplyYieldFee silently falls back on any
-        // precondition failure.
-        uint256 shortfall = 0; // #411 fix — see comment above.
-        // Pass-2 A1/D5 (#1189) — a refinance that lands in the grace window
-        // charges the same late fee `repayLoan` does (0 within term), split
-        // treasury/lender like the interest. The yield-fee branch below keeps the
-        // whole `interest + lateFee` for the lender (mirrors RepayFacet), so the
-        // penalty is never silently dropped on the discounted path.
-        uint256 lateFee = LibVaipakam.calculateLateFee(oldLoanId);
-        uint256 interestPortion = oldInterest + lateFee;
-        (uint256 treasuryFee, uint256 lenderInterest) = LibEntitlement.splitTreasury(
-            oldLoan,
-            interestPortion
-        );
-        // #1354 §F2 / #1383 — eligibility is `consent OR lenderMode == Full` (a
-        // Full lender earns the +10% even without hold-discount consent). The
-        // shared resolve helper runs the whole VPFI-payment-then-direct-reduction
-        // delivery, returning the deltas to fold in.
-        //
-        // #1947 — keyed EXPLICITLY on the current position-NFT holder. This used
-        // the `resolveLenderYieldFee(oldLoan, ...)` form, which resolves
-        // `oldLoan.lender` internally, on the stated grounds that the refinance
-        // had consolidated the slot to the current holder earlier. It attempts
-        // that consolidation, but the consolidation is Tier-2 *skip-not-block*:
-        // it declines rather than reverting for a sanctioned holder or an
-        // excluded lender state, so a call to it is NOT proof the field is
-        // fresh. On a transferred position that fell through the skip, the
-        // stale address priced the discount off the PREVIOUS lender's hold tier
-        // and — once the peg is set — debited that party's VPFI vault for a
-        // reduction the buyer receives.
-        // Held in a local because the analytics passthrough below must name the
-        // SAME party: this facet calls the library directly rather than through
-        // `VPFIDiscountFacet`, so unlike every other settlement path it emits
-        // its own `emitYieldFeeDiscountApplied` and has to carry the settling
-        // lender to it. Reporting `oldLoan.lender` there while charging the
-        // holder here would have indexers attribute the VPFI debit to the
-        // previous lender — precisely the transferred-position case this fix is
-        // about (Codex #1953 r1 P2).
-        address settlingLender = LibERC721.ownerOf(oldLoan.lenderTokenId);
-        (uint256 lenderExtra, uint256 newTreasuryFee, uint256 yieldVpfiDeducted) =
-            LibVPFIDiscount.resolveLenderYieldFeeFor(
-                oldLoan,
-                settlingLender,
-                interestPortion,
-                treasuryFee
-            );
-        if (lenderExtra > 0) {
-            lenderInterest += lenderExtra;
-            treasuryFee = newTreasuryFee;
-        }
-        uint256 lenderDue = oldLoan.principal + lenderInterest;
+        // #411 fix — the rate-shortfall top-up is gone; the event field stays
+        // at 0 so `LoanRefinanced` decodes unchanged (see {_exitingLenderDue}).
+        uint256 shortfall = 0;
+        (uint256 treasuryFee, uint256 lenderDue) = _exitingLenderDue(oldLoan, oldLoanId);
 
         // T-037 — pay each party directly from the borrower without
         // the Diamond holding the asset between transfers. The
@@ -905,27 +816,6 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // register its own vpfiHeld against the new loan id).
         LibVPFIDiscount.settleBorrowerLifProper(oldLoan);
 
-        // #658 PR-B (Codex #690 round-6 P2) — NOW re-stamp the borrower's VPFI,
-        // AFTER the LIF rebate is priced above. On the non-carry-over path with
-        // VPFI collateral, the borrower-side consolidation checkpointed the
-        // holder at the full balance and the legacy return (above) withdrew that
-        // VPFI out of the vault; re-stamping here keeps the holder from retaining
-        // fee-tier / staking credit on VPFI that has left, without skewing the
-        // just-settled rebate. Gated to the non-carry-over VPFI-collateral case
-        // (carry-over keeps the collateral in place, so nothing left the vault).
-        if (
-            !bOffer.refinanceCarryOver &&
-            oldLoan.collateralAsset == s.vpfiToken
-        ) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    ConsolidationFacet.restampUserVpfiInternal.selector,
-                    oldLoan.borrower
-                ),
-                bytes4(0)
-            );
-        }
-
         // T-092 Phase 2a (Codex round-1 P2) — emit the current
         // borrower-NFT owner as the borrower (not msg.sender) so
         // keeper-driven refinances attribute the row to the actual
@@ -940,6 +830,111 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             shortfall,
             uint8(oldLoan.status)
         );
+    }
+
+    /// @dev The exiting lender's settlement on a refinance: the treasury fee
+    ///      on the interest (after any lender yield-fee discount) and what the
+    ///      old lender is owed. A VPFI-paid discount debits the lender's vault
+    ///      here and emits its analytics passthrough here, before the payouts.
+    ///      Its own frame because {_refinanceLoanLogic} is at the viaIR stack
+    ///      budget.
+    function _exitingLenderDue(LibVaipakam.Loan storage oldLoan, uint256 oldLoanId)
+        private
+        returns (uint256 treasuryFee, uint256 lenderDue)
+    {
+        uint256 oldInterest = LibEntitlement.settlementInterestNet(
+            oldLoan,
+            block.timestamp
+        );
+
+        // #411 fix (2026-06-12) — DROPPED the rate-shortfall addend
+        // that previously over-compensated the exiting old lender at
+        // borrower expense. Spec §2127 / §2138 (the "Original Lender
+        // Protection Rule") historically required a shortfall =
+        // `oldFullTerm - newFullTerm` top-up on top of full-term
+        // interest. But full-term IS the lender's maximum possible
+        // earnings on this loan; paying ANY additional shortfall
+        // pushes them BEYOND their ceiling, funded by the borrower
+        // (`oldInterest + shortfall = P + 2·oldFullTerm − newFullTerm`).
+        //
+        // The Protection Rule is structurally satisfied by paying
+        // `principal + full-term interest` to an exiting lender —
+        // they are strictly whole at their maximum entitlement.
+        //
+        // The shortfall is still NECESSARY on the obligation-transfer
+        // / offset paths (`PrecloseFacet.transferObligationViaOffer`)
+        // where the lender STAYS on the loan and earns the NEW rate
+        // going forward — there the shortfall genuinely bridges back
+        // up to the original full-term. Refinance differs because the
+        // old lender exits (`s.lenderClaims[oldLoanId]` is set and the
+        // old loan closes). Refinance-path only fix; transfer/offset
+        // shortfall unchanged.
+        //
+        // Design doc:
+        // `docs/DesignsAndPlans/RefinanceOldLenderOverpayFix.md`
+        // (Option 1 selected 2026-06-07).
+        //
+        // The `shortfall` local is retained at 0 to keep the
+        // `LoanRefinanced` event signature byte-identical — indexers
+        // continue to decode the field, just always read 0 post-fix.
+
+        // Treasury fee on the interest portion, at the old loan's
+        // snapshotted rate.
+        // Lender Yield Fee discount (Tokenomics §6): when the old lender has
+        // platform-level VPFI-discount consent AND holds >= the required VPFI
+        // in vault, the treasury cut is paid in VPFI from the old lender's
+        // vault and the old lender keeps 100% of interestPortion in the
+        // lending asset. tryApplyYieldFee silently falls back on any
+        // precondition failure.
+        // Pass-2 A1/D5 (#1189) — a refinance that lands in the grace window
+        // charges the same late fee `repayLoan` does (0 within term), split
+        // treasury/lender like the interest. The yield-fee branch below keeps the
+        // whole `interest + lateFee` for the lender (mirrors RepayFacet), so the
+        // penalty is never silently dropped on the discounted path.
+        uint256 lateFee = LibVaipakam.calculateLateFee(oldLoanId);
+        uint256 interestPortion = oldInterest + lateFee;
+        uint256 lenderInterest;
+        (treasuryFee, lenderInterest) = LibEntitlement.splitTreasury(
+            oldLoan,
+            interestPortion
+        );
+        // #1354 §F2 / #1383 — eligibility is `consent OR lenderMode == Full` (a
+        // Full lender earns the +10% even without hold-discount consent). The
+        // shared resolve helper runs the whole VPFI-payment-then-direct-reduction
+        // delivery, returning the deltas to fold in.
+        //
+        // #1947 — keyed EXPLICITLY on the current position-NFT holder. This used
+        // the `resolveLenderYieldFee(oldLoan, ...)` form, which resolves
+        // `oldLoan.lender` internally, on the stated grounds that the refinance
+        // had consolidated the slot to the current holder earlier. It attempts
+        // that consolidation, but the consolidation is Tier-2 *skip-not-block*:
+        // it declines rather than reverting for a sanctioned holder or an
+        // excluded lender state, so a call to it is NOT proof the field is
+        // fresh. On a transferred position that fell through the skip, the
+        // stale address priced the discount off the PREVIOUS lender's hold tier
+        // and — once the peg is set — debited that party's VPFI vault for a
+        // reduction the buyer receives.
+        // Held in a local because the analytics passthrough below must name the
+        // SAME party: this facet calls the library directly rather than through
+        // `VPFIDiscountFacet`, so unlike every other settlement path it emits
+        // its own `emitYieldFeeDiscountApplied` and has to carry the settling
+        // lender to it. Reporting `oldLoan.lender` there while charging the
+        // holder here would have indexers attribute the VPFI debit to the
+        // previous lender — precisely the transferred-position case this fix is
+        // about (Codex #1953 r1 P2).
+        address settlingLender = LibERC721.ownerOf(oldLoan.lenderTokenId);
+        (uint256 lenderExtra, uint256 newTreasuryFee, uint256 yieldVpfiDeducted) =
+            LibVPFIDiscount.resolveLenderYieldFeeFor(
+                oldLoan,
+                settlingLender,
+                interestPortion,
+                treasuryFee
+            );
+        if (lenderExtra > 0) {
+            lenderInterest += lenderExtra;
+            treasuryFee = newTreasuryFee;
+        }
+        lenderDue = oldLoan.principal + lenderInterest;
 
         // Passthrough event for lender yield-fee VPFI discount so indexers
         // subscribe to a single facet for all VPFI-discount analytics.

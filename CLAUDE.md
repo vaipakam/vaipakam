@@ -296,6 +296,24 @@ runs half of it on old code:
   (`PredatesLoanClock`). Never compute `startTime + durationDays * 1 days` as
   a deadline in new code; read `LibLoanClock`.
 
+- **Every facet that writes a tracked VPFI balance or holds the reentrancy
+  guard + the tier accumulator + ProtocolBroadcastFacet (#1820).** A user's
+  tier record is refreshed inside `LibVaipakam.recordVaultDeposit` /
+  `recordVaultWithdraw` and the frozen-owed writes (`LibTierExclusion`,
+  `LibCloseoutFreeze`), through `LibTierRecord.refresh`, a self-call to
+  `syncTierRecord`; the push is queued while the guard or the fill lock is
+  held and flushed by the guard's release (`flushTierPushes`). That puts the
+  change in effectively every facet. A writer refreshed onto a Diamond with
+  no `syncTierRecord` route records NOTHING (the refresh tolerates a missing
+  accumulator so minimal test Diamonds work: a silent gap, not a revert),
+  and one left on old code still calls the retired restamp entries, which
+  the all-facets refresh removes. Cross it by fresh deploy or
+  `RefreshAllFacetsInPlace`;
+  `RedeployFacets` and `ReplaceStaleFacets` refuse a Diamond that does not
+  already route `syncTierRecord` (`PredatesTierRecordSeam`). Never add a
+  per-facet tier stamp in new code; write the balance through the two
+  writers.
+
 How the #1566 slices reach a chain is settled (owner, 2026-10-07, decision O1 = A): **every
 chain that runs slices 2–3 gets a fresh deploy.** Nothing is upgraded in place
 across this boundary and no pre-slice row is migrated; slices 2–3 make a

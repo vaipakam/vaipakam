@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
+import {LibTierRecord} from "../libraries/LibTierRecord.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 
 /// @dev Outbound surface on `VaipakamRewardMessenger` for the per-user
@@ -218,30 +219,35 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
 
     // ─── Producer call (rollup hook) ────────────────────────────────────
 
-    /// @notice Called by `VPFIDiscountAccumulatorFacet.rollupUserDiscount`
-    ///         via the diamond fallback after the ring-buffer + expiry
-    ///         writes land. Commits a new push when the user's resolved
-    ///         tuple changed, then delivers every owed lane it can.
+    /// @notice Called by `VPFIDiscountAccumulatorFacet.syncTierRecord`
+    ///         through the diamond fallback, outside any guarded action, after
+    ///         the user's tier record was refreshed. Commits a new push when
+    ///         the user's resolved tuple changed, then delivers every owed
+    ///         lane it can.
     /// @dev    Never reverts on a lane, the budget or the destination list;
     ///         only {TierPushOutOfGas} (too little gas for a call) escapes.
     function protocolBroadcastTierUpdate(address user) external {
         if (msg.sender != address(this)) revert OnlyInternal(msg.sender);
+        _push(LibVaipakam.storageSlot(), user);
+    }
 
+    /// @notice #1820 — push the tier of every user the action queued, once
+    ///         each. Called by the reentrancy guard's release
+    ///         (`LibReentrancyGuard._exit`, through `LibTierRecord`), while
+    ///         the guard is still held, so the cross-chain calls run after
+    ///         the action's settlement and under its guard.
+    /// @dev    Each push resolves the tier the user's record holds now, so a
+    ///         user whose VPFI moved several times in the action gets one
+    ///         push carrying the final tier, and one whose tier did not change
+    ///         commits nothing. Same failure rule as
+    ///         {protocolBroadcastTierUpdate}.
+    function flushTierPushes() external {
+        if (msg.sender != address(this)) revert OnlyInternal(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // Base-only — mirrors and unconfigured chains skip silently.
-        if (!s.isCanonicalVpfiChain) {
-            emit ProtocolTierBroadcastSkipped(user, "not-canonical-chain");
-            return;
+        address[] memory users = LibTierRecord.drain();
+        for (uint256 i; i < users.length; ++i) {
+            _push(s, users[i]);
         }
-        address msgr = s.rewardMessenger;
-        if (msgr == address(0)) {
-            emit ProtocolTierBroadcastSkipped(user, "messenger-not-configured");
-            return;
-        }
-
-        bool committed = _commit(s, user);
-        if (s.userTierPushNonce[user] == 0) return; // nothing ever committed
-        _deliver(s, msgr, _committedPush(s, user), 0, committed);
     }
 
     /**
@@ -272,6 +278,25 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
     }
 
     // ─── Internals ──────────────────────────────────────────────────────
+
+    /// @dev Commit `user`'s push when their resolved tuple changed, then
+    ///      deliver every owed lane. Base-only: on a mirror or with no
+    ///      messenger it emits why it skipped.
+    function _push(LibVaipakam.Storage storage s, address user) private {
+        if (!s.isCanonicalVpfiChain) {
+            emit ProtocolTierBroadcastSkipped(user, "not-canonical-chain");
+            return;
+        }
+        address msgr = s.rewardMessenger;
+        if (msgr == address(0)) {
+            emit ProtocolTierBroadcastSkipped(user, "messenger-not-configured");
+            return;
+        }
+
+        bool committed = _commit(s, user);
+        if (s.userTierPushNonce[user] == 0) return; // nothing ever committed
+        _deliver(s, msgr, _committedPush(s, user), 0, committed);
+    }
 
     /// @dev Resolve `user`'s tuple and commit it when it differs from the
     ///      latest committed push. Returns whether a push was committed.

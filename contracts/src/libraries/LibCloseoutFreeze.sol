@@ -7,6 +7,7 @@ import {LibSanctionedLock} from "./LibSanctionedLock.sol";
 import {LibDelivery} from "./LibDelivery.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {LibEntitlement} from "./LibEntitlement.sol";
+import {LibTierRecord} from "./LibTierRecord.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -569,6 +570,7 @@ library LibCloseoutFreeze {
         uint256 cur = s.frozenVpfiOwedByVault[lender];
         s.frozenVpfiOwedByVault[lender] = cur > bumped ? cur - bumped : 0;
         s.frozenVpfiOwedLenderLeg[loanId] = 0;
+        LibTierRecord.refresh(lender);
     }
 
     /**
@@ -587,5 +589,6 @@ library LibCloseoutFreeze {
         uint256 cur = s.frozenVpfiOwedByVault[borrower];
         s.frozenVpfiOwedByVault[borrower] = cur > bumped ? cur - bumped : 0;
         s.frozenVpfiOwedBorrowerSurplus[loanId] = 0;
+        LibTierRecord.refresh(borrower);
     }
 }

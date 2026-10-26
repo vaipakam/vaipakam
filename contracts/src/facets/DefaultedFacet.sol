@@ -24,7 +24,6 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
-import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {FallbackCustodyFacet} from "./FallbackCustodyFacet.sol";
 import {ForcedSaleFacet} from "./ForcedSaleFacet.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
@@ -518,12 +517,6 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 // ClaimFacet.claimAsLender, which withdraws them in the correct
                 // payment asset via the NFT-gated claim model.
                 // No borrower claim on default (lender takes full collateral)
-
-                // #1566 S2c: the VPFI re-stamp of the borrower after the
-                // in-kind transfer. The sale route's host re-stamps after its
-                // own movements, and the fallback entry after its own. See
-                // {_restampCollateralVpfi}.
-                _restampCollateralVpfi(loanId);
             } else {
                 revert LiquidationFailed();
             }
@@ -720,48 +713,6 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             abi.encodeWithSelector(
                 FallbackCustodyFacet.enterFallback.selector,
                 loanId
-            ),
-            bytes4(0)
-        );
-    }
-
-    /// @dev #1566 S2c (finding S1-11 of the slices 2-3 review). Both ERC-20
-    ///      collateral routes of `triggerDefault` (the liquid swap and the
-    ///      in-kind transfer to the lender) move the collateral OUT of
-    ///      `loan.borrower`'s vault, and the vault withdraw primitive never
-    ///      touches the VPFI fee tier. When the collateral is VPFI, the
-    ///      borrower's cached tier and staking checkpoint would keep counting
-    ///      VPFI that has left the vault until some unrelated later mutation
-    ///      corrected it: the terminal tier sync that follows restamps only a
-    ///      vault owner whose exclusion CHANGED, and on an ordinary default
-    ///      nothing changes. So re-stamp at the post-withdrawal balance, once,
-    ///      after the branch (the rule: every protocol action that moves VPFI
-    ///      through a vault refreshes that user's tier at the post-movement
-    ///      balance). If the terminal sync later does install an exclusion,
-    ///      it restamps that owner itself, so this stamp is never the stale one.
-    ///
-    ///      Broadcast-FREE on purpose: `triggerDefault` is a permissionless
-    ///      Tier-2 close-out that must not brick, and the broadcasting restamp
-    ///      can revert on the cross-chain tier-push budget. The mirror-chain
-    ///      tier catches up at the borrower's next broadcasting mutation, the
-    ///      same contract `vaultCreditFromDiamondERC20` documents. RiskFacet's
-    ///      post-withdraw restamp still broadcasts; that inconsistency is a
-    ///      recorded open item (FunctionalSpecs/_CodeVsDocsAudit.md), left
-    ///      alone here.
-    ///
-    ///      The swap-failure fallback never reaches this point: it returns
-    ///      early, and {FallbackCustodyFacet} restamps on its own custody
-    ///      moves. A non-VPFI collateral (NFTs included) is a no-op. Private,
-    ///      reading storage itself, so `triggerDefault`'s near-ceiling viaIR
-    ///      frame gains no locals.
-    function _restampCollateralVpfi(uint256 loanId) private {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.Loan storage loan = s.loans[loanId];
-        if (loan.collateralAsset != s.vpfiToken) return;
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                ConsolidationFacet.restampUserVpfiLocalInternal.selector,
-                loan.borrower
             ),
             bytes4(0)
         );

@@ -20,6 +20,7 @@ import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -76,6 +77,9 @@ contract ReplaceStaleFacets is DeployDiamond {
     /// @notice #668 / #935 - the target Diamond predates the loan clock (the
     ///         global pause credit); see {_requireLoanClock}.
     error PredatesLoanClock(address diamond);
+    /// @notice #1820 - the target Diamond predates the tier record seam; see
+    ///         {_requireTierRecordSeam}.
+    error PredatesTierRecordSeam(address diamond);
 
     function run() external override {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -113,6 +117,9 @@ contract ReplaceStaleFacets is DeployDiamond {
         // #668 / #935 - and one from before the loan clock; see
         // {_requireLoanClock}.
         _requireLoanClock(diamond);
+        // #1820 - and one from before the tier record seam; see
+        // {_requireTierRecordSeam}.
+        _requireTierRecordSeam(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -471,6 +478,21 @@ contract ReplaceStaleFacets is DeployDiamond {
         if (IDiamondLoupe(diamond).facetAddress(LoanFacet.getLoanDeadlines.selector) == address(0)) {
             revert PredatesLoanClock(diamond);
         }
+    }
+
+    /// @dev #1820 - refuse a Diamond from before the tier record seam: the
+    ///      seam moved the VPFI tier refresh into the two writers of the tier
+    ///      balance and the push into the reentrancy guard's release, which
+    ///      every guarded facet inlines, so a partial refresh across it splits
+    ///      the behaviour. Crossing it is a fresh deploy or
+    ///      `RefreshAllFacetsInPlace`. The marker is the routing of
+    ///      `VPFIDiscountAccumulatorFacet.syncTierRecord`. Called before the
+    ///      broadcast starts.
+    function _requireTierRecordSeam(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(VPFIDiscountAccumulatorFacet.syncTierRecord.selector)
+                == address(0)
+        ) revert PredatesTierRecordSeam(diamond);
     }
 
     /// @dev RL-1 (Codex #1302 P2) — split `selectors` into the subset the

@@ -21,7 +21,6 @@ import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
 import {LibDiscountedLiquidation} from "../libraries/LibDiscountedLiquidation.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
-import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 
@@ -363,9 +362,9 @@ contract ForcedSaleFacet is IVaipakamErrors {
      *            the rest of the lien, brings the rest of the collateral to
      *            the Diamond and returns `sold = false` for the caller's
      *            fallback entry, which finds the loan's whole collateral there.
-     *         5. Otherwise the division (see the contract notes) and the
-     *            kind's booking, one VPFI re-stamp of the stored borrower
-     *            when VPFI left or reached their vault, and {ForcedSaleSettled}.
+     *         5. Otherwise the division (see the contract notes), the kind's
+     *            booking and {ForcedSaleSettled}. Each vault movement
+     *            refreshes the owner's VPFI tier record at the write (#1820).
      *         Leaves the checkpoint (periodic), the terminal transition, the
      *         NFT status and the lifecycle event to the caller.
      * @param loanId       The loan.
@@ -544,8 +543,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
     // ─── Internals: divide and book ─────────────────────────────────────
 
     /// @dev A filled sale: divide the proceeds, pay the keeper, book the kind,
-    ///      re-stamp the stored borrower's VPFI when VPFI moved, and state
-    ///      every figure ({ForcedSaleSettled}).
+    ///      and state every figure ({ForcedSaleSettled}).
     function _settle(Job memory j, ForcedSaleOutcome memory out) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[j.loanId];
@@ -562,7 +560,6 @@ contract ForcedSaleFacet is IVaipakamErrors {
             _bookTerminal(s, j.loanId, loan, sp, out);
             _recordUnsold(s, j.loanId, loan, j.unsold, out.collateralSold);
         }
-        _restampBorrower(s, loan, out.borrowerExtraHeld, j.kind);
 
         emit ForcedSaleSettled(
             j.loanId,
@@ -761,35 +758,5 @@ contract ForcedSaleFacet is IVaipakamErrors {
         }
         amount = LibCloseoutFreeze.holdBorrowerExtra(s, loanId, loan, holder, loan.principalAsset, extra);
         held = true;
-    }
-
-    /// @dev One VPFI re-stamp of the stored borrower once the sale has moved
-    ///      VPFI out of their vault (VPFI collateral) or into it (a held VPFI
-    ///      extra). The fallback entry re-stamps on its own route.
-    ///      The time-based default's stamp is the broadcast-FREE one, as it was
-    ///      before the sale moved here (`DefaultedFacet._restampCollateralVpfi`):
-    ///      that permissionless close-out must not revert on the cross-chain
-    ///      tier-push budget, and the mirror tier catches up at the borrower's
-    ///      next broadcasting mutation. The other kinds keep the broadcasting
-    ///      stamp their callers used (the recorded open item in
-    ///      `_CodeVsDocsAudit.md`, left as it is).
-    function _restampBorrower(
-        LibVaipakam.Storage storage s,
-        LibVaipakam.Loan storage loan,
-        bool extraHeld,
-        ForcedSaleKind kind
-    ) private {
-        address vpfi = s.vpfiToken;
-        if (vpfi == address(0)) return;
-        if (loan.collateralAsset != vpfi && !(extraHeld && loan.principalAsset == vpfi)) return;
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                kind == ForcedSaleKind.TimeBasedDefault
-                    ? ConsolidationFacet.restampUserVpfiLocalInternal.selector
-                    : ConsolidationFacet.restampUserVpfiInternal.selector,
-                loan.borrower
-            ),
-            bytes4(0)
-        );
     }
 }

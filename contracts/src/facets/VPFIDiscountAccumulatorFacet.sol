@@ -3,6 +3,9 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {LibReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
+import {LibFillLock} from "../libraries/LibFillLock.sol";
+import {LibTierRecord} from "../libraries/LibTierRecord.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 /**
@@ -51,72 +54,59 @@ contract VPFIDiscountAccumulatorFacet {
         _;
     }
 
-    /// @notice Append the user's post-mutation balance to the ring
-    ///         buffer and update the lifecycle anchors + active-staker
-    ///         registry. Gated to internal cross-facet calls only.
-    /// @param  user            User whose accumulator is being rolled up.
-    /// @param  balPostMutation The balance that will be in effect after
-    ///                         the caller's vault mutation lands.
-    function rollupUserDiscount(address user, uint256 balPostMutation)
-        external
-        onlyInternal
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        _rollupCore(s, user, balPostMutation);
+    /// @notice The tier push host (`ProtocolBroadcastFacet`) is not routed
+    ///         while a reward messenger is configured: a deploy mistake, never
+    ///         read as "the accumulator is not cut".
+    error TierPushHostMissing();
 
-        // T-087 Sub 2.D — protocol-funded mirror broadcast via cross-
-        // facet call to `ProtocolBroadcastFacet`. Skipped entirely while
-        // `rewardMessenger` is unset (the deploy-time default and every
-        // minimal-fixture test). Once set, the call goes through and any
-        // revert bubbles — but since #898 / #911 the push itself never
-        // reverts on the budget, a lane or the destination list (those
-        // leave the lane owed); what can still bubble is a missing
-        // ProtocolBroadcastFacet cut (a deploy mistake the predeploy
-        // sanity catches) and `TierPushOutOfGas` (a starved call, which
-        // must fail the action rather than skip its push).
-        if (s.rewardMessenger != address(0)) {
-            // slither-disable-next-line low-level-calls
-            (bool ok, bytes memory returnData) = address(this).call(
-                abi.encodeWithSignature(
-                    "protocolBroadcastTierUpdate(address)", user
-                )
-            );
-            if (!ok) {
-                assembly {
-                    revert(add(32, returnData), mload(returnData))
-                }
+    /// @notice #1820 — refresh `user`'s tier record from the tier balance now
+    ///         in storage (tracked vault VPFI less VPFI frozen for a
+    ///         transferred position's holder), then push their tier to the
+    ///         mirrors, or queue the push for the end of the action.
+    /// @dev    Reached only through {LibTierRecord.refresh}, from the two
+    ///         writers of the tier balance and from the callers that refresh
+    ///         with no balance change (`pokeMyTier`, the loan-start
+    ///         snapshots). The balance is read here, never passed, so no
+    ///         caller can stamp the wrong one.
+    ///
+    ///         While a guarded action is in progress, or a fill holds the fill
+    ///         lock, the user is queued and the guard's release pushes each
+    ///         queued user once ({LibReentrancyGuard._exit}). Otherwise the
+    ///         push runs now. Nothing is pushed or queued while no reward
+    ///         messenger is configured.
+    ///
+    ///         A push host missing from the route reverts
+    ///         {TierPushHostMissing} instead of bubbling
+    ///         `FunctionDoesNotExist()`, so that selector, seen by
+    ///         {LibTierRecord.refresh}, can only mean this facet is not cut.
+    function syncTierRecord(address user) external onlyInternal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _rollupCore(
+            s,
+            user,
+            LibVPFIDiscount.tierVpfiBalance(user, LibVPFIDiscount.trackedVpfiBalance(user))
+        );
+        if (s.rewardMessenger == address(0)) return;
+        if (LibReentrancyGuard.entered() || LibFillLock.heldBy() != bytes32(0)) {
+            LibTierRecord.enqueue(user);
+            return;
+        }
+        // slither-disable-next-line low-level-calls
+        (bool ok, bytes memory returnData) = address(this).call(
+            abi.encodeWithSignature("protocolBroadcastTierUpdate(address)", user)
+        );
+        if (!ok) {
+            if (returnData.length >= 4 && bytes4(returnData) == bytes4(keccak256("FunctionDoesNotExist()"))) {
+                revert TierPushHostMissing();
+            }
+            assembly ("memory-safe") {
+                revert(add(32, returnData), mload(returnData))
             }
         }
     }
 
-    /// @notice RL-1 (VpfiRecyclingLoopClosureDesign §6) — broadcast-FREE
-    ///         sibling of {rollupUserDiscount}. Runs the identical local
-    ///         ring-buffer + lifecycle + expiry writes but deliberately
-    ///         skips the CCIP tier push.
-    /// @dev    Used by the Diamond-funded vault credit primitive
-    ///         ({VaultFactoryFacet.vaultCreditFromDiamondERC20}) on the
-    ///         reward claim-to-vault path: a claim must never inherit the
-    ///         broadcast path's failure modes (before #898 / #911: `ProtocolBudgetExhausted`,
-    ///         messenger misconfig) when today's wallet claim would have
-    ///         succeeded. The push is an optimization, not a correctness
-    ///         requirement — the user's NEXT balance mutation (or any
-    ///         keeper poke) runs the broadcasting rollup and carries the
-    ///         tier update to mirrors; until then mirrors serve the
-    ///         previously-pushed cache, exactly as they do between any two
-    ///         mutations. Gated to internal cross-facet calls only.
-    /// @param  user            User whose accumulator is being rolled up.
-    /// @param  balPostMutation The balance in effect after the caller's
-    ///                         vault mutation lands.
-    function rollupUserDiscountLocal(address user, uint256 balPostMutation)
-        external
-        onlyInternal
-    {
-        _rollupCore(LibVaipakam.storageSlot(), user, balPostMutation);
-    }
-
-    /// @dev Shared local-write body of the two rollup entries: ring-buffer
-    ///      advance, staker-lifecycle maintenance, and the projected
-    ///      tier-expiry stamp. Broadcast policy is the CALLER's concern.
+    /// @dev The local-write body of {syncTierRecord}: ring-buffer advance,
+    ///      staker-lifecycle maintenance, and the projected tier-expiry stamp.
     function _rollupCore(
         LibVaipakam.Storage storage s,
         address user,

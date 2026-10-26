@@ -589,24 +589,6 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         );
     }
 
-    /// @dev #658 (Codex #680 P2) — single-copy bridge to the cross-facet
-    ///      post-withdraw VPFI re-stamp. The eager consolidation above stamped
-    ///      the holder at the full pre-liquidation balance; once a liquidation
-    ///      path withdraws VPFI collateral out of the holder's vault, the credit
-    ///      is stale-high until the next VPFI action. Each liquidation entry
-    ///      calls this AFTER its collateral withdrawal; no-op for non-VPFI
-    ///      collateral (gated inside the facet). Same EIP-170 rationale as
-    ///      {_eagerConsolidateBothSides}.
-    function _restampCollateralVpfi(uint256 loanId) private {
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector,
-                loanId
-            ),
-            bytes4(0)
-        );
-    }
-
     /**
      * @notice Liquidate an Active loan whose Health Factor is below 1 by
      *         selling only the collateral its debt needs.
@@ -704,16 +686,6 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // B.2 semantic ("don't dump into the external book mid-window")
         // for that defensive edge.
         if (RiskMatchLiquidationFacet(address(this)).attemptInternalMatchAutoDispatch(loanId, msg.sender)) {
-            // #658 (Codex #680 round-2 P2) — the auto-dispatch branch returns
-            // here BEFORE the external-swap restamp below. If the eager
-            // consolidation above moved VPFI collateral to the holder (stamping
-            // them at the full pre-liquidation balance) and the internal match
-            // just consumed it, re-stamp the triggering loan's holder at the
-            // reduced balance now, so they can't keep tier/staking credit for
-            // VPFI the match already removed. No-op for non-VPFI. (The matched
-            // CANDIDATE leg's consolidation + restamp is PR-B —
-            // RiskMatchLiquidationFacet, where the candidateId is in scope.)
-            _restampCollateralVpfi(loanId);
             return;
         }
 
@@ -1010,10 +982,6 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             loan.collateralAsset,
             swappedCollateral
         );
-        // #658 (Codex #680 P2) — re-stamp the holder's VPFI tier/staking after
-        // the partial collateral slice leaves the vault. No-op for non-VPFI.
-        _restampCollateralVpfi(loanId);
-
         // Oracle-derived expected proceeds + slippage floor, scoped to
         // the slice. Same formula as {triggerLiquidation}.
         uint256 expectedProceeds = LibFallback.expectedSwapOutput(
@@ -1534,12 +1502,6 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
                 collateralSeized
             );
         }
-        // #658 (Codex #680 P2) — re-stamp the holder's VPFI tier/staking after
-        // the seized collateral leaves the vault (the surplus stays encumbered
-        // in the vault and is reflected in the reduced balance). No-op for
-        // non-VPFI; harmless when nothing was seized.
-        _restampCollateralVpfi(loanId);
-
         // Record borrower claim metadata — the surplus is in COLLATERAL
         // units (not principal), sits ENCUMBERED in the borrower's vault,
         // and is withdrawn by the borrower-position NFT holder through

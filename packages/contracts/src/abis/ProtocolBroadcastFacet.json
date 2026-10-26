@@ -14,6 +14,13 @@
   },
   {
     "type": "function",
+    "name": "flushTierPushes",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "getProtocolBroadcastBudget",
     "inputs": [],
     "outputs": [

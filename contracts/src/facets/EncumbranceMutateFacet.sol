@@ -9,7 +9,6 @@ import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibTierExclusion} from "../libraries/LibTierExclusion.sol";
 import {LibOwedAtDefault} from "../libraries/LibOwedAtDefault.sol";
-import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 
 /**
@@ -256,14 +255,14 @@ contract EncumbranceMutateFacet is DiamondReentrancyGuard {
     // by someone else) and by how much (the VPFI in that side's encumbrance
     // records), plus one non-terminal case (#1566 slice 2): a FallbackPending
     // VPFI loan's fallback custody row stays out of the stored borrower's
-    // tier. Hosted here so the recompute and the restamp exist once: the
+    // tier. Hosted here so the recompute exists once: the
     // terminal transitions above call it inline, `VaipakamNFTFacet` calls it
     // on a position transfer or burn, and every `LibEncumbrance` per-loan
     // mutator and `LibFallbackCustody` row mutator calls it when the side
     // already carries an exclusion.
 
-    /// @notice Re-derive `loanId`'s VPFI fee-tier exclusion and restamp every
-    ///         vault owner whose excluded amount changed.
+    /// @notice Re-derive `loanId`'s VPFI fee-tier exclusion and refresh the
+    ///         tier record of every vault owner whose excluded amount changed.
     function syncTierExclusion(uint256 loanId) external onlyDiamondInternal {
         _syncTierExclusion(loanId);
     }
@@ -294,26 +293,12 @@ contract EncumbranceMutateFacet is DiamondReentrancyGuard {
         }
     }
 
-    /// @dev Restamps with the BROADCAST-FREE local rollup. These syncs run
-    ///      inside must-complete close-outs and claims, and a broadcasting
-    ///      stamp can revert when the shared CCIP budget runs out
-    ///      (`LibConsolidation.restampUserVpfiLocal`) — a tier refresh must
-    ///      never brick a close-out. The cross-chain tier mirror picks the
-    ///      change up at the owner's next broadcasting mutation.
+    /// @dev `LibTierExclusion.sync` refreshes each owner whose excluded
+    ///      amount changed at the write itself (#1820), and the push to the
+    ///      mirrors waits for the end of the action, so a sync inside a
+    ///      close-out or claim never sends anything mid-settlement.
     function _syncTierExclusion(uint256 loanId) private {
-        address[4] memory changed = LibTierExclusion.sync(loanId);
-        for (uint256 i; i < 4; ++i) {
-            address who = changed[i];
-            if (who == address(0)) continue;
-            bool seen;
-            for (uint256 j; j < i; ++j) {
-                if (changed[j] == who) {
-                    seen = true;
-                    break;
-                }
-            }
-            if (!seen) LibConsolidation.restampUserVpfiLocal(who);
-        }
+        LibTierExclusion.sync(loanId);
     }
 
     /// @notice #2342 — the VPFI this loan currently keeps out of a vault

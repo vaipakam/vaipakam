@@ -3,7 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
-import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
+import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
@@ -33,8 +33,9 @@ import {defaultQuote} from "./helpers/ForcedSaleQuote.sol";
  *                 placed only on the swap route. (The brief names the
  *                 LTV-collapsed variant; the consented-illiquid default takes
  *                 the very same in-kind branch and needs no price fixture.)
- *         Both also pin the entry: one call of the broadcast-FREE
- *         `ConsolidationFacet.restampUserVpfiLocalInternal(borrower)`.
+ *         Both also pin the entry: the borrower's tier record is refreshed
+ *         through `VPFIDiscountAccumulatorFacet.syncTierRecord(borrower)`,
+ *         which since #1820 the vault withdrawal itself reaches.
  *
  * @dev    Straddle. Each cell first proves its fixture is live: the borrower's
  *         stamp starts at the PRE-default balance (collateral plus own VPFI),
@@ -150,26 +151,21 @@ contract DefaultedRestampTest is SetupTest {
     ///      the default's own day (the first write of that day sets both the
     ///      day minimum and the close), and prove the stamp reads it.
     function _stampAtPreDefaultBalance() internal {
-        vm.prank(address(diamond));
-        ConsolidationFacet(address(diamond)).restampUserVpfiLocalInternal(borrower);
+        TestMutatorFacet(address(diamond)).refreshTierRecordRaw(borrower);
         assertEq(_tracked(), COLLATERAL + OWN_VPFI, "fixture: tracked = collateral + own VPFI");
         (uint256 dayMin, uint256 dayClose) = _dayMinAndClose();
         assertEq(dayClose, COLLATERAL + OWN_VPFI, "fixture: stamp starts at the pre-default balance");
         assertEq(dayMin, COLLATERAL + OWN_VPFI, "fixture: day minimum starts there too");
     }
 
-    /// @dev Trigger the default from an unrelated keeper, expecting exactly the
-    ///      broadcast-free borrower restamp (the ONLY caller of that selector on
-    ///      this path; the fixture's own stamp above runs before the
-    ///      expectation is armed).
+    /// @dev Trigger the default from an unrelated keeper, expecting the
+    ///      borrower's tier record refresh (the fixture's own refresh above
+    ///      runs before the expectation is armed).
     function _triggerDefault() internal {
         uint256 sellQuote = defaultQuote(address(diamond), LOAN);
         vm.expectCall(
             address(diamond),
-            abi.encodeWithSelector(
-                ConsolidationFacet.restampUserVpfiLocalInternal.selector, borrower
-            ),
-            1
+            abi.encodeWithSelector(VPFIDiscountAccumulatorFacet.syncTierRecord.selector, borrower)
         );
         vm.prank(makeAddr("defaultKeeper"));
         DefaultedFacet(address(diamond)).triggerDefault(LOAN, sellQuote, defaultAdapterCalls());

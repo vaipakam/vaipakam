@@ -24,7 +24,6 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
-import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 
@@ -810,31 +809,6 @@ contract EarlyWithdrawalDirectFacet is
             VaultWithdrawFailed.selector
         );
 
-        // #1817 (Codex #1819 r3 P1) — checkpoint the buyer at the DEBIT
-        // trough, before any re-credit. The principal pull above can take
-        // their vaulted VPFI to zero, and the single post-credit stamp below
-        // would then observe old-positive → final-positive: the staker
-        // lifecycle never resets and the day's minimum never records the
-        // zero, so re-credited held VPFI would inherit the buyer's pre-sale
-        // tier tenure. Stamping the trough makes the zero observable; the
-        // final stamp after the credits remains. Since #1923 pinned
-        // `amount == principal` (item 15), this principal pull is the buyer's
-        // ONLY debit — there is no oversized-offer refund after it — so this IS
-        // the last-debit trough (the former #1819 r4 excess re-stamp is gone
-        // with that path). LOCAL rollup (r7 P2): this is an INTERMEDIATE
-        // checkpoint — the buyer's final stamp in the settlement block carries
-        // the broadcast, and a per-checkpoint CCIP push would charge the shared
-        // budget once per dip and could revert the sale when it covers the
-        // first message but not the second.
-        if (loan.principalAsset == s.vpfiToken) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    ConsolidationFacet.restampUserVpfiLocalInternal.selector,
-                    buyOffer.creator
-                ),
-                bytes4(0)
-            );
-        }
 
         uint256 toLiam = loan.principal - liamCost;
         if (toLiam > 0) {
@@ -945,30 +919,6 @@ contract EarlyWithdrawalDirectFacet is
                 VaultWithdrawFailed.selector
             );
             s.consolidationMoveFromUser = address(0);
-            // #1817 (Codex #1819 r6 P1) — checkpoint the DEPARTED lender at
-            // their post-withdraw balance NOW, between the held debit and the
-            // buyer-side redeposit. In a SELF-SALE (the stored lender selling
-            // into their own standing buy offer) the redeposit below returns
-            // the very same vault to positive, and a stamp taken only after
-            // the migration observes positive -> positive across a real zero
-            // - the staker lifecycle never resets. For a third-party sale
-            // this is the same post-mutation stamp the settlement block used
-            // to take, moved to the mutation site (where every other VPFI
-            // movement stamps). In a SELF-SALE this stamp is INTERMEDIATE —
-            // the same user's final buyer stamp follows — so it rolls up
-            // LOCALLY there (r7 P2: one broadcast per party per sale); for a
-            // third-party seller it is their final movement and broadcasts.
-            if (loan.principalAsset == s.vpfiToken) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        loan.lender == buyOffer.creator
-                            ? ConsolidationFacet.restampUserVpfiLocalInternal.selector
-                            : ConsolidationFacet.restampUserVpfiInternal.selector,
-                        loan.lender
-                    ),
-                    bytes4(0)
-                );
-            }
             address newVault = LibFacet.getOrCreateVault(buyOffer.creator);
             LibDelivery.pushExact(payAsset, newVault, priorHeld);
             // T-051 — Diamond-side transfer to new lender's vault
@@ -1015,20 +965,6 @@ contract EarlyWithdrawalDirectFacet is
                 s.heldForLenderEncumbered[loanId];
             LibEncumbrance.encumberLenderProceeds(
                 loanId, loan.lender, loan.principalAsset, nonActiveHeld
-            );
-            // #1503 item 27 (#1817) — the buyer's post-sale checkpoint.
-            // `loan.lender` is the buyer after the migration above; their
-            // vault always moved on this route (the principal debit, plus
-            // the held credit when any was held). The DEPARTED lender's
-            // stamp happens at the held-withdrawal site itself (r6 P1, gated
-            // on priorHeld > 0 by that block), so a self-sale's
-            // mid-transaction zero is observed before the redeposit.
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    ConsolidationFacet.restampUserVpfiInternal.selector,
-                    loan.lender
-                ),
-                bytes4(0)
             );
         }
 

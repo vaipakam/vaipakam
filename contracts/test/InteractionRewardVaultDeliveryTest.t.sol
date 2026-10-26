@@ -17,14 +17,14 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
 /// @dev RL-1 forced-failure harness: Replace-cut over the accumulator's
-///      broadcast-free rollup selector so the vault credit's LAST step
+///      tier record refresh (#1820) so the vault credit's LAST step
 ///      reverts AFTER the Diamond→vault transfer and the tracked-balance
 ///      record already executed in the same frame — proving the whole
 ///      vault-side unit rolls back atomically before the wallet fallback.
 contract RevertingRollupLocalMock {
     error ForcedRollupFailure();
 
-    function rollupUserDiscountLocal(address, uint256) external pure {
+    function syncTierRecord(address) external pure {
         revert ForcedRollupFailure();
     }
 }
@@ -336,12 +336,12 @@ contract InteractionRewardVaultDeliveryTest is SetupTest, IVaipakamErrors {
         address vault = _vaultFacet().getOrCreateUserVault(alice);
         uint256 expected = _seedClaimable(alice);
 
-        // Replace the broadcast-free rollup with a reverting mock: the
+        // Replace the tier record refresh with a reverting mock: the
         // credit primitive's transfer + record succeed in-frame, then the
         // rollup reverts — the WHOLE vault-side unit must roll back.
         RevertingRollupLocalMock mock = new RevertingRollupLocalMock();
         bytes4[] memory sel = new bytes4[](1);
-        sel[0] = VPFIDiscountAccumulatorFacet.rollupUserDiscountLocal.selector;
+        sel[0] = VPFIDiscountAccumulatorFacet.syncTierRecord.selector;
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(mock),

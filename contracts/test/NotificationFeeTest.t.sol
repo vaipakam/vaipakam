@@ -265,20 +265,20 @@ contract NotificationFeeTest is SetupTest {
 
     // ─── #973 / L26 — discount restamp on the vault debit ────────────────
 
-    /// @notice The bill runs the mandatory discount-accumulator rollup at
-    ///         the post-mutation balance — closing the L26 gap where a
-    ///         VPFI outflow left a stale fee-tier stamp behind.
+    /// @notice The bill refreshes the payer's tier record (since #1820 the
+    ///         vault withdrawal does it at the write) — closing the L26 gap
+    ///         where a VPFI outflow left a stale fee-tier stamp behind.
     function test_markNotifBilled_RestampsPayerDiscountTier() public {
         _scaffoldLoan(1);
 
-        // Assert the accumulator rollup is invoked during the bill (the
+        // Assert the tier record refresh is invoked during the bill (the
         // self-call routes through the Diamond by selector). A prefix
-        // match on the selector proves the restamp tail runs, without
-        // coupling to the TWA internals.
+        // match on the selector proves it runs, without coupling to the
+        // TWA internals.
         vm.expectCall(
             address(diamond),
             abi.encodeWithSelector(
-                VPFIDiscountAccumulatorFacet.rollupUserDiscount.selector
+                VPFIDiscountAccumulatorFacet.syncTierRecord.selector
             )
         );
 

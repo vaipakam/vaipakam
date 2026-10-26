@@ -81,62 +81,6 @@ contract ConsolidationFacet is
         );
     }
 
-    /// @notice #658 (Codex #680 P2) — internal-only post-withdraw VPFI
-    ///         re-stamp for the liquidation close-out family. The eager
-    ///         consolidation above checkpoints the current borrower holder at
-    ///         the FULL pre-liquidation VPFI balance (via
-    ///         {LibConsolidation.consolidateToHolder} → `_restampVpfi`); the
-    ///         host then withdraws some/all of that VPFI collateral out of the
-    ///         holder's vault for the swap. Without a post-withdraw re-stamp the
-    ///         holder keeps fee-tier / staking credit on VPFI that already left
-    ///         until their next VPFI action — the same gaming vector the
-    ///         eager-withdraw hosts (AddCollateral / SwapToRepay /
-    ///         PartialWithdrawal) close. Size-constrained liquidation hosts
-    ///         (RiskFacet ~298 bytes under EIP-170) can't inline
-    ///         `restampUserVpfi` (it pulls in the discount + staking rollups),
-    ///         so they cross-call this after the withdrawal. No-op for non-VPFI
-    ///         collateral. Internal-only; NOT `nonReentrant` (the host holds the
-    ///         lock).
-    function restampCollateralVpfiAfterWithdraw(uint256 loanId) external {
-        if (msg.sender != address(this)) revert OnlyDiamondInternal();
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.Loan storage loan = s.loans[loanId];
-        if (loan.collateralAsset == s.vpfiToken) {
-            LibConsolidation.restampUserVpfi(loan.borrower);
-        }
-    }
-
-    /// @notice #658 PR-B (Codex #690 round-6) — internal-only USER-keyed VPFI
-    ///         re-stamp. The collateral-keyed
-    ///         {restampCollateralVpfiAfterWithdraw} above only fires when the
-    ///         loan's COLLATERAL is VPFI, but `ClaimFacet.claimAsBorrower` can
-    ///         pay VPFI out of `loan.borrower`'s vault in forms the collateral
-    ///         key misses — a VPFI principal-SURPLUS claim row (collateral is
-    ///         some other token) or a still-liened VPFI top-up paid via the
-    ///         `extraLienedAmt` path while the rewritten claim row is non-VPFI.
-    ///         The caller decides VPFI actually left the vault (gating on the
-    ///         withdrawn asset) and passes the affected vault owner; this
-    ///         re-stamps unconditionally so no fee-tier / staking credit lingers
-    ///         on VPFI that is no longer vaulted. Internal-only; NOT
-    ///         `nonReentrant` (the host holds the lock).
-    function restampUserVpfiInternal(address user) external {
-        if (msg.sender != address(this)) revert OnlyDiamondInternal();
-        LibConsolidation.restampUserVpfi(user);
-    }
-
-    /// @notice Broadcast-FREE twin of {restampUserVpfiInternal} (#1817,
-    ///         Codex #1819 r7) — for INTERMEDIATE checkpoints inside a
-    ///         multi-movement settlement, where the transient balance must
-    ///         reach the accumulator but no observer can use the transient
-    ///         tier tuple and a per-checkpoint CCIP push would double-charge
-    ///         the shared budget (or revert the settlement when it runs
-    ///         out). The affected party's FINAL stamp carries the broadcast.
-    ///         Internal-only; NOT `nonReentrant` (the host holds the lock).
-    function restampUserVpfiLocalInternal(address user) external {
-        if (msg.sender != address(this)) revert OnlyDiamondInternal();
-        LibConsolidation.restampUserVpfiLocal(user);
-    }
-
     /// @notice Consolidate the **borrower** (collateral) side of `loanId` into
     ///         the current borrower-NFT holder's vault.
     function consolidateCollateralToHolder(

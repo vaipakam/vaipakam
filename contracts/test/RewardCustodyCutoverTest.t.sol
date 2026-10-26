@@ -41,12 +41,12 @@ import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {MockCrossChainMessenger} from "./mocks/MockCrossChainMessenger.sol";
 
 /// @dev The RL-1 forced-failure harness, reused: a Replace-cut over the
-///      broadcast-free rollup makes the vault credit's LAST step revert after
+///      tier record refresh (#1820) makes the vault credit's LAST step revert after
 ///      the holder → vault release already executed in the same frame.
 contract RevertingRollupForCutover {
     error ForcedRollupFailure();
 
-    function rollupUserDiscountLocal(address, uint256) external pure {
+    function syncTierRecord(address) external pure {
         revert ForcedRollupFailure();
     }
 }
@@ -393,7 +393,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         // A partial cut after the record: the routing moves, the record does not.
         RevertingRollupForCutover mock = new RevertingRollupForCutover();
         bytes4[] memory sel = new bytes4[](1);
-        sel[0] = VPFIDiscountAccumulatorFacet.rollupUserDiscountLocal.selector;
+        sel[0] = VPFIDiscountAccumulatorFacet.syncTierRecord.selector;
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(mock),
@@ -934,7 +934,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
 
         RevertingRollupForCutover mock = new RevertingRollupForCutover();
         bytes4[] memory sel = new bytes4[](1);
-        sel[0] = VPFIDiscountAccumulatorFacet.rollupUserDiscountLocal.selector;
+        sel[0] = VPFIDiscountAccumulatorFacet.syncTierRecord.selector;
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(mock),

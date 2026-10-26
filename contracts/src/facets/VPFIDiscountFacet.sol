@@ -5,6 +5,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {LibTierRecord} from "../libraries/LibTierRecord.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -193,9 +194,8 @@ contract VPFIDiscountFacet is
         // protocolTrackedVaultBalance counter ticks for the staked
         // VPFI. The chokepoint resolves the user's vault
         // internally — `_prepareDeposit` still creates it (via
-        // `getOrCreateUserVault`) so the staking-checkpoint /
-        // discount-accumulator can rollup against the post-mutation
-        // balance, but we no longer need the address back here.
+        // `getOrCreateUserVault`), but we do not need the address back
+        // here. The recorded deposit refreshes the tier record (#1820).
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultDepositERC20.selector,
@@ -242,16 +242,14 @@ contract VPFIDiscountFacet is
         (address vpfi, address vault) = _prepareDeposit(amount);
         // Bind the Permit2 pull to the registered VPFI token. Without
         // this check a permit signed for a different ERC-20 would be
-        // honoured by Permit2 while {_prepareDeposit} has already
-        // re-stamped the VPFI discount accumulator and staking
-        // checkpoint at the post-mutation balance — the on-chain VPFI
-        // balance would not actually move and accounting would drift.
+        // honoured by Permit2 while the record below credits VPFI —
+        // the on-chain VPFI balance would not actually move and
+        // accounting would drift.
         LibPermit2.pull(msg.sender, vault, vpfi, amount, permit, signature);
         // Permit2 already moved VPFI to the user's vault; record the
-        // deposit in the protocolTrackedVaultBalance counter so the
-        // staking checkpoint's `min(balanceOf, tracked)` reads the
-        // staked balance correctly and the future stuck-recovery
-        // path's cap math stays consistent.
+        // deposit in the protocolTrackedVaultBalance counter, which
+        // refreshes the tier record (#1820) and keeps the stuck-recovery
+        // path's cap math consistent.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.recordVaultDepositERC20.selector,
@@ -265,9 +263,7 @@ contract VPFIDiscountFacet is
     }
 
     /// @dev Shared pre-pull setup — validates amount, resolves the VPFI
-    ///      token address and the caller's vault, rolls up the
-    ///      discount accumulator + staking checkpoint at the
-    ///      post-mutation balance. Returns the resolved
+    ///      token address and the caller's vault. Returns the resolved
     ///      `(vpfi, vault)` so the caller can do the actual transfer
     ///      via whichever path (safeTransferFrom vs Permit2) fits.
     function _prepareDeposit(uint256 amount)
@@ -281,22 +277,6 @@ contract VPFIDiscountFacet is
         vault = VaultFactoryFacet(address(this)).getOrCreateUserVault(
             msg.sender
         );
-        uint256 prevBal = IERC20(vpfi).balanceOf(vault);
-        // T-054 PR-2 — clamp the rollup / checkpoint balance against
-        // the protocol-tracked counter so unsolicited dust pushed in
-        // via direct `IERC20.transfer` does NOT inflate the user's
-        // staking yield or VPFI discount tier. Post-mutation values
-        // computed from current storage + the amount about to be
-        // deposited via the chokepoint.
-        uint256 prevTracked = s.protocolTrackedVaultBalance[msg.sender][vpfi];
-        uint256 newStakedBal = LibVPFIDiscount.clampToTracked(
-            prevBal + amount,
-            prevTracked + amount
-        );
-        // Roll up the VPFI discount accumulator, re-stamping at the
-        // post-mutation balance so the next period accrues at the tier
-        // the user will actually hold after this deposit lands.
-        LibVPFIDiscount.rollupUserDiscount(msg.sender, newStakedBal);
     }
 
     /**
@@ -340,10 +320,6 @@ contract VPFIDiscountFacet is
         uint256 prevBal = IERC20(vpfi).balanceOf(vault);
         if (prevBal < amount) revert VPFIVaultBalanceInsufficient();
 
-        // T-054 PR-2 — clamp the post-withdraw balance against the
-        // protocol-tracked counter (less the same withdraw amount).
-        // Excludes any unsolicited dust still sitting in the vault
-        // from the post-mutation yield-bearing balance.
         uint256 prevTracked = s.protocolTrackedVaultBalance[msg.sender][vpfi];
 
         // #569 §6 F-1 (2026-06-13) — explicit encumbrance consult. VPFI
@@ -354,8 +330,8 @@ contract VPFIDiscountFacet is
         // through this staking-unwind door — only down to the free
         // balance. The shared chokepoint guard in `vaultWithdrawERC20`
         // (line below) enforces the same bound, but checking up-front
-        // (a) gives a clean, specific revert BEFORE the staking-rollup /
-        // checkpoint work below runs on a doomed amount, and (b) keeps
+        // (a) gives a clean, specific revert BEFORE the withdraw runs
+        // on a doomed amount, and (b) keeps
         // this fund-exit surface self-protecting against any future
         // refactor that bypasses the chokepoint. Defense-in-depth.
         //
@@ -368,17 +344,8 @@ contract VPFIDiscountFacet is
         if (amount > freeVpfi) {
             revert VPFIEncumberedByActiveLoan(amount, freeVpfi);
         }
-        uint256 newStakedBal = LibVPFIDiscount.clampToTracked(
-            prevBal - amount,
-            prevTracked - amount
-        );
-        // Close the VPFI-discount period and re-stamp at the post-
-        // mutation balance. The closing period carries the stamp left
-        // by the prior rollup (whatever tier was in effect up to now);
-        // the next period starts at the tier the user will hold after
-        // this withdraw.
-        LibVPFIDiscount.rollupUserDiscount(msg.sender, newStakedBal);
-
+        // The withdraw refreshes the caller's tier record at the write
+        // (#1820); the tracked counter alone feeds it, so dust never counts.
         VaultFactoryFacet(address(this)).vaultWithdrawERC20(
             msg.sender,
             vpfi,
@@ -751,9 +718,8 @@ contract VPFIDiscountFacet is
         // now zeros out the broadcast tier when consent is off. So
         // consent-off pokes correctly push (0, 0) and clear the
         // cache.
-        uint256 trackedBal = LibVPFIDiscount.trackedVpfiBalance(msg.sender);
-        LibVPFIDiscount.rollupUserDiscount(msg.sender, trackedBal);
-        emit TierPoked(msg.sender, trackedBal);
+        LibTierRecord.refresh(msg.sender);
+        emit TierPoked(msg.sender, LibVPFIDiscount.trackedVpfiBalance(msg.sender));
     }
 
     /**
@@ -790,7 +756,7 @@ contract VPFIDiscountFacet is
         returns (uint8 tier, uint256 trackedBal, uint256 discountBps)
     {
         // #954 (§2.2) — preview the tier from the SAME frozen-adjusted balance
-        // the accumulator actually stamps (`rollupUserDiscount` →
+        // the tier record actually reads (`syncTierRecord` →
         // `tierVpfiBalance`), so a stored party holding a transferred
         // position's frozen VPFI surplus doesn't see an inflated tier preview
         // that the stamp would never grant.
