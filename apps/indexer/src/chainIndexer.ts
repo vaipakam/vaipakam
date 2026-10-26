@@ -769,8 +769,6 @@ export async function sweepUnpublishedListings(
         ? {
             startAskPrice: BigInt(row.ask_price),
             endAskPrice: BigInt(row.end_ask_price),
-            projectedLenderLeg: 0n,
-            projectedTreasuryLeg: 0n,
             auctionEndTime: BigInt(row.auction_end_time),
           }
         : undefined;
@@ -7278,12 +7276,9 @@ async function _maybePublishToOpenSea(
   // T-086 Round-5 Block B (#309) — Dutch params. Undefined for
   // fixed-price posts (the publish helper falls back to the
   // Round-4 fixed-price shape verbatim). Defined when the event's
-  // `mode == PREPAY_MODE_DUTCH (1)`; the publish helper reads
-  // pctx at `auctionEndTime` to get the projected protocol legs
-  // that match the on-chain signed hash. `projectedLenderLeg` and
-  // `projectedTreasuryLeg` are derived inside the helper from
-  // that pctx read — the caller only supplies the three event-
-  // derived values.
+  // `mode == PREPAY_MODE_DUTCH (1)`. Since #2876 the order hashes
+  // no protocol leg, so these three event-derived values are all
+  // the Dutch shape needs.
   dutch?: { startAskPrice: bigint; endAskPrice: bigint; auctionEndTime: bigint },
 ): Promise<{ published: boolean; unsupportedChain: boolean }> {
   try {
@@ -7304,11 +7299,6 @@ async function _maybePublishToOpenSea(
           ? {
               startAskPrice: dutch.startAskPrice,
               endAskPrice: dutch.endAskPrice,
-              // The helper re-derives these from its pctx read at
-              // `auctionEndTime`; we pass 0n stubs here and the
-              // helper overwrites them.
-              projectedLenderLeg: 0n,
-              projectedTreasuryLeg: 0n,
               auctionEndTime: dutch.auctionEndTime,
             }
           : undefined,

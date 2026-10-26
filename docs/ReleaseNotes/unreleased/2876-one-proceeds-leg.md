@@ -1,4 +1,4 @@
-## Thread — Collateral sales pay one proceeds leg to the platform (PR #<n>)
+## Thread — Collateral sales pay one proceeds leg to the platform (PR #2916)
 
 A loan's own collateral listing used to ask the marketplace to pay three
 parties directly: the lender-position holder, the treasury, and the
@@ -38,6 +38,6 @@ a per-order copy of the signed lender and treasury amounts.
 Closes #2876 (owner decision 2026-10-26, "One proceeds leg"). This changes
 the executor's storage and the order shape, so it reaches a chain only by
 fresh deploy; the storage-layout break is acknowledged. The off-chain order
-builders (the shared order-shape helper, the indexer's OpenSea publisher
-and the agent's listing proxies) move to the new shape in a separate change
-timed with that deploy.
+builder the indexer uses to publish a listing to OpenSea builds the same
+one-leg shape in the same change, so a published listing's reconstructed
+order still matches the one the platform signed.
