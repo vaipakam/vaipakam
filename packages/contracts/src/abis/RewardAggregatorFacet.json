@@ -589,7 +589,7 @@
     "inputs": [],
     "outputs": [
       {
-        "name": "creditedRaw",
+        "name": "credited",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -597,11 +597,6 @@
         "name": "releasedRemitStranded",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "accountingSeeded",
-        "type": "bool",
-        "internalType": "bool"
       },
       {
         "name": "isCanonicalRewardChain",

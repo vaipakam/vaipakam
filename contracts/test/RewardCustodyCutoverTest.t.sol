@@ -2321,9 +2321,8 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     }
 
     /// Codex #2206 r1 (P1) — a reattribution is not absorption: on a chain
-    /// whose stored cumulative is unseeded because its bucket is relocated
-    /// custody only, moving credit into and out of the bucket leaves the
-    /// reported cumulative exactly where it was.
+    /// whose bucket is relocated custody only, moving credit into and out of
+    /// the bucket leaves the reported cumulative exactly where it was.
     function test_Reclassify_DoesNotMoveTheReportedAbsorption() public {
         _activatedMirror();
         _seedDiamond(10e18);
@@ -2697,7 +2696,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _classify(hB, 0, 10e18, keccak256("e-B"));
         _mut().consumeRecycleRawAsRemit(10e18, 922); // R2: B's 10
         assertEq(_paidOutRecycled(), 10e18, "R2's payout");
-        (, uint256 stranded0, , , ) = _agg().getRecycleCompositionPosition();
+        (, uint256 stranded0, , ) = _agg().getRecycleCompositionPosition();
         vm.expectEmit(true, true, false, true, address(diamond));
         emit RewardReconciliationFacet.ReconciliationInheritanceUndone(921, 0, 10e18);
         _mut().restoreReleasedRemitRaw(10e18, 10e18, 921); // R1 released
@@ -2723,7 +2722,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         (, uint256 reIn1, uint256 reOut1) = _recon().getReconciliationTotals();
         assertEq(reIn1 - reIn0, 10e18, "the un-inheritance is a reattribution into the bucket's figures");
         assertEq(reOut1, reOut0);
-        (, uint256 stranded1, , , ) = _agg().getRecycleCompositionPosition();
+        (, uint256 stranded1, , ) = _agg().getRecycleCompositionPosition();
         assertEq(stranded1 - stranded0, 10e18, "the stranded figure carries the whole sent share");
         (, , uint256 outstandingRecycled, ) = _agg().getGovernorCommitState();
         assertEq(outstandingRecycled, 10e18, "the restored commitment");
@@ -2876,35 +2875,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(_spentOf(40).recycledInheritable, 5e18, "entry 40 keeps the claim's 5");
         assertEq(_spentOf(41).recycledInheritable, 0, "entry 41's 5 were the remit's");
         assertEq(_spentOf(40).recycledSpent + _spentOf(41).recycledSpent, 15e18, "all still spent");
-    }
-
-    /// Codex #2206 r9 (P1) — the one-time stranded seed completes across a
-    /// correction: on an upgraded Diamond whose ceremony has not run, a
-    /// reclassification moves the bucket (or its payout figure) and the
-    /// reattribution terms, and the ceremony's postcondition reads the
-    /// identity's one implementation — the same sides every checker
-    /// restates — so a legitimate correction no longer blocks the backfill
-    /// for good.
-    function test_Seed_CompletesAcrossACorrection() public {
-        _activatedMirror();
-        _seedDiamond(10e18);
-        bytes32 h = _packetHash(keccak256("seed-A"));
-        _untyped(10e18, 84, keccak256("seed-A"));
-        _evidence(h, 10e18);
-        _classify(h, 0, 10e18, keccak256("e-seed"));
-        assertEq(_mut().consumeRecycleRawAsRemit(4e18, 1), 4e18); // R1: 4 of A
-        _mut().restoreReleasedRemitRaw(4e18, 4e18, 1); // released
-        _mut().setRemitReservationReleasedRaw(1, 4e18); // the history the ceremony scans
-        _mut().setReleasedRemitStrandedRaw(0); // the pre-upgrade shape: the release recorded nothing
-        _mut().setOutstandingCommitRaw(0, 0); // the restored commitment is the re-remit's; not under test
-        _reclassify(0, false, 3e18, keccak256("r-seed-out")); // 3 unspent to fresh, with their tokens
-        _reclassify(0, true, 1e18, keccak256("r-seed-in")); // 1 of them back
-        (, uint256 reIn, uint256 reOut) = _recon().getReconciliationTotals();
-        assertEq(reIn, 1e18);
-        assertEq(reOut, 3e18);
-        RewardCompensationDispatchFacet(address(diamond)).seedReleasedRemitStranded(1);
-        (, uint256 stranded, , , ) = _agg().getRecycleCompositionPosition();
-        assertEq(stranded, 4e18, "the release's whole sent share, backfilled");
     }
 
     /// Codex #2206 r9 (P2) — the fresh view answers only a known era: until

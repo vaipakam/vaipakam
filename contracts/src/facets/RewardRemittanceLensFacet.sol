@@ -140,55 +140,6 @@ contract RewardRemittanceLensFacet {
         return LibVaipakam.storageSlot().remitReservationNonce;
     }
 
-    /**
-     * @notice The released-remit stranded seed ceremony's state, for the
-     *         operator deciding whether to run it and for watching one in
-     *         flight.
-     * @dev    #1448 r10. `recycleStrandedSeedApplied` had NO external view,
-     *         so an operator could not answer "has this already run?" and had
-     *         to infer it from the published figure — which is exactly the
-     *         value-based reasoning that is WRONG here: a non-zero stranded
-     *         total can be a post-upgrade release recorded organically, with
-     *         a historical amount still unrecovered behind it. The one-shot
-     *         flag is the only sound answer, so it is published.
-     * @return applied        The ceremony has completed; it cannot run again.
-     * @return target         The pinned range end (0 = none in flight).
-     * @return cursor         How far the scan has reached.
-     * @return accum          Stranded backing accumulated so far (published
-     *                        only at completion).
-     * @return counted        Released reservations found so far.
-     * @return releasedCount  Lifetime count of releases, and the figure the
-     *                        race guard pins against. On a Diamond upgraded in
-     *                        place the slot is newly appended, so until the
-     *                        ceremony completes this counts POST-UPGRADE
-     *                        releases only; completion backfills it from the
-     *                        full scan (#1448 r14). Read together with
-     *                        `applied`: a true lifetime figure once that is
-     *                        set, a partial one before it.
-     */
-    function getReleasedRemitStrandedSeedState()
-        external
-        view
-        returns (
-            bool applied,
-            uint256 target,
-            uint256 cursor,
-            uint256 accum,
-            uint256 counted,
-            uint256 releasedCount
-        )
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        return (
-            s.recycleStrandedSeedApplied,
-            s.recycleStrandedSeedTarget,
-            s.recycleStrandedSeedCursor,
-            s.recycleStrandedSeedAccum,
-            s.recycleStrandedSeedCounted,
-            s.remitReleasedCount
-        );
-    }
-
     /// @notice Σ VPFI in PENDING (in-flight, un-acked) reservations to
     ///         `chainId`.
     function getRemitPendingTotal(

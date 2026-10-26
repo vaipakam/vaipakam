@@ -1581,7 +1581,7 @@ contract RewardAggregatorFacet is
      * @notice #1222 M3 B2-d5 — this chain's relocated-custody position: how
      *         much of the recycle bucket is Base-funded remit backing rather
      *         than first-time absorption, and the cumulative this chain
-     *         actually REPORTS to Base with that netted out.
+     *         actually REPORTS to Base, which never includes it.
      * @dev    Operator/observability read for the invariant that matters:
      *         `reportedCumulative` must never include relocated custody, or
      *         Base's `_mirrorAvailable` (`reported` net of the claim and
@@ -1607,89 +1607,46 @@ contract RewardAggregatorFacet is
         return (
             s.recycleCustodyRelocatedCumulative,
             s.recycleBucket,
-            LibVpfiRecycle.creditedCumulative(s)
+            s.recycleCreditedCumulative
         );
     }
 
     /**
-     * @notice #1444 / #1446 — the two raw counters plus the two live flags an
-     *         EXTERNAL checker needs
-     *         to verify this chain's recycle-bucket accounting without
-     *         trusting the accounting itself.
-     * @dev    Every other recycled read exposes a value the library DERIVES.
-     *         That is fine for reporting and useless for verification: if
-     *         {LibVpfiRecycle.creditedCumulative} stopped netting relocated
-     *         custody out, the reported figure and Base's accepted copy would
-     *         inflate together and stay equal, so no comparison between them
-     *         could see it (#1446). These three are stored slots, so a checker
-     *         can RE-DERIVE the published figures and disagree.
+     * @notice #1444 / #1446 — the stored counters plus the live role flag an
+     *         EXTERNAL checker needs to verify this chain's recycle-bucket
+     *         accounting without trusting the accounting itself.
+     * @dev    Read at one pinned block alongside {getRecycleCustodyPosition},
+     *         {getGovernorCommitState} and the repatriation and
+     *         reattribution figures, these make two relations checkable from
+     *         view calls alone:
      *
-     *         Two invariants become checkable from view calls alone, both
-     *         read at one pinned block alongside {getRecycleCustodyPosition}
-     *         and {getGovernorCommitState}:
-     *
-     *         1. COMPOSITION — `creditedRaw + custodyRelocated <= bucket +
-     *            paidOutRecycled + releasedRemitStranded`. Every credit lands in
-     *            the bucket exactly once; a counter that advanced without one
+     *         1. COMPOSITION — `credited + custodyRelocated + reattributedIn
+     *            <= bucket + paidOutRecycled + releasedRemitStranded +
+     *            repatriatedOut + reattributedOut`. Every credit lands in the
+     *            bucket exactly once; a counter that advanced without one
      *            breaks it. Inequality, not equality: `consume` floors the
      *            bucket for bounded cap-trim dust, which only widens the
-     *            right side. Checked in BOTH directions: the reverse
-     *            (`bucket + paidOut + stranded <= claimed + slack`) is what
-     *            catches an arrival crediting the bucket WITHOUT advancing
-     *            the relocated cumulative, which makes the forward bound
-     *            looser and leaves the derivation check agreeing with the
-     *            chain. `accountingSeeded` distinguishes the one state where
-     *            the reverse direction is legitimately unverifiable.
-     *         2. DERIVATION — `reportedCumulative == max(creditedRaw,
-     *            bucket + paidOutRecycled − custodyRelocated)`, i.e. the
-     *            pre-upgrade floor with the B2-d5 exclusion applied. Catches
-     *            the subtraction being dropped from the floor branch.
-     *
-     *         Also completes BUCKET COVERAGE (#1444): `bucket +
-     *         releasedRemitStranded >= outstandingCommitRecycled` is a hard
-     *         relation, where plain `bucket >= outstanding` had a legitimate
-     *         canonical failure path.
-     * @return creditedRaw           Stored `recycleCreditedCumulative` BEFORE
-     *                               the derived pre-upgrade floor is applied.
-     *                               Zero on a Diamond refreshed over live
-     *                               pre-#1222 state until its first credit —
-     *                               exactly the case the floor exists for, and
-     *                               the reason the derived figure cannot serve
-     *                               here.
+     *            right side. Checked in BOTH directions: the reverse (right
+     *            side `<= claimed + slack`) is what catches an arrival
+     *            crediting the bucket WITHOUT advancing the relocated
+     *            cumulative. Every counter starts at zero with the Diamond
+     *            (fresh deploy only, owner decision O1 = A), so both
+     *            directions hold from the first credit.
+     *         2. BUCKET COVERAGE (#1444) — `bucket + releasedRemitStranded -
+     *            releasedRemitResolved >= outstandingCommitRecycled` is a
+     *            hard relation, where plain `bucket >= outstanding` had a
+     *            legitimate canonical failure path.
+     * @return credited              Stored `recycleCreditedCumulative`: the
+     *                               lifetime Σ of first-time absorption, and
+     *                               exactly the figure the day-close reports
+     *                               (`reportedCumulative` in
+     *                               {getRecycleCustodyPosition} reads the
+     *                               same slot).
      * @return releasedRemitStranded Σ VPFI a released remittance took out of
      *                               the bucket and did not return (the
      *                               `paidOutRecycled` reversal). NOT the
      *                               pre-clamp commitment restored — that
      *                               figure's residual never left the bucket.
-     * @return accountingSeeded   Whether recycled accounting has ever run on
-     *                           this chain. DERIVED, not the raw slot: the
-     *                           flag is appended storage, so a Diamond
-     *                           refreshed over state that ALREADY has
-     *                           post-#1222 credits would read false forever
-     *                           (no historical credit replays the setter) and
-     *                           an under-credited composition there would be
-     *                           downgraded to an advisory until the next
-     *                           credit happened to run (#1448 r5). A non-zero
-     *                           `recycleCreditedCumulative` proves the chain
-     *                           was already seeded, so that is folded in.
-     *
-     *                           Deliberately NOT `custodyRelocated != 0`
-     *                           (#1448 r6). A mirror with a pre-#1222 bucket
-     *                           that took a relocation credit BEFORE this
-     *                           change has a non-zero relocated cumulative
-     *                           and a still-zero raw counter, because the old
-     *                           `creditCustodyRelocated` advanced only the
-     *                           former and never snapshotted the historical
-     *                           floor. Treating that as proof of seeding
-     *                           would turn the correct un-seeded advisory
-     *                           into a false CRITICAL on valid upgrade state
-     *                           — the opposite error to the one r5 fixed. Disambiguates `creditedRaw == 0`:
-     *                           false means a Diamond refreshed over live
-     *                           pre-#1222 state, where composition is
-     *                           genuinely unverifiable; true means a chain
-     *                           that has simply absorbed nothing, where a
-     *                           bucket with no counter behind it IS a fault
-     *                           (#1448 r4).
      * @return isCanonicalRewardChain Whether this Diamond currently acts as
      *                               the canonical reward chain. Published
      *                               with the figures because
@@ -1727,9 +1684,8 @@ contract RewardAggregatorFacet is
         external
         view
         returns (
-            uint256 creditedRaw,
+            uint256 credited,
             uint256 releasedRemitStranded,
-            bool accountingSeeded,
             bool isCanonicalRewardChain,
             uint256 releasedRemitResolved
         )
@@ -1738,12 +1694,10 @@ contract RewardAggregatorFacet is
         return (
             s.recycleCreditedCumulative,
             s.recycleReleasedRemitStrandedCumulative,
-            s.recycleAccountingSeeded || s.recycleCreditedCumulative != 0,
             s.isCanonicalRewardChain,
             // #1662 r3 — capped HERE, not at the write site: the stored
-            // cumulative accrues uncapped so resolutions recorded before
-            // the one-time stranded seed completes are not silently
-            // discarded against a floor that does not exist yet.
+            // cumulative accrues uncapped, so the published allowance
+            // term can never exceed the stranded figure it nets against.
             s.recycleReleasedRemitResolvedCumulative
                 > s.recycleReleasedRemitStrandedCumulative
                 ? s.recycleReleasedRemitStrandedCumulative

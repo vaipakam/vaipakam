@@ -179,8 +179,8 @@ export interface LocalLedger {
    * sit on the fresh side). OPTIONAL for the same reason as
    * `repatriatedOut` below: the view lives on a newer facet, and a chain
    * not yet refreshed with it answers every other read and reverts this
-   * one. `undefined` means UNKNOWN — the composition bound and the
-   * derivation re-statement SKIP, reported as a coverage gap — never zero:
+   * one. `undefined` means UNKNOWN — the composition bound SKIPS,
+   * reported as a coverage gap — never zero:
    * after any real correction a zero substitute would page a false
    * CRITICAL in one direction or the other.
    */
@@ -188,7 +188,7 @@ export interface LocalLedger {
   /**
    * #1568 C2 — `recycleRepatriatedOutCumulative`: lifetime VPFI this
    * chain's bucket has repatriated to Base. A DESTINATION term in the
-   * bucket composition and part of the reported-cumulative floor.
+   * bucket composition.
    * `undefined` means UNKNOWN — any read failure, missing selector
    * included (a partial facet refresh leaves possibly-nonzero storage
    * behind a reverting view — Codex #1618 r1/r5) — and every check that
@@ -229,19 +229,8 @@ export interface LocalLedger {
   armedFromDay: bigint;
   paidOutRecycled: bigint;
   /**
-   * #1444 / #1446 — the RAW stored slots, as opposed to every field above
-   * that the contract derives.
-   *
-   * `creditedRaw` is `recycleCreditedCumulative` BEFORE the pre-upgrade floor
-   * is applied; `reportedCumulative` above is what that floor produces. The
-   * difference is the whole point: a regression in the derivation moves the
-   * reported figure and Base's accepted copy of it in lockstep, so comparing
-   * those two can never see it, while comparing the derived figure against a
-   * re-derivation from these can.
-   */
-  /**
-   * #1444 / #1446 — the RAW stored slots, as opposed to every field above
-   * that the contract derives.
+   * #1444 / #1446 — the stored counters the bucket-composition and
+   * bucket-coverage relations need.
    *
    * OPTIONAL, and the optionality is load-bearing (#1448 r2). This view is a
    * NEWER facet selector than the three established reads, so a chain missed
@@ -254,13 +243,11 @@ export interface LocalLedger {
    */
   composition?: {
     /**
-     * `recycleCreditedCumulative` BEFORE the pre-upgrade floor is applied;
-     * `reportedCumulative` above is what that floor produces. The difference
-     * is the point: a regression in the derivation moves the reported figure
-     * and Base's accepted copy in lockstep, so comparing those two can never
-     * see it, while re-deriving from this can.
+     * `recycleCreditedCumulative`: lifetime first-time absorption on this
+     * chain. The same slot `reportedCumulative` above reads (#2875: there
+     * is no derived floor on a fresh Diamond).
      */
-    creditedRaw: bigint;
+    credited: bigint;
     /**
      * Σ VPFI a released remittance took out of the bucket and did not return.
      *
@@ -287,18 +274,6 @@ export interface LocalLedger {
      * them would under-recognise local backing).
      */
     releasedRemitResolved: bigint;
-    /**
-     * Whether ANY recycled credit has ever run on this chain.
-     *
-     * Disambiguates `creditedRaw === 0`, which two very different states
-     * share (#1448 r4): a Diamond refreshed over live pre-#1222 state, where
-     * the historical bucket genuinely has no counter behind it and
-     * composition is UNVERIFIABLE — and a fresh chain that has simply
-     * absorbed nothing, where a bucket with no counter behind it is a real
-     * fault. Inferring "un-seeded" from the zero alone downgraded the exact
-     * regression this check exists for to a non-paging advisory.
-     */
-    accountingSeeded: boolean;
     /**
      * Whether the chain ITSELF reports acting as the canonical reward chain.
      *
@@ -1165,15 +1140,13 @@ export function checkHardInvariants(
   // ── Bucket composition ─────────────────────────────────────────────
   //
   // #1446 — the check that catches a B2-d5 custody EXCLUSION regression in
-  // EITHER direction. `reported-derivation` covers the sibling failure (the
-  // subtraction dropped from the floor branch); this one covers a counter
-  // moving when it should not, and — via the reverse bound below — a counter
-  // NOT moving when it should.
+  // EITHER direction: a counter moving when it should not, and — via the
+  // reverse bound below — a counter NOT moving when it should.
   //
   // Every recycled credit lands in the bucket exactly once, so the two
   // lifetime cumulatives can never exceed where the tokens actually went:
   //
-  //     creditedRaw + relocated + reattributedIn
+  //     credited + relocated + reattributedIn
   //       <= bucket + paidOut + releasedRemitStranded + repatriatedOut
   //          + reattributedOut
   //
@@ -1184,13 +1157,11 @@ export function checkHardInvariants(
   // a reclassification (#1566 closure 2 cutover PR 2, Codex #2206 r9)
   // moves credit between the bucket (or its payout figure) and the fresh
   // side, counted on the reattribution term of the side it left or
-  // joined. The on-chain seed ceremony reads the same two sides from
-  // `LibVpfiRecycle.compositionSides`; this is the independent
-  // restatement.
+  // joined.
   //
   // Why it is the only check that sees this class: `reportedCumulative`
-  // is built by the SAME helper that builds the outbound day-close report,
-  // so a regression that stopped excluding relocated custody would inflate
+  // reads the SAME counter the outbound day-close report carries, so a
+  // regression that stopped excluding relocated custody would inflate
   // this chain's figure and Base's accepted copy of it identically, and
   // `base-ahead-of-chain` would see two equal numbers. This one compares
   // against where the tokens are, not against another copy of the claim.
@@ -1220,7 +1191,7 @@ export function checkHardInvariants(
     // a readable zero pair on a chain that never corrected is still checked.
     if (local.reattribution === undefined) continue;
     const claimed =
-      local.composition.creditedRaw +
+      local.composition.credited +
       local.custodyRelocated +
       local.reattribution.reattributedIn;
     // Repatriated-out is a DESTINATION: `debitRepatriationSurplus` moves
@@ -1239,11 +1210,7 @@ export function checkHardInvariants(
     // The forward bound alone is defeated by the very regression this
     // check exists for. If a custody arrival credits `recycleBucket` but
     // omits `recycleCustodyRelocatedCumulative`, `claimed` stays flat
-    // while `destinations` RISES — so the forward bound gets LOOSER, and
-    // `reported-derivation` agrees with the chain because it trusts the
-    // same missing slot. Verified: bucket 200→223, creditedRaw 1000,
-    // paidOut 800, relocated 0 makes the contract and this Worker both
-    // derive a false report of 1023 while the forward bound passes.
+    // while `destinations` RISES — so the forward bound gets LOOSER.
     //
     // So the relation is checked BOTH ways: tokens in the bucket that no
     // counter claims are as much a fault as counters claiming tokens that
@@ -1254,20 +1221,15 @@ export function checkHardInvariants(
     // the coverage tolerance for a noisy chain must not silently widen a
     // custody-exclusion blind spot (#1448 r2).
     //
-    // ADVISORY rather than CRITICAL when `creditedRaw` is 0: that is an
-    // un-seeded Diamond refreshed over live pre-#1222 state, where the
-    // whole historical bucket legitimately has no counter behind it. Not
-    // silent — the operator is told the relation is unverifiable until the
-    // first credit seeds the cumulative.
+    // Always CRITICAL (#2875): every chain is a fresh deploy (owner
+    // decision O1 = A), so every counter starts at zero with the Diamond
+    // and no bucket legitimately lacks a counter behind it.
     if (destinations > claimed + compositionSlackToleranceWei) {
-      // NOT `creditedRaw === 0` (#1448 r4) — a fresh chain reads zero too,
-      // and there the same state is a genuine fault that must page.
-      const unseeded = !local.composition.accountingSeeded;
       out.push(makeFinding({
         code: 'bucket-composition',
-        variant: unseeded ? 'unverifiable-unseeded' : 'under-credited',
+        variant: 'under-credited',
         identity: [
-          local.composition.creditedRaw,
+          local.composition.credited,
           local.custodyRelocated,
           local.bucket,
           local.paidOutRecycled,
@@ -1276,16 +1238,12 @@ export function checkHardInvariants(
           local.reattribution.reattributedIn,
           local.reattribution.reattributedOut,
         ],
-        severity: unseeded ? 'advisory' : 'critical',
+        severity: 'critical',
         chainId: local.chainId,
-        title: unseeded
-          ? 'Recycled composition cannot be verified — the cumulative is unseeded'
-          : 'Bucket holds more than the recycled cumulatives account for',
+        title: 'Bucket holds more than the recycled cumulatives account for',
         detail:
-          (unseeded
-            ? `no recycled credit has ever run on this chain, so its bucket has no counter behind it — a Diamond refreshed over live pre-#1222 state. The composition relation is UNVERIFIABLE until the first credit seeds the cumulative; reported here so the gap is visible rather than silently passing.\n`
-            : `bucket + paidOut + stranded + repatriated + reattributedOut > creditedRaw + relocated + reattributedIn — VPFI is in the bucket that no cumulative claims\n`) +
-          `  creditedRaw   = ${fmt(local.composition.creditedRaw)}\n` +
+          `bucket + paidOut + stranded + repatriated + reattributedOut > credited + relocated + reattributedIn — VPFI is in the bucket that no cumulative claims\n` +
+          `  credited      = ${fmt(local.composition.credited)}\n` +
           `  relocated     = ${fmt(local.custodyRelocated)}\n` +
           `  reattributedIn  = ${fmt(local.reattribution.reattributedIn)}\n` +
           `  claimed       = ${fmt(claimed)}\n` +
@@ -1296,9 +1254,7 @@ export function checkHardInvariants(
           `  destinations  = ${fmt(destinations)}\n` +
           `  unaccounted   = ${fmt(destinations - claimed)}\n` +
           `  tolerance     = ${fmt(compositionSlackToleranceWei)}\n\n` +
-          (unseeded
-            ? `EXPECTED on a freshly-upgraded chain and it self-heals: the first credit stamps the cumulative through the pre-upgrade floor.`
-            : `LIKELIEST CAUSE — an arriving remit credited the bucket WITHOUT advancing the relocated-custody cumulative. That is the mirror image of the over-credit case: it leaves this chain reporting Base's own top-up as its own absorption, and no other check sees it because they all read the same missing slot.\n\nNOTE this does NOT cover an arrival routed through the ordinary credit path instead of the custody-relocation one — that advances both sides and needs a Base-side acked-remittance cross-check.`),
+          `LIKELIEST CAUSE — an arriving remit credited the bucket WITHOUT advancing the relocated-custody cumulative. That is the mirror image of the over-credit case: it leaves this chain reporting Base's own top-up as its own absorption, and no other check sees it because they all read the same missing slot.\n\nNOTE this does NOT cover an arrival routed through the ordinary credit path instead of the custody-relocation one — that advances both sides and needs a Base-side acked-remittance cross-check.`,
       }));
     }
 
@@ -1308,7 +1264,7 @@ export function checkHardInvariants(
       code: 'bucket-composition',
       variant: 'over-credited',
       identity: [
-        local.composition.creditedRaw,
+        local.composition.credited,
         local.custodyRelocated,
         local.bucket,
         local.paidOutRecycled,
@@ -1321,8 +1277,8 @@ export function checkHardInvariants(
       chainId: local.chainId,
       title: 'Recycled cumulatives claim more credit than the bucket received',
       detail:
-        `creditedRaw + relocated + reattributedIn > bucket + paidOut + releasedRemitStranded + repatriated + reattributedOut — a counter advanced without tokens landing in the bucket\n` +
-        `  creditedRaw   = ${fmt(local.composition.creditedRaw)}\n` +
+        `credited + relocated + reattributedIn > bucket + paidOut + releasedRemitStranded + repatriated + reattributedOut — a counter advanced without tokens landing in the bucket\n` +
+        `  credited      = ${fmt(local.composition.credited)}\n` +
         `  relocated     = ${fmt(local.custodyRelocated)}\n` +
         `  reattributedIn  = ${fmt(local.reattribution.reattributedIn)}\n` +
         `  claimed       = ${fmt(claimed)}\n` +
@@ -1333,79 +1289,6 @@ export function checkHardInvariants(
         `  destinations  = ${fmt(destinations)}\n` +
         `  excess        = ${fmt(claimed - destinations)}\n\n` +
         `LIKELIEST CAUSE — a relocated-custody credit also advancing the absorption cumulative. That would let this chain report Base's own already-spent top-up back as its own local absorption, and Base would re-offer it as this chain's funding.`,
-    }));
-  }
-
-  // ── Reported-cumulative derivation ─────────────────────────────────
-  //
-  // #1446, second half — re-derive the PUBLISHED figure from the raw
-  // slots and disagree with the chain if it does not match:
-  //
-  //     reported == max(creditedRaw,
-  //                     bucket + paidOut + repatriatedOut + reattributedOut
-  //                       - relocated - reattributedIn)
-  //
-  // i.e. the stored counter, floored by the pre-upgrade derivation with
-  // the relocation — and, since #1566 closure 2 cutover PR 2 (Codex #2206
-  // r9), the reattribution pair — netted out. The composition bound above catches a
-  // counter advancing wrongly; this catches the DERIVATION dropping the
-  // subtraction, which matters on a Diamond refreshed over live pre-#1222
-  // state where the floor is the branch that binds.
-  //
-  // NOTE for maintainers: this formula is a deliberate SECOND
-  // implementation of `LibVpfiRecycle.creditedCumulative`. That is the
-  // point — an independent restatement is what makes disagreement
-  // meaningful — but it means a legitimate change to the library's
-  // derivation must be mirrored here in the same change, or this check
-  // will alarm on correct behaviour.
-  for (const local of obs.allLocals.values()) {
-    if (!local.composition) continue; // reported as a coverage gap
-    // #1568 C2 — the same skip-on-unknown gate as the composition bound
-    // (the floor consumes the same term; a zero substitute would deflate
-    // the re-derivation below the chain's own figure after any real
-    // repatriation). UNKNOWN includes a missing selector (r5); a
-    // readable zero is still checked.
-    if (local.repatriatedOut === undefined) continue;
-    if (local.reattribution === undefined) continue;
-    // Repatriated-out value stays IN the floor: it was absorbed here
-    // exactly once before leaving for Base, so a floor that dropped with
-    // the bucket on a healthy repatriation would fall below an earlier
-    // report (`LibVpfiRecycle.creditedCumulative` carries the same term;
-    // this restatement must move with it or the first repatriation pages
-    // a false mismatch). A reattribution is not absorption either: what a
-    // correction moved into the bucket is netted OUT like relocated
-    // custody, and what it moved out stays IN like a repatriation (Codex
-    // #2206 r1 on-chain, r9 here).
-    const gross =
-      local.bucket +
-      local.paidOutRecycled +
-      local.repatriatedOut +
-      local.reattribution.reattributedOut;
-    const netted = local.custodyRelocated + local.reattribution.reattributedIn;
-    const floorTerm = gross > netted ? gross - netted : 0n;
-    const raw = local.composition.creditedRaw;
-    const expected = raw >= floorTerm ? raw : floorTerm;
-    if (local.reportedCumulative === expected) continue;
-
-    out.push(makeFinding({
-      code: 'reported-derivation',
-      variant: 'mismatch',
-      identity: [local.reportedCumulative, expected],
-      severity: 'critical',
-      chainId: local.chainId,
-      title: 'Reported cumulative does not match its own inputs',
-      detail:
-        `the chain publishes a lifetime absorption figure this Worker cannot re-derive from the raw slots at the same block\n` +
-        `  reported      = ${fmt(local.reportedCumulative)}\n` +
-        `  re-derived    = ${fmt(expected)}  = max(creditedRaw, bucket + paidOut + repatriated + reattributedOut - relocated - reattributedIn)\n` +
-        `  creditedRaw   = ${fmt(local.composition.creditedRaw)}\n` +
-        `  bucket        = ${fmt(local.bucket)}\n` +
-        `  paidOut       = ${fmt(local.paidOutRecycled)}\n` +
-        `  repatriated   = ${fmt(local.repatriatedOut)}\n` +
-        `  reattributedOut = ${fmt(local.reattribution.reattributedOut)}\n` +
-        `  relocated     = ${fmt(local.custodyRelocated)}\n` +
-        `  reattributedIn  = ${fmt(local.reattribution.reattributedIn)}\n\n` +
-        `Either the derivation changed on-chain without this Worker being updated in the same change, or the relocated-custody exclusion has regressed. The figure is what mirrors report to Base and what sizes their funding, so treat a mismatch as load-bearing either way.`,
     }));
   }
 

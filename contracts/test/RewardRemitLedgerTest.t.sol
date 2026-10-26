@@ -1723,7 +1723,6 @@ contract RewardRemitLedgerTest is SetupTest {
         returns (
             uint256 raw,
             uint256 releasedStranded,
-            bool seeded,
             uint256 relocated,
             uint256 bucket,
             uint256 reported,
@@ -1732,8 +1731,7 @@ contract RewardRemitLedgerTest is SetupTest {
         )
     {
         RewardAggregatorFacet agg = RewardAggregatorFacet(address(diamond));
-        (raw, releasedStranded, seeded, , ) =
-            agg.getRecycleCompositionPosition();
+        (raw, releasedStranded, , ) = agg.getRecycleCompositionPosition();
         (relocated, bucket, reported) = agg.getRecycleCustodyPosition();
         (, , outstanding, paidOut) = agg.getGovernorCommitState();
     }
@@ -1745,7 +1743,6 @@ contract RewardRemitLedgerTest is SetupTest {
         (
             uint256 raw,
             uint256 releasedStranded,
-            bool seeded,
             uint256 relocated,
             uint256 bucket,
             ,
@@ -1759,29 +1756,15 @@ contract RewardRemitLedgerTest is SetupTest {
         );
     }
 
-    /// @dev The derivation of #1446: the REPORTED cumulative must be
-    ///      reproducible from the raw slots by an outside party. If the
-    ///      library stopped netting relocated custody out of the floor, the
-    ///      reported figure and Base's accepted copy would inflate together
-    ///      and no cross-chain comparison could see it — this one can.
+    /// @dev #2875 — the REPORTED cumulative is the stored absorption
+    ///      counter itself: there is no derived floor on a fresh Diamond, so
+    ///      the two views must read one figure.
     function _assertDerivation(string memory ctx) internal view {
-        (
-            uint256 raw,
-            ,
-            ,
-            uint256 relocated,
-            uint256 bucket,
-            uint256 reported,
-            uint256 paidOut,
-
-        ) = _composition();
-        uint256 gross = bucket + paidOut;
-        uint256 floorTerm = gross > relocated ? gross - relocated : 0;
-        uint256 expected = raw >= floorTerm ? raw : floorTerm;
+        (uint256 raw, , , , uint256 reported, , ) = _composition();
         assertEq(
             reported,
-            expected,
-            string.concat("derivation: reported == max(raw, bucket+paidOut-relocated) @ ", ctx)
+            raw,
+            string.concat("derivation: reported == the stored counter @ ", ctx)
         );
     }
 
@@ -1812,7 +1795,7 @@ contract RewardRemitLedgerTest is SetupTest {
         (uint256 recycledFull, uint256 recycledSent) =
             _remitRecycledWithResidual();
 
-        (uint256 rawBefore, uint256 strandedBefore, , bool canonBefore, ) =
+        (uint256 rawBefore, uint256 strandedBefore, bool canonBefore, ) =
             RewardAggregatorFacet(address(diamond))
                 .getRecycleCompositionPosition();
         assertEq(strandedBefore, 0, "no release yet");
@@ -1821,7 +1804,7 @@ contract RewardRemitLedgerTest is SetupTest {
         vm.warp(block.timestamp + 7 days);
         comp.releaseRemitReservation(1);
 
-        (uint256 raw, uint256 stranded, , , ) =
+        (uint256 raw, uint256 stranded, , ) =
             RewardAggregatorFacet(address(diamond))
                 .getRecycleCompositionPosition();
         // Codex #1448 r1 P1 — the SENT share, never the pre-clamp total. The
@@ -1868,7 +1851,7 @@ contract RewardRemitLedgerTest is SetupTest {
         vm.warp(block.timestamp + 7 days);
         comp.releaseRemitReservation(1);
 
-        (, uint256 stranded, , , uint256 bucket, , , uint256 outstanding) =
+        (, uint256 stranded, , uint256 bucket, , , uint256 outstanding) =
             _composition();
 
         // The naive form is genuinely violated here — assert that, so this
@@ -1915,675 +1898,6 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.releaseRemitReservation(1);
         _assertComposition("after released-remit restore");
         _assertDerivation("after released-remit restore");
-    }
-
-    // ─── #1448 r3: the pre-upgrade seed ceremony ──────────────────────────
-
-    /// @dev The state a Diamond is IN immediately after an in-place upgrade
-    ///      that added the stranded counter: a real released reservation, but
-    ///      the counter still zero because the old `restoreReleasedRemit` had
-    ///      nothing to record it in. Both externally-checkable relations read
-    ///      as violated on state the supported release path produced.
-    function _preUpgradeReleasedState()
-        internal
-        returns (uint256 recycledSent)
-    {
-        (, recycledSent) = _remitRecycledWithResidual();
-        vm.warp(block.timestamp + 7 days);
-        comp.releaseRemitReservation(1);
-        // Rewind BOTH appended slots to reproduce the pre-upgrade shape
-        // (#1448 r14). Rewinding only the value would build a state that
-        // cannot occur — a zero stranded total beside a release count that
-        // somehow survived the upgrade — and would hide the count backfill.
-        mutator.setReleasedRemitStrandedRaw(0);
-        mutator.setRemitReleasedCountRaw(0);
-    }
-
-    /// @dev Without the seed, BOTH relations are violated by exactly the
-    ///      historical stranded amount — so the watcher would page CRITICAL
-    ///      twice, immediately on upgrade, on correct behaviour. This test
-    ///      pins that precondition so the seed cannot look useful for the
-    ///      wrong reason.
-    function test_Seed_PreUpgradeStateViolatesBothRelations() public {
-        uint256 sent = _preUpgradeReleasedState();
-        (
-            uint256 raw,
-            uint256 stranded,
-            ,
-            uint256 relocated,
-            uint256 bucket,
-            ,
-            uint256 paidOut,
-            uint256 outstanding
-        ) = _composition();
-        assertEq(stranded, 0, "precondition: counter unwritten");
-        assertLt(bucket + stranded, outstanding, "coverage reads violated");
-        assertGt(
-            raw + relocated,
-            bucket + paidOut + stranded,
-            "composition reads violated"
-        );
-        assertEq(
-            raw + relocated - (bucket + paidOut + stranded),
-            sent,
-            "violated by EXACTLY the historical stranded amount"
-        );
-    }
-
-    /// @dev The ceremony DERIVES the amount from storage — the caller only
-    ///      says which reservations to count — and both relations reconcile.
-    function test_Seed_DerivesTheStrandedTotalAndReconciles() public {
-        uint256 sent = _preUpgradeReleasedState();
-        comp.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
-
-        (, uint256 stranded, , , uint256 bucket, , uint256 paidOut, uint256 outstanding) =
-            _composition();
-        assertEq(stranded, sent, "derived the CLAMPED sent share");
-        assertGe(bucket + stranded, outstanding, "coverage reconciles");
-        _assertComposition("after the seed");
-        _assertDerivation("after the seed");
-    }
-
-    /// @dev It must sum the SENT share, never the pre-clamp commitment —
-    ///      the same distinction Codex #1448 r1 established. Summing
-    ///      `recycledFull` would leave permanent slack.
-    function test_Seed_SumsTheSentShareNotThePreClampTotal() public {
-        LibVaipakam.RemitReservation memory r;
-        {
-            (uint256 recycledFull, ) = _remitRecycledWithResidual();
-            vm.warp(block.timestamp + 7 days);
-            comp.releaseRemitReservation(1);
-            mutator.setReleasedRemitStrandedRaw(0);
-            r = rlens.getRemitReservation(1);
-            assertGt(recycledFull, r.recycled, "fixture: residual exists");
-        }
-        comp.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
-        (, uint256 stranded, , , , , , ) = _composition();
-        assertEq(stranded, r.recycled, "sent share");
-        assertLt(stranded, r.recycledFull, "NOT the pre-clamp total");
-    }
-
-    /// @dev One-shot. A second run — or a run after an organic release
-    ///      already recorded some — would double-count.
-    function test_Seed_RefusesWhenAlreadySeeded() public {
-        _preUpgradeReleasedState();
-        comp.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
-        (, uint256 stranded, , , , , , ) = _composition();
-        uint256 seedTo = 2;
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                RewardCompensationDispatchFacet.ReleasedRemitStrandedAlreadySeeded.selector,
-                stranded
-            )
-        );
-        comp.seedReleasedRemitStranded(seedTo);
-    }
-
-    /// @dev COMPLETENESS, the property the id-list shape could not provide
-    ///      (Codex #1448 r4). A caller-supplied list could omit a release,
-    ///      still satisfy both post-condition inequalities because ordinary
-    ///      bucket headroom absorbed the gap, and permanently arm the
-    ///      one-shot guard with a short total. Scanning `1..nonce` makes
-    ///      completeness structural: with TWO historical releases the seed
-    ///      must equal their sum, not either one alone.
-    function test_Seed_CountsEveryReleasedReservationNotJustOne() public {
-        (, uint256 sentA) = _remitRecycledWithResidual();
-        vm.warp(block.timestamp + 7 days);
-        comp.releaseRemitReservation(1);
-
-        // A second remit of the re-opened day, released in turn.
-        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
-        _remitDay1ToArb();
-        LibVaipakam.RemitReservation memory r2 = rlens.getRemitReservation(2);
-        // 8 days, not another 7: two IDENTICAL `vm.warp(block.timestamp + N)`
-        // expressions get common-subexpression-eliminated under viaIR and the
-        // second is a no-op, so the release would revert RemitReleaseTooEarly.
-        vm.warp(block.timestamp + 8 days);
-        comp.releaseRemitReservation(2);
-
-        assertEq(rlens.getRemitReservationNonce(), 2, "fixture: two reservations");
-        assertGt(r2.recycled, 0, "fixture: the second stranded something too");
-        mutator.setReleasedRemitStrandedRaw(0);
-
-        comp.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
-        (, uint256 stranded, , , , , , ) = _composition();
-        assertEq(stranded, sentA + r2.recycled, "summed BOTH releases");
-        assertGt(stranded, sentA, "not just the first");
-    }
-
-    /// @dev A non-released reservation contributes nothing — the scan filters
-    ///      on status rather than trusting the caller to pick.
-    function test_Seed_IgnoresReservationsThatWereNotReleased() public {
-        _finalizeDay(1);
-        _remitDay1ToArb();
-        assertEq(uint256(rlens.getRemitReservation(1).status), 1, "pending");
-        comp.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
-        (, uint256 stranded, , , , , , ) = _composition();
-        assertEq(stranded, 0, "a pending reservation stranded nothing");
-    }
-
-    /// @dev The post-condition is the load-bearing safety property: if the
-    ///      derived seed does NOT reconcile, the divergence was not produced
-    ///      by pre-upgrade releases and the ceremony must refuse rather than
-    ///      half-silence a real alert.
-    function test_Seed_RevertsWhenItWouldNotReconcile() public {
-        _preUpgradeReleasedState();
-        // An unexplained shortfall on top of the historical one: the seed
-        // cannot account for this, so it must not be applied at all.
-        mutator.setRecycleBucketRaw(0);
-        uint256 seedTo = rlens.getRemitReservationNonce();
-        vm.expectRevert(
-            RewardCompensationDispatchFacet.SeedDoesNotReconcile.selector
-        );
-        comp.seedReleasedRemitStranded(seedTo);
-    }
-
-    // ─── #1448 r5: upgrade-path robustness ────────────────────────────────
-
-    /// @dev A NEW release landing after the upgrade but BEFORE the ceremony
-    ///      must not brick recovery. Guarding the one-shot on "the counter is
-    ///      non-zero" did exactly that: the historical amount would have been
-    ///      stranded forever with no entry point, and the redeploy script only
-    ///      prints the ceremony after all refresh work, so an operator doing
-    ///      nothing wrong could reach it.
-    function test_Seed_StillRunsAfterAPostUpgradeReleaseRecordedSome() public {
-        (, uint256 sentA) = _remitRecycledWithResidual();
-        vm.warp(block.timestamp + 7 days);
-        comp.releaseRemitReservation(1);
-        // The pre-upgrade shape: the historical release recorded nothing.
-        mutator.setReleasedRemitStrandedRaw(0);
-
-        // Now a SECOND release lands organically, before the ceremony runs.
-        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
-        _remitDay1ToArb();
-        LibVaipakam.RemitReservation memory r2 = rlens.getRemitReservation(2);
-        vm.warp(block.timestamp + 8 days);
-        comp.releaseRemitReservation(2);
-
-        (, uint256 before, , , , , , ) = _composition();
-        assertEq(before, r2.recycled, "only the NEW release is recorded");
-        assertGt(before, 0, "so the value-based guard would have refused");
-
-        comp.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
-
-        (, uint256 after_, , , , , , ) = _composition();
-        assertEq(after_, sentA + r2.recycled, "seed subsumes BOTH");
-        assertGt(after_, before, "the historical amount was recovered");
-    }
-
-    /// @dev The scan ASSIGNS rather than adds, so a release already recorded
-    ///      organically is not counted twice.
-    function test_Seed_DoesNotDoubleCountAnAlreadyRecordedRelease() public {
-        (, uint256 sent) = _remitRecycledWithResidual();
-        vm.warp(block.timestamp + 7 days);
-        comp.releaseRemitReservation(1);
-        // Counter left AS RECORDED — not rewound. The ceremony must be a
-        // no-op in value terms here.
-        (, uint256 before, , , , , , ) = _composition();
-        assertEq(before, sent, "recorded organically");
-
-        comp.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
-        (, uint256 after_, , , , , , ) = _composition();
-        assertEq(after_, sent, "assigned, not added");
-    }
-
-    /// @dev One-shot is keyed on the APPLIED flag, so a second run refuses
-    ///      even though the value is unchanged.
-    function test_Seed_AppliedFlagIsWhatBlocksASecondRun() public {
-        _preUpgradeReleasedState();
-        comp.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
-        (, uint256 stranded, , , , , , ) = _composition();
-        uint256 seedTo = rlens.getRemitReservationNonce();
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                RewardCompensationDispatchFacet.ReleasedRemitStrandedAlreadySeeded.selector,
-                stranded
-            )
-        );
-        comp.seedReleasedRemitStranded(seedTo);
-    }
-
-    /// @dev The post-condition now checks BOTH directions. A chain whose
-    ///      relocated counter is independently SHORT leaves the reverse
-    ///      discrepancy alive; the one-sided form accepted that and armed the
-    ///      ceremony anyway.
-    function test_Seed_RefusesWhenTheReverseDirectionStaysBroken() public {
-        _preUpgradeReleasedState();
-        // Bucket holds more than any counter accounts for — an arrival that
-        // credited without advancing the relocated cumulative.
-        mutator.setRecycleBucketRaw(
-            ConfigFacet(address(diamond)).getRecycleBucket() + 50e18
-        );
-        uint256 seedTo = rlens.getRemitReservationNonce();
-        vm.expectRevert(RewardCompensationDispatchFacet.SeedDoesNotReconcile.selector);
-        comp.seedReleasedRemitStranded(seedTo);
-    }
-
-    /// @dev #1448 r5 — the seeded marker is DERIVED, so a Diamond refreshed
-    ///      over state that already has post-#1222 credits does not read as
-    ///      never-seeded. Otherwise its under-credited composition would be
-    ///      downgraded to an advisory until some later credit ran.
-    function test_SeededMarker_DerivedFromExistingCumulatives() public {
-        _configureMirror();
-        // Raw slot false (appended storage), but real absorption exists.
-        mutator.setRecycleBucketRaw(40e18);
-        mutator.setRecycleCreditedCumulativeRaw(40e18);
-
-        (, , bool seeded, , ) = RewardAggregatorFacet(address(diamond))
-            .getRecycleCompositionPosition();
-        assertTrue(seeded, "existing absorption proves the chain was seeded");
-    }
-
-    /// @dev #1448 r6 — the OTHER direction of the same trap. A mirror with a
-    ///      pre-#1222 bucket that took a relocation credit BEFORE the seed-fold
-    ///      existed has a non-zero relocated cumulative and a still-ZERO raw
-    ///      counter: the old `creditCustodyRelocated` advanced only the former
-    ///      and never snapshotted the historical floor. Treating that as proof
-    ///      of seeding turns the correct un-seeded advisory into a false
-    ///      CRITICAL on valid upgrade state — the mirror image of the r5 bug.
-    function test_SeededMarker_RelocatedAloneIsNotProofOfSeeding() public {
-        _configureMirror();
-        // The exact pre-commit shape: historical bucket, relocated custody
-        // recorded, raw counter never written.
-        mutator.setRecycleBucketRaw(63e18);
-        mutator.setRecycleCustodyRelocatedRaw(23e18);
-        mutator.setRecycleCreditedCumulativeRaw(0);
-
-        (uint256 raw, , bool seeded, , ) =
-            RewardAggregatorFacet(address(diamond))
-                .getRecycleCompositionPosition();
-        assertEq(raw, 0, "fixture: the raw counter was never written");
-        assertFalse(
-            seeded,
-            "relocated custody alone must NOT count as proof of seeding"
-        );
-    }
-
-    /// @dev And it is still FALSE on a genuinely untouched chain — otherwise
-    ///      the derivation would just always return true.
-    function test_SeededMarker_FalseOnAnUntouchedChain() public {
-        _configureMirror();
-        (, , bool seeded, , ) = RewardAggregatorFacet(address(diamond))
-            .getRecycleCompositionPosition();
-        assertFalse(seeded, "nothing has ever run here");
-    }
-
-    // ─── #1448 r7: the seed is resumable and bounded ──────────────────────
-
-    /// @dev A Diamond with a long reservation history cannot scan `1..nonce`
-    ///      in one transaction, and because the ceremony is one-shot it would
-    ///      then NEVER seed — leaving the watcher permanently reporting valid
-    ///      pre-upgrade state as CRITICAL. Ranges fix the liveness without
-    ///      giving up completeness: the finish line is pinned from the nonce,
-    ///      so `1..target` is still covered structurally.
-    function test_Seed_ResumesAcrossRangesAndOnlyPublishesAtTheEnd() public {
-        (, uint256 sentA) = _remitRecycledWithResidual();
-        vm.warp(block.timestamp + 7 days);
-        comp.releaseRemitReservation(1);
-        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
-        _remitDay1ToArb();
-        LibVaipakam.RemitReservation memory r2 = rlens.getRemitReservation(2);
-        vm.warp(block.timestamp + 8 days);
-        comp.releaseRemitReservation(2);
-        mutator.setReleasedRemitStrandedRaw(0);
-        assertEq(rlens.getRemitReservationNonce(), 2, "fixture: two ids");
-
-        // Range 1 of 2 — NOTHING is published yet, so every relation over the
-        // ledger is exactly as it was. A partial total would make bucket
-        // coverage more permissive, which is the direction that hides a real
-        // shortfall.
-        comp.seedReleasedRemitStranded(1);
-        (, uint256 midway, , , , , , ) = _composition();
-        assertEq(midway, 0, "partial scan publishes nothing");
-
-        // Range 2 finishes it, and the total is BOTH releases.
-        comp.seedReleasedRemitStranded(2);
-        (, uint256 finalTotal, , , , , , ) = _composition();
-        assertEq(finalTotal, sentA + r2.recycled, "both releases counted once");
-    }
-
-    /// @dev A release landing mid-ceremony records organically AND may sit in
-    ///      an already-scanned range, so the scan and the live counter
-    ///      disagree. Refuse rather than guess.
-    function test_Seed_DetectsAReleaseLandingMidCeremony() public {
-        _remitRecycledWithResidual();
-        vm.warp(block.timestamp + 7 days);
-        comp.releaseRemitReservation(1);
-        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
-        _remitDay1ToArb();
-        mutator.setReleasedRemitStrandedRaw(0);
-
-        comp.seedReleasedRemitStranded(1); // range 1, ceremony now in flight
-
-        // Reservation 2 is released before the operator runs range 2.
-        vm.warp(block.timestamp + 8 days);
-        comp.releaseRemitReservation(2);
-
-        (, uint256 nowCounter, , , , , , ) = _composition();
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                RewardCompensationDispatchFacet.SeedRaceDetected.selector, 0, nowCounter
-            )
-        );
-        comp.seedReleasedRemitStranded(2);
-    }
-
-    /// @dev Ranges must move forward and stay inside the pinned target — a
-    ///      repeated or overlapping range is the double-count route the id
-    ///      list had.
-    function test_Seed_RejectsNonAdvancingOrOverrunningRanges() public {
-        _preUpgradeReleasedState();
-        uint256 target = rlens.getRemitReservationNonce();
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                RewardCompensationDispatchFacet.SeedRangeInvalid.selector,
-                target + 1, 0, target
-            )
-        );
-        comp.seedReleasedRemitStranded(target + 1);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                RewardCompensationDispatchFacet.SeedRangeInvalid.selector, 0, 0, target
-            )
-        );
-        comp.seedReleasedRemitStranded(0);
-    }
-
-    /// @dev The target is PINNED at the first call, so a reservation created
-    ///      later cannot move the finish line — the ceremony still completes.
-    function test_Seed_TargetIsPinnedAgainstLaterReservations() public {
-        _preUpgradeReleasedState();
-        comp.seedReleasedRemitStranded(1);
-        // A new reservation appears after the ceremony started.
-        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
-        _remitDay1ToArb();
-        assertEq(rlens.getRemitReservationNonce(), 2, "nonce moved");
-        // Completion is judged against the pinned target of 1, not the new
-        // nonce, so the ceremony is already finished and refuses a re-run.
-        (, uint256 stranded, , , , , , ) = _composition();
-        assertGt(stranded, 0, "published at the pinned target");
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                RewardCompensationDispatchFacet.ReleasedRemitStrandedAlreadySeeded.selector,
-                stranded
-            )
-        );
-        comp.seedReleasedRemitStranded(2);
-    }
-
-    /// @dev #1448 r8 — detecting the race must not BRICK the ceremony. Once a
-    ///      release lands mid-flight the baseline check reverts every
-    ///      subsequent call, so without a reset nothing can ever publish —
-    ///      the same liveness failure the resumable design was added to
-    ///      remove, reintroduced by the guard protecting it.
-    function test_Seed_ResetRecoversFromADetectedRace() public {
-        _remitRecycledWithResidual();
-        vm.warp(block.timestamp + 7 days);
-        comp.releaseRemitReservation(1);
-        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
-        _remitDay1ToArb();
-        mutator.setReleasedRemitStrandedRaw(0);
-
-        comp.seedReleasedRemitStranded(1);
-        vm.warp(block.timestamp + 8 days);
-        comp.releaseRemitReservation(2); // the race
-
-        (, uint256 raced, , , , , , ) = _composition();
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                RewardCompensationDispatchFacet.SeedRaceDetected.selector, 0, raced
-            )
-        );
-        comp.seedReleasedRemitStranded(2);
-
-        // Reset re-pins from the CURRENT state and the ceremony completes.
-        comp.resetReleasedRemitStrandedSeed();
-        comp.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
-
-        (, uint256 finalTotal, , , , , , ) = _composition();
-        LibVaipakam.RemitReservation memory r1 = rlens.getRemitReservation(1);
-        LibVaipakam.RemitReservation memory r2 = rlens.getRemitReservation(2);
-        assertEq(
-            finalTotal,
-            r1.recycled + r2.recycled,
-            "restart counted both releases, exactly once each"
-        );
-    }
-
-    /// @dev The reset is a restart lever, never a way to re-run a finished
-    ///      ceremony or edit the published figure.
-    function test_Seed_ResetRefusesOnceApplied() public {
-        _preUpgradeReleasedState();
-        comp.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
-        (, uint256 stranded, , , , , , ) = _composition();
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                RewardCompensationDispatchFacet.ReleasedRemitStrandedAlreadySeeded.selector,
-                stranded
-            )
-        );
-        comp.resetReleasedRemitStrandedSeed();
-    }
-
-    /// @dev And it refuses when nothing is in flight, so it cannot be used to
-    ///      poke at a Diamond that has never started one.
-    function test_Seed_ResetRefusesWhenNothingInFlight() public {
-        _preUpgradeReleasedState();
-        vm.expectRevert(RewardCompensationDispatchFacet.SeedNotStarted.selector);
-        comp.resetReleasedRemitStrandedSeed();
-    }
-
-    /// @dev The completion event must report RELEASED reservations, not the
-    ///      reservation nonce — the latter includes pending and acked entries
-    ///      and would inflate what audit consumers read (#1448 r8).
-    function test_Seed_EventReportsReleasedCountNotTheNonce() public {
-        _preUpgradeReleasedState();
-        // Fixture: one released reservation, plus a pending one, so nonce > count.
-        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
-        _remitDay1ToArb();
-        uint256 nonce = rlens.getRemitReservationNonce();
-        assertEq(nonce, 2, "fixture: 2 reservations, only 1 released");
-
-        vm.recordLogs();
-        comp.seedReleasedRemitStranded(nonce);
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        bytes32 sig = keccak256("ReleasedRemitStrandedSeeded(uint256,uint256)");
-        bool seen;
-        for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].topics[0] != sig) continue;
-            (, uint256 reservations) =
-                abi.decode(logs[i].data, (uint256, uint256));
-            assertEq(reservations, 1, "the RELEASED count, not the nonce");
-            seen = true;
-        }
-        assertTrue(seen, "completion event was emitted");
-    }
-
-    /// #1448 r10 — the race guard used to pin ONLY the stranded VALUE, which
-    /// is blind to the release most likely to corrupt the emitted count: one
-    /// whose recycled share is zero. `releaseRemitReservation` flips the
-    /// status to Released unconditionally, but `restoreReleasedRemit` returns
-    /// early when there is nothing to restore, so the value counter never
-    /// moves. Landing in an already-scanned range, the scan misses it too —
-    /// so the ceremony completed and reported a found-count the runbook tells
-    /// operators to reconcile against the release history independently.
-    ///
-    /// The state under test is "a release happened, the value did not move".
-    /// It is reproduced here by rewinding the value counter after a real
-    /// release rather than by building a fresh-only slice, because the shape
-    /// is what matters and the two are indistinguishable to the guard. In
-    /// production it arises whenever a released reservation carries no
-    /// recycled backing — a fresh-only remittance, or one whose recycled
-    /// share clamped to zero.
-    ///
-    /// Guarding on the release COUNT closes it: nothing can flip a status
-    /// without moving that.
-    function test_Seed_RaceGuardCatchesAZeroRecycledRelease() public {
-        _remitRecycledWithResidual();
-        vm.warp(block.timestamp + 7 days);
-        comp.releaseRemitReservation(1);
-        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
-        _remitDay1ToArb();
-        mutator.setReleasedRemitStrandedRaw(0);
-
-        // A PARTIAL scan: target pins at 2, cursor reaches 1. Reservation 2
-        // is inside the pinned range but not yet scanned, and still Pending.
-        comp.seedReleasedRemitStranded(1);
-        (, uint256 valueMid, , , , , , ) = _composition();
-        (, , , , , uint256 countMid) =
-            rlens.getReleasedRemitStrandedSeedState();
-
-        // Release it, then rewind the value so the counter reads exactly as
-        // it would after a release that stranded nothing.
-        vm.warp(block.timestamp + 8 days);
-        comp.releaseRemitReservation(2);
-        mutator.setReleasedRemitStrandedRaw(valueMid);
-
-        (, uint256 valueAfter, , , , , , ) = _composition();
-        (, , , , , uint256 countAfter) =
-            rlens.getReleasedRemitStrandedSeedState();
-        assertEq(
-            valueAfter,
-            valueMid,
-            "precondition: the value counter did NOT move - a value-only "
-            "guard is blind to this release by construction"
-        );
-        assertEq(countAfter, countMid + 1, "but the release COUNT did move");
-
-        // The guard must still fire, on the count. `seedTo` is hoisted: a
-        // nested getter would be "the next call" and eat the expectRevert.
-        uint256 seedTo = rlens.getRemitReservationNonce();
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                RewardCompensationDispatchFacet.SeedRaceDetected.selector,
-                valueMid,
-                valueAfter
-            )
-        );
-        comp.seedReleasedRemitStranded(seedTo);
-    }
-
-    /// #1448 r12 — a DEMOTED chain must still be able to seed its own
-    /// history. A Diamond that released remittances while canonical, was
-    /// switched to mirror, and is refreshed afterwards holds exactly the
-    /// status-3 reservations this ceremony reconstructs. Gating on the
-    /// CURRENT role would leave it with an unseeded composition discrepancy
-    /// permanently — unless an operator re-promoted a mirror purely to run a
-    /// migration, which is a far worse instruction than not gating on a flag
-    /// that can move underneath the ceremony.
-    ///
-    /// Recorded history is the real gate, and it is self-enforcing: only the
-    /// canonical chain ever creates reservations, so a chain that was never
-    /// canonical has an empty range and reverts `SeedNothingToScan`.
-    function test_Seed_RunsOnADemotedFormerCanonicalChain() public {
-        uint256 sentA = _preUpgradeReleasedState();
-        assertGt(sentA, 0, "fixture: released real backing while canonical");
-
-        // The role moves AFTER the history exists.
-        _unfreezeRole();
-        RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(false);
-
-        comp.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
-
-        (, uint256 stranded, , , , , , ) = _composition();
-        assertEq(
-            stranded,
-            sentA,
-            "the historical amount is recoverable after demotion - it is "
-            "history, and history does not change role"
-        );
-    }
-
-    /// And the gate that replaces the role check actually bites: a Diamond
-    /// with no reservation history cannot seed at all, whatever its role.
-    function test_Seed_RefusesWithNoReservationHistory() public {
-        _unfreezeRole();
-        RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(false);
-        vm.expectRevert(RewardCompensationDispatchFacet.SeedNothingToScan.selector);
-        comp.seedReleasedRemitStranded(1);
-    }
-
-    /// The ceremony's own state must be readable. Without it an operator can
-    /// only infer "has this already run?" from the published figure — which
-    /// is exactly the value-based reasoning that is wrong here, since a
-    /// non-zero total can be a post-upgrade release with a historical amount
-    /// still unrecovered behind it.
-    function test_Seed_StateIsExternallyReadable() public {
-        _preUpgradeReleasedState();
-        (bool appliedBefore, uint256 targetBefore, , , , ) =
-            rlens.getReleasedRemitStrandedSeedState();
-        assertFalse(appliedBefore, "not yet run");
-        assertEq(targetBefore, 0, "none in flight");
-
-        comp.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
-
-        (bool appliedAfter, , , uint256 accum, uint256 counted, ) =
-            rlens.getReleasedRemitStrandedSeedState();
-        assertTrue(appliedAfter, "one-shot is visibly spent");
-        assertGt(accum, 0, "and what it recovered is readable");
-        assertEq(counted, 1, "one release behind it");
-    }
-
-    /// #1448 r14 — the published pair must not contradict itself. Both
-    /// counters behind it are APPENDED slots, so on a Diamond upgraded in
-    /// place both start at zero with historical releases already behind them.
-    /// The scan recovers the history into `counted`; without the matching
-    /// backfill the tuple would advertise a "lifetime" release count SMALLER
-    /// than the "found so far" subset it is meant to contain — and an
-    /// operator reconciling it against the release history, exactly as the
-    /// runbook instructs, would find it short by every pre-upgrade release.
-    ///
-    /// Asserts the STORED counter (via the getter's own field), not a figure
-    /// derived for display: it is what a later consumer reads.
-    function test_Seed_BackfillsTheLifetimeReleaseCount() public {
-        _preUpgradeReleasedState();
-
-        // Precondition: the shape this exists for. One release is real and
-        // recorded in the reservation, but the lifetime counter cannot see it.
-        (, , , , , uint256 countBefore) =
-            rlens.getReleasedRemitStrandedSeedState();
-        assertEq(countBefore, 0, "precondition: appended slot reads zero");
-        assertEq(
-            uint256(rlens.getRemitReservation(1).status),
-            3,
-            "precondition: yet the release itself is real and Released"
-        );
-
-        comp.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
-
-        (bool applied, , , , uint256 counted, uint256 lifetime) =
-            rlens.getReleasedRemitStrandedSeedState();
-        assertTrue(applied, "ceremony completed");
-        assertEq(counted, 1, "the scan found the historical release");
-        assertEq(
-            lifetime,
-            counted,
-            "and the lifetime count was backfilled to match - not left at 0, "
-            "which would make the published tuple self-contradictory"
-        );
-    }
-
-    /// The backfill must not be able to DISCARD releases either — the
-    /// direction the assert covers. A count above what the scan found can
-    /// only mean the two disagree about the history, which must revert rather
-    /// than quietly overwrite. Unreachable through the public surface (the
-    /// race guard blocks completion after any mid-ceremony release), so it is
-    /// reached here by forcing the counter above the scan's own tally.
-    function test_Seed_RefusesToShrinkTheLifetimeReleaseCount() public {
-        _preUpgradeReleasedState();
-        mutator.setRemitReleasedCountRaw(5);
-
-        uint256 seedTo = rlens.getRemitReservationNonce();
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                RewardCompensationDispatchFacet.SeedWouldShrinkReleasedCount.selector,
-                1,
-                5
-            )
-        );
-        comp.seedReleasedRemitStranded(seedTo);
     }
 
     /// @dev Accept ETH refunds from the remit fee path.
@@ -3383,7 +2697,7 @@ contract RewardRemitLedgerTest is SetupTest {
         public
     {
         LibVaipakam.RemitReservation memory r = _releasedMixedFixture();
-        (, uint256 strandedBefore, , , ) = RewardAggregatorFacet(
+        (, uint256 strandedBefore, , ) = RewardAggregatorFacet(
             address(diamond)
         ).getRecycleCompositionPosition();
         assertGt(strandedBefore, 0, "fixture: the release stranded value");
@@ -3391,7 +2705,6 @@ contract RewardRemitLedgerTest is SetupTest {
         (
             ,
             uint256 strandedAfter,
-            ,
             ,
             uint256 recoveredAfter
         ) = RewardAggregatorFacet(address(diamond))
@@ -3515,13 +2828,13 @@ contract RewardRemitLedgerTest is SetupTest {
     /// from the other end.
     function test_Ceremony_TerminalLossRetiresRecycledBacking() public {
         LibVaipakam.RemitReservation memory r = _releasedMixedFixture();
-        (, uint256 stranded, , , uint256 resolvedBefore) =
+        (, uint256 stranded, , uint256 resolvedBefore) =
             RewardAggregatorFacet(address(diamond))
                 .getRecycleCompositionPosition();
         assertGt(stranded, 0, "fixture: the release stranded value");
         assertEq(resolvedBefore, 0, "nothing resolved yet");
         comp.recordRecoveryTerminalLoss(1, r.fresh, r.recycled);
-        (, , , , uint256 resolvedAfter) = RewardAggregatorFacet(
+        (, , , uint256 resolvedAfter) = RewardAggregatorFacet(
             address(diamond)
         ).getRecycleCompositionPosition();
         assertEq(
@@ -3562,7 +2875,7 @@ contract RewardRemitLedgerTest is SetupTest {
     /// under-recognises local backing and pages a false CRITICAL.
     function test_Import_SettlementDoesNotNetLocalStranding() public {
         LibVaipakam.RemitReservation memory r = _releasedMixedFixture();
-        (, uint256 stranded, , , uint256 resolvedBefore) =
+        (, uint256 stranded, , uint256 resolvedBefore) =
             RewardAggregatorFacet(address(diamond))
                 .getRecycleCompositionPosition();
         assertGt(stranded, 0, "fixture: local stranding");
@@ -3573,7 +2886,7 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7);
         vpfiTok.mint(address(diamond), 1e18);
         comp.clearImportedOutstanding(CHAIN_ARB, 1e18);
-        (, , , , uint256 resolvedAfter) = RewardAggregatorFacet(
+        (, , , uint256 resolvedAfter) = RewardAggregatorFacet(
             address(diamond)
         ).getRecycleCompositionPosition();
         assertEq(
@@ -3632,33 +2945,6 @@ contract RewardRemitLedgerTest is SetupTest {
         );
         comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
             CHAIN_ARB, 2, 0.6e18, 0.4e18, 1
-        );
-    }
-
-    /// r3-c3 - a resolution recorded BEFORE the one-time stranded seed
-    /// completes must not be discarded. The stored cumulative accrues
-    /// uncapped and is capped only where published, so the seed's later
-    /// assignment reveals the full resolved figure instead of leaving
-    /// returned/written-off value reading as in-transit forever.
-    function test_Ceremony_ResolutionSurvivesLateStrandedSeed() public {
-        LibVaipakam.RemitReservation memory r = _releasedMixedFixture();
-        // Reproduce the pre-seed shape: the stranded floor is not yet
-        // published, exactly as on an in-place-upgraded Diamond.
-        mutator.setReleasedRemitStrandedRaw(0);
-        comp.recordRecoveryTerminalLoss(1, r.fresh, r.recycled);
-        (, , , , uint256 publishedPreSeed) = RewardAggregatorFacet(
-            address(diamond)
-        ).getRecycleCompositionPosition();
-        assertEq(publishedPreSeed, 0, "capped at the unseeded floor");
-        // The seed lands the historical total.
-        mutator.setReleasedRemitStrandedRaw(r.recycled);
-        (, , , , uint256 publishedPostSeed) = RewardAggregatorFacet(
-            address(diamond)
-        ).getRecycleCompositionPosition();
-        assertEq(
-            publishedPostSeed,
-            r.recycled,
-            "the pre-seed resolution was retained, not discarded"
         );
     }
 
@@ -4610,7 +3896,7 @@ contract RewardRemitLedgerTest is SetupTest {
         (, uint256 recycledSent) = _remitRecycledWithResidual();
         vm.warp(block.timestamp + 7 days);
         comp.releaseRemitReservation(1);
-        (, uint256 stranded, , , uint256 resolvedBefore) =
+        (, uint256 stranded, , uint256 resolvedBefore) =
             RewardAggregatorFacet(address(diamond)).getRecycleCompositionPosition();
         assertGt(recycledSent, 0, "fixture-live: a recycled share was sent");
         assertEq(stranded, recycledSent, "fixture-live: the release stranded the sent share");
@@ -4618,13 +3904,13 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(rlens.getRemitReservation(1).strandedRecycled, recycledSent, "recorded on the reservation");
         uint256 total = rlens.getRemitReservation(1).total;
         rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, total);
-        (, , , , uint256 resolved) = RewardAggregatorFacet(address(diamond)).getRecycleCompositionPosition();
+        (, , , uint256 resolved) = RewardAggregatorFacet(address(diamond)).getRecycleCompositionPosition();
         assertEq(resolved, recycledSent, "the landed delivery resolved it");
         assertEq(rlens.getRemitReservation(1).strandedRecycled, 0, "and the record is spent");
         (uint256 booked, ) = rlens.getChainRemittedRecycled(CHAIN_ARB);
         assertEq(booked, recycledSent, "#1452: the late consumption is booked as delivered");
         rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, total);
-        (, , , , uint256 again) = RewardAggregatorFacet(address(diamond)).getRecycleCompositionPosition();
+        (, , , uint256 again) = RewardAggregatorFacet(address(diamond)).getRecycleCompositionPosition();
         assertEq(again, recycledSent, "a repeated acknowledgement resolves nothing more");
         (uint256 bookedAgain, ) = rlens.getChainRemittedRecycled(CHAIN_ARB);
         assertEq(bookedAgain, recycledSent, "#1452: and books nothing more");
@@ -4642,7 +3928,7 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.recordRecoveryTerminalLoss(1, 0, lost);
         assertEq(rlens.getRemitReservation(1).strandedRecycled, recycledSent - lost, "the loss came off the record");
         rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, rlens.getRemitReservation(1).total);
-        (, , , , uint256 resolved) = RewardAggregatorFacet(address(diamond)).getRecycleCompositionPosition();
+        (, , , uint256 resolved) = RewardAggregatorFacet(address(diamond)).getRecycleCompositionPosition();
         assertEq(resolved, recycledSent, "loss plus late delivery resolve the share once, not more");
     }
 
@@ -4736,7 +4022,7 @@ contract RewardRemitLedgerTest is SetupTest {
     }
 
     function _resolvedStranded() internal view returns (uint256 resolved) {
-        (, , , , resolved) = RewardAggregatorFacet(address(diamond)).getRecycleCompositionPosition();
+        (, , , resolved) = RewardAggregatorFacet(address(diamond)).getRecycleCompositionPosition();
     }
 
     /// @dev #1461 — a QUARANTINED late delivery was not credited on the mirror:
