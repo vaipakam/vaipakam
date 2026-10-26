@@ -1,4 +1,4 @@
-## Thread — Indexer data integrity (PR #TBD)
+## Thread — Indexer data integrity (PR #2913)
 
 The indexer no longer invents a block time. When it could not read a block's time it used to stamp its own clock in its place, and the loan record then stored that guess as the loan's start and last-settled time, on a row nothing later corrected. Now a block whose time cannot be read is not processed at all: the scan stops just before it, keeps its reading position there, and reports an RPC error so it retries shortly, and the next pass that can read the block processes it with the chain's real time. Every handler that stores a time about an event now takes it from the chain; a block handed in without its time is refused rather than dated by the clock.
 

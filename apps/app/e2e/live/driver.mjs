@@ -1860,8 +1860,35 @@ export async function launch({
   // public-page probe should present no provider at all, so an app
   // regression that asks for accounts on load has nothing to answer it.
   if (!keyless) {
+    // The wallet answers the site under test and nothing else (#2765).
+    // A binding is exposed to EVERY frame of every page in the context,
+    // so without this a redirect, a third-party iframe or a compromised
+    // preview could call `window.__walletRequest` directly and get
+    // signatures and transactions from the test key. The caller's frame
+    // is the one fact Playwright gives us about who is asking, so the
+    // check is on its origin, exactly as a real wallet scopes approval
+    // to an origin. A refusal is recorded in `blockedRequests` so the
+    // drive's report shows the attempt.
+    const siteOrigin = new URL(SITE).origin;
+    const callerOrigin = (source) => {
+      try {
+        return new URL(source?.frame?.url() ?? '').origin;
+      } catch {
+        return '';
+      }
+    };
     await setup('exposing the wallet binding', () =>
-      ctx.exposeBinding('__walletRequest', async (_src, payload) => {
+      ctx.exposeBinding('__walletRequest', async (source, payload) => {
+      const origin = callerOrigin(source);
+      if (origin !== siteOrigin) {
+        blockedRequests.push({
+          reason: `wallet rpc ${payload?.method ?? '(unknown)'} from a frame outside the site under test`,
+          url: origin || '(unknown origin)',
+          initiator: '(injected wallet)',
+        });
+        // EIP-1193 4100: the requested method is not authorized for this origin.
+        return { error: { code: 4100, message: 'test wallet answers only the site under test' } };
+      }
       try {
         const result = await handle(payload);
         return { result: jsonSafe(result) };
@@ -1876,8 +1903,12 @@ export async function launch({
       }),
     );
 
+    // Installed only in frames on the site's origin, so a third-party
+    // frame is not offered a provider at all. The binding check above is
+    // what enforces it; this keeps such a frame from seeing a wallet.
     await setup('installing the wallet init script', () =>
-      ctx.addInitScript(() => {
+      ctx.addInitScript((allowedOrigin) => {
+      if (window.location.origin !== allowedOrigin) return;
       if (window.ethereum?.__vaipakamTest) return;
       const listeners = {};
       const provider = {
@@ -1918,7 +1949,7 @@ export async function launch({
         );
       window.addEventListener('eip6963:requestProvider', announce);
       announce();
-      }),
+      }, siteOrigin),
     );
   }
 
