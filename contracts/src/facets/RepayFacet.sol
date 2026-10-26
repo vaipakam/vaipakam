@@ -27,7 +27,6 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 
 /**
@@ -138,43 +137,8 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
 
     // ─── T-034 Periodic Interest Payment events ───────────────────────────
 
-    /// @notice Emitted when a period checkpoint advances cleanly — either
-    ///         the borrower's voluntary repayments covered the period's
-    ///         interest in full (just-stamp) or
-    ///         {settlePeriodicInterest} was called with no shortfall.
-    ///         No collateral was sold; no settler bonus was paid.
-    /// @param loanId The loan whose checkpoint advanced.
-    /// @param periodEndAt Timestamp of the period boundary that closed
-    ///        (`lastPeriodicInterestSettledAt` BEFORE the advance).
-    /// @param expected The period's expected interest, snapshotted at
-    ///        the moment of the advance.
-    /// @param paidByBorrower Cumulative interest the borrower paid
-    ///        during the period, drawn from `interestPaidSinceLastPeriod`
-    ///        before reset.
-    /// @param settler `msg.sender` of the call that triggered the
-    ///        advance — borrower (via `repayPartial` fold), permissionless
-    ///        bot (via `settlePeriodicInterest`), or anyone else.
-    /// @custom:event-category state-change/loan-mutation
-    event PeriodicInterestSettled(
-        uint256 indexed loanId,
-        uint256 periodEndAt,
-        uint256 expected,
-        uint256 paidByBorrower,
-        address indexed settler
-    );
-
-    /// @notice Emitted when {repayPartial} folds the period checkpoint
-    ///         advance inline — i.e. the borrower's payment crossed a
-    ///         period boundary AND covered the period's expected
-    ///         interest in full. Off-chain consumers correlate this
-    ///         with the standard {PartialRepaid} fired in the same tx.
-    /// @custom:event-category state-change/loan-mutation
-    event RepayPartialPeriodAdvanced(
-        uint256 indexed loanId,
-        uint256 periodEndAt,
-        uint256 expected,
-        address indexed advancedBy
-    );
+    // `PeriodicInterestSettled` / `RepayPartialPeriodAdvanced` for the inline
+    // advance are declared on {LibPeriodicInterest}, which emits them (#2731).
 
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
     error RepaymentPastGracePeriod();
@@ -788,9 +752,10 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // days (the audit's M1). `creditSettledInterest` nets it out; the
             // stale `interestSettled` is then zeroed at the clock reset below
             // (mirrors PrecloseFacet / RiskFacet's #915 credit+zero).
-            uint256 grossAccrued = LibEntitlement.accruedInterestToTime(loan, block.timestamp);
-            uint256 priorSettled = uint256(loan.interestSettled);
-            accrued = LibEntitlement.creditSettledInterest(loan, grossAccrued);
+            uint256 settledCarried;
+            (accrued, settledCarried) = LibEntitlement.splitSettledInterest(
+                loan, LibEntitlement.accruedInterestToTime(loan, block.timestamp)
+            );
             (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(
                 loan,
                 accrued
@@ -923,74 +888,28 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // T-034 — interestAccrualStart downsized to uint64; explicit cast.
             loan.interestAccrualStart = uint64(block.timestamp); // Reset accrual start
             // Pass-2 A3 (#1191) — consume ONLY the portion of the settled credit
-            // that this partial's charge just netted (`grossAccrued`), and
+            // that this partial's charge just netted (the gross accrual), and
             // PRESERVE any excess. A periodic auto-liquidation can OVERDELIVER
             // (it credits actual slippage-buffered `lenderProceeds`, which may
             // exceed the interest accrued by the time this partial runs), so a
             // partial before enough future interest accrues would otherwise
             // forfeit the borrower's already-paid excess and later OVERSTATE the
             // debt (Codex #1229). The clock is reset above, so the surviving
-            // `interestSettled - grossAccrued` correctly credits future accrual.
-            loan.interestSettled = priorSettled > grossAccrued
-                ? priorSettled - grossAccrued
-                : 0;
+            // excess ({LibEntitlement.splitSettledInterest}) credits future accrual.
+            loan.interestSettled = settledCarried;
 
             // §3.10 — accrual clock reset right above (loan.interestAccrualStart
             // = block.timestamp), so accruedInterest at emit is 0.
             emit PartialRepaid(loanId, partialAmount, loan.principal, /* accruedInterest */ 0);
 
-            // T-034 §4.5 — track the interest portion that just settled
-            // against the period accumulator, and advance the checkpoint
-            // inline if the borrower's payment crossed the boundary AND
-            // covered the period's expected interest. The lender already
-            // received `lenderShare` (the full accrued interest from
-            // `loan.startTime`-was to now) in the safeTransferFrom above,
-            // so the period accumulator must record that as settled
-            // interest. Capped at uint128.max defensively — the field is
-            // sized to hold ~3.4×10^38 wei, well above any realistic
-            // single-period interest amount.
-            if (loan.periodicInterestCadence !=
-                LibVaipakam.PeriodicInterestCadence.None) {
-                // Pass-2 A3 (#1191, Codex #1229) — credit the NETTED `accrued`
-                // (interest CHARGED in cash this partial), NOT the gross.
-                // `grossAccrued` accrues from `interestAccrualStart`, which the
-                // periodic auto-liquidation does NOT reset when it advances a
-                // checkpoint (only `interestPaidSinceLastPeriod` is zeroed), so
-                // `grossAccrued` still spans the already-settled period(s). Adding
-                // it here would let a post-auto-settle partial credit old interest
-                // into the NEW period, mark it paid without a current-period
-                // payment, and skip a required auto-liquidation — underpaying the
-                // lender (Codex #1229 round 3, P1). The netted `accrued` never
-                // over-credits. The exact CURRENT-period attribution (which would
-                // also carry a prior over-delivery's excess forward, Codex #1229
-                // round 2) needs the accrual clock reconciled against
-                // `lastPeriodicInterestSettledAt` — deferred to #1230.
-                uint256 newPaid = uint256(loan.interestPaidSinceLastPeriod) +
-                    accrued;
-                if (newPaid > type(uint128).max) {
-                    newPaid = type(uint128).max;
-                }
-                loan.interestPaidSinceLastPeriod = SafeCast.toUint128(newPaid);
-                if (LibPeriodicInterest.canAdvanceCheckpointInline(loan)) {
-                    uint256 boundary = LibPeriodicInterest.periodEndAt(loan);
-                    uint256 expected =
-                        LibPeriodicInterest.expectedInterestForPeriod(loan);
-                    LibPeriodicInterest.advanceCheckpoint(loan);
-                    emit RepayPartialPeriodAdvanced(
-                        loanId,
-                        boundary,
-                        expected,
-                        msg.sender
-                    );
-                    emit PeriodicInterestSettled(
-                        loanId,
-                        boundary,
-                        expected,
-                        newPaid,
-                        msg.sender
-                    );
-                }
-            }
+            // T-034 §4.5 / #2731 — the interest this partial charged counts
+            // toward the current period, and the checkpoint advances inline
+            // when the period is over and now covered. The NETTED `accrued`
+            // is credited, never the gross accrual, which can span periods the
+            // periodic settlement already closed (Pass-2 A3, #1191 / Codex
+            // #1229). One rule for every mid-period payment
+            // ({LibPeriodicInterest.creditInterestPaid}).
+            LibPeriodicInterest.creditInterestPaid(loan, loanId, accrued);
         } else {
             // NFT: Deduct for partialDays (partialAmount = days)
             // Pass-2 D1 (#1188) — bound by REMAINING days, not the (now

@@ -12558,12 +12558,11 @@ library LibVaipakam {
      *
      *         Lender-protection entry points (HF-liquidation,
      *         time-default, periodic-shortfall) call
-     *         `forceCancelIntentIfDueOrRevert` instead — that helper
-     *         force-cancels the intent when the loan is already
-     *         liquidatable / defaultable AND reverts `IntentPending`
-     *         otherwise. The latter lands when the
-     *         `SwapToRepayIntentFacet` bodies implement the cancel
-     *         primitives the force-cancel branches depend on.
+     *         `SwapToRepayIntentFacet.forceCancelIntentFor(loanId,
+     *         reason)` instead — it force-cancels the intent when the
+     *         trigger the caller names holds now (HF below threshold,
+     *         past grace, or a periodic shortfall due, #2732) AND
+     *         reverts `IntentPending` otherwise.
      *
      * @dev    Internal one-liner so each call site stays a
      *         single-line edit. Uses the cheap inline reads on

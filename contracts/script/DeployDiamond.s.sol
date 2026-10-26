@@ -1910,22 +1910,20 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // T-087 Sub 3.B — preInteraction / postInteraction /
         // isValidSignature moved to the new IntentDispatchFacet; this
         // facet now owns 8 selectors instead of 11.
-        s = new bytes4[](10);
+        s = new bytes4[](8);
         s[0] = SwapToRepayIntentFacet.commitSwapToRepayIntent.selector;
         s[1] = SwapToRepayIntentFacet.cancelSwapToRepayIntent.selector;
         s[2] = SwapToRepayIntentFacet.cancelExpiredIntent.selector;
         s[3] = SwapToRepayIntentFacet.getIntentCommit.selector;
         // §5.8 layer 2 — force-cancel surface (onlyDiamondInternal).
-        s[4] = SwapToRepayIntentFacet.internalForceCancelIntent.selector;
-        s[5] = SwapToRepayIntentFacet.forceCancelIntentIfHFBelowOrRevert.selector;
-        s[6] = SwapToRepayIntentFacet.forceCancelIntentIfPastDefaultOrRevert.selector;
+        s[4] = SwapToRepayIntentFacet.forceCancelIntentFor.selector;
         // Dapp read surface for the canonical extension bytes.
-        s[7] = SwapToRepayIntentFacet.canonicalExtension.selector;
+        s[5] = SwapToRepayIntentFacet.canonicalExtension.selector;
         // #2322 — read-only preview of the debt-sized auction lot.
-        s[8] = SwapToRepayIntentFacet.previewSwapToRepayIntentLot.selector;
+        s[6] = SwapToRepayIntentFacet.previewSwapToRepayIntentLot.selector;
         // #1566 slice 3 — how much of a live commit rests in the Diamond (0 for
         // every commit made on this source; the custody census reads it).
-        s[9] = SwapToRepayIntentFacet.getIntentCustody.selector;
+        s[7] = SwapToRepayIntentFacet.getIntentCustody.selector;
     }
 
     /// @notice T-087 Sub 3.B — the three 1inch LOP v4 callbacks

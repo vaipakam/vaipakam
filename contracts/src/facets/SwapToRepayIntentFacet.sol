@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
+import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol";
@@ -184,12 +185,12 @@ contract SwapToRepayIntentFacet is
 
     /// @notice Emitted by the force-cancel branches in
     ///         RiskFacet's HF-liquidation + RiskMatchLiquidationFacet's
-    ///         internal-match + RepayFacet's auto-period-shortfall +
-    ///         DefaultedFacet.triggerDefault when they cancel a live
-    ///         commit to clear custody before settling the
-    ///         lender-protection action. The `reason` discriminator
-    ///         drives the indexer's activity-feed copy + lets ops
-    ///         distinguish HF-trigger from time-trigger.
+    ///         internal-match + RepayPeriodicFacet's periodic-shortfall
+    ///         sale + DefaultedFacet.triggerDefault when they cancel a
+    ///         live commit before settling the lender-protection action
+    ///         ({forceCancelIntentFor}). The `reason` names the trigger
+    ///         the cancel was checked against: HF, past grace, or a
+    ///         periodic shortfall due.
     /// @custom:event-category state-change/loan-mutation
     event SwapToRepayIntentForceCancelled(
         uint256 indexed loanId,
@@ -206,7 +207,11 @@ contract SwapToRepayIntentFacet is
         /// @dev Loan past `endTime + gracePeriod` while a commit was
         ///      still live (borrower committed late + auction outlived
         ///      the time-default window).
-        TimeDefaultDue
+        TimeDefaultDue,
+        /// @dev A periodic-interest period is past its grace with a
+        ///      shortfall, and the periodic settlement sells collateral
+        ///      for it (#2732).
+        PeriodicShortfallDue
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -284,9 +289,9 @@ contract SwapToRepayIntentFacet is
     error UnsupportedLoanShape();
     /// @dev Mirrors `SwapToRepayFacet.RepaymentPastGracePeriod`.
     error RepaymentPastGracePeriod();
-    /// @dev `internalForceCancelIntent` is restricted to cross-facet
-    ///      calls — direct user invocation would bypass the
-    ///      trigger-condition check the caller facet runs first.
+    /// @dev {forceCancelIntentFor} is restricted to cross-facet calls —
+    ///      only a forced close-out the Diamond is running may cancel a
+    ///      borrower's intent.
     error OnlyDiamondInternal();
 
     // ──────────────────────────────────────────────────────────────
@@ -774,93 +779,63 @@ contract SwapToRepayIntentFacet is
 
     /// @notice §5.8 layer 2 — force-cancel a live intent commit before
     ///         a lender-protection action settles, so the order cannot
-    ///         fill against collateral the action is about to take. Called by `RiskFacet`'s 4 HF-liquidation
-    ///         entry points + `RiskMatchLiquidationFacet.triggerInternalMatchLiquidation`
-    ///         + `RepayFacet._autoLiquidatePeriodShortfall` +
-    ///         `DefaultedFacet.triggerDefault` AFTER they confirm
-    ///         their respective trigger condition (HF <
-    ///         HF_LIQUIDATION_THRESHOLD for the HF paths; loan past
-    ///         `endTime + gracePeriod` for the time-default path).
-    /// @dev    `onlyDiamondInternal` — restricted to cross-facet
-    ///         calls. The trigger-condition check is the caller's
-    ///         responsibility (the diamond's reentrancy guard
-    ///         already wraps the outer entry point). Identical
-    ///         teardown to {_executeCancel}: the vault's signature and
-    ///         allowance withdrawn, live-count decrement, storage cleanup
-    ///         (no collateral moves: it never left the vault);
-    ///         the only difference is the event emitted (
-    ///         {SwapToRepayIntentForceCancelled} with reason
-    ///         discriminator + source facet attribution).
-    function internalForceCancelIntent(uint256 loanId, ForceCancelReason reason)
-        external
-    {
+    ///         fill against collateral the action is about to take.
+    ///         Every forced close-out calls this ONE entry with the
+    ///         trigger it acts on (#2732): the HF liquidations
+    ///         (`RiskFacet`, `RiskSplitLiquidationFacet`,
+    ///         `RiskMatchLiquidationFacet`) pass
+    ///         `HFBelowLiquidationThreshold`, the time-based default
+    ///         (`DefaultedFacet.triggerDefault`) passes `TimeDefaultDue`,
+    ///         and the periodic-shortfall sale
+    ///         (`RepayPeriodicFacet`) passes `PeriodicShortfallDue`.
+    ///         No commit live → no-op. A commit live AND the named
+    ///         trigger holds now → the commit is torn down and
+    ///         {SwapToRepayIntentForceCancelled} carries the reason. A
+    ///         commit live AND the trigger does not hold → revert
+    ///         `IntentPending`, so the borrower keeps the window the
+    ///         design promises.
+    /// @dev    `onlyDiamondInternal`. The facet re-checks the trigger
+    ///         itself ({_forceCancelDue}) rather than trusting the
+    ///         caller's word, so a caller passing the wrong reason
+    ///         cannot cancel an intent its own trigger does not
+    ///         justify. Before #2732 each trigger had its own entry and
+    ///         the periodic-shortfall sale borrowed the HF one, so a
+    ///         healthy borrower who missed a periodic payment could
+    ///         hold the sale off with a live intent. Same teardown as
+    ///         {_executeCancel} (no collateral moves: it never left the
+    ///         vault); only the event differs.
+    function forceCancelIntentFor(uint256 loanId, ForceCancelReason reason) external {
         if (msg.sender != address(this)) revert OnlyDiamondInternal();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.SwapToRepayIntentCommit storage commit = s.intentCommits[loanId];
-        if (commit.orderHash == bytes32(0)) revert IntentNoCommit(loanId);
-
-        bytes32 orderHash = _teardownCommit(s, loanId, commit);
-
-        emit SwapToRepayIntentForceCancelled(loanId, orderHash, reason, msg.sender);
-    }
-
-    /// @notice One-liner force-cancel helper for HF-liquidation
-    ///         entry points (`RiskFacet`'s four triggers,
-    ///         `RiskMatchLiquidationFacet.triggerInternalMatchLiquidation`,
-    ///         `RepayFacet._autoLiquidatePeriodShortfall`). If no
-    ///         commit is live → no-op. If a commit is live AND
-    ///         HF < `HF_LIQUIDATION_THRESHOLD` → force-cancel +
-    ///         emit `SwapToRepayIntentForceCancelled` with
-    ///         `HFBelowLiquidationThreshold` reason. If a commit
-    ///         is live AND HF is still healthy → revert
-    ///         `IntentPending` so the borrower keeps the 5min + 24h
-    ///         window the design promises.
-    /// @dev    `onlyDiamondInternal`. Callers wire this as the
-    ///         FIRST line of their entry point (before any other
-    ///         vault-touching work). Replaces the temporary
-    ///         `LibVaipakam.assertNoLiveIntentCommit` placeholder
-    ///         the round-2 checkpoint used.
-    function forceCancelIntentIfHFBelowOrRevert(uint256 loanId) external {
-        if (msg.sender != address(this)) revert OnlyDiamondInternal();
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.intentCommits[loanId].orderHash == bytes32(0)) return;
-        uint256 hf = RiskFacet(address(this)).calculateHealthFactor(loanId);
-        if (hf >= LibVaipakam.HF_LIQUIDATION_THRESHOLD) {
+        if (commit.orderHash == bytes32(0)) return;
+        if (!_forceCancelDue(s, loanId, reason)) {
             revert IVaipakamErrors.IntentPending(loanId);
         }
-        LibVaipakam.SwapToRepayIntentCommit storage commit = s.intentCommits[loanId];
         bytes32 orderHash = _teardownCommit(s, loanId, commit);
-        emit SwapToRepayIntentForceCancelled(
-            loanId, orderHash, ForceCancelReason.HFBelowLiquidationThreshold, address(this)
-        );
+        emit SwapToRepayIntentForceCancelled(loanId, orderHash, reason, address(this));
     }
 
-    /// @notice One-liner force-cancel helper for
-    ///         `DefaultedFacet.triggerDefault`. If no commit is
-    ///         live → no-op. If a commit is live AND
-    ///         `block.timestamp >= endTime + gracePeriod` →
-    ///         force-cancel + emit
-    ///         `SwapToRepayIntentForceCancelled` with
-    ///         `TimeDefaultDue` reason. If a commit is live AND
-    ///         the loan isn't past grace yet → revert
-    ///         `IntentPending`.
-    /// @dev    `onlyDiamondInternal`. Same wiring pattern as
-    ///         {forceCancelIntentIfHFBelowOrRevert}.
-    function forceCancelIntentIfPastDefaultOrRevert(uint256 loanId) external {
-        if (msg.sender != address(this)) revert OnlyDiamondInternal();
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.intentCommits[loanId].orderHash == bytes32(0)) return;
+    /// @dev Whether the trigger `reason` names holds for `loanId` now —
+    ///      the same test the calling close-out applies before it acts:
+    ///      HF below `HF_LIQUIDATION_THRESHOLD`; past the loan's grace
+    ///      end ({LibLoanClock.graceEnd}); or a periodic settlement due
+    ///      with a shortfall to sell for
+    ///      ({LibPeriodicInterest.settleableShortfall}).
+    function _forceCancelDue(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        ForceCancelReason reason
+    ) private view returns (bool) {
+        if (reason == ForceCancelReason.HFBelowLiquidationThreshold) {
+            return RiskFacet(address(this)).calculateHealthFactor(loanId)
+                < LibVaipakam.HF_LIQUIDATION_THRESHOLD;
+        }
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        uint256 endTime = LibLoanClock.maturity(loan);
-        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
-        if (block.timestamp < graceEnd) {
-            revert IVaipakamErrors.IntentPending(loanId);
+        if (reason == ForceCancelReason.TimeDefaultDue) {
+            return block.timestamp >= LibLoanClock.graceEnd(loan);
         }
-        LibVaipakam.SwapToRepayIntentCommit storage commit = s.intentCommits[loanId];
-        bytes32 orderHash = _teardownCommit(s, loanId, commit);
-        emit SwapToRepayIntentForceCancelled(
-            loanId, orderHash, ForceCancelReason.TimeDefaultDue, address(this)
-        );
+        return LibPeriodicInterest.settleableShortfall(loan) > 0;
     }
 
     /// @dev Tears down a live commit per §5.5 — invariant guard,
@@ -880,7 +855,7 @@ contract SwapToRepayIntentFacet is
 
     /// @dev Shared commit-teardown body used by {_executeCancel}
     ///      (borrower / permissionless paths) and
-    ///      {internalForceCancelIntent} (lender-protection paths).
+    ///      {forceCancelIntentFor} (lender-protection paths).
     ///      Handles: the old-custody refusal (#1566 slice 3, O1), the
     ///      already-filled nonce-bit check (Codex round-8 P1 #2), the
     ///      vault's signing registration revoked and its allowance to the

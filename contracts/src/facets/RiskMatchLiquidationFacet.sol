@@ -190,13 +190,19 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // the three legs would leave an order fillable against
         // collateral the match is taking.
         if (LibVaipakam.storageSlot().intentCommits[loanIdA].orderHash != bytes32(0)) {
-            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanIdA);
+            SwapToRepayIntentFacet(address(this)).forceCancelIntentFor(
+                loanIdA, SwapToRepayIntentFacet.ForceCancelReason.HFBelowLiquidationThreshold
+            );
         }
         if (LibVaipakam.storageSlot().intentCommits[loanIdB].orderHash != bytes32(0)) {
-            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanIdB);
+            SwapToRepayIntentFacet(address(this)).forceCancelIntentFor(
+                loanIdB, SwapToRepayIntentFacet.ForceCancelReason.HFBelowLiquidationThreshold
+            );
         }
         if (LibVaipakam.storageSlot().intentCommits[loanIdC].orderHash != bytes32(0)) {
-            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanIdC);
+            SwapToRepayIntentFacet(address(this)).forceCancelIntentFor(
+                loanIdC, SwapToRepayIntentFacet.ForceCancelReason.HFBelowLiquidationThreshold
+            );
         }
         // Tier-1 sanctions: matcher receives 1% per leg in PR5;
         // blocking sanctioned wallets here keeps the value-receipt
