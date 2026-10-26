@@ -9,8 +9,10 @@
  *   store <store_id> <secret_name>   the binding is a `secrets_store_secrets`
  *                                    entry: the value lives in that store
  *                                    under that name
- *   worker                           no store binding by that name: a value
- *                                    could only be a per-Worker secret
+ *   unbound                          the config binds nothing by that name:
+ *                                    the Worker cannot read it (every Worker
+ *                                    binds its RPC URLs from the store, so
+ *                                    this is a chain it does not serve)
  *
  * Exits 2 with a message on stderr when the config cannot be read or a
  * matching entry is malformed, so the caller refuses rather than guessing.
@@ -62,5 +64,5 @@ if (matches.length === 1) {
   }
   console.log(`store ${storeId} ${secretName}`);
 } else {
-  console.log('worker');
+  console.log('unbound');
 }

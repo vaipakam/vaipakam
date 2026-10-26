@@ -310,11 +310,14 @@ command above and confirm the name is present. (A per-Worker
 scripts' preflight does the same: `check_chain_rpc_secret` in
 `contracts/script/lib/worker-secrets.sh`, the one copy all three
 scripts source, reads the Worker's own `secrets_store_secrets` block
-and looks for the bound entry in that store, falling back to the
-Worker's own secrets only for a binding the config does not route
-through the store (#1492, #2763). A store or secret list it cannot
-read refuses the phase with its own message; it is never taken as
-"present".
+and looks for the bound entry in that store (#1492, #2763). Since every
+Worker binds every RPC it reads from the store, a chain whose RPC its
+config does not bind is a chain it does not serve: the indexer and the
+agent refuse (every deployed chain must be indexed and served), the
+keeper reports it and moves on (its chain set is what its config binds;
+it deliberately omits Polygon and Polygon Amoy). A store listing it
+cannot read refuses the phase with its own message; it is never taken
+as "present".
 
 ### Auto post-deploy steps performed by the script
 

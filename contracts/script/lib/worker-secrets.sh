@@ -24,9 +24,14 @@
 #      Worker no longer reads passed it (#1492).
 #
 # So the check now asks the Worker's OWN config where it reads the binding
-# from, and looks there: the named store for a store binding, the Worker's
-# secrets otherwise. A listing that cannot be read refuses with its own
-# message, never as "absent" and never as "present".
+# from, and looks in that store. Every Stage 3 Worker binds every RPC it
+# reads from the store, so its config is also the declaration of which chains
+# it reads: a chain whose RPC it does not bind is a chain it does not serve.
+# That is a refusal for the indexer and the agent, which must serve every
+# chain the protocol is deployed on, and a stated skip for the keeper, which
+# acts only on the chains its config binds (it deliberately omits Polygon and
+# Polygon Amoy). A listing that cannot be read refuses with its own message,
+# never as "absent" and never as "present".
 
 _WORKER_SECRETS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -34,46 +39,45 @@ _WORKER_SECRETS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #   Prints every secret name in the store whose scopes include "workers",
 #   one per line, walking every page. Returns 1 when a page cannot be read.
 _store_secret_names() {
-  local worker_dir="$1" store_id="$2" page=1 out rows
+  local worker_dir="$1" store_id="$2" page=1 out rows names
   while :; do
     out=$(cd "$worker_dir" && pnpm exec wrangler secrets-store secret list "$store_id" \
       --remote --per-page 100 --page "$page" 2>/dev/null) || return 1
-    # Table rows are `│ NAME │ ID │ COMMENT │ SCOPES │ STATUS │ …`.
+    # Table rows are `│ NAME │ ID │ COMMENT │ SCOPES │ STATUS │ …`. Each data
+    # row is printed as `<scope-ok> <name>`: the page size is a count of ALL
+    # the store's entries, so whether another page exists is judged on every
+    # row, and only the names with the workers scope are kept.
     rows=$(printf '%s\n' "$out" | awk -F'│' '
       NF > 6 {
         name = $2; scopes = $5
         gsub(/^[ \t]+|[ \t]+$/, "", name)
-        if (name != "" && name != "Name" && scopes ~ /workers/) print name
+        if (name != "" && name != "Name") print (scopes ~ /workers/ ? "1" : "0"), name
       }')
     [ -n "$rows" ] || break
-    printf '%s\n' "$rows"
+    names=$(printf '%s\n' "$rows" | awk '$1 == "1" { print $2 }')
+    [ -n "$names" ] && printf '%s\n' "$names"
     [ "$(printf '%s\n' "$rows" | wc -l)" -lt 100 ] && break
     page=$((page + 1))
   done
   return 0
 }
 
-# _worker_secret_names <worker_dir>
-#   Prints every per-Worker secret name, one per line. Returns 1 when the
-#   listing cannot be read or is not the JSON array wrangler prints.
-_worker_secret_names() {
-  local worker_dir="$1" out
-  out=$(cd "$worker_dir" && pnpm exec wrangler secret list 2>/dev/null) || return 1
-  printf '%s' "$out" | node -e '
-    let raw = "";
-    process.stdin.on("data", (c) => (raw += c));
-    process.stdin.on("end", () => {
-      const start = raw.indexOf("[");
-      let list;
-      try { list = JSON.parse(raw.slice(start)); } catch { process.exit(1); }
-      if (start < 0 || !Array.isArray(list)) process.exit(1);
-      for (const s of list) if (s && typeof s.name === "string") console.log(s.name);
-    });'
+# worker_serves_only_bound_chains <worker_name>
+#   True for a Worker whose chain set is whatever its config binds: a chain it
+#   binds no RPC for is outside that set, reported rather than refused. The
+#   indexer and the agent are not such Workers: every chain the protocol is
+#   deployed on must be indexed and served, so an unbound chain refuses there.
+worker_serves_only_bound_chains() {
+  case "$1" in
+    vaipakam-keeper) return 0 ;;
+    *)               return 1 ;;
+  esac
 }
 
 # verify_rpc_secret_on_worker <worker_dir> <worker_name> <binding> <chain_id>
-#   Returns 0 when the Worker can read <binding>, 1 (after printing why and
-#   how to fix it) otherwise.
+#   Returns 0 when the Worker can read <binding>, or when <binding> is outside
+#   the chain set of a Worker that serves only its bound chains; 1 (after
+#   printing why and how to fix it) otherwise.
 verify_rpc_secret_on_worker() {
   local worker_dir="$1" worker_name="$2" binding="$3" chain_id="$4"
   local where kind store_id secret_name names
@@ -84,55 +88,47 @@ verify_rpc_secret_on_worker() {
   fi
   read -r kind store_id secret_name <<<"$where"
 
-  if [ "$kind" = "store" ]; then
-    if ! names=$(_store_secret_names "$worker_dir" "$store_id"); then
-      echo "  ✗ FAIL: could not list Secrets Store $store_id, which $worker_name"
-      echo "    reads $binding from. Check the wrangler login (or CLOUDFLARE_API_TOKEN)"
-      echo "    can read the account's Secrets Store, then re-run. Not reading the"
-      echo "    store is not evidence the secret is there."
-      return 1
-    fi
-    if printf '%s\n' "$names" | grep -Fxq -- "$secret_name"; then
-      echo "  ✓ $worker_name reads $binding from Secrets Store entry $secret_name, which exists"
+  if [ "$kind" = "unbound" ]; then
+    if worker_serves_only_bound_chains "$worker_name"; then
+      echo "  · $worker_name binds no $binding in $worker_dir/wrangler.jsonc, so it does"
+      echo "    not act on chainId=$chain_id; nothing to check. If it should, bind"
+      echo "    $binding there from the Secrets Store."
       return 0
     fi
-    echo "  ✗ FAIL: $worker_name binds $binding to Secrets Store entry $secret_name"
-    echo "    (store $store_id), and the store has no such entry with the workers scope."
-    echo
-    echo "  The Worker's chain-config filter drops any chain whose RPC binding"
-    echo "  is empty, so chainId=$chain_id will silently never be queried."
-    echo "  Create the entry before re-running (wrangler prompts for the value,"
-    echo "  so it never lands in shell history):"
-    echo
-    echo "    cd $worker_dir"
-    echo "    pnpm exec wrangler secrets-store secret create $store_id \\"
-    echo "      --name $secret_name --scopes workers --remote"
-    echo
-    echo "  RPC URLs carry API keys: they live only in the store, never in the"
-    echo "  repo. Mainnet needs a paid tier so the cron is not throttled."
+    echo "  ✗ FAIL: $worker_name binds no $binding in $worker_dir/wrangler.jsonc,"
+    echo "    so it cannot read chainId=$chain_id at all, and this Worker must serve"
+    echo "    every chain the protocol is deployed on. Add the chain to this Worker"
+    echo "    (the $binding binding under secrets_store_secrets, as the other RPC"
+    echo "    bindings there are, and the chain's entry in the Worker's chain list),"
+    echo "    create the store entry if it is missing, and redeploy the Worker."
     return 1
   fi
 
-  if ! names=$(_worker_secret_names "$worker_dir"); then
-    echo "  ✗ FAIL: could not list $worker_name's secrets. Check the wrangler login"
-    echo "    (or CLOUDFLARE_API_TOKEN), then re-run. Not reading the list is not"
-    echo "    evidence the secret is there."
+  if ! names=$(_store_secret_names "$worker_dir" "$store_id"); then
+    echo "  ✗ FAIL: could not list Secrets Store $store_id, which $worker_name"
+    echo "    reads $binding from. Check the wrangler login (or CLOUDFLARE_API_TOKEN)"
+    echo "    can read the account's Secrets Store, then re-run. Not reading the"
+    echo "    store is not evidence the secret is there."
     return 1
   fi
-  if printf '%s\n' "$names" | grep -Fxq -- "$binding"; then
-    echo "  ✓ $binding is set on $worker_name (a per-Worker secret)"
+  if printf '%s\n' "$names" | grep -Fxq -- "$secret_name"; then
+    echo "  ✓ $worker_name reads $binding from Secrets Store entry $secret_name, which exists"
     return 0
   fi
-  echo "  ✗ FAIL: $binding is NOT set on $worker_name, and its wrangler config"
-  echo "    binds no Secrets Store entry by that name."
+  echo "  ✗ FAIL: $worker_name binds $binding to Secrets Store entry $secret_name"
+  echo "    (store $store_id), and the store has no such entry with the workers scope."
   echo
   echo "  The Worker's chain-config filter drops any chain whose RPC binding"
   echo "  is empty, so chainId=$chain_id will silently never be queried."
-  echo "  Either bind it from the Secrets Store in $worker_dir/wrangler.jsonc"
-  echo "  (as the Stage 3 Workers do), or set it on the Worker:"
+  echo "  Create the entry before re-running (wrangler prompts for the value,"
+  echo "  so it never lands in shell history):"
   echo
   echo "    cd $worker_dir"
-  echo "    pnpm exec wrangler secret put $binding"
+  echo "    pnpm exec wrangler secrets-store secret create $store_id \\"
+  echo "      --name $secret_name --scopes workers --remote"
+  echo
+  echo "  RPC URLs carry API keys: they live only in the store, never in the"
+  echo "  repo. Mainnet needs a paid tier so the cron is not throttled."
   return 1
 }
 
