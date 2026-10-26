@@ -113,16 +113,16 @@ contract RewardCustodyInvariant is SetupTest {
     }
 
     /// #1566 closure 2 cutover PR 1 — the `Unclassified` row is auditable
-    /// like every other: it equals its two figures (protected deliveries and
-    /// quarantines held, pre-attribution returns held), under every
-    /// interleaving of budget deliveries with the other flows.
-    function invariant_UnclassifiedRowEqualsItsFigures() public view {
-        (uint256 uncountedHeld, uint256 returnedHeld, ) =
+    /// like every other: it equals its figure (protected deliveries and
+    /// quarantines held), under every interleaving of budget deliveries with
+    /// the other flows.
+    function invariant_UnclassifiedRowEqualsItsFigure() public view {
+        (uint256 uncountedHeld, ) =
             RewardRemittanceLensFacet(address(diamond)).getUnclassifiedPosition();
         assertEq(
             _custody().rewardCustodyRow(LibVaipakam.RewardCustodyRow.Unclassified),
-            uncountedHeld + returnedHeld,
-            "Unclassified row == uncounted held + returned held"
+            uncountedHeld,
+            "Unclassified row == uncounted held"
         );
     }
 

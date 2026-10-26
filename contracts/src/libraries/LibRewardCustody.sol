@@ -1480,7 +1480,6 @@ library LibRewardCustody {
         if (era != RECONCILIATION_QUEUE_ERA) revert IVaipakamErrors.ReconciliationUnknownEra(era);
     }
     uint8 internal constant PACKET_KIND_STRANDED_RETURN = 3;
-    uint8 internal constant PACKET_KIND_CEREMONY_INFLOW = 4;
 
     /// @notice A value-bearing reward packet was recorded under its ingress stamp.
     /// @custom:event-category state-change/reward-custody
@@ -3959,7 +3958,7 @@ library LibRewardCustody {
         // disposed + drawn == protectedCumulative` holds after the draw, as
         // the batch's conservation identity does.
         p.drawn += amount;
-        _stepDownUncounted(s, p.kind, amount);
+        _stepDownUncounted(s, amount);
     }
 
     /// @notice Advance `dayId`'s consumption cursor past every exhausted epoch
@@ -4649,20 +4648,6 @@ library LibRewardCustody {
         emit RewardCustodyUnclassifiedCredited(h, PACKET_KIND_COMPENSATION, got);
     }
 
-    /// @notice A stranded return for a receipt that PREDATES recovery
-    ///         attribution: relocated (measured) into the row and counted as
-    ///         returned custody — attributable to no position, visible,
-    ///         never spendable as fresh.
-    function unclassifiedReturn(LibVaipakam.Storage storage s, bytes32 h, uint256 amount) internal {
-        if (amount == 0) return;
-        relocateToHolder(s, LibVaipakam.RewardCustodyRow.Unclassified, amount);
-        s.rewardCustodyUnclassifiedReturned += amount;
-        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
-        p.unclassified += amount;
-        p.protectedCumulative += amount;
-        emit RewardCustodyUnclassifiedCredited(h, p.kind, amount);
-    }
-
     /// @notice The R4 return's draw on the row: the stranded record's held
     ///         value leaves the `Unclassified` row for the return sender,
     ///         measured, and every figure that described it there steps
@@ -4756,7 +4741,7 @@ library LibRewardCustody {
         p.unclassified -= total;
         p.classifiedFresh += freshShare;
         p.classifiedRecycled += recycledShare;
-        _stepDownUncounted(s, p.kind, total);
+        _stepDownUncounted(s, total);
     }
 
     /// @dev The holder-side aggregates that fall when untyped value leaves a
@@ -4764,20 +4749,17 @@ library LibRewardCustody {
     ///      epoch DRAW ({_spendUntypedForDraw}). ONE implementation for both
     ///      (3b-ii-A): whoever changes what "left the untyped remainder"
     ///      means changes it here for every exit, and the `Unclassified` row
-    ///      invariant (row == uncounted held + returned held) keeps holding.
-    function _stepDownUncounted(LibVaipakam.Storage storage s, uint8 kind, uint256 total) private {
-        if (kind <= PACKET_KIND_COMPENSATION) {
-            uint256 have = s.rewardCustodyUnclassifiedUncounted;
-            if (total > have) revert IVaipakamErrors.ReconciliationFigureShort(0, total, have);
-            s.rewardCustodyUnclassifiedUncounted = have - total;
-            uint256 aggregate = s.rewardBudgetFreshUncounted;
-            if (total > aggregate) revert IVaipakamErrors.ReconciliationFigureShort(2, total, aggregate);
-            s.rewardBudgetFreshUncounted = aggregate - total;
-        } else {
-            uint256 have = s.rewardCustodyUnclassifiedReturned;
-            if (total > have) revert IVaipakamErrors.ReconciliationFigureShort(1, total, have);
-            s.rewardCustodyUnclassifiedReturned = have - total;
-        }
+    ///      invariant (row == uncounted held) keeps holding. Only budget and
+    ///      compensation packets carry an untyped remainder: a stranded
+    ///      return credits its receipt's recovery position (#2910), so its
+    ///      packet's remainder is zero and no exit reaches here for it.
+    function _stepDownUncounted(LibVaipakam.Storage storage s, uint256 total) private {
+        uint256 have = s.rewardCustodyUnclassifiedUncounted;
+        if (total > have) revert IVaipakamErrors.ReconciliationFigureShort(0, total, have);
+        s.rewardCustodyUnclassifiedUncounted = have - total;
+        uint256 aggregate = s.rewardBudgetFreshUncounted;
+        if (total > aggregate) revert IVaipakamErrors.ReconciliationFigureShort(1, total, aggregate);
+        s.rewardBudgetFreshUncounted = aggregate - total;
     }
 
     /// @notice Credit `amount` as FRESH out of `from` (the `Unclassified` row
@@ -4972,12 +4954,6 @@ library LibRewardCustody {
                 "custodyUnclassifiedQuarantine(bytes32,bytes32,uint256,uint256)", h, receiptKey, relocate, uncredit
             )
         );
-    }
-
-    /// @dev {unclassifiedReturn} through the custody facet.
-    function callUnclassifiedReturn(bytes32 h, uint256 amount) internal {
-        if (amount == 0) return;
-        _custody(abi.encodeWithSignature("custodyUnclassifiedReturn(bytes32,uint256)", h, amount));
     }
 
     /// @dev {releaseUnclassifiedForReturn} through the custody facet.

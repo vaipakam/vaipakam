@@ -2379,14 +2379,6 @@ contract TestMutatorFacet {
         return LibVaipakam.storageSlot().rewardEntries[id].processed;
     }
 
-    function setRecoveryAttributionRaw(bool armed, uint256 armedAt)
-        external
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        s.recoveryAttributionArmed = armed;
-        s.recoveryAttributionArmedAt = armedAt;
-    }
-
     /// @notice #1662 r2 test-only — set the GLOBAL recovery position
     ///         directly, so a test can stand up capacity belonging to
     ///         receipts other than the one under test (the claw sizes on

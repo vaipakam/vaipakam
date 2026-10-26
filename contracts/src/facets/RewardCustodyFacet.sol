@@ -825,9 +825,6 @@ contract RewardCustodyFacet is DiamondAccessControl {
      *             its column stays at Diamond custody by design);
      *           - the paid-side rebase has run (the baseline verified below
      *             is the one it installed);
-     *           - on `Canonical`, per-receipt recovery attribution is armed
-     *             — arming retires the legacy pooled position, and a recovery
-     *             row funded before that retirement would be left over-backed;
      *           - the recycled, recovery, overage and sanctions-held rows
      *             each EQUAL their ledger figure (`recycleBucket`,
      *             `recovered − redispatched`, `strandedReturnOverage`,
@@ -900,9 +897,6 @@ contract RewardCustodyFacet is DiamondAccessControl {
             revert IVaipakamErrors.RewardCustodyActivationDetachedNotSupported();
         }
         if (!s.armedFreshPaidRebased) revert IVaipakamErrors.RewardCustodyActivationRequiresRebase();
-        if (role == LibVaipakam.RewardRole.Canonical && !s.recoveryAttributionArmed) {
-            revert IVaipakamErrors.RewardCustodyActivationRequiresRecoveryArming();
-        }
         // The complete-cut record must be current (Codex #2186 r4 P1): the
         // ledger figures below say nothing about WHICH facets are routed,
         // and a custody facet cut without the reward paths that read the
@@ -1353,12 +1347,6 @@ contract RewardCustodyFacet is DiamondAccessControl {
     {
         _requireDiamondInternal();
         LibRewardCustody.unclassifiedQuarantine(LibVaipakam.storageSlot(), h, receiptKey, relocate, fromProvisional);
-    }
-
-    /// @notice Diamond-internal: {LibRewardCustody.unclassifiedReturn}.
-    function custodyUnclassifiedReturn(bytes32 h, uint256 amount) external {
-        _requireDiamondInternal();
-        LibRewardCustody.unclassifiedReturn(LibVaipakam.storageSlot(), h, amount);
     }
 
     /// @notice Diamond-internal: {LibRewardCustody.releaseUnclassifiedForReturn}.

@@ -1022,9 +1022,8 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(_unclassified(), 6e18, "the whole delivery is protected into Unclassified");
         assertEq(_held(), 6e18, "the whole landing is in the holder");
         assertEq(vpfi.balanceOf(address(diamond)), 4e18, "and none of it rests in the Diamond");
-        (uint256 uncountedHeld, uint256 returnedHeld, uint256 reservedHeld) = _rlens().getUnclassifiedPosition();
+        (uint256 uncountedHeld, uint256 reservedHeld) = _rlens().getUnclassifiedPosition();
         assertEq(uncountedHeld, 6e18, "the row's uncounted figure");
-        assertEq(returnedHeld, 0);
         assertEq(reservedHeld, 0);
         (, uint256 uncounted) = _rlens().getDeliveredFreshPosition();
         assertEq(uncounted, 6e18, "the reconciliation twin still counts it");
@@ -1146,7 +1145,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         LibVaipakam.StrandedRecovery memory sr = _rlens().getStrandedRecovery(REMITTER, 11);
         assertEq(sr.amount, 5e18, "recorded");
         assertEq(sr.held, 5e18, "and the record knows the holder backs it");
-        (uint256 uncountedHeld, , uint256 reservedHeld) = _rlens().getUnclassifiedPosition();
+        (uint256 uncountedHeld, uint256 reservedHeld) = _rlens().getUnclassifiedPosition();
         assertEq(uncountedHeld, 5e18);
         assertEq(reservedHeld, 5e18);
         assertEq(_rlens().getStrandedRecoveryReserved(), 5e18, "the raw reservation is untouched");
@@ -1187,7 +1186,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         LibVaipakam.StrandedRecovery memory sr = _rlens().getStrandedRecovery(REMITTER, 12);
         assertEq(sr.amount, 5e18);
         assertEq(sr.held, 5e18, "the record knows the holder backs it");
-        (uint256 uncountedHeld, , uint256 reservedHeld) = _rlens().getUnclassifiedPosition();
+        (uint256 uncountedHeld, uint256 reservedHeld) = _rlens().getUnclassifiedPosition();
         assertEq(uncountedHeld, 5e18);
         assertEq(reservedHeld, 5e18);
         assertEq(_rlens().getIngressPacket(_packetHash(id)).unclassified, 5e18, "the packet's record follows");
@@ -1450,7 +1449,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(receivedAfter - receivedBefore, 6e18, "received rose by the fresh share");
         assertEq(_held(), holderBefore, "no tokens left the holder");
         assertEq(vpfi.balanceOf(address(diamond)), diamondBefore, "nor the Diamond");
-        (uint256 uncountedHeld, , ) = _rlens().getUnclassifiedPosition();
+        (uint256 uncountedHeld, ) = _rlens().getUnclassifiedPosition();
         assertEq(uncountedHeld, 0, "the row's figure stepped down");
         assertEq(_uncountedAggregate(), 0, "and the global aggregate");
         (uint256 protectedIn, uint256 unclassified, uint256 cf, uint256 cr, ) = _packet(h);
@@ -1574,7 +1573,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _evidence(h, 4e18);
         _classify(h, 4e18, 5e18, keccak256("e-dust"));
         assertEq(_unclassified(), 1e18, "the residual stays in the row");
-        (uint256 uncountedHeld, , ) = _rlens().getUnclassifiedPosition();
+        (uint256 uncountedHeld, ) = _rlens().getUnclassifiedPosition();
         assertEq(uncountedHeld, 1e18);
         assertEq(_uncountedAggregate(), 1e18);
         (, uint256 unclassified, , , ) = _packet(h);

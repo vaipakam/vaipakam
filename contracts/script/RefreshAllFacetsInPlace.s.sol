@@ -152,12 +152,6 @@ interface IArmedFreshPaidSeed {
 ///      this one; every other failure must abort the migration while paused.
 error ArmedFreshPaidAlreadySeeded();
 
-interface IRecoveryAttribution {
-    function armRecoveryAttribution() external;
-
-    function recoveryAttributionArmed() external view returns (bool);
-}
-
 interface IOwnable {
     function owner() external view returns (address);
 }
@@ -982,47 +976,6 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // call is a no-op on a normal run and the sweep for an interrupted
         // one — and a rerun re-enters it exactly as before.
         _removeRetiredIngress(diamond, loupe);
-        // ─── #1434 P2-w6 (#1662 r4) — the UNATTRIBUTED recovery wrappers ───
-        //
-        // w6 gave both `…FromRecovery` wrappers a `sourceRemitId`, and round 10
-        // dropped the import entry point's `quarantineObserved`: three
-        // selector changes. Their old selectors are removed by
-        // {_sweepStaleRoutes} (#2313); what stays here is the arming, which
-        // no removal can do.
-        {
-            // #1662 r8 — ARM per-receipt attribution in the SAME paused
-            // run that retires the unattributed selectors. Removing the
-            // selectors stops new unattributed writes; it repairs nothing
-            // existing. Until the watermark is armed, a pre-upgrade
-            // receipt whose credit was already spent still reads as fully
-            // unspent (its spends were global-only) and can consume a
-            // later receipt's backing through the new wrapper.
-            //
-            // Arming LATER is not equivalent and is not safe: the valve
-            // snapshots the then-current reservation nonce, so any
-            // legitimate post-cut receipt created in the interim would be
-            // retired with the legacy ones. Atomic with the cut, while
-            // paused, is the only ordering that leaves no window.
-            // UNCONDITIONAL — every chain arms, exactly once (#1662 r11).
-            // Round 9 gated this on the live canonical flag so a mirror
-            // refresh would not revert on `onlyCanonical`, reasoning that
-            // mirrors hold no recovery position. That is false for a
-            // DEMOTED former canonical, which keeps the reservations and
-            // recovered tokens it accrued while canonical: the gate skips
-            // it, and re-promotion cannot repair the omission (the
-            // fresh-deploy auto-arm needs a zero nonce, which a Diamond
-            // with history does not have), so it would resume canonical
-            // operation with the watermark off. Arming a genuine mirror is
-            // harmless — its nonce is still 0, so the watermark records 0
-            // and retires nothing — so the safe rule is the unbranched
-            // one. `armRecoveryAttribution` dropped `onlyCanonical` in the
-            // same round to make this callable everywhere.
-            if (!IRecoveryAttribution(diamond).recoveryAttributionArmed()) {
-                IRecoveryAttribution(diamond).armRecoveryAttribution();
-                console.log("P2-w6: armed per-receipt recovery attribution");
-            }
-        }
-
         // ─── #1434 P2-w2 — the receiver wire-generation probe: RETIRED ────
         //
         // Codex #2232 r3 — this block did exactly what the pre-cut probe now

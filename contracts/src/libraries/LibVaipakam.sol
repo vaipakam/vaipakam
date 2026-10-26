@@ -6888,30 +6888,19 @@ library LibVaipakam {
         //   fresh-recovery attribution this once pointed at was removed
         //   in r6 along with the mint that needed it.)
         mapping(bytes32 => bool) importedTupleSeen;
-        // EVERY CHAIN (#1662 r7, delabelled r11) — the reservation nonce
-        //   at which PER-RECEIPT recovery attribution was armed. Receipts
-        //   at or below it predate attribution: their recovery credit was
-        //   recorded, but the spending and claws against it were only
-        //   ever tracked GLOBALLY, so their per-receipt counters read
-        //   zero and would report already-spent credit as unspent —
-        //   letting a legacy receipt draw against a later receipt's
-        //   backing. Legacy receipts are therefore not drawable at all;
-        //   their value remains reachable through the ordinary charged
-        //   path.
-        //
-        //   NOT Base-only, despite everything it governs being so. The
-        //   refresh arms UNCONDITIONALLY (r11), because a chain's
-        //   canonical status is mutable: a DEMOTED former canonical still
-        //   holds real history, and a canonical-gated arm would skip it
-        //   and could never catch up (the fresh-deploy auto-arm requires a
-        //   zero nonce). So a populated slot on a mirror is EXPECTED, not
-        //   a migration defect — it reads armed at nonce ZERO, which
-        //   constrains nothing, since every receipt id starts at 1 and
-        //   `remitReservationNonce` only advances on canonical-gated
-        //   surfaces. A fresh canonical deploy arms at zero for the same
-        //   reason: no receipts exist yet.
-        uint256 recoveryAttributionArmedAt;
-        bool recoveryAttributionArmed;
+        // ── RETIRED (#2910) — the #1662 recovery-attribution watermark ───
+        // The reservation nonce at which per-receipt recovery attribution
+        // was armed on a Diamond refreshed in place over receipts whose
+        // spends were tracked only globally, and its armed flag. Receipt ids
+        // come from `remitReservationNonce`, which advances only on
+        // canonical-gated surfaces, and a fresh canonical deploy armed at
+        // zero before its first receipt, so no receipt on this build can
+        // predate attribution. Every chain reaches this build by fresh
+        // deploy (owner decision O1 = A); the watermark, its arming and every
+        // rule that read it are removed. Kept in place, never written and
+        // never read, so the layout is unchanged.
+        uint256 retiredRecoveryAttributionArmedAt;
+        bool retiredRecoveryAttributionArmed;
         // BASE-ONLY (§5.4 R6e, reshaped #1662 r1) — the imported
         //   outstanding-compensation record for a chain after a Base
         //   deployment rotation: the RAW old-era tuple, not its hash —
@@ -7521,14 +7510,16 @@ library LibVaipakam {
         ///      auditable the way every other row is (rows equal figures):
         ///      `rewardCustodyUnclassifiedUncounted` is what the row holds
         ///      of untyped delivery remainders and quarantined compensation
-        ///      (net of R4 returns); `rewardCustodyUnclassifiedReturned` is
-        ///      what it holds of stranded returns for receipts that predate
-        ///      recovery attribution. Invariant: their sum equals the row.
+        ///      (net of R4 returns), and it equals the row. (#2910 —
+        ///      `retiredRewardCustodyUnclassifiedReturned` held stranded
+        ///      returns for receipts that predated recovery attribution, which
+        ///      no receipt on this build can; kept in place, never written and
+        ///      never read, so the layout is unchanged.)
         ///      `strandedRecoveryReservedHeld` is the part of
         ///      `strandedRecoveryReserved` whose tokens are in the holder —
         ///      the Diamond's backing position subtracts only the rest.
         uint256 rewardCustodyUnclassifiedUncounted;
-        uint256 rewardCustodyUnclassifiedReturned;
+        uint256 retiredRewardCustodyUnclassifiedReturned;
         uint256 strandedRecoveryReservedHeld;
         /// @dev #1566 closure 2 cutover PR 1 — every value-bearing reward
         ///      packet by its ingress stamp, and the per-source fallback

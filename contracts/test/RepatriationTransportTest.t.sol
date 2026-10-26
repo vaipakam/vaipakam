@@ -1190,7 +1190,7 @@ contract RepatriationTransportTest is SetupTest {
         assertEq(vpfi.balanceOf(holder), 0, "the holder gave it back");
         assertEq(vpfi.balanceOf(address(ccip)), 5 ether, "pulled by CCIP from the sender");
         assertEq(vpfi.balanceOf(address(diamond)), 0, "the Diamond's balance never moved");
-        (uint256 uncountedHeld, , uint256 reservedHeld) = _rlens().getUnclassifiedPosition();
+        (uint256 uncountedHeld, uint256 reservedHeld) = _rlens().getUnclassifiedPosition();
         assertEq(uncountedHeld, 0, "the row's figure stepped down");
         assertEq(reservedHeld, 0, "the reservation's held part stepped down");
         assertEq(_rlens().getStrandedRecoveryReserved(), 0, "earmark released");
@@ -1336,30 +1336,6 @@ contract RepatriationTransportTest is SetupTest {
         RewardCompensationDispatchFacet(address(diamond)).onStrandedReturnReceived(
             address(diamond), 11, 1, CHAIN_ARB, address(vpfi), 4 ether, 4 ether, 0, id
         );
-    }
-
-    /// Codex #2198 r1 — the ceremony twin: a recovery ceremony for a receipt
-    /// that predates attribution is recorded under a ceremony-kind packet
-    /// (sequence-keyed — no transport carried it) on a deployment whose
-    /// custody is NOT activated, with the tokens staying Diamond-side.
-    function test_RecoveryCeremony_PreAttributionInflowRecordedWhenNotActivated() public {
-        _armBase();
-        _mut().setRemitReservationCompRaw(11, CHAIN_ARB, 3, 4 ether, 1); // released
-        _mut().setRecoveryAttributionRaw(true, 20); // receipts 1..20 predate the arming
-        vpfi.mint(address(diamond), 4 ether); // brought home by the operator
-        (uint256 recBefore, , ) = _rlens().getRecoveryPosition();
-        RewardCompensationDispatchFacet(address(diamond)).recordRecoveryCeremony(11, 4 ether, 0);
-        (uint256 recAfter, , ) = _rlens().getRecoveryPosition();
-        assertEq(recAfter, recBefore, "no position credited for a pre-attribution receipt");
-        LibVaipakam.IngressPacket memory p =
-            _rlens().getIngressPacket(keccak256(abi.encode(uint256(0), uint256(1), "seq")));
-        assertGt(p.arrivedAt, 0, "recorded, sequence-keyed");
-        assertEq(p.kind, 4, "a ceremony-inflow packet");
-        assertEq(p.actualReceived, 4 ether);
-        assertEq(p.remitId, 11);
-        assertEq(p.unclassified, 0, "nothing of it is in the row");
-        assertEq(vpfi.balanceOf(address(diamond)), 4 ether, "the tokens stay Diamond-side");
-        assertEq(_rlens().getRecoveredForReceipt(11), 4 ether, "recovered as before");
     }
 
     /// Chain binding: a return authenticated from the WRONG chain cannot
