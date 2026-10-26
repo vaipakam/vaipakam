@@ -157,14 +157,24 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         the long-duration interest-formula invariant that the
     ///         duration cap exists to protect.
     error AutoExtendDurationOutOfRange();
-    /// @notice T-092 Phase 3 — extend called before at least one
-    ///         full day has elapsed since `loan.startTime`. Codex
-    ///         round-1 P1 — without this guard, `accruedInterestToTime`
-    ///         (which floors to whole days) returns 0 and the post-
-    ///         extension `startTime` reset would let a borrower
-    ///         repeatedly extend just before the daily boundary to
-    ///         erase all accrual.
-    error AutoExtendTooSoonAfterStart();
+    /// @notice #2738 — extend called before the loan's extension window
+    ///         opens ({getAutoExtendWindow}). The window opens
+    ///         {AUTO_EXTEND_WINDOW} before the loan's effective maturity, so
+    ///         a loan is re-termed (interest settled, start reset, rate
+    ///         moved) only near the end of the term both parties agreed,
+    ///         never early in it; and never within the first day after its
+    ///         start (Codex round-1 P1 on T-092: the start reset would let a
+    ///         borrower roll the obligation forward without accrual landing).
+    /// @param  opensAt The earliest timestamp an extension is accepted.
+    error AutoExtendWindowNotOpen(uint256 opensAt);
+    /// @notice #2738 — the proposed term would make the loan defaultable
+    ///         sooner than it is now: its new end plus the grace its new
+    ///         duration earns falls before the current grace end. A short
+    ///         new duration can land in a smaller grace bucket, so a later
+    ///         end alone does not protect the borrower's grace time.
+    /// @param  newGraceEnd The grace end the proposed term would give.
+    /// @param  graceEnd    The loan's grace end now.
+    error ExtensionShortensGrace(uint256 newGraceEnd, uint256 graceEnd);
     /// @notice T-092 Phase 3 — `block.timestamp + newDurationDays *
     ///         1 days` overflows `uint64`. Without this check the
     ///         explicit cast would silently truncate, letting a
@@ -464,6 +474,59 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         }
     }
 
+    // ─── Extension window — #2738 ────────────────────────────────────
+
+    /// @notice How long before a loan's effective maturity its extension
+    ///         window opens (#2738). Fixed, not a governance knob: it is
+    ///         part of what both parties consent to when they set their
+    ///         auto-extend caps.
+    uint256 internal constant AUTO_EXTEND_WINDOW = 3 days;
+
+    /// @notice #2738 — when an active loan may be extended in place: from
+    ///         `opensAt` to `closesAt`, both inclusive. `opensAt` is
+    ///         {AUTO_EXTEND_WINDOW} before the loan's effective
+    ///         (pause-adjusted) maturity, or one day after its start if that
+    ///         is later; `closesAt` is its effective grace end, past which
+    ///         the loan may be defaulted. The keeper reads this rather than
+    ///         computing the window itself, so the rule lives in one place.
+    /// @dev    An extension inside the window must also leave the loan
+    ///         defaultable no sooner than `closesAt`: the new end plus the
+    ///         grace its new duration earns must be at least `closesAt`
+    ///         ({ExtensionShortensGrace}). Both parties' caps and the admin
+    ///         switch still apply; this view says only WHEN.
+    /// @param  loanId The loan.
+    /// @return opensAt  Earliest timestamp `extendLoanInPlace` accepts.
+    /// @return closesAt Latest timestamp it accepts (the grace end).
+    function getAutoExtendWindow(uint256 loanId)
+        external
+        view
+        returns (uint64 opensAt, uint64 closesAt)
+    {
+        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        // `startTime == 0` is a loan id never opened: its zero status reads
+        // as Active.
+        if (loan.startTime == 0 || loan.status != LibVaipakam.LoanStatus.Active) {
+            revert LoanNotActive();
+        }
+        (uint256 o, uint256 c) = _extendWindow(loan);
+        return (uint64(o), uint64(c));
+    }
+
+    /// @dev The one statement of the extension window (#2738), read by the
+    ///      executor and by {getAutoExtendWindow}. Maturity and grace end come
+    ///      from {LibLoanClock}, so a pause moves the window with the loan.
+    function _extendWindow(LibVaipakam.Loan storage loan)
+        private
+        view
+        returns (uint256 opensAt, uint256 closesAt)
+    {
+        uint256 m = LibLoanClock.maturity(loan);
+        opensAt = m > AUTO_EXTEND_WINDOW ? m - AUTO_EXTEND_WINDOW : 0;
+        uint256 firstDayEnd = uint256(loan.startTime) + LibVaipakam.ONE_DAY;
+        if (opensAt < firstDayEnd) opensAt = firstDayEnd;
+        closesAt = LibLoanClock.graceEnd(loan);
+    }
+
     // ─── extendLoanInPlace — T-092 Phase 3 (#503) executor ───────────
 
     /// @notice Extend an active loan in place: roll `startTime` forward
@@ -506,7 +569,9 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // the only entry point.
         if (!s.protocolCfg.cfgAutoExtendEnabled) revert AutoExtendDisabled();
 
-        if (loan.status != LibVaipakam.LoanStatus.Active) {
+        // `startTime == 0` is a loan id never opened: its zero status reads
+        // as Active.
+        if (loan.startTime == 0 || loan.status != LibVaipakam.LoanStatus.Active) {
             revert LoanNotActive();
         }
         // ERC20 principal only — NFT rentals would need a custody
@@ -544,16 +609,17 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         ) {
             revert AutoExtendDurationOutOfRange();
         }
-        // Codex round-1 P1 — the executor resets `loan.startTime` to
-        // `block.timestamp` at the end. If less than a full day has
-        // elapsed since the previous start, `accruedInterestToTime`
-        // floors to zero accrued interest and a borrower could
-        // repeatedly extend just before the daily boundary to roll
-        // the obligation forward without ever paying interest. Refuse
-        // extension within the first day so accrual always lands.
-        if (block.timestamp < uint256(loan.startTime) + LibVaipakam.ONE_DAY) {
-            revert AutoExtendTooSoonAfterStart();
-        }
+        // #2738 — the one extension window ({_extendWindow}): it opens
+        // AUTO_EXTEND_WINDOW before the effective maturity (and never inside
+        // the first day after the start, so accrual always lands before the
+        // start is reset) and closes at the grace end.
+        (uint256 windowOpensAt, uint256 graceEndNow) = _extendWindow(loan);
+        if (block.timestamp < windowOpensAt) revert AutoExtendWindowNotOpen(windowOpensAt);
+        // Codex round-4 P1 — refuse extension once the loan is past its
+        // grace end. At that point `DefaultedFacet.triggerDefault` is the
+        // lender's intended resolution and extension would let an
+        // authorised keeper salvage a defaultable state.
+        if (block.timestamp > graceEndNow) revert ExtensionGraceExpired();
 
         // ── Auth: keeper-side bit + Tier-1 sanctions on all parties ──
         if (LibAuth.requireKeeperFor(
@@ -617,18 +683,12 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // extend the loan's end time.
         uint256 oldEndTime = LibLoanClock.maturity(loan);
         if (newEndTimeUint <= oldEndTime) revert ExtensionMustExtend();
-        // Codex round-4 P1 — refuse extension once the loan is past
-        // its default grace window. At that point
-        // `DefaultedFacet.triggerDefault` is the lender's intended
-        // resolution and extension would let an authorised keeper
-        // salvage a defaultable state. Mirrors the late-fee check
-        // below but using the grace-aware threshold.
-        if (
-            block.timestamp >
-            oldEndTime + LibVaipakam.gracePeriod(loan.durationDays)
-        ) {
-            revert ExtensionGraceExpired();
-        }
+        // #2738 — and never make it defaultable sooner. The new term starts
+        // now, so it carries no pause credit: its grace end is its end plus
+        // the grace its new duration earns, and that must not fall before
+        // the grace end the loan has today.
+        uint256 newGraceEnd = newEndTimeUint + LibVaipakam.gracePeriod(newDurationDays);
+        if (newGraceEnd < graceEndNow) revert ExtensionShortensGrace(newGraceEnd, graceEndNow);
 
         // ── Accrued-interest math + treasury / lender split ──────────
         // Codex round-1 P1 — honor `loan.useFullTermInterest`. When

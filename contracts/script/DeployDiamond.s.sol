@@ -1950,7 +1950,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         Setters + readers for auto-lend / auto-opt-in / per-loan
     ///         refinance caps + per-loan + per-side extend caps.
     function _getAutoLifecycleFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](13);
+        s = new bytes4[](14);
         s[0] = AutoLifecycleFacet.setAutoLendConsent.selector;
         s[1] = AutoLifecycleFacet.getAutoLendConsent.selector;
         s[2] = AutoLifecycleFacet.setAutoOptInOnNewLoan.selector;
@@ -1965,6 +1965,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[11] = AutoLifecycleFacet.getAutoExtendLenderCaps.selector;
         // T-092 Phase 3 (#503) — extendLoanInPlace executor.
         s[12] = AutoLifecycleFacet.extendLoanInPlace.selector;
+        // #2738 — when a loan may be extended (the keeper reads it).
+        s[13] = AutoLifecycleFacet.getAutoExtendWindow.selector;
     }
 
     /// @notice #407 PR 2 (2026-06-12) — encumbrance mutate facet
