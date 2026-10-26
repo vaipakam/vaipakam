@@ -601,6 +601,80 @@ contract OracleFacetTest is Test {
         assertEq(decimals, 8);
     }
 
+    // ─── #2419 — a composed price keeps the finer feed's precision ───────────
+
+    /// @dev The 1e18 numeraire value of `amount` base units, by the rule
+    ///      `NumeraireValueFacet.getNumeraireValue` applies to the price read.
+    function _valueOf(address asset, uint256 amount) internal view returns (uint256) {
+        (uint256 price, uint8 dec) = OracleFacet(address(diamond)).getAssetPrice(asset);
+        return LibNumeraireValue.toValue(amount, price, dec, 18, false);
+    }
+
+    /// @dev Route `asset` to the asset/ETH × ETH/USD fallback: no direct
+    ///      asset/USD feed, an asset/ETH feed at `ethFeedPrice` / `ethFeedDec`,
+    ///      and ETH/USD at `ethUsdPrice` / `ethUsdDec`.
+    function _routeViaEth(
+        int256 ethFeedPrice,
+        uint8 ethFeedDec,
+        int256 ethUsdPrice,
+        uint8 ethUsdDec
+    ) internal {
+        address ethDenom = makeAddr("ethDenom");
+        address assetEthFeed = makeAddr("assetEthFeed");
+        OracleAdminFacet(address(diamond)).setEthChainlinkDenominator(ethDenom);
+        _mockRegistryFeed(mockAsset, address(0));
+        vm.mockCall(
+            mockRegistry,
+            abi.encodeWithSignature("getFeed(address,address)", mockAsset, ethDenom),
+            abi.encode(assetEthFeed)
+        );
+        _mockFeedFull(assetEthFeed, ethFeedPrice, ethFeedDec);
+        _mockFeedFull(mockEthUsdFeed, ethUsdPrice, ethUsdDec);
+    }
+
+    /// An 18-decimal asset/ETH feed composed with an 8-decimal ETH/USD feed
+    /// reports at 18 decimals.
+    function testEthPivotPriceKeepsTheAssetFeedPrecision() public {
+        _routeViaEth(int256(0.5e18), 18, int256(2000e8), 8);
+        (uint256 price, uint8 decimals) = OracleFacet(address(diamond)).getAssetPrice(mockAsset);
+        assertEq(decimals, 18, "finer scale");
+        assertEq(price, 1000e18, "0.5 ETH at $2,000");
+    }
+
+    /// A price far below one 8-decimal unit keeps its digits: 5e-12 ETH at
+    /// $2,000 is $1e-8, which the 18-decimal composition carries in full.
+    function testEthPivotCheapAssetKeepsItsDigits() public {
+        _routeViaEth(int256(5e6), 18, int256(2000e8), 8);
+        (uint256 price, uint8 decimals) = OracleFacet(address(diamond)).getAssetPrice(mockAsset);
+        assertEq(decimals, 18);
+        assertEq(price, 1e10, "$1e-8 at 18 decimals");
+    }
+
+    /// Either leg may be the finer one: an 8-decimal asset/ETH feed with an
+    /// 18-decimal ETH/USD feed reports at 18, and two 8-decimal feeds at 8.
+    function testEthPivotScaleIsTheFinerOfTheTwoFeeds() public {
+        _routeViaEth(int256(0.5e8), 8, int256(2000e18), 18);
+        (uint256 price, uint8 decimals) = OracleFacet(address(diamond)).getAssetPrice(mockAsset);
+        assertEq(decimals, 18);
+        assertEq(price, 1000e18);
+
+        _routeViaEth(int256(0.5e8), 8, int256(2000e8), 8);
+        (price, decimals) = OracleFacet(address(diamond)).getAssetPrice(mockAsset);
+        assertEq(decimals, 8);
+        assertEq(price, 1000e8);
+    }
+
+    /// The value the risk path reads from a composed price is the same
+    /// whichever scale the composition reports: $1,000 per token, 3 tokens.
+    function testEthPivotValueIsScaleIndependent() public {
+        _routeViaEth(int256(0.5e18), 18, int256(2000e8), 8);
+        uint256 at18 = _valueOf(mockAsset, 3e18);
+        _routeViaEth(int256(0.5e8), 8, int256(2000e8), 8);
+        uint256 at8 = _valueOf(mockAsset, 3e18);
+        assertEq(at18, 3000e18, "18-decimal composition");
+        assertEq(at8, 3000e18, "8-decimal composition");
+    }
+
     function testGetAssetPriceRevertsNoPriceFeed() public {
         _mockRegistryFeed(mockAsset, address(0));
         vm.expectRevert(OracleFacet.NoPriceFeed.selector);
