@@ -617,63 +617,72 @@ contract SecondaryQuorumTest is Test {
         assertEq(price2, CHAINLINK_PRICE_8DEC);
     }
 
-    // ─── #638 — countLiveSecondaryOracleFeeds ─────────────────────────
+    // ─── #638 / #2737 — countLiveSecondaryOracleFeeds ─────────────────
     // The read-only live-feed counter the backstop oracle-coverage gate
-    // consumes. "Live" = configured + fresh + non-zero (NOT Unavailable),
-    // independent of whether the feed agrees with Chainlink.
+    // consumes. "Live" = configured + fresh + non-zero (NOT Unavailable);
+    // since #2737 it reports live feeds split by whether each agrees with
+    // Chainlink, so the gate can count only agreement.
 
-    function _countLive() internal view returns (uint8) {
-        return
-            OracleFacet(address(diamond)).countLiveSecondaryOracleFeeds(
-                mockAsset
-            );
+    function _count() internal view returns (uint8 agreeing, uint8 disagreeing) {
+        return OracleFacet(address(diamond)).countLiveSecondaryOracleFeeds(mockAsset);
     }
 
     function testCountLive_noneConfigured_returnsZero() public view {
         // setUp wires none of the three secondaries.
-        assertEq(_countLive(), 0, "no secondaries -> 0 live");
+        (uint8 a, uint8 d) = _count();
+        assertEq(a, 0, "no secondaries -> 0 agreeing");
+        assertEq(d, 0, "no secondaries -> 0 disagreeing");
     }
 
-    function testCountLive_oneAgreeingFeed_returnsOne() public {
+    function testCountLive_oneAgreeingFeed() public {
         _enableTellor();
         _mockTellorAgree();
-        assertEq(_countLive(), 1, "tellor agree -> 1 live");
+        (uint8 a, uint8 d) = _count();
+        assertEq(a, 1, "tellor agrees");
+        assertEq(d, 0);
     }
 
-    function testCountLive_disagreeingFeedStillCountsLive() public {
-        // A configured, fresh, non-zero feed that DISAGREES is still LIVE for
-        // coverage purposes — the backstop cares that the asset is multiply
-        // priced, not that the feeds currently concur.
+    function testCountLive_disagreeingFeedIsReportedAsDissent() public {
+        // A configured, fresh, non-zero feed that DISAGREES is live, and is
+        // reported as dissent rather than as coverage (#2737).
         _enableApi3();
         _mockApi3Disagree();
-        assertEq(_countLive(), 1, "disagreeing feed still counts as live");
+        (uint8 a, uint8 d) = _count();
+        assertEq(a, 0, "dissent is not agreement");
+        assertEq(d, 1, "dissent reported");
     }
 
     function testCountLive_noDataFeedNotCounted() public {
-        // Configured but reporting zero/no data -> Unavailable -> not counted.
+        // Configured but reporting zero/no data -> Unavailable -> neither.
         _enableDia();
         _mockDiaNoData();
-        assertEq(_countLive(), 0, "no-data feed not live");
+        (uint8 a, uint8 d) = _count();
+        assertEq(a, 0);
+        assertEq(d, 0);
     }
 
-    function testCountLive_allThreeLive_returnsThree() public {
+    function testCountLive_allThreeAgree() public {
         _enableTellor();
         _mockTellorAgree();
         _enableApi3();
         _mockApi3Agree();
         _enableDia();
         _mockDiaAgree();
-        assertEq(_countLive(), 3, "all three live -> 3");
+        (uint8 a, uint8 d) = _count();
+        assertEq(a, 3, "all three agree");
+        assertEq(d, 0);
     }
 
-    function testCountLive_mixedLiveAndUnavailable_countsOnlyLive() public {
+    function testCountLive_mixed_splitsAgreeDisagreeAndSkipsUnavailable() public {
         _enableTellor();
-        _mockTellorAgree(); // live
+        _mockTellorAgree(); // agrees
         _enableApi3();
         _mockApi3NoData(); // Unavailable
         _enableDia();
-        _mockDiaDisagree(); // live (disagrees but reports)
-        assertEq(_countLive(), 2, "2 live, 1 unavailable -> 2");
+        _mockDiaDisagree(); // disagrees
+        (uint8 a, uint8 d) = _count();
+        assertEq(a, 1, "one agrees");
+        assertEq(d, 1, "one disagrees");
     }
 
     // ─── #666 — the status read names why a price read failed ─────────

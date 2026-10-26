@@ -11437,10 +11437,22 @@ library LibVaipakam {
     }
 
     /// @dev Effective tier-LTV the loan-init gate consults. Reads the
-    ///      cache if fresh (≤ 14d since last refresh), else returns
-    ///      the library default for that tier. Tier 0 always returns
-    ///      0 (asset not classified — caller must reject before
-    ///      reaching this).
+    ///      peer-derived cache only when it is fresh (≤ 14d since last
+    ///      refresh) AND still inside the tier's CURRENT safety box
+    ///      (`tierLtvBoundsBps`); otherwise returns the governance tier cap
+    ///      (`cfgTierMaxInitLtvBps`). Tier 0 always returns 0 (asset not
+    ///      classified — caller must reject before reaching this).
+    ///
+    ///      #2736 — the box is re-checked HERE, at the one read site,
+    ///      rather than only when the refresh writes the entry. The refresh
+    ///      rejects a candidate outside the box it sees, but governance can
+    ///      move the box afterwards (`ConfigFacet.setTierLtvParams`), and
+    ///      before this a still-fresh entry above a tightened ceiling kept
+    ///      admitting new loans at the old value for up to 14 days. An
+    ///      out-of-box entry is treated like a stale one, not clipped into
+    ///      range, matching the refresh's own rule (spec: "rejected rather
+    ///      than clipped"), so the setter needs no cache invalidation for
+    ///      the box to bind immediately.
     function effectiveTierMaxInitLtvBps(uint8 tier) internal view returns (uint16) {
         if (tier == 0 || tier > MAX_LIQUIDITY_TIER) return 0;
         Storage storage s = storageSlot();
@@ -11453,7 +11465,9 @@ library LibVaipakam {
                 entry.lastRefreshedAt > 0 &&
                 block.timestamp - uint256(entry.lastRefreshedAt) <= TIER_LTV_CACHE_HARD_TTL
             ) {
-                return entry.ltvBps;
+                (uint16 floorBps, uint16 ceilBps) = tierLtvBoundsBps(tier);
+                uint16 cached = entry.ltvBps;
+                if (cached >= floorBps && cached <= ceilBps) return cached;
             }
         }
         // #633 — the cache-miss / paused fallback is the GOVERNANCE-configured tier
@@ -11576,9 +11590,13 @@ library LibVaipakam {
     ///      and publicly observable via `CallScheduled` on the timelock.
     ///      Passing `maxStaleness == 0` clears BOTH fields regardless of
     ///      the `minValidAnswer` argument — it's the "remove the
-    ///      override entirely" escape hatch.
+    ///      override entirely" escape hatch. An override can only make the
+    ///      feed STRICTER: it is applied on top of the two-tier defaults,
+    ///      never instead of them (#2742), so a budget above
+    ///      `ORACLE_STABLE_STALENESS` is refused.
     /// @param feed           Chainlink aggregator to configure.
-    /// @param maxStaleness   Max acceptable age in seconds. 0 clears.
+    /// @param maxStaleness   Max acceptable age in seconds, at most
+    ///                       `ORACLE_STABLE_STALENESS`. 0 clears.
     /// @param minValidAnswer Floor on the raw answer the aggregator
     ///                       returns; in the aggregator's decimals.
     ///                       Pass 0 (or a negative int) for no floor.
@@ -11597,6 +11615,15 @@ library LibVaipakam {
             ovr.minValidAnswer = 0;
             emit FeedOverrideSet(feed, 0, 0);
             return;
+        }
+        // #2742 — an override only tightens (OracleFacet._freshEnough applies
+        // it ON TOP of the two-tier defaults), so a budget above the outer
+        // default bound could never bind. Refuse it as the configuration
+        // mistake it is, rather than store a value that reads as a loosening.
+        if (maxStaleness > ORACLE_STABLE_STALENESS) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "feedMaxStaleness", uint256(maxStaleness), 1, ORACLE_STABLE_STALENESS
+            );
         }
         ovr.maxStaleness = maxStaleness;
         ovr.minValidAnswer = minValidAnswer;

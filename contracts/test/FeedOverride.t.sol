@@ -15,8 +15,9 @@ import {MockChainlinkAggregator} from "./mocks/MockChainlinkAggregator.sol";
  *           - Only the owner can install or clear an override.
  *           - A tighter override rejects a price that would pass the
  *             global two-tier defaults.
- *           - A looser override accepts a price that the global
- *             volatile ceiling (2h) would reject.
+ *           - An override never loosens: a longer budget leaves the
+ *             global two-tier defaults in force (#2742), and a budget
+ *             above the outer 25h default is refused.
  *           - A `minValidAnswer` floor rejects a below-floor reading
  *             regardless of staleness.
  *           - Clearing the override (maxStaleness=0) restores the
@@ -145,18 +146,13 @@ contract FeedOverrideTest is SetupTest {
         OracleFacet(address(diamond)).getAssetPrice(asset);
     }
 
-    /// @dev Loosening override accepts a price that the 2h global
-    ///      volatile ceiling would reject. Useful for feeds with
-    ///      legitimately slow heartbeats (fiat, commodity) where the
-    ///      operator is confident a longer staleness is safe.
-    function test_LooserStaleness_AcceptsOtherwiseStalePrice() public {
-        // Feed reports a price 4 hours old — well past the 2h global
-        // volatile ceiling. A non-peg-aligned price ($1000) would fail
-        // the stable-peg relaxation too. A 6-hour override should accept.
+    /// @dev #2742 — an override can never loosen a feed. A 6h budget on a
+    ///      volatile feed leaves the 2h default in force, so a 4h-old,
+    ///      off-peg price is still refused. (Before #2742 this test asserted
+    ///      the opposite: the override replaced the defaults.)
+    function test_LongerStaleness_DoesNotLoosenTheDefault() public {
         feed.setRound(int256(1000e8), block.timestamp - 4 hours);
 
-        // Baseline: global rule rejects as stale (no peg tolerance for
-        // an off-$1 asset price).
         vm.expectRevert(OracleFacet.StalePriceData.selector);
         OracleFacet(address(diamond)).getAssetPrice(asset);
 
@@ -166,9 +162,36 @@ contract FeedOverrideTest is SetupTest {
             0
         );
 
-        (uint256 price, ) = OracleFacet(address(diamond))
-            .getAssetPrice(asset);
-        assertEq(price, 1000e8);
+        vm.expectRevert(OracleFacet.StalePriceData.selector);
+        OracleFacet(address(diamond)).getAssetPrice(asset);
+    }
+
+    /// @dev #2742 — a budget above the outer default (25h) could never bind,
+    ///      so the setter refuses it rather than store what reads as a
+    ///      loosening. Exactly 25h is accepted.
+    function test_setFeedOverride_RefusesBudgetAboveOuterDefault() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ParameterOutOfRange.selector,
+                bytes32("feedMaxStaleness"),
+                uint256(25 hours + 1),
+                uint256(1),
+                uint256(25 hours)
+            )
+        );
+        OracleAdminFacet(address(diamond)).setFeedOverride(
+            address(feed),
+            uint40(25 hours + 1),
+            0
+        );
+
+        OracleAdminFacet(address(diamond)).setFeedOverride(
+            address(feed),
+            uint40(25 hours),
+            0
+        );
+        (uint40 m, ) = OracleAdminFacet(address(diamond)).getFeedOverride(address(feed));
+        assertEq(m, 25 hours, "25h stored");
     }
 
     /// @dev Min-valid-answer floor rejects a below-floor reading even
