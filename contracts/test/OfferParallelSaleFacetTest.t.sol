@@ -59,10 +59,11 @@ contract OfferParallelSaleFacetTest is SetupTest {
     uint256 internal constant INTEREST_RATE_BPS = 1_200; // 12%
     uint16 internal constant TEST_BUFFER_BPS = 200; // 2 %
 
-    // 1 day of interest at 12% on 100 ether = 100 * 0.12 / 365 ≈ 0.0328 ether
-    // Floor = (100 + 0.0328) × 1.02 ≈ 102.0335 ether
+    // #2740 pre-loan floor = (principal + interest over term + grace at the
+    // offer's rate + late fee at the grace boundary) × (1 + buffer). For this
+    // 30-day offer (3-day grace): (100 + 1.0849 + 2.5) × 1.02 ≈ 105.657 ether.
     uint256 internal constant EXPECTED_FLOOR_LO_BOUND = 102 ether;
-    uint256 internal constant SAFE_ASK = 105 ether;
+    uint256 internal constant SAFE_ASK = 108 ether;
     uint256 internal constant SUB_FLOOR_ASK = 101 ether;
 
     function setUp() public {
@@ -213,6 +214,31 @@ contract OfferParallelSaleFacetTest is SetupTest {
         );
         OfferParallelSaleFacet(address(diamond)).postParallelSaleListing(
             uint96(OFFER_ID), SAFE_ASK, conduitKey, _emptyFeeLegs()
+        );
+    }
+
+    /// @notice #2740 — the pre-loan floor hedges what the live floor can reach
+    ///         before the grace boundary: interest over term + grace plus the
+    ///         late fee at the boundary, with no treasury charge on top.
+    function test_2740_preLoanFloorHedgesInterestAndLateFeeNotATreasuryAddend() public {
+        _scaffoldDefaultOffer();
+        uint256 graceDays = 3; // the default bucket for a 30-day loan
+        uint256 interest = (PRINCIPAL_AMOUNT * INTEREST_RATE_BPS * (DURATION_DAYS + graceDays)) / (365 * 10_000);
+        uint256 lateFee = (PRINCIPAL_AMOUNT * (100 + 50 * graceDays)) / 10_000;
+        uint256 expectedMinAsk =
+            ((PRINCIPAL_AMOUNT + interest + lateFee) * (10_000 + TEST_BUFFER_BPS)) / 10_000;
+
+        vm.prank(borrowerHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OfferParallelSaleFacet.AskBelowPreLoanFloor.selector,
+                uint96(OFFER_ID),
+                expectedMinAsk - 1,
+                expectedMinAsk
+            )
+        );
+        OfferParallelSaleFacet(address(diamond)).postParallelSaleListing(
+            uint96(OFFER_ID), expectedMinAsk - 1, conduitKey, _emptyFeeLegs()
         );
     }
 
