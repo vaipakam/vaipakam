@@ -1,4 +1,4 @@
-## Thread — every interest payment counts toward the current period, and a periodic settlement can always run (PR #TBD)
+## Thread — every interest payment counts toward the current period, and a periodic settlement can always run (PR #2885)
 
 On a loan with a periodic-interest schedule, the borrower owes each period's
 interest by a deadline, and a settlement sells collateral for any part left
