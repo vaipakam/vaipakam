@@ -121,7 +121,8 @@ writes the file:
    of its own and Polygon's (`api-polygon-tokens.polygon.technology`) no
    longer resolves, so both read Uniswap Labs' default list, which Arbitrum's
    bridge lists already carry a copy of; Ethereum also reads the Superchain
-   list's L1 entries. An issuer's own page, such as Circle for USDC, settles a
+   list's L1 entries, and Base and Optimism read Uniswap's list beside the
+   Superchain one, which names few of their tokens. An issuer's own page, such as Circle for USDC, settles a
    review entry by hand.
 3. It drafts a binding only when exactly one address is named by all three.
    A source may answer with several addresses for one symbol (CoinGecko lists

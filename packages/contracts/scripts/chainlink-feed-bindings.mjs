@@ -76,7 +76,8 @@ const SUPERCHAIN_LIST = 'https://static.optimism.io/optimism.tokenlist.json';
 // Uniswap Labs' default list. The token-list source for Ethereum (which has
 // no list of its own; the Superchain list names only what is bridged to OP)
 // and for Polygon, whose own list endpoint (api-polygon-tokens.polygon.technology)
-// no longer resolves. Arbitrum already reads its arbed copy of the same list.
+// no longer resolves; read beside the Superchain list on Base and Optimism,
+// which names few of their tokens. Arbitrum already reads its arbed copy.
 const UNISWAP_DEFAULT_LIST = 'https://tokens.uniswap.org';
 // Multicall3, at the same address on every chain here: the chain reads go
 // through it so a whole run's reads land at the pinned block in a few calls,
@@ -105,7 +106,7 @@ export const CHAINS = Object.freeze({
     directory: `${DIRECTORY}/feeds-ethereum-mainnet-base-1.json`,
     coingeckoPlatform: 'base',
     cmcPlatforms: ['Base'],
-    tokenLists: [SUPERCHAIN_LIST],
+    tokenLists: [SUPERCHAIN_LIST, UNISWAP_DEFAULT_LIST],
     rpc: 'https://mainnet.base.org',
   },
   optimism: {
@@ -113,7 +114,7 @@ export const CHAINS = Object.freeze({
     directory: `${DIRECTORY}/feeds-ethereum-mainnet-optimism-1.json`,
     coingeckoPlatform: 'optimistic-ethereum',
     cmcPlatforms: ['Optimism'],
-    tokenLists: [SUPERCHAIN_LIST],
+    tokenLists: [SUPERCHAIN_LIST, UNISWAP_DEFAULT_LIST],
     rpc: 'https://mainnet.optimism.io',
   },
   arbitrum: {
