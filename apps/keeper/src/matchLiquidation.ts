@@ -10,6 +10,11 @@
  * branch reverts `NoEnabledSwapRoute`, or the priority window refuses the
  * external path.
  *
+ * On a Diamond deployed before #2796 (the live testnets, until the
+ * all-waves fresh deploy) the call takes no sale size; the form is read
+ * from the Diamond's loupe (`readForcedSaleSurface`), and a Diamond routing
+ * part of each form is sent nothing.
+ *
  * The sale size (#2796) is passed as 0. The match returns before the size
  * is read, and with an empty list a call that does not match cannot sell
  * at all, so no size is ever judged on this send.
@@ -28,15 +33,18 @@
  * broadcast whose answer was lost is reported as unconfirmed, by hash.
  */
 
-import { encodeFunctionData, type Abi, type Address, type Hex, type PublicClient } from 'viem';
-import { RiskFacetABI } from '@vaipakam/contracts/abis';
+import { type Address, type Hex, type PublicClient } from 'viem';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
-import { INTERNAL_MATCH_EXECUTED_TOPIC } from '@vaipakam/lib/routeBuilder';
+import {
+  INTERNAL_MATCH_EXECUTED_TOPIC,
+  encodeTriggerLiquidation,
+  readForcedSaleSurface,
+  type ForcedSaleSurface,
+} from '@vaipakam/lib/routeBuilder';
 import type { ChainConfig } from './env';
 import type { KeeperContext } from './keeper';
+import { surfaceSkipReason } from './closeOut';
 import { attemptErrorReason, keeperTxPending, sendInSubmissionSlot } from './keeperSend';
-
-const RISK_ABI: Abi = RiskFacetABI as Abi;
 
 /** What the chain says `triggerLiquidation(loanId, 0, [])` would do now. */
 export type MatchPreview =
@@ -47,9 +55,10 @@ export type MatchPreview =
   /** It reverts, the node cannot simulate, or it reports no logs. */
   | 'unknown';
 
-/** The empty-list `triggerLiquidation` this pass sends, encoded once. */
-function emptyListLiquidation(loanId: bigint): Hex {
-  return encodeFunctionData({ abi: RISK_ABI, functionName: 'triggerLiquidation', args: [loanId, 0n, []] });
+/** The empty-list `triggerLiquidation` this pass sends, in the form the
+ *  Diamond routes (a pre-#2796 Diamond takes no sale size). */
+function emptyListLiquidation(surface: ForcedSaleSurface, loanId: bigint): Hex {
+  return encodeTriggerLiquidation(surface, loanId, 0n, []);
 }
 
 /** Simulate the empty-list liquidation at `blockNumber` and read its logs. */
@@ -59,13 +68,14 @@ export async function previewMatchLiquidation(deps: {
   account: Address;
   loanId: bigint;
   blockNumber: bigint;
+  surface: ForcedSaleSurface;
 }): Promise<MatchPreview> {
-  const { client, diamond, account, loanId, blockNumber } = deps;
+  const { client, diamond, account, loanId, blockNumber, surface } = deps;
   let results;
   try {
     ({ results } = await client.simulateCalls({
       account,
-      calls: [{ to: diamond, data: emptyListLiquidation(loanId) }],
+      calls: [{ to: diamond, data: emptyListLiquidation(surface, loanId) }],
       blockNumber,
     }));
   } catch {
@@ -95,7 +105,7 @@ export type MatchLiquidationOutcome =
 /** Preview, hold, send. Never sends when a step cannot establish its answer. */
 export async function attemptMatchLiquidation(
   deps: Pick<KeeperContext, 'wallet' | 'diamond' | 'chainId' | 'notAfterMs'> & {
-    client: Pick<PublicClient, 'simulateCalls' | 'getBlockNumber' | 'getTransactionCount'>;
+    client: Pick<PublicClient, 'simulateCalls' | 'getBlockNumber' | 'getTransactionCount' | 'readContract'>;
   },
   loanId: bigint,
 ): Promise<MatchLiquidationOutcome> {
@@ -104,15 +114,21 @@ export async function attemptMatchLiquidation(
   if (!keeper) return { kind: 'skipped', reason: 'no-keeper-account' };
 
   // The preview first: while the kill-switch is off, or no opposing
-  // position exists, it is the only read this costs.
+  // position exists, it and the surface read are all this costs.
   const blockNumber = await client.getBlockNumber({ cacheTime: 0 });
-  const preview = await previewMatchLiquidation({ client, diamond, account: keeper, loanId, blockNumber });
+  let surface: ForcedSaleSurface;
+  try {
+    surface = await readForcedSaleSurface({ client, diamond, blockNumber });
+  } catch (err) {
+    return { kind: 'skipped', reason: surfaceSkipReason(err) };
+  }
+  const preview = await previewMatchLiquidation({ client, diamond, account: keeper, loanId, blockNumber, surface });
   if (preview !== 'match') return { kind: 'skipped', reason: `preview=${preview}` };
 
   const pending = await keeperTxPending(client, keeper);
   if (pending !== null) return { kind: 'skipped', reason: pending };
 
-  return sendInSubmissionSlot(wallet, deps.chainId, deps.notAfterMs, diamond, emptyListLiquidation(loanId));
+  return sendInSubmissionSlot(wallet, deps.chainId, deps.notAfterMs, diamond, emptyListLiquidation(surface, loanId));
 }
 
 /**

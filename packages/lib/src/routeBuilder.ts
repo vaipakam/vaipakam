@@ -28,7 +28,15 @@
  *
  * Framework-agnostic: viem only, no browser or Worker globals.
  */
-import { encodeFunctionData, toEventSelector, type Address, type Hex, type PublicClient } from 'viem';
+import {
+  encodeFunctionData,
+  toEventSelector,
+  toFunctionSelector,
+  zeroAddress,
+  type Address,
+  type Hex,
+  type PublicClient,
+} from 'viem';
 import {
   ADAPTER_NAME_KIND,
   packAggregatorData,
@@ -670,6 +678,10 @@ export interface PreviewCloseOutDeps {
   /** Simulate at this block rather than the node's latest — so a preview
    *  can be judged together with reads pinned to the same block. */
   blockNumber?: bigint;
+  /** Which `triggerDefault` the Diamond routes ({@link readForcedSaleSurface});
+   *  the sized form when omitted. On `'whole'` the call sells the whole
+   *  collateral and `sellAmount` is not sent. */
+  surface?: ForcedSaleSurface;
 }
 
 /** `DefaultedFacet.LoanDefaulted(uint256 indexed loanId, bool
@@ -715,11 +727,7 @@ export async function previewCloseOutDetail(
       calls: [
         {
           to: diamond,
-          data: encodeFunctionData({
-            abi: TRIGGER_DEFAULT_ABI,
-            functionName: 'triggerDefault',
-            args: [loanId, sellAmount, calls],
-          }),
+          data: encodeTriggerDefault(deps.surface ?? 'sized', loanId, sellAmount, calls),
         },
       ],
       ...(blockNumber !== undefined ? { blockNumber } : {}),
@@ -853,4 +861,173 @@ export function forcedSaleQuoteAmount(plan: ForcedSalePlan): bigint | null {
 /** Whether `quoted` still lies in the range `plan` accepts. */
 export function forcedSaleQuoteAccepted(plan: ForcedSalePlan, quoted: bigint): boolean {
   return plan.sell !== 0n && quoted >= plan.sell && quoted <= plan.maxSell;
+}
+
+// ─── The forced-sale surface a Diamond routes (#2834 on live testnets) ────
+
+/**
+ * Which forced-sale entry points a Diamond routes.
+ *
+ *  - `'sized'` — the #2796 surface every fresh deploy carries:
+ *    `previewForcedSale`, and `triggerDefault` / `triggerLiquidation` that
+ *    take the sale size `(loanId, sellAmount, adapterCalls)`.
+ *  - `'whole'` — the surface of a Diamond deployed before #2796, which the
+ *    live testnets run until the all-waves fresh deploy: no
+ *    `previewForcedSale`, and `(loanId, adapterCalls)` forms that sell the
+ *    WHOLE collateral and return the surplus to the borrower.
+ *
+ * Everything `'whole'` here is deleted once no served chain runs a
+ * pre-#2796 Diamond (#2907), the same way the B4 report path goes (#2866).
+ */
+export type ForcedSaleSurface = 'sized' | 'whole';
+
+const ADAPTER_CALLS = {
+  name: 'adapterCalls',
+  type: 'tuple[]',
+  components: [
+    { name: 'adapterIdx', type: 'uint256' },
+    { name: 'data', type: 'bytes' },
+  ],
+} as const;
+
+/** The sized `triggerLiquidation` (#2796). */
+const TRIGGER_LIQUIDATION_ABI = [
+  {
+    type: 'function',
+    name: 'triggerLiquidation',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'loanId', type: 'uint256' },
+      { name: 'sellAmount', type: 'uint256' },
+      ADAPTER_CALLS,
+    ],
+    outputs: [],
+  },
+] as const;
+
+/** The pre-#2796 whole-collateral forms. */
+const WHOLE_SALE_ABI = [
+  {
+    type: 'function',
+    name: 'triggerDefault',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'loanId', type: 'uint256' }, ADAPTER_CALLS],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'triggerLiquidation',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'loanId', type: 'uint256' }, ADAPTER_CALLS],
+    outputs: [],
+  },
+] as const;
+
+/** The selectors {@link readForcedSaleSurface} asks the loupe about: the
+ *  sized surface's three, and the whole-collateral surface's two. */
+export const FORCED_SALE_SURFACE_SELECTORS = {
+  sized: {
+    plan: toFunctionSelector(PREVIEW_FORCED_SALE_ABI[0]),
+    triggerDefault: toFunctionSelector(TRIGGER_DEFAULT_ABI[0]),
+    triggerLiquidation: toFunctionSelector(TRIGGER_LIQUIDATION_ABI[0]),
+  },
+  whole: {
+    triggerDefault: toFunctionSelector(WHOLE_SALE_ABI[0]),
+    triggerLiquidation: toFunctionSelector(WHOLE_SALE_ABI[1]),
+  },
+} as const;
+
+const LOUPE_FACET_ADDRESS_ABI = [
+  {
+    type: 'function',
+    name: 'facetAddress',
+    stateMutability: 'view',
+    inputs: [{ name: '_functionSelector', type: 'bytes4' }],
+    outputs: [{ name: 'facetAddress_', type: 'address' }],
+  },
+] as const;
+
+/** A Diamond that routes neither surface whole: some of each, or neither. */
+export class MixedForcedSaleSurface extends Error {
+  readonly routed: Readonly<Record<string, boolean>>;
+
+  constructor(routed: Readonly<Record<string, boolean>>) {
+    super(
+      `the Diamond routes neither forced-sale surface whole (${Object.entries(routed)
+        .map(([name, on]) => `${name}=${on ? 'routed' : 'absent'}`)
+        .join(' ')})`,
+    );
+    this.routed = routed;
+    this.name = 'MixedForcedSaleSurface';
+  }
+}
+
+export interface ReadForcedSaleSurfaceDeps {
+  client: Pick<PublicClient, 'readContract'>;
+  diamond: Address;
+  blockNumber?: bigint;
+}
+
+/**
+ * The forced-sale surface `diamond` routes, read from its own loupe.
+ *
+ * `'sized'` needs the plan and both sized calls routed; `'whole'` needs both
+ * whole-collateral calls routed and none of the sized three. Anything else
+ * throws {@link MixedForcedSaleSurface}: a Diamond part-way between the two
+ * would size a sale with one rule and settle it with the other, so a caller
+ * sends nothing. A read that fails throws what it throws.
+ */
+export async function readForcedSaleSurface(deps: ReadForcedSaleSurfaceDeps): Promise<ForcedSaleSurface> {
+  const { client, diamond, blockNumber } = deps;
+  const routed = async (selector: Hex): Promise<boolean> => {
+    const host = (await client.readContract({
+      address: diamond,
+      abi: LOUPE_FACET_ADDRESS_ABI,
+      functionName: 'facetAddress',
+      args: [selector],
+      ...(blockNumber !== undefined ? { blockNumber } : {}),
+    })) as Address;
+    return host.toLowerCase() !== zeroAddress;
+  };
+  const { sized, whole } = FORCED_SALE_SURFACE_SELECTORS;
+  const [plan, sizedDefault, sizedLiquidation, wholeDefault, wholeLiquidation] = await Promise.all([
+    routed(sized.plan),
+    routed(sized.triggerDefault),
+    routed(sized.triggerLiquidation),
+    routed(whole.triggerDefault),
+    routed(whole.triggerLiquidation),
+  ]);
+  if (plan && sizedDefault && sizedLiquidation) return 'sized';
+  if (!plan && !sizedDefault && !sizedLiquidation && wholeDefault && wholeLiquidation) return 'whole';
+  throw new MixedForcedSaleSurface({ plan, sizedDefault, sizedLiquidation, wholeDefault, wholeLiquidation });
+}
+
+/** `triggerDefault` in the form `surface` routes. `'whole'` sells the whole
+ *  collateral and does not send `sellAmount`. */
+export function encodeTriggerDefault(
+  surface: ForcedSaleSurface,
+  loanId: bigint,
+  sellAmount: bigint,
+  calls: readonly AdapterCall[],
+): Hex {
+  return surface === 'sized'
+    ? encodeFunctionData({ abi: TRIGGER_DEFAULT_ABI, functionName: 'triggerDefault', args: [loanId, sellAmount, calls] })
+    : encodeFunctionData({ abi: WHOLE_SALE_ABI, functionName: 'triggerDefault', args: [loanId, calls] });
+}
+
+/** `triggerLiquidation` in the form `surface` routes. `'whole'` sells the
+ *  whole collateral and does not send `sellAmount`. */
+export function encodeTriggerLiquidation(
+  surface: ForcedSaleSurface,
+  loanId: bigint,
+  sellAmount: bigint,
+  calls: readonly AdapterCall[],
+): Hex {
+  return surface === 'sized'
+    ? encodeFunctionData({
+        abi: TRIGGER_LIQUIDATION_ABI,
+        functionName: 'triggerLiquidation',
+        args: [loanId, sellAmount, calls],
+      })
+    : encodeFunctionData({ abi: WHOLE_SALE_ABI, functionName: 'triggerLiquidation', args: [loanId, calls] });
 }

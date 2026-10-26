@@ -11,6 +11,7 @@ import { armHeldFence } from './helpers/epochFence';
 import {
   decodeFunctionData,
   keccak256,
+  parseAbi,
   type Abi,
   type Address,
   type Hex,
@@ -18,7 +19,8 @@ import {
   type WalletClient,
 } from 'viem';
 import { RiskFacetABI } from '@vaipakam/contracts/abis';
-import { INTERNAL_MATCH_EXECUTED_TOPIC } from '@vaipakam/lib/routeBuilder';
+import { FORCED_SALE_SURFACE_SELECTORS, INTERNAL_MATCH_EXECUTED_TOPIC, type ForcedSaleSurface } from '@vaipakam/lib/routeBuilder';
+import { surfaceFacet } from './helpers/forcedSaleSurface';
 import { attemptMatchLiquidation, tryMatchLiquidation } from '../src/matchLiquidation';
 import { resetSubmissionQueues } from '../src/submissionQueue';
 
@@ -43,7 +45,15 @@ interface Scene {
   /** `lost`: no answer came back; `refused`: the node answered with a
    *  coded refusal, so nothing was relayed. */
   broadcast?: 'lost' | 'refused';
+  /** The forced-sale surface the Diamond routes. */
+  surface?: ForcedSaleSurface | 'mixed';
 }
+
+/** The pre-#2796 whole-collateral `triggerLiquidation(loanId, adapterCalls)`. */
+const WHOLE_LIQUIDATION_ABI = parseAbi([
+  'function triggerLiquidation(uint256 loanId, (uint256 adapterIdx, bytes data)[] adapterCalls)',
+]);
+const DECODE_ABI = [...(RiskFacetABI as Abi), ...WHOLE_LIQUIDATION_ABI];
 
 function harness(scene: Scene) {
   resetSubmissionQueues();
@@ -51,6 +61,12 @@ function harness(scene: Scene) {
   const previews: { blockNumber?: bigint; calls: { data: Hex }[] }[] = [];
   const client = {
     getBlockNumber: async () => 100n,
+    readContract: async (args: { functionName: string; args: readonly Hex[] }) => {
+      expect(args.functionName).toBe('facetAddress');
+      const host = surfaceFacet(args.args[0], scene.surface);
+      if (host === undefined) throw new Error(`unexpected selector ${args.args[0]}`);
+      return host;
+    },
     getTransactionCount: async (args: { blockTag: string }) =>
       args.blockTag === 'pending' ? 7 + (scene.unmined ?? 0) : 7,
     simulateCalls: async (args: { blockNumber?: bigint; calls: { data: Hex }[] }) => {
@@ -79,7 +95,7 @@ function harness(scene: Scene) {
     },
     prepareTransactionRequest: async (args: { data: Hex; to: Address }) => {
       expect(args.to).toBe(DIAMOND);
-      writes.push(decodeFunctionData({ abi: RiskFacetABI as Abi, data: args.data }) as never);
+      writes.push(decodeFunctionData({ abi: DECODE_ABI, data: args.data }) as never);
       return args;
     },
     signTransaction: async () => SIGNED,
@@ -106,6 +122,22 @@ describe('attemptMatchLiquidation', () => {
     expect(h.previews[0].blockNumber).toBe(100n);
     const simulated = decodeFunctionData({ abi: RiskFacetABI as Abi, data: h.previews[0].calls[0].data });
     expect(simulated).toEqual({ functionName: 'triggerLiquidation', args: [LOAN_ID, 0n, []] });
+  });
+
+  it('previews and sends the whole-collateral form on a Diamond deployed before #2796', async () => {
+    const h = harness({ surface: 'whole' });
+    const out = await attemptMatchLiquidation(h.deps, LOAN_ID);
+    expect(out).toEqual({ kind: 'submitted', tx: keccak256(SIGNED) });
+    expect(h.writes).toEqual([{ functionName: 'triggerLiquidation', args: [LOAN_ID, []] }]);
+    expect(h.previews[0].calls[0].data.slice(0, 10)).toBe(FORCED_SALE_SURFACE_SELECTORS.whole.triggerLiquidation);
+  });
+
+  it('sends nothing to a Diamond routing part of each surface, and does not preview', async () => {
+    const h = harness({ surface: 'mixed' });
+    const out = await attemptMatchLiquidation(h.deps, LOAN_ID);
+    expect(out.kind === 'skipped' && out.reason).toMatch(/^surface-mixed:/);
+    expect(h.previews).toHaveLength(0);
+    expect(h.writes).toHaveLength(0);
   });
 
   it('sends nothing unless the preview affirmatively shows a match', async () => {

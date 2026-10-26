@@ -15,6 +15,9 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {LibNumeraireValue} from "../src/libraries/LibNumeraireValue.sol";
+import {LibFallback} from "../src/libraries/LibFallback.sol";
+import {LibSaleSizing} from "../src/libraries/LibSaleSizing.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /**
@@ -599,6 +602,121 @@ contract OracleFacetTest is Test {
         (uint256 price, uint8 decimals) = OracleFacet(address(diamond)).getAssetPrice(mockWeth);
         assertEq(price, 2000e8);
         assertEq(decimals, 8);
+    }
+
+    // ─── #2419 — a composed price keeps the finer feed's precision ───────────
+
+    /// @dev The 1e18 numeraire value of `amount` base units, by the rule
+    ///      `NumeraireValueFacet.getNumeraireValue` applies to the price read.
+    function _valueOf(address asset, uint256 amount) internal view returns (uint256) {
+        (uint256 price, uint8 dec) = OracleFacet(address(diamond)).getAssetPrice(asset);
+        return LibNumeraireValue.toValue(amount, price, dec, 18, false);
+    }
+
+    /// @dev Route `asset` to the asset/ETH × ETH/USD fallback: no direct
+    ///      asset/USD feed, an asset/ETH feed at `ethFeedPrice` / `ethFeedDec`,
+    ///      and ETH/USD at `ethUsdPrice` / `ethUsdDec`.
+    function _routeViaEth(
+        int256 ethFeedPrice,
+        uint8 ethFeedDec,
+        int256 ethUsdPrice,
+        uint8 ethUsdDec
+    ) internal {
+        _routeAssetViaEth(mockAsset, "assetEthFeed", ethFeedPrice, ethFeedDec, ethUsdPrice, ethUsdDec);
+    }
+
+    /// @dev {_routeViaEth} for any `asset`, its asset/ETH feed at the
+    ///      address `makeAddr(feedName)`.
+    function _routeAssetViaEth(
+        address asset,
+        string memory feedName,
+        int256 ethFeedPrice,
+        uint8 ethFeedDec,
+        int256 ethUsdPrice,
+        uint8 ethUsdDec
+    ) internal {
+        address ethDenom = makeAddr("ethDenom");
+        address assetEthFeed = makeAddr(feedName);
+        OracleAdminFacet(address(diamond)).setEthChainlinkDenominator(ethDenom);
+        _mockRegistryFeed(asset, address(0));
+        vm.mockCall(
+            mockRegistry,
+            abi.encodeWithSignature("getFeed(address,address)", asset, ethDenom),
+            abi.encode(assetEthFeed)
+        );
+        _mockFeedFull(assetEthFeed, ethFeedPrice, ethFeedDec);
+        _mockFeedFull(mockEthUsdFeed, ethUsdPrice, ethUsdDec);
+    }
+
+    /// An 18-decimal asset/ETH feed composed with an 8-decimal ETH/USD feed
+    /// reports at 18 decimals.
+    function testEthPivotPriceKeepsTheAssetFeedPrecision() public {
+        _routeViaEth(int256(0.5e18), 18, int256(2000e8), 8);
+        (uint256 price, uint8 decimals) = OracleFacet(address(diamond)).getAssetPrice(mockAsset);
+        assertEq(decimals, 18, "finer scale");
+        assertEq(price, 1000e18, "0.5 ETH at $2,000");
+    }
+
+    /// A price far below one 8-decimal unit keeps its digits: 5e-12 ETH at
+    /// $2,000 is $1e-8, which the 18-decimal composition carries in full.
+    function testEthPivotCheapAssetKeepsItsDigits() public {
+        _routeViaEth(int256(5e6), 18, int256(2000e8), 8);
+        (uint256 price, uint8 decimals) = OracleFacet(address(diamond)).getAssetPrice(mockAsset);
+        assertEq(decimals, 18);
+        assertEq(price, 1e10, "$1e-8 at 18 decimals");
+    }
+
+    /// Either leg may be the finer one: an 8-decimal asset/ETH feed with an
+    /// 18-decimal ETH/USD feed reports at 18, and two 8-decimal feeds at 8.
+    function testEthPivotScaleIsTheFinerOfTheTwoFeeds() public {
+        _routeViaEth(int256(0.5e8), 8, int256(2000e18), 18);
+        (uint256 price, uint8 decimals) = OracleFacet(address(diamond)).getAssetPrice(mockAsset);
+        assertEq(decimals, 18);
+        assertEq(price, 1000e18);
+
+        _routeViaEth(int256(0.5e8), 8, int256(2000e8), 8);
+        (price, decimals) = OracleFacet(address(diamond)).getAssetPrice(mockAsset);
+        assertEq(decimals, 8);
+        assertEq(price, 1000e8);
+    }
+
+    /// The value the risk path reads from a composed price is the same
+    /// whichever scale the composition reports: $1,000 per token, 3 tokens.
+    function testEthPivotValueIsScaleIndependent() public {
+        _routeViaEth(int256(0.5e18), 18, int256(2000e8), 8);
+        uint256 at18 = _valueOf(mockAsset, 3e18);
+        _routeViaEth(int256(0.5e8), 8, int256(2000e8), 8);
+        uint256 at8 = _valueOf(mockAsset, 3e18);
+        assertEq(at18, 3000e18, "18-decimal composition");
+        assertEq(at8, 3000e18, "8-decimal composition");
+    }
+
+    /// The settlement conversions hold when BOTH loan assets are priced
+    /// through the ETH pivot at 18 decimals: collateral and principal at
+    /// $1,000 each, 1,000 tokens converted either way, sized for a sale at a
+    /// 5% cap, all at ordinary loan sizes and with the exact answer.
+    function testEthPivotBothLegsSettlementConversionsHold() public {
+        _routeAssetViaEth(mockAsset, "assetEthFeed", int256(0.5e18), 18, int256(2000e8), 8);
+        _routeAssetViaEth(mockAsset2, "asset2EthFeed", int256(0.5e18), 18, int256(2000e8), 8);
+        (, uint8 colDec) = OracleFacet(address(diamond)).getAssetPrice(mockAsset);
+        (, uint8 prinDec) = OracleFacet(address(diamond)).getAssetPrice(mockAsset2);
+        assertEq(colDec, 18, "collateral composed at 18");
+        assertEq(prinDec, 18, "principal composed at 18");
+
+        LibFallback.Rate memory r = LibFallback.oracleRate(address(diamond), mockAsset, mockAsset2);
+        assertEq(LibFallback.toPrincipal(r, 1000e18), 1000e18, "collateral -> principal");
+        assertEq(LibFallback.toCollateral(r, 1000e18, Math.Rounding.Ceil), 1000e18, "principal -> collateral");
+        assertEq(
+            LibFallback.expectedSwapOutput(address(diamond), mockAsset, mockAsset2, 1000e18),
+            1000e18,
+            "expected swap output"
+        );
+        // 950 principal at a 5% cap needs exactly 1,000 collateral, sized at
+        // the same rate (`sizeSale` reads it from the Diamond it runs in).
+        (bool covers, uint256 sell, uint256 floor) = LibSaleSizing.sizeSaleAtRate(r, 950e18, 2000e18, 500);
+        assertTrue(covers, "sale sized");
+        assertEq(sell, 1000e18, "least covering sale");
+        assertEq(floor, 950e18, "its slippage floor");
     }
 
     function testGetAssetPriceRevertsNoPriceFeed() public {

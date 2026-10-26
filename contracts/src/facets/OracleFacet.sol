@@ -522,9 +522,10 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
      *      rule and revert on failure. The l2 sequencer circuit breaker
      *      runs first so queued-tx price lag never reaches LTV/HF math.
      * @param asset The ERC20 token address.
-     * @return price The USD price (scaled, 8 decimals for direct USD
-     *         feeds; 8 decimals for the asset/ETH fallback — the ETH/USD
-     *         feed dominates the scale).
+     * @return price The numeraire price, scaled by `decimals`: a direct
+     *         feed's own decimals, and for a composed price (asset/ETH ×
+     *         ETH/USD, or a PAD pivot) the finer of the composed feeds'
+     *         decimals ({_composePrice}).
      * @return decimals The feed's decimal scaling.
      */
     /// @notice Permissionless daily oracle snapshot.
@@ -700,13 +701,9 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         // from ETH/<numeraire> ÷ ETH/PAD.
         (uint256 fxRate, uint8 fxDec) = _padNumeraireRate(s);
 
-        // Compose: numeraire price = padPrice × fxRate / 10^fxDec.
-        // Resulting decimals match `padDec` (Chainlink USD-quoted
-        // feeds are 8-decimal; Feed Registry asset/USD feeds are
-        // typically 8-decimal too). The fxDec cancellation keeps the
-        // composed value in the same scale as the pad-quoted leg.
-        uint256 numerPrice = (padPrice * fxRate) / (10 ** fxDec);
-        return (numerPrice, padDec);
+        // Compose: numeraire price = padPrice × fxRate, at the finer of
+        // the two legs' precisions ({_composePrice}).
+        return _composePrice(padPrice, padDec, fxRate, fxDec);
     }
 
     /// @dev Read asset price in PAD-units. Tries Chainlink Feed
@@ -764,8 +761,10 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
                 );
                 (uint256 ethPerPad, uint8 ethDec) = _readAggregatorStrict(ethPadAnchor, false);
                 _validatePythCrossCheck(ethPerPad, ethDec);
-                uint256 combined = (assetPerEth * ethPerPad) / (10 ** assetPerEthDec);
-                return (combined, ethDec);
+                // asset/ETH × ETH/PAD, at the finer of the two feeds'
+                // precisions ({_composePrice}): an asset/ETH feed is
+                // usually 18-decimal, and a cheap asset's price keeps it.
+                return _composePrice(assetPerEth, assetPerEthDec, ethPerPad, ethDec);
             }
         }
 
@@ -1320,6 +1319,24 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             }
         }
         return string(out);
+    }
+
+    /// @dev The product of two prices, `a` at `aDec` decimals and `b` at
+    ///      `bDec`, at the FINER of the two scales: `max(aDec, bDec)`
+    ///      decimals, dividing the full-width product once by
+    ///      `10^min(aDec, bDec)`. The one composition rule for a pivoted
+    ///      price (asset/ETH × ETH/PAD, asset/PAD × PAD/numeraire), so no
+    ///      composition reports fewer decimals than the most precise feed it
+    ///      read. Rounds down; a product that floors to zero is still refused
+    ///      by the price readers ({ZeroPrice}).
+    function _composePrice(uint256 a, uint8 aDec, uint256 b, uint8 bDec)
+        private
+        pure
+        returns (uint256 price, uint8 decimals)
+    {
+        (uint8 lo, uint8 hi) = aDec < bDec ? (aDec, bDec) : (bDec, aDec);
+        price = Math.mulDiv(a, b, 10 ** uint256(lo));
+        decimals = hi;
     }
 
     /// @dev Rescale a price value from `fromDec` to `toDec` decimals.
