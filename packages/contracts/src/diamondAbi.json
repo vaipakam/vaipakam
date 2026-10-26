@@ -86,6 +86,7 @@
 {"type":"error","name":"CustodyPendingSurplusNeedsActiveRole","inputs":[{"name":"role","type":"uint8","internalType":"uint8"}]},
 {"type":"error","name":"DayAlreadyFinalized","inputs":[]},
 {"type":"error","name":"DayCapModeUnsetPostCutover","inputs":[{"name":"dayId","type":"uint256","internalType":"uint256"}]},
+{"type":"error","name":"DayFundedLocally","inputs":[{"name":"dayId","type":"uint256","internalType":"uint256"}]},
 {"type":"error","name":"DayNotReadyToFinalize","inputs":[]},
 {"type":"error","name":"DeliveredFreshBoundExceeded","inputs":[{"name":"fresh","type":"uint256","internalType":"uint256"},{"name":"remaining","type":"uint256","internalType":"uint256"}]},
 {"type":"error","name":"DeliveredFreshShortfall","inputs":[{"name":"needed","type":"uint256","internalType":"uint256"},{"name":"available","type":"uint256","internalType":"uint256"}]},
