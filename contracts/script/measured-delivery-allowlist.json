@@ -92,11 +92,6 @@
       "reason": "VPFI reward claim paid to the claimant's wallet (a payout of a recorded claim books nobody by what arrives). Reward custody is outside #2440's scope."
     },
     {
-      "site": "src/facets/VaultFactoryFacet.sol:VaultFactoryFacet.vaultCreditFromDiamondERC20",
-      "moves": 1,
-      "reason": "Credit of a VPFI reward or rebate into a user's vault. Every caller passes VPFI (LibVPFIDiscount, LibRewardStaging, RewardClaimFacet), the protocol's own token, which charges no transfer fee. VPFI reward paths are outside #2440's scope."
-    },
-    {
       "site": "src/keeper/FlashLoanLiquidator.sol:FlashLoanLiquidator.receiveFlashLoan",
       "moves": 1,
       "reason": "Standalone keeper liquidator repaying its flash loan from its own balance. Not protocol custody and books nothing in the protocol; keeper code is owned by the keeper work."
