@@ -14,6 +14,7 @@ import type { Env } from '../src/env';
 import {
   MAX_SIGNATURE_BYTES,
   isValidSignatureShape,
+  limitedRefusal,
   verifyOnChain,
   verifyWalletSignature,
   type ChainSigChecker,
@@ -213,9 +214,19 @@ describe('verifyWalletSignature', () => {
         blob,
         84532,
         NEVER, // the gate must refuse before this could fire
-        async () => false,
+        async () => 'refused',
       ),
-    ).toEqual({ ok: false, reason: 'limited' });
+    ).toEqual({ ok: false, reason: 'limited', slot: 'refused' });
+  });
+
+  it('a gate that cannot count is LIMITED with its own outcome, answered 503 not 429 (#2755)', async () => {
+    const blob = `0x${'ab'.repeat(700)}`;
+    for (const slot of ['unconfigured', 'unavailable'] as const) {
+      const verdict = await verifyWalletSignature(ENV_ONE_CHAIN, ACCOUNT_A.address, MESSAGE, blob, 84532, NEVER, async () => slot);
+      expect(verdict).toEqual({ ok: false, reason: 'limited', slot });
+      expect(limitedRefusal(slot).status).toBe(503);
+    }
+    expect(limitedRefusal('refused').status).toBe(429);
   });
 
   it('the gate never charges the ECDSA fast path (#2013)', async () => {
@@ -231,7 +242,7 @@ describe('verifyWalletSignature', () => {
         NEVER,
         async () => {
           gateAsked = true;
-          return false;
+          return 'refused' as const;
         },
       ),
     ).toEqual({ ok: true, via: 'ecdsa' });

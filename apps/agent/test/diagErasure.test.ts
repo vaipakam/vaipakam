@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import {
   buildErasureMessage,
@@ -468,6 +468,28 @@ describe('handleDiagErasure', () => {
       DENY_CHAIN,
     );
     expect(fastPath.status).toBe(200);
+  });
+
+  it('answers a chain-path limiter that cannot count with 503, never a retry-shortly 429 (#2755)', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const throwing = {
+      limit: async () => {
+        throw new Error('limiter down');
+      },
+    } as unknown as Env['SIG_VERIFY_RATELIMIT'];
+    for (const binding of [throwing, undefined]) {
+      const res = await handleDiagErasure(
+        post('/diag/erasure', {
+          wallet: ACCOUNT_A.address,
+          issuedAt: nowSec(),
+          signature: '0x' + 'ab'.repeat(700), // 6492-shaped → chain path
+        }),
+        withChain(makeEnv(db, { SIG_VERIFY_RATELIMIT: binding })),
+        CORS,
+        DENY_CHAIN,
+      );
+      expect(res.status).toBe(503);
+    }
   });
 
   it('a chain-verified authority erases ONLY the confirming chain (#2013 r5)', async () => {

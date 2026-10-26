@@ -60,7 +60,7 @@ import {
   type Hex,
 } from 'viem';
 import { getRpcChains, type Env } from './env';
-import { takeCallerSlot } from './rateLimit';
+import { slotRefusalStatus, takeCallerSlot, type SlotOutcome } from './rateLimit';
 
 /**
  * Signature shape: 0x-prefixed, even-length hex. NOT fixed at 65
@@ -105,9 +105,17 @@ export type WalletSigVerdict =
        *  about it).
        *  unavailable: no complete definitive answer could be
        *  obtained.
-       *  limited: the chain path's rate budget refused this request
-       *  before any chain was consulted (#2013 round 1 P1). */
-      reason: 'mismatch' | 'unavailable' | 'limited';
+       *  limited: the chain path's rate budget did not admit this
+       *  request, before any chain was consulted (#2013 round 1 P1). */
+      reason: 'mismatch' | 'unavailable';
+    }
+  | {
+      ok: false;
+      reason: 'limited';
+      /** Why the budget did not admit it (#2755): spent, or a limiter
+       *  that is missing or could not count. {@link limitedRefusal}
+       *  turns it into the answer. */
+      slot: Exclude<SlotOutcome, 'taken'>;
     };
 
 /**
@@ -131,14 +139,28 @@ export const MAX_CHAINS_PER_REQUEST = 3;
  * like the other abusable endpoints. The ECDSA fast path stays free —
  * it costs nothing. The binding follows the one fail-closed rule in
  * `rateLimit.ts` (#2755): a missing or failing binding closes the chain
- * path like a spent budget does, which the verifier reports as `limited`,
- * never as a bad signature.
+ * path like a spent budget does. The verifier reports either as `limited`,
+ * never as a bad signature, and keeps the slot outcome so the answer says
+ * which it was ({@link limitedRefusal}).
  */
 export function chainVerifyGate(
   env: Env,
   req: Request,
-): () => Promise<boolean> {
-  return async () => (await takeCallerSlot(req, env.SIG_VERIFY_RATELIMIT)) === 'taken';
+): () => Promise<SlotOutcome> {
+  return () => takeCallerSlot(req, env.SIG_VERIFY_RATELIMIT);
+}
+
+/**
+ * The HTTP answer for a `limited` verdict, shared by every handler that
+ * verifies a wallet signature. A spent budget is 429 (try again shortly);
+ * a limiter that is missing or could not count is 503, because waiting
+ * does not help the caller and the operator needs to see it (#2755).
+ */
+export function limitedRefusal(slot: Exclude<SlotOutcome, 'taken'>): { status: 429 | 503; reason: string } {
+  const { status } = slotRefusalStatus(slot)!;
+  return status === 429
+    ? { status, reason: 'too many verification attempts — try again shortly' }
+    : { status, reason: 'signature verification rate limit unavailable' };
 }
 
 /**
@@ -242,7 +264,7 @@ export async function verifyWalletSignature(
   // consulted once, after the free fast path, before any RPC is
   // spent. Absent → ungated (callers without a request context,
   // and the default for tests of the decision logic).
-  chainPathAllowed?: () => Promise<boolean>,
+  chainPathAllowed?: () => Promise<SlotOutcome>,
   // Injectable for tests; production uses the exported cap.
   maxChains: number = MAX_CHAINS_PER_REQUEST,
 ): Promise<WalletSigVerdict> {
@@ -283,8 +305,9 @@ export async function verifyWalletSignature(
 
   // Everything past this line spends RPC subrequests on an
   // unauthenticated body — the gate meters it (#2013 round 1 P1).
-  if (chainPathAllowed && !(await chainPathAllowed())) {
-    return { ok: false, reason: 'limited' };
+  if (chainPathAllowed) {
+    const slot = await chainPathAllowed();
+    if (slot !== 'taken') return { ok: false, reason: 'limited', slot };
   }
 
   const chains = relevant.slice(0, maxChains);

@@ -249,6 +249,47 @@ describe('the OpenSea offers walk is charged as spent', () => {
     expect(body.collection_offers).toMatchObject({ stoppedBy: 'upstream-quota' });
   });
 
+  it('marks every partial walk truncated, not only a budget refusal', async () => {
+    // Every slot taken. The collection leg hits the page ceiling (3 by
+    // default) with a cursor still left; the item leg's second page fails.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('/contract/')) return new Response(JSON.stringify({ nft: { collection: 'c' } }), { status: 200 });
+        if (url.includes('/nfts/') && url.includes('next=')) return new Response('boom', { status: 500 });
+        return new Response(JSON.stringify({ offers: [{ id: url }], next: 'more' }), { status: 200 });
+      }),
+    );
+    const res = await worker.fetch(
+      call('GET', path),
+      rawEnv({ OPENSEA_OFFERS_RATELIMIT: allow(), OPENSEA_UPSTREAM_RATELIMIT: allow(), OPENSEA_API_KEY: secret('k') }),
+      ctx(),
+    );
+    const body = (await res.json()) as Record<string, { status: number; truncated: boolean; stoppedBy?: string } | null>;
+    expect(body.collection_offers).toMatchObject({ status: 200, truncated: true });
+    expect(body.item_offers).toMatchObject({ status: 200, truncated: true });
+    expect(body.collection_offers?.stoppedBy).toBeUndefined();
+  });
+
+  it('does not mark a walk that reached the last page truncated', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) =>
+        url.includes('/contract/')
+          ? new Response(JSON.stringify({ nft: { collection: 'c' } }), { status: 200 })
+          : new Response(JSON.stringify({ offers: [], next: null }), { status: 200 }),
+      ),
+    );
+    const res = await worker.fetch(
+      call('GET', path),
+      rawEnv({ OPENSEA_OFFERS_RATELIMIT: allow(), OPENSEA_UPSTREAM_RATELIMIT: allow(), OPENSEA_API_KEY: secret('k') }),
+      ctx(),
+    );
+    const body = (await res.json()) as Record<string, { truncated: boolean } | null>;
+    expect(body.collection_offers?.truncated).toBe(false);
+    expect(body.item_offers?.truncated).toBe(false);
+  });
+
   it('reports a limiter that cannot count on a leg as 503, never as a spent budget', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const fetchSpy = vi.fn(async () =>

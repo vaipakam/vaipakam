@@ -210,7 +210,11 @@ export async function handleOpenSeaOffers(
     if (!initialUrl) return null;
     const all: unknown[] = [];
     let lastStatus = 0;
-    let truncated = false;
+    // Set only when OpenSea said there is no further page. Every other way
+    // the walk ends after a page succeeded (the page ceiling with a cursor
+    // left, a later page failing or unreadable, a slot not taken) leaves a
+    // partial list, which the leg reports as `truncated`.
+    let reachedEnd = false;
     let stoppedBy: string | undefined;
     // Codex round-16 P2 review #328 — track whether ANY page
     // succeeded. If page 1 succeeds and page 2 fails, we want
@@ -226,10 +230,9 @@ export async function handleOpenSeaOffers(
       const refusal = await spend();
       if (refusal) {
         // No slot for this page: with no page yet the leg reports the
-        // refusal's own status; otherwise it keeps what it has and says it
-        // stopped. Either way `stoppedBy` names the refusal.
-        if (anyPageSucceeded) truncated = true;
-        else lastStatus = refusal.status;
+        // refusal's own status; otherwise it keeps what it has. Either way
+        // `stoppedBy` names the refusal.
+        if (!anyPageSucceeded) lastStatus = refusal.status;
         stoppedBy = refusal.error;
         break;
       }
@@ -259,12 +262,13 @@ export async function handleOpenSeaOffers(
         url = `${initialUrl}${sep}limit=100&next=${encodeURIComponent(next)}`;
       } else {
         url = null;
+        reachedEnd = true;
       }
     }
     return {
       status: lastStatus,
       body: JSON.stringify({ offers: all }),
-      truncated,
+      truncated: anyPageSucceeded && !reachedEnd,
       ...(stoppedBy ? { stoppedBy } : {}),
     };
   };
@@ -292,8 +296,9 @@ export async function handleOpenSeaOffers(
 }
 
 /** One offers leg as fetched: the status the leg answers with, its body,
- *  whether the walk stopped before OpenSea's last page, and, when the
- *  credential budget stopped it, the refusal's error name. */
+ *  whether it holds a partial list (a page succeeded but the walk ended
+ *  before OpenSea said there was no further page, for any reason), and,
+ *  when the credential budget stopped it, the refusal's error name. */
 interface LegResult {
   status: number;
   body: string;
