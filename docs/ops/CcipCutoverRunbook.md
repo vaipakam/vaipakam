@@ -448,18 +448,16 @@ flight, in this order when **lowering**:
      `"42161:0xMirrorDiamond,10:0xMirrorDiamond"`); leaving it unset
      logs a loud warning and leaves zeroed-day compensation quoting
      unreachable for the unregistered lanes.
-  1b. **Lapse-terminal arming (constraint-19, #1656 r2)** — the two
-     permissionless lapse terminals ship DARK
-     (`LapseTerminalsNotArmed`). Per mirror, arm them
-     (`RewardCommitmentFacet.armLapseTerminals`, ADMIN, one-shot) ONLY
-     after: (a) Base's `getLegacyManualReservations` pages read EMPTY
-     over the full id range (Pending hits released or resolved), and
-     (b) every delivered legacy receipt was stamped mirror-side
-     (`stampLegacyCompensation`) and any pre-w4 funded day seeded
-     Base-side (`seedCompFunded`, at the RECEIVED figure for
-     short-ACKed deliveries). The arm is the checklist's on-chain
-     attestation — an upgrade window's expired days cannot be lapsed
-     out from under an unstamped legacy delivery.
+  1b. **Lapse terminals need no arming (#2875).** The two
+     permissionless lapse terminals work from deploy: each day closes on
+     its own frozen clock. The one-shot arm, the legacy receipt stamp,
+     the pre-w4 funded-record seed and the legacy-reservation inventory
+     they gated were removed, because they served only a Diamond
+     upgraded in place across w4, and every chain gets a fresh deploy
+     (owner decision O1 = A). A day still needs a lapse schedule
+     (`setLapseSchedule`, on Base) frozen at its finalization to be
+     lapse-eligible; version 0 never lapses. No deploy or configure
+     script sets one yet (#2909), so set it by hand until that lands.
   2. **When a MIRROR Diamond rotates**: on Base, run
      `setMirrorRewardDeployment(chainId, newMirrorDiamond)`, then
      `clearCompQuote(dayId, chainId)` for any NONZERO quote still

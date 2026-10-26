@@ -1621,17 +1621,6 @@ contract TestMutatorFacet {
         LibInteractionRewards.noteEntryLifecycle(s, s.rewardEntries[id]); // the real forfeit bumps the version (A2-ii)
     }
 
-    /// @notice #1434 P2-w1 test-only — erase a day's frozen lapse clock,
-    ///         reproducing a day that was FINALIZED before the P2-w1
-    ///         upgrade (production writes the clock unconditionally at
-    ///         `_finalizeAndWrite`, so the pre-upgrade shape is otherwise
-    ///         unreachable in a fresh test deployment). Drives the
-    ///         clockless-day refusals (`BroadcastClockMissing`,
-    ///         `CompensationDayHasNoClock`).
-    function clearDayLapseClockRaw(uint256 dayId) external {
-        delete LibVaipakam.storageSlot().dayLapseClock[dayId];
-    }
-
     /// @notice #1434 P2-w2 test-only — set the lapse flags whose ONLY
     ///         production writers are the w4 lapse terminals, so the §2.2
     ///         post-lapse quarantine branch (deliberately unreachable until
@@ -2227,8 +2216,8 @@ contract TestMutatorFacet {
     }
 
     /// @notice #1434 P2-w4 test-only — set the short-lapse deadline inputs
-    ///         directly (production writers: `_creditCompensation` +
-    ///         `stampLegacyCompensation`), so deadline-math tests need no
+    ///         directly (production writers: `_creditCompensation` and the
+    ///         provisional-credit confirmation), so deadline-math tests need no
     ///         full credit round per timestamp.
     function setCompReceiptClockRaw(
         uint256 dayId,
@@ -2238,26 +2227,6 @@ contract TestMutatorFacet {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.firstCompReceiptAt[dayId] = firstAt;
         s.lastQualifyingCompReceiptAt[dayId] = lastQualifyingAt;
-    }
-
-    /// @notice #1434 P2-w4 test-only — record a delivered remit receipt
-    ///         (production writer: the d5/P2 ingress), for the
-    ///         legacy-stamp tests.
-    function setReceivedRemitRaw(
-        address remitter,
-        uint256 remitId,
-        uint256 amount
-    ) external {
-        LibVaipakam.storageSlot().receivedRemits[
-            keccak256(abi.encode(remitter, remitId))
-        ] = LibVaipakam.ReceivedRemit({
-            srcChainId: uint32(block.chainid),
-            receivedAt: uint64(block.timestamp),
-            amount: amount,
-            remitter: remitter,
-            classification: 0,
-            packetHash: bytes32(0)
-        });
     }
 
     /// @notice #1434 P2-w4 test-only — the Base-side frozen zeroed marker
@@ -2284,7 +2253,7 @@ contract TestMutatorFacet {
         s.compFundedLender18[chainId][dayId] = lender18;
         s.compFundedBorrower18[chainId][dayId] = borrower18;
         // #1656 r2 — the existence flag follows the staged values: (0,0)
-        // stages the PRE-w4 shape (no record), nonzero stages a recorded
+        // stages a day with no record, nonzero stages a recorded
         // one. Flag-true-with-zero-values arises only via the real
         // ACK-reconciliation path.
         s.compFundedRecorded[chainId][dayId] = lender18 != 0 || borrower18 != 0;

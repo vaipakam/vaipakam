@@ -6810,9 +6810,10 @@ library LibVaipakam {
         //   first + 3 × window) over the day's FROZEN clock words.
         mapping(uint256 => uint64) firstCompReceiptAt;
         mapping(uint256 => uint64) lastQualifyingCompReceiptAt;
-        // MIRROR-ONLY (constraint-19): a legacy (pre-P2 d5) receipt spent
-        //   by {stampLegacyCompensation} — one receipt stamps one day.
-        mapping(bytes32 => bool) legacyReceiptStamped;
+        // RETIRED (#2875): marked a pre-P2 receipt the removed legacy
+        //   compensation stamp had spent. Nothing writes or reads it; the
+        //   slot keeps its place (fresh deploys only, owner decision O1 = A).
+        mapping(bytes32 => bool) retiredLegacyReceiptStamped;
         // BASE-ONLY (§5.1 R6): one compensation reservation in flight per
         //   chain — the manual/supplemental remitId (0 = none). Set at
         //   dispatch; cleared by the consumption ACK (w4), return
@@ -6832,19 +6833,16 @@ library LibVaipakam {
         mapping(uint32 => mapping(uint256 => uint256)) compFundedLender18;
         mapping(uint32 => mapping(uint256 => uint256)) compFundedBorrower18;
         // BASE-ONLY (#1656 r2) — the funded record EXISTS for this
-        //   chain-day (manual dispatch / supplemental / migration seed).
+        //   chain-day (stamped by the manual dispatch and every supplemental).
         //   A dedicated flag, never the (0,0) value pair: a severe short
         //   delivery's ACK reconciliation can legitimately round both
         //   sides to zero, and that day must stay supplementable.
         mapping(uint32 => mapping(uint256 => bool)) compFundedRecorded;
-        // MIRROR-ONLY (#1656 r2) — the lapse terminals' ARMING flag: the
-        //   §8 activation precondition (Base's legacy inventory reading
-        //   empty + every delivered legacy receipt stamped) becomes
-        //   enforceable on-chain state instead of ceremony discipline.
-        //   One-shot ADMIN arm; both permissionless terminals refuse
-        //   while false, so an upgrade window's expired days cannot be
-        //   lapsed out from under an unstamped legacy delivery.
-        bool lapseTerminalsArmed;
+        // RETIRED (#2875): the lapse terminals' one-shot arming flag. It
+        //   guarded only the legacy compensation migration, which a fresh
+        //   deploy never runs; the terminals now work from deploy. Nothing
+        //   writes or reads it; the slot keeps its place.
+        bool retiredLapseTerminalsArmed;
         // MIRROR-ONLY (#1656 r11) — how many entries each side's quote
         //   accumulation walked for the day. The short-lapse scaled arm
         //   shaves this off the delivered pool before scaling Δq:

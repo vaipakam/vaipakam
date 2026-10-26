@@ -1900,11 +1900,9 @@ contract RewardAggregatorFacet is
     ///         those on the expected-source list when the day finalized that
     ///         had not reported, in list order. Recorded at finalization, so a
     ///         later edit of the list does not change it.
-    /// @return recorded True once the day's finalization wrote this record.
-    ///                  False while the day is not finalized, and for a day
-    ///                  finalized by a Diamond that predates the record, whose
-    ///                  zeroed set this view does not know (its
-    ///                  `ChainContributionZeroed` events still state it).
+    /// @return recorded True once the day's finalization wrote this record,
+    ///                  which every finalization does, so false means the
+    ///                  day is not finalized yet.
     /// @return zeroed   The zeroed chains; empty for a recorded day every
     ///                  listed chain reported, and whenever `recorded` is
     ///                  false.

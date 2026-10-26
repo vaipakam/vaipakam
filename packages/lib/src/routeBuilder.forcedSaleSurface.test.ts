@@ -3,7 +3,6 @@ import { decodeFunctionData, parseAbi, toFunctionSelector, zeroAddress, type Abi
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
   FORCED_SALE_SURFACE_SELECTORS,
-  MixedForcedSaleSurface,
   encodeTriggerDefault,
   encodeTriggerLiquidation,
   readForcedSaleSurface,
@@ -51,32 +50,16 @@ describe('FORCED_SALE_SURFACE_SELECTORS', () => {
 });
 
 describe('readForcedSaleSurface', () => {
-  it('reads sized when the plan and both sized calls are routed', async () => {
-    const { client, asked } = loupe([sized.plan, sized.triggerDefault, sized.triggerLiquidation]);
+  it('reads sized when the plan is routed, in one request at the given block', async () => {
+    const { client, asked } = loupe([sized.plan]);
     await expect(readForcedSaleSurface({ client, diamond: DIAMOND, blockNumber: 7n })).resolves.toBe('sized');
-    expect(asked.every((a) => a.blockNumber === 7n)).toBe(true);
+    expect(asked).toEqual([{ selector: sized.plan, blockNumber: 7n }]);
   });
 
-  it('reads sized when a refreshed Diamond still routes the old forms too', async () => {
-    const { client } = loupe([...Object.values(sized), ...Object.values(whole)]);
-    await expect(readForcedSaleSurface({ client, diamond: DIAMOND })).resolves.toBe('sized');
-  });
-
-  it('reads whole when only the whole-collateral forms are routed', async () => {
-    const { client } = loupe([whole.triggerDefault, whole.triggerLiquidation]);
+  it('reads whole when the plan is not routed', async () => {
+    const { client, asked } = loupe([whole.triggerDefault, whole.triggerLiquidation]);
     await expect(readForcedSaleSurface({ client, diamond: DIAMOND })).resolves.toBe('whole');
-  });
-
-  it('refuses a Diamond part-way between the two', async () => {
-    for (const routed of [
-      [sized.triggerDefault, sized.triggerLiquidation, whole.triggerDefault, whole.triggerLiquidation],
-      [sized.plan, whole.triggerDefault, whole.triggerLiquidation],
-      [whole.triggerDefault],
-      [],
-    ]) {
-      const { client } = loupe(routed);
-      await expect(readForcedSaleSurface({ client, diamond: DIAMOND })).rejects.toBeInstanceOf(MixedForcedSaleSurface);
-    }
+    expect(asked).toHaveLength(1);
   });
 
   it('throws what a failed read throws', async () => {

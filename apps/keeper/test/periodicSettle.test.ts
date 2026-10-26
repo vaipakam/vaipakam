@@ -70,7 +70,7 @@ function revertWith(errorName: string): Error {
 
 interface Scene {
   /** The forced-sale surface the Diamond routes. */
-  surface?: ForcedSaleSurface | 'mixed';
+  surface?: ForcedSaleSurface;
   /** The plan as read on each call, in order (the last one repeats). */
   plans?: ForcedSalePlan[];
   loan?: GraceLoan;

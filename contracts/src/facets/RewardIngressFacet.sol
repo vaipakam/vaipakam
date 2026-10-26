@@ -426,11 +426,11 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             return;
         }
         // A CLOCKLESS payload (zero finalizedAt) cannot settle either: an
-        //     honest Base refuses such a dispatch outright (#1634 r2 —
-        //     {CompensationDayHasNoClock}), so one arriving here is stale
-        //     or hostile, and a provisional credit for it would wait on a
-        //     broadcast that can never carry a matching clock. The
-        //     token-safe mirror of the Base-side refusal (reason 6).
+        //     honest Base never sends one (it dispatches only a finalized
+        //     day, and finalization freezes the clock), so one arriving
+        //     here is stale or hostile, and a provisional credit for it
+        //     would wait on a broadcast that can never carry a matching
+        //     clock. It is quarantined token-safely (reason 6).
         if (finalizedAt == 0) {
             _quarantineCompensation(s, h, dayId, remitter, remitId, amount, 6);
             return;

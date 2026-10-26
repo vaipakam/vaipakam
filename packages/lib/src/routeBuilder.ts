@@ -923,8 +923,9 @@ const WHOLE_SALE_ABI = [
   },
 ] as const;
 
-/** The selectors {@link readForcedSaleSurface} asks the loupe about: the
- *  sized surface's three, and the whole-collateral surface's two. */
+/** The selectors of both surfaces. {@link readForcedSaleSurface} asks the
+ *  loupe about `sized.plan` only; the rest name the forms the encoders
+ *  produce. */
 export const FORCED_SALE_SURFACE_SELECTORS = {
   sized: {
     plan: toFunctionSelector(PREVIEW_FORCED_SALE_ABI[0]),
@@ -947,21 +948,6 @@ const LOUPE_FACET_ADDRESS_ABI = [
   },
 ] as const;
 
-/** A Diamond that routes neither surface whole: some of each, or neither. */
-export class MixedForcedSaleSurface extends Error {
-  readonly routed: Readonly<Record<string, boolean>>;
-
-  constructor(routed: Readonly<Record<string, boolean>>) {
-    super(
-      `the Diamond routes neither forced-sale surface whole (${Object.entries(routed)
-        .map(([name, on]) => `${name}=${on ? 'routed' : 'absent'}`)
-        .join(' ')})`,
-    );
-    this.routed = routed;
-    this.name = 'MixedForcedSaleSurface';
-  }
-}
-
 export interface ReadForcedSaleSurfaceDeps {
   client: Pick<PublicClient, 'readContract'>;
   diamond: Address;
@@ -969,37 +955,29 @@ export interface ReadForcedSaleSurfaceDeps {
 }
 
 /**
- * The forced-sale surface `diamond` routes, read from its own loupe.
+ * The forced-sale surface `diamond` routes, read from its own loupe in ONE
+ * request: `'sized'` when it routes `previewForcedSale`, `'whole'` when it
+ * does not. A read that fails throws what it throws.
  *
- * `'sized'` needs the plan and both sized calls routed; `'whole'` needs both
- * whole-collateral calls routed and none of the sized three. Anything else
- * throws {@link MixedForcedSaleSurface}: a Diamond part-way between the two
- * would size a sale with one rule and settle it with the other, so a caller
- * sends nothing. A read that fails throws what it throws.
+ * One selector, not every form's, because the keeper's passes run under a
+ * hard request budget (the grace-default pass's is 40) and the answer is
+ * checked again by the call itself: #2796 added the plan and the sized
+ * calls together, and every caller previews or estimates the exact call it
+ * then sends. A Diamond routing the plan without the sized calls, or
+ * neither surface, makes that call revert `FunctionDoesNotExist` before
+ * anything is broadcast, so a wrong reading costs a skipped attempt, never
+ * a send.
  */
 export async function readForcedSaleSurface(deps: ReadForcedSaleSurfaceDeps): Promise<ForcedSaleSurface> {
   const { client, diamond, blockNumber } = deps;
-  const routed = async (selector: Hex): Promise<boolean> => {
-    const host = (await client.readContract({
-      address: diamond,
-      abi: LOUPE_FACET_ADDRESS_ABI,
-      functionName: 'facetAddress',
-      args: [selector],
-      ...(blockNumber !== undefined ? { blockNumber } : {}),
-    })) as Address;
-    return host.toLowerCase() !== zeroAddress;
-  };
-  const { sized, whole } = FORCED_SALE_SURFACE_SELECTORS;
-  const [plan, sizedDefault, sizedLiquidation, wholeDefault, wholeLiquidation] = await Promise.all([
-    routed(sized.plan),
-    routed(sized.triggerDefault),
-    routed(sized.triggerLiquidation),
-    routed(whole.triggerDefault),
-    routed(whole.triggerLiquidation),
-  ]);
-  if (plan && sizedDefault && sizedLiquidation) return 'sized';
-  if (!plan && !sizedDefault && !sizedLiquidation && wholeDefault && wholeLiquidation) return 'whole';
-  throw new MixedForcedSaleSurface({ plan, sizedDefault, sizedLiquidation, wholeDefault, wholeLiquidation });
+  const host = (await client.readContract({
+    address: diamond,
+    abi: LOUPE_FACET_ADDRESS_ABI,
+    functionName: 'facetAddress',
+    args: [FORCED_SALE_SURFACE_SELECTORS.sized.plan],
+    ...(blockNumber !== undefined ? { blockNumber } : {}),
+  })) as Address;
+  return host.toLowerCase() === zeroAddress ? 'whole' : 'sized';
 }
 
 /** `triggerDefault` in the form `surface` routes. `'whole'` sells the whole
