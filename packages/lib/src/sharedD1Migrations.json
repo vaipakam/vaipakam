@@ -73,5 +73,7 @@
   "0073_loans_prenotify_examined.sql",
   "0074_protocol_config_bundle_unread.sql",
   "0075_protocol_config_drop_master_flags.sql",
-  "0076_signed_request_use.sql"
+  "0076_signed_request_use.sql",
+  "0077_drop_prenotify_scan_cursor.sql",
+  "0078_delete_legacy_signed_offers.sql"
 ]

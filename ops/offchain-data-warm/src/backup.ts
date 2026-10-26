@@ -90,6 +90,17 @@ const ARCHIVE_TABLES_REQUIRED = [
   // every restore (#1480, found in #1450 r30).
   'pre_grace_notify_state',
   'telegram_links',
+  // HYBRID tables (#1481): born off chain, with columns the indexer
+  // projects from chain events. Their migrations (0033, 0019) are applied on
+  // every database, so they are plain REQUIRED. The restore imports the
+  // user's part and hands the projected part back to the block-zero replay
+  // (`scripts/restore-from-archive.mjs`, RESTORE_PROJECTIONS).
+  //   - signed_offers — EIP-712 offers users POSTed to the book. They exist
+  //     nowhere on chain until filled; before this they were unrecoverable.
+  //   - prepay_listing_match_breadcrumbs — which OpenSea offer a two-step
+  //     match answered, POSTed by the app; no chain event carries it.
+  'signed_offers',
+  'prepay_listing_match_breadcrumbs',
 ];
 
 // Rollout-aware required set: REQUIRED once its migration has been

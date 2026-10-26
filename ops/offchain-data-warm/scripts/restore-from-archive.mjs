@@ -44,6 +44,9 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
+// The indexer's statement of a stored signed offer (#1481). A relative path:
+// this script runs under plain Node outside the pnpm workspace.
+import { signedOfferRowProblem } from '../../../packages/lib/src/signedOfferWire.mjs';
 
 // ── Constants ─────────────────────────────────────────────────────────
 
@@ -88,7 +91,7 @@ const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 // anything else in an archive is wrong or hostile — either way, stop.
 // Keep in sync with backup.ts; the #1481 classification guard watches
 // the backup side of that sync.
-const BORN_OFF_CHAIN_TABLES = new Set([
+export const BORN_OFF_CHAIN_TABLES = new Set([
   'diag_errors',
   'diag_legal_holds',
   'diag_legal_hold_audit',
@@ -109,6 +112,11 @@ const BORN_OFF_CHAIN_TABLES = new Set([
   // from publication. A replay cannot recreate them, so the archive is the
   // only copy of the withdrawn row.
   'loan_orphans',
+  // #1481 — the two HYBRID tables: born off chain, with columns the replay
+  // maintains. Imported through RESTORE_PROJECTIONS below, which hands the
+  // replay-maintained part back to the §6 replay instead of restoring it.
+  'signed_offers',
+  'prepay_listing_match_breadcrumbs',
 ]);
 // Archived as a restore-performance optimisation ONLY. The runbook's
 // default treatment for these is §6 clear-and-replay from chain — a
@@ -153,6 +161,10 @@ const ERA_GATED_TABLES = {
   support_tickets: 'migration 0028 (#1040)',
   recycle_day_backfill: 'migration 0047 (#1349 M5)',
   loan_orphans: 'migration 0065 (#2197)',
+  // Their migrations are older than the archiving: what gates these two is
+  // #1481, the change that started exporting them.
+  signed_offers: 'the backup since #1481',
+  prepay_listing_match_breadcrumbs: 'the backup since #1481',
 };
 
 // Live column sets for the born-off-chain tables (Codex #1484 r13):
@@ -207,6 +219,19 @@ const REQUIRED_TABLE_COLUMNS = {
     'id', 'move_id', 'chain_id', 'diamond', 'loan_id', 'from_status', 'observed_block',
     'withdrawn_at', 'row_json', 'related_json', 'reviewed_at',
   ],
+  // `order_json` and `signature` are what a taker submits on chain; without
+  // them a restored row advertises an offer nobody can fill.
+  signed_offers: [
+    'chain_id', 'order_hash', 'signer', 'order_json', 'signature',
+    'offer_type', 'lending_asset', 'collateral_asset', 'duration_days',
+    'asset_type', 'collateral_asset_type', 'interest_rate_bps', 'interest_rate_bps_max',
+    'amount', 'amount_max', 'collateral_amount', 'collateral_amount_max',
+    'fill_mode', 'expires_at', 'deadline', 'nonce',
+    'status', 'filled_amount', 'created_at', 'updated_at',
+  ],
+  prepay_listing_match_breadcrumbs: [
+    'chain_id', 'tx_hash', 'loan_id', 'order_hash', 'bidder', 'matched_at', 'match_mode',
+  ],
 };
 
 // TRUSTED primary keys for the born-off-chain tables, from the same
@@ -227,6 +252,8 @@ const TRUSTED_PRIMARY_KEYS = {
   diag_legal_hold_audit: ['id'],
   recycle_day_backfill: ['chain_id', 'day_id'],
   loan_orphans: ['id'],
+  signed_offers: ['chain_id', 'order_hash'],
+  prepay_listing_match_breadcrumbs: ['chain_id', 'tx_hash'],
 };
 
 // Every OTHER uniqueness the schema declares on a born-off-chain table,
@@ -242,8 +269,54 @@ const TRUSTED_UNIQUE_KEYS = {
 // (src/loanOrphans.ts), and the operator's review command quotes it, so a
 // value of any other shape is refused rather than restored.
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+// The signed-offer route (apps/indexer/src/signedOfferRoutes.ts) stores the
+// struct hash and the signer lowercased, and refuses a signature that is not
+// 64 or 65 bytes of hex; the match-source route and the `PrepayListingMatched`
+// handler store lowercased hashes and addresses.
+const HASH_SHAPE = /^0x[0-9a-f]{64}$/;
+const ADDRESS_SHAPE = /^0x[0-9a-f]{40}$/;
+const SIGNATURE_SHAPE = /^0x(?:[0-9a-fA-F]{128}|[0-9a-fA-F]{130})$/;
 const TRUSTED_COLUMN_SHAPES = {
   loan_orphans: { move_id: UUID_SHAPE },
+  signed_offers: { order_hash: HASH_SHAPE, signer: ADDRESS_SHAPE, signature: SIGNATURE_SHAPE },
+  prepay_listing_match_breadcrumbs: {
+    tx_hash: HASH_SHAPE,
+    order_hash: HASH_SHAPE,
+    bidder: ADDRESS_SHAPE,
+    match_mode: /^(?:v1-twostep|atomic)$/,
+  },
+};
+
+/**
+ * How each HYBRID table is restored (#1481): the part a user created off
+ * chain is imported, and the part the indexer projects from chain events is
+ * handed back to the §6 block-zero replay, which runs after §4's import and
+ * rebuilds it from canonical history. Restoring that part from the archive
+ * instead would keep whatever the archive says, including a value written by
+ * whoever tampered with the database before the backup ran, wherever no
+ * later chain event happens to overwrite it.
+ *
+ * Each entry maps one archived row to the row to import, or to null when the
+ * whole row is the replay's to rebuild. `check-table-classification.mjs`
+ * requires an entry here for every table it classifies `hybrid`, and none
+ * for any other table.
+ *
+ *   - `signed_offers`: the signed order (struct, signature, promoted market
+ *     columns, timestamps) is the user's; `status` and `filled_amount` are
+ *     the lifecycle projection of SignedOfferFilled / SignedOfferMatched /
+ *     SignedOfferCancelled / SignedOfferNonceBurned. Every one of those
+ *     handlers updates only an `active` row and writes the cumulative fill
+ *     read from chain at the event's block, so a row imported as
+ *     `active` / `0` comes out of the replay in its true state.
+ *   - `prepay_listing_match_breadcrumbs`: a `v1-twostep` row is the app's
+ *     record of which OpenSea offer a two-step match answered, which no
+ *     chain event carries. An `atomic` row is written by the
+ *     `PrepayListingMatched` handler from the event itself, so the replay
+ *     writes it again, and only from an event that exists.
+ */
+export const RESTORE_PROJECTIONS = {
+  signed_offers: (row) => ({ ...row, status: 'active', filled_amount: '0' }),
+  prepay_listing_match_breadcrumbs: (row) => (row.match_mode === 'atomic' ? null : row),
 };
 
 // Whole-row checks the writer's own invariants allow, run before any SQL is
@@ -287,6 +360,13 @@ function loanOrphanRowProblem(row) {
 }
 const TRUSTED_ROW_CHECKS = {
   loan_orphans: loanOrphanRowProblem,
+  // #1481 — the stored order must be one a taker can replay and the book can
+  // read: `order_json` the canonical serialization of a well-formed order, and
+  // every market column the field it copies. The rule is the indexer POST
+  // route's own (`packages/lib/src/signedOfferWire.mjs`), so an archived row
+  // is re-admitted only in the form the route would have written. Whether the
+  // signature is the signer's is #2899.
+  signed_offers: signedOfferRowProblem,
 };
 
 // The archived legal-hold tables whose rows carry `legal_doc_ref`
@@ -381,6 +461,17 @@ export function applyOrder(tables) {
 
 /** Convert one TableExport into a replace-not-merge SQL batch. */
 export function tableToSql(table) {
+  return tableToBatch(table).sql;
+}
+
+/** The batch for one TableExport, with how many archived rows it imports
+ *  (`imported`, the figure the post-import COUNT(*) must equal) and how many
+ *  it leaves for the §6 replay to rebuild (`leftToReplay`, non-zero only for
+ *  a hybrid table — see RESTORE_PROJECTIONS). Every archived row is
+ *  validated, including one the projection then leaves to the replay: a
+ *  malformed row is evidence about the archive whichever way it would be
+ *  restored. */
+export function tableToBatch(table) {
   const name = assertIdentifier(table.name, 'table');
   if (!Array.isArray(table.schema) || table.schema.length === 0) {
     fail(`table ${name}: archive carries no schema — cannot order columns`);
@@ -425,6 +516,8 @@ export function tableToSql(table) {
   }
   const seenKeys = uniqueSets.map(() => new Set());
   const shapes = TRUSTED_COLUMN_SHAPES[name] ?? {};
+  let imported = 0;
+  let leftToReplay = 0;
   for (const [i, row] of rows.entries()) {
     const keys = Object.keys(row);
     // Strict shape check: a row keyed differently from the schema is
@@ -450,10 +543,17 @@ export function tableToSql(table) {
     }
     const problem = TRUSTED_ROW_CHECKS[name]?.(row);
     if (problem) fail(`table ${name} row ${i}: ${problem} — refusing to restore it`);
-    const values = columns.map((c) => sqlLiteral(row[c], `table ${name} row ${i} column ${c}`));
+    const projection = Object.hasOwn(RESTORE_PROJECTIONS, name) ? RESTORE_PROJECTIONS[name] : null;
+    const restored = projection ? projection(row) : row;
+    if (restored === null) {
+      leftToReplay++;
+      continue;
+    }
+    const values = columns.map((c) => sqlLiteral(restored[c], `table ${name} row ${i} column ${c}`));
     lines.push(`INSERT INTO "${name}" (${colList}) VALUES (${values.join(', ')});`);
+    imported++;
   }
-  return lines.join('\n') + '\n';
+  return { sql: lines.join('\n') + '\n', imported, leftToReplay };
 }
 
 /** Write every archived table's SQL file; returns apply-ordered
@@ -637,7 +737,7 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
     secureStagingDir(path.resolve(outDir));
     secureStagingDir(dir);
     for (const table of applyOrder(tables)) {
-      const sql = tableToSql(table);
+      const { sql, imported, leftToReplay } = tableToBatch(table);
       const file = path.join(dir, `${table.name}.sql`);
       // Fresh inode, never write-through: a reused predictable file
       // could already be held open by another local account, and
@@ -648,7 +748,8 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
       entries.push({
         name: table.name,
         file,
-        rowCount: table.rows.length,
+        rowCount: imported,
+        leftToReplay,
         database,
         tier:
           database !== ARCHIVE_DATABASE
@@ -1419,7 +1520,8 @@ export function main(argv) {
 
   const locality = remote ? '--remote' : '--local';
   const cmd = (e) =>
-    `wrangler d1 execute ${shQuote(e.database)} --file=${shQuote(e.file)} ${locality}   # ${e.rowCount} rows`;
+    `wrangler d1 execute ${shQuote(e.database)} --file=${shQuote(e.file)} ${locality}   # ${e.rowCount} rows` +
+    (e.leftToReplay > 0 ? ` (${e.leftToReplay} more archived row(s) are the §6 replay's to rebuild)` : '');
   const born = d1.filter((e) => e.tier === 'born-off-chain');
   const derived = d1.filter((e) => e.tier === 're-derivable');
   const legacy = d1.filter((e) => e.tier === 'legacy-lz');

@@ -33,6 +33,7 @@ import {
   MAX_SIGNED_OFFER_BODY_BYTES,
 } from '../src/signedOfferRoutes';
 import { createSqliteD1 } from './helpers/sqliteD1';
+import { signedOfferRowProblem } from '@vaipakam/lib/signedOfferWire';
 import {
   SIGNED_OFFER_TYPES,
   orderHashOf,
@@ -623,27 +624,6 @@ describe('GET /signed-offers — per-side price-relevant caps (Codex #1145 r4)',
     );
     expect(offers.map((o) => o.orderHash)).toEqual(['ask-live']);
   });
-
-  it('a pre-#1949 row (no Full opt-in fields) is not served, and does not use up the cap', async () => {
-    // Its signature is over the 28-field typehash: the contract can never
-    // accept it, and a client replaying it would have no value for the
-    // three new fields. Straddle: the same row in the current shape is served.
-    const rows: SeedRow[] = [];
-    for (let i = 0; i < 100; i++) {
-      rows.push({
-        orderHash: `old-${String(i).padStart(3, '0')}`,
-        offerType: 0,
-        rateBps: 100,
-        rateBpsMax: 100,
-        createdAt: 1_000 + i,
-        orderJson: '{"useFullTermInterest":false}',
-      });
-    }
-    rows.push({ orderHash: 'ask-current', offerType: 0, rateBps: 900, rateBpsMax: 900, createdAt: 9_000 });
-    const body = await getBookBody(seedBook(rows));
-    expect(body.offers.map((o) => o.orderHash)).toEqual(['ask-current']);
-    expect(body.truncated).toBe(false);
-  });
 });
 
 // ── GET /signed-offers — truncation flag + signer scope (#1247 PAG-011) ──
@@ -851,6 +831,31 @@ function rangedPartialOrder(
     ...overrides,
   });
 }
+
+describe('POST /signed-offers — the stored row is the one a restore re-admits (#1481)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ['a single-value order', () => makeOrder()],
+    ['a ranged order with a GTT window', () =>
+      rangedPartialOrder({ fillMode: '2', expiresAt: String(Math.floor(Date.now() / 1000) + 10 * 86_400) })],
+  ])('%s passes the restore converter\'s row check as written', async (_label, build) => {
+    // The restore converter refuses an archived row unless its order_json is
+    // the canonical form of a well-formed order and every market column is
+    // that order's field. Both writers read one rule; this pins that what
+    // the route writes is what the restore accepts.
+    stubRpc({ nonceUsed: false, filled: 0n });
+    const { env, db } = makeChainEnv();
+    const order = build();
+    expect((await post(env, order)).status).toBe(201);
+    const row = db
+      .prepare(`SELECT * FROM signed_offers WHERE order_hash = ?`)
+      .get(orderHashOf(order)) as Record<string, unknown>;
+    expect(signedOfferRowProblem(row)).toBeNull();
+  });
+});
 
 describe('POST /signed-offers — chain-state ingest gate (Codex #1145 r7)', () => {
   afterEach(() => {

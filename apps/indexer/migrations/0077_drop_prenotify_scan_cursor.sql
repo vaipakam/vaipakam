@@ -1,0 +1,16 @@
+-- #1481 — drop the pre-notify lane's retired scan cursor.
+--
+-- `prenotify_scan_cursor` (0050, #2219) held a deadline for the agent's
+-- pre-notify lane to resume at. #2230 (0073) replaced it with what each pass
+-- examined, recorded on the `loans` rows and in `prenotify_pass`, and the
+-- agent that shipped with it neither reads nor writes this table. 0073 left
+-- the drop to a later migration because the agent still serving while it
+-- landed read the table; that agent is gone (the live agent bundle carries
+-- 0073's `prenotify_pass` and names this table only in its migration list,
+-- checked 2026-10-26), so this is the contract step of that pair (#2838).
+--
+-- Nothing reads or writes it: no Worker, no route, the nightly archive does
+-- not export it, and the restore runbook no longer clears it
+-- (docs/ops/OffChainRestore.md §6). A fresh environment replays 0050
+-- (creates it) and then this file.
+DROP TABLE IF EXISTS prenotify_scan_cursor;
