@@ -1037,6 +1037,13 @@ EOF
   echo "[3a] DeployLaunchGate.s.sol"
   forge script script/DeployLaunchGate.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
 
+  # [3a'] The feed registry (#2880): the Diamond's oracle prices every asset
+  # but WETH through it, so it lands before the mock rig registers feeds into
+  # it and before configure points the Diamond at it. Reused when recorded.
+  echo
+  echo "[3a'] DeployFeedRegistry.s.sol"
+  forge script script/DeployFeedRegistry.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+
   # [3b] Canonical VPFI token — MUST land BEFORE DeployCrosschain. On the
   # canonical chain (Base / Base Sepolia) DeployCrosschain's canonical branch
   # reads `.vpfiToken` to wrap the existing token in the CCIP LockRelease pool;

@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {DeployDiamond} from "../DeployDiamond.s.sol";
 import {DeployTestnetMocks} from "../DeployTestnetMocks.s.sol";
+import {FeedRegistryDeployment} from "../lib/FeedRegistryDeployment.sol";
 import {Launch} from "../Launch.s.sol";
 import {Deployments} from "../lib/Deployments.sol";
 import {WETH9} from "@chainlink/contracts/src/v0.8/vendor/canonical-weth/WETH9.sol";
@@ -92,6 +93,9 @@ contract DeployE2EFixture is DeployDiamond, DeployTestnetMocks {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         runWith(vm.addr(adminKey), vm.envAddress("TREASURY_ADDRESS"), deployerKey);
+        // The feed registry the mock rig registers its feeds in (#2880), by
+        // the same path the deploy scripts take.
+        FeedRegistryDeployment.deploy(deployerKey, adminKey);
         _deployTestnetMocks(deployerKey, adminKey, diamond, CANONICAL_WETH);
         // The deploy leaves the Diamond paused (#945); the fixture goes live
         // through the same launch step every chain uses. On 31337 it reports

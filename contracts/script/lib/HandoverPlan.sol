@@ -108,8 +108,10 @@ library HandoverPlan {
     ///      record. A missing required contract is never read as "nothing to
     ///      hand over": the handover refuses it on a production chain and the
     ///      gate fails it there (reports it as not checked on a testnet).
-    ///      `guardian` marks a `GuardianPausable` contract, whose
-    ///      `guardian()` must be readable and must be the Pauser Safe.
+    ///      `guardian` marks a contract whose `guardian()` holds a stop-only
+    ///      power (a `GuardianPausable` contract's pause, or the feed
+    ///      registry's veto, #2880); it must be readable and must be the
+    ///      Pauser Safe.
     struct Target {
         string label;
         address addr;
@@ -146,7 +148,7 @@ library HandoverPlan {
     ///      The canonical token does since #937.
     function read(string memory json) internal view returns (Target[] memory targets) {
         bool canonical = isCanonical();
-        Target[] memory all = new Target[](10);
+        Target[] memory all = new Target[](11);
         uint256 n;
         n = _slot(all, n, "ccipMessenger", readOptional(json, "ccipMessenger"), OwnableKind.OpenZeppelin, true, true);
         n = _slot(all, n, "vpfiTokenPool", readOptional(json, "vpfiTokenPool"), OwnableKind.Chainlink, true, false);
@@ -185,6 +187,11 @@ library HandoverPlan {
         n = _slot(
             all, n, "vpfiReturnReceiver", readOptional(json, "vpfiReturnReceiver"), OwnableKind.OpenZeppelin, canonical, true
         );
+        // #2880 — every chain prices through its own feed registry. Its
+        // owner can change any feed under the delay, so it moves to the
+        // Timelock like every other owned contract; its guardian holds the
+        // veto, a stop-only power, so it is the Pauser Safe.
+        n = _slot(all, n, "feedRegistry", readOptional(json, "feedRegistry"), OwnableKind.OpenZeppelin, true, true);
         // Canonical VPFI only: on a mirror the local ERC-20 IS `vpfiMirror`,
         // already listed above.
         if (canonical) {

@@ -3596,13 +3596,12 @@ library LibVaipakam {
         // chains), converts depth to USD via the ETH/USD feed, and
         // prices assets with a hybrid rule: prefer a direct asset/USD
         // Chainlink feed; fall back to asset/ETH × ETH/USD when no
-        // direct USD feed exists. On L2s where the Chainlink Feed
-        // Registry is not deployed, `chainlnkRegistry` is address(0)
-        // and both the USD and ETH Feed Registry lookups are skipped —
-        // pricing flows through the direct `ethNumeraireFeed` address for
-        // WETH and reverts with {NoPriceFeed} for other assets unless
-        // the admin wires a per-asset direct feed (not yet exposed;
-        // tracked in the follow-up).
+        // direct USD feed exists. Both lookups go through
+        // `chainlnkRegistry`, which on every chain is that chain's own
+        // `VaipakamFeedRegistry` (#2880): Chainlink runs its Feed
+        // Registry on Ethereum mainnet only, so without ours every
+        // asset but WETH (priced from `ethNumeraireFeed`) would revert
+        // {NoPriceFeed}.
         /// @dev AggregatorV3 address for ETH/USD (8 decimals). REQUIRED
         ///      for liquidity depth conversion and for pricing WETH
         ///      itself. Zero disables every ETH-quoted code path.

@@ -134,6 +134,10 @@ else
   echo "    WARN: could not resolve Diamond creation block — frontend may skip the logIndex scan" >&2
 fi
 
+# The feed registry (#2880) lands before the mocks register their feeds in it.
+echo "[1b/6] DeployFeedRegistry"
+forge script script/DeployFeedRegistry.s.sol --rpc-url "$RPC" --broadcast --slow
+
 echo "[2/6] DeployTestnetLiquidityMocks (mUSDC, mWBTC, mock WETH, oracles, Univ3)"
 forge script script/DeployTestnetLiquidityMocks.s.sol --rpc-url "$RPC" --broadcast --slow
 

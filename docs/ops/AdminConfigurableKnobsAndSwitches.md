@@ -538,6 +538,14 @@ All address-only
 configs that wire the chain-specific oracle stack. No numeric range;
 zero disables the corresponding flow.
 
+The feed registry is the chain's own `VaipakamFeedRegistry` on every chain
+(#2880), never Chainlink's (which exists on Ethereum mainnet only), and the
+USD and ETH denominators are that registry's own keys. `ConfigureOracle`
+writes all three from the recorded `.feedRegistry`. Which feed prices which
+token is not a Diamond setting at all: it lives in the registry, where each
+change waits a delay (3 days by default on a production chain, 1 to 14
+allowed; 0 allowed on a testnet) that the Pauser Safe can veto.
+
 ## Reward subsystem (cross-chain interest aggregation)
 
 ### Reward grace seconds

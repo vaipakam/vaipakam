@@ -13,6 +13,7 @@ import {RepriceTestnetMock} from "../../script/RepriceTestnetMock.s.sol";
 import {MockPoolPricing} from "../../script/lib/MockPoolPricing.sol";
 import {RepriceVenueReport} from "../../script/lib/RepriceVenueReport.sol";
 import {TestnetMockOracleRig} from "./TestnetMockOracleRig.sol";
+import {TestnetFeedRegistration} from "../../script/lib/TestnetFeedRegistration.sol";
 
 /// @dev A feed that refuses to report above a ceiling — stands in for an
 ///      oracle that rejects a price on ONE side of the target (a secondary
@@ -22,6 +23,8 @@ contract CeilingFeed {
     int256 public price;
     int256 public immutable ceiling;
     uint8 public constant decimals = 8;
+    /// @dev The registry checks a feed's pair name (#2880).
+    string public constant description = "tLIQ / USD";
 
     constructor(int256 _price, int256 _ceiling) {
         owner = msg.sender;
@@ -292,7 +295,9 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
     ///         and proves the wiring there.
     function test_feedProbe_triesTheOtherDirectionWhenOneIsRejected() public {
         CeilingFeed feed = new CeilingFeed(int256(1_600e8), int256(1_600e8));
-        registry.setFeed(address(tLIQ), USD_DENOM, address(feed));
+        TestnetFeedRegistration.Feed[] memory feeds = new TestnetFeedRegistration.Feed[](1);
+        feeds[0] = TestnetFeedRegistration.Feed(address(tLIQ), USD_DENOM, address(feed), "tLIQ / USD");
+        TestnetFeedRegistration.register(registry, feeds);
         RepriceTarget memory t = tliqTarget;
         t.feed = address(feed);
         (uint256 p,) = OracleFacet(address(diamond)).getAssetPrice(address(tLIQ));

@@ -1527,9 +1527,9 @@ For manual / multisig control, the underlying setters are:
 
 On `OracleAdminFacet`:
 
-1. `setChainlinkRegistry(<feed registry>)` — mainnet only; on testnets `ConfigureOracle` skips the registry and goes straight to per-symbol feeds
-2. `setUsdChainlinkDenominator(<USD denominator>)`
-3. `setEthChainlinkDenominator(<ETH denominator>)`
+1. `setChainlinkRegistry(<feed registry>)` — on every chain, the chain's own `VaipakamFeedRegistry` from `.feedRegistry` (#2880)
+2. `setUsdChainlinkDenominator(<USD denominator>)` — the registry's `USD()`
+3. `setEthChainlinkDenominator(<ETH denominator>)` — the registry's `ETH()`
 4. `setWethContract(<WETH on this chain>)`
 5. `setEthUsdFeed(<ETH/USD feed>)`
 6. `setStableTokenFeed("USDC" | "USDT" | ..., <feed>)` — once per stable symbol

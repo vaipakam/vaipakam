@@ -41,8 +41,27 @@ contract MockChainlinkFeed {
 }
 
 /**
+ * @title MockChainlinkPairFeed
+ * @notice A {MockChainlinkFeed} that also answers `description()` with its
+ *         pair name, as a real Chainlink feed does. `VaipakamFeedRegistry`
+ *         checks that name on every entry (#2880), so the testnet rig's feeds
+ *         are of this kind.
+ */
+contract MockChainlinkPairFeed is MockChainlinkFeed {
+    string public description;
+
+    constructor(int256 _price, uint8 _decimals, string memory _pair) MockChainlinkFeed(_price, _decimals) {
+        description = _pair;
+    }
+}
+
+/**
  * @title MockChainlinkRegistry
- * @notice Simulates Chainlink's FeedRegistryInterface.
+ * @notice Simulates Chainlink's FeedRegistryInterface, for unit tests and the
+ *         stand-alone dev flow scripts that build a throwaway Diamond. Every
+ *         deploy path that reaches a chain (the testnet rig, the Anvil
+ *         bootstrap, the e2e fixture) uses the real `VaipakamFeedRegistry`
+ *         instead (#2880).
  *         The DEPLOYER registers (base, quote) -> feed mappings; an
  *         open `setFeed` would let anyone repoint a public testnet
  *         Diamond's price source (see MockChainlinkFeed note).

@@ -2135,17 +2135,13 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     /// @dev Feed Registry lookup, try/catch wrapped. Returns `address(0)`
     ///      on missing feed or registry failure.
     ///
-    ///      Slither's `chainlink-feed-registry` detector warns the Feed
-    ///      Registry is only deployed on Ethereum Mainnet — true, and
-    ///      handled by design: `LibVaipakam.Storage.chainlnkRegistry` is
-    ///      stored as `address(0)` on every non-mainnet chain (see the
-    ///      storage-slot comment at LibVaipakam.sol:1629). Every caller
-    ///      of `_registryFeed` first guards with `if (registry !=
-    ///      address(0))`, so on L2s the registry branch is never
-    ///      reached and pricing falls through to the direct-feed lookup
-    ///      path. Setting `chainlnkRegistry` to a real address on
-    ///      mainnet is therefore an optional fast path, not a
-    ///      requirement. Not a vuln.
+    ///      Slither's `chainlink-feed-registry` detector warns that
+    ///      Chainlink's Feed Registry exists on Ethereum mainnet only.
+    ///      True, and why `chainlnkRegistry` is never Chainlink's: on
+    ///      every chain it is that chain's own `VaipakamFeedRegistry`
+    ///      (#2880), which answers this same `getFeed` call with the
+    ///      official Chainlink feed for the pair, or zero when none is
+    ///      registered. Not a vuln.
     // slither-disable-next-line chainlink-feed-registry
     function _registryFeed(address registry, address base, address quote)
         private
