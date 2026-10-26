@@ -1093,7 +1093,6 @@ contract ClaimFacet is
             );
         }
 
-
         // For NFT rentals: return the vaulted rental NFT to the lender
         if (loan.assetType == LibVaipakam.AssetType.ERC721) {
             LibFacet.crossFacetCall(
@@ -2125,31 +2124,21 @@ contract ClaimFacet is
     ///       SELF-HOOK (not an inline `LibInteractionRewards.closeLoan`) so the
     ///       heavy close/re-anchor body lives on {InteractionRewardsFacet}, not
     ///       inlined into this EIP-170-tight facet — the same lever
-    ///       {RiskMatchLiquidationFacet} uses. Reward bookkeeping is strictly
-    ///       subordinate to the fund-critical claim, so the low-level call is
-    ///       best-effort (not bubbled); `forfeitBorrowerLif` stays inline + hard
-    ///       (it moves VPFI to treasury — fund-critical, per the invariant).
+    ///       {RiskMatchLiquidationFacet} uses. It BUBBLES (#2739): a terminal
+    ///       transition closes its reward entry in the same transaction or
+    ///       reverts, so an unclosed entry can never read as claimable after
+    ///       a forfeiting close. `forfeitBorrowerLif` stays inline + hard.
     function _closeDefaultTerminalRewards(
         uint256 loanId,
         LibVaipakam.Loan storage loan
     ) private {
         LibVPFIDiscount.forfeitBorrowerLif(loan);
-        _rewardHook(
+        LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 InteractionRewardsFacet.liquidationRewardClose.selector,
                 loanId
-            )
+            ),
+            RewardHookCallFailed.selector
         );
-    }
-
-    /// @dev #1067 — best-effort reward close-out self-call. The close/re-anchor
-    ///      logic lives on {InteractionRewardsFacet}; a failed low-level call is
-    ///      intentionally not bubbled (the claim proceeds regardless). Production
-    ///      always cuts InteractionRewardsFacet.
-    function _rewardHook(bytes memory data) private {
-        (bool ok, ) = address(this).call(data);
-        if (!ok) {
-            // best-effort — the close proceeds regardless.
-        }
     }
 }

@@ -48,6 +48,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 
 /**
  * @title PrecloseFacetTest
@@ -194,7 +195,7 @@ contract PrecloseFacetTest is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](30);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](31);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -312,6 +313,17 @@ contract PrecloseFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(NumeraireValueFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNumeraireValueFacetSelectors()
+        });
+        // #2739 - every terminal reward close (preclose, offset completion)
+        // and the obligation-transfer reward split run by a BUBBLING self-call
+        // into InteractionRewardsFacet: a terminal closes its reward entries in
+        // the same transaction or reverts. A hand-built Diamond that cuts
+        // PrecloseFacet must cut this host too, or those paths revert
+        // FunctionDoesNotExist at that self-call.
+        cuts[30] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(InteractionRewardsFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getInteractionRewardsFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

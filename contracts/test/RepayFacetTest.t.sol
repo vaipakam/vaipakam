@@ -60,6 +60,7 @@ import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 
 contract RepayFacetTest is Test {
     VaipakamDiamond diamond;
@@ -155,7 +156,7 @@ contract RepayFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](21);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -283,6 +284,16 @@ contract RepayFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(NumeraireValueFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNumeraireValueFacetSelectors()
+        });
+
+        // #2739 - terminal reward closes run by a BUBBLING self-call into
+        // InteractionRewardsFacet (a terminal closes its reward entries in the
+        // same transaction or reverts), so a hand-built Diamond that reaches a
+        // terminal must cut this host too.
+        cuts[21] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(InteractionRewardsFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getInteractionRewardsFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
