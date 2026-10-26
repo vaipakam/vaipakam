@@ -164,7 +164,9 @@ export default function PrivacyPage() {
             <strong>Not</strong> recorded: full wallet address, browser
             user-agent string, IP address (beyond transient
             rate-limiting), localStorage contents, cookies, or any
-            free-form text you typed. Records are pruned after 90 days.
+            free-form text you typed. Records are pruned after 90 days,
+            except a record the law requires us to keep, which is kept for
+            as long as that requirement lasts.
             The legal basis is "legitimate interest" (security, fraud
             prevention, and improving service reliability) under GDPR
             Art 6(1)(f). Your erasure control is live regardless of the
@@ -470,7 +472,10 @@ export default function PrivacyPage() {
               our servers"). Any record that does exist, whether
               captured while automatic capture ran or by our own
               operators exercising the endpoint's health check, is
-              pruned 90 days after its capture. A signed erasure
+              pruned 90 days after its capture, unless the law requires us
+              to keep it (then it is kept, and neither the prune nor an
+              erasure request removes it, until that requirement ends). A
+              signed erasure
               request reaches the records tied to your wallet; a record
               captured with no wallet connected — including the
               operators' own health check — is not tied to anyone and

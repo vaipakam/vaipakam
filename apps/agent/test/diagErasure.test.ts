@@ -91,6 +91,13 @@ class FakeStmt {
     const s = this.sql;
     if (s.includes('DELETE FROM diag_errors')) {
       const wh = this.args[0] as string;
+      // #2758 — the delete carries the hold condition itself; model it.
+      // Leaving it out would let the hold invariant below pass on a fake
+      // that never looked at a hold.
+      if (!s.includes('diag_legal_holds')) {
+        throw new Error('FakeD1: a diag_errors delete without the legal-hold condition');
+      }
+      if (this.db.holds.some((h) => h.wallet_hash === wh)) return;
       if (s.includes('chain_id')) {
         // #2013 r5 — the chain-scoped erase a contract-verified
         // signer is limited to.
