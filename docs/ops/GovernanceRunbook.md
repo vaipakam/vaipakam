@@ -595,7 +595,7 @@ even for the gap between the deploy and the handover.
    count**, both read in the state where it proved every role's holders;
    the wrapper records the two together (`handover-gate.proof`) for the
    launch phase and the verify report.
-2. Run `deploy-mainnet.sh <slug> --phase launch`. It reads the six launch
+2. Run `deploy-mainnet.sh <slug> --phase launch`. It reads the seven launch
    requirements off the chain and refuses unless every one is met, the
    Timelock holds `UNPAUSER_ROLE` and owns the Diamond, the admin key holds
    no Diamond role at all, and the role epoch and the Timelock's call count
@@ -633,7 +633,16 @@ even for the gap between the deploy and the handover.
      helper the ccip-wire phase wires them with. On a mirror chain the VPFI
      token's own mint and burn authority (`tokenPool()`) must be that same
      routed pool, and the token must be owned by the Diamond's owner with no
-     transfer pending: whoever that slot names can mint mirror VPFI.
+     transfer pending: whoever that slot names can mint mirror VPFI;
+   - a quote-asset (PAA) list naming an asset besides WETH (#2747). The
+     liquidity-tier search never quotes WETH against itself, so without
+     another quote WETH resolves to tier 0 whatever its depth: the most
+     conservative liquidation threshold on every WETH-collateral loan, no
+     discounted liquidation, and no new WETH-collateral loan once
+     depth-tiered LTV is on. The `configure` phase writes the list from
+     `<CHAIN>_PAA_QUOTE_ASSETS` (the chain's canonical stablecoin), and the
+     setter never accepts a list without such a quote. Whether that pool is
+     deep enough for a higher tier is measured per loan, not here.
 
    The launch checks the chain against these DECLARED values rather than
    against itself: a check that only read the configuration back would
@@ -673,7 +682,7 @@ even for the gap between the deploy and the handover.
    same operation and prints its state (not scheduled, pending, ready,
    done).
 4. After the delay, anyone sends the printed `executeBatch(...)` call. The
-   Diamond itself calls the gate, which reads all six requirements again
+   Diamond itself calls the gate, which reads all seven requirements again
    inside that transaction, then checks that the Diamond's owner is still
    the one signed, that the admin key still holds no Diamond role, that
    the role epoch has not moved, and that the Timelock has executed no other

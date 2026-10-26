@@ -7,6 +7,7 @@ import {Launch} from "../../script/Launch.s.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {ProfileFacet} from "../../src/facets/ProfileFacet.sol";
 import {OracleAdminFacet} from "../../src/facets/OracleAdminFacet.sol";
+import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {VPFITokenFacet} from "../../src/facets/VPFITokenFacet.sol";
 import {IVaipakamErrors} from "../../src/interfaces/IVaipakamErrors.sol";
@@ -285,6 +286,23 @@ contract LaunchWethStub {
     }
 }
 
+/// @dev #2747 — a Diamond stand-in answering only the two reads the WETH
+///      quote-route check makes, so the check can be read against a list the
+///      real setter would refuse to write.
+contract LaunchPaaDiamondStub {
+    address public getWethContract;
+    address[] internal paa;
+
+    constructor(address weth_, address[] memory paa_) {
+        getWethContract = weth_;
+        paa = paa_;
+    }
+
+    function getPaaAssets() external view returns (address[] memory) {
+        return paa;
+    }
+}
+
 /// @dev A price feed stand-in: answers `decimals()` and `latestRoundData()`
 ///      with a price.
 contract LaunchFeedStub {
@@ -369,6 +387,9 @@ contract LaunchTest is Test {
     address internal constant PROPOSER = address(0x5AFE);
     address internal constant TREASURY = address(0xBEEF);
     address internal constant VPFI = address(0xF1F1);
+    /// @dev #2747 — the quote asset besides WETH every configured Diamond
+    ///      here carries, so WETH has a liquidity-tier route.
+    address internal constant STABLE_QUOTE = address(0x05DC);
     /// @dev The Pauser Safe stand-in the handover appoints.
     address internal constant GUARDIAN = address(0x6A2D);
 
@@ -387,6 +408,13 @@ contract LaunchTest is Test {
         launcher = new Launch();
         new DeployLaunchGate().deploy(DEPLOYER_KEY);
         weth = address(new LaunchWethStub());
+        // #2747 — the configure phase's quote-asset list: WETH plus a quote
+        // besides it. A Diamond born paused still takes config writes.
+        address[] memory paa = new address[](2);
+        paa[0] = weth;
+        paa[1] = STABLE_QUOTE;
+        vm.prank(admin);
+        ConfigFacet(diamond).setPaaAssets(paa);
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────
@@ -1400,6 +1428,37 @@ contract LaunchTest is Test {
         );
         tl.executeBatch(targets, values, payloads, bytes32(0), salt);
         assertTrue(AdminFacet(diamond).paused());
+    }
+
+    /// @dev #2747 — the configured Diamond's list names a quote besides
+    ///      WETH, so the quote-route check is met.
+    function test_WethQuoteRoute_MetWithAQuoteBesidesWeth() public {
+        _configure();
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
+        assertEq(c[6].label, "WETH has a liquidity-tier quote route");
+        assertTrue(c[6].checkable && c[6].met);
+    }
+
+    /// @dev #2747 — an unconfigured list (empty, which the Diamond reports as
+    ///      WETH alone) and an explicit WETH-only list both leave WETH with no
+    ///      tier route: NOT MET, so a testnet launch refuses and the gate
+    ///      refuses.
+    function test_WethQuoteRoute_NotMetWithWethAlone() public {
+        address[] memory onlyWeth = new address[](1);
+        onlyWeth[0] = weth;
+        address stub = address(new LaunchPaaDiamondStub(weth, onlyWeth));
+        LibLaunchReadiness.Check[] memory c = _gate().checks(stub, _d(address(0)));
+        assertTrue(c[6].checkable);
+        assertFalse(c[6].met);
+        assertEq(
+            c[6].detail,
+            "the quote-asset list names no asset besides WETH, so WETH would resolve to liquidity tier 0: run the configure phase with a stable quote (<CHAIN>_PAA_QUOTE_ASSETS)"
+        );
+        address[] memory none = new address[](0);
+        stub = address(new LaunchPaaDiamondStub(weth, none));
+        c = _gate().checks(stub, _d(address(0)));
+        assertTrue(c[6].checkable);
+        assertFalse(c[6].met);
     }
 
     /// @dev `--skip-vpfi`: no VPFI token and none declared. Both CCIP checks

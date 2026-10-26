@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {ISwapAdapter} from "../src/interfaces/ISwapAdapter.sol";
 import {IERC173} from "@diamond-3/interfaces/IERC173.sol";
@@ -120,6 +121,10 @@ contract ConfigureOracle is Script {
         /// the allowance target (the legacy route; liquidations use the rig's
         /// registered MockSwapAdapter).
         address zeroEx;
+        /// #2747 — the rig's stable stand-in (`liquidToken2`, mUSDC), pooled
+        /// against its WETH: the quote asset besides WETH that gives WETH
+        /// itself a depth-tier route.
+        address stableQuote;
     }
 
     /// @dev The Chainlink `Denominations` sentinels the mock rig keys its feeds
@@ -161,7 +166,45 @@ contract ConfigureOracle is Script {
                 && IUniswapV3FactoryView(rig.factory).getPool(liquidToken, rig.weth, 3000) == liquidPool,
             "ConfigureOracle: the recorded mock factory does not return the recorded tLIQ/WETH pool for .weth - the mock rig record is inconsistent; re-run the testnet-mocks phase"
         );
+        address stableQuote = Deployments.readTestnetMockOptional("liquidToken2");
+        address stablePool = Deployments.readTestnetMockOptional("liquidToken2WethPool");
+        require(
+            stableQuote != address(0) && stablePool != address(0)
+                && IUniswapV3FactoryView(rig.factory).getPool(stableQuote, rig.weth, 3000) == stablePool,
+            "ConfigureOracle: the recorded mock factory does not return the recorded mUSDC/WETH pool for .weth - the mock rig record is inconsistent; re-run the testnet-mocks phase"
+        );
+        rig.stableQuote = stableQuote;
         rig.adopted = true;
+    }
+
+    /// @dev #2747 — the quote-asset (PAA) list this run writes: WETH first,
+    ///      then the quote assets besides it. The depth-tier search never
+    ///      quotes an asset against itself, so WETH has a tier route only
+    ///      through another quote: without one WETH resolves to tier 0, the
+    ///      launch readiness check refuses the chain, and
+    ///      `ConfigFacet.setDepthTieredLtvEnabled` refuses to switch on. An adopted rig supplies its
+    ///      mUSDC; any other chain names its quotes (e.g. its canonical USDC)
+    ///      in `<CHAIN>_PAA_QUOTE_ASSETS`, comma-separated, CHAIN-PREFIXED ONLY
+    ///      because the addresses are per chain. Returns an empty list when
+    ///      none is named, so the run leaves the list as it is and says so.
+    function _paaList(MockRig memory rig, address weth) internal view returns (address[] memory paa) {
+        address[] memory quotes;
+        if (rig.adopted) {
+            quotes = new address[](1);
+            quotes[0] = rig.stableQuote;
+        } else {
+            quotes = vm.envOr(string.concat(_prefix(), "PAA_QUOTE_ASSETS"), ",", new address[](0));
+        }
+        if (quotes.length == 0) return paa;
+        paa = new address[](quotes.length + 1);
+        paa[0] = weth;
+        for (uint256 i; i < quotes.length; ++i) {
+            require(
+                quotes[i] != address(0) && quotes[i] != weth,
+                "ConfigureOracle: PAA_QUOTE_ASSETS must name quote assets other than WETH (WETH is added first by this script)"
+            );
+            paa[i + 1] = quotes[i];
+        }
     }
 
     function _resolveAddress(string memory key) internal view returns (address) {
@@ -249,6 +292,8 @@ contract ConfigureOracle is Script {
         console.log("0x allowanceTarget:    ", allowanceTarget);
         console.log("Feed Registry:         ", feedRegistry);
         console.log("Mock rig adopted:      ", rig.adopted);
+        address[] memory paa = _paaList(rig, weth);
+        console.log("PAA quote assets:      ", paa.length);
 
         // Pre-flight role/owner check. OracleAdminFacet setters require
         // the Diamond's ERC-173 owner (LibDiamond.enforceIsContractOwner);
@@ -360,6 +405,15 @@ contract ConfigureOracle is Script {
             af.setallowanceTarget(allowanceTarget);
         } else {
             console.log("0x unset - liquidation via registered on-chain swap adapter(s) only (e.g. PancakeSwap V3 on BNB testnet).");
+        }
+
+        // #2747 — the quote-asset list, WETH plus at least one other quote, so
+        // WETH has a tier route. Without one the list is left alone and the
+        // launch readiness check refuses the chain until it is set.
+        if (paa.length > 0) {
+            ConfigFacet(diamond).setPaaAssets(paa);
+        } else {
+            console.log("PAA quote list unchanged: no <CHAIN>_PAA_QUOTE_ASSETS given. The launch readiness check refuses this chain until the list names a quote asset besides WETH (#2747).");
         }
 
         // Stable-token feeds — optional, registered one symbol at a time.

@@ -13,6 +13,7 @@ interface ILaunchReadableDiamond {
     function getSanctionsOracle() external view returns (address);
     function getWethContract() external view returns (address);
     function getSwapAdapters() external view returns (address[] memory);
+    function getPaaAssets() external view returns (address[] memory);
     function isSwapAdapterDisabled(address adapter) external view returns (bool);
     // forge-lint: disable-next-line(mixed-case-function)
     function getVPFIToken() external view returns (address);
@@ -163,13 +164,14 @@ library LibLaunchReadiness {
     ///        no pool address is ever taken on trust.
     function check(address diamond, Declared memory declared) internal view returns (Check[] memory checks) {
         VpfiRoute memory route = _vpfiRoute(diamond, declared.tokenAdminRegistry);
-        checks = new Check[](6);
+        checks = new Check[](7);
         checks[0] = _treasury(diamond);
         checks[1] = _sanctions(diamond);
         checks[2] = _priceFeed(diamond, declared.weth);
         checks[3] = _swapRoute(diamond);
         checks[4] = _vpfiPool(diamond, route, declared);
         checks[5] = _ccipLanes(route, declared);
+        checks[6] = _wethQuoteRoute(diamond);
     }
 
     /// @notice Whether every check was answered and met.
@@ -334,6 +336,43 @@ library LibLaunchReadiness {
                 : "no enabled swap adapter that is a contract answering adapterName(): run the swap-adapters phase";
         } catch {
             c.detail = "getSwapAdapters() unreadable";
+        }
+    }
+
+    /// @dev #2747 — WETH has a liquidity-tier route only through a quote
+    ///      asset other than itself: the tier search never quotes an asset
+    ///      against itself, and the empty list of a Diamond whose configure
+    ///      phase has not set one resolves to WETH alone. With no other quote,
+    ///      WETH resolves to tier 0 whatever its market depth, which stamps
+    ///      the most conservative liquidation threshold on every
+    ///      WETH-collateral loan, refuses it the discounted liquidation and,
+    ///      once depth-tiered LTV is on, refuses every new WETH-collateral
+    ///      loan. The check reads the list the tier search uses; whether the
+    ///      quote's pools are deep enough for a higher tier is a market
+    ///      measurement made per loan, not a launch requirement, and the
+    ///      detail says so.
+    function _wethQuoteRoute(address diamond) private view returns (Check memory c) {
+        c.label = "WETH has a liquidity-tier quote route";
+        address weth;
+        try ILaunchReadableDiamond(diamond).getWethContract() returns (address w) {
+            weth = w;
+        } catch {
+            c.detail = "getWethContract() unreadable";
+            return c;
+        }
+        try ILaunchReadableDiamond(diamond).getPaaAssets() returns (address[] memory quotes) {
+            c.checkable = true;
+            for (uint256 i; i < quotes.length; ++i) {
+                if (quotes[i] != address(0) && quotes[i] != weth) {
+                    c.met = true;
+                    break;
+                }
+            }
+            c.detail = c.met
+                ? "the quote-asset list names an asset besides WETH, so WETH can be tiered (its tier still depends on that pool's depth)"
+                : "the quote-asset list names no asset besides WETH, so WETH would resolve to liquidity tier 0: run the configure phase with a stable quote (<CHAIN>_PAA_QUOTE_ASSETS)";
+        } catch {
+            c.detail = "getPaaAssets() unreadable";
         }
     }
 

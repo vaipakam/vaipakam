@@ -1472,6 +1472,11 @@ contract ConfigFacet is DiamondAccessControl {
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
+        // #2747 — switching on needs a quote asset other than WETH, or every
+        // WETH-collateral loan resolves to tier 0 and is refused. Only an
+        // unconfigured (empty) list can fail here: `setPaaAssets` never
+        // writes a list without one. Switching off is never refused.
+        if (enabled) LibVaipakam.assertPaaHasNonWethQuote();
         LibVaipakam.storageSlot().protocolCfg.depthTieredLtvEnabled = enabled;
         emit DepthTieredLtvEnabledSet(enabled);
     }
@@ -1963,9 +1968,13 @@ contract ConfigFacet is DiamondAccessControl {
     /// @notice Replace the PAA list — the per-chain "predominantly
     ///         available" quote tokens the depth-tier route search probes
     ///         an asset's pools against (e.g. `[WETH, USDC, USDT, DAI]`
-    ///         by their addresses on this chain). Pass an empty array to
-    ///         reset to the implicit `[wethContract]` fallback. Validates:
-    ///         no zero address, no duplicates, length ≤ {MAX_PAA_ASSETS}.
+    ///         by their addresses on this chain). Validates: no zero
+    ///         address, no duplicates, length ≤ {MAX_PAA_ASSETS}, and
+    ///         (#2747) at least one member other than WETH, since WETH is
+    ///         never quoted against itself and would otherwise resolve to
+    ///         tier 0. So an empty list is refused: the implicit
+    ///         `[wethContract]` fallback is a fresh Diamond's unconfigured
+    ///         state only, never a state governance can return to.
     ///         (A member without a Chainlink feed is harmless — the route
     ///         search skips it; this is *not* a per-asset *tiering*
     ///         allowlist.)
@@ -1989,6 +1998,8 @@ contract ConfigFacet is DiamondAccessControl {
             else list.push(assets[i]);
         }
         for (uint256 k = oldLen; k > n; --k) list.pop();
+        // #2747 — the list must keep a quote asset other than WETH.
+        LibVaipakam.assertPaaHasNonWethQuote();
         emit PaaAssetsSet(n);
     }
 
