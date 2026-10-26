@@ -1,6 +1,6 @@
 /**
  * The canonical EIP-191 messages a user signs to authorise the four
- * alert-family actions — link, unlink, mute-due-date, test-alert.
+ * alert-family actions — link, unlink, save settings, test-alert.
  *
  * ONE source of truth, by design (#2014, the shape #2008 established
  * for the erasure family): the wallet prompt the connected app shows
@@ -17,7 +17,9 @@
  * Every message differs in headline AND body text, so a signature
  * captured for one action can never be replayed as another. Each is
  * FROZEN from its first release — the byte-pinning test in
- * `alertsMessage.test.ts` holds them verbatim. The wallet is
+ * `alertsMessage.test.ts` holds them verbatim. (The one retirement, the
+ * mute-only due-date message, went with #2754 while the platform was
+ * prelive: every settings save is now signed over the settings message.) The wallet is
  * lower-cased so a checksummed and an all-lowercase spelling of the
  * same address produce the same message.
  */
@@ -82,22 +84,61 @@ export function buildTelegramUnlinkMessage(
 }
 
 /**
- * Mute due-date reminders: required when a `/thresholds` write sets
- * `notify_maturity_approaching` to false, since that silences BOTH
- * due-date warning lanes (agent reminder + keeper pre-grace) — an
- * unsigned opt-out would be alert suppression through a side door.
+ * What one alert-settings save changes (#2754). Every field is
+ * optional, and an absent field means "keep the saved value", the
+ * same contract the agent's `PUT /thresholds` has always applied:
+ *
+ * - `bands`: the three health-factor bands, all together or not at
+ *   all (they are one lane state);
+ * - `dueDateReminders`: the payment due-date reminder switch;
+ * - `pushAlerts`: `true` when the save switches Push alerts on. There
+ *   is no way to switch Push off through this save, so there is no
+ *   `false`.
  */
-export function buildDueDateOptOutMessage(
+export interface AlertSettingsChange {
+  bands?: { warnHf: number; alertHf: number; criticalHf: number };
+  dueDateReminders?: boolean;
+  pushAlerts?: true;
+}
+
+/**
+ * Save alert settings (#2754): signed for EVERY settings write, not
+ * only an opt-out. The message names exactly what the save changes,
+ * so the signature authorises those values and no others, and the
+ * agent rebuilds it from the request body it is about to store.
+ *
+ * It replaced the mute-only message (#1056 round 6), which proved
+ * ownership for an opt-out and left every other write trusting the
+ * wallet named in the body: a caller with a spoofed Origin could
+ * rewrite any wallet's bands and Push opt-in.
+ *
+ * Numbers are written with `String(n)`, which gives the same text for
+ * the same number on both sides.
+ */
+export function buildAlertSettingsMessage(
   wallet: string,
   chainId: number,
+  change: AlertSettingsChange,
   issuedAt: number,
 ): string {
+  const { bands, dueDateReminders, pushAlerts } = change;
   return [
-    'Vaipakam — Mute due-date payment reminders',
+    'Vaipakam — Save alert settings',
     '',
-    'I request that payment due-date reminders for the wallet below',
-    'be switched off. Signing this message proves ownership of the',
-    'wallet. It is not a transaction and costs no gas.',
+    'I request that the alert settings below be saved for the wallet',
+    'below. A setting marked unchanged keeps its saved value. Signing',
+    'this message proves ownership of the wallet. It is not a',
+    'transaction and costs no gas.',
+    '',
+    `Health-factor alerts: ${
+      bands
+        ? `warn at ${String(bands.warnHf)}, alert at ${String(bands.alertHf)}, critical at ${String(bands.criticalHf)}`
+        : 'unchanged'
+    }`,
+    `Due-date payment reminders: ${
+      dueDateReminders === undefined ? 'unchanged' : dueDateReminders ? 'on' : 'off'
+    }`,
+    `Push alerts: ${pushAlerts ? 'switch on' : 'unchanged'}`,
     '',
     `Wallet: ${wallet.toLowerCase()}`,
     `Chain id: ${chainId}`,

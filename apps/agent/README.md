@@ -29,18 +29,18 @@ Two things it used to say alongside that are **withdrawn**:
 
 | Route | Proof required |
 |---|---|
+| `PUT /thresholds` | **EIP-191 ownership proof over what the save changes** (#2754): the bands, the due-date reminder choice and a Push opt-in, each named or marked unchanged. The agent rebuilds the message from the body it received, so a signature covers that save and no other. It was signature-free except for a due-date opt-out until #2754 |
 | `POST /link/telegram` | **EIP-191 ownership proof**, parsed and verified before a code is issued |
 | `POST /unlink/telegram` | **EIP-191 ownership proof** (scoped to unlink). Note what this route *is*: clearing the wallet ↔ `tg_chat_id` link is an **alert-suppression** surface — a successful unlink silently stops every Telegram HF/interest alert for that wallet |
 | `POST /telegram/test` | **EIP-191 ownership proof** (scoped to test-send). Sends a real message to the linked chat |
-| `POST /tg/webhook` | **a one-time six-digit code**, not a signature and not a Telegram secret. Dispatched at `index.ts:166-167` **before** the Origin gate and with no webhook-secret header, so any caller may POST JSON; what bounds it is that the code was issued only after an EIP-191 proof on `/link/telegram` and is consumed on first use. It is the **completion half** of that handshake, and it writes the caller-supplied chat ID — so guessing a live code redirects a wallet's alerts. Do not count it among the unsigned routes below: those are open, this one holds a bearer secret |
+| `POST /tg/webhook` | **Telegram's webhook secret, then a one-time link code** (#2753). A request without the `X-Telegram-Bot-Api-Secret-Token` header Telegram sends (the secret is derived from the bot token; `scripts/register-telegram-webhook.mjs` registers it) is refused 401 before its body is read. The code is the completion half of the `/link/telegram` handshake: issued only after an EIP-191 proof there, 24 symbols (120 bits) from the Web Crypto generator, valid ten minutes and consumed on first use. It writes the sending chat's ID, so it is a bearer secret; it was a guessable six-digit number until #2753 |
 | Diagnostics administration (legal-hold / erasure) | signature- or role-gated |
 | `POST /support/ticket` | **none** — deliberately accepts no wallet identity |
 | `POST /diag/record` | **none** — CORS + rate limiting only |
-| `PUT /thresholds` (ordinary path) | **none** — signature-free |
 | `POST /intent/fusion/post` | **none at request level** — origin + rate-limit are the enforced controls. The on-chain commitment check is **best-effort, not a control**: it runs only when `ONEINCH_API_KEY` is set and the chain has an RPC URL, and when the receipt fetch or the `getIntentCommit` read errors, `preflightCommitOnChain` returns `degraded` and the handler deliberately proceeds to Fusion. Only an affirmative `reject` stops a request. Reading it as authentication would credit this route with a gate that opens on RPC trouble. Mutates external resolver state |
 | `POST /opensea/listing` | **none at request level** — origin + rate-limit. Publishes to a live marketplace under the project's `OPENSEA_API_KEY`; the vault's ERC-1271 check over a borrower-bound order hash is what actually authorises it |
 
-An earlier version of this paragraph swung the other way and called the whole set "not wallet-signature-gated", which erased the real controls on the gated routes — `POST /link/telegram`, `POST /unlink/telegram`, `POST /telegram/test` and diagnostics administration. Name them rather than counting them: an earlier draft said "the first two", which silently went stale the moment the table grew.
+An earlier version of this paragraph swung the other way and called the whole set "not wallet-signature-gated", which erased the real controls on the gated routes — `PUT /thresholds` (since #2754), `POST /link/telegram`, `POST /unlink/telegram`, `POST /telegram/test` and diagnostics administration. Name them rather than counting them: an earlier draft said "the first two", which silently went stale the moment the table grew.
 
 Those last two are **credential-backed publication paths**: they change state
 outside this project — a resolver network and a public marketplace — using the
@@ -48,7 +48,9 @@ project's own API keys rather than any user's signature. An earlier version of
 this table omitted both, which preserved a false "unsigned three" count and hid
 the two routes whose controls differ most from the rest.
 
-**The unsigned routes are not uniformly protected either.** `POST /support/ticket`, `POST /diag/record`, `POST /intent/fusion/post` and `POST /opensea/listing` each have a rate-limit binding; **`PUT /thresholds` has none** — it is reached after the origin check and neither its dispatch nor `handlePutThresholds` calls a limiter, so unbounded threshold upserts are NOT mitigated. An earlier draft said the unsigned routes were protected by "origin checks and rate limits", which asserted a control that does not exist on that route. Check the specific route.
+**The four signed alert routes share one entry and two more controls** (#2754, #2753). `PUT /thresholds`, `POST /link/telegram`, `POST /unlink/telegram` and `POST /telegram/test` all authorise through `authoriseAlertRequest` (`src/linkAuth.ts`): it verifies the signature, then claims the exact signed message once in the shared D1 ledger `signed_request_use`, so a captured request cannot be presented a second time (409 `request-already-used`; 503 while that table's migration is pending, never an unrecorded acceptance). A per-IP limiter (`ALERT_WRITE_RATELIMIT`, 20 a minute) runs at the router before any signature work. Until #2754 `PUT /thresholds` had no limiter and no signature, so any caller could rewrite any wallet's bands and Push opt-in.
+
+**The unsigned routes are not uniformly protected either.** `POST /support/ticket`, `POST /diag/record`, `POST /intent/fusion/post` and `POST /opensea/listing` each have a rate-limit binding. An earlier draft said the unsigned routes were protected by "origin checks and rate limits" while one of them had no limiter, which asserted a control that did not exist on that route. Check the specific route.
 
 ## How to run
 

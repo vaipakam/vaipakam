@@ -20,6 +20,13 @@
  *     and it re-reads the status.
  *  4. UNKNOWN: the status could not be read — stated, and nothing offered.
  *
+ *  #2754 / #2753 — like the agent, the stub stores nothing unsigned: every
+ *  save must carry the wallet's signature over the settings message built
+ *  from the body it sent, and a signed request presented twice is refused.
+ *  So each save above is also proof that the app signs what it sends, and
+ *  the refused-at-save case proves the repeat without the opt-in is signed
+ *  again rather than resent.
+ *
  *  #2723 — the paid-Push billing consent, against the REAL Diamond on anvil
  *  (the fee and the consent are read from and written to the chain; only the
  *  service's billing answer, `billedChainIds`, comes from the stub):
@@ -33,6 +40,8 @@
 import http from 'node:http';
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { Page } from '@playwright/test';
+import { verifyMessage } from 'viem';
+import { buildAlertSettingsMessage, type AlertSettingsChange } from '@vaipakam/lib/alertsMessage';
 import { test, expect, connectWallet } from '../lib/wallet-fixture';
 import { ANVIL_URL } from '../lib/anvil';
 import { CHAIN_ID, DIAMOND, DIAMOND_ABI_VIEM, pub } from '../lib/chain';
@@ -57,6 +66,38 @@ let putPush: 'stored' | 'refuse' = 'stored';
  *  paid Push on. The e2e chain is listed only in `here`. */
 let billedMode: 'nowhere' | 'here' = 'nowhere';
 const puts: Record<string, unknown>[] = [];
+/** Signatures already accepted, as the agent's one-use ledger keeps them. */
+const usedSignatures = new Set<string>();
+
+/** The agent's rule: the body's own fields name what the save changes,
+ *  and the signature must be the body's wallet's over exactly that. */
+async function signedSave(b: Record<string, unknown>): Promise<'ok' | 'unsigned' | 'repeat'> {
+  if (typeof b.signature !== 'string' || typeof b.issuedAt !== 'number') return 'unsigned';
+  const change: AlertSettingsChange = {
+    ...(typeof b.warn_hf === 'number'
+      ? {
+          bands: {
+            warnHf: b.warn_hf,
+            alertHf: b.alert_hf as number,
+            criticalHf: b.critical_hf as number,
+          },
+        }
+      : {}),
+    ...(typeof b.notify_maturity_approaching === 'boolean'
+      ? { dueDateReminders: b.notify_maturity_approaching }
+      : {}),
+    ...(b.push_channel === 'subscribed' ? { pushAlerts: true as const } : {}),
+  };
+  const valid = await verifyMessage({
+    address: b.wallet as `0x${string}`,
+    message: buildAlertSettingsMessage(b.wallet as string, b.chain_id as number, change, b.issuedAt),
+    signature: b.signature as `0x${string}`,
+  }).catch(() => false);
+  if (!valid) return 'unsigned';
+  if (usedSignatures.has(b.signature)) return 'repeat';
+  usedSignatures.add(b.signature);
+  return 'ok';
+}
 
 test.beforeAll(async () => {
   agentStub = http.createServer((req, res) => {
@@ -90,9 +131,18 @@ test.beforeAll(async () => {
       req.on('data', (c: Buffer) => {
         body += c.toString();
       });
-      req.on('end', () => {
+      req.on('end', async () => {
         const parsed = JSON.parse(body) as Record<string, unknown>;
         puts.push(parsed);
+        const signed = await signedSave(parsed);
+        if (signed === 'unsigned') {
+          json(401, { error: 'signature-required' });
+          return;
+        }
+        if (signed === 'repeat') {
+          json(409, { error: 'request-already-used' });
+          return;
+        }
         const requested = typeof parsed.push_channel === 'string';
         if (requested && putPush === 'refuse') {
           json(409, { error: 'push-unavailable', push: 'unavailable' });
@@ -231,6 +281,8 @@ test('an opt-in the agent refuses at save stays off, and the card says why', asy
   const sent = puts.slice(before);
   expect(sent[0]?.push_channel).toBe('subscribed');
   expect(sent.some((p) => p.push_channel === undefined)).toBe(true);
+  // …and signed again: a new request, not the first one resent.
+  expect(new Set(sent.map((p) => p.signature)).size).toBe(sent.length);
   await expect(page.getByText('Push delivery is on for this wallet.')).toHaveCount(0);
   // The card re-read the status and now states the outage.
   await expect(

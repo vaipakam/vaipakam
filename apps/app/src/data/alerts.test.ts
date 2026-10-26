@@ -8,6 +8,7 @@
  * in a subscription), and permitting a held wallet to switch one on.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { buildAlertSettingsMessage } from '@vaipakam/lib/alertsMessage';
 import {
   DEFAULT_PREFS,
   FLOOR_BANDS,
@@ -21,6 +22,18 @@ const prefs = (over: Partial<AlertPrefs> = {}): AlertPrefs => ({
   ...DEFAULT_PREFS,
   ...over,
 });
+
+/** A wallet stand-in that records what it was asked to sign. */
+function recordingSigner() {
+  const signed: string[] = [];
+  return {
+    signed,
+    signMessage: async (message: string) => {
+      signed.push(message);
+      return `0xsig${signed.length}`;
+    },
+  };
+}
 
 describe('addsAlertOptIn', () => {
   it('does not call switching a lane off an enrolment', () => {
@@ -129,6 +142,7 @@ describe('saveAlertPrefs wire shape (#2000)', () => {
     // A first opt-out from a fresh device: the due-date toggle only.
     await saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS, repayDue: true }, {
       dueDateChanged: true,
+      signMessage: recordingSigner().signMessage,
     });
     expect(bodies[0]!.warn_hf).toBeUndefined();
     expect(bodies[0]!.alert_hf).toBeUndefined();
@@ -140,6 +154,7 @@ describe('saveAlertPrefs wire shape (#2000)', () => {
     const bodies = stubAgent();
     await saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS, risky: true }, {
       bandsChanged: true,
+      signMessage: recordingSigner().signMessage,
     });
     expect(bodies[0]!.warn_hf).toBe(DEFAULT_PREFS.warnHf);
     expect(bodies[0]!.critical_hf).toBe(DEFAULT_PREFS.criticalHf);
@@ -149,45 +164,70 @@ describe('saveAlertPrefs wire shape (#2000)', () => {
     const bodies = stubAgent();
     await saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS, risky: false }, {
       bandsChanged: true,
+      signMessage: recordingSigner().signMessage,
     });
     expect(bodies[0]!.warn_hf).toBe(FLOOR_BANDS.warnHf);
     expect(bodies[0]!.alert_hf).toBe(FLOOR_BANDS.alertHf);
     expect(bodies[0]!.critical_hf).toBe(FLOOR_BANDS.criticalHf);
   });
 
-  it('retries ONCE with bands when an old agent refuses the bandless body', async () => {
-    // Rollout shim (#2005 round 1 P2): the app and agent deploy
-    // independently, and an app deployed first would send bandless
-    // saves to a parser that requires all three — every due-date and
-    // push save 400ing, a held user unable to mute a reminder being
-    // the worst of it. A bandless save refused as `invalid-payload`
-    // is retried with the lane's current bands (the pre-#2000 wire,
-    // no worse than before); any other failure is not.
+  it('signs every save over exactly what its body carries (#2754)', async () => {
+    // The agent stores nothing unsigned, and rebuilds the message from the
+    // body it received: the signed message and the body must describe one
+    // save, or every save is refused.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1_800_000_000_000));
+    try {
+      const bodies = stubAgent();
+      const wallet = recordingSigner();
+      await saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS, risky: false, repayDue: false }, {
+        bandsChanged: true,
+        dueDateChanged: true,
+        signMessage: wallet.signMessage,
+      });
+      expect(wallet.signed).toEqual([
+        buildAlertSettingsMessage(
+          WALLET,
+          84532,
+          { bands: FLOOR_BANDS, dueDateReminders: false },
+          1_800_000_000,
+        ),
+      ]);
+      expect(bodies[0]!.issuedAt).toBe(1_800_000_000);
+      expect(bodies[0]!.signature).toBe('0xsig1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('signs a save that changes nothing it names, too', async () => {
+    // No unsigned path is left: the agent refuses an unsigned body, so the
+    // app never sends one, whatever the save carries.
+    const bodies = stubAgent();
+    const wallet = recordingSigner();
+    await saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS }, { signMessage: wallet.signMessage });
+    expect(wallet.signed).toHaveLength(1);
+    expect(wallet.signed[0]).toContain('Health-factor alerts: unchanged');
+    expect(wallet.signed[0]).toContain('Due-date payment reminders: unchanged');
+    expect(bodies[0]!.signature).toBe('0xsig1');
+  });
+
+  it('names a repeated signature and an unavailable check in plain words', async () => {
     vi.stubEnv('VITE_AGENT_ORIGIN', 'https://agent.test');
-    const bodies: Array<Record<string, unknown>> = [];
-    let first = true;
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_url: unknown, init?: RequestInit) => {
-        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
-        if (first) {
-          first = false;
-          return new Response(JSON.stringify({ error: 'invalid-payload' }), {
-            status: 400,
-          });
-        }
-        return new Response(JSON.stringify({ ok: true }), { status: 200 });
-      }),
-    );
-    await saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS }, {
-      dueDateChanged: true,
-    });
-    expect(bodies).toHaveLength(2);
-    expect(bodies[0]!.warn_hf).toBeUndefined();
-    expect(bodies[1]!.warn_hf).toBe(DEFAULT_PREFS.warnHf);
-    // The retry keeps the rest of the body intact — the opt-in flag
-    // still travels.
-    expect(bodies[1]!.notify_maturity_approaching).toBe(true);
+    for (const [status, error, words] of [
+      [409, 'request-already-used', /already used/],
+      [503, 'verification-unavailable', /could not check your signature/],
+    ] as const) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response(JSON.stringify({ error }), { status })),
+      );
+      await expect(
+        saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS }, {
+          signMessage: recordingSigner().signMessage,
+        }),
+      ).rejects.toThrow(words);
+    }
   });
 });
 
@@ -221,27 +261,39 @@ describe('saveAlertPrefs and a refused Push opt-in (#2251)', () => {
       status: 409,
       body: { error: 'push-unavailable', push: 'unavailable' },
     });
+    const wallet = recordingSigner();
     const out = await saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS, pushEnabled: true }, {
       dueDateChanged: true,
+      signMessage: wallet.signMessage,
     });
     expect(out).toBe('unavailable');
     expect(bodies).toHaveLength(2);
     expect(bodies[0]!.push_channel).toBe('subscribed');
     expect(bodies[1]!.push_channel).toBeUndefined();
     expect(bodies[1]!.notify_maturity_approaching).toBe(true);
+    // The repeat is a different change, so it is signed again (#2753:
+    // each signed request is accepted once).
+    expect(wallet.signed).toHaveLength(2);
+    expect(wallet.signed[0]).toContain('Push alerts: switch on');
+    expect(wallet.signed[1]).toContain('Push alerts: unchanged');
+    expect(bodies[1]!.signature).toBe('0xsig2');
   });
 
   it('reads an opt-in the agent kept or stored as stored', async () => {
     stubAgent({ status: 200, body: { ok: true, push: 'kept' } });
     expect(
-      await saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS, pushEnabled: true }),
+      await saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS, pushEnabled: true }, {
+        signMessage: recordingSigner().signMessage,
+      }),
     ).toBe('stored');
   });
 
   it('still fails on any other 409', async () => {
     stubAgent({ status: 409, body: { error: 'something-else' } });
     await expect(
-      saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS, pushEnabled: true }),
+      saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS, pushEnabled: true }, {
+        signMessage: recordingSigner().signMessage,
+      }),
     ).rejects.toThrow(/409/);
   });
 });

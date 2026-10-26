@@ -141,8 +141,8 @@ export function AlertsCard() {
       // this save is the user flipping that toggle — any other save
       // omits it and the agent preserves the stored value (a fresh
       // device's defaults must not undo an opt-out made elsewhere).
-      // Switching the reminder OFF additionally signs an ownership
-      // proof; the agent refuses unsigned opt-outs.
+      // Every save is signed by the wallet over a message naming what it
+      // changes (#2754); the agent stores nothing unsigned.
       // bandsChanged mirrors it for the risky lane (#2000): the bands
       // carry that lane's state, so they are sent only when this save
       // is the user touching the toggle or the advanced numbers — any

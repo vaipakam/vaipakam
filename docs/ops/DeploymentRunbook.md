@@ -2374,28 +2374,23 @@ about the machine.
    # wrangler prompts for the value — paste the BotFather token.
    ```
    `TG_BOT_USERNAME` is committed in `wrangler.jsonc` as a public var.
-3. Register the webhook so Telegram pushes inbound DMs into the worker.
-
-   > **SECURITY — read before running this step.** `handleTelegramWebhook`
-   > (`apps/agent/src/index.ts:654`) verifies only that `TG_BOT_TOKEN` is
-   > configured; it does **not** verify that a request actually came from
-   > Telegram. The route sits before the Origin gate and carries no rate
-   > limiter, so it accepts update JSON from any caller. Telegram supports
-   > a `secret_token` parameter on `setWebhook` and echoes it back in the
-   > `X-Telegram-Bot-Api-Secret-Token` header on every delivery — **the
-   > agent does not check that header today.** Setting the parameter alone
-   > therefore buys nothing; the handler has to reject mismatches first.
-   >
-   > This is not created by registering the webhook — the endpoint is
-   > already public and `POST /link/telegram` already issues handshake
-   > codes regardless — but do not treat this step as making the linking
-   > flow safe. Tracked privately per SECURITY.md; do not open a public
-   > issue for it.
+3. Register the webhook so Telegram pushes inbound DMs into the worker,
+   **with its secret**. The agent refuses (401) every `/tg/webhook` request
+   that does not carry the `X-Telegram-Bot-Api-Secret-Token` header Telegram
+   sends when the webhook was registered with a `secret_token` (#2753). The
+   secret is derived from the bot token (HMAC-SHA256 keyed by the token over
+   a fixed label), so there is no second secret to store; the registration
+   script computes it and registers both in one call. It prompts for the
+   token with the echo off, so the token reaches neither shell history nor
+   the process list:
    ```bash
-   curl "https://api.telegram.org/bot<TG_BOT_TOKEN>/setWebhook" \
-        --data-urlencode "url=https://agent.vaipakam.com/tg/webhook"
+   cd apps/agent && node scripts/register-telegram-webhook.mjs
+   # prints the registered URL and Telegram's last delivery error, if any
    ```
-   Verify with `getWebhookInfo`.
+   A bare `setWebhook` without `secret_token` leaves the bot silent: every
+   delivery is refused. Run the script again after every token rotation
+   (IncidentRunbook, token rotation), since the secret changes with the
+   token.
 
 ### 8b. Push Protocol channel
 

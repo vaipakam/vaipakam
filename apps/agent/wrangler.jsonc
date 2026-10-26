@@ -194,6 +194,16 @@
         "simple": { "limit": 60, "period": 60 },
       },
       {
+        // #2754 — the signed alert writes: PUT /thresholds, link,
+        // unlink and the test alert. One save is one signed request, so
+        // a person never comes near this; it bounds the signature work
+        // a caller spraying bodies can cause.
+        "name": "ALERT_WRITE_RATELIMIT",
+        "type": "ratelimit",
+        "namespace_id": "1012",
+        "simple": { "limit": 20, "period": 60 },
+      },
+      {
         // #2013 — the signature-verification CHAIN PATH (ERC-1271/
         // 6492 checks against configured RPCs). Only requests that
         // fall past the free ECDSA fast path consume this, so a

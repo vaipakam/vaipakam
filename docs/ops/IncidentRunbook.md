@@ -830,7 +830,11 @@ identity), so rotation is time-sensitive.
   either sender's log: `wrangler tail` for the agent, `journalctl -u
   vaipakam-keeper` on the keeper machine.
 - Telegram inbound webhook traffic looks scripted (high-frequency
-  `/start <code>` posts from new chat IDs).
+  `/start <code>` posts from new chat IDs). Since #2753 a post that did not
+  come from Telegram is refused (401) before it is read, so a burst of 401s
+  on `/tg/webhook` is someone probing the route; scripted traffic that
+  PASSES the check came through Telegram itself, which a 24-symbol link code
+  keeps from guessing its way to a link.
 
 ### Detect
 - Search BOTH senders' logs: the agent's (`wrangler tail`, or its Workers
@@ -898,32 +902,28 @@ runs after revocation.
    wrangler secrets-store secret update "$STORE" \
      --secret-id "$SECRET_ID" --remote
    ```
-4. Re-register the webhook. The token goes in the URL path, so it must not
-   be typed into the command — that would undo step 3's prompted upload by
-   writing the freshly minted credential straight into shell history, and
-   into the process list where any other user on the box can read it from
-   `ps`. Prompt for it and hand curl its options on **stdin**, so the token
-   appears in neither:
+4. Re-register the webhook with the secret derived from the NEW token. The
+   agent derives the secret it checks from whichever token it holds, so
+   until this step runs every delivery is refused (401) and the bot is
+   silent — a rotation that skips it fails closed, not open. The token must
+   not be typed into a command: that would undo step 3's prompted upload by
+   writing the freshly minted credential into shell history, and into the
+   process list where any other user on the box can read it from `ps`. The
+   registration script prompts for it with the echo off and sends it only
+   inside its own process:
 
    ```bash
-   read -rsp 'New bot token: ' TG_TOKEN; echo
-
-   printf 'url = "https://api.telegram.org/bot%s/setWebhook"\ndata-urlencode = "url=https://agent.vaipakam.com/tg/webhook"\n' \
-     "$TG_TOKEN" | curl -K -
-
-   # Confirm it took — same pattern, same reason:
-   printf 'url = "https://api.telegram.org/bot%s/getWebhookInfo"\n' \
-     "$TG_TOKEN" | curl -K -
-
-   unset TG_TOKEN
+   cd apps/agent && node scripts/register-telegram-webhook.mjs
    ```
 
-   `curl -K -` reads its options from standard input, so the assembled URL
-   never becomes a command-line argument. `read -rs` keeps the typed value
-   off the screen and out of history. `unset` drops it from the shell's
-   environment when you are done — a rotation performed to evict an
-   attacker should not leave the replacement credential lying around the
-   workstation.
+   It calls `setWebhook` with the URL and the derived `secret_token`, then
+   `getWebhookInfo`, and prints what Telegram reports. A plain `setWebhook`
+   without `secret_token` is NOT a substitute: the bot would stay silent.
+   Between this step and step 5 an agent isolate still holding the old token
+   computes the old secret and refuses deliveries; Telegram keeps undelivered
+   updates and retries them, so a link code sent in that window lands once
+   the redeploy is done (or expires, after ten minutes, and the user asks
+   for a new one).
 
    `agent.vaipakam.com`, NOT `api.vaipakam.com` — the latter belonged to
    the removed hf-watcher and no current Worker binds it; `/tg/webhook`

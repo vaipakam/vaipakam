@@ -8,7 +8,8 @@
  * absent.
  */
 import { describe, it, expect } from 'vitest';
-import { parsePutThresholds } from '../src/index';
+import { buildAlertSettingsMessage } from '@vaipakam/lib/alertsMessage';
+import { parsePutThresholds, settingsChangeOf } from '../src/index';
 
 const WALLET = '0x1DAefA360ED370285f003Fa2d92DB75628088282';
 const FULL = {
@@ -68,5 +69,53 @@ describe('parsePutThresholds (#2000 optional bands)', () => {
   it('still rejects a malformed wallet or chain id', () => {
     expect(parsePutThresholds({ ...FULL, wallet: '0x123' })).toBeNull();
     expect(parsePutThresholds({ ...FULL, chain_id: '84532' })).toBeNull();
+  });
+});
+
+describe('what a settings save is signed over (#2754)', () => {
+  it('names exactly the fields the body carries, and nothing it omits', () => {
+    expect(settingsChangeOf(parsePutThresholds(FULL)!)).toEqual({
+      bands: { warnHf: 1.5, alertHf: 1.2, criticalHf: 1.05 },
+    });
+    expect(
+      settingsChangeOf(
+        parsePutThresholds({
+          wallet: WALLET,
+          chain_id: 84532,
+          notify_maturity_approaching: false,
+          push_channel: 'subscribed',
+        })!,
+      ),
+    ).toEqual({ dueDateReminders: false, pushAlerts: true });
+    expect(settingsChangeOf(parsePutThresholds({ wallet: WALLET, chain_id: 84532 })!)).toEqual({});
+  });
+
+  it('rebuilds the message the app signed from the body the app sent', () => {
+    // The app signs buildAlertSettingsMessage over its change and sends
+    // the same values in the body; the agent must arrive at the same bytes.
+    const change = {
+      bands: { warnHf: 1.012, alertHf: 1.011, criticalHf: 1.01 },
+      dueDateReminders: true,
+    };
+    const body = JSON.parse(
+      JSON.stringify({
+        wallet: WALLET,
+        chain_id: 84532,
+        warn_hf: change.bands.warnHf,
+        alert_hf: change.bands.alertHf,
+        critical_hf: change.bands.criticalHf,
+        notify_maturity_approaching: true,
+      }),
+    );
+    expect(
+      buildAlertSettingsMessage(WALLET, 84532, settingsChangeOf(parsePutThresholds(body)!), 1),
+    ).toBe(buildAlertSettingsMessage(WALLET, 84532, change, 1));
+  });
+
+  it('refuses a Push value other than the opt-in, and non-finite bands', () => {
+    expect(parsePutThresholds({ wallet: WALLET, chain_id: 84532, push_channel: 'x' })).toBeNull();
+    expect(parsePutThresholds({ ...FULL, warn_hf: Infinity })).toBeNull();
+    expect(parsePutThresholds({ ...FULL, chain_id: 1.5 })).toBeNull();
+    expect(parsePutThresholds({ ...FULL, chain_id: 0 })).toBeNull();
   });
 });

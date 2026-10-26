@@ -165,6 +165,9 @@ interface BaseEnv {
   QUOTE_0X_RATELIMIT?: RateLimitBinding;
   QUOTE_1INCH_RATELIMIT?: RateLimitBinding;
   DIAG_RECORD_RATELIMIT?: RateLimitBinding;
+  // #2754 — per-IP gate on the signed alert writes (`PUT /thresholds`,
+  // link, unlink, test alert), taken before any signature work.
+  ALERT_WRITE_RATELIMIT?: RateLimitBinding;
   // T-086 step 14 — per-IP gate on `POST /opensea/listing`. The
   // expected call rate is one POST per borrower-driven
   // postPrepayListing / updatePrepayListing tx, so a tight budget

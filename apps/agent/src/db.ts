@@ -5,6 +5,7 @@
  */
 
 import type { PublishedRailRow } from '@vaipakam/push';
+import { newLinkCode } from './telegram';
 
 export type Band = 'healthy' | 'warn' | 'alert' | 'critical';
 
@@ -280,15 +281,17 @@ export async function putNotifyState(
     .run();
 }
 
-/** 6-digit numeric Telegram handshake code with a 10-minute expiry.
- *  Collisions are exceedingly rare (1-in-10^6 per window) but we
- *  regenerate on ON CONFLICT just in case. */
+/** Telegram handshake code with a 10-minute expiry. The code is the
+ *  120-bit `newLinkCode()` (#2753), so a collision is not a practical
+ *  event; the one retry below stays only because the insert would
+ *  otherwise surface a primary-key clash as a failed link. */
 export async function issueTelegramLinkCode(
   db: D1Database,
   wallet: string,
   chainId: number,
+  retried = false,
 ): Promise<string> {
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  const code = newLinkCode();
   const expiresAt = Math.floor(Date.now() / 1000) + 600;
   try {
     await db
@@ -299,9 +302,12 @@ export async function issueTelegramLinkCode(
       .bind(code, wallet.toLowerCase(), chainId, expiresAt)
       .run();
     return code;
-  } catch {
-    // Retry once on code-collision.
-    return issueTelegramLinkCode(db, wallet, chainId);
+  } catch (err) {
+    // Retry once on code-collision. Only once: the retry used to recurse
+    // on every failure, so a database error looped until the isolate
+    // gave up instead of reaching the caller.
+    if (retried) throw err;
+    return issueTelegramLinkCode(db, wallet, chainId, true);
   }
 }
 

@@ -734,6 +734,12 @@ const copySource = {
     // error line).
     optoutUnavailable:
       'That switch can’t be saved right now — the alert service is being upgraded. Please try again in a little while.',
+    // #2754 / #2753 — every save is signed, and the alert service accepts
+    // each signed request once.
+    signatureCheckUnavailable:
+      'Your settings were not saved: the alert service could not check your signature just now. Please try again in a little while.',
+    requestAlreadyUsed:
+      'Your settings were not saved: that signature was already used. Save again to sign a new request.',
     pushTitle: 'Prefer app push instead?',
     pushBody:
       'The same alerts are published to Vaipakam’s Push Protocol channel — subscribe there with your wallet and any Push-compatible app delivers them.',
