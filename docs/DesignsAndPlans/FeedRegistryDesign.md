@@ -119,13 +119,35 @@ writes the file:
    and the chain's official token list. That is the Superchain token list for
    Base and Optimism, Arbitrum's bridge token list, or the issuer's own page,
    such as Circle for USDC.
-3. It drafts a binding only when all three name the same address. A
-   disagreement, a missing entry or an ambiguous symbol is written to the
-   file's `review` section with the conflicting answers, and nothing is drafted
-   for it.
+3. It drafts a binding only when exactly one address is named by all three.
+   A source may answer with several addresses for one symbol (CoinGecko lists
+   every coin that shares it), so the rule is the intersection, and the other
+   candidates each source gave are written beside the binding for the
+   reviewer. A source naming nothing, the sources disagreeing, or two
+   addresses named by all three goes to the file's `review` section with
+   every source's answer, and nothing is drafted for it. A feed for which no
+   source names any token on the chain (SOL / USD on an L2) is listed under
+   `skipped` instead, with every other feed the tool did not draft and why.
+4. It reads each drafted binding on chain the way the registry will check
+   it: the feed's `description()` becomes the binding's pair name, and the
+   feed's decimals, the age of its latest answer against its heartbeat and
+   the token's decimals must all agree. A binding that fails a read moves to
+   `review`, so the file never carries one the registry would refuse.
+
+ETH-quoted and USD-quoted feeds for one token are separate bindings, since
+the registry keys an entry by (token, quote). ETH / USD itself is never
+drafted: WETH is priced from the Diamond's own ETH feed.
+
+The owner may add entries by hand under `manual`: a high, new or custom
+feed, or a token the official list does not carry (native USDC on
+Arbitrum, cbBTC on Base). Each carries a `source` stating where its address
+came from, such as the issuer's page. A rerun keeps them as written and
+drafts nothing for a (token, quote) one of them covers.
 
 A binding reaches chain only after the file merges by PR review. API keys for
-CoinGecko and CoinMarketCap live only with the drafting tool.
+CoinGecko and CoinMarketCap live only with the drafting tool: it reads them
+from the environment or from the two names in an env file, sends them as
+request headers, and prints neither.
 
 **On-chain backstop that already exists.** An asset is liquid only if its own
 DEX pool's spot price agrees with the oracle price. A binding that pointed a

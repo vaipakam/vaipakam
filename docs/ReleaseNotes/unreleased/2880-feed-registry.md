@@ -8,6 +8,8 @@ Every change waits a delay the Pauser Safe can veto: adds, replacements and remo
 
 Configure now points the Diamond at the recorded registry on every chain and takes the USD and ETH denominators from it. The old denominator and registry environment settings are retired. The testnet and Anvil mock rigs and the end-to-end fixture now register their mock feeds in the real registry, so the shape the testnets run is the shape a mainnet runs. Fresh deploy only.
 
-Still to come under #2880: the tool that drafts each chain's reviewed bindings from Chainlink's directory, cross-checked against CoinGecko, CoinMarketCap and the chain's token list. After that come the service that proposes and executes the merged bindings, and a launch-readiness check that the registry is set. #2745 (secondary oracle keys from the registered pair name) builds on this.
+A drafting tool now writes each chain's bindings file from Chainlink's directory. It keeps only standard low- and medium-risk price feeds quoted in USD or ETH, with no shutdown date. It drafts a binding only when CoinGecko, CoinMarketCap and the chain's official token list all name the same single token address. It then reads the feed and the token on chain the way the registry will. Anything else goes to a review list with every source's answer, and nothing is drafted for it. Every feed it leaves out is listed with the reason. The owner can add entries by hand, each naming where its address came from. The API keys stay on the machine that runs the tool and are never printed.
+
+Still to come under #2880: the service that proposes and executes the merged bindings, and a launch-readiness check that the registry is set. #2745 (secondary oracle keys from the registered pair name) builds on this.
 
 Part of #2880.
