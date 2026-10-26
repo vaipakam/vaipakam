@@ -6,7 +6,9 @@ import {console} from "forge-std/console.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
-import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
+import {MockChainlinkPairFeed} from "./mocks/MockChainlinkRegistry.sol";
+import {VaipakamFeedRegistry} from "../src/oracle/VaipakamFeedRegistry.sol";
+import {TestnetFeedRegistration} from "./lib/TestnetFeedRegistration.sol";
 import {MockUniswapV3Factory} from "./mocks/MockUniswapV3.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
@@ -73,7 +75,6 @@ contract DeployTestnetLiquidityMocks is Script {
     ///      so the protocol's `getFeed(asset, USD)` lookup hits our
     ///      mock feeds 1:1.
     address constant USD_DENOM = 0x0000000000000000000000000000000000000348;
-    address constant ETH_DENOM = 0x000000000000000000000000000000000000000E;
 
     /// @dev Canonical Base predeploy WETH address. Same on Base
     ///      mainnet (8453) and Base Sepolia (84532) — published by
@@ -201,19 +202,9 @@ contract DeployTestnetLiquidityMocks is Script {
         mUsdc.mint(vm.addr(deployerKey), MUSDC_INITIAL_SUPPLY);
         mWbtc.mint(vm.addr(deployerKey), MWBTC_INITIAL_SUPPLY);
 
-        MockChainlinkRegistry registry = new MockChainlinkRegistry();
-        MockChainlinkFeed mUsdcFeed = new MockChainlinkFeed(MUSDC_USD_PRICE, 8);
-        MockChainlinkFeed mWbtcFeed = new MockChainlinkFeed(MWBTC_USD_PRICE, 8);
-        MockChainlinkFeed wethFeed  = new MockChainlinkFeed(WETH_USD_PRICE, 8);
-
-        // Register every feed under the canonical (asset, USD)
-        // sentinel pair. The Diamond's `_primaryPrice` consults the
-        // registry for `getFeed(asset, USD)` first, falling back to
-        // `asset/ETH × ETH/USD` only when no direct USD feed is
-        // registered. Direct USD makes the path linear.
-        registry.setFeed(address(mUsdc), USD_DENOM, address(mUsdcFeed));
-        registry.setFeed(address(mWbtc), USD_DENOM, address(mWbtcFeed));
-        registry.setFeed(weth, USD_DENOM, address(wethFeed));
+        MockChainlinkPairFeed mUsdcFeed = new MockChainlinkPairFeed(MUSDC_USD_PRICE, 8, "mUSDC / USD");
+        MockChainlinkPairFeed mWbtcFeed = new MockChainlinkPairFeed(MWBTC_USD_PRICE, 8, "mWBTC / USD");
+        MockChainlinkPairFeed wethFeed  = new MockChainlinkPairFeed(WETH_USD_PRICE, 8, "ETH / USD");
 
         // Mock UniV3 factory + per-pair pools. `MIN_LIQUIDITY_PAD`
         // is satisfied via `MOCK_POOL_LIQUIDITY` chosen above. Both
@@ -230,18 +221,33 @@ contract DeployTestnetLiquidityMocks is Script {
         console.log("Deployed mocks:");
         console.log("  mUSDC ERC20:           ", address(mUsdc));
         console.log("  mWBTC ERC20:           ", address(mWbtc));
-        console.log("  MockChainlinkRegistry: ", address(registry));
         console.log("  MockUniswapV3Factory:  ", address(univ3));
         console.log("  mUSDC/USD feed:        ", address(mUsdcFeed));
         console.log("  mWBTC/USD feed:        ", address(mWbtcFeed));
         console.log("  WETH/USD feed:         ", address(wethFeed));
 
         // ── Step 2: Admin-side: wire mocks into Diamond ────────────────
+        // Every feed goes into the chain's real feed registry (#2880) under
+        // (asset, USD), by an owner proposal executed at once (delay 0 on a
+        // testnet). The Diamond consults `getFeed(asset, USD)` first, so a
+        // direct USD feed makes the path linear.
+        VaipakamFeedRegistry registry = VaipakamFeedRegistry(Deployments.readFeedRegistryOptional());
+        require(
+            address(registry).code.length != 0,
+            "DeployTestnetLiquidityMocks: no feedRegistry recorded for this chain - run DeployFeedRegistry first"
+        );
         vm.startBroadcast(adminKey);
+        {
+            TestnetFeedRegistration.Feed[] memory feeds = new TestnetFeedRegistration.Feed[](3);
+            feeds[0] = TestnetFeedRegistration.Feed(address(mUsdc), USD_DENOM, address(mUsdcFeed), "mUSDC / USD");
+            feeds[1] = TestnetFeedRegistration.Feed(address(mWbtc), USD_DENOM, address(mWbtcFeed), "mWBTC / USD");
+            feeds[2] = TestnetFeedRegistration.Feed(weth, USD_DENOM, address(wethFeed), "ETH / USD");
+            TestnetFeedRegistration.register(registry, feeds);
+        }
         OracleAdminFacet oa = OracleAdminFacet(diamond);
         oa.setChainlinkRegistry(address(registry));
-        oa.setUsdChainlinkDenominator(USD_DENOM);
-        oa.setEthChainlinkDenominator(ETH_DENOM);
+        oa.setUsdChainlinkDenominator(registry.USD());
+        oa.setEthChainlinkDenominator(registry.ETH());
         oa.setWethContract(weth);
         oa.setEthUsdFeed(address(wethFeed));
         oa.setUniswapV3Factory(address(univ3));

@@ -407,6 +407,11 @@ FACETS=(
   # deployment. NOT a diamond facet; the delister bot asks the oracle it reads
   # `isTestnetStandIn()` so every report names the stand-in as such.
   "TestnetSanctionsOracleStandIn"
+  # #2880 — the chain's feed registry: which official Chainlink feed prices
+  # which token. NOT a diamond facet (the Diamond reads it through
+  # `getFeed`); the feed service proposes and executes its changes and any
+  # reader enumerates its entries from this ABI.
+  "VaipakamFeedRegistry"
   # #2612 — the CCIP transport adapter (standalone; NOT a diamond facet). The
   # keeper's reward day-close pass reads both ends of a mirror's report
   # channel from it (`channelOf`, `remoteMessengerOf`, `handlerOf`,

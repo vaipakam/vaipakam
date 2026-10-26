@@ -14,7 +14,9 @@ import {DiamondCutFacet} from "../../src/facets/DiamondCutFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
-import {MockChainlinkRegistry, MockChainlinkFeed} from "../../script/mocks/MockChainlinkRegistry.sol";
+import {MockChainlinkPairFeed} from "../../script/mocks/MockChainlinkRegistry.sol";
+import {VaipakamFeedRegistry} from "../../src/oracle/VaipakamFeedRegistry.sol";
+import {TestnetFeedRegistration} from "../../script/lib/TestnetFeedRegistration.sol";
 import {MockUniswapV3Factory} from "../../script/mocks/MockUniswapV3.sol";
 import {MockSwapAdapter} from "../mocks/MockSwapAdapter.sol";
 import {DeployTestnetMocks} from "../../script/DeployTestnetMocks.s.sol";
@@ -23,8 +25,9 @@ import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 /**
  * @title TestnetMockOracleRig
  * @notice A Diamond with the oracle facets cut in and wired to the EXACT
- *         faucet mocks {DeployTestnetMocks} deploys: the real
- *         {MockChainlinkRegistry}, {MockChainlinkFeed}s at the same prices,
+ *         faucet mocks {DeployTestnetMocks} deploys: the chain's real
+ *         {VaipakamFeedRegistry} (#2880) holding {MockChainlinkPairFeed}s at
+ *         the same prices, registered the same way,
  *         the real {MockUniswapV3Factory} with pools created at the
  *         re-derived `sqrtPriceX96`, the `[weth]` PAA list, the same risk
  *         params, and a {MockSwapAdapter} priced from the same snapshot.
@@ -52,10 +55,10 @@ abstract contract TestnetMockOracleRig is Test, DeployTestnetMocks {
 
     // The oracle mocks, kept so a test can drive them after setUp — the
     // reprice test (#2314) moves the feeds and pool spots directly.
-    MockChainlinkRegistry registry;
-    MockChainlinkFeed tliqFeed;
-    MockChainlinkFeed musdcFeed;
-    MockChainlinkFeed ethFeed;
+    VaipakamFeedRegistry registry;
+    MockChainlinkPairFeed tliqFeed;
+    MockChainlinkPairFeed musdcFeed;
+    MockChainlinkPairFeed ethFeed;
     MockUniswapV3Factory univ3;
     address tliqPool;
     address musdcPool;
@@ -123,17 +126,24 @@ abstract contract TestnetMockOracleRig is Test, DeployTestnetMocks {
         vm.warp(7 days);
 
         // ── Oracle mocks — mirrors DeployTestnetMocks step 1/2 exactly ──
-        registry = new MockChainlinkRegistry();
-        tliqFeed = new MockChainlinkFeed(int256(P_TLIQ), 8);
-        musdcFeed = new MockChainlinkFeed(int256(P_MUSDC), 8);
+        // The registry as FeedRegistryDeployment leaves it on a testnet: owned
+        // by the admin (this test), delay 0.
+        registry = new VaipakamFeedRegistry(owner, owner);
+        registry.setDelay(0);
+        tliqFeed = new MockChainlinkPairFeed(int256(P_TLIQ), 8, "tLIQ / USD");
+        musdcFeed = new MockChainlinkPairFeed(int256(P_MUSDC), 8, "mUSDC / USD");
         // mWETH + WETH share one feed so the pool stays 1:1 (static-mock
         // branch of the script; MWETH_USD_FEED override is the same wiring
         // with a live aggregator address).
-        ethFeed = new MockChainlinkFeed(int256(P_MWETH), 8);
-        registry.setFeed(address(tLIQ), USD_DENOM, address(tliqFeed));
-        registry.setFeed(address(mUSDC), USD_DENOM, address(musdcFeed));
-        registry.setFeed(address(mWETH), USD_DENOM, address(ethFeed));
-        registry.setFeed(address(weth), USD_DENOM, address(ethFeed));
+        ethFeed = new MockChainlinkPairFeed(int256(P_MWETH), 8, "ETH / USD");
+        {
+            TestnetFeedRegistration.Feed[] memory feeds = new TestnetFeedRegistration.Feed[](4);
+            feeds[0] = TestnetFeedRegistration.Feed(address(tLIQ), USD_DENOM, address(tliqFeed), "tLIQ / USD");
+            feeds[1] = TestnetFeedRegistration.Feed(address(mUSDC), USD_DENOM, address(musdcFeed), "mUSDC / USD");
+            feeds[2] = TestnetFeedRegistration.Feed(address(mWETH), USD_DENOM, address(ethFeed), "ETH / USD");
+            feeds[3] = TestnetFeedRegistration.Feed(address(weth), USD_DENOM, address(ethFeed), "ETH / USD");
+            TestnetFeedRegistration.register(registry, feeds);
+        }
 
         univ3 = new MockUniswapV3Factory();
         // Re-derived spot per pool via the production helper.
@@ -155,8 +165,8 @@ abstract contract TestnetMockOracleRig is Test, DeployTestnetMocks {
 
         OracleAdminFacet oa = OracleAdminFacet(address(diamond));
         oa.setChainlinkRegistry(address(registry));
-        oa.setUsdChainlinkDenominator(USD_DENOM);
-        oa.setEthChainlinkDenominator(ETH_DENOM);
+        oa.setUsdChainlinkDenominator(registry.USD());
+        oa.setEthChainlinkDenominator(registry.ETH());
         oa.setWethContract(address(weth));
         oa.setEthUsdFeed(address(ethFeed));
         oa.setUniswapV3Factory(address(univ3));
