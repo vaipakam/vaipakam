@@ -71,10 +71,6 @@ const BROWSER = new Set(['apps/app', 'apps/www', 'packages/i18n']);
  */
 const PENDING: Array<{ path: RegExp; why: string }> = [
   { path: /^apps\/indexer\/src\/loanRoutes\.ts$/, why: 'in flight under #2757; moved after it lands' },
-  {
-    path: /^apps\/indexer\/src\/(recycleRoutes|rewardRoutes)\.ts$/,
-    why: 'the recycling and reward routes, changed only by their owner',
-  },
 ];
 
 function serverSourceFiles(): string[] {

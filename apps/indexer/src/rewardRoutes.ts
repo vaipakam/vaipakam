@@ -45,6 +45,7 @@
  * on where the record ends.
  */
 
+import { redactedError } from '@vaipakam/lib/errorDescription';
 import type { Env } from './env';
 import { jsonResponse } from './offerRoutes';
 import { INGESTED_BEFORE_TIME_KIND } from './rewardLoopLedger';
@@ -245,9 +246,9 @@ export async function handleLoopClosure(
             },
     });
   } catch (err) {
-    return jsonResponse(
-      { error: 'loop-closure query failed', detail: String(err) },
-      500,
-    );
+    // The cause stays in the log, redacted: a public response carries no
+    // error text, which can hold an RPC URL with its key (#2759).
+    console.error('[rewards] loop-closure query failed', redactedError(err));
+    return jsonResponse({ error: 'loop-closure query failed' }, 500);
   }
 }
