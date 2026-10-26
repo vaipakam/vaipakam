@@ -46,7 +46,7 @@ interface Scene {
    *  coded refusal, so nothing was relayed. */
   broadcast?: 'lost' | 'refused';
   /** The forced-sale surface the Diamond routes. */
-  surface?: ForcedSaleSurface | 'mixed';
+  surface?: ForcedSaleSurface;
 }
 
 /** The pre-#2796 whole-collateral `triggerLiquidation(loanId, adapterCalls)`. */
@@ -130,14 +130,6 @@ describe('attemptMatchLiquidation', () => {
     expect(out).toEqual({ kind: 'submitted', tx: keccak256(SIGNED) });
     expect(h.writes).toEqual([{ functionName: 'triggerLiquidation', args: [LOAN_ID, []] }]);
     expect(h.previews[0].calls[0].data.slice(0, 10)).toBe(FORCED_SALE_SURFACE_SELECTORS.whole.triggerLiquidation);
-  });
-
-  it('sends nothing to a Diamond routing part of each surface, and does not preview', async () => {
-    const h = harness({ surface: 'mixed' });
-    const out = await attemptMatchLiquidation(h.deps, LOAN_ID);
-    expect(out.kind === 'skipped' && out.reason).toMatch(/^surface-mixed:/);
-    expect(h.previews).toHaveLength(0);
-    expect(h.writes).toHaveLength(0);
   });
 
   it('sends nothing unless the preview affirmatively shows a match', async () => {

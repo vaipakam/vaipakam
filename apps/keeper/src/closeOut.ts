@@ -54,10 +54,12 @@
  * `triggerDefault(loanId, adapterCalls)` form, which sells the whole
  * collateral and returns the surplus to the borrower. On such a Diamond the
  * attempt quotes the whole collateral, skips the plan checks, and sends that
- * form; the preview still decides. The surface is read from the Diamond's
- * loupe at the start and again at the gate's block, and a Diamond routing
- * part of each, or cut in between, is sent nothing. The whole-collateral
- * branch is deleted with the rest of that surface (`ForcedSaleSurface`).
+ * form; the preview still decides. The surface is one loupe read at the
+ * start (`readForcedSaleSurface`); it is not read again at the gate, because
+ * the gate's preview simulates the exact form that is sent, and a Diamond
+ * cut in between (or routing part of each surface) makes that form revert
+ * there, so nothing is sent. The whole-collateral branch is deleted with the
+ * rest of that surface (#2907).
  */
 
 import {
@@ -85,7 +87,6 @@ import {
   type CloseOutPreview,
   type CloseOutPreviewDetail,
   type ForcedSaleSurface,
-  MixedForcedSaleSurface,
 } from '@vaipakam/lib/routeBuilder';
 import {
   BOUNDED_LISTING_SELECTOR,
@@ -182,8 +183,9 @@ export async function attemptCloseOut(
   // Which `triggerDefault` this Diamond routes: the sized one every fresh
   // deploy carries, or the whole-collateral one of a Diamond deployed before
   // #2796, which the live testnets run until the all-waves fresh deploy.
-  // A Diamond part-way between the two, or one whose routing could not be
-  // read, is sent nothing.
+  // One request: the attempt runs under the pass's request budget. A wrong
+  // reading (a Diamond part-way between the two) is caught by the gate's
+  // preview of the exact form; an unread one is sent nothing.
   let surface: ForcedSaleSurface;
   try {
     surface = await readForcedSaleSurface({ client, diamond });
@@ -256,7 +258,7 @@ export async function attemptCloseOut(
   // An empty list still previews: a liquid loan reverts, an illiquid or
   // collapsed one takes the in-kind branch, and only the chain knows which.
   const gateBlock = await client.getBlockNumber({ cacheTime: 0 });
-  const [lateHf, lateSale, live, detail, latePlan, lateSurface] = await Promise.all([
+  const [lateHf, lateSale, live, detail, latePlan] = await Promise.all([
     hfStanding(client, diamond, loanId, gateBlock),
     saleVerdict(client, diamond, loanId, loan.lenderTokenId, keeper, gateBlock),
     readLoan(client, diamond, loanId, gateBlock),
@@ -264,11 +266,7 @@ export async function attemptCloseOut(
     readsPlan
       ? readForcedSalePlan({ client, diamond, loanId, kind: FORCED_SALE_KIND.TimeBasedDefault, blockNumber: gateBlock })
       : Promise.resolve(null),
-    readForcedSaleSurface({ client, diamond, blockNumber: gateBlock }).catch(surfaceSkipReason),
   ]);
-  // The Diamond was cut while the attempt was being judged: what was built
-  // is for the other surface.
-  if (lateSurface !== surface) return { kind: 'skipped', reason: `gate:surface-changed (${surface}->${lateSurface})` };
   if (typeof lateHf === 'object') return { kind: 'skipped', reason: `gate:hf-unread:${lateHf.unread}` };
   const lateNotOurs = ownerVerdict(role, lateHf);
   if (lateNotOurs !== null) return { kind: 'skipped', reason: `gate:${lateNotOurs}` };
@@ -318,9 +316,9 @@ export async function attemptCloseOut(
 }
 
 /** Why a forced-sale attempt sends nothing when the Diamond's surface could
- *  not be established: it routes part of each form, or the read failed. */
+ *  not be read. */
 export function surfaceSkipReason(err: unknown): string {
-  return err instanceof MixedForcedSaleSurface ? `surface-mixed:${err.message}` : `surface-unread:${describeFailure(err)}`;
+  return `surface-unread:${describeFailure(err)}`;
 }
 
 /** Null when the loan is this role's to close; otherwise the reason not to. */

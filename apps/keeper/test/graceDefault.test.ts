@@ -97,9 +97,8 @@ interface Scene {
   /** `previewForcedSale(loanId, TimeBasedDefault)` as read on each call, in
    *  order (the last one repeats): the early read, then the gate's. */
   plans?: (Plan | 'revert')[];
-  /** The forced-sale surface the Diamond routes, per surface read in order
-   *  (the last one repeats): the attempt's first read, then the gate's. */
-  surfaces?: (ForcedSaleSurface | 'mixed')[];
+  /** The forced-sale surface the Diamond routes. */
+  surface?: ForcedSaleSurface;
 }
 
 interface Plan {
@@ -155,11 +154,8 @@ function harness(scene: Scene) {
           return scene.hf ?? 2n * 10n ** 18n;
         case 'facetAddress': {
           const selector = (args.args as readonly Hex[])[0];
-          const surfaces = scene.surfaces ?? ['sized'];
-          const surface = surfaces[Math.min(surfaceReads, surfaces.length - 1)];
-          // Each surface read asks about this selector once, and last.
-          if (selector === FORCED_SALE_SURFACE_SELECTORS.whole.triggerLiquidation) surfaceReads += 1;
-          return surfaceFacet(selector, surface) ?? (scene.boundedListing === false ? A(0) : A(0xfa));
+          if (selector === FORCED_SALE_SURFACE_SELECTORS.sized.plan) surfaceReads += 1;
+          return surfaceFacet(selector, scene.surface) ?? (scene.boundedListing === false ? A(0) : A(0xfa));
         }
         case 'isLoanDefaultable':
           if (scene.defaultable === null) throw new Error('rpc down');
@@ -233,7 +229,7 @@ function harness(scene: Scene) {
       } as unknown as ServerOrchestrationResult;
     },
   };
-  return { deps, writes, previews, routes, routeSizes, planBlocks };
+  return { deps, writes, previews, routes, routeSizes, planBlocks, surfaceReads: () => surfaceReads };
 }
 
 describe('attemptGraceDefault', () => {
@@ -349,7 +345,7 @@ describe('attemptGraceDefault', () => {
   describe('a Diamond deployed before #2796 (the whole-collateral surface)', () => {
     it('quotes the whole collateral, reads no plan, and sends the whole-collateral form', async () => {
       // A plan read would revert: the whole surface has none.
-      const h = harness({ ending: 'sale', calls: 2, surfaces: ['whole'], plans: ['revert'] });
+      const h = harness({ ending: 'sale', calls: 2, surface: 'whole', plans: ['revert'] });
       const out = await attemptGraceDefault(h.deps, LOAN_ID);
       expect(out).toEqual({
         kind: 'submitted',
@@ -370,25 +366,25 @@ describe('attemptGraceDefault', () => {
     });
 
     it('sends the in-kind close in the whole-collateral form too', async () => {
-      const h = harness({ ending: 'other', defaulted: true, calls: 0, surfaces: ['whole'], hf: 5n * 10n ** 17n });
+      const h = harness({ ending: 'other', defaulted: true, calls: 0, surface: 'whole', hf: 5n * 10n ** 17n });
       const out = await attemptCloseOut(h.deps, LOAN_ID, 'in-kind');
       expect(out).toMatchObject({ kind: 'submitted', calls: 0, sellAmount: 0n });
       const w = h.writes[0] as { functionName: string; args: readonly unknown[] };
       expect(w.args).toEqual([LOAN_ID, []]);
     });
 
-    it('sends nothing to a Diamond routing part of each surface', async () => {
-      const h = harness({ ending: 'sale', surfaces: ['mixed'] });
-      const out = await attemptGraceDefault(h.deps, LOAN_ID);
-      expect(out.kind === 'skipped' && out.reason).toMatch(/^surface-mixed:the Diamond routes neither forced-sale surface whole/);
-      expect(h.routes).toEqual([]);
-      expect(h.writes).toEqual([]);
+    it('reads the surface once per attempt, in one request', async () => {
+      const h = harness({ ending: 'sale', calls: 1, surface: 'whole', plans: ['revert'] });
+      await attemptGraceDefault(h.deps, LOAN_ID);
+      expect(h.surfaceReads()).toBe(1);
     });
 
-    it('sends nothing when the Diamond was cut between the first read and the gate', async () => {
-      const h = harness({ ending: 'sale', surfaces: ['whole', 'sized'] });
+    it('sends nothing when the routed form does not run (a Diamond part-way between the two)', async () => {
+      // The preview of the exact form is the check: a form the Diamond does
+      // not route reverts there.
+      const h = harness({ ending: null, calls: 1, surface: 'whole', plans: ['revert'] });
       const out = await attemptGraceDefault(h.deps, LOAN_ID);
-      expect(out).toEqual({ kind: 'skipped', reason: 'gate:surface-changed (whole->sized)' });
+      expect(out.kind).toBe('skipped');
       expect(h.writes).toEqual([]);
     });
   });
