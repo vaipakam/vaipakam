@@ -7,12 +7,24 @@
 #
 # TIGHTER than the retired apps/defi's file on purpose: this app loads
 # no Google Analytics and no external fonts, so script-src carries no
-# third-party hosts and font-src needs no Google origins. The permissive
-# `connect-src https: wss:` is inherent to a crypto frontend — RPC
-# endpoints are env-configurable hosts, the indexer/agent Workers and
-# the realtime push channel (wss://indexer.vaipakam.com/ws/chain/:id)
-# are separate origins, and WalletConnect relays are third-party. Pin
-# narrower only if the RPC set is ever frozen.
+# third-party hosts and font-src needs no Google origins.
+#
+# connect-src is being NARROWED IN TWO STEPS (#43, owner decision
+# 2026-10-26: "report-only first, then enforce"). The enforced policy
+# still allows `connect-src 'self' https: wss:`, so a script that got
+# onto the page could send what it reads to any host. The narrow list —
+# this build's own Workers, the RPC of every deployed chain, the
+# third-party APIs the app calls and the wallet SDKs' hosts — is sent
+# beside it as `Content-Security-Policy-Report-Only`: a request outside
+# it is reported, not refused. The build writes that list in place of the
+# second upper-case placeholder below, from the same resolver the bundle
+# reads its endpoints through (src/lib/endpoints.ts), so the list cannot
+# describe another deployment. The live drives fail on any report. Once a
+# deployed build has been driven clean, the list moves into the enforced
+# line and the report-only line goes. Until then the exposure above is
+# real and is stated here rather than hidden. (No report endpoint is
+# named: a report would carry the page address a visitor was on, and the
+# privacy spec sends nothing about a visit without consent.)
 #
 # script-src is `'self'` plus the hashes of the inline boot scripts in
 # index.html, and NOTHING else (#43 / ET-017). The upper-case token in
@@ -87,6 +99,7 @@
   Cross-Origin-Opener-Policy: same-origin-allow-popups
   Cross-Origin-Resource-Policy: cross-origin
   Content-Security-Policy: default-src 'self'; script-src 'self' __INLINE_SCRIPT_HASHES__; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self' https: wss:; frame-src 'self' https://verify.walletconnect.com https://verify.walletconnect.org; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://app.safe.global https://*.safe.global; upgrade-insecure-requests
+  Content-Security-Policy-Report-Only: connect-src 'self' __CONNECT_SOURCES__
 
 # SPA entry point — served for every non-asset path via wrangler.jsonc
 # `not_found_handling: single-page-application`. Force revalidation on

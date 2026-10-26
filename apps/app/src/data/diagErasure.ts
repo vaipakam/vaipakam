@@ -34,6 +34,7 @@ import {
   buildErasureMessage,
   buildErasureStatusMessage,
 } from '@vaipakam/lib/erasureMessage';
+import { agentOrigin as configuredAgentOrigin } from '../lib/endpoints';
 
 const TIMEOUT_MS = 10_000;
 
@@ -45,9 +46,7 @@ const TIMEOUT_MS = 10_000;
 const TRANSPORT_MARGIN_SECONDS = 30;
 
 function agentOrigin(): string | null {
-  const url = import.meta.env.VITE_AGENT_ORIGIN as string | undefined;
-  if (!url) return null;
-  return url.replace(/\/$/, '');
+  return configuredAgentOrigin(import.meta.env);
 }
 
 export function diagErasureConfigured(): boolean {

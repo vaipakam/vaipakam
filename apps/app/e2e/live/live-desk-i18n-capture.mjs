@@ -66,7 +66,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 // that ordering deliberately, so it reaches the shared BLOCKED exits
 // (#1581) without disturbing it — the shared exits are the point, since a
 // second local copy is how two definitions of "BLOCKED" start diverging.
-const { blockedSync, precondition, trackBrowser } = await import('./driver.mjs');
+const { blockedSync, precondition, trackBrowser, watchCspViolations } = await import('./driver.mjs');
 if (proxyShimError) {
   // A broken ENVIRONMENT, not a product regression — and it failed before
   // any browser or page existed, so nothing could have been observed.
@@ -271,6 +271,7 @@ for (const [index, lng] of LOCALES.entries()) {
       ignoreHTTPSErrors: true,
     });
     await ctx.route('**/*', routeThroughUndici);
+    await watchCspViolations(ctx);
     // Seed the language BEFORE the app boots — the shared i18n factory
     // reads `vaipakam:language` from localStorage on init.
     await ctx.addInitScript((code) => {

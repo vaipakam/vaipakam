@@ -11,20 +11,15 @@
  * app adds fields when a page needs them, not before.
  */
 import { getDeployment } from '@vaipakam/contracts/deployments';
+import { rpcUrlFor, wsUrlFor } from '../lib/endpoints';
 
-const env = import.meta.env;
-
+/** Display metadata. Where a chain is READ from (its RPC and optional
+ *  WebSocket URL) is resolved by `lib/endpoints.ts`, which the build also
+ *  reads to write the page's `connect-src` (#43), so the two cannot
+ *  disagree. */
 interface ChainMeta {
   chainId: number;
   name: string;
-  rpcUrlEnvKey: string;
-  rpcUrlDefault: string;
-  /** Optional WebSocket RPC env key. When the env var is set, the
-   *  wagmi transport prefers it (`eth_subscribe` newHeads → live query
-   *  invalidation); absent, the app falls back to HTTP block polling.
-   *  No default — WS is opt-in per deploy. Defaults to the RPC key with
-   *  `_RPC_URL` → `_WSS_URL` when omitted. */
-  wsUrlEnvKey?: string;
   blockExplorer: string;
   testnet: boolean;
   nativeGasSymbol: string;
@@ -37,8 +32,6 @@ const CHAIN_META: readonly ChainMeta[] = [
   {
     chainId: 1,
     name: 'Ethereum',
-    rpcUrlEnvKey: 'VITE_ETHEREUM_RPC_URL',
-    rpcUrlDefault: 'https://ethereum-rpc.publicnode.com',
     blockExplorer: 'https://etherscan.io',
     testnet: false,
     nativeGasSymbol: 'ETH',
@@ -46,8 +39,6 @@ const CHAIN_META: readonly ChainMeta[] = [
   {
     chainId: 8453,
     name: 'Base',
-    rpcUrlEnvKey: 'VITE_BASE_RPC_URL',
-    rpcUrlDefault: 'https://mainnet.base.org',
     blockExplorer: 'https://basescan.org',
     testnet: false,
     nativeGasSymbol: 'ETH',
@@ -55,8 +46,6 @@ const CHAIN_META: readonly ChainMeta[] = [
   {
     chainId: 42161,
     name: 'Arbitrum',
-    rpcUrlEnvKey: 'VITE_ARBITRUM_RPC_URL',
-    rpcUrlDefault: 'https://arb1.arbitrum.io/rpc',
     blockExplorer: 'https://arbiscan.io',
     testnet: false,
     nativeGasSymbol: 'ETH',
@@ -64,8 +53,6 @@ const CHAIN_META: readonly ChainMeta[] = [
   {
     chainId: 10,
     name: 'Optimism',
-    rpcUrlEnvKey: 'VITE_OPTIMISM_RPC_URL',
-    rpcUrlDefault: 'https://mainnet.optimism.io',
     blockExplorer: 'https://optimistic.etherscan.io',
     testnet: false,
     nativeGasSymbol: 'ETH',
@@ -73,8 +60,6 @@ const CHAIN_META: readonly ChainMeta[] = [
   {
     chainId: 56,
     name: 'BNB Chain',
-    rpcUrlEnvKey: 'VITE_BNB_RPC_URL',
-    rpcUrlDefault: 'https://bsc-dataseed.bnbchain.org',
     blockExplorer: 'https://bscscan.com',
     testnet: false,
     nativeGasSymbol: 'BNB',
@@ -82,8 +67,6 @@ const CHAIN_META: readonly ChainMeta[] = [
   {
     chainId: 84532,
     name: 'Base Sepolia',
-    rpcUrlEnvKey: 'VITE_BASE_SEPOLIA_RPC_URL',
-    rpcUrlDefault: 'https://sepolia.base.org',
     blockExplorer: 'https://sepolia.basescan.org',
     testnet: true,
     nativeGasSymbol: 'ETH',
@@ -91,8 +74,6 @@ const CHAIN_META: readonly ChainMeta[] = [
   {
     chainId: 421614,
     name: 'Arbitrum Sepolia',
-    rpcUrlEnvKey: 'VITE_ARBITRUM_SEPOLIA_RPC_URL',
-    rpcUrlDefault: 'https://sepolia-rollup.arbitrum.io/rpc',
     blockExplorer: 'https://sepolia.arbiscan.io',
     testnet: true,
     nativeGasSymbol: 'ETH',
@@ -100,8 +81,6 @@ const CHAIN_META: readonly ChainMeta[] = [
   {
     chainId: 97,
     name: 'BNB Testnet',
-    rpcUrlEnvKey: 'VITE_BNB_TESTNET_RPC_URL',
-    rpcUrlDefault: 'https://data-seed-prebsc-1-s1.bnbchain.org:8545',
     blockExplorer: 'https://testnet.bscscan.com',
     testnet: true,
     nativeGasSymbol: 'BNB',
@@ -121,34 +100,6 @@ export interface SupportedChain {
   deployBlock: number;
 }
 
-function rpcUrlFor(meta: ChainMeta): string {
-  // A copied-as-is .env.example exposes the keys as EMPTY strings —
-  // `??` alone would keep '' and the transport would call http('').
-  const fromEnv = (env[meta.rpcUrlEnvKey] as string | undefined)?.trim();
-  return fromEnv || meta.rpcUrlDefault;
-}
-
-/** WebSocket RPC URL for a chain, or undefined when not configured.
- *  Reads `wsUrlEnvKey` (defaulting to the RPC key with `_RPC_URL` →
- *  `_WSS_URL`). No hardcoded default — a deploy opts in by setting the
- *  env var; absent, the live layer falls back to HTTP block polling. */
-function wsUrlFor(meta: ChainMeta): string | undefined {
-  const key = meta.wsUrlEnvKey ?? meta.rpcUrlEnvKey.replace('_RPC_URL', '_WSS_URL');
-  const fromEnv = (env[key] as string | undefined)?.trim();
-  return fromEnv || undefined;
-}
-
-/** Mainnet RPC for the ENS-read-only client in `wagmi.ts`. Ethereum
- *  need not be a DEPLOYED chain (testnet phase: no Diamond on chain 1,
- *  so it never enters SUPPORTED_CHAINS), but ENS reverse lookups still
- *  resolve there — and they must ride the same env-overridable
- *  plumbing as every other chain read, never a library's implicit
- *  default endpoint. */
-export function ensMainnetRpcUrl(): string {
-  const meta = CHAIN_META.find((m) => m.chainId === 1);
-  return meta ? rpcUrlFor(meta) : 'https://ethereum-rpc.publicnode.com';
-}
-
 /** Every chain with a live Diamond, in display order. */
 export const SUPPORTED_CHAINS: readonly SupportedChain[] = CHAIN_META.flatMap(
   (meta) => {
@@ -158,8 +109,11 @@ export const SUPPORTED_CHAINS: readonly SupportedChain[] = CHAIN_META.flatMap(
       {
         chainId: meta.chainId,
         name: meta.name,
-        rpcUrl: rpcUrlFor(meta),
-        wsUrl: wsUrlFor(meta),
+        // A WebSocket URL, when configured, is preferred by the wagmi
+        // transport (`eth_subscribe` newHeads drive live invalidation);
+        // absent, the app polls over HTTP. Opt-in per deploy, no default.
+        rpcUrl: rpcUrlFor(meta.chainId, import.meta.env),
+        wsUrl: wsUrlFor(meta.chainId, import.meta.env),
         blockExplorer: meta.blockExplorer,
         testnet: meta.testnet,
         nativeGasSymbol: meta.nativeGasSymbol,
@@ -205,7 +159,7 @@ export function chainDisplayName(chainId: number | undefined): string | null {
  *  unsupported network: env override first, else the first supported
  *  mainnet, else the first supported chain (testnet phase). */
 export const DEFAULT_CHAIN: SupportedChain = (() => {
-  const envId = Number(env.VITE_DEFAULT_CHAIN_ID ?? NaN);
+  const envId = Number(import.meta.env.VITE_DEFAULT_CHAIN_ID ?? NaN);
   const fromEnv = Number.isFinite(envId) ? BY_ID.get(envId) : undefined;
   if (fromEnv) return fromEnv;
   return SUPPORTED_CHAINS.find((c) => !c.testnet) ?? SUPPORTED_CHAINS[0];

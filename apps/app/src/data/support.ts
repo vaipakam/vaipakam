@@ -8,15 +8,14 @@
  * the surface says so honestly and offers the mailto path instead of
  * silently pointing at another environment's backend.
  */
+import { agentOrigin as configuredAgentOrigin } from '../lib/endpoints';
 
 const TIMEOUT_MS = 8_000;
 
 export const SUPPORT_EMAIL = 'support@vaipakam.com';
 
 function agentOrigin(): string | null {
-  const raw = import.meta.env.VITE_AGENT_ORIGIN as string | undefined;
-  if (!raw) return null;
-  return raw.replace(/\/+$/, '');
+  return configuredAgentOrigin(import.meta.env);
 }
 
 export function supportConfigured(): boolean {

@@ -29,7 +29,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
-import { blocked, requireSiteUrl, trackBrowser } from './driver.mjs';
+import { blocked, requireSiteUrl, trackBrowser, watchCspViolations } from './driver.mjs';
 import { reviewAnalytics } from './analyticsRecyclingReview.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -51,6 +51,7 @@ try {
 }
 
 const ctx = await browser.newContext({ locale: 'en-US' });
+await watchCspViolations(ctx);
 const page = await ctx.newPage();
 
 // The page's own answers from the indexer, by route. A request that fails

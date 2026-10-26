@@ -18,6 +18,12 @@
  * `https:`/`wss:` origin) FAILS rather than shipping either a policy that
  * blocks the page's own reads or one with the placeholder left in.
  *
+ * The policy completed is the `Content-Security-Policy` line by default.
+ * A surface staging a narrower list first can name
+ * {@link REPORT_ONLY_HEADER} instead: the browser then reports a request
+ * the list would refuse and lets it through, so the list can be measured
+ * before it is enforced (the connected app, #43).
+ *
  * The same shape as `cspScriptHashes.mjs`, beside it. Covered by
  * `cspConnectSources.test.ts`.
  */
@@ -28,6 +34,23 @@ import path from 'node:path';
  *  CSP source expression, so a policy that somehow shipped with it
  *  unreplaced would allow only `'self'`, which is the safe direction. */
 export const CONNECT_SOURCES_PLACEHOLDER = '__CONNECT_SOURCES__';
+
+/** The enforced policy header, the one completed unless a caller names
+ *  another. */
+export const ENFORCED_HEADER = 'Content-Security-Policy';
+
+/** The report-only policy header: what it would refuse is reported, not
+ *  refused. */
+export const REPORT_ONLY_HEADER = 'Content-Security-Policy-Report-Only';
+
+const POLICY_HEADERS = new Set([ENFORCED_HEADER, REPORT_ONLY_HEADER]);
+
+function policyHeader(header) {
+  if (!POLICY_HEADERS.has(header)) {
+    throw new Error(`[csp] ${JSON.stringify(header)} is not a policy header`);
+  }
+  return header;
+}
 
 const SCHEMES = new Set(['https:', 'wss:']);
 const HOST = /^[a-z0-9-]+(\.[a-z0-9-]+)*$/;
@@ -71,18 +94,21 @@ export function connectSource(url) {
   return u.origin;
 }
 
-/** The directives of the one `Content-Security-Policy` line in `headers`,
- *  by name, in order. Throws unless there is exactly one such line. */
-function policyDirectives(headers) {
+/** The directives of the one `header` line in `headers`, by name, in
+ *  order. Throws unless there is exactly one such line. The match is on
+ *  the whole header name, so the enforced policy never reads the
+ *  report-only line or the other way round. */
+function policyDirectives(headers, header) {
+  const prefix = `${policyHeader(header)}:`;
   const lines = headers
     .split('\n')
     .map((l) => l.trim())
-    .filter((l) => l.startsWith('Content-Security-Policy:'));
+    .filter((l) => l.startsWith(prefix));
   if (lines.length !== 1) {
-    throw new Error(`[csp] expected one Content-Security-Policy line in _headers, found ${lines.length}`);
+    throw new Error(`[csp] expected one ${header} line in _headers, found ${lines.length}`);
   }
   const directives = new Map();
-  for (const part of lines[0].slice('Content-Security-Policy:'.length).split(';')) {
+  for (const part of lines[0].slice(prefix.length).split(';')) {
     const [name, ...values] = part.trim().split(/\s+/);
     if (name) directives.set(name, values);
   }
@@ -90,17 +116,18 @@ function policyDirectives(headers) {
 }
 
 /**
- * The `connect-src` sources of the one `Content-Security-Policy` line in a
- * `_headers` file. Throws unless there is exactly one such line and it has
- * a `connect-src`: a check against a policy it could not find would pass
- * for any page.
+ * The `connect-src` sources of the one `header` line in a `_headers` file
+ * (the enforced policy unless named). Throws unless there is exactly one
+ * such line and it has a `connect-src`: a check against a policy it could
+ * not find would pass for any page.
  *
  * @param {string} headers
+ * @param {string} [header]
  * @returns {string[]}
  */
-export function policyConnectSources(headers) {
-  const values = policyDirectives(headers).get('connect-src');
-  if (!values) throw new Error('[csp] the Content-Security-Policy line has no connect-src');
+export function policyConnectSources(headers, header = ENFORCED_HEADER) {
+  const values = policyDirectives(headers, header).get('connect-src');
+  if (!values) throw new Error(`[csp] the ${header} line has no connect-src`);
   return values;
 }
 
@@ -108,21 +135,23 @@ export function policyConnectSources(headers) {
  * `headers` with the placeholder replaced by `sources` (each passed through
  * {@link connectSource}, duplicates dropped, order kept).
  *
- * Throws unless the placeholder occurs exactly once and inside `connect-src`,
- * or when `sources` is empty: a surface with nothing to connect to beyond
- * its own origin has no business carrying the placeholder.
+ * Throws unless the placeholder occurs exactly once and inside the
+ * `connect-src` of the `header` policy (the enforced one unless named), or
+ * when `sources` is empty: a surface with nothing to connect to beyond its
+ * own origin has no business carrying the placeholder.
  *
  * @param {string} headers
  * @param {string[]} sources
+ * @param {string} [header]
  * @returns {string}
  */
-export function applyConnectSources(headers, sources) {
+export function applyConnectSources(headers, sources, header = ENFORCED_HEADER) {
   const count = headers.split(CONNECT_SOURCES_PLACEHOLDER).length - 1;
   if (count !== 1) {
     throw new Error(`[csp] expected ${CONNECT_SOURCES_PLACEHOLDER} exactly once in _headers, found ${count}`);
   }
-  if (!policyConnectSources(headers).includes(CONNECT_SOURCES_PLACEHOLDER)) {
-    throw new Error(`[csp] ${CONNECT_SOURCES_PLACEHOLDER} is outside connect-src`);
+  if (!policyConnectSources(headers, header).includes(CONNECT_SOURCES_PLACEHOLDER)) {
+    throw new Error(`[csp] ${CONNECT_SOURCES_PLACEHOLDER} is outside connect-src of the ${header} line`);
   }
   const origins = [...new Set(sources.map(connectSource))];
   if (origins.length === 0) throw new Error('[csp] connect-src: no origins to allow');
@@ -150,7 +179,9 @@ function readIfPresent(file) {
  * An output directory with no `index.html` is left alone: the Cloudflare
  * plugin's worker environment writes none.
  *
- * @param {{ sources: () => string[], missingHeadersHint?: string }} options
+ * `header` names the policy completed: the enforced one unless given.
+ *
+ * @param {{ sources: () => string[], header?: string, missingHeadersHint?: string }} options
  */
 export function cspConnectSourcesPlugin(options) {
   return {
@@ -170,9 +201,10 @@ export function cspConnectSourcesPlugin(options) {
           `[csp] ${headersFile} is missing` + (options.missingHeadersHint ? `; ${options.missingHeadersHint}` : '.'),
         );
       }
-      const completed = applyConnectSources(headers, options.sources());
+      const header = options.header ?? ENFORCED_HEADER;
+      const completed = applyConnectSources(headers, options.sources(), header);
       fs.writeFileSync(headersFile, completed);
-      console.log(`[csp] connect-src allows ${policyConnectSources(completed).join(' ')}`);
+      console.log(`[csp] ${header} connect-src: ${policyConnectSources(completed, header).join(' ')}`);
     },
   };
 }

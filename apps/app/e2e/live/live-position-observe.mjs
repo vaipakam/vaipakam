@@ -102,7 +102,7 @@ import {
   forcedCloseVerdict,
   reconcileEligibility,
 } from './forcedCloseCard.mjs';
-import { livePublicClient, requireSiteUrl } from './driver.mjs';
+import { livePublicClient, requireSiteUrl, watchCspViolations } from './driver.mjs';
 import {
   expectedPostureFrom,
   postureCopyFrom,
@@ -1934,6 +1934,7 @@ const ctx = await discovery('creating the browser context', () =>
     locale: PINNED_LOCALE,
   }),
 );
+await discovery('watching for content-policy violations', () => watchCspViolations(ctx));
 
 /** Every refusal, with why — a too-narrow allowlist must be visible. */
 const refusedRpc = [];

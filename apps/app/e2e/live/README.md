@@ -82,6 +82,24 @@ reviewed" (`verdictContract.mjs`).
 Today `live-role-journeys.mjs` (every scenario) and
 `live-recover-locales.mjs` (each locale) use it.
 
+## A content-policy report fails every drive (#43)
+
+Every browser context a drive opens is watched for the page's
+`securitypolicyviolation` events (`cspViolations.mjs`): `launch()` watches
+its own, and a drive that opens a context itself calls
+`watchCspViolations(ctx)` on it (a unit test holds each one to that). The
+browser fires the event for an enforced refusal and for a report-only one
+alike. At process exit `driver.mjs` turns a PASS, BLOCKED or UNDETERMINED
+into a FAIL that names each distinct violation; a FAIL stands with them
+listed beside it.
+
+This is what measures the connected app's narrow `connect-src`, which is
+sent report-only before it is enforced: a report-only line in a verdict is
+a host the list would refuse once enforced, so it is either added (with its
+reason, in `src/lib/endpoints.ts`) or the request is removed. Not seen: a
+request from the service worker, which has no document, and a report fired
+in the instant before the browser closes.
+
 ## Scripts
 
 | Script | What it verifies live |

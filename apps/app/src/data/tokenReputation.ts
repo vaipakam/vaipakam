@@ -20,8 +20,8 @@ import { useQuery } from '@tanstack/react-query';
 import { platformForChain } from '@vaipakam/lib/chainPlatforms';
 import { copy } from '../content/copy';
 import { needsSecurityCheck } from './tokenSecurity';
+import { COINGECKO_API_BASE as COINGECKO_BASE } from '../lib/endpoints';
 
-const COINGECKO_BASE = 'https://api.coingecko.com/api/v3';
 const TIMEOUT_MS = 6_000;
 
 export type TokenReputation =
