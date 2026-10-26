@@ -9,6 +9,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   CONNECT_SOURCES_PLACEHOLDER,
+  REPORT_ONLY_HEADER,
   applyConnectSources,
   connectSource,
   cspConnectSourcesPlugin,
@@ -78,11 +79,40 @@ describe('applyConnectSources', () => {
   });
 });
 
+describe('a report-only policy', () => {
+  // The enforced line stays as it is while the narrower list is measured
+  // under the report-only header (the connected app, #43).
+  const staged =
+    "/*\n  Content-Security-Policy: default-src 'self'; connect-src 'self' https: wss:\n" +
+    `  Content-Security-Policy-Report-Only: connect-src 'self' ${P}\n`;
+
+  it('is completed only when named, and the enforced line is left alone', () => {
+    const out = applyConnectSources(staged, ['https://a.example'], REPORT_ONLY_HEADER);
+    expect(policyConnectSources(out, REPORT_ONLY_HEADER)).toEqual(["'self'", 'https://a.example']);
+    expect(policyConnectSources(out)).toEqual(["'self'", 'https:', 'wss:']);
+  });
+
+  it('is never read as the enforced policy, nor the other way round', () => {
+    // Completing the enforced line finds the placeholder outside it.
+    expect(() => applyConnectSources(staged, ['https://a.example'])).toThrow(/outside connect-src of the Content-Security-Policy line/);
+    expect(() => policyConnectSources(headers("'self'"), REPORT_ONLY_HEADER)).toThrow(
+      /one Content-Security-Policy-Report-Only line/,
+    );
+  });
+
+  it('refuses a header that is not a policy header', () => {
+    expect(() =>
+      // @ts-expect-error -- the point is a name outside the type
+      policyConnectSources(staged, 'X-Content-Security-Policy'),
+    ).toThrow(/not a policy header/);
+  });
+});
+
 describe('cspConnectSourcesPlugin', () => {
-  const run = (files: Record<string, string>, sources: string[]) => {
+  const run = (files: Record<string, string>, sources: string[], header?: typeof REPORT_ONLY_HEADER) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'csp-connect-'));
     for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), text);
-    const plugin = cspConnectSourcesPlugin({ sources: () => sources, missingHeadersHint: 'hint' });
+    const plugin = cspConnectSourcesPlugin({ sources: () => sources, header, missingHeadersHint: 'hint' });
     const ctx = {
       error(message: string): never {
         throw new Error(message);
@@ -95,6 +125,14 @@ describe('cspConnectSourcesPlugin', () => {
   it('completes the built _headers', () => {
     const out = run({ 'index.html': '<!doctype html>', _headers: headers(`'self' ${P}`) }, ['https://a.example/']);
     expect(policyConnectSources(out!)).toEqual(["'self'", 'https://a.example']);
+  });
+
+  it('completes the report-only policy when told to', () => {
+    const staged =
+      "/*\n  Content-Security-Policy: default-src 'self'; connect-src 'self' https:\n" +
+      `  Content-Security-Policy-Report-Only: connect-src 'self' ${P}\n`;
+    const out = run({ 'index.html': '<!doctype html>', _headers: staged }, ['wss://a.example'], REPORT_ONLY_HEADER);
+    expect(policyConnectSources(out!, REPORT_ONLY_HEADER)).toEqual(["'self'", 'wss://a.example']);
   });
 
   it('leaves an output without a page alone, and fails one without _headers', () => {

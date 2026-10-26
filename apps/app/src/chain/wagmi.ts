@@ -26,7 +26,8 @@ import {
   type Chain,
 } from 'wagmi/chains';
 import { getDefaultConfig } from 'connectkit';
-import { SUPPORTED_CHAINS, ensMainnetRpcUrl } from './chains';
+import { SUPPORTED_CHAINS } from './chains';
+import { ENS_FALLBACK_RPC_URL, ensMainnetRpcUrl } from '../lib/endpoints';
 import { connectionGeneration } from '../lib/dataRights';
 import { probeTransport } from '../lib/readProbe';
 
@@ -117,18 +118,16 @@ for (const c of SUPPORTED_CHAINS) {
 // the same env-overridable plumbing as every other chain
 // (VITE_ETHEREUM_RPC_URL, else the chains.ts default), with a second
 // public endpoint behind it so a throttled primary degrades to the
-// fallback instead of to a dropped name. dRPC's public gateway as the
-// secondary — maintained and CORS-open; cloudflare-eth.com was
-// rejected here (Codex #1084 r1): Cloudflare's own migration guide
-// lists it as a deprecated legacy gateway hostname.
+// fallback instead of to a dropped name (`ENS_FALLBACK_RPC_URL`, whose
+// choice is recorded in lib/endpoints.ts).
 const chainsWithEns = chains.some((c) => c.id === mainnet.id)
   ? chains
   : [...chains, mainnet];
 if (!transports[mainnet.id]) {
   transports[mainnet.id] = probeTransport(
     fallback([
-      http(ensMainnetRpcUrl(), { batch: true }),
-      http('https://eth.drpc.org', { batch: true }),
+      http(ensMainnetRpcUrl(import.meta.env), { batch: true }),
+      http(ENS_FALLBACK_RPC_URL, { batch: true }),
     ]),
     mainnet.id,
   );

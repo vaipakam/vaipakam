@@ -50,6 +50,7 @@ import { baseSepolia, arbitrumSepolia, bscTestnet } from 'viem/chains';
 import { walletGateDecision } from './walletGate.mjs';
 import { LiveShapeMismatchError, shapeBlock, shapeChecked } from './shapeCheckedClient.mjs';
 import { classifyRpcResponse, createSocketCalls, isChainRpcMethod } from './rpc-verdict.mjs';
+import { cspViolationVerdict, installCspViolationWatch } from './cspViolations.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // Dev TEST wallets only — throwaway keys holding testnet dust. The
@@ -91,6 +92,20 @@ export function trackBrowser(browser) {
  */
 const OBSERVED_RPC_FAULTS = [];
 /**
+ * Every content-policy violation a page reported, across every context this
+ * process watched (#43, `cspViolations.mjs`). Applied at process exit.
+ */
+const OBSERVED_CSP_VIOLATIONS = [];
+
+/**
+ * Watch a browser context for content-policy violations. `launch()` does
+ * this for its own context; a drive that opens a context itself calls it
+ * on that context, so its exit carries the same verdict.
+ */
+export async function watchCspViolations(ctx) {
+  await installCspViolationWatch(ctx, (v) => OBSERVED_CSP_VIOLATIONS.push(v));
+}
+/**
  * #2841 — a PASS reached after a chain answer of the wrong shape is
  * withdrawn.
  *
@@ -122,6 +137,17 @@ process.on('uncaughtExceptionMonitor', (err) => {
   UNCAUGHT = err;
 });
 process.on('exit', (code) => {
+  // #43 — a content-policy violation on the page is a finding, applied here
+  // for every drive whatever its own exits: a PASS or BLOCKED becomes FAIL.
+  // It outranks the shape rule below, which only ever withdraws a PASS.
+  const csp = cspViolationVerdict(code, OBSERVED_CSP_VIOLATIONS);
+  if (csp) {
+    console.error(csp.message);
+    process.exitCode = csp.code;
+    const shape = shapeBlock();
+    if (shape) console.error(`\n(the chain also answered in a shape this build does not describe: ${shape})`);
+    return;
+  }
   const why = shapeBlock();
   if (!why) return;
   const uncaughtMismatch = code === 1 && UNCAUGHT instanceof LiveShapeMismatchError;
@@ -1399,6 +1425,10 @@ export async function launch({
     LIVE_BROWSER = created;
     return created;
   });
+
+  // #43 — every launch, keyless included: a report-only refusal changes
+  // nothing the page does, so only this watch makes it a verdict.
+  await setup('watching for content-policy violations', () => watchCspViolations(ctx));
 
   // The egress gateway resets Chromium's own TLS handshakes, so ALL
   // page traffic is served from THIS process via undici (whose stack

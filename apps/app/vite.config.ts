@@ -4,8 +4,11 @@ import { cloudflare } from '@cloudflare/vite-plugin';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { cspScriptHashesPlugin } from '@vaipakam/lib/cspScriptHashes';
+import { REPORT_ONLY_HEADER, cspConnectSourcesPlugin } from '@vaipakam/lib/cspConnectSources';
+import { connectSources } from './src/lib/endpoints.ts';
 
 // Stamp the commit + build time into the bundle (shown on the Help page)
 // so a tester can always tell which build they're looking at.
@@ -128,6 +131,39 @@ function cspScriptHashes(): Plugin {
   }) as Plugin;
 }
 
+// #43 (ET-017) — the hosts the page may connect to, written into the
+// built `_headers` from the SAME resolver the bundle reads its endpoints
+// through (`src/lib/endpoints.ts`), with the variables Vite compiles in
+// (`loadEnv` also takes the process environment's `VITE_*`), for every
+// chain the committed deployments bundle carries a Diamond for.
+//
+// STAGED: for now the list is the REPORT-ONLY policy (owner decision
+// 2026-10-26, "report-only first, then enforce"). The enforced policy keeps
+// `connect-src 'self' https: wss:` until a deployed build has been driven
+// clean under it, because a wallet SDK host missed in an enforced list
+// silently breaks that wallet. The live drives fail on any report
+// (`e2e/live/driver.mjs`), which is how a miss is found before it can
+// block anything.
+//
+// Production builds only: the e2e build reads a local Anvil over plain
+// http, which no policy here may name, and the e2e tier serves no
+// `_headers` at all.
+function cspConnectSources(mode: string): Plugin {
+  const env = loadEnv(mode, process.cwd(), 'VITE_');
+  const require = createRequire(import.meta.url);
+  const bundle = JSON.parse(
+    fs.readFileSync(require.resolve('@vaipakam/contracts/deployments.json'), 'utf8'),
+  ) as Record<string, { diamond?: string }>;
+  const deployed = Object.entries(bundle)
+    .filter(([, d]) => typeof d?.diamond === 'string' && d.diamond !== '')
+    .map(([id]) => Number(id));
+  return cspConnectSourcesPlugin({
+    header: REPORT_ONLY_HEADER,
+    sources: () => connectSources(env, deployed),
+    missingHeadersHint: 'run the prebuild (scripts/generate-seo.mjs) first.',
+  }) as Plugin;
+}
+
 // #2687 — builds `sw/sw.ts` into `dist/sw.js` beside the app. A second,
 // self-contained build because a service worker must be one classic script
 // at a fixed address, while the app's output is hashed ES-module chunks.
@@ -171,7 +207,7 @@ export default defineConfig(({ mode, command }) => {
   return {
   plugins: process.env.APP_E2E
     ? [e2eDeploymentsBundle(), react(), cspScriptHashes()]
-    : [react(), cloudflare(), cspScriptHashes(), serviceWorker()],
+    : [react(), cloudflare(), cspScriptHashes(), cspConnectSources(mode), serviceWorker()],
   build: {
     rollupOptions: {
       output: {

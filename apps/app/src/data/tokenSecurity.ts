@@ -36,8 +36,8 @@
 import { useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getCanonicalAssetsForChain } from '@vaipakam/lib';
+import { GOPLUS_ORIGIN } from '../lib/endpoints';
 
-const GOPLUS_ORIGIN = 'https://api.gopluslabs.io';
 const TIMEOUT_MS = 6_000;
 
 /** Chains GoPlus's token_security endpoint covers that we deploy to.

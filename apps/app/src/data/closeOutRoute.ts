@@ -50,6 +50,7 @@ import {
   type RoutePosture,
 } from '@vaipakam/lib/routeBuilder';
 import type { AdapterRoster } from '@vaipakam/lib/swapRoutes';
+import { agentOrigin } from '../lib/endpoints';
 
 // The builder itself is shared with the keeper (#2468) and lives in
 // `@vaipakam/lib/routeBuilder`. This module is the app's side of it: how
@@ -81,9 +82,7 @@ export {
 
 /** The agent's origin for quotes, or `null` when the deployment has none. */
 export function agentQuoteOrigin(): string | null {
-  const url = import.meta.env.VITE_AGENT_ORIGIN as string | undefined;
-  if (!url) return null;
-  return url.replace(/\/$/, '');
+  return agentOrigin(import.meta.env);
 }
 
 /**

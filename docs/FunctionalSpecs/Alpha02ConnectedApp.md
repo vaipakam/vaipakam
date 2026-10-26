@@ -245,6 +245,25 @@ including people who never will.
 - The app never turns text into code at run time, and its policy says
   so: a dependency that needs that is a finding to investigate, not a
   reason to loosen the policy.
+- The app may send network requests only to its own address, the
+  platform services that build is configured with (the indexer, its live
+  update channel and the alert service), the chain endpoints of the
+  networks it supports, the token-screening services it calls, and the
+  services the wallet connectors it offers need to connect a wallet. Any
+  other destination is to be refused, so a script that got onto the page
+  cannot use a request to send what it reads elsewhere. These addresses
+  come from the build's configuration, so the build writes the list from
+  the same settings the app reads them from, and a build that cannot name
+  one of its own endpoints must stop instead of shipping.
+- Because a wallet service missed from that list would silently break
+  that wallet, the list is first published as a report: requests outside
+  it are reported and still made, and a review of the deployed app fails
+  on any such report. It is enforced only once a deployed build has been
+  reviewed clean. Until then requests to other secure hosts are still
+  possible, and the app's documentation says so rather than implying the
+  list is already enforced. No report is sent anywhere: it would carry
+  the address a visitor was on, and nothing about a visit leaves the
+  page without consent.
 - This narrows what an injected script can do inside the app. It does
   not protect against a compromised deployment, which serves its own
   policy, or against software on the user's own device such as a

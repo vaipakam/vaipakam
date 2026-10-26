@@ -23,7 +23,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium } from '@playwright/test';
-import { blocked, requireSiteUrl, trackBrowser } from './driver.mjs';
+import { blocked, requireSiteUrl, trackBrowser, watchCspViolations } from './driver.mjs';
 
 const site = requireSiteUrl().replace(/\/+$/, '');
 const origin = new URL(site).origin;
@@ -49,6 +49,7 @@ try {
     ...(process.env.LIVE_CHROMIUM_PATH ? { executablePath: process.env.LIVE_CHROMIUM_PATH } : {}),
   });
   trackBrowser(ctx);
+  await watchCspViolations(ctx);
 } catch (err) {
   await blocked('could not start Chromium', err, cleanup);
 }

@@ -10,35 +10,23 @@
 
 import type { ProtocolKnobKey } from '@vaipakam/lib/protocolKnobs';
 import type { SignedOrderWire } from '../lib/signedOffer';
+import { indexerOrigin, indexerWsOrigin as wsOriginOf } from '../lib/endpoints';
 
 const TIMEOUT_MS = 4_000;
 
 function baseUrl(): string | null {
-  const url = import.meta.env.VITE_INDEXER_ORIGIN as string | undefined;
-  if (!url) return null;
-  return url.replace(/\/$/, '');
+  return indexerOrigin(import.meta.env);
 }
 
 export function indexerConfigured(): boolean {
   return baseUrl() !== null;
 }
 
-/**
- * #757 Phase B — the WebSocket origin for the indexer's realtime push
- * channel. Prefers an explicit `VITE_INDEXER_WS_ORIGIN` (an operator
- * may front the WS on a separate host); otherwise derives it from
- * `VITE_INDEXER_ORIGIN` by swapping the scheme. `null` = channel
- * disabled, the app keeps its normal polling. Mirrors
- * apps/defi/src/lib/indexerClient.ts.
- */
+/** #757 Phase B — the origin of the indexer's realtime push channel, or
+ *  `null` when it is off (the app keeps its normal polling). Resolved in
+ *  `lib/endpoints.ts`, beside the policy that must allow it. */
 export function indexerWsOrigin(): string | null {
-  const explicit = import.meta.env.VITE_INDEXER_WS_ORIGIN as string | undefined;
-  if (explicit) return explicit.replace(/\/$/, '');
-  const http = baseUrl();
-  if (!http) return null;
-  if (http.startsWith('https://')) return 'wss://' + http.slice('https://'.length);
-  if (http.startsWith('http://')) return 'ws://' + http.slice('http://'.length);
-  return null; // non-http origin — can't derive a ws scheme.
+  return wsOriginOf(import.meta.env);
 }
 
 /**
