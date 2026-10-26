@@ -260,6 +260,7 @@ export interface CreateOfferPayload {
 export type OfferFormError =
   | { code: 'lendingAssetInvalid' }
   | { code: 'amountNonPositive' }
+  | { code: 'collateralNonPositive' }
   | { code: 'amountTooPrecise'; decimals: number }
   | { code: 'collateralTooPrecise'; decimals: number }
   | { code: 'rateNegative' }
@@ -310,6 +311,17 @@ export function validateOfferForm(
     isTooPrecise(s.collateralAmount, collDec)
   ) {
     return { code: 'collateralTooPrecise', decimals: collDec };
+  }
+  // #2729 — an ERC-20 loan against ERC-20 collateral must post collateral.
+  // The contract refuses zero (`CollateralMustBePositive`): only the
+  // protocol's own lender-sale vehicle may carry none, and no form creates
+  // one. Refused here too, so an empty field never reaches a signature.
+  if (
+    s.assetType === 'erc20' &&
+    s.collateralAssetType === 'erc20' &&
+    (!s.collateralAmount || !(Number(s.collateralAmount) > 0))
+  ) {
+    return { code: 'collateralNonPositive' };
   }
   if (s.interestRate === '' || Number(s.interestRate) < 0) return { code: 'rateNegative' };
   const duration = Number(s.durationDays);

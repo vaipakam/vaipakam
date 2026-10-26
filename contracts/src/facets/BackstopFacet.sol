@@ -321,10 +321,11 @@ contract BackstopFacet is
 
     /// @notice Revert unless `o` is a shape the backstop can actually fill.
     /// @dev Checked at BOTH opt-in ({setOfferBackstopEligible}) AND fill
-    ///      ({backstopFill}) — the offer can be mutated via `OfferMutateFacet`
-    ///      AFTER opt-in (e.g. fixed-size → ranged), and `backstopEligibleAfter`
-    ///      is not cleared on mutation, so the opt-in check alone is not load-
-    ///      bearing. Rejects the shapes the later `matchIntent` path rejects:
+    ///      ({backstopFill}). Since #2737 every `OfferMutateFacet` edit clears
+    ///      `backstopEligibleAfter`, so an edited offer must opt in again and
+    ///      the opt-in check sees its new shape; the fill-time re-check stays
+    ///      as the second line, so the fill never depends on that clear alone.
+    ///      Rejects the shapes the later `matchIntent` path rejects:
     ///        • refinance-tagged (direct-accept-only, #576 — `executeMatch` rejects);
     ///        • non-ERC20-on-ERC20 (the backstop intent + vault are ERC20-on-ERC20;
     ///          `previewMatch` rejects an asset-type mismatch);
@@ -437,9 +438,9 @@ contract BackstopFacet is
             LibVaipakam.isOfferExpired(o) ||
             o.accepted
         ) revert OfferNotBackstopFillable();
-        // Re-assert the fillable SHAPE here, not just at opt-in: the offer may have
-        // been mutated (e.g. fixed-size → ranged, or retagged) after opt-in, and
-        // `backstopEligibleAfter` is not cleared on mutation.
+        // Re-assert the fillable SHAPE here, not just at opt-in. An edit clears
+        // the opt-in (#2737), so this should never see a shape the opt-in did not;
+        // it stays so the fill never rests on that clear alone.
         _assertBackstopShape(o);
         // Effective unfilled capacity = ceiling − filled (the `LibOfferMatch`
         // formula). The shape gate above guarantees `amountMax == amount`, so this

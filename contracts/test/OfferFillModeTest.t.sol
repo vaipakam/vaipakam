@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibOfferShape} from "../src/libraries/LibOfferShape.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
@@ -128,7 +129,7 @@ contract OfferFillModeTest is SetupTest {
     function testAonRequiresSingleValueAmount() public {
         // amount != amountMax under AON must revert.
         vm.prank(lender);
-        vm.expectRevert(OfferCreateFacet.AonRequiresSingleValueAmount.selector);
+        vm.expectRevert(LibOfferShape.AonRequiresSingleValueAmount.selector);
         OfferCreateFacet(address(diamond)).createOffer(
             _lenderParams(LibVaipakam.FillMode.Aon, 1000 ether, 1500 ether, 0)
         );
