@@ -53,6 +53,8 @@ const DEFAULT_CAP = feeCeiling(undefined, 0);
 const T0 = Date.UTC(2026, 9, 23, 0, 10, 0);
 /** Each chain's reward messenger and its CCIP transport, as the fakes are
  *  wired by default: every report channel link reads as wired. */
+const ONE_QUOTE_SEL = toFunctionSelector('quoteSendChainReport(uint256,(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint64,uint256))');
+const B4_QUOTE_SEL = toFunctionSelector('quoteSendChainReport(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint64)');
 const MESSENGER_OF: Record<number, Address> = {
   [BASE]: '0x00000000000000000000000000000000000000b2',
   [MIRROR]: '0x00000000000000000000000000000000000000c2',
@@ -217,6 +219,8 @@ class FakeDiamond {
   sendsB4: boolean | 'unread' = true;
   /** The loupe reads asked of this Diamond. */
   loupeReads = 0;
+  /** A read of a messenger's code fails. */
+  codeUnread = false;
   /** Single-destination quotes refuse with this, when set. */
   refuseTo: string | null = null;
   /** Single-destination quotes refuse with this error, by destination. */
@@ -456,6 +460,13 @@ class FakeDiamond {
   /** Every finalization event, with the block it is in. */
   history: { block: bigint; name: 'DailyGlobalInterestFinalized' | 'ChainContributionZeroed'; dayId: number; sourceChainId?: number }[] = [];
   getBlockNumber = async () => this.blockNo;
+  /** A messenger's code: its dispatcher holds the quotes it carries. */
+  getCode = async ({ address }: { address: Address }): Promise<`0x${string}` | undefined> => {
+    if (this.codeUnread) throw new Error('rpc down');
+    if (address !== this.messenger && address !== this.messengerNow) return undefined;
+    const quotes = [...(this.quotePredatesReport ? [] : [ONE_QUOTE_SEL]), ...(this.quotesB4 ? [B4_QUOTE_SEL] : [])];
+    return `0x6080604052${quotes.map((q) => `63${q.slice(2)}14`).join('')}00`;
+  };
   /** Log queries fail. */
   logsUnread = false;
   getLogs = async ({ event, args, fromBlock, toBlock }: { event: { name: string }; args: { dayId: bigint }; fromBlock: bigint; toBlock: bigint }) => {
@@ -1604,17 +1615,34 @@ describe('a run', () => {
     mirror.quotePredatesReport = true;
     await run(mirror);
     expect(mirror.sent).toEqual([]);
-    expect(alerts(/is refused \(the messenger quotes neither the one report shape nor the B4 report/).length).toBeGreaterThan(0);
+    expect(alerts(/carries no day-report quote, neither the one report shape \(#2621\) nor the B4 report/).length).toBeGreaterThan(0);
+  });
+
+  it('a mirror whose messenger code cannot be read closes no day, and says the shape is unknown', async () => {
+    mirror.codeUnread = true;
+    await run(mirror);
+    expect(mirror.sent).toEqual([]);
+    expect(alerts(/which day-report shape this chain's reward messenger carries could not be read/).length).toBeGreaterThan(0);
+  });
+
+  it('a mirror on the one report shape closes no day while Base still takes only the B4 report', async () => {
+    base.quotePredatesReport = true;
+    base.quotesB4 = true;
+    await run(mirror);
+    expect(mirror.sent).toEqual([]);
+    expect(alerts(/this chain sends the one report shape \(#2621\), and Base's reward messenger \S+ takes the B4 report/).length).toBeGreaterThan(0);
   });
 
   describe('a mirror still on the B4 report (deployed before #2790, as the live testnets are)', () => {
     beforeEach(() => {
-      mirror.quotePredatesReport = true;
-      mirror.quotesB4 = true;
+      for (const x of [mirror, base]) {
+        x.quotePredatesReport = true;
+        x.quotesB4 = true;
+      }
       mirror.b4Fee = LANE_FEE + 7n;
     });
 
-    it('closes its days, paying the B4 quote, and reads the Diamond\'s reporter once', async () => {
+    it('closes its days, paying the B4 quote, and reads the Diamond\'s reporter once a run', async () => {
       await run(mirror);
       expect(mirror.sent.length).toBeGreaterThan(1);
       expect(mirror.sent.every((x) => x.fn === 'closeDay' && x.value === LANE_FEE + 7n)).toBe(true);
@@ -1634,17 +1662,34 @@ describe('a run', () => {
       mirror.sendsB4 = false;
       await run(mirror);
       expect(mirror.sent).toEqual([]);
-      expect(alerts(/its Diamond's reporter facet predates the B4 send/).length).toBeGreaterThan(0);
+      expect(alerts(/this Diamond's reporter facet predates the B4 send/).length).toBeGreaterThan(0);
     });
 
-    it('leaves the days for the next run when whether its Diamond sends B4 is unread', async () => {
+    it('holds every close while whether its Diamond sends B4 is unread, and says so', async () => {
       mirror.sendsB4 = 'unread';
       await run(mirror);
       expect(mirror.sent).toEqual([]);
       expect(alerts(/predates the B4 send/)).toEqual([]);
+      expect(alerts(/whether this Diamond's reporter sends the B4 report its messenger carries could not be read/).length).toBeGreaterThan(0);
     });
 
-    it('prefers the one report shape when the messenger quotes both', async () => {
+    it('sends nothing while Base takes the one report shape (Base would refuse the smaller B4 payload on delivery)', async () => {
+      base.quotePredatesReport = false;
+      base.quotesB4 = false;
+      await run(mirror);
+      expect(mirror.sent).toEqual([]);
+      expect(alerts(/this chain sends the B4 report \(deployed before #2790\), and Base's reward messenger \S+ takes the one report shape/).length).toBeGreaterThan(0);
+    });
+
+    it("sends nothing while the shape Base's messenger takes is unread", async () => {
+      base.codeUnread = true;
+      await run(mirror);
+      expect(mirror.sent).toEqual([]);
+      expect(alerts(/which day-report shape Base's reward messenger \S+ takes could not be read/).length).toBeGreaterThan(0);
+    });
+
+    it('prefers the one report shape when the messenger carries both', async () => {
+      base.quotePredatesReport = false;
       mirror.quotePredatesReport = false;
       await run(mirror);
       expect(mirror.sent.length).toBeGreaterThan(0);
@@ -2312,5 +2357,15 @@ describe('rewardDayClose fee ceiling (#2627)', () => {
       expect('unread' in c, raw).toBe(true);
     }
     expect(feeCeiling('84532=5,84532=6', 1)).toEqual({ unread: "this keeper's fee ceiling, REWARD_DAY_CLOSE_MAX_FEE_WEI being malformed (chain 84532 is named twice)" });
+  });
+});
+
+describe('hostsSelector', () => {
+  it('finds a selector as its dispatch constant, leading zero bytes dropped as the compiler drops them', async () => {
+    const { hostsSelector } = await import('../src/rewardDayClose/shape');
+    expect(hostsSelector('0x6080631234567814', '0x12345678')).toBe(true);
+    expect(hostsSelector('0x6080621234561400', '0x00123456')).toBe(true);
+    expect(hostsSelector('0x6080631234561400', '0x00123456')).toBe(false);
+    expect(hostsSelector('0x608063abcdef0114', '0x12345678')).toBe(false);
   });
 });
