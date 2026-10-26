@@ -117,7 +117,9 @@ contract RiskSplitLiquidationFacet is
         // to the standard liquidation flow.
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.intentCommits[loanId].orderHash != bytes32(0)) {
-            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanId);
+            SwapToRepayIntentFacet(address(this)).forceCancelIntentFor(
+                loanId, SwapToRepayIntentFacet.ForceCancelReason.HFBelowLiquidationThreshold
+            );
         }
         // Sanctions / sequencer / HF / liquidity gates — identical to
         // {RiskFacet.triggerLiquidation}.

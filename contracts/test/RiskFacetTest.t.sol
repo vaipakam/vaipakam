@@ -4164,6 +4164,95 @@ contract RiskFacetTest is Test {
         vm.clearMockedCalls();
     }
 
+    /// @dev #2731 — opens the partial-liquidation fixture 10 days in, on a
+    ///      Monthly cadence, with `interestSettled` set to `settled`. Mocks the
+    ///      price into the partial band and funds the swap like the happy path.
+    function _partialOnCadence(uint256 settled) private returns (uint256 loanId) {
+        loanId = createAndAcceptOffer();
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        loan.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.Monthly;
+        loan.lastPeriodicInterestSettledAt = loan.startTime;
+        loan.interestSettled = settled;
+        TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
+        vm.warp(uint256(loan.startTime) + 10 days);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
+            abi.encode(0.65e8, 8)
+        );
+        MockVaultWithdraw.deliversAll(address(diamond));
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+        deal(mockERC20, address(diamond), 5_000 ether);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000e18);
+    }
+
+    /// @dev #2731 — the 10-day accrual on the fixture's 1000 @ 5%.
+    function _tenDayInterest() private pure returns (uint256) {
+        uint256 principal = 1000 ether;
+        return (principal * 500 * 10 days) / (365 days * 10_000);
+    }
+
+    /// @dev #2731 — the interest a partial liquidation pays the lender is
+    ///      credited to the loan's current period, the same as a partial
+    ///      repay's, so the next periodic settlement does not sell collateral
+    ///      for it again. The period is not over, so the checkpoint stays.
+    ///      Kills: a partial liquidation that pays interest and leaves the
+    ///      period counter at zero.
+    function testPartialLiq_CreditsInterestToCurrentPeriod() public {
+        uint256 loanId = _partialOnCadence(0);
+        LibVaipakam.Loan memory before_ = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 5_000, defaultAdapterCalls());
+        LibVaipakam.Loan memory after_ = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(
+            uint256(after_.interestPaidSinceLastPeriod),
+            _tenDayInterest(),
+            "the interest the slice paid is credited to the period"
+        );
+        assertEq(
+            after_.lastPeriodicInterestSettledAt,
+            before_.lastPeriodicInterestSettledAt,
+            "the period is not over: the checkpoint stays"
+        );
+        assertEq(after_.interestSettled, 0, "nothing settled ahead of the accrual is left");
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #2731 — periodic credit already forwarded beyond what has accrued
+    ///      is the borrower's, paid ahead. The partial liquidation charges no
+    ///      interest out of it and carries the excess forward against the
+    ///      restarted clock instead of zeroing it. Kills: `interestSettled = 0`
+    ///      after a partial, which forfeited interest the borrower had paid.
+    function testPartialLiq_CarriesSettledInterestAheadOfTheAccrual() public {
+        uint256 loanId = _partialOnCadence(50 ether);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 5_000, defaultAdapterCalls());
+        LibVaipakam.Loan memory after_ = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(
+            after_.interestSettled,
+            50 ether - _tenDayInterest(),
+            "the excess over the accrual carries forward"
+        );
+        assertEq(
+            uint256(after_.interestPaidSinceLastPeriod),
+            0,
+            "no interest was charged, so none is credited"
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #2731 — a slice whose repaid amount does not cover the segment's
+    ///      interest is refused by name: the accrual clock restarts at a
+    ///      partial, so the unpaid remainder would be forgiven at the lender's
+    ///      expense. Kills: the clamp that paid the interest only as far as the
+    ///      slice reached and restarted the clock anyway.
+    function testPartialLiq_RevertsWhenSliceDoesNotCoverInterest() public {
+        uint256 loanId = _partialOnCadence(0);
+        // 1 bps of 1800 collateral sells 0.18, about 0.2 of principal after
+        // the swap: far below the ~1.37 of interest ten days have accrued.
+        vm.expectPartialRevert(RiskFacet.PartialMustCoverInterest.selector);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 1, defaultAdapterCalls());
+        vm.clearMockedCalls();
+    }
+
     /// @dev #641 regression — a partial at a SUB-DAY offset must preserve the
     ///      loan's maturity EXACTLY. The old code reset `startTime = now` and
     ///      floored `durationDays`, dropping the sub-day remainder and maturing

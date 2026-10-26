@@ -19,7 +19,9 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {LibERC721} from "../src/libraries/LibERC721.sol";
@@ -285,25 +287,101 @@ contract SwapToRepayIntentFacetTest is SetupTest {
     //  Force-cancel surface — onlyDiamondInternal guard
     // ══════════════════════════════════════════════════════════════
 
-    function test_InternalForceCancelIntent_RevertWhen_DirectCall() public {
+    function test_ForceCancelIntentFor_RevertWhen_DirectCall() public {
         // External callers (anyone except the diamond itself) must
         // be rejected — the force-cancel surface is for cross-facet
-        // calls from the liquidation entry points.
+        // calls from the forced close-outs, whatever reason is named.
         vm.expectRevert(SwapToRepayIntentFacet.OnlyDiamondInternal.selector);
-        SwapToRepayIntentFacet(address(diamond)).internalForceCancelIntent(
+        SwapToRepayIntentFacet(address(diamond)).forceCancelIntentFor(
             LOAN_ID, SwapToRepayIntentFacet.ForceCancelReason.HFBelowLiquidationThreshold
+        );
+        vm.expectRevert(SwapToRepayIntentFacet.OnlyDiamondInternal.selector);
+        SwapToRepayIntentFacet(address(diamond)).forceCancelIntentFor(
+            LOAN_ID, SwapToRepayIntentFacet.ForceCancelReason.TimeDefaultDue
+        );
+        vm.expectRevert(SwapToRepayIntentFacet.OnlyDiamondInternal.selector);
+        SwapToRepayIntentFacet(address(diamond)).forceCancelIntentFor(
+            LOAN_ID, SwapToRepayIntentFacet.ForceCancelReason.PeriodicShortfallDue
         );
     }
 
-    function test_ForceCancelIntentIfHFBelowOrRevert_RevertWhen_DirectCall() public {
-        vm.expectRevert(SwapToRepayIntentFacet.OnlyDiamondInternal.selector);
-        SwapToRepayIntentFacet(address(diamond)).forceCancelIntentIfHFBelowOrRevert(LOAN_ID);
+    /// @dev #2732 — puts the scaffold loan on a Monthly cadence over 60
+    ///      days with periodic interest switched on, commits a live intent
+    ///      while the loan is healthy, and returns the moment the first
+    ///      period's settlement grace ends (well before maturity).
+    function _commitOnCadence() internal returns (uint256 settleFrom) {
+        NumeraireConfigFacet(address(diamond)).setPeriodicInterestEnabled(true);
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(LOAN_ID);
+        loan.durationDays = 60;
+        loan.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.Monthly;
+        loan.lastPeriodicInterestSettledAt = loan.startTime;
+        TestMutatorFacet(address(diamond)).setLoan(LOAN_ID, loan);
+        SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
+        vm.prank(borrowerEoa);
+        SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
+        (, , settleFrom, , , , ) = RepayPeriodicFacet(address(diamond)).previewPeriodicSettle(LOAN_ID);
+        assertLt(settleFrom, uint256(loan.startTime) + 60 days, "precondition: the period's grace ends in term");
     }
 
-    function test_ForceCancelIntentIfPastDefaultOrRevert_RevertWhen_DirectCall() public {
-        vm.expectRevert(SwapToRepayIntentFacet.OnlyDiamondInternal.selector);
-        SwapToRepayIntentFacet(address(diamond))
-            .forceCancelIntentIfPastDefaultOrRevert(LOAN_ID);
+    /// @dev #2732 — a missed periodic payment past its grace cancels a live
+    ///      intent on its OWN trigger, while the loan is healthy: the HF gate
+    ///      the periodic sale used to borrow would have refused, letting the
+    ///      borrower hold the sale off indefinitely. Kills: routing the
+    ///      periodic sale through the HF-only cancel.
+    function test_ForceCancelIntentFor_PeriodicShortfallDue_CancelsAHealthyLoansIntent() public {
+        uint256 settleFrom = _commitOnCadence();
+        vm.warp(settleFrom);
+        assertGe(RiskFacet(address(diamond)).calculateHealthFactor(LOAN_ID), 1.2e18, "precondition: healthy");
+
+        vm.recordLogs();
+        vm.prank(address(diamond));
+        SwapToRepayIntentFacet(address(diamond)).forceCancelIntentFor(
+            LOAN_ID, SwapToRepayIntentFacet.ForceCancelReason.PeriodicShortfallDue
+        );
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bool seen;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] == SwapToRepayIntentFacet.SwapToRepayIntentForceCancelled.selector) {
+                (SwapToRepayIntentFacet.ForceCancelReason reason) =
+                    abi.decode(logs[i].data, (SwapToRepayIntentFacet.ForceCancelReason));
+                assertEq(uint8(reason), uint8(SwapToRepayIntentFacet.ForceCancelReason.PeriodicShortfallDue));
+                seen = true;
+            }
+        }
+        assertTrue(seen, "the cancel names the periodic trigger");
+        vm.expectRevert(abi.encodeWithSelector(SwapToRepayIntentFacet.IntentNoCommit.selector, LOAN_ID));
+        SwapToRepayIntentFacet(address(diamond)).getIntentCommit(LOAN_ID);
+    }
+
+    /// @dev #2732 — before the period's grace ends there is no shortfall to
+    ///      sell for, so the borrower keeps the intent window.
+    function test_ForceCancelIntentFor_PeriodicShortfallDue_RevertsBeforeGrace() public {
+        uint256 settleFrom = _commitOnCadence();
+        vm.warp(settleFrom - 1);
+        vm.prank(address(diamond));
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.IntentPending.selector, LOAN_ID));
+        SwapToRepayIntentFacet(address(diamond)).forceCancelIntentFor(
+            LOAN_ID, SwapToRepayIntentFacet.ForceCancelReason.PeriodicShortfallDue
+        );
+    }
+
+    /// @dev #2732 — the facet checks the trigger the caller names, never
+    ///      another one: with the periodic shortfall due but the loan
+    ///      healthy and in term, neither the HF reason nor the time-default
+    ///      reason may cancel the intent.
+    function test_ForceCancelIntentFor_ChecksTheNamedTriggerOnly() public {
+        uint256 settleFrom = _commitOnCadence();
+        vm.warp(settleFrom);
+        vm.prank(address(diamond));
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.IntentPending.selector, LOAN_ID));
+        SwapToRepayIntentFacet(address(diamond)).forceCancelIntentFor(
+            LOAN_ID, SwapToRepayIntentFacet.ForceCancelReason.HFBelowLiquidationThreshold
+        );
+        vm.prank(address(diamond));
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.IntentPending.selector, LOAN_ID));
+        SwapToRepayIntentFacet(address(diamond)).forceCancelIntentFor(
+            LOAN_ID, SwapToRepayIntentFacet.ForceCancelReason.TimeDefaultDue
+        );
     }
 
     // ══════════════════════════════════════════════════════════════

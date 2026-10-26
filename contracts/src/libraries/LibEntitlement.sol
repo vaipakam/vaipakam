@@ -110,17 +110,7 @@ library LibEntitlement {
     function currentBorrowBalance(
         LibVaipakam.Loan memory loan
     ) internal view returns (uint256) {
-        // #641 — accrue from the interest clock (see `_accrualStart`); inlined
-        // here because this overload takes `Loan memory`, not storage.
-        uint256 accrualStart = loan.interestAccrualStart != 0
-            ? uint256(loan.interestAccrualStart)
-            : uint256(loan.startTime);
-        uint256 elapsed = block.timestamp > accrualStart
-            ? block.timestamp - accrualStart
-            : 0;
-        uint256 accruedInterest = (loan.principal *
-            loan.interestRateBps *
-            elapsed) / (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        uint256 accruedInterest = grossBorrowInterest(loan);
         // #915 (M7) — credit interest already forwarded to the lender via
         // periodic auto-liquidation (`loan.interestSettled`, saturating at 0)
         // so the HF / forced-close debt does not double-count it. The accrual
@@ -131,6 +121,27 @@ library LibEntitlement {
         uint256 settled = uint256(loan.interestSettled);
         uint256 netInterest = accruedInterest > settled ? accruedInterest - settled : 0;
         return loan.principal + netInterest;
+    }
+
+    /// @notice Seconds-precise interest accrued on the current accrual
+    ///         segment, BEFORE the periodic credit (`interestSettled`) is
+    ///         taken off: the gross figure {currentBorrowBalance} nets.
+    /// @dev    A path that pays this segment's interest and restarts the
+    ///         clock consumes `interestSettled` against this gross figure and
+    ///         keeps any excess (#2731, as `repayPartial` does since #1191).
+    function grossBorrowInterest(
+        LibVaipakam.Loan memory loan
+    ) internal view returns (uint256) {
+        // #641 — accrue from the interest clock (see `_accrualStart`); inlined
+        // here because this overload takes `Loan memory`, not storage.
+        uint256 accrualStart = loan.interestAccrualStart != 0
+            ? uint256(loan.interestAccrualStart)
+            : uint256(loan.startTime);
+        uint256 elapsed = block.timestamp > accrualStart
+            ? block.timestamp - accrualStart
+            : 0;
+        return (loan.principal * loan.interestRateBps * elapsed)
+            / (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
     }
 
     /// @notice #408/#410/#413 (2026-06-12) — Gross interest owed on an
@@ -218,6 +229,28 @@ library LibEntitlement {
     ) internal view returns (uint256) {
         uint256 settled = uint256(loan.interestSettled);
         return grossInterest > settled ? grossInterest - settled : 0;
+    }
+
+    /// @notice #2731 — split a segment's gross interest at an accrual-clock
+    ///         restart: `due` is what the paying path charges (the gross less
+    ///         the periodic credit `interestSettled`, as
+    ///         {creditSettledInterest}), `carried` is the credit beyond the
+    ///         gross, which the borrower already paid and which the path
+    ///         writes back to `interestSettled` against the restarted clock.
+    ///         At most one is non-zero.
+    /// @dev    The ONE rule for every path that restarts the clock mid-term
+    ///         (partial repay, partial swap-to-repay, partial liquidation):
+    ///         consuming the whole credit would forfeit the excess, keeping it
+    ///         whole would net it a second time (#1191, #915). Each path keeps
+    ///         its own accrual basis for `gross` (whole days on the voluntary
+    ///         paths, seconds on liquidation; see {currentBorrowBalance}).
+    function splitSettledInterest(
+        LibVaipakam.Loan storage loan,
+        uint256 grossInterest
+    ) internal view returns (uint256 due, uint256 carried) {
+        uint256 settled = uint256(loan.interestSettled);
+        if (grossInterest > settled) return (grossInterest - settled, 0);
+        return (0, settled - grossInterest);
     }
 
     /// @notice When the seller's forfeitable interest starts accruing — the

@@ -545,15 +545,16 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         uint256 sellAmount,
         LibSwap.AdapterCall[] calldata adapterCalls
     ) private {
-        // T-090 v1.1 (#389) §5.8 layer 2 — same force-cancel-on-
-        // HF-low pattern as the public HF-liquidation entry
-        // points. If no commit is live → no-op. If a commit is
-        // live AND HF < `HF_LIQUIDATION_THRESHOLD` → force-cancel
-        // + emit `SwapToRepayIntentForceCancelled`. Otherwise
-        // revert `IntentPending` so the borrower's window is
-        // honoured even mid-period.
+        // T-090 v1.1 (#389) §5.8 layer 2 — a live intent commit is
+        // force-cancelled on THIS sale's own trigger, the periodic
+        // shortfall past grace (#2732), not on the HF gate: a missed
+        // periodic payment is a time trigger, and a healthy borrower
+        // must not be able to hold the sale off with a live intent.
+        // The host re-checks the trigger itself.
         if (LibVaipakam.storageSlot().intentCommits[loanId].orderHash != bytes32(0)) {
-            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanId);
+            SwapToRepayIntentFacet(address(this)).forceCancelIntentFor(
+                loanId, SwapToRepayIntentFacet.ForceCancelReason.PeriodicShortfallDue
+            );
         }
         // #658 PR-B — the periodic auto-liquidate is a both-side fund-distribution
         // event (it SELLS the borrower's collateral and PAYS the lender the

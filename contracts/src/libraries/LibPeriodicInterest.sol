@@ -17,6 +17,73 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  * See docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §4.1, §4.3, §4.5.
  */
 library LibPeriodicInterest {
+    /// @notice A mid-period interest payment (partial repay, partial
+    ///         swap-to-repay or partial liquidation) crossed a period
+    ///         boundary AND covered the period's expected interest, so the
+    ///         checkpoint advanced inline. Off-chain consumers correlate it
+    ///         with the payment's own event in the same transaction. Same
+    ///         signature (and topic) as when each paying facet declared it.
+    /// @custom:event-category state-change/loan-mutation
+    event RepayPartialPeriodAdvanced(
+        uint256 indexed loanId,
+        uint256 periodEndAt,
+        uint256 expected,
+        address indexed advancedBy
+    );
+
+    /// @notice A period checkpoint advanced with no collateral sold: the
+    ///         interest paid during the period covered it. Same signature
+    ///         (and topic) as `RepayPeriodicFacet.PeriodicInterestSettled`.
+    /// @param periodEndAt The boundary that closed (before the advance).
+    /// @param expected The period's expected interest at the advance.
+    /// @param paidByBorrower Interest credited to the period before reset.
+    /// @param settler `msg.sender` of the call that advanced it.
+    /// @custom:event-category state-change/loan-mutation
+    event PeriodicInterestSettled(
+        uint256 indexed loanId,
+        uint256 periodEndAt,
+        uint256 expected,
+        uint256 paidByBorrower,
+        address indexed settler
+    );
+
+    /// @notice #2731 — record `paid` interest, delivered to the lender
+    ///         mid-period, against the loan's current period, and advance
+    ///         the checkpoint when the period is over and now covered.
+    /// @dev    The ONE rule for every path that pays interest without
+    ///         settling a period (partial repay, partial swap-to-repay,
+    ///         partial liquidation): a path that paid interest and did not
+    ///         credit it here would leave the period reading unpaid, and the
+    ///         periodic settlement would sell collateral for interest the
+    ///         lender already has. `paid` is the interest charged in cash by
+    ///         this payment, net of any earlier periodic credit (never the
+    ///         gross accrual, which can span periods already settled; exact
+    ///         per-period attribution is #1230). No-op for a loan with no
+    ///         cadence. The counter saturates at uint128.max. The events name
+    ///         `msg.sender`, the account that made the payment.
+    function creditInterestPaid(
+        LibVaipakam.Loan storage loan,
+        uint256 loanId,
+        uint256 paid
+    ) internal {
+        if (loan.periodicInterestCadence == LibVaipakam.PeriodicInterestCadence.None) return;
+        uint256 newPaid = uint256(loan.interestPaidSinceLastPeriod) + paid;
+        if (newPaid > type(uint128).max) newPaid = type(uint128).max;
+        loan.interestPaidSinceLastPeriod = SafeCast.toUint128(newPaid);
+        if (canAdvanceCheckpointInline(loan)) _advanceInline(loan, loanId, newPaid);
+    }
+
+    /// @dev {creditInterestPaid}'s inline advance, kept out of its frame so
+    ///      the callers' at-budget viaIR frames carry no extra slots. The
+    ///      advancer is `msg.sender` of the paying call.
+    function _advanceInline(LibVaipakam.Loan storage loan, uint256 loanId, uint256 paid) private {
+        uint256 boundary = periodEndAt(loan);
+        uint256 expected = expectedInterestForPeriod(loan);
+        advanceCheckpoint(loan);
+        emit RepayPartialPeriodAdvanced(loanId, boundary, expected, msg.sender);
+        emit PeriodicInterestSettled(loanId, boundary, expected, paid, msg.sender);
+    }
+
     /// @dev Expected interest for ONE full period at the loan's current
     ///      principal and rate. Computed on-demand using `loan.principal`
     ///      so a borrower who repays principal mid-period sees their

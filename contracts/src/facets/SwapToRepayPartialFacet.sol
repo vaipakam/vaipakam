@@ -29,7 +29,6 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title SwapToRepayPartialFacet
@@ -72,31 +71,6 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         uint256 principalOut,
         uint256 partialPrincipal,
         uint256 adapterUsed
-    );
-
-    /// @notice Mirror of `RepayFacet.RepayPartialPeriodAdvanced` so the
-    ///         T-034 periodic-interest checkpoint-advance signal is
-    ///         observable on the swap-to-repay path too. Identical
-    ///         topic hash — indexers subscribing by topic catch both.
-    ///         (Codex round-1 PR #390 P2 #2.)
-    /// @custom:event-category state-change/loan-mutation
-    event RepayPartialPeriodAdvanced(
-        uint256 indexed loanId,
-        uint256 periodEndAt,
-        uint256 expected,
-        address indexed advancedBy
-    );
-
-    /// @notice Mirror of `RepayFacet.PeriodicInterestSettled`. Topic
-    ///         match — see {RepayPartialPeriodAdvanced}.
-    ///         (Codex round-1 PR #390 P2 #2.)
-    /// @custom:event-category state-change/loan-mutation
-    event PeriodicInterestSettled(
-        uint256 indexed loanId,
-        uint256 periodEndAt,
-        uint256 expected,
-        uint256 paidByBorrower,
-        address indexed settler
     );
 
     /// @notice #1383 — the lender yield-fee resolve host cross-facet call
@@ -299,9 +273,9 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // periodic auto-liquidation's already-settled days — the audit's M1 /
         // its SwapToRepay twin). Netted here; the stale `interestSettled` is
         // zeroed at the accrual-clock reset below (the #915 credit+zero pattern).
-        uint256 grossAccrued = LibEntitlement.accruedInterestToTime(loan, block.timestamp);
-        uint256 priorSettled = uint256(loan.interestSettled);
-        uint256 accrued = LibEntitlement.creditSettledInterest(loan, grossAccrued);
+        (uint256 accrued, uint256 settledCarried) = LibEntitlement.splitSettledInterest(
+            loan, LibEntitlement.accruedInterestToTime(loan, block.timestamp)
+        );
         (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(loan, accrued);
 
         // Must at least cover the accrued interest.
@@ -430,48 +404,19 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         }
         loan.interestAccrualStart = uint64(block.timestamp); // reset accrual clock
         // Pass-2 A3 (#1191) — consume ONLY the settled portion this partial's
-        // charge just netted (`grossAccrued`) and PRESERVE any excess: a periodic
+        // charge just netted (the gross accrual) and PRESERVE any excess: a periodic
         // auto-liquidation can OVERDELIVER (credits slippage-buffered proceeds >
         // interest accrued so far), so zeroing all of it would forfeit the
         // borrower's already-paid excess and later overstate the debt (Codex
-        // #1229). The clock is reset above, so the surviving
-        // `interestSettled - grossAccrued` credits future accrual.
-        loan.interestSettled = priorSettled > grossAccrued
-            ? priorSettled - grossAccrued
-            : 0;
+        // #1229). The clock is reset above, so the surviving excess
+        // ({LibEntitlement.splitSettledInterest}) credits future accrual.
+        loan.interestSettled = settledCarried;
 
-        // ── T-034 §4.5 — periodic-interest checkpoint advance
-        //    (mirror RepayFacet:679-706) ────────────────────────────
-        if (loan.periodicInterestCadence != LibVaipakam.PeriodicInterestCadence.None) {
-            // Pass-2 A3 (#1191, Codex #1229) — credit the NETTED `accrued`, NOT
-            // `grossAccrued`: the latter spans already-settled periods (the
-            // accrual clock is not reset by periodic auto-liquidation), so adding
-            // it would credit old interest into the new period and skip a
-            // required auto-liquidation, underpaying the lender (Codex #1229
-            // round 3, P1). Exact current-period attribution deferred to #1230.
-            // Mirrors RepayFacet.
-            uint256 newPaid = uint256(loan.interestPaidSinceLastPeriod) + accrued;
-            if (newPaid > type(uint128).max) newPaid = type(uint128).max;
-            loan.interestPaidSinceLastPeriod = SafeCast.toUint128(newPaid);
-            if (LibPeriodicInterest.canAdvanceCheckpointInline(loan)) {
-                // Codex round-1 PR #390 P2 #2 — emit the
-                // `RepayPartialPeriodAdvanced` + `PeriodicInterestSettled`
-                // events that off-chain accounting subscribes to. Both
-                // are topic-matched to the RepayFacet declarations so
-                // existing indexer / dashboard handlers fire here too.
-                uint256 boundary = LibPeriodicInterest.periodEndAt(loan);
-                uint256 expected = LibPeriodicInterest.expectedInterestForPeriod(loan);
-                LibPeriodicInterest.advanceCheckpoint(loan);
-                emit RepayPartialPeriodAdvanced(loanId, boundary, expected, msg.sender);
-                emit PeriodicInterestSettled(
-                    loanId,
-                    boundary,
-                    expected,
-                    newPaid,
-                    msg.sender
-                );
-            }
-        }
+        // ── T-034 §4.5 / #2731 — the interest this partial charged counts
+        //    toward the current period (the NETTED `accrued`, never
+        //    the gross accrual; Pass-2 A3, #1191). Same rule as `repayPartial`
+        //    ({LibPeriodicInterest.creditInterestPaid}).
+        LibPeriodicInterest.creditInterestPaid(loan, loanId, accrued);
 
         // ── Post-repay HF guard ──────────────────────────────────────
         // Pass-2 A2 (#1190, Codex #1229) — MONOTONICITY, not the old inverted
