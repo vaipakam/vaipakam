@@ -21,9 +21,11 @@
 // selector only if its code holds it as a dispatch constant, so its code
 // says which quote, and so which report, it has. A call to find out would
 // confuse a function that reverts unnamed with one that is absent, and a
-// selector found nowhere in the code is absent.
+// selector found nowhere in the code is absent. The reward messenger is a
+// UUPS proxy, so the code read is its implementation's, at the EIP-1967 slot,
+// read this run (an upgrade in place changes it).
 
-import { toFunctionSelector, type Abi, type AbiFunction, type Address, type Hex, type PublicClient } from 'viem';
+import { getAddress, toFunctionSelector, type Abi, type AbiFunction, type Address, type Hex, type PublicClient } from 'viem';
 import { PastRunDeadline } from '../batchRead';
 import { B4_QUOTE_ABI, B4_REPORTER_SELECTOR, CLOSE_DAY_SELECTOR, LOUPE_ABI, MESSENGER_ABI } from './constants';
 import type { ChainRun } from './deps';
@@ -42,6 +44,9 @@ const quoteOf = (abi: Abi): Hex => {
 const ONE_QUOTE = quoteOf(MESSENGER_ABI);
 const B4_QUOTE = quoteOf(B4_QUOTE_ABI as Abi);
 
+/** EIP-1967's implementation slot: `keccak256('eip1967.proxy.implementation') - 1`. */
+const IMPLEMENTATION_SLOT: Hex = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc';
+
 /** Whether `code` holds `selector` as a dispatch constant: a PUSH of its
  *  bytes, leading zero bytes dropped as the compiler drops them. */
 export function hostsSelector(code: Hex, selector: Hex): boolean {
@@ -51,12 +56,15 @@ export function hostsSelector(code: Hex, selector: Hex): boolean {
   return code.toLowerCase().includes(push + s);
 }
 
-/** The report shape the messenger at `address` carries, or null when it
- *  carries neither (no code there, or no day-report quote). */
+/** The report shape the messenger at `address` carries (its implementation's
+ *  code, when it is a proxy), or null when it carries neither (no code there,
+ *  or no day-report quote). */
 export async function messengerShape(client: PublicClient, address: Address, label: string): Promise<Fact<ReportShape | null>> {
   let code: Hex | undefined;
   try {
-    code = await client.getCode({ address });
+    const slot = await client.getStorageAt({ address, slot: IMPLEMENTATION_SLOT });
+    const impl = slot === undefined || BigInt(slot) === 0n ? address : getAddress(`0x${slot.slice(-40)}`);
+    code = await client.getCode({ address: impl });
   } catch (err) {
     if (err instanceof PastRunDeadline) throw err;
     console.error(`[keeper] rewardDayClose ${label} unread: ${shortErr(err)}`);

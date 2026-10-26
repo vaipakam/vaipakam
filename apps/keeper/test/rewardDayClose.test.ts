@@ -461,9 +461,19 @@ class FakeDiamond {
   history: { block: bigint; name: 'DailyGlobalInterestFinalized' | 'ChainContributionZeroed'; dayId: number; sourceChainId?: number }[] = [];
   getBlockNumber = async () => this.blockNo;
   /** A messenger's code: its dispatcher holds the quotes it carries. */
+  /** The messenger is a proxy whose implementation lives here (null = not a proxy). */
+  messengerImpl: Address | null = null;
+  getStorageAt = async ({ address }: { address: Address }): Promise<`0x${string}` | undefined> => {
+    if (this.codeUnread) throw new Error('rpc down');
+    const impl = (address === this.messenger || address === this.messengerNow) && this.messengerImpl !== null ? this.messengerImpl : ZERO;
+    return pad(impl, { size: 32 });
+  };
   getCode = async ({ address }: { address: Address }): Promise<`0x${string}` | undefined> => {
     if (this.codeUnread) throw new Error('rpc down');
-    if (address !== this.messenger && address !== this.messengerNow) return undefined;
+    // A proxy's own code carries no quote; its implementation's does.
+    if (this.messengerImpl !== null && (address === this.messenger || address === this.messengerNow)) return '0x363d3d373d3d3d363d73';
+    const isImpl = this.messengerImpl !== null && address.toLowerCase() === this.messengerImpl.toLowerCase();
+    if (address !== this.messenger && address !== this.messengerNow && !isImpl) return undefined;
     const quotes = [...(this.quotePredatesReport ? [] : [ONE_QUOTE_SEL]), ...(this.quotesB4 ? [B4_QUOTE_SEL] : [])];
     return `0x6080604052${quotes.map((q) => `63${q.slice(2)}14`).join('')}00`;
   };
@@ -1648,6 +1658,14 @@ describe('a run', () => {
       expect(mirror.sent.every((x) => x.fn === 'closeDay' && x.value === LANE_FEE + 7n)).toBe(true);
       expect(mirror.loupeReads).toBe(2);
       expect(alerts(/refused/)).toEqual([]);
+    });
+
+    it('reads a proxied messenger by its implementation\'s code', async () => {
+      mirror.messengerImpl = '0x00000000000000000000000000000000000000b4';
+      base.messengerImpl = '0x00000000000000000000000000000000000000b5';
+      await run(mirror);
+      expect(mirror.sent.length).toBeGreaterThan(0);
+      expect(mirror.sent.every((x) => x.value === LANE_FEE + 7n)).toBe(true);
     });
 
     it('closes a day Base has finalized: B4 is the older shape Base applies after finalization', async () => {
