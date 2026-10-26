@@ -339,7 +339,9 @@
       "paidPredatesNotBillable": "这个版本也没有计费调用，因此在 {{chain}} 上无法收取该费用。",
       "paidPredatesBillingUnknown": "我们无法确认这个版本能否收取该费用。",
       "paidAgreed": "已保存：你已同意在 {{chain}} 上每个贷款方最多支付 {{fee}} VPFI。",
-      "paidWithdrawn": "已撤回：在 {{chain}} 上不会再向你收取付费 Push 提醒费用。"
+      "paidWithdrawn": "已撤回：在 {{chain}} 上不会再向你收取付费 Push 提醒费用。",
+      "signatureCheckUnavailable": "您的设置未保存：提醒服务暂时无法验证您的签名。请稍后再试。",
+      "requestAlreadyUsed": "您的设置未保存：该签名已被使用。请再次保存以签署新的请求。"
     },
     "notifications": {
       "bellLabel": "通知",

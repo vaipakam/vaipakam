@@ -339,7 +339,9 @@
       "paidPredatesNotBillable": "이 버전에는 청구 호출도 없으므로 {{chain}}에서는 수수료를 청구할 수 없습니다.",
       "paidPredatesBillingUnknown": "이 버전이 수수료를 청구할 수 있는지 확인하지 못했습니다.",
       "paidAgreed": "저장됨: {{chain}}에서 대출 한쪽당 최대 {{fee}} VPFI 지불에 동의했습니다.",
-      "paidWithdrawn": "철회됨: {{chain}}에서 유료 Push 알림 수수료가 청구되지 않습니다."
+      "paidWithdrawn": "철회됨: {{chain}}에서 유료 Push 알림 수수료가 청구되지 않습니다.",
+      "signatureCheckUnavailable": "설정이 저장되지 않았습니다. alert service가 지금 서명을 확인하지 못했습니다. 잠시 후 다시 시도하세요.",
+      "requestAlreadyUsed": "설정이 저장되지 않았습니다. 해당 서명은 이미 사용되었습니다. 다시 저장하여 새 요청에 서명하세요."
     },
     "notifications": {
       "bellLabel": "알림",

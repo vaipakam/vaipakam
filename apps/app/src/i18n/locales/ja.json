@@ -339,7 +339,9 @@
       "paidPredatesNotBillable": "このバージョンには課金の呼び出しもないため、{{chain}} では手数料を請求できません。",
       "paidPredatesBillingUnknown": "このバージョンが手数料を請求できるかどうかを確認できませんでした。",
       "paidAgreed": "保存しました：{{chain}} でローンの片側ごとに最大 {{fee}} VPFI の支払いに同意しました。",
-      "paidWithdrawn": "取り消しました：{{chain}} で有料の Push 通知の料金が請求されることはありません。"
+      "paidWithdrawn": "取り消しました：{{chain}} で有料の Push 通知の料金が請求されることはありません。",
+      "signatureCheckUnavailable": "設定は保存されませんでした — アラートサービスが現在あなたの署名を確認できませんでした。しばらくして再試行してください。",
+      "requestAlreadyUsed": "設定は保存されませんでした — その署名はすでに使用されています。もう一度保存して新しいリクエストに署名してください。"
     },
     "notifications": {
       "bellLabel": "通知",

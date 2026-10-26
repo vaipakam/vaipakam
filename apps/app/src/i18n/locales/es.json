@@ -339,7 +339,9 @@
       "paidPredatesNotBillable": "Esta versión tampoco tiene una llamada de facturación, así que la tarifa no se puede cobrar en {{chain}}.",
       "paidPredatesBillingUnknown": "No pudimos comprobar si esta versión puede cobrar la tarifa.",
       "paidAgreed": "Guardado: has aceptado pagar hasta {{fee}} VPFI por lado del préstamo en {{chain}}.",
-      "paidWithdrawn": "Retirada: ya no se te pueden cobrar tarifas de alertas Push de pago en {{chain}}."
+      "paidWithdrawn": "Retirada: ya no se te pueden cobrar tarifas de alertas Push de pago en {{chain}}.",
+      "signatureCheckUnavailable": "No se guardó tu configuración: el servicio de alertas no pudo comprobar tu firma en este momento. Inténtalo de nuevo en un momento.",
+      "requestAlreadyUsed": "No se guardó tu configuración: esa firma ya se usó. Guarda de nuevo para firmar una nueva solicitud."
     },
     "notifications": {
       "bellLabel": "Notificaciones",
