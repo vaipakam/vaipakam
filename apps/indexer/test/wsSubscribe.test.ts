@@ -170,6 +170,38 @@ describe('the ingest DO caps the sockets it holds', () => {
     expect(accepted).toEqual([]);
   });
 
+  it('lets only one of two concurrent upgrades take the last per-IP slot', async () => {
+    // Both pass the early check, then await the env resolution; the check
+    // that holds is the one with no await before the accept.
+    const accepted: Array<{ tags: string[] }> = [];
+    const state = {
+      setWebSocketAutoResponse: () => {},
+      getWebSockets: (tag?: string) =>
+        new Array((tag === undefined || tag === `ip:${IP}` ? MAX_SUBSCRIBERS_PER_IP - 1 : 0) + accepted.length).fill({}),
+      acceptWebSocket: (_ws: unknown, tags: string[]) => accepted.push({ tags }),
+    };
+    vi.stubGlobal('WebSocketRequestResponsePair', class {});
+    vi.stubGlobal(
+      'WebSocketPair',
+      class {
+        0 = {};
+        1 = { send: () => {} };
+      },
+    );
+    const obj = new ChainIngestDO(
+      state as unknown as DurableObjectState,
+      { CHAIN_INGEST_VIA_DO: 'true' } as WorkerEnv,
+    );
+    const answers = await Promise.all([
+      obj.fetch(upgrade()).catch(() => 'accepted'),
+      obj.fetch(upgrade()).catch(() => 'accepted'),
+    ]);
+    expect(accepted).toHaveLength(1);
+    const refused = answers.filter((a) => a instanceof Response) as Response[];
+    expect(refused).toHaveLength(1);
+    expect(refused[0]!.status).toBe(429);
+  });
+
   it('accepts under both caps and tags the socket with its IP', async () => {
     const { obj, accepted } = doWith(MAX_SUBSCRIBERS_PER_IP, MAX_SUBSCRIBERS_PER_IP - 1);
     // Node's Response refuses status 101, which the Workers runtime allows,
