@@ -1,16 +1,30 @@
 /**
- * Phase 7a — server-side quote proxy for the liquidation flow.
+ * Phase 7a — server-side quote proxy for the forced-close flow.
  *
- * Two HTTP entry points:
- *   POST /quote/0x      — proxies the 0x v2 Swap API quote endpoint
- *   POST /quote/1inch   — proxies the 1inch v6 Swap API quote endpoint
+ * One HTTP entry point, `POST /quote/1inch`, which proxies the 1inch v6
+ * Swap API with the operator-held key injected server-side, so the key
+ * never ships to a browser. The connected app's forced-close card
+ * (`apps/app/src/data/closeOutRoute.ts`) is its only caller.
  *
- * Both inject the operator-held API key server-side so the keys never
- * ship to a browser client. The frontend's `useLiquidationQuotes` hook
- * calls these routes from the user's wallet origin; the worker rejects
- * any other origin via the existing `isAllowedOrigin` gate in index.ts.
+ * There is no `/quote/0x` (#2755). It existed with no caller: the app
+ * never asks 0x through this proxy, because a 0x quote can bind to the
+ * transaction's originating account, which the app cannot name for every
+ * wallet (`origin-bound` in `@vaipakam/lib/routeBuilder`), and the keeper
+ * quotes 0x with its own key. A route nobody calls that spends an API key
+ * is only an attack surface, so it was removed rather than hardened.
  *
- * Request body (identical for both endpoints):
+ * Gating (#2755), in order:
+ *   1. the router's Origin gate (`FRONTEND_ORIGIN`), which stops another
+ *      site's page from spending the key through a visitor's browser;
+ *   2. the caller budget `QUOTE_1INCH_RATELIMIT`, per client IP, taken at
+ *      the router;
+ *   3. the 1inch credential budget (`rateLimit.ts`), one slot taken right
+ *      before the upstream call, shared with `/intent/fusion/post`.
+ * Every limiter fails closed. The Origin header can be forged outside a
+ * browser, so for a scripted caller the two budgets are the bound, and
+ * this Worker states that rather than calling the route authenticated.
+ *
+ * Request body:
  *   {
  *     chainId:    number;   // e.g. 8453 (Base), 1 (Ethereum)
  *     sellToken:  string;   // ERC-20 collateral asset
@@ -20,25 +34,18 @@
  *     slippageBps?: number; // Default 600 (6% — matches on-chain ceiling)
  *   }
  *
- * Response: pass-through of the aggregator's JSON body. Consumers read:
- *   - `transaction.to` + `transaction.data` (0x v2) or `tx.to` +
- *     `tx.data` (1inch v6) — both fields are required because the
- *     on-chain `AggregatorAdapterBase` expects the calldata packaged
- *     as `abi.encode(address swapTarget, bytes swapCalldata)`. The
- *     adapter approves a separate immutable `allowanceTarget` and
- *     validates `swapTarget` against an owner-managed allowlist
- *     before forwarding the calldata. See the Deployment Runbook's
- *     "Aggregator adapter construction — allowanceTarget split"
- *     section for the why.
- *   - `buyAmount` (0x) / `dstAmount` or `toAmount` (1inch) for the
- *     expected output used to rank the try-list.
- *
- * Rate-limit: not enforced here yet — Cloudflare Workers' built-in IP-
- * based rate-limit binding is the next step. For testnet bring-up the
- * caller's own request budget governs.
+ * Response: pass-through of the aggregator's JSON body. Consumers read
+ * `tx.to` + `tx.data` (packaged by the on-chain `AggregatorAdapterBase`
+ * as `abi.encode(address swapTarget, bytes swapCalldata)`; the adapter
+ * approves a separate immutable `allowanceTarget` and validates
+ * `swapTarget` against an owner-managed allowlist, see the Deployment
+ * Runbook's "Aggregator adapter construction — allowanceTarget split")
+ * and `dstAmount` / `toAmount` for the expected output used to rank the
+ * try-list.
  */
 
 import type { Env } from './env';
+import { slotRefusal, takeCredentialSlot } from './rateLimit';
 
 interface QuoteRequest {
   chainId: number;
@@ -53,16 +60,16 @@ const HEX_ADDR = /^0x[0-9a-fA-F]{40}$/;
 const DECIMAL = /^[1-9][0-9]{0,77}$/;
 
 /**
- * #2463 round 15 — per-venue readiness, so the app can say before the
- * lender acts whether an aggregator can be asked at all. A venue is ready
- * when this Worker holds its key. The allow-list is disclosed by the
- * response itself: an origin outside `FRONTEND_ORIGIN` gets a CORS header
+ * #2463 round 15 — readiness, so the app can say before the lender acts
+ * whether 1inch can be asked at all: it can when this Worker holds the
+ * key. It reports only what the proxy serves (#2755 removed `zeroex`).
+ * The allow-list is disclosed by the response itself: an origin outside `FRONTEND_ORIGIN` gets a CORS header
  * naming another origin, the browser refuses to read the body, and the app
  * reports readiness as unread rather than guessing.
  */
 export function handleQuoteReadiness(env: Env, corsOrigin: string): Response {
   return new Response(
-    JSON.stringify({ oneinch: Boolean(env.ONEINCH_API_KEY), zeroex: Boolean(env.ZEROEX_API_KEY) }),
+    JSON.stringify({ oneinch: Boolean(env.ONEINCH_API_KEY) }),
     {
       status: 200,
       headers: {
@@ -74,47 +81,12 @@ export function handleQuoteReadiness(env: Env, corsOrigin: string): Response {
   );
 }
 
-export async function handle0xQuote(
-  req: Request,
-  env: Env,
-  corsOrigin: string,
-): Promise<Response> {
-  if (!(await checkRateLimit(req, env.QUOTE_0X_RATELIMIT))) {
-    return jsonErr(corsOrigin, 429, 'rate-limited');
-  }
-  const body = await parseBody(req);
-  if (!body) return jsonErr(corsOrigin, 400, 'invalid-payload');
-  if (!env.ZEROEX_API_KEY) return jsonErr(corsOrigin, 503, 'zeroex-not-configured');
-
-  // 0x v2 endpoint shape: query-param chainId + tokens + sell amount.
-  const url = new URL('https://api.0x.org/swap/allowance-holder/quote');
-  url.searchParams.set('chainId', String(body.chainId));
-  url.searchParams.set('sellToken', body.sellToken);
-  url.searchParams.set('buyToken', body.buyToken);
-  url.searchParams.set('sellAmount', body.sellAmount);
-  url.searchParams.set('taker', body.taker);
-  // 0x expresses slippage as a decimal string ("0.06" = 6%).
-  const slippageBps = body.slippageBps ?? 600;
-  url.searchParams.set('slippageBps', String(slippageBps));
-
-  const upstream = await fetch(url.toString(), {
-    headers: {
-      '0x-api-key': env.ZEROEX_API_KEY,
-      '0x-version': 'v2',
-      Accept: 'application/json',
-    },
-  });
-  return passthrough(upstream, corsOrigin);
-}
-
 export async function handle1inchQuote(
   req: Request,
   env: Env,
   corsOrigin: string,
 ): Promise<Response> {
-  if (!(await checkRateLimit(req, env.QUOTE_1INCH_RATELIMIT))) {
-    return jsonErr(corsOrigin, 429, 'rate-limited');
-  }
+  // The caller budget was taken at the router (#2755).
   const body = await parseBody(req);
   if (!body) return jsonErr(corsOrigin, 400, 'invalid-payload');
   if (!env.ONEINCH_API_KEY) return jsonErr(corsOrigin, 503, 'oneinch-not-configured');
@@ -135,6 +107,9 @@ export async function handle1inchQuote(
   // settlement time and the simulation rejects the EOA caller.
   url.searchParams.set('disableEstimate', 'true');
 
+  // Charged as spent: one slot of the 1inch budget for this one call.
+  const refused = slotRefusal(await takeCredentialSlot(env, 'oneinch'), corsOrigin, 'upstream-quota');
+  if (refused) return refused;
   const upstream = await fetch(url.toString(), {
     headers: {
       Authorization: `Bearer ${env.ONEINCH_API_KEY}`,
@@ -145,39 +120,6 @@ export async function handle1inchQuote(
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────
-
-/**
- * Per-IP rate-limit gate. Cloudflare Workers' built-in
- * `RateLimitBinding` returns `{ success: boolean }` from `limit({ key })`;
- * `success === false` means the IP is currently over the budget for
- * this binding. We use the request's CF-resolved IP (`cf-connecting-ip`)
- * as the key, falling back to a static "unknown" bucket so an absent
- * header doesn't bypass the limit.
- *
- * Returns `true` if the request should proceed; `false` if the
- * caller should respond 429.
- *
- * If the binding is undefined (legacy deploy that hasn't been
- * `wrangler deploy`-ed since wrangler.jsonc gained the binding), we
- * fail OPEN — the route still works, just unrate-limited. Operators
- * see this in monitoring and can update the deployment.
- */
-async function checkRateLimit(
-  req: Request,
-  binding:
-    | { limit(input: { key: string }): Promise<{ success: boolean }> }
-    | undefined,
-): Promise<boolean> {
-  if (!binding) return true;
-  const ip = req.headers.get('cf-connecting-ip') ?? 'unknown';
-  try {
-    const { success } = await binding.limit({ key: ip });
-    return success;
-  } catch {
-    // Don't fail-closed on a binding error — log and let through.
-    return true;
-  }
-}
 
 async function parseBody(req: Request): Promise<QuoteRequest | null> {
   let raw: unknown;

@@ -1,5 +1,6 @@
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { resolveD1Binding } from '@vaipakam/lib/d1Maintenance';
+import type { RateLimitBinding } from './rateLimit';
 
 /**
  * This Worker's deployed name, used as the label on a D1 refusal so an
@@ -87,10 +88,12 @@ export const WORKER_NAME = 'vaipakam-agent';
  *                            address, the signer posts as that
  *                            channel's delegate, so rotating the key
  *                            no longer moves the channel.
- *   - `ZEROEX_API_KEY` /
- *     `ONEINCH_API_KEY`    — server-side aggregator API keys for the
- *                            public `/quote/*` proxy endpoints.
- *                            Secrets Store bindings (T-078).
+ *   - `ONEINCH_API_KEY`    — server-side 1inch API key for the
+ *                            `/quote/1inch` and `/intent/fusion/post`
+ *                            proxies. Secrets Store binding (T-078).
+ *                            (The agent holds no 0x key since #2755
+ *                            removed `/quote/0x`; the keeper has its
+ *                            own.)
  *   - `DIAG_WALLET_HMAC_KEY` — T-075 secret keying the per-wallet
  *                            deletion hash. Secrets Store binding
  *                            (T-078). The `/diag/legal-hold`
@@ -116,11 +119,12 @@ export const WORKER_NAME = 'vaipakam-agent';
  *      notifications" summary of that blast radius is WITHDRAWN;
  *      a threat review starting from this file should not inherit
  *      it.)
- *   - `QUOTE_0X_RATELIMIT`,
- *     `QUOTE_1INCH_RATELIMIT`,
- *     `DIAG_RECORD_RATELIMIT` — Cloudflare built-in rate-limit
- *                            bindings (one per upstream service).
- *                            Native bindings — not secrets.
+ *   - `*_RATELIMIT`        — Cloudflare built-in rate-limit
+ *                            bindings: a caller budget per limited
+ *                            route and a credential budget per API
+ *                            key, all read through the one fail-closed
+ *                            rule in `rateLimit.ts` (#2755). Native
+ *                            bindings — not secrets.
  *   - `DIAG_SAMPLE_RATE`,
  *     `DIAG_RETENTION_DAYS` — diagnostics record sampling +
  *                            retention. Plain `var`s.
@@ -137,10 +141,6 @@ export const WORKER_NAME = 'vaipakam-agent';
 /** A Cloudflare Secrets Store secret binding — read with `.get()`. */
 export type SecretBinding = { get(): Promise<string> };
 
-/** A Cloudflare built-in rate-limit binding. */
-type RateLimitBinding = {
-  limit(input: { key: string }): Promise<{ success: boolean }>;
-};
 
 /**
  * The non-secret bindings + plain config — identical shape in both
@@ -159,11 +159,18 @@ interface BaseEnv {
    *  Read by the shared rail in `packages/push`. */
   PUSH_CHANNEL_ADDRESS?: string;
 
-  // Cloudflare built-in rate-limit bindings — one per upstream
-  // service so a noisy caller on /quote/0x can't drain the
-  // /quote/1inch budget. Configured in wrangler.jsonc.
-  QUOTE_0X_RATELIMIT?: RateLimitBinding;
+  // Cloudflare built-in rate-limit bindings, configured in
+  // wrangler.jsonc. Optional in the type because a deployment can lack
+  // one; `rateLimit.ts` refuses the route when it does (#2755).
+  // Per-IP caller budget for `POST /quote/1inch`.
   QUOTE_1INCH_RATELIMIT?: RateLimitBinding;
+  // #2755 — credential budgets, one per operator-held API key, keyed by
+  // a constant and charged one slot per upstream call: every route that
+  // calls 1inch, and every route that calls OpenSea, draws from its
+  // key's one budget. See `rateLimit.ts` for what they bound and what
+  // they do not (per Cloudflare location, eventually consistent).
+  ONEINCH_UPSTREAM_RATELIMIT?: RateLimitBinding;
+  OPENSEA_UPSTREAM_RATELIMIT?: RateLimitBinding;
   DIAG_RECORD_RATELIMIT?: RateLimitBinding;
   // #2754 — per-IP gate on the signed alert writes (`PUT /thresholds`,
   // link, unlink, test alert), taken before any signature work.
@@ -201,17 +208,6 @@ interface BaseEnv {
   // API quota — `parseMaxPages` in the proxy is the canonical
   // clamp.
   OPENSEA_OFFERS_MAX_PAGES?: string;
-  // #334 Codex round-1 P2 — global upstream rate-limit keyed by
-  // a constant ("upstream") rather than per-IP. Bounds aggregate
-  // upstream calls to the shared `OPENSEA_API_KEY` across all
-  // caller IPs. Without this binding the per-IP
-  // `OPENSEA_OFFERS_RATELIMIT` is the only gate, so two or more
-  // distinct caller IPs polling hot tokens at the raised
-  // `OPENSEA_OFFERS_MAX_PAGES` ceiling could each individually
-  // stay under the per-IP cap while in aggregate exceeding the
-  // OpenSea API tier. Optional — when absent the proxy falls
-  // back to per-IP-only gating + warns once at startup.
-  OPENSEA_OFFERS_UPSTREAM_RATELIMIT?: RateLimitBinding;
   // T-086 Round-6 / Block D (#345) — per-IP rate-limit on the new
   // GET /opensea/signed-offer/{chainId}/{contract}/{tokenId}/{orderHash}
   // endpoint. One RTT to OpenSea per inbound (no pagination), so
@@ -315,8 +311,7 @@ export interface WorkerEnv extends BaseEnv {
   TG_BOT_TOKEN?: SecretBinding;
   // Push Protocol channel signer.
   PUSH_CHANNEL_PK?: SecretBinding;
-  // Aggregator API keys for the public `/quote/*` proxies.
-  ZEROEX_API_KEY?: SecretBinding;
+  // 1inch API key for `/quote/1inch` and `/intent/fusion/post`.
   ONEINCH_API_KEY?: SecretBinding;
   // T-086 step 14 — OpenSea Listings API key for the
   // `POST /opensea/listing` proxy. Used server-side only; the dapp
@@ -363,8 +358,7 @@ export interface Env extends BaseEnv {
   TG_BOT_TOKEN?: string;
   // Push Protocol channel signer.
   PUSH_CHANNEL_PK?: string;
-  // Aggregator API keys for the public `/quote/*` proxies.
-  ZEROEX_API_KEY?: string;
+  // 1inch API key for `/quote/1inch` and `/intent/fusion/post`.
   ONEINCH_API_KEY?: string;
   // T-086 step 14 — resolved OpenSea Listings API key.
   OPENSEA_API_KEY?: string;
@@ -449,7 +443,6 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     bnbTest,
     tgToken,
     pushPk,
-    zeroEx,
     oneInch,
     openSea,
     walletHmac,
@@ -468,7 +461,6 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     readSecret(raw.RPC_BNB_TESTNET),
     readSecret(raw.TG_BOT_TOKEN),
     readSecret(raw.PUSH_CHANNEL_PK),
-    readSecret(raw.ZEROEX_API_KEY),
     readSecret(raw.ONEINCH_API_KEY),
     readSecret(raw.OPENSEA_API_KEY),
     readSecret(raw.DIAG_WALLET_HMAC_KEY),
@@ -503,7 +495,6 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     RPC_BNB_TESTNET: bnbTest,
     TG_BOT_TOKEN: tgToken,
     PUSH_CHANNEL_PK: pushPk,
-    ZEROEX_API_KEY: zeroEx,
     ONEINCH_API_KEY: oneInch,
     OPENSEA_API_KEY: openSea,
     DIAG_WALLET_HMAC_KEY: walletHmac,

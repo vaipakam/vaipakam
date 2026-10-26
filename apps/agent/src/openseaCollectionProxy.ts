@@ -15,10 +15,12 @@
  * the fees live inside the Collection API body. There is no
  * separate `/collections/{slug}/fees` endpoint on OpenSea's v2 API.
  *
- * **Rate-limit + CORS** (Codex P2 line 75 + line 193 on PR #324):
- * the proxy MUST rate-limit per-IP (otherwise anyone can spoof an
- * allowed Origin and iterate slugs/chains to drain the
- * `OPENSEA_API_KEY` quota). The CORS response MUST echo the
+ * **Rate-limit + CORS** (Codex P2 line 75 + line 193 on PR #324,
+ * #2755): the router takes the per-IP caller budget before this runs,
+ * and one slot of the shared OpenSea credential budget is taken right
+ * before the upstream call (both fail closed, `rateLimit.ts`), since an
+ * allowed Origin can be forged to iterate slugs/chains and drain the
+ * `OPENSEA_API_KEY` quota. The CORS response MUST echo the
  * RESOLVED single origin from the request, NOT the raw
  * `FRONTEND_ORIGIN` CSV (browsers reject a CSV
  * `Access-Control-Allow-Origin`).
@@ -30,6 +32,7 @@
  */
 
 import type { Env } from './env';
+import { slotRefusal, takeCredentialSlot } from './rateLimit';
 
 const OPENSEA_HOST: Record<number, string> = {
   1: 'api.opensea.io',
@@ -55,17 +58,9 @@ export async function handleOpenSeaCollection(
       resolvedOrigin,
     );
   }
-  // Per-IP rate-limit BEFORE the upstream call, otherwise a
-  // scripted iterator could drain our OpenSea quota even though
-  // the response would be a 400. Same Cloudflare RateLimitBinding
-  // pattern as /opensea/listing.
-  if (!(await checkRateLimit(req, env.OPENSEA_COLLECTION_RATELIMIT))) {
-    return jsonResponse(
-      { error: 'rate-limited' },
-      429,
-      resolvedOrigin,
-    );
-  }
+  // The caller budget (`OPENSEA_COLLECTION_RATELIMIT`) was taken at the
+  // router (#2755).
+
   // Chain selection: the dapp passes ?chainId=<id> for chains
   // where the collection slug ambiguates across multiple chain
   // deployments. Default to mainnet.
@@ -89,6 +84,9 @@ export async function handleOpenSeaCollection(
     );
   }
 
+  // Charged as spent: one slot of the OpenSea budget for this one call.
+  const refused = slotRefusal(await takeCredentialSlot(env, 'opensea'), resolvedOrigin, 'upstream-quota');
+  if (refused) return refused;
   const upstream = await fetch(apiUrl, {
     method: 'GET',
     headers: {
@@ -124,20 +122,3 @@ function jsonResponse(
   });
 }
 
-/**
- * Pattern from quoteProxy.ts: Cloudflare's RateLimitBinding
- * exposes `limit({ key })` returning `{ success: boolean }`.
- * Key by client IP (`CF-Connecting-IP`). If the binding isn't
- * configured the limit defaults to allow (the binding is the only
- * defense; the deploy adds it intentionally and a missing binding
- * is an operator-config issue rather than a per-request fail-closed).
- */
-async function checkRateLimit(
-  req: Request,
-  binding: undefined | { limit: (args: { key: string }) => Promise<{ success: boolean }> },
-): Promise<boolean> {
-  if (!binding) return true;
-  const ip = req.headers.get('CF-Connecting-IP') ?? 'unknown';
-  const r = await binding.limit({ key: ip });
-  return r.success;
-}

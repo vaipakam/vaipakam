@@ -90,12 +90,12 @@ describe('fetch, on a build with no D1 binding', () => {
   });
 
   it('refuses a route that touches no database, deliberately', async () => {
-    // The aggregator quote proxy reads no D1. It is refused anyway, because
+    // The quote-readiness probe reads no D1. It is refused anyway, because
     // the alternative is a hand-maintained list of which routes touch the
     // database — the enumeration the whole mechanism exists to replace. This
     // case exists so that the cost is recorded rather than discovered.
     const res = await worker.fetch(
-      new Request('https://agent.example/quote/0x?chainId=84532'),
+      new Request('https://agent.example/quote/readiness'),
       NO_BINDINGS,
       fakeCtx(),
     );

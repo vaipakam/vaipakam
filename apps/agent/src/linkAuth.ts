@@ -46,6 +46,7 @@
  */
 
 import type { Env } from './env';
+import type { SlotOutcome } from './rateLimit';
 import {
   LINK_SIGNATURE_MAX_AGE_SECONDS,
   buildAlertSettingsMessage,
@@ -57,6 +58,7 @@ import {
 import { claimSignedRequest, SignedRequestLedgerUnavailableError } from './signedRequestUse';
 import {
   chainVerifyGate,
+  limitedRefusal,
   isValidSignatureShape,
   verifyOnChain,
   verifyWalletSignature,
@@ -186,7 +188,7 @@ export async function verifySignedLinkRequest(
   checker: ChainSigChecker = verifyOnChain,
   // The chain path's per-IP rate gate (#2013) — handlers pass
   // `chainVerifyGate(env, request)`.
-  chainPathAllowed?: () => Promise<boolean>,
+  chainPathAllowed?: () => Promise<SlotOutcome>,
 ): Promise<LinkVerifyResult> {
   if (Math.abs(nowSeconds - req.issuedAt) > LINK_SIGNATURE_MAX_AGE_SECONDS) {
     return { ok: false, status: 400, reason: 'request timestamp is stale' };
@@ -203,11 +205,7 @@ export async function verifySignedLinkRequest(
   );
   if (verdict.ok) return { ok: true, via: verdict.via };
   if (verdict.reason === 'limited') {
-    return {
-      ok: false,
-      status: 429,
-      reason: 'too many verification attempts — try again shortly',
-    };
+    return { ok: false, ...limitedRefusal(verdict.slot) };
   }
   return verdict.reason === 'unavailable'
     ? {
