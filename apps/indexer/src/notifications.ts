@@ -767,7 +767,7 @@ async function loadLoanParties(
       }
     }
   } catch (err) {
-    console.error('[notifications] party lookup failed', err);
+    console.error('[notifications] party lookup failed', redactedError(err));
     return null;
   }
   return partiesByLoan;
@@ -832,6 +832,7 @@ export const DERIVED_LOG_INDEX = 1_000_000;
 export { NOTIF_EVENT_KIND_RECONCILED as RECONCILED_EVENT_KIND } from '@vaipakam/lib/notificationProvenance';
 import { NOTIF_EVENT_KIND_RECONCILED } from '@vaipakam/lib/notificationProvenance';
 import { chunkD1InList } from '@vaipakam/lib/d1Binds';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 /**
  * Inbox rows for terminals the repair found rather than an event announced

@@ -50,6 +50,7 @@ import { slotRefusal, takeCredentialSlot } from './rateLimit';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { createPublicClient, http, keccak256, toBytes } from 'viem';
 import { readJsonBody } from '@vaipakam/lib/requestBody';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 /** A Fusion post: the order struct, its hash, the commit transaction hash
  *  and a signature (#2756). */
@@ -393,7 +394,7 @@ export async function handleIntentFusionPost(
     });
     return passthrough(upstream, corsOrigin);
   } catch (err) {
-    console.error('[intent/fusion/post] upstream fetch failed', err);
+    console.error('[intent/fusion/post] upstream fetch failed', redactedError(err));
     return jsonErr(corsOrigin, 502, 'fusion-upstream-failed');
   }
 }
@@ -435,7 +436,7 @@ async function preflightCommitOnChain(
     }
     console.warn(
       '[intent/fusion/post] receipt RPC degraded; proceeding',
-      err,
+      redactedError(err),
     );
     return { kind: 'degraded' };
   }
@@ -565,7 +566,7 @@ async function preflightCommitOnChain(
     } catch (err) {
       console.warn(
         '[intent/fusion/post] buyback ledger read RPC degraded; proceeding',
-        err,
+        redactedError(err),
       );
       // RPC degradation: fall through. The on-chain commit is still
       // the source of truth; a mutated body sent to Fusion would
@@ -658,16 +659,15 @@ async function preflightCommitOnChain(
     // pattern in case the error class isn't surfaced verbatim
     // (some custom transports wrap the original).
     const name = (err as { name?: string })?.name ?? '';
-    const msg = String((err as Error)?.message ?? '');
     const isRevert =
       name === 'ContractFunctionRevertedError' ||
-      /revert|execution reverted/i.test(msg);
+      /revert|execution reverted/i.test(String((err as Error)?.message ?? ''));
     if (isRevert) {
       return { kind: 'reject', reason: 'commit-no-longer-live' };
     }
     console.warn(
       '[intent/fusion/post] getIntentCommit RPC degraded; proceeding',
-      err,
+      redactedError(err),
     );
     return { kind: 'degraded' };
   }
