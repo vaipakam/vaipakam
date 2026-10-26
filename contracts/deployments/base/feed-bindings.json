@@ -24,11 +24,40 @@
         "name": "Superchain Token List",
         "version": "10.0.1770",
         "sha256": "0x04daa3fff6c486946a7312685180f3297fe6545f489dadb5f70a128967bdedf3"
+      },
+      {
+        "url": "https://tokens.uniswap.org",
+        "name": "Uniswap Labs Default",
+        "version": "22.32.0",
+        "sha256": "0x132cfa159d9ec36717cfd128b85d8a209baea67ed2b0862aa2edfe812878f522"
       }
     ]
   },
-  "checkedAtBlock": 53116672,
+  "checkedAtBlock": 53117851,
   "bindings": [
+    {
+      "token": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
+      "symbol": "CBBTC",
+      "tokenDecimals": 8,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0x07DA0E54543a844a80ABE69c8A12F22B3aA59f9D",
+      "feedDecimals": 8,
+      "pair": "cbBTC / USD",
+      "heartbeat": 1200,
+      "category": "low",
+      "directoryPath": "cbbtc-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ],
+      "otherCandidates": {
+        "coinmarketcap": [
+          "0x805aF152eebc7e280628A0Bb30Dd916b5B7716fb"
+        ]
+      }
+    },
     {
       "token": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
       "symbol": "CBETH",
@@ -77,6 +106,78 @@
       "heartbeat": 86400,
       "category": "low",
       "directoryPath": "dai-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed",
+      "symbol": "DEGEN",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0xE62BcE5D7CB9d16AB8b4D622538bc0A50A5799c2",
+      "feedDecimals": 8,
+      "pair": "DEGEN / USD",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "degen-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42",
+      "symbol": "EURC",
+      "tokenDecimals": 6,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0xDAe398520e2B67cd3f27aeF9Cf14D93D927f8250",
+      "feedDecimals": 8,
+      "pair": "EURC / USD",
+      "heartbeat": 86400,
+      "category": "low",
+      "directoryPath": "eurc-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0x4BfAa776991E85e5f8b1255461cbbd216cFc714f",
+      "symbol": "HOME",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0x121934C415937863d64ef93436169444633EE0d8",
+      "feedDecimals": 18,
+      "pair": "HOME / USD",
+      "heartbeat": 86400,
+      "category": "low",
+      "directoryPath": "home-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0x97bE14Dd8f994A5364573BC035D85309E7CB34de",
+      "symbol": "JITOSOL",
+      "tokenDecimals": 9,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0x0ca181015d21A5ed19baFC17F2138883C2b16D54",
+      "feedDecimals": 18,
+      "pair": "JITOSOL / USD",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "jitosol-usd",
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
@@ -197,6 +298,42 @@
       ]
     },
     {
+      "token": "0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b",
+      "symbol": "VIRTUAL",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0xEaf310161c9eF7c813A14f8FEF6Fb271434019F7",
+      "feedDecimals": 8,
+      "pair": "VIRTUAL / USD",
+      "heartbeat": 86400,
+      "category": "low",
+      "directoryPath": "virtual-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0xA88594D404727625A9437C3f886C7643872296AE",
+      "symbol": "WELL",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0xc15d9944dAefE2dB03e53bef8DDA25a56832C5fe",
+      "feedDecimals": 8,
+      "pair": "WELL / USD",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "well-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
       "token": "0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452",
       "symbol": "WSTETH",
       "tokenDecimals": 18,
@@ -208,6 +345,24 @@
       "heartbeat": 86400,
       "category": "medium",
       "directoryPath": "wsteth-eth",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "tokenList"
+      ]
+    },
+    {
+      "token": "0x6985884C4392D348587B19cb9eAAf157F13271cd",
+      "symbol": "ZRO",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0xdc31a4CCfCA039BeC6222e20BE7770E12581bfEB",
+      "feedDecimals": 8,
+      "pair": "ZRO / USD",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "zro-usd",
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
@@ -238,7 +393,7 @@
       "directoryPath": "aero-usd",
       "feed": "0x4EC5970fC728C5f65ba413992CD5fF6FD70fcfF0",
       "quote": "USD",
-      "reason": "no address from tokenList",
+      "reason": "the sources name different addresses",
       "candidates": {
         "coingecko": [
           "0x3f5bF3EdAc59d650D8fDf9657a71F2f904A3a4Ee",
@@ -247,7 +402,9 @@
         "coinmarketcap": [
           "0x3f5bF3EdAc59d650D8fDf9657a71F2f904A3a4Ee"
         ],
-        "tokenList": []
+        "tokenList": [
+          "0x940181a94A35A4569E4529A3CDfB74e38FD98631"
+        ]
       }
     },
     {
@@ -281,23 +438,6 @@
       }
     },
     {
-      "pair": "cbBTC / USD",
-      "directoryPath": "cbbtc-usd",
-      "feed": "0x07DA0E54543a844a80ABE69c8A12F22B3aA59f9D",
-      "quote": "USD",
-      "reason": "no address from tokenList",
-      "candidates": {
-        "coingecko": [
-          "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf"
-        ],
-        "coinmarketcap": [
-          "0x805aF152eebc7e280628A0Bb30Dd916b5B7716fb",
-          "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf"
-        ],
-        "tokenList": []
-      }
-    },
-    {
       "pair": "COMP / USD",
       "directoryPath": "comp-usd",
       "feed": "0x9DDa783DE64A9d1A60c49ca761EbE528C35BA428",
@@ -314,38 +454,6 @@
       }
     },
     {
-      "pair": "DEGEN / USD",
-      "directoryPath": "degen-usd",
-      "feed": "0xE62BcE5D7CB9d16AB8b4D622538bc0A50A5799c2",
-      "quote": "USD",
-      "reason": "no address from tokenList",
-      "candidates": {
-        "coingecko": [
-          "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed"
-        ],
-        "coinmarketcap": [
-          "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed"
-        ],
-        "tokenList": []
-      }
-    },
-    {
-      "pair": "EURC / USD",
-      "directoryPath": "eurc-usd",
-      "feed": "0xDAe398520e2B67cd3f27aeF9Cf14D93D927f8250",
-      "quote": "USD",
-      "reason": "no address from tokenList",
-      "candidates": {
-        "coingecko": [
-          "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42"
-        ],
-        "coinmarketcap": [
-          "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42"
-        ],
-        "tokenList": []
-      }
-    },
-    {
       "pair": "GHO / USD",
       "directoryPath": "gho-usd",
       "feed": "0x42868EFcee13C0E71af89c04fF7d96f5bec479b0",
@@ -356,38 +464,6 @@
           "0x6Bb7a212910682DCFdbd5BCBb3e28FB4E8da10Ee"
         ],
         "coinmarketcap": [],
-        "tokenList": []
-      }
-    },
-    {
-      "pair": "HOME / USD",
-      "directoryPath": "home-usd",
-      "feed": "0x121934C415937863d64ef93436169444633EE0d8",
-      "quote": "USD",
-      "reason": "no address from tokenList",
-      "candidates": {
-        "coingecko": [
-          "0x4BfAa776991E85e5f8b1255461cbbd216cFc714f"
-        ],
-        "coinmarketcap": [
-          "0x4BfAa776991E85e5f8b1255461cbbd216cFc714f"
-        ],
-        "tokenList": []
-      }
-    },
-    {
-      "pair": "JITOSOL / USD",
-      "directoryPath": "jitosol-usd",
-      "feed": "0x0ca181015d21A5ed19baFC17F2138883C2b16D54",
-      "quote": "USD",
-      "reason": "no address from tokenList",
-      "candidates": {
-        "coingecko": [
-          "0x97bE14Dd8f994A5364573BC035D85309E7CB34de"
-        ],
-        "coinmarketcap": [
-          "0x97bE14Dd8f994A5364573BC035D85309E7CB34de"
-        ],
         "tokenList": []
       }
     },
@@ -662,22 +738,6 @@
       }
     },
     {
-      "pair": "VIRTUAL / USD",
-      "directoryPath": "virtual-usd",
-      "feed": "0xEaf310161c9eF7c813A14f8FEF6Fb271434019F7",
-      "quote": "USD",
-      "reason": "no address from tokenList",
-      "candidates": {
-        "coingecko": [
-          "0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b"
-        ],
-        "coinmarketcap": [
-          "0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b"
-        ],
-        "tokenList": []
-      }
-    },
-    {
       "pair": "WBTC / USD",
       "directoryPath": "wbtc-usd",
       "feed": "0xCCADC697c55bbB68dc5bCdf8d3CBe83CdD4E071E",
@@ -710,22 +770,6 @@
       }
     },
     {
-      "pair": "WELL / USD",
-      "directoryPath": "well-usd",
-      "feed": "0xc15d9944dAefE2dB03e53bef8DDA25a56832C5fe",
-      "quote": "USD",
-      "reason": "no address from tokenList",
-      "candidates": {
-        "coingecko": [
-          "0xA88594D404727625A9437C3f886C7643872296AE"
-        ],
-        "coinmarketcap": [
-          "0xA88594D404727625A9437C3f886C7643872296AE"
-        ],
-        "tokenList": []
-      }
-    },
-    {
       "pair": "YFI / USD",
       "directoryPath": "yfi-usd",
       "feed": "0xD40e758b5eC80820B68DFC302fc5Ce1239083548",
@@ -739,22 +783,6 @@
         "tokenList": [
           "0x9EaF8C1E34F05a589EDa6BAfdF391Cf6Ad3CB239"
         ]
-      }
-    },
-    {
-      "pair": "ZRO / USD",
-      "directoryPath": "zro-usd",
-      "feed": "0xdc31a4CCfCA039BeC6222e20BE7770E12581bfEB",
-      "quote": "USD",
-      "reason": "no address from tokenList",
-      "candidates": {
-        "coingecko": [
-          "0x6985884C4392D348587B19cb9eAAf157F13271cd"
-        ],
-        "coinmarketcap": [
-          "0x6985884C4392D348587B19cb9eAAf157F13271cd"
-        ],
-        "tokenList": []
       }
     }
   ],

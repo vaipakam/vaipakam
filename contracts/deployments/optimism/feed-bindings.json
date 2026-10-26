@@ -24,10 +24,16 @@
         "name": "Superchain Token List",
         "version": "10.0.1770",
         "sha256": "0x04daa3fff6c486946a7312685180f3297fe6545f489dadb5f70a128967bdedf3"
+      },
+      {
+        "url": "https://tokens.uniswap.org",
+        "name": "Uniswap Labs Default",
+        "version": "22.32.0",
+        "sha256": "0x132cfa159d9ec36717cfd128b85d8a209baea67ed2b0862aa2edfe812878f522"
       }
     ]
   },
-  "checkedAtBlock": 158711960,
+  "checkedAtBlock": 158713139,
   "bindings": [
     {
       "token": "0xAd42D013ac31486B73b6b059e748172994736426",
@@ -350,6 +356,20 @@
         "coinmarketcap": [],
         "tokenList": [
           "0xadDb6A0412DE1BA0F936DCaeb8Aaa24578dcF3B2"
+        ]
+      }
+    },
+    {
+      "pair": "CELO / USD",
+      "directoryPath": "celo-usd",
+      "feed": "0x5A9072a995E072fD06D8f1EB95933955FDa53C0a",
+      "quote": "USD",
+      "reason": "no address from coingecko and coinmarketcap",
+      "candidates": {
+        "coingecko": [],
+        "coinmarketcap": [],
+        "tokenList": [
+          "0x9b88D293b7a791E40d36A39765FFd5A1B9b5c349"
         ]
       }
     },
@@ -712,11 +732,6 @@
       "pair": "BTC / USD",
       "directoryPath": "btc-usd",
       "reason": "no source names a BTC token on this chain"
-    },
-    {
-      "pair": "CELO / USD",
-      "directoryPath": "celo-usd",
-      "reason": "no source names a CELO token on this chain"
     },
     {
       "pair": "COMP / USD",
