@@ -474,38 +474,20 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     readSecret(raw.DIAG_WALLET_HMAC_KEY),
   ]);
   return {
-    // Non-secret bindings / config — passed straight through.
-    //
+    // Non-secret bindings / config — passed straight through, ALL of them,
+    // by spreading the raw env (#2754 r1). This used to be a hand-kept list
+    // of field copies, and a binding left off it reached the Worker as
+    // `undefined` with nothing to say so: `OPENSEA_OFFERS_MAX_PAGES` (#334)
+    // and then `ALERT_WRITE_RATELIMIT`, whose gate read the missing binding
+    // as "no limiter" and let every request through. Spreading makes a new
+    // binding arrive by default; the secret fields below are then overridden
+    // with their resolved strings, and one forgotten there keeps its raw
+    // binding type, which `Env` refuses at compile time.
+    ...raw,
     // `DB` is the exception: it goes through the maintenance seam, which
     // returns the real binding untouched on every ordinary deploy and a
     // refusing stub when the binding is absent (#2239).
     DB: resolveD1Binding(raw.DB, WORKER_NAME),
-    TG_BOT_USERNAME: raw.TG_BOT_USERNAME,
-    PUSH_CHANNEL_ADDRESS: raw.PUSH_CHANNEL_ADDRESS,
-    QUOTE_0X_RATELIMIT: raw.QUOTE_0X_RATELIMIT,
-    QUOTE_1INCH_RATELIMIT: raw.QUOTE_1INCH_RATELIMIT,
-    DIAG_RECORD_RATELIMIT: raw.DIAG_RECORD_RATELIMIT,
-    OPENSEA_LISTING_RATELIMIT: raw.OPENSEA_LISTING_RATELIMIT,
-    INTENT_FUSION_POST_RATELIMIT: raw.INTENT_FUSION_POST_RATELIMIT,
-    OPENSEA_COLLECTION_RATELIMIT: raw.OPENSEA_COLLECTION_RATELIMIT,
-    OPENSEA_OFFERS_RATELIMIT: raw.OPENSEA_OFFERS_RATELIMIT,
-    // #334 — preserve the wrangler-vars config so the proxy
-    // can read it. Without this copy the proxy's
-    // `env.OPENSEA_OFFERS_MAX_PAGES` is always undefined and
-    // the configurable behaviour is unreachable.
-    OPENSEA_OFFERS_MAX_PAGES: raw.OPENSEA_OFFERS_MAX_PAGES,
-    OPENSEA_OFFERS_UPSTREAM_RATELIMIT: raw.OPENSEA_OFFERS_UPSTREAM_RATELIMIT,
-    OPENSEA_SIGNED_OFFER_RATELIMIT: raw.OPENSEA_SIGNED_OFFER_RATELIMIT,
-    SUPPORT_TICKET_RATELIMIT: raw.SUPPORT_TICKET_RATELIMIT,
-    SIG_VERIFY_RATELIMIT: raw.SIG_VERIFY_RATELIMIT,
-    TG_OPS_BOT_TOKEN: raw.TG_OPS_BOT_TOKEN,
-    TG_OPS_CHAT_ID: raw.TG_OPS_CHAT_ID,
-    DIAG_SAMPLE_RATE: raw.DIAG_SAMPLE_RATE,
-    DIAG_RETENTION_DAYS: raw.DIAG_RETENTION_DAYS,
-    DIAG_LEGAL_DOCS: raw.DIAG_LEGAL_DOCS,
-    FRONTEND_ORIGIN: raw.FRONTEND_ORIGIN,
-    // T-086 Round-5 Block A (#313) — pass through verbatim.
-    RECIPIENT_VALIDATING_TOKENS: raw.RECIPIENT_VALIDATING_TOKENS,
     // Resolved secrets.
     RPC_BASE: base,
     RPC_ETH: eth,
