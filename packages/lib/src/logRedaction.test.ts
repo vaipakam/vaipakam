@@ -85,7 +85,7 @@ function serverSourceFiles(): string[] {
       if (name === 'node_modules') continue;
       const p = join(dir, name);
       if (statSync(p).isDirectory()) walk(p);
-      else if (/\.(ts|mts)$/.test(name) && !/\.(test|spec)\.|\.d\.ts$/.test(name)) out.push(p);
+      else if (/\.(ts|mts)$/.test(name) && !/\.(test|spec)\./.test(name) && !name.endsWith('.d.ts')) out.push(p);
     }
   };
   for (const base of ['apps', 'packages']) {
