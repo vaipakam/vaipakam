@@ -24,6 +24,7 @@ import { redactText } from '@vaipakam/lib/redactAddresses';
 import type { Env } from './env';
 import { insertSupportTicket } from './db';
 import { readJsonBody } from '@vaipakam/lib/requestBody';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 /** The ticket's fields are capped in characters below; a character can
  *  take up to six bytes once JSON-escaped, so the body cap is set from
@@ -174,7 +175,7 @@ export async function handleSupportTicket(
   } catch (e) {
     // Includes the migration-not-applied case on a fresh env — an
     // honest 503 lets the widget steer the user to the mailto path.
-    console.error('[support] ticket insert failed', e);
+    console.error('[support] ticket insert failed', redactedError(e));
     return json({ error: 'unavailable' }, 503, corsOrigin);
   }
 
@@ -251,7 +252,7 @@ export async function notifyOpsNewTicket(
       console.error('[support] ops notify failed after retry', res.status);
     }
   } catch (e) {
-    console.error('[support] ops notify failed', e);
+    console.error('[support] ops notify failed', redactedError(e));
   }
 }
 

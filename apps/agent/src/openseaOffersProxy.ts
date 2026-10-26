@@ -238,7 +238,9 @@ export async function handleOpenSeaOffers(
       }
       const page = await fetch(url, { headers })
         .then(r => r.text().then(body => ({ status: r.status, body })))
-        .catch(err => ({ status: 0, body: String(err) }));
+        // A network failure carries no body; the leg reports status 0 and
+        // stops, so the error's text is never needed here (#2759).
+        .catch(() => ({ status: 0, body: '' }));
       if (page.status < 200 || page.status >= 300) {
         // Page failed. If no page has succeeded yet, surface
         // the failure status; otherwise keep `lastStatus` at

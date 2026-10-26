@@ -24,6 +24,7 @@ import { MetricsFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
 import type { Env } from './env';
 import { getChainConfigs } from './env';
 import { readJsonBody } from '@vaipakam/lib/requestBody';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 /** A Farcaster Frame action: the untrusted fields plus the signed
  *  `trustedData` message (#2756). */
@@ -134,9 +135,7 @@ export async function handleActiveLoansFramePost(
         }
         return { chain: chain.name, count: loanIds.length, lowestHf };
       } catch (err) {
-        console.error(
-          `[frames] chain=${chain.name} err=${String(err).slice(0, 200)}`,
-        );
+        console.error(`[frames] chain=${chain.name}`, redactedError(err));
         return { chain: chain.name, count: 0, lowestHf: null as number | null };
       }
     }),

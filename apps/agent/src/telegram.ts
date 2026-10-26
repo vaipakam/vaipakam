@@ -3,6 +3,8 @@
  * handle webhook-pushed updates for the handshake flow.
  */
 
+import { redactedError } from '@vaipakam/lib/errorDescription';
+
 const TELEGRAM_API = 'https://api.telegram.org';
 
 /** Send a plain-text message to a chat. No formatting — keeps the
@@ -56,7 +58,7 @@ export async function sendMessage(
   } catch (err) {
     // Network-level failure (DNS, timeout) — same swallow policy. NOTHING
     // came back, so whether the message arrived is genuinely unknown.
-    console.error(`Telegram sendMessage threw: chat=${chatId} err=${err}`);
+    console.error(`Telegram sendMessage threw: chat=${chatId}`, redactedError(err));
     return 'unknown';
   }
   if (!res.ok) {

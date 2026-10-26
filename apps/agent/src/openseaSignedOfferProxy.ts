@@ -44,6 +44,7 @@
 
 import type { Env } from './env';
 import { slotRefusal, takeCredentialSlot } from './rateLimit';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 const OPENSEA_HOST: Record<number, string> = {
   1: 'api.opensea.io',
@@ -242,7 +243,7 @@ export async function handleOpenSeaSignedOffer(
     // need the detail; operators can read it from the Worker's
     // observability log.
     // eslint-disable-next-line no-console
-    console.warn('[signed-offer] upstream fetch failed', err);
+    console.warn('[signed-offer] upstream fetch failed', redactedError(err));
     return jsonResponse(
       { error: 'upstream-unreachable' },
       502,

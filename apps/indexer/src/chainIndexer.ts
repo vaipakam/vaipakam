@@ -150,6 +150,7 @@ import { schemaDeclineNotice, schemaGate } from './schemaGate';
 import { adoptDeployment, describeAdoption, isAdoptedEpoch } from './deploymentEpoch';
 import { activityRefs } from '@vaipakam/lib/activityRefs';
 import { activityActor } from '@vaipakam/lib/activityActor';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -306,7 +307,7 @@ async function stampNotifiedWatermark(
   try {
     plan = planNotifiedWatermark(await readNotifiedWatermark(env, chainId), through, scanFrom, wroteOk);
   } catch (err) {
-    console.error('[chainIndexer] notified-watermark read failed — the watermark holds', err);
+    console.error('[chainIndexer] notified-watermark read failed — the watermark holds', redactedError(err));
     return;
   }
   let stampTo: bigint;
@@ -330,7 +331,7 @@ async function stampNotifiedWatermark(
     // stored stamp (or no stamp), "holds" means LOWERED to just below the
     // failed scan, or the failure leaves no record (Codex #2489 r6). Both
     // cursors, so neither can sit above an unproven range.
-    console.error('[chainIndexer] notified-watermark replay failed — the watermark holds', err);
+    console.error('[chainIndexer] notified-watermark replay failed — the watermark holds', redactedError(err));
     if (plan.holdAt !== undefined) {
       await _writeNotifiedWatermark(env, chainId, plan.holdAt);
       await _writeNotifiedCursor(env, chainId, NOTIFIED_WRITTEN_CURSOR_KIND, plan.holdAt);
@@ -354,7 +355,7 @@ async function advanceNotifiedWritten(env: Env, chainId: number, through: bigint
       await _writeNotifiedCursor(env, chainId, NOTIFIED_WRITTEN_CURSOR_KIND, through);
     }
   } catch (err) {
-    console.error('[chainIndexer] notified-written advance failed', err);
+    console.error('[chainIndexer] notified-written advance failed', redactedError(err));
   }
 }
 
@@ -374,7 +375,7 @@ async function holdNotifiedWatermark(env: Env, chainId: number, scanFrom: bigint
       await _writeNotifiedCursor(env, chainId, NOTIFIED_WRITTEN_CURSOR_KIND, hold);
     }
   } catch (err) {
-    console.error('[chainIndexer] notified-watermark hold failed', err);
+    console.error('[chainIndexer] notified-watermark hold failed', redactedError(err));
   }
 }
 
@@ -402,7 +403,7 @@ async function _writeNotifiedCursor(env: Env, chainId: number, kind: string, blo
       )
       .run();
   } catch (err) {
-    console.error(`[chainIndexer] ${kind} cursor stamp failed`, err);
+    console.error(`[chainIndexer] ${kind} cursor stamp failed`, redactedError(err));
   }
 }
 
@@ -430,7 +431,7 @@ export async function _stampIngestedBeforeTime(env: Env, chainId: number, headTi
       .bind(chainId, INGESTED_BEFORE_TIME_KIND, Number(headTimestamp), Math.floor(Date.now() / 1000))
       .run();
   } catch (err) {
-    console.error('[chainIndexer] ingested-before-time stamp failed', err);
+    console.error('[chainIndexer] ingested-before-time stamp failed', redactedError(err));
   }
 }
 
@@ -605,7 +606,7 @@ export async function runChainIndexer(
     );
     results.push(r);
   } catch (err) {
-    console.error(`[chainIndexer] chain ${chain.id} failed`, err);
+    console.error(`[chainIndexer] chain ${chain.id} failed`, redactedError(err));
     // The count belongs on the failure result too. A pass that threw still
     // spent what it spent, and the tick that went wrong is the one an
     // operator most wants the figure for.
@@ -879,7 +880,7 @@ async function sweepMarketSummaries(
       .bind(chainId, MARKET_SWEEP_CURSOR_KIND, nowSec, nowSec)
       .run();
   } catch (err) {
-    console.error('[chainIndexer] market_summary sweep failed', err);
+    console.error('[chainIndexer] market_summary sweep failed', redactedError(err));
   }
 }
 
@@ -1537,7 +1538,7 @@ export async function _reportQuarantineForChain(env: Env, chainId: number): Prom
           `and every held row withholds reminders from whatever loan now bears ` +
           `its id. The report below may therefore name rows that are already ` +
           `resolvable`,
-        err,
+        redactedError(err),
       );
     }
     await reportStaleQuarantine(
@@ -1552,7 +1553,7 @@ export async function _reportQuarantineForChain(env: Env, chainId: number): Prom
     console.error(
       `[chainIndexer] quarantine STALE REPORT failed for chain ${chainId} — ` +
         `withholding is unaffected, but long-held rows are not being named`,
-      err,
+      redactedError(err),
     );
   }
 }
@@ -1939,7 +1940,7 @@ export async function _runLoanReconcilePass(input: {
         console.error(
           `[chainIndexer] quarantine WRITE failed for chain ${chainId} — ` +
             `${effects.join('; ')}`,
-          err,
+          redactedError(err),
         );
       }
     }
@@ -2541,7 +2542,7 @@ async function runChainPass(
     } catch (err) {
       console.error(
         `[chainIndexer] getLogs ${cursor}-${chunkEnd} failed`,
-        err,
+        redactedError(err),
       );
       // Don't advance the cursor on partial failure — the next tick
       // retries from the same `scanFrom`. Bail early so we don't
@@ -2854,7 +2855,7 @@ async function runChainPass(
     await materializeNotifications(env.DB, chainId, scannedLogs, blockTimestamps, now);
   } catch (err) {
     notifiedOk = false;
-    console.error(`[notifications] insert failed on chain ${chainId} — the watermark holds, the archive replays`, err);
+    console.error(`[notifications] insert failed on chain ${chainId} — the watermark holds, the archive replays`, redactedError(err));
   }
 
   // RPC read-diet PR B — keep the display config snapshot current
@@ -3262,7 +3263,7 @@ async function processOfferLogs(
     } catch (err) {
       console.error(
         `[chainIndexer] inline getOfferDetails(${Number(o.offerId)}) failed; falling back to stub`,
-        err,
+        redactedError(err),
       );
     }
 
@@ -3520,7 +3521,7 @@ async function processOfferLogs(
         // eslint-disable-next-line no-console
         console.error(
           `[chainIndexer] #760 getOfferDetails(${Number(ev.lenderOfferId)}) for OfferMatched failed; aborting scan so the cursor doesn't advance`,
-          err,
+          redactedError(err),
         );
         throw err;
       }
@@ -3840,7 +3841,7 @@ async function processSignedOfferLogs(
         // eslint-disable-next-line no-console
         console.error(
           `[chainIndexer] signedOfferFilledAmount(${orderHash}) for SignedOfferMatched failed; aborting scan so the cursor doesn't advance`,
-          err,
+          redactedError(err),
         );
         throw err;
       }
@@ -3941,7 +3942,7 @@ export async function runHealLanes(
       console.warn(`[chainIndexer] ledger settlement heal NOT RUNNING on chain ${chainId}: the head is a guess, not a settled block`);
     }
   } catch (err) {
-    console.warn(`[chainIndexer] ledger settlement heal stopped on chain ${chainId}; retried next tick`, err);
+    console.warn(`[chainIndexer] ledger settlement heal stopped on chain ${chainId}; retried next tick`, redactedError(err));
   }
   // #2636 r4/r7 — SECOND, beside the ledger heal and before the early return
   // below: settled rows the chain has no loan for. It is placed with the
@@ -3955,7 +3956,7 @@ export async function runHealLanes(
       const withdrawn = await sweepSettledExistence(settleClient, diamond, env, chainId, budget, atBlock);
       ledgerSettledLoanIds = [...ledgerSettledLoanIds, ...withdrawn];
     } catch (err) {
-      console.warn(`[chainIndexer] settled-row existence sweep stopped on chain ${chainId}; retried next tick`, err);
+      console.warn(`[chainIndexer] settled-row existence sweep stopped on chain ${chainId}; retried next tick`, redactedError(err));
     }
   }
   // #2476 r18 — a row settled above is never selected again, so this return
@@ -3992,7 +3993,7 @@ export async function runHealLanes(
       await reverifyInitTerms(env, chainId);
     }
   } catch (err) {
-    console.warn(`[chainIndexer] heal lanes stopped on chain ${chainId}; remaining rows wait for the next tick`, err);
+    console.warn(`[chainIndexer] heal lanes stopped on chain ${chainId}; remaining rows wait for the next tick`, redactedError(err));
   }
   return { detailRefreshes, loanDetailRefreshes, ledgerSettledLoanIds };
 }
@@ -4120,7 +4121,7 @@ async function refreshOfferDetails(
       blockNumber: atBlock,
     })) as Record<string, unknown>;
   } catch (err) {
-    console.error(`[chainIndexer] getOfferDetails(${offerId}) failed`, err);
+    console.error(`[chainIndexer] getOfferDetails(${offerId}) failed`, redactedError(err));
     return false;
   }
   if (!detail) return false;
@@ -4631,7 +4632,7 @@ export async function settleFromLedger(
         if (block === null) undated.push(row.loan_id);
       }
     } catch (err) {
-      console.warn(`[chainIndexer] ledger settlement heal: loan ${row.loan_id} on chain ${chainId} retried next lap`, err);
+      console.warn(`[chainIndexer] ledger settlement heal: loan ${row.loan_id} on chain ${chainId} retried next lap`, redactedError(err));
     }
   }
   // A short page means the walk reached the end: wrap. Otherwise resume after
@@ -4660,7 +4661,7 @@ export async function settleFromLedger(
         env.DB.prepare(upsert).bind(chainId, SETTLE_HEAL_LAP_END_KIND, next === 0 ? 0 : lapEnd, t),
       ]);
     } catch (err) {
-      console.warn(`[chainIndexer] ledger settlement heal: rotation pointer not saved on chain ${chainId}`, err);
+      console.warn(`[chainIndexer] ledger settlement heal: rotation pointer not saved on chain ${chainId}`, redactedError(err));
     }
   }
   // #2636 r1 — the report says what each settlement rests on: every one is
@@ -4765,7 +4766,7 @@ export async function sweepSettledExistence(
         blockNumber: atBlock,
       })) as { id?: number | bigint };
     } catch (err) {
-      console.warn(`[chainIndexer] settled-row existence sweep: loan ${row.loan_id} on chain ${chainId} unread; retried next tick`, err);
+      console.warn(`[chainIndexer] settled-row existence sweep: loan ${row.loan_id} on chain ${chainId} unread; retried next tick`, redactedError(err));
       break;
     }
     if (Number(detail.id ?? 0) === 0) {
@@ -4775,7 +4776,7 @@ export async function sweepSettledExistence(
           withdrawn.push(row.loan_id);
         }
       } catch (err) {
-        console.warn(`[chainIndexer] settled-row existence sweep: loan ${row.loan_id} on chain ${chainId} not withdrawn; retried next lap`, err);
+        console.warn(`[chainIndexer] settled-row existence sweep: loan ${row.loan_id} on chain ${chainId} not withdrawn; retried next lap`, redactedError(err));
         break;
       }
     }
@@ -4793,7 +4794,7 @@ export async function sweepSettledExistence(
         env.DB.prepare(upsert).bind(chainId, SETTLED_EXISTENCE_LAP_END_KIND, next === 0 ? 0 : lapEnd, t),
       ]);
     } catch (err) {
-      console.warn(`[chainIndexer] settled-row existence sweep: rotation pointer not saved on chain ${chainId}`, err);
+      console.warn(`[chainIndexer] settled-row existence sweep: rotation pointer not saved on chain ${chainId}`, redactedError(err));
     }
   }
   if (withdrawn.length > 0) {
@@ -5038,7 +5039,7 @@ async function refreshStubLoans(
         .run();
       if ((updated.meta?.changes ?? 0) > 0) healed++;
     } catch (err) {
-      console.error(`[chainIndexer] getLoanDetails(${row.loan_id}) failed`, err);
+      console.error(`[chainIndexer] getLoanDetails(${row.loan_id}) failed`, redactedError(err));
       // Soft-skip: leave row at is_stub = 1, next tick retries.
     }
   }
@@ -5426,7 +5427,7 @@ export async function processLoanLogs(
       } catch (err) {
         console.error(
           `[chainIndexer] LoanInitiatedDetails missing for loan ${loanId} AND getLoanDetails read-back failed; stub INSERT`,
-          err,
+          redactedError(err),
         );
       }
       if (loanDetail) {
@@ -6087,7 +6088,7 @@ export async function processLoanLogs(
         // eslint-disable-next-line no-console
         console.error(
           `[chainIndexer] #749 getLoanDetails(${loanId}) for LoanSaleCompleted failed; aborting scan so the cursor doesn't advance`,
-          err,
+          redactedError(err),
         );
         throw err;
       }
@@ -6329,7 +6330,7 @@ export async function processLoanLogs(
           // eslint-disable-next-line no-console
           console.error(
             `[chainIndexer] #760 getLoanDetails(${loanId}) for InternalMatchExecuted failed; aborting scan so the cursor doesn't advance`,
-            err,
+            redactedError(err),
           );
           throw err;
         }
@@ -7238,11 +7239,11 @@ async function _resolveGraceEnd(
     if (blockNumber !== undefined) {
       console.warn(
         `[chainIndexer] _resolveGraceEnd(${loanId}) block-pinned read failed; retrying at latest`,
-        err,
+        redactedError(err),
       );
       return _resolveGraceEnd(client, diamond, loanId);
     }
-    console.error(`[chainIndexer] _resolveGraceEnd(${loanId}) failed`, err);
+    console.error(`[chainIndexer] _resolveGraceEnd(${loanId}) failed`, redactedError(err));
     return 0; // Sentinel — the frontend treats 0 as "unknown grace end".
   }
 }
@@ -7327,7 +7328,7 @@ async function _maybePublishToOpenSea(
   } catch (err) {
     console.error(
       `[chainIndexer] _maybePublishToOpenSea(${loanId}) threw`,
-      err,
+      redactedError(err),
     );
     return { published: false, unsupportedChain: false };
   }

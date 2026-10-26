@@ -44,6 +44,7 @@ import {
 } from './signedOfferEip712';
 import { slotRefusalStatus, takeCallerSlot } from '@vaipakam/lib/rateLimit';
 import { readJsonBody } from '@vaipakam/lib/requestBody';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 /** A signed offer: the order struct and its signature, which for a smart
  *  account (ERC-6492) can run to a few kilobytes (#2756). */
@@ -644,7 +645,7 @@ export async function handleSignedOfferPost(
       );
     }
   } catch (err) {
-    console.error('[signedOfferRoutes] existing-row lookup failed', err);
+    console.error('[signedOfferRoutes] existing-row lookup failed', redactedError(err));
     return jsonResponse({ error: 'lookup-failed' }, 500);
   }
 
@@ -739,7 +740,7 @@ export async function handleSignedOfferPost(
   } catch (err) {
     console.warn(
       '[signedOfferRoutes] chain-state ingest check failed; accepting (lifecycle handlers reconcile)',
-      err,
+      redactedError(err),
     );
   }
 
@@ -812,11 +813,11 @@ export async function handleSignedOfferPost(
       // fail-open block as the refresh.
       await seedMarketSweepCursorIfAbsent(env.DB, chainId, now);
     } catch (err) {
-      console.error('[signedOfferRoutes] market_summary refresh failed', err);
+      console.error('[signedOfferRoutes] market_summary refresh failed', redactedError(err));
     }
     return jsonResponse({ chainId, orderHash }, 201);
   } catch (err) {
-    console.error('[signedOfferRoutes] insert failed', err);
+    console.error('[signedOfferRoutes] insert failed', redactedError(err));
     return jsonResponse({ error: 'insert-failed' }, 500);
   }
 }
@@ -988,7 +989,7 @@ export async function handleSignedOffersGet(
     }));
     return jsonResponse({ chainId, offers, truncated });
   } catch (err) {
-    console.error('[signedOfferRoutes] book read failed', err);
+    console.error('[signedOfferRoutes] book read failed', redactedError(err));
     return jsonResponse({ error: 'book-failed' }, 500);
   }
 }

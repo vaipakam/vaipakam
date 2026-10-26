@@ -33,7 +33,12 @@ import {
   type ProtocolKnobRead,
 } from '@vaipakam/lib/protocolKnobs';
 import { getDeployment } from '@vaipakam/contracts/deployments';
-import { describeFailure } from '@vaipakam/lib/errorDescription';
+import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
+
+/** A call that reached a Diamond without the getter: the decoded name, the
+ *  raw selector, or viem's generic wording. Tested, never printed (#2759). */
+const MISSING_SELECTOR =
+  /function.*(does not exist|not found)|FunctionNotFound|FunctionDoesNotExist|0xa9ad62f8/i;
 import { pauseLogToJson, readPauseLog } from '@vaipakam/lib/loanClock';
 import type { Env } from './env';
 import { jsonResponse } from './offerRoutes';
@@ -464,18 +469,16 @@ export async function maybeRefreshProtocolConfig(opts: {
         // into the transient branch and re-forced the three config
         // reads on every near-head scan forever).
         const raw = (err as { data?: unknown })?.data;
-        const msg = `${typeof raw === 'string' ? raw : ''} ${String(err)}`;
         if (
-          /function.*(does not exist|not found)|FunctionNotFound|FunctionDoesNotExist|0xa9ad62f8/i.test(
-            msg,
-          )
+          MISSING_SELECTOR.test(typeof raw === 'string' ? raw : '') ||
+          MISSING_SELECTOR.test(String(err))
         ) {
           return [] as const; // pre-getter diamond — definitively no buckets
         }
         // eslint-disable-next-line no-console
         console.error(
           `[configSnapshot] getGraceBuckets read failed for chain ${opts.chainId} (keeping previous value)`,
-          err,
+          redactedError(err),
         );
         return null;
       }),
@@ -518,7 +521,7 @@ export async function maybeRefreshProtocolConfig(opts: {
         // eslint-disable-next-line no-console
         console.error(
           `[configSnapshot] knob read failed for chain ${opts.chainId} (stored as unknown)`,
-          err,
+          redactedError(err),
         );
         return null;
       }),
@@ -600,7 +603,7 @@ export async function maybeRefreshProtocolConfig(opts: {
     // eslint-disable-next-line no-console
     console.error(
       `[configSnapshot] refresh failed for chain ${opts.chainId} (fail-open)`,
-      err,
+      redactedError(err),
     );
     // A refresh that failed ON a config event must not leave the old
     // row looking fresh for the whole backstop window (Codex #1231
@@ -748,7 +751,7 @@ export async function handleConfigSnapshot(
     });
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error('[configSnapshot] route failed', err);
+    console.error('[configSnapshot] route failed', redactedError(err));
     return jsonResponse({ error: 'config-failed' }, 500);
   }
 }

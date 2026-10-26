@@ -27,7 +27,14 @@ Current scope:
   rule was first written as a private helper in `apps/indexer`, with the
   hazard documented in full, and the next change wrote `String(err)` around a
   viem read in `apps/agent` anyway (#2213). One rule, every Worker holding an
-  RPC client.
+  RPC client. Since #2759 it holds the one redaction rule (`redactSecrets`)
+  every formatter applies, and `redactedError`, which keeps the message, the
+  cause chain and the first stack frames with every URL and credential
+  removed. `logRedaction.test.ts` reads the syntax tree of every server-side
+  package and refuses any place a caught value is turned into text other
+  than through these formatters, whether the text goes to a log, a
+  response, an alert or a stored row (`logRedaction.ts` is that check, used
+  by the test only).
 - `activityRefs`, `activityActor` — how an activity row is filed: the loan
   and offer an event concerns (read from the Diamond ABI by one rule, #1794)
   and the wallet it is filed under. They live here, not in `apps/indexer`,

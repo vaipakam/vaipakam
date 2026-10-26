@@ -145,6 +145,7 @@ import type { AlertSettingsChange } from '@vaipakam/lib/alertsMessage';
 import { isTickDue } from '@vaipakam/lib/cronCadence';
 import { AGENT_TICK_CADENCE_MINUTES } from './tickCadence';
 import { readJsonBody } from '@vaipakam/lib/requestBody';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 /** A signed alert request: a few fields plus a wallet signature. A
  *  smart-account (ERC-6492) signature can run to a few kilobytes, so the
@@ -221,19 +222,19 @@ export default {
     ctx.waitUntil(
       runPeriodicPreNotify(resolved).catch((err) => {
         // eslint-disable-next-line no-console
-        console.error('[agent] runPeriodicPreNotify pass failed:', err);
+        console.error('[agent] runPeriodicPreNotify pass failed:', redactedError(err));
       }),
     );
     ctx.waitUntil(
       pruneOldDiagErrors(resolved).catch((err) => {
         // eslint-disable-next-line no-console
-        console.error('[agent] pruneOldDiagErrors pass failed:', err);
+        console.error('[agent] pruneOldDiagErrors pass failed:', redactedError(err));
       }),
     );
     ctx.waitUntil(
       pruneOldSupportTickets(resolved).catch((err) => {
         // eslint-disable-next-line no-console
-        console.error('[agent] pruneOldSupportTickets pass failed:', err);
+        console.error('[agent] pruneOldSupportTickets pass failed:', redactedError(err));
       }),
     );
     // #1896 — expired Telegram handshake codes. This sweep used to run
@@ -287,7 +288,7 @@ export default {
     ctx.waitUntil(
       sweepExpiredLinks(resolved.DB).catch((err) => {
         // eslint-disable-next-line no-console
-        console.error('[agent] sweepExpiredLinks pass failed:', err);
+        console.error('[agent] sweepExpiredLinks pass failed:', redactedError(err));
       }),
     );
 

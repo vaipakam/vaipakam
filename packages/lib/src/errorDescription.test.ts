@@ -14,7 +14,7 @@ import {
   toFunctionSelector,
   type Abi,
 } from 'viem';
-import { describeFailure, redactAndBound, summarizeFailure } from './errorDescription';
+import { describeFailure, redactAndBound, redactedError, redactSecrets, summarizeFailure } from './errorDescription';
 
 /** What viem hands a catch block when an RPC rejects the request. */
 function viemHttpError(): Error {
@@ -212,5 +212,56 @@ describe('summarizeFailure', () => {
     const e = Object.assign(new Error('x'), { shortMessage: 'a'.repeat(500) });
     expect(summarizeFailure(e)).toHaveLength(200);
     expect(summarizeFailure(e, 10)).toHaveLength(10);
+  });
+});
+
+describe('redactSecrets', () => {
+  it('removes a URL whole, with or without its scheme', () => {
+    expect(redactSecrets('URL: https://base.example.com/v2/KEY1 then x')).toBe('URL: <redacted url> then x');
+    expect(redactSecrets('posting to KEY2.quiknode.pro/abc/ failed')).toBe('posting to <redacted url> failed');
+    expect(redactSecrets('wss://node.example/ws/KEY3')).not.toContain('KEY3');
+  });
+
+  it('removes key-like field values and bearer tokens outside a URL', () => {
+    const said = redactSecrets('apikey=K1 token: "K2" Authorization: Bearer K3 x-api-key=K4');
+    for (const k of ['K1', 'K2', 'K3', 'K4']) expect(said).not.toContain(k);
+  });
+
+  it('removes a Telegram bot token', () => {
+    expect(redactSecrets('bot 123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw0 failed')).not.toContain('AAHdq');
+  });
+
+  it('keeps hashes, ids and SQL errors an operator reads', () => {
+    const hash = `0x${'ab'.repeat(32)}`;
+    expect(redactSecrets(`tx ${hash} reverted`)).toBe(`tx ${hash} reverted`);
+    expect(redactSecrets('D1_ERROR: no such column: loans.grace_end')).toBe('D1_ERROR: no such column: loans.grace_end');
+  });
+});
+
+describe('redactedError', () => {
+  it('keeps the message and the cause chain, without the credential', () => {
+    const err = new Error('read failed', { cause: viemHttpError() });
+    const said = redactedError(err);
+    expect(said).toContain('Error: read failed ← HttpRequestError: HTTP request failed.');
+    expect(said).not.toContain('SUPERSECRETAPIKEY');
+    expect(said).not.toContain('base-sepolia.example.com');
+  });
+
+  it('keeps a bounded number of stack frames', () => {
+    const said = redactedError(new Error('boom'));
+    const frames = said.split('\n').filter((l) => /^\s*at\s/.test(l));
+    expect(frames.length).toBeGreaterThan(0);
+    expect(frames.length).toBeLessThanOrEqual(8);
+  });
+
+  it('describes a non-Error by its type, never by its fields', () => {
+    expect(redactedError({ url: 'https://x.example/KEY' })).toBe('a thrown object (not an Error)');
+    expect(redactedError('https://x.example/KEY failed')).toBe('<redacted url> failed');
+  });
+
+  it('stops on a cyclic cause and is bounded', () => {
+    const a = new Error('a'.repeat(5_000));
+    (a as { cause?: unknown }).cause = a;
+    expect(redactedError(a).length).toBeLessThanOrEqual(2_000);
   });
 });
