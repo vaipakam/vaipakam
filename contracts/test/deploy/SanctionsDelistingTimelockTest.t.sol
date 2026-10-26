@@ -403,6 +403,65 @@ contract SanctionsDelistingTimelockTest is Test {
 
     // ── A removed proposer's proposals ────────────────────────────────
 
+    /// #2902: removing a key voids its proposals for good. Reappointing the
+    /// same address starts a new authority generation; the old proposals
+    /// stay void on every path (execute, reconfirm, its own cancel) and stay
+    /// discardable, while the reappointed key may propose afresh.
+    function test_ReappointingAProposerDoesNotReviveItsVoidedProposals() public {
+        (, SanctionsDelistingTimelock tl) = _local();
+        uint256 id = _propose(tl, _arr(a, b));
+
+        vm.expectEmit(address(tl));
+        emit SanctionsDelistingTimelock.AuthorityLapsed(bot, 1);
+        vm.prank(admin);
+        tl.setProposer(bot, false);
+        vm.prank(admin);
+        tl.setProposer(bot, true);
+        assertEq(tl.authGeneration(bot), 1);
+        assertTrue(tl.isProposer(bot));
+        assertFalse(tl.holdsAuthority(id), "a reappointment does not restore the old authority");
+
+        vm.warp(T0 + 2 days);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.ProposerRemoved.selector, id, bot));
+        tl.execute(id);
+        (bool ready, bytes4 reason) = tl.readiness(id);
+        assertFalse(ready);
+        assertEq(reason, SanctionsDelistingTimelock.ProposerRemoved.selector);
+
+        vm.startPrank(bot);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.NotItsProposer.selector, id, bot));
+        tl.cancel(id);
+        vm.stopPrank();
+
+        vm.prank(stranger);
+        tl.discard(id);
+        assertEq(tl.proposalOf(a), 0);
+
+        // The reappointed key proposes under its new generation.
+        uint256 id2 = _propose(tl, _arr(a));
+        assertEq(tl.getProposal(id2).generation, 1);
+        assertTrue(tl.holdsAuthority(id2));
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.ProposerStillAppointed.selector, id2, bot));
+        tl.discard(id2);
+    }
+
+    /// Appointing a key that is already appointed, or removing one that is
+    /// not, changes no generation: only a real loss of authority voids.
+    function test_SettingAProposerToItsCurrentStateVoidsNothing() public {
+        (, SanctionsDelistingTimelock tl) = _local();
+        uint256 id = _propose(tl, _arr(a));
+        vm.startPrank(admin);
+        tl.setProposer(bot, true);
+        tl.setProposer(stranger, false);
+        vm.stopPrank();
+        assertEq(tl.authGeneration(bot), 0);
+        assertEq(tl.authGeneration(stranger), 0);
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.ProposerStillAppointed.selector, id, bot));
+        tl.discard(id);
+    }
+
     function test_RemovedProposer_CannotExecute_AndAnyoneMayDiscard() public {
         (SanctionsList list, SanctionsDelistingTimelock tl) = _local();
         uint256 id = _propose(tl, _arr(a, b));
