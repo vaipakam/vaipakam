@@ -35,31 +35,52 @@
 
 _WORKER_SECRETS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# _store_secret_names <worker_dir> <store_id>
-#   Prints every secret name in the store whose scopes include "workers",
-#   one per line, walking every page. Returns 1 when a page cannot be read.
-_store_secret_names() {
-  local worker_dir="$1" store_id="$2" page=1 out rows names
+# wrangler's own text for a listing with no rows. It is a fatal error, not an
+# empty table, whether the store is empty or the page is past the last one
+# (wrangler 4.90 `secrets-store secret list`), so it is the end of the list.
+_WRANGLER_EMPTY_LISTING='List request returned no secrets.'
+
+# _store_has_secret <worker_dir> <store_id> <secret_name>
+#   Answers the one question the check asks: does the store hold <secret_name>
+#   with the workers scope? Walks the pages until the name is found or the list
+#   ends. Returns 0 when found, 1 when the list ended without it, 2 when a page
+#   could not be read (and prints that page's error on stderr).
+_store_has_secret() {
+  local worker_dir="$1" store_id="$2" secret_name="$3" page=1 out err rows
+  err=$(mktemp)
   while :; do
-    out=$(cd "$worker_dir" && pnpm exec wrangler secrets-store secret list "$store_id" \
-      --remote --per-page 100 --page "$page" 2>/dev/null) || return 1
+    if ! out=$(cd "$worker_dir" && pnpm exec wrangler secrets-store secret list "$store_id" \
+      --remote --per-page 100 --page "$page" 2>"$err"); then
+      # A store whose secrets are all on earlier pages (an exact multiple of
+      # 100) answers the next page with the empty-listing error. That is the
+      # end of the list; any other failure is a listing we could not read.
+      if grep -Fq -- "$_WRANGLER_EMPTY_LISTING" "$err"; then
+        rm -f "$err"
+        return 1
+      fi
+      cat "$err" >&2
+      rm -f "$err"
+      return 2
+    fi
     # Table rows are `│ NAME │ ID │ COMMENT │ SCOPES │ STATUS │ …`. Each data
-    # row is printed as `<scope-ok> <name>`: the page size is a count of ALL
-    # the store's entries, so whether another page exists is judged on every
-    # row, and only the names with the workers scope are kept.
+    # row is printed as `<scope-ok> <name>`: the page size counts ALL the
+    # store's entries, so whether another page exists is judged on every row.
     rows=$(printf '%s\n' "$out" | awk -F'│' '
       NF > 6 {
         name = $2; scopes = $5
         gsub(/^[ \t]+|[ \t]+$/, "", name)
         if (name != "" && name != "Name") print (scopes ~ /workers/ ? "1" : "0"), name
       }')
-    [ -n "$rows" ] || break
-    names=$(printf '%s\n' "$rows" | awk '$1 == "1" { print $2 }')
-    [ -n "$names" ] && printf '%s\n' "$names"
-    [ "$(printf '%s\n' "$rows" | wc -l)" -lt 100 ] && break
+    if printf '%s\n' "$rows" | awk -v n="$secret_name" '$1 == "1" && $2 == n { f = 1 } END { exit !f }'; then
+      rm -f "$err"
+      return 0
+    fi
+    if [ -z "$rows" ] || [ "$(printf '%s\n' "$rows" | wc -l)" -lt 100 ]; then
+      rm -f "$err"
+      return 1
+    fi
     page=$((page + 1))
   done
-  return 0
 }
 
 # worker_serves_only_bound_chains <worker_name>
@@ -80,7 +101,7 @@ worker_serves_only_bound_chains() {
 #   printing why and how to fix it) otherwise.
 verify_rpc_secret_on_worker() {
   local worker_dir="$1" worker_name="$2" binding="$3" chain_id="$4"
-  local where kind store_id secret_name names
+  local where kind store_id secret_name
 
   if ! where=$(node "$_WORKER_SECRETS_DIR/worker-secret-binding.mjs" "$worker_dir" "$binding"); then
     echo "  ✗ FAIL: cannot read where $worker_name binds $binding (see the error above)."
@@ -104,16 +125,18 @@ verify_rpc_secret_on_worker() {
     return 1
   fi
 
-  if ! names=$(_store_secret_names "$worker_dir" "$store_id"); then
-    echo "  ✗ FAIL: could not list Secrets Store $store_id, which $worker_name"
-    echo "    reads $binding from. Check the wrangler login (or CLOUDFLARE_API_TOKEN)"
-    echo "    can read the account's Secrets Store, then re-run. Not reading the"
-    echo "    store is not evidence the secret is there."
-    return 1
-  fi
-  if printf '%s\n' "$names" | grep -Fxq -- "$secret_name"; then
+  local found=0
+  _store_has_secret "$worker_dir" "$store_id" "$secret_name" || found=$?
+  if [ "$found" -eq 0 ]; then
     echo "  ✓ $worker_name reads $binding from Secrets Store entry $secret_name, which exists"
     return 0
+  fi
+  if [ "$found" -eq 2 ]; then
+    echo "  ✗ FAIL: could not list Secrets Store $store_id, which $worker_name"
+    echo "    reads $binding from (wrangler's error is above). Check the wrangler"
+    echo "    login (or CLOUDFLARE_API_TOKEN) can read the account's Secrets Store,"
+    echo "    then re-run. Not reading the store is not evidence the secret is there."
+    return 1
   fi
   echo "  ✗ FAIL: $worker_name binds $binding to Secrets Store entry $secret_name"
   echo "    (store $store_id), and the store has no such entry with the workers scope."
