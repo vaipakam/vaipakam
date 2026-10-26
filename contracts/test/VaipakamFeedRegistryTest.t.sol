@@ -276,6 +276,51 @@ contract VaipakamFeedRegistryTest is Test {
         reg.execute(id, cs);
     }
 
+    function test_ProposerCannotReplaceOrRemoveAnOwnerPlacedHighEntry() public {
+        VaipakamFeedRegistry.Change[] memory add = _change(link, USD, address(0), address(linkUsd), "LINK / USD");
+        add[0].category = VaipakamFeedRegistry.Category.High;
+        vm.prank(OWNER);
+        uint256 id = reg.propose(add, DIR, DIR_DATE);
+        vm.warp(block.timestamp + reg.DEFAULT_DELAY());
+        linkUsd.set(2000e8, block.timestamp);
+        reg.execute(id, add);
+
+        // A removal by the proposer.
+        VaipakamFeedRegistry.Change[] memory rm = _change(link, USD, address(linkUsd), address(0), "");
+        vm.prank(BOT);
+        uint256 rmId = reg.propose(rm, DIR, DIR_DATE);
+        // A replacement by the proposer, re-labelled into its own scope.
+        RegistryFeedStub other = new RegistryFeedStub("LINK / USD", 8);
+        VaipakamFeedRegistry.Change[] memory rp = _change(link, USD, address(linkUsd), address(other), "LINK / USD");
+        other.set(2000e8, block.timestamp);
+        vm.prank(BOT);
+        uint256 rpId = reg.propose(rp, DIR, DIR_DATE);
+
+        vm.warp(block.timestamp + reg.DEFAULT_DELAY());
+        linkUsd.set(2000e8, block.timestamp);
+        other.set(2000e8, block.timestamp);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaipakamFeedRegistry.CategoryNeedsOwner.selector, 0, VaipakamFeedRegistry.Category.High
+            )
+        );
+        reg.execute(rmId, rm);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaipakamFeedRegistry.CategoryNeedsOwner.selector, 0, VaipakamFeedRegistry.Category.High
+            )
+        );
+        reg.execute(rpId, rp);
+        assertEq(reg.getFeed(link, USD), address(linkUsd), "the owner's entry stands");
+
+        // The owner may remove it.
+        vm.prank(OWNER);
+        uint256 ownerRm = reg.propose(rm, DIR, DIR_DATE);
+        vm.warp(block.timestamp + reg.DEFAULT_DELAY());
+        reg.execute(ownerRm, rm);
+        assertEq(reg.getFeed(link, USD), address(0));
+    }
+
     function test_ReappointingAProposerDoesNotReviveItsVoidedProposals() public {
         VaipakamFeedRegistry.Change[] memory cs = _change(link, USD, address(0), address(linkUsd), "LINK / USD");
         vm.prank(BOT);

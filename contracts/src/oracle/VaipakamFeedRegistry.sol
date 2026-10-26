@@ -49,7 +49,8 @@ import {TestnetChains} from "../compliance/TestnetChains.sol";
  *            sorts feeds by risk: low, medium, high, new and custom. A
  *            proposer may propose low and medium feeds only. A high, new or
  *            custom feed enters only on the owner's own proposal, under the
- *            same delay and veto.
+ *            same delay and veto, and only the owner may then replace or
+ *            remove it.
  *
  *         4. **A proposal applies to the state it was made against, or not at
  *            all.** Each change names the feed it expects to replace (zero
@@ -425,7 +426,7 @@ contract VaipakamFeedRegistry is Ownable2Step {
         _checkChanges(changes, p.byOwner);
         p.state = State.Executed;
         for (uint256 i; i < changes.length; ++i) {
-            _apply(changes[i], p.directorySha256, p.directoryDate, i, id);
+            _apply(changes[i], p.directorySha256, p.directoryDate, i, id, p.byOwner);
         }
         emit ProposalExecuted(id, msg.sender);
     }
@@ -479,11 +480,20 @@ contract VaipakamFeedRegistry is Ownable2Step {
         }
     }
 
-    function _apply(Change calldata c, bytes32 dirHash, uint32 dirDate, uint256 i, uint256 id) private {
+    /// @dev The proposer's scope binds the entry a change TOUCHES as well as
+    ///      the one it writes: a proposer may not replace or remove an entry
+    ///      the owner placed above its scope. Checked here, at execution,
+    ///      because the current entry is only known then.
+    function _apply(Change calldata c, bytes32 dirHash, uint32 dirDate, uint256 i, uint256 id, bool byOwner)
+        private
+    {
         bytes32 k = _key(c.base, c.quote);
         Entry storage e = _entries[k];
         address previous = e.feed;
         if (previous != c.expectedFeed) revert ExpectedFeedMismatch(i, c.expectedFeed, previous);
+        if (!byOwner && previous != address(0) && e.category != Category.Low && e.category != Category.Medium) {
+            revert CategoryNeedsOwner(i, e.category);
+        }
         if (c.feed == address(0)) {
             if (previous == address(0)) revert NothingToRemove(i);
             delete _entries[k];

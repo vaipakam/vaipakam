@@ -75,7 +75,7 @@ section 5.
 | Role | Who | May |
 |---|---|---|
 | owner | admin, then the Timelock | appoint and remove the proposer and the guardian; set the delay inside its bounds |
-| proposer | the feed service's key | propose adds, replaces and removals; execute a proposal whose delay has passed |
+| proposer | the feed service's key | propose adds, replaces and removals of low- and medium-risk entries (it may not replace or remove an entry the owner placed above that scope); execute a proposal whose delay has passed |
 | guardian | the Pauser Safe | veto any pending proposal |
 
 The veto goes to the Pauser Safe rather than the governance Safe because it is
