@@ -161,6 +161,24 @@ export async function indexerPublishPrepayListing(
   }
 
   try {
+    // 0. Publish only a LIVE listing (#1481). Every read below is pinned to
+    //    the post tx's block, so on its own this module would rebuild and
+    //    publish an order the borrower has since cancelled, replaced, or
+    //    sold through — which is exactly what an ingest catching up on old
+    //    blocks, or a block-zero replay after a restore, hands it. The
+    //    Diamond keeps the loan's current listing hash; an order that is not
+    //    it is not offered to OpenSea. The row keeps a NULL marker, and the
+    //    ingest replaces or deletes it when it reaches the later event.
+    const liveOrderHash = (await input.publicClient.readContract({
+      address: input.diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getPrepayListingOrderHash',
+      args: [input.loanId],
+    })) as `0x${string}`;
+    if (liveOrderHash.toLowerCase() !== input.expectedOrderHash.toLowerCase()) {
+      return { published: false, error: 'listing-not-live' };
+    }
+
     // 1. Read the post tx's block timestamp — the canonical
     //    `startTime` is `block.timestamp` AT THE POST CALL,
     //    same as the diamond used.

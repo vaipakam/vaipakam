@@ -650,19 +650,21 @@ export async function runChainIndexer(
  *
  * BUDGET (#2194): this sweep shares ONE tick's allowance with the scan and the
  * other cron passes, which is why it takes the invocation's counter rather
- * than opening its own — and it ASKS before each row. A row is seven external
- * requests (the transaction receipt, its block, the prepay context, the
- * executor's Seaport, the counter, the order hash, then the OpenSea POST) and
- * one D1 write. Its client does not retry, so seven is a bound rather than a
+ * than opening its own — and it ASKS before each row. A row is eight external
+ * requests (the loan's live listing hash, the transaction receipt, its block,
+ * the prepay context, the executor's Seaport, the counter, the order hash,
+ * then the OpenSea POST) and one D1 write. Its client does not retry, so
+ * eight is a bound rather than a
  * normal figure; a row that fails is simply retried next tick, which is what
  * this sweep is for. The cron entry point runs it AFTER ingest has finished
  * (`index.ts`), so on the legacy inline path it takes what the scan left
  * rather than racing the scan for it — the condition #2194 recorded, where
  * the sweep's 35 and the scan's ~38 were drawn concurrently from one 50.
  */
-/** One sweep row: six chain reads and the OpenSea POST, then the marker write.
- *  A bound, because the sweep's client does not retry. */
-const SWEEP_ROW_COST: Cost = { external: 7, d1Queries: 1 };
+/** One sweep row: seven chain reads (the live-listing check first, #1481) and
+ *  the OpenSea POST, then the marker write. A bound, because the sweep's
+ *  client does not retry. */
+const SWEEP_ROW_COST: Cost = { external: 8, d1Queries: 1 };
 
 export async function sweepUnpublishedListings(
   rawEnv: Env,

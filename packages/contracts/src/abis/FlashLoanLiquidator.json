@@ -140,17 +140,12 @@
         "internalType": "uint256"
       },
       {
-        "name": "swapTarget",
+        "name": "swapAdapter",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "swapAllowanceTarget",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "swapCalldata",
+        "name": "adapterData",
         "type": "bytes",
         "internalType": "bytes"
       }
@@ -178,17 +173,12 @@
         "internalType": "uint256"
       },
       {
-        "name": "swapTarget",
+        "name": "swapAdapter",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "swapAllowanceTarget",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "swapCalldata",
+        "name": "adapterData",
         "type": "bytes",
         "internalType": "bytes"
       }
@@ -425,8 +415,14 @@
   },
   {
     "type": "error",
-    "name": "SwapFailed",
-    "inputs": []
+    "name": "SwapAdapterNotRouted",
+    "inputs": [
+      {
+        "name": "adapter",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",

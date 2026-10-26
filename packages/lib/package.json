@@ -145,6 +145,10 @@
       "types": "./src/markdownProse.d.mts",
       "default": "./src/markdownProse.mjs"
     },
+    "./signedOfferWire": {
+      "types": "./src/signedOfferWire.d.mts",
+      "default": "./src/signedOfferWire.mjs"
+    },
     "./rateLimit": {
       "types": "./src/rateLimit.ts",
       "default": "./src/rateLimit.ts"

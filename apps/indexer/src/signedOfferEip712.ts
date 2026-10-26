@@ -32,90 +32,23 @@ import {
   type Hex,
   type TypedDataDomain,
 } from 'viem';
+import {
+  SIGNED_OFFER_FIELDS,
+  SIGNED_OFFER_FIELD_NAMES,
+  type SignedOrderWire,
+} from '@vaipakam/lib/signedOfferWire';
 
 /** The 31-field SignedOffer typed-data description — struct order EXACTLY as
- *  `LibSignedOffer.SignedOffer` declares it (enums ⇒ uint8, GTT ⇒ uint64). */
-export const SIGNED_OFFER_TYPES = {
-  SignedOffer: [
-    { name: 'offerType', type: 'uint8' },
-    { name: 'lendingAsset', type: 'address' },
-    { name: 'amount', type: 'uint256' },
-    { name: 'amountMax', type: 'uint256' },
-    { name: 'interestRateBps', type: 'uint256' },
-    { name: 'interestRateBpsMax', type: 'uint256' },
-    { name: 'collateralAsset', type: 'address' },
-    { name: 'collateralAmount', type: 'uint256' },
-    { name: 'collateralAmountMax', type: 'uint256' },
-    { name: 'durationDays', type: 'uint256' },
-    { name: 'assetType', type: 'uint8' },
-    { name: 'collateralAssetType', type: 'uint8' },
-    { name: 'tokenId', type: 'uint256' },
-    { name: 'quantity', type: 'uint256' },
-    { name: 'collateralTokenId', type: 'uint256' },
-    { name: 'collateralQuantity', type: 'uint256' },
-    { name: 'prepayAsset', type: 'address' },
-    { name: 'allowsPartialRepay', type: 'bool' },
-    { name: 'allowsPrepayListing', type: 'bool' },
-    { name: 'allowsParallelSale', type: 'bool' },
-    { name: 'expiresAt', type: 'uint64' },
-    { name: 'fillMode', type: 'uint8' },
-    { name: 'periodicInterestCadence', type: 'uint8' },
-    { name: 'refinanceTargetLoanId', type: 'uint256' },
-    { name: 'useFullTermInterest', type: 'bool' },
-    // #1949 — the maker's Full tariff opt-in rides the artifact they sign.
-    { name: 'creatorFull', type: 'bool' },
-    { name: 'creatorMaxCStar', type: 'uint256' },
-    { name: 'creatorAllowFullDowngrade', type: 'bool' },
-    { name: 'signer', type: 'address' },
-    { name: 'nonce', type: 'uint256' },
-    { name: 'deadline', type: 'uint256' },
-  ],
-} as const;
+ *  `LibSignedOffer.SignedOffer` declares it (enums ⇒ uint8, GTT ⇒ uint64).
+ *  The list itself is `@vaipakam/lib/signedOfferWire`'s, the one statement of
+ *  the stored order the POST route and the restore converter share (#1481). */
+export const SIGNED_OFFER_TYPES = { SignedOffer: SIGNED_OFFER_FIELDS } as const;
 
-/** The 31 field names in canonical struct order — the route uses this both to
- *  validate the POSTed object strictly and to build the canonical
- *  `order_json` replay payload with a stable key order. */
-export const SIGNED_OFFER_FIELD_NAMES: readonly string[] =
-  SIGNED_OFFER_TYPES.SignedOffer.map((f) => f.name);
-
-/** The wire-shape order: every uint as a decimal string, addresses as
- *  lowercase 0x-40-hex, bools as booleans. This is BOTH the POST body shape
- *  and the stored `order_json` shape — takers replay it verbatim into
- *  `acceptSignedOffer`. */
-export interface SignedOrderWire {
-  offerType: string;
-  lendingAsset: string;
-  amount: string;
-  amountMax: string;
-  interestRateBps: string;
-  interestRateBpsMax: string;
-  collateralAsset: string;
-  collateralAmount: string;
-  collateralAmountMax: string;
-  durationDays: string;
-  assetType: string;
-  collateralAssetType: string;
-  tokenId: string;
-  quantity: string;
-  collateralTokenId: string;
-  collateralQuantity: string;
-  prepayAsset: string;
-  allowsPartialRepay: boolean;
-  allowsPrepayListing: boolean;
-  allowsParallelSale: boolean;
-  expiresAt: string;
-  fillMode: string;
-  periodicInterestCadence: string;
-  refinanceTargetLoanId: string;
-  useFullTermInterest: boolean;
-  /** #1949 — the maker's Full tariff opt-in, carried on the signed artifact. */
-  creatorFull: boolean;
-  creatorMaxCStar: string;
-  creatorAllowFullDowngrade: boolean;
-  signer: string;
-  nonce: string;
-  deadline: string;
-}
+/** The 31 field names in canonical struct order, and the wire-shape order:
+ *  every uint as a decimal string, addresses as lowercase 0x-40-hex, bools as
+ *  booleans. That is BOTH the POST body shape and the stored `order_json`
+ *  shape — takers replay it verbatim into `acceptSignedOffer`. */
+export { SIGNED_OFFER_FIELD_NAMES, type SignedOrderWire };
 
 /** The EIP-712 domain the Diamond computes in
  *  `LibSignedOffer.domainSeparator()` — name/version are constants; chainId

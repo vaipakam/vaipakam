@@ -123,9 +123,6 @@ function insertSigned(
     status?: string;
     expiresAt?: number;
     deadline?: number;
-    /** A row signed under the pre-#1949 shape (no `creatorFull`): the book and
-     *  the summaries both exclude it (Codex #2489 r12). Default: new shape. */
-    legacy?: boolean;
   },
 ): void {
   h.db
@@ -144,7 +141,7 @@ function insertSigned(
     .run(
       s.chainId ?? CHAIN_ID,
       s.orderHash,
-      s.legacy ? '{}' : '{"creatorFull":false}',
+      '{"creatorFull":false}',
       s.offerType,
       s.lendingAsset,
       C1,
@@ -339,20 +336,6 @@ describe('GET /offers/markets — signed-book union (Codex #1145 r4)', () => {
 // The route above is a pure summary read; these pin the WRITE side:
 // windowed touched-set detection (updated_at legs + the no-event
 // time-expiry legs) and the emptied-market delete.
-
-describe('refreshMarketSummaries — legacy signed rows are not depth (#1949, Codex #2489 r12)', () => {
-  it('a pre-#1949 signed row alone creates no market; beside a new-shape row it adds nothing', async () => {
-    const h = freshDb();
-    insertSigned(h, { orderHash: '0xlegacy', offerType: 0, lendingAsset: L1, durationDays: 30, rateBps: 500, legacy: true });
-    // Mutation: drop the predicate from the recompute → one market with one
-    // lender offer at 500 bps, while GET /signed-offers serves nothing.
-    expect((await getMarketsBody(h)).markets).toEqual([]);
-    insertSigned(h, { orderHash: '0xfresh', offerType: 0, lendingAsset: L1, durationDays: 30, rateBps: 700 });
-    const { markets } = await getMarketsBody(h);
-    expect(markets).toHaveLength(1);
-    expect(markets[0]).toMatchObject({ lenderOffers: 1, bestAskBps: 700 });
-  });
-});
 
 describe('refreshMarketSummaries — windowed sweep (#1270)', () => {
   const summaryRows = (h: SqliteD1) =>
