@@ -73,7 +73,11 @@ const CREDENTIAL_FIELD =
  */
 export function redactSecrets(text: string): string {
   return text
-    .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S*/gi, '<redacted url>')
+    // Every rule that starts on a run of name characters starts only at the
+    // run's first character (the lookbehinds), so a long run is scanned once:
+    // starting at each `\b` instead made `a.a.a.…` quadratic, 30 s of CPU
+    // for 200 KB of error text.
+    .replace(/(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\/\/\S*/gi, '<redacted url>')
     .replace(/(?<![\w./\\-])(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?\/[^\s"'<>)]*/gi, '<redacted url>')
     .replace(
       /(?<![\w./\\-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.){2,}[a-z]{2,}(?![\w-]|\.[a-z0-9])(?::\d+(?![\d:]))?(?!:\d)/gi,

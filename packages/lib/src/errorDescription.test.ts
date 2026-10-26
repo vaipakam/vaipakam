@@ -253,6 +253,16 @@ describe('redactSecrets', () => {
     expect(redactSecrets('{"apiKey":"half of a k')).toBe('{"apiKey":"<redacted>"');
   });
 
+  it('runs in linear time on long runs of name characters', () => {
+    // Each of these took 15-30 s under a rule that restarted at every word
+    // boundary; a Worker would have spent its CPU limit on one error.
+    for (const s of ['a.'.repeat(100_000), 'a-'.repeat(100_000), 'ab.cd.'.repeat(30_000)]) {
+      const t = performance.now();
+      redactSecrets(s);
+      expect(performance.now() - t).toBeLessThan(1_000);
+    }
+  });
+
   it('is idempotent', () => {
     const once = redactSecrets('apikey=K1 {"token":"a b"} KEY2.quiknode.pro https://x.example/K');
     expect(redactSecrets(once)).toBe(once);
