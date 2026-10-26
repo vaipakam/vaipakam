@@ -21,7 +21,7 @@ Before the interaction-reward mesh, every chain's daily accounting was self-cont
 | **Daily liveness** | Any reporter chain misses its `closeDay` / CCIP reward message within grace → Base can't finalize with full coverage. Recurs every 24h, not per-deploy. | §1 (delayed messages), §2 (zeroed chain reconciliation) |
 | **Consistency divergence** | A mirror's `knownGlobalInterestUSD18[day]` ≠ Base's `getDailyGlobalInterest(day)`. Users on that mirror compute claims from the wrong denominator. Idempotent-on-match catches replays, but not a bad first-message. | ChainByChainChecks.md §6 — *critical page* rule |
 | **Ingress trust compromise** | `rewardMessenger` or the `CcipMessenger` remote-messenger/channel maps are misconfigured → reports or broadcasts can be rejected, misrouted, or attributed to the wrong chain. | AdminKeysAndPause.md + AdminConfigurableKnobsAndSwitches.md — timelocked behind owner/admin paths |
-| **CCIP replay / re-execution** | Same message manually re-executed or delivered after an incident. Safe only if `ChainDayAlreadyReported` and "idempotent-on-match" in `onRewardBroadcastReceived` hold. Any bug = silent double-count. | Covered by reward plumbing tests + daily consistency check |
+| **CCIP replay / re-execution** | Same message manually re-executed or delivered after an incident. Safe only if `ChainDayAlreadyReported` and "idempotent-on-match" in `onRewardBroadcastV3Received` hold. Any bug = silent double-count. | Covered by reward plumbing tests + daily consistency check |
 | **Pause asymmetry** | Diamond pause stops new reward facet writes, while stand-alone `GuardianPausable` cross-chain contracts pause separately. If they are left unpaused, in-flight CCIP messages can still land through `CcipMessenger` into the reward messenger. | §3 — pause response must decide whether to pause the CCIP stack too |
 | **Selector-list drift** | Reward facet selectors live in both `DeployDiamond.s.sol` and `HelperTest.sol`. Drift breaks either prod deploys or test harness silently. | UpgradeSafety.md — "both lists MUST stay in sync" |
 | **Parameter identicality** | `graceSeconds`, `launchTimestamp`, `expectedSourceEids` must agree across chains. A silent mismatch shifts the reward curve. | ChainByChainChecks.md §5 — identicality check |
@@ -78,7 +78,8 @@ RewardAggregatorFacet.finalizeDay(dayId)
    → emits ChainContributionZeroed(dayId, eid) per missing chain
    → emits DailyGlobalInterestFinalized(dayId, lenderUSD18, borrowerUSD18)
 RewardBroadcastFacet.broadcastGlobal{value: ccipFee}(dayId)
-   → landing on every reporter via onRewardBroadcastReceived
+   → landing on every reporter via onRewardBroadcastV3Received (kind 10,
+     the one broadcast wire since #1944)
    ↑ NOT RewardAggregatorFacet — the broadcast cluster moved to its own
      facet for EIP-170 headroom (#1569). The SELECTOR is unchanged and still
      routed through the Diamond, so a call built against the Diamond works

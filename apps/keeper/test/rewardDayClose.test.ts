@@ -170,7 +170,7 @@ describe('the pure rules', () => {
 
 const REPORTER_ABI = RewardReporterFacetABI as Abi;
 const AGGREGATOR_ABI = RewardAggregatorFacetABI as Abi;
-const ERRORS_ABI = [...REPORTER_ABI, ...(AGGREGATOR_ABI as Abi), ...(VaipakamDiamondABI as Abi).filter((x) => x.type === 'error'), { type: 'error', name: 'MessengerPredatesV3', inputs: [] }] as Abi;
+const ERRORS_ABI = [...REPORTER_ABI, ...(AGGREGATOR_ABI as Abi), ...(VaipakamDiamondABI as Abi).filter((x) => x.type === 'error')] as Abi;
 function revert(errorName: string, args: readonly unknown[] = []): ContractFunctionRevertedError {
   return new ContractFunctionRevertedError({
     abi: ERRORS_ABI,
@@ -221,8 +221,6 @@ class FakeDiamond {
   loupeReads = 0;
   /** A read of a messenger's code fails. */
   codeUnread = false;
-  /** Single-destination quotes refuse with this, when set. */
-  refuseTo: string | null = null;
   /** Single-destination quotes refuse with this error, by destination. */
   refuseToChain = new Map<number, string>();
   /** Destinations the contract gives no standing in any day. */
@@ -425,7 +423,6 @@ class FakeDiamond {
         if (this.noStanding.has(Number(args![1])) || (!this.destinations.includes(Number(args![1])) && !this.reported.get(d)?.has(Number(args![1])) && !this.standing.has(Number(args![1]))))
           throw revert('DestinationHasNoDayStanding', [BigInt(d), args![1]]);
         if (this.refuseToChain.has(Number(args![1]))) throw revert(this.refuseToChain.get(Number(args![1]))!);
-        if (this.refuseTo) throw revert(this.refuseTo, this.refuseTo === 'DestinationHasNoDayStanding' ? [BigInt(d), args![1]] : []);
         return BROADCAST_TO_FEE;
       default:
         throw new Error(`unexpected read ${functionName}`);
@@ -1130,17 +1127,6 @@ describe('a run', () => {
     expect(base.sent.slice(1), 'healed alone, the way the contract admits').toEqual([{ fn: 'broadcastGlobalTo', day: 0, value: BROADCAST_TO_FEE, to: MIRROR }]);
   });
 
-  it('says a destination taken off the list cannot be reached when the Diamond will not send to it alone', async () => {
-    finalizedDayZero();
-    await run(base);
-    base.destinations = [];
-    base.refuseTo = 'MessengerPredatesV3';
-    later(BROADCAST_RESEND_AFTER_SEC);
-    await run(base);
-    expect(base.sent.map((s) => s.fn), 'no send to every destination: it would not reach this one').toEqual(['broadcastGlobal']);
-    expect(alerts(/chain 421614 is not a broadcast destination and the Diamond will not send the day to it alone \(MessengerPredatesV3\)/)).toHaveLength(1);
-  });
-
   const owed = () => (keeper.db.prepare(`SELECT block FROM keeper_work_open WHERE kind = 'day_owed' ORDER BY block`).all() as { block: number }[]).map((r) => r.block);
 
   it('owes a day nothing to a destination off the list that has no standing in it', async () => {
@@ -1159,7 +1145,7 @@ describe('a run', () => {
   it('keeps a day in view while an expected mirror is off the broadcast list, and sends it once the mirror is listed', async () => {
     finalizedDayZero();
     base.destinations = [];
-    base.refuseTo = 'MessengerPredatesV3'; // the messenger cannot send to it alone either
+    base.noSingleSend = true; // and the Diamond cannot send to it alone either
     await run(base);
     expect(base.sent, 'no send could reach it').toEqual([]);
     expect(alerts(/chain 421614 is not a broadcast destination/)).toHaveLength(1);
@@ -1168,7 +1154,7 @@ describe('a run', () => {
     later(LOOKBACK_DAYS * 86_400); // long enough for the day to have left a lookback-only window
     base.today = LOOKBACK_DAYS + 2;
     base.destinations = [MIRROR];
-    base.refuseTo = null;
+    base.noSingleSend = false;
     for (let d = 1; d < base.today; d++) {
       base.reported.set(d, new Set([BASE, MIRROR]));
       base.sentAt.set(d, NOW - 60);
@@ -1419,7 +1405,7 @@ describe('a run', () => {
     finalizedDayZero();
     await run(base);
     later(BROADCAST_RESEND_AFTER_SEC);
-    base.refuseTo = 'MessengerPredatesV3';
+    base.noSingleSend = true;
     await run(base);
     expect(base.sent.map((s) => s.fn)).toEqual(['broadcastGlobal', 'broadcastGlobal']);
     expect(alerts(/refused/), 'a fallback is not a refusal').toEqual([]);

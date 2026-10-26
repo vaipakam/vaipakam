@@ -20,7 +20,7 @@ const BASE_SEPOLIA = 84532;
 const MOCK = getDeployment(BASE_SEPOLIA)!.testnetMocks!.mockSwapAdapter as Address;
 
 /** A Diamond listing `adapters` (address → adapterName), all enabled. */
-function chain(adapters: [Address, string][], targetAllowed = true): PublicClient {
+function chain(adapters: [Address, string][], targetAllowed = true, mockRestrictedTo: Address = A(0)): PublicClient {
   const names = new Map(adapters.map(([a, n]) => [a.toLowerCase(), n]));
   return {
     readContract: async (args: { address: Address; functionName: string }) => {
@@ -39,7 +39,7 @@ function chain(adapters: [Address, string][], targetAllowed = true): PublicClien
         case 'shouldRevert':
           return false;
         case 'restrictedTo':
-          return A(0);
+          return mockRestrictedTo;
         case 'outputMultiplierBps':
           return 10_000n;
         case 'tokenUsdPrice8':
@@ -76,6 +76,38 @@ describe('orchestrateServerQuotes (#2468)', () => {
     });
     expect(out.calls).toEqual([{ adapterIdx: 1n, data: '0x' }]);
     expect(out.ranked.map((r) => r.kind)).toEqual(['testnetMock']);
+  });
+
+  it('names each ranked quote\'s adapter, for a seller outside the Diamond (#2734)', async () => {
+    const client = chain([
+      [A(0xab), 'SomethingElse'],
+      [MOCK, 'Mock'],
+    ]);
+    const out = await orchestrateServerQuotes({} as Env, client, {
+      chainId: BASE_SEPOLIA,
+      diamond: DIAMOND,
+      ...sale,
+    });
+    expect(out.ranked.map((r) => r.adapter)).toEqual([MOCK]);
+  });
+
+  it('checks the testnet mock pays the seller it names, not the Diamond (#2734)', async () => {
+    const LIQUIDATOR = A(0x11);
+    // A mock restricted to the liquidator pays it and nobody else.
+    const client = chain([[MOCK, 'Mock']], true, LIQUIDATOR);
+    const forDiamond = await orchestrateServerQuotes({} as Env, client, {
+      chainId: BASE_SEPOLIA,
+      diamond: DIAMOND,
+      ...sale,
+    });
+    expect(forDiamond.ranked).toEqual([]);
+    const forLiquidator = await orchestrateServerQuotes({} as Env, client, {
+      chainId: BASE_SEPOLIA,
+      diamond: DIAMOND,
+      seller: LIQUIDATOR,
+      ...sale,
+    });
+    expect(forLiquidator.ranked.map((r) => r.adapter)).toEqual([MOCK]);
   });
 
   it('quotes 0x for ITS ADAPTER with the keeper as origin, at the index the Diamond lists', async () => {

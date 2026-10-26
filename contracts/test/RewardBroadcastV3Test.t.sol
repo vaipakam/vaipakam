@@ -28,20 +28,17 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 /// @title RewardBroadcastV3Test
 /// @notice #1434 P2-w1 — facet-level coverage for the kind-10 V3 broadcast:
 ///         the finalization-time day-clock freeze, the versioned lapse
-///         schedule (R5), the three-step send/quote ladder, the
-///         permissionless single-destination heal, and the mirror-side V3
-///         ingress (install / clock backfill / divergence extension / era
-///         binding).
+///         schedule (R5), the send and its quote, the permissionless
+///         single-destination heal, and the mirror-side V3 ingress
+///         (install / divergence extension / era binding).
 ///
-///         The four design-§8 slice-1 proofs live here (plus one at the
-///         wire layer in VaipakamRewardFlowTest):
+///         Kind 10 is the only broadcast wire (#1944, generation 8): the
+///         kind-2 and kind-5 fallbacks, the clock backfill onto a day an
+///         older wire applied, and the era-rotation quarantine they needed
+///         are retired, and their tests with them. Two of the design-§8
+///         slice-1 proofs stand:
 ///           1. Re-broadcast determinism of the frozen fields
 ///              ({testReBroadcastCarriesIdenticalFrozenFacts}).
-///           2. Clock backfill on an already-applied day
-///              ({testClockBackfillOnKind5AppliedDay}).
-///           3. An old in-flight kind-5 still applies
-///              ({testKind5StillAppliesWithoutClock} facet-level;
-///              wire-level in VaipakamRewardFlowTest).
 ///           4. Divergence-check extension to the frozen fields
 ///              ({testV3ReplayDivergenceOnEachFrozenField}).
 ///
@@ -70,12 +67,6 @@ abstract contract RewardBroadcastV3Harness is SetupTest, IVaipakamErrors {
 
     function _era() internal view returns (RewardEraFacet) {
         return RewardEraFacet(address(diamond));
-    }
-
-    /// @dev PR C-4 — the id of the most recently parked broadcast (ids are dense from 1).
-    function _lastParkedId() internal view returns (uint256 id) {
-        id = 1;
-        while (_era().getParkedBroadcast(id + 1).receivedAt != 0) ++id;
     }
 
     function _rep() internal view returns (RewardReporterFacet) {
@@ -142,9 +133,7 @@ abstract contract RewardBroadcastV3Harness is SetupTest, IVaipakamErrors {
     }
 
     /// @dev Mirror config WITHOUT the era ground truth — the pre-arming
-    ///      state a live mirror sits in between the facet upgrade and the
-    ///      arming step (V3 ingress dark; kind-5/kind-2 still apply,
-    ///      without provenance).
+    ///      state, in which the broadcast ingress refuses every packet.
     function _configureMirrorUnarmed(uint32 localChainId) internal {
         vm.chainId(localChainId);
         _rep().setBaseChainId(CHAIN_BASE);
@@ -466,7 +455,7 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // The three-step send/quote ladder
+    // The send and its quote
     // ════════════════════════════════════════════════════════════════════════
 
     function testBroadcastUsesV3WhenClockPresent() public {
@@ -477,8 +466,6 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
         _bcast().broadcastGlobal(1);
 
         assertEq(messenger.broadcastV3Count(), 1, "V3 wire used");
-        assertEq(messenger.broadcastV2Count(), 0);
-        assertEq(messenger.broadcastCount(), 0);
         (uint64 at, uint32 ver, uint64 w, uint64 g, , ) =
             messenger.lastV3Extras();
         (uint64 cAt, uint32 cVer, uint64 cW, uint64 cG) =
@@ -487,49 +474,6 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
         assertEq(ver, cVer);
         assertEq(w, cW);
         assertEq(g, cG);
-    }
-
-    function testBroadcastFallsBackToV2OnPreV3Messenger() public {
-        _configureCanonical();
-        messenger.setV3Unsupported(true);
-        _com().setLapseSchedule(7 days, 24 hours);
-        _reportAndFinalizeDay1();
-
-        _bcast().broadcastGlobal(1);
-
-        assertEq(messenger.broadcastV3Count(), 0);
-        assertEq(messenger.broadcastV2Count(), 1, "V2 fallback used");
-        assertEq(messenger.broadcastCount(), 0, "legacy untouched");
-    }
-
-    /// A day finalized BEFORE the upgrade has no frozen clock; it must ride
-    /// the V2 wire permanently even on a V3-capable messenger (a zero-clock
-    /// V3 would fail closed at the mirror as a permanently failed CCIP
-    /// message).
-    function testBroadcastFallsBackToV2WhenDayHasNoClock() public {
-        _configureCanonical();
-        _com().setLapseSchedule(7 days, 24 hours);
-        _reportAndFinalizeDay1();
-        _mut().clearDayLapseClockRaw(1);
-
-        _bcast().broadcastGlobal(1);
-
-        assertEq(messenger.broadcastV3Count(), 0, "no zero-clock V3 sent");
-        assertEq(messenger.broadcastV2Count(), 1, "clockless day rides V2");
-    }
-
-    function testQuoteFollowsClocklessDayToV2() public {
-        _configureCanonical();
-        messenger.setQuoteNative(0.05 ether);
-        _com().setLapseSchedule(7 days, 24 hours);
-        _reportAndFinalizeDay1();
-
-        // Clock present + V3-capable: V3 pricing (lane × 3 marker).
-        assertEq(_bcast().quoteBroadcastGlobal(1), 0.3 ether, "V3 quote");
-
-        // Clockless: the quote prices the V2 wire the send would use.
-        _mut().clearDayLapseClockRaw(1);
-        assertEq(_bcast().quoteBroadcastGlobal(1), 0.1 ether, "V2 quote");
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -565,8 +509,7 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
 
     /// Standing via the remit-ineligible record alone: the zeroed chain was
     /// NOT included in the denominator, yet it holds a chain-day
-    /// commitments record — precisely the destination the clock backfill
-    /// exists for.
+    /// commitments record — precisely the destination the heal exists for.
     function testHealAdmitsZeroedDest() public {
         _configureCanonical();
         _com().setLapseSchedule(7 days, 24 hours);
@@ -641,38 +584,10 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
         _bcast().broadcastGlobalTo(1, wide);
     }
 
-    function testHealRevertsOnClocklessDay() public {
-        _configureCanonical();
-        _com().setLapseSchedule(7 days, 24 hours);
-        _reportAndFinalizeDay1();
-        _mut().clearDayLapseClockRaw(1);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(DayHasNoLapseClock.selector, 1)
-        );
-        _bcast().broadcastGlobalTo(1, CHAIN_ARB);
-    }
-
     function testHealRevertsBeforeFinalization() public {
         _configureCanonical();
         vm.expectRevert(DayNotReadyToFinalize.selector);
         _bcast().broadcastGlobalTo(1, CHAIN_ARB);
-    }
-
-    /// The heal cannot fall back to V2 — kind-5 carries no clock, so a
-    /// fallback would "succeed" while healing nothing. A pre-V3 messenger
-    /// is a reasoned refusal instead.
-    function testHealRevertsOnPreV3Messenger() public {
-        _configureCanonical();
-        messenger.setV3Unsupported(true);
-        _com().setLapseSchedule(7 days, 24 hours);
-        _reportAndFinalizeDay1();
-
-        vm.expectRevert(MessengerPredatesV3.selector);
-        _bcast().broadcastGlobalTo(1, CHAIN_ARB);
-
-        vm.expectRevert(MessengerPredatesV3.selector);
-        _bcast().quoteBroadcastGlobalTo(1, CHAIN_ARB);
     }
 
     function testQuoteBroadcastGlobalTo() public {
@@ -691,8 +606,7 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
 }
 
 /// @notice Mirror-side coverage: the V3 ingress (install / gates / era
-///         binding / rotation), proof 2 (clock backfill), proof 3
-///         (kind-5 still applies) and proof 4 (divergence extension).
+///         binding / rotation) and proof 4 (divergence extension).
 contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
     // ════════════════════════════════════════════════════════════════════════
     // Mirror-side V3 ingress — install, gates, era binding
@@ -705,11 +619,11 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
 
         vm.expectEmit(true, true, false, true);
         emit RewardReporterFacet.DayClockInstalled(
-            3, 1_700_000_000, 1, true, ERA_BASE, false
+            3, 1_700_000_000, 1, true, ERA_BASE
         );
         messenger.deliverBroadcastV3(b);
 
-        // V2 layer applied (same effects the kind-5 path produces).
+        // The nested per-destination fields applied.
         (uint256 gl, uint256 gb, bool isSet) =
             _rep().getKnownGlobalInterestNumeraire18(3);
         assertTrue(isSet);
@@ -779,6 +693,36 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         messenger.deliverBroadcastV3(stale);
     }
 
+    /// #1944 — the day delivery gate binds by ROLE with no arming latch, so a
+    /// broadcast applies only where the gate already binds (Mirror) or can pay
+    /// nothing fresh (Detached). An Unconfigured or canonical Diamond refuses
+    /// it, writing nothing, as a re-executable CCIP message. Straddle: the
+    /// same packet applies once the chain is a mirror, and a Detached former
+    /// mirror still takes an in-flight one.
+    function testV3IngressRefusedOffAMirrorRole() public {
+        _configureMirror(CHAIN_ARB);
+        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
+        uint256 snap = vm.snapshotState();
+
+        _mut().setRewardRoleRaw(0, false, false); // Unconfigured
+        vm.expectRevert(abi.encodeWithSelector(BroadcastRoleRefused.selector, uint8(LibVaipakam.RewardRole.Unconfigured)));
+        messenger.deliverBroadcastV3(b);
+        assertFalse(_rep().getBroadcastV2Applied(b.v2.dayId), "Unconfigured: nothing applied");
+
+        _mut().setRewardRoleRaw(CHAIN_BASE, true, true); // Canonical
+        vm.expectRevert(abi.encodeWithSelector(BroadcastRoleRefused.selector, uint8(LibVaipakam.RewardRole.Canonical)));
+        messenger.deliverBroadcastV3(b);
+        vm.revertToState(snap);
+
+        _mut().setRewardRoleRaw(0, false, true); // Detached
+        messenger.deliverBroadcastV3(b);
+        assertTrue(_rep().getBroadcastV2Applied(b.v2.dayId), "Detached: an in-flight packet still applies");
+        vm.revertToState(snap);
+
+        messenger.deliverBroadcastV3(b);
+        assertTrue(_rep().getBroadcastV2Applied(b.v2.dayId), "straddle: a mirror applies it");
+    }
+
     /// Codex #1632 r1 P1 — the FIRST install is the era race the per-day
     /// record cannot defend: with no clock recorded, a retired
     /// deployment's delayed packet must be rejected by the CONFIGURED
@@ -823,249 +767,6 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         vm.prank(alice);
         vm.expectRevert();
         _rep().setBaseRewardDeployment(ERA_BASE);
-    }
-
-    /// Codex #1632 r2 P1 — a true era ROTATION permanently retires the
-    /// identity-less legacy wires' FRESH applies (a retired era's delayed
-    /// or re-executed kind-5/kind-2 is indistinguishable from a
-    /// legitimate one; the new era only speaks V3). Since PR C-4 (#1566) a
-    /// retired wire's fresh apply is PARKED, not reverted: recorded in the
-    /// parked lane, counted against the live era, no day state installed,
-    /// a retry refused by name while the gate holds — so a legitimate late
-    /// packet stays on record, for a retry or the operator's tombstone,
-    /// instead of being lost in a revert.
-    /// Replays of already-applied days stay idempotent, and a disarm/re-arm
-    /// cycle of the SAME era is not a rotation.
-    function testRotationRetiresLegacyWire() public {
-        _configureMirror(CHAIN_ARB);
-        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB)); // day 3 applied
-
-        // Disarm/re-arm same era: NOT a rotation — wire stays open.
-        _rep().setBaseRewardDeployment(address(0));
-        _rep().setBaseRewardDeployment(ERA_BASE);
-        RewardBroadcastV2 memory day4 = _v2Packet(CHAIN_ARB);
-        day4.dayId = 4;
-        messenger.deliverBroadcastV2(day4);
-
-        // A DIFFERENT nonzero era: rotation — legacy fresh applies are PARKED.
-        _rotateEra(address(0xE2));
-        uint64 live = _era().getCustodyEraCurrent();
-        uint256 openBefore = _era().getCustodyEraParkedOpen(live);
-        RewardBroadcastV2 memory day5 = _v2Packet(CHAIN_ARB);
-        day5.dayId = 5;
-        messenger.deliverBroadcastV2(day5); // parked, not reverted
-        LibVaipakam.ParkedBroadcast memory p5 = _era().getParkedBroadcast(_lastParkedId());
-        assertEq(p5.kind, 5, "the kind-5 wire is parked");
-        assertEq(p5.dayId, 5);
-        assertEq(p5.status, 0, "parked, not applied");
-        assertEq(p5.custodyEraAtReceipt, live, "counted against the live era");
-        (, , bool set5) = _rep().getKnownGlobalInterestNumeraire18(5);
-        assertFalse(set5, "no day state installed for day 5");
-
-        // Kind-2 fresh writes park too (a retired era's pair would wedge the
-        // day against the new era's V3).
-        messenger.deliverBroadcast(6, 1e18, 1e18, type(uint256).max);
-        LibVaipakam.ParkedBroadcast memory p6 = _era().getParkedBroadcast(_lastParkedId());
-        assertEq(p6.kind, 2, "the kind-2 wire is parked");
-        assertEq(p6.dayId, 6);
-        (, , bool set6) = _rep().getKnownGlobalInterestNumeraire18(6);
-        assertFalse(set6, "no day state installed for day 6");
-        assertEq(_era().getCustodyEraParkedOpen(live) - openBefore, 2, "both parked against the live era");
-
-        // Replays of the pre-rotation days stay idempotent.
-        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
-        messenger.deliverBroadcastV2(day4);
-    }
-
-    /// Codex #1632 r2 P1 — the cross-era backfill sequence: a kind-5
-    /// applied under era 1, then a rotation, then a current-era V3 for
-    /// the same day. The apply-time PROVENANCE stamp is what blocks it:
-    /// the day's recorded era names era 1, so the era-2 packet fails the
-    /// per-day check instead of stamping era 2 onto era-1 figures.
-    function testCrossEraBackfillBlocked() public {
-        _configureMirror(CHAIN_ARB);
-        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB)); // era-1 figures
-        assertEq(_rep().getDayClockEra(3), ERA_BASE, "provenance = era 1");
-
-        _rotateEra(address(0xE2)); // rotation
-
-        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
-        b.baseDeployment = address(0xE2); // passes the configured-era gate
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                BroadcastEraMismatch.selector, 3, ERA_BASE, address(0xE2)
-            )
-        );
-        messenger.deliverBroadcastV3(b);
-
-        (uint64 at, , , ) = _com().getDayLapseClock(3);
-        assertEq(at, 0, "no cross-era clock was smuggled in");
-    }
-
-    /// Codex #1632 r3 P1 — the PRE-ARMING inventory: days applied before
-    /// the era ground truth existed carry no provenance (`era == 0`).
-    /// After a ROTATION the mirror can no longer tell which era supplied
-    /// their figures, so it refuses to attach V3 clock facts to them —
-    /// via the backfill branch (kind-5-applied) AND the mixed-generation
-    /// full apply (kind-2 pair). Such days belong to the pre-rotation
-    /// drain/heal ceremony.
-    function testEraUnknownDaysUnhealableAfterRotation() public {
-        _configureMirrorUnarmed(CHAIN_ARB);
-        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB)); // day 3, era 0
-        messenger.deliverBroadcast(7, 9e18, 4e18, type(uint256).max); // kind-2
-        assertEq(_rep().getDayClockEra(3), address(0), "no provenance");
-
-        _rep().setBaseRewardDeployment(ERA_BASE); // first arming
-        _rotateEra(address(0xE2)); // rotation
-
-        RewardBroadcastV3 memory b3 = _v3Packet(CHAIN_ARB);
-        b3.baseDeployment = address(0xE2);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                BroadcastEraMismatch.selector, 3, address(0), address(0xE2)
-            )
-        );
-        messenger.deliverBroadcastV3(b3);
-
-        RewardBroadcastV3 memory b7 = _v3Packet(CHAIN_ARB);
-        b7.v2.dayId = 7;
-        b7.v2.globalLenderNumeraire18 = 9e18;
-        b7.v2.globalBorrowerNumeraire18 = 4e18;
-        b7.baseDeployment = address(0xE2);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                BroadcastEraMismatch.selector, 7, address(0), address(0xE2)
-            )
-        );
-        messenger.deliverBroadcastV3(b7);
-    }
-
-    /// The counterpart that keeps the LIVE MIGRATION healable: on a mirror
-    /// that has NEVER rotated, era-unknown days (applied before arming)
-    /// heal freely — a single era in the mirror's history leaves nothing
-    /// to confuse them with.
-    function testEraUnknownDayHealsOnNeverRotatedMirror() public {
-        _configureMirrorUnarmed(CHAIN_ARB);
-        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB)); // day 3, era 0
-
-        _rep().setBaseRewardDeployment(ERA_BASE); // first arming only
-        messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB));
-
-        (uint64 at, , , ) = _com().getDayLapseClock(3);
-        assertEq(at, 1_700_000_000, "pre-arming day healed");
-        assertEq(_rep().getDayClockEra(3), ERA_BASE, "era recorded");
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // PROOF 2 — clock backfill on an already-applied day
-    // ════════════════════════════════════════════════════════════════════════
-
-    /// A day whose figures were applied via kind-5 before the upgrade
-    /// accepts a V3 packet as a CLOCK BACKFILL: it verifies only the
-    /// immutable global pair, writes only the V3 fields, and never touches
-    /// the halves — proven here by delivering a V3 whose halves DIFFER
-    /// (as they legitimately can after `backfillDayInclusion` mutated the
-    /// destination's figures on Base) and asserting the mirror's stored
-    /// stamp is unchanged.
-    function testClockBackfillOnKind5AppliedDay() public {
-        _configureMirror(CHAIN_ARB);
-        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
-        (uint64 preAt, , , ) = _com().getDayLapseClock(3);
-        assertEq(preAt, 0, "kind-5 apply leaves no clock");
-
-        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
-        b.zeroedForDest = true;
-        b.v2.freshLenderHalf = 999e18; // halves deliberately divergent
-        b.v2.recycleConsume = 777e18;
-
-        vm.expectEmit(true, true, false, true);
-        emit RewardReporterFacet.DayClockInstalled(
-            3, 1_700_000_000, 1, true, ERA_BASE, true
-        );
-        messenger.deliverBroadcastV3(b);
-
-        // The clock landed…
-        (uint64 at, uint32 ver, , ) = _com().getDayLapseClock(3);
-        assertEq(at, 1_700_000_000);
-        assertEq(ver, 1);
-        assertEq(_rep().getDayClockEra(3), ERA_BASE);
-        assertTrue(_rep().getDayDeliberatelyZeroed(3));
-        // …and the applied figures did NOT (adding the clock is the
-        // branch's only write).
-        LibVaipakam.ChainDayFunding memory f =
-            _agg().getChainDayRecycledFunding(3, CHAIN_ARB);
-        assertEq(f.freshLenderHalf, 20e18, "halves untouched by backfill");
-        assertEq(f.recycleConsume, 5e18, "consume untouched by backfill");
-    }
-
-    /// Codex #1632 r1 P1 — the backfill must PRESERVE the pre-d3
-    /// reservation repair the V2 replay path performs: a day applied by a
-    /// pre-d3 receiver has `broadcastV2Applied` without its reservation,
-    /// and a backfill that returned early would leave the heal looking
-    /// complete while the mirror stayed under-reserved. The repair uses the
-    /// STORED applied figure — proven by a packet carrying divergent
-    /// halves — and is idempotent on replay.
-    function testClockBackfillRepairsPreD3Reservation() public {
-        _configureMirror(CHAIN_ARB);
-        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
-        // Reconstruct the PRE-d3 receiver state: applied + stamped, but
-        // never reserved.
-        _mut().setMirrorCommitReservedRaw(3, false);
-        _mut().setOutstandingCommitRaw(0, 0);
-
-        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
-        b.v2.recycleConsume = 777e18; // divergent packet figure — untrusted
-        messenger.deliverBroadcastV3(b);
-
-        (, , uint256 outstandingRecycled, ) = _agg().getGovernorCommitState();
-        assertEq(
-            outstandingRecycled,
-            5e18,
-            "repair reserved the STORED applied figure, not the packet's"
-        );
-
-        // Idempotent: a replay does not double-reserve. (With the clock now
-        // installed, a replay routes through the shared core's
-        // full-divergence path — so it must carry the TRUE figures; the
-        // divergent probe above was only admissible on the backfill branch,
-        // which deliberately does not compare halves.)
-        messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB));
-        (, , uint256 outstandingAfterReplay, ) =
-            _agg().getGovernorCommitState();
-        assertEq(outstandingAfterReplay, 5e18, "no double reservation");
-    }
-
-    /// The backfill still verifies the immutable pair — a packet from a
-    /// diverging history cannot smuggle a clock in.
-    function testClockBackfillRejectsDivergentGlobals() public {
-        _configureMirror(CHAIN_ARB);
-        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
-
-        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
-        b.v2.globalLenderNumeraire18 = 31e18;
-        vm.expectRevert(KnownGlobalAlreadySet.selector);
-        messenger.deliverBroadcastV3(b);
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // PROOF 3 (facet level) — old kind-5 still applies, without a clock
-    // ════════════════════════════════════════════════════════════════════════
-
-    function testKind5StillAppliesWithoutClock() public {
-        _configureMirror(CHAIN_ARB);
-        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
-
-        (uint256 gl, , bool isSet) = _rep().getKnownGlobalInterestNumeraire18(3);
-        assertTrue(isSet, "kind-5 applied in full");
-        assertEq(gl, 30e18);
-        (uint64 at, , , ) = _com().getDayLapseClock(3);
-        assertEq(at, 0, "no clock - day not lapse-eligible");
-        // #1632 r2 — an ARMED mirror stamps era PROVENANCE at apply time
-        // (the configured era it believed was sending), even though the
-        // kind-5 wire itself carries no identity and no clock.
-        assertEq(
-            _rep().getDayClockEra(3), ERA_BASE, "provenance stamped on apply"
-        );
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -1177,168 +878,6 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         assertEq(armed, 2, "an armed mirror ignores a later, different D*");
     }
 
-    /// …and a RETIRED era cannot arm this mirror through that same door.
-    ///
-    /// The rotation gate (a fresh legacy apply after a rotation is PARKED)
-    /// deliberately sits BELOW the replay branch, so
-    /// an already-applied day keeps replaying idempotently forever after a
-    /// rotation. That placement is safe while a replay is a no-op — and the
-    /// install above is not one. Without the exclusion, a delayed or
-    /// re-executed kind-5 packet from the retired era could still CHOOSE this
-    /// mirror's era, which is precisely the authority the rotation withdrew.
-    function testRetiredEraCannotArmThroughAReplay() public {
-        _configureMirror(CHAIN_ARB);
-
-        // The racing application, leaving the mirror unarmed.
-        RewardBroadcastV2 memory pre = _v2Packet(CHAIN_ARB);
-        pre.armedFromDay = 0;
-        messenger.deliverBroadcastV2(pre);
-        (uint256 armedBefore, , , ) = _agg().getGovernorCommitState();
-        assertEq(armedBefore, 0, "mirror starts unarmed, as the race leaves it");
-
-        // Base rotates. Everything the old era says is now unauthenticated.
-        _rotateEra(address(0xE2));
-
-        // The retired era replays that same day carrying an arming day. The
-        // replay is still ACCEPTED — idempotency after rotation is the
-        // deliberate part — but it must not arm.
-        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
-        (uint256 armedAfterLegacy, , , ) = _agg().getGovernorCommitState();
-        assertEq(
-            armedAfterLegacy, 0, "a retired era cannot choose this mirror's era"
-        );
-
-        // Nothing else about the replay changed: the day stays applied and
-        // the mirror stays usable. Only the ARMING was withheld.
-        assertTrue(_rep().getBroadcastV2Applied(3), "the day is still applied");
-    }
-
-    /// The control for the test above, and the reason it is not vacuous: the
-    /// SAME wire, the SAME day, the SAME replay — differing only in that no
-    /// rotation has happened — must still install `D*`. Without this, a
-    /// change that simply broke the #1944 install on the legacy path would
-    /// pass the retired-era test above and look like a fix.
-    ///
-    /// It also pins the install on the V2 path specifically; #1944's own test
-    /// drives it through V3.
-    function testLegacyReplayArmsWhileTheEraIsStillCurrent() public {
-        _configureMirror(CHAIN_ARB);
-
-        RewardBroadcastV2 memory pre = _v2Packet(CHAIN_ARB);
-        pre.armedFromDay = 0;
-        messenger.deliverBroadcastV2(pre);
-        (uint256 armedBefore, , , ) = _agg().getGovernorCommitState();
-        assertEq(armedBefore, 0, "mirror starts unarmed");
-
-        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
-        (uint256 armedAfter, , , ) = _agg().getGovernorCommitState();
-        assertEq(armedAfter, 2, "an era still in force fills the hole");
-    }
-
-    /// The install has to survive the V3 CLOCK-BACKFILL branch too.
-    ///
-    /// A day applied over V2 carries no lapse clock, so its post-arm
-    /// rebroadcast over V3 takes the backfill branch and returns there —
-    /// never reaching `_applyBroadcastV2Core`'s replay install. The mirror
-    /// stayed unarmed and needed a second, unexplained V3 delivery: the
-    /// #1944 defect resurfacing one path over (Codex #2031 r2).
-    function testV3ClockBackfillInstallsArmedDayWhenTheMirrorHasNone()
-        public
-    {
-        _configureMirror(CHAIN_ARB);
-
-        // Applied over V2 while Base carried no D*. No clock is written,
-        // which is what routes the rebroadcast into the backfill branch.
-        RewardBroadcastV2 memory pre = _v2Packet(CHAIN_ARB);
-        pre.armedFromDay = 0;
-        messenger.deliverBroadcastV2(pre);
-        // The LAPSE clock is what routes the rebroadcast into the backfill
-        // branch — not `dayClockEra`, which a V2 apply does set. Asserted so
-        // the test cannot quietly stop exercising that branch.
-        (uint64 finalizedAtBefore, , , ) = _com().getDayLapseClock(3);
-        assertEq(finalizedAtBefore, 0, "V2 leaves no lapse clock");
-        (uint256 armedBefore, , , ) = _agg().getGovernorCommitState();
-        assertEq(armedBefore, 0, "mirror starts unarmed");
-
-        // Base arms and rebroadcasts the same day over V3.
-        messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB));
-
-        (uint256 armedAfter, , , ) = _agg().getGovernorCommitState();
-        assertEq(armedAfter, 2, "the backfill installed D* in one delivery");
-        (uint64 finalizedAtAfter, , , ) = _com().getDayLapseClock(3);
-        assertEq(
-            finalizedAtAfter,
-            1_700_000_000,
-            "and it really was the backfill branch that ran"
-        );
-    }
-
-    /// A day a PRE-#1569 receiver applied must still get its earmark.
-    ///
-    /// The non-atomic rollout case (Codex #2031 r5): Base arms the knob and
-    /// charges `chainKeeperAllocDebited`, the mirror is still on old
-    /// bytecode, so it stores `keeperAllocate` on the day record and marks
-    /// the day applied — but the budget write did not exist yet. Keyed on
-    /// the applied flag the repair could never run, and the two sides would
-    /// diverge silently: Base has reduced what it will instruct while the
-    /// mirror still counts those tokens as fundable.
-    function testReplayRepairsAnUnappliedKeeperEarmark() public {
-        _configureMirror(CHAIN_ARB);
-
-        // Apply the day with NO earmark, then write the stored field
-        // directly. That reproduces the pre-upgrade state exactly: stamp
-        // populated, day applied, budget untouched, flag false.
-        RewardBroadcastV2 memory pre = _v2Packet(CHAIN_ARB);
-        pre.keeperAllocate = 0;
-        messenger.deliverBroadcastV2(pre);
-        _mut().setChainDayFundingKeeperAllocateRaw(3, uint32(CHAIN_ARB), 2e18);
-
-        (, uint256 budgetBefore) = _cfg().getRecycleRegisterState();
-        assertEq(budgetBefore, 0, "the old receiver reserved nothing");
-
-        // The refreshed mirror replays the same day, carrying the earmark
-        // Base instructed. Every frozen fact matches, so this is a replay.
-        RewardBroadcastV2 memory replay = _v2Packet(CHAIN_ARB);
-        replay.keeperAllocate = 2e18;
-        messenger.deliverBroadcastV2(replay);
-
-        (, uint256 budgetAfter) = _cfg().getRecycleRegisterState();
-        assertEq(budgetAfter, 2e18, "the replay completed the earmark");
-
-        // …and STILL at most once: a further replay must not double-credit.
-        messenger.deliverBroadcastV2(replay);
-        (, uint256 budgetAgain) = _cfg().getRecycleRegisterState();
-        assertEq(budgetAgain, 2e18, "the repair is one-shot");
-    }
-
-    /// The V3 clock-backfill branch returns early too, so it needs the same
-    /// repair — otherwise a pre-#1569 day whose rebroadcast arrives over V3
-    /// stays unreserved through the one delivery that was meant to heal it.
-    function testV3ClockBackfillRepairsAnUnappliedKeeperEarmark() public {
-        _configureMirror(CHAIN_ARB);
-
-        RewardBroadcastV2 memory pre = _v2Packet(CHAIN_ARB);
-        pre.keeperAllocate = 0;
-        messenger.deliverBroadcastV2(pre);
-        _mut().setChainDayFundingKeeperAllocateRaw(3, uint32(CHAIN_ARB), 3e18);
-        (, uint256 budgetBefore) = _cfg().getRecycleRegisterState();
-        assertEq(budgetBefore, 0, "nothing reserved yet");
-
-        // A V2 apply leaves no lapse clock, which is what routes this
-        // rebroadcast into the backfill branch.
-        (uint64 finalizedAtBefore, , , ) = _com().getDayLapseClock(3);
-        assertEq(finalizedAtBefore, 0, "no lapse clock, so the backfill runs");
-
-        RewardBroadcastV3 memory v3 = _v3Packet(CHAIN_ARB);
-        v3.v2.keeperAllocate = 3e18;
-        messenger.deliverBroadcastV3(v3);
-
-        (, uint256 budgetAfter) = _cfg().getRecycleRegisterState();
-        assertEq(budgetAfter, 3e18, "the backfill completed the earmark");
-        (uint64 finalizedAtAfter, , , ) = _com().getDayLapseClock(3);
-        assertGt(finalizedAtAfter, 0, "and it really was the backfill branch");
-    }
-
     // ── #1569 M4 C3 — the Base-authorized keeper allocation ────────────
 
     /// The instruction EARMARKS inside the mirror's own bucket.
@@ -1399,33 +938,10 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         messenger.deliverBroadcastV3(changed);
     }
 
-    /// A V3 for a day applied via the LEGACY kind-2 wire (known pair set,
-    /// but never V2-applied) takes the FULL apply path — V2 figures layered
-    /// on, clock installed. Not a backfill: the backfill branch is only for
-    /// `broadcastV2Applied` days.
-    function testV3OnLegacyKind2AppliedDayDoesFullApply() public {
-        _configureMirror(CHAIN_ARB);
-        // #1636 r2 — the kind-2 pair carries the SAME frozen day-pool
-        // figures the V3 packet does (production freezes once, sends on
-        // both wires); a divergent pair is the consensus violation
-        // {_installDayPoolStampV3} rejects.
-        messenger.deliverBroadcastFull(
-            3, 30e18, 15e18, type(uint256).max, 20e18, 10e18, 0
-        );
-
-        messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB));
-
-        LibVaipakam.ChainDayFunding memory f =
-            _agg().getChainDayRecycledFunding(3, CHAIN_ARB);
-        assertTrue(f.stamped, "V2 layer applied on top of legacy pair");
-        (uint64 at, , , ) = _com().getDayLapseClock(3);
-        assertEq(at, 1_700_000_000, "clock installed");
-    }
-
     /// @dev #1636 r2 P1 — the V3 PRODUCTION path installs the day-level
     ///      pool stamp (the Δq quote numerator + the quote surface's
-    ///      stamp gate). Before r2 only the retiring legacy kind-2
-    ///      ingress wrote it, leaving V3-delivered zeroed days unable to
+    ///      stamp gate). Before r2 only the kind-2 ingress (retired in
+    ///      #1944) wrote it, leaving V3-delivered zeroed days unable to
     ///      quote at all; the earlier tests concealed that by seeding the
     ///      stamp raw.
     function testV3InstallsDayPoolStamp() public {
@@ -1438,20 +954,6 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         assertEq(recycled, 20e18, "recycled = half x 2");
     }
 
-    /// @dev #1636 r2 — a pre-r2 V3 day (kind-5 applied: clock and stamp
-    ///      both missing) heals BOTH by the same permissionless re-send,
-    ///      through the clock-backfill branch.
-    function testV3BackfillInstallsDayPoolStampToo() public {
-        _configureMirror(CHAIN_ARB);
-        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB)); // no stamp
-        (bool stampedBefore, , , , ) = _agg().getDayPoolStamp(3);
-        assertFalse(stampedBefore, "kind-5 leaves no day-pool stamp");
-
-        messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB)); // backfill
-        (bool stamped, uint256 floor, , , ) = _agg().getDayPoolStamp(3);
-        assertTrue(stamped, "backfill branch installs the stamp");
-        assertEq(floor, 40e18, "floor from the wire");
-    }
 }
 
 /// @notice #1434 P2-w2 — the §2.2 compensation-ingress CLASSIFICATION over
@@ -1867,32 +1369,6 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
             _rlens().getStrandedRecovery(address(0xD2), REMIT_ID);
         assertEq(sr.amount, 5e18, "second arrival reserved whole");
         assertEq(sr.reason, 4, "reason: provisional conflict");
-    }
-
-    /// A rotated mirror's legacy-applied era-less day can never receive its
-    /// V3 heal (the w1 gate), so a compensation for it must quarantine at
-    /// ingress (reason 5) — a provisional credit there could never reach
-    /// the confirm/demote hook and its tokens would sit outside the
-    /// reservation as spendable backing.
-    function testUnhealableDayQuarantinesInsteadOfProvisional() public {
-        _configureCompMirror();
-        // Era-less applied state (pre-arming kind-5 apply), then a rotation.
-        _rep().setBaseRewardDeployment(address(0));
-        vm.chainId(CHAIN_ARB);
-        _mut().setBroadcastV2AppliedRaw(3, true);
-        _rep().setBaseRewardDeployment(ERA_BASE);
-        _rotateEra(address(0xE2)); // rotation
-
-        _deliverComp(3, address(0xE2), 3e18, 2e18);
-
-        assertFalse(
-            _rlens().getDayCompensation(3).provisional,
-            "never provisional"
-        );
-        LibVaipakam.StrandedRecovery memory sr =
-            _rlens().getStrandedRecovery(address(0xE2), REMIT_ID);
-        assertEq(sr.amount, 5e18, "reserved");
-        assertEq(sr.reason, 5, "reason: V3-unhealable day");
     }
 
     /// The overtake case evaluates the WIRE-CARRIED frozen words: an

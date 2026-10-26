@@ -39,11 +39,11 @@ import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
  *             sequencing hazards the governor §7 #6 clauses are about.
  *
  *         **Transparent transport, deliberately.** The bus composes the
- *         per-destination {RewardBroadcastV2} from `shared ∪ perDest` with
- *         the identical field mapping as the production encoder
- *         (`VaipakamRewardMessenger._encodeBroadcastV2`) but performs no
- *         `abi.encode`/`decode` round trip and charges no fee. The wire
- *         itself — payload framing, generation fallbacks, fee accounting — is
+ *         per-destination {RewardBroadcastV3} from `shared ∪ extras ∪
+ *         perDest` with the identical field mapping as the production
+ *         encoder (`VaipakamRewardMessenger._encodeBroadcastV3`) but performs
+ *         no `abi.encode`/`decode` round trip and charges no fee. The wire
+ *         itself — payload framing, fee accounting — is
  *         covered by `CrossChainRewardPlumbingTest`; this harness isolates
  *         the MESH ACCOUNTING across real diamonds, so a transparent
  *         transport is the correct scope, not a gap.
@@ -82,7 +82,9 @@ contract MeshBusMessenger is IRewardMessenger {
     }
 
     QueuedReport[] internal reports;
-    RewardBroadcastV2[] internal broadcasts;
+    /// @dev The one broadcast wire (kind 10, #1944): every queued entry is
+    ///      the full V3 form.
+    RewardBroadcastV3[] internal broadcasts;
 
     /// @notice How many times each queued message has been DELIVERED — a
     ///         duplicate-delivery test asserts on this rather than trusting
@@ -138,6 +140,15 @@ contract MeshBusMessenger is IRewardMessenger {
         view
         returns (RewardBroadcastV2 memory)
     {
+        return broadcasts[i].v2;
+    }
+
+    /// @notice The full V3 form of queued broadcast `i` (clock and era).
+    function broadcastV3At(uint256 i)
+        external
+        view
+        returns (RewardBroadcastV3 memory)
+    {
         return broadcasts[i];
     }
 
@@ -151,8 +162,8 @@ contract MeshBusMessenger is IRewardMessenger {
     {
         for (uint256 i; i < broadcasts.length; ++i) {
             if (
-                broadcasts[i].dayId == dayId
-                    && broadcasts[i].destChainId == destChainId
+                broadcasts[i].v2.dayId == dayId
+                    && broadcasts[i].v2.destChainId == destChainId
             ) {
                 return i;
             }
@@ -187,30 +198,6 @@ contract MeshBusMessenger is IRewardMessenger {
         );
     }
 
-    /// @dev Per-destination V2 fan-out. Mirrors the production messenger's
-    ///      contract exactly: the configured destination set is the
-    ///      authority, and every configured destination must have exactly one
-    ///      funded entry (equal lengths + every-configured-found rules out
-    ///      both extras and duplicates).
-    function broadcastDayV2(
-        IRewardMessenger.BroadcastV2Shared calldata shared,
-        IRewardMessenger.BroadcastV2PerDest[] calldata perDest,
-        address payable
-    ) external payable override {
-        if (msg.sender != baseDiamond) revert NotBase(msg.sender);
-        uint256 n = dests.length;
-        if (perDest.length != n) {
-            revert DestinationSetMismatch(perDest.length, n);
-        }
-        for (uint256 i; i < n; ++i) {
-            broadcasts.push(_compose(shared, _findDest(perDest, dests[i])));
-            // #1434 P2-w1 — keep the V3 queue index-aligned: a V2-
-            // generation send has no V3 form (zero `finalizedAt` marks
-            // the hole, and {deliverBroadcastV3} refuses it).
-            broadcastsV3.push();
-        }
-    }
-
     // ─── Deliver side (called by the TEST, after `vm.chainId`) ─────────────
 
     /// @notice Deliver queued report `i` to the canonical aggregator.
@@ -243,10 +230,10 @@ contract MeshBusMessenger is IRewardMessenger {
     ///      with `BroadcastDestinationMismatch`, which is the behaviour under
     ///      test in the mis-routing case.
     function deliverBroadcast(uint256 i) external {
-        RewardBroadcastV2 memory b = broadcasts[i];
+        RewardBroadcastV3 memory b = broadcasts[i];
         broadcastDeliveries[i] += 1;
-        RewardReporterFacet(diamondOf[b.destChainId])
-            .onRewardBroadcastV2Received(b);
+        RewardReporterFacet(diamondOf[b.v2.destChainId])
+            .onRewardBroadcastV3Received(b);
     }
 
     /// @notice Deliver queued broadcast `i` to an ARBITRARY diamond — the
@@ -255,7 +242,7 @@ contract MeshBusMessenger is IRewardMessenger {
     ///         cross-wire.
     function deliverBroadcastTo(uint256 i, address diamond) external {
         broadcastDeliveries[i] += 1;
-        RewardReporterFacet(diamond).onRewardBroadcastV2Received(broadcasts[i]);
+        RewardReporterFacet(diamond).onRewardBroadcastV3Received(broadcasts[i]);
     }
 
     // ─── Internals ─────────────────────────────────────────────────────────
@@ -265,8 +252,8 @@ contract MeshBusMessenger is IRewardMessenger {
         if (id == 0) revert NotEnrolled(msg.sender);
     }
 
-    /// @dev `shared ∪ perDest`, field-for-field as
-    ///      `VaipakamRewardMessenger._encodeBroadcastV2` builds it.
+    /// @dev `shared ∪ perDest`, field-for-field as the nested V2 part of
+    ///      `VaipakamRewardMessenger._encodeBroadcastV3`.
     function _compose(
         IRewardMessenger.BroadcastV2Shared calldata shared,
         IRewardMessenger.BroadcastV2PerDest calldata d
@@ -289,39 +276,7 @@ contract MeshBusMessenger is IRewardMessenger {
         });
     }
 
-    function _findDest(
-        IRewardMessenger.BroadcastV2PerDest[] calldata perDest,
-        uint256 destChainId
-    ) private pure returns (IRewardMessenger.BroadcastV2PerDest calldata) {
-        for (uint256 i; i < perDest.length; ++i) {
-            if (perDest[i].destChainId == destChainId) return perDest[i];
-        }
-        revert DestinationNotFunded(destChainId);
-    }
-
-    // ─── #1434 P2-w1 — V3 broadcast surface ────────────────────────────────
-    //
-    // The bus stays a transparent transport: the V3 send queues the SAME
-    // nested V2 form into `broadcasts` (so every existing mesh-accounting
-    // sequence — ordering, duplication, drops — keeps operating on the one
-    // queue) and records the appended clock facts beside it in
-    // `broadcastsV3`, index-aligned. `deliverBroadcast(i)` still delivers
-    // the V2 form (a legitimate lane behaviour — the kind-5 ingress branch
-    // is kept in production precisely for old in-flight packets);
-    // `deliverBroadcastV3(i)` delivers the full V3 form. Clock/wire-framing
-    // correctness itself is CrossChainRewardPlumbingTest's scope.
-
-    /// @notice Index-aligned V3 forms (`finalizedAt == 0` ⇒ the entry was
-    ///         queued by a V2-generation send and has no V3 form).
-    RewardBroadcastV3[] internal broadcastsV3;
-
-    function broadcastV3At(uint256 i)
-        external
-        view
-        returns (RewardBroadcastV3 memory)
-    {
-        return broadcastsV3[i];
-    }
+    // ─── Send side: the V3 broadcast ───────────────────────────────────────
 
     function broadcastDayV3(
         IRewardMessenger.BroadcastV2Shared calldata shared,
@@ -366,19 +321,7 @@ contract MeshBusMessenger is IRewardMessenger {
         return 0;
     }
 
-    /// @notice Deliver queued broadcast `i` in its V3 form to its
-    ///         destination diamond (same chain-id-warp contract as
-    ///         {deliverBroadcast}).
-    function deliverBroadcastV3(uint256 i) external {
-        RewardBroadcastV3 memory b = broadcastsV3[i];
-        require(b.finalizedAt != 0, "MeshBus: entry has no V3 form");
-        broadcastDeliveries[i] += 1;
-        RewardReporterFacet(diamondOf[b.v2.destChainId])
-            .onRewardBroadcastV3Received(b);
-    }
-
-    /// @dev Queue both forms, index-aligned: the nested V2 into the one
-    ///      shared queue, the full V3 beside it. `baseDeployment` is
+    /// @dev Queue one destination's V3 packet. `baseDeployment` is
     ///      stamped from `baseDiamond`, mirroring the production
     ///      messenger's stamp of its own Diamond binding.
     function _queueV3(
@@ -386,10 +329,8 @@ contract MeshBusMessenger is IRewardMessenger {
         IRewardMessenger.BroadcastV3Extras calldata extras,
         IRewardMessenger.BroadcastV3PerDest calldata d
     ) private {
-        RewardBroadcastV2 memory v2 = _compose(shared, d.base);
-        broadcasts.push(v2);
-        broadcastsV3.push(RewardBroadcastV3({
-            v2: v2,
+        broadcasts.push(RewardBroadcastV3({
+            v2: _compose(shared, d.base),
             finalizedAt: extras.finalizedAt,
             lapseScheduleVersion: extras.lapseScheduleVersion,
             lapseWindowSeconds: extras.lapseWindowSeconds,
@@ -401,7 +342,7 @@ contract MeshBusMessenger is IRewardMessenger {
         }));
     }
 
-    /// @dev V3 twin of {_findDest}.
+    /// @dev The packet Base funded for `destChainId`, reverting if absent.
     function _findDestV3(
         IRewardMessenger.BroadcastV3PerDest[] calldata perDest,
         uint256 destChainId
@@ -430,39 +371,6 @@ contract MeshBusMessenger is IRewardMessenger {
         returns (uint256)
     {
         return 0;
-    }
-
-    function quoteBroadcastGlobal(uint256, uint256, uint256)
-        external
-        pure
-        override
-        returns (uint256)
-    {
-        return 0;
-    }
-
-    function quoteBroadcastDayV2(
-        IRewardMessenger.BroadcastV2Shared calldata,
-        IRewardMessenger.BroadcastV2PerDest[] calldata
-    ) external pure override returns (uint256) {
-        return 0;
-    }
-
-    /// @dev The pre-B2-b flat broadcast. This bus configures a V2-capable
-    ///      messenger, so reaching it means the facet took the legacy
-    ///      fallback — a wiring error in a harness that never simulates an
-    ///      un-upgraded proxy. Fail loud rather than silently swallow it.
-    function broadcastGlobal(
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        address payable
-    ) external payable override {
-        revert("MeshBus: legacy broadcast unexpected");
     }
 
     function sendCommitmentReport(uint256, uint256, uint256, address payable)

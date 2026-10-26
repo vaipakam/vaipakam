@@ -47,11 +47,12 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *                  native fee out of `msg.value`. The messenger delivers
  *                  into `RewardAggregatorFacet.onChainReportReceived` on Base.
  *
- *      {onRewardBroadcastReceived} is the mirror-side trusted ingress
+ *      {onRewardBroadcastV3Received} is the mirror-side trusted ingress
  *      handler: when Base finalizes day `D`, its messenger broadcasts the
- *      pair back and the mirror's messenger invokes this method, which
- *      populates `knownGlobal*InterestNumeraire18[D]` used by the §4 formula.
- *      Gated to `rewardMessenger` — no other address may write these values.
+ *      day back and the mirror's messenger invokes this method, which
+ *      populates `knownGlobal*InterestNumeraire18[D]` used by the §4 formula,
+ *      the chain's own funded figures and the day's frozen clock. Gated to
+ *      `rewardMessenger` — no other address may write these values.
  *
  *      Admin surface configures the cross-chain wiring (messenger address,
  *      canonical Base chain id, canonical flag, grace window) under
@@ -154,8 +155,8 @@ contract RewardReporterFacet is
         // #1195 E3 (Pass-2) — reject a late self-report AFTER the day has been
         // finalized, matching the mirror ingress guard in `RewardAggregatorFacet`
         // (`onChainReportReceived`). Storing a post-finalization report is
-        // payout-benign but poisons the `backfillDayInclusion` predicate and the
-        // audit trail; the Base path must fail-loud like the mirror path.
+        // payout-benign but poisons the audit trail; the Base path must
+        // fail-loud like the mirror path.
         if (s.dailyGlobalFinalized[dayId]) revert ReportAfterFinalization();
 
         // Fold entry-driven deltas into `totalLenderInterestNumeraire18[dayId]` /
@@ -321,302 +322,25 @@ contract RewardReporterFacet is
 
     // ─── Mirror-side trusted broadcast ingress ──────────────────────────────
 
-    /**
-     * @notice Trusted ingress: the messenger delivers Base's finalized global
-     *         denominator for `dayId` and this function stamps it into
-     *         `knownGlobal{Lender,Borrower}InterestNumeraire18` so local
-     *         {LibInteractionRewards.claimForUserWindow} can use it.
-     * @dev Gated to the Diamond's registered `rewardMessenger`. First call for
-     *      `dayId` writes the pair; repeat calls must carry the SAME
-     *      numbers (idempotent on match, revert `KnownGlobalAlreadySet`
-     *      on divergence).
-     *
-     *      Works on Base too: {RewardAggregatorFacet.finalizeDay} funnels
-     *      Base's own finalization through the same storage slot (via a
-     *      direct write, not this function), so Base-side claims read
-     *      the identical denominator without needing a CCIP message.
-     * @param dayId                 Day being broadcast.
-     * @param globalLenderNumeraire18     Finalized global lender denominator.
-     * @param globalBorrowerNumeraire18   Finalized global borrower denominator.
-     */
-    function onRewardBroadcastReceived(
-        uint256 dayId,
-        uint256 globalLenderNumeraire18,
-        uint256 globalBorrowerNumeraire18,
-        uint256 capThreshold18,
-        uint256 scheduleFloorHalf,
-        uint256 recycledHalf,
-        uint256 armedFromDay
-    ) external {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (msg.sender != s.rewardMessenger || s.rewardMessenger == address(0)) {
-            revert NotAuthorizedRewardMessenger();
-        }
-
-        if (s.knownGlobalSet[dayId]) {
-            // Idempotent re-delivery is fine — CCIP retries can
-            // duplicate a packet. Divergent values must never overwrite.
-            _requireV1Consensus(s, dayId, globalLenderNumeraire18, globalBorrowerNumeraire18, capThreshold18, scheduleFloorHalf, recycledHalf);
-            return;
-        }
-
-        // #1632 r2 — same rotation retirement as the kind-5 wire: a fresh
-        // kind-2 write after an era rotation could install a retired era's
-        // consensus pair, which would then wedge the day against the new
-        // era's V3 (mixed-generation comparison). Replays above stay
-        // idempotent. PR C-4 — refused is PARKED, not reverted: the message is
-        // accepted by the transport and recorded with a disposition to come.
-        if (s.rewardEraRotated) {
-            LibRewardCustody.parkBroadcast(
-                s,
-                2,
-                dayId,
-                keccak256(
-                    abi.encode(
-                        uint8(2), dayId, globalLenderNumeraire18, globalBorrowerNumeraire18, capThreshold18,
-                        scheduleFloorHalf, recycledHalf, armedFromDay
-                    )
-                )
-            );
-            return;
-        }
-        _applyLegacyBroadcastV1(
-            s, dayId, globalLenderNumeraire18, globalBorrowerNumeraire18, capThreshold18, scheduleFloorHalf,
-            recycledHalf, armedFromDay
-        );
-    }
-
-    /// @dev The kind-2 REPLAY rule — ONE body for the ingress and the parked retry
-    ///      (#1566 PR 1 review): a day already known must carry the SAME
-    ///      consensus or the write is refused. #1008 (S13) — `capThreshold18` is
-    ///      part of the broadcast's consensus value, so a divergent-threshold
-    ///      replay reverts too (Codex #1147 r7 K6). PR-3c — the composition
-    ///      halves join the consensus tuple for the same reason.
-    function _requireV1Consensus(
-        LibVaipakam.Storage storage s,
-        uint256 dayId,
-        uint256 globalLenderNumeraire18,
-        uint256 globalBorrowerNumeraire18,
-        uint256 capThreshold18,
-        uint256 scheduleFloorHalf,
-        uint256 recycledHalf
-    ) private view {
-        LibVaipakam.DayPoolStamp storage prior = s.dayPoolStamp[dayId];
-        if (
-            s.knownGlobalLenderInterestNumeraire18[dayId] != globalLenderNumeraire18 ||
-            s.knownGlobalBorrowerInterestNumeraire18[dayId] != globalBorrowerNumeraire18 ||
-            s.dayCapThreshold18[dayId] != capThreshold18 ||
-            (prior.stamped &&
-                (uint256(prior.scheduleFloor) != scheduleFloorHalf * 2 ||
-                    uint256(prior.recycledBudget) != recycledHalf * 2))
-        ) {
-            revert KnownGlobalAlreadySet();
-        }
-    }
-
-    /// @dev PR C-4 — the kind-2 apply body, shared by the ingress and the parked retry.
-    function _applyLegacyBroadcastV1(
-        LibVaipakam.Storage storage s,
-        uint256 dayId,
-        uint256 globalLenderNumeraire18,
-        uint256 globalBorrowerNumeraire18,
-        uint256 capThreshold18,
-        uint256 scheduleFloorHalf,
-        uint256 recycledHalf,
-        uint256 armedFromDay
-    ) private {
-        s.knownGlobalLenderInterestNumeraire18[dayId] = globalLenderNumeraire18;
-        s.knownGlobalBorrowerInterestNumeraire18[dayId] = globalBorrowerNumeraire18;
-        // #1008 (S13) — store the CANONICAL threshold from Base; mirrors never
-        // recompute locally, so Base + every mirror cap identically.
-        LibInteractionRewards.setBroadcastDayCapThreshold(dayId, capThreshold18);
-        // Governor PR-3c (#1217 §6/§8) — store the Base-stamped day-pool
-        // composition verbatim so the mirror's dual accumulators price the
-        // IDENTICAL dailyPool (never recomputed locally; margin/Ā stay 0 —
-        // they are Base-side transparency fields). The arming day travels
-        // in-band too, so mirrors arm on the same D* with zero operator
-        // drift (a mirror only ever moves it forward from unset).
-        s.dayPoolStamp[dayId] = LibVaipakam.DayPoolStamp({
-            scheduleFloor: SafeCast.toUint128(scheduleFloorHalf * 2),
-            recycledBudget: SafeCast.toUint128(recycledHalf * 2),
-            aBarAtFinalize: 0,
-            marginBpsAtFinalize: 0,
-            stamped: true
-        });
-        if (armedFromDay != 0 && s.governorCommitArmedFromDay == 0) {
-            s.governorCommitArmedFromDay = armedFromDay;
-        }
-        s.knownGlobalSet[dayId] = true;
-
-        emit KnownGlobalInterestSet(
-            dayId,
-            globalLenderNumeraire18,
-            globalBorrowerNumeraire18
-        );
-    }
-
-    /// @notice #1222 M3 B2-b — a V2 broadcast was applied on this mirror:
+    /// @notice #1222 M3 B2-b — a day's broadcast was applied on this mirror:
     ///         the consensus pair + cap family landed, the chain's own
-    ///         funded stamp was written, and — on a FRESH post-d3
-    ///         application — the local recycle bucket RESERVED its
-    ///         instructed slice. Said "surrendered … (consume-on-arrival)"
-    ///         until #1349: arrival encumbers the slice, it does not spend
-    ///         it — `consume` debits at claim/remit.
-    ///
-    ///         DO NOT read a historical occurrence of this event as proof
-    ///         the reservation exists. A day first applied by a PRE-d3
-    ///         receiver got the stamp and the applied flag with no
-    ///         reservation, and the replay branch in `_applyBroadcastV2Core`
-    ///         completes that missed reservation LATER — guarded by its own
-    ///         flag, and returning without emitting this event again. So
-    ///         for such a day the reservation and the event sit in
-    ///         different transactions, and an event-driven audit that
-    ///         infers reservation state from this log alone will be wrong
-    ///         about exactly the days the rollout gap created.
+    ///         funded stamp was written, the keeper earmark was applied and
+    ///         the local recycle bucket RESERVED its instructed slice.
+    ///         Arrival encumbers the slice, it does not spend it — `consume`
+    ///         debits at claim/remit. Emitted once per day, in the same
+    ///         transaction as the reservation (#1944: no older wire is left
+    ///         that could apply a day without it).
     /// @custom:event-category informational/reward-governor
     event RewardBroadcastV2Applied(
         uint256 indexed dayId,
         uint256 recycleConsume
     );
 
-    /**
-     * @notice #1222 M3 B2-b — trusted ingress for the per-destination V2
-     *         broadcast: Base's finalized consensus fields plus THIS
-     *         chain's own funded figures for `dayId`.
-     * @dev Messenger-gated. Applies, in order:
-     *
-     *      1. Replay-stable binding — the packet's embedded `destChainId`
-     *         must equal `block.chainid` (a delayed delivery after a
-     *         destination-list edit or a governance replay must never
-     *         apply another chain's figures here).
-     *      2. Whole-day idempotency — the first application sets
-     *         `broadcastV2Applied[dayId]`; a re-delivered packet must
-     *         match EVERY applied field (revert on divergence) and is
-     *         otherwise a no-op, so the arrival-time RESERVATION
-     *         (`_reserveMirrorCommitOnce` → {LibVpfiRecycle.reserveMirrorCommit})
-     *         can never run twice. This said "the consume-on-arrival debit"
-     *         until #1349 — in the function that performs the reservation,
-     *         and describing the one thing it is written NOT to do: arrival
-     *         reserves, `consume` debits later at claim/remit, because
-     *         debiting at both points charges the same tokens twice.
-     *      3. Consensus pair — written, or verified against a value a
-     *         legacy kind-2 delivery already set (mixed-generation days).
-     *      4. Cap family, atomic with the mode (#1351 2a pairing):
-     *         ShareOfPool ⇒ legacy threshold disabled (max) + the
-     *         per-side D1 ceilings, verbatim from Base; Legacy ⇒ the §4
-     *         threshold verbatim.
-     *      5. The chain's own `ChainDayFunding` stamp — what the armed-day
-     *         accumulators price with. (`fundedLender`/`fundedBorrower`
-     *         stay 0 here: they are Base-side records; the equivalent
-     *         halves already encode the funded budgets exactly.)
-     *      6. `armedFromDay` — forward-only, as in the legacy ingress.
-     *      7. Reserve-on-arrival — the local bucket ENCUMBERS
-     *         `recycleConsume` exactly once, mirroring the
-     *         `chainConsumedRecycled[c]` mark Base booked at finalization
-     *         (same figure, both ledgers). Headed "Consume-on-arrival …
-     *         surrenders" until #1349; the debit happens later, at
-     *         claim/remit, and doing both would charge the slice twice.
-     */
-    /// @dev #1222 M3 B2-d3 — reserve this day's instructed local recycled
-    ///      commit AT MOST ONCE, tracked on its own flag
-    ///      (`mirrorRecycleCommitReserved`) rather than on
-    ///      `broadcastV2Applied`, so a day whose broadcast was applied by a
-    ///      pre-d3 implementation can still have its reservation completed
-    ///      by a later replay (Codex #1430 r4).
-    function _reserveMirrorCommitOnce(
-        LibVaipakam.Storage storage s,
-        uint256 dayId,
-        uint256 amount
-    ) private {
-        if (amount == 0) return;
-        if (s.mirrorRecycleCommitReserved[dayId]) return;
-        s.mirrorRecycleCommitReserved[dayId] = true;
-        LibVpfiRecycle.reserveMirrorCommit(dayId, amount);
-    }
-
-    /// @dev #1569 M4 C3 (Codex #2031 r5) — apply this day's Base-instructed
-    ///      keeper earmark AT MOST ONCE, on its own flag rather than on
-    ///      `broadcastV2Applied`, so a day whose broadcast was applied by a
-    ///      PRE-#1569 receiver can still have its earmark completed by a
-    ///      later replay. Exactly the shape, and exactly the reason, of
-    ///      {_reserveMirrorCommitOnce} above.
-    ///
-    ///      Without it a non-atomic rollout diverges the two sides silently:
-    ///      Base has charged `chainKeeperAllocDebited` and reduced what it
-    ///      will instruct, while the mirror never reserved the earmark and
-    ///      still counts those tokens as fundable for claims and
-    ///      repatriation.
-    function _applyKeeperEarmarkOnce(
-        LibVaipakam.Storage storage s,
-        uint256 dayId,
-        uint256 amount
-    ) private {
-        if (amount == 0) return;
-        if (s.mirrorKeeperEarmarkApplied[dayId]) return;
-        s.mirrorKeeperEarmarkApplied[dayId] = true;
-        s.recycleKeeperBudget += amount;
-    }
-
-    function onRewardBroadcastV2Received(RewardBroadcastV2 calldata b)
-        external
-    {
-        LibVaipakam.Storage storage s = _broadcastIngressGates(b.destChainId);
-        _applyBroadcastV2Core(s, b, /* legacyWire */ true, 0);
-    }
-
-    /// @notice PR C-4 — retry a PARKED kind-2 broadcast: re-supply it, prove it is
-    ///         the one parked, and run the same apply through the same gate.
-    ///         Permissionless: the digest is the authority. It stays parked while
-    ///         the gate refuses; a quarantine-only entry is refused by name.
-    function retryParkedBroadcastV1(
-        uint256 id,
-        uint256 dayId,
-        uint256 globalLenderNumeraire18,
-        uint256 globalBorrowerNumeraire18,
-        uint256 capThreshold18,
-        uint256 scheduleFloorHalf,
-        uint256 recycledHalf,
-        uint256 armedFromDay
-    ) external nonReentrant {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibRewardCustody.requireParkedRetryable(
-            s,
-            id,
-            keccak256(
-                abi.encode(
-                    uint8(2), dayId, globalLenderNumeraire18, globalBorrowerNumeraire18, capThreshold18,
-                    scheduleFloorHalf, recycledHalf, armedFromDay
-                )
-            )
-        );
-        if (s.knownGlobalSet[dayId]) {
-            // The day landed by another route since this copy was parked
-            // (#1566 PR 1 review): one carrying the SAME consensus is moot and
-            // retires as applied — as the kind-5 retry's replay always did —
-            // while a divergent one is refused and stays parked.
-            _requireV1Consensus(s, dayId, globalLenderNumeraire18, globalBorrowerNumeraire18, capThreshold18, scheduleFloorHalf, recycledHalf);
-        } else {
-            if (s.rewardEraRotated) revert ParkedBroadcastStillUnroutable(id);
-            _applyLegacyBroadcastV1(
-                s, dayId, globalLenderNumeraire18, globalBorrowerNumeraire18, capThreshold18, scheduleFloorHalf,
-                recycledHalf, armedFromDay
-            );
-        }
-        LibRewardCustody.parkedBroadcastApplied(s, id);
-    }
-
-    /// @notice PR C-4 — retry a PARKED kind-5 broadcast; see {retryParkedBroadcastV1}.
-    function retryParkedBroadcastV2(uint256 id, RewardBroadcastV2 calldata b) external nonReentrant {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibRewardCustody.requireParkedRetryable(s, id, keccak256(abi.encode(uint8(5), b)));
-        if (b.destChainId != block.chainid) revert BroadcastDestinationMismatch(b.destChainId);
-        _applyBroadcastV2Core(s, b, /* legacyWire */ true, id);
-        LibRewardCustody.parkedBroadcastApplied(s, id);
-    }
-
-    /// @dev #1434 P2-w1 — the trust + destination-binding gates shared by
-    ///      the kind-5 and kind-10 ingresses (messenger-gated; the packet's
-    ///      embedded `destChainId` must equal `block.chainid`).
+    /// @dev #1434 P2-w1 — the broadcast ingress's trust + destination-binding
+    ///      gates (messenger-gated; the packet's embedded `destChainId` must
+    ///      equal `block.chainid`, so a delayed delivery after a
+    ///      destination-list edit can never apply another chain's figures
+    ///      here), plus the role gate (#1944: Mirror or Detached only).
     function _broadcastIngressGates(uint256 destChainId)
         private
         view
@@ -630,29 +354,50 @@ contract RewardReporterFacet is
         if (destChainId != block.chainid) {
             revert BroadcastDestinationMismatch(destChainId);
         }
+        // #1944 — the day delivery gate binds by ROLE, from a mirror's first
+        // day, with no arming latch to refuse a first day below the folds. So
+        // a stamp may land only where the gate already binds (Mirror) or can
+        // pay nothing fresh (Detached: zero delivered bound). An Unconfigured
+        // chain prices unbounded and the canonical chain funds itself; a day
+        // stamped there could be folded unproven and then re-held on becoming
+        // a mirror, which the walk's re-derivation would halt on.
+        LibVaipakam.RewardRole role = LibVaipakam.rewardRole(s);
+        if (role == LibVaipakam.RewardRole.Unconfigured || role == LibVaipakam.RewardRole.Canonical) {
+            revert BroadcastRoleRefused(uint8(role));
+        }
     }
 
-    /// @dev The ONE V2 apply/replay implementation (#1434 P2-w1 refactor —
-    ///      body unchanged). The V3 ingress hands its nested `v2` struct
-    ///      here verbatim, so the two wire generations can never apply the
-    ///      shared fields differently. Takes `memory` because the V3 path
-    ///      passes a struct member; the V2 external path pays one
-    ///      calldata→memory copy for the privilege of there being exactly
-    ///      one implementation.
+    /// @dev The apply/replay of the broadcast's nested V2 fields. Takes
+    ///      `memory` because the caller passes a struct member.
+    ///
+    ///      Applies, in order:
+    ///
+    ///      1. Whole-day idempotency — the first application sets
+    ///         `broadcastV2Applied[dayId]`; a re-delivered packet must match
+    ///         EVERY applied field (revert on divergence) and is otherwise a
+    ///         no-op, so the arrival-time RESERVATION can never run twice.
+    ///      2. Consensus pair — written.
+    ///      3. Cap family, atomic with the mode (#1351 2a pairing):
+    ///         ShareOfPool ⇒ legacy threshold disabled (max) + the per-side
+    ///         D1 ceilings, verbatim from Base; LegacyEthRatio ⇒ the §4
+    ///         threshold verbatim.
+    ///      4. The chain's own `ChainDayFunding` stamp — what the armed-day
+    ///         accumulators price with. (`fundedLender`/`fundedBorrower`
+    ///         stay 0 here: they are Base-side records; the equivalent
+    ///         halves already encode the funded budgets exactly.)
+    ///      5. The Base-authorized keeper earmark.
+    ///      6. `armedFromDay` — forward-only from unset.
+    ///      7. Reserve-on-arrival — the local bucket ENCUMBERS
+    ///         `recycleConsume`, mirroring the `chainConsumedRecycled[c]`
+    ///         mark Base booked at finalization (same figure, both ledgers).
+    ///         Not a debit: the debit happens later, at claim/remit, and
+    ///         doing both would charge the slice twice.
     function _applyBroadcastV2Core(
         LibVaipakam.Storage storage s,
-        RewardBroadcastV2 memory b,
-        bool legacyWire,
-        uint256 parkedId
+        RewardBroadcastV2 memory b
     ) private {
         uint32 selfId = uint32(block.chainid);
         if (s.broadcastV2Applied[b.dayId]) {
-            // Codex #1430 r4 — complete a reservation a PRE-d3 application of
-            // this same day missed (Base-first / non-atomic rollout: the old
-            // receiver stored the stamp and set the applied flag without
-            // reserving). Guarded by its own flag, so it can never
-            // double-reserve on an ordinary replay.
-            _reserveMirrorCommitOnce(s, b.dayId, b.recycleConsume);
             LibVaipakam.ChainDayFunding storage prior =
                 s.chainDayRecycledFunding[b.dayId][selfId];
             if (
@@ -674,14 +419,13 @@ contract RewardReporterFacet is
             //
             // `broadcastGlobal` is permissionless (`onlyCanonical` tests the
             // CHAIN, not the caller), so a third party can apply a day here
-            // while Base is still unarmed. Before this, the replay returned
-            // above the install below, and `governorCommitArmedFromDay` is
-            // ONE-SHOT — so the post-arm rebroadcast of that same day exited
-            // idempotently and the mirror could not be armed through this
-            // path at all. That is not a race the ceremony can close: every
-            // mitigation depends on an unapplied day still existing when it
-            // is needed, and a third party decides that (#1943 documents the
-            // mitigation and says outright it is mitigation, not closure).
+            // while Base is still unarmed. `governorCommitArmedFromDay` is
+            // ONE-SHOT, so if the replay returned before this install, the
+            // post-arm rebroadcast of that same day would exit idempotently
+            // and the mirror could not be armed through this path at all.
+            // That is not a race a ceremony can close: every mitigation
+            // depends on an unapplied day still existing when it is needed,
+            // and a third party decides that.
             //
             // Safe HERE precisely because the divergence check above has
             // already passed: every frozen fact of this day matches what was
@@ -693,74 +437,31 @@ contract RewardReporterFacet is
             //
             // Still one-shot: the zero check means an already-armed mirror
             // ignores a later, different `D*`, so a replay can fill the hole
-            // but can never re-choose the era. No event, matching the
+            // but can never re-choose the era. The caller has authenticated
+            // the packet's era before reaching here. No event, matching the
             // main-path install below.
-            //
-            // RETIRED ERAS ARE EXCLUDED, and that is not the same test the
-            // fresh path makes. The rotation gate (a fresh legacy apply after
-            // a rotation is PARKED, PR C-4) sits BELOW this branch on purpose, so an applied day keeps replaying
-            // idempotently after a rotation — but idempotent replay is a
-            // no-op, and this install is not. Without the clause, a kind-5
-            // packet from a retired era could still choose this mirror's
-            // era through a delayed replay, which is precisely the authority
-            // the rotation withdrew. A replay from a retired era therefore
-            // stays a no-op here; the V3 wire passes `legacyWire = false`
-            // and has authenticated its era, so the hole it exists to fill
-            // is still fillable.
-            if (
-                b.armedFromDay != 0 && s.governorCommitArmedFromDay == 0
-                    && !(legacyWire && s.rewardEraRotated)
-            ) {
+            if (b.armedFromDay != 0 && s.governorCommitArmedFromDay == 0) {
                 s.governorCommitArmedFromDay = b.armedFromDay;
             }
-            // #1569 M4 C3 (Codex #2031 r5) — the keeper earmark's own
-            // pre-upgrade repair, the sibling of the reservation repair at
-            // the top of this branch. Placed AFTER the divergence check,
-            // and reading the STORED figure rather than the packet's: by
-            // here every frozen fact of the day has been proven to match,
-            // so a diverging packet has already reverted and cannot earmark
-            // anything. The reservation repair above predates that check
-            // and keeps its position for compatibility, but a new write has
-            // no reason to run before the day has been authenticated.
-            _applyKeeperEarmarkOnce(s, b.dayId, prior.keeperAllocate);
             return;
         }
-
-        // #1632 r2 — after an era ROTATION, the identity-less kind-5 wire
-        // refuses FRESH applies (Codex #1632 r2: legacy packets carry no
-        // deployment identity, so a retired era's delayed delivery is
-        // indistinguishable from a legitimate one). Placed
-        // AFTER the replay branch above, so already-applied days replay
-        // idempotently forever. The V3 caller passes `legacyWire = false`:
-        // it reaches this core only having authenticated its era against
-        // the configured ground truth.
-        if (legacyWire && s.rewardEraRotated) {
-            // PR C-4 — refused is PARKED on first receipt; a retry that still
-            // meets the gate stays parked, by name.
-            if (parkedId != 0) revert ParkedBroadcastStillUnroutable(parkedId);
-            LibRewardCustody.parkBroadcast(s, 5, b.dayId, keccak256(abi.encode(uint8(5), b)));
-            return;
+        // One writer per own-chain funding record (Codex #2879). On a mirror
+        // only this apply stamps it; a record already stamped with no
+        // broadcast applied was written by `finalizeDay` while this chain was
+        // canonical, and that day was funded here. Overwriting it would price
+        // the day twice and reserve its recycled commit a second time, and
+        // would make the delivery gate hold a day a fold may already have
+        // passed. Refused by name: the packet stays a failed, re-executable
+        // message.
+        if (s.chainDayRecycledFunding[b.dayId][selfId].stamped) {
+            revert DayFundedLocally(b.dayId);
         }
 
-        // Mixed-generation same-day: a legacy kind-2 delivery may already
-        // have set the consensus pair — this packet must agree, then its
-        // V2-only records layer on top.
-        if (s.knownGlobalSet[b.dayId]) {
-            if (
-                s.knownGlobalLenderInterestNumeraire18[b.dayId]
-                    != b.globalLenderNumeraire18
-                    || s.knownGlobalBorrowerInterestNumeraire18[b.dayId]
-                        != b.globalBorrowerNumeraire18
-            ) {
-                revert KnownGlobalAlreadySet();
-            }
-        } else {
-            s.knownGlobalLenderInterestNumeraire18[b.dayId] =
-                b.globalLenderNumeraire18;
-            s.knownGlobalBorrowerInterestNumeraire18[b.dayId] =
-                b.globalBorrowerNumeraire18;
-            s.knownGlobalSet[b.dayId] = true;
-        }
+        s.knownGlobalLenderInterestNumeraire18[b.dayId] =
+            b.globalLenderNumeraire18;
+        s.knownGlobalBorrowerInterestNumeraire18[b.dayId] =
+            b.globalBorrowerNumeraire18;
+        s.knownGlobalSet[b.dayId] = true;
 
         if (b.capMode == uint8(LibVaipakam.CapMode.ShareOfPool)) {
             LibInteractionRewards.setBroadcastDayCapThreshold(
@@ -793,29 +494,20 @@ contract RewardReporterFacet is
         // The earmark comes from INSIDE this chain's bucket — bounded on
         // Base by the headroom the day's commit left in this chain's
         // availability — exactly as the local register is on Base:
-        // `recycleBucket` is unchanged and no tokens move. What changes is how much of the bucket is available to
-        // fund reward budgets, since `recycleKeeperBudget` is netted out of
-        // the fundable figure and out of repatriation's draw.
+        // `recycleBucket` is unchanged and no tokens move. What changes is
+        // how much of the bucket is available to fund reward budgets, since
+        // `recycleKeeperBudget` is netted out of the fundable figure and out
+        // of repatriation's draw.
         //
         // Base sized this from the chain's REPORTED DAY INFLOW and charged
         // it BESIDE the local commit reserved below, bounded by the headroom
         // that commit leaves in the chain's availability — so it is value
         // this chain already holds and Base is telling it how to label,
         // never an instruction to find more. The commit is the CAP, not the
-        // base it is a share of (Codex #2031 r13; an earlier revision of
-        // this comment said the commit was the base).
-        //
-        // An earlier revision said Base "carved this from" the commit
-        // (Codex #2031 r4). It does not: the commit stays whole and the
-        // earmark is a second, separately-bounded draw. Stated precisely
-        // because the mirror reserves BOTH figures, and a reader who
-        // believes one contains the other would conclude the mirror
-        // double-reserves.
-        //
-        // Guarded by its OWN flag rather than by the whole-day idempotency
-        // guard, so a day a pre-#1569 receiver applied can still have its
-        // earmark completed on replay — see {_applyKeeperEarmarkOnce}.
-        _applyKeeperEarmarkOnce(s, b.dayId, b.keeperAllocate);
+        // base it is a share of (Codex #2031 r13). The commit stays whole
+        // and the earmark is a second, separately-bounded draw: the mirror
+        // reserves BOTH figures, and neither contains the other.
+        s.recycleKeeperBudget += b.keeperAllocate;
 
         if (b.armedFromDay != 0 && s.governorCommitArmedFromDay == 0) {
             s.governorCommitArmedFromDay = b.armedFromDay;
@@ -831,25 +523,11 @@ contract RewardReporterFacet is
         // this reservation, forfeits/expiries release it — the identical
         // lifecycle Base runs for its own commits. Runs exactly once per day
         // under the whole-day idempotency guard above.
-        _reserveMirrorCommitOnce(s, b.dayId, b.recycleConsume);
+        if (b.recycleConsume != 0) {
+            LibVpfiRecycle.reserveMirrorCommit(b.dayId, b.recycleConsume);
+        }
 
         s.broadcastV2Applied[b.dayId] = true;
-
-        // #1632 r2 — PROVENANCE: an ARMED mirror stamps the era it is
-        // configured for at apply time, so a later V3 for this day can
-        // only backfill or verify against the era that actually delivered
-        // its figures (the identity-less kind-5 wire cannot carry this
-        // itself; the ceremony rule that arming precedes any rotation is
-        // what makes the stamp truthful, and the rotation gate above
-        // closes the wire once that stops holding). On the V3 path this
-        // pre-stamp is overwritten by {_installDayClock} with the packet's
-        // own — already-authenticated — identity, the same value.
-        if (
-            s.baseRewardDeployment != address(0)
-                && s.dayClockEra[b.dayId] == address(0)
-        ) {
-            s.dayClockEra[b.dayId] = s.baseRewardDeployment;
-        }
 
         emit RewardBroadcastV2Applied(b.dayId, b.recycleConsume);
         emit KnownGlobalInterestSet(
@@ -877,30 +555,29 @@ contract RewardReporterFacet is
     // ─── #1434 P2-w1 — V3 (kind-10) ingress: the frozen day clock ───────────
 
     /// @notice #1434 P2-w1 — this day's frozen lapse clock was installed
-    ///         from an authenticated V3 broadcast. `backfilled` marks the
-    ///         migration branch (clock added to a day whose figures were
-    ///         applied via kind-5 before the upgrade) — the inventory signal
-    ///         design §1.1's 12b gate asks for.
+    ///         from an authenticated V3 broadcast, in the same transaction
+    ///         that applied the day's figures.
     /// @custom:event-category informational/reward-clock
     event DayClockInstalled(
         uint256 indexed dayId,
         uint64 finalizedAt,
         uint32 scheduleVersion,
         bool deliberatelyZeroed,
-        address indexed era,
-        bool backfilled
+        address indexed era
     );
 
     /**
-     * @notice #1434 P2-w1 — trusted ingress for the per-destination V3
-     *         broadcast: the full kind-5 semantics plus the day's FROZEN
-     *         lapse-clock facts. Applies, in order:
+     * @notice #1434 P2-w1 — trusted ingress for the per-destination
+     *         broadcast, the ONE broadcast shape (#1944): Base's finalized
+     *         consensus fields, THIS chain's own funded figures for the day,
+     *         and the day's FROZEN lapse-clock facts. Applies, in order:
      *
-     *      1. The shared trust + destination-binding gates (as kind-5).
-     *      2. Fail-closed clock presence — a zero `finalizedAt` is rejected
-     *         (an honest Base broadcasts clockless pre-upgrade days on the
-     *         V2 wire instead), so the packet stays a failed, re-executable
-     *         CCIP message rather than installing a meaningless clock.
+     *      1. The trust + destination-binding gates.
+     *      2. Fail-closed clock presence — a zero `finalizedAt` is rejected.
+     *         Base freezes the clock in the same call that finalizes the
+     *         day, and only a finalized day is broadcast, so a zero clock is
+     *         a malformed packet; it stays a failed, re-executable CCIP
+     *         message rather than installing a meaningless clock.
      *      3. Era binding (§2h constraint 20), TWO layers (Codex #1632 r1):
      *         the packet's `baseDeployment` must equal the mirror's
      *         CONFIGURED current Base deployment ({setBaseRewardDeployment}
@@ -910,21 +587,18 @@ contract RewardReporterFacet is
      *         broadcast from a retired Base deployment must never install
      *         its clock, schedule or zeroed marker into the new era, where
      *         a new-era compensation could combine with it.
-     *      4. CLOCK BACKFILL (the 12b migration branch) — an already-applied
-     *         day with no clock verifies day identity, destination, era and
-     *         the immutable global pair ONLY, then writes ONLY the V3
-     *         fields. It deliberately does NOT compare the halves or
-     *         inclusion-derived fields (`backfillDayInclusion` legitimately
-     *         mutates a destination's halves after the first send, so a full
-     *         V2-field comparison would make the one supported migration
-     *         sequence unhealable) and never re-applies them — adding the
-     *         clock is the branch's only write.
-     *      5. Otherwise the shared V2 core runs (fresh apply, or the full
-     *         replay-divergence check), then the clock is installed
-     *         first-time or verified: a re-delivered packet must match every
-     *         frozen clock fact (finalizedAt, schedule version, inline
-     *         parameters, zeroed marker). `armedFromDay` stays OUTSIDE the
-     *         comparison, exactly as on the V2 path (first-apply-only).
+     *      4. The V2 fields' apply core (fresh apply, or the full
+     *         replay-divergence check), then the day-pool stamp and the
+     *         clock, installed first-time or verified: a re-delivered packet
+     *         must match every frozen clock fact (finalizedAt, schedule
+     *         version, inline parameters, zeroed marker). `armedFromDay`
+     *         stays OUTSIDE the comparison (first-apply-only, plus the
+     *         replay install the core documents).
+     *
+     *      Every applied day carries its era from the transaction that
+     *      applied it: the figures, the clock and `dayClockEra` are written
+     *      together, and no other wire can apply a day (#1944 retired kinds
+     *      2 and 5), so there is no day with figures but no recorded era.
      */
     function onRewardBroadcastV3Received(RewardBroadcastV3 calldata b)
         external
@@ -939,10 +613,10 @@ contract RewardReporterFacet is
         // yet, and the CCIP lane authenticates the shared remote
         // messenger, not the Diamond generation behind it), so without
         // this gate a retired deployment's in-flight packet after a Base
-        // rotation would win the race and poison the day's era
-        // permanently. Fail-closed while unarmed: a V3 to a mirror whose
-        // operator has not set {setBaseRewardDeployment} stays a failed,
-        // re-executable CCIP message.
+        // rebind would win the race and poison the day's era
+        // permanently. Fail-closed while unarmed: a broadcast to a mirror
+        // whose operator has not set {setBaseRewardDeployment} stays a
+        // failed, re-executable CCIP message.
         address expectedEra = s.baseRewardDeployment;
         if (expectedEra == address(0) || b.baseDeployment != expectedEra) {
             revert BroadcastEraUnauthenticated(
@@ -950,113 +624,24 @@ contract RewardReporterFacet is
             );
         }
         // The per-day RECORD still binds a day to the era that installed
-        // its clock: after a rotation bumps the config, a day recorded
+        // its clock: after a rebind moves the config, a day recorded
         // under the previous era rejects new-era re-deliveries (the
         // drain/heal ceremony owns cross-era days, not silent overwrite).
         address era = s.dayClockEra[dayId];
         if (era != address(0) && era != b.baseDeployment) {
             revert BroadcastEraMismatch(dayId, era, b.baseDeployment);
         }
-        // Codex #1632 r3 P1 — a ROTATED mirror refuses to attach V3 clock
-        // facts to any day with PRIOR state but UNKNOWN era provenance
-        // (`dayClockEra == 0`): days applied before arming (kind-5) or
-        // seeded by a pre-arming kind-2 pair predate the provenance stamp,
-        // and after a rotation the mirror can no longer tell WHICH era
-        // supplied their figures — stamping the new era onto them is the
-        // cross-era combination this whole gate family exists to prevent.
-        // On a NEVER-rotated mirror the same days heal freely: with a
-        // single era in the mirror's entire history there is nothing to
-        // confuse them with (the live-migration case). Rotated-away
-        // era-unknown days belong to the drain/heal ceremony — heal them
-        // BEFORE rotating (CcipCutoverRunbook §8).
-        if (
-            s.rewardEraRotated && era == address(0)
-                && (s.broadcastV2Applied[dayId] || s.knownGlobalSet[dayId])
-        ) {
-            revert BroadcastEraMismatch(dayId, address(0), b.baseDeployment);
-        }
 
-        if (
-            s.broadcastV2Applied[dayId]
-                && s.dayLapseClock[dayId].finalizedAt == 0
-        ) {
-            // Clock backfill — immutable pair only (see natspec item 4).
-            if (
-                !s.knownGlobalSet[dayId]
-                    || s.knownGlobalLenderInterestNumeraire18[dayId]
-                        != b.v2.globalLenderNumeraire18
-                    || s.knownGlobalBorrowerInterestNumeraire18[dayId]
-                        != b.v2.globalBorrowerNumeraire18
-            ) {
-                revert KnownGlobalAlreadySet();
-            }
-            // Codex #1632 r1 P1 — the pre-d3 reservation repair the V2
-            // replay path performs must survive this branch: a day applied
-            // by a PRE-d3 receiver has `broadcastV2Applied` set without its
-            // reservation, and returning early here would leave the heal
-            // looking complete while the mirror stays under-reserved
-            // against the local share Base already booked and netted.
-            // Idempotent (its own flag), and it reserves the STORED applied
-            // figure — never the packet's halves, which this branch
-            // deliberately does not trust (`backfillDayInclusion` may have
-            // mutated them on Base after the original send).
-            _reserveMirrorCommitOnce(
-                s,
-                dayId,
-                s.chainDayRecycledFunding[dayId][uint32(block.chainid)]
-                    .recycleConsume
-            );
-            // #1636 r2 — the day-pool stamp backfills alongside the clock
-            // (a pre-r2 V3 day has neither; both are finalize-frozen facts
-            // healed by the same re-send).
-            _installDayPoolStampV3(s, b);
-            _installDayClock(s, b, /* backfilled */ true);
-            // #1944 (Codex #2031 r2) — the one-shot `D*` install must survive
-            // THIS branch too, for exactly the reason the reservation repair
-            // above must: a day applied over V2 while Base was unarmed has no
-            // clock, so its post-arm rebroadcast lands HERE and returns,
-            // never reaching `_applyBroadcastV2Core`'s replay install. The
-            // mirror stayed unarmed and needed a second, unexplained V3
-            // delivery to arm — the #1944 defect resurfacing one path over.
-            //
-            // No retired-era clause, and the asymmetry is the point: this
-            // path is V3-only and has already authenticated `baseDeployment`
-            // against the configured ground truth above. Authenticating its
-            // era is precisely what the legacy wire cannot do, which is why
-            // the replay-branch install excludes it and this one does not.
-            if (b.v2.armedFromDay != 0 && s.governorCommitArmedFromDay == 0) {
-                s.governorCommitArmedFromDay = b.v2.armedFromDay;
-            }
-            // #1569 M4 C3 (Codex #2031 r5) — and the keeper earmark's
-            // repair, for the same reason the reservation repair above is
-            // in this branch: this early return is a path a pre-#1569
-            // applied day can reach, so an unreserved earmark would stay
-            // unreserved forever. Reads the STORED figure, which this
-            // branch already prefers over the packet's halves.
-            _applyKeeperEarmarkOnce(
-                s,
-                dayId,
-                s.chainDayRecycledFunding[dayId][uint32(block.chainid)]
-                    .keeperAllocate
-            );
-            _notifyCompensationHook(b);
-            return;
-        }
-
-        _applyBroadcastV2Core(s, b.v2, /* legacyWire */ false, 0);
-        // #1636 r2 — install (or verify) the day-level funded pool stamp
-        // from the V3 packet. The V2 core deliberately does not write it
-        // (the V2 wire never carried the day-level figure — only per-chain
-        // slices, which are ZERO for a zeroed dest), yet Δq's numerator
-        // and the quote surface's stamp gate both need it mirror-side; the
-        // legacy kind-2 ingress that used to install it retires at
-        // rotation. Runs on replays too, so any pre-r2 V3 day heals by a
-        // permissionless re-send.
+        _applyBroadcastV2Core(s, b.v2);
+        // #1636 r2 — install (or verify) the day-level funded pool stamp:
+        // Δq's numerator and the quote surface's stamp gate both need it
+        // mirror-side, and the per-chain slices cannot supply it (they are
+        // ZERO for a zeroed destination).
         _installDayPoolStampV3(s, b);
 
         LibVaipakam.DayLapseClock storage c = s.dayLapseClock[dayId];
         if (c.finalizedAt == 0) {
-            _installDayClock(s, b, /* backfilled */ false);
+            _installDayClock(s, b);
         } else if (
             c.finalizedAt != b.finalizedAt
                 || c.scheduleVersion != b.lapseScheduleVersion
@@ -1082,14 +667,12 @@ contract RewardReporterFacet is
         );
     }
 
-    /// @dev #1636 r2 — install (first V3 for the day) or VERIFY (replay /
-    ///      mixed-generation) the day-level funded pool stamp from the V3
-    ///      packet's day-pool words. Divergence joins the broadcast
-    ///      consensus family (`KnownGlobalAlreadySet`), matching the
-    ///      legacy kind-2 ingress's own stamp-divergence rule. Stored
-    ///      doubled, read halved — byte-compatible with every existing
-    ///      `dayPoolStamp` consumer (the kind-2 write at
-    ///      {onRewardBroadcastReceived} uses the identical convention).
+    /// @dev #1636 r2 — install (first broadcast for the day) or VERIFY
+    ///      (replay) the day-level funded pool stamp from the packet's
+    ///      day-pool words. Divergence joins the broadcast consensus family
+    ///      (`KnownGlobalAlreadySet`). Stored doubled, read halved — the
+    ///      convention every `dayPoolStamp` consumer reads (Base stamps the
+    ///      whole figures at finalization).
     function _installDayPoolStampV3(
         LibVaipakam.Storage storage s,
         RewardBroadcastV3 calldata b
@@ -1116,16 +699,11 @@ contract RewardReporterFacet is
     /// @dev The V3 fields' writer: the packed clock, the era record, and
     ///      this destination's zeroed marker — atomically, so a day can
     ///      never hold a clock without its era (the compensation ingress
-    ///      that w2 adds keys its remitter check on the era). One other
-    ///      site touches `dayClockEra` alone: the shared apply core's
-    ///      provenance PRE-stamp on an armed mirror (#1632 r2), which this
-    ///      function overwrites with the packet's own authenticated
-    ///      identity — the same value by construction (the configured-era
-    ///      gate admitted the packet).
+    ///      that w2 adds keys its remitter check on the era). The only
+    ///      writer of `dayClockEra`.
     function _installDayClock(
         LibVaipakam.Storage storage s,
-        RewardBroadcastV3 calldata b,
-        bool backfilled
+        RewardBroadcastV3 calldata b
     ) private {
         uint256 dayId = b.v2.dayId;
         s.dayLapseClock[dayId] = LibVaipakam.DayLapseClock({
@@ -1141,8 +719,7 @@ contract RewardReporterFacet is
             b.finalizedAt,
             b.lapseScheduleVersion,
             b.zeroedForDest,
-            b.baseDeployment,
-            backfilled
+            b.baseDeployment
         );
     }
 
@@ -1152,27 +729,16 @@ contract RewardReporterFacet is
         return LibVaipakam.storageSlot().dayClockEra[dayId];
     }
 
-    /// @notice #1944 — whether THIS chain has already applied the V2 broadcast
+    /// @notice #1944 — whether THIS chain has already applied the broadcast
     ///         for `dayId`.
     /// @dev    Written for the M7 arming ceremony, which had to know per
-    ///         mirror — and immediately before broadcasting — whether a
-    ///         candidate propagation day was still unapplied, because a
-    ///         replay used to return BEFORE the `armedFromDay` install and
-    ///         `D*` is one-shot. Answering it by scanning for
-    ///         `RewardBroadcastV2Applied` logs is materially worse than a
-    ///         readback under ceremony pressure: it depends on provider
-    ///         retention and range limits, and a missed page reads as "not
-    ///         applied", which is the exact wrong answer here.
-    ///
-    ///         THE UNDERLYING DEFECT IS NOW CLOSED. This comment used to end
-    ///         "a day applied pre-arm still cannot carry `D*`", and that
-    ///         stopped being true when #1944 moved the install inside the
-    ///         replay branch: a rebroadcast of an applied day now fills an
-    ///         empty `D*` (never re-chooses a set one, and never from a
-    ///         retired era's legacy wire). The readback stays useful — an
-    ///         operator still wants to see which days are applied — but it is
-    ///         no longer load-bearing for arming, and reading it as "this day
-    ///         is burnt for propagation" is now the wrong conclusion.
+    ///         mirror whether a candidate propagation day was still
+    ///         unapplied. Answering it by scanning for
+    ///         `RewardBroadcastV2Applied` logs depends on provider retention
+    ///         and range limits, and a missed page reads as "not applied".
+    ///         A rebroadcast of an applied day fills an empty `D*` (never
+    ///         re-chooses a set one), so the readback is informational: it
+    ///         does not mean the day is burnt for propagation.
     function getBroadcastV2Applied(uint256 dayId) external view returns (bool) {
         return LibVaipakam.storageSlot().broadcastV2Applied[dayId];
     }
@@ -1193,15 +759,15 @@ contract RewardReporterFacet is
     /// @custom:event-category informational/reward-clock
     event BaseRewardDeploymentSet(address baseDeployment);
 
-    /// @notice Set (or rotate) the CURRENT Base deployment this mirror
-    ///         accepts V3 clock facts from — the explicit era ground truth
+    /// @notice Set (or rebind) the CURRENT Base deployment this mirror
+    ///         accepts broadcasts from — the explicit era ground truth
     ///         (Codex #1632 r1: the per-day era record cannot defend the
     ///         FIRST install, and the CCIP lane authenticates the shared
     ///         messenger, not the Diamond generation behind it).
-    /// @dev    ADMIN. Zero disables the V3 ingress entirely (fail-closed —
-    ///         packets stay failed, re-executable CCIP messages until
-    ///         re-armed). Rotation belongs to the same ceremony that
-    ///         rotates the Base deployment; days whose clocks were
+    /// @dev    ADMIN. Zero disables the broadcast ingress entirely
+    ///         (fail-closed — packets stay failed, re-executable CCIP
+    ///         messages until re-armed). A rebind belongs to the same
+    ///         ceremony that rotates the Base deployment; days whose clocks were
     ///         installed under the PREVIOUS era keep rejecting new-era
     ///         re-deliveries via their per-day record (drain/heal owns
     ///         cross-era days).
@@ -1214,8 +780,8 @@ contract RewardReporterFacet is
         // is never rebound directly to a different retained source: the
         // change must pass through `Detached`. Judged against the last
         // NONZERO era, never the live config, so disarm-then-rearm cannot
-        // smuggle a rebinding past it (the same yardstick the rotation
-        // detection below uses). Permanent, not only during the freeze.
+        // smuggle a rebinding past it. Permanent, not only during the
+        // freeze.
         if (
             baseDeployment != address(0)
                 && s.rewardEraLastNonzero != address(0)
@@ -1226,26 +792,16 @@ contract RewardReporterFacet is
                 s.rewardEraLastNonzero, baseDeployment
             );
         }
+        // The last NONZERO era — the yardstick the rebind check above
+        // reads.
         if (baseDeployment != address(0)) {
-            // #1632 r2 — rotation detection against the last NONZERO era
-            // (never the live config, so disarm/re-arm cannot smuggle a
-            // rotation past it). A true rotation permanently retires the
-            // LEGACY broadcast wires' fresh-apply paths: kind-5/kind-2
-            // packets carry no deployment identity, so post-rotation a
-            // retired era's delayed or re-executed delivery cannot be
-            // told apart from a legitimate one — and the new era only
-            // ever speaks V3.
-            address last = s.rewardEraLastNonzero;
-            if (last != address(0) && baseDeployment != last) {
-                s.rewardEraRotated = true;
-            }
             s.rewardEraLastNonzero = baseDeployment;
         }
         s.baseRewardDeployment = baseDeployment;
         emit BaseRewardDeploymentSet(baseDeployment);
     }
 
-    /// @notice The configured era ground truth (0 = V3 ingress dark).
+    /// @notice The configured era ground truth (0 = broadcast ingress dark).
     function getBaseRewardDeployment() external view returns (address) {
         return LibVaipakam.storageSlot().baseRewardDeployment;
     }

@@ -79,6 +79,9 @@ contract RecycleTransparencyMetricsTest is SetupTest {
         _rep().setBaseChainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(true);
         _rep().setRewardMessenger(address(messenger));
+        // #1944 — the one broadcast wire authenticates Base's era, so a
+        // suite that delivers broadcasts binds its mirror to one.
+        _rep().setBaseRewardDeployment(address(0xBA5E0E7A));
         uint32[] memory chainIds = new uint32[](2);
         chainIds[0] = CHAIN_BASE;
         chainIds[1] = CHAIN_ARB;

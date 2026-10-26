@@ -49,13 +49,14 @@ import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
  *         `proveDeliveryDayChunk`.
  * @dev    The fixture is the epoch-draw suites' mirror (Arbitrum chain id,
  *         Base as the reward chain, this contract as the remittance receiver).
- *         Days are stamped by REAL V2 broadcasts through
+ *         Days are stamped by REAL broadcasts (the per-destination fields
+ *         inside the kind-10 envelope) through
  *         {MockRewardMessenger.deliverBroadcastV2} and closed locally (the
  *         chain's interest totals and `chainReportSentAt`) BEFORE the
  *         broadcast -- the order the production cycle runs in, close then
- *         report then finalize then broadcast. The gate is armed per cell and
- *         never in `setUp`: the setter is one-shot, and three cells exercise it
- *         dark or refused. Abstract, so no cell runs twice; the two concrete
+ *         report then finalize then broadcast. The gate binds by ROLE on every
+ *         mirror day, with no arming step (#1944, owner decision 2026-10-26),
+ *         so each cell only pins that it binds. Abstract, so no cell runs twice; the two concrete
  *         suites below differ only in whether reward custody is ACTIVATED.
  */
 abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
@@ -78,7 +79,6 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
     uint256 internal constant S = 16; // RemitWire.D6_CHUNK_DAYS
     uint8 internal constant ROUTE_CHUNK = 2;
     bytes32 internal constant PROVED_SIG = keccak256("DayDeliveryProved(uint256,bytes32,uint256,uint8)");
-    bytes32 internal constant ARMED_SIG = keccak256("DayDeliveryGateArmed(uint256)");
 
     /// @dev Redeclared so `expectEmit` can name them; the emitters are the
     ///      libraries inlined into the epoch facet.
@@ -87,7 +87,7 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
 
     /// @dev {RewardRemittanceLensFacet.getDayDeliveryState}, named.
     struct GateDay {
-        bool gateArmed;
+        bool gateBinds;
         bool stamped;
         bool freshStamped;
         bool landed;
@@ -131,6 +131,8 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
         vm.chainId(CHAIN_ARB);
         RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(false);
         RewardReporterFacet(address(diamond)).setBaseChainId(CHAIN_BASE);
+        // #1944 — the one broadcast wire authenticates Base's era.
+        RewardReporterFacet(address(diamond)).setBaseRewardDeployment(address(0xBA5E0E7A));
         RewardRemittanceFacet(address(diamond)).setRewardRemittanceReceiver(address(this));
         if (_custodyActive()) activateRewardCustodyForTest(address(vpfi), 0);
         messenger = new MockRewardMessenger(address(diamond));
@@ -188,7 +190,7 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
 
     function _gd(uint256 d) internal view returns (GateDay memory v) {
         (
-            v.gateArmed,
+            v.gateBinds,
             v.stamped,
             v.freshStamped,
             v.landed,
@@ -234,24 +236,10 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
 
     // ─── the gate ───
 
-    /// @dev Arm the gate and pin what the setter STORED and ANNOUNCED. The
-    ///      announcement is matched by topic, so the cell reads the same whether
-    ///      the event indexes its day or not.
-    function _armGate(uint256 fromDay) internal {
-        vm.recordLogs();
-        _remit().setDayDeliveryGateFromDay(fromDay);
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        uint256 seen;
-        for (uint256 i; i < logs.length; ++i) {
-            Vm.Log memory l = logs[i];
-            if (l.emitter != address(diamond) || l.topics.length == 0 || l.topics[0] != ARMED_SIG) continue;
-            uint256 announced = l.topics.length > 1 ? uint256(l.topics[1]) : abi.decode(l.data, (uint256));
-            assertEq(announced, fromDay, "the arming announces its first day");
-            ++seen;
-        }
-        assertEq(seen, 1, "the arming is announced once");
-        assertTrue(_gd(fromDay).gateArmed, "stored: the gate binds from its first day");
-        if (fromDay > 1) assertFalse(_gd(fromDay - 1).gateArmed, "stored: and not the day before it");
+    /// @dev The gate needs no arming: on a mirror it binds by role, from the
+    ///      first day. Each cell pins that here, where it used to arm.
+    function _gateBinds() internal view {
+        assertTrue(_gd(1).gateBinds, "the gate binds on a mirror, with no arming step");
     }
 
     // ─── days ───
@@ -524,7 +512,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
     ///      lender interest, OWED, and listed by nothing that landed. Alice's
     ///      one entry is on day 2.
     function _heldScene() internal returns (uint256 id, bytes32 h1) {
-        _armGate(1);
+        _gateBinds();
         _loanSideOpen(1);
         _closeLocal(1, 1e18, 0);
         _broadcastV2(_armedPacket(1));
@@ -573,7 +561,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         assertEq(_cursor(), 1, "stored: the cursor rests on day 1");
 
         GateDay memory g = _gd(2);
-        assertTrue(g.gateArmed, "the gate binds day 2");
+        assertTrue(g.gateBinds, "the gate binds day 2");
         assertTrue(g.stamped && g.freshStamped, "Base's stamp prices fresh on day 2");
         assertFalse(g.landed, "nothing listing day 2 has landed");
         assertEq(g.provedBy, bytes32(0), "no proof names day 2");
@@ -629,7 +617,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         the stamp defer on the gate.
      */
     function test_1944_3_ProofBeforeTheBroadcast_LandsAnUnstampedDay() public {
-        _armGate(1);
+        _gateBinds();
         _loanSideOpen(1);
         _closeLocal(1, 1e18, 0);
         _entry(1, 2);
@@ -669,7 +657,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         day never pays -- an epoch-path packet writes no mark.
      */
     function test_1944_4a_AWholeAttestedEpoch_LandsTheDay_AndPaysFromIt() public {
-        _armGate(1);
+        _gateBinds();
         _owedDay1();
         _expectHeld(1);
 
@@ -701,7 +689,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         first claim defers on the gate's name instead.
      */
     function test_1944_4b_OneIndexedChunk_LandsTheDay_ButTheEpochIsNotDrawable() public {
-        _armGate(1);
+        _gateBinds();
         _owedDay1();
         uint256[] memory list = _days(20, 1);
         (bytes32 h, bytes32[] memory leaves) = _d6(10e18, list, 42, keccak256("gate-d6-part"), 0, 0);
@@ -740,7 +728,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         statement of a fact the batch index already owns.
      */
     function test_1944_5_TheProofRoutes_RefuseWhatTheyCannotProve() public {
-        _armGate(1);
+        _gateBinds();
         bytes32 nobody = keccak256("gate-nobody");
         vm.expectRevert(abi.encodeWithSelector(IngressPacketUnknown.selector, nobody));
         _epoch().proveDeliveryDayChunk(nobody, 0, _one(1), new bytes32[](0));
@@ -778,7 +766,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      */
     function test_1944_6_APreArmingDay_HoldsTheWindowAndTheLegacySlice() public {
         uint256 h1 = LibInteractionRewards.halfPoolForDay(1);
-        _armGate(1);
+        _gateBinds();
         _closeLocal(1, 100e18, 0);
         _broadcastV2(_unarmedPacket(1, h1));
         _mut().setDailyLenderInterest(1, alice, 50e18, 100e18); // the window counter
@@ -822,7 +810,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         internal
         returns (bytes32 h2)
     {
-        _armGate(1);
+        _gateBinds();
         _loanSideOpen(1);
         _closeLocal(1, lender1, borrower1);
         _broadcastV2(day1);
@@ -884,7 +872,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         may send nothing for a locally backed side.
      */
     function test_1944_7c_ARecycledOnlySide_PaysFromTheBucket_WithNothingProven() public {
-        _armGate(1);
+        _gateBinds();
         _loanSideOpen(1);
         _mut().setRecycleBucketRaw(10e18);
         _closeLocal(1, 1e18, 0);
@@ -913,7 +901,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
     }
 
     /**
-     * @notice Cell 7d (S1-R1) -- the derivation fix, gate DARK: an UNARMED day
+     * @notice Cell 7d (S1-R1) -- the derivation fix, nothing held: an UNARMED day
      *         Base excluded this chain from (stamp zero-halved) prices nothing
      *         through the window, while the identical counters on the included
      *         day beside it pay that day's half.
@@ -928,7 +916,8 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         _mut().setDailyLenderInterest(1, alice, 50e18, 100e18);
         _mut().setDailyLenderInterest(2, alice, 50e18, 100e18);
         _liveFunding(h2);
-        assertFalse(_gd(1).gateArmed, "the gate is dark: this is the derivation alone");
+        assertTrue(_gd(1).gateBinds, "fixture: the gate binds");
+        assertFalse(_awaits(2, 1) || _awaits(2, 2), "neither day waits (excluded / never reported): this is the derivation alone");
 
         uint256 live = _live();
         uint256 paid = _claim();
@@ -1062,7 +1051,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         delivery Base never sends -- the cursor wedges on it.
      */
     function test_1944_8_AZeroLiabilitySide_ReportSent_IsNotHeld() public {
-        _armGate(1);
+        _gateBinds();
         _loanSideOpen(1);
         _closeLocal(1, 1e18, 0);
         uint256 id = _entry(1, 2);
@@ -1101,7 +1090,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         held behind the delivery the report releases (deadlock).
      */
     function test_1944_9_AnUnsentReport_HoldsTheDay_AndTheReportStillFlows() public {
-        _armGate(1);
+        _gateBinds();
         uint256 id = _owedDay1();
         (, uint256 liability, ) = _com().getCommitmentAccumulation(1, 0);
         assertEq(liability, 0, "fixture: nothing accumulated yet");
@@ -1137,11 +1126,11 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         epoch) and the day never lands.
      */
     function test_1944_10_ARetiredErasDelivery_LandsThroughItsEpoch() public {
-        _armGate(1);
+        _gateBinds();
         _owedDay1();
         _detach();
         _reattach();
-        assertEq(_eraF().getCustodyEraCurrent(), 2, "fixture: two effective role changes after arming");
+        assertEq(_eraF().getCustodyEraCurrent(), 2, "fixture: two effective role changes after day 1 was owed");
         assertTrue(_awaits(0, 1), "fixture: day 1 still owes fresh and waits");
 
         bytes32 h = _untyped(4e18, _one(1), 101, keccak256("gate-retired-era"));
@@ -1157,20 +1146,26 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
     }
 
     /**
-     * @notice Cell 10b -- the setter refuses a non-Mirror, and ARMS a mirror past
-     *         custody era zero (#1566 PR C revision: Base stamps the destination's
-     *         reported era and a retired era's delivery opens its epoch, so arming
-     *         there wedges nothing). Straddle: detached between the two role
-     *         changes, the same arming is refused.
+     * @notice Cell 10b -- the gate follows the ROLE across a role change, with
+     *         no setter: detached, it does not bind and nothing waits; a mirror
+     *         again past custody era zero, it binds from day 1 and the owed day
+     *         waits again (#1566 PR C revision: Base stamps the destination's
+     *         reported era and a retired era's delivery opens its epoch, so
+     *         binding there wedges nothing). The retired arming selector is not
+     *         routed.
      */
-    function test_1944_10b_TheSetter_ArmsAMirrorPastEraZero() public {
+    function test_1944_10b_TheGate_FollowsTheRole_PastEraZero() public {
+        _owedDay1();
+        assertTrue(_awaits(0, 1), "fixture: a mirror's owed, unproven day waits");
         _detach();
-        vm.expectRevert(DeliveryGateNotMirror.selector);
-        _remit().setDayDeliveryGateFromDay(1);
+        assertFalse(_gd(1).gateBinds, "detached: the gate does not bind");
+        assertFalse(_awaits(0, 1), "detached: nothing waits");
         _reattach();
         assertGt(_eraF().getCustodyEraCurrent(), 0, "fixture: a mirror again, past era zero");
-        _remit().setDayDeliveryGateFromDay(1);
-        assertTrue(_gd(1).gateArmed, "stored: the gate armed");
+        assertTrue(_gd(1).gateBinds, "a mirror again: the gate binds");
+        assertTrue(_awaits(0, 1), "and the owed day waits again");
+        (bool ok, ) = address(diamond).call(abi.encodeWithSignature("setDayDeliveryGateFromDay(uint256)", uint256(1)));
+        assertFalse(ok, "the retired arming setter is not routed");
     }
 
     // ─────────────────────── cell 11: one chokepoint ───────────────────────
@@ -1190,12 +1185,13 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         single staging record's re-pricing (`prepareStagedDay`) is not
      *         exercised: a record is created only for a day a walk, an expiry
      *         or a domain had ALREADY priced, so its day sits at or below the
-     *         fold's cursor, which never retreats and at or below which the
-     *         setter refuses to arm -- the rung cannot hold it. That is a
-     *         reachability argument, not a measurement.
+     *         fold's cursor, which never retreats, and the gate bound when
+     *         that day was priced (it binds from a mirror's first day, with no
+     *         later arming that could re-hold it) -- the rung cannot hold it.
+     *         That is a reachability argument, not a measurement.
      */
     function test_1944_11a_TheExpiryClockAndThePreviews_ShareTheRung() public {
-        _armGate(1);
+        _gateBinds();
         uint256 id = _owedDay1();
         _cfg().setRewardClaimHorizonDays(180);
         bytes32 h = _liveOf(NEED, _one(1), 121, keccak256("gate-clock"));
@@ -1245,7 +1241,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         single mutation fails it.
      */
     function test_1499_AwaitingDelivery_PredicateAndClaimAgree_BothSides() public {
-        _armGate(1);
+        _gateBinds();
         uint256 id = _owedDay1();
         bytes32 h = _liveOf(NEED, _one(1), 149, keccak256("gate-1499"));
         _mut().userClaimFundingNeedRaw(alice);
@@ -1269,7 +1265,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         share of a day this chain was never funded for.
      */
     function test_1944_11b_TheForfeitSweep_CreditsNothingWhileHeld() public {
-        _armGate(1);
+        _gateBinds();
         uint256 id = _owedDay1();
         _mut().setRewardEntryForfeitedRaw(id);
         _mut().setLoanActiveLenderEntryId(LOAN, id);
@@ -1319,8 +1315,9 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         gate cannot reach a started clock. A clock starts only once the
      *         side's fold covers the entry's WHOLE window (the sweep returns
      *         before the clock while `cursor < endDay - 1`); the fold halts
-     *         BEFORE a held day; the setter refuses to arm at or below either
-     *         cursor; and the predicate is one-way for a day the fold passed.
+     *         BEFORE a held day; the gate binds from a mirror's first day, so no
+     *         later arming can reach below a cursor; and the predicate is
+     *         one-way for a day the fold passed.
      *         So every day of a started entry is landed or owes nothing, and
      *         `rewardEntryObsBlocked` pauses a running clock only for the
      *         deferrals that can follow a start (a delivered shortfall, a
@@ -1330,7 +1327,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         the stored evidence that no block was recorded.
      */
     function test_1944_11c_AHeldLaterDay_NeverFreezesARunningCountdown() public {
-        _armGate(1);
+        _gateBinds();
         _loanSideOpen(2);
         _closeLocal(1, 1e18, 0);
         _broadcastV2(_armedPacket(1));
@@ -1391,7 +1388,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      */
     function test_1944_11d_ADomainPreparation_PausesAtAHeldDay_AndResumesOnceProven() public {
         uint32 n = 32; // > MAX_INTERACTION_CLAIM_DAYS (30): the side is a domain
-        _armGate(1);
+        _gateBinds();
         _loanSideOpen(n);
         for (uint256 d = 1; d <= n; ++d) {
             _closeLocal(d, 1e18, 0);
@@ -1429,82 +1426,26 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         assertEq(_recordPhase(5), uint8(LibVaipakam.StagingPhase.Staging), "the once-held day is staged");
     }
 
-    // ─────────────────────── cell 14: dark and below the gate ───────────────────────
+    // ─────────────────────── cell 14: no arming step ───────────────────────
 
     /**
-     * @notice Cell 14a -- the gate DARK pays an owed, unproven day as today;
-     *         the arming is one-shot afterwards, and zero is refused.
-     * @dev    Mutation: drop step 1 (the latch) and the dark claim waits.
+     * @notice Cell 14 -- with NO arming step, an owed, unproven day waits from
+     *         a mirror's very first day: the claim defers by name and pays
+     *         nothing until the proof lands.
+     * @dev    Mutation: put any latch or first-day exit back in front of the
+     *         role test and this day pays unproven -- the named deferral fails.
      */
-    function test_1944_14a_TheDarkGate_PaysAsToday_AndArmsOnce() public {
+    function test_1944_14_AnOwedDay_WaitsFromTheFirstDay_WithNoArmingStep() public {
         _owedDay1();
         _liveFunding(NEED);
         GateDay memory g = _gd(1);
-        assertFalse(g.gateArmed, "dark");
+        assertTrue(g.gateBinds, "the gate binds with nothing armed");
         assertTrue(g.stamped && g.reported && !g.landed, "fixture: an owed, unproven day");
-        assertFalse(g.awaitsLender, "dark: nothing waits");
-        assertEq(_claim(), NEED, "pays as today");
-
-        _armGate(5);
-        vm.expectRevert(abi.encodeWithSelector(DeliveryGateAlreadyArmed.selector, uint256(5)));
-        _remit().setDayDeliveryGateFromDay(1);
-        vm.expectRevert(InvalidAmount.selector);
-        _remit().setDayDeliveryGateFromDay(0);
-        assertFalse(_gd(1).gateArmed, "stored: still from day 5");
-    }
-
-    /**
-     * @notice Cell 14b -- a day BELOW the gate's first day pays as today, the
-     *         first day at it waits: one claim pays day 2 and parks on day 3,
-     *         the next names day 3, the proof pays it.
-     * @dev    Mutation: drop the `d < fromDay` exit and day 2 waits too -- the
-     *         first claim reverts by name instead of paying.
-     */
-    function test_1944_14b_ADayBelowTheGate_PaysAsToday() public {
-        _armGate(3);
-        _loanSideOpen(2);
-        for (uint256 d = 1; d <= 3; ++d) {
-            _closeLocal(d, 1e18, 0);
-            _broadcastV2(_armedPacket(d));
-        }
-        _entry(2, 4);
-        _liveFunding(NEED); // day 2's funding, as today
-        bytes32 h = _liveOf(NEED, _one(3), 142, keccak256("gate-below"));
-        assertFalse(_awaits(2, 2), "day 2 is below the gate");
-        assertTrue(_awaits(2, 3), "day 3 is at it, owed and unproven");
-
-        assertEq(_claim(), NEED, "day 2 pays as today; the walk parks on day 3");
-        _expectHeld(3);
-        _prove(h, _one(3));
-        assertEq(_claim(), NEED, "proven, day 3 pays");
-        assertEq(vpfi.balanceOf(alice), 2 * NEED, "both days, once each");
-    }
-
-    /**
-     * @notice Cell 14c -- the arming refuses a first day AT or BELOW either fold
-     *         cursor: the fold priced that day without the gate and the walk may
-     *         already have paid it, so arming under the cursor would claim a
-     *         hold the stored state no longer honours. The straddle: one day
-     *         above both cursors arms.
-     * @dev    Mutation: drop the fold check and the arming at the cursor
-     *         succeeds -- the expected revert is not raised.
-     */
-    function test_1944_14c_TheArming_RefusesADayAtOrBelowTheFold() public {
-        _owedDay1();
-        _liveFunding(NEED);
-        assertEq(_claim(), NEED, "fixture: the dark gate pays day 1");
-        (uint256 lc, , , , ) = _mut().getCumStateRaw(0, 0);
-        (uint256 bc, , , , ) = _mut().getCumStateRaw(1, 0);
-        uint256 top = lc > bc ? lc : bc;
-        assertGe(lc, 1, "fixture: the lender fold has passed day 1");
-
-        vm.expectRevert(abi.encodeWithSelector(DeliveryGateBelowFold.selector, top, lc, bc));
-        _remit().setDayDeliveryGateFromDay(top);
-        vm.expectRevert(abi.encodeWithSelector(DeliveryGateBelowFold.selector, uint256(1), lc, bc));
-        _remit().setDayDeliveryGateFromDay(1);
-        assertFalse(_gd(top + 1).gateArmed, "stored: the gate stays dark");
-
-        _armGate(top + 1);
+        assertTrue(g.awaitsLender, "day 1 waits");
+        uint256 live = _payable();
+        _expectHeld(1);
+        assertEq(_payable(), live, "nothing paid while held");
+        assertEq(vpfi.balanceOf(alice), 0, "nothing reached the claimant");
     }
 
     // ─────────────────────── cell 15: replays ───────────────────────
@@ -1517,7 +1458,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         one of the two stored-mark assertions fails.
      */
     function test_1944_15_AReplayedBroadcast_IsIdempotent_AndNeverTheMark() public {
-        _armGate(1);
+        _gateBinds();
         _owedDay1();
         _broadcastV2(_armedPacket(1));
         assertTrue(_awaits(0, 1), "a replay is not a delivery");
@@ -1548,7 +1489,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         assertion right after it fails.
      */
     function test_1944_17_IngressWritesNothingPerDay() public {
-        _armGate(1);
+        _gateBinds();
         _owedDay1();
 
         bytes32 hU = _untyped(10e18, _one(1), 172, keccak256("gate-i-unattested"));
@@ -1596,7 +1537,7 @@ contract RewardDayDeliveryGatePreActivationTest is RewardDayDeliveryGateBase {
      *         only and this day can never land.
      */
     function test_1944_5_APreActivationD6_IsProvenByChunk_AndPays() public {
-        _armGate(1);
+        _gateBinds();
         _owedDay1();
         uint256[] memory list = _days(1, 1);
         bytes32[] memory leaves = RemitWire.d6Chunks(list);
@@ -1637,7 +1578,7 @@ contract RewardDayDeliveryGatePreActivationTest is RewardDayDeliveryGateBase {
      * @dev    Mutation: drop the `disposed == 0` refusal and the packet marks.
      */
     function test_1944_10c_ADisposedPacket_IsRefused() public {
-        _armGate(1);
+        _gateBinds();
         bytes32 h = _liveOf(NEED, _one(1), 111, keccak256("gate-disposed"));
         uint256 snap = vm.snapshotState();
         _prove(h, _one(1));
@@ -1660,7 +1601,7 @@ contract RewardDayDeliveryGatePreActivationTest is RewardDayDeliveryGateBase {
      *         repeat, and the stored-mark or the log-count assertion fails.
      */
     function test_1944_16_TheProofIsIdempotentPerDay_TheFirstListerStays() public {
-        _armGate(1);
+        _gateBinds();
         _owedDay1();
         bytes32 hA = _liveOf(NEED, _two(1, 2), 161, keccak256("gate-first"));
 
@@ -1685,8 +1626,8 @@ contract RewardDayDeliveryGatePreActivationTest is RewardDayDeliveryGateBase {
     }
 
     /**
-     * @notice Cell 12 -- ROLES: the setter refuses every non-Mirror; armed on a
-     *         Mirror, the same storage read as Canonical or Unconfigured holds
+     * @notice Cell 12 -- ROLES: the gate does not bind on any non-Mirror; on a
+     *         Mirror it binds, and the same storage read as Canonical or Unconfigured holds
      *         nothing and pays as today -- the stamp's half where a stamp
      *         landed, the schedule half where none did (the derivation's
      *         byte-identical side). Straddle: as a Mirror the day waits.
@@ -1696,16 +1637,14 @@ contract RewardDayDeliveryGatePreActivationTest is RewardDayDeliveryGateBase {
     function test_1944_12_TheCanonicalAndUnconfiguredRoles_AreNeverHeld() public {
         uint256 snap = vm.snapshotState();
         _mut().setRewardRoleRaw(CHAIN_BASE, true, true);
-        vm.expectRevert(DeliveryGateNotMirror.selector);
-        _remit().setDayDeliveryGateFromDay(1);
+        assertFalse(_gd(1).gateBinds, "Canonical: the gate does not bind");
         _mut().setRewardRoleRaw(0, false, false);
-        vm.expectRevert(DeliveryGateNotMirror.selector);
-        _remit().setDayDeliveryGateFromDay(1);
+        assertFalse(_gd(1).gateBinds, "Unconfigured: the gate does not bind");
         vm.revertToState(snap);
 
         uint256 h1 = LibInteractionRewards.halfPoolForDay(1);
         uint256 h2 = LibInteractionRewards.halfPoolForDay(2);
-        _armGate(1);
+        _gateBinds();
         _closeLocal(1, 100e18, 0);
         _broadcastV2(_unarmedPacket(1, h1));
         _legacyEntry(100e18, 1, 2);
@@ -1726,5 +1665,41 @@ contract RewardDayDeliveryGatePreActivationTest is RewardDayDeliveryGateBase {
         _mut().setRewardRoleRaw(0, false, false);
         assertFalse(_awaits(2, 1), "Unconfigured: nothing waits");
         assertApproxEqAbs(_claim(), expected, 1e6, "Unconfigured pays as today");
+    }
+
+    // ─────────────── cell 18: a former canonical's own days ───────────────
+
+    /**
+     * @notice Cell 18 -- a day this chain funded ITSELF, while it was
+     *         canonical, is never held once the chain is a mirror: Base sent
+     *         it nothing, so no delivery could land it. The day carries every
+     *         input that holds an owed day (its own stamp with a fresh half,
+     *         the denominator, the report, a cap threshold, interest) except a
+     *         broadcast. A broadcast for that day is then refused by name, so
+     *         the record keeps one writer and the gate never rises on it later.
+     * @dev    Mutation: read the stamp instead of `broadcastV2Applied` in step
+     *         4 and the first assertion fails; drop the ingress refusal and the
+     *         broadcast overwrites the local record.
+     */
+    function test_1944_18_AFormerCanonicalsOwnDays_AreNeverHeld() public {
+        _gateBinds();
+        uint32 self = uint32(block.chainid);
+        _closeLocal(1, 1e18, 0);
+        // What `finalizeDay` wrote here while this chain was canonical.
+        _mut().setChainDayFundingRaw(1, self, 1e18, 0);
+        _mut().setKnownGlobalDailyInterest(1, 1e18, 1e18, true);
+        _mut().setDayCapThreshold18(1, type(uint256).max);
+        assertFalse(_awaits(0, 1), "a locally funded day is not held");
+        assertFalse(_gd(1).awaitsLender, "the operator read agrees");
+
+        uint256 snap = vm.snapshotState();
+        _mut().setBroadcastV2AppliedRaw(1, true);
+        assertTrue(_awaits(0, 1), "contrast: the same day, applied by a broadcast, waits");
+        vm.revertToState(snap);
+
+        _rep().setRewardMessenger(address(messenger));
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.DayFundedLocally.selector, uint256(1)));
+        messenger.deliverBroadcastV2(_armedPacket(1));
+        assertFalse(_awaits(0, 1), "still unheld after the refused broadcast");
     }
 }

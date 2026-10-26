@@ -366,7 +366,7 @@ contract ConfigureRewardReporter is Script {
     ///        (1) has runtime bytecode (not an EOA);
     ///        (2) implements the `IRewardMessenger` interface, by
     ///            checking that BOTH messenger-specific view selectors
-    ///            (`quoteSendChainReport` + `quoteBroadcastGlobal`)
+    ///            (`quoteSendChainReport` + `quoteBroadcastDayV3`)
     ///            are present — distinguishes a real messenger from
     ///            `BuybackRemittanceReceiver` or any other contract that
     ///            happens to expose a `diamond()` getter; AND
@@ -412,19 +412,22 @@ contract ConfigureRewardReporter is Script {
             "or another non-messenger contract bound to the same Diamond)"
         );
 
-        // (2b) IRewardMessenger.quoteBroadcastGlobal selector present?
+        // (2b) IRewardMessenger.quoteBroadcastDayV3 selector present? The one
+        // broadcast wire (#1944). An empty destination array either prices
+        // to zero or is refused by name (`BroadcastDestinationSetMismatch`),
+        // which still proves the selector exists.
+        IRewardMessenger.BroadcastV2Shared memory shared;
+        IRewardMessenger.BroadcastV3Extras memory extras;
         (bool ok2, bytes memory ret2) = candidate.staticcall(
-            abi.encodeWithSelector(
-                IRewardMessenger.quoteBroadcastGlobal.selector,
-                uint256(0),
-                uint256(0),
-                uint256(0)
+            abi.encodeCall(
+                IRewardMessenger.quoteBroadcastDayV3,
+                (shared, extras, new IRewardMessenger.BroadcastV3PerDest[](0))
             )
         );
         require(
             ok2 || ret2.length > 0,
             "ConfigureRewardReporter: rewardMessenger candidate does not implement "
-            "IRewardMessenger.quoteBroadcastGlobal (likely BuybackRemittanceReceiver or another "
+            "IRewardMessenger.quoteBroadcastDayV3 (likely BuybackRemittanceReceiver or another "
             "non-messenger contract bound to the same Diamond)"
         );
 

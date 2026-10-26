@@ -27,13 +27,21 @@
 //     is never sent. Each simulation runs the whole trade, the real
 //     flash-loan fee and the real swap included.
 //
+// The SALE goes through one of the Diamond's own registered swap adapters
+// (#2734): the FlashLoanLiquidator refuses any other (`SwapAdapterNotRouted`),
+// so the keeper quotes it with the same route builder every forced close uses
+// (serverQuotes.ts), each aggregator quoted with its adapter as the taker, and
+// passes the chosen adapter and its quote bytes. Before #2734 the liquidator
+// approved and called the quote's own target, and the keeper had a second,
+// liquidator-taker quote service for it.
+//
 // The decision is a pure function of injected reads (`planFlashLoanLiquidation`)
 // so it can be tested without a chain; keeper.ts supplies the reads.
 
 import { ForcedSaleFacetABI, NumeraireValueFacetABI } from '@vaipakam/contracts/abis';
 import { summarizeFailure } from '@vaipakam/lib/errorDescription';
+import type { SwapVenueKind } from '@vaipakam/lib/swapRoutes';
 import type { Abi, Address, Hex, PublicClient } from 'viem';
-import type { DexDirectQuote } from './dexDirectQuotes';
 import { feeNumeraireValue, txFeeUnpricedReason } from './txFee';
 
 /** `LibDiscountedLiquidation.Status`, by value. Append-only on the contract. */
@@ -46,6 +54,7 @@ export const DISCOUNTED_LIQUIDATION_STATUS = [
   'Untiered',
   'Unpriced',
   'Ready',
+  'InternalMatchWindow',
 ] as const;
 export const DISCOUNTED_LIQUIDATION_READY = DISCOUNTED_LIQUIDATION_STATUS.indexOf('Ready');
 
@@ -58,6 +67,9 @@ const STATUS_REASON: Readonly<Record<string, string>> = {
   Healthy: 'the loan is healthy',
   Untiered: 'the collateral has no liquidity tier',
   Unpriced: 'an oracle price is unavailable',
+  // #2734: every external liquidation route waits out the window; the
+  // keeper's triggerLiquidation branch is the one that dispatches the match.
+  InternalMatchWindow: 'the loan is inside the internal-match priority window',
 };
 
 export function discountedStatusReason(status: number): string {
@@ -128,16 +140,26 @@ export function liquidatorFunction(via: FlashLoanVia): 'liquidateViaAaveV3' | 'l
   return via === 'aave-v3' ? 'liquidateViaAaveV3' : 'liquidateViaBalancerV2';
 }
 
-/** `liquidateVia*(loanId, sellAmount, minProfit, swapTarget, swapAllowanceTarget, swapCalldata)`. */
-export type LiquidatorArgs = readonly [bigint, bigint, bigint, Address, Address, Hex];
+/** `liquidateVia*(loanId, sellAmount, minProfit, swapAdapter, adapterData)`. */
+export type LiquidatorArgs = readonly [bigint, bigint, bigint, Address, Hex];
+
+/** One quoted sale through a Diamond-registered swap adapter: the adapter
+ *  itself (the liquidator names it by address, not by the Diamond's index)
+ *  and that adapter's quote bytes. */
+export interface FlashLoanSaleQuote {
+  kind: SwapVenueKind;
+  expectedOutput: bigint;
+  adapter: Address;
+  adapterData: Hex;
+}
 
 export interface FlashLoanPlanDeps {
   chainId: number;
   loanId: bigint;
   readPreview: () => Promise<DiscountedLiquidationPreview>;
-  /** Best-first DEX-direct quotes for selling `sellAmount` of collateral for
-   *  principal, with the FlashLoanLiquidator as taker. */
-  quote: (sellAmount: bigint, preview: DiscountedLiquidationPreview) => Promise<DexDirectQuote[]>;
+  /** Best-first quotes for selling `sellAmount` of collateral for principal
+   *  through the Diamond's registered swap adapters. */
+  quote: (sellAmount: bigint, preview: DiscountedLiquidationPreview) => Promise<FlashLoanSaleQuote[]>;
   /** The whole fee of sending these arguments; throws the call's revert. */
   estimateFee: (args: LiquidatorArgs) => Promise<bigint>;
   minProfit: (principalAsset: Address, feeWei: bigint) => Promise<MinProfit>;
@@ -149,7 +171,7 @@ export type FlashLoanPlan =
       kind: 'send';
       args: LiquidatorArgs;
       preview: DiscountedLiquidationPreview;
-      quote: DexDirectQuote;
+      quote: FlashLoanSaleQuote;
       feeWei: bigint;
       minProfit: bigint;
     };
@@ -173,7 +195,7 @@ export async function planFlashLoanLiquidation(deps: FlashLoanPlanDeps): Promise
 
   const quotes = await deps.quote(preview.seized, preview);
   const best = quotes[0];
-  if (!best) return { kind: 'skip', reason: 'no DEX-direct quote for the seizure' };
+  if (!best) return { kind: 'skip', reason: 'no swap adapter quoted the seizure' };
   // A pre-filter only: proceeds that do not even repay the debt cannot net a
   // profit whatever the fees. The authoritative check is the simulation below.
   if (best.expectedOutput <= preview.debt) {
@@ -184,7 +206,7 @@ export async function planFlashLoanLiquidation(deps: FlashLoanPlanDeps): Promise
   }
 
   const args = (minProfit: bigint): LiquidatorArgs =>
-    [deps.loanId, preview.seized, minProfit, best.swapTarget, best.swapAllowanceTarget, best.swapCalldata] as const;
+    [deps.loanId, preview.seized, minProfit, best.adapter, best.adapterData] as const;
   // Estimated first with no profit floor: what it costs to send at all.
   let feeWei: bigint;
   try {
