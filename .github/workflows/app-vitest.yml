@@ -92,7 +92,10 @@ jobs:
             fi
           fi
           echo "Diff range: $BASE..$HEAD"
-          CHANGED=$(git diff --name-only "$BASE" "$HEAD" || git diff --name-only HEAD~1 HEAD)
+          # --no-renames: a rename counts at BOTH paths, as in ci.yml's
+          # detect-changes, so moving a file out of a watched path still
+          # wakes the suites (#2762).
+          CHANGED=$(git diff --no-renames --name-only "$BASE" "$HEAD" || git diff --no-renames --name-only HEAD~1 HEAD)
           echo "Changed files:"
           echo "$CHANGED"
 

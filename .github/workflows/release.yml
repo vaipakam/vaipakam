@@ -63,10 +63,16 @@ jobs:
 
       - name: Resolve tag + commit
         id: tag
+        # The dispatch input reaches the shell as data, never as script
+        # text (#2762): an expression inside `run:` is pasted in before
+        # bash parses it.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            TAG="${{ inputs.tag }}"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            TAG="$INPUT_TAG"
           else
             TAG="${GITHUB_REF#refs/tags/}"
           fi

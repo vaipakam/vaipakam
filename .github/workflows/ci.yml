@@ -172,10 +172,12 @@ concurrency:
   group: ci-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Read-only for every job (#2762). The two SARIF uploaders, the CodeQL
+# job and slither, carry `security-events: write` (and CodeQL its
+# `actions: read`) in their own blocks, so a job running PR-controlled
+# scripts never inherits a write grant.
 permissions:
   contents: read
-  security-events: write   # SARIF uploads (Slither + CodeQL)
-  actions: read            # required by github/codeql-action/analyze
 
 jobs:
   # ── detect-changes ────────────────────────────────────────────────────
@@ -286,7 +288,13 @@ jobs:
           # submodule URL / path edit is exactly the class of change
           # the content-based cache key invalidates on, so contracts
           # CI must re-run to confirm the rebuilt graph still passes.
-          CONTRACTS_RE='^(contracts/|\.gitmodules$|\.github/workflows/(ci|mainnet-gate)\.yml$)'
+          # Plus every file OUTSIDE contracts/ that contracts-fast reads
+          # (#2762): the committed facet ABIs and the deployments bundle
+          # predeploy-check compares, the Deployment type it checks facet
+          # keys against, and the manifest ExportedFacetParityTest pins.
+          # A PR touching only one of those used to skip the job whose
+          # whole purpose is to compare it.
+          CONTRACTS_RE='^(contracts/|\.gitmodules$|\.github/workflows/(ci|mainnet-gate)\.yml$|packages/contracts/src/abis/|packages/contracts/src/deployments\.(json|ts)$|packages/contracts/scripts/diamond-facets\.json$)'
           if echo "$CHANGED" | grep -Eq "$CONTRACTS_RE"; then
             echo "contracts=true" >> "$GITHUB_OUTPUT"
           else
