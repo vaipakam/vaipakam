@@ -2491,7 +2491,7 @@
         "OfferCreatorFullTariffSet": "オファーの手数料選択を記録",
         "OfferKeeperEnabled": "キーパーの権限を更新",
         "OfferSaleProceedsCredited": "売却代金を保管庫に入金",
-        "OfferSaleProceedsSplit": "売却代金を分配",
+        "CollateralSaleProceedsSplit": "売却代金を分配",
         "ParallelSaleLockReleased": "担保売却の出品を解除",
         "PartialCollateralWithdrawn": "担保を一部引き出し",
         "PostParallelSaleListing": "担保売却を出品",

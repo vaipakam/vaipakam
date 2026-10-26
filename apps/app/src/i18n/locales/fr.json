@@ -2491,7 +2491,7 @@
         "OfferCreatorFullTariffSet": "Choix de frais enregistré pour l’offre",
         "OfferKeeperEnabled": "Autorisation du keeper mise à jour",
         "OfferSaleProceedsCredited": "Produit de la vente crédité dans le coffre",
-        "OfferSaleProceedsSplit": "Produit de la vente réparti",
+        "CollateralSaleProceedsSplit": "Produit de la vente réparti",
         "ParallelSaleLockReleased": "Annonce de vente de la garantie libérée",
         "PartialCollateralWithdrawn": "Garantie partiellement retirée",
         "PostParallelSaleListing": "Annonce de vente de la garantie publiée",

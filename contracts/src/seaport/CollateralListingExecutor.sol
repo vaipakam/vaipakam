@@ -182,20 +182,10 @@ contract CollateralListingExecutor is
     ///             reconstruction in `LibPrepayOrder` use this to
     ///             pick the right component builder.
     ///
-    ///         **What is NOT in `OrderContext` (Round-5 Block B):**
-    ///         The projected lender + treasury legs the facet
-    ///         signed against at post time are NOT pinned here.
-    ///         For Dutch mode, the executor re-derives them at
-    ///         cancel time via `getPrepayContext(loanId,
-    ///         auctionEndTime)` — same lookup the facet did at
-    ///         sign time. Under stable governance config the
-    ///         re-read matches; under drift the existing
-    ///         `SeaportCancelSkipped` fallback fires. See
-    ///         {LibPrepayOrder.componentsForCancelDutch} natspec
-    ///         for the per-input-source breakdown and the design
-    ///         rationale (§15.2 "Alternative considered + rejected"
-    ///         box — pinning the projected legs creates a worse
-    ///         problem on fee-curve DECREASES).
+    ///         **No loan amounts are pinned (#2876).** The order's
+    ///         proceeds leg is the ask net of the recorded fee legs, so
+    ///         the recorded fields above plus the loan's collateral,
+    ///         lending asset and grace end rebuild it exactly.
     struct OrderContext {
         uint96 loanId;
         address conduit;
@@ -236,39 +226,14 @@ contract CollateralListingExecutor is
         return _orderFeeLegs[orderHash];
     }
 
-    /// @notice T-086 Round-7 (Issue #355) — signed-leg snapshot kept
-    ///         alongside `_orderFeeLegs` (parallel mapping pattern, same
-    ///         orderHash key). Records `consideration[0].amount`
-    ///         (lender) + `consideration[1].amount` (treasury) at sign
-    ///         time so the auto-list-at-floor B-cond-2 gate can decide
-    ///         rotation by reading the SIGNED amounts directly, not by
-    ///         deriving them from `askPrice` (which would treat the
-    ///         borrower-leg slack as protocol coverage and miss the
-    ///         unfillable-order case — see Round-7 design doc §18.5).
-    /// @dev    Storage cost = 1 slot per recorded order (two uint128s
-    ///         packed). Cleared by `clearOrder` alongside the rest of
-    ///         the per-order storage.
-    struct SignedProtocolLegs {
-        uint128 lender;
-        uint128 treasury;
-    }
-    mapping(bytes32 orderHash => SignedProtocolLegs) internal _orderProtocolLegs;
-
-    /// @notice Read accessor for `_orderProtocolLegs[orderHash]`. Returns
-    ///         the lender + treasury amounts recorded at `recordOrder`
-    ///         time; returns `(0, 0)` for an unknown or already-cleared
-    ///         orderHash (the default `SignedProtocolLegs` value).
-    function orderProtocolLegs(bytes32 orderHash) external view returns (uint128 lender, uint128 treasury) {
-        SignedProtocolLegs storage legs = _orderProtocolLegs[orderHash];
-        return (legs.lender, legs.treasury);
-    }
-
     // ─── T-086 Round-8 (#358) — Offer-keyed parallel-sale surface ──────
     //
     // Codex round-9 P1 #4 — these mappings are appended at the END of
     // the executor's storage layout so the existing UUPS-upgradeable
-    // base-slot allocation for `_orderFeeLegs` + `_orderProtocolLegs`
-    // stays unchanged. Pre-round-9 these were inserted BEFORE
+    // base-slot allocation for `_orderFeeLegs` stays unchanged. (#2876
+    // removed the `_orderProtocolLegs` mapping that sat before these;
+    // the storage-layout guard records that as a fresh-deploy-only
+    // break.) Pre-round-9 these were inserted BEFORE
     // `_orderFeeLegs`, which would have corrupted any existing
     // deployment's storage at upgrade time. Platform is pre-live so
     // no live data is at risk, but this is the correct append-only
@@ -384,9 +349,10 @@ contract CollateralListingExecutor is
     ///         `Seaport.cancel` emit because the cancel-time
     ///         reconstructed `OrderComponents` hashed to something
     ///         other than the originally-recorded `orderHash`. Real-
-    ///         world causes: position-NFT holder transferred between
-    ///         sign and cleanup; Seaport `incrementCounter(vault)`
-    ///         was called; treasury address rotated. The cleanup is
+    ///         world cause: Seaport `incrementCounter(vault)` was
+    ///         called between sign and cleanup (since #2876 the order
+    ///         names no position holder or treasury, so neither a
+    ///         transfer nor a rotation drifts it). The cleanup is
     ///         still safe — the executor's binding + vault
     ///         `revokeListingOrderHash` already invalidate fills —
     ///         we just can't accelerate OpenSea's catalog refresh
@@ -401,12 +367,16 @@ contract CollateralListingExecutor is
     error ConduitNotApproved(address conduit);
     error LoanNotActive(uint256 loanId);
     error GraceExpired(uint256 loanId);
-    error LenderShortPaid(bytes32 orderHash);
-    error TreasuryShortPaid(bytes32 orderHash);
+    /// @notice #2876 — the proceeds leg (`consideration[0]`, paid to the
+    ///         Diamond) is below the floor at this block: for a loan-keyed
+    ///         listing, what a repayment would owe the lender and the
+    ///         treasury; for an offer-keyed one, the recorded ask net of
+    ///         its fee legs.
+    error ProceedsShortPaid(bytes32 orderHash, uint256 paid, uint256 floor);
+    /// @notice #2876 — the proceeds leg is not paid to the Diamond.
+    error WrongProceedsRecipient(bytes32 orderHash);
     error WrongConsiderationCount(uint256 expected, uint256 actual);
     error WrongOfferCount(uint256 expected, uint256 actual);
-    error WrongLenderRecipient(bytes32 orderHash);
-    error WrongBorrowerRecipient(bytes32 orderHash);
     /// @notice #825-r3 (P1) — a fill recipient (current borrower holder or a
     ///         recorded fee-leg recipient) is sanctions-flagged at fill time.
     error SanctionedListingRecipient(address recipient);
@@ -415,7 +385,6 @@ contract CollateralListingExecutor is
     ///         (Seaport's `fulfiller`), or the account an ERC-721 collateral
     ///         reached in the fill.
     error SanctionedListingBuyer(address buyer);
-    error WrongTreasuryRecipient(bytes32 orderHash);
     error WrongConsiderationItemType(uint256 idx, ItemType expected, ItemType actual);
     error WrongConsiderationToken(uint256 idx, address expected, address actual);
     error WrongConsiderationIdentifier(uint256 idx);
@@ -449,13 +418,6 @@ contract CollateralListingExecutor is
     ///         narrower width still covers >10^38 wei.
     error EndAskPriceOverflow(uint256 endAskPrice);
     error AuctionEndTimeOverflow(uint256 auctionEndTime);
-    /// @notice T-086 Round-7 (Issue #355) — signed-leg snapshot
-    ///         overflow guards. Mirrors the existing narrowing-cast
-    ///         protection on `endAskPrice`. With realistic protocol-leg
-    ///         values well under 2^128 (~3.4e38), these reverts are
-    ///         unreachable in practice — explicit > silent.
-    error SignedLenderAmountOverflow(uint256 signedLenderAmount);
-    error SignedTreasuryAmountOverflow(uint256 signedTreasuryAmount);
     /// @notice Round-5 Block B (#309) — caller passed a `mode`
     ///         outside the `{PREPAY_MODE_FIXED_PRICE,
     ///         PREPAY_MODE_DUTCH}` allow-set. Mode tags are
@@ -474,9 +436,8 @@ contract CollateralListingExecutor is
     ///         `auctionEndTime > startTime`, `auctionEndTime` non-
     ///         zero) were violated at the executor boundary.
     error DutchModeShapeViolation();
-    /// @notice #2440 — the leg the protocol books as paid (the lender leg of
-    ///         a loan-keyed sale, or the Diamond's proceeds leg of an
-    ///         offer-keyed one; consideration index `idx`) reached its
+    /// @notice #2440 — the leg the protocol books as paid (the Diamond's
+    ///         proceeds leg, consideration index `idx`) reached its
     ///         recipient short: the recipient's balance rose by `received`,
     ///         less than the `expected` the order pays. A sale is voluntary and
     ///         its settlement books that leg as paid in full, so the whole fill
@@ -644,9 +605,7 @@ contract CollateralListingExecutor is
         uint256 endAskPrice,
         uint256 auctionEndTime,
         uint8 mode,
-        FeeLeg[] calldata feeLegs,
-        uint256 signedLenderAmount,
-        uint256 signedTreasuryAmount
+        FeeLeg[] calldata feeLegs
     ) external {
         if (msg.sender != vaipakamDiamond) revert NotDiamond();
         if (!approvedConduits[conduit]) revert ConduitNotApproved(conduit);
@@ -664,14 +623,6 @@ contract CollateralListingExecutor is
         if (askPrice > type(uint192).max) revert AskPriceOverflow(askPrice);
         if (endAskPrice > type(uint128).max) revert EndAskPriceOverflow(endAskPrice);
         if (auctionEndTime > type(uint64).max) revert AuctionEndTimeOverflow(auctionEndTime);
-        // T-086 Round-7 (Issue #355) — signed-leg overflow guards
-        // mirror the existing pattern.
-        if (signedLenderAmount > type(uint128).max) {
-            revert SignedLenderAmountOverflow(signedLenderAmount);
-        }
-        if (signedTreasuryAmount > type(uint128).max) {
-            revert SignedTreasuryAmountOverflow(signedTreasuryAmount);
-        }
 
         // Round-5 Block B (#309) — mode-tag dispatch + per-mode shape
         // assertion. The diamond facet has already enforced the
@@ -688,10 +639,10 @@ contract CollateralListingExecutor is
             // match the recorded `askPrice` is the EFFECTIVE ask
             // (= bidder.offer[0].startAmount - bidderFeeTotal) per
             // Round-6 design doc §17.11 step 4 — the Vaipakam
-            // counter-order's three consideration legs sum to this
-            // value; recording the gross bidder offer would make the
-            // cancel-reconstruction branch build a 3-leg order
-            // mismatched against the actual orderHash.
+            // counter-order's proceeds leg is this value (it carries no
+            // fee legs); recording the gross bidder offer would make the
+            // cancel-reconstruction branch build an order mismatched
+            // against the actual orderHash.
             if (endAskPrice != askPrice || auctionEndTime != 0) {
                 revert FixedPriceModeShapeViolation();
             }
@@ -745,17 +696,6 @@ contract CollateralListingExecutor is
             mode: mode
         });
 
-        // T-086 Round-7 (Issue #355) — pin the signed lender + treasury
-        // amounts so the auto-list-at-floor B-cond-2 gate can read them
-        // directly instead of deriving from `askPrice` (the borrower can
-        // pad askPrice with slack landing in consideration[2] without
-        // raising the signed lender/treasury, so an askPrice-derivation
-        // would miss the unfillable-order case).
-        _orderProtocolLegs[orderHash] = SignedProtocolLegs({
-            lender: uint128(signedLenderAmount),
-            treasury: uint128(signedTreasuryAmount)
-        });
-
         emit OrderRecorded(orderHash, loanId, conduit);
     }
 
@@ -784,9 +724,10 @@ contract CollateralListingExecutor is
     ///           (a) the recorded loanId is zero (binding never
     ///               existed; this branch isn't taken),
     ///           (b) the cancel-time reconstructed hash mismatches
-    ///               the recorded hash (sign-time data drift —
-    ///               position-NFT holder transferred, treasury
-    ///               rotated, Seaport `incrementCounter` was called),
+    ///               the recorded hash (Seaport `incrementCounter`
+    ///               was called on the vault; since #2876 the order
+    ///               names no holder or treasury, so their changes
+    ///               no longer drift it),
     ///               or
     ///           (c) the `ISeaportCancel.cancel` call itself reverts
     ///               (defensive — Seaport's `cancel` should not
@@ -815,10 +756,6 @@ contract CollateralListingExecutor is
         // with `feeLegs.length` (≤ MAX_FEE_LEGS = 4) so it stays
         // bounded.
         delete _orderFeeLegs[orderHash];
-        // T-086 Round-7 (Issue #355) — clear the parallel signed-leg
-        // snapshot alongside the rest of the per-order storage. Same
-        // single-slot bounded cost as the OrderContext delete.
-        delete _orderProtocolLegs[orderHash];
         emit OrderCanceled(orderHash, loanId);
     }
 
@@ -1038,14 +975,10 @@ contract CollateralListingExecutor is
         // storage for the canonical-shape reconstruction.
         FeeLeg[] memory feeLegs = _orderFeeLegs[orderHash];
 
-        // Round-5 Block B (#309) — mode-aware dispatch. The
-        // fixed-price path keeps the existing sign-time-pctx
-        // reconstruction. The Dutch path reads pctx at
-        // `auctionEndTime` (so `pctx.lenderLeg` / `pctx.treasuryLeg`
-        // resolve to the projected-max values that were signed at
-        // post time, under sign-time governance config — assuming
-        // governance hasn't drifted; if it has, the hash recompute
-        // mismatches and we emit `SeaportCancelSkipped`).
+        // Round-5 Block B (#309) — mode-aware dispatch: the fixed-price
+        // order's Seaport end time is the grace end, the Dutch order's
+        // the auction end; both are otherwise rebuilt from recorded
+        // inputs (#2876).
         OrderComponents memory components;
         if (
             ctx.mode == PREPAY_MODE_FIXED_PRICE ||
@@ -1058,14 +991,14 @@ contract CollateralListingExecutor is
             // 0, empty feeLegs); the recorded `askPrice` is the
             // EFFECTIVE ask = offer_value - bidderFeeTotal (§17.11
             // step 4 + §17.7 of the Round-6 design doc) so the
-            // reconstruction summing to that ask is the correct
-            // 3-leg consideration that was signed at match-time.
+            // reconstruction's proceeds leg is the one signed at
+            // match-time.
             components = _buildFixedPriceCancelComponents(orderHash, ctx, feeLegs);
             if (components.offerer == address(0)) {
                 // Skip-fallback sentinel: helper returned an empty
-                // shell because the cancel-time solvency check
-                // tripped (governance drift). Breadcrumb already
-                // emitted inside the helper.
+                // shell because its defensive fee-coverage check
+                // tripped. Breadcrumb already emitted inside the
+                // helper.
                 return;
             }
         } else if (ctx.mode == PREPAY_MODE_DUTCH) {
@@ -1109,51 +1042,34 @@ contract CollateralListingExecutor is
     ///      "skip + breadcrumb already emitted" signal so the
     ///      reconstruction helpers don't need a separate boolean
     ///      return shape.
+    ///
+    ///      #2876 — the order carries no loan amounts (its proceeds leg is
+    ///      the ask net of the recorded fee legs), so every input is a
+    ///      recorded one and a governance change between sign and cancel
+    ///      no longer makes the rebuilt hash drift. `pctx` supplies only
+    ///      the loan's collateral, lending asset, grace end and vault.
     function _buildFixedPriceCancelComponents(
         bytes32 orderHash,
         OrderContext memory ctx,
         FeeLeg[] memory feeLegs
     ) private returns (OrderComponents memory components) {
-        // Sign-time pctx — getPrepayContext(loanId, ctx.startTime)
-        // re-derives the floor legs evaluated at the ORIGINAL post
-        // timestamp.
         IVaipakamPrepayContext.PrepayContext memory pctx =
             IVaipakamPrepayContext(vaipakamDiamond).getPrepayContext(
                 uint256(ctx.loanId),
                 uint256(ctx.startTime)
             );
-
-        // Defensive floor-coverage check. `LibPrepayOrder._componentsAtMemory`
-        // computes `borrowerLeg = askPrice - lenderLeg - treasuryLeg`;
-        // if the cancel-time floor reads HIGHER than the recorded
-        // sign-time `askPrice`, the unchecked subtraction would panic
-        // with arithmetic underflow and revert the entire cleanup
-        // path. Realistic causes:
-        //   (a) Governance bumped `treasuryFeeBps` between sign and
-        //       cancel → `pctx.treasuryLeg` is now higher than the
-        //       value the facet validated against at post time.
-        //   (b) Governance flipped a related fee curve.
-        // In any such case the original order is functionally already
-        // "stale" — it could never have been filled at the new floor —
-        // so the right behaviour is to fall back to the no-op skip
-        // branch (the proper cleanup still completes; we just don't
-        // get the OpenSea catalog refresh acceleration).
-        uint256 feeSumStart = 0;
-        for (uint256 i = 0; i < feeLegs.length; ) {
-            feeSumStart += uint256(feeLegs[i].startAmount);
-            unchecked { ++i; }
-        }
-        if (uint256(ctx.askPrice) < pctx.lenderLeg + pctx.treasuryLeg + feeSumStart) {
+        // Defensive: the facet signed `askPrice` above the fee legs, so
+        // this never trips; if it did, the rebuild would underflow and
+        // revert the whole cleanup, so skip with a breadcrumb instead (the
+        // cleanup proper still completes).
+        if (uint256(ctx.askPrice) < _feeSum(feeLegs, true)) {
             emit SeaportCancelSkipped(orderHash, uint256(ctx.loanId));
-            // Sentinel: `offerer == address(0)` indicates caller-side
-            // skip — the empty OrderComponents struct is returned
-            // unmodified from its zero-value default.
             return components;
         }
-
         components = LibPrepayOrder.componentsForCancel(
             pctx,
             address(this),
+            vaipakamDiamond,
             uint256(ctx.askPrice),
             ctx.conduitKey,
             uint256(ctx.salt),
@@ -1163,15 +1079,10 @@ contract CollateralListingExecutor is
         );
     }
 
-    /// @dev Round-5 Block B (#309) — Dutch cancel-time
-    ///      reconstruction. Reads pctx at `auctionEndTime` so the
-    ///      lender + treasury legs resolve to the projected-max
-    ///      values that were signed at post-time (under sign-time
-    ///      governance config). If governance has bumped between
-    ///      sign + cancel, the projected values shift and the hash
-    ///      recompute mismatches → `_tryCancelOnSeaport` emits
-    ///      `SeaportCancelSkipped` and the cleanup proper (binding
-    ///      delete + vault revoke) carries the safety invariant.
+    /// @dev Round-5 Block B (#309) — Dutch cancel-time reconstruction.
+    ///      Every input is recorded (#2876: no projected loan legs), so
+    ///      the rebuild matches the signed order whatever governance did
+    ///      since. Same skip sentinel as the fixed-price builder.
     function _buildDutchCancelComponents(
         bytes32 orderHash,
         OrderContext memory ctx,
@@ -1182,30 +1093,19 @@ contract CollateralListingExecutor is
                 uint256(ctx.loanId),
                 uint256(ctx.auctionEndTime)
             );
-
-        // Same defensive coverage check as the fixed-price path,
-        // but using `endAskPrice` (the floor must be coverable at
-        // the END of the auction window for the order to have been
-        // signable; if cancel-time projected legs + fee endAmounts
-        // exceed `endAskPrice`, the canonical-shape rebuild would
-        // underflow on the borrower-end leg).
-        uint256 feeSumEnd = 0;
-        for (uint256 i = 0; i < feeLegs.length; ) {
-            feeSumEnd += uint256(feeLegs[i].endAmount);
-            unchecked { ++i; }
-        }
-        if (uint256(ctx.endAskPrice) < pctx.lenderLeg + pctx.treasuryLeg + feeSumEnd) {
+        if (
+            uint256(ctx.askPrice) < _feeSum(feeLegs, true) ||
+            uint256(ctx.endAskPrice) < _feeSum(feeLegs, false)
+        ) {
             emit SeaportCancelSkipped(orderHash, uint256(ctx.loanId));
             return components;
         }
-
         components = LibPrepayOrder.componentsForCancelDutch(
             pctx,
             address(this),
+            vaipakamDiamond,
             uint256(ctx.askPrice),         // startAskPrice
             uint256(ctx.endAskPrice),
-            pctx.lenderLeg,                // projectedLenderLeg
-            pctx.treasuryLeg,              // projectedTreasuryLeg
             ctx.conduitKey,
             uint256(ctx.salt),
             uint256(ctx.startTime),
@@ -1213,6 +1113,14 @@ contract CollateralListingExecutor is
             ISeaportOrderHash(seaport).getCounter(pctx.borrowerVault),
             feeLegs
         );
+    }
+
+    /// @dev Sum of the fee legs' start (or end) amounts.
+    function _feeSum(FeeLeg[] memory feeLegs, bool atStart) private pure returns (uint256 sum) {
+        for (uint256 i = 0; i < feeLegs.length; ) {
+            sum += uint256(atStart ? feeLegs[i].startAmount : feeLegs[i].endAmount);
+            unchecked { ++i; }
+        }
     }
 
     // ─── ERC-1271 sign-time signature delegate ──────────────────────────
@@ -1386,20 +1294,23 @@ contract CollateralListingExecutor is
         // #1279 — the collateral has moved by now; screen where it landed.
         _assertCollateralHolderNotBarred(params);
 
-        // #2440 — refuse the fill unless the lender leg reached the lender in
-        // full: the settlement below closes the loan as repaid on it.
+        // #2440 — refuse the fill unless the proceeds leg reached the
+        // Diamond in full: the settlement below splits exactly that figure.
         uint256 balanceAtCheck = _consumeBookedLeg(params);
 
         // ── Atomic settlement: callback to the diamond ──────────────────
-        // The diamond's privileged facet method asserts
-        // `msg.sender == address(this)` + Active status, then atomically:
-        //   - loan.status = Settled (via LibLifecycle).
-        //   - LibERC721._unlock(loan.borrowerTokenId).
-        //   - LibVPFIDiscount.settleBorrowerLifProper(loan).
+        // #2876 — the Diamond splits the proceeds (lender, treasury net of
+        // the lender's yield-fee discount, borrower-position vault) at
+        // what a repayment at this block would owe, then closes the loan:
+        // Settled, borrower NFT unlocked, `settleBorrowerLifProper`. The
+        // proceeds figure is the leg's amount at this block (a Dutch
+        // order's leg has already decayed to it in `params`).
         // After this returns we clear the orderContext so an already-
         // filled hash can't double-fill (Seaport itself blocks re-fills
         // on the same order, but defense-in-depth).
-        IVaipakamPrepayCallbacks(vaipakamDiamond).executorFinalizePrepaySale(loanId);
+        IVaipakamPrepayCallbacks(vaipakamDiamond).executorFinalizePrepaySale(
+            loanId, params.consideration[0].amount
+        );
         _excludeCallbackMove(params, balanceAtCheck);
         delete orderContext[params.orderHash];
         // T-086 Round-5 Block A (#313) — Codex P2 round-1 cleanup
@@ -1410,15 +1321,6 @@ contract CollateralListingExecutor is
         // line. `delete` on a dynamic-array mapping value clears
         // length + every element (Solidity standard semantics).
         delete _orderFeeLegs[params.orderHash];
-        // T-086 Round-7 follow-up (Codex round-13 P2 #1) — also clear
-        // the per-order signed-leg snapshot. Round-2 added
-        // `_orderProtocolLegs` writes in `recordOrder` + the
-        // `clearOrder` cleanup but missed this fill-path delete, so
-        // filled orders were leaking a packed-two-uint128s slot AND
-        // `orderProtocolLegs(orderHash)` was returning nonzero amounts
-        // for already-filled orders (the interface natspec promises
-        // `(0, 0)` for cleared/unknown orderHashes).
-        delete _orderProtocolLegs[params.orderHash];
 
         emit OrderFilled(params.orderHash, loanId);
         return ISeaportZone.validateOrder.selector;
@@ -1507,10 +1409,10 @@ contract CollateralListingExecutor is
     ///        - the diamond callback runs `assertOfferFillNotSanctioned`
     ///          (live sanctions recheck — round-3 against Raja P1 #3),
     ///          NOT a loan-status check (no loan exists)
-    ///        - consideration shape is 1 proceeds leg + N fee legs
-    ///          (not 3 protocol legs + N), and the recipient of
-    ///          consideration[0] is `address(diamond)` (not 3 distinct
-    ///          NFT-holder / treasury / borrower recipients)
+    ///        - the proceeds floor is the recorded ask net of its fee legs
+    ///          (no loan to price a repayment against). The consideration
+    ///          shape is the same as the loan-keyed branch since #2876:
+    ///          1 proceeds leg to `address(diamond)` + N fee legs.
     function _checkOfferOrderPreconditions(ZoneParameters calldata params)
         private
     {
@@ -1607,10 +1509,12 @@ contract CollateralListingExecutor is
         }
         uint256 expectedProceeds = uint256(ctx.askPrice) - feeSum;
         if (params.consideration[0].amount < expectedProceeds) {
-            revert LenderShortPaid(params.orderHash);
+            revert ProceedsShortPaid(
+                params.orderHash, params.consideration[0].amount, expectedProceeds
+            );
         }
         if (params.consideration[0].recipient != address(vaipakamDiamond)) {
-            revert WrongLenderRecipient(params.orderHash);
+            revert WrongProceedsRecipient(params.orderHash);
         }
         // Per-fee-leg shape — same ERC20 + principalAsset + zero-
         // identifier checks the loan-keyed path runs.
@@ -1693,10 +1597,10 @@ contract CollateralListingExecutor is
         // `authorizeOrder` and the `Seaport.validate()` pre-registration path —
         // so a flagged recipient aborts the fill. The buyer's funds are never
         // committed (Seaport reverts the whole fill atomically), so nothing is
-        // stranded. The loan-keyed consideration pays the live lender holder
-        // (consideration[0]) and the borrower-remainder holder (consideration[2])
-        // directly, plus the recorded fee legs; treasury is the protocol (no
-        // screen). (#821 covers the diamond-side close-out deposits on the
+        // stranded. The Diamond pays the live lender holder and the
+        // borrower-remainder holder out of the proceeds leg (and screens them
+        // again there, fail-closed); Seaport pays the recorded fee legs
+        // directly. Treasury is the protocol (no screen). (#821 covers the diamond-side close-out deposits on the
         // non-fill paths.)
         // #1279 — the buyer is a Tier-1 party too: screen the fulfiller.
         _assertBuyerNotBarred(params);
@@ -1762,38 +1666,29 @@ contract CollateralListingExecutor is
         }
 
         // ── Consideration shape check ───────────────────────────────────
-        // Three protocol legs in fixed order: [lender, treasury, borrower]
-        // per design doc §5.5. T-086 Round-5 Block A (#313) allows
-        // additional fee legs at indices 3 … (3 + feeLegsCount - 1) up
-        // to `MAX_FEE_LEGS = 4` total. Each leg (protocol or fee) must
+        // #2876 — ONE proceeds leg to the Diamond at index 0, then up to
+        // `MAX_FEE_LEGS` fee legs (Round-5 Block A, #313). Every leg must
         // be in the loan's lending asset (ERC20 only for v1 — NFT-rental
-        // loans don't fit the prepay sale flow). Without these checks,
-        // a fill could route the right amounts in the WRONG token
-        // (Codex / Grok blocker on Round 1).
+        // loans don't fit the prepay sale flow). Without these checks, a
+        // fill could route the right amounts in the WRONG token (Codex /
+        // Grok blocker on Round 1).
         if (
-            params.consideration.length < 3 ||
-            params.consideration.length > 3 + MAX_FEE_LEGS
+            params.consideration.length < 1 ||
+            params.consideration.length > 1 + MAX_FEE_LEGS
         ) {
-            revert WrongConsiderationCount(3 + MAX_FEE_LEGS, params.consideration.length);
+            revert WrongConsiderationCount(1 + MAX_FEE_LEGS, params.consideration.length);
         }
         if (pctx.assetType != LibVaipakam.AssetType.ERC20) {
             revert UnsupportedLendingAssetType();
         }
-        // Protocol legs — itemType + token + identifier shape, plus
-        // amount + recipient checks below.
         _assertConsiderationItem(params.consideration[0], 0, pctx.principalAsset, params.orderHash);
-        _assertConsiderationItem(params.consideration[1], 1, pctx.principalAsset, params.orderHash);
-        _assertConsiderationItem(params.consideration[2], 2, pctx.principalAsset, params.orderHash);
-        // T-086 Round-5 Block A (#313) — per-fee-leg shape loop. Same
-        // ERC20 + principalAsset + zero-identifier checks the protocol
-        // legs get. Recipient is NOT validated against an on-chain
-        // allowlist (per §14.4: economically neutral for the borrower
-        // to lie since the fees come out of their own remainder; OpenSea
-        // submission-time enforcement is the forcing function for
-        // correctness). Amount > 0 IS validated here so a fill can't
-        // record a zero-amount fee leg that clutters the indexer's
-        // record without economic effect.
-        for (uint256 i = 3; i < params.consideration.length; ) {
+        // Fee legs: same ERC20 + principalAsset + zero-identifier shape.
+        // Recipient is NOT validated against an on-chain allowlist (per
+        // §14.4: economically neutral for the borrower to lie since the
+        // fees come out of their own remainder; OpenSea submission-time
+        // enforcement is the forcing function for correctness). Amount > 0
+        // IS validated so a fill can't record a zero-amount fee leg.
+        for (uint256 i = 1; i < params.consideration.length; ) {
             _assertConsiderationItem(params.consideration[i], i, pctx.principalAsset, params.orderHash);
             if (params.consideration[i].amount == 0) {
                 revert FeeLegZeroAmount(i);
@@ -1801,32 +1696,21 @@ contract CollateralListingExecutor is
             unchecked { ++i; }
         }
 
-        // ── Live-floor leg checks (read from the diamond view) ─────────
-        // Lender + treasury legs compared against the live floor as
-        // resolved by the diamond at THIS block. The diamond invokes
-        // `LibCollateralSettlement` in its own storage context, so the
-        // floor is correctly derived from loan state (Round 1 was
-        // calling the library from the executor, which read empty
-        // storage — Codex L450 P0).
-        if (params.consideration[0].amount < pctx.lenderLeg) {
-            revert LenderShortPaid(params.orderHash);
+        // ── Proceeds leg: recipient + live floor ───────────────────────
+        // The Diamond receives the proceeds and splits them at this block
+        // (`PrepayListingFacet.executorFinalizePrepaySale`), so the leg must
+        // pay the Diamond and cover what a repayment at THIS block would owe
+        // the lender and the treasury. The floor is resolved by the Diamond
+        // in its own storage context (Round 1 called the library from the
+        // executor, which read empty storage — Codex L450 P0). Who the
+        // lender and borrower holders are no longer matters to the order:
+        // the Diamond pays whoever holds each position at the fill.
+        if (params.consideration[0].recipient != vaipakamDiamond) {
+            revert WrongProceedsRecipient(params.orderHash);
         }
-        if (params.consideration[1].amount < pctx.treasuryLeg) {
-            revert TreasuryShortPaid(params.orderHash);
-        }
-
-        // ── Recipient checks (bind to CURRENT NFT holders + treasury) ──
-        // The diamond resolved the lender + borrower position-NFT
-        // current holders + the configured treasury address. Recipient
-        // mismatches reject the fill atomically.
-        if (params.consideration[0].recipient != pctx.lenderNftOwner) {
-            revert WrongLenderRecipient(params.orderHash);
-        }
-        if (params.consideration[1].recipient != pctx.treasury) {
-            revert WrongTreasuryRecipient(params.orderHash);
-        }
-        if (params.consideration[2].recipient != pctx.borrowerNftOwner) {
-            revert WrongBorrowerRecipient(params.orderHash);
+        uint256 floor = pctx.lenderLeg + pctx.treasuryLeg;
+        if (params.consideration[0].amount < floor) {
+            revert ProceedsShortPaid(params.orderHash, params.consideration[0].amount, floor);
         }
     }
 
@@ -1838,39 +1722,20 @@ contract CollateralListingExecutor is
     // recipient, so the zone is the only party that sees a recipient's
     // balance both before the transfers (`authorizeOrder`) and after them
     // (`validateOrder`). Exactly one leg of each order is BOOKED by the
-    // protocol as paid, and it is consideration[0] in both branches (pinned by
-    // the precondition stacks): the lender leg of a loan-keyed sale, on which
-    // the loan closes as repaid, and the Diamond's proceeds leg of an
-    // offer-keyed sale, which the Diamond credits and splits. That leg must
-    // arrive in full, as every leg a voluntary flow books does
-    // (`LibDelivery` outcome 1). The other legs book nobody as paid: the
-    // treasury leg is a fee its recipient bears the charge on, the borrower
-    // leg is the seller's own remainder, and the fee legs go to third parties
+    // protocol as paid: consideration[0], the proceeds leg to the Diamond
+    // (pinned by both precondition stacks; #2876 gave the loan-keyed listing
+    // the offer-keyed shape). The Diamond credits or splits exactly that
+    // figure, so it must arrive in full, as every leg a voluntary flow books
+    // does (`LibDelivery` outcome 1). The fee legs go to third parties
     // (`LibDelivery` outcome 3), so they are not measured.
     //
-    // A booked leg the recipient pays to itself (a lender buying the
-    // collateral of their own loan) books no one else as paid, and the payer's
-    // balance falls by the other legs it pays, so a rise cannot be read. It is
-    // not measured, the rule `LibDelivery.measured` applies to a move whose
-    // source is its recipient. The zone sees no transfer source, so it proves
-    // the self-payment from what Seaport 1.6 passes it, and only where that is
-    // a proof: the recipient is the `fulfiller`, AND `validateOrder` receives
-    // a one-entry `orderHashes`. A one-entry array is what Seaport builds for
-    // a single-order fulfilment (`fulfillOrder`, `fulfillAdvancedOrder`, every
-    // basic order) and for an available-orders fill of one order, and in each
-    // the fulfiller pays the whole consideration. A call that combines orders
-    // (`matchOrders` / `matchAdvancedOrders`, or an available-orders fill of
-    // several) passes one entry per order, and there the fulfiller need not
-    // be the payer: in a match the counter-order's offerer funds the leg, so
-    // a lender who matches their own listing against a third party's bid is
-    // the fulfiller while the bidder pays (Codex #2622 r3). Every such leg is
-    // measured. The Diamond never pays a listing's consideration itself (when
-    // it calls Seaport it matches a bidder's order, and the bidder pays), so
-    // the exemption never applies to the Diamond's proceeds leg.
-    //
-    // The base is recorded at `authorizeOrder` for every order, exempt or
-    // not, because Seaport's `orderHashes` there is still being filled and
-    // cannot say what the call is; `validateOrder` decides.
+    // Every booked leg is measured. The Diamond never pays a listing's
+    // consideration itself (when it calls Seaport, in the atomic OpenSea-offer
+    // match, it matches a bidder's order and the bidder pays), so the
+    // Diamond's balance rise is always the buyer's payment. (Before #2876 a
+    // loan-keyed listing booked the lender's leg, which a lender buying their
+    // own loan's collateral paid to themselves, and that case needed an
+    // exemption. A lender buying it now pays the Diamond like any buyer.)
     //
     // One Seaport call may fill several of these orders, and Seaport runs
     // every `authorizeOrder` before any transfer and every `validateOrder`
@@ -1878,22 +1743,16 @@ contract CollateralListingExecutor is
     // order: `authorizeOrder` stores the recipient's balance as the base; each
     // `validateOrder` requires its leg among the arrivals above the base not
     // yet claimed by an earlier order, and claims it by raising the base. A
-    // settlement callback can move the same token to or from the same
-    // recipient (an offer-keyed fill's Diamond pays its proceeds onward), so
-    // the base is then shifted by exactly that move: what one order's
-    // settlement moves is never read as another order's arrival.
+    // settlement callback moves the same token out of the Diamond (it pays the
+    // proceeds onward), so the base is then shifted by exactly that move: what
+    // one order's settlement moves is never read as another order's arrival.
     //
     // The record lives in transient storage (EIP-1153), so it never outlives
     // the transaction and touches no persistent slot of this proxy.
     //
-    // Residues. A transfer someone else makes to the same recipient between
-    // the two hooks counts as arrival; it is real tokens reaching that
-    // recipient, and is reachable only with a token outside the supported set.
-    // A lender who pays their own listing inside a COMBINED call (their own
-    // bid matched against it by anyone, or a batch of available orders that
-    // includes it) is measured, reads short, and the fill is refused, with any
-    // token: the lender buys the collateral of their own loan by filling that
-    // listing on its own instead.
+    // Residue. A transfer someone else makes to the Diamond in the same token
+    // between the two hooks counts as arrival; it is real tokens reaching the
+    // Diamond, and is reachable only with a token outside the supported set.
 
     /// @dev Namespace of the transient arrival record.
     bytes32 private constant ARRIVAL_BASE_TAG = keccak256("vaipakam.listing.arrival-base");
@@ -1916,21 +1775,8 @@ contract CollateralListingExecutor is
         }
     }
 
-    /// @dev Whether the booked leg is measured: always, except where Seaport's
-    ///      parameters prove its recipient paid it (the recipient is the
-    ///      `fulfiller` of a single-order call, see the section comment). Read
-    ///      at `validateOrder` only, where `orderHashes` is final.
-    function _bookedLegMeasured(ZoneParameters calldata params) private view returns (bool) {
-        address recipient = params.consideration[0].recipient;
-        return recipient != params.fulfiller ||
-            params.orderHashes.length != 1 ||
-            recipient == vaipakamDiamond;
-    }
-
     /// @dev `authorizeOrder` (before any transfer of the Seaport call): the
-    ///      base of the booked leg's recipient is its balance now, recorded for
-    ///      every order (whether the leg is measured is decided at
-    ///      `validateOrder`, see the section comment). Overwriting
+    ///      base of the booked leg's recipient is its balance now. Overwriting
     ///      is correct: inside one Seaport call every `authorizeOrder` precedes
     ///      every transfer, so a second order paying the same recipient writes
     ///      the same figure; across two Seaport calls in one transaction, the
@@ -1951,7 +1797,6 @@ contract CollateralListingExecutor is
         private
         returns (uint256 balanceAtCheck)
     {
-        if (!_bookedLegMeasured(params)) return 0;
         ReceivedItem calldata item = params.consideration[0];
         bytes32 key = _arrivalKey(item.token, item.recipient);
         uint256 storedPlusOne = _arrivalBase(key);
@@ -1972,7 +1817,6 @@ contract CollateralListingExecutor is
     ///      order sees only what is left (it is refused rather than
     ///      over-counted).
     function _excludeCallbackMove(ZoneParameters calldata params, uint256 balanceAtCheck) private {
-        if (!_bookedLegMeasured(params)) return;
         ReceivedItem calldata item = params.consideration[0];
         bytes32 key = _arrivalKey(item.token, item.recipient);
         uint256 raised = (_arrivalBase(key) - 1) + IERC20(item.token).balanceOf(item.recipient);

@@ -27,22 +27,27 @@ pragma solidity ^0.8.29;
  *         executor later signs + finalizes.
  */
 interface IVaipakamPrepayCallbacks {
-    /// @notice Finalize a Seaport prepay-listing fill. Marks the loan
-    ///         Settled, unlocks the borrower NFT, and calls
-    ///         `LibVPFIDiscount.settleBorrowerLifProper` so the
-    ///         borrower's VPFI rebate (Phase-5 LIF) accrues correctly
-    ///         on this proper-close path.
-    /// @dev    The diamond's implementation MUST assert:
-    ///           - `msg.sender == collateralListingExecutor` (the
-    ///             diamond's stored executor address — only this
-    ///             singleton can finalize).
-    ///           - `loan.status == LoanStatus.Active` (re-validates
-    ///             the executor's own check; defense-in-depth).
-    ///         and then atomically:
-    ///           - `loan.status = LoanStatus.Settled` via LibLifecycle.
-    ///           - `LibERC721._unlock(loan.borrowerTokenId)`.
-    ///           - `LibVPFIDiscount.settleBorrowerLifProper(loan)`.
-    function executorFinalizePrepaySale(uint256 loanId) external;
+    /// @notice Finalize a Seaport prepay-listing fill: split the sale
+    ///         proceeds the Diamond just received and close the loan.
+    /// @dev    #2876 — a loan-keyed listing pays ONE proceeds leg
+    ///         (`consideration[0]`) to the Diamond, the same shape as the
+    ///         offer-keyed parallel-sale order. The Diamond then pays, at
+    ///         what a repayment at THIS block would owe:
+    ///           - the current lender-position holder its due, plus any
+    ///             lender yield-fee discount the holder qualifies for;
+    ///           - the treasury its share net of that discount;
+    ///           - the current borrower-position holder's vault the rest.
+    ///         The implementation MUST assert:
+    ///           - `msg.sender == collateralListingExecutor`;
+    ///           - `loan.status == LoanStatus.Active`;
+    ///           - `proceeds` covers the repayment floor at this block;
+    ///         and then atomically split the proceeds, mark the loan
+    ///         Settled, unlock the borrower NFT and settle the borrower's
+    ///         Phase-5 LIF (`settleBorrowerLifProper`).
+    /// @param  loanId   Loan whose collateral was sold.
+    /// @param  proceeds The proceeds leg's amount, which the executor has
+    ///                  measured as having reached the Diamond in full.
+    function executorFinalizePrepaySale(uint256 loanId, uint256 proceeds) external;
 
     // ─── T-086 Round-8 (#358) — offer-keyed callbacks ──────────────────
     //

@@ -1,4 +1,39 @@
 {
   "_readme": "Acknowledged storage-layout breaks (#1274 / #2092). An entry { baseSha256, lines, reason } accepts exactly the listed ledger lines, and only when compared against the base golden file whose sha256 it names, so it goes inert once that base changes; delete inert entries. Only CI honours an acknowledgement: it records that NO chain may be upgraded in place across the change, and the deploy-time check never reads this file. See docs/DesignsAndPlans/StorageLayoutGuardDesign.md.",
-  "acks": []
+  "acks": [
+    {
+      "baseSha256": "396fd10b2fe61e0fd6d7070bb2bbd13a011ac3a107181c4e383f0e826a1eef58",
+      "lines": [
+        "C|uups:CollateralListingExecutor@5[bytes32]|0|0|_orderProtocolLegs[]",
+        "C|uups:CollateralListingExecutor@6[bytes32]|0|0|offerContext[]",
+        "C|uups:CollateralListingExecutor@7[bytes32]@0[]|0|0|_offerFeeLegs[][]",
+        "D|uups:CollateralListingExecutor@7[bytes32]|0|0|_offerFeeLegs[]",
+        "L|uups:CollateralListingExecutor@5[bytes32]|0|0|uint128|_orderProtocolLegs[].lender",
+        "L|uups:CollateralListingExecutor@5[bytes32]|0|16|uint128|_orderProtocolLegs[].treasury",
+        "L|uups:CollateralListingExecutor@6[bytes32]|0|0|uint96|offerContext[].offerId",
+        "L|uups:CollateralListingExecutor@6[bytes32]|0|12|address|offerContext[].conduit",
+        "L|uups:CollateralListingExecutor@6[bytes32]|1|0|bytes32|offerContext[].conduitKey",
+        "L|uups:CollateralListingExecutor@6[bytes32]|2|0|uint256|offerContext[].salt",
+        "L|uups:CollateralListingExecutor@6[bytes32]|3|0|uint64|offerContext[].startTime",
+        "L|uups:CollateralListingExecutor@6[bytes32]|3|8|uint192|offerContext[].askPrice",
+        "L|uups:CollateralListingExecutor@6[bytes32]|4|0|uint64|offerContext[].endTime",
+        "L|uups:CollateralListingExecutor@6[bytes32]|4|28|uint8|offerContext[].mode",
+        "L|uups:CollateralListingExecutor@6[bytes32]|4|8|address|offerContext[].principalAsset",
+        "L|uups:CollateralListingExecutor@6[bytes32]|5|0|address|offerContext[].borrowerVault",
+        "L|uups:CollateralListingExecutor@6[bytes32]|6|0|address|offerContext[].borrowerWallet",
+        "L|uups:CollateralListingExecutor@6[bytes32]|7|0|address|offerContext[].collateralAsset",
+        "L|uups:CollateralListingExecutor@6[bytes32]|7|20|uint8|offerContext[].collateralAssetType",
+        "L|uups:CollateralListingExecutor@6[bytes32]|8|0|uint256|offerContext[].collateralTokenId",
+        "L|uups:CollateralListingExecutor@6[bytes32]|9|0|uint256|offerContext[].collateralQuantity",
+        "L|uups:CollateralListingExecutor@7[bytes32]@0[]|0|0|address|_offerFeeLegs[][].recipient",
+        "L|uups:CollateralListingExecutor@7[bytes32]@0[]|0|20|uint96|_offerFeeLegs[][].startAmount",
+        "L|uups:CollateralListingExecutor@7[bytes32]@0[]|1|0|uint96|_offerFeeLegs[][].endAmount",
+        "M|uups:CollateralListingExecutor|5|0|bytes32|_orderProtocolLegs",
+        "M|uups:CollateralListingExecutor|6|0|bytes32|offerContext",
+        "M|uups:CollateralListingExecutor|7|0|bytes32|_offerFeeLegs",
+        "W|uups:CollateralListingExecutor@7[bytes32]@0[]|64"
+      ],
+      "reason": "#2876: a loan-keyed listing now pays one proceeds leg to the Diamond, so the executor no longer records the signed lender and treasury legs. Removing the _orderProtocolLegs mapping moves offerContext and _offerFeeLegs up one slot. Prelive: CollateralListingExecutor reaches every chain by fresh deploy (the all-waves deploy), never an in-place upgrade."
+    }
+  ]
 }

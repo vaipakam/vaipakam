@@ -2491,7 +2491,7 @@
         "OfferCreatorFullTariffSet": "تم تسجيل خيار الرسوم للعرض",
         "OfferKeeperEnabled": "تم تحديث إذن الـ keeper",
         "OfferSaleProceedsCredited": "أُضيفت عائدات البيع إلى الخزنة",
-        "OfferSaleProceedsSplit": "تم تقسيم عائدات البيع",
+        "CollateralSaleProceedsSplit": "تم تقسيم عائدات البيع",
         "ParallelSaleLockReleased": "تم تحرير إدراج بيع الضمان",
         "PartialCollateralWithdrawn": "تم سحب جزء من الضمان",
         "PostParallelSaleListing": "تم نشر إدراج بيع الضمان",

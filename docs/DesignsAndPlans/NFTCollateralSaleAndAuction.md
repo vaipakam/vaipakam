@@ -2,6 +2,29 @@
 
 **Status:** Round 4 RATIFIED + SHIPPED (PRs #300 / #302 / #303 / #304 / #307 / #308 / #310 / #312 / #317 / #318 / #319 / #321). · Round 5 RATIFIED via PR #322 (2026-06-02). · **Round 5.1 errata** (this revision) — addresses Codex's post-merge review against `bc55c3f7` (5 P2 — corrected on-chain event names, sim-preflight feasibility, builder math precision, batched-cut deploy requirement). Spec-only; no semantic change to the Round-5 design. · Tracking Issue [#279](https://github.com/vaipakam/vaipakam/issues/279) · Round-5 follow-ups: fee-legs [#313](https://github.com/vaipakam/vaipakam/issues/313), auction modes [#309](https://github.com/vaipakam/vaipakam/issues/309) · Multi-marketplace expansion: [#281](https://github.com/vaipakam/vaipakam/issues/281)
 
+> **#2876 — the loan-keyed order shape below is SUPERSEDED (owner decision
+> 2026-10-26, "One proceeds leg").** Every section that describes the
+> loan-keyed listing's consideration as three protocol legs (lender,
+> treasury, borrower remainder) paid by Seaport straight to the position
+> holders, the `_orderProtocolLegs` signed-leg snapshot (§18.14 round-3.8
+> to 3.11), and the self-payment exemption on the lender leg describes the
+> retired design. A loan-keyed listing now carries the same shape the
+> offer-keyed parallel sale (§19) always had: ONE proceeds leg, the ask net
+> of the fee legs, paid to the Diamond, followed by the fee legs. In the
+> zone's `validateOrder` the Diamond splits it by one function shared by
+> both listing types (`PrepayListingFacet._settleSaleProceeds`), at what a
+> repayment at the fill would owe: the current lender holder its due plus
+> its yield-fee discount, the treasury its share net of that discount, the
+> current borrower holder's vault the rest, reported in
+> `CollateralSaleProceedsSplit`. The executor checks the leg pays the
+> Diamond and covers the live floor (`ProceedsShortPaid`,
+> `WrongProceedsRecipient`) and measures it arriving in full; auto-list's
+> B-cond-2 reads the proceeds leg at the current block against the live
+> floor. A Dutch listing's posting floor is still priced at its auction end;
+> its payout is what is owed at the fill. Fresh deploy only. The canonical
+> statement is `docs/FunctionalSpecs/ProjectDetailsREADME.md`, "NFT
+> collateral sale before default".
+>
 > **#1854 — the frontend half of this design no longer exists.** Every
 > `apps/defi` work item below (A.8, B.7, C.2, D.3, §14.4's post-UI signal,
 > §19's toggle) shipped into `apps/defi`, which was **deleted** along with

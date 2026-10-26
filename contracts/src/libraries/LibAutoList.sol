@@ -33,9 +33,9 @@ import {
  *           - {b_cond_1_fixedPriceAboveFloor} — fixed-price rotation
  *               gate. Dutch is carved out per round-3.9.
  *
- *           - {b_cond_2_signedLegsShort} — both-mode strict-shortfall
- *               gate against the executor's `_orderProtocolLegs`
- *               snapshot per round-3.8 + round-3.9.
+ *           - {b_cond_2_proceedsShort} — both-mode strict-shortfall
+ *               gate: the order's proceeds leg at this block is below
+ *               the live floor, so the order cannot fill (#2876).
  *
  *           - {b_cond_3a_dutchNeverReachesFee} — Dutch never decays
  *               to the fee-aware floor at all (compares `endAskPrice`
@@ -114,29 +114,59 @@ library LibAutoList {
         return existingAsk > (askAtFloor_ + feeSum);
     }
 
-    /// @notice B-cond-2 (both modes, round-3.9 strict-shortfall) —
-    ///         the signed lender or treasury leg is strictly short of
-    ///         live `pctx`.
-    /// @dev    Mirrors the executor's per-leg fill-time check at
-    ///         `CollateralListingExecutor._assertOrderContent`
-    ///         (`consideration[0].amount < pctx.lenderLeg →
-    ///         LenderShortPaid`). Strict `>` (not `> + 1`) per
-    ///         round-3.9: the schema-extended read is direct from
-    ///         storage with no arithmetic rounding to absorb, and a
-    ///         1-wei shortfall makes the order unfillable.
-    /// @param  pctx Live prepay-context.
-    /// @param  recordedLender Signed lender amount snapshotted in
-    ///                        `_orderProtocolLegs.lender`.
-    /// @param  recordedTreasury Signed treasury amount snapshotted in
-    ///                          `_orderProtocolLegs.treasury`.
-    function b_cond_2_signedLegsShort(
-        IVaipakamPrepayContext.PrepayContext memory pctx,
-        uint128 recordedLender,
-        uint128 recordedTreasury
+    /// @notice B-cond-2 (both modes, round-3.9 strict-shortfall) — the
+    ///         order's proceeds leg at this block is strictly below the
+    ///         live floor (`pctx.lenderLeg + pctx.treasuryLeg`), so the
+    ///         executor would refuse a fill now (`ProceedsShortPaid`).
+    /// @dev    #2876 — the order pays one proceeds leg to the Diamond, the
+    ///         ask net of its fee legs, so what it would deliver is
+    ///         derived from the recorded ask and fee legs exactly (there
+    ///         is no borrower-remainder leg whose slack an ask-derived
+    ///         figure could mistake for coverage, the reason Round-7 kept
+    ///         a separate signed-leg snapshot). A Dutch leg is read at
+    ///         `nowTs` the way Seaport resolves a consideration amount
+    ///         (linear between the start and end amounts, rounded UP),
+    ///         and only ever decays, so once short it stays short. Strict
+    ///         `<`: an order that delivers exactly the floor fills.
+    /// @param  liveFloor      `pctx.lenderLeg + pctx.treasuryLeg` at `nowTs`.
+    /// @param  proceedsStart  Recorded ask (Dutch: start ask) minus the
+    ///                        fee legs' start amounts.
+    /// @param  proceedsEnd    Recorded end ask minus the fee legs' end
+    ///                        amounts (equal to `proceedsStart` for a
+    ///                        fixed-price order).
+    /// @param  startTime      Recorded `OrderContext.startTime`.
+    /// @param  auctionEndTime Recorded `OrderContext.auctionEndTime` (0
+    ///                        for a fixed-price order).
+    function b_cond_2_proceedsShort(
+        uint256 liveFloor,
+        uint256 proceedsStart,
+        uint256 proceedsEnd,
+        uint256 startTime,
+        uint256 auctionEndTime,
+        uint256 nowTs
     ) internal pure returns (bool) {
-        return
-            pctx.lenderLeg > uint256(recordedLender) ||
-            pctx.treasuryLeg > uint256(recordedTreasury);
+        return proceedsAt(proceedsStart, proceedsEnd, startTime, auctionEndTime, nowTs)
+            < liveFloor;
+    }
+
+    /// @notice The proceeds leg's amount at `nowTs`, as Seaport resolves a
+    ///         consideration item: `startAmount` before the window,
+    ///         `endAmount` at or after its end, and in between the linear
+    ///         interpolation rounded UP (`_locateCurrentAmount` with
+    ///         `roundUp = true`).
+    function proceedsAt(
+        uint256 proceedsStart,
+        uint256 proceedsEnd,
+        uint256 startTime,
+        uint256 auctionEndTime,
+        uint256 nowTs
+    ) internal pure returns (uint256) {
+        if (proceedsStart == proceedsEnd || nowTs <= startTime) return proceedsStart;
+        if (nowTs >= auctionEndTime) return proceedsEnd;
+        uint256 duration = auctionEndTime - startTime;
+        uint256 elapsed = nowTs - startTime;
+        uint256 total = proceedsStart * (duration - elapsed) + proceedsEnd * elapsed;
+        return (total + duration - 1) / duration;
     }
 
     /// @notice B-cond-3a (Dutch only, round-3.5 + 3.6 fee-aware) —
@@ -174,8 +204,8 @@ library LibAutoList {
     ///         current fee-aware floor — interest accrual or
     ///         governance buffer-bump pushed it there), FIRE
     ///         rotation immediately (supersedes round-3.6 "skip"
-    ///         semantics — with round-3.8 signed-legs B-cond-2, a
-    ///         pure buffer-bump wouldn't otherwise trigger any
+    ///         semantics — B-cond-2 compares against the unbuffered
+    ///         floor, so a pure buffer-bump wouldn't otherwise trigger any
     ///         rotation gate). Round-3.4 saturating fallback for
     ///         loans whose grace duration is shorter than the
     ///         configured margin: `safeMargin = graceDuration / 2`.
@@ -232,15 +262,15 @@ library LibAutoList {
         //
         // The round-3.13 design correction argued the `==` case was
         // a "healthy at-floor Dutch" recoverable on the next call via
-        // b_cond_2 (signed-legs shortfall) once interest accrued. The
+        // b_cond_2 (proceeds shortfall) once interest accrued. The
         // round-3.4 natspec extended that argument with a "bounded
         // one-block window" claim.
         //
         // Codex round-5 adversarial finding broke both:
-        //   - **Full-term loans**: interest is baked into the signed
-        //     `lenderLeg` once at sign-time and does NOT grow over
-        //     time (see `Loan.useFullTermInterest`). So signed-legs
-        //     == live-legs ALWAYS for the full-term path; b_cond_2
+        //   - **Full-term loans**: interest is the full term's from
+        //     the start and does NOT grow over time (see
+        //     `Loan.useFullTermInterest`). So the floor never rises
+        //     past the order for the full-term path; b_cond_2
         //     NEVER fires. An at-equality Dutch listing stays
         //     unfillable until grace expiry (when DefaultedFacet
         //     takes over) — many days, not one block.

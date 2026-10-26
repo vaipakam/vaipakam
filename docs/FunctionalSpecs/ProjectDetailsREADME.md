@@ -1186,7 +1186,32 @@ sale proceeds, without weakening the lender's default rights.
   auction's end) prices interest and the late fee at that moment. A
   borrow-or-sell listing posted before any lender accepts hedges the most
   this amount can reach before the grace boundary: the worst-case interest
-  over the term and grace, plus the late fee at the boundary.
+  over the term and grace, plus the late fee at the boundary. Those
+  projections size a listing's floor only. The payout is always what a
+  repayment at the moment of the fill would owe, and whatever the buyer
+  paid above that belongs to the current borrower-position holder.
+- The lender's yield-fee discount applies to a sale exactly as it would to
+  a repayment at the same moment: the part of the treasury's share that
+  the current lender-position holder's discount covers is paid to that
+  holder instead of the treasury. The discount moves value between the
+  lender and the treasury only; it never changes what the borrower side
+  receives.
+- Every collateral sale pays the platform, in one payment, the whole
+  sale price net of the marketplace fee legs, and the platform splits it
+  in the same transaction by one rule, whichever listing type sold the
+  collateral (a loan's own listing, or a borrow-or-sell listing carried
+  into a loan): the current lender-position holder its due, the treasury
+  its share net of any lender discount, and the current borrower-position
+  holder the rest, into their Vault, or into their wallet when they have
+  no Vault or theirs is behind a mandatory upgrade. The borrower side's
+  Vault never stops the sale that pays the lender, and a payout never
+  creates a Vault; the platform's report of the split says which of the
+  two the remainder reached. A sale that pays less than the lender's due
+  plus the treasury's share at the moment of the fill does not fill. The
+  marketplace order names no position holder, so a position that changes
+  hands after the listing is posted is still paid correctly, and the
+  platform reports the split in one event that names every amount as its
+  recipient received it (owner decision 2026-10-26, #2876).
 - Settlement recipients must follow the current Vaipakam position NFT
   owners at fill time, not only the original lender and borrower
   wallets. This preserves secondary-transfer semantics for both
@@ -1251,10 +1276,12 @@ sale proceeds, without weakening the lender's default rights.
   listing, and the paying bidder of a marketplace match that someone else
   assembles, when the NFT goes to an unflagged account.
 - **Fail-closed backstop for collateral-sale recipients.** The prepay /
-  parallel collateral sale settles inside the marketplace fill and pays the
-  live position holders (the current lender- and borrower-position owners)
-  plus the recorded fee recipients directly, an instant before the loan flips
-  to settled. The sign-time and fill-time recipient screens are *fail-open*
+  parallel collateral sale settles inside the marketplace fill: the
+  marketplace pays the recorded fee recipients directly, and the platform
+  pays the live position holders (the current lender- and borrower-position
+  owners) out of the proceeds, in the same transaction and after the loan
+  has flipped to settled (so nothing a payout reaches can repay, claim or
+  sell the loan again). The sign-time and fill-time recipient screens are *fail-open*
   oracle reads, so a recipient flagged during a sanctions-oracle outage could
   otherwise be paid; and because the fill is atomic, a screen that merely
   *reverts* on a flagged recipient would roll its own registry write back with

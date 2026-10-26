@@ -202,7 +202,10 @@ runs half of it on old code:
   the old route returns no data (a hard revert, never a misread amount). The
   set is effectively every facet that moves ERC-20s out of a vault, so refresh
   VaultFactoryFacet in the same cut as any of them. All three refresh scripts
-  carry it.
+  carry it. The Diamond-funded credit `vaultCreditFromDiamondERC20` likewise
+  returns what the vault received (#2876), and the collateral-sale settlement
+  (PrepayListingFacet) decodes it: on a pre-#2876 VaultFactoryFacet every sale
+  that pays a borrower holder's vault reverts.
 
 - **OracleFacet + every facet that prices a fallback split (#666).**
   `LibFallback.tryOracleRate` reads `getAssetPriceStatus`, a selector only

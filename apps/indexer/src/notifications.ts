@@ -239,7 +239,7 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
   PrepaySaleListingSynced: 'permissionless sanctions-sync breadcrumb — no user meaning',
   PrepaySaleOfferSynced: 'offer-keyed sanctions-sync breadcrumb — no user meaning',
   OfferSaleProceedsCredited: 'vault-credit breadcrumb — surfaced on the balance pane, not the inbox',
-  OfferSaleProceedsSplit: 'per-recipient split breakdown — terminal loan row covers the user',
+  CollateralSaleProceedsSplit: 'per-recipient split breakdown — terminal loan row covers the user',
   PostParallelSaleListing: 'UI-facing OpenSea listing breadcrumb — no loan-state notification',
   ParallelSaleLockReleased: 'non-destructive unwind — offer stays open, no user meaning',
   SwapToRepayIntentCommitted: 'own action — the borrower committed a swap intent',

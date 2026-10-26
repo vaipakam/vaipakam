@@ -361,15 +361,13 @@ contract NFTPrepayListingFacet is
     ///         couldn't rebuild the original shape.
     error FeeLegDecayNotAllowedOnFixedPrice(uint256 idx);
 
-    /// @notice Round-5 Block A: the sum-of-considerations equality
-    ///         (`askPrice == lenderLeg + treasuryLeg + borrowerLeg +
-    ///         sum(feeLegs.amount)`) failed. Either the dapp
-    ///         miscomputed the fee amounts against the gross
-    ///         askPrice, the schedule it queried changed mid-flight,
-    ///         or `askPrice` doesn't cover the protocol legs plus
-    ///         the buffer plus fees. The borrower's remainder
-    ///         (after the buffer-bps margin on the protocol legs)
-    ///         must be ≥ 0.
+    /// @notice Round-5 Block A: `askPrice` doesn't cover the live
+    ///         floor (what a repayment now would owe the lender and the
+    ///         treasury) plus the buffer-bps margin plus the fee legs.
+    ///         Either the dapp miscomputed the fee amounts against the
+    ///         gross askPrice or the schedule it queried changed
+    ///         mid-flight. Since #2876 the order's proceeds leg (paid to
+    ///         the Diamond) is `askPrice − sum(feeLegs.amount)`.
     error AskBelowFloorPlusFees(uint256 loanId, uint256 askPrice, uint256 required);
 
     // Round-5 Block B (#309) — Dutch-mode entry points + their
@@ -623,8 +621,6 @@ contract NFTPrepayListingFacet is
             address(executor),
             CollateralListingExecutor(address(executor)).seaport(),
             askPrice,
-            pctx.lenderLeg,
-            pctx.treasuryLeg,
             salt,
             conduitKey,
             feeLegs
@@ -657,13 +653,7 @@ contract NFTPrepayListingFacet is
             askPrice,                    // endAskPrice = askPrice
             0,                           // auctionEndTime = 0 sentinel
             PREPAY_MODE_FIXED_PRICE,
-            feeLegs,
-            // T-086 Round-7 (Issue #355) — signed-leg snapshot.
-            // Fixed-price orders set consideration[0].amount =
-            // pctx.lenderLeg, consideration[1].amount = pctx.treasuryLeg
-            // verbatim per LibPrepayOrder.buildAndHash.
-            pctx.lenderLeg,
-            pctx.treasuryLeg
+            feeLegs
         );
         _wireVaultForListing(s, loan, orderHash, conduit, address(executor));
     }
@@ -826,8 +816,6 @@ contract NFTPrepayListingFacet is
             address(executor),
             CollateralListingExecutor(address(executor)).seaport(),
             askPrice,
-            pctx.lenderLeg,
-            pctx.treasuryLeg,
             salt,
             conduitKey,
             feeLegs
@@ -837,12 +825,8 @@ contract NFTPrepayListingFacet is
         s.prepayListingExecutor[loanId] = address(executor);
         // T-086 #316 + Round-5 Block A (#313) + Round-5 Block B (#309) +
         // Round-7 Issue #355 — same sign-time-input pinning as the post
-        // path including fee legs + the auction-mode tag + the signed-
-        // leg snapshot. Fixed-price stamps `endAskPrice == askPrice`
-        // and `auctionEndTime == 0`; the signed legs come from the live
-        // pctx since LibPrepayOrder.buildAndHash sets
-        // consideration[0/1].amount = pctx.lenderLeg / pctx.treasuryLeg
-        // verbatim.
+        // path including fee legs + the auction-mode tag. Fixed-price
+        // stamps `endAskPrice == askPrice` and `auctionEndTime == 0`.
         executor.recordOrder(
             newOrderHash,
             loanId,
@@ -854,9 +838,7 @@ contract NFTPrepayListingFacet is
             askPrice,                    // endAskPrice = askPrice
             0,                           // auctionEndTime = 0 sentinel
             PREPAY_MODE_FIXED_PRICE,
-            feeLegs,
-            pctx.lenderLeg,
-            pctx.treasuryLeg
+            feeLegs
         );
 
         // Vault rotation: register the new orderHash binding +
@@ -1274,13 +1256,11 @@ contract NFTPrepayListingFacet is
     ///      for the Round-4 `_requireAskCoversFloor` that also folds
     ///      fee legs into the coverage check.
     ///
-    ///      Per the merged Round-5 design §14.5 + errata Codex P2
-    ///      line 740: the borrower-leg derivation is
-    ///        `borrowerLeg = askPrice − lenderLeg − treasuryLeg − sum(feeLegs.amount)`
-    ///      and the borrower must still earn ≥ 0 after the protocol-
-    ///      legs buffer is applied. The buffer applies ONLY to the
-    ///      protocol legs (lender + treasury); fee legs are fixed-
-    ///      amount obligations not subject to drift.
+    ///      The order's proceeds leg is `askPrice − sum(feeLegs.amount)`
+    ///      (#2876); the Diamond splits it at the fill, so it must cover
+    ///      the floor then. The buffer applies ONLY to the floor (it is
+    ///      the headroom for interest accruing until the fill); fee legs
+    ///      are fixed-amount obligations not subject to drift.
     ///
     ///      Concretely, the invariant we enforce is:
     ///        `askPrice ≥ (lender + treasury) × (1 + bufferBps/10000)

@@ -443,6 +443,7 @@ contract SeaportSettlementForkTest is SetupTest {
         OrderComponents memory components = LibPrepayOrder.componentsForCancel(
             pctx,
             address(forkExecutor),
+            address(diamond),
             askPrice,
             conduitKey,
             TEST_SALT,
@@ -476,19 +477,17 @@ contract SeaportSettlementForkTest is SetupTest {
     ///           5. Asserts six post-fill state changes (per #378):
     ///              a. Lender-NFT holder balance ↑ by `pctx.lenderLeg`.
     ///              b. Treasury balance ↑ by `pctx.treasuryLeg`.
-    ///              c. Borrower-NFT holder balance ↑ by the remainder.
+    ///              c. Borrower-NFT holder's VAULT ↑ by the remainder.
     ///              d. Loan transitioned to `Settled`.
     ///              e. Borrower-NFT lock released.
     ///              f. Buyer holds the collateral NFT.
     ///
-    ///         Note on payment recipients: `LibPrepayOrder._componentsAtMemory`
-    ///         pins the lender + borrower consideration recipients
-    ///         as `pctx.lenderNftOwner` and `pctx.borrowerNftOwner`,
-    ///         which `PrepayListingFacet.getPrepayContext` derives via
-    ///         `ownerOf(lenderTokenId)` / `ownerOf(borrowerTokenId)`.
-    ///         The scaffold mints those position NFTs to the EOA
-    ///         actors (`phase2Lender` / `phase2Borrower`), so Seaport
-    ///         routes payments to THEM — not to their vault proxies.
+    ///         Note on payment recipients (#2876): the order pays ONE
+    ///         proceeds leg to the Diamond, which splits it in the zone's
+    ///         `validateOrder` callback: the lender holder (`ownerOf
+    ///         (lenderTokenId)`, the EOA `phase2Lender` here) is paid
+    ///         directly, the treasury its share, and the borrower holder's
+    ///         VAULT the remainder.
     function test_Fork_BuyerFulfillsAndSettles() public {
         if (!forkEnabled) return;
 
@@ -513,6 +512,7 @@ contract SeaportSettlementForkTest is SetupTest {
         OrderComponents memory components = LibPrepayOrder.componentsForCancel(
             pctx,
             address(forkExecutor),
+            address(diamond),
             askPrice,
             conduitKey,
             TEST_SALT,
@@ -527,22 +527,15 @@ contract SeaportSettlementForkTest is SetupTest {
         IERC20(address(phase2Principal)).approve(SEAPORT_ADDR, askPrice);
 
         // ── Snapshot balances + state BEFORE fulfillment ─────────
-        // Codex round-1 P2 — `LibPrepayOrder._componentsAtMemory`
-        // bakes the lender + borrower consideration recipients as
-        // `pctx.lenderNftOwner` and `pctx.borrowerNftOwner`, which
-        // `PrepayListingFacet.getPrepayContext` derives via
-        // `ownerOf(lenderTokenId)` / `ownerOf(borrowerTokenId)`.
-        // This scaffold mints the position NFTs to the EOA actors
-        // (`phase2Lender` / `phase2Borrower`), so Seaport routes
-        // payments to THEM, not to their vault proxies. Asserting
-        // against the EOAs is the load-bearing check.
+        // #2876 — the Diamond pays the lender-position holder (the EOA
+        // `phase2Lender`) and the borrower-position holder's vault.
         address treasury = AdminFacet(address(diamond)).getTreasury();
         uint256 lenderBefore =
             IERC20(address(phase2Principal)).balanceOf(phase2Lender);
         uint256 treasuryBefore =
             IERC20(address(phase2Principal)).balanceOf(treasury);
         uint256 borrowerBefore =
-            IERC20(address(phase2Principal)).balanceOf(phase2Borrower);
+            IERC20(address(phase2Principal)).balanceOf(phase2BorrowerVault);
 
         // ── Build AdvancedOrder from OrderComponents ─────────────
         // `OrderParameters` is `OrderComponents` minus `counter` plus
@@ -631,14 +624,14 @@ contract SeaportSettlementForkTest is SetupTest {
             pctx.treasuryLeg,
             "treasury balance must increase by pctx.treasuryLeg"
         );
-        // 3. Borrower NFT holder balance ↑ by remainder.
+        // 3. Borrower NFT holder's vault ↑ by the remainder.
         uint256 borrowerAfter =
-            IERC20(address(phase2Principal)).balanceOf(phase2Borrower);
+            IERC20(address(phase2Principal)).balanceOf(phase2BorrowerVault);
         uint256 expectedRemainder = askPrice - pctx.lenderLeg - pctx.treasuryLeg;
         assertEq(
             borrowerAfter - borrowerBefore,
             expectedRemainder,
-            "borrower NFT holder balance must increase by ask minus lender+treasury legs"
+            "borrower holder's vault must increase by ask minus lender+treasury legs"
         );
         // 4. Loan transitioned to Settled.
         LibVaipakam.Loan memory loanAfter =

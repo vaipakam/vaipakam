@@ -8,14 +8,17 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {IVaipakamPrepayContext} from "../src/seaport/IVaipakamPrepayContext.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @notice Integration tests for the diamond-side `PrepayListingFacet`
 ///         (T-086 step 5). Exercises:
 ///           - `setCollateralListingExecutor` / `getCollateralListingExecutor`
 ///             admin surface.
 ///           - `executorFinalizePrepaySale` privileged-caller gate
-///             (msg.sender == storedExecutor) + happy-path state
-///             mutation.
+///             (msg.sender == storedExecutor) + happy-path split and
+///             state mutation (#2876).
 ///
 ///         The view path (`getPrepayContext`) is exercised end-to-end
 ///         in the executor's unit tests via a mock diamond; here we
@@ -93,7 +96,7 @@ contract PrepayListingFacetTest is SetupTest {
         // No executor configured (default address(0)).
         vm.prank(mockExecutor);
         vm.expectRevert(PrepayListingFacet.ExecutorNotSet.selector);
-        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(TEST_LOAN_ID);
+        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(TEST_LOAN_ID, 0);
     }
 
     function test_executorFinalizePrepaySale_revertsNotExecutor() public {
@@ -108,7 +111,7 @@ contract PrepayListingFacetTest is SetupTest {
                 mockExecutor
             )
         );
-        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(TEST_LOAN_ID);
+        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(TEST_LOAN_ID, 0);
     }
 
     function test_executorFinalizePrepaySale_revertsIfLoanNotActive() public {
@@ -126,7 +129,7 @@ contract PrepayListingFacetTest is SetupTest {
                 LibVaipakam.LoanStatus.Settled
             )
         );
-        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(TEST_LOAN_ID);
+        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(TEST_LOAN_ID, 0);
     }
 
     function test_executorFinalizePrepaySale_happyPath() public {
@@ -137,8 +140,29 @@ contract PrepayListingFacetTest is SetupTest {
         // finalization callback touches.
         _scaffoldLoan(TEST_LOAN_ID, LibVaipakam.LoanStatus.Active);
 
+        // #2876 — the buyer's proceeds leg paid the Diamond: the floor (what
+        // a repayment now owes the lender and the treasury) plus 3 ether.
+        IVaipakamPrepayContext.PrepayContext memory pctx =
+            IVaipakamPrepayContext(address(diamond)).getPrepayContext(TEST_LOAN_ID, block.timestamp);
+        uint256 proceeds = pctx.lenderLeg + pctx.treasuryLeg + 3 ether;
+        ERC20Mock(mockERC20).mint(address(diamond), proceeds);
+        // The holder has a vault (a payout never creates one; a holder
+        // without one is paid in their wallet, covered in VPFIDiscountFacetTest).
+        address holderVault =
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(_scBorrower);
+
         vm.prank(mockExecutor);
-        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(TEST_LOAN_ID);
+        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(TEST_LOAN_ID, proceeds);
+
+        // The split: the lender holder its due, the borrower holder's vault
+        // everything above the floor.
+        assertEq(IERC20(mockERC20).balanceOf(_scLender), pctx.lenderLeg, "lender paid its due");
+        assertEq(
+            IERC20(mockERC20).balanceOf(holderVault),
+            3 ether,
+            "borrower holder's vault took the remainder"
+        );
+        assertEq(IERC20(mockERC20).balanceOf(_scBorrower), 0, "nothing reached the wallet");
 
         // Verify loan transitioned Active → Settled.
         LibVaipakam.Loan memory readBack = _readLoan(TEST_LOAN_ID);
@@ -158,15 +182,18 @@ contract PrepayListingFacetTest is SetupTest {
         loan.borrower = _scBorrower;
         loan.status = status;
         loan.principal = 100e18;
+        loan.principalAsset = mockERC20;
+        loan.lenderTokenId = 91_001;
+        loan.borrowerTokenId = 91_002;
         loan.interestRateBps = 1_200;
         loan.startTime = uint64(block.timestamp);
         loan.durationDays = 30;
-        // borrowerTokenId stays 0 — `LibERC721._unlock` on a 0 token id
-        // is a no-op (deletes a never-set slot); LibVPFIDiscount on a
-        // loan with no LIF state is also a no-op. The test exercises
-        // the callback's STATE-flip path, which is the load-bearing
-        // assertion.
+        // #2876 — the split pays the live position holders, so the two
+        // position NFTs exist. LibVPFIDiscount on a loan with no LIF state
+        // is a no-op.
         TestMutatorFacet(address(diamond)).setLoan(id, loan);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(_scLender, loan.lenderTokenId);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(_scBorrower, loan.borrowerTokenId);
     }
 
     function _readLoan(uint256 id) internal view returns (LibVaipakam.Loan memory loan) {

@@ -5550,7 +5550,7 @@ const copySource = {
       OfferCreatorFullTariffSet: 'Fee choice recorded for the offer',
       OfferKeeperEnabled: 'Keeper permission updated',
       OfferSaleProceedsCredited: 'Sale proceeds credited to the vault',
-      OfferSaleProceedsSplit: 'Sale proceeds split',
+      CollateralSaleProceedsSplit: 'Sale proceeds split',
       ParallelSaleLockReleased: 'Collateral sale listing released',
       PartialCollateralWithdrawn: 'Collateral partly withdrawn',
       PostParallelSaleListing: 'Collateral sale listing posted',

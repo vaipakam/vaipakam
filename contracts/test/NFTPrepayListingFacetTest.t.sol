@@ -24,6 +24,7 @@ import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.so
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockListingExecutorRecorder} from "./mocks/MockListingExecutorRecorder.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
+import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockSeaport} from "./mocks/MockSeaport.sol";
 import {MockConduitController} from "./mocks/MockConduitController.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -764,6 +765,13 @@ contract NFTPrepayListingFacetTest is SetupTest {
         // cancel paths would find a hash but couldn't run (status
         // != Active).
         _scaffoldActiveLoan({allowsPrepay: true});
+        // #2876 — the fill's split pays real tokens, so the lending asset
+        // is a real token here.
+        ERC20Mock lendingToken = new ERC20Mock("Lending", "LND", 18);
+        LibVaipakam.Loan memory loan = _baseLoan();
+        loan.allowsPrepayListing = true;
+        loan.principalAsset = address(lendingToken);
+        TestMutatorFacet(address(diamond)).setLoan(LOAN_ID, loan);
 
         vm.prank(borrowerHolder);
         bytes32 derivedHash = NFTPrepayListingFacet(address(diamond)).postPrepayListing(
@@ -782,8 +790,11 @@ contract NFTPrepayListingFacetTest is SetupTest {
         // usage the call comes from the executor singleton; the
         // diamond's gate checks `msg.sender == storedExecutor`
         // which is our MockListingExecutorRecorder address.
+        // The buyer's proceeds leg (the whole ask; no fee legs) has paid the
+        // Diamond by the time the executor calls back.
+        lendingToken.mint(address(diamond), _floorPlusBuffer());
         vm.prank(address(mockExecutor));
-        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(LOAN_ID);
+        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(LOAN_ID, _floorPlusBuffer());
 
         // Post-condition: hash cleared.
         assertEq(

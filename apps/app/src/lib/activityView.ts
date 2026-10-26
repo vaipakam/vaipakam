@@ -198,7 +198,7 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   OfferCreatorFullTariffSet: { label: 'Fee choice recorded for the offer', category: 'offer', priority: 12 },
   OfferKeeperEnabled: { label: 'Keeper permission updated', category: 'offer', priority: 40 },
   OfferSaleProceedsCredited: { label: 'Sale proceeds credited to the vault', category: 'offer', priority: 60 },
-  OfferSaleProceedsSplit: { label: 'Sale proceeds split', category: 'loan-close', priority: 75 },
+  CollateralSaleProceedsSplit: { label: 'Sale proceeds split', category: 'loan-close', priority: 75 },
   ParallelSaleLockReleased: { label: 'Collateral sale listing released', category: 'offer', priority: 45 },
   PartialCollateralWithdrawn: { label: 'Collateral partly withdrawn', category: 'collateral', priority: 75 },
   PostParallelSaleListing: { label: 'Collateral sale listing posted', category: 'offer', priority: 55 },

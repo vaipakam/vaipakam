@@ -90,7 +90,7 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['OfferCreatedDetails', ['creator']],
   ['OfferCanceledDetails', ['creator']],
   ['OfferSaleProceedsCredited', ['borrower']],
-  ['OfferSaleProceedsSplit', ['lender', 'borrower']],
+  ['CollateralSaleProceedsSplit', ['lender', 'borrower']],
   ['PostParallelSaleListing', ['borrower']],
   ['ParallelSaleLockReleased', ['borrower']],
   ['PrepaySaleListingSynced', ['caller']],

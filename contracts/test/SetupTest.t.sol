@@ -400,6 +400,15 @@ contract SetupTest is Test {
     // Vault impl
     VaipakamVaultImplementation vaultImpl;
 
+    /// @dev Applies the test Diamond's cut in its own frame. Encoding a
+    ///      `FacetCut[]` (an array of structs that each hold an array) is a
+    ///      deep nested loop; run inside {setupHelper}'s frame, with that
+    ///      function's live values beneath it, it landed one slot over the
+    ///      stack limit in some compile units (#2876).
+    function _applyDiamondCut(IDiamondCut.FacetCut[] memory cuts) private {
+        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+    }
+
     function setupHelper() public {
         owner = address(this);
         (lender, lenderPk) = makeAddrAndKey("lender");
@@ -1174,7 +1183,7 @@ contract SetupTest is Test {
         // #594 — standalone holder-only consolidation entry points are cut at
         // slot 33 (see the #687-B note above).
 
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        _applyDiamondCut(cuts);
 
         // Initialize AccessControl roles (must be first — all admin calls require roles)
         AccessControlFacet(address(diamond)).initializeAccessControl();
