@@ -52,13 +52,8 @@ import {
   useAllowanceForPlan,
   type SubmitProgress,
 } from '../lib/submitProgress';
-import {
-  fetchTokenSecurity,
-  isCuratedAsset,
-  needsSecurityCheck,
-  useTokenSecurity,
-  verdictFingerprint,
-} from '../data/tokenSecurity';
+import { screenTargets, useTokenScreen } from '../contracts/acceptTokenScreen';
+import { TokenScreenBanner } from '../components/TokenScreenBanner';
 import { flowDisabled } from '../lib/killSwitch';
 import { idleAware } from '../lib/idle';
 import {
@@ -850,37 +845,22 @@ function RentNftFlow() {
   const rentPlanKnown =
     totalPrepay !== undefined && planAllowance.data !== undefined;
   const rentPlanTotal = 2 + rentPlanApprove;
-  // #1036 — screen the prepay token (the leg the renter pays; the
-  // listed NFT itself has no ERC-20 security surface). Fail closed:
-  // 'block'/'unknown' hold the accept button.
-  const prepaySec = useTokenSecurity(
+  // #1036 / #2726 — screen every ERC-20 leg the rental moves: the
+  // prepayment token the renter pays (the listed NFT itself has no ERC-20
+  // security surface) and a collateral leg if the listing carries one. The
+  // shared screen the accept signer enforces; fail closed: a block, a
+  // pending verdict or a failed check holds the accept button.
+  const tokenScreen = useTokenScreen(
     readChain.chainId,
-    selected?.prepayAsset,
+    selected ? screenTargets(selected) : [],
   );
-  // 'needed' derives from the check's inputs, never query lifecycle
-  // state (fetchStatus idles after settling — must not un-gate).
-  const prepaySecNeeded = needsSecurityCheck(
-    readChain.chainId,
-    selected?.prepayAsset,
-  );
-  // Fail-closed on THREE states: no data yet, a 'block' verdict, and
-  // an errored REFETCH — react-query keeps the prior verdict in
-  // `data` when a later refetch fails, so `isError` must dominate
-  // the stale verdict or an outage would silently un-gate.
-  const prepaySecBlocked =
-    prepaySecNeeded &&
-    (prepaySec.isError ||
-      prepaySec.data === undefined ||
-      prepaySec.data.kind === 'block');
-  const prepaySecWarned =
-    prepaySecNeeded && !prepaySec.isError && prepaySec.data?.kind === 'warn';
+  const prepaySecBlocked = !tokenScreen.ok;
+  const prepaySecWarned = tokenScreen.warned.length > 0;
   // Late-disclosure rule: a warning/block arriving after the consent
   // box was ticked voids the consent. Fingerprinted on the REASON
   // content too — changed warning text is a new disclosure even when
   // the verdict kind stayed 'warn'.
-  const prepaySecFingerprint = prepaySec.isError
-    ? 'errored'
-    : verdictFingerprint(prepaySec.data);
+  const prepaySecFingerprint = tokenScreen.fingerprint;
   // Fingerprint current when consent was LAST ticked (stamped in the
   // checkbox handler). canSign requires a match while a warning is
   // disclosed — the clear-effect below only runs after a commit,
@@ -1081,47 +1061,10 @@ function RentNftFlow() {
       // comparison (incl. ERC-1155 quantity and asset type) runs
       // before the wallet is asked to sign, so the renter never signs
       // terms that differ from the reviewed listing.
-      // #1036 — re-verify the prepay token at submit time (fail
-      // closed; curated tokens are pre-vetted and skipped). A live
-      // result differing from the reviewed disclosure is pushed into
-      // the query cache before aborting, so the re-review renders the
-      // new finding and the fingerprint effect voids stale consent.
-      if (!isCuratedAsset(walletChain.chainId, selected.prepayAsset)) {
-        const v = await fetchTokenSecurity(walletChain.chainId, selected.prepayAsset);
-        const cacheKey = [
-          'tokenSecurity',
-          readChain.chainId,
-          selected.prepayAsset.toLowerCase(),
-        ];
-        if (v.kind === 'block') {
-          queryClient.setQueryData(cacheKey, v);
-          throw new Error(copy.tokenSecurity.gateBlock(copy.rent.prepaymentTokenLabel, v.reasons.join('; ')));
-        }
-        if (v.kind === 'unknown') {
-          // RESET (not invalidate): reset drops `data` to undefined
-          // immediately, closing the gate the moment the submit lock
-          // clears — invalidate keeps the stale verdict readable
-          // while the forced refetch is in flight. A persistent
-          // outage then errors into the blocked banner + "Check
-          // again".
-          void queryClient.resetQueries({ queryKey: cacheKey });
-          throw new Error(copy.tokenSecurity.gateUnknown(copy.rent.prepaymentTokenLabel));
-        }
-        // A live 'warn' passes ONLY when the review already disclosed
-        // this exact warning (same reasons) — anything else was never
-        // consented to.
-        if (
-          v.kind === 'warn' &&
-          verdictFingerprint(v) !== verdictFingerprint(prepaySec.data)
-        ) {
-          queryClient.setQueryData(cacheKey, v);
-          // Synchronous consent clear — the fingerprint effect fires
-          // next render; a fast retry inside that window would pass
-          // un-consented.
-          setConsent(false);
-          throw new Error(copy.tokenSecurity.gateChanged(copy.rent.prepaymentTokenLabel));
-        }
-      }
+      // #1036 / #2726 — the token screen is re-run at SIGN time by the
+      // accept signer itself, on every ERC-20 leg of the canonical terms
+      // (the prepayment token, and a collateral leg if the listing has one),
+      // against what this review showed (`screen` below).
       // #2725 — EVERY term the signature binds, as this review showed it; the
       // signer compares each against the canonical terms before the wallet
       // prompt.
@@ -1160,6 +1103,8 @@ function RentNftFlow() {
           offerId: BigInt(selected.offerId),
           consent,
           expected: reviewedRentTerms,
+          // #2726 — the token-security verdicts this review showed.
+          screen: tokenScreen.reviewed,
         });
       } catch (err) {
         if (err instanceof Error && err.message === copy.match.termsChanged) {
@@ -1434,45 +1379,7 @@ function RentNftFlow() {
                 {copy.acceptTerms.checking}
               </p>
             )}
-            {prepaySecBlocked ? (
-              <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
-                <span className="banner-body">
-                  {prepaySec.isError || prepaySec.data === undefined
-                    ? copy.tokenSecurity.gateUnknown(copy.rent.prepaymentTokenLabel)
-                    : copy.tokenSecurity.gateBlock(
-                        copy.rent.prepaymentTokenLabel,
-                        (prepaySec.data.kind === 'block' ? prepaySec.data.reasons : []).join('; '),
-                      )}
-                </span>
-                {prepaySec.isError ? (
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    style={{ marginTop: 8 }}
-                    onClick={() => {
-                      void prepaySec.refetch();
-                    }}
-                  >
-                    {copy.tokenSecurity.retry}
-                  </button>
-                ) : null}
-              </div>
-            ) : prepaySecWarned ? (
-              <div className="banner banner-warn" role="alert" style={{ marginTop: 16 }}>
-                <span className="banner-body">
-                  {copy.tokenSecurity.gateWarn(
-                    copy.rent.prepaymentTokenLabel,
-                    (prepaySec.data?.kind === 'warn' ? prepaySec.data.reasons : []).join('; '),
-                  )}
-                </span>
-              </div>
-            ) : prepaySecNeeded && prepaySec.data?.kind === 'unsupported' ? (
-              <div className="banner banner-info" role="note" style={{ marginTop: 16 }}>
-                <span className="banner-body">
-                  {copy.tokenSecurity.gateUnsupported(copy.rent.prepaymentTokenLabel)}
-                </span>
-              </div>
-            ) : null}
+            <TokenScreenBanner screen={tokenScreen} style={{ marginTop: 16 }} />
             {killed ? (
               <div className="banner banner-warn" role="alert" style={{ marginTop: 16 }}>
                 <span className="banner-body">{copy.killSwitch.disabled}</span>

@@ -43,6 +43,11 @@ import {
   reviewedMismatches,
   type ReviewedAcceptTerms,
 } from './acceptReview';
+import {
+  assertTokenScreenLive,
+  screenTargets,
+  type ReviewedTokenScreen,
+} from './acceptTokenScreen';
 
 const ACCEPT_DEADLINE_SECONDS = 30 * 60; // 30 minutes, matching the Permit2 window.
 
@@ -172,6 +177,10 @@ export function useAcceptTermsSigning() {
        *  would be aborted afterwards. Required, so a review cannot leave a
        *  bound term out of the comparison by omission. */
       expected: ReviewedAcceptTerms;
+      /** #2726 — the token-security verdicts the review showed
+       *  (`useTokenScreen().reviewed`). Required, so no accept reaches the
+       *  wallet without the screen. */
+      screen: ReviewedTokenScreen;
     }): Promise<AcceptTermsPayload> => {
       if (!address || !walletChain) {
         throw new Error(copy.errors.walletConnectFirst);
@@ -551,6 +560,16 @@ export function useAcceptTermsSigning() {
         throw new Error(copy.match.termsChanged);
       }
 
+      // #2726 — the token screen, on the legs of the terms being signed: a
+      // blocked or unverifiable token refuses, and a warning passes only
+      // when the review showed that exact warning.
+      await assertTokenScreenLive({
+        chainId: walletChain.chainId,
+        targets: screenTargets(terms),
+        reviewed: input.screen,
+        queryClient,
+      });
+
       // AFTER the reviewed-vs-canonical comparison, deliberately (Codex #1700
       // r7): an amendment that raises the principal enough to cross the
       // ceiling would otherwise throw the ceiling error first, so the user
@@ -673,6 +692,8 @@ export function useSignedOfferAcceptTermsSigning() {
        *  (`reviewedTermsFromOrder` of the order it displayed). Compared in
        *  full against the terms built from `order` before signing. */
       reviewed: ReviewedAcceptTerms;
+      /** #2726 — the token-security verdicts the confirm showed. */
+      screen: ReviewedTokenScreen;
       /** The single mandatory risk-and-terms consent checkbox. */
       consent: boolean;
       /** #1355 — the TAKER's own Full VPFI tariff opt-in (see the
@@ -859,6 +880,16 @@ export function useSignedOfferAcceptTermsSigning() {
       if (reviewedMismatches(input.reviewed, terms).length > 0) {
         throw new Error(copy.match.termsChanged);
       }
+
+      // #2726 — the token screen, as on the direct accept. The signed-offer
+      // routes admit any ERC-20 pair, so this is what stops a fill against a
+      // token the screen blocks.
+      await assertTokenScreenLive({
+        chainId: walletChain.chainId,
+        targets: screenTargets(terms),
+        reviewed: input.screen,
+        queryClient,
+      });
 
       const signature = (await walletClient.signTypedData({
         account: address,
