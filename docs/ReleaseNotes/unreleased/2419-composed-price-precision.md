@@ -1,4 +1,4 @@
-## Thread — A price read through two feeds keeps the finer feed's precision (PR #TBD)
+## Thread — A price read through two feeds keeps the finer feed's precision (PR #2905)
 
 Part of the #2419 scale change. When no direct feed prices an asset in the
 active numeraire, the protocol combines two feeds: the asset's price in ETH
