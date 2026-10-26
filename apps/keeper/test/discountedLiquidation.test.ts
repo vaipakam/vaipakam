@@ -4,7 +4,8 @@
  * principal token's units, never from placeholders.
  */
 import { describe, expect, it } from 'vitest';
-import type { Address, Hex } from 'viem';
+import { encodeFunctionData, type Abi, type Address, type Hex } from 'viem';
+import { FlashLoanLiquidatorABI } from '@vaipakam/contracts/abis';
 import {
   DISCOUNTED_LIQUIDATION_READY,
   DISCOUNTED_LIQUIDATION_STATUS,
@@ -155,6 +156,16 @@ describe('planFlashLoanLiquidation', () => {
       '0x00000000000000000000000000000000000000a1',
       '0xdeadbeef',
     ]);
+  });
+
+  it("sends arguments the liquidator's compiled entry accepts (#2734)", async () => {
+    const plan = await planFlashLoanLiquidation(deps().d);
+    if (plan.kind !== 'send') throw new Error('expected a send');
+    for (const via of ['aave-v3', 'balancer-v2'] as const) {
+      expect(() =>
+        encodeFunctionData({ abi: FlashLoanLiquidatorABI as Abi, functionName: liquidatorFunction(via), args: plan.args }),
+      ).not.toThrow();
+    }
   });
 
   it('never quotes the whole collateral or sizes anything from it', async () => {
