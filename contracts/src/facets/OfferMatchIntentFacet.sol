@@ -280,16 +280,15 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
         p.creatorRiskAndTermsConsent = true; // consent captured at setLenderIntent
         p.fillMode = LibVaipakam.FillMode.Partial;
         p.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.None;
-        // #625 WI-3 — deliberately leave `useFullTermInterest` / `allowsPartialRepay`
-        // at their defaults (false) on the slice: the loan does NOT inherit them from
-        // the lender slice. `matchIntent` requires the BORROWER offer to be
-        // full-term + non-partial (`LenderIntentFullTermRequired` /
-        // `LenderIntentPartialRepayNotAllowed`), and `LoanFacet._copyPrincipalAssetFields`
-        // copies the loan's `useFullTermInterest` / `allowsPartialRepay` from the
-        // accepted (borrower) offer — so the slice's values are never read for loan
-        // terms. Setting them here would be a dead write. The resulting full-term +
-        // no-partial guarantee on the loan is pinned by `LenderIntentMatch`'s
-        // `test_matchIntent_fillsAndAttributesToLender`.
+        // #2727 — the slice carries the lifecycle terms the lender intent
+        // stands for: full-term interest, no partial repay, no prepay listing
+        // (the default), no periodic cadence. The loan copies its terms from
+        // the borrower offer, and the match admits only a pair whose terms
+        // agree (`LifecycleTermsMismatch`), so a borrower offer with any other
+        // terms is never filled from an intent. `matchIntent`'s own
+        // `LenderIntentFullTermRequired` / `LenderIntentPartialRepayNotAllowed`
+        // guards run first and name the two most common cases.
+        p.useFullTermInterest = true;
     }
 
     /// @dev Materialize an intent slice as an on-chain offer with `creator =
