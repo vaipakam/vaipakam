@@ -523,7 +523,7 @@ test('signed_offers: only an order a taker can replay, in the form the route sto
   assert.throws(() => restore(signedOfferRow({ order_json: '[1]' })), /order_json is not an object/);
   assert.throws(() => restore(signedOfferRow({ order_json: '{"amount":"1"}' })), /order_json lacks offerType/);
   assert.throws(
-    () => restore(signedOfferRow({ order_json: json.replace('{', '{"extra":1,') })),
+    () => restore(signedOfferRow({ order_json: JSON.stringify({ extra: 1, ...order }) })),
     /unknown field extra/,
   );
   // Each field in its wire form.
@@ -533,7 +533,7 @@ test('signed_offers: only an order a taker can replay, in the form the route sto
   assert.throws(() => restore(withField('offerType', '256')), /offerType is not within uint8/);
   assert.throws(() => restore(withField('allowsPartialRepay', 'true')), /allowsPartialRepay is not a boolean/);
   assert.throws(
-    () => restore(signedOfferRow({ order_json: json.replace(`0x${'1'.repeat(40)}`, `0x${'A'.repeat(40)}`) })),
+    () => restore(signedOfferRow({ order_json: JSON.stringify({ ...order, lendingAsset: `0x${'A'.repeat(40)}` }) })),
     /lendingAsset is not a lowercase address/,
   );
   // The canonical bytes, not merely an equivalent object.
