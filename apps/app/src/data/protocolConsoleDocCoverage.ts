@@ -80,7 +80,6 @@ export const DOC_COVERAGE: Readonly<Record<string, DocCoverage>> = {
   'Chainlink Feed Registry / USD denominator / ETH denominator / WETH contract / ETH-USD feed / Uniswap V3 factory':
     { notShown: 'not-yet' },
   'Reward grace seconds': { shown: ['rewardGraceSeconds'] },
-  'Zeroed-day lapse schedule (`setLapseSchedule`)': { notShown: 'rewards-and-recycling' },
   'Reward messenger / base chain id / canonical reward chain flag': { notShown: 'rewards-and-recycling' },
   'Interaction-rewards launch timestamp': { notShown: 'rewards-and-recycling' },
   'Interaction-rewards cap (VPFI per ETH)': { notShown: 'rewards-and-recycling' },
