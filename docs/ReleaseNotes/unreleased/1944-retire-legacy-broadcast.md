@@ -1,4 +1,4 @@
-## Thread — One reward broadcast wire (PR #<n>)
+## Thread — One reward broadcast wire (PR #2879)
 
 Base now sends each finalized reward day to its mirrors on one wire only: the
 per-destination broadcast that carries the day's frozen clock and the identity
