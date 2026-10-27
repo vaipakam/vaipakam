@@ -99,8 +99,10 @@ library LibRewardRemitDispatch {
     /**
      * @dev #1222 M3 B2-d2 (Codex #1426 r6) — NET fresh headroom for a remit
      *      that will retire `retires` of the outstanding armed-fresh
-     *      commitments: `CAP − remitted − paid − (outstandingFresh −
-     *      retires)`, floored at zero. The gross `CAP − remitted − paid`
+     *      commitments: `CAP − remitted − paid − held − (outstandingFresh −
+     *      retires)`, floored at zero, where the first three terms are
+     *      {LibInteractionRewards.poolRemaining} (`held` = what partly sent
+     *      unarmed days reserve, #918). The gross `CAP − remitted − paid`
      *      figure ignores commitments other days (and Base-side claims)
      *      still hold against the pool — after an operator RELEASE (which
      *      keeps the sent amount counted while restoring the obligation),
@@ -113,10 +115,7 @@ library LibRewardRemitDispatch {
         LibVaipakam.Storage storage s,
         uint256 retires
     ) internal view returns (uint256 remaining) {
-        uint256 used = s.rewardBudgetRemittedGlobal + s.interactionPoolPaidOut;
-        remaining = used >= LibVaipakam.VPFI_INTERACTION_POOL_CAP
-            ? 0
-            : LibVaipakam.VPFI_INTERACTION_POOL_CAP - used;
+        remaining = LibInteractionRewards.poolRemaining();
         uint256 outFresh = s.outstandingCommitFresh;
         uint256 encumbered = outFresh > retires ? outFresh - retires : 0;
         remaining = remaining > encumbered ? remaining - encumbered : 0;

@@ -5877,11 +5877,19 @@ library LibInteractionRewards {
 
     function poolRemaining() internal view returns (uint256) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // The HARD figure — paid and remitted only. What staging records have
+        // The HARD figure — paid, remitted, and what partly sent unarmed
+        // remit days hold for their mirrors. What staging records have
         // RESERVED is a separate, recoverable term ({poolAvailable}): pricing
         // and the lifetime truncation read this, so a reservation never reads
         // as exhaustion; availability reads the other (Codex #2308 r2).
-        uint256 reserved = s.interactionPoolPaidOut + s.rewardBudgetRemittedGlobal;
+        // #918 (Codex #2959 r1) — `remitDayFreshReserved` is NOT that kind of
+        // reservation: it is a whole-day remittance already under way, which a
+        // send of the whole in one would have charged to
+        // `rewardBudgetRemittedGlobal` outright, so it counts as used here.
+        // This is the ONE definition of the pool's hard headroom; every
+        // consumer (claims, the sweeps, day sizing, the remit gate) reads it.
+        uint256 reserved = s.interactionPoolPaidOut + s.rewardBudgetRemittedGlobal
+            + s.remitDayFreshReserved;
         return
             LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
                 ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved

@@ -246,6 +246,18 @@ contract RewardRemittanceLensFacet {
         return LibVaipakam.storageSlot().rewardBudgetRemittedGlobal;
     }
 
+    /// @notice #918 — fresh VPFI the 69M pool holds for partly sent
+    ///         pre-commitment (unarmed) remit days: what those days still owe
+    ///         their mirrors and have already reserved. The pool's hard
+    ///         headroom counts it as used alongside Base's payouts and
+    ///         {getRewardBudgetRemittedGlobal}, so a day sent in parts holds
+    ///         the pool exactly as a send of its whole in one would. A released
+    ///         part's fresh is not in it until the next part re-reserves it
+    ///         (`RemitDayLedger.freshUncovered`, {getRemitDayLedger}).
+    function getRemitDayFreshReserved() external view returns (uint256) {
+        return LibVaipakam.storageSlot().remitDayFreshReserved;
+    }
+
     /// @notice The configured keeper EOA (address(0) = owner-only).
     function getRewardRemittanceKeeper() external view returns (address) {
         return LibVaipakam.storageSlot().rewardRemittanceKeeper;
