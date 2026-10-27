@@ -87,10 +87,9 @@ export async function explainMinedRevert(
     } catch (e) {
       const raw = e instanceof BaseError ? e.walk((x) => typeof (x as { data?: unknown }).data === 'string') : undefined;
       data = (raw as { data?: Hex } | undefined)?.data;
-      // viem's short message names the failure without the request URL; any
-      // other thrown value is named by its kind only, never made into text
-      // (a caught value becomes text only through the redaction formatters).
-      nodeError = e instanceof BaseError ? e.shortMessage : `a non-viem ${e instanceof Error ? e.name : typeof e} was thrown`;
+      // #2759 — a caught value becomes text only as a bounded description:
+      // viem's shortMessage carries no request URL; anything else, its class name.
+      nodeError = e instanceof BaseError ? e.shortMessage : e instanceof Error ? e.name : 'a non-Error value was thrown';
     }
   }
   if (source === '') return `${parts.join(', ')}: no trace and no replay were possible`;
