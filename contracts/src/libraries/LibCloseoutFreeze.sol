@@ -81,9 +81,10 @@ library LibCloseoutFreeze {
         LibVaipakam.Loan storage loan,
         uint256 lenderDue
     ) internal {
-        // #2440 — every caller is a VOLUNTARY swap-to-repay (the full route and
-        // a filled intent), so the deposit is refused unless the lender's vault
-        // received all of `lenderDue`: the loan closes on that figure, and the
+        // #2440 — every caller is a VOLUNTARY close (the full swap-to-repay
+        // route, a filled intent, and the collateral sale, #2876), so the
+        // deposit is refused unless the lender's vault received all of
+        // `lenderDue`: the loan closes on that figure, and the
         // claim and the reservation name it.
         LibSanctionedLock.depositLockedInFull(
             s, loan.lender, loanId, loan.principalAsset, lenderDue
