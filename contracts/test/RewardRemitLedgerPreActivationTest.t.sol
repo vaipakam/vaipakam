@@ -195,7 +195,7 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
         assertEq(reportedBefore, 40e18, "precondition: genuine absorption");
 
         // Base tops up 23 recycled inside a 30-token delivery.
-        _d6(address(vpfiTok), 30e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 23e18, 0, bytes32(0));
+        _d6(address(vpfiTok), 30e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 23e18, 7e18, bytes32(0));
 
         // Bucket grew by exactly the recycled share — the claim path is backed.
         assertEq(cfg.getRecycleBucket(), 63e18, "bucket takes the top-up");
@@ -271,14 +271,14 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
         _d6(address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 8e18, 0, bytes32(0));
     }
 
-    /// @dev A delivery naming no recycled share relocates NO custody: the
-    ///      bucket is credited only by what the wire states as recycled.
+    /// @dev An all-fresh delivery relocates NO custody: the bucket is
+    ///      credited only by what the wire states as recycled.
     function test_D5_ZeroRecycledShare_RelocatesNoCustody() public {
         _configureMirror();
         ConfigFacet cfg = ConfigFacet(address(diamond));
         mutator.setRecycleBucketRaw(40e18);
 
-        _d6(address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 0, address(0xBA5E), 0, 0, bytes32(0));
+        _d6(address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 0, address(0xBA5E), 0, 7e18, bytes32(0));
 
         assertEq(cfg.getRecycleBucket(), 40e18, "bucket unchanged");
         (uint256 relocated, , ) = RewardAggregatorFacet(address(diamond))
@@ -301,7 +301,7 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
         _assertDerivation("mirror genesis");
 
         // Base tops up 23 recycled inside a 30-token delivery.
-        _d6(address(vpfiTok), 30e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 23e18, 0, bytes32(0));
+        _d6(address(vpfiTok), 30e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 23e18, 7e18, bytes32(0));
         (uint256 raw, , uint256 relocated, uint256 bucket, , , ) =
             _composition();
         assertEq(relocated, 23e18, "fixture: custody relocated");
@@ -361,25 +361,28 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
         assertEq(uncounted, 0, "nothing was refused");
     }
 
-    /// @dev **Finding (c).** A wire generation that never carried the split
-    ///      arrives with `freshShare == 0`, and the Diamond must NOT infer
-    ///      `amount - recycledShare`. The old code did, booking a delivery of
-    ///      unknown composition as entirely fresh — over-stating precisely
-    ///      where least is known.
+    /// @dev **Finding (c), closed at the ingress (#2910).** A delivery whose
+    ///      fresh and recycled figures do not add up to what arrived is
+    ///      REFUSED (re-executable), so the Diamond never has to choose
+    ///      between inferring `amount - recycledShare` as fresh (the old
+    ///      over-statement) and leaving the difference uncounted. The real
+    ///      receiver always sends a whole split; only a wire that never
+    ///      carried one could produce this, and every such wire is retired.
     ///
     ///      Non-vacuous by construction: the same fixture, same chain, same
     ///      armed day and same amount is counted in full by the test above.
     ///      The ONLY difference is the declared fresh share.
-    function test_DeliveredFresh_UnknownCompositionCountsNothing() public {
+    function test_DeliveredFresh_UnknownComposition_IsRefused() public {
         _configureMirror();
         uint256 dStar = _today() + 5;
         _armFrom(dStar);
 
+        vm.expectPartialRevert(IVaipakamErrors.TransportSplitNotWhole.selector);
         _d6(address(vpfiTok), 7e18, _days(dStar), CHAIN_BASE, 42, address(0xBA5E), 0, 0, bytes32(0));
 
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 0, "unknown composition contributes no fresh");
-        assertEq(uncounted, 7e18, "and is recorded, not discarded");
+        assertEq(counted, 0, "nothing counted");
+        assertEq(uncounted, 0, "and nothing left unattributed");
     }
 
     /// @dev **Finding (b), inverted by #1566 closure 2.** Funding delivered

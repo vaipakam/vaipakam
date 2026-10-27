@@ -6839,6 +6839,12 @@ PR C.**
 > on chain at the import, resolved whole and once (relocated measured,
 > replacement-funded delta-checked, or written down) and entered into the
 > same log, so the snapshot-keyed error path IS the packet reclassification.
+> *(Superseded for (c), #2910: the envelope import is retired. Every chain
+> reaches this build by a fresh deploy, which has no pre-stamp inventory,
+> and the ingress now refuses any delivery whose fresh and recycled figures
+> do not add up to what arrived, on both paths, so nothing ever enters the
+> uncounted aggregate without a packet to classify it. Its storage keeps its
+> place, renamed retired.)*
 > Four things the landed shape settles differently from this section's
 > pre-PR-1 prose, each stated so it is not re-argued: **(1) the aggregate
 > wire bound is STRUCTURAL.** PR 1 protects exactly a packet's untyped part

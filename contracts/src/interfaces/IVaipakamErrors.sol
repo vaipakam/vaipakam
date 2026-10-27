@@ -454,8 +454,8 @@ interface IVaipakamErrors {
     error ReconciliationPacketReserved(bytes32 packetHash, uint256 reserved);
     /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r3) — the evidence
     ///         rule: an entry's fresh side would exceed its authenticated
-    ///         fresh figure (a packet's transport-attested remainder split;
-    ///         the envelope's replacement-funded fresh). Fresh is the
+    ///         fresh figure (the packet's transport-attested remainder
+    ///         split). Fresh is the
     ///         privileged direction; without evidence, value classifies
     ///         recycled or stays.
     error ReconciliationFreshUnevidenced(bytes32 key, uint256 cumulativeFresh, uint256 authenticated);
@@ -596,13 +596,6 @@ interface IVaipakamErrors {
     ///         fresh twin of the uncommitted-bucket bound: what an armed day
     ///         reserved stays in the row for its claims.
     error ReconciliationExceedsUncommittedLive(uint256 requested, uint256 uncommitted);
-    /// @notice The envelope under this snapshot id was already imported.
-    error LegacyEnvelopeAlreadyImported(bytes32 snapshotId);
-    /// @notice The stated dispositions do not resolve the envelope exactly.
-    error LegacyEnvelopeMismatch(bytes32 snapshotId, uint256 stated, uint256 netTotal);
-    /// @notice The envelope nets to nothing: there is no pre-stamp inventory
-    ///         to import.
-    error LegacyEnvelopeEmpty(bytes32 snapshotId);
     /// @notice #1566 slice 4 PR B — the pause epoch the operator established
     ///         the activation figures under is no longer the live one.
     /// @param stated The epoch stated by the caller.
@@ -1680,7 +1673,8 @@ interface IVaipakamErrors {
     error DeliveryProofNotBudget(bytes32 packetHash, uint8 kind);
     /// @notice #1944 c1 — the packet's value was disposed of (returned / released), so it funds no day here.
     error DeliveryPacketDisposed(bytes32 packetHash, uint256 disposed);
-    /// @notice A d6 delivery held as its own epoch needs a split that accounts for the whole delivery (3d-1).
+    /// @notice A d6 delivery needs a split that accounts for the whole delivery: held as its own epoch (3d-1)
+    ///         and, since #2910, on the typed-ledger path before activation too.
     error TransportSplitNotWhole(bytes32 packetHash, uint256 fresh, uint256 recycled, uint256 amount);
     /// @notice The domain under `domainKey` is not in the phase this entry
     ///         needs (A2-ii).

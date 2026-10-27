@@ -232,6 +232,22 @@
       "from": "armedFreshPaidRebased",
       "to": "retiredArmedFreshPaidRebased",
       "reason": "#2910 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the paid-side seed (#1434 P1-b) and the slice-4 paid-side rebase imported a reconstructed paid total on a Diamond upgraded in place, each behind a one-shot guard. A fresh deploy has no paid history to import (its paid and received sides start at zero), so DeployDiamond only ever consumed both guards with zero; the two writers, their guards, their getters, the activation's and the bootstrap writers' rebase prerequisite and the refresh's bootstrap mode are removed. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 539,
+      "offset": 0,
+      "from": "legacyEnvelopes",
+      "to": "retiredLegacyEnvelopes",
+      "reason": "#2910 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the bootstrap envelope import (#1566 closure 2 cutover PR 2) classified inventory that reached a Diamond upgraded in place before its packets were stamped. On a fresh deploy that inventory is zero: the budget ingress now refuses a split that does not account for the whole delivery on the pre-activation path as well as the epoch path, so no untyped remainder enters the uncounted aggregate before activation, and every other pre-activation uncounted arrival is a quarantine the stranded-recovery reservation and the returned cumulative already explain. The import, its preview and record getter, its event, errors and recycle helper are removed. The field keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam@517[]",
+      "slot": 1,
+      "offset": 0,
+      "from": "reconciliationLog[].envelope",
+      "to": "reconciliationLog[].retiredEnvelope",
+      "reason": "#2910 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the bootstrap envelope import (#1566 closure 2 cutover PR 2) classified inventory that reached a Diamond upgraded in place before its packets were stamped. On a fresh deploy that inventory is zero: the budget ingress now refuses a split that does not account for the whole delivery on the pre-activation path as well as the epoch path, so no untyped remainder enters the uncounted aggregate before activation, and every other pre-activation uncounted arrival is a quarantine the stranded-recovery reservation and the returned cumulative already explain. The import, its preview and record getter, its event, errors and recycle helper are removed. The field keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
     }
   ]
 }

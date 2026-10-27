@@ -77,14 +77,22 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
      *         other epoch obeys — with only the residual reaching the shared
      *         sources. The uncounted figures grow by the whole amount: this
      *         value is in no shared ledger, and the draws step them down as
-     *         they type it. A
-     *         wire whose split does not account for the whole delivery is
-     *         refused by name: a wei under no cap would be value no day could
-     *         draw and no classification could reach.
+     *         they type it.
+     *
+     *         A wire whose split does not account for the whole delivery is
+     *         refused by name, on BOTH paths (#2910): on the epoch path a wei
+     *         under no cap would be value no day could draw and no
+     *         classification could reach; before activation it would be an
+     *         untyped remainder in the uncounted aggregate that nothing could
+     *         classify (the envelope import that once could, for a Diamond
+     *         upgraded in place, is retired with it). The shipped receiver
+     *         always sends a whole split (its fresh share is what arrived less
+     *         the recycled share), so the refusal binds only a wire that
+     *         departs from it.
      *
      *         Before custody activation the delivery's tokens rest with the
      *         Diamond and the activation is what assigns them, so a rooted
-     *         delivery then takes the TYPED-LEDGER path — the fresh component
+     *         delivery then takes the TYPED-LEDGER path — the fresh share
      *         counted, the recycled one credited to the bucket — and opens no
      *         epoch (giving it one would leave two records claiming the same
      *         money, §5c's one-accounting-path rule). Its commitment is still
@@ -166,10 +174,10 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // backed, consumable home, drawn by the obligations of the days it lists
         // as transport legs, so nothing it carries reaches the live baseline.
         if (intendedEra > s.custodyEraCurrent) emit CustodyEraAheadFiledLive(h, intendedEra, s.custodyEraCurrent);
+        if (freshShare + recycledShare != amount) {
+            revert TransportSplitNotWhole(h, freshShare, recycledShare, amount);
+        }
         if (epoch) {
-            if (freshShare + recycledShare != amount) {
-                revert TransportSplitNotWhole(h, freshShare, recycledShare, amount);
-            }
             LibRewardCustody.stampPacketEra(
                 s, h, intendedEra > s.custodyEraCurrent ? s.custodyEraCurrent : intendedEra
             );
@@ -179,7 +187,6 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             LibRewardCustody.admitRootedTransportBatch(s, h, amount);
         } else {
             if (freshShare != 0) s.rewardBudgetArmedFreshReceived += freshShare;
-            if (freshLooking > freshShare) s.rewardBudgetFreshUncounted += freshLooking - freshShare;
             LibVpfiRecycle.creditCustodyRelocated(
                 remitId,
                 recycledShare,

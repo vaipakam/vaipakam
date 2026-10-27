@@ -440,16 +440,16 @@ contract RewardRemittanceLensFacet {
      *                   received side is too).
      * @return uncounted Σ fresh-looking value this chain did not count: a
      *                   delivery held as a transport epoch lands here whole
-     *                   until its draws type it, and a typed delivery
-     *                   contributes its scaling residue — the receiver
-     *                   scales the fresh and recycled shares to what actually
-     *                   arrived with flooring, so on a fee-on-transfer or
-     *                   rounded delivery their sum sits below the amount and
-     *                   the difference is booked here rather than invented
-     *                   as fresh (Codex #2151 r1 P2). Non-zero means this
-     *                   chain's counted funding UNDERSTATES what Base sent —
-     *                   the safe direction, but one an operator must read
-     *                   with both sources in mind.
+     *                   until its draws type it, and quarantined compensation
+     *                   or a demoted provisional hold lands here until its
+     *                   return. A typed (pre-activation) delivery contributes
+     *                   nothing: the receiver sends the fresh share as what
+     *                   actually landed less the scaled recycled share, and
+     *                   the ingress refuses any split that is not whole
+     *                   (#2910), so no residue is left uncounted. Non-zero
+     *                   means this chain's counted funding UNDERSTATES what
+     *                   Base sent — the safe direction, but one an operator
+     *                   must read with those sources in mind.
      */
     function getDeliveredFreshPosition()
         external

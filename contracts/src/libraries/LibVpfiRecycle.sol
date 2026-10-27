@@ -117,8 +117,9 @@ library LibVpfiRecycle {
         // event's reference slot.
         SpendGatedPerk,
         // #1566 closure 2 cutover PR 2 — CUSTODY-RELOCATION class (append-only
-        // enum): the RECYCLED share of a legacy packet, or of the bootstrap
-        // envelope, classified by the reconciliation epoch. Relocated custody
+        // enum): the RECYCLED share of a legacy packet classified by the
+        // reconciliation epoch (the bootstrap envelope that also used it was
+        // retired in #2910). Relocated custody
         // like {RemittedCustodyRelocation} — Base-funded tokens whose typing
         // arrived late — never absorption; the same exclusions apply.
         LegacyReconciliation,
@@ -1016,8 +1017,8 @@ library LibVpfiRecycle {
     }
 
     /// @dev The bookkeeping tail of {creditCustodyRelocated} — the bucket
-    ///      credit, the relocated cumulative, the event — for the two in-holder forms of #1566 closure 2 cutover
-    ///      PR 2 ({creditCustodyFromUnclassified}, {creditCustodyFundedInHolder}).
+    ///      credit, the relocated cumulative, the event — for the in-holder form of #1566 closure 2 cutover
+    ///      PR 2 ({creditCustodyFromUnclassified}; its envelope twin was retired in #2910).
     ///      It is NOT shared with {creditCustodyRelocated} itself, on
     ///      purpose: that function inlines into `RewardRemittanceFacet` at
     ///      its EIP-170 budget, and routing it through this helper cost that
@@ -1059,17 +1060,6 @@ library LibVpfiRecycle {
         LibRewardCustody.move(
             s, LibVaipakam.RewardCustodyRow.Unclassified, LibVaipakam.RewardCustodyRow.Recycled, amount
         );
-        _bookRelocatedCredit(s, refId, amount, RecycleSource.LegacyReconciliation);
-    }
-
-    /// @notice The bootstrap envelope's replacement-funded recycled share:
-    ///         the caller pulled the tokens into the holder (delta-checked)
-    ///         in this frame; the recycled row and the bucket are credited
-    ///         as relocated custody, exactly as {creditCustodyRelocated}.
-    function creditCustodyFundedInHolder(uint256 refId, uint256 amount) internal {
-        if (amount == 0) return;
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibRewardCustody.credit(s, LibVaipakam.RewardCustodyRow.Recycled, amount, 0);
         _bookRelocatedCredit(s, refId, amount, RecycleSource.LegacyReconciliation);
     }
 
