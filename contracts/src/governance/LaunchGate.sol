@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibLaunchReadiness, ILaunchReadableDiamond} from "./LibLaunchReadiness.sol";
 import {ILaunchGate} from "../interfaces/ILaunchGate.sol";
+import {LaunchCrossChainChecks} from "./LaunchCrossChainChecks.sol";
 
 /**
  * @title LaunchGate
@@ -38,15 +39,32 @@ import {ILaunchGate} from "../interfaces/ILaunchGate.sol";
  *      the precondition holds again; a moved pause epoch or role epoch needs
  *      a fresh proposal, by design.
  *
- *      The gate is stateless, ownerless and constructor-free, and it is
- *      deployed at a deterministic CREATE2 address (`DeployLaunchGate.s.sol`),
- *      so its address commits to its exact bytecode: a reviewer of the
- *      proposal can check the gate's code from its address alone. It reads
- *      the same {LibLaunchReadiness} list the launch script reports, and it
- *      accepts only "every requirement met": a requirement the chain cannot
- *      answer refuses here exactly as it does for a production launch.
+ *      The gate is stateless and ownerless, its constructor takes no
+ *      arguments, and it is deployed at a deterministic CREATE2 address
+ *      (`DeployLaunchGate.s.sol`), so its address commits to its exact
+ *      bytecode: a reviewer of the proposal can check the gate's code from
+ *      its address alone. It reads the same {LibLaunchReadiness} list the
+ *      launch script reports, and it accepts only "every requirement met": a
+ *      requirement the chain cannot answer refuses here exactly as it does
+ *      for a production launch.
+ *
+ *      The two cross-chain requirements (the VPFI pool and its CCIP lanes)
+ *      are read by a companion, {LaunchCrossChainChecks}, because all ten in
+ *      one contract exceed EIP-170 (#2975). The constructor creates the
+ *      companion, so the companion's creation code is part of the gate's and
+ *      the gate's address commits to both; the list itself is still put
+ *      together by {LibLaunchReadiness.compose}, the same composer the
+ *      launch script's {LibLaunchReadiness.check} uses.
  */
 contract LaunchGate is ILaunchGate {
+    /// @notice The companion that reads the cross-chain requirements,
+    ///         created with this gate (#2975).
+    LaunchCrossChainChecks public immutable crossChainChecks;
+
+    constructor() {
+        crossChainChecks = new LaunchCrossChainChecks();
+    }
+
     /// @notice A launch requirement does not hold. `state` is the printed
     ///         verdict ("NOT MET" or "NOT CHECKED").
     error LaunchNotReady(string label, string state, string detail);
@@ -87,7 +105,7 @@ contract LaunchGate is ILaunchGate {
         view
         returns (LibLaunchReadiness.Check[] memory)
     {
-        return LibLaunchReadiness.check(diamond, declared);
+        return _checks(diamond, declared);
     }
 
     /// @notice Reverts {LaunchNotReady} with the first requirement that is
@@ -127,7 +145,7 @@ contract LaunchGate is ILaunchGate {
         Handover calldata handover
     ) external view {
         if (handover.deployKey == address(0)) revert NoDeployKey();
-        LibLaunchReadiness.Check[] memory c = LibLaunchReadiness.check(diamond, declared);
+        LibLaunchReadiness.Check[] memory c = _checks(diamond, declared);
         for (uint256 i; i < c.length; ++i) {
             if (!c[i].checkable || !c[i].met) {
                 revert LaunchNotReady(c[i].label, LibLaunchReadiness.verdict(c[i]), c[i].detail);
@@ -142,5 +160,15 @@ contract LaunchGate is ILaunchGate {
         (bool readable, uint64 liveCalls) = LibLaunchReadiness.timelockCalls(liveOwner);
         if (!readable) revert TimelockCallsUnreadable(liveOwner);
         if (liveCalls != handover.timelockCalls) revert TimelockActedDuringDelay(handover.timelockCalls, liveCalls);
+    }
+
+    /// @dev The one list ({LibLaunchReadiness.compose}), with the
+    ///      cross-chain pair read by the companion.
+    function _checks(address diamond, LibLaunchReadiness.Declared calldata declared)
+        private
+        view
+        returns (LibLaunchReadiness.Check[] memory)
+    {
+        return LibLaunchReadiness.compose(diamond, declared, crossChainChecks.checks(diamond, declared));
     }
 }
