@@ -1,4 +1,4 @@
-## Thread — Security hygiene batch: interface discovery, dust impact, metadata text, listing release (PR #<n>)
+## Thread — Security hygiene batch: interface discovery, dust impact, metadata text, listing release (PR #2964)
 
 The platform contract now answers the standard interface query (ERC-165) truthfully and completely. Until now it recorded only the position NFT's interfaces, so it denied supporting the interface query itself, the Diamond's cut and inspection interfaces, ownership, and the ERC-1155 receiver it hosts; an integration that checks before a safe transfer could refuse it. One list now names every interface, a fresh deploy records it right after the facets are cut, and a deploy test checks every claim against the functions the Diamond actually routes. Advertising the ERC-1155 receiver does not open the Diamond as a sink: it still accepts an incoming NFT only as one step of its own collateral moves. A test that expected a bare revert from the offer matcher now expects the matcher's own error, so it can no longer pass on an unrouted function. Closes #2752.
 

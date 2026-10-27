@@ -1,4 +1,4 @@
-## Thread — A rental carries no collateral (PR #TBD)
+## Thread — A rental carries no collateral (PR #2964)
 
 An NFT-rental offer can no longer name a collateral. The platform refuses one
 whose collateral asset, amount, upper amount, token id or quantity is set, and
