@@ -626,12 +626,23 @@ else
   # its ABIs are re-synced and redeployed on their own cadence, so a
   # contract deploy must not be hard-blocked on that repo's state, but
   # the operator is still told to re-sync it).
+  # Drift is classified (lib/abi-drift.sh, #1564): `calls` when a
+  # function's selector, arguments or result changed, `decode` when only the
+  # error/event list did. A hard dir fails on either. An advisory dir warns on
+  # call drift and only NOTES decode drift, because the shared error list
+  # changes on nearly every contract PR and a permanent warning hides the
+  # call drift that actually breaks the keeper bot.
+  # shellcheck source=lib/abi-drift.sh
+  source "$SCRIPT_DIR/lib/abi-drift.sh"
   check_abi_dir() {
-    local label="$1" dir="$2" hard="$3" export_script="$4" drift=0 checked=0
+    local label="$1" dir="$2" hard="$3" export_script="$4" drift=0 decode_drift=0 checked=0
     if [ ! -d "$dir" ]; then
       echo "  · $label — $dir not present, skipping"
       return 0
     fi
+    local tmp_committed tmp_fresh
+    tmp_committed="$(mktemp)"
+    tmp_fresh="$(mktemp)"
     local f name fresh
     for f in "$dir"/*.json; do
       [ -e "$f" ] || continue
@@ -665,17 +676,32 @@ else
         continue
       fi
       checked=$((checked + 1))
-      if ! diff -q \
-        <(git -C "$dir" show "HEAD:$rel" 2>/dev/null | jq -S . 2>/dev/null) \
-        <(printf '%s' "$fresh" | jq -S . 2>/dev/null) >/dev/null 2>&1; then
-        if [ "$hard" -eq 1 ]; then
-          echo "  ✗ $label — committed $name.json is stale vs the compiled ABI" >&2
-        else
-          echo "  ⚠ $label — committed $name.json is stale vs the compiled ABI" >&2
-        fi
-        drift=$((drift + 1))
-      fi
+      git -C "$dir" show "HEAD:$rel" >"$tmp_committed" 2>/dev/null || : >"$tmp_committed"
+      printf '%s' "$fresh" >"$tmp_fresh"
+      case "$(abi_drift_kind "$tmp_committed" "$tmp_fresh")" in
+        none) ;;
+        decode)
+          if [ "$hard" -eq 1 ]; then
+            echo "  ✗ $label — committed $name.json is stale vs the compiled ABI (error/event list)" >&2
+            drift=$((drift + 1))
+          else
+            echo "  · $label — committed $name.json lists other errors/events than the compiled ABI" \
+              "(revert and event decoding only; every function matches)"
+            decode_drift=$((decode_drift + 1))
+          fi
+          ;;
+        *)
+          if [ "$hard" -eq 1 ]; then
+            echo "  ✗ $label — committed $name.json is stale vs the compiled ABI" >&2
+          else
+            echo "  ⚠ $label — committed $name.json is stale vs the compiled ABI: a function's" >&2
+            echo "    selector, arguments or result differs, so the bot's calls may not match" >&2
+          fi
+          drift=$((drift + 1))
+          ;;
+      esac
     done
+    rm -f "$tmp_committed" "$tmp_fresh"
     # Cross-check the directory against the export script's `FACETS=(...)`
     # list — catch a required ABI that is missing OR present-but-untracked.
     # The loop above only sees files that exist, so a missing one would
@@ -702,8 +728,12 @@ else
         drift=$((drift + 1))
       done
     fi
-    if [ "$drift" -eq 0 ]; then
+    if [ "$drift" -eq 0 ] && [ "$decode_drift" -eq 0 ]; then
       echo "  ✓ $label — $checked facet ABI(s) in sync"
+    elif [ "$drift" -eq 0 ]; then
+      echo "  ✓ $label — every function in $checked facet ABI(s) matches; $decode_drift list(s)"
+      echo "    other errors/events, so some reverts decode as raw bytes until the next"
+      echo "    keeper-bot ABI sync (exportAbis.sh)"
     elif [ "$hard" -eq 1 ]; then
       echo "    re-run exportFrontendAbis.sh and commit the result" >&2
       FAIL=1
