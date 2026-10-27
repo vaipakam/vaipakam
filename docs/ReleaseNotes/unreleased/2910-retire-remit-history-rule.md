@@ -1,4 +1,4 @@
-## Rewards — the remittance history rule is retired (PR #TBD)
+## Rewards — the remittance history rule is retired (PR #2941)
 
 Two facts on a reward remittance's record were added after remittances had
 already been released and finalized on Diamonds upgraded in place: how much of
