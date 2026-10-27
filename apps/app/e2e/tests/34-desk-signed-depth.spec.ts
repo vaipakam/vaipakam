@@ -21,8 +21,9 @@
  *  State 1 is the control that keeps 2 and 3 honest: a note that showed
  *  on every load would pass both of them.
  *
- *  The market is an empty tenor (freshTenor only READS the chain), so no
- *  resting offer from another spec can change what the ladder shows. */
+ *  The market is an empty tenor (freshTenor finds no resting offer on the
+ *  chain or in the signed book), so no resting offer from another spec can
+ *  change what the ladder shows. */
 import { test, expect } from '../lib/wallet-fixture';
 import { CHAIN_ID } from '../lib/chain';
 import { freshTenor, openMarketViaCustomPair } from '../lib/desk';

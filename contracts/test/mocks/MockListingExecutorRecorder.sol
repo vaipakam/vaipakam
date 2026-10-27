@@ -33,22 +33,7 @@ contract MockListingExecutorRecorder is IListingExecutorRecorder {
         uint256 auctionEndTime;
         uint8 mode;
         FeeLeg[] feeLegs;
-        // T-086 Round-7 (Issue #355) — signed-leg snapshot fields so
-        // tests can assert each post path forwarded the new args.
-        uint256 signedLenderAmount;
-        uint256 signedTreasuryAmount;
     }
-
-    /// @notice T-086 Round-7 (Issue #355) — mirrors the executor's
-    ///         `_orderProtocolLegs` mapping so tests that exercise the
-    ///         auto-list-at-floor B-cond-2 read path can stage a
-    ///         `(lender, treasury)` snapshot independently of an actual
-    ///         `recordOrder` call.
-    struct SignedProtocolLegs {
-        uint128 lender;
-        uint128 treasury;
-    }
-    mapping(bytes32 => SignedProtocolLegs) internal _orderProtocolLegs;
 
     RecordedCall[] internal _recordOrderCalls;
     bytes32[] public clearOrderCalls;
@@ -86,9 +71,7 @@ contract MockListingExecutorRecorder is IListingExecutorRecorder {
         uint256 endAskPrice,
         uint256 auctionEndTime,
         uint8 mode,
-        FeeLeg[] calldata feeLegs,
-        uint256 signedLenderAmount,
-        uint256 signedTreasuryAmount
+        FeeLeg[] calldata feeLegs
     ) external override {
         // Push an empty entry first, then copy each FeeLeg field
         // explicitly — Solidity rejects a direct
@@ -110,42 +93,14 @@ contract MockListingExecutorRecorder is IListingExecutorRecorder {
             call.feeLegs.push(feeLegs[i]);
             unchecked { ++i; }
         }
-        call.signedLenderAmount = signedLenderAmount;
-        call.signedTreasuryAmount = signedTreasuryAmount;
-
-        // T-086 Round-7 (Issue #355) — mirror the executor's parallel
-        // snapshot so `orderProtocolLegs(orderHash)` reads from the
-        // same source the production executor uses.
-        _orderProtocolLegs[orderHash] = SignedProtocolLegs({
-            lender: uint128(signedLenderAmount),
-            treasury: uint128(signedTreasuryAmount)
-        });
     }
 
     function clearOrder(bytes32 orderHash) external override {
         clearOrderCalls.push(orderHash);
-        // T-086 Round-7 (Issue #355) — match the executor's clear path.
-        delete _orderProtocolLegs[orderHash];
     }
 
     function approvedConduits(address conduit) external view override returns (bool) {
         return _approvedConduits[conduit];
-    }
-
-    /// @inheritdoc IListingExecutorRecorder
-    function orderProtocolLegs(bytes32 orderHash) external view override returns (uint128 lender, uint128 treasury) {
-        SignedProtocolLegs storage legs = _orderProtocolLegs[orderHash];
-        return (legs.lender, legs.treasury);
-    }
-
-    /// @notice T-086 Round-7 (Issue #355) — test-only setter so unit
-    ///         tests can stage a `(lender, treasury)` snapshot
-    ///         independently of running a full `recordOrder` flow.
-    function setOrderProtocolLegs(bytes32 orderHash, uint128 lender, uint128 treasury) external {
-        _orderProtocolLegs[orderHash] = SignedProtocolLegs({
-            lender: lender,
-            treasury: treasury
-        });
     }
 
     /// @notice Round-5 Block B (#309) post-merge polish — Codex P2

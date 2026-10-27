@@ -48,12 +48,18 @@ interface IVaipakamPrepayContext {
         //    `asOfTimestamp`. The executor uses these as the live floor
         //    + grace + recipient bindings for the fill. Caller passes
         //    `block.timestamp` at fill time so the read is current.
+        //    `lenderLeg + treasuryLeg` is the sale FLOOR: what a
+        //    repayment at `asOfTimestamp` would owe, before any lender
+        //    yield-fee discount. The listing pays one proceeds leg to the
+        //    Diamond, which splits it at fill time (#2876), so these two
+        //    figures are a floor to price against, not recipients' legs.
         uint256 lenderLeg;       // LibCollateralSettlement.saleLegs: principal + lender share
         uint256 treasuryLeg;     // LibCollateralSettlement.saleLegs: treasury share
         uint256 graceEnd;        // startTime + duration*1d + LibVaipakam.gracePeriod
-        address lenderNftOwner;  // VaipakamNFTFacet.ownerOf(loan.lenderTokenId)
-        address borrowerNftOwner;// VaipakamNFTFacet.ownerOf(loan.borrowerTokenId)
-        address treasury;        // AdminFacet.getTreasury()
+        // VaipakamNFTFacet.ownerOf(loan.borrowerTokenId), screened at fill.
+        // There is no lender-holder field: the lender's share is booked to
+        // a claim row and screened at the claim, not at the fill (#2876).
+        address borrowerNftOwner;
         // #306 architectural fix — borrower's per-user vault
         // address (the Seaport order's expected offerer). The
         // executor's zone callback verifies
@@ -67,9 +73,8 @@ interface IVaipakamPrepayContext {
     ///         call. Implementation on the diamond reads from
     ///         `LibVaipakam.storageSlot().loans[loanId]` + invokes
     ///         `LibCollateralSettlement.saleLegs` (the repayment split at
-    ///         `asOfTimestamp`, #2740) + reads `treasury` + resolves the
-    ///         lender / borrower NFT
-    ///         current holders. Pure read; no state mutation.
+    ///         `asOfTimestamp`, #2740) + resolves the lender / borrower
+    ///         NFT current holders. Pure read; no state mutation.
     /// @param  loanId         Loan to look up.
     /// @param  asOfTimestamp  The block timestamp to evaluate
     ///                        time-varying quantities at. Passed by the

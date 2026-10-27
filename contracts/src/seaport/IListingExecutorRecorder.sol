@@ -96,9 +96,7 @@ interface IListingExecutorRecorder {
         uint256 endAskPrice,
         uint256 auctionEndTime,
         uint8 mode,
-        FeeLeg[] calldata feeLegs,
-        uint256 signedLenderAmount,
-        uint256 signedTreasuryAmount
+        FeeLeg[] calldata feeLegs
     ) external;
 
     /// @notice Remove a binding. Idempotent. T-086 #316: while the
@@ -106,9 +104,9 @@ interface IListingExecutorRecorder {
     ///         canonical `OrderComponents` and forwards
     ///         `Seaport.cancel` so OpenSea's marketplace catalog
     ///         refreshes the listing within ~30s of the cleanup.
-    ///         The cancel emit is best-effort; reconstruction
-    ///         mismatch (NFT-holder transfer, counter increment,
-    ///         treasury rotation) gracefully falls back to no-op.
+    ///         The cancel emit is best-effort; a reconstruction
+    ///         mismatch (a Seaport counter increment) gracefully
+    ///         falls back to no-op.
     ///         See {CollateralListingExecutor.clearOrder}.
     function clearOrder(bytes32 orderHash) external;
 
@@ -165,29 +163,6 @@ interface IListingExecutorRecorder {
     ///         canonical order against the same Seaport the executor
     ///         routes fills through.
     function seaport() external view returns (address);
-
-    /// @notice T-086 Round-7 (Issue #355) — read accessor for the
-    ///         per-order signed-leg snapshot. Returns the
-    ///         `consideration[0].amount` (lender) and
-    ///         `consideration[1].amount` (treasury) recorded at sign
-    ///         time for `orderHash`. The auto-list-at-floor B-cond-2
-    ///         gate reads these directly to decide rotation: when live
-    ///         `pctx.lenderLeg` or `pctx.treasuryLeg` exceeds the
-    ///         signed amount the order is unfillable
-    ///         (CollateralListingExecutor._assertOrderContent reverts
-    ///         `LenderShortPaid` / `TreasuryShortPaid` at fill time),
-    ///         so the keeper rotates to a fresh fixed-price-at-floor
-    ///         listing.
-    ///
-    ///         Returns `(0, 0)` for an unknown or already-cleared
-    ///         orderHash.
-    ///
-    ///         Populated by `recordOrder` — signed amounts come in as
-    ///         the new `signedLenderAmount` + `signedTreasuryAmount`
-    ///         args, not re-derived from `askPrice` (which would
-    ///         silently treat borrower-leg slack as protocol coverage
-    ///         — see Round-7 §18.5 B-cond-2 rationale).
-    function orderProtocolLegs(bytes32 orderHash) external view returns (uint128 lender, uint128 treasury);
 
     // ─── T-086 Round-8 (#358) — Offer-keyed surface ────────────────────
     //

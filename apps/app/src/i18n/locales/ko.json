@@ -2490,7 +2490,7 @@
         "OfferCreatorFullTariffSet": "오퍼의 수수료 선택 기록됨",
         "OfferKeeperEnabled": "키퍼 권한 업데이트됨",
         "OfferSaleProceedsCredited": "매각 대금이 금고에 입금됨",
-        "OfferSaleProceedsSplit": "매각 대금 분배됨",
+        "CollateralSaleProceedsSplit": "매각 대금 분배됨",
         "ParallelSaleLockReleased": "담보 매각 등록 해제됨",
         "PartialCollateralWithdrawn": "담보 일부 인출됨",
         "PostParallelSaleListing": "담보 매각 등록 게시됨",

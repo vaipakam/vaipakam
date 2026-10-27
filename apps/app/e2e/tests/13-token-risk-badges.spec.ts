@@ -26,139 +26,36 @@
  *     recommendation is never offered ahead of its screen — and opens it
  *     once the answer lands.
  */
-import { spawn, type ChildProcess } from 'node:child_process';
-import type { Page } from '@playwright/test';
 import { test, expect, connectWallet } from '../lib/wallet-fixture';
+import type { Page } from '@playwright/test';
 import {
   OFFER_AMOUNT_WETH,
   pickCuratedAsset,
   postLenderOffer,
   newestOfferIdFor,
 } from '../lib/flows';
-import { ANVIL_URL } from '../lib/anvil';
 import { WETH } from '../lib/chain';
 import { accountFor } from '../lib/wallets';
+import {
+  goPlusRow,
+  mockGoPlus,
+  startGoPlusServer,
+  type GoPlusServer,
+} from '../lib/goplus';
 
 const BADGE_PORT = 4175;
-const BADGE_BASE = `http://127.0.0.1:${BADGE_PORT}`;
-const STUB_PORT = Number(process.env.APP_E2E_STUB_PORT ?? 8788);
 
-let badgeServer: ChildProcess | undefined;
+let badgeServer: GoPlusServer | undefined;
+let BADGE_BASE = '';
 
 test.beforeAll(async () => {
-  const stale = await fetch(BADGE_BASE).then(
-    () => true,
-    () => false,
-  );
-  if (stale) {
-    throw new Error(
-      `something is already listening on ${BADGE_BASE} — kill it before running the badges spec`,
-    );
-  }
-  badgeServer = spawn(
-    'node',
-    [
-      'node_modules/vite/bin/vite.js',
-      '--host',
-      '127.0.0.1',
-      '--port',
-      String(BADGE_PORT),
-      '--strictPort',
-    ],
-    {
-      env: {
-        ...process.env,
-        APP_E2E: '1',
-        VITE_DEFAULT_CHAIN_ID: '84532',
-        VITE_BASE_SEPOLIA_RPC_URL: ANVIL_URL,
-        VITE_INDEXER_ORIGIN: `http://127.0.0.1:${STUB_PORT}`,
-        VITE_GOPLUS_EXTRA_CHAINS: '84532',
-      },
-      stdio: 'ignore',
-    },
-  );
-  const deadline = Date.now() + 120_000;
-  for (;;) {
-    if (badgeServer.exitCode !== null) {
-      throw new Error(
-        `badges vite exited with ${badgeServer.exitCode} — port ${BADGE_PORT} already in use?`,
-      );
-    }
-    try {
-      const res = await fetch(BADGE_BASE);
-      if (res.status < 500) return;
-    } catch {
-      /* not up yet */
-    }
-    if (Date.now() > deadline) throw new Error('badges vite not ready');
-    await new Promise((r) => setTimeout(r, 500));
-  }
+  badgeServer = await startGoPlusServer(BADGE_PORT);
+  BADGE_BASE = badgeServer.base;
 });
 
 test.afterAll(() => {
-  badgeServer?.kill('SIGTERM');
+  badgeServer?.stop();
 });
-
-/** A fully-evaluated GoPlus row (every check '0'/known) with
- *  overrides — unknown/missing fields would add "could not be
- *  evaluated" noise the assertions don't want. */
-function goPlusRow(overrides: Record<string, unknown> = {}) {
-  return {
-    is_open_source: '1',
-    is_honeypot: '0',
-    cannot_sell_all: '0',
-    cannot_buy: '0',
-    buy_tax: '0',
-    sell_tax: '0',
-    transfer_tax: '0',
-    is_mintable: '0',
-    owner_change_balance: '0',
-    is_blacklisted: '0',
-    transfer_pausable: '0',
-    is_whitelisted: '0',
-    is_anti_whale: '0',
-    anti_whale_modifiable: '0',
-    trading_cooldown: '0',
-    hidden_owner: '0',
-    can_take_back_ownership: '0',
-    is_proxy: '0',
-    selfdestruct: '0',
-    slippage_modifiable: '0',
-    personal_slippage_modifiable: '0',
-    external_call: '0',
-    fake_token: null,
-    ...overrides,
-  };
-}
-
-/** Answer every GoPlus request (single or comma-batched) with `row`
- *  for each requested address — or an HTTP `status` failure. With
- *  `gate`, every answer is held until it settles (a screen still in
- *  flight, #2535). */
-async function mockGoPlus(
-  page: Page,
-  row: Record<string, unknown> | null,
-  status = 200,
-  gate?: Promise<void>,
-): Promise<void> {
-  await page.route('https://api.gopluslabs.io/**', async (route) => {
-    if (gate) await gate;
-    if (row === null) {
-      await route.fulfill({ status, body: 'mocked failure' });
-      return;
-    }
-    const url = new URL(route.request().url());
-    const addrs = (url.searchParams.get('contract_addresses') ?? '')
-      .split(',')
-      .filter(Boolean);
-    const result = Object.fromEntries(addrs.map((a) => [a.toLowerCase(), row]));
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ code: 1, message: 'ok', result }),
-    });
-  });
-}
 
 /** Drive the borrow guided matcher on `base` to the offers step. */
 async function openGuidedMatches(page: Page, base: string): Promise<void> {
@@ -189,7 +86,7 @@ test('a hard-flagged offer wears "Risk flagged" on the book and is excluded from
   const offerId = await newestOfferIdFor(lender.account.address);
 
   const viewer = await launchWallet('borrower', { advanced: true });
-  await mockGoPlus(viewer.page, goPlusRow({ is_honeypot: '1' }));
+  await mockGoPlus(viewer.page, () => ({ row: goPlusRow({ is_honeypot: '1' }) }));
 
   // Book row: badge visible (advanced mode renders the offer id).
   await viewer.page.goto(`${BADGE_BASE}/offers`, { waitUntil: 'domcontentloaded' });
@@ -223,7 +120,7 @@ test('a warn-tier offer stays listed wearing "Caution"', async ({
   const offerId = await newestOfferIdFor(accountFor('lender').address);
 
   const viewer = await launchWallet('borrower', { advanced: true });
-  await mockGoPlus(viewer.page, goPlusRow({ slippage_modifiable: '1' }));
+  await mockGoPlus(viewer.page, () => ({ row: goPlusRow({ slippage_modifiable: '1' }) }));
 
   await viewer.page.goto(`${BADGE_BASE}/offers`, { waitUntil: 'domcontentloaded' });
   const row = bookRowFor(viewer.page, offerId);
@@ -246,7 +143,7 @@ test('an unreachable screen shows "Not screened" and keeps the offer listed', as
   const offerId = await newestOfferIdFor(accountFor('lender').address);
 
   const viewer = await launchWallet('borrower', { advanced: true });
-  await mockGoPlus(viewer.page, null, 500);
+  await mockGoPlus(viewer.page, () => ({ status: 500 }));
 
   await viewer.page.goto(`${BADGE_BASE}/offers`, { waitUntil: 'domcontentloaded' });
   const row = bookRowFor(viewer.page, offerId);
@@ -264,7 +161,7 @@ test('a guided match whose screen has not answered is "Checking" and cannot be c
   const answered = new Promise<void>((r) => {
     release = r;
   });
-  await mockGoPlus(viewer.page, goPlusRow(), 200, answered);
+  await mockGoPlus(viewer.page, () => ({ row: goPlusRow() }), answered);
 
   await openGuidedMatches(viewer.page, BADGE_BASE);
   const card = viewer.page

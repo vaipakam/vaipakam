@@ -33,10 +33,11 @@ import {LibERC721} from "../src/libraries/LibERC721.sol";
  *           1. Precondition revert paths (grace window, status,
  *              caller-eligibility, config gates).
  *           2. Case A (fresh post) — happy path: records the order
- *              with `pctx.lenderLeg` / `pctx.treasuryLeg` as the
- *              signed amounts (the round-3.8 signed-legs invariant).
+ *              at the buffered live floor (`pctx.lenderLeg` +
+ *              `pctx.treasuryLeg`).
  *           3. Case B (rotation) — strict-shortfall B-cond-2 fires
- *              when the signed legs are stale relative to live pctx.
+ *              when the order's proceeds leg (#2876: the ask net of
+ *              its fee legs) is below the live floor.
  *           4. Opt-out lifecycle:
  *              - `cancelPrepayListing` during grace SETS the flag.
  *              - `cancelPrepayListing` OUTSIDE grace does NOT set it.
@@ -236,31 +237,23 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
         vm.prank(keeperCaller);
         NFTPrepayAutoListFacet(address(diamond)).autoListAtFloorOnGrace(LOAN_ID);
 
-        // The mock recorded the post. Signed lender + treasury legs
-        // MUST match pctx.lenderLeg + pctx.treasuryLeg (round-3.8
-        // invariant — no askPrice derivation).
+        // The mock recorded the post at the buffered live floor.
         MockListingExecutorRecorder.RecordedCall memory rc =
             mockExecutor.recordedCallAt(0);
+        IVaipakamPrepayContext.PrepayContext memory pctx =
+            IVaipakamPrepayContext(address(diamond))
+                .getPrepayContext(LOAN_ID, block.timestamp);
 
-        // pctx.lenderLeg = principalPlusAccruedInterest; for
-        // principal=100 ether, 30 days at 12% APR, ~ mid-grace, the
-        // accrued interest is non-zero. Assert it matches the recorded
-        // signed amount byte-for-byte.
-        // SetupTest leaves treasury fee bps = 0 by default, so
-        // pctx.treasuryLeg = 0 and pctx.lenderLeg = principal +
-        // accrued interest.
         assertEq(rc.mode, PREPAY_MODE_FIXED_PRICE, "Case A posts fixed-price");
         assertEq(rc.endAskPrice, rc.askPrice, "endAskPrice == askPrice");
         assertEq(rc.auctionEndTime, 0, "auctionEndTime sentinel 0");
         assertEq(rc.feeLegs.length, 0, "auto-list posts protocol-only");
-        // signed lender > 0 (principal accrued some interest in grace).
-        assertGt(rc.signedLenderAmount, 0, "signed lender from pctx");
-        // Floor = (lender + treasury) * (10_000 + buffer) / 10_000.
-        // Whatever the live treasuryLeg is, the recorded askPrice
-        // must match the round-3.8 floor derivation byte-for-byte;
-        // this pins the askAtFloor invariant.
+        // pctx.lenderLeg = principal + accrued interest (> 0 in grace).
+        assertGt(pctx.lenderLeg, 0, "live lender leg");
+        // Floor = (lender + treasury) * (10_000 + buffer) / 10_000; with
+        // no fee legs the order's proceeds leg is the whole ask (#2876).
         uint256 expectedFloor =
-            ((rc.signedLenderAmount + rc.signedTreasuryAmount)
+            ((pctx.lenderLeg + pctx.treasuryLeg)
                 * (10_000 + TEST_BUFFER_BPS)) / 10_000;
         assertEq(rc.askPrice, expectedFloor, "askPrice == floor(lender+treasury, buffer)");
         // Diamond bookkeeping updated.
@@ -324,7 +317,7 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
 
     // ─── 3. Case B (rotation) — B-cond-2 strict shortfall fires ─────────
 
-    function test_autoList_caseB_rotatesOnSignedLegsShort() public {
+    function test_autoList_caseB_rotatesOnProceedsShort() public {
         _scaffoldActiveLoan();
         _warpIntoGrace();
 
@@ -336,8 +329,9 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
         TestMutatorFacet(address(diamond))
             .setPrepayListingExecutor(LOAN_ID, address(mockExecutor));
 
-        // Stage the executor's per-order state directly. Signed
-        // lender = 0 → live lender > signed lender → B-cond-2 fires.
+        // Stage the executor's per-order state directly. A 1-ether ask
+        // with no fee legs pays 1 ether of proceeds, far below the live
+        // floor (100-ether principal) → B-cond-2 fires.
         mockExecutor.setOrderContext(
             staleOrderHash,
             PREPAY_MODE_FIXED_PRICE,
@@ -346,7 +340,6 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
             uint64(block.timestamp - 1 days), // startTime
             0                  // auctionEndTime sentinel
         );
-        mockExecutor.setOrderProtocolLegs(staleOrderHash, 0, 0); // signed legs zero
 
         // Lock the NFT manually since the stale listing pre-locked it.
         // (Auto-list rotation expects the lock to already be in place
@@ -378,7 +371,7 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
             }
             assertTrue(
                 selector != NFTPrepayAutoListFacet.AutoListAlreadyAtOrBelowFloor.selector,
-                "B-cond-2 must fire on signed-leg shortfall"
+                "B-cond-2 must fire on a proceeds shortfall"
             );
         }
     }
@@ -495,10 +488,10 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
         uint256 staleAsk = (askAtFloor * 3) / 2;
 
         // Seed the mock with a realistic recordOrder for the stale
-        // hash so the conduit/conduitKey + askPrice + signed legs are
+        // hash so the conduit/conduitKey + askPrice + fee legs are
         // ALL coherent at the auto-list path's read sites
-        // (`orderContextConduit` + `orderContextRead` + `orderFeeLegs` +
-        // `orderProtocolLegs`). Cheaper than 4 separate setters and
+        // (`orderContextConduit` + `orderContextRead` + `orderFeeLegs`).
+        // Cheaper than 3 separate setters and
         // mirrors the realistic state the borrower-post path would
         // produce.
         FeeLeg[] memory emptyFeeLegs = new FeeLeg[](0);
@@ -514,9 +507,7 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
             staleAsk,                        // fixed-price: end == start
             0,                               // auctionEndTime sentinel
             PREPAY_MODE_FIXED_PRICE,
-            emptyFeeLegs,
-            uint128(pctx.lenderLeg),         // signed legs == live legs ⇒ B-cond-2 quiet
-            uint128(pctx.treasuryLeg)
+            emptyFeeLegs
         );
         TestMutatorFacet(address(diamond))
             .setPrepayListingOrderHash(LOAN_ID, staleOrderHash);
@@ -543,8 +534,6 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
         assertEq(rc.mode, PREPAY_MODE_FIXED_PRICE, "rotation re-posts as fixed-price");
         assertEq(rc.askPrice, askAtFloor, "rotated askPrice == live askAtFloor");
         assertEq(rc.endAskPrice, askAtFloor, "endAskPrice == askPrice on fixed-price rotation");
-        assertEq(rc.signedLenderAmount, pctx.lenderLeg, "signed lender from live pctx");
-        assertEq(rc.signedTreasuryAmount, pctx.treasuryLeg, "signed treasury from live pctx");
     }
 
     /// @notice §18.12 — B-cond-5 expired Dutch listing. A Dutch order
@@ -592,9 +581,7 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
             pctx.lenderLeg,                  // endAskPrice (below start, well-defined decay)
             uint64(block.timestamp - 1 hours), // auctionEndTime EXPIRED ⇒ B-cond-5 fires
             PREPAY_MODE_DUTCH,
-            emptyFeeLegs,
-            uint128(pctx.lenderLeg),         // signed lender == live ⇒ B-cond-2 quiet
-            uint128(pctx.treasuryLeg)
+            emptyFeeLegs
         );
         TestMutatorFacet(address(diamond))
             .setPrepayListingOrderHash(LOAN_ID, expiredDutchHash);
@@ -610,15 +597,12 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
         assertTrue(newHash != bytes32(0), "rotation pinned a fresh hash");
         assertTrue(newHash != expiredDutchHash, "rotation replaced the expired Dutch hash");
 
-        // The rotation re-posts as fixed-price at the live floor with
-        // signed legs == live pctx legs.
+        // The rotation re-posts as fixed-price at the live floor.
         MockListingExecutorRecorder.RecordedCall memory rc =
             mockExecutor.recordedCallAt(mockExecutor.recordCallCount() - 1);
         assertEq(rc.mode, PREPAY_MODE_FIXED_PRICE, "B-cond-5 rotation re-posts as fixed-price");
         assertEq(rc.askPrice, askAtFloor, "rotated askPrice == live askAtFloor");
         assertEq(rc.endAskPrice, askAtFloor, "endAskPrice == askPrice on fixed-price re-post");
-        assertEq(rc.signedLenderAmount, pctx.lenderLeg, "signed lender from live pctx");
-        assertEq(rc.signedTreasuryAmount, pctx.treasuryLeg, "signed treasury from live pctx");
     }
 
     /// @notice §18.12 round-3.5 against Codex round-5 P2 line 263 —
@@ -662,9 +646,7 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
             askAtFloor / 2,                  // endAskPrice well below floor
             uint64(gracePeriodEnd),          // auctionEndTime ≈ grace end (B-cond-5 quiet)
             PREPAY_MODE_DUTCH,
-            emptyFeeLegs,
-            uint128(pctx.lenderLeg),         // signed lender == live ⇒ B-cond-2 quiet
-            uint128(pctx.treasuryLeg)
+            emptyFeeLegs
         );
         TestMutatorFacet(address(diamond))
             .setPrepayListingOrderHash(LOAN_ID, dutchOrderHash);

@@ -34,9 +34,8 @@ import {FeeLeg, OfferContext} from "../seaport/PrepayTypes.sol";
  *           - orderType     = `FULL_RESTRICTED`
  *           - offer item    = the loan's collateral NFT (ItemType
  *                             derived from `loan.collateralAssetType`)
- *           - consideration = lender / treasury / borrower split,
- *                             amounts + recipients derived from
- *                             the live floor at this block
+ *           - consideration = ONE proceeds leg paid to the Diamond,
+ *                             then the listing's fee legs (#2876)
  *           - startTime     = block.timestamp
  *           - endTime       = `loan.gracePeriodEnd` (exclusive
  *                             on the Seaport side too)
@@ -48,26 +47,35 @@ import {FeeLeg, OfferContext} from "../seaport/PrepayTypes.sol";
  *         Seaport's own view, the vault's ERC-1271 path can never
  *         authorise a different shape — closing the #306
  *         vault-ERC-1271-orderHash-shape-flaw.
+ *
+ *         **One proceeds leg (#2876).** The order pays the sale price,
+ *         less its fee legs, to the Diamond as a single leg, the same
+ *         shape as the offer-keyed parallel-sale order below. The
+ *         Diamond splits it when the fill settles: the lender and the
+ *         treasury are paid what a full repayment would owe at that
+ *         moment (with the lender's yield-fee discount resolved on the
+ *         treasury share), and the borrower position's holder receives
+ *         the rest in their vault. So nothing in the signed order names
+ *         the lender, the treasury or the borrower: a position-NFT
+ *         transfer or a treasury rotation no longer stales a listing,
+ *         and the payout always follows the holders at fill time.
  */
 library LibPrepayOrder {
-    /// @dev #656a — the nine scalar order-spec values that thread through the
+    /// @dev #656a — the scalar order-spec values that thread through the
     ///      canonical `OrderComponents` builder, bundled into a MEMORY struct so
     ///      they're read on-demand (one `mload` each at use) instead of living
-    ///      as nine simultaneous stack slots inside `_componentsAtMemory`. The
+    ///      as simultaneous stack slots inside `_componentsAtMemory`. The
     ///      whole `buildAndHash*` → `_componentsAtMemory` chain inlines into each
     ///      listing facet, so this struct is what keeps the flattened frame
-    ///      under the viaIR whole-unit stack ceiling and leaves slack for the
-    ///      #656b consolidate-before-listing hook. The PUBLIC builders keep their
-    ///      scalar signatures (callers + orderHash inputs unchanged); each just
-    ///      packs its scalars into an `OrderSpec` before the private build. Field
-    ///      order is documentation-only — every field maps 1:1 to the former
-    ///      positional argument, so the derived Seaport orderHash is byte-
-    ///      identical (asserted by the #656a parity tests).
+    ///      under the viaIR whole-unit stack ceiling. Field order is
+    ///      documentation-only.
     struct OrderSpec {
         uint256 startAskPrice;
         uint256 endAskPrice;
-        uint256 lenderLeg;
-        uint256 treasuryLeg;
+        /// @dev #2876 — recipient of the proceeds leg. Passed explicitly
+        ///      because the executor rebuilds the order for cancellation in
+        ///      its own context, where `address(this)` is not the Diamond.
+        address diamond;
         uint256 salt;
         bytes32 conduitKey;
         uint256 startTime;
@@ -78,78 +86,33 @@ library LibPrepayOrder {
     /// @dev Resolve the `OrderComponents` for a fixed-price prepay
     ///      listing and derive its Seaport orderHash. Single source
     ///      of truth consumed by `NFTPrepayListingFacet.postPrepayListing`
-    ///      + `updatePrepayListing`.
+    ///      + `updatePrepayListing`. Runs inside the Diamond, so the
+    ///      proceeds recipient is `address(this)`.
     ///
     ///      Round-5 Block A (#313): accepts an optional `feeLegs`
     ///      array (length 0..MAX_FEE_LEGS=4). Each fee leg is
-    ///      appended after the borrower leg, in the order the
+    ///      appended after the proceeds leg, in the order the
     ///      caller provides — the dapp orders them per the
     ///      OpenSea Collection API response so OpenSea's
     ///      submission-time enforcement sees the expected shape.
-    ///
-    ///      Round-5 Block B (#309): now a thin wrapper over the
-    ///      unified `_componentsCore` builder with
-    ///      `startAskPrice == endAskPrice == askPrice` (no decay)
-    ///      and the Seaport `endTime == pctx.graceEnd` (the
-    ///      historical fixed-price shape).
     function buildAndHash(
         IVaipakamPrepayContext.PrepayContext memory pctx,
         address vault,
         address executor,
         address seaport,
         uint256 askPrice,
-        uint256 lenderLeg,
-        uint256 treasuryLeg,
         uint256 salt,
         bytes32 conduitKey,
         FeeLeg[] calldata feeLegs
     ) internal view returns (bytes32 orderHash) {
-        OrderComponents memory components = _components(
-            pctx,
-            vault,
-            executor,
-            askPrice,
-            lenderLeg,
-            treasuryLeg,
-            salt,
-            conduitKey,
-            ISeaportOrderHash(seaport).getCounter(vault),
-            feeLegs
-        );
-        orderHash = ISeaportOrderHash(seaport).getOrderHash(components);
-    }
-
-    /// @dev T-086 Round-6 / Block D (#345) — memory-typed sibling
-    ///      of {buildAndHash} used by {NFTPrepayListingAtomicFacet}.
-    ///      Solidity doesn't allow overloading internal library
-    ///      functions by data location alone, so a distinct name.
-    ///      The atomic facet constructs an in-memory empty
-    ///      `FeeLeg[]` at the call site (the Vaipakam counter-order
-    ///      has no fee legs per §17.7), so we expose a memory-
-    ///      typed entry point. v1 callers continue to use the
-    ///      calldata `buildAndHash`; both flow through
-    ///      `_componentsAtMemory`.
-    function buildAndHashMem(
-        IVaipakamPrepayContext.PrepayContext memory pctx,
-        address vault,
-        address executor,
-        address seaport,
-        uint256 askPrice,
-        uint256 lenderLeg,
-        uint256 treasuryLeg,
-        uint256 salt,
-        bytes32 conduitKey,
-        FeeLeg[] memory feeLegs
-    ) internal view returns (bytes32 orderHash) {
-        OrderComponents memory components = _componentsAtMemory(
+        OrderComponents memory components = _componentsAtCalldata(
             pctx,
             vault,
             executor,
             OrderSpec({
                 startAskPrice: askPrice,
                 endAskPrice: askPrice,      // fixed-price: end == start
-                lenderLeg: lenderLeg,
-                treasuryLeg: treasuryLeg,
+                diamond: address(this),
                 salt: salt,
                 conduitKey: conduitKey,
                 startTime: block.timestamp,
@@ -161,27 +124,77 @@ library LibPrepayOrder {
         orderHash = ISeaportOrderHash(seaport).getOrderHash(components);
     }
 
+    /// @dev T-086 Round-6 / Block D (#345) — memory-typed sibling
+    ///      of {buildAndHash} used by the auto-list facet. Solidity
+    ///      doesn't allow overloading internal library functions by
+    ///      data location alone, so a distinct name.
+    function buildAndHashMem(
+        IVaipakamPrepayContext.PrepayContext memory pctx,
+        address vault,
+        address executor,
+        address seaport,
+        uint256 askPrice,
+        uint256 salt,
+        bytes32 conduitKey,
+        FeeLeg[] memory feeLegs
+    ) internal view returns (bytes32 orderHash) {
+        OrderComponents memory components = fixedPriceComponentsMem(
+            pctx,
+            vault,
+            executor,
+            askPrice,
+            salt,
+            conduitKey,
+            ISeaportOrderHash(seaport).getCounter(vault),
+            feeLegs
+        );
+        orderHash = ISeaportOrderHash(seaport).getOrderHash(components);
+    }
+
+    /// @dev The canonical fixed-price components a listing opened at this
+    ///      block signs: `startTime = block.timestamp`, `endTime =
+    ///      pctx.graceEnd`, proceeds to `address(this)` (the Diamond).
+    ///      {buildAndHashMem} hashes them; the atomic OpenSea-offer match
+    ///      submits the same items as its counter-order, so the order it
+    ///      records and the order it fills cannot differ in shape.
+    function fixedPriceComponentsMem(
+        IVaipakamPrepayContext.PrepayContext memory pctx,
+        address vault,
+        address executor,
+        uint256 askPrice,
+        uint256 salt,
+        bytes32 conduitKey,
+        uint256 counter,
+        FeeLeg[] memory feeLegs
+    ) internal view returns (OrderComponents memory) {
+        return _componentsAtMemory(
+            pctx,
+            vault,
+            executor,
+            OrderSpec({
+                startAskPrice: askPrice,
+                endAskPrice: askPrice,      // fixed-price: end == start
+                diamond: address(this),
+                salt: salt,
+                conduitKey: conduitKey,
+                startTime: block.timestamp,
+                seaportEndTime: pctx.graceEnd, // fixed-price: endTime = grace
+                counter: counter
+            }),
+            feeLegs
+        );
+    }
+
     /// @dev Round-5 Block B (#309): Dutch-mode variant of
-    ///      {buildAndHash}. The borrower-leg decays from
-    ///      `startAskPrice − projectedLenderLeg − projectedTreasuryLeg
-    ///      − sum(feeLegs.startAmount)` at `block.timestamp` down to
-    ///      `endAskPrice − projectedLenderLeg − projectedTreasuryLeg
-    ///      − sum(feeLegs.endAmount)` at `auctionEndTime`.
+    ///      {buildAndHash}. The proceeds leg decays from
+    ///      `startAskPrice − sum(feeLegs.startAmount)` at
+    ///      `block.timestamp` down to `endAskPrice −
+    ///      sum(feeLegs.endAmount)` at `auctionEndTime`, by Seaport's
+    ///      native amount interpolation. The facet has already checked
+    ///      that the end proceeds cover the floor projected at
+    ///      `auctionEndTime`; the floor only grows, so every earlier fill
+    ///      is covered too.
     ///
-    ///      `projectedLenderLeg` and `projectedTreasuryLeg` MUST be
-    ///      the values returned by
-    ///      `IVaipakamPrepayContext.getPrepayContext(loanId,
-    ///      auctionEndTime)` — i.e. the floor's lender + treasury
-    ///      shares projected at the auction's endTime under
-    ///      sign-time governance config (design doc §15.2). The
-    ///      facet computes them by reading the pctx at
-    ///      `auctionEndTime` and passes them through; the library
-    ///      doesn't re-derive (the diamond's view facet owns the
-    ///      floor formula).
-    ///
-    ///      Seaport's native amount interpolation handles the
-    ///      decay — every `ConsiderationItem` with `start != end`
-    ///      yields the linearly-interpolated value at fill time.
     ///      The `endTime` on the components struct is
     ///      `auctionEndTime`, NOT `pctx.graceEnd` — past
     ///      `auctionEndTime`, Seaport rejects the order as expired
@@ -195,26 +208,25 @@ library LibPrepayOrder {
         address seaport,
         uint256 startAskPrice,
         uint256 endAskPrice,
-        uint256 projectedLenderLeg,
-        uint256 projectedTreasuryLeg,
         uint256 auctionEndTime,
         uint256 salt,
         bytes32 conduitKey,
         FeeLeg[] calldata feeLegs
     ) internal view returns (bytes32 orderHash) {
-        OrderComponents memory components = _componentsDutchCalldata(
+        OrderComponents memory components = _componentsAtCalldata(
             pctx,
             vault,
             executor,
-            startAskPrice,
-            endAskPrice,
-            projectedLenderLeg,
-            projectedTreasuryLeg,
-            salt,
-            conduitKey,
-            block.timestamp,
-            auctionEndTime,
-            ISeaportOrderHash(seaport).getCounter(vault),
+            OrderSpec({
+                startAskPrice: startAskPrice,
+                endAskPrice: endAskPrice,
+                diamond: address(this),
+                salt: salt,
+                conduitKey: conduitKey,
+                startTime: block.timestamp,
+                seaportEndTime: auctionEndTime,
+                counter: ISeaportOrderHash(seaport).getCounter(vault)
+            }),
             feeLegs
         );
         orderHash = ISeaportOrderHash(seaport).getOrderHash(components);
@@ -242,26 +254,18 @@ library LibPrepayOrder {
     }
 
     /// @dev Rebuild the canonical `OrderComponents` for a previously
-    ///      recorded listing, using the sign-time inputs the executor
-    ///      pinned in {CollateralListingExecutor.OrderContext}.
-    ///
-    ///      T-086 #316: the executor calls this from `clearOrder` to
-    ///      reconstruct the order it originally authorised so it can
-    ///      forward `Seaport.cancel` at terminal cleanup. We CAN'T
-    ///      reuse {buildAndHash} for this: it stamps
-    ///      `startTime = block.timestamp` (only correct AT SIGN TIME)
-    ///      and re-derives the live floor at the CURRENT block (only
-    ///      correct if the floor hasn't drifted). Cancel-time
-    ///      reconstruction needs the original `startTime` + the
-    ///      sign-time pctx (the caller derives `pctx` by calling
-    ///      `getPrepayContext(loanId, ctx.startTime)` so the floor
-    ///      legs evaluate as-of the original timestamp).
-    ///
-    ///      Pure function: the executor's `clearOrder` is the
-    ///      single internal consumer.
+    ///      recorded fixed-price (or atomic-match) listing, from the
+    ///      sign-time inputs the executor pinned in
+    ///      {CollateralListingExecutor.OrderContext}, so the executor can
+    ///      forward `Seaport.cancel` at terminal cleanup (T-086 #316).
+    ///      {buildAndHash} can't be reused: it stamps `startTime =
+    ///      block.timestamp`. The order carries no loan amounts (#2876),
+    ///      so the rebuild needs only the recorded inputs, the loan's
+    ///      collateral and grace end (from `pctx`) and the Diamond.
     function componentsForCancel(
         IVaipakamPrepayContext.PrepayContext memory pctx,
         address executor,
+        address diamond,
         uint256 askPrice,
         bytes32 conduitKey,
         uint256 salt,
@@ -276,8 +280,7 @@ library LibPrepayOrder {
             OrderSpec({
                 startAskPrice: askPrice,
                 endAskPrice: askPrice,        // fixed-price: end == start
-                lenderLeg: pctx.lenderLeg,
-                treasuryLeg: pctx.treasuryLeg,
+                diamond: diamond,
                 salt: salt,
                 conduitKey: conduitKey,
                 startTime: startTime,
@@ -289,54 +292,17 @@ library LibPrepayOrder {
     }
 
     /// @dev Round-5 Block B (#309) — Dutch-mode cancel-time
-    ///      reconstruction. The executor calls this from
-    ///      `_tryCancelOnSeaport` when the recorded order's `mode`
-    ///      tag is `PREPAY_MODE_DUTCH`.
-    ///
-    ///      Per-input source at cancel time:
-    ///        - `startAskPrice` / `endAskPrice` / `auctionEndTime`
-    ///          / `salt` / `conduitKey` / `startTime` / `fee legs`
-    ///          come from `OrderContext` + the per-orderHash
-    ///          fee-leg array — every borrower-controlled +
-    ///          sign-time value is stamped at `recordOrder` so
-    ///          cancel-time replays them verbatim.
-    ///        - `projectedLenderLeg` / `projectedTreasuryLeg` are
-    ///          NOT pinned in `OrderContext`. The caller reads
-    ///          pctx at `auctionEndTime` (the same lookup time
-    ///          the facet used at sign time) and supplies the
-    ///          freshly-resolved `pctx.lenderLeg` /
-    ///          `pctx.treasuryLeg` here.
-    ///
-    ///      Under STABLE governance config — the common case —
-    ///      the cancel-time pctx-at-`auctionEndTime` read returns
-    ///      the same values the facet signed against, the
-    ///      recomputed hash equals the recorded orderHash, and
-    ///      `Seaport.cancel` forwards cleanly. Under governance
-    ///      drift (e.g. a mid-auction `setFeesConfig` bump that
-    ///      moved `treasuryFeeBps`), the projected legs diverge,
-    ///      the hash recompute mismatches, and
-    ///      `_tryCancelOnSeaport` emits the existing
-    ///      `SeaportCancelSkipped` breadcrumb — matching the
-    ///      fixed-price path's drift-handling shape. The proper
-    ///      cleanup (binding delete + vault revoke) still
-    ///      completes; only the accelerated OpenSea catalog
-    ///      refresh is lost.
-    ///
-    ///      Pinning the projected legs explicitly into
-    ///      `OrderContext` (+2 slots) would eliminate the
-    ///      drift-skip, but the symmetric fee-curve-DECREASE
-    ///      case (treasuryFeeBps drops mid-auction) would let
-    ///      frozen-shape orders keep filling at above-current-
-    ///      policy treasury take — wrong protocol behaviour per
-    ///      design doc §15.2's "Alternative considered + rejected"
-    ///      box. v1 accepts the drift-skip trade-off.
+    ///      reconstruction. Every input is recorded at sign time
+    ///      (`startAskPrice` / `endAskPrice` / `auctionEndTime` / `salt`
+    ///      / `conduitKey` / `startTime` / fee legs); since #2876 the
+    ///      order carries no projected loan legs, so a governance change
+    ///      mid-auction no longer makes the rebuilt hash drift.
     function componentsForCancelDutch(
         IVaipakamPrepayContext.PrepayContext memory pctx,
         address executor,
+        address diamond,
         uint256 startAskPrice,
         uint256 endAskPrice,
-        uint256 projectedLenderLeg,
-        uint256 projectedTreasuryLeg,
         bytes32 conduitKey,
         uint256 salt,
         uint256 startTime,
@@ -351,8 +317,7 @@ library LibPrepayOrder {
             OrderSpec({
                 startAskPrice: startAskPrice,
                 endAskPrice: endAskPrice,
-                lenderLeg: projectedLenderLeg,
-                treasuryLeg: projectedTreasuryLeg,
+                diamond: diamond,
                 salt: salt,
                 conduitKey: conduitKey,
                 startTime: startTime,
@@ -364,76 +329,6 @@ library LibPrepayOrder {
     }
 
     // ── Internal helpers ────────────────────────────────────────────
-
-    function _components(
-        IVaipakamPrepayContext.PrepayContext memory pctx,
-        address vault,
-        address executor,
-        uint256 askPrice,
-        uint256 lenderLeg,
-        uint256 treasuryLeg,
-        uint256 salt,
-        bytes32 conduitKey,
-        uint256 counter,
-        FeeLeg[] calldata feeLegs
-    ) private view returns (OrderComponents memory) {
-        return _componentsAtCalldata(
-            pctx,
-            vault,
-            executor,
-            OrderSpec({
-                startAskPrice: askPrice,
-                endAskPrice: askPrice,      // fixed-price: end == start
-                lenderLeg: lenderLeg,
-                treasuryLeg: treasuryLeg,
-                salt: salt,
-                conduitKey: conduitKey,
-                startTime: block.timestamp,
-                seaportEndTime: pctx.graceEnd, // fixed-price: endTime = grace
-                counter: counter
-            }),
-            feeLegs
-        );
-    }
-
-    /// @dev Round-5 Block B (#309) — Dutch sign-time calldata path.
-    ///      Mirrors {_components} but takes explicit
-    ///      `(startAskPrice, endAskPrice, projectedLenderLeg,
-    ///      projectedTreasuryLeg, auctionEndTime)` so Seaport's
-    ///      native amount interpolation handles the linear decay.
-    function _componentsDutchCalldata(
-        IVaipakamPrepayContext.PrepayContext memory pctx,
-        address vault,
-        address executor,
-        uint256 startAskPrice,
-        uint256 endAskPrice,
-        uint256 projectedLenderLeg,
-        uint256 projectedTreasuryLeg,
-        uint256 salt,
-        bytes32 conduitKey,
-        uint256 startTime,
-        uint256 auctionEndTime,
-        uint256 counter,
-        FeeLeg[] calldata feeLegs
-    ) private pure returns (OrderComponents memory) {
-        return _componentsAtCalldata(
-            pctx,
-            vault,
-            executor,
-            OrderSpec({
-                startAskPrice: startAskPrice,
-                endAskPrice: endAskPrice,
-                lenderLeg: projectedLenderLeg,
-                treasuryLeg: projectedTreasuryLeg,
-                salt: salt,
-                conduitKey: conduitKey,
-                startTime: startTime,
-                seaportEndTime: auctionEndTime,
-                counter: counter
-            }),
-            feeLegs
-        );
-    }
 
     /// @dev Pure body for the calldata-feeLegs flavour (the sign-time
     ///      path through {buildAndHash} / {buildAndHashDutch}).
@@ -456,25 +351,12 @@ library LibPrepayOrder {
         return _componentsAtMemory(pctx, vault, executor, spec, feeLegsMem);
     }
 
-    /// @dev Pure body for the memory-feeLegs flavour (the cancel-time
-    ///      reconstruction path through {componentsForCancel} /
-    ///      {componentsForCancelDutch}, where the executor reads the
-    ///      fee legs out of storage into memory before calling).
-    ///
-    ///      Unified across both modes:
-    ///      - Fixed-price: `startAskPrice == endAskPrice == askPrice`,
-    ///        `lenderLeg`/`treasuryLeg` are the LIVE values at
-    ///        sign-time (read from pctx at sign-time), and
-    ///        `seaportEndTime == pctx.graceEnd`.
-    ///      - Dutch: `startAskPrice ≥ endAskPrice`, `lenderLeg`/
-    ///        `treasuryLeg` are the PROJECTED-MAX values at
-    ///        `auctionEndTime` under sign-time governance config
-    ///        (read from pctx at `auctionEndTime`), and
-    ///        `seaportEndTime == auctionEndTime`.
-    ///
-    ///      Parameterised on `startTime` AND `seaportEndTime` so
-    ///      cancel-time reconstruction can pin the ORIGINAL sign-time
-    ///      stamps instead of the current block.
+    /// @dev Pure body shared by every loan-keyed builder. Fixed-price:
+    ///      `startAskPrice == endAskPrice` and `seaportEndTime ==
+    ///      pctx.graceEnd`. Dutch: `startAskPrice ≥ endAskPrice` and
+    ///      `seaportEndTime == auctionEndTime`. Parameterised on
+    ///      `startTime` and `seaportEndTime` so cancel-time
+    ///      reconstruction can pin the original sign-time stamps.
     function _componentsAtMemory(
         IVaipakamPrepayContext.PrepayContext memory pctx,
         address vault,
@@ -503,44 +385,12 @@ library LibPrepayOrder {
             });
         }
 
-        // ─── Consideration (3 protocol legs + N fee legs) ──────
-        ConsiderationItem[] memory consideration = new ConsiderationItem[](3 + feeLegs.length);
-        consideration[0] = ConsiderationItem({
-            itemType: ItemType.ERC20,
-            token: pctx.principalAsset,
-            identifierOrCriteria: 0,
-            startAmount: spec.lenderLeg,
-            endAmount: spec.lenderLeg,
-            recipient: payable(pctx.lenderNftOwner)
-        });
-        consideration[1] = ConsiderationItem({
-            itemType: ItemType.ERC20,
-            token: pctx.principalAsset,
-            identifierOrCriteria: 0,
-            startAmount: spec.treasuryLeg,
-            endAmount: spec.treasuryLeg,
-            recipient: payable(pctx.treasury)
-        });
-        // Borrower remainder. Round 5 (#313 + #309) deducts the sum
-        // of fee-leg start/end amounts in addition to lender +
-        // treasury. The facet's `_requireAskCoversFloor[WithFees]` +
-        // start-state-solvency check (§14.5 + §15.2) ensure the
-        // underflow is guarded by the earlier revert, not by
-        // `unchecked`.
-        //
-        // Round-5 Block B (#309) — `startAskPrice` and `endAskPrice`
-        // are independent caller-supplied parameters. For the
-        // fixed-price callers (`buildAndHash` /
-        // `componentsForCancel`) the facet enforces
-        // `startAskPrice == endAskPrice` and every fee-leg satisfies
-        // `startAmount == endAmount`, so the borrower leg's
-        // start/end collapses to a constant. For Dutch callers
-        // (`buildAndHashDutch` / `componentsForCancelDutch`) the
-        // facet enforces `startAskPrice ≥ endAskPrice` and
-        // per-fee-leg start ≥ end, AND `borrowerLeg.startAmount ≥
-        // borrowerLeg.endAmount` — the resulting consideration
-        // decays linearly between the two stamps under Seaport's
-        // native amount interpolation.
+        // ─── Consideration (1 proceeds leg + N fee legs) ───────
+        // #2876 — the buyer pays exactly the ask: the fee legs go to
+        // their recipients and the rest is ONE proceeds leg to the
+        // Diamond, which splits it between lender, treasury and the
+        // borrower position at the fill. The facet's floor checks
+        // guarantee the subtraction cannot underflow.
         uint256 feeSumStart = 0;
         uint256 feeSumEnd = 0;
         for (uint256 i = 0; i < feeLegs.length; ) {
@@ -548,17 +398,18 @@ library LibPrepayOrder {
             feeSumEnd += uint256(feeLegs[i].endAmount);
             unchecked { ++i; }
         }
-        consideration[2] = ConsiderationItem({
+        ConsiderationItem[] memory consideration = new ConsiderationItem[](1 + feeLegs.length);
+        consideration[0] = ConsiderationItem({
             itemType: ItemType.ERC20,
             token: pctx.principalAsset,
             identifierOrCriteria: 0,
-            startAmount: spec.startAskPrice - spec.lenderLeg - spec.treasuryLeg - feeSumStart,
-            endAmount: spec.endAskPrice - spec.lenderLeg - spec.treasuryLeg - feeSumEnd,
-            recipient: payable(pctx.borrowerNftOwner)
+            startAmount: spec.startAskPrice - feeSumStart,
+            endAmount: spec.endAskPrice - feeSumEnd,
+            recipient: payable(spec.diamond)
         });
         // Append fee legs (Round 5 #313).
         for (uint256 i = 0; i < feeLegs.length; ) {
-            consideration[3 + i] = ConsiderationItem({
+            consideration[1 + i] = ConsiderationItem({
                 itemType: ItemType.ERC20,
                 token: pctx.principalAsset,
                 identifierOrCriteria: 0,
@@ -580,12 +431,6 @@ library LibPrepayOrder {
             // invariant + Seaport's restricted-order routing.
             orderType: OrderType.FULL_RESTRICTED,
             startTime: spec.startTime,
-            // Round-5 Block B (#309) — caller-supplied Seaport
-            // `endTime`. Fixed-price callers pass `pctx.graceEnd`
-            // (unchanged from the Round-4 shape); Dutch callers
-            // pass `auctionEndTime` so Seaport's amount
-            // interpolation stops at the auction close + the order
-            // becomes unfillable past that tick.
             endTime: spec.seaportEndTime,
             zoneHash: bytes32(0),
             salt: spec.salt,
@@ -601,9 +446,8 @@ library LibPrepayOrder {
     ///         (no-loan branch) parallel-sale listing. Mirror of
     ///         {buildAndHashMem} for the offer-keyed surface; called
     ///         from `OfferCreateFacet.postParallelSaleListing`.
-    /// @dev    The no-loan branch's consideration shape is
-    ///         dramatically simpler than the loan-keyed branch
-    ///         (§19.6b):
+    /// @dev    The no-loan branch's consideration has the same shape as
+    ///         the loan-keyed branch since #2876 (§19.6b):
     ///           - consideration[0] = single proceeds leg paid in
     ///             `principalAsset` to `address(diamond)` (NOT
     ///             directly to the vault — round-3.1 against Codex
@@ -618,11 +462,10 @@ library LibPrepayOrder {
     ///             sign-time, NOT lifted from a bidder-side
     ///             SignedZone).
     ///
-    ///         No lender / treasury / borrower-remainder split: there
-    ///         is no loan, no lender accrual, no protocol-cut-of-
-    ///         interest to collect at this stage. The full
-    ///         `askPrice` lands as the single proceeds leg to the
-    ///         diamond.
+    ///         What differs is the settlement: with no loan yet, the
+    ///         Diamond credits the whole proceeds leg to the borrower; once
+    ///         a lender has accepted, it splits the leg exactly as a
+    ///         loan-keyed sale does.
     ///
     ///         Same FULL_RESTRICTED order-type + zone-vault offerer
     ///         pattern as the loan-keyed builder. The executor's
@@ -727,9 +570,8 @@ library LibPrepayOrder {
         // ─── Consideration (1 proceeds leg + N fee legs) ───────
         // Codex round-3 P2 #6 — feeSum MUST be subtracted from the
         // proceeds leg so the BUYER's total payment equals exactly
-        // `askPrice` (the displayed listing price), mirroring the
-        // loan-keyed `_componentsAtMemory` shape where the borrower
-        // remainder = startAskPrice - lenderLeg - treasuryLeg - feeSum.
+        // `askPrice` (the displayed listing price), the same rule as
+        // the loan-keyed `_componentsAtMemory`.
         // Pre-Codex round-3, the proceeds leg got the full askPrice +
         // fee legs were appended on top — so buyers paid
         // `askPrice + feeSum`, charging fees TWICE (once via the

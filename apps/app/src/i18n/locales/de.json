@@ -2490,7 +2490,7 @@
         "OfferCreatorFullTariffSet": "Gebührenwahl für das Angebot festgehalten",
         "OfferKeeperEnabled": "Keeper-Berechtigung aktualisiert",
         "OfferSaleProceedsCredited": "Verkaufserlös im Tresor gutgeschrieben",
-        "OfferSaleProceedsSplit": "Verkaufserlös aufgeteilt",
+        "CollateralSaleProceedsSplit": "Verkaufserlös aufgeteilt",
         "ParallelSaleLockReleased": "Verkaufsangebot der Sicherheiten freigegeben",
         "PartialCollateralWithdrawn": "Sicherheiten teilweise abgezogen",
         "PostParallelSaleListing": "Verkaufsangebot der Sicherheiten veröffentlicht",

@@ -112,21 +112,15 @@ export interface IndexerPublishInput {
   }>;
   /** T-086 Round-5 Block B (#309) — Dutch-decay parameters. When
    *  `undefined` (fixed-price post), the JS reconstruction uses
-   *  the Round-4 + Block A shape with `endAskPrice == askPrice`
-   *  and the Seaport `endTime == graceEnd`. When defined, the
-   *  borrower leg decays + the Seaport `endTime` is
+   *  `endAskPrice == askPrice` and the Seaport `endTime == graceEnd`.
+   *  When defined, the proceeds leg decays + the Seaport `endTime` is
    *  `auctionEndTime`. The indexer reads these from the event's
-   *  `endAskPrice` / `auctionEndTime` / `mode` non-indexed
-   *  fields; on `mode == PREPAY_MODE_FIXED_PRICE (0)` it omits
-   *  this struct entirely (passes `undefined`). The two extra
-   *  projected legs (`projectedLenderLeg` / `projectedTreasuryLeg`)
-   *  come from an RPC `getPrepayContext(loanId, auctionEndTime)`
-   *  the indexer makes for the Dutch path. */
+   *  `endAskPrice` / `auctionEndTime` / `mode` non-indexed fields;
+   *  on `mode == PREPAY_MODE_FIXED_PRICE (0)` it omits this struct
+   *  entirely (passes `undefined`). */
   dutch?: {
     startAskPrice: bigint;
     endAskPrice: bigint;
-    projectedLenderLeg: bigint;
-    projectedTreasuryLeg: bigint;
     auctionEndTime: bigint;
   };
 }
@@ -191,31 +185,17 @@ export async function indexerPublishPrepayListing(
     const startTime = BigInt(block.timestamp);
 
     // 2. Pull the diamond's snapshot context the post call
-    //    consumed — `getPrepayContext(loanId, asOfTimestamp)`
-    //    re-runs the live-floor math at the post-tx block.
-    //    Round-5 Block B (#309): for Dutch posts, the on-chain
-    //    builder reads pctx at `auctionEndTime` (so the projected
-    //    lender + treasury legs match what was signed). For fixed-
-    //    price posts, pctx is read at `startTime` as before.
-    //    Round-5 Block B (#309) post-merge polish — Codex P2: pin
-    //    the eth_call to the post-tx's block number so the
-    //    governance config (`cfgTreasuryFeeBps` etc.) reads as it
-    //    was at sign time, not as it is now. The `asOfTimestamp`
-    //    arg only affects the live-floor interest-accrual math;
-    //    governance config reads from storage at the current
-    //    block unless we override `blockNumber`. Without this, a
-    //    mid-window treasury-fee bump between post and indexer-
-    //    ingest would cause the JS reconstruction to hash to a
-    //    different orderHash than the on-chain signed one, and
-    //    the defensive `expectedOrderHash` compare would skip
-    //    the publish even though the on-chain order is still
-    //    validly signed + fillable.
-    const ctxLookupTime = input.dutch?.auctionEndTime ?? startTime;
+    //    consumed. Since #2876 the order hashes no lender, treasury or
+    //    borrower figure (one proceeds leg pays the Diamond, which
+    //    splits it at the fill), so only the loan's fixed fields are
+    //    read here: the vault, the collateral, the lending asset and
+    //    the grace end. The call is pinned to the post-tx block so the
+    //    vault and grace end read as they were at sign time.
     const ctx = (await input.publicClient.readContract({
       address: input.diamondAddress,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'getPrepayContext',
-      args: [input.loanId, ctxLookupTime],
+      args: [input.loanId, startTime],
       blockNumber: receipt.blockNumber,
     })) as PrepayContextOnChain;
 
@@ -255,12 +235,8 @@ export async function indexerPublishPrepayListing(
       collateralTokenId: ctx.collateralTokenId,
       collateralQuantity: ctx.collateralQuantity,
       principalAsset: ctx.principalAsset,
-      lenderLeg: ctx.lenderLeg,
-      treasuryLeg: ctx.treasuryLeg,
       askPrice: input.askPrice,
-      lenderNftOwner: ctx.lenderNftOwner,
-      borrowerNftOwner: ctx.borrowerNftOwner,
-      treasury: ctx.treasury,
+      diamond: input.diamondAddress,
       startTime,
       graceEnd: ctx.graceEnd,
       salt: input.salt,
@@ -270,26 +246,18 @@ export async function indexerPublishPrepayListing(
       // thread the recorded fee legs through so the JS
       // reconstruction matches the on-chain hash on fee-enforced
       // collections. Empty for fee-free posts; the call collapses
-      // to the Round-4 3-leg shape.
+      // to the one proceeds leg.
       feeLegs: input.feeLegs,
       // T-086 Round-5 Block B (#309) — pass the recorded Dutch
-      // params through to the shape builder. When `input.dutch`
-      // is undefined the builder falls back to the fixed-price
-      // shape verbatim. When defined, the builder uses
-      // `dutch.startAskPrice` / `dutch.endAskPrice` for the
-      // borrower leg decay, `dutch.projectedLenderLeg` /
-      // `dutch.projectedTreasuryLeg` for the pinned protocol
-      // legs, and `dutch.auctionEndTime` for the Seaport
-      // `endTime`. We re-derive the projected legs from the
-      // pctx read at `auctionEndTime` above so the caller
-      // doesn't have to (the caller only supplies the three
-      // event-derived values).
+      // params through to the shape builder. When `input.dutch` is
+      // undefined the builder emits the fixed-price shape; when
+      // defined, the proceeds leg decays from the start ask to the
+      // end ask (net of the fee legs) and Seaport `endTime` is the
+      // auction end.
       dutch: input.dutch
         ? {
             startAskPrice: input.dutch.startAskPrice,
             endAskPrice: input.dutch.endAskPrice,
-            projectedLenderLeg: ctx.lenderLeg,
-            projectedTreasuryLeg: ctx.treasuryLeg,
             auctionEndTime: input.dutch.auctionEndTime,
           }
         : undefined,
@@ -373,9 +341,7 @@ interface PrepayContextOnChain {
   lenderLeg: bigint;
   treasuryLeg: bigint;
   graceEnd: bigint;
-  lenderNftOwner: `0x${string}`;
   borrowerNftOwner: `0x${string}`;
-  treasury: `0x${string}`;
   borrowerVault: `0x${string}`;
 }
 
