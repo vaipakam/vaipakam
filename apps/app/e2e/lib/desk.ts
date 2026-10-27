@@ -37,6 +37,7 @@ import {
 } from './chain';
 import { accountFor, type Role } from './wallets';
 import { increaseTime } from './anvil';
+import { fetchSignedBook } from './signed';
 
 export const TLIQ = MOCKS!.liquidToken as `0x${string}`;
 /** Second liquid faucet mock (deployments key `liquidToken2`): mUSDC —
@@ -76,16 +77,20 @@ export async function liveOfferTenors(
   return new Set(rankings.map((r) => Number(r.durationDays)));
 }
 
-/** A tenor bucket for the pair with NO live offers on the fork right
- *  now (default WETH/tLIQ). Each test recomputes, so a previous test's
- *  (or retry's) seeds exclude their bucket automatically.
+/** A tenor bucket for the pair with NO resting offers right now (default
+ *  WETH/tLIQ): none live on the fork AND none in the stub's signed book.
+ *  A signed order never touches the chain, so a bucket that holds only a
+ *  resting signed order (spec 37 leaves them) reads empty on-chain while
+ *  its ladder is not; both books count (#2934). Each test recomputes, so a
+ *  previous test's (or retry's) seeds exclude their bucket automatically.
  *
  *  CROSS-SPEC BUCKET BUDGET: a pair has only the six
  *  {@link BUCKET_PREFERENCE} buckets, shared by EVERY spec that seeds
  *  resting GTC offers into it — plus every retry burns another bucket.
  *  A spec file that rests GTC offers must therefore own its OWN pair:
  *  WETH/tLIQ belongs to specs 17/18; spec 19 trades WETH/mUSDC
- *  ({@link MUSDC}, deployments `liquidToken2`). When a new spec needs
+ *  ({@link MUSDC}, deployments `liquidToken2`), which specs 37 and 46
+ *  share for one signed order per test. When a new spec needs
  *  resting desk offers, give it the next untouched pair instead of
  *  squeezing into an owned one — exhaustion throws here, but only at
  *  runtime, in whichever spec runs last. */
@@ -94,9 +99,13 @@ export async function freshTenor(
   coll: `0x${string}` = TLIQ,
 ): Promise<number> {
   const live = await liveOfferTenors(lend, coll);
-  for (const d of BUCKET_PREFERENCE) if (!live.has(d)) return d;
+  for (const d of BUCKET_PREFERENCE) {
+    if (live.has(d)) continue;
+    if ((await fetchSignedBook(lend, coll, d)).length > 0) continue;
+    return d;
+  }
   throw new Error(
-    `every duration bucket for pair ${lend}/${coll} already has live offers on the fork — no fresh market to test in (see freshTenor's bucket-budget note: one pair per resting-GTC spec file)`,
+    `every duration bucket for pair ${lend}/${coll} already has resting offers (on the fork or in the signed book) — no fresh market to test in (see freshTenor's bucket-budget note: one pair per resting-GTC spec file)`,
   );
 }
 
