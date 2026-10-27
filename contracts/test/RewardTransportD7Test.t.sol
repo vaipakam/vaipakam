@@ -188,9 +188,11 @@ contract RewardTransportD7Test is SetupTest, IVaipakamErrors {
     function test_TheRootedIngress_FitsTheDestinationBudget() public {
         uint256[] memory dayIds = _days(LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP, 1);
         LibD6Delivery.Delivery memory d = _delivery(10e18, dayIds, 91, keccak256("gas-d6"), 4e18, 0);
-        uint256 before = gasleft();
         LibD6Delivery.deliver(address(diamond), d);
-        uint256 used = before - gasleft();
+        // The Diamond call alone, not a gasleft() window around the helper:
+        // the window also counted the helper building the Merkle leaves and
+        // the calldata in the test's own frame, which no chain executes.
+        uint256 used = vm.lastCallGas().gasTotalUsed;
         emit log_named_uint("rooted ingress gas", used);
         LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("gas-d6"))));
         assertTrue(p.attested, "fixture-live: the full path ran (the epoch attested from the wire)");

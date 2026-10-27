@@ -1,0 +1,7 @@
+## Thread — Reward remittance destination gas raised to 1,100,000 (PR #2974)
+
+A reward remittance now asks the mirror to run its receiver with 1,100,000 gas, up from 1,050,000. The figure is derived from the mirror's rooted ingress, the call every remittance makes on arrival, with the receiver's own reserve and a quarter's margin added. After #918 that call measures 750,163 gas, so under the margin rule the old limit was 12,704 gas short. The call itself still fitted under the old limit; what it lacked was the margin, which absorbs the transport's own receive overhead and the gas lost at each forwarding hop.
+
+#918 had recorded 735,327 gas and kept the old limit. That figure came from an older forge (1.5.1). On the same bytecode it reads 24,708 gas lower than the version CI pins (1.8.3), and it is not established which of the two matches a chain. The derivation therefore takes the higher figure. It also came from a window that counted the test helper's own work along with the Diamond call. The check now measures the Diamond call alone, and the figure is recorded with the forge version CI pins. That check runs only in the pre-deploy full regression, which is why the shortfall did not show on #918's own CI.
+
+The only cost of the higher limit is the destination-execution part of each remittance's CCIP fee, which the sender quotes on-chain from the same constant. Fresh deploy only, like the rest of #918.

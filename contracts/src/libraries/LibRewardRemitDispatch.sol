@@ -76,20 +76,26 @@ library LibRewardRemitDispatch {
     ///         in `RewardTransportD7Test` — cold, over the widest list — plus
     ///         {REWARD_BUDGET_RECEIVER_RESERVE} for the receiver's own work,
     ///         with a quarter's margin, rounded up to the next 50,000.
-    ///         Re-measured 2026-10-27 (#918, the day's whole and per-part
-    ///         sums on the D7 wire): rooted 735,327, so
-    ///         (735,327 + 100,000) x 1.25 = 1,044,159, still rounded up to
-    ///         1,050,000. Earlier: 710,205 on 2026-10-24 (#2777) and 685,689
-    ///         on 2026-10-12 under a limit of 1,000,000. The next growth of
-    ///         about 4,700 gas crosses the rounding step and moves the limit to
-    ///         1,100,000. Re-derive it whenever the cell's figure
-    ///         moves; the cell fails once the margin is gone. Raising it raises only the
+    ///         Re-measured 2026-10-27 after #918 (the day's whole and
+    ///         per-part sums on the D7 wire), as the Diamond call's own gas
+    ///         under forge 1.8.3, the version CI pins: rooted 750,163, so
+    ///         (750,163 + 100,000) x 1.25 = 1,062,704, rounded up to
+    ///         1,100,000. #918 recorded 735,327 and kept 1,050,000, but that
+    ///         figure came from forge 1.5.1, which reads the same bytecode
+    ///         24,708 gas lower on this call (which of the two matches a
+    ///         chain is not established, so the derivation takes the higher),
+    ///         and from a gasleft() window that also counted the test
+    ///         helper's own work. Measure with the pinned forge. Earlier figures, both window-based: 710,205 on
+    ///         2026-10-24 (#2777) and 685,689 on 2026-10-12, under limits of
+    ///         1,050,000 and 1,000,000. Headroom now: about 29,800 gas before
+    ///         the next step to 1,150,000. Re-derive it whenever the cell's
+    ///         figure moves; the cell fails once the margin is gone. Raising it raises only the
     ///         destination-execution part of each remittance's CCIP fee, which
     ///         the sender quotes on-chain from this same constant. The 300,000
     ///         it once stood at was below even the ingress, so automatic
     ///         execution would have failed on every delivery to an activated
     ///         mirror.
-    uint256 internal constant REWARD_BUDGET_DEST_GAS_LIMIT = 1_050_000;
+    uint256 internal constant REWARD_BUDGET_DEST_GAS_LIMIT = 1_100_000;
 
     /// @notice What the budget reserves for the receiver's own work around the
     ///         Diamond's ingress — the router's call, the frame decode, the token
