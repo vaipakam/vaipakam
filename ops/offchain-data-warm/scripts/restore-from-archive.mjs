@@ -100,14 +100,6 @@ export const BORN_OFF_CHAIN_TABLES = new Set([
   'pre_grace_notify_state', // archived since #1480; absent from older archives
   'telegram_links',
   'support_tickets',
-  // #1349 M5 (migration 0047) — pre-cutover recycling day figures. The one
-  // born-off-chain table in the recycling set: the rest are chain-log folds
-  // that §6 replays, but these are recomputed from a getter whose input a
-  // role demotion can overwrite, after which a re-run yields different
-  // numbers and the original is gone. Unknown tables are rejected as
-  // hostile, so omitting it here would make every post-rollout archive
-  // unrestorable (Codex #1513 r1 P1).
-  'recycle_day_backfill',
   // #2197 (migration 0065) — loan rows proven absent on chain and withdrawn
   // from publication. A replay cannot recreate them, so the archive is the
   // only copy of the withdrawn row.
@@ -132,6 +124,30 @@ const RE_DERIVABLE_TABLES = new Set([
 ]);
 const KNOWN_ARCHIVE_TABLES = new Set([...BORN_OFF_CHAIN_TABLES, ...RE_DERIVABLE_TABLES]);
 const KNOWN_LZ_TABLES = new Set(['lz_alert_state', 'scan_cursor', 'oft_balance_history']);
+
+/**
+ * Tables the backup USED to export to d1.archive and no longer does, each
+ * with why. Recognised so an archive from before the retirement stays
+ * restorable — refusing it as unknown would make every archive of that era
+ * unusable, including the known-good baseline an incident restore may need
+ * to reach back for — but NEVER imported, and no batch (not even a clear)
+ * is emitted for it: nothing reads the table, and once its drop migration
+ * has applied the live schema has no table a clear could target.
+ *
+ * A retired table is accepted only EMPTY. Each one is listed here because
+ * nothing in the platform ever produced rows for it, so an archived row is
+ * not something this converter can explain. Skipping it would hide that;
+ * importing it is impossible. The converter refuses instead, like any other
+ * shape the writer cannot produce, and the operator picks a different
+ * archive or escalates.
+ */
+export const RETIRED_ARCHIVE_TABLES = new Map([
+  [
+    'recycle_day_backfill',
+    'pre-cutover recycling day figures (migration 0047, #1349 M5), retired by #2937: ' +
+      'no writer ever shipped, and every chain is a fresh deploy with no pre-cutover day to recover',
+  ],
+]);
 
 // FK children of user_thresholds (ON DELETE CASCADE). Replacing the
 // parent destroys live child rows, so an archive that carries the
@@ -158,7 +174,6 @@ const BASELINE_TABLES = [
 // check below, with the cascade-specific consequence spelled out.)
 const ERA_GATED_TABLES = {
   support_tickets: 'migration 0028 (#1040)',
-  recycle_day_backfill: 'migration 0047 (#1349 M5)',
   loan_orphans: 'migration 0065 (#2197)',
   // Its migration is older than the archiving: what gates it is #1481, the
   // change that started exporting it.
@@ -203,14 +218,6 @@ const REQUIRED_TABLE_COLUMNS = {
     'id', 'at', 'action', 'wallet_hash', 'admin_wallet',
     'detail', 'legal_doc_ref', 'legal_doc_sha256',
   ],
-  // `armed` is the load-bearing one: an archive omitting it would restore
-  // every pre-cutover day as NOT armed, republishing figures nothing
-  // reserved as though the platform had committed to them.
-  recycle_day_backfill: [
-    'chain_id', 'day_id', 'stamped', 'schedule_floor', 'recycled_budget',
-    'fresh_drawdown', 'absorbed_local', 'absorbed_mirror', 'armed',
-    'armed_from_day', 'recorded_at', 'generator_rev',
-  ],
   // `row_json` and `related_json` are the withdrawn rows themselves; without
   // them the record says only that something was withdrawn, not what.
   loan_orphans: [
@@ -245,7 +252,6 @@ const TRUSTED_PRIMARY_KEYS = {
   support_tickets: ['ticket_id'],
   diag_legal_holds: ['wallet_hash'],
   diag_legal_hold_audit: ['id'],
-  recycle_day_backfill: ['chain_id', 'day_id'],
   loan_orphans: ['id'],
   signed_offers: ['chain_id', 'order_hash'],
 };
@@ -544,6 +550,36 @@ export function assertVersion(archive) {
   }
 }
 
+/**
+ * The section's tables minus the retired ones, each retired table checked
+ * empty and announced. A retired table carrying rows is refused: nothing
+ * ever wrote it, so the rows are unexplained, and nothing would ever read
+ * them if they were put back.
+ */
+function dropRetiredTables(tables) {
+  const kept = [];
+  for (const table of tables) {
+    const why = RETIRED_ARCHIVE_TABLES.get(table?.name);
+    if (why === undefined) {
+      kept.push(table);
+      continue;
+    }
+    const rows = table.rows;
+    if (!Array.isArray(rows) || rows.length > 0 || (table.rowCount ?? 0) !== 0) {
+      fail(
+        `archive carries rows (or a non-zero rowCount) for retired table ${table.name} — ` +
+          `${why}. Nothing ever wrote it, so this is not a shape the backup produces; ` +
+          `pick a different archive, or escalate: this can be evidence of pre-backup tampering`,
+      );
+    }
+    console.warn(
+      `ℹ archive carries retired table ${table.name} (empty) — skipped: no batch is ` +
+        `emitted and nothing is imported (${why}).`,
+    );
+  }
+  return kept;
+}
+
 export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db' } = {}) {
   assertVersion(archive);
   // A version-1 archive ALWAYS carries d1.archive — backup.ts emits it
@@ -581,7 +617,8 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
     const nameList = tables.map((t) => t?.name);
     const names = new Set(nameList);
     for (const t of names) {
-      if (!allowed.has(t)) {
+      const retired = database === ARCHIVE_DATABASE && RETIRED_ARCHIVE_TABLES.has(t);
+      if (!allowed.has(t) && !retired) {
         fail(
           `archive names table ${JSON.stringify(t)} which the backup never exports to this ` +
             `section — wrong or hostile archive; refusing to emit a destructive batch for it`,
@@ -596,6 +633,10 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
       const dupes = nameList.filter((n, i) => nameList.indexOf(n) !== i);
       fail(`archive repeats table entr${dupes.length > 1 ? 'ies' : 'y'} ${[...new Set(dupes)].join(', ')} — the backup emits each table exactly once; refusing`);
     }
+    // Retired tables leave the section here, before any schema, cascade or
+    // batch handling: recognised, accepted only empty, never imported (see
+    // RETIRED_ARCHIVE_TABLES). Everything below works on what remains.
+    const importable = database === ARCHIVE_DATABASE ? dropRetiredTables(tables) : tables;
     // Baseline completeness for the main section: every era of the
     // backup carries these even at zero rows, so `[]` or a partial
     // set is a truncated/hostile archive, not a small one.
@@ -629,7 +670,7 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
       // (with its rows shortened to match) converts cleanly and
       // silently NULLs that column for every restored row (Codex
       // #1484 r13).
-      for (const table of tables) {
+      for (const table of importable) {
         const required = REQUIRED_TABLE_COLUMNS[table.name];
         if (!required) continue; // re-derivable: §6 clear-and-replay is the default
         const archivedCols = new Set((table.schema ?? []).map((c) => c?.name));
@@ -673,12 +714,12 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
       // child's FK constraint — a partially-restored database. Check
       // the archived relation itself before emitting anything
       // (Codex #1484 r2).
-      const parent = tables.find((t) => t.name === 'user_thresholds');
+      const parent = importable.find((t) => t.name === 'user_thresholds');
       const parentKeys = new Set(
         parent.rows.map((r) => JSON.stringify(CASCADE_FK_COLUMNS.map((c) => r[c]))),
       );
       for (const child of CASCADE_CHILDREN) {
-        const childTable = tables.find((t) => t.name === child);
+        const childTable = importable.find((t) => t.name === child);
         if (!childTable) continue;
         for (const [i, row] of childTable.rows.entries()) {
           const key = JSON.stringify(CASCADE_FK_COLUMNS.map((c) => row[c]));
@@ -709,7 +750,7 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
     // level by level from the outdir down.
     secureStagingDir(path.resolve(outDir));
     secureStagingDir(dir);
-    for (const table of applyOrder(tables)) {
+    for (const table of applyOrder(importable)) {
       const { sql, imported } = tableToBatch(table);
       const file = path.join(dir, `${table.name}.sql`);
       // Fresh inode, never write-through: a reused predictable file
@@ -979,220 +1020,6 @@ export function invalidLegalDocRefs(archive) {
  *    basis even when the latest placement looks fine.
  *
  *  Returns {table, row, problem} entries for the caller to fail on. */
-/** Unsigned decimal wei, as the writer emits it. */
-const UNSIGNED_DECIMAL = /^[0-9]+$/;
-/** The contract getter behind these figures returns `uint256`. */
-const UINT256_MAX = (1n << 256n) - 1n;
-/**
- * The POOL fields are narrower than that. `DayPoolStamp.scheduleFloor` and
- * `.recycledBudget` are `uint128` on chain (`LibVaipakam.sol`), so anything
- * from 2^128 up cannot have come from the getter — it would restore and then
- * be published, and fed into the trailing-pool and runway arithmetic
- * (Codex #1513 r13). The absorption counters really are uint256 mappings, so
- * they keep the wider bound.
- */
-const UINT128_MAX = (1n << 128n) - 1n;
-const UINT128_FIELDS = new Set(['schedule_floor', 'recycled_budget']);
-/**
- * Digits accepted before we stop parsing at all. `uint256` maxes out at 78
- * decimal digits, so anything longer cannot be a real figure — and refusing
- * on LENGTH first means a hostile archive cannot make us build a
- * multi-megabyte BigInt just to discover it is out of range.
- */
-const MAX_AMOUNT_DIGITS = 78;
-
-/**
- * Per-row writer invariants for `recycle_day_backfill` (Codex #1513 r3).
- *
- * Column PRESENCE is not enough. The amount columns are TEXT, so
- * `schedule_floor: "not-a-number"` restores without complaint and then
- * makes the read route throw at `BigInt(...)` — a 500 for that whole chain
- * — while a plausible numeric substitution silently falsifies published
- * history instead. `armed` decides whether a day's figures are republished
- * as committed emission, so a non-boolean there is not cosmetic.
- *
- * Returns {table, row, problem} entries for the caller to fail on.
- */
-export function invalidRecycleBackfillRowShapes(archive) {
-  const invalid = [];
-  // One arming sentinel per chain, across the whole capture.
-  const sentinelByChain = new Map();
-  for (const table of archive?.d1?.archive ?? []) {
-    if (table?.name !== 'recycle_day_backfill') continue;
-    for (const [i, row] of (table.rows ?? []).entries()) {
-      const push = (problem) =>
-        invalid.push({ table: table.name, row: i, problem });
-
-      for (const col of [
-        'schedule_floor', 'recycled_budget', 'fresh_drawdown',
-        'absorbed_local', 'absorbed_mirror',
-      ]) {
-        const v = row[col];
-        if (typeof v !== 'string' || !UNSIGNED_DECIMAL.test(v)) {
-          push(
-            `${col} ${JSON.stringify(v)} is not an unsigned decimal string — it ` +
-              `restores into the TEXT column without complaint and then throws ` +
-              `in the read route, 500ing the series for this chain`,
-          );
-        } else if (v.length > MAX_AMOUNT_DIGITS) {
-          // Length BEFORE value: refusing here means a hostile archive cannot
-          // make us construct an enormous BigInt just to learn it is invalid.
-          push(
-            `${col} has ${v.length} digits — a uint256 has at most ` +
-              `${MAX_AMOUNT_DIGITS}, so this cannot be a figure the getter ` +
-              `produced, and parsing it would be the attack rather than the check`,
-          );
-        } else {
-          const max = UINT128_FIELDS.has(col) ? UINT128_MAX : UINT256_MAX;
-          if (BigInt(v) > max) {
-            push(
-              `${col} ${v} exceeds ${UINT128_FIELDS.has(col) ? 'uint128' : 'uint256'} ` +
-                `— the contract storage behind this figure cannot hold it, so ` +
-                `restoring it would publish impossible history and feed the ` +
-                `runway arithmetic`,
-            );
-          }
-        }
-      }
-      for (const col of ['chain_id', 'day_id', 'armed_from_day', 'recorded_at']) {
-        const v = row[col];
-        // SAFE integers: 2^53 passes `Number.isInteger` and satisfies
-        // `n + 1 === n`, so a restored `day_id` at that value makes the
-        // read route's dense `for (dayId <= maxDay; dayId++)` loop never
-        // terminate and hangs every request (Codex #1513 r4).
-        if (!Number.isSafeInteger(v) || v < 0) {
-          push(`${col} ${JSON.stringify(v)} is not a non-negative safe integer`);
-        }
-      }
-      // Provenance the writer always stamps. Without it an archive can
-      // restore rows under the schema's empty-string default, which makes
-      // first-write-wins captures from DIFFERENT computations
-      // indistinguishable — the exact ambiguity the column was added to
-      // remove (Codex #1513 r5 P2).
-      if (typeof row.generator_rev !== 'string' || row.generator_rev === '') {
-        push(
-          `generator_rev ${JSON.stringify(row.generator_rev)} is not a ` +
-            `non-empty string — the writer stamps every row, so a blank one ` +
-            `did not come from it and cannot be tied to a computation`,
-        );
-      }
-      // The generator NEVER supplies these — the getter behind it does not
-      // return them — yet the read surface publishes whatever is stored.
-      // A fabricated margin would silently rewrite historical transparency
-      // figures (Codex #1513 r7).
-      for (const col of ['a_bar', 'margin_bps']) {
-        if (row[col] !== null && row[col] !== undefined) {
-          push(
-            `${col} ${JSON.stringify(row[col])} is not null — the generator ` +
-              `cannot know this field, so a value here did not come from it`,
-          );
-        }
-      }
-      if (row.stamped !== 0 && row.stamped !== 1) {
-        push(`stamped ${JSON.stringify(row.stamped)} is not exactly 0 or 1`);
-      }
-      if (row.armed !== 0 && row.armed !== 1) {
-        push(
-          `armed ${JSON.stringify(row.armed)} is not exactly 0 or 1 — this flag ` +
-            `decides whether the day's figures are republished as committed ` +
-            `emission rather than as an estimate`,
-        );
-      }
-      // The writer SKIPS an unfinalized day with no absorption — there is
-      // nothing to preserve. A restored empty row is therefore not a shape
-      // it produces, and it is not inert: every row participates in the
-      // head query's MIN(day_id), so an invented early one drags the
-      // coverage boundary back and makes the API publish synthetic quiet
-      // buckets for days it never observed (Codex #1513 r8).
-      // VALUES, not strings (Codex #1513 r12). `absorbed_local: "00"` passes
-      // the decimal and uint256 checks and is numerically zero, but a string
-      // comparison called the row non-empty — so it restored, moved
-      // MIN(day_id) backward, and made the API publish quiet buckets for
-      // days it never observed. Guarded so a malformed amount (already
-      // pushed above) cannot throw here.
-      const amountVal = (v) =>
-        typeof v === 'string' && UNSIGNED_DECIMAL.test(v) && v.length <= MAX_AMOUNT_DIGITS
-          ? BigInt(v)
-          : null;
-      const localVal = amountVal(row.absorbed_local);
-      const mirrorVal = amountVal(row.absorbed_mirror);
-      if (row.stamped === 0 && localVal === 0n && mirrorVal === 0n) {
-        push(
-          `an unfinalized row with no absorption is not a shape the writer ` +
-            `emits (it skips those) — restored, it would drag coverage back ` +
-            `and fabricate quiet days`,
-        );
-      }
-      if (row.stamped === 0 && row.armed === 1) {
-        push(
-          `an unfinalized day cannot be armed — the writer emits armed=0 for ` +
-            `absorption-only rows, so this pair is not a shape it produces`,
-        );
-      }
-      // CROSS-ROW, recorded per chain and checked after the loop: the pass
-      // resolves `armed_from_day` ONCE per capture, so every row it emits
-      // for a chain carries the same sentinel. A spliced archive can mix
-      // two — each row internally consistent, the set impossible — and the
-      // read route trusts the per-row `armed` flag (Codex #1513 r13).
-      if (Number.isSafeInteger(row.chain_id) && Number.isSafeInteger(row.armed_from_day)) {
-        const seen = sentinelByChain.get(row.chain_id);
-        if (seen === undefined) {
-          sentinelByChain.set(row.chain_id, row.armed_from_day);
-        } else if (seen !== row.armed_from_day) {
-          push(
-            `armed_from_day ${row.armed_from_day} disagrees with ${seen} seen ` +
-              `earlier for chain ${row.chain_id} — one capture resolves ONE ` +
-              `sentinel, so a mixture is spliced rather than emitted`,
-          );
-        }
-      }
-      // CROSS-FIELD: the drawdown cannot exceed the schedule floor (Codex
-      // #1513 r12). The getter computes it from `scheduleFloor / 2` on each
-      // side, so `schedule_floor: "0"` with `fresh_drawdown: "1"` is a shape
-      // it cannot produce — yet each field passes its own check, and the
-      // read route publishes the restored value as committed `netEmission`.
-      // Validating fields independently is not validating the row.
-      const floorVal = amountVal(row.schedule_floor);
-      const drawVal = amountVal(row.fresh_drawdown);
-      if (
-        row.stamped === 1 &&
-        floorVal !== null &&
-        drawVal !== null &&
-        drawVal > floorVal
-      ) {
-        push(
-          `fresh_drawdown ${row.fresh_drawdown} exceeds schedule_floor ` +
-            `${row.schedule_floor} — the getter derives the drawdown from the ` +
-            `floor, so it cannot produce this, and the route would publish it ` +
-            `as committed net emission`,
-        );
-      }
-      // `armed` must AGREE with the sentinel, not merely be a valid scalar
-      // (Codex #1513 r4). `armed_from_day = 0` means the governor was NEVER
-      // armed, so a stamped row claiming armed=1 under it restores figures
-      // nothing reserved and republishes them as committed emission. The
-      // writer derives one from the other; an archive where they disagree
-      // did not come from the writer.
-      if (
-        row.stamped === 1 &&
-        Number.isSafeInteger(row.day_id) &&
-        Number.isSafeInteger(row.armed_from_day)
-      ) {
-        const expected =
-          row.armed_from_day !== 0 && row.day_id >= row.armed_from_day ? 1 : 0;
-        if (row.armed !== expected) {
-          push(
-            `armed=${row.armed} contradicts armed_from_day=${row.armed_from_day} ` +
-              `for day ${row.day_id} (the writer derives armed=${expected}) — ` +
-              `restoring it would republish an estimate as committed emission`,
-          );
-        }
-      }
-    }
-  }
-  return invalid;
-}
-
 export function invalidLegalRowShapes(archive) {
   const invalid = [];
   for (const table of archive?.d1?.archive ?? []) {
@@ -1427,25 +1254,6 @@ export function main(argv) {
   }
 
   const archive = JSON.parse(readFileSync(positional[0], 'utf8'));
-  // Row-shape validation runs BEFORE either materialization (Codex #1513
-  // r4). Validating afterwards still exits non-zero and still prints no
-  // apply command, but the staging directory has already been overwritten
-  // with a batch built from the hostile archive — replacing a prior
-  // known-good staging output at the documented restore path. Refusing
-  // before anything is written keeps the failure non-destructive.
-  const badBackfill = invalidRecycleBackfillRowShapes(archive);
-  if (badBackfill.length > 0) {
-    for (const { table, row, problem } of badBackfill) {
-      console.error(`✗ ${table} row ${row}: ${problem}`);
-    }
-    fail(
-      `${badBackfill.length} recycle_day_backfill row(s) violate the writer's ` +
-        `column invariants — restoring them would either 500 the transparency ` +
-        `series or republish falsified history as the record. Pick a different ` +
-        `archive, or escalate: this can be evidence of pre-backup tampering`,
-    );
-  }
-
   const d1 = convertD1(archive, outDir, { lzDatabase });
   const r2 = materializeR2(archive, outDir);
 

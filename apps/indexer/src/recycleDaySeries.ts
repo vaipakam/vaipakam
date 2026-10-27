@@ -118,8 +118,11 @@ async function applyOne(
     // stamped-but-unarmed days with a zero drawdown — fabricated history
     // in the shape of real history, and it would drag the coverage
     // boundary back over days this consumer cannot actually account for.
-    // The ratified cutover puts those days on the getter-based backfill
-    // instead (plan §M5, "Cutover"), which is a separate slice.
+    // No source supplies those days instead: the getter-based backfill the
+    // ratified cutover planned for them was retired by #2937, because every
+    // chain reaches this build by a fresh deploy whose Diamond emits only
+    // the widened shape. On such a chain this branch is a guard that never
+    // fires; it stays so a stray legacy log is refused, not coerced.
     //
     // Presence, not a block boundary: a widened emission always carries
     // both keys and a legacy one carries neither, so this is exact and
@@ -127,7 +130,8 @@ async function applyOne(
     if (!('freshDrawdown' in log.args) || !('armed' in log.args)) {
       // Recorded so the audit trail is complete and a replay cannot
       // re-decide it; the day stays unstamped and absorption-only, which
-      // is the truthful state until the backfill covers it.
+      // is the truthful state for a day whose figures were never announced
+      // in a shape this consumer can read.
       await env.DB.batch([record]);
       return true;
     }
@@ -245,7 +249,8 @@ async function applyOne(
   // ATTRIBUTED accumulates the accepted day credits for this source. The
   // day series' mirror term is summed across mirrors on chain, so without
   // this the per-source reconciliation in the read surface has nothing to
-  // subtract and a backfill-only mirror gets compared away (#1513 r4).
+  // subtract, and one source's fold gets compared away by another's report
+  // (#1513 r4).
   const nextReported = (
     reported > big(prevReported?.reported_cumulative)
       ? reported
@@ -307,8 +312,7 @@ async function applyOne(
  * The chain scan shares ONE cursor across every domain handler, so on an
  * existing deployment that cursor is already past every block this series
  * cares about. Wiring the ingest in without this would start the history
- * at "whenever this shipped" while looking complete — and the deferred
- * pre-cutover getter backfill does not cover it, because these are days
+ * at "whenever this shipped" while looking complete — these are days
  * that DID announce themselves, just before anyone was listening
  * (Codex #1507 r1 P1).
  *

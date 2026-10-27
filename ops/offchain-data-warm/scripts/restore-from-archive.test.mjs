@@ -581,6 +581,78 @@ test('prepay_listing_match_breadcrumbs is not archived: the replay writes every 
   );
 });
 
+const BACKFILL_COLUMNS = [
+  'chain_id', 'day_id', 'stamped', 'schedule_floor', 'recycled_budget',
+  'fresh_drawdown', 'absorbed_local', 'absorbed_mirror', 'armed',
+  'armed_from_day', 'recorded_at', 'generator_rev',
+];
+
+test('recycle_day_backfill is retired: an older archive carrying it EMPTY still converts, and imports nothing for it (#2937)', () => {
+  // Every archive written between migration 0047 and #2937 carries the table,
+  // always empty (nothing ever wrote it). Refusing those as unknown would make
+  // that whole era unrestorable; the table is skipped instead, with no batch
+  // and no clear — nothing reads it, and its drop migration removes it.
+  const dir = outDir();
+  const entries = convertD1(
+    {
+      version: 1,
+      d1: { archive: [...baselineArchive(), tableFixture('recycle_day_backfill', BACKFILL_COLUMNS, [])] },
+    },
+    dir,
+  );
+  assert.equal(entries.find((e) => e.name === 'recycle_day_backfill'), undefined);
+  assert.equal(existsSync(path.join(dir, 'd1', 'recycle_day_backfill.sql')), false);
+  // The rest of the archive restores exactly as it would without it.
+  assert.ok(entries.find((e) => e.name === 'user_thresholds'));
+  // A current archive, which no longer carries it, gets no clear for it either.
+  const current = convertD1({ version: 1, d1: { archive: baselineArchive() } }, outDir());
+  assert.equal(current.find((e) => e.name === 'recycle_day_backfill'), undefined);
+});
+
+test('recycle_day_backfill is retired: an archive carrying ROWS for it is refused (#2937)', () => {
+  // No writer ever produced a row, so one is unexplained: refused like any
+  // other shape the backup cannot produce, before any batch is written.
+  const row = {
+    chain_id: 8453, day_id: 1, stamped: 1, schedule_floor: '100', recycled_budget: '0',
+    fresh_drawdown: '0', absorbed_local: '0', absorbed_mirror: '0', armed: 1,
+    armed_from_day: 1, recorded_at: 1700000000, generator_rev: 'x',
+  };
+  const dir = outDir();
+  assert.throws(
+    () =>
+      convertD1(
+        {
+          version: 1,
+          d1: { archive: [...baselineArchive(), tableFixture('recycle_day_backfill', BACKFILL_COLUMNS, [row])] },
+        },
+        dir,
+      ),
+    /retired table recycle_day_backfill/,
+  );
+  assert.equal(existsSync(path.join(dir, 'd1')), false);
+  // A non-zero rowCount over an emptied row list is the same claim.
+  const lying = { ...tableFixture('recycle_day_backfill', BACKFILL_COLUMNS, []), rowCount: 3 };
+  assert.throws(
+    () => convertD1({ version: 1, d1: { archive: [...baselineArchive(), lying] } }, outDir()),
+    /retired table recycle_day_backfill/,
+  );
+  // Retirement is per section: the legacy lz section never exported it.
+  assert.throws(
+    () =>
+      convertD1(
+        {
+          version: 1,
+          d1: {
+            archive: baselineArchive(),
+            lzAlerts: [tableFixture('recycle_day_backfill', BACKFILL_COLUMNS, [])],
+          },
+        },
+        outDir(),
+      ),
+    /which the backup never exports to this section/,
+  );
+});
+
 test('duplicate archived primary keys are rejected before any batch is emitted (r12)', () => {
   // Single-column key.
   const dup = tableFixture(

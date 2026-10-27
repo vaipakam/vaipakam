@@ -1114,7 +1114,9 @@ that user's settings are worth keeping.
 And the born-off-chain set is larger than this table shows: the classifier
 also names `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`,
 `pre_grace_notify_state`, `telegram_links` and `recycle_day_backfill`. All
-are empty today. **Re-run the counts across all nine on the day** — this
+are empty today. (`recycle_day_backfill` has since been retired by #2937: it
+is no longer classified, archived or imported, so the set is eight from that
+change on.) **Re-run the counts across all of them on the day** — this
 table is a dated observation, not a property, and a legal hold or a
 diagnostic recorded between now and execution would not be visible in it.
 
