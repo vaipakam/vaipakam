@@ -17,8 +17,8 @@ confirms a drafted binding. It sends one back to review when the bridge names
 a different deployed token, as with Polygon's native USDC against bridged
 USDC.e, where choosing between native and bridged stays a person's call. It
 settles a review entry only where at least two lists name the bridge's token
-and no list names another. Run against the current files, it settles 24
-review entries (Arbitrum 5, Polygon 6, Base 7, Optimism 6) and sends
+and no list names another. Run against the current files, it settles 23
+review entries (Arbitrum 5, Polygon 5, Base 7, Optimism 6) and sends
 Polygon's two USDC bindings to review. The bindings files themselves change
 only when the drafting run is repeated with the source keys, which happens on
 the owner's machine.
