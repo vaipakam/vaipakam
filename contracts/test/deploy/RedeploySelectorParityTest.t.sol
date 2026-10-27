@@ -185,6 +185,17 @@ contract RedeploySelectorParityTest is Test {
         );
     }
 
+    /// @dev #1980 — the borrower LIF VPFI-custody path was retired, so the
+    ///      `getBorrowerLifRebate` selector `RedeployFacets` Removes must be
+    ///      GONE from ClaimFacet's compiled surface.
+    function test_RetiredBorrowerLifRebateSelector_IsGone() public view {
+        bytes4[] memory abiSels = _abiSelectorsExcept("ClaimFacet", bytes4(0));
+        assertFalse(
+            _contains(abiSels, FacetSelectors.retiredBorrowerLifRebateSelector()),
+            "getBorrowerLifRebate must not be compiled"
+        );
+    }
+
     /// @dev #2812 — the range master flags were retired, so every selector
     ///      `ReplaceStaleFacets` Removes for them must be GONE from ConfigFacet's
     ///      compiled surface, while the matching kill-switch stays.

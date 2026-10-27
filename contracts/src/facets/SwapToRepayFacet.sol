@@ -488,7 +488,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // flip declares the listing dead.
         LibPrepayCleanup.clearActiveListing(loan, loanId);
 
-        // ── Transition + LIF VPFI settlement ─────────────────────────
+        // ── Transition ───────────────────────────────────────────────
         // #1132 (S10 central enforcement) — route through the
         // `EncumbranceMutateFacet.terminalize` host so the validated Active→Repaid
         // transition AND both holders' fail-closed frozen-claimant markers land

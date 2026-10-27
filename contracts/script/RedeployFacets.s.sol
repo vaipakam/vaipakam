@@ -364,6 +364,13 @@ contract RedeployFacets is Script {
         // routing split as the HF knob + Consolidation sets above.
         (bytes4[] memory claimToAdd, bytes4[] memory claimToReplace) =
             _partitionByRouting(diamond, _claimSelectors());
+        // #1980 — `getBorrowerLifRebate` retired with the borrower LIF
+        // VPFI-custody path, so it is gone from `_claimSelectors()`. Remove it
+        // wherever it is still routed, or it stays live on the old ClaimFacet
+        // bytecode (empty on a fresh Diamond, so the step is idempotent).
+        bytes4[] memory retiredClaim = new bytes4[](1);
+        retiredClaim[0] = FacetSelectors.retiredBorrowerLifRebateSelector();
+        (, bytes4[] memory claimToRemove) = _partitionByRouting(diamond, retiredClaim);
         // #1123 — ProfileFacet gained THREE new selectors (refreshSanctionsFlag,
         // isSanctionsConfirmedFlagged, enforcePositionSaleMove + enforcePositionMove)
         // alongside its already-routed ones. Same Add/Replace-by-routing split as
@@ -468,6 +475,7 @@ contract RedeployFacets is Script {
             (refiToAdd.length > 0 ? 1 : 0) +
             (accToAdd.length > 0 ? 1 : 0) + (accToReplace.length > 0 ? 1 : 0) +
             (claimToAdd.length > 0 ? 1 : 0) + (claimToReplace.length > 0 ? 1 : 0) +
+            (claimToRemove.length > 0 ? 1 : 0) +
             (profToAdd.length > 0 ? 1 : 0) + (profToReplace.length > 0 ? 1 : 0) +
             (nftToAdd.length > 0 ? 1 : 0) + (nftToReplace.length > 0 ? 1 : 0) +
             (vfToAdd.length > 0 ? 1 : 0) + (vfToReplace.length > 0 ? 1 : 0) +
@@ -575,6 +583,9 @@ contract RedeployFacets is Script {
         }
         // #658 PR-B2 — the already-routed ClaimFacet selectors repoint to the
         // refreshed bytecode; #954's new selector is Add'ed.
+        if (claimToRemove.length > 0) {
+            cuts[idx++] = _remove(claimToRemove);
+        }
         if (claimToReplace.length > 0) {
             cuts[idx++] = _replace(address(claimFacet), claimToReplace);
         }
