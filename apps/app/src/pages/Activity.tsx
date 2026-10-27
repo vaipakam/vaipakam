@@ -24,6 +24,8 @@ import {
   isWalletActivity,
   legText,
   rowValue,
+  saleProceedsShares,
+  type SaleShare,
   type ActivityRowView,
   type LegLabels,
   type LegMeta,
@@ -77,10 +79,42 @@ function RowValueText({ value }: { value: RowValue }) {
   );
 }
 
+/** #2876 — the viewer's own part of a collateral sale, and whether it was
+ *  paid to their wallet or is held for their claim. */
+function SaleShareLine({ share }: { share: SaleShare }) {
+  const meta = useTokenMeta(share.leg.asset);
+  const state: LegMeta = meta.data
+    ? { status: 'ready', decimals: meta.data.decimals, symbol: meta.data.symbol }
+    : meta.isError
+      ? { status: 'unreadable' }
+      : { status: 'loading' };
+  const amount = legText(share.leg, state, LEG_LABELS);
+  const line =
+    share.role === 'lender'
+      ? copy.activity.saleShareLender(amount)
+      : share.held
+        ? copy.activity.saleShareBorrowerHeld(amount)
+        : copy.activity.saleShareBorrowerPaid(amount);
+  return (
+    <>
+      <br />
+      <span className="row-sub">{line}</span>
+    </>
+  );
+}
+
 /** UX-008 — one coalesced transaction as a readable row: plain-language
  *  action, a single substance sub-line (loan/offer id · who acted · when
  *  · how many sub-events it stood in for), and an explorer link. */
-function ActivityRow({ row, explorer }: { row: ActivityRowView; explorer: string }) {
+function ActivityRow({
+  row,
+  explorer,
+  me,
+}: {
+  row: ActivityRowView;
+  explorer: string;
+  me: string | undefined;
+}) {
   const { event, label, labelSource, hiddenCount } = row;
   // Prefer the translated catalog label (per kind, or per destination for a
   // status edge into an end state); fall back to the pure module's label for
@@ -88,6 +122,7 @@ function ActivityRow({ row, explorer }: { row: ActivityRowView; explorer: string
   // event).
   const displayLabel = catalogText(copy.activity[labelSource.catalog], labelSource.key) ?? label;
   const value = useMemo(() => rowValue(row), [row]);
+  const shares = useMemo(() => saleProceedsShares(row, me), [row, me]);
   const hasValue = value.legs.length > 0 || value.unstated;
   const context = [
     event.loanId !== null ? copy.activity.loanRef(event.loanId) : null,
@@ -119,6 +154,9 @@ function ActivityRow({ row, explorer }: { row: ActivityRowView; explorer: string
           <span className="row-sub">{copy.activity.heldForLenderNote}</span>
         </>
       ) : null}
+      {shares.map((share, i) => (
+        <SaleShareLine key={i} share={share} />
+      ))}
     </span>
   );
 
@@ -186,6 +224,7 @@ function ActivityFeed({
   observations,
   truncated,
   explorer,
+  me,
   visible,
   onLoadMore,
 }: {
@@ -193,6 +232,8 @@ function ActivityFeed({
   observations: RepairObservation[];
   truncated: boolean;
   explorer: string;
+  /** The connected wallet, for the rows that state the viewer's own part. */
+  me: string | undefined;
   visible: number;
   onLoadMore: () => void;
 }) {
@@ -217,7 +258,7 @@ function ActivityFeed({
       <div className="row-list">
         {shown.map((item) =>
           item.type === 'tx' ? (
-            <ActivityRow key={item.key} row={item.row} explorer={explorer} />
+            <ActivityRow key={item.key} row={item.row} explorer={explorer} me={me} />
           ) : (
             <RepairObservationRow key={item.key} observation={item.observation} />
           ),
@@ -489,6 +530,7 @@ export function Activity() {
             observations={activity.data.observations}
             truncated={activity.data.truncated}
             explorer={readChain.blockExplorer}
+            me={address}
             visible={visible}
             onLoadMore={() => setVisible((v) => v + PAGE)}
           />
