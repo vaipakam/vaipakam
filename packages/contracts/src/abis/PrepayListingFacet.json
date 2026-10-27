@@ -190,37 +190,6 @@
   },
   {
     "type": "event",
-    "name": "BorrowerLifRebateClaimed",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "claimant",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newVaultVpfiBalance",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "CollateralListingExecutorUpdated",
     "inputs": [
       {
@@ -303,35 +272,10 @@
         "internalType": "uint256"
       },
       {
-        "name": "borrowerInVault",
+        "name": "borrowerHeld",
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LoanStatusChanged",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "from",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum LibVaipakam.LoanStatus"
-      },
-      {
-        "name": "to",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum LibVaipakam.LoanStatus"
       }
     ],
     "anonymous": false
@@ -401,6 +345,37 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SanctionedProceedsLocked",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recipient",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1863,22 +1838,6 @@
     "type": "error",
     "name": "InvalidSaleOffer",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidTransition",
-    "inputs": [
-      {
-        "name": "from",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.LoanStatus"
-      },
-      {
-        "name": "to",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.LoanStatus"
-      }
-    ]
   },
   {
     "type": "error",
