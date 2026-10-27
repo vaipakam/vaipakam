@@ -1,4 +1,4 @@
-## Thread — The rental review refuses a listing that names collateral, and says why (PR #<n>)
+## Thread — The rental review refuses a listing that names collateral, and says why (PR #2950)
 
 A rental takes no collateral. Accepting one pulls only the renter's
 prepayment, and a rental default pays the prepayment out and returns the NFT
