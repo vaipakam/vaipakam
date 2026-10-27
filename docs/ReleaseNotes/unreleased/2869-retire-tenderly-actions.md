@@ -1,4 +1,4 @@
-## Thread — Tenderly: retire the broken actions, and refuse an alert preset that can never fire (PR #TBD)
+## Thread — Tenderly: retire the broken actions, and refuse an alert preset that can never fire (PR #2979)
 
 The Tenderly actions manifest named three retired Diamonds, and the four Web3 Actions it deployed had never worked: the folder had no package file to build them, the health-factor watcher called a function the Diamond does not have, the large-loan action decoded an old event and loan shape, and each action read one project-wide Diamond address, so none could serve more than one chain. The owner chose to retire them (2026-10-27) rather than rebuild them. The four actions and their manifest are gone, and so are the four alert presets that pointed at them. The signals they were meant to give (a pre-liquidation health-factor page, a feed-heartbeat warning, L2 sequencer transitions and a large-loan flag) now have no confirmed home; #2968 lists each one, so the gap is stated rather than hidden behind code that did nothing.
 
