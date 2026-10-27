@@ -7231,21 +7231,13 @@ library LibVaipakam {
         ///      for every later day, which is the failure mode the
         ///      withdrawn B2-d4 attempt was rejected for.
         uint256 rewardBudgetArmedFreshPaid;
-        /// @dev #1434 P1-b (Codex #1699 r2) — the one-shot migration flag for
-        ///      the counter above. TRUE once an in-place-upgraded mirror has
-        ///      seeded its pre-P1-b paid history.
-        ///
-        ///      Needed because the bound goes live the moment this facet set
-        ///      is cut, while the paid counter starts at ZERO — yet
-        ///      `rewardBudgetArmedFreshReceived` already holds deliveries for
-        ///      compensated and short-lapsed days, which BYPASSED the old
-        ///      blanket mirror halt by design and were genuinely payable. Left
-        ///      unseeded, that already-spent funding reads as wholly available
-        ///      and can be spent a second time.
-        ///
-        ///      A fresh deploy needs no seed (both counters start at zero), so
-        ///      this is armed only where there is history to carry.
-        bool armedFreshPaidSeeded;
+        /// @dev RETIRED (#2910). Was the one-shot flag of the P1-b paid-side
+        ///      seed, which carried pre-P1-b payout history into the counter
+        ///      above on a mirror upgraded in place. Every chain reaches this
+        ///      build by a fresh deploy, whose counter has tracked every
+        ///      payout from block one, so the seed and this flag are gone. The
+        ///      slot keeps its place and is no longer read or written.
+        bool retiredArmedFreshPaidSeeded;
         /// @dev #1434 (Codex #1699 r7 P2) — APPENDED AT THE TAIL (same
         ///      in-place-upgrade rule as every counter above). Running totals
         ///      of what an expiring reward entry has ALREADY had credited
@@ -7458,16 +7450,13 @@ library LibVaipakam {
         ///      named recipient — both of which arrive with PR B; PR A adds
         ///      no writer, so every row reads zero on a PR-A Diamond.
         mapping(RewardCustodyRow => uint256) rewardCustodyRows;
-        /// @dev #1566 slice 4 PR A — one-shot guard for
-        ///      `RewardCustodyFacet.rebaseArmedFreshPaid`, the paid-side
-        ///      importer for a chain carrying history the vintage-blind
-        ///      ledger (#1566 closure 2) now charges. Independent of
-        ///      {armedFreshPaidSeeded} so the rebase is available whether or
-        ///      not the P1-b seeder ran; the rebase sets BOTH guards so the
-        ///      additive seeder can never run after an absolute total has
-        ///      been installed. A fresh deploy consumes it at deploy with a
-        ///      zero total, exactly as the seeder is consumed.
-        bool armedFreshPaidRebased;
+        /// @dev RETIRED (#2910). Was the one-shot guard of the paid-side
+        ///      rebase, which imported a reconstructed paid total on a chain
+        ///      carrying payout history the vintage-blind ledger (#1566
+        ///      closure 2) charges. A fresh deploy has no such history, so
+        ///      the rebase and this guard are gone. The slot keeps its place
+        ///      and is no longer read or written.
+        bool retiredArmedFreshPaidRebased;
         /// @dev #1566 slice 4 PR A (Codex #2158 r13 P2) — every
         ///      `RewardCustodyHolder` this Diamond CONSTRUCTED, the first and
         ///      every successor, registered at construction and never

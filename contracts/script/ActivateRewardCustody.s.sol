@@ -180,10 +180,6 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
             f.role != uint8(LibVaipakam.RewardRole.Detached),
             "ActivateRewardCustody: this deployment is Detached -- activation waits for slice 4 PR C (the receive ingresses do not yet refuse by role, and the freeze would block re-attachment); re-attach first, or wait"
         );
-        require(
-            RewardCustodyFacet(diamond).armedFreshPaidRebased(),
-            "ActivateRewardCustody: the paid-side rebase has not run on this chain -- run the facet refresh's migrations first"
-        );
         // 3b-ii-A2 (Codex #2308 r7, r9) — the activation refuses while a
         // staging record is resolving, and a resolving record's pages cannot
         // run under the manual pause this ceremony needs; read it here, before
@@ -253,7 +249,7 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         if (f.role == uint8(LibVaipakam.RewardRole.Canonical)) {
             require(
                 f.received == f.paid,
-                "ActivateRewardCustody: canonical baseline not verified (received != paid) -- the rebase installs received = paid; examine the ledger before activating"
+                "ActivateRewardCustody: canonical baseline not verified (received != paid) -- a fresh deploy starts at received = paid; examine the ledger before activating"
             );
             require(f.rowLive == 0 && a.fundLive == 0, "ActivateRewardCustody: a canonical chain activates with an EMPTY live-fresh row -- fund forward through fundRewardPool after the unpause, never here");
             require(!a.writeDown, "ActivateRewardCustody: REWARD_CUSTODY_WRITE_DOWN_MIRROR_GAP applies to a Mirror only");

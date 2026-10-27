@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
-import {DiamondPausable, LibPausable} from "../libraries/LibPausable.sol";
+import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {
     IRewardMessenger,
@@ -1068,96 +1068,6 @@ contract RewardReporterFacet is
             bytes32(uint256(old ? 1 : 0)),
             bytes32(uint256(on ? 1 : 0))
         );
-    }
-
-    /// @notice #1434 P1-b (Codex #1699 r2) — the pre-P1-b paid-side history
-    ///         was seeded on this mirror, arming the delivered-fresh bound
-    ///         against funding that was already spent before the upgrade.
-    /// @custom:event-category state-change/reward-compensation
-    event ArmedFreshPaidSeeded(uint256 amount);
-
-    /// @notice #1699 r18 P2 — whether the one-shot paid-history seed has run.
-    ///         Exists so the maintained refresh can SKIP the migration block
-    ///         on an already-seeded Diamond instead of demanding obsolete
-    ///         migration inputs mid-refresh, paused. (The earlier position —
-    ///         "the one-shot revert IS the signal" — required reaching the
-    ///         seed call at all; the input-validation require sat in front of
-    ///         it and wedged every rerun.)
-    function armedFreshPaidSeeded() external view returns (bool) {
-        return LibVaipakam.storageSlot().armedFreshPaidSeeded;
-    }
-
-    /**
-     * @notice #1434 P1-b (Codex #1699 r2) — ONE-SHOT migration seed for the
-     *         delivered-fresh bound's PAID side on an in-place-upgraded
-     *         mirror.
-     * @dev    Why a seed and not a derivation. The bound is
-     *         `received - paid`. On upgrade the received counter already
-     *         holds deliveries for compensated and short-lapsed days — those
-     *         states deliberately BYPASSED the old blanket mirror halt and
-     *         were payable in the parent implementation — while the newly
-     *         appended paid counter starts at zero. Unseeded, that
-     *         already-spent funding reads as available and can be spent
-     *         again.
-     *
-     *         An exact ON-CHAIN derivation does not exist, which is the
-     *         deciding fact rather than a matter of taste.
-     *         `DayCompensation.armedFreshCounted` records what a day ADDED TO
-     *         THE RECEIVED side, not what was paid out of it; the paid figure
-     *         lives in `userSideDayPaidVpfi[user][side][day]`, which cannot be
-     *         summed on-chain over an unbounded user set. So the operator
-     *         computes it off-chain from the indexed payout events and seeds
-     *         it here, once.
-     *
-     *         Direction of error matters and is stated so an operator can
-     *         choose deliberately: seeding LOW re-opens the double-spend this
-     *         exists to close; seeding HIGH strands legitimate funding until
-     *         further deliveries arrive (recoverable, and the conservative
-     *         side). Prefer the high estimate when uncertain.
-     *
-     *         Fresh deploys need no seed — both counters start at zero — so
-     *         this is only for chains carrying pre-P1-b history.
-     *
-     *         #1566 closure 2 — the counter this seeds now means fresh reward
-     *         value paid out of delivered funding WHATEVER the day's vintage
-     *         (charged at the claim's delivery and at the reward-absorption
-     *         credit), so a seed must cover legacy payouts too. This one-shot
-     *         writer is retained as the paid-side starting point; the
-     *         migration-capable writers the design specifies for a chain
-     *         mid-flight (received-side import, `paid = max(existing,
-     *         reconciled)`) arrive with the second closure-2 PR.
-     * @param  amount     Fresh reward value already paid out of delivered
-     *                    funding before this upgrade, any vintage.
-     * @param  pauseEpoch The pause epoch — the pause library's transition
-     *                    count — at which the caller established `amount`
-     *                    under the MANUAL pause (#1566 slice 4 PR A, Codex
-     *                    #2158 r29 P1). The seed is as irreversible as the
-     *                    rebase and is bound to its pause the same way: it
-     *                    requires the manual pause and refuses a stated epoch
-     *                    that is no longer the live one, so a figure a payout
-     *                    may have overtaken can never be sealed.
-     */
-    function seedArmedFreshPaid(uint256 amount, uint64 pauseEpoch)
-        external
-        onlyRole(LibAccessControl.ADMIN_ROLE)
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.armedFreshPaidSeeded) revert ArmedFreshPaidAlreadySeeded();
-        LibPausable.requireManuallyPaused();
-        uint64 liveEpoch = LibPausable.pauseTransitions();
-        if (pauseEpoch != liveEpoch) {
-            revert IVaipakamErrors.ArmedFreshSeedStalePauseEpoch(pauseEpoch, liveEpoch);
-        }
-        // #1566 slice 4 PR A (Codex #2158 r13 P1) — bounded to the pool cap,
-        // as the rebase is: this is the one writer that could install an
-        // impossible paid figure ahead of it.
-        uint256 resulting = s.rewardBudgetArmedFreshPaid + amount;
-        if (resulting > LibVaipakam.VPFI_INTERACTION_POOL_CAP) {
-            revert IVaipakamErrors.ArmedFreshSeedExceedsCap(resulting, LibVaipakam.VPFI_INTERACTION_POOL_CAP);
-        }
-        s.armedFreshPaidSeeded = true;
-        s.rewardBudgetArmedFreshPaid = resulting;
-        emit ArmedFreshPaidSeeded(amount);
     }
 
     /// @notice Adjust the grace window after the first chain report for

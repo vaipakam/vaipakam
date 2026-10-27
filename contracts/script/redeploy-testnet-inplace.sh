@@ -62,32 +62,13 @@
 #   (the forge scripts read these via vm.envUint). Chain->RPC-var mapping mirrors
 #   Deployments.sol's envPrefix(): base-sepolia -> BASE_SEPOLIA_RPC_URL, etc.
 #
-#   P1-b SEED (#1434) — required ONCE per chain, and only on a chain that has
-#   not been seeded yet. RefreshAllFacetsInPlace performs a ONE-SHOT,
-#   IRREVERSIBLE accounting migration inside its paused block: it seeds how much
-#   ARMED fresh that chain had already paid out before P1-b. The correct value is
-#   per chain (a fresh post-P1-b deploy owes 0; a pre-P1-b mirror owes its real
-#   indexed payout history), so the variables are per chain too, following the
-#   same <PREFIX> convention as the RPC URLs:
-#
-#     ARMED_FRESH_PAID_SEED_<PREFIX>        e.g. ARMED_FRESH_PAID_SEED_ARB_SEPOLIA=1234...
-#     ARMED_FRESH_PAID_NO_HISTORY_<PREFIX>  e.g. ARMED_FRESH_PAID_NO_HISTORY_BASE_SEPOLIA=true
-#
-#   Exactly one of the two must be set for each UNSEEDED selected chain; the
-#   pre-flight refuses the run otherwise, BEFORE any broadcast. An already-seeded
-#   chain needs neither (the script skips the migration block by reading the
-#   on-chain `armedFreshPaidSeeded()` flag). The orchestrator exports the
-#   resolved pair as the process-global ARMED_FRESH_PAID_SEED /
-#   ARMED_FRESH_PAID_NO_HISTORY the forge script reads — per chain, inside the
-#   loop, so a multi-chain run can never apply one chain's answer to another.
-#
 #   REWARD ROLE BACKFILL (#1566 closure 3) — required for EVERY selected chain.
 #   The four-state reward-role resolver records the role in a field that did
 #   not exist before this upgrade; a chain that was configured and then
 #   DETACHED under the old setters would otherwise read as never-configured
 #   (fail-OPEN: unbounded delivered allowance). State cannot tell the two
 #   apart, so the operator declares each chain's role from the recorded
-#   topology, in the same refuse-to-default posture as the P1-b seed:
+#   topology, and the refresh refuses to default it:
 #
 #     REWARD_ROLE_EXPECTED_<PREFIX>   one of canonical | mirror | unconfigured | detached
 #                                     e.g. REWARD_ROLE_EXPECTED_BASE_SEPOLIA=canonical
@@ -100,72 +81,9 @@
 #   exports the resolved value as the process-global REWARD_ROLE_EXPECTED, per
 #   chain, inside the loop.
 #
-#   PAID-SIDE REBASE (#1566 slice 4 PR A) — required for every selected chain
-#   that has not run it. Closure 2 (#2151) widened what the paid side charges
-#   to every vintage, so a pre-existing mirror with ordinary-schedule history
-#   reads UNDER-counted after the refresh unless its paid counter is rebased to
-#   the reconstructed absolute total. RefreshAllFacetsInPlace runs the
-#   one-shot rebase itself, paused, after the role backfill — and, like the
-#   P1-b seed, refuses to default the figure. Per chain, same <PREFIX>:
-#
-#     ARMED_FRESH_PAID_TOTAL_<PREFIX>        the reconstructed ABSOLUTE fresh-paid total
-#                                            (every vintage; existing counter / retirement
-#                                            watermark are a FLOOR the call applies itself)
-#     ARMED_FRESH_REBASE_NO_HISTORY_<PREFIX> =true to declare there is nothing to import
-#
-#   Exactly one of the two must be set for each NOT-YET-REBASED selected chain
-#   (the pre-flight reads the on-chain `armedFreshPaidRebased()` flag and
-#   skips an already-rebased chain). On a chain whose reward role is inactive
-#   (unconfigured / detached) the facet accepts only a history-free chain; a
-#   detached chain with history is DEFERRED by the refresh with the stated
-#   total logged for its re-attachment ceremony. The orchestrator exports the
-#   resolved pair as the process-global ARMED_FRESH_PAID_TOTAL /
-#   ARMED_FRESH_REBASE_NO_HISTORY, per chain, inside the loop — never one
-#   chain's irreversible total for another.
-#
-#   The pre-flight also reads the EXISTING paid counter of every not-yet-
-#   rebased chain (the lens getter `getDeliveredFreshBound()`, first word) and
-#   refuses one above the 69M pool cap before any broadcast, since the rebase
-#   refuses to floor on it. A chain that reports the P1-b seed as run must
-#   expose that counter; on one that never routed the seeder the read is
-#   best-effort, because nothing but the pre-cap seeder could exceed the cap.
-#   Where the counter reads, the seeder's own predicate — the RESULTING
-#   counter, existing plus seed, within the cap — is checked as well.
-#
-#   EVERY answer to a due migration — a stated seed or total, or a
-#   NO_HISTORY declaration — must have been established from a chain that
-#   could not move, and be BOUND to that pause: pause the Diamond manually,
-#   establish the answer from the paused chain, and state the pause EPOCH
-#   you established it at:
-#
-#     ARMED_FRESH_PAUSE_EPOCH_<PREFIX>       the pause library's transition count at
-#                                            that moment (bytes 17..24 of its storage
-#                                            slot; the pre-flight reports the live one)
-#
-#   The pre-flight refuses a chain with a migration due unless it is under
-#   the MANUAL pause (read directly from the pause slot, so a manual pause
-#   beside a watcher window counts) AND the stated epoch is the live one;
-#   the refresh refuses again before its first transaction (forge re-checks
-#   immediately before each broadcast); and the rebase refuses ON CHAIN. A
-#   lift-and-reapply moves the count even inside one block, so a stale
-#   answer can never be paired with a fresh pause. The refresh itself also
-#   pauses as its first transaction, before the implementation deploys, and
-#   leaves a chain it found paused PAUSED — reported as such, not as
-#   ordinary completion.
-#
-#   FIRST ROLLOUT = TWO RUNS. Until this refresh has cut the new pause code
-#   in, the live Diamond counts no transitions (the count reads zero), so a
-#   pause made under the old code cannot be pinned. On such a chain the run
-#   performs every refresh step EXCEPT the two paid-side migrations (the
-#   cuts, the retired-selector removal, the proxy upgrades and the
-#   reward-role backfill DO run) — and demands NO migration answer for that
-#   chain on that run; then pause again (counted now),
-#   establish the answer under that pause, state its epoch, and run again
-#   for that chain — the facets are current and the migrations run. The
-#   refresh always sends pause() as its first transaction (protecting the
-#   cuts by transaction order; the irreversible migrations are gated on
-#   chain), and both migrations — the older seed as well as the rebase —
-#   carry the epoch and are refused on chain if it is stale.
+#   The refresh pauses as its first transaction, before the implementation
+#   deploys, and leaves a chain it found paused PAUSED — reported as such,
+#   not as ordinary completion.
 #
 #   And before the first broadcast, EVERY selected chain's refresh is
 #   simulated end to end against a fork of its live state (step [3b], never
@@ -267,29 +185,13 @@ done
 banner() { printf '\n\033[1;36m═══ %s ═══\033[0m\n' "$*"; }
 
 # Decimal-string arithmetic for figures past bash's 64-bit range (wei amounts
-# near 1e26), with no external dependency. Every pre-flight comparison of
-# such a figure goes through `dec_gt`, and the on-chain seeder validates a
-# SUM (Codex #2158 r16 P2), so the pre-flight needs `dec_add` too.
+# near 1e26), with no external dependency: every comparison of such a figure
+# goes through `dec_gt`.
 dec_norm() { local v; v="$(printf '%s' "$1" | sed 's/^0*//')"; printf '%s' "${v:-0}"; }
 # TRUE when digit-only $1 > digit-only $2.
 dec_gt() {
   local a b; a="$(dec_norm "$1")"; b="$(dec_norm "$2")"
   [ "${#a}" -gt "${#b}" ] || { [ "${#a}" -eq "${#b}" ] && [ "$a" \> "$b" ]; }
-}
-# Prints digit-only $1 + digit-only $2.
-dec_add() {
-  local a b carry=0 out="" i j da db s
-  a="$(dec_norm "$1")"; b="$(dec_norm "$2")"
-  i=$(( ${#a} - 1 )); j=$(( ${#b} - 1 ))
-  while [ "$i" -ge 0 ] || [ "$j" -ge 0 ] || [ "$carry" -ne 0 ]; do
-    da=0; db=0
-    [ "$i" -ge 0 ] && da="${a:$i:1}"
-    [ "$j" -ge 0 ] && db="${b:$j:1}"
-    s=$(( da + db + carry ))
-    out="$(( s % 10 ))$out"; carry=$(( s / 10 ))
-    i=$(( i - 1 )); j=$(( j - 1 ))
-  done
-  printf '%s' "$out"
 }
 
 # The bound-holder / artifact relation of ONE chain (Codex #2158 r12, r16 P2)
@@ -363,24 +265,11 @@ holder_state() {
 # one chain's irreversible answer to another — the whole reason these
 # variables are per chain.
 export_chain_answers() {
-  local slug="$1" pfx seed_var nohist_var role_var total_var rnohist_var
+  local slug="$1" pfx role_var
   pfx="$(prefix_for "$slug")"
-  seed_var="ARMED_FRESH_PAID_SEED_${pfx}"; nohist_var="ARMED_FRESH_PAID_NO_HISTORY_${pfx}"
-  unset ARMED_FRESH_PAID_SEED ARMED_FRESH_PAID_NO_HISTORY
-  [ -n "${!seed_var:-}" ] && export ARMED_FRESH_PAID_SEED="${!seed_var}"
-  [ "${!nohist_var:-}" = "true" ] && export ARMED_FRESH_PAID_NO_HISTORY=true
   role_var="REWARD_ROLE_EXPECTED_${pfx}"
   unset REWARD_ROLE_EXPECTED
   export REWARD_ROLE_EXPECTED="${!role_var}"
-  total_var="ARMED_FRESH_PAID_TOTAL_${pfx}"; rnohist_var="ARMED_FRESH_REBASE_NO_HISTORY_${pfx}"
-  unset ARMED_FRESH_PAID_TOTAL ARMED_FRESH_REBASE_NO_HISTORY
-  [ -n "${!total_var:-}" ] && export ARMED_FRESH_PAID_TOTAL="${!total_var}"
-  [ "${!rnohist_var:-}" = "true" ] && export ARMED_FRESH_REBASE_NO_HISTORY=true
-  # The pause epoch the pre-flight pinned for this chain (set only where a
-  # migration is due); the refresh refuses a due migration without it.
-  local epoch_var="ARMED_FRESH_PAUSE_EPOCH_${pfx}"
-  unset ARMED_FRESH_PAUSE_EPOCH
-  [ -n "${!epoch_var:-}" ] && export ARMED_FRESH_PAUSE_EPOCH="${!epoch_var}"
   return 0
 }
 # #1566 slice 4 PR B (Codex #2186 r1 P2) — the activation ceremony's answers
@@ -440,7 +329,7 @@ rpc_var_for() {
 }
 
 # Map a chain slug -> its env-var PREFIX (the RPC var minus the _RPC_URL tail).
-# Used by the P1-b seed pre-flight so its variables follow the same convention.
+# Used by the per-chain answers so their variables follow the same convention.
 prefix_for() {
   local v
   v="$(rpc_var_for "$1")" || return 1
@@ -505,18 +394,6 @@ for slug in $CHAINS; do
     info "$slug: admin holds VAULT_ADMIN_ROLE ✓"
   fi
 
-  # P1-b seed pre-flight (#1434). RefreshAllFacetsInPlace runs a ONE-SHOT,
-  # IRREVERSIBLE accounting migration inside its paused block, and its inputs
-  # are per CHAIN — a fresh post-P1-b deploy owes 0, a pre-P1-b mirror owes its
-  # real payout history. A single process-global answer applied across the
-  # default two-chain loop is therefore wrong for at least one of them, with no
-  # repair path (`seedArmedFreshPaid` refuses a second call). Validate here, so
-  # a missing or ambiguous answer fails BEFORE any broadcast — the same reason
-  # the VAULT_ADMIN_ROLE check moved up front.
-  #
-  # An ALREADY-SEEDED chain needs no answer: the script reads the on-chain flag
-  # and skips the block entirely, so demanding an obsolete value would just
-  # re-create the wedge that gating fixed.
   pfx="$(prefix_for "$slug")" || fail "chain '$slug': no env-prefix mapping"
   # #1566 slice 4 PR A (Codex #2158 r10 P2) — `cast` is REQUIRED by the
   # post-refresh holder step ([4b] reads rewardCustodyHolder() and fails
@@ -526,9 +403,9 @@ for slug in $CHAINS; do
   # preflight exists to prevent.
   command -v cast >/dev/null 2>&1 || fail "'cast' is required for this workflow (the post-refresh holder step reads rewardCustodyHolder() with it) -- install foundry's cast before broadcasting"
   # Reward-role declaration (#1566 closure 3) — required for every selected
-  # chain, validated BEFORE any broadcast. Unlike the P1-b seed there is no
-  # on-chain "already done" flag to skip on: the forge script compares the
-  # live role to this declaration every run and refuses on mismatch.
+  # chain, validated BEFORE any broadcast. There is no on-chain "already
+  # done" flag to skip on: the forge script compares the live role to this
+  # declaration every run and refuses on mismatch.
   role_var="REWARD_ROLE_EXPECTED_${pfx}"
   role_val="${!role_var:-}"
   case "$role_val" in
@@ -536,183 +413,10 @@ for slug in $CHAINS; do
     "") fail "chain '$slug': set ${role_var}=canonical|mirror|unconfigured|detached (this Diamond's reward-mesh role per the recorded topology). Refusing to default an irreversible role record." ;;
     *)  fail "chain '$slug': ${role_var}='${role_val}' is not one of canonical|mirror|unconfigured|detached" ;;
   esac
-  # LibVaipakam.VPFI_INTERACTION_POOL_CAP = 69_000_000 * 1e18 — the lifetime
-  # cap every paid-side figure below is checked against, stated once.
-  pool_cap="69000000000000000000000000"
-  seed_var="ARMED_FRESH_PAID_SEED_${pfx}"
-  nohist_var="ARMED_FRESH_PAID_NO_HISTORY_${pfx}"
-  seed_val="${!seed_var:-}"
-  nohist_val="${!nohist_var:-}"
-  already_seeded=""
+  diamond2=""
   if command -v cast >/dev/null 2>&1; then
     dfile2="deployments/$slug/addresses.json"
     diamond2="$(grep -oE '"diamond"[[:space:]]*:[[:space:]]*"0x[0-9a-fA-F]{40}"' "$dfile2" 2>/dev/null | grep -oE '0x[0-9a-fA-F]{40}')"
-    if [ -n "$diamond2" ]; then
-      # A pre-P1-b diamond does not route this selector yet; a revert here is
-      # simply "not seeded", never a failure.
-      already_seeded="$(cast call "$diamond2" 'armedFreshPaidSeeded()(bool)' --rpc-url "$val" 2>/dev/null || echo '')"
-    fi
-  fi
-  # The slice-4 "already rebased" flag and the EXISTING paid counter are read
-  # here, once, because BOTH decisions below consult them: the seeder
-  # validates `existing + seed` (Codex #2158 r16 P2) and the rebase refuses to
-  # floor on a counter above the pool cap (r13 P1, pre-flighted since r15 P2)
-  # — refusals that must land HERE, before any chain has broadcast, not at a
-  # later chain's paused refresh. A pre-slice-4 Diamond does not route the
-  # flag (a revert reads as "not rebased"); the counter is the first word of
-  # the lens getter every seeded Diamond routes. Only the pre-cap seeder could
-  # have pushed the counter over the cap (ordinary payouts are charged out of
-  # the 69M pool), so a chain that reports the P1-b seed as run MUST expose
-  # its counter, while on a chain that never routed the seeder the read is
-  # best-effort.
-  already_rebased=""; live_paid=""
-  if [ -n "${diamond2:-}" ]; then
-    already_rebased="$(cast call "$diamond2" 'armedFreshPaidRebased()(bool)' --rpc-url "$val" 2>/dev/null || echo '')"
-    live_paid="$(cast call "$diamond2" 'getDeliveredFreshBound()(uint256,uint256)' --rpc-url "$val" 2>/dev/null | head -n 1 | cut -d' ' -f1 | tr -d '[:space:]' || echo '')"
-    case "$live_paid" in ''|*[!0-9]*) live_paid="" ;; esac
-  fi
-  if [ -z "$live_paid" ]; then
-    [ "$already_seeded" = "true" ] && fail "chain '$slug': the P1-b seed has run on this Diamond but its existing armed-fresh paid counter could not be read (getDeliveredFreshBound() via cast) -- the slice-4 rebase refuses a counter above the interaction pool cap, and that must be known BEFORE any chain broadcasts; fix the read and re-run"
-    info "$slug: existing armed-fresh paid counter not readable here (the seeder never ran on this Diamond, so the counter is bounded by the pool schedule)"
-  elif [ "$already_rebased" != "true" ] && dec_gt "$live_paid" "$pool_cap"; then
-    fail "chain '$slug': the EXISTING armed-fresh paid counter (${live_paid} wei) already exceeds the interaction pool cap (69,000,000 VPFI = ${pool_cap} wei) -- rebaseArmedFreshPaid refuses to floor on it, so this chain's refresh would abort paused after earlier chains had already broadcast. Only a seed placed before the seeder was capped can have produced it and this refresh carries no in-place correction for it; decide this chain's disposition before re-running (nothing has been broadcast)"
-  else
-    info "$slug: existing armed-fresh paid counter = ${live_paid} wei (within the pool cap) ✓"
-  fi
-  # An ANSWER to a one-shot migration — a stated seed, a stated total, OR a
-  # no-history declaration — is only as good as the moment it was
-  # established (Codex #2158 r25 P1, r26 P1 ×2, r27 P1 ×2): a payout between
-  # then and the refresh's pause is charged to the old counter under the old
-  # rules, never reaches the seeded or rebased figure, and falsifies "no
-  # history" just as surely. The refresh pauses as its FIRST transaction,
-  # closing the window inside the run; the window before it is closed here:
-  # every chain on which a migration is still DUE (not yet seeded, or not yet
-  # rebased) must already be under the MANUAL pause when this pre-flight
-  # runs, and the OPERATOR states the pause EPOCH at which the answer was
-  # established — the pause library's strictly monotonic transition count,
-  # which a lift-and-reapply moves even inside one block — which must equal
-  # the live epoch here, again in the refresh before its first transaction
-  # (forge re-runs that immediately before each broadcast), and once more ON
-  # CHAIN in the rebase itself. An answer is thereby bound to the pause it
-  # was taken under, never paired with whatever pause is in force. The state
-  # comes from the pause library's ONE storage slot
-  # (LibPausable.PAUSABLE_STORAGE_POSITION: `paused` at byte 0, the
-  # auto-pause deadline in the next 8 bytes, the last boundary timestamp in
-  # the 8 after that, the transition count in the 8 after those), read raw
-  # because a pre-refresh Diamond routes no newer getter; the manual flag is
-  # read DIRECTLY, so a manual pause that coexists with a watcher window
-  # counts (r26 P2). The decode mirrors LibPausable.decodePausableSlot.
-  pause_slot="0x2160e84a745d8897ad2778886d40d3563c8bc30c059c5f2173e21e9d47057400"
-  manual_paused=""; pause_epoch=""
-  if [ -n "${diamond2:-}" ]; then
-    raw="$(cast storage "$diamond2" "$pause_slot" --rpc-url "$val" 2>/dev/null || echo '')"
-    case "$raw" in
-      0x[0-9a-fA-F]*)
-        if [ "${#raw}" -eq 66 ]; then
-          hex="${raw#0x}"
-          # Big-endian word: byte 0 (`paused`) is the LAST two hex digits;
-          # bytes 1..8 (the auto-pause deadline) the 16 before them; bytes
-          # 9..16 (`lastPauseBoundaryAt`) the 16 before those; bytes 17..24
-          # (`pauseTransitions`, the epoch) the 16 before those — hex[14:30].
-          [ "${hex:62:2}" != "00" ] && manual_paused=true
-          pause_epoch="$(cast to-dec "0x${hex:14:16}")"
-        fi ;;
-    esac
-  fi
-  bootstrap=0
-  if [ "$already_seeded" != "true" ] || [ "$already_rebased" != "true" ]; then
-    [ "$manual_paused" = "true" ] || fail "chain '$slug': a paid-side migration is DUE on this Diamond (seeded=${already_seeded:-no}, rebased=${already_rebased:-no}) but it is not under the MANUAL pause (pause slot ${raw:-unreadable}) -- the seed, total, or no-history answer for it must be established from a chain that cannot move, and a payout before the refresh pauses never reaches the counter the one-shot guard seals. Pause the Diamond (AdminFacet.pause(); a watcher auto-pause window alone does not count), establish the answer from the paused chain, note the pause epoch this pre-flight then reports, and re-run. Nothing has been sent"
-    [ -n "$pause_epoch" ] || fail "chain '$slug': the pause epoch could not be read from the pause slot -- refusing to consume a migration answer whose pause cannot be pinned"
-    if [ "$(dec_norm "$pause_epoch")" = "0" ]; then
-      # BOOTSTRAP (Codex #2158 r28 P1): a zero count under a manual pause
-      # means the pause was made by the OLD pause code, which never counted —
-      # nothing can pin it. This run cuts facets only on this chain and the
-      # refresh defers the migrations; a second run, after re-pausing on the
-      # new code, carries the answer and its epoch.
-      info "$slug: BOOTSTRAP — pause transitions are not counted on this Diamond yet (old pause code): this run performs every step of the refresh EXCEPT the two paid-side migrations (facet cuts, retired-selector removal, proxy upgrades, reward-role backfill, tariff migration where due) and leaves it paused; then pause again (counted now), establish the seed / total / no-history answer under that pause, set \$ARMED_FRESH_PAUSE_EPOCH_${pfx}, and run again for the migrations"
-      bootstrap_chains="${bootstrap_chains:+$bootstrap_chains }$slug"
-      bootstrap=1
-    else
-      epoch_var="ARMED_FRESH_PAUSE_EPOCH_${pfx}"; epoch_val="${!epoch_var:-}"
-      [ -n "$epoch_val" ] || fail "chain '$slug': a paid-side migration is DUE -- set \$$epoch_var to the pause EPOCH at which you established the seed / total / no-history answer under the manual pause (the live epoch right now is $pause_epoch; it is the pause library's transition count, bytes 17..24 of its storage slot). Refusing to pair an answer with a pause it was not taken under. Nothing has been sent"
-      case "$epoch_val" in ''|*[!0-9]*) fail "chain '$slug': \$$epoch_var='${epoch_val}' is not a non-negative integer" ;; esac
-      [ "$(dec_norm "$epoch_val")" = "$(dec_norm "$pause_epoch")" ] || fail "chain '$slug': \$$epoch_var=$epoch_val but the live pause epoch is $pause_epoch -- the pause was lifted or re-applied since the answer was established, so the answer may omit a payout; re-establish it under the current pause and state that epoch. Nothing has been sent"
-      info "$slug: manually paused ✓ at the stated pause epoch $epoch_val (the refresh and the rebase re-check it)"
-    fi
-  fi
-  if [ "$bootstrap" -eq 1 ]; then
-    # No migration runs on a bootstrap chain, so no answer is consumed and
-    # none is demanded (Codex #2158 r29 P1): the real answers are required
-    # on the second run, established under the counted pause.
-    info "$slug: P1-b seed answer not needed on this bootstrap run (the migration is deferred; establish it under the counted pause for the second run)"
-  elif [ "$already_seeded" = "true" ]; then
-    info "$slug: P1-b armed-fresh history already seeded ✓ (migration will be skipped)"
-  elif [ -n "$seed_val" ] && [ "$nohist_val" = "true" ]; then
-    fail "chain '$slug': both \$$seed_var and \$$nohist_var are set — they are mutually exclusive; state ONE answer for this chain"
-  elif [ -n "$seed_val" ]; then
-    # Same shape and cap checks as the slice-4 total below (Codex #2158 r14
-    # P2): the seed is now capped on chain too, and that refusal must land
-    # here, before any chain has broadcast.
-    case "$seed_val" in
-      ''|*[!0-9]*) fail "chain '$slug': \$$seed_var='${seed_val}' is not a non-negative integer (wei)" ;;
-    esac
-    if dec_gt "$seed_val" "$pool_cap"; then
-      fail "chain '$slug': \$$seed_var='${seed_val}' exceeds the interaction pool cap (69,000,000 VPFI = ${pool_cap} wei) -- seedArmedFreshPaid would refuse it on chain; correct the figure"
-    fi
-    # The seeder's actual predicate is the SUM (Codex #2158 r16 P2): it refuses
-    # `existing + seed` above the cap, so two figures that pass on their own
-    # can still abort a later chain's refresh. Checked whenever the counter
-    # reads; the simulation in [3b] covers the rest.
-    if [ -n "$live_paid" ]; then
-      seed_resulting="$(dec_add "$live_paid" "$seed_val")"
-      if dec_gt "$seed_resulting" "$pool_cap"; then
-        fail "chain '$slug': the existing armed-fresh paid counter (${live_paid} wei) plus \$$seed_var (${seed_val}) = ${seed_resulting} wei exceeds the interaction pool cap (69,000,000 VPFI = ${pool_cap} wei) -- seedArmedFreshPaid refuses the RESULTING counter on chain, and that would land after earlier chains had already broadcast; correct the figure"
-      fi
-    fi
-    info "$slug: P1-b seed = \$$seed_var ($seed_val)"
-  elif [ "$nohist_val" = "true" ]; then
-    info "$slug: P1-b seed = 0 (\$$nohist_var declares no pre-P1-b history)"
-  else
-    fail "chain '$slug': the P1-b armed-fresh migration is UNSEEDED and irreversible. Set \$$seed_var to the armed fresh already paid out on this chain before the P1-b upgrade (from the indexed payout history), or \$$nohist_var=true to declare there is none. Refusing to broadcast an accounting migration this run cannot state an answer for."
-  fi
-  # #1566 slice 4 PR A — the paid-side REBASE answer, same posture as the
-  # seed: per chain, validated before any broadcast, skipped only on the
-  # on-chain "already rebased" flag (a pre-slice-4 Diamond does not route the
-  # getter yet; a revert reads as "not rebased", never as a failure).
-  total_var="ARMED_FRESH_PAID_TOTAL_${pfx}"
-  rnohist_var="ARMED_FRESH_REBASE_NO_HISTORY_${pfx}"
-  total_val="${!total_var:-}"
-  rnohist_val="${!rnohist_var:-}"
-  if [ "$bootstrap" -eq 1 ]; then
-    info "$slug: slice-4 rebase answer not needed on this bootstrap run (the migration is deferred; establish it under the counted pause for the second run)"
-  elif [ "$already_rebased" = "true" ]; then
-    info "$slug: slice-4 paid-side rebase already run ✓ (migration will be skipped)"
-  elif [ -n "$total_val" ] && [ "$rnohist_val" = "true" ]; then
-    fail "chain '$slug': both \$$total_var and \$$rnohist_var are set — they are mutually exclusive; state ONE answer for this chain"
-  elif [ -n "$total_val" ]; then
-    case "$total_val" in
-      ''|*[!0-9]*) fail "chain '$slug': \$$total_var='${total_val}' is not a non-negative integer (wei)" ;;
-    esac
-    # Must fit uint256 (Codex #2158 r8 P2): a digit-only value past the
-    # maximum passes the shape check but cannot be decoded by the forge
-    # script, and in a multi-chain run that abort would land AFTER earlier
-    # chains had already completed their irreversible refreshes.
-    uint_max="115792089237316195423570985008687907853269984665640564039457584007913129639935"
-    if dec_gt "$total_val" "$uint_max"; then
-      fail "chain '$slug': \$$total_var='${total_val}' exceeds uint256 -- the forge script could not decode it, after earlier chains had already broadcast"
-    fi
-    # And within the interaction pool's lifetime cap (Codex #2158 r12 P2):
-    # the facet refuses a larger total (nothing honest can have paid out
-    # more than can ever be rewarded), and that refusal must land HERE,
-    # before any chain has broadcast, not at a later chain's rebase.
-    if dec_gt "$total_val" "$pool_cap"; then
-      fail "chain '$slug': \$$total_var='${total_val}' exceeds the interaction pool cap (69,000,000 VPFI = ${pool_cap} wei) -- the rebase would refuse it on chain; correct the reconstruction"
-    fi
-    info "$slug: slice-4 rebase total = \$$total_var ($total_val)"
-  elif [ "$rnohist_val" = "true" ]; then
-    info "$slug: slice-4 rebase total = 0 (\$$rnohist_var declares nothing to import)"
-  else
-    fail "chain '$slug': the slice-4 paid-side rebase has NOT run and is irreversible. Set \$$total_var to the reconstructed absolute fresh-paid total for this chain (every vintage; the deduplicated sum of payouts, expiry/forfeit absorptions and the fresh portions of non-recovery remittance and compensation dispatches), or \$$rnohist_var=true to declare there is nothing to import. Refusing to broadcast an accounting migration this run cannot state an answer for."
   fi
   # #1566 slice 4 PR A (Codex #2158 r16 P2) — the bound-holder / artifact
   # relation is classified HERE, before any broadcast, by the same rule step
@@ -793,7 +497,7 @@ fi
 # ── [3b] Simulate every selected chain's refresh — no broadcast ──────────────
 # The root of a whole family of pre-flight findings (Codex #2158 r8, r12,
 # r14, r15, r16): each refusal RefreshAllFacetsInPlace can raise on chain —
-# the seed's and rebase's caps and sums, the role declaration, the owner key,
+# the role declaration, the owner key,
 # the facet cuts themselves — is exercised HERE, per chain, against a fork of
 # its live state AT SIMULATION TIME, before the first broadcast on any chain.
 # The bash checks above stay as early, explicit messages for the common
@@ -853,16 +557,9 @@ EOF
     var="$(rpc_var_for "$slug")"
     echo "  # $slug"
     pfx="$(prefix_for "$slug")"
-    # The P1-b seed is per chain and one-shot; a manual rerun must carry the
-    # SAME answer the orchestrator would have resolved, or it migrates blind.
-    echo "  #   (P1-b, only if this chain is not yet seeded: prefix the command with"
-    echo "  #    ARMED_FRESH_PAID_SEED=\$ARMED_FRESH_PAID_SEED_${pfx}  or  ARMED_FRESH_PAID_NO_HISTORY=true)"
+    # The role declaration is per chain; a manual rerun must carry the SAME
+    # answer the orchestrator would have resolved.
     echo "  #   (#1566 role backfill, ALWAYS: prefix with REWARD_ROLE_EXPECTED=\$REWARD_ROLE_EXPECTED_${pfx})"
-    echo "  #   (#1566 slice-4 rebase, if not yet rebased: prefix with"
-    echo "  #    ARMED_FRESH_PAID_TOTAL=\$ARMED_FRESH_PAID_TOTAL_${pfx}  or  ARMED_FRESH_REBASE_NO_HISTORY=true)"
-    echo "  #   (#1566 slice-4, while a seed or rebase is still due: the Diamond must ALREADY be under the MANUAL pause, and the"
-    echo "  #    answer's pause epoch must be stated -- prefix with ARMED_FRESH_PAUSE_EPOCH=\$ARMED_FRESH_PAUSE_EPOCH_${pfx}; the"
-    echo "  #    refresh refuses the migration unless that is still the live epoch)"
     echo "  FOUNDRY_PROFILE=default forge script script/RefreshAllFacetsInPlace.s.sol --sig \"refresh()\" --ffi --rpc-url \$$var --broadcast --slow"
     echo "  #   (#1566 slice-4, only while rewardCustodyHolder() is unbound; after handover: --sig \"stage()\" then --sig \"record()\";"
     echo "  #    in every mode the artifact is reconciled by --sig \"record()\" once the bind has confirmed)"
@@ -879,7 +576,7 @@ fi
 for slug in $CHAINS; do
   var="$(rpc_var_for "$slug")"
   rpc="${!var}"
-  # THIS chain's answers (seed, role, rebase — all validated in the pre-flight
+  # THIS chain's answer (the role, validated in the pre-flight
   # and exercised by the simulation in [3b]) into the process-global names the
   # forge script reads; scoped per chain inside the loop.
   export_chain_answers "$slug"
@@ -990,7 +687,7 @@ for slug in $CHAINS; do
         [ -n "${REWARD_CUSTODY_PAUSE_EPOCH:-}" ] || fail "$slug: \$$act_var=true but \$REWARD_CUSTODY_PAUSE_EPOCH_$(prefix_for "$slug") is unset -- every activation answer is per chain (suffix _$(prefix_for "$slug")); nothing sent for this ceremony"
         "${NICE[@]}" forge script script/ActivateRewardCustody.s.sol --sig "run()" \
           --rpc-url "$rpc" --broadcast --slow \
-          || fail "$slug: ActivateRewardCustody failed -- read the refusal above (a figure without an answer, a stale REWARD_CUSTODY_PAUSE_EPOCH, a role or rebase precondition); nothing after the refusal was sent; after governance handover use --sig \"stage()\" then \"record()\""
+          || fail "$slug: ActivateRewardCustody failed -- read the refusal above (a figure without an answer, a stale REWARD_CUSTODY_PAUSE_EPOCH, a role precondition); nothing after the refusal was sent; after governance handover use --sig \"stage()\" then \"record()\""
         "${NICE[@]}" forge script script/ActivateRewardCustody.s.sol --sig "record()" \
           --rpc-url "$rpc" \
           || fail "$slug: ActivateRewardCustody record() failed -- the activation broadcast but its record was NOT reconciled; run --sig \"record()\" again"
@@ -1038,9 +735,6 @@ for slug in $CHAINS; do
   else
     info "$slug: in-place redeploy complete (service restored: the pause slot shows neither the manual flag nor a live auto-pause window)."
   fi
-  case " ${bootstrap_chains:-} " in *" $slug "*)
-    info "$slug: BOOTSTRAP run -- every refresh step ran EXCEPT the paid-side seed and rebase (those are DEFERRED; the role backfill and proxy upgrades DID run). Next for this chain: AdminFacet.pause() once more (counted now), establish the answer under that pause, set \$ARMED_FRESH_PAUSE_EPOCH_$(prefix_for "$slug"), and run again with --chains \"$slug\"" ;;
-  esac
   done_chains="${done_chains:+$done_chains }$slug"
 done
 
@@ -1063,9 +757,6 @@ fi
 
 if [ -n "${paused_chains:-}" ]; then
   info "NOT LIVE after this run: [$paused_chains] -- a plain slug is under the manual pause it was refreshed under (resume by a fresh Unpauser decision, AdminFacet.unpause(), once its migrations are verified); '(auto-pause)' is under a watcher window; '(unknown)' could not be read and must be verified by hand. Not ordinary completion."
-fi
-if [ -n "${bootstrap_chains:-}" ]; then
-  info "BOOTSTRAP chains (paid-side seed + rebase DEFERRED; every other refresh step ran): [$bootstrap_chains] -- for each: AdminFacet.pause() once more (counted now that the new pause code is live), establish the seed / total / no-history answer under that pause, set ARMED_FRESH_PAUSE_EPOCH_<PREFIX> to the pause library's transition count, and run this script again for that chain."
 fi
 if [ -n "${unactivated_chains:-}" ]; then
   info "REWARD CUSTODY NOT ACTIVATED on: [$unactivated_chains] -- reward reads and debits stay on the Diamond path there; a Canonical chain among them REFUSES reward claims and remittances until the activation ceremony (ActivateRewardCustody.s.sol, or this script with REWARD_CUSTODY_ACTIVATE_<PREFIX>=true and the per-row answers) has run. Not ordinary completion."

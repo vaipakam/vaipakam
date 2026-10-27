@@ -792,7 +792,8 @@ future change here. Each prerequisite carries a note saying what met it.
      `rewardBudgetArmedFreshPaid` (tail-appended storage, written at every
      armed-fresh payout site — the claim walk, the forfeiture sweep, the expiry
      batch — each scoped to mirrors, plus the one-shot migration seed
-     `seedArmedFreshPaid` for chains carrying pre-P1-b history).
+     `seedArmedFreshPaid` for chains carrying pre-P1-b history, retired in
+     #2910 since every chain is a fresh deploy).
      `interactionPoolPaidOut` is explicitly FORBIDDEN as a proxy — it counts
      lifetime payouts including ordinary-schedule ones no delivery funded, so
      charging them would defer every later day on any chain with prior

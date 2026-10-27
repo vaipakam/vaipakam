@@ -296,7 +296,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(0, epoch);
         _rep().setBaseChainId(0); // detach: no allocation yet, so not frozen
         assertEq(uint8(_rep().getRewardRole()), uint8(LibVaipakam.RewardRole.Detached), "detached");
         vm.expectRevert(RewardCustodyActivationDetachedNotSupported.selector);
@@ -309,7 +308,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(0, epoch);
         vm.expectRevert(
             abi.encodeWithSelector(
                 RewardCustodyActivationRequiresConfiguredRole.selector,
@@ -329,7 +327,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _custody().bindRewardCustodyHolder();
         _admin().pause();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(0, epoch);
         _mut().setStagedEpochTotalRaw(1);
         vm.expectRevert(abi.encodeWithSelector(RewardCustodyActivationBlockedByStagedEarmark.selector, uint256(1)));
         _custody().activateRewardCustody(epoch, false);
@@ -340,9 +337,8 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     }
 
     /// The ceremony's gates, each straddled: unpaused refuses; a stale epoch
-    /// refuses; an unconsumed rebase refuses; the live epoch under the manual
-    /// pause with the rebase consumed activates — once.
-    function test_Activation_RequiresManualPauseLiveEpochAndRebase() public {
+    /// refuses; the live epoch under the manual pause activates — once.
+    function test_Activation_RequiresManualPauseAndLiveEpoch() public {
         _becomeCanonical();
         _custody().bindRewardCustodyHolder();
         uint64 epochUnpaused = _epoch();
@@ -356,10 +352,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         );
         _custody().activateRewardCustody(epoch - 1, false);
 
-        vm.expectRevert(RewardCustodyActivationRequiresRebase.selector);
-        _custody().activateRewardCustody(epoch, false);
-
-        _custody().rebaseArmedFreshPaid(0, epoch);
         _custody().activateRewardCustody(epoch, false);
         assertTrue(_custody().rewardCustodyActivated(), "activated");
         assertFalse(_mut().getRewardRoleChangesFrozenRaw(), "#1566 PR C revision: activation freezes nothing");
@@ -384,7 +376,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(0, epoch);
         (uint32 stampedV, uint32 requiredV, bytes32 stamped, bytes32 current) =
             _custody().rewardCustodyCutoverStatus();
         assertEq(stampedV, requiredV, "the build recorded this tree's version");
@@ -498,7 +489,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(0, epoch);
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -567,7 +557,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(0, epoch);
         _custody().relocateRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recovery, 3e18);
         // Replacement funding from the caller serves the same rows.
         vpfi.mint(address(this), 1e18);
@@ -594,7 +583,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(4e18, epoch); // mirror: paid stays 4, received untouched
 
         vm.expectRevert(
             abi.encodeWithSelector(RewardCustodyBootstrapRowNotAllowed.selector, uint8(LibVaipakam.RewardCustodyRow.LiveFresh))
@@ -635,7 +623,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(4e18, epoch);
         vpfi.mint(address(this), 2e18);
         vpfi.approve(address(diamond), 2e18);
         _custody().fundRewardCustodyRow(LibVaipakam.RewardCustodyRow.LiveFresh, 2e18);
@@ -644,37 +631,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(paid, 4e18, "paid retained");
         assertEq(received, 6e18, "received written down to paid + what the holder backs");
         assertEq(_live(), 2e18, "the row IS the headroom");
-    }
-
-    /// Every bootstrap write waits for the paid-side rebase (Codex #2186 r3
-    /// P1): the rebase only raises `paid`, so a live row credited to the
-    /// pre-rebase `received − paid` would be left above the figure the
-    /// rebase leaves — which activation refuses and nothing before it can
-    /// debit. Straddled: refused before the rebase, the same writes
-    /// accepted after it.
-    function test_Bootstrap_RequiresThePaidRebase() public {
-        _becomeMirror();
-        _seedDiamond(10e18);
-        _mut().setArmedFreshLedgerRaw(10e18, 4e18); // gap 6
-        _mut().setRecycleBucketRaw(4e18);
-        _admin().pause();
-        _custody().bindRewardCustodyHolder();
-        vpfi.mint(address(this), 6e18);
-        vpfi.approve(address(diamond), 6e18);
-
-        vm.expectRevert(RewardCustodyBootstrapRequiresRebase.selector);
-        _custody().fundRewardCustodyRow(LibVaipakam.RewardCustodyRow.LiveFresh, 6e18);
-        vm.expectRevert(RewardCustodyBootstrapRequiresRebase.selector);
-        _custody().relocateRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 4e18);
-        vm.expectRevert(RewardCustodyBootstrapRequiresRebase.selector);
-        _custody().releaseRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 1);
-        assertEq(_held(), 0, "nothing moved into the holder");
-
-        _custody().rebaseArmedFreshPaid(4e18, _epoch());
-        _custody().fundRewardCustodyRow(LibVaipakam.RewardCustodyRow.LiveFresh, 6e18);
-        _custody().relocateRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 4e18);
-        assertEq(_live(), 6e18, "the live row backs the post-rebase gap");
-        assertEq(_recycledRow(), 4e18, "the recycled row backs the bucket");
     }
 
     /// A figure that moves after its row was backed leaves the row ABOVE it:
@@ -691,7 +647,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(4e18, epoch);
         vpfi.mint(address(this), 6e18);
         vpfi.approve(address(diamond), 6e18);
         _custody().fundRewardCustodyRow(LibVaipakam.RewardCustodyRow.LiveFresh, 6e18);
@@ -700,7 +655,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(vpfi.balanceOf(address(diamond)), 6e18, "the Diamond kept what was not relocated");
 
         // The CLASS, not one mover: the paid side rises (a payout a lifted
-        // pause let through, or the rebase itself) and the bucket falls.
+        // pause let through) and the bucket falls.
         _mut().setArmedFreshLedgerRaw(10e18, 7e18); // gap 3, row 6 — excess 3
         _mut().setRecycleBucketRaw(3e18); // bucket 3, row 4 — excess 1
 
@@ -848,7 +803,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(6e18, epoch); // paid 6, received 0: a 6 deficit
+        _mut().setArmedFreshLedgerRaw(0, 6e18); // paid 6, received 0: a 6 deficit
         _custody().activateRewardCustody(epoch, false);
         _admin().unpause();
 
@@ -1220,7 +1175,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(2e18, epoch); // a deficit of 2
+        _mut().setArmedFreshLedgerRaw(0, 2e18); // a deficit of 2
         _custody().activateRewardCustody(epoch, false);
         _admin().unpause();
         _seedDiamond(10e18);
@@ -1407,7 +1362,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(deficit, epoch);
+        _mut().setArmedFreshLedgerRaw(0, deficit);
         _custody().activateRewardCustody(epoch, false);
         _admin().unpause();
     }
@@ -3065,7 +3020,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(6e18, epoch); // deficit 6
+        _mut().setArmedFreshLedgerRaw(0, 6e18); // deficit 6
         _custody().activateRewardCustody(epoch, false);
         _admin().unpause();
         fundRewardPoolForTest(address(vpfi), 10e18); // restitution 6, live 4
@@ -3090,7 +3045,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(6e18, epoch); // deficit 6
+        _mut().setArmedFreshLedgerRaw(0, 6e18); // deficit 6
         _custody().activateRewardCustody(epoch, false);
         _admin().unpause();
         fundRewardPoolForTest(address(vpfi), 4e18); // all restitution; received 4, paid 6
@@ -3118,7 +3073,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(6e18, epoch);
+        _mut().setArmedFreshLedgerRaw(0, 6e18);
         _custody().activateRewardCustody(epoch, false);
         _admin().unpause();
         fundRewardPoolForTest(address(vpfi), 4e18);
@@ -3239,7 +3194,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(6e18, epoch);
+        _mut().setArmedFreshLedgerRaw(0, 6e18);
         _mut().setStagingEncumberedCountRaw(1);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RewardCustodyActivationBlockedByStagedRecords.selector, uint256(1)));
         _custody().activateRewardCustody(epoch, false);
