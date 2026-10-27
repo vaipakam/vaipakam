@@ -1,4 +1,4 @@
-## Release notes — the assembler names fragments to read together (PR #TBD)
+## Release notes — the assembler names fragments to read together (PR #2946)
 
 Release-note fragments are written one at a time, against the code as it stood
 when each change merged. Two can each be true and still contradict each other
