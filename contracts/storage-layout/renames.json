@@ -216,6 +216,22 @@
       "from": "remitReservations[].strandedStamped",
       "to": "remitReservations[].retiredStrandedStamped",
       "reason": "#2910 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the #2489 reservation history rule stamped released reservations' stranded records and booked consumed reservations' recycled shares for records written before those fields existed on a Diamond upgraded in place. On a fresh deploy a release writes its stranded record in the same transaction that sets status 3, and every attested consumption books its share in the transaction that stamps it, so the rule, its permissionless walk, the history figure and the lens views are removed. The field keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 492,
+      "offset": 0,
+      "from": "armedFreshPaidSeeded",
+      "to": "retiredArmedFreshPaidSeeded",
+      "reason": "#2910 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the paid-side seed (#1434 P1-b) and the slice-4 paid-side rebase imported a reconstructed paid total on a Diamond upgraded in place, each behind a one-shot guard. A fresh deploy has no paid history to import (its paid and received sides start at zero), so DeployDiamond only ever consumed both guards with zero; the two writers, their guards, their getters, the activation's and the bootstrap writers' rebase prerequisite and the refresh's bootstrap mode are removed. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 508,
+      "offset": 0,
+      "from": "armedFreshPaidRebased",
+      "to": "retiredArmedFreshPaidRebased",
+      "reason": "#2910 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the paid-side seed (#1434 P1-b) and the slice-4 paid-side rebase imported a reconstructed paid total on a Diamond upgraded in place, each behind a one-shot guard. A fresh deploy has no paid history to import (its paid and received sides start at zero), so DeployDiamond only ever consumed both guards with zero; the two writers, their guards, their getters, the activation's and the bootstrap writers' rebase prerequisite and the refresh's bootstrap mode are removed. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
     }
   ]
 }

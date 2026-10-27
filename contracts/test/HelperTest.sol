@@ -2280,7 +2280,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](21);
+        selectors = new bytes4[](19);
         selectors[0] = RewardReporterFacet.closeDay.selector;
         // #1434 P2-w1 — V3 (kind-10) ingress + the mirror-side clock reads
         // + the era ground truth (#1632 r1).
@@ -2295,21 +2295,19 @@ contract HelperTest {
         // T-068: `setLocalEid` removed — chain identity is `block.chainid`.
         selectors[7] = RewardReporterFacet.setBaseChainId.selector;
         selectors[8] = RewardReporterFacet.setIsCanonicalRewardChain.selector;
-        selectors[9] = RewardReporterFacet.seedArmedFreshPaid.selector;
-        selectors[10] = RewardReporterFacet.armedFreshPaidSeeded.selector;
-        selectors[11] = RewardReporterFacet.setRewardGraceSeconds.selector;
-        selectors[12] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
-        selectors[13] = RewardReporterFacet.getChainReportSentAt.selector;
-        selectors[14] = RewardReporterFacet.getRewardReporterConfig.selector;
-        selectors[15] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
+        selectors[9] = RewardReporterFacet.setRewardGraceSeconds.selector;
+        selectors[10] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
+        selectors[11] = RewardReporterFacet.getChainReportSentAt.selector;
+        selectors[12] = RewardReporterFacet.getRewardReporterConfig.selector;
+        selectors[13] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
         // Single-field getter for the protocol-console knob registry.
-        selectors[16] = RewardReporterFacet.getRewardGraceSeconds.selector;
-        selectors[17] = RewardReporterFacet.getBroadcastV2Applied.selector;
+        selectors[14] = RewardReporterFacet.getRewardGraceSeconds.selector;
+        selectors[15] = RewardReporterFacet.getBroadcastV2Applied.selector;
         // #1566 closure 3 — the resolved role.
-        selectors[18] = RewardReporterFacet.getRewardRole.selector;
+        selectors[16] = RewardReporterFacet.getRewardRole.selector;
         // #2277 — the permissionless frontier catch-up and its view.
-        selectors[19] = RewardReporterFacet.advanceInterestFrontiers.selector;
-        selectors[20] = RewardReporterFacet.getInterestFrontiers.selector;
+        selectors[17] = RewardReporterFacet.advanceInterestFrontiers.selector;
+        selectors[18] = RewardReporterFacet.getInterestFrontiers.selector;
         return selectors;
     }
 
@@ -2444,63 +2442,61 @@ contract HelperTest {
             RewardCompensationDispatchFacet.releaseRemitReservation.selector;
     }
 
-    /// #1566 slice 4 PR A — custody lifecycle, ledger views, paid-side
-    /// rebase. Mirrors `DeployDiamond._getRewardCustodySelectors`.
+    /// #1566 slice 4 PR A — custody lifecycle and ledger views. Mirrors
+    /// `DeployDiamond._getRewardCustodySelectors`.
     function getRewardCustodyFacetSelectors()
         public
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](41);
+        selectors = new bytes4[](39);
         selectors[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         selectors[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
-        selectors[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
-        selectors[3] = RewardCustodyFacet.rewardCustodyHolder.selector;
-        selectors[4] = RewardCustodyFacet.armedFreshPaidRebased.selector;
-        selectors[5] = RewardCustodyFacet.rewardCustodyRow.selector;
-        selectors[6] = RewardCustodyFacet.rewardCustodySnapshot.selector;
-        selectors[7] = RewardCustodyFacet.armedFreshLedger.selector;
-        selectors[8] = RewardCustodyFacet.sweepForeignTokenFromRewardCustody.selector;
-        selectors[9] = RewardCustodyFacet.sweepNativeFromRewardCustody.selector;
-        selectors[10] = RewardCustodyFacet.rewardCustodyHolderConstructed.selector;
-        selectors[11] = RewardCustodyFacet.rewardCustodyNativeHeld.selector;
-        selectors[12] = RewardCustodyFacet.recoverVpfiFromPredecessor.selector;
-        selectors[13] = RewardCustodyFacet.sweepERC721FromRewardCustody.selector;
-        selectors[14] = RewardCustodyFacet.sweepERC1155FromRewardCustody.selector;
-        selectors[15] = RewardCustodyFacet.sweepUnattributedVpfiFromRewardCustody.selector;
+        selectors[2] = RewardCustodyFacet.rewardCustodyHolder.selector;
+        selectors[3] = RewardCustodyFacet.rewardCustodyRow.selector;
+        selectors[4] = RewardCustodyFacet.rewardCustodySnapshot.selector;
+        selectors[5] = RewardCustodyFacet.armedFreshLedger.selector;
+        selectors[6] = RewardCustodyFacet.sweepForeignTokenFromRewardCustody.selector;
+        selectors[7] = RewardCustodyFacet.sweepNativeFromRewardCustody.selector;
+        selectors[8] = RewardCustodyFacet.rewardCustodyHolderConstructed.selector;
+        selectors[9] = RewardCustodyFacet.rewardCustodyNativeHeld.selector;
+        selectors[10] = RewardCustodyFacet.recoverVpfiFromPredecessor.selector;
+        selectors[11] = RewardCustodyFacet.sweepERC721FromRewardCustody.selector;
+        selectors[12] = RewardCustodyFacet.sweepERC1155FromRewardCustody.selector;
+        selectors[13] = RewardCustodyFacet.sweepUnattributedVpfiFromRewardCustody.selector;
         // #1566 slice 4 PR B — activation, funding, bootstrap, overage, ledger.
-        selectors[16] = RewardCustodyFacet.activateRewardCustody.selector;
-        selectors[17] = RewardCustodyFacet.fundRewardPool.selector;
-        selectors[18] = RewardCustodyFacet.fundRewardCustodyRow.selector;
-        selectors[19] = RewardCustodyFacet.relocateRewardCustodyRow.selector;
-        selectors[20] = RewardCustodyFacet.releaseRewardCustodyOverage.selector;
-        selectors[21] = RewardCustodyFacet.rewardCustodyActivated.selector;
-        selectors[22] = RewardCustodyFacet.custodyDeliverClaim.selector; // 3b-ii-A (the freeze getter retired)
-        selectors[23] = RewardCustodyFacet.rewardCustodyLedger.selector;
+        selectors[14] = RewardCustodyFacet.activateRewardCustody.selector;
+        selectors[15] = RewardCustodyFacet.fundRewardPool.selector;
+        selectors[16] = RewardCustodyFacet.fundRewardCustodyRow.selector;
+        selectors[17] = RewardCustodyFacet.relocateRewardCustodyRow.selector;
+        selectors[18] = RewardCustodyFacet.releaseRewardCustodyOverage.selector;
+        selectors[19] = RewardCustodyFacet.rewardCustodyActivated.selector;
+        selectors[20] = RewardCustodyFacet.custodyDeliverClaim.selector; // 3b-ii-A (the freeze getter retired)
+        selectors[21] = RewardCustodyFacet.rewardCustodyLedger.selector;
         // #1566 slice 4 PR B — the Diamond-internal custody entry points.
-        selectors[24] = RewardCustodyFacet.custodyRelocateToRow.selector;
-        selectors[25] = RewardCustodyFacet.custodyMove.selector;
-        selectors[27] = RewardCustodyFacet.custodyUnclassifiedQuarantine.selector;
-        selectors[28] = RewardCustodyFacet.custodyReleaseFromRow.selector;
-        selectors[29] = RewardCustodyFacet.custodyPayoutToWallet.selector;
-        selectors[30] = RewardCustodyFacet.custodyDrawForTransport.selector;
+        selectors[22] = RewardCustodyFacet.custodyRelocateToRow.selector;
+        selectors[23] = RewardCustodyFacet.custodyMove.selector;
+        selectors[25] = RewardCustodyFacet.custodyUnclassifiedQuarantine.selector;
+        selectors[26] = RewardCustodyFacet.custodyReleaseFromRow.selector;
+        selectors[27] = RewardCustodyFacet.custodyPayoutToWallet.selector;
+        selectors[28] = RewardCustodyFacet.custodyDrawForTransport.selector;
         // #1566 slice 4 PR B (Codex #2186 r1) — restitution dispositions + the versioned snapshot.
-        selectors[31] = RewardCustodyFacet.releaseRestitutionAsPaidCorrection.selector;
-        selectors[32] = RewardCustodyFacet.releaseRestitutionToTreasury.selector;
-        selectors[33] = RewardCustodyFacet.getRecycleBackingSnapshotV2.selector;
+        selectors[29] = RewardCustodyFacet.releaseRestitutionAsPaidCorrection.selector;
+        selectors[30] = RewardCustodyFacet.releaseRestitutionToTreasury.selector;
+        selectors[31] = RewardCustodyFacet.getRecycleBackingSnapshotV2.selector;
         // #1566 slice 4 PR B (Codex #2186 r3) — the bootstrap release.
-        selectors[34] = RewardCustodyFacet.releaseRewardCustodyRow.selector;
+        selectors[32] = RewardCustodyFacet.releaseRewardCustodyRow.selector;
         // #1566 slice 4 PR B (Codex #2186 r4) — the complete-cut record.
-        selectors[35] = RewardCustodyFacet.stampRewardCustodyCutover.selector;
-        selectors[36] = RewardCustodyFacet.rewardCustodyCutoverStatus.selector;
+        selectors[33] = RewardCustodyFacet.stampRewardCustodyCutover.selector;
+        selectors[34] = RewardCustodyFacet.rewardCustodyCutoverStatus.selector;
         // #1566 closure 2 cutover PR 1 — the UNCLASSIFIED ingress attribution's
-        // Diamond-internal entry points (the quarantine one took slot 27).
-        selectors[37] = RewardCustodyFacet.custodyRecordIngressPacket.selector;
-        selectors[38] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
-        selectors[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
+        // Diamond-internal entry points (the quarantine one took slot 25).
+        selectors[35] = RewardCustodyFacet.custodyRecordIngressPacket.selector;
+        selectors[36] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
+        selectors[38] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
         // #1566 sanctions rule (owner 2026-10-14) — reward set apart / released.
-        selectors[39] = RewardCustodyFacet.custodySetApartReward.selector;
-        selectors[26] = RewardCustodyFacet.custodyReleaseSanctionsHeld.selector;
+        selectors[37] = RewardCustodyFacet.custodySetApartReward.selector;
+        selectors[24] = RewardCustodyFacet.custodyReleaseSanctionsHeld.selector;
     }
 
     /// #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch

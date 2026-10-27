@@ -2750,9 +2750,9 @@ library LibInteractionRewards {
             // Scoping to mirrors is the rebaseline: the counter means "armed
             // fresh this chain paid out of DELIVERED funding", and a canonical
             // chain has none by construction. A demotion therefore starts the
-            // paid side from whatever mirror-era spending exists (zero, or the
-            // operator's `seedArmedFreshPaid` figure), which is the only
-            // reading under which received and paid describe the same era.
+            // paid side from whatever mirror-era spending exists (zero on a
+            // chain that was never a mirror), which is the only reading under
+            // which received and paid describe the same era.
             // #1566 closure 2 — the STORAGE charge no longer happens here.
             // It used to: `rewardBudgetArmedFreshPaid += freshSpent`, armed
             // days only, mirrors only. That charged by VINTAGE while the
