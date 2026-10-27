@@ -1597,16 +1597,16 @@ contract CollateralListingExecutor is
         // `authorizeOrder` and the `Seaport.validate()` pre-registration path —
         // so a flagged recipient aborts the fill. The buyer's funds are never
         // committed (Seaport reverts the whole fill atomically), so nothing is
-        // stranded. The Diamond pays the live lender holder and the
-        // borrower-remainder holder out of the proceeds leg (and screens them
-        // again there, fail-closed); Seaport pays the recorded fee legs
-        // directly. Treasury is the protocol (no screen). (#821 covers the diamond-side close-out deposits on the
-        // non-fill paths.)
+        // stranded. Seaport pays the recorded fee legs directly, so each is
+        // screened here. The borrower-position holder is screened because the
+        // sale is that side's own dealing (the Diamond screens it again,
+        // fail-closed). The lender-position holder is NOT screened: the
+        // Diamond books its share to the lender's vault behind a claim row,
+        // and the claim is where its sanctions status applies, so a flagged
+        // lender never blocks the borrower's sale (#2876, owner direction
+        // 2026-10-27). Treasury is the protocol (no screen).
         // #1279 — the buyer is a Tier-1 party too: screen the fulfiller.
         _assertBuyerNotBarred(params);
-        if (_recipientBarred(pctx.lenderNftOwner)) {
-            revert SanctionedListingRecipient(pctx.lenderNftOwner);
-        }
         if (_recipientBarred(pctx.borrowerNftOwner)) {
             revert SanctionedListingRecipient(pctx.borrowerNftOwner);
         }

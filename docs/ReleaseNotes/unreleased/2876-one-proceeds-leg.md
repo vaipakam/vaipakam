@@ -28,7 +28,7 @@ The sale is neutral between the two sides. Before, the whole sale was
 refused when either position holder was flagged, or when the lender's wallet
 refused the token, so one side could stop the other's payout. Now a flagged
 lender holder, or a lender wallet that would refuse the token, cannot stop
-the borrower's sale, because the lender is paid through the claim, which
+the borrower's sale or get a standing listing cancelled, because the lender is paid through the claim, which
 decides on its own screen when the money may leave. A refusing borrower
 wallet cannot stop it either. The one refusal left is the borrower's own: a
 borrower-position holder flagged by the time of the fill cannot sell their

@@ -52,7 +52,6 @@ contract LibAutoListTest is Test {
         pctx.treasuryLeg = treasury;
         // Constant so the helper is `pure` and callers can be too.
         pctx.graceEnd = 1_000_000;
-        pctx.lenderNftOwner = ANY_ADDR;
         pctx.borrowerNftOwner = ANY_ADDR;
         pctx.borrowerVault = ANY_ADDR;
     }

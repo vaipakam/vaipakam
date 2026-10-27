@@ -138,10 +138,11 @@ contract PrepayListingFacet is
         uint256 endTime = LibLoanClock.maturity(loan);
         ctx.graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
 
-        // Current position-NFT holders. Reads the diamond's own NFT
-        // surface via the same `VaipakamNFTFacet.ownerOf` selector
-        // any other facet would.
-        ctx.lenderNftOwner = VaipakamNFTFacet(address(this)).ownerOf(loan.lenderTokenId);
+        // Current borrower-position holder: the sale is that side's own
+        // dealing, so the executor screens it at fill. The lender-position
+        // holder is not a sale recipient: its share is deposited into the
+        // lender's vault behind a claim row, and the claim is screened
+        // instead, so a flagged lender never blocks the sale (#2876).
         ctx.borrowerNftOwner = VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId);
 
         // #306 architectural fix — borrower's per-user vault.
@@ -727,9 +728,10 @@ contract PrepayListingFacet is
         //    flagged after listing fill during an outage, so use the registry-aware
         //    fail-closed bar — paired with `syncPrepaySaleOffer` registering the
         //    Scenario-A creator (r1 P1).
-        //  - Scenario B (accepted): the sale proceeds are split to the CURRENT
-        //    position holders (screened live by `_settleLoanFromParallelSale`'s
-        //    `assertRecipientNotBarred`), and `borrowerWallet` here is the STORED
+        //  - Scenario B (accepted): the sale settles through
+        //    `_settleLoanFromParallelSale`, which screens the CURRENT
+        //    borrower-position holder live (`assertRecipientNotBarred`; the
+        //    lender's share goes to a claim row), and `borrowerWallet` here is the STORED
         //    original seller — NOT a live recipient. Applying the registry bar would
         //    let a stale/original-seller marker revert a clean current holder's fill,
         //    so keep the fail-open screen on that vestigial party.

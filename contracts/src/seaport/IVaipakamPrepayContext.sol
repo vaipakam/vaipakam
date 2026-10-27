@@ -56,8 +56,10 @@ interface IVaipakamPrepayContext {
         uint256 lenderLeg;       // LibCollateralSettlement.saleLegs: principal + lender share
         uint256 treasuryLeg;     // LibCollateralSettlement.saleLegs: treasury share
         uint256 graceEnd;        // startTime + duration*1d + LibVaipakam.gracePeriod
-        address lenderNftOwner;  // VaipakamNFTFacet.ownerOf(loan.lenderTokenId) — screened at fill
-        address borrowerNftOwner;// VaipakamNFTFacet.ownerOf(loan.borrowerTokenId) — screened at fill
+        // VaipakamNFTFacet.ownerOf(loan.borrowerTokenId), screened at fill.
+        // There is no lender-holder field: the lender's share is booked to
+        // a claim row and screened at the claim, not at the fill (#2876).
+        address borrowerNftOwner;
         // #306 architectural fix — borrower's per-user vault
         // address (the Seaport order's expected offerer). The
         // executor's zone callback verifies

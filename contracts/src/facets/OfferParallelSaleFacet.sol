@@ -353,10 +353,12 @@ contract OfferParallelSaleFacet is
     ///         listing (the surface is offer-keyed via
     ///         `offerPrepayListingOrderHash[offerId]`, and pre-loan Scenario A has
     ///         no loan at all, so a loan-only sync couldn't reach it). Reads every
-    ///         live consideration recipient — the recorded fee-leg recipients, plus
-    ///         (once the offer is accepted into a loan, Scenario B) the current
-    ///         lender- and borrower-position holders the parallel-sale settlement
-    ///         pays — and, on an authoritative oracle-up `Flagged` read, COMMITS the
+    ///         party the fill screens — the recorded fee-leg recipients, plus the
+    ///         seller before acceptance (Scenario A) or the current
+    ///         borrower-position holder after it (Scenario B). The lender-position
+    ///         holder is not read: the sale books the lender's share to a claim row
+    ///         screened at the claim (#2876). On an authoritative oracle-up
+    ///         `Flagged` read it COMMITS the
     ///         flag to `sanctionsConfirmedFlagged` and CANCELS the listing so it can
     ///         no longer fill.
     /// @dev    The offer-keyed twin of `NFTPrepayListingFacet.syncPrepaySaleListing`;
@@ -406,15 +408,13 @@ contract OfferParallelSaleFacet is
             flaggedFound =
                 _syncRecipientFlag(s.offers[uint256(offerId)].creator) || flaggedFound;
         } else {
-            // Scenario B — the accepted offer's settlement
-            // (`PrepayListingFacet._settleLoanFromParallelSale`) pays the LIVE lender-
-            // and borrower-position holders directly. `_ownerOfRaw` (raw SLOAD →
-            // address(0) for a burned token) keeps the sync non-reverting if the loan
-            // has since terminalized.
+            // Scenario B — the accepted offer's sale settles through
+            // `PrepayListingFacet._settleLoanFromParallelSale` (the shared
+            // `_settleSale`), which screens the LIVE
+            // borrower-position holder (the lender's share goes to a claim row).
+            // `_ownerOfRaw` (raw SLOAD → address(0) for a burned token) keeps the
+            // sync non-reverting if the loan has since terminalized.
             LibVaipakam.Loan storage loan = s.loans[loanId];
-            flaggedFound =
-                _syncRecipientFlag(LibERC721._ownerOfRaw(loan.lenderTokenId)) ||
-                flaggedFound;
             flaggedFound =
                 _syncRecipientFlag(LibERC721._ownerOfRaw(loan.borrowerTokenId)) ||
                 flaggedFound;

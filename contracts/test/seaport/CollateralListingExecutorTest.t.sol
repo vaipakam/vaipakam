@@ -277,7 +277,6 @@ contract CollateralListingExecutorTest is Test {
         c.lenderLeg = 100e18;
         c.treasuryLeg = 1e18;
         c.graceEnd = block.timestamp + 30 days;
-        c.lenderNftOwner = lenderHolder;
         c.borrowerNftOwner = borrowerHolder;
         // #306 fix — executor's _checkOrderPreconditions verifies
         // `params.offerer == pctx.borrowerVault`. Test's
@@ -765,23 +764,23 @@ contract CollateralListingExecutorTest is Test {
         assertTrue(diamond.markConsumedCalled());
     }
 
-    /// @notice #825-r4 (P1) — fill-time re-screen of the live LENDER holder,
-    ///         whom the Diamond pays out of the proceeds at the fill (#2876).
-    ///         Clean at post time, flagged before fill → fill aborts.
-    function test_authorizeOrder_revertsWhenLenderRecipientSanctioned() public {
+    /// @notice #2876 — a collateral sale is neutral between the sides: the
+    ///         lender-position holder is not a sale recipient (the Diamond books
+    ///         its share to a claim row screened at the claim), so a lender holder
+    ///         flagged before the fill neither blocks authorization nor the fill.
+    ///         The context carries no lender holder at all for the executor to
+    ///         screen; flagging the lender on the mock proves no other read does.
+    function test_fill_succeedsWhenLenderHolderSanctioned() public {
         _setDefaultContext();
         _recordValidOrder();
         diamond.setSanctioned(lenderHolder, true);
 
         ZoneParameters memory p = _validZoneParams();
         vm.prank(seaport);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                CollateralListingExecutor.SanctionedListingRecipient.selector,
-                lenderHolder
-            )
-        );
-        executor.authorizeOrder(p);
+        assertEq(executor.authorizeOrder(p), ISeaportZone.authorizeOrder.selector);
+        _fillOne(p, _amountsOf(p));
+        assertTrue(diamond.finalizeCalled(), "the borrower's sale settles");
+        assertEq(diamond.finalizeLoanId(), TEST_LOAN_ID);
     }
 
     /// @notice #825-r3 (P1) — fill-time re-screen of a recorded FEE-LEG
@@ -932,7 +931,6 @@ contract CollateralListingExecutorTest is Test {
         c.collateralTokenId = TEST_COLLATERAL_TOKEN_ID;
         c.collateralQuantity = 1;
         c.graceEnd = block.timestamp + 30 days;
-        c.lenderNftOwner = lenderHolder;
         c.borrowerNftOwner = borrowerHolder;
         c.borrowerVault = makeAddr("mockBorrowerVault");
         diamond.setContext(c);

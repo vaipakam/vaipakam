@@ -341,7 +341,6 @@ interface PrepayContextOnChain {
   lenderLeg: bigint;
   treasuryLeg: bigint;
   graceEnd: bigint;
-  lenderNftOwner: `0x${string}`;
   borrowerNftOwner: `0x${string}`;
   borrowerVault: `0x${string}`;
 }

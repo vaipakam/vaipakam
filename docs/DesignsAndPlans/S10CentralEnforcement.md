@@ -104,6 +104,15 @@ only registers + encumbers; a Diamond-resident credit uses `depositLocked` insid
 
 ### Invariant B — registry-aware decision on every inline holder payout
 
+> **Superseded for collateral sales by #2876 (owner direction 2026-10-27).** A collateral sale no
+> longer pays either position holder inside the fill. It pays the Diamond one proceeds leg, closes
+> the loan Active → Repaid like a repayment, books the lender's share to the lender's vault behind a
+> claim row (screened at `claimAsLender`), and pays the borrower remainder to a clean holder or holds
+> it on the borrower claim row. So the fill, `syncPrepaySaleListing` and `syncPrepaySaleOffer` screen
+> only the borrower-position holder (Scenario B), the seller (Scenario A) and the fee-leg recipients;
+> a flagged lender holder neither blocks nor cancels the sale. The text below is the pre-#2876
+> record.
+
 Two payout channels:
 
 1. **Diamond-mediated** — every "pay `ownerOf(positionTokenId)` now" via `safeTransfer` /

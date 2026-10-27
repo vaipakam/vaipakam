@@ -1059,12 +1059,14 @@ contract NFTPrepayListingFacet is
     // ─── #1144 (S10 Invariant B): syncPrepaySaleListing ─────────────────
 
     /// @notice Permissionless sanctions sync for a LOAN-keyed prepay-collateral
-    ///         listing. Reads every LIVE consideration recipient the order pays —
-    ///         the current lender- and borrower-position holders plus the recorded
-    ///         fee-leg recipients — and, on an authoritative oracle-up `Flagged`
-    ///         read, COMMITS the flag to `sanctionsConfirmedFlagged` (via
+    ///         listing. Reads every party the fill screens — the current
+    ///         borrower-position holder (the sale is that side's own dealing) and
+    ///         the recorded fee-leg recipients — and, on an authoritative oracle-up
+    ///         `Flagged` read, COMMITS the flag to `sanctionsConfirmedFlagged` (via
     ///         `LibVaipakam.syncBuyerSanctionsFlag`) and CANCELS the listing so it
-    ///         can no longer fill.
+    ///         can no longer fill. The lender-position holder is not read: the sale
+    ///         books the lender's share to a claim row screened at the claim, so a
+    ///         flagged lender never cancels the borrower's sale (#2876).
     /// @dev    The S10 Invariant B counterpart to Invariant A's deferred-claim
     ///         freeze: the prepay-sale channel pays holders INLINE inside the atomic
     ///         Seaport fill, where a `mustFreezeParty`-revert would roll its own
@@ -1087,16 +1089,11 @@ contract NFTPrepayListingFacet is
             revert PrepayListingNotFound(loanId);
         }
 
-        bool flaggedFound = false;
-        // The two live position holders paid by consideration[0] / consideration[2].
+        // The live borrower-position holder, whom the fill screens.
         // `_ownerOfRaw` (raw SLOAD → address(0) for a burned token) keeps the sync
         // non-reverting even on a terminalized loan whose NFTs are gone.
-        flaggedFound =
-            _syncRecipientFlag(LibERC721._ownerOfRaw(loan.lenderTokenId)) ||
-            flaggedFound;
-        flaggedFound =
-            _syncRecipientFlag(LibERC721._ownerOfRaw(loan.borrowerTokenId)) ||
-            flaggedFound;
+        bool flaggedFound =
+            _syncRecipientFlag(LibERC721._ownerOfRaw(loan.borrowerTokenId));
 
         // The recorded fee-leg recipients (the executor persisted them at post
         // time; the zone callback re-screens the live set, which this pre-registers).

@@ -1227,8 +1227,9 @@ sale proceeds, without weakening the lender's default rights.
 - A collateral sale is neutral between the two sides (owner direction
   2026-10-27): nothing about one side's position holder may stop the other
   side's payout. A lender-position holder who is flagged, or whose wallet
-  would refuse the token, does not stop the borrower's sale, because the
-  lender is never paid inside the sale itself; the lender's share waits in
+  would refuse the token, does not stop the borrower's sale or cancel a
+  standing listing for it, because the lender is never paid inside the
+  sale itself; the lender's share waits in
   the lender's Vault, and the lender claim's own screen decides when it may
   leave. A borrower-side wallet that refuses the remainder does not stop
   the sale either; the remainder is held. The one refusal is the borrower's

@@ -120,11 +120,6 @@
             "internalType": "uint256"
           },
           {
-            "name": "lenderNftOwner",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
             "name": "borrowerNftOwner",
             "type": "address",
             "internalType": "address"
