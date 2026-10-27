@@ -66,34 +66,6 @@
   },
   {
     "type": "function",
-    "name": "emitDiscountApplied",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrower",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "lendingAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "vpfiDeducted",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "emitYieldFeeDiscountApplied",
     "inputs": [
       {
@@ -296,79 +268,6 @@
   },
   {
     "type": "function",
-    "name": "quoteVPFIDiscount",
-    "inputs": [
-      {
-        "name": "offerId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "eligible",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "vpfiRequired",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrowerVaultBal",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "tier",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "quoteVPFIDiscountFor",
-    "inputs": [
-      {
-        "name": "offerId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrower",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "eligible",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "vpfiRequired",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrowerVaultBal",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "tier",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "resolveLenderYieldFeeFor",
     "inputs": [
       {
@@ -500,37 +399,6 @@
       },
       {
         "name": "newVaultBalance",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "VPFIDiscountApplied",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrower",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "lendingAsset",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "vpfiDeducted",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
