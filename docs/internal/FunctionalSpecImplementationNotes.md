@@ -553,3 +553,17 @@ From WebsiteReadme.md:
 From WebsiteReadme.md:
 
 - the React i18n binding should re-render when a lazy-loaded locale bundle is added, so the first language-picker click visibly changes language after the dynamic import resolves
+
+## Subsequent collateral-sale decision
+
+The direct-recipient marketplace model quoted below is superseded by the
+owner's one-proceeds-leg decision in #2916, merged while #2958 was under review.
+The current functional spec records the platform-received proceeds and
+repayment-equivalent settlement; this paragraph is retained only as history.
+
+and verification evidence is retained in the
+  [internal implementation notes](../internal/FunctionalSpecImplementationNotes.md#lender-entitlement-implementation-findings).
+
+The earlier collateral-sale discount findings above motivated #2876. Its
+settlement design was resolved by #2916; live activation still requires
+evidence from each compatible deployment.

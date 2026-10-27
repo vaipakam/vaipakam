@@ -674,11 +674,13 @@ Lender rules:
   exception permits narrowing the entitlement on recovered lender interest.
 - Enabling Full requires live-deployment evidence that recovery settlements,
   current-holder refinance debits and partial-liquidation payouts, and the
-  two collateral-sale terminals all honor these rules. Source changes alone
-  do not discharge that gate. The collateral-sale discount work tracked in
-  #2876 remains an explicit activation dependency; unresolved implementation
-  and verification evidence is retained in the
-  [internal implementation notes](../internal/FunctionalSpecImplementationNotes.md#lender-entitlement-implementation-findings).
+  two collateral-sale terminals all honor these rules. The one-proceeds-leg
+  settlement ratified in #2916 applies the lender's yield-fee discount to both
+  collateral-sale types, resolving #2876's settlement design. Source changes
+  alone do not discharge the live-deployment gate: the compatible order shape
+  and settlement must be deployed before a chain is described as ready.
+  Earlier implementation and verification findings are retained as history in
+  the [internal implementation notes](../internal/FunctionalSpecImplementationNotes.md#lender-entitlement-implementation-findings).
   An owner decision about the scope of recovered-interest discounts would
   not remove the separate duty to pay and debit the correct holder.
 
