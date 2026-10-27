@@ -87,6 +87,16 @@ different `required_status_checks` contexts (the monorepo gates on
 the keeper-bot gates on `Typecheck` + `ABI shape sanity` for 6).
 See §7 for the gate-by-gate detail.
 
+**What stays out of the public repo (#2764).** Both repos are public, so
+anything committed is published, and git history keeps it after a
+deletion. Questionnaires and due-diligence replies sent to vendors on
+Vaipakam's behalf carry business detail (legal entity, jurisdiction,
+volumes, contacts) that has no reason to be public; they live in the
+private project files, not under `docs/internal/`. Identifiers that a
+deploy needs in committed config, such as the secrets-store ID every
+`wrangler.jsonc` binds, are not secrets and stay; what protects them is
+the scope of the API tokens, which never enter the repo.
+
 ---
 
 ## 2. Git procedures
