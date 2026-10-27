@@ -486,6 +486,7 @@ const VALUE_GROUP: Record<string, string> = {
   BorrowerFundsClaimed: 'borrower-claim',
   BorrowerSurplusClaimed: 'borrower-surplus',
   CollateralAdded: 'collateral-added',
+  CollateralSaleProceedsSplit: 'sale-proceeds',
 };
 
 /** Everything a row can say about value. */
@@ -519,6 +520,49 @@ export function rowValue(row: Pick<ActivityRowView, 'related'>): RowValue {
   }
   const legs = [...byGroup.values()].filter((l): l is ValueLeg => l !== null);
   return { legs, unstated: legs.length < byGroup.size, mayIncludeHeldForLender };
+}
+
+/** One party's part of a collateral sale's proceeds, as the viewer's own. */
+export interface SaleShare {
+  role: 'lender' | 'borrower';
+  leg: Extract<ValueLeg, { kind: 'token' }>;
+  /** Held for the party's claim rather than paid to their wallet. The
+   *  lender's part always is: it waits for the lender's claim. */
+  held: boolean;
+}
+
+/**
+ * #2876 — the viewer's own part of a collateral sale's proceeds. The split
+ * event names each party and the amount owed to them, and says whether the
+ * borrower's remainder was paid or held, so this reads those named fields of
+ * that one event and nothing else. A part is stated only when the indexer
+ * established the proceeds as an ERC-20 amount (`assetType` 0 on the same
+ * event), so an amount is never shown in units the row could not name. A zero
+ * part is not a share.
+ */
+export function saleProceedsShares(
+  row: Pick<ActivityRowView, 'related'>,
+  me: string | undefined,
+): SaleShare[] {
+  if (!me) return [];
+  const self = me.toLowerCase();
+  const out: SaleShare[] = [];
+  for (const ev of row.related) {
+    if (ev.kind !== 'CollateralSaleProceedsSplit' || ev.assetType !== 0 || !ev.asset) continue;
+    if (typeof ev.args !== 'object' || ev.args === null) continue;
+    const a = ev.args;
+    const asset = ev.asset;
+    const part = (who: unknown, amount: unknown, role: SaleShare['role'], held: boolean) => {
+      if (typeof who !== 'string' || who.toLowerCase() !== self) return;
+      if (typeof amount !== 'string' || !DIGITS.test(amount) || BigInt(amount) === 0n) return;
+      out.push({ role, leg: { kind: 'token', asset, amount: BigInt(amount), amountMax: null }, held });
+    };
+    part(a.lender, a.lenderAmount, 'lender', true);
+    if (typeof a.borrowerHeld === 'boolean') {
+      part(a.borrower, a.borrowerAmount, 'borrower', a.borrowerHeld);
+    }
+  }
+  return out;
 }
 
 /** What is known about an ERC-20 leg's token while it renders. */

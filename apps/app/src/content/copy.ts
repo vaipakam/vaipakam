@@ -5457,6 +5457,15 @@ const copySource = {
     // for the lender from earlier top-ups are paid out with it.
     heldForLenderNote:
       'A lender claim also pays out any funds held for the lender from earlier top-ups — those are not included in the amount shown.',
+    // #2876 — the viewer's own part of a collateral sale's proceeds, from the
+    // split event. The lender's part always waits for the lender's claim; the
+    // borrower's remainder is paid to the wallet unless the sale held it.
+    saleShareLender: tmpl(`Your share as lender: {{amount}}, held for you until you claim it.`, ['amount']),
+    saleShareBorrowerPaid: tmpl(`Your share as borrower: {{amount}}, sent to your wallet.`, ['amount']),
+    saleShareBorrowerHeld: tmpl(
+      `Your share as borrower: {{amount}}, held for you until you claim it.`,
+      ['amount'],
+    ),
     viewTx: 'View transaction',
     // #2643 — a loan whose ending event was never recorded, closed by the
     // indexer reading its status from the chain. An OBSERVATION, not an

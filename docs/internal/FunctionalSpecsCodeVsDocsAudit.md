@@ -1,0 +1,1359 @@
+# Code vs Docs Audit
+
+`docs/FunctionalSpecs/` is the **code-INDEPENDENT specification** of what
+the platform is **intended** to do — the test oracle. The contract code is
+the thing *under test*, never the *source* of the spec. (See
+`docs/FunctionalSpecs/README.md` for the full rules; the load-bearing one
+is: the spec is sourced from documents, never transcribed from code.)
+
+This file records places where observed code behaviour diverges from what
+the spec says is intended. Each divergence is a **candidate bug** (the
+code is wrong and the spec is right) OR **a stale doc** (the spec needs
+to catch up with an intent-decision the project owner has since made) —
+the two are never silently reconciled. Code-observed behaviour enters the
+spec ONLY via an explicit intent-decision from the project owner, not by
+copying what the code does.
+
+## How to use this file
+
+1. When review surfaces a contract behaviour that doesn't match
+   `docs/FunctionalSpecs/<domain>.md`, append a row to **Open findings**
+   below with: date, the divergent symbol (`Facet.function` or
+   spec-section reference), one-line summary, and a status of `pending
+   triage`.
+2. Triage decides:
+   - **Code is wrong** → file a bug-fix card on `@vaipakam-labs`,
+     reference this entry from the card body. When fixed, move the
+     finding to **Resolved findings** with the closing PR / commit.
+   - **Spec is wrong** → owner provides an intent-decision in writing,
+     the spec doc is updated, the finding moves to Resolved with the
+     intent-decision note + the closing spec-update PR.
+3. Open findings count is itself audit-relevant — a growing list signals
+   drift; auditors will read this file.
+4. **Keep row state current.** When a finding's linked issue / PR is
+   verified and closed, move the row from **Open findings** to **Resolved
+   findings** in that same cleanup pass (with the closing PR and, where
+   useful, the verification command) — don't leave fixed launch-blockers
+   sitting under Open, where readers mistake them for live.
+
+## Open findings
+
+| Date | Divergent symbol | Spec section | One-line summary | Status |
+|------|------------------|--------------|------------------|--------|
+| 2026-10-25 | `LibNotificationFee.bill` / `ConfigFacet.getNotificationFeeConfig` — the paid-notification fee is a FLAT native-VPFI quantity (`cfgNotificationFee`, default 0.5 VPFI, no oracle read), withdrawn from the payer's vault into Diamond custody and credited to the recycle bucket (`LibVpfiRecycle.credit(NotificationFee)`, #1346) | ProjectDetailsREADME.md §11 "Notification Fee Model" | The spec states a numeraire-denominated fee converted through the `ETH/<numeraire>` price and the fixed VPFI-per-ETH rate, transferred directly from the vault to the treasury with no Diamond custody window. The code charges a flat VPFI amount and routes it through custody into the recycle bucket. Found while building the alerts-page consent (#2723), which states the fee in VPFI exactly as the contract charges it and names no destination beyond "the protocol"; the spec was NOT rewritten to match. Needs an owner intent decision: either the spec catches up with #1346's routing and the flat fee, or the code is the bug | pending triage |
+| 2026-09-25 | `LibRewardCustody.planTransportDraw` WITHHOLDS every epoch whose `dayCount > 1` (it lists any day other than the one being paid) and every epoch whose packet is not yet attested, reporting each by reason (`withheldShared` / `withheldUnattested` on `getTransportCoverageForDay`) | TokenomicsTechSpec, transport-epoch draws (#1566 3b-ii-A) | The design refuses a draw contested by another day's known unmet obligation and draws an epoch listing an UNARRIVED day only for a day's gap; neither predicate is answerable yet (an epoch records `dayCount`, not which days, and no per-day unmet-obligation figure exists), so the code withholds every shared epoch — a superset of both cases that spends nothing. It also drew unattested epochs and retyped their legs on attestation, which left settled custody ledgers disagreeing with the retyped legs. The 2026-09-24 row here recorded an intermediate 'drawn last, for the gap only' rule; Codex #2276 r26 showed that still spends a contested epoch. | Resolved — OWNER intent decision 2026-09-25 (#2276 round 26): withhold shared epochs until 3c's contested machinery (#2318), draw only attested epochs, never retype a drawn leg; spec amended to state it. |
+| 2026-10-02 | `LibInteractionRewards.userArmedFreshNeedWithLegsView` / `entryArmedNeedView` (A2-iii): the expiry clock's executability read no longer simulates the claimant's chunk; it prices the entry's own pending day against PREPARED coverage (the one batch at the day's cursor; a day a staging record holds reads not executable in any phase) and reads an entry behind its side's front, or a borrower entry while a lender day pends, as not executable | TokenomicsTechSpec RL-3 "claim-executable" bullet | The spec said the recycled obligation is "measured by the same day-by-day simulation the claim itself runs". A read-only consumer cannot run that simulation once the preview IS the settlement (design question 10), so the rule became the conservative prepared-coverage read. | Resolved — OWNER intent (build-first, 2026-10-02; design question 10 ratified): spec bullet rewritten to state the static read and its known over-caution (an entry behind its side's front waits; preparation is the way out). |
+| 2026-10-02 | `LibRewardCustody.transportAllocateForDay` (A2-iii): the residual-leg choice reads the DAY's own deficits; the gross-needs pre-pass over the settlement call (`callDomainNeeds`, `userDomainNeedsView`, `chunkListsAnEpochView`) is deleted | TokenomicsTechSpec §5c "allocation domain" | The spec defined the domain as the gross needs of the whole call. Under the round-26 rule (attested single-day epochs only) every drawable epoch's two rooms sum to at most its balance, so the choice the domain guided never changes what a leg receives; the pre-pass was inert and its mirror produced most of A1's findings. | Resolved — spec §5c rewritten: the domain is the day; cross-call allocation is A2-ii's staged domain and 3c's matching, never a pre-pass. |
+| 2026-08-21 | `ProtocolBroadcastFacet.protocolBroadcastTierUpdate` skips on `tuple-unchanged` and `VPFIDiscountFacet.pokeMyTier` is idempotent, while `LibVPFIDiscount._mirrorEffectiveTierAndBps` expires a cache entry on WALL-CLOCK age (`DEFAULT_MIRROR_TIER_MAX_AGE_SEC` = 60 days). A holder whose tier, rate, expiry and table version are unchanged cannot refresh the mirror by any OBVIOUS route — but a consent round-trip does work and is undocumented: `protocolBroadcastTierUpdate` forces `(0,0)` while consent is off, so consent-off + poke pushes zero and consent-on + poke pushes the real tier, both differing from the last sent tuple. Four transactions, no balance change | TokenomicsTechSpec §12.5 / CrossChainTierPropagation — the max-age backstop and the broadcast dedup are each specified, their INTERACTION is not | **CODE DEFECT (severity revised down), filed as #1856.** Each half is individually correct and individually justified (dedup preserves cross-chain budget; the backstop covers stake-then-never-return). Together they close the door on precisely the user the backstop was written for, and the only remedy is a four-transaction consent round-trip that no user would guess and no surface documents — and which the contracts themselves flag as a broadcast-budget drain vector they consciously accepted, so publicising it as routine maintenance is its own problem. NOTE also that `pokeMyTier`'s docstring contradicts its body: it claims a consent-off poke "emits `TierPokeSkippedNoConsent` and returns without rolling up", while the body has no consent gate and the inline comment says the early return "was wrong" and was removed. Surfaced by Codex on PR #1845 against copy that had just been corrected to MENTION the expiry and then named renewals the dedup suppresses. Public copy is corrected there to state what actually renews it; that is a truthful description of the defect, not a fix. | open, #1856 |\n| 2026-08-21 | `LibVPFIDiscount.holdOnlyBorrowerLif` adds the Full own-side bump (`FULL_MODE_FEE_DISCOUNT_BONUS_BPS`) whenever `fullMode && isLiquid`, WITHOUT consulting `vpfiDiscountConsent[borrower]` — so a Full borrower with the hold-discount consent off still pays a reduced LIF, not the full one | TokenomicsTechSpec §6b (borrower HoldOnly / Full two-mode model) — the borrower Full bullet says the bump materialises when the opt-in is confirmed and is SILENT on the consent interaction | **Spec ASYMMETRY, not a contradiction.** The LENDER rule states the same property explicitly and by name (§592/§594, "Full is itself the consent" — `d_tariff` does not require it); the borrower rule never says it either way. Surfaced by user-facing copy on PR #1845 (#882), where the silence was reachable: the FAQ said a borrower without consent pays the full fee AND, two sentences later, that a Full borrower receives the tariff slice — a self-contradiction traceable to a spec that answered the question on one party and not its twin. Public copy is corrected in that PR to scope the failure to the hold-tier slice. **Spec text deliberately NOT written from the code** — restating the lender's clause on the borrower needs an owner intent-decision, because the omission may be intentional scope rather than an oversight. | pending triage |
+| 2026-08-21 | `ProtocolBroadcastFacet.protocolBroadcastTierUpdate` forces the pushed payload to `(0, 0)` whenever the CANONICAL chain's `vpfiDiscountConsent[user]` is false; `LibVPFIDiscount.holdOnlyBorrowerLif` / the lender path read the SETTLING chain's flag. So the discount consent is deployment-local AND the canonical flag additionally gates propagation — a user who settles only on a mirror must enable it on BOTH chains. | TokenomicsTechSpec §12.5 (tier basis / qualifying rules) — spec is SILENT on both properties; it says "a single platform-level on-chain consent flag" with no chain scoping | **Spec GAP, not a contradiction.** The code has enforced this since T-087 Sub 4; the spec never captured it. Surfaced via user-facing copy on PR #1845 (#882), where the omission was reachable: a reader could follow every published instruction and still be charged in full. Public copy (whitepaper §12.5, FAQ, discount card, Advanced guide) is corrected in that PR. **Spec text deliberately NOT written from the code** — needs an owner intent-decision to enter §12.5. | pending triage |
+| 2026-08-16 | `contracts/test/Create2DeploymentTest.t.sol` — cited as test evidence; no such file exists. Its cited pair `DeployerZeroRolesTest.t.sol` does. The named helper `contracts/script/lib/LibCreate2Deploy.sol` is present but **UNREFERENCED** — no import or call anywhere in the tree — and `deploy-testnet.sh` / `deploy-mainnet.sh` both state the reward-messenger deploy uses a plain `new`, not CREATE2 | `ProjectDetailsREADME.md` `### Testing and Auditing` — the test-file list preceding `#### Positive-flow coverage map` | Spec asserts a deterministic-address + post-handover-role invariant is covered by a test file that is not in the tree, and the deterministic deployment it describes may itself have been retired rather than merely losing its test | **RESOLVED — STALE DOC, retired by T-068 (PR #46).** The first question's answer is *no*, which moots the second: the CREATE2 reward bootstrap was removed with LayerZero, and the disposition was already written down — `contracts/.env.example` ("`REWARD_VERSION` is gone") and the dead-section banner in `docs/ops/DeploymentRunbook.md` §3a. The spec's CREATE2 bullets are now marked retired, the dangling citation is dropped, and the unreferenced `LibCreate2Deploy.sol` is deleted (detail entry below) |
+| 2026-08-04 | `apps/app` locale bundles (`apps/alpha02` when this row was opened) — keys that EXIST in an advertised locale but hold the ENGLISH string. RAW pre-policy measurement (2026-08-04, heuristic, superseded): `hi` 283, `ko` 48, `ar` 34, `de` 20, `fr` 20, `es` 16, `ja` 14, `zh` 14, `ta` 12. The GUARDED figures below are the authoritative ones — they differ because the exemption is now an explicit, enumerated policy rather than a guess at what "looks like a brand or a token" (the count is deliberately not restated here — read the file) | Alpha02ConnectedApp.md "Display Language" — "A language offered as translated shows that language everywhere it is offered" | **SPEC INTENTIONALLY AHEAD OF CODE.** The MISSING-key half of this divergence is closed: `untranslated-baseline.json` is empty, every key exists in every advertised locale, and `check-locale-coverage` enforces that with no exemption (160 keys → 2 → 0). But presence is not translation. `missingSubtree` compares key PRESENCE, so a leaf holding the English string is indistinguishable from a translated one — `copy.alerts.title` = "Alerts" and `copy.signing.phaseApprove` = "Approving… ({{c}} of {{t}})" are present in `hi` and render in English. Deliberately NOT scoped down: narrowing the spec to "every key exists" would make it satisfiable while the reader still meets English mid-page, which is the thing the sentence is about. Closing it needed a policy for which identical leaves are legitimate before it could be guarded; that policy now exists and the divergence is GUARDED and BOUNDED, though not yet closed. `translation-policy.json` gained `acceptedAsTranslated`, each entry carrying a written reason AND the English value it was granted against, so a reworded source makes the exemption stale instead of silently inheriting it (the product name; the GTC / AON / IOC order-type acronyms; a rate template whose only word is APR; a two-token amount string; the French `Mode strict`, which is correct French built from the same two words as `Strict mode` and so indistinguishable to any word comparison — recorded with the exact accepted French, so rewording it retires the entry; and the em dash the trading desk shows for an unavailable value — that last one moved OUT of the baseline because a shrink-only record made it permanent debt: the only way it could ever leave was by being replaced with a different glyph, which would be a regression rather than a translation; the German and French `Support` — whose translated siblings read `Support und Verbindungsprüfung` and `Support et vérification de connexion`, so each locale uses the word inside a sentence it did translate, while Spanish says `Soporte` and Hindi still owes a Devanagari rendering — and the French notification and position labels moved out for the same reason — `Notifications` and `Positions` are ordinary French words spelled as the English, so the baseline could only lose them to a worse synonym, Codex #1607 r14; and the consent sentence's closing fragment in ALL NINE locales — `ar`/`de`/`es`/`fr`/`ko` keep `.` because those languages end a sentence with it, while `hi`/`ja`/`ta`/`zh` carry a closing clause whose exact text is recorded, each evidenced by the fully translated sibling `prefix`; every locale is named because the English there has no words, so "not the English marks" cannot be read as "translated", and regressing the Japanese to `.` still fails, r15/r20). Two policy shapes now live in that scope, because they behave oppositely when a value moves: an ordinary entry is a judgement about the present and RETIRES when the locale is reworded, while an `invariant` entry — the brand name, the GTC/AON/IOC acronyms, the token-only templates, the em dash — may never differ in any locale, is checked against all nine rather than its own list, and reports a REGRESSION TO RESTORE rather than an exemption to retire. Without that split the guard told a maintainer who had corrupted the brand to narrow the scope, and following that advice made `VaipakamX` pass (Codex #1607 r20). Where the English leaf has NO WORDS at all (four of them), every locale must be accounted for — still showing the English in the baseline, or naming its exact value in the policy — because there the marks ARE the content and a novel mark cannot be read as evidence of translation: `.` localized to `.!` passed until this was enforced (r20). There are deliberately NO pattern-based exemptions: an earlier draft excused any letterless value, which is false — `copy.consentParts.suffix` is `.` in English and `。` in Chinese, so that rule would have let a real localization regress unnoticed (Codex #1607 r1). Detection is NOT byte equality: the question is whether everything the reader sees can be cut, end to end, into the English source's own words — so case, separators, word ORDER and repetition do not count as translation (`Refinance carry-over collateral shortfall` in Hindi against `Refinance carry over collateral shortfall` in English is English with a hyphen; Korean `{{units}} tILQ mint` for `Mint {{units}} tILQ` is English in Korean word order, and nine such leaves were passing a sequence comparison — Codex #1607 r11). The test is finally on the word SET rather than counts, which subsumes three separately-found holes: reordering (r11), deletion — Hindi `loan asset` for `the loan asset`, Korean `permission signing…` for `Signing the permission…`, eight leaves in all (r13) — and repetition, since `Settings Settings` is LONGER than its source and slipped past a length shortcut (r14). Every arrangement, deletion and duplication of English words is English. The rule is precisely "everything the reader sees is built from THIS SOURCE's words", not the looser "every word is an English word" — `Open Settings` for `Settings` is English and passes, and that boundary is stated rather than implied (Codex #1607 r15). The looser rule was measured before being rejected: treating all 1,801 words in en.json as a dictionary adds 17 pairs, and reading them, essentially all are correct translations sharing vocabulary with English (French `Plus`, `Principal`, `Type de NFT`, `1 an` — and `{{noun}} n°{{id}} — {{what}}`, the value defended one round earlier AS localization). Separating those from a genuine English rewrite needs a language identifier, not a set operation, so it is #1611 rather than an approximation that scores worse than the rule it replaces. The question is asked of the LETTERS rather than the tokens, because the word boundaries are themselves editable: `Set-tings` tokenizes as two fragments that are not source words (Codex #1607 r16), and comparing whole concatenations then failed on `Set-tings Set-tings`, whose letters are `settings` twice (r17). Cutting the letter stream into source words covers every combination of reordering, deletion, repetition and moved punctuation at once, and on the committed bundles flags exactly what the two rules it replaced flagged and nothing more. The stream is LETTERS only — a digit dropped inside a word (`Set1tings`) otherwise broke the decomposition and read as translated (r18) — and the same question is now asked of the punctuation when neither side has words, because `.` doubled to `..` is not a translation into anything and exact comparison excused it (r18) — with spacing removed first, since `. .` is the same two English full stops to a reader and the trimmed form left the space in the middle (r19). Invisible characters are removed before the words are cut, so a zero-width space inside `Settings` no longer splits it into two tokens that match nothing. A value with no words on either side is asked the SAME question of its marks — can what the reader sees be built from the source's own punctuation, spacing ignored? — because there the punctuation IS the content. Exact comparison was the earlier answer and it excused repetition: `.` doubled to `..`, or spaced as `. .`, is not a translation into anything (Codex #1607 r18/r19). `copy.consentParts.suffix` is `.` in English and `。` in Chinese, which the rule keeps distinct because `。` is not among the English marks; collapsing punctuation altogether would call that correct localization untranslated (the Korean bundle carried 40 leaves differing from English only in capitalization), and ARRAY elements are compared individually as `path[i]` (the 8 strings in `copy.help.risks` / `copy.recover.warnings` were skipped entirely before — Codex #1607 r3). Everything else identical to English is recorded per `(key, locale)` in `english-valued-baseline.json`, which is the live count — the figures here are the opening measurement, frozen at the date shown and not maintained as the backlog shrinks (308 keys / 490 pairs at 2026-08-08 — `hi` 286, `ko` 94, `de` 32, `ar` 29, `es` 11, `zh` 11, `ja` 10, `fr` 10, `ta` 7), enforced symmetrically: a NEW English-valued leaf fails, and an entry that has since been translated must be pruned or the check fails. The shrink-only rule is itself enforced now rather than merely stated: the record lives in the same repository as the code, so one change could cause a regression AND record it and still go green (r18). A required CI step compares both baselines against the PR base and fails on any pair ADDED — and on any pair REMOVED whose locale still READS AS the English it was recorded against — judged by the guards' single shared still-English rule, so a case-only or spacing difference does not let the evidence be deleted either (the committed `ko:contractError.SaleListingActive` differs from its source only in case, and an exact comparison would have released it — Codex #1607 r23/r24), because rewording the source and deleting the entry in one change otherwise erases the evidence that triggers re-audit and both guards go green while the reader still meets the old English (r22). It refuses to run at all against a base it cannot resolve rather than passing everything. A removal IS allowed when the committed policy now authorizes that exact value — recognising a backlog entry as a legitimate identical translation means adding the policy entry and dropping the baseline pair together, and without that exception the two guards deadlock: coverage passes, the required check fails, and there is no supported way to correct a false-positive backlog entry (Codex #1607 r25). The baseline records the English text each entry was written against. Inequality is NOT treated as proof of translation: if the English is reworded, the recorded locales stop matching it and would otherwise be pruned away as "already translated" while still showing the old English — debt deleted by following the guard's own advice (Codex #1607 r1). A moved source is now reported for hand re-audit and `--prune` carries it through untouched. Verified by driving each rule in both directions — regressing `de:copy.chrome.nav.settings` fails naming it; translating `de:copy.help.buildLabel` fails demanding a prune; `--prune` then removes exactly that pair and adds none; rewording `copy.alerts.title` while `hi` keeps the old English fails for re-audit AND survives a prune; rewording `copy.app.name` reports its `acceptedAsTranslated` entry stale; reordering `de:copy.chrome.skipToContent` into `content to Skip` fails; hiding a zero-width space inside `de:copy.chrome.nav.settings` fails; and rewording the recorded French retires its exemption as unused. A separate rule bounds WHICH ALPHABETS each bundle may contain (Latin everywhere, plus the locale's own scripts) and ALLOWLISTS what else may appear: letters, marks, numbers, punctuation, spaces, and twelve declared symbols (`$ + = ~ ° × ← → ≈ ≥ ＋` and the soft hyphen) measured as every such character in the ten bundles today. The allowlist replaced a growing blocklist — rounds 5, 10, 11, 12, 13, 15, 16 and 17 each named one more character that renders as something other than its bytes, ending with U+2800 BRAILLE PATTERN BLANK (a `So` character in no ignorable class) and the bidi overrides, which are default-ignorable and so were being STRIPPED, meaning a right-to-left override over reversed text compared as gibberish while a browser renders it as `Settings`. Enumerating what may appear ends the sequence; anything else fails before someone has to discover it, because every comparison here is about what a reader sees and a cross-script lookalike defeats exactly that: `S<Cyrillic e>ttings` renders as "Settings" and compares as a different word, so it read as translated German (Codex #1607 r12). Declaring nine short alphabet lists rejects the whole class — Greek, Armenian and Cherokee lookalikes as well as Cyrillic — where a confusables table would only reject the characters someone enumerated. Combining MARKS are held to the same rule as letters — a Hebrew point dropped inside `Settings` is doubly invisible, since the tokenizer treats it as a word boundary while the screen still reads Settings — while `Inherited` marks, which is what ordinary diacritics carry, stay allowed so correctly accented French and German pass. It does NOT catch a lookalike from a script the locale legitimately uses, which is stated rather than implied. A separate rule catches the opposite shape: a locale value with NO words where the English is prose, which `stillEnglish` structurally cannot see (its wordless branch exists for punctuation-only content on both sides, so a worded English against a wordless locale value compares unequal and reads as translated — replacing a German label with `…` passed everything, Codex #1607 r13). That check asks about LETTERS, not words: a digit run counts as a word when comparing vocabulary, which is right there and wrong here, and `123` as a label passed until it was separated (r14). The failure footer is class-aware, because the existing advice (`translate --missing-only`) skips a key that is PRESENT and would have reported "nothing to do" on a locale just failed. Still open because the backlog is real translation work. | #1596 |
+| 2026-07-26 | `RewardAggregatorFacet.finalizeDay` finalization readiness has NO commitment input; commitment reports are accepted post-finalize; `remitIneligible` marks chains ZEROED out of the interest denominator | VpfiRecyclingCompletionPlan.md §M3 ("this gate must be wired into day-finalization readiness itself") + the B2-c spec section (superseded in place) | **CODE IS AUTHORITATIVE — plan sentence amended by necessity (B2-d1, decide-and-record; flagged for owner ratification in PR).** The plan's finalize-readiness placement predates the B2-c re-slice and the D1-share-cap mirror model: the commitment a mirror reports is its day-`D` PRICED liability, whose inputs (the day's per-side caps + funding stamp) are OUTPUTS of `finalizeDay(D)` delivered by `broadcastGlobal(D)` — a readiness wait on the report is causally circular and deadlocks every armed day into the grace backstop with all mirrors remit-ineligible. The plan's GOALS are preserved at the only causally-possible site: ShareOfPool remittance for a `(day, chain)` waits for that chain's COMPLETE report (delays, never zeroes — the B2-d2 gate + clamp), and `remitIneligible` retargets to the genuinely-poisoned case (armed-day finalize that zeroed the chain's interest out of the denominator → operator reconciles + remits manually, sized from the mirror's locally-readable state — the late-accepted report itself prices at the zeroed chain's deliberately-zero stamp, Codex #1425 r1). Full derivation: Vpfi1222B2dDeliveredBackingDesign.md §2b. | #1222 M3 B2-d1; umbrella #1349 |
+| 2026-07-24 | `_loanSideRewardCapEff` / `_loanSideRemaining` per-loan reward cap is CANONICAL-ONLY (`cfgFeeEntitlementEnabled = feeEntitlementEnabled && isCanonicalVpfiChain`; an unstamped mirror loan returns the unbounded sentinel) vs formula-doc rev-15 line ~782 `paid_L ≤ min(capEff_L, remitted_L)` treating `capEff_L` as a bound on mirrors too | VpfiAbsorptionDistributionFormulaRedesign.md rev-15 (mirror enforcement, ~line 782 / 1145) | **CODE IS AUTHORITATIVE — reconciled to the D1 share-cap mirror model (#1222 M3, owner decision 2026-07-24/25).** The frozen formula doc's per-loan "commitment" `capEff_L − max(paid, remitted)` assumes a per-loan lifetime reward cap on every chain, but the shipped M2 architecture makes that cap a canonical-chain feature only — mirror loans are bounded by the D1 `(user,side,day)` share cap and, from the delivered-backing stage, the delivery-acknowledged remitted clamp. B2-c ships only the Base-side commitment GATE plumbing; the mirror→Base commitment REPORT (and its mirror D1-derived headroom) is designed once in B2-d, where the coupled mirror consumption + remitted clamp live — after review (Codex #1422) showed a paged, permissionless, active-loan-list report is the wrong mechanism for a mirror's day-`D` claimable liabilities. Not a bug — the doc predates the D1-share-cap mirror model; reconciled rather than adding a per-loan cap to mirrors (contradicts the canonical-only design). | #1222 M3 B2-c (gate plumbing); mirror report + D1 headroom + remitted clamp → B2-d; umbrella #1349 |
+| 2026-07-19 | `ConfigFacet` fee zero-sentinel defaults (`10` bps LIF / `100` bps yield) vs the frozen `0.2%` LIF / `2%` yield package | TokenomicsTechSpec §5, §6 | **SPEC INTENTIONALLY AHEAD OF CODE (owner decision D1 (b), 2026-07-18 — M2 PR-1 spec supersession).** The spec now states the frozen 20/200 bps package as the launch baseline; the compiled defaults are still 10/100. Not a bug — the code change (compiled defaults → 20/200 + the grandfather resolver so open loans keep their origination-time rate) is a later M2 milestone. | M2 code — #1352 (fee defaults + grandfather); umbrella #1349 |
+| 2026-07-19 | `LibVPFIDiscount.tryApplyBorrowerLif` (peg-custody borrower LIF → `vpfiHeld` → rebate/forfeit) vs the HoldOnly-hybrid + Full-tariff two-mode model for **new** loans | TokenomicsTechSpec §6, §6b | **Borrower half RESOLVED by #1980 (2026-10-27).** The peg-custody path is removed from the code — the up-front VPFI charge, the settle-or-forfeit split, the rebate payout and its claim lane — and the spec now says the same, so the two agree that it is gone. This row stays open only for the lender-side remainder below. **CODE NOW MATCHES for the accept-side modes (2026-07-20).** HoldOnly (asset-LIF direct reduction, #1352, merged) + Full (per-party `C*` VPFI tariff at origination → recycle bucket, #1347) are both implemented for new loans; ~~open `vpfiHeld > 0` loans grandfather on the legacy path~~ (no such loan ever existed — #1980 removed the legacy path). Full ships dark behind the fee-entitlement master switch. **The lender-side Full discount at settlement (yield-fee `+10%`, #1354) is now honored on the PRIMARY settlement paths (2026-07-20):** `RepayFacet` (terminal repay), `PrecloseFacet` direct close, `RefinanceFacet`, and `AutoLifecycleFacet` apply `d = min(d_hold + d_tariff, 5000)` with `d_tariff = +10%` when `lenderMode == Full`, eligibility widened to `consent OR Full` (the Full opt-in is itself the consent), the VPFI-debit path gated on the charged party's own consent, dark until `feeEntitlementEnabled`. The loan-side reward cap that consumes the stamped notional `C*` (#1353) is implemented (dark, gated on the D* arming). **Remaining divergence (hard `feeEntitlementEnabled` cut-over blocker → #1383):** (a) the SECONDARY lender-yield settlement paths. **Swap family DONE (2026-07-21, #1383 part B):** `SwapToRepayFacet.swapToRepayFull` / `swapToRepayPartial` + `LibSwapToRepayIntentSettlement._runSettlement` now resolve the discount via a diamond-internal `VPFIDiscountFacet.resolveLenderYieldFeeFor` host, keyed on the current lender-NFT holder where the path does not consolidate `loan.lender` (the resolve helpers were parameterized on an explicit settling lender). **Repay family DONE (2026-07-21, #1383 part B2):** `RepayFacet.repayPartial` (ERC-20 + rental) and `RepayPeriodicFacet.autoDeductDaily` now resolve the discount via the host keyed on the current holder (unconditional treasury transfers guarded); `repayLoan` + `swapToRepayFull` re-keyed on the current holder (skip-not-block consolidation hardening). **Preclose family DONE (2026-07-21, #1383 part B3):** the `precloseDirect` NFT-rental leg and both obligation-transfer (Option-2b) legs — the ERC-20 APR leg and the rental catch-up leg — now resolve the discount via the host; the `precloseDirect` ERC-20 primary was converted from an inlined delivery to the same host, reclaiming ~2 KB of EIP-170 headroom on this size-maxed facet (395 B → 2329 B free) to pay for the additions. Settling lender on ALL FOUR preclose sites — the ERC-20 `precloseDirect` primary included — is `ownerOf(lenderTokenId)`, the CURRENT holder (Codex #1390 P1 ×2). Rentals are excluded from the eager consolidation and `transferObligationViaOffer` deliberately KEEPS `loan.lender`; and even on the ERC-20 primary, `eagerConsolidateBothSides` is Tier2 **skip-not-block** (it leaves the field un-re-anchored for a sanctions-frozen holder or the #597 `heldForLender` exclusion), so a consolidation call is NOT proof `loan.lender` is fresh. Since `ClaimFacet.claimAsLender` is `ownerOf`-gated, the current holder is who is actually paid. Keying on the stale address would have priced the discount off the seller's hold tier and, once the peg is set, DEBITED the seller's VPFI vault for a discount they never receive. The interim vault credit / `heldForLender` park still resolving `loan.lender` remains the pre-existing #1124 gap — but it must not be extended into spending a non-participant's VPFI. A rental-specific quote fix rode along in part B2: `quoteYieldFee` priced the fee against `loan.principalAsset`, which for a rental is the rented NFT contract, so the VPFI-payment quote always fell back and silently denied every rental lender the discount — it now prices against the asset the fee is denominated in (`prepayAsset` for rentals). **Offset DONE (2026-07-21, #1391):** `PrecloseFacet` Option-3 now resolves the discount at `_settleOldLenderAtCompletion`, with the treasury-split base (`accruedInterest + lateFee`, excluding the pure-lender `shortfall`) threaded out of the read-only `_computeOffsetSettlement` as a third return so the discount is sized on exactly the base the cut was taken from. Delivering inside the acceptor's tx is safe both ways: direct-reduction moves no tokens, and the VPFI-payment path is already gated on the CHARGED party's own stored consent inside `quoteYieldFee`, so a third party's accept can never debit a non-consenting old lender's vault. Keyed on `ownerOf(lenderTokenId)`. **AutoLifecycle transferred-position DONE (2026-07-21, #1392):** the `lenderNftOwner == loan.lender` guard — which skipped the discount outright on a transferred position, so a lender who paid the `C*` tariff FORFEITED the `+10%` they bought — is replaced by resolving through the host keyed on `lenderNftOwner`, exactly the party `_routeInterest` pays. The guard was correct when written (the old helper keyed consent + the VPFI debit on the stored `loan.lender` internally, so post-transfer it would have billed the seller); now that the helper takes an explicit settling lender, the concern is addressed properly rather than avoided: the Full slice is loan-scoped (`feeEntitlementByLoanId[loan.id]`, holder-independent), the hold tier is an instant per-address lookup so the NEW holder's tier applies, and any VPFI debit is gated on that holder's own stored consent in `quoteYieldFee` (a non-consenting holder still receives the bump via direct reduction). Also restores this path's previously-dropped analytics passthrough and shrank the facet ~2.8 KB. **With #1391 + #1392 merged, every REPAYMENT and EARLY-CLOSE path honors the hold + Full stamps, keyed uniformly on `ownerOf(lenderTokenId)`: the discount follows the party the claim pays, never the address the bookkeeping still names.** **Divergence (a) — CODE LANDED 2026-08-26 (#1383), NOT YET DEPLOYED.** All five recovery entry points now resolve the lender yield-fee discount through the new `LibLenderYieldFeeHost` keyed on `ownerOf(lenderTokenId)`; `RefinanceFacet` is re-keyed off the stored lender; and `RiskFacet.triggerPartialLiquidation`'s PAYOUT pays the current holder (it writes no claim record, so the recipient was final — that half was misrouted principal, not a discount). Mutation-verified tests cover the payout re-key and the discount on `triggerLiquidation`; the remaining entry points share the same helper but carry no test of their own yet. **The `feeEntitlementEnabled` gate is NOT discharged by the code landing** — it asks what is LIVE on the target Diamond, and this is deployed nowhere. Historical record of the divergence follows. **Divergence (a) was NOT closed** — an earlier revision of this row said it was, and said "EVERY lender-yield settlement path in the protocol". The RECOVERY paths were never swept: `DefaultedFacet.triggerDefault`, `RiskFacet.triggerLiquidation` / `_settleDiscountedLiquidation` / `triggerPartialLiquidation` (the last keeps the loan Active) and `RiskSplitLiquidationFacet.triggerLiquidationSplit` — FIVE entry points — each call `LibEntitlement.splitTreasury` on recovered lender interest, and all three facets contain zero `lenderYieldFeeEligible` and zero resolver calls. **Partial liquidation additionally loses the PAYMENT, not just the discount**: it deposits the lender share to `loan.lender` and deliberately writes NO claim record (`RiskFacet:1210`/`:1216`), so on a transferred position the previous lender keeps the proceeds and the current holder has nothing to claim against — every other recovery entry pairs its deposit with a `lenderClaims` write. Discharge requires that payout keyed on or parked for `ownerOf(lenderTokenId)` too. **`RepayPeriodicFacet._autoLiquidatePeriodShortfall` is NOT a sixth**, though an earlier revision of this row counted it: it deducts a handling fee on total swap PROCEEDS, never calls `splitTreasury`, and charges no lender yield fee for the bump to reduce (Codex #1947 r8). The collateral prepay-SALE terminals were listed here in an earlier revision and are REMOVED: their treasury leg is an ADDITIVE consideration item paid out of the sale price, with the lender receiving principal + interest GROSS and the BORROWER's residual bearing the fee — so there is no lender discount to deliver, and applying the bump there would subsidise the borrower (Codex #1947 r10). And `RefinanceFacet:429-433` resolves against the STORED lender after a skip-not-block consolidation, so a transferred position can have the previous lender's vault fund the buyer's discount. Since frozen §F2 (`VpfiAbsorptionDistributionFormulaRedesign.md`, not `TokenomicsTechSpec`) says "at every lender-yield settlement", that is a live divergence and a hard `feeEntitlementEnabled` cut-over blocker, not a scope boundary (#1383, #1947).** The remaining `feeEntitlementEnabled` gate is BOTH the settlement divergence above AND the reward-side joint cutover (#1351 D1 share cap + `D*` arming). **Neither half is ENFORCED by anything on-chain or in CI.** PR-9 (#1356)'s deploy-assert pins `feeEntitlementEnabled` OFF on a fresh deploy and observes no settlement path whatsoever; `ConfigFacet.setFeeEntitlementEnabled` checks only `isCanonicalVpfiChain`. Unit coverage exists for the SWEPT paths' source behaviour (`VPFIDiscountFacetTest`, `SwapToRepayFacetTest`), and none for the recovery paths or refinance; neither that nor green deploy assertions is evidence that #1947 is closed — the cut-over requires the fix to be DEPLOYED and READ BACK on the target Diamond by hand, per the GovernanceRunbook's M7 Step 1. (b) ~~`AutoLifecycleFacet.extendLoanInPlace` overwrites the term without restamping `feeEntitlementByLoanId`~~ **RESOLVED (2026-07-21, #1384):** an in-place extension now downgrades a lender Full stamp (no unpriced `+10%` on the un-tariffed added term, since the bump is settled per-term at the extension boundary). The loan-side reward-cap is a per-loan LIFETIME budget consumed lazily as rewards are counted, so it is left intact (resetting it would wipe the unclaimed original-term reward; proration precision across the boundary is #1372), and the borrower stamp is left intact (no settlement path reads `borrowerMode`). `feeEntitlementEnabled` must not cut over until (a) also closes (→ #1383, #1947) — a manual deployment-and-readback requirement, not something PR-9's deploy-assert can establish (see above). | M2 code — #1352 (HoldOnly) ✓, #1347 (Full tariff at accept) ✓, #1353 (loan-side cap) ✓, #1354 (primary settlement sweep) ✓, #1384 (extension repricing) ✓, #1383 (secondary settlement paths — A/B/B2/B3) ✓, #1391 (offset) ✓, #1392 (auto-lifecycle transferred position) ✓ → **settlement side: REPAYMENT + EARLY-CLOSE paths CLOSED, RECOVERY paths OPEN (FIVE recovery entry points — default, liquidation, discounted liquidation, split, partial (which ALSO mis-routes the payout itself, not only the discount — no claim record, see the divergence text) — PLUS refinance which honors the stamp but resolves it against the STORED lender — #1947)**; **remaining (settlement divergence AND reward side)** #1351 (D1 share-of-pool cap) + joint `D*` arming. **NOT gated by #1356** — its deploy-assert only pins the switch OFF on a fresh deploy and observes no settlement path (see the divergence text above); the cut-over is a manual deployment-and-readback per GovernanceRunbook M7 Step 1. Umbrella #1349 |
+| 2026-07-19 | Interaction-reward `500 VPFI/ETH` ETH-ratio cap (#1008) vs the loan-side fee-linked cap `½×C*×(1−m_reward)` + D1 share-of-pool | TokenomicsTechSpec §4, §6b | **CODE NOW MATCHES for the loan-side cap (2026-07-20, #1353).** The per-`(loanId, side)` lifetime cap `½×C*×(1−m_reward)` (bounding the WHOLE post-`D*` armed reward, fresh + recycled) with early-close/sale-split proration and the `m_reward` haircut snapshot at open are implemented in `LibInteractionRewards` and stamped by `FeeEntitlementFacet`, gated on the ShareOfPool arming `_isArmedDay` (D*). **Reward-ineligibility is stamp-based, not value-based:** the cap keys the unstamped skip on `openDays == 0` (a stamped dust loan with `cStarOpen == 0` is still capped to ~0), while a truly unpriced canonical origination is made ineligible **upstream** by not creating reward entries — there is no value-based `cStar == 0` gate in the cap code. It ships **dark**: while `D*` is unarmed (every current deploy) the legacy #1008 ETH-ratio cap governs unchanged. **Remaining:** the D1 `(user, side, day)` share-of-pool cap (#1351) and the actual **joint cutover arming** of `D*` (retiring #1008 on post-cutover days, jointly with PR-2 + PR-6) are later milestones. | M2 code — #1353 (loan-side cap machinery) ✓; **remaining** #1351 (D1 share cap), joint `D*` arming; umbrella #1349 |
+| 2026-07-03 | `VaipakamNFTFacet` (no mint-counter / existence view) vs WebsiteReadme "the Vaipakam NFT verifier must distinguish between a valid live NFT, a burned NFT, and a token ID that was never minted" | WebsiteReadme Key UX Requirements | `ownerOf` reverts identically for burned and never-minted ids and `nftStatuses` is deleted on burn, so no on-chain read distinguishes the two; the connected app's verifier (PR pending) states both possibilities honestly instead. Full three-way distinction needs a contract view (e.g. expose `s.nextTokenId`). | pending triage |
+| 2026-07-02 | `apps/defi` Create Offer NFT-rental daily fee (`offerSchema.toCreateOfferPayload` non-ERC20 amount path) | WebsiteReadme "Key UX Requirements" (amounts in human token units) | The form hint says the daily rental fee is entered "in whole tokens", but the NFT-leg payload passes the typed number through UNSCALED — a user typing "10" lists a daily fee of 10 wei of the prepay asset, mispricing every rental created through the form. `apps/alpha02` (now `apps/app`) scales by the payment asset's decimals instead (PR #887); the two apps diverged and defi's behaviour looked like the bug. **NOTE 2026-08-26 (#1854): `apps/defi` was deleted, so the divergent surface no longer exists — the correctly-scaled `apps/app` path is the only one left.** Row kept in Open pending an owner triage decision on whether the WebsiteReadme requirement is now satisfied or the row simply lapses. | pending triage |
+| 2026-08-17 | §9 lender-exit hardening DEPTH — the cross-cutting rules built out for Option 2 (the listed sale) were written into **that option's** section rather than the `### General Rules for All Lender Early Withdrawal Options` section that already exists for shared rules | `ProjectDetailsREADME.md` §9 | Option 1 (the direct instant-exit sale) is fully specified — participants, preconditions, accrued-interest forfeiture, principal recovery, rate-shortfall handling, frontend warning, ordered contract actions, borrower impact — and is referenced by name-in-words from Option 2's own rules. What it never received is the hardening Option 2 accumulated through #1503: offer-deadline, party-owing-itself, maturity-entry and one-live-route-per-position were each stated under Option 2 only, so an Option-1 reader never met them. That asymmetry, not any absence, is the mechanism behind #1503 items 8, 17, 21 and 24 | **RESOLVED (2026-08-17)** — the four genuinely cross-cutting rules are lifted into §9's General Rules, phrased route-neutrally and as intent, with the reasoning stated in the spec itself. Genuinely listing-specific rules (finite window, signed floor, teardown, quiet period) stay under Option 2. **Supersedes a WRONG entry** that claimed the route was absent from the spec — see the detail section | #1780; behaviour → #1503 |
+| 2026-08-19 | Offer-lifecycle VPFI vault movements without a tier restamp — `OfferCreateFacet`'s creator escrow pull (wallet → vault), `OfferCancelFacet` / `OfferMutateFacet`'s escrow returns (vault → wallet), and the listed-sale ACCEPT-time price pull (buyer vault → Diamond `saleProceedsEscrow`). The restamp is wired **per mutation site** (`vaultDepositERC20` / `vaultWithdrawERC20` are deliberately restamp-free primitives), and these sites never call the rollup | TokenomicsTechSpec — the shared time-weighted-tier rule: every vault VPFI movement re-records the balance at that moment | The spec states the intent correctly; the code covers most sites but not these. A user whose offer escrows or receives VPFI is priced on a balance they no longer hold (or not priced on one they now do) until their next unrelated restamping movement. #1819 closed the SETTLEMENT half of the sale routes; the accept-time escrow pull and the offer-lifecycle paths remain. The spec rule is kept as intent — narrowing it to the covered sites would make it satisfiable while the mispricing persists, which is the thing the rule is about | **CLOSED — code brought to the spec (#1820).** The refresh moved from the call sites to the two writers of the tier balance (the tracked vault counter's deposit/withdraw and the frozen-owed writes), so every VPFI movement refreshes the record, these three included, and no new site can be missed. Cells in `contracts/test/TierRecordSeamTest.t.sol`. |
+| 2026-09-24 | `SwapToRepayFacet.swapToRepayFull` — `maxCollateralIn` | ProjectDetailsREADME.md, swap-to-repay bullets ("unused pledged collateral becomes borrower-claimable"; "Favorable-quote surplus principal should transfer directly to the … holder's wallet") | The spec frames the full-close sale as sized to the DEBT, with any principal surplus arising from a favourable quote and the rest of the collateral left pledged and claimable. Observed on the live Base Sepolia bytecode (fork run, `contracts/script/fork-scenarios/` A11.5–A11.6): the sale is EXACT-IN on the caller's cap — `maxCollateralIn` is the amount sold, not an upper bound on it. With a 0.6 tLIQ cap against ≈1,001 tLIQ2 of debt the protocol sold all 0.6 (1,200 tLIQ2) and sent 199.04 to the borrower's wallet; with the cap at the full 1.25 it sold everything and sent 1,499.04. So a caller who over-sizes the cap converts pledged collateral into the principal asset well beyond what the repayment needs, and the resulting "surplus" is a user-chosen conversion, not a favourable-quote artifact. The natspec calls the parameter an "Upper bound on collateral the caller permits the diamond to withdraw + swap", which reads the same way the spec does. No value is lost beyond slippage, and no shipped surface drives this path today (`apps/app` does not call it; only the indexer observes its events), so there is no current user exposure. | **CODE DEFECT — owner decision 2026-09-25; FIXED IN CODE by #2317, NOT YET DEPLOYED.** `swapToRepayFull` now sizes the sale to the debt (the least collateral whose slippage-capped oracle floor covers the payoff), with `maxCollateralIn` bounding it, and a read-only preview reports the sale size from the same computation. The live Base Sepolia Diamond still runs the pre-fix bytecode until a refresh. The same principle for the resolver-filled intent path is #2322. The spec is the intent: `maxCollateralIn` is an upper bound, the full-close sale is sized to what the debt needs, and collateral the debt does not need stays pledged and borrower-claimable. The spec is unchanged. The fork driver's A11.5 asserts this and fails against the live bytecode until the fix is deployed. |
+| 2026-09-25 | `SwapToRepayIntentFacet.commitSwapToRepayIntent` — the auction lot | ProjectDetailsREADME.md, swap-to-repay bullets ("unused pledged collateral becomes borrower-claimable"; the full-close upper-bound rule, which the owner's #2317 decision applied to the direct path) | The resolver-filled full close put the loan's WHOLE collateral into the Fusion auction as the maker amount, so a fill converted every unit of collateral into the principal asset regardless of what the order asked, with the excess paid out as surplus principal. That is the same defect #2317 fixed on the direct path, and the design doc recorded it as a deliberate order-shape rule. | **CODE DEFECT — decided from the spec 2026-09-25 (owner direction: follow `ProjectDetailsREADME.md`); FIXED IN CODE by #2322, NOT YET DEPLOYED.** The commit now puts up only the least collateral whose slippage-capped oracle value covers the debt floor plus the auction buffer, through the same sizing rule as the direct path (`LibSwapToRepaySizing`); the borrower's `takerAmount` sets the fixed-price order's price and any excess over the debt is surplus principal; the rest stays in the vault, liened; a loan with a live intent has nothing internally matchable; and the post-fill lien is topped up to cover the borrower's collateral claim. The spec now states the intent-path rule; the design docs carry supersede notes. |
+| 2026-10-07 | Forced-close VPFI restamps disagree on mirror propagation: `RiskFacet.triggerLiquidation`'s post-withdraw restamp BROADCASTS the borrower's tier (`ConsolidationFacet.restampCollateralVpfiAfterWithdraw`), while `DefaultedFacet.triggerDefault`'s (#1566 S2c) and every `FallbackCustodyFacet` custody move restamp LOCALLY (`ConsolidationFacet.restampUserVpfiLocalInternal` / `LibConsolidation.restampUserVpfiLocal`) | TokenomicsTechSpec, tier rules ("every protocol action that moves VPFI through a user's Vault must refresh that user's tier accumulator at the post-movement balance, at the moment of the movement"; mirrors apply the cached effective tier) | Both forced closes refresh the canonical accumulator at the post-movement balance, as the spec requires. They differ on WHEN mirrors learn it: the health-factor liquidation pushes in the same transaction; the time-based default and the fallback custody moves leave the push to the borrower's next broadcasting mutation, so a mirror can price the borrower on the pre-close tier meanwhile. The spec does not say which a forced close must do. The local form was chosen for the new sites so a permissionless close-out cannot fail on the cross-chain push budget; RiskFacet's broadcast was left unchanged by #1566. Needs one rule for every forced close. **Update (#898 / #911):** the reason for the local form is gone, because a tier push no longer reverts the action; it stays owed on its lane. #2849 proposes the one rule (every restamp broadcasts) and lists the sites to check. | **CLOSED (#1820, #2849).** One rule: every refresh pushes, once per user per action, when the action ends. The time-based default, the fallback custody moves and the vault reward credit now push like the health-factor liquidation; the broadcast-free variant is retired. |
+| 2026-10-07 | Non-VPFI lender legs carry no per-loan reservation: the fallback in-kind lender slice (`FallbackCustodyFacet.disposeFallbackCustody`), the retry distribution's lender leg (`ClaimFacet._distributeRetryProceeds`) and the internal-match lender legs (`RiskMatchLiquidationFacet`) reserve the lender's proceeds only when the asset is VPFI (#592) | ProjectDetailsREADME §7 "Internal-Match Incentive and Surplus Handling" (lender proceeds "not freely withdrawable by the stored loan record's original lender"); #2141's inventory ("held under lien") | #2141's inventory says these legs are held "under lien". For a non-VPFI asset they are not: the proceeds sit in the stored lender's vault with no reservation, and what keeps the stored lender from taking them is that a vault offers no user-facing withdrawal of that asset outside the claim (VPFI is the one asset with a user-facing tracked exit), not a lock. The spec's statement holds today for that reason; the inventory's wording is inaccurate. A reservation for every asset runs into the single-asset reservation design (#592) and is outside #1566. | pending triage (follow-up under #592) |
+
+| 2026-10-25 | Position-NFT status (`VaipakamNFTFacet.nftStatusOf`) at a repayment and at a forced close | ProjectDetailsREADME.md "NFT Status Updates on Closure" and "NFT Status Updates on Default/Liquidation" | Not a contradiction, two gaps in the spec. (1) The spec names "Loan Initiated" at the fill and "Loan Closed" then burned on each side's claim, but says nothing about the status between a repayment (or preclose, refinance, offset, early rental close, full swap-to-repay) and the claims; the chain records "Loan Repaid" on both NFTs there. (2) The spec says the NFTs go to "Loan Defaulted" **or** "Loan Liquidated" without saying which forced close records which; the chain records "Loan Liquidated" for every forced close that sells the collateral, including a time-based default past grace. The fork driver (`contracts/script/fork-scenarios`, #2332) asserts both as observed. A spec sentence stating the intended mapping needs an owner decision. | pending triage |
+
+## Resolved findings
+
+| Date opened | Divergent symbol | Resolution | Closed by |
+|-------------|------------------|------------|-----------|
+| 2026-07-15 | `LibVPFIDiscount.settleBorrowerLifProper` — consent-off zeroed an already-prepaid borrower LIF rebate (forfeiting `vpfiHeld` to treasury), reachable on mirrors via the `(0,0)` tier broadcast (TokenomicsTechSpec §6a; Pass-2 E2, re-opened as #1255) | **MOOT — the path it lived on is removed (#1980, owner decision "Retire it").** No loan could reach the peg-custody borrower LIF after #1352, the platform is pre-live and every chain is deployed fresh, so no prepaid rebate ever existed to be zeroed. The code no longer carries the up-front VPFI charge, the settle-or-forfeit split or the rebate payout, and TokenomicsTechSpec §6 / §6b now state that no borrower VPFI is held for a loan and no rebate is paid. Code and spec agree that the path is gone, so neither a code fix nor a description of the confiscation is owed. The original row text is kept in this file's history. | #1980 (PR #TBD) |
+| 2026-10-25 | `ConfigFacet` range master flags (`rangeAmountEnabled`, `rangeRateEnabled`) and the borrower-side `rangeCollateralEnabled`: settable, readable and published in the configuration bundle, but read by no contract path, so an operator could "turn ranges off" and nothing changed; the spec's "Testnet Master Flags" and "Canonical Limit-Order Enablement" bullets described four switches, and the 2026-07-05 #900 row below required `rangeAmountEnabled` on wherever ranges are permitted | **RESOLVED — owner decision 2026-10-25 (#2812): retire the flags.** Ranged offers are always on; the matching kill-switch (`partialFillEnabled`) is the one governance lever over range orders. The setters, getters, events and `getMasterFlags` were removed from the contract, and the two range fields left the configuration bundle (PR #2839). The spec now states ranges as always on and the matching switch as the only switch; the off-chain readers take bundle fields by name and decode a chain answer only at the shape their build describes (the indexer stores an answer of another shape as unknown, with the reason). **This supersedes the `rangeAmountEnabled` clause of the 2026-07-05 #900 row**, whose mutate-path HF/LTV parity fix stands. | PR #2839 (Refs #2812) |
+| 2026-10-23 | `RiskParams.loanInitMaxLtvBps` read raw at every LTV gate, preview and snapshot, so an asset nobody had configured read as a 0% ceiling and every liquid loan against it was refused (`LTVExceeded`), against the spec's "any ERC-20 that passes the liquidity test may back a loan" and its asset ceiling as an optional tightening; `RiskParams.reserveFactorBps` stored, range-checked and settable but read by no fee path — #2696 | **CLOSED — the code brought to the spec (owner decisions 2026-10-25: the spec answers the ceiling question, so no per-asset numbers are needed; the reserve factor is retired).** One reading of the ceiling, `LibVaipakam.assetInitLtvCeilingBps`, is used by every reader: unset means no per-asset ceiling, so the health-factor floor (and, depth-tiered, the tier cap) binds; a set ceiling still tightens; the setter cannot write zero. `getAssetRiskProfile` reports whether a ceiling is set instead of a bare number. The reserve factor leaves the setter, its event and both risk views; its storage slot keeps its place under a declared rename (`retiredReserveFactorBps`). Spec: the new "Optional Per-Asset Initiation-LTV Ceiling" bullet, the bounded-knobs list and the launch-readiness disclosure. | #2696 PR |
+| 2026-10-05 | `LibRewardCustody.dayAwaitsFreshDelivery` (read at two rungs: `LibInteractionRewards._dayPoolHalves` and `clampToFinalized`) holds a mirror day owing fresh funding until a PROVEN delivery lands (dark one-shot latch); `LibInteractionRewards._sideFreshHalf` prices every stamped mirror day from the Base stamp (NOT latched) — #1944 consequence 1 | **RESOLVED — OWNER intent decision 2026-10-20 (decision card in the project thread): the per-day delivery gate is RATIFIED as the fix for #1944 consequence 1**, together with the stamp-pricing payout change on excluded and allocation-exhausted mirror days. This settles the DESIGN REVERSAL recorded here on 2026-10-05: the bridge design's "funding is fungible across days, an early claim is a safe revert" position is superseded, and the spec text already restated in that change (TokenomicsTechSpec §4a and the claim behaviour list) stands as intended behaviour. Broadcasting stays permissionless; the restrict-the-broadcaster option on #1944 is not taken. **Not discharged by this decision: the gate ships dark.** `setDayDeliveryGateFromDay` is a one-shot admin call per mirror and no script makes it, so the race stays open in practice on every mirror until that call lands. It is armed per mirror only after the keeper's delivery-proof pass is verified running there (`GovernanceRunbook.md`, "The day delivery gate (#1944 consequence 1)"), and each call needs the owner's go-ahead. #1944 stays open for that arming and the stated leftovers (legacy kind-2 days, days before the first gated day, a late Base inclusion backfill). **Update 2026-10-26:** two of those leftovers are closed in code — the kind-2 and kind-5 broadcast wires are retired (kind 10 is the only one, generation 8) and `backfillDayInclusion` is removed, so finalization is the only writer of a day's inclusion; days before the first gated day remain. **Update 2026-10-26 (owner decision, "Retire all three"):** the last leftover and the arming step are closed together — the one-shot `setDayDeliveryGateFromDay` latch is removed and the gate binds on every mirror by role from its first day, so there is no dark state and no day before the gate's first day. The remaining operational precondition is the keeper's delivery-proof pass running on each mirror (`GovernanceRunbook.md`). Original finding: **DESIGN REVERSAL — spec restated in the same change; owner ratification requested.** The bridge design rejected a per-day claim-side funded gate as net-negative because an early claim was a "safe revert"; the governance runbook's containment note (the #1566 reclassification) shows it is a fund-loss shape, because the mirror balance also holds other owners' value. The spec's "revert (empty balance), never lost value" sentence is withdrawn and the gate is stated as intended behaviour. The remedy chosen (prove the day's OWN delivery; landed = proven membership or an indexed epoch) is NEW relative to the menu recorded on #1944 (restrict / separate), so it stands as the spec's intent pending the owner's explicit decision. The stamp-pricing fix is not behind the latch and changes payouts on excluded and allocation-exhausted pre-cutover mirror days (to zero / the stamped floor) — recorded so the change is not read as drift. | Owner decision 2026-10-20; the code landed in #2489 (`24c6aef`) |
+| 2026-10-07 | `SwapToRepayIntentFacet.commitSwapToRepayIntent` pulled the intent's lot from the borrower's vault into the Diamond at COMMIT, where it rested until the fill or a teardown, against the owner's custody rule (Option F, ratified 2026-08-31; #2141) | **CLOSED — the code brought to the spec (#1566 S3b).** The commit moves nothing: the lot stays in the borrower's vault, pledged, and leaves it only inside its own fill, under a fill lock that refuses every other entry into the protocol until the fill settles; the fill settles exactly the committed lot against exactly the taking amount; a cancellation moves nothing, which also lets a borrower flagged after committing no longer block it (#658). A commit recorded under the old custody is refused by name at the fill and at every cancellation (owner decision O1 = A, 2026-10-07: fresh deploy only). The spec's intent paragraph, sanctions bullet, custody rule and test-coverage line now state it. Cells I0-I15 in `contracts/test/SwapToRepayIntentFillTest.t.sol`; #2141's invariant now holds the intent class to zero Diamond custody too. | #1566 S3b (local build-first stack; PR pending) |
+| 2026-10-08 | `SwapToRepayIntentFacet` / `TreasuryFacet` `_fetchLopDomainSeparator` read the LOP's EIP-712 domain through `DOMAIN_SEPARATOR()`, which the deployed v4 LOP (inside the 1inch Aggregation Router v6) does not expose, so the resolver-filled intent commit and the validated buyback commit reverted against it (#2449) | **CLOSED — CODE DEFECT, the code brought to the spec.** The spec describes a resolver-filled auction and a validated buyback that work against the deployed limit-order protocol; neither could commit there. Both now read the domain through ERC-5267 `eip712Domain()` (`LibLopDomain`), accept only the plain four-field domain naming this chain and the LOP itself, and derive the separator; a fork cell proves the derivation reproduces the deployed router's own order hash. The spec states the rule (the protocol signs for exactly the order the configured limit-order protocol presents). | #2449 (local build-first stack; PR pending) |
+| 2026-10-07 | `DefaultedFacet.triggerDefault` — both ERC-20 collateral routes (the liquid swap and the in-kind transfer) withdrew VPFI collateral from the borrower's vault with no fee-tier refresh, so the borrower kept tier and staking credit on VPFI that had left the vault until some unrelated later mutation (finding S1-11 of the #1566 slices 2–3 review) | **CLOSED — code brought to the spec (#1566 S2c).** Spec: TokenomicsTechSpec tier rules ("every protocol action that moves VPFI through a user's Vault must refresh that user's tier accumulator at the post-movement balance"), unchanged. One broadcast-free restamp of the borrower now follows the ERC-20 collateral branch and covers both routes; the swap-failure fallback returns before it and is restamped by the fallback custody host. Cells F18 (swap) and F18b (in-kind) in `contracts/test/DefaultedRestampTest.t.sol`. The broadcast-versus-local difference from RiskFacet is the open row above. | #1566 S2c (local build-first stack; PR pending) |
+| 2026-10-07 | Liquidation-fallback collateral rested in the Diamond's own balance from the failed swap until a claim, cure, internal match or the keeper backstop resolved the loan (`RiskFacet` / `DefaultedFacet` `_fullCollateralTransferFallback`, and every consumer paying the fallback out of Diamond custody), against the owner's custody rule (Option F, ratified 2026-08-31; #2141). The spec described that custody too ("the original sits in protocol custody", "restore any fallback-held collateral") | **CLOSED — the stale spec brought to the owner's decision, and the code to the spec (#1566 S2b).** ProjectDetailsREADME now states the rule (no user asset rests in protocol custody across transactions), the vault-held fallback in the liquidation, claim and internal-match sections, and the fallback-pending fee-tier exclusion. Code: the one fallback producer returns the collateral to the borrower's vault under the lien in the failing transaction, and every consumer moves its share out of that vault through one per-loan custody record with one move event. A fallback row recorded under the old custody fails closed rather than being migrated (owner decision O1 = A, 2026-10-07: fresh deploy only). Cells F1–F17 and F19–F21 in `contracts/test/FallbackCustodyTest.t.sol`; #2141's invariant now holds the fallback class to zero Diamond custody. | #1566 S2b (local build-first stack; PR pending) |
+| 2026-10-07 | #2141 inventory row 4 — "the sanctions close-out freeze is held in the Diamond" | **NOT A DIVERGENCE — the inventory was wrong; the code already meets the rule.** Frozen lender proceeds and a flagged holder's borrower surplus are deposited into the recorded party's own vault through the pinned receive path, with a per-loan reservation, and the frozen-owed VPFI counter is a fee-tier exclusion, not custody: the frozen-in-the-vault posture the spec states. Verified by code reading for the #1566 slices 2–3 brief. Closing #2141's row on that basis awaits the owner's ratification (decision O2); a signed #2141 comment corrects the row. | no code change |
+| 2026-09-11 | `apps/keeper/scripts/check-deploy-invocations.mjs` — the check INFERRED whether a deploying file rewrites its configuration, by scanning the file's text, where the specification required a DECLARATION from the deployment itself (#2085) | **CLOSED — the code was brought up to the specification, and the specification's own optional allowance is left standing.** The inference was deleted: `check-deploy-invocations.mjs`, its fixture suite and the `keeper deploy guard (--keep-vars, tree-wide)` CI job are gone, and `check-keep-vars.mjs` — structural, over discovered configurations, unconditional in CI — is the whole implemented defence. This was the PRINCIPAL divergence of the set and the resolution runs in the direction this file exists to protect: the specification had already decided that where a check needs another system's execution model the answer is a declaration, and the implementation now does only that. **A first draft went further and is recorded here because it was wrong**: it rewrote the specification's permissive "a secondary check MAY additionally reject individual deployment commands" into "an implementation should not carry one", which is a reversal of ratified intent, not a code-to-spec fix, and would have needed an explicit owner decision (Codex #2171 r1, P1 — correct). The allowance is restored; the platform simply does not exercise it, which the allowance permits. The ratified constraints on any future such check are kept in condensed form rather than deleted with the implementation. What the declaration does not cover is now stated by name in the surviving script's header rather than implied | this PR |
+| 2026-09-11 | `apps/keeper/scripts/check-deploy-invocations.mjs` — six catalogued misses carried no fixture (#2104, #2106, #2108, #2110, #2113, #2116), against the invariant that a knowingly-kept miss be pinned by a test | **CLOSED — dissolved rather than fixed, and worth distinguishing from a fix.** No check, no misses: the pinning requirement governs a command-level check, and none is implemented. The requirement itself SURVIVES in the specification and binds any future one — nothing was narrowed to match an implementation and no miss was blessed; the surface the misses were on was removed. The seventeen open issues enumerating those and other parsing edges (#2104, #2106, #2108, #2110, #2112–#2119, #2121–#2124, #2126) close for the same reason. **One capability the retired check genuinely had is kept**, in bounded form: rejecting a deployment that selects a non-canonical configuration is now asserted over configuration FILES rather than over commands — and, after a second round returned six findings against a first attempt that classified WHICH files mattered, over **every** deployment configuration in the tree without classification | this PR |
+| 2026-10-03 | `LibRewardCustody.planTransportDraw` / `stageable` / `cursorBatchRooms` withheld EVERY multi-day epoch (`dayCount > 1`) vs `Vpfi1566CanonicalDeliveredBoundDesign.md:2480-2506` (necessity: an unarrived-day batch is drawn LAST, for the gap) and `:6984-7003` (contested: another ARRIVED listed day with an unmet obligation refuses the draw) — #2318 | **CLOSED (owner decision 2026-10-02, option A: the design text as written) — 3c-1 builds both gates by construction.** The batch's day list is kept at materialization; each other listed day is read live (arrival = the day's broadcast stamp for an armed day, the known-global interest for a pre-arming day; termination = the per-day closure proof's stamp). Contested ⇒ withheld by name; unarrived ⇒ necessity tier (sorted last, served only for the live/bucket shortfall); all arrived and proven closed ⇒ ordinary. The record path stages ordinary only, so no staged draw needs the settlement-time re-judgement the design asks for (arrival, attestation and closure are monotone; new obligations can appear only on unarrived days). The one-call draw re-plans at settlement. Oversize (> fan-out cap) and list-less batches are withheld as contested. |
+| 2026-10-25 | The 3c-1 contest gate (row above) left a mirror claim spanning two days of one multi-day remittance unpayable for good: the epoch was contested while both days were open, and neither day could close until that claim paid — found by the protocol two-chain Anvil suite (#848, PR #2825), filed as #2821 | **CLOSED (owner decision 2026-10-25, "One day per send") — the intent changed, not the code alone.** The canonical chain funds ONE day per remittance and refuses a wider send and its fee quote by name; close-only days may ride along. The mirror's contest gate and necessity tier are retired as unreachable, and any epoch listing more than one day is withheld for good. TokenomicsTechSpec's remittance and epoch-draw bullets restate the intent; the 2026-10-03 row above is superseded. |
+| 2026-09-20 | `apps/app/src/data/alerts.ts` `pushChannelUrl` + `apps/app/src/components/AlertsCard.tsx` + `apps/agent/src/index.ts` `PUT /thresholds` — whether the Push rail is OFFERED is decided on the frontend channel address alone; nothing consults the backend signer, and the opt-in is persisted without checking that the deployment can sign | **CLOSED — CODE DEFECT, the code brought to the spec (#2251).** The spec line (ProjectDetailsREADME §11, "An Offered Channel Must Be A Channel That Can Send") stands as written. The agent now answers `GET /push/status` from the same shared rail it sends with (`packages/push`, #2248), without the key leaving the Worker, and the Alerts card reads it before offering Push: an unavailable rail, and one the card could not ask about, are each stated and nothing is offered; the subscribe link opens the channel the agent posts as, and the app's build-time `VITE_PUSH_CHANNEL_ADDRESS` is retired. The two decisions the row named were taken as follows: the signal lives on a dedicated agent endpoint, readable before the toggle renders; `PUT /thresholds` refuses a NEW Push opt-in the rail cannot honour with a 409 that stores nothing, so an app bundle from before the change reads it as a failure rather than as "on" (the current app repeats the save without the opt-in and says why), and an opt-in already stored is kept through the outage (`push: 'kept'`). Remaining scope, stated: the status covers the agent's rail and says so (`scope: 'agent'`), and the card says the check covers payment reminders only; the keeper sends HF-band alerts from its own copy of the key, which moves onto the shared rail in a follow-up (#2248), and a combined readiness answer covering both senders is still to come. **Follow-up landed (#2667):** the keeper publishes its rail's readiness each watcher run, and `GET /push/status` answers `scope: 'service'` for both senders when that record is recent, falling back to the agent's own answer, scoped to it, when it is not | this PR |
+| 2026-08-07 | `apps/www/src/pages/UserGuide.tsx` `extractToc` — registered only an `###` carrying a non-role `<a id>`, then `sections.filter((s) => s.items.length > 0)`, so a chapter whose subsections were unanchored was dropped from the contents list entirely; it also did no code-fence tracking, so a `##` inside a code sample would have been listed | **CLOSED — fixed in the renderer, which is the half that keeps working for the NEXT chapter.** Confirmed live on production first (`vaipakam.com/help/advanced`: 20 H2s in the DOM including `How VPFI Discounts Work`, 153 sidebar links containing none of it). `extractToc` now offers an item-less chapter as its own jump target, keyed on the slug `headingComponents` already installs on every rendered `<h2>` — the same promotion `extractMarkdownToc` always did. It also reads the Markdown PARSE TREE instead of scanning lines, which retires the fence gap and every sibling of it (HTML comments, indented code) at once rather than one rule at a time. Verified byte-identical TOC output on 19 of the 20 guide files before the swap; the twentieth gains exactly the missing chapter. **Deliberately NOT fixed in content**: giving the two English cards anchors would make the English edition carry anchors the nine translations lack, which the parity guard correctly rejects — that chapter is untranslated (#1593). Guarded by `scripts/check-guide-toc-coverage.ts`, which imports the SAME `extractToc` the page renders from (a guard with its own copy would have agreed with the bug) and fails if any declared chapter is absent from its contents list; reverting the fix reproduces the original failure by name. | #1599 (verification: `pnpm --filter @vaipakam/www typecheck`) |
+| 2026-10-04 | `RefinanceFacet` post-rollover risk gate called `RiskFacet.calculateLTV` / `calculateHealthFactor` unconditionally, so every refinance of a consented illiquid-collateral loan reverted `IlliquidLoanNoRiskMath` after the payoff. Initiation (`LoanFacet`) skips those checks for a not-fully-liquid loan with mutual consent. Spec intent was ambiguous: the refinance section allowed ERC-20 loans including illiquid collateral, while the post-rollover gate line covered only the liquid case. | **Owner decision 2026-10-04 — Fixed (code to intent).** Illiquid refinance is allowed when both parties to the replacement consent. The gate now mirrors initiation on the replacement loan's own stamps (leg liquidity plus `riskAndTermsConsentFromBoth`), and the spec states the consented-illiquid branch. Found on a fork of the live Base Sepolia Diamond (loan 22). Test: `T092AutoLifecycleIntegrationTest.test_2380_consentedIlliquidCollateral_refinanceCompletes`. | #2380 |
+| 2026-08-04 | `apps/www/src/content/userguide` — the English `Advanced` guide carried a `buy-vpfi.cross-chain-tier` anchor none of the nine translated editions had; `Basic.ko.md` uniquely carried `rewards.withdraw-staked` | **CLOSED — both fixed at the source, and the check widened.** The cross-chain tier section is translated into all nine editions (its `buy-vpfi.` prefix is legacy naming from before the #687-A excision; the content documents the current CCIP tier push, verified against the section text before translating). The Korean stray was REMOVED rather than promoted to English: it described a withdraw control on the Rewards page, which has none — the action lives on the VPFI page, and `Basic.ko.md`'s own `buy-vpfi.unstake` already documents it correctly, so deleting it removed a false claim without losing information. `KNOWN_GAPS` is now empty. **Closing these exposed a blind spot in the guard itself**: it compared anchor SETS, so an edition missing an ENTIRE chapter compared equal (every anchor that chapter would contribute is absent from both sides at once) — which is how all nine editions lost `How VPFI Discounts Work` while the check reported agreement. It now also compares chapter COUNTS, defining "chapter" as a column-zero `##` the FILE declares — matching how the guide's own `extractToc` (in `src/pages/UserGuide.tsx`, NOT the `extractMarkdownToc` in `src/lib/markdownToc.tsx` that Overview/Whitepaper use) recognises one, rather than the way CommonMark would in the abstract — `hi`/`ja` carry indented `##` lines whose two spaces CONTINUE the preceding list item, so they parse as `root > list > listItem > heading` and are unreachable from the sidebar; counting them would have recorded those editions as chapter-equivalent while two of their chapters stayed invisible — with the shortfalls recorded in `KNOWN_CHAPTER_GAPS` and a stale-entry check in both directions. Demonstrated: an anchor-less chapter added to the English edition produces ZERO anchor findings and nine count findings. The count is of the FILE, deliberately: `extractToc` additionally drops any chapter with no anchored subsection, so counting the SIDEBAR would put `en` and `de` both at 18 and stop reporting the chapter German genuinely lacks. That gap between file and sidebar is its own finding, opened below. | #1561 follow-up; remaining chapter translations → #1593; sidebar drop → #1599 |
+| 2026-08-04 | `apps/alpha02` locale bundles — keys MISSING outright from an advertised locale, so the reader met English mid-page wherever a bundle had no entry. Opened at 160 keys across the offset / tariff / early-repay / transfer-obligation / sale-hold / loan-sale / `contractError.*` sections; recorded per `(key, locale)` pair in `src/i18n/untranslated-baseline.json` | **CLOSED — the gap was filled, not the spec narrowed.** 160 keys → 2 (#1529 translated the bulk) → 0 (#1590 translated the last two, `copy.match.riskGateCreatorBlocked` and `copy.match.riskGateTierTooLow` — the two offer-matching refusals, which surface at the worst moment to switch language). `untranslated-baseline.json` is now `{}` and `check-locale-coverage` enforces full key presence with **no exemption**, so the count cannot silently grow back. Verified load-bearing rather than vacuous: deleting `es`'s `riskGateTierTooLow` made the guard fail naming it, and restoring it passed again. Verified on the deployed build too, not just on disk — `apps/alpha02/e2e/live/live-recover-locales.mjs` renders all nine locales on production and asserts the `lang` attribute, the text direction, and a translated `<h1>`; the presence guard alone could not have caught a 404ing locale chunk. **The successor finding is narrower and still open**: a key can now be PRESENT and still hold the English string, which `missingSubtree` cannot see — tracked as #1596 in the Open table. | #1529, #1590 (verification: `pnpm --filter @vaipakam/alpha02 typecheck`; `node apps/alpha02/e2e/live/live-recover-locales.mjs`) |
+| 2026-07-30 | `chainRewardBudgetSideSplitForDay` / `_dayPoolHalves` zero recycled half on an unarmed day vs TokenomicsTechSpec §4a "an unarmed day is NOT fresh-only" | **NOT A DIVERGENCE — refuted; the two observations are about different layers.** `RewardAggregatorFacet._stampGovernorDayPool`'s UNARMED branch (`:850`) stamps `recycledBudget = min(fundable, coupled)`, a recycled portion (possibly zero — the formula yields 0 on day 0 or an empty bucket) measured against the canonical bucket — the spec's subject, and correct. The cited functions are the CLAIM/reservation layer, where an unarmed stamp is deliberately a record only and claims pay the scheduled portion, because reserving with no consume side would collapse `freshAvailable` (`LibVaipakam` storage doc). Both true; neither needed changing. What WAS wrong: the spec sentence did not name its layer, which is what made the confusion look like a contradiction — it now does. Full write-up in `D-#1457-01` below. The real adjacent risk (non-empty bucket + fresh-only claims pre-arming) is **#1460**, still open — reachable already on an unarmed deployment AND still an unconditional arming prerequisite (three conditions; see the D-#1457-01 write-up below). | #1457 (umbrella #1349) |
+| 2026-07-13 | Stale-spec + stale-comment cluster (A4/B4/F1/F2/F3/F5/E2/C5 + comments A5/C2/C3/D6/E1) | **Pass-2 spec/comment edits — Done (code ratified; UPDATE SPEC/COMMENTS).** **Spec** (ProjectDetailsREADME unless noted): A4 refinance repayment made mode-aware (full-term vs pro-rata-opted, #1003) at the frontend-warning, payoff-step, and Original-Lender-Protection sites; B4 §885 refinance-tagged offer principal now stated as frozen (not adjustable); F1 removed the deleted `setStakingApr` knob; F2 replaced retired `updateRiskParams.liqThresholdBps` with per-tier `setTierLiquidationLtvBps` + `T1≤T2≤T3`; F3 §812 carves out the live prepay-listing transfer-lock; F5 §2647 carves out never-flagged wallets (fail-open during outage, #1006); C5 §1350 FLL profit headroom softened to off-chain keeper policy. **E2 REVERTED → re-triaged as #1255** (see Open findings): the "carve out the prepaid rebate" spec edit conflicts with ratified code — `settleBorrowerLifProper` reads an instantaneous effective discount at settlement, so consent-off (incl. the mirror `(0,0)` broadcast) zeros the prepaid rebate and forfeits `vpfiHeld` to treasury; not a clean UPDATE-SPEC. **Comments**: A5 `RiskFacet` partial-liq docstring rewritten to the post-#641 interest-clock-only re-stamp; C2 `LibVaipakam` tier-liquidation NatSpec fixed (Tier-1=80%/Tier-3=90% de-inverted; tier-0 alias → Tier-1); C3 `RiskFacet` sequencer-down comment corrected (DefaultedFacet reverts, doesn't full-transfer); D6 `RepayFacet` rental-NFT comment corrected to vault-escrow custody. **E1** (residual retired-terminology NatSpec) is NOT edited here — split into its own sweep issue **#1253** (the referenced #1018 was closed + scoped to CLAUDE.md; correct replacement terminology needs care). No ABI change (comment-only source edits). | spec-doc PR (umbrella #1196) |
+| 2026-07-13 | Low-severity code cluster (B1/B2/B3/C4/E3/F4) | **Pass-2 Low group — Fixed, all six as recommended.** **B1** (§1083) `LibSignedOffer.toCreateOfferParams` honors the `amountMax==0 ⇒ amount` sentinel on the direct fill path (matched the matcher path). **B2** (§1075) `LibMetricsTypes.OfferState` gains an append-only `Expired` value; `deriveOfferState` returns it for a lapsed GTT offer via `isOfferExpired` (wire-compatible uint8, no ABI JSON change). **B3** (§1075) `OfferMatchFacet` GTT vet uses `>=` (expired at-and-after the deadline). **C4** `DefaultedFacet` liquid time-default records the treasury accrual (`recordTreasuryAccrual`), matching the HF paths. **E3** `RewardReporterFacet.closeDay` rejects a post-finalization self-report (`ReportAfterFinalization`), matching the mirror ingress guard. **F4** `DeployTimelock` asserts `minDelay >= 48h` on Phase-1 mainnets (Ethereum/Base/Polygon/Arbitrum/Optimism). No ABI change (B2's enum stays uint8). Tests: `_amountMaxZeroSentinel`, `getOfferState_expiredGtt`, `gtt_boundary_atExpiresAt`, `CloseDayRevertsAfterFinalization`, `DeployTimelockGuardTest` (C4 covered by the DefaultedFacet regression + the identical tested HF-path mirror). Regression: SignedOfferBook/Matcher, Enumeration, BulkDashboard, DefaultedFacet, FacetSizeLimit all green. | #1195 (umbrella #1196) |
+| 2026-07-13 | `PrecloseFacet.transferObligationViaOffer` used ERC-20 APR math (`proRataInterestSeconds`) on the rental per-day fee → undeducted elapsed rent lost to the lender | **Pass-2 D4 (Med) — Fixed (arm a).** The APR settlement is 0 for a rental (`interestRateBps == 0`), so the rent accrued between `lastDeductTime` and the transfer was silently dropped by the section-5b prepay reset and stayed withdrawable in the exiting borrower's un-liened vault. The transfer now runs a rent settlement BEFORE the loan rewrite (mirroring `RepayPeriodicFacet.autoDeductDaily`), keyed off ASSET TYPE (not the stored rate; the APR path is neutralized for rentals so there's no overlap): (a) elapsed rent `principal × min(elapsedDays, remainingRentalDays)` counting from `max(lastDeductTime, startTime)` (treasury-split via `effectiveTreasuryFeeBps`) PLUS (b) the **term shortfall** `principal × max(0, (remainingRentalDays − catchUpDays) − offer.durationDays)` — the UNPAID days after catch-up the shorter incoming term won't cover (goes fully to the lender, mirroring the ERC-20 path's `shortfall` leg — §1420). Total clamped to funded prepay; lender share forwarded to the current lender-position holder from the prepay vault via `freezeOrPayActiveLenderFromVault` (fail-closed park if flagged), treasury share withdrawn + accrued, `loan.prepayAmount` decremented. The exiting borrower's genuinely-unused prepay + buffer stay theirs to withdraw. **Codex #1249 r1+r2 (6×P2, all fixed):** r1 — guard the elapsed subtraction against a future `lastDeductTime` (prepaid days via `repayPartial`), add the shortfall leg (2nd half of arm-a), avoid double-bill vs the APR path; r2 — key off asset type (a rental can carry a non-zero rate after takeover, so a rate gate would drop rent), base the shortfall on UNPAID days after catch-up (wall-clock double-charged prepaid days), and start the clock at `max(lastDeductTime, startTime)` (legacy `lastDeductTime==0` drained the full prepay). Original-lender-not-disadvantaged invariant (§1512/§1420) now holds for rentals as for interest loans. No ABI/selector change; PrecloseFacet stays under EIP-170. Tests (6): catch-up 693e, shortfall 993e, prepaid-clock no-brick, prepaid-days-shortfall 500e, nonzero-rate-still-settles 693e, legacy-zero-clock 693e; PrecloseFacetTest 86/86. | #1194 (umbrella #1196) |
+| 2026-07-13 | Rental buffer BPS never snapshotted; `OfferCancelFacet` / `OfferMutateFacet` / `OfferAcceptFacet` / `LoanFacet` / `PrecloseFacet` re-derived from live `cfgRentalBufferBps()` | **Pass-2 D3 (Med) — Fixed.** New append-only `Offer.rentalBufferBpsAtCreate` (uint16, slot-23 spare, zero-legacy → live fallback via `LibVaipakam.effectiveRentalBufferBps`) is stamped at `OfferCreateFacet` create. Every downstream economic site now reads that snapshot instead of live config: accept pull, cancel refund, modify delta (both sides — closes the previously in-code-acknowledged skew), loan-init `bufferAmount`, and the Option-2 transfer reset (from the incoming offer's snapshot). A `cfgRentalBufferBps()` governance retune between create and a later site can no longer brick a cancel (refund > vaulted), strand prepay (refund < vaulted), or push `loan.bufferAmount` above what was funded (which defeated the #1004 fee ≤ buffer guarantee / re-armed the #1096 `InsufficientPrepay` brick). Only the Offer carries the BPS; the Loan already snapshots the absolute buffer that `calculateRentalLateFee` clamps to. Snapshot-at-origination discipline (§696-699/§1233/§1243) now holds. ABI: `getOffer` return grew the field (frontend re-exported, typecheck green). Tests: `RentalBufferSnapshotTest` (accept/cancel/modify under retune) + PrecloseFacet transfer-under-retune; FacetSizeLimit green (PrecloseFacet stays under EIP-170). | #1193 (umbrella #1196) |
+| 2026-07-13 | `DefaultedFacet:533-637` value-collapsed branch fired on HF<1 (`RiskFacet:520`), gave the lender the entire liquid collateral in-kind, no swap, no borrower residual | **Pass-2 C1 (Med) — Fixed.** The liquid-collateral time-default route now keys on a genuine LTV>110% collapse ONLY (via the existing `RiskFacet.calculateLTV(loanId) > cfgVolatilityLtvThresholdBps()` view), not the old `isCollateralValueCollapsed` (`ltv>110% \|\| hf<1`). An HF<1-but-covered loan (collateral between debt and debt/liqThreshold, LTV still ≤110%) now routes through the swap/split waterfall (Path A): it must attempt ≥1 enabled route (§1373), the lender is capped at total debt with the borrower keeping the surplus, and a swap that can't execute safely falls through to the existing oracle-aware three-way fallback (`_fullCollateralTransferFallback` → lender-full only when oracle-dead or collateral insufficient, else lender ceiling = due+interest+3% with borrower residual). The LTV>110% "extreme crash" and illiquid-with-consent in-kind arms are unchanged (collateral below debt ⇒ §774 "insufficient" exception). No new selector / no ABI change — reuses the on-chain LTV view. Spec §774/§790/§1373 conforms. Tests: covered-band (LTV 105%, HF<1) routes to swap with lender-principal claim + borrower residual; existing collapse tests re-pointed to mock `calculateLTV`>110%. | #1192 (umbrella #1196) |
+| 2026-07-13 | `precloseDirect`/`refinanceLoan`/offset completion gate only on `Active`; `computePreclose` hardcodes `lateFee:0` | **Pass-2 A1/D5 (Med) — Fixed.** All three early-close paths now charge the same late fee `repayLoan` does when overdue (0 within term), split treasury/lender like the interest (incl. the VPFI yield-fee branch); `computePreclose` gained a `lateFee` param; the NFT-rental preclose funds its late fee from the pre-funded buffer; refinance folds the fee into the exiting lender's split. **Post-grace cut-off differs by structure** (Codex #1233): `precloseDirect` (single atomic tx) reverts `RepaymentPastGracePeriod` strictly past grace → DefaultedFacet. **Refinance is two-step** (accept creates+funds the replacement; a later tx completes) — reverting the completion would strand the borrower with both loans, so an already-accepted refinance always completes (old lender made whole + late fee, lender-favourable vs default, mirroring the repayLoan FallbackPending cure); a FRESH post-grace refinance is refused at ADMISSION (`LibAutoRefinanceCheck.validate`/`matchAdmissible` revert `RefinanceTargetPastGrace`; tagged-offer expiry clamped to the target's grace deadline). Offset gets the fee defensively (#1032 anti-drift guard already blocks at/post-maturity completion). Spec §1217/§1403/§1325 conforms. Tests: grace-window late fee + post-grace revert (preclose ERC20 + rental); manual-refinance-completes-past-grace (no strand) + tagged-admission reject + expiry clamp. alpha02 UI follow-ups: #1235 / #1236. | #1189 (umbrella #1196) |
+| 2026-07-13 | `RepayFacet.repayPartial` required post-payment HF ≥ the 1.5 admission floor | **Pass-2 A2 (Med) — Fixed.** Replaced the inverted floor with a MONOTONICITY assert (`hfAfter >= hfBefore`, capturing pre-partial HF): a partial only raises HF, so the 1.5 floor blocked exactly the deleveraging (HF 1.2→1.4) the lender wants. New `PartialRepayWorsensHealthFactor` error; spec §1161-1164 grants partial with no post-HF floor, §1362 "strictly improve HF". Tests: sub-1.5 deleverage succeeds + worsening-HF reverts. | #1190 (umbrella #1196) |
+| 2026-07-13 | `repayPartial:769/881` + `swapToRepayPartial` (`SwapToRepayFacet:700/807`) skipped `creditSettledInterest` / zeroing `interestSettled` at the accrual-clock restart | **Pass-2 A3 (Med) — Fixed.** Both voluntary-partial paths now `creditSettledInterest` the accrued charge (no re-charge — M1) AND settle `interestSettled` at the clock reset (no stale future-only subtract), mirroring the #915 `PrecloseFacet:886` / `RiskFacet` credit+zero. **Codex #1229 refinement:** when a periodic auto-liquidation OVER-delivered, the reset preserves the unused excess (`priorSettled − grossAccrued`) rather than blindly zeroing, so the borrower's already-paid surplus isn't forfeited; it zeroes only when the charge consumed the whole credit. The period accumulator is credited with the netted cash `accrued` (never `grossAccrued`, which spans already-settled periods). The exact current-period attribution (carry the preserved excess toward the current period's dues) is deferred to **#1230**. The PR-#559 "don't accumulate" comment reconciled (credit/settle is not accumulation). Gated on the dormant periodic-interest flag; ERC-20 non-periodic loans unaffected. | #1191 (umbrella #1196) |
+| 2026-07-13 | `RepayPeriodicFacet:215` / `RepayFacet:983` decremented `loan.durationDays` while `startTime` fixed → rental maturity/grace walked earlier (`DefaultedFacet:243`, `RepayFacet:267`, `isGraceWindow`, `gracePeriod`) | **Pass-2 D1 (High) — Fixed.** Kept `durationDays` IMMUTABLE (the #641-pattern arm of the ratified recommendation, chosen after a scout showed ~20+ maturity consumers already treat `startTime + durationDays` as the fixed maturity): rental amortisation stops decrementing the term and instead advances `lastDeductTime`, with a new `LibVaipakam.remainingRentalDays` accessor feeding the fee/close math. So maturity + grace stay fixed at origination for every consumer with no consumer-side change, and the ERC-4907 `userExpires` no longer shrinks (**#893 join**). | #1188 (umbrella #1196) |
+| 2026-07-03 | `EarlyWithdrawalFacet.createLoanSaleOffer` (+ its mocked-only test coverage) vs WebsiteReadme "The lender can instead LIST the position for sale" | **Fixed** — the listing entry point now completes on-chain (internal create entry + zero-collateral ceiling exemption + consolidation redesign, `EarlyWithdrawalFacet.sol:661-717`); the reentrancy + `MaxLendingAboveCeiling` blockers are gone. Verified on main. (Housekeeping: pass-2 D7 — this row lingered under Open after the fix landed.) | #951 (PR #959) |
+| 2026-07-05 | `OfferAcceptFacet:1153` pays the `1%` LIF matcher share to `msg.sender` on direct `acceptOffer` / signed-offer fills, not only `matchOffers` | **[TokenomicsTechSpec §5a (Loan Initiation Fee Matcher Share)]** Spec-review **L-a (Low, Ambiguous)**. **Owner decision 2026-07-11: KEEP CODE / UPDATE SPEC** — the `1%` share is intentionally paid to the transaction submitter (the recorded `matcher`) on **every** initiation path: the relayer/bot on `matchOffers`, and `msg.sender` on a direct accept or signed-offer fill. It rewards whoever brings the fill on-chain; the treasury always receives the complementary `99%` (default). §5a reworded from "permissionless Range Orders matcher" to the all-paths **recorded-match-caller** model — the immediate `msg.sender` at the match: the EOA on direct/matchOffers/signed-offer fills, but the routing contract (e.g. the backstop vault on `backstopFill`) on a contract-routed fill, so the share accrues to that contract, not the triggering EOA (Codex #1165 r1 P2). | Spec update PR #1165 (#1159, umbrella #998) |
+| 2026-07-05 | `LibSwap.swapWithFailover:154` reverts `NoSwapAdaptersConfigured` on a zero-registered-adapter deployment vs ProjectDetailsREADME §7 "reaches the fallback" | **[ProjectDetailsREADME §7 (Swap Failover / Fallback Claim Model)]** Spec-review **L-i (Low, Ambiguous — spec self-contradictory)**. **Owner decision 2026-07-11: KEEP CODE / UPDATE SPEC** — a deployment with zero registered swap adapters is an operator misconfiguration and MUST fail loud (revert) rather than silently route every forced close into the in-kind collateral fallback (3%+2% premium) with zero DEX attempts. §7 clarified: a forced close needs ≥1 registered adapter AND a non-empty enabled try-list; the per-loan fallback engages only after configured routes are attempted and fail, never because routes are absent. Complements the S9/#1005 empty-try-list hardening. | Spec update PR #1165 (#1158, umbrella #998) |
+| 2026-07-05 | `LibInteractionRewards.sol:643` per-user reward cap uses claim-time ETH price for all historical days | **[TokenomicsTechSpec §4 (interaction-reward cap pricing)]** Spec-review **L-j (Low, Ambiguous)**. **Owner decision 2026-07-11: RESOLVED BY #1008** — the S13/#1008 fix (Option B) snapshots the per-day cap threshold at day **finalisation** (canonical ETH price + cap ratio broadcast to every chain), not at claim time, so the cap no longer drifts with claim-time price. Finalisation-time pricing is the intended semantics; no residual code or spec change. | Resolved by #1008; card #1160 closed (umbrella #998) |
+| 2026-07-05 | `DeployFounderVesting.s.sol:36` founder/team vesting 4-yr linear / 1-yr cliff vs an older "12-mo cliff + 36-mo linear" spec reading | **[TokenomicsTechSpec §3 / §3a + ProjectDetailsREADME (Vesting rules)]** Spec-review **L-o (Low, Ambiguous)**. **Owner decision 2026-07-11: KEEP CODE (standard 4-yr vest / 1-yr cliff)** — the deploy defaults (`DURATION_DAYS = 1460`, `CLIFF_DAYS = 365`, OZ `VestingWalletCliff`: 25% unlocks in one step at the 1-yr cliff, then linear to 100% at yr 4, inclusive of the cliff) are the near-universal founder-vesting convention and the intended schedule. The specs (TokenomicsTechSpec §3/§3a + ProjectDetailsREADME) already document exactly this ("48-mo total linear, inclusive of the cliff") — the §3-vs-§3a inconsistency the finding flagged was already reconciled by PR #1011/#1015, so no residual spec edit is needed. | Owner-confirmed 2026-07-11; card #1161 closed (umbrella #998) |
+| 2026-07-05 | `LibVaipakam.isSanctionedAddress:6940` `catch { return false }` (fail-open) reaches the locked-proceeds release gate | **[ProjectDetailsREADME §16 ("value-moving checks that cannot determine a clean result should fail safe")]** Spec-conformance review **S10 (Medium)**. **Owner decision 2026-07-05: PARTIAL FIX** — normal (never-flagged) claims stay FAIL-OPEN (don't hold honest users' funds on an oracle blip); the RELEASE of already-locked `SanctionedProceedsLocked` funds must FAIL-CLOSED on oracle revert — keep them parked in the flagged wallet's own vault until the oracle recovers AND confirms clean. Narrow fix scoped to the locked-release gate only. | #1006 — merged (umbrella #998) |
+| 2026-07-05 | `LibInteractionRewards.sol:947` per-window cap vs TokenomicsTechSpec §4 per-DAY cap | **[TokenomicsTechSpec §4 (interaction-reward cap)]** Spec-review **S13 (Medium)**. Window-aggregate cap lets quiet-day shares net against under-cap days. **Owner decision 2026-07-05: FIX CODE** — enforce the 0.5-VPFI-per-0.001-ETH cap per day (aligns with anti-wash-farming intent, cf. #919). | #1008 — merged (umbrella #998) |
+| 2026-07-05 | `OfferMutateFacet` skips the create-time HF/LTV floor checks; also skipped when `rangeAmountEnabled` is false | **[ProjectDetailsREADME §4 (1014) + §3 modify (610)]** Spec-review **S15 (Medium)**, overlaps #900. **Owner decision 2026-07-05: FIX CODE** — add `minCollateralForLending`/`maxLendingForCollateral` checks to the mutate setters (fail-early parity) and ensure `rangeAmountEnabled` is on wherever range offers are permitted. | #900 — merged (umbrella #998) |
+| 2026-07-05 | `RiskFacet.sol:802` liquidation waterfall takes the 2% treasury handling fee + liquidator bonus before the lender when proceeds < debt | **[ProjectDetailsREADME §7 (1310, proceeds distribution)]** Spec-review **L-g (Low)**. **Owner decision 2026-07-05: FIX CODE (partial)** — subordinate the 2% TREASURY HANDLING fee to full lender recovery (treasury doesn't profit while the lender takes a loss); KEEP the liquidator bonus (necessary keeper incentive — explicitly respected). **FIXED (Tranche 4, #998):** the handling fee is now taken only from surplus above full lender recovery (single/split/time-default paths, shared inline waterfall); underwater ⇒ handling fee 0. | #1009 — merged (umbrella #998) |
+| 2026-07-05 | `DefaultedFacet.triggerDefault:364` time-based-default swap pays no caller incentive (HF-liquidation does) | **[ProjectDetailsREADME §7 (735, dynamic incentive)]** Spec-review **L-h (Low)**. **Owner decision 2026-07-05: FIX CODE** — add the same dynamic liquidator incentive (6%−slippage, capped 3%) to the time-based-default swap path for consistency/liveness of permissionless triggering. **FIXED (Tranche 4, #998):** the time-default swap now pays the caller the shared incentive curve. As a Tier-2 close-out (deliberately permissionless, must not brick) the TRIGGER is never sanctions-gated, but the bonus (a new value payment) is WITHHELD from a sanctioned caller — such a caller can still trigger the default but earns no bonus (it flows to lender/borrower). Not KYC-gated, unlike the Tier-1 HF-liquidation bonus. | #1010 — merged (umbrella #998) |
+| 2026-07-05 | `LibVaipakam.calculateLateFee:6036` uses `loan.principal` (the per-DAY fee for rentals) as the late-fee base for all asset types | **[ProjectDetailsREADME §6 (~1160: "1% of the overdue rental amount… capped at 5% of the total rental amount")]** Spec-conformance review **S8 (Medium)**. NFT-rental late fee is computed on one day's fee, not the overdue rental amount — for a D-day rental the base is ~D× too small and the cap is 5% of a single day's fee; under-charges the late renter and under-compensates lender/treasury. Base the NFT branch on `principal × undeducted days` with a 5%-of-total-rental cap. | #1004 — merged (umbrella #998) |
+| 2026-07-05 | `LibSwap.swapWithFailover:158` returns `(false,0)` on an empty try-list; `DefaultedFacet.triggerDefault:364` / `RiskFacet.triggerLiquidation:754` then run `_fullCollateralTransferFallback` | **[ProjectDetailsREADME §7 (fallback engages only when "every configured swap route fails"; caller supplies a ranked try-list)]** Spec-conformance review **S9 (Medium)**. Any permissionless caller can pass an empty adapter try-list and push an eligible loan straight into FallbackPending (3%+2% premium, in-kind lender recovery) with ZERO routes attempted on a healthy DEX. Require a non-empty try-list on both forced-close entry points, as `RepayPeriodicFacet.settlePeriodicInterest:458` already does. **FIXED (Tranche 4, #998):** `LibSwap.swapWithFailover` now counts the routes it actually attempts and reverts `NoEnabledSwapRoute` when none were — covering the empty-list AND the non-empty-but-all-governance-disabled case (Codex #1087 r1 P1) centrally for every failover caller; the forced-close collateral withdrawal rolls back atomically. (The partial and split paths already reverted — `PartialSwapAllFailed` / sum-mismatch.) | #1005 — merged (umbrella #998) |
+| 2026-07-05 | `RiskFacet.triggerLiquidation:770` / `RiskSplitLiquidationFacet:234` / `DefaultedFacet.triggerDefault:396` / `LibFallback.computeFallbackEntitlements:151` use gross accrual with no `interestSettled` credit | **[ProjectDetailsREADME §7 (~1268: liquidation recovers the "outstanding" amount; periodic-settled interest is paid once)]** Spec-conformance review **S12 (Medium)**, confirms **#915**. Voluntary closes net `interestSettled` correctly via `settlementInterestNet`, but all four forced-close sites do not — a periodically-settled loan later liquidated / defaulted / fallback-closed is charged the same interest twice. Net `interestSettled` (saturating) in all four. **FIXED (Tranche 4, #998):** all four now credit `interestSettled` — the single/split HF paths + HF metric via the shared `currentBorrowBalance`, the time-default inline, the in-kind `LibFallback` split, plus the preclose Option 2 obligation-transfer (Option 3 offset + refinance already netted). Codex #1087 r1 P2: the two paths that re-originate an active loan in place + restart the accrual clock (Option 2 transfer, routine partial liquidation) now ZERO `interestSettled` at the restart, so the credit isn't subtracted twice on the re-originated loan's next settlement. | #915 — merged (umbrella #998) |
+| 2026-07-05 | `RepayFacet.repayLoan:254` grace gate runs before the FallbackPending cure branch | Spec-review **S2 (High)**. **FIXED (Tranche 3, #998):** the grace gate is now `!curingFallback && now > graceEnd` — a FallbackPending full-repayment cure (which only exists past graceEnd) is exempt, so a borrower with funds can cancel the fallback and reclaim collateral; the cure makes the lender whole (principal + interest incl. grace accrual + late fees). | #1000 (PR #<n>) |
+| 2026-07-05 | `RefinanceFacet` `fullTermInterest(...)` unconditional vs `useFullTermInterest` election | Spec-review **S7 (Medium)**. **FIXED (Tranche 3, #998):** the exiting lender's interest is now settled via `LibEntitlement.settlementInterestNet` (mode-aware — full-term for opt-in loans, pro-rata for opt-out), the same helper the preclose path uses, so the two early-close doors agree; also credits periodic `interestSettled`. | #1003 (PR #<n>) |
+| 2026-07-05 | `PrecloseFacet._remainingDays` day-granular replacement-term gate (Option 2/3) lets the new maturity exceed the original by ~24h | Spec-review **L-c (Low)**. **FIXED (Tranche 3, #998):** both gates now compare MATURITIES with second precision (`now + newDuration·1day ≤ originalStart + originalDuration·1day`) instead of up-rounded whole-day remaining counts; `_remainingDays` removed. The Option-3 (offset) anti-drift is enforced at ACCEPTANCE (`_completeOffsetImpl`, atomic with the accepting tx) so a replacement accepted later than requested can't mature past the original either; the request-time gate stays a fast first-line guard (equality allowed). | #1032 (PR #1069) |
+| 2026-07-05 | `PrecloseFacet._settleOffsetPayments:1128` deposits full principal into the old lender's vault at offer-creation; `OfferCancelFacet.cancelOffer:202` never refunds / decrements `heldForLender` | Spec-review **S3 (High)**. **FIXED via REDESIGN (#998, Codex #1070):** the offset (Preclose Option 3) now settles the old lender ONLY at completion (`_settleOldLenderAtCompletion`), computed from live terms and pulled from the borrower — posting moves no settlement funds and parks nothing. This removes the entire parked-prepay hazard class by construction: cancel is trivially loss-free (nothing to unwind), a close-out / lender-sale / obligation-transfer while the offset is live can't corrupt a half-settled payoff, and a later term edit can't shortchange the lender (shortfall recomputed at completion). Mutual-exclusion guards refuse lender-sale (`OffsetActiveOnLoan`), obligation-transfer (`OffsetAlreadyActive`) and offset-offer mutation (`OffsetVehicleImmutable`) while an offset is linked; one live offset per loan. Trade-off: borrower funds the payoff at acceptance, not posting (else the accept reverts, loan untouched). | #1001 (PR #1070) |
+| 2026-07-05 | `LibInteractionRewards.sol:907` "still open" gate is the dead `endDay == 0` (stamped at registration) | Spec-review **S4 (High)**. **FIXED (Tranche 2, #998):** added a `closed` bit to `RewardEntry`, set by `_closeEntry` (the single choke point for `closeLoan` + `transferLenderEntry`); `_processEntry`/`_previewEntryReward`/`previewForUserEntries` now gate on `closed`, not the calendar. A reward is claimable/sweepable only once the loan is actually closed — the claim-at-maturity-then-default forfeit-bypass is closed. `endDay` is now purely the accrual bound. | #1002 (PR #<n>) |
+| 2026-07-05 | `LibInteractionRewards.closeLoan` never called from `PrecloseFacet` / `RefinanceFacet` (both flip Active→Repaid) | Spec-review **S5 (High)**, confirms **#969**. **FIXED (Tranche 2, #998):** the TERMINAL early-close paths (`precloseDirect`, `completeOffset`, `RefinanceFacet` old-loan) now close the reward entries (clean — borrower repaid/rolled, exiting lender paid in full, neither forfeits), fixing the refinance double-count. The CONTINUING obligation-transfer (`transferObligationViaOffer`) re-points the borrower entry to the incoming borrower instead of closing (loan stays Active). Reward calls routed through a best-effort `InteractionRewardsFacet` hook so the god-facet stays under EIP-170 and reward bookkeeping never blocks a fund-critical preclose. **Superseded by #2739:** the best-effort hook let a caller starve the reward close of gas and keep a reward the close should have forfeited; every terminal reward close now runs inside the terminal transaction and reverts it on failure. Follow-up: the re-pointed entry keeps the original term's rate/window. | #969 (PR #<n>) |
+| 2026-07-05 | `LibVaipakam.sol:162` `TIER{1,2,3}_LIQUIDATION_LTV_BPS` = 90/85/80 vs README §7 "deeper markets = higher threshold" | Spec-review **S1 (High)**. **FIXED (Tranche 1, #998):** flipped the default gradient to `T1=80 / T2=85 / T3=90` (deeper = higher) and the `ConfigFacet.setTierLiquidationLtvBps` invariant from `T1≥T2≥T3` to `T1≤T2≤T3`. Also remapped the tier-0 "untierable" liquidation-threshold fallback from Tier 3 → Tier 1 (post-flip Tier 3 = 90% would otherwise hand the thinnest collateral the most permissive threshold — Codex #1052 P1). Whitepaper §7 + spec §7 carry the concrete defaults. Pre-live, so no open loans hold the old snapshot. | #999 (PR #<n>) |
+| 2026-07-05 | `OracleFacet._liquidityTier:1765` never consults `best[1]` (the $50k `tier1SizePad` probe) | Spec-review **S11 (Medium)**. **FIXED (Tranche 1, #998):** Tier 1 now requires clearing the $50k probe (`best[1] ≤ bound`); a floor-clearing-but-sub-$50k asset falls to the untierable Tier 0 (conservative 0% init-LTV cap + the Tier-1 liquidation floor via the S1 tier-0 remap), making the previously-inert `tier1SizePad` governance knob live. | #1007 (PR #<n>) |
+| 2026-07-05 | `LibVaipakam.gracePeriod:5859` uses `durationDays < 365` so a 365-day loan gets 30-day grace vs README §2 "≤ 1 year → 2 weeks" | Spec-review **S6 (Medium)**. **Owner decision 2026-07-05: KEEP CODE / UPDATE SPEC** — a 365-day (max-tenor) loan intentionally keeps the longer, borrower-friendly 30-day grace; §2 reworded so the "2 weeks" bucket is `< 365` days and exactly-1-year loans are documented as receiving 30 days. | Spec update PR #1011 (merged 2026-07-05) |
+| 2026-07-05 | `RiskFacet.calculateHealthFactor:452` risk-adjusted HF (collateral × liquidation-threshold ÷ borrow) vs README §3 (519) plain "Collateral Value / Borrowed Value" formula + worked example | Spec-review **S14 (Medium)**. **Owner decision 2026-07-05: SPEC IS STALE** — the code follows standard DeFi practice (liquidation-threshold-weighted HF); the spec's own worked example would be rejected by the `HF ≥ 1.5e18` init gate. §3 formula + worked example (and the §2578 partial-withdrawal formula, cf. L-e) updated to the risk-adjusted definition. | Spec update PR #1011 (merged 2026-07-05) |
+| 2026-07-05 | `LibVaipakam.sol:321` `PEER_DIVERGENCE_TOLERANCE_BPS = 3000` (30pp) vs README §1 (227) "at least two peers agree within 15 percentage points" | Spec-review **S16 (Medium)**. **Owner decision 2026-07-05: SPEC IS STALE** — the 30pp tolerance is deliberate (real-world Aave-vs-Compound 20-30pp spreads, bounded by the per-tier safety boxes which match the spec exactly); §1 updated to the 30pp value + rationale. | Spec update PR #1011 (merged 2026-07-05) |
+| 2026-07-05 | keeper-init of preclose / obligation-transfer / offset / refinance / sale-listing (`KEEPER_ACTION_*` opt-in bits) vs the spec's "party-only" execution-class matrix (~775-814) + §1340/§1591 | Spec-review **S17 (Medium)**. **Owner decision 2026-07-05: KEEP KEEPER-INIT** — the newer per-action opt-in model (bounded by user opt-in bits + caps + kill-switches; the keeper is never a loan party and cannot route funds to itself) is the ratified design, already blessed in §1349/§2589/§1692; the stale execution-class matrix + the two "party-only" general-rule bullets updated to match. | Spec update PR #1011 (merged 2026-07-05) |
+| 2026-07-05 | `LibVaipakam.effectiveTierMaxInitLtvBps:6363` hard-stale fallback = governance caps 50/60/65 vs README §1 (225) "library defaults of 50%, 62%, 73%" (those constants have zero callers) | Spec-review **S18 (Medium)**. **Owner decision 2026-07-05: SPEC IS STALE** — falling back to the governance cap (so a tightened cap survives a peer-pause, per #633) is the intended, conservative behaviour; §225 updated. Dead `TIER*_LTV_DEFAULT_BPS` helper cleanup flagged in the report for follow-up. | Spec update PR #1011 (merged 2026-07-05) |
+| 2026-07-05 | TokenomicsTechSpec §9 insurance/bug-bounty 2%-of-supply surplus recycling has no on-chain implementation | Spec-review **S19 (Medium)**. **Owner decision 2026-07-05: KEEP DORMANT ON RETAIL (legal surface)** — an on-chain protocol-operated "insurance pool" could read as offering insurance (regulated activity); the bug-bounty allocation stays a plain multisig-held treasury bucket, NOT an on-chain insurance product, and no "insurance" language on retail marketing/ToS. §9 updated to reflect dormant/operational status on retail. Note: any future build stays disabled-by-default + industrial-fork-gated (KYC-enforcement pattern) — the spec-update half is what closes here. | Spec update PR #1011 (merged 2026-07-05) |
+| 2026-07-05 | `LibEntitlement.sol:152` interest accrues through grace (`effectiveDays = max(elapsed, floor)`) on top of late fees vs §6 interest formula capped at duration | Spec-review **L-f (Low, #408)**. **Owner decision 2026-07-05: KEEP CODE** — a loan outstanding into grace accrues time-value interest (the late fee is a separate penalty); §6 interest formula + late-fee section updated to document grace accrual. | Spec update PR #1011 (merged 2026-07-05) |
+| 2026-07-05 | `LibCompliance.calculateValueNumeraire:56` KYC value = principal + collateral vs §16 headline "principal being lent" | Spec-review **L-l (Low; industrial-fork, dormant on retail)**. **Owner decision 2026-07-05: KEEP CODE** — total value-at-risk (principal + collateral) is the conservative compliance base; §16 wording updated to match. | Spec update PR #1011 (merged 2026-07-05) |
+| 2026-07-05 | `LibVaipakam.sol:403` `MAX_OFFER_DURATION_DAYS_CEIL = 4385` (~12yr) vs §2/§14 1–365-day product bound | Spec-review **L-m (Low)**. **Owner decision 2026-07-05: KEEP CODE** — retain the governance headroom above 365 days for future longer-tenor products; §2/§14 updated to document the governance ceiling (default 365, ceiling 4385) rather than an absolute 365 bound. | Spec update PR #1011 (merged 2026-07-05) |
+| 2026-06-30 | `EarlyWithdrawalFacet.completeLoanSale` / `PrecloseFacet.completeOffset` (completion-path deferred proceeds) | **Vault-lock the buyer's receive on `completeLoanSale`; `completeOffset` needed no change.** A BUYER (`newLender`) flagged AFTER committing the sale bricked `completeLoanSale` because the shortfall deposit (`depositFromPayerForLender` → `vaultDepositERC20From`) and the held migration both resolve the buyer's vault through the screened `getOrCreateUserVault`. Wrapped the two shortfall deposits in `LibSanctionedLock.begin`/`end` and the held migration in `depositLocked`, so the completion finishes and the buyer's share parks frozen behind the #821 freeze (the seller side already arms the move-out exemption from #597). `completeOffset` (`_completeOffsetImpl`) does NO completion-time vault deposit/withdraw — it only records claims + transitions; the deferred proceeds (borrower collateral, lender held) move at claim time, already handled by #821 (`_resetNftRenter`'s `vaultSetNFTUser` reads the vault directly and does not screen). Verified: `EarlyWithdrawalFacetTest.t.sol::test_completeLoanSale_FlaggedBuyer_CompletesNotBricked` + the EarlyWithdrawal/Preclose/Claim/Sanctions regression. | #831 |
+| 2026-06-29 | `VaultFactoryFacet.getOrCreateUserVault` recipient-vault brick on `repayLoan` / `triggerDefault` / HF-liquidation | **Vault-lock + freeze.** A receive-side `getOrCreateUserVault` exemption (`sanctionedDepositExemptUser`, pinned exact-address, never mints a vault for a flagged wallet) lets these close-outs deposit the flagged recipient's share into their OWN existing vault instead of bricking, so the unflagged counterparty is made whole; `LibSanctionedLock` wraps each deposit + emits `SanctionedProceedsLocked`. The share is FROZEN by a **position-NFT transfer restriction** (`VaipakamNFTFacet.transferFrom`/`safeTransferFrom` reject a flagged `from`/`to`) plus the **live-claimant** (`msg.sender`/`nftOwner`) claim screens: a flagged wallet can't move a position in or out of itself AND can't claim while holding it. The claim paths intentionally do NOT screen the stored `loan.lender`/`loan.borrower` — for a non-consolidated (NFT-rental) loan the claim arms the exact-address move-out exemption so a LEGITIMATE pre-flag secondary-market buyer can still withdraw from a stale-flagged stored vault (the #594/#659 protection is preserved). Parallel-sale `recordOfferSaleProceeds` live-lender leg screened at fill. `cancelOffer` intentionally still reverts (creator's own escrow → freeze, not a counterparty path). Verified: `SanctionsOracle.t.sol::test_SanctionedLender_RepayLocksProceeds_ClaimFreezesUntilCleared`, `VaipakamNFTFacet.t.sol::test_SanctionedWallet_CannotTransferPositionNFT`, `CollateralConsolidation.t.sol::test_SanctionedStoredOwner_MoveStillSucceeds` + the default/liquidation/repay/claim/backstop regression. | #821 |
+| 2026-06-29 | `apps/defi` `LegalGate.tsx` + `useTosAcceptance.ts` | The Terms gate now fails **CLOSED**: `useTosAcceptance` gates `hasAccepted` on a new `readOk` flag (true only after a successful read) and resets `currentVersion = 0` on a read error, so the unread/errored default can't be mistaken for the genuine gate-disabled state. `LegalGate` no longer renders `children` while `loading` (neutral loading state) or on `!readOk` (retry state) — it only passes through after a successful read shows accepted / genuinely-disabled. Verified: `pnpm --filter @vaipakam/defi exec vitest run test/components/LegalGate.test.tsx` (5 cases: holds closed on loading + on read error; opens on accepted/disabled; modal when enabled+not-accepted; no gate when disconnected). | #822 |
+| 2026-06-29 | `RiskFacet.triggerLiquidationDiscounted` | Now screens the seized-collateral `recipient` arg (`_assertNotSanctioned(recipient)`) in addition to the caller, so a flagged recipient can't receive the bought collateral. Verified: `forge test --match-test test_triggerLiquidationDiscounted_RevertsWhenRecipientSanctioned`. | #816 (#815 group A) |
+| 2026-06-29 | `DefaultedFacet.triggerDefault` / HF-liquidation (`attemptInternalMatchAutoDispatch`) | For a sanctioned matcher the objective internal match still executes (skipping it would let a flagged caller degrade settlement to the external/FallbackPending path), but the 1% incentive is zeroed and folded into the lenders' shares so no bonus reaches the flagged wallet. Verified: `forge test --match-test test_attemptAutoDispatch_sanctionedMatcher_settlesWithoutBonus`. | #817 (#815 group A) |
+| 2026-06-29 | `NFTPrepayListingFacet` / `NFTPrepayDutchListingFacet` post+update | The manual fixed-price + Dutch `post*`/`update*` paths now call `_assertNotSanctioned` on the holder, matching the atomic/auto-list paths. Verified: `forge test --match-test revertsWhenHolderSanctioned`. | #818 (#815 group A) |
+| 2026-06-29 | `PrecloseFacet.transferObligationViaOffer` / `EarlyWithdrawalFacet.createLoanSaleOffer` (initiation) | These keeper-authorizable **initiation** paths now screen the current position holder, not just `msg.sender`. (The **completion** paths `completeLoanSale` / `completeOffset`, where a buyer is committed, remain under the #821 deferred-proceeds finding.) Verified: `forge test --match-test "RevertsWhen*HolderSanctioned_viaKeeper"`. | #819 (#815 group A) |
+| 2026-06-29 | `AddCollateralFacet.addCollateral` | Now screens the payer / current borrower-NFT holder (`_assertNotSanctioned(msg.sender)`), not just the stored `loan.borrower`. Verified: `forge test --match-test test_addCollateral_RevertsWhenTransferredHolderSanctioned`. | #820 (#815 group A) |
+| 2026-06-13 | `VPFIDiscountFacet.withdrawVPFIFromVault` | VPFI vault withdrawal now checks free balance through the encumbrance ledger (`LibEncumbrance.freeBalance`, subtracting the caller's VPFI encumbrance) before releasing, so VPFI backing a live loan as ERC-20 collateral can't exit the vault without the HF-checked path — closing the staking-unwind drain. Verified: `forge test --match-contract VPFIDiscountFacetTest --match-test test_F1_withdrawVPFIFromVault -vv`. | PR #572 (#565, T-407-B v2); bug card #570; blocker-verify #794 |
+| 2026-06-14 | `ClaimFacet._claimAsLenderImpl` (VPFI lender-proceeds reservation release) | The #585 lender-proceeds reservation now records and releases under the **actual** encumbered asset (`s.lenderProceedsEncumberedAsset[loanId]`), not `loan.principalAsset`, so the in-kind / illiquid VPFI-collateral default terminal reserves + frees the correct bucket. Verified: `forge test --match-contract Vpfi592LenderProceedsTest -vv`. | #592 (PR #596; verified + closed under #795) |
+| 2026-05-22 | `ADR-0004` "every cross-chain contract carries `GuardianPausable`" (over-broad — `VpfiPoolRateGovernor` does not extend it) AND `ConfigureCcip._setGuardians` does not wire `VPFIMirrorToken` | **Both directions addressed.** ADR-0004 wording qualified to "every cross-chain contract with a runtime send / receive path" + enumerated the contracts that carry the pause base + named `VpfiPoolRateGovernor` as the intentional exception (rate-limit admin only, no runtime send/receive). `ConfigureCcip._setGuardians` extended to wire `VPFIMirrorToken` on mirror chains (the canonical `VPFIToken` is OFT-shaped and paused via its own AccessControl path, not the cross-chain guardian — left untouched). | #200 + #201 |
+
+---
+
+*Maintained by the project owner; review-surfaced findings appended by
+reviewers (human or AI) with a one-line description.*
+
+## D-#1457-01 — Unarmed-day recycled portion — **NOT A DIVERGENCE (refuted 2026-07-30)**
+
+**Status:** CLOSED. The spec is correct and the code matches it. The report
+compared two different layers.
+
+**What was reported:** that `TokenomicsTechSpec` §4a's "an unarmed day is NOT
+fresh-only: it already carries a recycled portion, sized from the canonical
+chain's own bucket (Phase A′)" is contradicted by
+`chainRewardBudgetSideSplitForDay` / `_dayPoolHalves` returning a zero recycled
+half for an unarmed day.
+
+**Both observations are accurate. They are about different layers.**
+
+- **Budget layer — the spec's subject.** `RewardAggregatorFacet._stampGovernorDayPool`
+  (`:776`, called from `_finalizeAndWrite` at `:602`) stamps every finalized
+  day, and its UNARMED branch (`:850`) sets
+  `recycledBudget = schedule == 0 ? 0 : min(fundable, coupled)` — a recycled
+  portion MEASURED AGAINST the canonical chain's own bucket (not drawn from it —
+  see the follow-up below), and **possibly zero**: the formula yields 0 on day 0
+  and whenever `fundable` or `coupled` is 0. (This line said "NON-zero" until
+  #1457 r18. The summary row and the release note were corrected a round
+  earlier and this one was missed, leaving the entry internally inconsistent —
+  the overstatement was load-bearing for the refutation, which is exactly why it
+  should not have survived anywhere.) Written into
+  `dayPoolStamp[dayId].recycledBudget`. That is Phase A′ exactly as specified.
+- **Claim / reservation layer — the cited functions.** While
+  `governorCommitArmedFromDay == 0`, the stamp is deliberately a RECORD ONLY and
+  the claim math pays the scheduled portion. `LibVaipakam`'s own storage doc
+  states the reason: accumulating reservations with no consume side "would
+  silently collapse `freshAvailable`". Arming wires reservation and consumption
+  together, atomically, which is when the recorded recycled portion becomes
+  payable.
+
+So an unarmed day genuinely does carry a recycled portion (recorded), and
+genuinely does not pay one (claims). Neither statement needs changing.
+
+**What was actually wrong:** the spec sentence did not say which layer it
+described, which is what made a layer confusion look like a contradiction. It
+now says so explicitly, and names this entry so the next reader does not re-file
+it.
+
+**The adjacent risk that IS real, and is tracked elsewhere.** Pre-arming the
+recycle bucket can be non-empty — `LibNotificationFee` credits it with no
+arming or fee-entitlement gate, as "the first live non-forfeit absorption
+class" — while claims are fresh-only. A fresh-only claim reaching recycle-bucket
+backing is **#1460**, a P1 that is **both already reachable on an unarmed
+deployment AND an unconditional `BACKING --> ARM` arming prerequisite** — not
+alternatives (#1457 r21; an earlier revision of this line said "rather than
+arming-gated", which the plan's §M7 step 0 and §4 no longer support). It needs
+THREE conditions, not two: a non-empty bucket, a scheduled-only claim, **and**
+the scheduled side short (`balanceOf − recycleBucket < scheduledPayout`) — with
+ample unearmarked funding the first two hold and nothing is corrupted. The edge
+governs sequencing; reachability governs urgency. This entry is closed;
+that one is not.
+
+**Follow-up (2026-07-30, #1457 r16) — a second, narrower error in the same
+sentence, and this one was real.** After the layer confusion was refuted, review
+pointed at the surviving words "and remitted from there". Verified across four
+paths: `_stampGovernorDayPool`'s unarmed branch (`:850`) only WRITES the stamp;
+`RewardRemittanceFacet._planDay`'s unarmed branch carries `p.recycled == 0`;
+`chainRewardBudgetSideSplitForDay`'s unarmed else-branch never assigns the
+recycled locals; and both `LibVpfiRecycle.consume` call sites are unreachable
+with a non-zero argument on an unarmed day. The operator `remitManualBudget`
+path is fresh-only by construction and gated on a flag only armed days set.
+
+So on an unarmed day the code supports exactly ONE of three things —
+**recording** a budget — and neither reserves against the bucket nor remits
+value. The spec now says "sized against", states the two negatives explicitly,
+and the release note records both errors. Collapsing record / reserve / remit
+into one word is what made the original sentence read as a contradiction.
+
+**Method note.** The reviewer's suggested remedy was to change the spec, and the
+first instinct on this side was to treat it as a spec-versus-code coin flip. It
+was neither: reading the finalization branch settled it in one look. Recording
+that because "which layer is this claim about?" would have resolved it before it
+was ever filed as a divergence.
+
+
+---
+
+## Partial repayment vs. a standing refinance request — the hold is device-local (2026-08-07, #1589 r3)
+
+**Status:** resolved by code, 2026-10-04 (#2391, PR #2406) — the code was
+brought to the spec's original intent (the hold applies wherever the borrower
+is signed in); the spec was not rewritten to match the code. The app now finds
+a refinance request on chain among the current borrower-position holder's own
+offers (bounded by the loan's own offer id), so partial repayment, preclose,
+obligation handover, offset and taking collateral back are held from any
+device, and an unanswerable search holds them too. What remains is the race
+no client check can close — a request posted between the app's last check and
+the transaction mining — since `repayPartial` still carries no on-chain
+refinance guard; the spec states that race.
+
+**Race closed on chain, 2026-10-05 (#2407).** The protocol now records one
+refinance request per loan and refuses a partial repayment (direct and
+swap-to-repay), a direct preclose, an obligation handover, an offset and a
+partial collateral withdrawal (and an in-place extension) while that request
+stands — not taken, cancelled or expired, posted by the current holder, on an
+active loan — and refuses a second standing request for the same loan. Whether
+a lender could fill it right now is deliberately not part of the hold (#2424
+r10): a standing request that can no longer fill holds the loan until the
+borrower cancels it, which matches the app's own search rule. Only the recorded request can be taken, so a
+request that drops out of the record cannot revive unguarded. Full repayment, every enforcement action (including a
+partial liquidation) and adding collateral are deliberately not held (see `ProjectDetailsREADME.md`, the
+refinance section). This brings the code to the intent the spec already
+stated; the spec's race paragraph was rewritten to say the protocol closes it.
+Since #2425 the app finds the request from the protocol's record first, and
+uses its bounded on-chain search only for leftovers (requests the record does
+not name, which the protocol never accepts and which block nothing) and on a
+deployment without the record. The refinance form stops on an uncancelled
+expired request before posting (#2424). The original entry follows.
+
+The connected app holds partial repayment while another arrangement is pinned
+to the loan's outstanding amount. Two of those holds are answered by the chain
+and therefore hold from any device: a live offset (the borrower position's lock
+is read live and fails closed on an unreadable answer) and a sale a buyer has
+already accepted (a chain simulation probe).
+
+The third — a standing refinance request — is not. `data/refinancePending.ts`
+discovers the request from a **device-local `localStorage` marker**, and its own
+header states why: "the indexer has no column for the refinance tag yet". Every
+render then verifies that marker against the chain, so the state is trustworthy
+*once known*; what is device-local is knowing a request exists at all.
+`repayPartial` carries no refinance guard on chain either.
+
+**The consequence.** A borrower who posts a refinance request on one device and
+then opens the app on another is offered partial repayment with nothing held.
+Taking it shrinks the principal, and the standing request — frozen at the old
+amount — becomes permanently unacceptable to any lender. Nothing warns them
+beforehand, and the app they are looking at cannot know the request exists.
+
+**What is NOT lost, stated precisely** (a first draft of this entry overstated
+it): the dead request is not stranded on the original device. `useMyOffersFull`
+chain-enumerates every active offer the wallet created, and `OpenOrdersPanel`
+exposes `cancelOffer` to its creator, so the borrower can find and cancel it as
+an ordinary open order from anywhere. The cleanup is device-independent; what
+is device-local is the ASSOCIATION with the loan — the position page cannot
+connect the request to the loan it targets, so the partial is not held, no
+warning is shown, and the borrower has to already know to go looking. The cost
+is therefore the lost refinance opportunity and a silent surprise, not an
+unreachable piece of state.
+
+**Why this is filed rather than fixed here.** #1589 is a test-coverage PR; this
+was found while writing the spec sentence for partial repayment, when a review
+round pointed out the sentence claimed a guarantee the product does not make.
+The spec has been narrowed to state the limitation plainly. Whether the intent
+is a chain-backed interlock (requiring refinance-tag discovery the indexer
+cannot currently serve) or an accepted device-local behaviour with a warning is
+a product call, not one to settle by writing whichever the code happens to do
+into the spec.
+
+## Full-tariff ceiling overtake: creator arm form has no warning (#1702)
+
+**Spec** (`Alpha02ConnectedApp.md`, Full opt-in): an acceptance or fill review
+warns when the live quote rises above the authorized ceiling, names both
+figures, and offers to raise it.
+
+**Code**: the standing-offer creator's arm form (Open Orders) reads the live
+quote and validates that the typed ceiling is a well-formed number, but never
+compares the two. A creator can therefore save a STRICT authorization whose
+ceiling is already below the current quote. What is doomed is a fill whose OWN
+effective principal prices above that ceiling — the charge is recomputed per
+fill, so a smaller partial can price under it, and the quote can fall back.
+Still the same failure the acceptance side now prevents, on the side that
+commits first and cannot see the fills that fail.
+
+**Decision**: candidate BUG, not a stale doc. Found by Codex review of #1701
+while checking that the new spec text did not over-claim for a surface it does
+not describe. **RESOLVED** by the warning added for #1702; the spec bullet now
+describes the creator side rather than naming a gap.
+
+## Direct position sale ignored a standing offer's deadline (#1503 item 8)
+
+**Spec** (`ProjectDetailsREADME.md`, "Offer expiry (GTT)"): at and after its
+deadline an offer "can no longer be accepted or matched", and every fill /
+match / preview path "refuse[s] expired offers before any state change."
+
+**Code**: the direct position sale — a lender selling an existing position
+into a standing offer to buy — validated the offer's type and its already-taken
+flag, but never its deadline. An offer past its deadline and not yet cleaned up
+therefore stayed consumable through that one route: the seller could draw the
+principal its author had set aside and mark the offer taken after the window
+the author consented to had closed.
+
+**Decision**: candidate BUG, not a stale doc — the spec's intent was already
+unambiguous. The divergence was one of enumeration rather than intent: the
+spec listed the routes it expected to matter ("direct accepts, matchOffers,
+previewAccept, previewMatch") and a position sale is none of those by name,
+while being exactly one of them in substance. The guard the path needed already
+existed and was already in use on the accept path; it had simply never been
+called here. **RESOLVED** — the guard is now applied before any lien release or
+vault movement, and the spec's enumeration now states the rule by what a path
+*does* (binds a standing offer to a loan, spending its author's committed
+funds) rather than by a list of path names that a new route can silently fall
+outside of.
+
+## Obligation transfer ignores the incoming borrower's offer deadline (sibling of #1503 item 8)
+
+**Spec** (`ProjectDetailsREADME.md`, "Offer expiry (GTT)"): the deadline binds
+every route by which a standing offer can be bound to a loan, not only the ones
+a user would call "accepting" it.
+
+**Code**: `PrecloseFacet.transferObligationViaOffer` reads the incoming
+borrower's standing Borrower Offer directly — it does not route through the
+gated accept path — and validates the offer's type, its already-taken flag, its
+refinance tag, its partial-fill state and asset continuity. It never consults
+the deadline. An exiting borrower can therefore hand their obligation to an
+author whose offer window has closed.
+
+**Decision**: candidate BUG, same class as #1503 item 8 and found by the
+adversarial self-review of that fix, when checking whether the spec's
+generalised wording was true of the other offer-consuming routes. It is not the
+same as the refinance path, which was checked at the same time and is sound:
+there the offer's creator must be the borrower acting, so the deadline being
+ignored overrides nobody's consent but the actor's own. Here the offer belongs
+to a third party. **RESOLVED** (#1773) — the guard now runs alongside the
+existing offer-shape checks, before the collateral top-up, the borrower rewrite
+and the position-NFT work, routed through the same shared helper so the
+never-expires sentinel keeps one definition. Tracked separately from the item-8
+PR rather than folded in, so each path carried its own tests.
+
+## The spec cited three test files that do not exist (#1785)
+
+**Spec** (`ProjectDetailsREADME.md`, `### Testing and Auditing` → the test-file
+list that precedes `#### Positive-flow coverage map`): three named test files
+were cited as the evidence for specific invariants —
+
+- `contracts/test/Create2DeploymentTest.t.sol` — "deterministic address +
+  post-handover role invariant", cited as a pair with
+  `DeployerZeroRolesTest.t.sol`.
+- `contracts/test/invariants/StakingRewardMonotonicity.invariant.t.sol` —
+  "rewardPerTokenStored never decreases; per-user earned grows until claim".
+- `contracts/test/invariants/StakingBalances.invariant.t.sol` —
+  "sum(userStaked) == totalStaked, pool-cap respected".
+
+**Code**: none of the three exists. The cited sibling
+`DeployerZeroRolesTest.t.sol` does, so half of that pair went missing rather
+than the whole citation being stale. `rewardPerTokenStored` and `totalStaked`
+appear nowhere in `contracts/` at all — neither `src/` nor `test/`.
+
+**Decision — the two staking citations: STALE DOC, RESOLVED (#1785).** Not a
+pending intent decision, which is how an earlier revision of this entry wrongly
+filed it. The disposition was already made in writing:
+[`VPFISecuritiesFeatureExcision.md`](../DesignsAndPlans/VPFISecuritiesFeatureExcision.md)
+§B directs the removal of `test/invariants/StakingBalances.invariant.t.sol`
+"(+ any staking-monotonicity invariant)"; #687-B carried it out; and this same
+spec **already states**, under "Vault-Held VPFI", that "the former `5% APR`
+staking-reward program and its claim surface are removed."
+
+So the live spec was contradicting itself — declaring the programme removed in
+one section while citing property suites as evidence it holds in another. That
+is the residue the excision ratchet exists to catch, and prose has no compiler.
+Both bullets are deleted. Note what sourced this: the excision **design record**
+and the spec's own text, not an inspection of what the tree happens to contain
+— which is the only way a doc-sourced spec may be corrected.
+
+**Decision — the CREATE2 citation: STALE DOC, RESOLVED (retired by T-068, PR #46).**
+An earlier revision of this entry held it open on two counts — is deterministic
+deployment still intended, and where did the coverage go — and was right to:
+`LibCreate2Deploy.sol` existed but nothing called it, and both deploy scripts
+said the reward-messenger deploy uses a plain `new`. The first question's answer
+was already written down and simply had not been read into this register:
+`contracts/.env.example` states "`REWARD_VERSION` is gone … that deploy path no
+longer exists", and `docs/ops/DeploymentRunbook.md` §3a carries a dead-section
+banner saying the same-address-on-every-chain property "is not a property the
+current deploy has". The mechanism went with LayerZero: CCIP resolves chains
+through the messenger's own registry, so one cross-chain address was no longer
+needed. `Create2DeploymentTest.t.sol` was deleted in the same change.
+
+The answer to the first question is **no**, which moots the second. Applied
+consistently: the spec's two CREATE2 intent bullets are marked retired rather
+than deleted, the dangling test citation is dropped, the runbook's live
+troubleshooting bullets and phase-table sentence that still told an operator
+to bump the salt are retired, and `LibCreate2Deploy.sol` is deleted. The
+`batch5-unsafe-typecast-triage.csv` row that inventoried a cast inside it now
+names a deleted file; it is a record of a past triage pass and is left as one.
+Sourced from the excision records and the tree's own deploy scripts, not from
+an inspection of what the code happens to do — which is the only way a
+doc-sourced spec may be corrected.
+
+Found while repairing genuinely broken relative links in the live doc bands
+(#1785), where all three resolved to nothing.
+
+
+## §9's lender-exit hardening lives under one option instead of the shared section (#1780)
+
+**This entry replaces a WRONG finding, and how it was wrong is the useful part.**
+The original claimed the direct lender-exit route "has never been in the canonical
+spec", on the evidence that `sellLoanViaBuyOffer` appears zero times in
+`ProjectDetailsREADME.md`. That evidence was worthless. The functional spec is
+**deliberately code-free** — no Solidity, no ABIs, no function names — so a
+function name is absent from it *by convention*, not by omission. Searching a
+code-free document for an identifier and concluding the behaviour is unspecified
+is a category error, and I built a chain on top of it — no spec, therefore no test
+oracle, therefore that is why the route keeps missing guards — that was wrong at
+step one.
+
+What §9 actually contains for Option 1: participants, purpose, preconditions,
+economic treatment (accrued-interest forfeiture, principal recovery, and the
+rate-difference/shortfall rule with a worked example), the frontend net-proceeds
+warning, the ordered smart-contract actions, and borrower impact. It is also
+referenced from Option 2's rules in words — "the direct instant-exit path (the
+lender-swap-in sale)" — and one Option 2 rule already states it applies to both
+routes. The route is specified and cross-referenced. The keeper claim was wrong
+the same way: §9's General Rules already say initiation is party-only absent an
+explicit per-action grant, which covers every route without enumerating them.
+
+The real divergence is **depth, not presence**. Option 2's section grew a large
+body of hardening as #1503 built it out — finite listing windows, the buyer's
+signed collateral floor, permissionless teardown, the relist quiet period,
+borrower-cannot-buy, non-matchable previews, no fresh origination fee. Several are
+genuinely specific to a listing. Four are not: an offer past its deadline is
+unfillable, a party must not end up owing itself, a buyer must not enter at or
+after maturity, and one position must not be sold through two routes at once. Each
+was written under Option 2 because that is what was being built at the time, so an
+Option-1 reader never met them — and those four are exactly the shape of #1503
+items 8, 17, 21 and 24.
+
+§9 already had a `### General Rules for All Lender Early Withdrawal Options`
+section, which is where a shared rule belongs. The four are lifted there, phrased
+route-neutrally and as intent rather than transcribed from either route's
+implementation, with the reasoning stated in the spec itself: a shared rule kept
+under one option is a rule the other option's reader will not see. Same principle
+as the deployability-split rule — state the rule once, not once per instance.
+
+Resolved rather than left open, because the fix is structural and needs no intent
+decision about *whether* those four bind both routes: three describe a state the
+protocol cannot coherently be in at all (a filled expired offer, a party owing
+itself, one position sold twice), and the fourth is already stated in Option 2 as
+applying to the direct route.
+
+What this does NOT settle: whether the direct route survives. PR-G is scoped to
+replace it with a position-sale bid instrument. If it does, the General Rules are
+where its successor inherits these invariants; if it is removed, they stay correct
+for whatever remains. Either way they now live in the place that does not need
+rewriting when the route list changes — which is the point of putting them there
+rather than duplicating them into Option 1.
+
+
+## Offer-lifecycle VPFI vault movements skip the tier restamp (#1817 r3 → #1820)
+
+Found while scoping #1819's release-note claim. The fragment's first draft said
+the sale routes were the only uncovered vault movement ("deposits, withdrawals,
+fee payments, claim consolidation all did this"), and Codex asked for the claim
+to be either scoped or made true. Checking made it clear the claim was too
+broad: the tier restamp is wired **at each mutation site**, not inside the
+vault primitives — `vaultDepositERC20` / `vaultWithdrawERC20` move funds and
+tick the tracked counter but never touch the accumulator (the one primitive
+that does restamp is `vaultCreditFromDiamondERC20`, the protocol-payout credit
+path). So coverage is exactly the set of call sites someone wired, and three
+groups of sites were never wired:
+
+- **Offer creation** — the creator's lending asset (or ERC-20 collateral) is
+  pulled into their vault at `createOffer`. VPFI in, no restamp.
+- **Offer cancellation / mutation** — the escrow leaves the vault again. VPFI
+  out, no restamp.
+- **Listed-sale accept** — the buyer's sale price is pulled from their vault
+  into Diamond custody when they accept a loan-sale listing, before the
+  completion step #1819 instrumented. VPFI out, no restamp at the pull.
+
+The divergence direction matters: the spec's shared rule ("every vault VPFI
+movement re-records the balance at that moment") is the **intent**, stated
+before these sites existed, and the code fell short of it — this is a code gap,
+not a stale spec. The rule is deliberately NOT narrowed to the covered sites:
+a spec that enumerated the wired call sites would be satisfied by the very
+mispricing the rule exists to prevent (the same reasoning as the locale-audit
+entry above — presence of the mechanism is not the property the sentence is
+about).
+
+Disposition: #1819's release fragment now scopes its claim to the flows the
+tier system actually wires up and names this remainder explicitly; the
+checkpoints themselves are deferred to #1820 rather than silently widened into
+that PR (each site needs its own targeted test and an EIP-170 re-check on the
+touched facets, and the offer facets are not otherwise in #1819's blast
+radius). #1820 also carries the instruction to re-audit every remaining
+vault-movement call site for VPFI reachability rather than trusting this
+enumeration to be exhaustive.
+
+**Resolved (#1820).** The re-audit found the enumeration could not be made
+exhaustive by listing sites, so the fix does not list them: the refresh now
+sits at the two writers of the balance the tier reads, and every path that
+moves a user's tracked VPFI refreshes their record through them. See
+`docs/DesignsAndPlans/TierRecordSeamDesign.md`.
+
+## A disclosed reward migration was performed best-effort (#1503 item 12)
+
+**Spec** (`ProjectDetailsREADME.md`, §9 lender exit): the sale quote a seller
+decides on names the interaction-reward forfeiture as a priced cost line, and
+names the buyer's fresh entry over the remaining loan window as something they
+receive. A quote is a representation of what the transaction will do.
+
+**Code**: both sale routes performed that migration through a self-call whose
+failure was deliberately swallowed, on the rationale — correct for its
+siblings — that reward bookkeeping is subordinate to a fund-critical
+settlement. A failure therefore settled the sale with the seller's entry
+un-forfeited and no residual entry for the buyer, reporting success. The two
+parties transacted on terms neither was shown, with nothing in the outcome to
+reveal it.
+
+**Decision**: candidate BUG on the SALE routes specifically, and NOT a general
+reversal of the best-effort convention. The distinguishing fact is the quote:
+where a cost line is disclosed at the moment of decision, delivering it is part
+of what was agreed, and its silent omission is a mis-settled trade rather than
+a deferred bookkeeping chore. The sibling hooks (preclose, claim, prepay,
+periodic, risk-match) disclose nothing comparable and stay best-effort by
+intent — that asymmetry is the finding, not an inconsistency to iron out.
+
+**RESOLVED** — both sale routes now refuse the settlement when the migration
+cannot be performed, surfacing the underlying reason where there is one and a
+named failure where there is not. In normal operation the migration is O(1)
+storage bookkeeping with its own inactive-programme and no-entry early returns,
+so what this can actually surface is a deploy in which the reward component is
+unrouted: exactly the state that must not settle sales quietly. The spec now
+states the rule directly rather than leaving it implied by the quote.
+
+## The sale's transitional record was counted as a real position (#1503 item 26)
+
+**Spec** (`ProjectDetailsREADME.md`, §9 lender exit): the internal record a
+listed sale creates to carry the lender relationship from acceptance to
+settlement is not a position and is invisible to users — it holds no
+collateral, carries no borrower obligation, and ends inside the flow that
+created it.
+
+**Code**: it was counted into the active-position and lifetime-position totals
+and the interest-rate averages, appended to both parties' permanent position
+histories, placed in the working set keepers walk, and announced to interfaces
+as a newly created loan. Users saw a position in their history they never
+opened; the protocol's own lifetime totals permanently counted positions that
+were never real.
+
+**Decision**: candidate BUG. The spec's claim is not an enumeration that a new
+surface could fall outside of — "invisible" is a property of the record, and
+every one of these is a place it was visible.
+
+There is a second, subtler divergence in the same area worth recording because
+the fix reverses an earlier fix. #1782 had made the record's ENDING observable,
+on the reasoning that an interface which had recorded its creation received
+nothing saying it ended and left it running forever. That reasoning was sound
+given a creation event; removing the creation event dissolves its premise. The
+property that survives is a PAIRING — announced at both ends or at neither —
+and a terminal event for a record no interface knows about is a reference to an
+unknown position, the same confusion #1782 set out to remove.
+
+A THIRD divergence sits underneath both, and it is the one that made the first
+fix incomplete (Codex #1825 r1). Suppressing the record's creation-time writes
+and notifications does not make it absent, because the record itself persists
+and its id came from the shared sequence: `getAllLoansPaginated`,
+`getLoansByStatusPaginated`, `getGlobalCounts` and the `getProtocolStats` /
+`getTotalInterestEarnedNumeraire` lifetime scans all enumerate by id range and
+kept returning it — pricing its mirrored principal into lifetime volume (the
+same money, once per sale) and its mirrored rate into interest earned. The
+`OfferAccepted` event likewise still published the record's own id, which the
+indexer stores as an activity row's `loan_id`. "Invisible" is a property of the
+record; a fix that only covers the writes made at one moment is an enumeration
+again.
+
+**RESOLVED** — the record is excluded at every listed point and its close-out
+is silent and count-neutral to match, so entries balance exactly in both
+directions. A DURABLE mark on the record — carrying the real loan it stands for
+— is what the range-enumerating surfaces filter on, and what gives the
+acceptance event a true id to name; a transient link could not serve either,
+since the sale link is deleted at completion. The same mark also separates two legacy facts that the first cut of the routing
+conflated: whether a record was ANNOUNCED at creation and whether it was
+COUNTED. `LibMetricsHooks` documents that a loan predating the counter layer or
+its backfill may be absent from those totals while its `LoanInitiated` still
+built a consumer row, so deciding both from active-list membership closed such
+a record silently — the #1782 stuck-active defect, re-entered through the
+legacy door. Announcement is now decided by the mark, counting by the counters.
+
+The exclusion is drawn around POSITION accounting specifically:
+the record still counts a first-time buyer toward the unique-participant
+total and still releases the consumed listing's open-offer entry, because
+neither is a claim about positions and dropping them would have replaced one
+visible-phantom defect with two invisible ones (a real participant missing
+from the user count, and a consumed listing still on display until its token
+is destroyed). Records created under the earlier behaviour were counted and
+announced, so their close-outs still decrement and still announce; the two
+regimes are distinguished from the record's own state, needing no migration.
+
+## Sale listing vs live position — behavioural terms (#1503 item 23)
+
+The spec says a lender-sale listing carries the position's behavioural terms —
+partial-repay permission, prepay-listing permission, the interest model
+(`useFullTermInterest`) and periodic cadence — and
+that a listing whose terms disagree with its position "does not describe what it
+sells" and ought to be refused at purchase.
+
+**RESOLVED (#1835). Both halves are now implemented; this entry is retained as
+the record of how the gap was carried and closed.**
+
+The copying half went live first: a listing built from that point on takes all
+FOUR from the position, so it describes what it sells, and the buyer's
+signature binds against the listing rather than needing to read the position.
+That is sound permanently, not just at listing time, because all four are
+written once at loan initiation and never again.
+
+**The interest model is in scope and must stay in scope.** An earlier revision
+of this entry listed only three terms, and that omission is load-bearing in the
+wrong direction: a maintainer reading this record as the invariant could delete
+the `useFullTermInterest` comparison as out of scope and recreate exactly the
+legacy full-term-interest mismatch the refusal exists to catch. The shipped
+guard compares all four.
+
+The refusal half was **deferred for one release, deliberately**, and the reason
+is worth keeping. A listing created before the copying rule holds the empty
+defaults while its position holds the truth, so it could still be bought on a
+false description. The PROTOTYPE was written and tested and cost 164 bytes;
+`OfferAcceptFacet` had exactly 164 bytes of EIP-170 headroom, so landing it
+would have left that facet on the ceiling and made the next correction to it
+undeployable — passing CI green while removing the ability to fix anything
+further on the accept path. The facet was split first (#1888), and the refusal
+landed immediately after.
+
+**Do not read 164 as the shipped cost** — that figure measured the prototype
+and is kept only because it is what justified the deferral. Review added the
+fourth term and moved the comparison, so **as shipped the guard costs 448
+bytes** against the post-split baseline of 21,071, leaving `OfferAcceptFacet`
+at 21,519 with 3,057 free. Anyone sizing a future change against EIP-170 should
+use those numbers; the prototype figure understates the consumption by 284
+bytes.
+
+Two things about the shape are load-bearing and should survive future edits.
+The comparison is listing-against-POSITION: the accept-time checks compare the
+buyer's agreement against the listing, and on a stale listing those agree
+perfectly, so no signature check can substitute. And the refusal belongs at
+ACCEPT specifically — refusing at completion instead would strand a buyer whose
+funds are already committed on the legacy accepted-but-not-completed shape,
+which this document's own settlement rules forbid.
+
+Kept, rather than deleted, because the interval is the instructive part: the
+spec stated INTENT ahead of code for one release, under a recorded and bounded
+gap, rather than being quietly wrong or being watered down to match what shipped.
+
+## Sale-cost disclosure keys on the lock, where the spec keys on fillability
+
+**Resolved in the #1810 / #1848 app change (2026-10-23), toward the spec.** No
+intent decision was needed: the code moved to meet the spec. The listing hook
+now keeps the listing's expiry and accepted flag, which it already fetched, and
+the chooser's pending-cost disclosure keys on whether the sale can still
+COMPLETE: an accepted listing still can, an expired unaccepted one cannot, and
+an unread record keeps the lock as the safe-direction fallback. The
+**unrecovered-id** case below is unchanged — with no offer id there is no
+record to read, so the card still falls back to the lock and over-warns. The
+entry is kept for that residue and for the reasoning.
+
+A related spec contradiction was settled in the same change, also toward the
+more specific text. `ProjectDetailsREADME.md`'s quiet-period paragraph said a
+paydown simply makes a pending buyer re-sign, while its own seller-bounds
+paragraph says a partial repayment can make a bounded listing unfillable. The
+parenthetical now distinguishes the listings made before the bounds existed
+(re-sign) from those that recorded them (unfillable until relisted), and the
+connected-app spec says the same.
+
+The spec says an exit the lender has already committed to keeps its cost stated,
+because a sale in flight has pending consequences rather than hypothetical
+prices — and that the test is whether the sale can still **complete**.
+
+The lender exit chooser implements that test as "the position lock stands",
+which is a **proxy**, and the two come apart in one state. A listing that
+expired without selling keeps the lock until the lender cancels or someone runs
+the permissionless cleanup; through that window no buyer can complete the sale,
+but the card carries on naming the held-balance transfer and the reward
+forfeiture as pending losses.
+
+**Direction of the error matters here** and is why this is recorded rather than
+rushed. The card over-warns: it names a cost the lender can no longer incur, on
+a row that already reads as unavailable. That is a poorer explanation, not a
+value-losing one — unlike the original defect this rule was written to fix,
+which HID a cost that could still be incurred.
+
+**Cheaper to fix than first recorded, for most positions.** This entry
+originally said the gap needed a new read. That is wrong for the ordinary case
+and the correction matters, because the deferral was justified on the cost:
+whenever the listing's offer id resolves — the same-device path — the hook
+already fetches that offer, and the response it decodes carries both
+`expiresAt` and `accepted`. It narrows the result to the two fields it wanted
+(the sale rate and creation time) and drops the rest. Classifying fillability
+for those positions is a matter of keeping fields already on the wire, not
+issuing another request.
+
+What genuinely remains is the **unrecovered-id** case: where the listing is
+known only by the position lock and no offer id could be resolved, there is
+nothing to widen, and answering needs either id recovery or an authoritative
+verdict from the protocol. That half belongs with the other pre-checks in
+#1841 and is part of what the shared preview verdict in
+a shared preview verdict would answer — proposed in #1847, which is
+still open, so this deliberately names the ISSUE rather than the design
+file. The file exists only on that branch; citing its path from here
+sent a reader to something not present on main.
+
+Left deferred rather than fixed here on scope, not cost — the error
+over-warns in the safe direction, and widening a shared hook's decode plus its
+state type is a change to a surface several other cards read, which does not
+belong in a chooser PR. Tracked as **#1848**, filed separately from #1841
+precisely because it is the opposite shape: #1841 collects checks that need a
+NEW authoritative read, and this one needs none for the ordinary case.
+
+Recorded so a later reader finds a known, bounded, safe-direction gap rather
+than concluding the card's rule is simply the lock.
+
+## The app asked a seller to fund a settlement the protocol takes from the buyer's payment (#2674)
+
+**Resolved in the #1810 / #1848 app change (2026-10-23), toward the spec.** No
+intent decision was needed. `ProjectDetailsREADME.md` ("Smart Contract
+Actions") says the sale flow should prefer net settlement, deducting
+forfeitures and shortfalls from the incoming proceeds rather than requiring the
+seller to source separate wallet liquidity. The protocol has done exactly that
+for listed sales since #1659: a buyer's acceptance escrows the payment, and the
+completion in the same transaction deducts the settlement before paying the
+rest to the seller, refusing the whole acceptance when the settlement is larger
+than the payment.
+
+The connected app had kept the model that preceded it. It set a standing token
+approval when a lender listed, watched the seller's allowance and balance with
+a restore action, revoked the approval on cancel, told the seller the
+settlement would be pulled from their wallet, and had the BUYER's review read
+the seller's allowance and balance before allowing a purchase. None of that
+reflected what the protocol does, and the last part was coupled to the first:
+removing the approval alone would have made every buyer's review refuse.
+Review of the bound-listing change found three defects in this machinery in
+three rounds, which is what showed the model itself was the fault.
+
+All of it was removed together. The listing sets no approval, the card watches
+nothing in the seller's wallet, every payout line reads "the buyer's payment,
+less the settlement", and the buyer's review checks that the settlement fits
+inside the payment. Two residues are stated rather than implied: approvals
+granted by earlier app versions stay in place until the seller revokes them
+(the cancel message says where), and the protocol still carries a wallet-pull
+branch for a completion with no escrowed payment, which only a seller-driven
+manual completion of a pre-escrow acceptance can reach and which the app does
+not drive.
+
+## VPFI fee discounts: the spec was right and everything downstream of it was wrong (#1981)
+
+**Resolved 2026-08-31 by owner intent-decision: the code's behaviour is the
+intended behaviour. The documentation was corrected.**
+
+T-087 Sub 1.B removed the per-loan averaging from both VPFI fee discounts.
+Fee application resolves the party's effective tier at the moment the fee is
+charged; the per-loan anchors (`lenderDiscountAccAtInit`,
+`borrowerDiscountAccAtInit`) are neither written nor read — the slots
+remain in the `Loan` layout and hold zero on every loan opened since. The
+documentation set did not follow, and went on asserting a loan-lifetime
+average in `CLAUDE.md`, the whitepaper, `docs/GLOSSARY.md`, and the user
+guides in several languages.
+
+**What makes this entry worth keeping is which document did NOT drift.**
+`TokenomicsTechSpec.md` §"Lender rules" was correct the whole time, and
+specifically so: it requires the applied discount to *"equal the user's
+current effective discount at that fee-application moment"*, states that
+*"loan-opening snapshots may remain for compatibility and analytics, but they
+must not drive the discount bps"*, and grounds the anti-gaming property in
+*"the canonical TWA, minimum-history, and minimum-tier-over-history rules"*
+rather than in a per-loan average. That is the intended-behaviour oracle
+describing the shipped behaviour exactly, while four other documents
+described a mechanism that had been deleted.
+
+So this was never a code-vs-spec divergence. It was a **spec-vs-derivative-
+docs** divergence, which the `_CodeVsDocsAudit` process is not shaped to
+catch: nothing in the loop compares the reference documents against the
+oracle, only code against the oracle. Recorded here anyway, because the most
+expensive of the stale copies was `CLAUDE.md` — the top of the doc-precedence
+chain — which instructed contributors to preserve an invariant
+(*"`borrowerDiscountAccAtInit` … don't bypass"*) that the code had stopped
+honouring.
+
+**Two things nearly turned this into a wrong fix.**
+
+First, the issue as filed said *"the code applies a point-in-time tier
+lookup"*. It does not. `effectiveTierAndBps` gates on a minimum staked
+duration, takes a recency-weighted average over a trailing window
+(governance-bounded 14-30 days, default 30, and never reaching back past the
+day the current stake began), and then clamps to the lowest tier held over
+that history — using each day's *minimum* balance, so a same-day dip counts. Had the correction been made from the
+issue's own summary, the docs would have been rewritten to say something
+false in the opposite direction, and the user-facing anti-gaming promise
+would have been withdrawn when it is in fact true. Against that specific
+pattern it holds more firmly under the real rule than under the old one: an
+average can be pulled up by a late top-up, a minimum cannot. The replacement
+is not stricter in every respect — its history is capped at 30 days, so a long
+loan's early low-tier period rolls out of it where a loan-lifetime average
+retained it — and the first draft of this correction asserted the unqualified
+comparison, which review caught.
+
+Second, most occurrences of "time-weighted" in the tree are **correct** — the
+tier genuinely is time-weighted. Only the phrase's attachment to a *loan's
+own window* was false. A find-and-replace over the phrase would have broken
+more than it fixed.
+
+**Naming was the proximate cause, and is fixed.**
+`lenderTimeWeightedDiscountBps` / `borrowerTimeWeightedDiscountBps` performed
+no time-weighting and had not since T-087 Sub 1.B; they are now
+`lenderHoldTierDiscountBps` / `borrowerHoldTierDiscountBps`. A name that
+asserts a property the body does not have is a documentation defect that
+outlives every comment written around it — a reader checking the signature
+instead of the body would have concluded the stale docs were right.
+
+`docs/adr/0003-vpfi-time-weighted-discount.md` records the superseded design
+and now carries a supersession note rather than an edit: an ADR is a record
+of a decision as it was taken, and rewriting its body would falsify it. The
+same reasoning left `docs/ReleaseNotes/`, `docs/OlderDocs/` and
+`docs/FindingsAndFixes/` untouched.
+
+---
+
+## Data-rights erasure: four places the shipped behaviour cannot yet meet the stated intent (#1862 Part 2)
+
+Recorded here rather than by weakening
+[`Alpha02ConnectedApp.md`](../FunctionalSpecs/Alpha02ConnectedApp.md), per this doc set's rule
+that the spec states **intent** and a divergence is a finding rather than an
+edit. All four are tracked, and all four were found by review of the work that
+introduced the intent — so the spec is not stale; the implementation has not
+caught up with it.
+
+**The common cause is worth stating once.** An erasure must act on wallet
+machinery it neither controls nor can pause: a wallet SDK that navigates the
+page, a reconnect with no cancel, per-tab clients that cannot be coordinated
+without an acknowledgement protocol, and an app-wide remount keyed on a
+preference the erasure itself resets. Each divergence below is one instance of
+that, and none is a coding slip.
+
+| Intent, as the spec states it | Where the code falls short | Tracked |
+| --- | --- | --- |
+| *"every one of them must be ended before a sign-out is claimed"* | A wallet whose persisted session is mid-restore cannot reliably be ended: the persisted connection map holds method-less placeholders during a reconnect, and there is no cancel for an in-flight reconnect. The app reports the wallet as holding out, so it does not *claim* the sign-out — but the reconnect can complete afterwards and repopulate storage. | #2039 |
+| *"A request abandoned for taking too long must not be left free to act later"* | Honoured for storage and for connector stragglers. NOT honoured against a wallet SDK that navigates: Coinbase Wallet's WalletLink teardown schedules a page reload during connector cleanup, which runs before the sweep and the database clear, so it can end the erasure partway with nothing reported. | #2035 |
+| *"A tab told about another tab's erasure must bring ITSELF into line"* and *"Nothing a peer tab does in response may write"* | Both are met for the peer's own context. What is not met is the consequence: a peer clearing SHARED stores is a second uncoordinated remover, which can destroy a session created after the request and can take the originating tab's transaction so the reported count reads zero. Neither has a fix inside the current design. | #2037 |
+| *"the erasure is reported as a count rather than a blanket done"* | For a non-English user the report may not be shown at all: resetting the language remounts the app subtree, which replaces the page while the erasure is still awaiting. The data is erased; the evidence of it is discarded. | #2038 |
+
+**What this does not mean.** None of the four is a case where the app claims
+success falsely — the reporting rules the spec sets out hold in every one of
+them, which is why they are divergences of *reach* rather than of *honesty*.
+Two of them (#2035, #2038) are the narrower failure of an erasure that works
+while its evidence does not survive, which on a page whose purpose is
+reporting is still a real gap.
+
+
+---
+
+## An unsubstantiable loan record is reported, but not withdrawn from publication (#2190 r8)
+
+**RESOLVED (#2197, PR #2636).** The platform now withdraws such a record,
+whatever status it is published under (live, ended or settled). On a proven
+nonexistent read at the settled head, the row moves out of `loans` into
+`loan_orphans`, kept whole for an operator's restore with the block the proof
+was read at. Its activity, history and notifications move with it, and its
+side tables and alert memory are cleared, all in one transaction. Every
+surface that lists or counts loans then stops publishing it with no
+per-surface filter. The durable finding is the `loan_orphans` entry itself:
+the stale report names every entry until a person marks it reviewed
+(`reviewed_at`), and that holds across an archive restore. The id's
+reconciliation quarantine marker is released rather than kept, because it
+would withhold reminders from a real loan later given the same id. The
+keeper's private HF-band state for the id is a known follow-up (#2638). The spec was not changed to match the code; the code moved to the
+spec, and `Alpha02ConnectedApp.md` now also states the withdrawal. The entry
+below is kept as the record of the divergence.
+
+Recorded here rather than by softening
+[`Alpha02ConnectedApp.md`](../FunctionalSpecs/Alpha02ConnectedApp.md), per this doc set's rule
+that the spec states **intent** and that resolving a divergence by editing the
+spec to match the code needs an explicit human decision. Found by review of the
+change that introduced the intent, so the spec is not stale — the
+implementation has not caught up with it.
+
+| Intent, as the spec states it | Where the code falls short | Tracked |
+| --- | --- | --- |
+| *"A record the chain has no loan for is not a running loan […] the platform […] reports the ones it cannot substantiate instead of counting them as open forever"* | The reconciliation pass DOES detect these — a loan the chain has never heard of returns a zero-valued answer whose state is indistinguishable from running, so the pass tests existence first and names the failures in the operator's log as unresolvable. What it does not do is change the record: the row keeps its running state, so it is still counted in the index's own total and still published by the surfaces that list running loans. The spec's first clause is therefore met as a matter of *reporting* and not of *publication*. | #2197 |
+
+**Why it is a divergence rather than a bug to fix in place.** Withdrawing such
+a row needs a state the schema does not have — a quarantined or excluded
+status — which is a migration plus a decision at every surface that today
+filters on "running". That is a different change from the one #2190 makes, and
+inventing the state mid-review would put an unreviewed status value into a
+table four Workers read.
+
+**What it does not mean.** The pass does not treat these rows as confirmed
+running, which was the original defect: before #2190 an orphaned row read as a
+healthy active loan on every pass forever, and the count disagreement it caused
+was silent. It is named, with the loan ids, WHENEVER THE ROTATION EXAMINES IT AND THE
+PASS FINISHES — not on every tick. (The second qualifier is #2203: a pass
+that fails its cursor write discards every diagnostic it collected, so a row
+can be examined, correctly identified as unresolvable, and still not named.) The pass looks at one or three rows a turn, so on a larger live
+set a known orphan can go unmentioned for most of a lap. The gap is that
+naming it does not stop it being published, and that the naming itself is
+periodic rather than continuous.
+
+---
+
+## A correction's "settled point" is a guess when the source cannot supply one (#2199 r4)
+
+Recorded here rather than by weakening
+[`Alpha02ConnectedApp.md`](../FunctionalSpecs/Alpha02ConnectedApp.md), per this doc set's rule
+that the spec states **intent** and that editing the spec to match the code
+needs an explicit human decision. Found by review of the documentation for
+the change that introduced the intent.
+
+| Intent, as the spec states it | Where the code falls short | Tracked |
+| --- | --- | --- |
+| *"The chain state a correction relies on must therefore be read at a point the chain treats as settled, never at whatever the source last saw and never at a point derived from how far the index itself has read."* | The scan asks the source for its settled point and falls back to a fixed step back from the latest block whenever that request FAILS FOR ANY REASON — the `catch` is unconditional, so a timeout or a momentary error from a source that normally answers takes it just as an old node does. That is derived from what the source last saw — the thing the sentence forbids — and it is a heuristic finality margin rather than the chain's own statement. Against a reorganisation deeper than the margin it can report an ending that later disappears. | #2201 |
+
+**BOTH consumers are exposed, and an earlier version of this entry said
+otherwise.** It claimed the ordinary scan self-corrects — cursor re-read,
+events replay, record converges — and used that to argue the heuristic was
+tolerable for the scan and not for the correction. That is wrong, and the
+scan's own code comment says so: the cursor advances monotonically from
+`lastBlock + 1`, so a reorganised-out block is never revisited and "the next
+cron run … would skip the reorged block, leaving the stale row in D1
+forever". Both consumers turn a wrong read into a permanent wrong record;
+they differ only in which record.
+
+What remains true is that the correction's wrong record is the more
+alarming one — a position published as closed when it is open — and that
+the correction cannot even be corrected by the mechanism that wrote it,
+since it selects only live rows. But that is a difference of severity, not
+of recoverability, and the fix must cover both.
+
+**When the fallback engages is wider than it first appears.** The `catch`
+around the settled-point request is unconditional, so it is taken not only
+by a source that cannot answer the question but by ANY failure of it — a
+timeout, a momentary error — from a source that normally can. Supporting the
+settled tag therefore does not exempt a deployment; it only makes the
+contingency rarer. An earlier version of this entry said the deployed
+configuration "reads a settled point normally", which is true on the ordinary
+path and was doing the work of an exemption it does not provide.
+
+**HALF RESOLVED (#2201, correction side).** The correction no longer acts on
+a guessed settled point: the resolution now reports whether the chain named
+the block or the platform stepped back from the tip, and the correction
+refuses the latter and says which chain it is not running on. The spec's
+statement of intent is unchanged — this is the code moving toward it, not the
+doc being weakened — and `Alpha02ConnectedApp.md` now also states the
+not-running behaviour, since "it declines, and says so" is itself intended
+behaviour rather than an implementation detail.
+
+The message quotes the source's own reason rather than naming a cause, which
+is this entry's unconditional-`catch` paragraph made operational: a timeout
+from a capable source and a source that lacks the capability are
+indistinguishable at that moment, so an asserted cause would send an operator
+to replace something that works.
+
+**SCAN HALF RESOLVED (#2201).** A tick whose settled read does not answer
+now holds the scan: it reads nothing, keeps the cursor, and says which chain
+is held and the provider's own reason, every tick. That is the
+correctness-over-liveness choice the paragraph below says must be made
+deliberately rather than inherited from a `catch`, and
+`Alpha02ConnectedApp.md` now states it. The paragraph below is kept as the
+record of why it was deferred, and the owner made that liveness call explicitly
+(owner decision 2026-10-22: pause the scan and say so).
+
+**Historical, superseded by the paragraph above: why the scan half was first
+left open.** The entry above is right that the fix must cover both consumers; what stopped the scan being
+covered in the same change is that its remedy is a real trade rather than a
+strictly-better refusal. The correction declining costs nothing that was
+working — no correction is the status quo ante. A scan declining to advance
+would mean a deployment whose source never answers the settled read never
+indexes that chain at all. That is a liveness decision with an owner-visible
+cost, and folding it into a correction fix would have made it silently.
+
+Recorded because the temptation, twice now, has been to resolve the asymmetry
+by restating the retracted claim — that the scan self-corrects — and thereby
+closing the whole entry. It does not, and the retraction above stands.
+
+## The transport epochs: two divergences the 3b-i ledger resolved (#2232)
+
+Both were found during Codex review of #2232 and both are **RESOLVED in code**
+— recorded here because the audit file is where a reader later checks whether
+a spec sentence was changed to match an implementation, and the first of these
+looks exactly like that and is not.
+
+### 1. The day index's order — a contradiction INSIDE the design, not code drift
+
+| Intent, as the design states it | What the code did | Resolution |
+| --- | --- | --- |
+| A day's batch index is read oldest-first, so a preparer's "oldest on ties" default has an order to use. | Membership is written by `materializeTransportBatchPage`, which is permissionless and asynchronous, so a batch's POSITION in a day's list recorded only which caller got there first. | Position now carries no order and **the order is data**: each entry is returned with its own packet's immutable `arrivedAt`. |
+
+This is the case the file's standing rule is least able to handle on its own.
+`Vpfi1566CanonicalDeliveredBoundDesign.md` asked for an ordering that its OWN
+compact-admission requirement makes unbuildable on-chain: admission is compact
+because a transport payload is immutable and a receive-side refusal would
+refuse the same message on every re-execution, so the membership must be
+written afterwards by whoever supplies the committed list — and that is a
+property of caller timing, not of arrival.
+
+So the divergence was **document-internal**, and resolving it did not weaken
+the spec toward the code. The intent — *a preparer can order deliveries by
+when they arrived* — is now met more directly than the original wording asked
+for, since `arrivedAt` is the delivery's own stamp rather than a proxy for it.
+The alternative considered and rejected was serializing materialization behind
+a global frontier, which would make position carry arrival at the cost of a
+strictly worse failure: one batch whose list nobody re-supplies would stall
+every other batch's indexing indefinitely.
+
+**No human intent-decision is required for this one**, and that is the point
+of recording it: a later reader who finds the ordering sentence rewritten
+should find this entry rather than assume the spec was bent.
+
+### 2. The 3a-to-3b window — spec promised an index nothing could provide
+
+| Intent, as the spec states it | Where the code fell short | Resolution |
+| --- | --- | --- |
+| Design §5c records a day-list commitment on every arrival on a wire older than d6 *precisely so* "a packet landing between 3a and 3b carries authenticated membership 3b can index". | 3b-i reached `admitTransportBatch` only from the ingress. For the whole 3a-to-3b window those packets held untyped value with no epoch bounding it, their committed list was refused as an unknown batch, and their zero `batchId` made classification skip the gate entirely. | `RewardEpochFacet.admitLegacyTransportBatch` — permissionless, every figure read from the packet's own record. |
+
+A straightforward spec-said / code-didn't, resolved in the direction the rule
+requires: the code moved to meet the spec.
+
+**One residue is intrinsic and is stated rather than hidden.** A d5 delivery
+short enough that BOTH stated components floored to zero is indistinguishable,
+from the record alone, from a delivery that stated nothing. It is admitted —
+binding it to the days its own delivery named is a stricter gate on the same
+money, never a second claim on it. Recorded in the entry's NatSpec, in
+`TokenomicsTechSpec.md`, and in the design note.
+
+**A second-order defect this entry's fix introduced, its resolution, and the
+justification that resolution later outlived.** The admission originally took
+only the packet hash. It sets `p.batchId`, and at the time that CLOSED the
+classification gate on a packet ungated until that moment, while the only route
+back through the gate (`materializeTransportBatchPage`) proves the day list
+against the packet's commitment — so anyone could close a gate only a holder of
+the committed list could reopen, on the oldest deliveries, whose list survives
+only in long-past event data this programme has an open blocker on reading
+(#2095). The admission takes the committed list and proves it. The list is not
+stored; admission stays compact.
+
+**That symmetry argument is now retired and must not be repeated** (Codex #2232
+r5/r7). Once `rolloutAdmissionStatus` became the classification gate's rule as
+well, an owed packet is gated by its own SHAPE from the moment it lands, so the
+admission closes nothing. The requirement stays for the reason that does hold:
+it is the one call that fixes an immutable anchor over the protected row, and an
+anchor bounding a membership nobody can exhibit describes a set nobody can
+enumerate. The retired reason is recorded rather than deleted because it stood
+in seven places at once, and a reader who remembers it should find this note
+instead of concluding the docs were merely behind.
+
+### 3. The release of a transport epoch — spec states a machine check the code leaves to the operator
+
+> **RESOLVED by 3b-ii-B (#2459).** The per-day closure proof is the machine
+> check: parking requires every listed day proven closed, so the release entries
+> are open (parking permissionless, the acknowledgment ADMIN) and the interim
+> `TransportReleaseNotYetAvailable` refusal is removed. The record below is kept
+> as decided at the time.
+
+> **DECIDED — owner, 2026-09-20 (recorded on #2258): Reading B, with the
+> conservative remedy.** The release entries stay in the surface but refuse
+> every caller in 3b-i (`TransportReleaseNotYetAvailable`), so no epoch-backed
+> packet can be classified before 3b-ii tracks obligations per day and the
+> design's refusal becomes a check the chain can perform. The library
+> implementation of the release is kept and tested through a test-only raw
+> entry. #2258 stays open as the tracker for 3b-ii's obligation check. What
+> follows is the record of the divergence as it stood when the decision was
+> asked for.
+
+**This one needs a human intent-decision**, unlike entry 1. It is recorded
+here rather than resolved because the two readings below lead to materially
+different products, and picking one by myself would be resolving a fund
+guarantee by preference.
+
+| Intent, as the design states it | Where the code stands | Status |
+| --- | --- | --- |
+| "The cutover's classification entry **refuses a packet whose batch still lists an outstanding obligation** and admits it once the remainder is parked with its acknowledgment" (design §5c). And: any remainder goes to the pending position "after the currently-known targeted obligations terminate". | 3b-i refuses classification unless the batch is released, and nothing tests whether a listed day still carries an unsettled obligation. Parking is permissionless; the acknowledgment is the administrator's. | **Open — owner decision.** Raised by Codex on #2232 r6. |
+
+**The fact that decides which remedy is even possible.** There is no per-day
+outstanding-obligation figure in 3b-i's state to test. Obligations live per
+ENTRY (`rewardEntries`, keyed by entry id); `DayPoolStamp` carries a day's
+schedule floor, recycled budget and finalize-time figures, and
+`dayClosedByRemitId` marks a day FUNDED by a remittance, which is not the same
+claim as "every obligation on this day has terminated". Answering the design's
+question for a batch's listed days therefore means walking entries — the
+unbounded work the design itself defers to 3b-ii's staging and reference
+tracking. So "add the check" is not available to 3b-i at any price; only the
+two options below are.
+
+**Reading A — the acknowledgment IS the check, performed by a person.** §5c
+calls the acknowledgment "a deliberate operator disposition carrying a recorded
+acknowledgment" and says the lane "cannot prove a per-target closure", so
+choosing to stop waiting is an owner decision with its consequence written
+down (later obligations for those days are refused to the extent they looked to
+that batch). On this reading the code already implements the rule, with a human
+supplying the judgement the chain cannot, and the divergence is that the design
+ALSO describes it as an automatic refusal in a second passage.
+
+**Reading B — the machine check is load-bearing and its absence is a defect.**
+Until 3b-ii there is no way for a listed day's obligation to draw from an
+epoch. So an operator who acknowledges early, and a classification that follows,
+move the delivery's value out of the membership-bound holding and into the
+general live/recycled backing any day can draw. Nothing is lost from the
+holder and no obligation becomes unpayable — but the earmark that is the whole
+purpose of the epoch is gone, and it cannot be reinstated.
+
+**Recommendation, if the decision falls to whoever reads this first:** Reading B,
+and the conservative remedy — withhold classification of epoch-backed packets
+until 3b-ii lands the tracking, by not shipping the release entries in 3b-i.
+The cost is narrow: such a packet's value simply stays protected and visible in
+`Unclassified`, which is where it already is, and becomes classifiable when the
+machinery that lets its days draw exists. The cost of the other direction is an
+earmark that cannot be restored once spent. That is the direction §5c takes
+everywhere else it is forced to choose.
+
+**Do not resolve this by rewriting the design to match the code.** The rule in
+`CLAUDE.md` applies with full force here: the design states the stricter of the
+two behaviours, and softening it to "the operator decides" would retire a fund
+guarantee by edit.
+
+## Finalization coverage is a report COUNT, and Base's own report counts whether or not Base is listed (#2613)
+
+**Spec** (`TokenomicsTechSpec.md`, "Finalization on Base"): a day finalizes once
+every chain in the expected-source set has reported, and that set includes Base
+itself.
+
+**Code:** coverage is `chainDailyReportCount[day] >= expectedSourceChainIds.length`.
+A mirror's report is admitted only from a listed chain. Base's own report is
+recorded by its local day-close without that check. So when Base is not on its
+own list, which is the live Base Sepolia configuration as of 2026-10-20, two
+things follow:
+
+- the count can reach the listed number while a listed mirror is still
+  missing, and anyone may finalize the day "on full coverage" inside grace;
+- Base's own interest is summed into no day's global total.
+
+**Status:** RESOLVED toward the spec (2026-10-22, PR for #2618/#2613): Base
+now judges coverage chain by chain over the list, only a listed chain's report
+starts grace, and a permissionless finalization refuses a list that is empty or
+leaves Base out. The Base Sepolia list was corrected on 2026-10-21. Historical
+note: the configuration was corrected
+separately, which needs an owner OK for an admin call. The keeper's day-close
+pass (#2612) judges coverage per listed chain, and alerts on a list that leaves
+Base out. That covers only the keeper's own calls, because `finalizeDay` is
+permissionless. **Do not resolve this by rewriting the spec to "a count of
+reports":** the per-chain rule is what stops a report still in flight from
+being zeroed.
+
+## A chain taken off Base's expected-source list has its last report refused (#2618)
+
+**Spec** (`TokenomicsTechSpec.md`, "Finalization on Base"): a report reaching
+Base after its day is finalized still applies what it says about the chain (its
+custody era and its recycled-availability and commitment ratchets), "so a chain
+whose last report arrives late (or that then detaches) never leaves
+already-retired commitments outstanding".
+
+**Code:** the chain-report ingress checks the source against Base's CURRENT
+expected-source list first, ahead of the late path, and refuses
+(`SourceChainIdNotExpected`) a chain not on it. A mirror removed from the list
+before its last report lands therefore loses that report's chain-wide figures,
+and Base keeps the commitments it retired outstanding. The commitment-report
+ingress already admits a removed chain by the day's own evidence (it was
+included in, or zeroed from, that day); the chain-report ingress has no such
+standing.
+
+**Status:** RESOLVED toward the spec (2026-10-22, PR for #2618/#2613), by
+the owner-approved approach: Base no longer refuses a day report for list
+membership at all. Every authenticated report applies what it says about the
+chain; its day figures are stored and counted only if the chain is listed when
+the day finalizes. The spec gained the "who may report vs whose figures count"
+rule to say so (owner direction 2026-10-22: improve the document where the
+better approach needs it). Historical note, found by Codex on PR #2616: the
+keeper's day-close pass (#2612) reads Base's list on each mirror it serves and
+alerts while the mirror is not on it, when the refused report can still be
+executed again by hand once the chain is listed again. That warns an operator;
+it does not make the ordering safe. **Do not resolve this by rewriting the spec
+to "a detached chain's last report is dropped"** without a recorded owner
+decision: the ratchets are what keep retired commitments from staying
+reserved on Base.
+
+## The pre-d6 budget wires are retired: a spec change made on a recorded owner decision (2026-10-22)
+
+**Spec before** (`TokenomicsTechSpec.md`, transport epochs first and second
+changes): a mirror accepts reward-budget deliveries on wires older than the
+rooted one (d6), keeps a fingerprint of their day list, can be sent the
+source's recorded split afterwards by a split-attestation message, writes their
+membership from a re-supplied flat list, proves a no-epoch delivery's flat
+list, and can bring an older delivery into the epoch ledger retrospectively
+from its recorded fingerprint.
+
+**Spec after:** the rooted wire is the only budget wire. The receiving contract
+refuses every older budget payload by name (`UnknownRemitWireShape`), and the
+attestation message, the flat-list writer, the flat-list proof and the
+retrospective admission are withdrawn. A rooted delivery's split is attested by
+its own wire, and its days land only chunk by chunk against its root. The old
+bullets stay in the spec, marked superseded, because the epoch, draw, staging,
+closure and release rules they carry still apply to every rooted delivery.
+
+**Why this is not the spec bent to the code.** The code did what the old spec
+said; nothing diverged. The intent changed, by an explicit owner decision
+(Raaj, 2026-10-22, on the delivery-proof thread): "remove it, we are still in
+prelive, so lets do things accordingly", followed by the choice to do it end to
+end in one change (receiver refusal, the flat-only contract code, and the
+keeper's flat route). The precondition is owner decision O1 = A: every chain
+that runs these slices is a fresh deploy, so no pre-d6 delivery is in flight to
+any of them and no current sender produces one. On a chain that ever did carry
+pre-d6 deliveries, this change would strand them, and it must not reach one by
+an in-place upgrade.
+
+**Status:** resolved by the spec change and the code change together. Do not
+reintroduce a flat-list route to "restore coverage": there is no population for
+it to cover.
+
+## Accepting an offset offer: the connected-app spec excluded it, the owner reversed that (#2523, 2026-10-23)
+
+The connected-app spec said an offset vehicle "remains not acceptable in this
+app version" and listed accepting one among the kinds kept out of the
+surface "by intent, not by omission". The same app, meanwhile, lets a
+borrower POST an offset and tells them their loan closes when a borrower
+accepts it. The result was a one-sided feature: an offset posted here had no
+taker here, and the poster was not told so.
+
+**Resolved by spec change on a recorded owner decision.** #2523 asked for an
+offset-accept review, and the owner approved it as part of the issue plan
+(Wave 5, approved 2026-10-20). The spec now describes that review: the
+taker's loan is ordinary and on the offer's own terms; the review and the
+receipt state that the same transaction closes the earlier loan from the
+poster's wallet; and signing waits until every condition that close-out
+needs is positively clear. The exclusion stays only for a linked offer whose
+kind cannot be identified.
+
+This is not code being transcribed into the spec. The intent changed first,
+in the issue, and both the spec and the code follow it.
+
+## The day-close grace window reads as zero when it was never set (#2681, 2026-10-23)
+
+The parameter reference describes the reward grace window as a setting with a
+built-in default of four hours that governance may change. The contracts'
+read for it returns the stored value as it is, so on a deployment where
+governance never set it the answer is zero, while the window the protocol
+actually applies is the four-hour default. A reader taking the read at its
+word would conclude the window is zero.
+
+**Candidate bug in the code, not the doc.** The doc states the intent: the
+setting has a default and the read should report what is in force. The fix
+belongs in the contracts and is filed as #2681. Until it lands, the protocol
+console does not repeat the contract's zero: it reports the documented
+four-hour default and says the window is not set, so that default applies.
+The figure comes from the parameter reference, not from the contract, and
+is held in one place in the app that names this entry; once #2681 makes the
+read report the window in force, that copy goes.
+
+**Status:** open, tracked by #2681.
+
+## The connected app is not installable (#2687, 2026-10-23)
+
+The website spec's PWA requirements say the dApp should be installable from
+the browser, with a manifest whose shortcuts reach Offer Book, My Loans,
+VPFI Vault and Alerts, and a production-only service worker that never
+caches live data. The connected app has no manifest and no service worker.
+
+The only manifest in the tree was a leftover on the marketing site from the
+retired app. The marketing site never linked it; the retired app linked its
+own copy on its own host, removed with that app. None of its shortcuts
+reached what it named: the marketing site reads an unknown first path
+segment as a language, so they landed on marketing pages. One was a "Buy
+VPFI" shortcut to the retired purchase route, which the site redirects to
+its VPFI information page. #1742 deletes it. That changes nothing about installability, since
+nothing could install it, but it removes a file that described the removed
+purchase surface.
+
+**Candidate gap in the code, not the doc.** The spec states the intent, and
+the shortcut list it names has no purchase entry. The work is filed as
+#2687.
+
+**Resolution (#2687, 2026-10-23).** The connected app now links a web
+manifest with the four shortcuts the spec names (Offer Book, My positions
+for My Loans, VPFI, and Alerts, which live in Settings), and a production
+build registers a service worker that caches only this build's static shell
+files and answers nothing else: no page load, no cross-origin request, no
+request with a query string.
+
+One point is a reading of the spec rather than a copy of it. The spec asks
+navigational HTML to "prefer a network-first strategy". Network-first
+usually means a cached page is served when the network fails. The app does
+not do that: a page load always goes to the network, offline included,
+because a cached page would run an old build against contract addresses
+and interfaces it cannot know are retired. The spec's stated purpose, that
+a deploy replaces the shell on the next load, holds more strongly this way,
+and the spec now says so in its own words. If an offline page is wanted
+later, it has to be a page that runs no app code.
+
+**Status:** resolved by #2687.
+
+## Forced sales: the spec now sizes them to the debt, ahead of the code (#2796, 2026-10-25)
+
+**A spec change made on a recorded owner decision, ahead of the code.** On
+2026-10-25 the owner chose one sell-to-need rule for every forced sale, with
+the handling charge and the caller's incentive taken on what the borrower
+owes rather than on the proceeds (decision "Yes, charges on the debt"), and
+the extra from a periodic auto-liquidation paid back to the borrower
+(decision "Pay it back to the borrower"). `ProjectDetailsREADME.md` states
+that rule now, under "Forced Sales Sell Only What the Debt Needs" and the
+charge, periodic-settlement and Proceeds Distribution lines it touches. The
+design record is `docs/DesignsAndPlans/ForcedSaleSizingDesign.md`.
+
+**What the code did until the implementation landed.** The Health-Factor
+liquidation (single and split route) and the liquid branch of the time-based
+default sold the whole collateral and took both charges as shares of the
+proceeds. Partial liquidation took its charges as shares of the proceeds
+alongside the repayment.
+
+**The periodic auto-liquidation follows the rule (#2795).** It sells through
+the shared forced-sale host: the sale is sized to the missed interest plus
+the two charges on it, the lender is paid at most what was owed, and the
+borrower's extra goes to the position holder's wallet, or is held in the
+borrower's vault for the claim when the holder is flagged or the wallet
+payment fails. The fixed buffer and the slippage notice that went with it are
+gone.
+
+**Every route follows the rule (#2796).** The Health-Factor liquidation on
+the single and split route and the liquid branch of the time-based default
+sell through the same host: the least covering amount, charges on the debt,
+the fee only after the lender, the unsold collateral left pledged in the
+borrower's vault for the borrower's claim and the extra held there with it.
+When every route fails the whole collateral still enters the in-kind
+fallback. Partial liquidation takes its incentive and handling charge as
+shares of the amount repaid. The caller names the amount sold and the host
+accepts it only inside the published range (the spec's quote line), a detail
+the code needed because every sale is an exact-input swap.
+
+**Status:** resolved — the code follows the stated intent on every forced-sale
+path. The 2% quote margin is the owner's decision of 2026-10-25.
