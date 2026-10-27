@@ -2712,7 +2712,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](19);
+        s = new bytes4[](21);
         s[0] = RewardReporterFacet.closeDay.selector;
         // #1434 P2-w1 — V3 (kind-10) ingress + the mirror-side clock reads
         // + the era ground truth (#1632 r1).
@@ -2741,6 +2741,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #2277 — the permissionless frontier catch-up and its view.
         s[17] = RewardReporterFacet.advanceInterestFrontiers.selector;
         s[18] = RewardReporterFacet.getInterestFrontiers.selector;
+        // #917 — the one-way retirement and its record.
+        s[19] = RewardReporterFacet.retireRewardChain.selector;
+        s[20] = RewardReporterFacet.getRewardChainRetirement.selector;
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.
@@ -2799,7 +2802,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](17);
+        s = new bytes4[](20);
         s[0] = RepatriationFacet.authorizeRepatriation.selector;
         s[1] = RepatriationFacet.onRepatriationReturnReceived.selector;
         s[2] = RepatriationFacet.onRepatriationCancelAck.selector;
@@ -2821,6 +2824,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[15] = RepatriationFacet.getRepatriationTokenAdminRegistry.selector;
         // #1434 P2-w5 — the Mode-B stranded return dispatch.
         s[16] = RepatriationFacet.sendStrandedReturn.selector;
+        // #917 — a retired mirror's surplus return, its Base ingress, and
+        // Base's per-source record.
+        s[17] = RepatriationFacet.sendRetiredSurplusReturn.selector;
+        s[18] = RepatriationFacet.onRetiredSurplusReturnReceived.selector;
+        s[19] = RepatriationFacet.getChainRetiredSurplusReturned.selector;
     }
 
     /// T-087 Sub 1.B — single-home accumulator facet (ring-buffer

@@ -697,6 +697,18 @@ interface IVaipakamErrors {
     ///         retires; delayed packets from the old source are not
     ///         attributed to the new one) — never a direct rebinding.
     error RewardBaseChainRebindRequiresDetach(uint32 current, uint32 requested);
+    /// @notice #917 — this chain is RETIRED from the reward mesh. Retirement
+    ///         is one-way: the two reward-role setters refuse every write,
+    ///         so the chain stays Detached and its return destination stays
+    ///         the base it detached from.
+    error RewardChainIsRetired();
+    /// @notice #917 — `retireRewardChain` was called on a chain that is not a
+    ///         mirror detached from a recorded base. `role` is the resolved
+    ///         reward role; `detachedFrom` and `detachedFromDeployment` are
+    ///         the recorded base chain and Base Diamond (zero when none is
+    ///         recorded, e.g. a canonical chain that detached, or a mirror
+    ///         whose Base deployment was never configured).
+    error RewardChainNotRetirable(uint8 role, uint32 detachedFrom, address detachedFromDeployment);
     /// @notice #1566 slice 4 PR B — a mirror's base reward deployment (its
     ///         funding identity) was being rebound directly to a different
     ///         one while the mirror role stands. Same rule as the base chain:
