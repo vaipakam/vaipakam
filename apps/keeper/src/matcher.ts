@@ -56,6 +56,7 @@ import {
   AdminFacetABI,
   LenderIntentFacetABI,
   ClaimFacetABI,
+  DIAMOND_ABI_VIEM,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import type { PassTick } from './passSchedule';
@@ -70,6 +71,7 @@ import {
 } from './keeper';
 import { reportSendError } from './submissionQueue';
 import { summarizeFailure, redactedError } from '@vaipakam/lib/errorDescription';
+import { revertErrorName } from '@vaipakam/lib/contractRevert';
 import { ROLL_MIN_VALUE_TO_GAS, judgeRollValue } from './rollGasFloor';
 import { estimateTxFeeWei, txFeeUnpricedReason } from './txFee';
 
@@ -203,7 +205,7 @@ const FILL_MODE_AON = 1;
 
 // `LibOfferMatch.IntentError` indices the intent-fill pass classifies a non-ok
 // `previewIntent` by (Ok, Paused, Sanctioned, MatcherDisabled, IntentDisabled,
-//  AggregatorPaused, Inactive, VpfiLendingUnsupported, KeeperUnauthorized,
+//  AggregatorPaused, Inactive, RetiredVpfiLending, KeeperUnauthorized,
 //  BelowMinFill, ExposureExceeded, DurationTooLong, FullTermRequired,
 //  PartialRepayNotAllowed, CollateralUnresolvable, CapitalInsufficient, …):
 
@@ -251,7 +253,7 @@ const INTENT_ERR_INTENT_TERMINAL = new Set<number>([
   2, // Sanctioned — solver (keeper) or this lender
   5, // AggregatorPaused — this aggregator-adapter intent frozen
   6, // Inactive
-  7, // VpfiLendingUnsupported
+  7, // RetiredVpfiLending — never returned since #2914; kept intent-level
   8, // KeeperUnauthorized — this keeper not delegated for a gated intent
 ]);
 
@@ -1295,6 +1297,43 @@ async function listRollableLoans(
   return walkRegistry(ctx, 'getRollableIntentLoans', ROLL_SCAN_PAGE, run, readsOver(ctx, overBudget), liftRollable);
 }
 
+/** The `rollIntentLoan` refusals that say the loan settles through its
+ *  owner's normal claim instead: nothing the keeper can change by trying
+ *  again, so the loan is counted as left to its owner rather than reported as
+ *  a failed estimate. */
+const ROLL_LEFT_TO_CLAIM = new Set([
+  'LenderIntentVpfiRollUnsupported', // #2914 — VPFI proceeds stay reserved until claimed
+  'LenderIntentLoanNotRollable',
+  'LenderIntentPositionTransferred',
+  'LenderIntentNothingToRoll',
+]);
+
+/** The roll pass's verdict on a failed `rollIntentLoan` estimate. Pure;
+ *  pinned by the tests. */
+export function rollEstimateRefusal(err: unknown): 'unauthorized' | 'leftToClaim' | 'failed' {
+  if (redactedError(err, { stack: false }).includes('KeeperAccessRequired')) return 'unauthorized';
+  const name = revertErrorName(err);
+  return name !== null && ROLL_LEFT_TO_CLAIM.has(name) ? 'leftToClaim' : 'failed';
+}
+
+/** The platform's VPFI token, lower-cased, or null when it does not read (the
+ *  roll estimate then refuses VPFI loans one by one instead). */
+async function readVpfiToken(ctx: KeeperContext): Promise<string | null> {
+  try {
+    const token = (await ctx.client.readContract({
+      address: ctx.diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getVPFIToken',
+    })) as Address;
+    return token.toLowerCase() === zeroAddress ? null : token.toLowerCase();
+  } catch (err) {
+    console.log(
+      `[matcher] chain=${ctx.chainId} roll pass: VPFI token unread, VPFI loans are refused at their estimate instead: ${summarizeFailure(err, 200)}`,
+    );
+    return null;
+  }
+}
+
 async function submitRoll(
   ctx: KeeperContext,
   loanId: bigint,
@@ -1384,13 +1423,23 @@ async function runIntentRollPass(
     return;
   }
 
+  // #2914 — a VPFI loan never rolls (`LenderIntentVpfiRollUnsupported`): its
+  // proceeds stay reserved until the position holder claims them. One read
+  // leaves every such loan to its owner without an estimate each.
+  const vpfiToken = await readVpfiToken(ctx);
+
   let submits = submitsUsed;
   let rolled = 0;
   let declinedDust = 0;
+  let leftToClaim = 0;
   const unauthorizedOwners = new Set<string>();
   for (const loan of rollable) {
     if (submits >= MAX_SUBMITS_PER_TICK || overBudget()) break;
     if (unauthorizedOwners.has(loan.owner.toLowerCase())) continue;
+    if (vpfiToken !== null && loan.lendingAsset.toLowerCase() === vpfiToken) {
+      leftToClaim += 1;
+      continue;
+    }
     // Re-read the pause immediately before committing gas (mirrors the fill
     // pass — the AUTO_ROLL auth path enforces keepersPaused on-chain anyway, but
     // skip the doomed submit + its gas).
@@ -1412,8 +1461,11 @@ async function runIntentRollPass(
         account: ctx.wallet.account,
       });
     } catch (err) {
-      if (redactedError(err, { stack: false }).includes('KeeperAccessRequired')) {
+      const refusal = rollEstimateRefusal(err);
+      if (refusal === 'unauthorized') {
         unauthorizedOwners.add(loan.owner.toLowerCase());
+      } else if (refusal === 'leftToClaim') {
+        leftToClaim += 1;
       } else {
         console.log(
           `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loan.loanId)} not rolled: fee estimate failed: ${summarizeFailure(err, 200)}`,
@@ -1472,9 +1524,9 @@ async function runIntentRollPass(
       unauthorizedOwners.add(loan.owner.toLowerCase());
     }
   }
-  if (rolled > 0 || declinedDust > 0) {
+  if (rolled > 0 || declinedDust > 0 || leftToClaim > 0) {
     console.log(
-      `[matcher] chain=${ctx.chainId} roll pass: ${rolled} loan(s) rolled, ${declinedDust} worth less than ${ROLL_MIN_VALUE_TO_GAS}x their gas left for their owners (${rollable.length} repaid candidate(s))`,
+      `[matcher] chain=${ctx.chainId} roll pass: ${rolled} loan(s) rolled, ${declinedDust} worth less than ${ROLL_MIN_VALUE_TO_GAS}x their gas left for their owners, ${leftToClaim} that settle through their owner's claim (${rollable.length} repaid candidate(s))`,
     );
   }
 }

@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {LibOfferMatchExecute} from "../src/libraries/LibOfferMatchExecute.sol";
@@ -1153,6 +1154,33 @@ contract LenderIntentMatchTest is SetupTest {
         );
         vm.prank(solver);
         vm.expectRevert(OfferMatchIntentFacet.LenderIntentFullTermRequired.selector);
+        OfferMatchIntentFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
+    // ── #2727 — a borrower offer with a lifecycle term the intent never
+    //    offered (here a periodic-interest cadence) is not filled from it ──
+    function test_previewIntent_lifecycleTermsMismatch_agrees() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("b1");
+        uint256 cp = _postBorrowerCustom(
+            b, PRINCIPAL, 2 * PRINCIPAL, MAX_DURATION, true, false
+        );
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(cp);
+        o.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.Monthly;
+        TestMutatorFacet(address(diamond)).setOffer(cp, o);
+
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok);
+        assertEq(uint8(r.intentError), uint8(LibOfferMatch.IntentError.Ok));
+        assertEq(
+            uint8(r.matchError),
+            uint8(LibOfferMatch.MatchError.LifecycleTermsMismatch)
+        );
+        vm.prank(solver);
+        vm.expectRevert(LibOfferMatchExecute.LifecycleTermsMismatch.selector);
         OfferMatchIntentFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
         );

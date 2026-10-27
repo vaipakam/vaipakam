@@ -648,7 +648,12 @@ contract Launch is Script {
     ///             the chain's bridged WETH9). The gate then refuses any
     ///             other;
     ///           - the feed registry: the artifact's `feedRegistry` (#2880),
-    ///             the only registry the Diamond may price through.
+    ///             the only registry the Diamond may price through;
+    ///           - the reward role (#2920): none when the artifact records
+    ///             no reward messenger (a `--skip-vpfi` deployment runs no
+    ///             rewards), otherwise Canonical on the reward base chain and
+    ///             Mirror elsewhere, by the chain-id rule
+    ///             `ConfigureRewardReporter` configures from.
     function declaredFromEnv(address diamond) public view returns (LibLaunchReadiness.Declared memory d) {
         d.tokenAdminRegistry = vm.envOr("CCIP_TOKEN_ADMIN_REGISTRY", address(0));
         d.vpfiPool = Deployments.readVpfiTokenPoolOptional();
@@ -669,6 +674,11 @@ contract Launch is Script {
         } catch {}
         d.mirrorToken = !Deployments.isCanonicalVpfiChainId(block.chainid);
         d.feedRegistry = Deployments.readFeedRegistryOptional();
+        d.rewardRole = Deployments.tryReadRewardMessenger() == address(0)
+            ? LibLaunchReadiness.RewardRoleIntent.None
+            : Deployments.isCanonicalRewardChainId(block.chainid)
+                ? LibLaunchReadiness.RewardRoleIntent.Canonical
+                : LibLaunchReadiness.RewardRoleIntent.Mirror;
     }
 
     /// @dev How a launch record names its gate: nothing for a plain unpause,
@@ -763,6 +773,15 @@ contract Launch is Script {
         console.log("        never the wrapped native token (OracleAdminFacet.setWethContract policy)");
         console.log("      feed registry (the artifact's feedRegistry):", declared.feedRegistry);
         console.log("        the chain's VaipakamFeedRegistry; its owner and veto are proven by the handover gate");
+        console.log(
+            declared.rewardRole == LibLaunchReadiness.RewardRoleIntent.Canonical
+                ? "      reward role: Canonical (the reward base chain)"
+                : declared.rewardRole == LibLaunchReadiness.RewardRoleIntent.Mirror
+                    ? "      reward role: Mirror"
+                    : declared.rewardRole == LibLaunchReadiness.RewardRoleIntent.None
+                        ? "      reward role: none (the artifact records no reward messenger; the Diamond must stay Unconfigured)"
+                        : "      reward role: NOT DECLARED (the gate reports it NOT CHECKED)"
+        );
         console.log("    handover - the governance state the launch is bound to:");
         console.log("      admin key, which must hold no role:", d.handover.deployKey);
         console.log("      Diamond owner:", d.handover.owner);

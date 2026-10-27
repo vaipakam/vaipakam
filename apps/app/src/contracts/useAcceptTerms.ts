@@ -37,13 +37,24 @@ import {
 } from '../lib/signedOffer';
 import { isAssetIlliquidLive, isMissingSelectorError } from './preflights';
 import { linkedOfferKind } from './linkedOfferKind';
+import {
+  illiquidAcknowledgements,
+  illiquidLegUnreviewed,
+  reviewedMismatches,
+  type ReviewedAcceptTerms,
+} from './acceptReview';
+import {
+  assertTokenScreenLive,
+  screenTargets,
+  type ReviewedTokenScreen,
+} from './acceptTokenScreen';
 
 const ACCEPT_DEADLINE_SECONDS = 30 * 60; // 30 minutes, matching the Permit2 window.
 
 // EIP-712 type for `AcceptTerms`. Field ORDER + types MUST match
 // `LibAcceptTerms.ACCEPT_TERMS_TYPEHASH` exactly (enums encoded as
 // `uint8`), or the recovered signature won't match on-chain.
-const ACCEPT_TERMS_TYPES = {
+export const ACCEPT_TERMS_TYPES = {
   AcceptTerms: [
     { name: 'acceptor', type: 'address' },
     { name: 'offerCreator', type: 'address' },
@@ -158,34 +169,18 @@ export function useAcceptTermsSigning() {
         blocked?: boolean;
         blockedReason?: 'unavailable' | 'ceiling';
       };
-      /** The terms the user REVIEWED (from the indexer row). Compared
-       *  against the canonical terms BEFORE the wallet is asked to
-       *  sign — the signature is the acknowledgement, so the user must
-       *  never sign terms that differ from what they reviewed, even if
-       *  the transaction would be aborted afterwards. Only provided
-       *  fields are compared. */
-      expected?: {
-        lendingAsset?: string;
-        collateralAsset?: string;
-        amount?: bigint;
-        interestRateBps?: bigint;
-        collateralAmount?: bigint;
-        durationDays?: number;
-        tokenId?: bigint;
-        prepayAsset?: string;
-        quantity?: bigint;
-        assetType?: number;
-        /** The interest MODE the review's copy described (full-term
-         *  floor vs pro-rata). It changes what an early repayment
-         *  costs, so a stale indexer flag must abort BEFORE the
-         *  wallet prompt like any other reviewed term. */
-        useFullTermInterest?: boolean;
-        /** True when the review DISCLOSED the in-kind (illiquid)
-         *  default path. Anything else (false OR omitted) makes the
-         *  signer re-read liquidity live and abort on an illiquid leg
-         *  — omission is the safe side, never a silent skip. */
-        illiquidWarned?: boolean;
-      };
+      /** #2725 — EVERY term the signature binds, as the review showed it,
+       *  and the legs it showed as illiquid (#2728). Compared in full
+       *  against the canonical terms BEFORE the wallet is asked to sign:
+       *  the signature is the acknowledgement, so the user must never sign
+       *  terms that differ from what they reviewed, even if the transaction
+       *  would be aborted afterwards. Required, so a review cannot leave a
+       *  bound term out of the comparison by omission. */
+      expected: ReviewedAcceptTerms;
+      /** #2726 — the token-security verdicts the review showed
+       *  (`useTokenScreen().reviewed`). Required, so no accept reaches the
+       *  wallet without the screen. */
+      screen: ReviewedTokenScreen;
     }): Promise<AcceptTermsPayload> => {
       if (!address || !walletChain) {
         throw new Error(copy.errors.walletConnectFirst);
@@ -516,12 +511,11 @@ export function useAcceptTermsSigning() {
         parallelSaleOrderHash: o.parallelSaleOrderHash as Hex,
         periodicInterestCadence: Number(o.periodicInterestCadence),
         riskAndTermsConsent: input.consent,
-        // Always acknowledge BOTH legs' assets — the contract reads the
-        // ack only for a leg it classifies illiquid; acknowledging both
-        // is correct consent AND robust against a leg going illiquid
-        // between signing and execution.
-        acknowledgedIlliquidLendingAsset: lendingAsset,
-        acknowledgedIlliquidCollateralAsset: collateralAsset,
+        // #2728 — acknowledge only the legs the review showed as illiquid.
+        // A leg that turns illiquid after signing then fails the contract's
+        // own check, so the accept is refused and reviewed again instead of
+        // passing on a consent the user never gave.
+        ...illiquidAcknowledgements(input.expected.illiquidLegs, lendingAsset, collateralAsset),
         nonce: randomNonce(),
         deadline: chainNow + BigInt(ACCEPT_DEADLINE_SECONDS),
         riskTermsHash,
@@ -530,64 +524,51 @@ export function useAcceptTermsSigning() {
         ...fullTariff,
       };
 
-      // The signed terms acknowledge BOTH assets as potentially
-      // illiquid — but the acknowledgement is only meaningful consent
-      // if the review disclosed the in-kind default path. Unless the
-      // caller POSITIVELY says the review warned (illiquidWarned:
-      // true), re-read liquidity live and abort before signing if a
-      // leg is illiquid — the re-review then shows the warning. The
-      // default is the SAFE side on purpose: a future caller that
-      // forgets the flag gets a loud abort on illiquid pairs, never a
-      // silently skipped disclosure. Reads fail CLOSED — an unknown
-      // must not sign as "liquid".
-      // Note: gated on the FLAG only, not on `expected` being present
-      // — a caller that omits expected entirely still gets the loud
-      // abort on an illiquid pair, never a silent skip.
-      if (input.expected?.illiquidWarned !== true) {
-        const [lendingIlliquid, collateralIlliquid] = await Promise.all([
-          isAssetIlliquidLive({
-            publicClient,
-            diamondAddress: diamondAddr,
-            asset: lendingAsset,
-            failClosed: true,
-          }),
-          isAssetIlliquidLive({
-            publicClient,
-            diamondAddress: diamondAddr,
-            asset: collateralAsset,
-            failClosed: true,
-          }),
-        ]);
-        if (lendingIlliquid || collateralIlliquid) {
-          throw new Error(copy.match.termsChanged);
-        }
+      // #2728 — a leg that reads illiquid NOW but was not shown as illiquid
+      // would be signed with no acknowledgement for it, and the in-kind
+      // default it brings was never disclosed. Abort before signing; the
+      // re-review, which reads liquidity live, then shows the warning. Reads
+      // fail CLOSED: an unknown must not sign as "liquid".
+      const [lendingIlliquid, collateralIlliquid] = await Promise.all([
+        isAssetIlliquidLive({
+          publicClient,
+          diamondAddress: diamondAddr,
+          asset: lendingAsset,
+          failClosed: true,
+        }),
+        isAssetIlliquidLive({
+          publicClient,
+          diamondAddress: diamondAddr,
+          asset: collateralAsset,
+          failClosed: true,
+        }),
+      ]);
+      if (
+        illiquidLegUnreviewed(input.expected.illiquidLegs, {
+          lending: lendingIlliquid,
+          collateral: collateralIlliquid,
+        })
+      ) {
+        throw new Error(copy.match.termsChanged);
       }
 
-      // Reviewed-vs-canonical comparison happens BEFORE the wallet is
-      // asked to sign — the signature IS the acknowledgement, so terms
-      // the user never reviewed must never receive one.
-      if (input.expected) {
-        const e = input.expected;
-        const mismatch =
-          (e.lendingAsset !== undefined &&
-            e.lendingAsset.toLowerCase() !== terms.lendingAsset.toLowerCase()) ||
-          (e.collateralAsset !== undefined &&
-            e.collateralAsset.toLowerCase() !== terms.collateralAsset.toLowerCase()) ||
-          (e.amount !== undefined && e.amount !== terms.amount) ||
-          (e.interestRateBps !== undefined && e.interestRateBps !== terms.interestRateBps) ||
-          (e.collateralAmount !== undefined && e.collateralAmount !== terms.collateralAmount) ||
-          (e.durationDays !== undefined && BigInt(e.durationDays) !== terms.durationDays) ||
-          (e.tokenId !== undefined && e.tokenId !== terms.tokenId) ||
-          (e.prepayAsset !== undefined &&
-            e.prepayAsset.toLowerCase() !== terms.prepayAsset.toLowerCase()) ||
-          (e.quantity !== undefined && e.quantity !== terms.quantity) ||
-          (e.assetType !== undefined && e.assetType !== terms.assetType) ||
-          (e.useFullTermInterest !== undefined &&
-            e.useFullTermInterest !== terms.useFullTermInterest);
-        if (mismatch) {
-          throw new Error(copy.match.termsChanged);
-        }
+      // #2725 — reviewed-vs-canonical comparison over EVERY reviewed field
+      // (`ACCEPT_TERMS_FIELD_SOURCE`), BEFORE the wallet is asked to sign —
+      // the signature IS the acknowledgement, so terms the user never
+      // reviewed must never receive one.
+      if (reviewedMismatches(input.expected, terms).length > 0) {
+        throw new Error(copy.match.termsChanged);
       }
+
+      // #2726 — the token screen, on the legs of the terms being signed: a
+      // blocked or unverifiable token refuses, and a warning passes only
+      // when the review showed that exact warning.
+      await assertTokenScreenLive({
+        chainId: walletChain.chainId,
+        targets: screenTargets(terms),
+        reviewed: input.screen,
+        queryClient,
+      });
 
       // AFTER the reviewed-vs-canonical comparison, deliberately (Codex #1700
       // r7): an amendment that raises the principal enough to cross the
@@ -707,6 +688,12 @@ export function useSignedOfferAcceptTermsSigning() {
   const sign = useCallback(
     async (input: {
       order: SignedOrderWire;
+      /** #2725 — every term the fill confirm SHOWED
+       *  (`reviewedTermsFromOrder` of the order it displayed). Compared in
+       *  full against the terms built from `order` before signing. */
+      reviewed: ReviewedAcceptTerms;
+      /** #2726 — the token-security verdicts the confirm showed. */
+      screen: ReviewedTokenScreen;
       /** The single mandatory risk-and-terms consent checkbox. */
       consent: boolean;
       /** #1355 — the TAKER's own Full VPFI tariff opt-in (see the
@@ -770,10 +757,10 @@ export function useSignedOfferAcceptTermsSigning() {
       }
 
       // The compact fill confirm has NO surface for the in-kind
-      // (illiquid) default disclosure — re-read liquidity live and
-      // abort on an illiquid leg, exactly the safe-side default the
-      // direct signer applies when the review didn't warn. Reads fail
-      // CLOSED — an unknown must not sign as "liquid".
+      // (illiquid) default disclosure, so it shows no leg as illiquid —
+      // re-read liquidity live and abort on a leg that reads illiquid,
+      // the same rule the direct signer applies. Reads fail CLOSED — an
+      // unknown must not sign as "liquid".
       const [lendingIlliquid, collateralIlliquid] = await Promise.all([
         isAssetIlliquidLive({
           publicClient,
@@ -788,7 +775,12 @@ export function useSignedOfferAcceptTermsSigning() {
           failClosed: true,
         }),
       ]);
-      if (lendingIlliquid || collateralIlliquid) {
+      if (
+        illiquidLegUnreviewed(input.reviewed.illiquidLegs, {
+          lending: lendingIlliquid,
+          collateral: collateralIlliquid,
+        })
+      ) {
         throw new Error(copy.desk.signed.illiquid);
       }
 
@@ -873,17 +865,31 @@ export function useSignedOfferAcceptTermsSigning() {
         parallelSaleOrderHash: ZERO_HASH,
         periodicInterestCadence: Number(o.periodicInterestCadence),
         riskAndTermsConsent: input.consent,
-        // Acknowledge BOTH legs — same rationale as the direct signer
-        // (the contract reads the ack only for a leg it classifies
-        // illiquid; both-acked is robust against a mid-flight flip).
-        acknowledgedIlliquidLendingAsset: lendingAsset,
-        acknowledgedIlliquidCollateralAsset: collateralAsset,
+        // #2728 — only the legs the confirm showed as illiquid (none: it
+        // has no surface for that disclosure, and an illiquid pair was
+        // refused above).
+        ...illiquidAcknowledgements(input.reviewed.illiquidLegs, lendingAsset, collateralAsset),
         nonce: randomNonce(),
         deadline: chainNow + BigInt(ACCEPT_DEADLINE_SECONDS),
         riskTermsHash,
         // #1355 — the taker's Full VPFI tariff opt-in (absent ⇒ non-Full).
         ...fullTariff,
       };
+
+      // #2725 — the confirm showed every term this signs.
+      if (reviewedMismatches(input.reviewed, terms).length > 0) {
+        throw new Error(copy.match.termsChanged);
+      }
+
+      // #2726 — the token screen, as on the direct accept. The signed-offer
+      // routes admit any ERC-20 pair, so this is what stops a fill against a
+      // token the screen blocks.
+      await assertTokenScreenLive({
+        chainId: walletChain.chainId,
+        targets: screenTargets(terms),
+        reviewed: input.screen,
+        queryClient,
+      });
 
       const signature = (await walletClient.signTypedData({
         account: address,

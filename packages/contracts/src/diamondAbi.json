@@ -706,6 +706,7 @@
 {"type":"error","name":"AssetMismatch","inputs":[]},
 {"type":"error","name":"CollateralBelowRequired","inputs":[]},
 {"type":"error","name":"DurationMismatch","inputs":[]},
+{"type":"error","name":"LifecycleTermsMismatch","inputs":[]},
 {"type":"error","name":"MatchHFTooLow","inputs":[]},
 {"type":"error","name":"OffsetVehicleNotMatchable","inputs":[]},
 {"type":"error","name":"RateNoOverlap","inputs":[]},

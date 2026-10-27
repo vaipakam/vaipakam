@@ -74,6 +74,9 @@ library LibOfferMatchExecute {
     error RateNoOverlap();
     error CollateralBelowRequired();
     error DurationMismatch();
+    /// @notice #2727 — the two offers differ on a lifecycle term the loan
+    ///         would carry; see `LibOfferMatch.MatchError.LifecycleTermsMismatch`.
+    error LifecycleTermsMismatch();
     error MatchHFTooLow();
     error VaultWithdrawFailed();
     /// @notice #576 — a refinance-tagged offer was passed to `matchOffers`.
@@ -234,6 +237,9 @@ library LibOfferMatchExecute {
             }
             if (mr.errorCode == LibOfferMatch.MatchError.DurationMismatch) {
                 revert DurationMismatch();
+            }
+            if (mr.errorCode == LibOfferMatch.MatchError.LifecycleTermsMismatch) {
+                revert LifecycleTermsMismatch();
             }
             if (mr.errorCode == LibOfferMatch.MatchError.HFTooLow) {
                 revert MatchHFTooLow();

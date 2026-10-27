@@ -837,6 +837,16 @@ uncommitted edits (or HEAD moved during the run), the stamp reads
 script warns when this happens. Re-run from a clean checkout before
 committing (keeper-bot#12 r1).
 
+**How the pre-deploy gate reports this repo (#1564).** `predeploy-check.sh`
+step 4 compares the bot's committed ABIs with the compiled ones and splits
+the difference (`contracts/script/lib/abi-drift.sh`): a changed function
+(selector, arguments, result, mutability) is a ⚠ warning, because the bot's
+calls may no longer match; a changed error or event list alone is a · note,
+because only revert and event decoding degrade. Every facet carries the whole
+shared error list, so that note appears after most contract PRs; it still
+means "sync before the next bot release", it just no longer hides the
+warning that means "the bot's calls are wrong".
+
 Skipping this sync ships a public bot whose ABI doesn't match
 deployed reality — the bot will revert in production with
 opaque "function selector not found" failures. Treat this sync
