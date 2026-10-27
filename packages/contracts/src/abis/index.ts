@@ -106,6 +106,7 @@ import RewardAggregatorFacetABI from './RewardAggregatorFacet.json';
 import RewardBroadcastFacetABI from './RewardBroadcastFacet.json';
 import RewardRemittanceFacetABI from './RewardRemittanceFacet.json';
 import RewardRemittanceLensFacetABI from './RewardRemittanceLensFacet.json';
+import RewardRemitDestinationFacetABI from './RewardRemitDestinationFacet.json';
 import RewardCompensationDispatchFacetABI from './RewardCompensationDispatchFacet.json';
 import RewardCommitmentFacetABI from './RewardCommitmentFacet.json';
 import RewardCustodyFacetABI from './RewardCustodyFacet.json';
@@ -258,6 +259,7 @@ export {
   RewardBroadcastFacetABI,
   RewardRemittanceFacetABI,
   RewardRemittanceLensFacetABI,
+  RewardRemitDestinationFacetABI,
   RewardCompensationDispatchFacetABI,
   RewardCommitmentFacetABI,
   RewardCustodyFacetABI,

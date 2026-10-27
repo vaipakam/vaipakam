@@ -550,6 +550,25 @@ surface stays inert.
       `getRewardChainRetirement()`). Then take the mirror off Base's
       expected-source list with `RewardAggregatorFacet.setExpectedSourceChainIds`,
       in a separate admin write. Retiring does not do that for you.
+      **The removal is irreversible for the mirror's unsent days (#2963).**
+      Every remit day of that mirror up to and including today is
+      abandoned: Base never sends it again, by the ordinary remit or the
+      manual-budget path, and the mirror's users lose it. The same write
+      releases what Base held for those days (a partly sent day's fresh
+      hold and unsent recycled commitment; an armed unsent day's
+      commitments) and emits `RemitAbandonedDayReleased` per day with the
+      figures. So first make sure every day you still mean to pay that
+      mirror is whole (`quoteRemitDayStatuses` reads `Remitted` or
+      `NothingOwed`). After the write, read
+      `RewardRemittanceLensFacet.getRemitDestinationRelease(<mirror chain id>)`:
+      the release is done when `releaseCursor` equals `abandonedBefore`.
+      It stops at the first unfinalized day (today, at least), so once
+      those days finalize, anyone runs
+      `RewardRemitDestinationFacet.continueRemitDestinationRelease(<chain id>, <max days>)`
+      until it is done. A day no listed chain ever reported holds the walk
+      until you `forceFinalizeDay` it. Putting the chain back on the list
+      is refused (`RemitDestinationReleasePending`) until the release is
+      done, and it is then paid only from the day after the removal.
 
 7. `ConfigFacet.setMirrorTierMaxAgeSec(<seconds>)` — cache
    staleness threshold (default 60 days; setter floor 30 days).

@@ -141,7 +141,14 @@ library LibVpfiRecycle {
         ///      absorption: it stays out of the day-bucketed `credited[d]`
         ///      feed and the first-time-absorption cumulative, and it never
         ///      reopens fresh headroom. refId is the SOURCE CHAIN id.
-        RetiredSurplusReturn
+        RetiredSurplusReturn,
+        /// @dev #2963 — release-only class (append-only enum): the recycled
+        ///      commitment an ABANDONED remit day still held toward a chain
+        ///      Base took off its expected-source list. Never a credit class:
+        ///      it tags {RewardCommitmentReleased}, refId is the DAY id (the
+        ///      chain is in `LibRemitDayLedger.RemitAbandonedDayReleased`, emitted with
+        ///      it).
+        RemitDestinationRemoved
     }
 
     /// @notice Emitted once per recycle-bucket credit — the on-chain feed

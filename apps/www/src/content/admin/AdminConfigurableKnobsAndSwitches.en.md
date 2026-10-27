@@ -1051,6 +1051,19 @@ dropping a chain id mid-flight for a day already in progress causes
 that day to finalize with a lower denominator. Treat this list as a
 topology change to be made between days, not during one.
 
+**Dropping a chain also ends Base's remittances to it (#2963).** Every
+remit day of the dropped chain up to and including today is abandoned:
+never sent to it again, by any path, and its users lose those days. The
+same write releases the pool room Base held for them and names each
+day's figures in `RemitAbandonedDayReleased`. The release walks days in
+order and stops at the first unfinalized one, so it usually finishes
+later through the permissionless
+`RewardRemitDestinationFacet.continueRemitDestinationRelease`. Until it is
+done, the setter refuses to list the chain again
+(`RemitDestinationReleasePending`); listed again, it is paid only from
+the day after the removal. Progress:
+`RewardRemittanceLensFacet.getRemitDestinationRelease(chainId)`.
+
 ### Repatriation endpoints (`repatriationEndpoints`, `repatriationTokenAdminRegistry`)
 
 Address wiring for the #1568 Mode-A planned-surplus repatriation

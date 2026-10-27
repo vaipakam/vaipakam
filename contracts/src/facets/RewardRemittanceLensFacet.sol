@@ -191,6 +191,22 @@ contract RewardRemittanceLensFacet {
         return LibVaipakam.storageSlot().remitDayLedger[chainId][dayId];
     }
 
+    /// @notice #2963 — where Base stands with a destination it took off its
+    ///         expected-source list. Every day before `abandonedBefore` is
+    ///         abandoned: never sent to `chainId` again, by any path. The walk
+    ///         has released what Base held for every day before
+    ///         `releaseCursor`; the release is unfinished while the cursor is
+    ///         below the bound, and the chain cannot be listed again until it
+    ///         is done. Both zero for a chain never removed.
+    function getRemitDestinationRelease(uint32 chainId)
+        external
+        view
+        returns (uint256 abandonedBefore, uint256 releaseCursor)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (s.remitAbandonedBefore[chainId], s.remitReleaseCursor[chainId]);
+    }
+
     /// @notice #918 — the live outbound VPFI CCIP lane bucket toward
     ///         `chainId`: how much one remittance part can move there right now.
     /// @dev    Resolved by the same rule the repatriation bounds enforce
@@ -246,8 +262,8 @@ contract RewardRemittanceLensFacet {
         return LibVaipakam.storageSlot().rewardBudgetRemittedGlobal;
     }
 
-    /// @notice #918 — fresh VPFI the 69M pool holds for partly sent
-    ///         pre-commitment (unarmed) remit days: what those days still owe
+    /// @notice #918 — fresh VPFI the 69M pool holds for partly sent remit
+    ///         days, armed or not (Codex #2959 r3): what those days still owe
     ///         their mirrors and have already reserved. The pool's hard
     ///         headroom counts it as used alongside Base's payouts and
     ///         {getRewardBudgetRemittedGlobal}, so a day sent in parts holds

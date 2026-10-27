@@ -29,6 +29,7 @@ import {
 import {MockRewardMessenger} from "../mocks/MockRewardMessenger.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
+import {RewardRemitDestinationFacet} from "../../src/facets/RewardRemitDestinationFacet.sol";
 
 /**
  * @title  MeshLedgerInvariant
@@ -150,7 +151,7 @@ contract MeshLedgerInvariant is Test {
         InteractionRewardsLensFacet lens = InteractionRewardsLensFacet(ArtifactDeploy.deploy(type(InteractionRewardsLensFacet).name));
         RepatriationFacet repatFacet = RepatriationFacet(ArtifactDeploy.deploy(type(RepatriationFacet).name));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](10);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](11);
         cuts[0] = _cut(address(ac), helper.getAccessControlFacetSelectors());
         cuts[1] = _cut(address(admin), helper.getAdminFacetSelectors());
         cuts[2] = _cut(address(vpfiFacet), helper.getVPFITokenFacetSelectors());
@@ -176,6 +177,11 @@ contract MeshLedgerInvariant is Test {
         // authorization draw the SS7 #6 second term bounds.
         cuts[8] = _cut(
             address(repatFacet), helper.getRepatriationFacetSelectors()
+        );
+        // #2963 — `setExpectedSourceChainIds` self-calls this facet's hook.
+        cuts[10] = _cut(
+            ArtifactDeploy.deploy(type(RewardRemitDestinationFacet).name),
+            helper.getRewardRemitDestinationFacetSelectors()
         );
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 

@@ -24,7 +24,9 @@ const FUNCTION_DOES_NOT_EXIST_SELECTOR = '0xa9ad62f8';
 /** `LibRemitDayLedger.RemitDayStatus`, in declaration order (the ABI carries
  *  the enum as a `uint8`). `remitDayStatus.test.ts` pins this list to the
  *  contract's own declaration. `Partial` (#918): the day acts, but the part
- *  this cap allows leaves it still owing the rest. */
+ *  this cap allows leaves it still owing the rest. `Abandoned` (#2963): Base
+ *  took this mirror off its expected-source list after the day, so the day is
+ *  never sent; settled, as lost, and not owed. */
 export const REMIT_DAY_STATUSES = [
   'NotFinalized',
   'Repeated',
@@ -36,6 +38,7 @@ export const REMIT_DAY_STATUSES = [
   'Unbacked',
   'Closeable',
   'Partial',
+  'Abandoned',
 ] as const;
 export type RemitDayStatus = (typeof REMIT_DAY_STATUSES)[number];
 

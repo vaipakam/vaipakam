@@ -8225,6 +8225,24 @@ library LibVaipakam {
         ///      `RepatriationFacet.onRetiredSurplusReturnReceived`. Base-only.
         ///      Appended — append-only.
         mapping(uint32 => uint256) chainRetiredSurplusReturned;
+        /// @dev #2963 — per destination, the first day NOT abandoned (exclusive
+        ///      bound; 0 = none). Taking a chain off Base's expected-source
+        ///      list abandons every day of it before the day after the removal:
+        ///      no remit or compensation day below the bound is ever sent to
+        ///      it again, and the pool room Base held for those days is
+        ///      released by the walk below. Only raised, never lowered, so a
+        ///      day once abandoned stays abandoned after the chain is re-listed.
+        ///      Written only by `LibRemitDayLedger.abandonDestination`.
+        ///      Base-only. Appended — append-only.
+        mapping(uint32 => uint256) remitAbandonedBefore;
+        /// @dev #2963 — per destination, the first day the release walk has NOT
+        ///      yet released. Every day below it is abandoned and released;
+        ///      the walk stops at the first unfinalized day and at the bound.
+        ///      While it is below `remitAbandonedBefore`, the release is
+        ///      unfinished and the chain cannot be re-listed. Written only by
+        ///      `LibRemitDayLedger.walkAbandoned`. Base-only. Appended —
+        ///      append-only.
+        mapping(uint32 => uint256) remitReleaseCursor;
     }
 
     /// @notice #918 — one (destination, day)'s remit ledger on Base. See

@@ -196,6 +196,12 @@ contract RewardCompensationDispatchFacet is
         if (LibRemitDayLedger.hasLedger(s, dstChainId, dayId)) {
             revert RemitDayPartlySent(dayId, dstChainId);
         }
+        // #2963 — a day of a chain Base took off its expected-source list is
+        // never sent to it again, by this path either: the chain's users lose
+        // it, and nothing of the 69M pool is spent on it.
+        if (LibRemitDayLedger.isAbandoned(s, dstChainId, dayId)) {
+            revert RemitDayAbandoned(dayId, dstChainId);
+        }
         address vpfi = s.vpfiToken;
         if (vpfi == address(0)) revert VPFITokenNotSet();
         address messenger = s.crossChainMessenger;
@@ -932,6 +938,9 @@ contract RewardCompensationDispatchFacet is
         // days carry a ledger. Its armed days' fresh commitments became their
         // pool hold at their first part, so none is restored below.
         bool ledgerRemit;
+        // #2963 — the recycled commitment this reservation retired on days the
+        // abandoned-day walk had already released: it stays retired.
+        uint256 notRestored;
         for (uint256 i; i < n; ) {
             uint256 d = closed[i];
             if (LibRemitDayLedger.hasLedger(s, dst, d)) {
@@ -940,7 +949,7 @@ contract RewardCompensationDispatchFacet is
                 // day's close markers go whenever it is no longer whole,
                 // whichever part set them.
                 bool own = funded && i == fundedAt;
-                LibRemitDayLedger.releasePart(
+                notRestored += LibRemitDayLedger.releasePart(
                     s, dst, d, remitId, own ? r.fresh : 0, own ? r.recycled : 0
                 );
             } else if (s.dayClosedByRemitId[dst][d] == remitId) {
@@ -1001,7 +1010,11 @@ contract RewardCompensationDispatchFacet is
         // commitment as well would hold the same fresh twice, with nothing
         // left to retire it (#918, Codex #2959 r3).
         if (!ledgerRemit) LibInteractionRewards.restoreArmedFresh(r.armedFreshFull);
-        r.strandedRecycled = LibVpfiRecycle.restoreReleasedRemit(r.recycledFull, r.recycled, remitId);
+        // The take reversal (`r.recycled`) is about the tokens and runs in
+        // full; only the commitment restore leaves out the walked days.
+        r.strandedRecycled = LibVpfiRecycle.restoreReleasedRemit(
+            r.recycledFull - notRestored, r.recycled, remitId
+        );
         emit RemitReservationReleased(
             remitId, dst, r.total, r.fresh, r.recycled
         );

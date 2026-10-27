@@ -11,6 +11,7 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IRewardMessenger, ChainDayReport} from "../interfaces/IRewardMessenger.sol";
+import {RewardRemitDestinationFacet} from "./RewardRemitDestinationFacet.sol";
 
 /**
  * @title RewardAggregatorFacet
@@ -1767,6 +1768,17 @@ contract RewardAggregatorFacet is
     ///      with the mirror deployments; dropping a chain id for a given
     ///      day mid-flight causes that day to finalize with a lower
     ///      denominator.
+    ///
+    ///      #2963 — dropping a chain is also the END of Base's remittances to
+    ///      it for every day up to and including today: those days are
+    ///      abandoned, never sent by any path, and the pool room Base held for
+    ///      them (each locked day's unsent fresh, each armed day's
+    ///      commitments) is released in this write, day by day with an event
+    ///      naming each day's figures. The chain's users lose those days.
+    ///      Irreversible for those days: listing the chain again pays it from
+    ///      the day after the removal only, and is refused while the release
+    ///      of its abandoned days is unfinished
+    ///      (`RewardRemitDestinationFacet.continueRemitDestinationRelease`).
     /// @param chainIds Full replacement list of expected source chain ids.
     function setExpectedSourceChainIds(
         uint32[] calldata chainIds
@@ -1776,6 +1788,11 @@ contract RewardAggregatorFacet is
         // every day without `Base`'s own interest, irreversibly. Refused here;
         // `finalizeDay` refuses one too, for a list stored before this check.
         if (chainIds.length == 0 || !_listsSelf(chainIds)) revert ExpectedSourceListUnusable();
+        // #2963 — before the list is rewritten (the hook reads the old one):
+        // every chain dropped has its remit days abandoned and the pool room
+        // Base held for them released, and a chain added back is refused
+        // while its last removal's release is unfinished.
+        _onExpectedSourceListChange(chainIds);
         uint256 len = s.expectedSourceChainIds.length;
         // Pop existing, then push new — `delete s.expectedSourceChainIds`
         // does not recursively clear dynamic arrays in Diamond storage
@@ -1812,6 +1829,26 @@ contract RewardAggregatorFacet is
             }
         }
         emit ExpectedSourceChainIdsUpdated(chainIds);
+    }
+
+    /// @dev #2963 — the remit side of a list change, on the remittance facet
+    ///      (Diamond self-call). The rethrow is written here, annotated, rather
+    ///      than through `LibRevert`: an unannotated assembly block anywhere in
+    ///      this facet withholds the memory guard from all of it, and its
+    ///      finalize frame sits at the viaIR stack ceiling. The block only
+    ///      reads `ret`, a `bytes memory` it already holds, within its bounds.
+    function _onExpectedSourceListChange(uint32[] calldata chainIds) private {
+        // slither-disable-next-line low-level-calls
+        (bool ok, bytes memory ret) = address(this).call(
+            abi.encodeWithSelector(
+                RewardRemitDestinationFacet.onExpectedSourceListChange.selector, chainIds
+            )
+        );
+        if (ok) return;
+        if (ret.length == 0) revert RemitDestinationReleaseFailed();
+        assembly ("memory-safe") {
+            revert(add(ret, 0x20), mload(ret))
+        }
     }
 
     /// @dev Whether `chainIds` carries this chain's own id.

@@ -306,6 +306,7 @@ FACETS=(
   "RewardBroadcastFacet"
   "RewardRemittanceFacet"
   "RewardRemittanceLensFacet"
+  "RewardRemitDestinationFacet"
   "RewardCompensationDispatchFacet"
   "RewardCommitmentFacet"
   "RewardCustodyFacet"
