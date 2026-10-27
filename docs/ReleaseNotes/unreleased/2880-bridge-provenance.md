@@ -1,4 +1,4 @@
-## Feed bindings: bridged tokens proved from the canonical bridge (PR #TBD)
+## Feed bindings: bridged tokens proved from the canonical bridge (PR #2965)
 
 The feed-bindings drafting tool resolves which token a price feed means from
 three independent lists, and drafts a binding only where all three name the
