@@ -1849,8 +1849,7 @@ contract SetupTest is Test {
     /// @dev Runs the per-chain activation ceremony the way the ceremony script
     ///      does, on a Diamond whose reward role is ALREADY configured (the
     ///      freeze arms at activation, so configure first): manual pause →
-    ///      bind the holder if unbound → consume the paid-side rebase with
-    ///      zero if not consumed → re-record the complete cut (a suite's
+    ///      bind the holder if unbound → re-record the complete cut (a suite's
     ///      own mock cuts change the routed set) → activate at the live
     ///      pause epoch →
     ///      unpause. Then funds the pool through the registered writer when
@@ -1869,9 +1868,6 @@ contract SetupTest is Test {
         (, , , uint64 epoch) = LibPausable.decodePausableSlot(
             vm.load(address(diamond), LibPausable.PAUSABLE_STORAGE_POSITION)
         );
-        if (!custody.armedFreshPaidRebased()) {
-            custody.rebaseArmedFreshPaid(0, epoch);
-        }
         custody.stampRewardCustodyCutover();
         custody.activateRewardCustody(epoch, false);
         admin.unpause();

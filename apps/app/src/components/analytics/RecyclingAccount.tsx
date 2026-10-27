@@ -191,7 +191,6 @@ function AccountBody({
   // that badge: a caveat whose condition is absent is noise a reader has
   // to rule out (TokenomicsTechSpec — caveats only where they hold).
   const anyEstimate = daily.some((d) => d.estimate);
-  const anyRecomputed = daily.some((d) => d.origin === 'backfill');
   // The drawn figure's limits describe a drawn figure, so they are shown
   // only while one is on screen: the programme-wide drawn total (global
   // scope) or a committed day's drawn cell. On a local-only or empty
@@ -358,11 +357,6 @@ function AccountBody({
           {copy.recycling.footnoteEstimate}
         </p>
       )}
-      {anyRecomputed && (
-        <p className="an-note" data-testid="recycling-footnote-recomputed">
-          {copy.recycling.footnoteRecomputed}
-        </p>
-      )}
       {/* Always true: every section above has figure cells, and every one
           of them follows these two rules. */}
       <p className="an-note" data-testid="recycling-footnote-cells">
@@ -402,8 +396,6 @@ function runwayText(c: RecyclingCumulative, locale: string | undefined): string 
   switch (c.runwayUnavailableReason) {
     case 'no-armed-finalized-days':
       return copy.recycling.runwayNoArmedDays;
-    case 'backfilled-mirror-absorption-not-decomposable':
-      return copy.recycling.runwayBackfilledMirror;
     case 'attribution-column-unavailable':
       return copy.recycling.runwayAttributionRebuilding;
     case null:
@@ -476,13 +468,6 @@ function DayRow({
         {d.estimate && (
           <span className="badge badge-warn" data-testid={`estimate-${d.dayId}`}>
             {copy.recycling.estimateBadge}
-          </span>
-        )}
-        {/* A recomputed row was captured later, from state a role handover
-            can rewrite — not recorded as it happened. */}
-        {d.origin === 'backfill' && (
-          <span className="badge badge-neutral" data-testid={`recomputed-${d.dayId}`}>
-            {copy.recycling.recomputedBadge}
           </span>
         )}
       </th>

@@ -146,6 +146,10 @@ describe('parseRecyclingSeries — the series', () => {
     ['a non-finite runway', series({ cumulative: { ...series().cumulative, runwayExtensionDays: Infinity } })],
     ['a non-array daily', series({ daily: {} })],
     ['a fractional day id', series({ daily: [day({ dayId: 1.5 })] })],
+    // #2937 retired the recomputed backfill: every stored day is event-derived,
+    // so no indexer serves this provenance any more.
+    ['the retired backfill origin', series({ daily: [day({ origin: 'backfill' })] })],
+    ['an unknown origin', series({ daily: [day({ origin: 'getter' })] })],
   ])('refuses the whole series for %s', (_why, raw) => {
     expect(parseRecyclingSeries(raw)).toBeNull();
   });

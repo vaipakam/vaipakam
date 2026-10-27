@@ -239,36 +239,6 @@ interface IVaipakamErrors {
     /// @param available Remaining delivered-less-paid allowance.
     error DeliveredFreshShortfall(uint256 needed, uint256 available);
 
-    /// @notice #1434 P1-b (Codex #1699 r2) — the one-shot pre-P1-b paid-side
-    ///         migration seed has already run on this chain.
-    /// @dev    One-shot on purpose: the seed ADDS to the paid counter, so a
-    ///         second call would double-charge the bound and strand funding.
-    error ArmedFreshPaidAlreadySeeded();
-
-    /// @notice #1566 slice 4 PR A — the one-shot paid-side rebase
-    ///         (`rebaseArmedFreshPaid`) has already run on this chain.
-    /// @dev    One-shot because it installs an ABSOLUTE figure and, on the
-    ///         canonical chain, resets `received` to it: a second call could
-    ///         only lower delivered headroom that has since been earned.
-    error ArmedFreshPaidAlreadyRebased();
-    /// @notice #1566 slice 4 PR A (Codex #2158 r11 P1) — the reconstructed
-    ///         paid total offered to the one-shot rebase exceeds the
-    ///         interaction pool's lifetime cap. No honest history can be
-    ///         larger than everything that can ever be rewarded, and a
-    ///         mistyped value would be installed irreversibly — as `paid`,
-    ///         and on the canonical chain as `received` — with no way left
-    ///         to lower it.
-    /// @param total The total offered.
-    /// @param cap   The pool cap it must not exceed.
-    error ArmedFreshRebaseTotalExceedsCap(uint256 total, uint256 cap);
-    /// @notice #1566 slice 4 PR A (Codex #2158 r13 P1) — the additive P1-b
-    ///         seed would push the paid counter above the interaction pool's
-    ///         lifetime cap. The seed is the one writer that could install an
-    ///         impossible paid figure ahead of the rebase; bounding it keeps
-    ///         `paid` inside what can ever be rewarded.
-    /// @param resulting The paid counter the seed would produce.
-    /// @param cap       The pool cap it must not exceed.
-    error ArmedFreshSeedExceedsCap(uint256 resulting, uint256 cap);
     /// @notice #1566 slice 4 PR A (Codex #2158 r13 P2) — the address offered
     ///         to a custody sweep is not a holder this Diamond CONSTRUCTED.
     ///         Every holder the Diamond creates (the first and every
@@ -276,20 +246,6 @@ interface IVaipakamErrors {
     ///         arbitrary contract could imitate is never consulted.
     /// @param holder The address offered.
     error RewardCustodyHolderNotConstructedHere(address holder);
-    /// @notice #1566 slice 4 PR A (Codex #2158 r1 P2, r5 P1) — the paid-side
-    ///         rebase was called on an inactive reward role (`Unconfigured`
-    ///         or `Detached`) on a chain that is not history-free: something
-    ///         to import, or something already on the paid OR received side.
-    ///         The role decides whether the received-side baseline is
-    ///         installed, so a one-shot run before the role is known would
-    ///         close the door on state the later role needs levelled. Only a
-    ///         chain with all three at zero may consume the guard while
-    ///         inactive — the fresh-deploy case.
-    /// @param role           The resolved role ordinal.
-    /// @param total          The total offered.
-    /// @param paidBefore     The paid counter as found.
-    /// @param receivedBefore The received counter as found.
-    error ArmedFreshRebaseRequiresActiveRole(uint8 role, uint256 total, uint256 paidBefore, uint256 receivedBefore);
     /// @notice #1566 slice 4 PR A — the custody holder is already bound;
     ///         binding is one-shot and changes only through the paused
     ///         replacement ceremony.
@@ -382,18 +338,6 @@ interface IVaipakamErrors {
     ///         under one would leave a resolving record unable to pay and
     ///         unable to unwind. Settle or unwind the records first.
     error RewardRoleChangeBlockedByStagedRecords(uint256 encumbered);
-    /// @notice #1566 slice 4 PR A (Codex #2158 r27 P1) — the rebase was called
-    ///         with a pause epoch that is not the live one: the figure was
-    ///         established under a different pause (or none), and a payout in
-    ///         between may be missing from it.
-    /// @param stated The pause epoch the caller established the figure at.
-    /// @param live   The pause library's current transition count.
-    error ArmedFreshRebaseStalePauseEpoch(uint64 stated, uint64 live);
-    /// @notice #1566 slice 4 PR A (Codex #2158 r29 P1) — the seed's twin of
-    ///         the rebase's stale-epoch refusal.
-    /// @param stated The pause epoch the caller established the figure at.
-    /// @param live   The pause library's current transition count.
-    error ArmedFreshSeedStalePauseEpoch(uint64 stated, uint64 live);
     /// @notice #1566 slice 4 PR A (Codex #2158 post-cap P2) — the ERC-721
     ///         sweep was asked to recover a token the named holder does not
     ///         own, so there is nothing to recover from it.
@@ -463,11 +407,6 @@ interface IVaipakamErrors {
     ///         bind to and keeps the Diamond-custody column forever.
     /// @param role The resolved {LibVaipakam.RewardRole} ordinal.
     error RewardCustodyActivationRequiresConfiguredRole(uint8 role);
-    /// @notice #1566 slice 4 PR B — activation requires the one-shot paid-side
-    ///         rebase to have run (a fresh deploy consumes it at deploy; a
-    ///         live chain's refresh runs it), so the baseline it verifies is
-    ///         the one the rebase installed.
-    error RewardCustodyActivationRequiresRebase();
     /// @notice #1566 slice 4 PR B (Codex #2186 r4, r5) — activation, or a
     ///         bootstrap write, was attempted on a deployment whose ROUTING
     ///         (every facet with the selectors it serves) is not the one a
@@ -515,8 +454,8 @@ interface IVaipakamErrors {
     error ReconciliationPacketReserved(bytes32 packetHash, uint256 reserved);
     /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r3) — the evidence
     ///         rule: an entry's fresh side would exceed its authenticated
-    ///         fresh figure (a packet's transport-attested remainder split;
-    ///         the envelope's replacement-funded fresh). Fresh is the
+    ///         fresh figure (the packet's transport-attested remainder
+    ///         split). Fresh is the
     ///         privileged direction; without evidence, value classifies
     ///         recycled or stays.
     error ReconciliationFreshUnevidenced(bytes32 key, uint256 cumulativeFresh, uint256 authenticated);
@@ -657,13 +596,6 @@ interface IVaipakamErrors {
     ///         fresh twin of the uncommitted-bucket bound: what an armed day
     ///         reserved stays in the row for its claims.
     error ReconciliationExceedsUncommittedLive(uint256 requested, uint256 uncommitted);
-    /// @notice The envelope under this snapshot id was already imported.
-    error LegacyEnvelopeAlreadyImported(bytes32 snapshotId);
-    /// @notice The stated dispositions do not resolve the envelope exactly.
-    error LegacyEnvelopeMismatch(bytes32 snapshotId, uint256 stated, uint256 netTotal);
-    /// @notice The envelope nets to nothing: there is no pre-stamp inventory
-    ///         to import.
-    error LegacyEnvelopeEmpty(bytes32 snapshotId);
     /// @notice #1566 slice 4 PR B — the pause epoch the operator established
     ///         the activation figures under is no longer the live one.
     /// @param stated The epoch stated by the caller.
@@ -678,8 +610,8 @@ interface IVaipakamErrors {
     /// @param held     What the row holds.
     error RewardCustodyRowUnbacked(uint8 row, uint256 required, uint256 held);
     /// @notice #1566 slice 4 PR B — the canonical chain's paid-side baseline
-    ///         (`received == paid`, installed by the rebase) does not hold at
-    ///         activation.
+    ///         (`received == paid`, which a fresh deploy starts at) does not
+    ///         hold at activation.
     error RewardCustodyBaselineNotVerified(uint256 received, uint256 paid);
     /// @notice #1566 slice 4 PR B — the holder's balance cannot be read at
     ///         activation, so the rows cannot be verified against it.
@@ -717,13 +649,6 @@ interface IVaipakamErrors {
     /// @param requested The credit asked for.
     /// @param room      `figure − row`, what the row may still receive.
     error RewardCustodyBootstrapExceedsLedger(uint8 row, uint256 requested, uint256 room);
-    /// @notice #1566 slice 4 PR B (Codex #2186 r3) — a bootstrap writer was
-    ///         called before the paid-side rebase ran. The rows are backed
-    ///         against ledger figures the rebase finalises — `received −
-    ///         paid` most directly, since the rebase only ever RAISES
-    ///         `paid` — and a credit made before it can be left above the
-    ///         figure the rebase leaves, which activation refuses.
-    error RewardCustodyBootstrapRequiresRebase();
     /// @notice #1566 slice 4 PR B (Codex #2186 r3) — a bootstrap release
     ///         asked for more than the row holds ABOVE its ledger figure.
     ///         The release reconciles a row a moved figure left over-backed;
@@ -1748,7 +1673,8 @@ interface IVaipakamErrors {
     error DeliveryProofNotBudget(bytes32 packetHash, uint8 kind);
     /// @notice #1944 c1 — the packet's value was disposed of (returned / released), so it funds no day here.
     error DeliveryPacketDisposed(bytes32 packetHash, uint256 disposed);
-    /// @notice A d6 delivery held as its own epoch needs a split that accounts for the whole delivery (3d-1).
+    /// @notice A d6 delivery needs a split that accounts for the whole delivery: held as its own epoch (3d-1)
+    ///         and, since #2910, on the typed-ledger path before activation too.
     error TransportSplitNotWhole(bytes32 packetHash, uint256 fresh, uint256 recycled, uint256 amount);
     /// @notice The domain under `domainKey` is not in the phase this entry
     ///         needs (A2-ii).

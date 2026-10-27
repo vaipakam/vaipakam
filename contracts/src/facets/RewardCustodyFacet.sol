@@ -35,11 +35,11 @@ import {RewardCustodyHolder} from "../RewardCustodyHolder.sol";
  *     so the invariant "attributed never exceeds held" is observable — and
  *     the surface says when the balance CANNOT be read rather than
  *     rendering zero.
- *  3. **`rebaseArmedFreshPaid`** — the paid-side importer §5b requires for a
- *     chain carrying history the vintage-blind ledger (#1566 closure 2) now
- *     charges. Paused, ADMIN, one-shot, a FLOOR rather than a set, and on the
- *     canonical chain it installs the zero-headroom baseline
- *     `received = paid` in the same call.
+ *
+ *     (A third entry, the one-shot paid-side rebase for a chain carrying
+ *     pre-closure-2 payout history, was retired in #2910: every chain reaches
+ *     this build by a fresh deploy, whose paid and received counters start at
+ *     zero and have tracked every payout since.)
  *
  * **This PR is deployable dark.** No payout, gate or funding path reads the
  * holder or the rows yet, and no PROTOCOL writer can fund the holder; PR B's
@@ -61,12 +61,11 @@ import {RewardCustodyHolder} from "../RewardCustodyHolder.sol";
  * the bound holder through {recoverVpfiFromPredecessor} (Codex #2158 r14
  * P2), where it shows as the unattributed remainder.
  *
- * @dev Why a separate facet rather than a corner of `RewardReporterFacet`
- *      (which hosts the older one-shot seeder): the reporter is a cross-chain
- *      ingress surface at EIP-170 budget, and custody lifecycle is a
- *      different concern with a different reviewer — a paused ceremony an
- *      operator runs, not a message a messenger delivers. The seeder stays
- *      where it is; the rebase consumes its guard from here.
+ * @dev Why a separate facet rather than a corner of `RewardReporterFacet`:
+ *      the reporter is a cross-chain ingress surface at EIP-170 budget, and
+ *      custody lifecycle is a different concern with a different reviewer —
+ *      a paused ceremony an operator runs, not a message a messenger
+ *      delivers.
  */
 contract RewardCustodyFacet is DiamondAccessControl {
     // ─── Events ─────────────────────────────────────────────────────────────
@@ -190,28 +189,6 @@ contract RewardCustodyFacet is DiamondAccessControl {
         address indexed treasury,
         uint256 requested,
         uint256 received
-    );
-
-    /// @notice The delivered-fresh ledger's paid side was rebased to an
-    ///         absolute total (and, on the canonical chain, the received side
-    ///         to the same figure).
-    /// @param role              The reward role resolved at the call, as
-    ///                          {LibVaipakam.RewardRole} ordinal — it decides
-    ///                          whether the received side was rewritten.
-    /// @param requestedTotal    The total the operator reconstructed.
-    /// @param paidBefore        The paid counter before the call.
-    /// @param paidAfter         `max(paidBefore, requestedTotal)`.
-    /// @param receivedBefore    The received counter before the call.
-    /// @param receivedAfter     Equal to `paidAfter` on the canonical chain,
-    ///                          unchanged elsewhere.
-    /// @custom:event-category state-change/reward-compensation
-    event ArmedFreshPaidRebased(
-        uint8 role,
-        uint256 requestedTotal,
-        uint256 paidBefore,
-        uint256 paidAfter,
-        uint256 receivedBefore,
-        uint256 receivedAfter
     );
 
     // ─── Holder lifecycle ───────────────────────────────────────────────────
@@ -568,145 +545,6 @@ contract RewardCustodyFacet is DiamondAccessControl {
         emit RewardCustodyUnattributedVpfiSwept(bound, treasury, amount, unattributed);
     }
 
-    // ─── Paid-side migration importer ───────────────────────────────────────
-
-    /**
-     * @notice ONE-SHOT, PAUSED migration (the MANUAL pause — an auto-pause
-     *         window does not qualify, Codex #2158 r18 P2): rebase the delivered-fresh ledger's
-     *         paid side to an absolute reconstructed total, never below what
-     *         it already holds, and on the canonical chain set the received
-     *         side to the same figure.
-     * @dev    Why this exists next to `seedArmedFreshPaid` (design §5c):
-     *         the seeder is additive and one-shot, and on a live mirror it
-     *         may already have been consumed by the P1-b migration — so it
-     *         cannot serve a chain whose paid history #1566 closure 2 just
-     *         widened (every vintage is now charged, not only coordinated-mode
-     *         days). Reconciling an absolute total needs a SET with a FLOOR:
-     *         importing a total on top of an existing counter double-counts;
-     *         importing below it would republish delivered headroom that an
-     *         earlier administrative retirement had already withdrawn.
-     *
-     *         `total` is the DEDUPLICATED sum of every genuine historical
-     *         fresh outflow the vintage-blind ledger now charges — per-user
-     *         payouts, expiry and forfeit absorptions, and the fresh portions
-     *         of every non-recovery remittance and compensation dispatch —
-     *         with recovery redispatches excluded. Any existing counter or
-     *         retirement watermark is a FLOOR applied here, not a term to add
-     *         off-chain: 60 of payouts followed by a retirement at 100 is
-     *         `total = 100`, and `max` keeps it there.
-     *
-     *         On the CANONICAL chain the received side is set to the
-     *         resulting paid figure — the zero-headroom baseline. With no
-     *         provenance ledger to bootstrap from, this is the only call a
-     *         canonical deployment has to bring `received` up from zero;
-     *         without it the chain would sit at `paid = P, received = 0`,
-     *         negative headroom, swallowing every later delivery until
-     *         funding exceeded `P`. A MIRROR's received side is the messenger's
-     *         to write and is left alone.
-     *
-     *         On an INACTIVE role (`Unconfigured`, `Detached`) the call is
-     *         accepted only when the chain is HISTORY-FREE on every side:
-     *         nothing to import, nothing on the paid side and nothing on the
-     *         received side (`total == 0 && paid == 0 && received == 0`).
-     *         That is the fresh-deploy case, which consumes both guards so
-     *         neither migration writer can ever run on a chain with no
-     *         history. Anything else on an inactive role is REFUSED (Codex
-     *         #2158 r1 P2, r5 P1): the role decides whether the received side
-     *         is rewritten, and a one-shot that ran before the role was
-     *         known would close the door on state the later role needs
-     *         levelled — a raised `paid` without its baseline, or a
-     *         pre-role-field chain detached before residual retirement
-     *         (`received > 0`, `paid == 0`) that a direct promotion to
-     *         Canonical would otherwise expose as spendable headroom with
-     *         no way left to install `received = paid`. A detached chain
-     *         carrying history on either side therefore keeps its guard
-     *         OPEN until it is re-attached and the rebase runs under the
-     *         active role.
-     *
-     *         Consumes {LibVaipakam.Storage.armedFreshPaidSeeded} as well as
-     *         its own guard: if the P1-b seeder never ran, it would otherwise
-     *         remain callable and a stale migration call would ADD historical
-     *         paid value on top of the absolute total just installed — a
-     *         one-way loss of delivered headroom that arrives after the
-     *         one-shot rebase can no longer correct it.
-     *
-     *         Direction of error, so an operator chooses deliberately: too
-     *         LOW re-opens a double-spend; too HIGH strands legitimate funding
-     *         until further deliveries arrive (recoverable, the conservative
-     *         side). Prefer the high estimate when uncertain — but never
-     *         above the interaction pool's lifetime cap, which the call
-     *         refuses: nothing honest can have paid out more than can ever
-     *         be rewarded, and a mistyped figure would be irreversible.
-     * @param  total      The reconstructed absolute paid total.
-     * @param  pauseEpoch The pause epoch — the pause library's transition
-     *                    count — at which the caller established `total`
-     *                    under the manual pause. The call refuses unless it
-     *                    is still the live epoch (Codex #2158 r26/r27 P1): a
-     *                    figure reconstructed from a live chain, or under a
-     *                    pause that was lifted and re-applied since, may omit
-     *                    a payout the old counter never charged, and this
-     *                    one-shot would seal it. The contract holds the rule
-     *                    so no tooling can pair a stale answer with a fresh
-     *                    pause.
-     */
-    function rebaseArmedFreshPaid(
-        uint256 total,
-        uint64 pauseEpoch
-    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
-        LibPausable.requireManuallyPaused();
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.armedFreshPaidRebased) {
-            revert IVaipakamErrors.ArmedFreshPaidAlreadyRebased();
-        }
-        uint64 liveEpoch = LibPausable.pauseTransitions();
-        if (pauseEpoch != liveEpoch) {
-            revert IVaipakamErrors.ArmedFreshRebaseStalePauseEpoch(pauseEpoch, liveEpoch);
-        }
-        // Bounded to what can ever be rewarded (Codex #2158 r11 P1): the
-        // call is one-shot and a floor, so a mistyped total above the pool
-        // cap could never be lowered again and, on the canonical chain,
-        // would be installed as `received` too.
-        if (total > LibVaipakam.VPFI_INTERACTION_POOL_CAP) {
-            revert IVaipakamErrors.ArmedFreshRebaseTotalExceedsCap(total, LibVaipakam.VPFI_INTERACTION_POOL_CAP);
-        }
-        LibVaipakam.RewardRole role = LibVaipakam.rewardRole(s);
-
-        uint256 paidBefore = s.rewardBudgetArmedFreshPaid;
-        uint256 receivedBefore = s.rewardBudgetArmedFreshReceived;
-        // The RESULT is bounded too (Codex #2158 r13 P1): a paid counter
-        // already above the cap would survive `max` and, on the canonical
-        // chain, be copied into `received` while both guards close. Such a
-        // counter is refused here with the guard left OPEN, so it can be
-        // examined and corrected rather than sealed in.
-        if (paidBefore > LibVaipakam.VPFI_INTERACTION_POOL_CAP) {
-            revert IVaipakamErrors.ArmedFreshRebaseTotalExceedsCap(paidBefore, LibVaipakam.VPFI_INTERACTION_POOL_CAP);
-        }
-        bool activeRole = role == LibVaipakam.RewardRole.Canonical
-            || role == LibVaipakam.RewardRole.Mirror;
-        if (!activeRole && (total != 0 || paidBefore != 0 || receivedBefore != 0)) {
-            revert IVaipakamErrors.ArmedFreshRebaseRequiresActiveRole(
-                uint8(role), total, paidBefore, receivedBefore
-            );
-        }
-        uint256 paidAfter = total > paidBefore ? total : paidBefore;
-
-        s.rewardBudgetArmedFreshPaid = paidAfter;
-        if (role == LibVaipakam.RewardRole.Canonical) {
-            s.rewardBudgetArmedFreshReceived = paidAfter;
-        }
-        s.armedFreshPaidRebased = true;
-        s.armedFreshPaidSeeded = true;
-
-        emit ArmedFreshPaidRebased(
-            uint8(role),
-            total,
-            paidBefore,
-            paidAfter,
-            receivedBefore,
-            s.rewardBudgetArmedFreshReceived
-        );
-    }
-
     // ─── #1566 slice 4 PR B — activation, funding and the bootstrap writers ─
 
     /// @notice The reward custody was activated on this chain: from here every
@@ -823,8 +661,6 @@ contract RewardCustodyFacet is DiamondAccessControl {
      *
      *           - the role is configured (`Unconfigured` can never activate:
      *             its column stays at Diamond custody by design);
-     *           - the paid-side rebase has run (the baseline verified below
-     *             is the one it installed);
      *           - the recycled, recovery, overage and sanctions-held rows
      *             each EQUAL their ledger figure (`recycleBucket`,
      *             `recovered − redispatched`, `strandedReturnOverage`,
@@ -896,7 +732,6 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (role == LibVaipakam.RewardRole.Detached) {
             revert IVaipakamErrors.RewardCustodyActivationDetachedNotSupported();
         }
-        if (!s.armedFreshPaidRebased) revert IVaipakamErrors.RewardCustodyActivationRequiresRebase();
         // The complete-cut record must be current (Codex #2186 r4 P1): the
         // ledger figures below say nothing about WHICH facets are routed,
         // and a custody facet cut without the reward paths that read the
@@ -1060,10 +895,9 @@ contract RewardCustodyFacet is DiamondAccessControl {
      *         Diamond's own balance, touching NO ledger counter. Bounded by
      *         `row − figure`.
      * @dev    ADMIN, MANUAL pause, before activation only. A row is backed
-     *         against a figure that stays LIVE until the activation: the
-     *         paid-side rebase raises `paid` and shrinks `received − paid`,
-     *         and a pause lifted between the credits and the activation lets
-     *         payouts, redispatch and surplus debits shrink the others.
+     *         against a figure that stays LIVE until the activation: a
+     *         pause lifted between the credits and the activation lets
+     *         payouts, redispatch and surplus debits shrink it.
      *         Activation refuses a row above its figure — equality, not
      *         `>=` — and no reward path debits a row before activation, so
      *         without this exit the excess would sit at the holder until
@@ -1192,8 +1026,7 @@ contract RewardCustodyFacet is DiamondAccessControl {
 
     /// @dev The bootstrap writers' shared preconditions and the ledger
     ///      figure the row backs: refuses after activation, refuses a role
-    ///      that cannot activate, refuses before the paid-side rebase, and
-    ///      refuses a row with no bootstrap figure.
+    ///      that cannot activate, and refuses a row with no bootstrap figure.
     function _bootstrapFigure(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardCustodyRow row,
@@ -1211,16 +1044,7 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (role != LibVaipakam.RewardRole.Canonical && role != LibVaipakam.RewardRole.Mirror) {
             revert IVaipakamErrors.RewardCustodyBootstrapRequiresActiveRole(uint8(role));
         }
-        // The figures are read as FINAL (Codex #2186 r3 P1): the paid-side
-        // rebase only ever RAISES `paid`, so a live-fresh row credited to
-        // `received − paid` before it would be left above the figure the
-        // rebase leaves — which activation refuses and nothing before it
-        // can debit. The ceremony script orders the rebase first; the
-        // contract holds the rule so no tooling can order them otherwise.
-        // Every row, not only the live one: one window for every bootstrap
-        // write is the rule an operator can hold in mind.
-        if (!s.armedFreshPaidRebased) revert IVaipakamErrors.RewardCustodyBootstrapRequiresRebase();
-        // And the complete-cut record must be current (Codex #2186 r4 P1):
+        // The complete-cut record must be current (Codex #2186 r4 P1):
         // nothing moves into the holder's rows on a deployment whose reward
         // paths may not know the holder — the same window as the activation.
         LibRewardCustody.requireCutover(s);
@@ -1462,11 +1286,6 @@ contract RewardCustodyFacet is DiamondAccessControl {
         return holder.balance;
     }
 
-    /// @notice Whether the one-shot paid-side rebase has run on this chain.
-    function armedFreshPaidRebased() external view returns (bool) {
-        return LibVaipakam.storageSlot().armedFreshPaidRebased;
-    }
-
     /// @notice #1566 slice 4 PR B — whether reward custody reads and debits
     ///         the holder on this chain (the activation ceremony has run).
     function rewardCustodyActivated() external view returns (bool) {
@@ -1623,8 +1442,8 @@ contract RewardCustodyFacet is DiamondAccessControl {
     ///         paid and REMAINING, which is `max` on a canonical chain and
     ///         saturates at zero on an over-paid mirror — so neither
     ///         `received` nor a deficit can be read back from it. The
-    ///         migration ceremonies (design §5d) verify `received == paid`
-    ///         after the rebase, and an over-paid mirror's deficit is what
+    ///         activation ceremony (design §5d) verifies `received == paid`
+    ///         on the canonical chain, and an over-paid mirror's deficit is what
     ///         the §5c deficit split acts on; both need the pair as stored.
     /// @return received What has been delivered and counted as fresh.
     /// @return paid     What has been charged as fresh, any vintage.

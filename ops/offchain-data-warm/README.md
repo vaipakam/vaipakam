@@ -180,7 +180,7 @@ which means tickets have no backup — a product decision, tracked as **#1474**.
 
 | Source | Coverage |
 | --- | --- |
-| `vaipakam-warm` D1 (born-off-chain) | `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`, `notify_state`, `pre_grace_notify_state`, `telegram_links`, `support_tickets`, `recycle_day_backfill`, `loan_orphans` — irrecoverable without backup. |
+| `vaipakam-warm` D1 (born-off-chain) | `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`, `notify_state`, `pre_grace_notify_state`, `telegram_links`, `support_tickets`, `loan_orphans` — irrecoverable without backup. |
 | `vaipakam-warm` D1 (hybrid, #1481) | `signed_offers` — born off chain, with columns the indexer projects from chain events. The restore imports the user's part and leaves the projected part to the block-zero replay. |
 | `vaipakam-warm` D1 (re-derivable) | `offers`, `loans`, `activity_events`, `oracle_snapshot_state`, `liquidity_confidence`, `indexer_cursor` — kept for restore-performance only; can be skipped on restore in favour of a fresh re-index from block 0. |
 | `vaipakam-legal-vault` R2 | Every uploaded legal-hold document. |

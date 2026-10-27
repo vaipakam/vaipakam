@@ -219,6 +219,14 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     ///      its transport epoch, attested from the wire. Before activation the
     ///      stated shares credit the shared ledgers and the rest counts as
     ///      uncounted.
+    /// @dev An external hop onto {_deliverStamped}, so `vm.expectRevert` sees
+    ///      the whole delivery as one call.
+    function deliverStampedExternal(uint256 amount, uint256 fresh, uint256 recycled, uint256 remitId, bytes32 id)
+        external
+    {
+        _deliverStamped(amount, fresh, recycled, remitId, id);
+    }
+
     function _deliverStamped(uint256 amount, uint256 fresh, uint256 recycled, uint256 remitId, bytes32 id)
         internal
         returns (bytes32 h)
@@ -296,7 +304,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(0, epoch);
         _rep().setBaseChainId(0); // detach: no allocation yet, so not frozen
         assertEq(uint8(_rep().getRewardRole()), uint8(LibVaipakam.RewardRole.Detached), "detached");
         vm.expectRevert(RewardCustodyActivationDetachedNotSupported.selector);
@@ -309,7 +316,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(0, epoch);
         vm.expectRevert(
             abi.encodeWithSelector(
                 RewardCustodyActivationRequiresConfiguredRole.selector,
@@ -329,7 +335,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _custody().bindRewardCustodyHolder();
         _admin().pause();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(0, epoch);
         _mut().setStagedEpochTotalRaw(1);
         vm.expectRevert(abi.encodeWithSelector(RewardCustodyActivationBlockedByStagedEarmark.selector, uint256(1)));
         _custody().activateRewardCustody(epoch, false);
@@ -340,9 +345,8 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     }
 
     /// The ceremony's gates, each straddled: unpaused refuses; a stale epoch
-    /// refuses; an unconsumed rebase refuses; the live epoch under the manual
-    /// pause with the rebase consumed activates — once.
-    function test_Activation_RequiresManualPauseLiveEpochAndRebase() public {
+    /// refuses; the live epoch under the manual pause activates — once.
+    function test_Activation_RequiresManualPauseAndLiveEpoch() public {
         _becomeCanonical();
         _custody().bindRewardCustodyHolder();
         uint64 epochUnpaused = _epoch();
@@ -356,10 +360,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         );
         _custody().activateRewardCustody(epoch - 1, false);
 
-        vm.expectRevert(RewardCustodyActivationRequiresRebase.selector);
-        _custody().activateRewardCustody(epoch, false);
-
-        _custody().rebaseArmedFreshPaid(0, epoch);
         _custody().activateRewardCustody(epoch, false);
         assertTrue(_custody().rewardCustodyActivated(), "activated");
         assertFalse(_mut().getRewardRoleChangesFrozenRaw(), "#1566 PR C revision: activation freezes nothing");
@@ -384,7 +384,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(0, epoch);
         (uint32 stampedV, uint32 requiredV, bytes32 stamped, bytes32 current) =
             _custody().rewardCustodyCutoverStatus();
         assertEq(stampedV, requiredV, "the build recorded this tree's version");
@@ -498,7 +497,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(0, epoch);
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -567,7 +565,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(0, epoch);
         _custody().relocateRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recovery, 3e18);
         // Replacement funding from the caller serves the same rows.
         vpfi.mint(address(this), 1e18);
@@ -594,7 +591,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(4e18, epoch); // mirror: paid stays 4, received untouched
 
         vm.expectRevert(
             abi.encodeWithSelector(RewardCustodyBootstrapRowNotAllowed.selector, uint8(LibVaipakam.RewardCustodyRow.LiveFresh))
@@ -635,7 +631,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(4e18, epoch);
         vpfi.mint(address(this), 2e18);
         vpfi.approve(address(diamond), 2e18);
         _custody().fundRewardCustodyRow(LibVaipakam.RewardCustodyRow.LiveFresh, 2e18);
@@ -644,37 +639,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(paid, 4e18, "paid retained");
         assertEq(received, 6e18, "received written down to paid + what the holder backs");
         assertEq(_live(), 2e18, "the row IS the headroom");
-    }
-
-    /// Every bootstrap write waits for the paid-side rebase (Codex #2186 r3
-    /// P1): the rebase only raises `paid`, so a live row credited to the
-    /// pre-rebase `received − paid` would be left above the figure the
-    /// rebase leaves — which activation refuses and nothing before it can
-    /// debit. Straddled: refused before the rebase, the same writes
-    /// accepted after it.
-    function test_Bootstrap_RequiresThePaidRebase() public {
-        _becomeMirror();
-        _seedDiamond(10e18);
-        _mut().setArmedFreshLedgerRaw(10e18, 4e18); // gap 6
-        _mut().setRecycleBucketRaw(4e18);
-        _admin().pause();
-        _custody().bindRewardCustodyHolder();
-        vpfi.mint(address(this), 6e18);
-        vpfi.approve(address(diamond), 6e18);
-
-        vm.expectRevert(RewardCustodyBootstrapRequiresRebase.selector);
-        _custody().fundRewardCustodyRow(LibVaipakam.RewardCustodyRow.LiveFresh, 6e18);
-        vm.expectRevert(RewardCustodyBootstrapRequiresRebase.selector);
-        _custody().relocateRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 4e18);
-        vm.expectRevert(RewardCustodyBootstrapRequiresRebase.selector);
-        _custody().releaseRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 1);
-        assertEq(_held(), 0, "nothing moved into the holder");
-
-        _custody().rebaseArmedFreshPaid(4e18, _epoch());
-        _custody().fundRewardCustodyRow(LibVaipakam.RewardCustodyRow.LiveFresh, 6e18);
-        _custody().relocateRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 4e18);
-        assertEq(_live(), 6e18, "the live row backs the post-rebase gap");
-        assertEq(_recycledRow(), 4e18, "the recycled row backs the bucket");
     }
 
     /// A figure that moves after its row was backed leaves the row ABOVE it:
@@ -691,7 +655,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(4e18, epoch);
         vpfi.mint(address(this), 6e18);
         vpfi.approve(address(diamond), 6e18);
         _custody().fundRewardCustodyRow(LibVaipakam.RewardCustodyRow.LiveFresh, 6e18);
@@ -700,7 +663,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(vpfi.balanceOf(address(diamond)), 6e18, "the Diamond kept what was not relocated");
 
         // The CLASS, not one mover: the paid side rises (a payout a lifted
-        // pause let through, or the rebase itself) and the bucket falls.
+        // pause let through) and the bucket falls.
         _mut().setArmedFreshLedgerRaw(10e18, 7e18); // gap 3, row 6 — excess 3
         _mut().setRecycleBucketRaw(3e18); // bucket 3, row 4 — excess 1
 
@@ -848,7 +811,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(6e18, epoch); // paid 6, received 0: a 6 deficit
+        _mut().setArmedFreshLedgerRaw(0, 6e18); // paid 6, received 0: a 6 deficit
         _custody().activateRewardCustody(epoch, false);
         _admin().unpause();
 
@@ -1048,21 +1011,27 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
 
     /// A delivery on a deployment whose custody is NOT activated takes the
     /// typed-ledger path: the stated fresh share is counted, the recycled
-    /// share credits the bucket, the remainder counts as uncounted, all of it
-    /// stays in the Diamond's balance and no row moves. The packet is still
-    /// recorded, since the stamp is taken on every deployment.
-    function test_UntypedRemainder_StaysDiamondSide_WhenNotActivated() public {
+    /// share credits the bucket, all of it stays in the Diamond's balance and
+    /// no row moves. The packet is still recorded, since the stamp is taken on
+    /// every deployment. A split that does not account for the whole delivery
+    /// is refused here exactly as on the epoch path (#2910): it would leave an
+    /// untyped remainder in the uncounted aggregate that nothing classifies.
+    function test_TypedLedgerPath_WhenNotActivated_RefusesAPartialSplit() public {
         _remit().setRewardRemittanceReceiver(address(this));
         _seedDiamond(10e18);
         bytes32 id = keccak256("pkt-legacy");
-        _deliverStamped(6e18, 3e18, 2e18, 7, id);
+        vm.expectRevert(
+            abi.encodeWithSelector(TransportSplitNotWhole.selector, _packetHash(id), 3e18, 2e18, 6e18)
+        );
+        this.deliverStampedExternal(6e18, 3e18, 2e18, 7, id);
+        _deliverStamped(6e18, 4e18, 2e18, 7, id);
         assertEq(_unclassified(), 0, "no row moves");
         assertEq(vpfi.balanceOf(address(diamond)), 10e18, "everything rests in the Diamond");
         (uint256 received, ) = _ledger();
-        assertEq(received, 3e18, "counted Diamond-side");
+        assertEq(received, 4e18, "counted Diamond-side");
         assertEq(_cfg().getRecycleBucket(), 2e18, "the recycled share credited the bucket");
         (, uint256 uncounted) = _rlens().getDeliveredFreshPosition();
-        assertEq(uncounted, 1e18);
+        assertEq(uncounted, 0, "no untyped remainder");
         LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(_packetHash(id));
         assertGt(p.arrivedAt, 0, "the packet is recorded on every deployment");
         assertEq(p.unclassified, 0, "nothing of it is in the row");
@@ -1220,7 +1189,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(2e18, epoch); // a deficit of 2
+        _mut().setArmedFreshLedgerRaw(0, 2e18); // a deficit of 2
         _custody().activateRewardCustody(epoch, false);
         _admin().unpause();
         _seedDiamond(10e18);
@@ -1282,8 +1251,10 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     /// deployment the whole amount lands in the `Unclassified` row under a
     /// transport epoch, attested from the wire as ALL RECYCLED, so a fresh
     /// classification needs the evidence {_evidence} stands in, exactly as an
-    /// untyped arrival needed it. Before activation it states no share, so
-    /// the whole amount counts as uncounted Diamond-side.
+    /// untyped arrival needed it. Before activation the same whole recycled
+    /// split takes the typed-ledger path (the ingress refuses a split that
+    /// does not account for the whole delivery on both paths, #2910), so
+    /// nothing of it is classifiable.
     ///
     /// The packet is not classifiable until its epoch is released. This
     /// section's subject is classification, so the release is done here
@@ -1291,8 +1262,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     /// the release and admitting after it — is pinned in
     /// `RewardTransportEpochTest`, where it is the subject.
     function _untyped(uint256 amount, uint256 remitId, bytes32 id) internal {
-        bool activated = _custody().rewardCustodyActivated();
-        _deliverStamped(amount, 0, activated ? amount : 0, remitId, id);
+        _deliverStamped(amount, 0, amount, remitId, id);
         _releaseEpoch(_packetHash(id));
     }
     /// @dev Index the batch's one chunk, then park its remainder and record
@@ -1407,7 +1377,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(deficit, epoch);
+        _mut().setArmedFreshLedgerRaw(0, deficit);
         _custody().activateRewardCustody(epoch, false);
         _admin().unpause();
     }
@@ -1461,7 +1431,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(e.key, h);
         assertEq(e.freshCredit, 6e18);
         assertEq(e.recycledCredit, 4e18);
-        assertFalse(e.envelope, "a packet-backed entry");
+        assertFalse(e.retiredEnvelope, "the retired envelope flag is never set");
         (, uint256 funspent, , , , ) = _queue();
         (, uint256 runspent, , , ) = _rqueue();
         assertEq(funspent, 6e18);
@@ -1599,9 +1569,9 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     /// replay guard.
     function test_Classify_Gates() public {
         _becomeMirror();
-        _seedDiamond(10e18);
+        _seedDiamond(15e18); // 10 for the pre-activation packet, 5 for the protected one
         bytes32 id = keccak256("legacy-gates");
-        _untyped(10e18, 37, id); // not activated: stays Diamond-side
+        _untyped(10e18, 37, id); // not activated: typed at ingress, Diamond-side
         bytes32 h = _packetHash(id);
         vm.expectRevert(LibPausable.ExpectedManualPause.selector);
         _recon().classifyLegacyPacket(h, 0, 1e18, keccak256("g-1"));
@@ -1609,15 +1579,21 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         vm.expectRevert(RewardCustodyNotActivated.selector);
         _recon().classifyLegacyPacket(h, 0, 1e18, keccak256("g-1"));
         _admin().unpause();
+        // The pre-activation delivery typed its whole value into the recycled
+        // ledger (every split is whole, #2910), so activation needs that
+        // ledger's tokens relocated into the holder first.
+        _admin().pause();
+        _custody().bindRewardCustodyHolder();
+        _custody().relocateRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 10e18);
+        _admin().unpause();
         activateRewardCustodyForTest(address(vpfi), 0);
         _admin().pause();
         vm.expectRevert(abi.encodeWithSelector(ReconciliationPacketUnknown.selector, keccak256("nope")));
         _recon().classifyLegacyPacket(keccak256("nope"), 0, 1e18, keccak256("g-2"));
         vm.expectRevert(InvalidAmount.selector);
         _recon().classifyLegacyPacket(h, 0, 0, keccak256("g-3"));
-        // The pre-activation packet's value is Diamond-side, not in the row:
-        // its remainder is zero, so nothing of it is classifiable — that
-        // value is the envelope's to import.
+        // The pre-activation packet's value was typed at ingress and is not in
+        // the row: its remainder is zero, so nothing of it is classifiable.
         vm.expectRevert(abi.encodeWithSelector(ReconciliationExceedsPacketRemainder.selector, h, 1e18, 0));
         _recon().classifyLegacyPacket(h, 0, 1e18, keccak256("g-4"));
         // A refused entry's id is NOT spent (the revert rolls the mark back);
@@ -2336,111 +2312,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(_cfg().getRecycleCreditedCumulative(), reported0, "still nothing");
     }
 
-    /// The envelope: the inventory that arrived BEFORE the activation
-    /// (Diamond-side, no stamp in the row) is imported whole and once — read
-    /// on chain, relocated measured as RECYCLED (it has no evidence source),
-    /// entered into the same log; its fresh side is bounded by what was
-    /// replacement-funded, here nothing.
-    function test_Envelope_ImportsPreStampInventory_Relocated() public {
-        _becomeMirror();
-        _seedDiamond(10e18);
-        _untyped(10e18, 46, keccak256("pre")); // not activated: Diamond-side
-        assertEq(_uncountedAggregate(), 10e18);
-        activateRewardCustodyForTest(address(vpfi), 0);
-        (uint256 net, uint256 raw, uint256 holderUncounted, uint256 diamondReserved, uint256 returned) =
-            _recon().previewLegacyEnvelope();
-        assertEq(net, 10e18, "the envelope");
-        assertEq(raw, 10e18);
-        assertEq(holderUncounted + diamondReserved + returned, 0);
-        uint256 diamondBefore = vpfi.balanceOf(address(diamond));
-        _admin().pause();
-        _recon().importLegacyEnvelope(keccak256("snap-1"), 10e18, 0, 0, 0);
-        _admin().unpause();
-        assertEq(_live(), 0, "nothing fresh without replacement custody");
-        assertEq(_recycledRow(), 10e18);
-        assertEq(_bucket(), 10e18);
-        assertEq(diamondBefore - vpfi.balanceOf(address(diamond)), 10e18, "relocated out of the Diamond");
-        assertEq(_held(), 10e18, "into the holder");
-        assertEq(_uncountedAggregate(), 0, "the aggregate emptied");
-        (net, , , , ) = _recon().previewLegacyEnvelope();
-        assertEq(net, 0);
-        LibVaipakam.LegacyEnvelope memory env = _recon().getLegacyEnvelope(keccak256("snap-1"));
-        assertGt(env.importedAt, 0);
-        assertEq(env.netTotal, 10e18);
-        assertEq(env.relocatedRecycled, 10e18);
-        assertEq(env.replacedFresh, 0);
-        LibVaipakam.ReconciliationEntry memory e = _entry(env.entryIndex);
-        assertEq(e.key, keccak256("snap-1"));
-        assertTrue(e.envelope);
-        assertEq(e.freshCredit, 0);
-        assertEq(e.recycledCredit, 10e18);
-        _admin().pause();
-        vm.expectRevert(abi.encodeWithSelector(LegacyEnvelopeAlreadyImported.selector, keccak256("snap-1")));
-        _recon().importLegacyEnvelope(keccak256("snap-1"), 0, 0, 0, 0);
-        vm.expectRevert(abi.encodeWithSelector(LegacyEnvelopeEmpty.selector, keccak256("snap-2")));
-        _recon().importLegacyEnvelope(keccak256("snap-2"), 0, 0, 0, 0);
-        // The envelope's error path is the same reclassification, under the
-        // same evidence rule: nothing of it may be lifted to fresh.
-        vm.expectRevert(
-            abi.encodeWithSelector(ReconciliationFreshUnevidenced.selector, keccak256("snap-1"), 2e18, 0)
-        );
-        _recon().reclassifyReconciliationEntry(env.entryIndex, false, 2e18, keccak256("r-env"));
-        _admin().unpause();
-    }
-
-    /// What the holder already holds of the aggregate (post-stamp
-    /// remainders, protected at ingress) is not the envelope's.
-    function test_Envelope_NetsWhatTheHolderAlreadyHolds() public {
-        _activatedMirror();
-        _seedDiamond(10e18);
-        _untyped(10e18, 47, keccak256("post")); // activated: protected, in the row
-        (uint256 net, uint256 raw, uint256 holderUncounted, , ) = _recon().previewLegacyEnvelope();
-        assertEq(raw, 10e18);
-        assertEq(holderUncounted, 10e18);
-        assertEq(net, 0, "nothing pre-stamp");
-    }
-
-    /// Every unit of the envelope is resolved, exactly: relocated where the
-    /// tokens are still here, replacement-funded (delta-checked from the
-    /// caller) or written down where pre-holder outflows spent them. The
-    /// replacement-funded fresh is the envelope's evidence: its fresh side
-    /// can be corrected down and back up to it, never beyond.
-    function test_Envelope_ReplacementAndWriteDown_ResolveExactly() public {
-        _becomeMirror();
-        _seedDiamond(10e18);
-        _untyped(10e18, 48, keccak256("pre-2"));
-        vm.prank(address(diamond));
-        vpfi.transfer(address(0xdead), 10e18); // a pre-holder outflow spent it
-        activateRewardCustodyForTest(address(vpfi), 0);
-        _admin().pause();
-        vm.expectRevert(abi.encodeWithSelector(LegacyEnvelopeMismatch.selector, keccak256("snap-3"), 9e18, 10e18));
-        _recon().importLegacyEnvelope(keccak256("snap-3"), 0, 3e18, 2e18, 4e18);
-        vpfi.mint(address(this), 5e18);
-        vpfi.approve(address(diamond), 5e18);
-        _recon().importLegacyEnvelope(keccak256("snap-3"), 0, 3e18, 2e18, 5e18);
-        _admin().unpause();
-        assertEq(_held(), 5e18, "the replacement was pulled into the holder");
-        assertEq(_live(), 3e18);
-        assertEq(_recycledRow(), 2e18);
-        assertEq(_bucket(), 2e18);
-        assertEq(_uncountedAggregate(), 0, "the written-down part left the aggregate too");
-        LibVaipakam.LegacyEnvelope memory env = _recon().getLegacyEnvelope(keccak256("snap-3"));
-        assertEq(env.replacedFresh, 3e18);
-        assertEq(env.replacedRecycled, 2e18);
-        assertEq(env.writtenDown, 5e18);
-        _reclassify(env.entryIndex, true, 2e18, keccak256("r-env-down"));
-        assertEq(_live(), 1e18);
-        assertEq(_bucket(), 4e18);
-        _reclassify(env.entryIndex, false, 2e18, keccak256("r-env-up")); // back up to what was funded
-        assertEq(_live(), 3e18);
-        _admin().pause();
-        vm.expectRevert(
-            abi.encodeWithSelector(ReconciliationFreshUnevidenced.selector, keccak256("snap-3"), 4e18, 3e18)
-        );
-        _recon().reclassifyReconciliationEntry(env.entryIndex, false, 1e18, keccak256("r-env-over"));
-        _admin().unpause();
-    }
-
     /// Codex #2206 r4 (P1) — spent-ness is RECORDED, never read from the
     /// balance: a later fresh credit backs its own place in the pool and
     /// un-spends nothing. A classified fresh and paid out whole; an
@@ -3065,7 +2936,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(6e18, epoch); // deficit 6
+        _mut().setArmedFreshLedgerRaw(0, 6e18); // deficit 6
         _custody().activateRewardCustody(epoch, false);
         _admin().unpause();
         fundRewardPoolForTest(address(vpfi), 10e18); // restitution 6, live 4
@@ -3090,7 +2961,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(6e18, epoch); // deficit 6
+        _mut().setArmedFreshLedgerRaw(0, 6e18); // deficit 6
         _custody().activateRewardCustody(epoch, false);
         _admin().unpause();
         fundRewardPoolForTest(address(vpfi), 4e18); // all restitution; received 4, paid 6
@@ -3118,7 +2989,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(6e18, epoch);
+        _mut().setArmedFreshLedgerRaw(0, 6e18);
         _custody().activateRewardCustody(epoch, false);
         _admin().unpause();
         fundRewardPoolForTest(address(vpfi), 4e18);
@@ -3239,7 +3110,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().pause();
         _custody().bindRewardCustodyHolder();
         uint64 epoch = _epoch();
-        _custody().rebaseArmedFreshPaid(6e18, epoch);
+        _mut().setArmedFreshLedgerRaw(0, 6e18);
         _mut().setStagingEncumberedCountRaw(1);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RewardCustodyActivationBlockedByStagedRecords.selector, uint256(1)));
         _custody().activateRewardCustody(epoch, false);

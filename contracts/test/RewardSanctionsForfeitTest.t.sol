@@ -3489,7 +3489,6 @@ contract RewardSanctionsHeldActivationTest is RewardSanctionsMirrorBase {
         AdminFacet(address(diamond)).pause();
         if (_custody().rewardCustodyHolder() == address(0)) _custody().bindRewardCustodyHolder();
         uint64 epoch = _pauseEpoch();
-        if (!_custody().armedFreshPaidRebased()) _custody().rebaseArmedFreshPaid(0, epoch);
         _custody().stampRewardCustodyCutover();
         vm.expectRevert(
             abi.encodeWithSelector(

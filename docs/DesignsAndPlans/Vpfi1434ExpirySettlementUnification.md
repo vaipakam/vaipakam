@@ -344,6 +344,9 @@ an already-seeded Diamond no longer wedges paused demanding obsolete
 inputs — the earlier "the one-shot revert IS the signal" position
 required reaching the seed call at all, and the input require sat in
 front of it.
+(Superseded by #2910: the seed, its flag and the refresh's migration
+block were retired; every chain is a fresh deploy with no pre-P1-b
+paid history to seed.)
 
 With this, every settlement consumer — claim, expiry, forfeit — prices
 through the one engine. That is the design's end state.

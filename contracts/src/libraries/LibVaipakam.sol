@@ -6467,23 +6467,22 @@ library LibVaipakam {
         ///      The field keeps its name: renaming a storage field is a
         ///      layout event the provenance walker gates on.
         uint256 rewardBudgetArmedFreshReceived;
-        /// @dev The reconciliation counterpart: Σ of the fresh-looking
-        ///      amount of every delivery this chain declined to count above.
-        ///      Per delivery that is `amount − recycledShare` — the whole
-        ///      delivery for a legacy/d2 payload, whose recycled share was
-        ///      never transmitted.
+        /// @dev The reconciliation counterpart: Σ of the fresh-looking value
+        ///      this chain holds without counting it — an activated
+        ///      delivery's transport epoch until its draws type it, and
+        ///      quarantined compensation or a demoted provisional hold until
+        ///      its return.
         ///
-        ///      Not decorative. Both sources are silent by construction — an
-        ///      unstated composition (the day-vintage exclusion was retired
-        ///      by #1566 closure 2) and the flooring residue of a
-        ///      composition-known delivery scaled to what actually arrived —
-        ///      an uncounted delivery moves real VPFI into this Diamond and
-        ///      changes no other figure, so without this counter the only
-        ///      symptom would be armed claims deferring for funding the
-        ///      operator can see arriving. Read the pair together —
-        ///      `{RewardRemittanceFacet.getDeliveredFreshPosition}` returns
-        ///      both — and a non-zero value here is the signal that this
-        ///      chain's counted funding understates what Base actually sent.
+        ///      A typed (pre-activation) delivery never adds here: its split
+        ///      is whole by construction (the receiver sends the fresh share
+        ///      as what landed less the scaled recycled share) and the ingress
+        ///      refuses any other (#2910). The unstated-composition and
+        ///      flooring-residue sources this counter once caught belonged to
+        ///      retired wires. Read the pair together —
+        ///      `{RewardRemittanceLensFacet.getDeliveredFreshPosition}`
+        ///      returns both — and a non-zero value here is the signal that
+        ///      this chain's counted funding understates what Base actually
+        ///      sent.
         uint256 rewardBudgetFreshUncounted;
         /// @notice #1222 M4 C1 (#1567) — the surplus-flag multiple `N`.
         ///         A chain is flagged operator-visible when its
@@ -7231,21 +7230,13 @@ library LibVaipakam {
         ///      for every later day, which is the failure mode the
         ///      withdrawn B2-d4 attempt was rejected for.
         uint256 rewardBudgetArmedFreshPaid;
-        /// @dev #1434 P1-b (Codex #1699 r2) — the one-shot migration flag for
-        ///      the counter above. TRUE once an in-place-upgraded mirror has
-        ///      seeded its pre-P1-b paid history.
-        ///
-        ///      Needed because the bound goes live the moment this facet set
-        ///      is cut, while the paid counter starts at ZERO — yet
-        ///      `rewardBudgetArmedFreshReceived` already holds deliveries for
-        ///      compensated and short-lapsed days, which BYPASSED the old
-        ///      blanket mirror halt by design and were genuinely payable. Left
-        ///      unseeded, that already-spent funding reads as wholly available
-        ///      and can be spent a second time.
-        ///
-        ///      A fresh deploy needs no seed (both counters start at zero), so
-        ///      this is armed only where there is history to carry.
-        bool armedFreshPaidSeeded;
+        /// @dev RETIRED (#2910). Was the one-shot flag of the P1-b paid-side
+        ///      seed, which carried pre-P1-b payout history into the counter
+        ///      above on a mirror upgraded in place. Every chain reaches this
+        ///      build by a fresh deploy, whose counter has tracked every
+        ///      payout from block one, so the seed and this flag are gone. The
+        ///      slot keeps its place and is no longer read or written.
+        bool retiredArmedFreshPaidSeeded;
         /// @dev #1434 (Codex #1699 r7 P2) — APPENDED AT THE TAIL (same
         ///      in-place-upgrade rule as every counter above). Running totals
         ///      of what an expiring reward entry has ALREADY had credited
@@ -7458,16 +7449,13 @@ library LibVaipakam {
         ///      named recipient — both of which arrive with PR B; PR A adds
         ///      no writer, so every row reads zero on a PR-A Diamond.
         mapping(RewardCustodyRow => uint256) rewardCustodyRows;
-        /// @dev #1566 slice 4 PR A — one-shot guard for
-        ///      `RewardCustodyFacet.rebaseArmedFreshPaid`, the paid-side
-        ///      importer for a chain carrying history the vintage-blind
-        ///      ledger (#1566 closure 2) now charges. Independent of
-        ///      {armedFreshPaidSeeded} so the rebase is available whether or
-        ///      not the P1-b seeder ran; the rebase sets BOTH guards so the
-        ///      additive seeder can never run after an absolute total has
-        ///      been installed. A fresh deploy consumes it at deploy with a
-        ///      zero total, exactly as the seeder is consumed.
-        bool armedFreshPaidRebased;
+        /// @dev RETIRED (#2910). Was the one-shot guard of the paid-side
+        ///      rebase, which imported a reconstructed paid total on a chain
+        ///      carrying payout history the vintage-blind ledger (#1566
+        ///      closure 2) charges. A fresh deploy has no such history, so
+        ///      the rebase and this guard are gone. The slot keeps its place
+        ///      and is no longer read or written.
+        bool retiredArmedFreshPaidRebased;
         /// @dev #1566 slice 4 PR A (Codex #2158 r13 P2) — every
         ///      `RewardCustodyHolder` this Diamond CONSTRUCTED, the first and
         ///      every successor, registered at construction and never
@@ -7531,7 +7519,7 @@ library LibVaipakam {
         ///      immutable thing), the two queues that distribute spent-ness
         ///      among the entries, the absorbed records, the recycled
         ///      consumption record, the
-        ///      per-entry replay guard, the envelopes, and the two
+        ///      per-entry replay guard, the retired envelope slot, and the two
         ///      reattribution cumulatives that keep the bucket's composition
         ///      identity stated: `bucket == credited + relocated +
         ///      reattributedIn − paidOut − repatriatedOut − reattributedOut`
@@ -7584,7 +7572,11 @@ library LibVaipakam {
         mapping(uint64 => uint256) freshPendingAmountByEra;
         uint256 recycledPendingAmount;
         mapping(bytes32 => bool) reconciliationEntryUsed;
-        mapping(bytes32 => LegacyEnvelope) legacyEnvelopes;
+        /// @dev RETIRED (#2910) — the bootstrap envelope records. The import
+        ///      that wrote them existed for pre-stamp inventory on a Diamond
+        ///      upgraded in place; every chain is a fresh deploy (owner decision
+        ///      O1 = A), so the slot keeps its place and is never written.
+        mapping(bytes32 => RetiredLegacyEnvelope) retiredLegacyEnvelopes;
         uint256 recycleReattributedInCumulative;
         uint256 recycleReattributedOutCumulative;
         /// @dev #1566 transport epochs PR 3b — the transport epochs.
@@ -8907,12 +8899,11 @@ library LibVaipakam {
 
     /// @notice #1566 closure 2 cutover PR 2 — one entry of the legacy
     ///         reconciliation epoch's classification log: what a
-    ///         classification (or the bootstrap envelope's import) put on
-    ///         each side, as CURRENTLY attributed.
-    /// @dev    `key` is the packet's ingress stamp, or the envelope's
-    ///         snapshot id (`envelope` says which, so a correction knows
-    ///         whether a packet's component counters follow it and whose
-    ///         evidence bounds its fresh side).
+    ///         classification put on each side, as CURRENTLY attributed.
+    /// @dev    `key` is the packet's ingress stamp. `retiredEnvelope` is
+    ///         RETIRED (#2910): it marked an entry the bootstrap envelope's
+    ///         import wrote, and that import is gone, so every entry is a
+    ///         packet's and the field is always false. It keeps its place.
     ///         The ORDER of the log is the immutable thing (design §5c):
     ///         spent-ness is distributed among the entries FIFO by that
     ///         order. Per side, the entry's credit splits into what is
@@ -8934,7 +8925,7 @@ library LibVaipakam {
     ///         index), never inferred (Codex #2206 r5, r6).
     struct ReconciliationEntry {
         bytes32 key;
-        bool envelope;
+        bool retiredEnvelope;
         uint64 era;
         uint64 landedAt;
         uint256 freshCredit;
@@ -8978,16 +8969,11 @@ library LibVaipakam {
         uint8 kind;
     }
 
-    /// @notice #1566 closure 2 cutover PR 2 — the bootstrap envelope: the
-    ///         pre-stamp inventory as one bounded aggregate, its netting
-    ///         figures all read on chain at the import, and the disposition
-    ///         of every unit of it (relocated as recycled — the inventory
-    ///         has no evidence source, so its fresh share is exactly what
-    ///         is replacement-funded; replacement-funded as fresh or
-    ///         recycled; or written down). Its log entry (`entryIndex`) is
-    ///         what the snapshot-keyed error path reclassifies, its fresh
-    ///         side bounded by `replacedFresh`.
-    struct LegacyEnvelope {
+    /// @notice RETIRED (#2910) — the layout of the bootstrap envelope record
+    ///         (#1566 closure 2 cutover PR 2), kept only so the retired
+    ///         `retiredLegacyEnvelopes` slot keeps its recorded shape. Nothing
+    ///         reads or writes it.
+    struct RetiredLegacyEnvelope {
         uint64 importedAt;
         uint256 rawUncounted;
         uint256 holderUncounted;

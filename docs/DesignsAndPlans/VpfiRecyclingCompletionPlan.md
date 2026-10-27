@@ -911,6 +911,17 @@ Three ways to close that, and why the third wins:
 The event had **no consumers outside the contract** — declaration and emit
 only — so widening it broke nothing.
 
+> **Retired by #2937 (2026-10-27): the pre-cutover backfill below is not
+> built and will not be.** Every chain reaches the widened event by a fresh
+> deploy (owner decision O1 = A), whose Diamond announces every day in the
+> widened shape from its first, so there is no pre-cutover day to recover.
+> The operator pass (#1523) never shipped and nothing ever wrote
+> `recycle_day_backfill`; #2937 removed its read path, its runway refusal,
+> its backup and restore registration, and a follow-up migration drops the
+> table. The reasoning below is kept as the record of why a backfill would
+> have had to carry arming status and run before any demotion — it describes
+> a design that was retired, not current behaviour.
+
 **Cutover, because the natural claim overreaches.** Widening the event changes
 its topic, so days finalized BEFORE the upgrade were announced under the old
 five-argument signature and cannot supply the field; the indexer's derived

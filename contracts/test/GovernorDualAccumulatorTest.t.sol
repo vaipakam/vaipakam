@@ -14,8 +14,6 @@ import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
-import {LibPausable} from "../src/libraries/LibPausable.sol";
-import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {RewardBroadcastV2} from "../src/interfaces/IRewardMessenger.sol";
@@ -114,12 +112,6 @@ contract GovernorDualAccumulatorTest is SetupTest {
     ///      InteractionRewardsFacet into InteractionRewardsLensFacet).
     function _lens() internal view returns (InteractionRewardsLensFacet) {
         return InteractionRewardsLensFacet(address(diamond));
-    }
-
-    /// @dev The live pause epoch, as the deploy tooling reads it.
-    function _pauseEpoch() internal view returns (uint64 transitions) {
-        (,,, transitions) =
-            LibPausable.decodePausableSlot(vm.load(address(diamond), LibPausable.PAUSABLE_STORAGE_POSITION));
     }
 
     function _rep() internal view returns (RewardReporterFacet) {
@@ -683,40 +675,6 @@ contract GovernorDualAccumulatorTest is SetupTest {
             0,
             "and only then charges the delivered bound"
         );
-    }
-
-    /// @dev #1434 P1-b (Codex #1699 r2 P1) — the one-shot pre-P1-b paid-side
-    ///      seed, and its refusal to run twice.
-    ///
-    ///      An in-place-upgraded mirror already holds deliveries in the
-    ///      RECEIVED counter for compensated / short-lapsed days that were
-    ///      payable before this slice, while the paid counter starts at zero.
-    ///      Unseeded, that already-spent funding reads as available. The seed
-    ///      is one-shot because it ADDS: a second call would double-charge the
-    ///      bound and strand funding that was never spent.
-    function testP1bSeedArmedFreshPaidIsOneShot() public {
-        vm.chainId(CHAIN_ARB);
-        _rep().setBaseChainId(CHAIN_BASE);
-        _rep().setIsCanonicalRewardChain(false);
-
-        // Pre-upgrade shape: delivery recorded, paid side still at zero.
-        _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
-        (, uint256 beforeSeed) = RewardRemittanceLensFacet(address(diamond)).getDeliveredFreshBound();
-        assertEq(beforeSeed, 1_000 ether, "LIVE: unseeded reads fully available");
-
-        AdminFacet(address(diamond)).pause(); // the seed is bound to the manual pause (Codex #2158 r29 P1)
-        _rep().seedArmedFreshPaid(400 ether, _pauseEpoch());
-
-        (uint256 paid, uint256 remaining) = RewardRemittanceLensFacet(address(diamond)).getDeliveredFreshBound();
-        assertEq(paid, 400 ether, "the seed lands on the paid side");
-        assertEq(remaining, 600 ether, "and the bound shrinks by exactly that");
-
-        // One-shot: a second call must refuse rather than add again.
-        vm.expectRevert(IVaipakamErrors.ArmedFreshPaidAlreadySeeded.selector);
-        _rep().seedArmedFreshPaid(1 ether, _pauseEpoch());
-
-        (, uint256 after_) = RewardRemittanceLensFacet(address(diamond)).getDeliveredFreshBound();
-        assertEq(after_, 600 ether, "a refused re-seed changes nothing");
     }
 
     /// @dev #1434 P1-b (Codex #1699 r2 P2, reshaped by r18) — near 69M

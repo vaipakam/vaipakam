@@ -271,9 +271,9 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
 
     /// A delivery with a stated composition credits its authenticated FRESH
     /// share whatever days it funds; the recycled share is relocated custody
-    /// into the bucket; an old-wire packet (no composition) stays UNCOUNTED
-    /// whole, for the cutover epoch to reconcile.
-    function test_ReceivedSide_FreshAnyVintage_OldWireUncounted() public {
+    /// into the bucket; a delivery whose split does not add up to what
+    /// arrived is refused (#2910), so nothing lands uncounted.
+    function test_ReceivedSide_FreshAnyVintage_AnUnstatedSplitRefused() public {
         _configureMirror();
         uint256 bucketBefore = _cfg().getRecycleBucket();
         _deliverFresh(5e18, 2e18, 11); // stated: 5 fresh + 2 recycled, legacy day
@@ -284,10 +284,13 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
 
         uint256[] memory days_ = new uint256[](1);
         days_[0] = 1;
+        // A split that is not whole is refused at the ingress (#2910), so no
+        // delivery leaves value unattributed.
+        vm.expectPartialRevert(IVaipakamErrors.TransportSplitNotWhole.selector);
         _d6(address(vpfi), 3e18, days_, CHAIN_BASE, 12, REMITTER, 0, 0, bytes32(0)); // no share stated
         (counted, uncounted) = _rlens().getDeliveredFreshPosition();
-        assertEq(counted, 5e18, "an unstated composition counts nothing");
-        assertEq(uncounted, 3e18, "...and lands whole in uncounted");
+        assertEq(counted, 5e18, "the refused delivery counts nothing");
+        assertEq(uncounted, 0, "...and leaves nothing uncounted");
     }
 
     // ─── the reward-absorption operation ─────────────────────────────────────

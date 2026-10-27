@@ -165,82 +165,6 @@
   },
   {
     "type": "function",
-    "name": "getLegacyEnvelope",
-    "inputs": [
-      {
-        "name": "snapshotId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct LibVaipakam.LegacyEnvelope",
-        "components": [
-          {
-            "name": "importedAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "rawUncounted",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "holderUncounted",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "diamondReserved",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "returnedCumulative",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "netTotal",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "relocatedRecycled",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "replacedFresh",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "replacedRecycled",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "writtenDown",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "entryIndex",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getPacketClassificationExcess",
     "inputs": [
       {
@@ -344,7 +268,7 @@
             "internalType": "bytes32"
           },
           {
-            "name": "envelope",
+            "name": "retiredEnvelope",
             "type": "bool",
             "internalType": "bool"
           },
@@ -492,39 +416,6 @@
   },
   {
     "type": "function",
-    "name": "importLegacyEnvelope",
-    "inputs": [
-      {
-        "name": "snapshotId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "relocateRecycled",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "replaceFresh",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "replaceRecycled",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "writeDown",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "isReconciliationEntryUsed",
     "inputs": [
       {
@@ -538,39 +429,6 @@
         "name": "",
         "type": "bool",
         "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "previewLegacyEnvelope",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "netTotal",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "rawUncounted",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "holderUncounted",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "diamondReserved",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "returnedCumulative",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -705,55 +563,6 @@
       }
     ],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "event",
-    "name": "LegacyEnvelopeImported",
-    "inputs": [
-      {
-        "name": "snapshotId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "entryIndex",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "netTotal",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "relocatedRecycled",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "replacedFresh",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "replacedRecycled",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "writtenDown",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
   },
   {
     "type": "event",
@@ -1054,106 +863,6 @@
     "type": "error",
     "name": "AlreadyLaunched",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ArmedFreshPaidAlreadyRebased",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ArmedFreshPaidAlreadySeeded",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ArmedFreshRebaseRequiresActiveRole",
-    "inputs": [
-      {
-        "name": "role",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "total",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "paidBefore",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "receivedBefore",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ArmedFreshRebaseStalePauseEpoch",
-    "inputs": [
-      {
-        "name": "stated",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "live",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ArmedFreshRebaseTotalExceedsCap",
-    "inputs": [
-      {
-        "name": "total",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cap",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ArmedFreshSeedExceedsCap",
-    "inputs": [
-      {
-        "name": "resulting",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cap",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ArmedFreshSeedStalePauseEpoch",
-    "inputs": [
-      {
-        "name": "stated",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "live",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ]
   },
   {
     "type": "error",
@@ -2353,22 +2062,6 @@
   },
   {
     "type": "error",
-    "name": "InsufficientRecycleBacking",
-    "inputs": [
-      {
-        "name": "needed",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "available",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "IntentPending",
     "inputs": [
       {
@@ -2646,49 +2339,6 @@
     "type": "error",
     "name": "LaunchGateCallInvalid",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "LegacyEnvelopeAlreadyImported",
-    "inputs": [
-      {
-        "name": "snapshotId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "LegacyEnvelopeEmpty",
-    "inputs": [
-      {
-        "name": "snapshotId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "LegacyEnvelopeMismatch",
-    "inputs": [
-      {
-        "name": "snapshotId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "stated",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "netTotal",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",
@@ -3892,11 +3542,6 @@
   },
   {
     "type": "error",
-    "name": "RewardCustodyActivationRequiresRebase",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "RewardCustodyActivationStalePauseEpoch",
     "inputs": [
       {
@@ -3989,11 +3634,6 @@
         "internalType": "uint8"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "RewardCustodyBootstrapRequiresRebase",
-    "inputs": []
   },
   {
     "type": "error",
@@ -4439,17 +4079,6 @@
     "type": "error",
     "name": "RiskAndTermsConsentRequired",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SafeERC20FailedOperation",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",

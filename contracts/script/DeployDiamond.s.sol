@@ -103,7 +103,6 @@ import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
-import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
@@ -391,7 +390,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         RewardAggregatorFacet rewardAggregatorFacet = RewardAggregatorFacet(ArtifactDeploy.deploy(type(RewardAggregatorFacet).name));
         RewardRemittanceFacet rewardRemittanceFacet = RewardRemittanceFacet(ArtifactDeploy.deploy(type(RewardRemittanceFacet).name));
         RewardRemittanceLensFacet rewardRemittanceLensFacet = RewardRemittanceLensFacet(ArtifactDeploy.deploy(type(RewardRemittanceLensFacet).name));
-        // #1566 slice 4 PR A — custody lifecycle + paid-side rebase.
+        // #1566 slice 4 PR A — custody lifecycle and ledger views.
         RewardCustodyFacet rewardCustodyFacet = RewardCustodyFacet(ArtifactDeploy.deploy(type(RewardCustodyFacet).name));
         // #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch.
         RewardReconciliationFacet rewardReconciliationFacet = RewardReconciliationFacet(ArtifactDeploy.deploy(type(RewardReconciliationFacet).name));
@@ -942,36 +941,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
         VaipakamNFTFacet(diamond).initializeNFT();
         console.log("NFT initialized.");
 
-        // 5d-bis. #1434 P1-b (Codex #1699 r21) — mark this FRESH deployment as
-        //     already seeded, with zero.
-        //
-        //     `seedArmedFreshPaid` exists for a chain that was upgraded INTO
-        //     P1-b and therefore carries armed-fresh payouts made before the
-        //     paid-side counter existed. A chain deployed fresh has no such
-        //     history by construction: the counter has tracked every payout
-        //     from block one, so its correct seed is exactly 0.
-        //
-        //     Recording that here is what makes the flag mean what the rest of
-        //     the system reads it to mean. `RefreshAllFacetsInPlace` and the
-        //     redeploy orchestrator both branch on `armedFreshPaidSeeded()`:
-        //     left false, a fresh Diamond is misclassified as UNMIGRATED on
-        //     its first full-facet refresh, which at best demands operator
-        //     inputs that do not apply and at worst invites an operator to
-        //     supply "the payout history" — double-counting payouts the live
-        //     counter already holds and pinning the delivered-fresh bound at
-        //     zero until duplicate funding arrives.
-        //
-        //     Before the unpause, deliberately: the one-shot flag and the
-        //     paused window are the same "armed, not merely present" rule the
-        //     migration itself follows, so no window exists in which the
-        //     Diamond is live with an unseeded marker.
-        // A fresh deploy has nothing to import; the epoch is the constructor's
-        // manual pause, still in force (Codex #2158 r27/r29 P1).
-        (,,, uint64 pauseEpoch) =
-            LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
-        RewardReporterFacet(diamond).seedArmedFreshPaid(0, pauseEpoch);
-        console.log("P1-b: fresh deployment marked seeded (0).");
-
         // 5d-ii. #1566 slice 4 PR A — the delivered reward custody holder.
         //     CONSTRUCTED BY THE DIAMOND ITSELF and bound once, here, while
         //     the Diamond is still paused — no address is supplied, so no
@@ -988,20 +957,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         //     `ConfigureRewardReporter` has given the deployment its reward
         //     role — a fresh deployment takes the same ceremony as a live one,
         //     so binding it here changes no live behaviour.
-        //
-        //     The one-shot paid-side REBASE is consumed with a zero total
-        //     for the same reason the P1-b seed is: a fresh deployment has no
-        //     history to import, and consuming the guard now means neither
-        //     migration writer can ever run on a chain that never needed one.
-        //     Role is `Unconfigured` at this point, so the call touches
-        //     neither counter (`max(0, 0)`; the received side is rewritten
-        //     only on `Canonical`).
         address rewardCustodyHolder = RewardCustodyFacet(diamond).bindRewardCustodyHolder();
-        // Same epoch as the seed above: neither the bind nor the seed is a
-        // pause transition.
-        RewardCustodyFacet(diamond).rebaseArmedFreshPaid(0, pauseEpoch);
         console.log("Reward custody holder bound:", rewardCustodyHolder);
-        console.log("Slice 4: fresh deployment marked rebased (0).");
 
         // 5e. The Diamond STAYS PAUSED (#945). It is born paused (see
         //     `VaipakamDiamond.constructor`) so the half-cut window between
@@ -2730,7 +2687,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](21);
+        s = new bytes4[](19);
         s[0] = RewardReporterFacet.closeDay.selector;
         // #1434 P2-w1 — V3 (kind-10) ingress + the mirror-side clock reads
         // + the era ground truth (#1632 r1).
@@ -2744,23 +2701,21 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // `block.chainid`, no longer a settable endpoint id.
         s[7] = RewardReporterFacet.setBaseChainId.selector;
         s[8] = RewardReporterFacet.setIsCanonicalRewardChain.selector;
-        s[9] = RewardReporterFacet.seedArmedFreshPaid.selector;
-        s[10] = RewardReporterFacet.armedFreshPaidSeeded.selector;
-        s[11] = RewardReporterFacet.setRewardGraceSeconds.selector;
-        s[12] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
-        s[13] = RewardReporterFacet.getChainReportSentAt.selector;
-        s[14] = RewardReporterFacet.getRewardReporterConfig.selector;
-        s[15] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
+        s[9] = RewardReporterFacet.setRewardGraceSeconds.selector;
+        s[10] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
+        s[11] = RewardReporterFacet.getChainReportSentAt.selector;
+        s[12] = RewardReporterFacet.getRewardReporterConfig.selector;
+        s[13] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
         // Single-field getter for the protocol-console knob registry.
-        s[16] = RewardReporterFacet.getRewardGraceSeconds.selector;
+        s[14] = RewardReporterFacet.getRewardGraceSeconds.selector;
         // #1944 — per-mirror readback the M7 arming ceremony needs.
-        s[17] = RewardReporterFacet.getBroadcastV2Applied.selector;
+        s[15] = RewardReporterFacet.getBroadcastV2Applied.selector;
         // #1566 closure 3 — the resolved role. The two raw fields above
         // cannot distinguish Detached from Unconfigured.
-        s[18] = RewardReporterFacet.getRewardRole.selector;
+        s[16] = RewardReporterFacet.getRewardRole.selector;
         // #2277 — the permissionless frontier catch-up and its view.
-        s[19] = RewardReporterFacet.advanceInterestFrontiers.selector;
-        s[20] = RewardReporterFacet.getInterestFrontiers.selector;
+        s[17] = RewardReporterFacet.advanceInterestFrontiers.selector;
+        s[18] = RewardReporterFacet.getInterestFrontiers.selector;
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.
@@ -3534,62 +3489,60 @@ contract DeployDiamond is Script, ArtifactRootBase {
             RewardCompensationDispatchFacet.releaseRemitReservation.selector;
     }
 
-    /// #1566 slice 4 PR A — custody lifecycle, ledger views, paid-side rebase.
+    /// #1566 slice 4 PR A — custody lifecycle and ledger views.
     function _getRewardCustodySelectors()
         internal
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](41);
+        s = new bytes4[](39);
         s[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         s[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
-        s[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
-        s[3] = RewardCustodyFacet.rewardCustodyHolder.selector;
-        s[4] = RewardCustodyFacet.armedFreshPaidRebased.selector;
-        s[5] = RewardCustodyFacet.rewardCustodyRow.selector;
-        s[6] = RewardCustodyFacet.rewardCustodySnapshot.selector;
-        s[7] = RewardCustodyFacet.armedFreshLedger.selector;
-        s[8] = RewardCustodyFacet.sweepForeignTokenFromRewardCustody.selector;
-        s[9] = RewardCustodyFacet.sweepNativeFromRewardCustody.selector;
-        s[10] = RewardCustodyFacet.rewardCustodyHolderConstructed.selector;
-        s[11] = RewardCustodyFacet.rewardCustodyNativeHeld.selector;
-        s[12] = RewardCustodyFacet.recoverVpfiFromPredecessor.selector;
-        s[13] = RewardCustodyFacet.sweepERC721FromRewardCustody.selector;
-        s[14] = RewardCustodyFacet.sweepERC1155FromRewardCustody.selector;
-        s[15] = RewardCustodyFacet.sweepUnattributedVpfiFromRewardCustody.selector;
+        s[2] = RewardCustodyFacet.rewardCustodyHolder.selector;
+        s[3] = RewardCustodyFacet.rewardCustodyRow.selector;
+        s[4] = RewardCustodyFacet.rewardCustodySnapshot.selector;
+        s[5] = RewardCustodyFacet.armedFreshLedger.selector;
+        s[6] = RewardCustodyFacet.sweepForeignTokenFromRewardCustody.selector;
+        s[7] = RewardCustodyFacet.sweepNativeFromRewardCustody.selector;
+        s[8] = RewardCustodyFacet.rewardCustodyHolderConstructed.selector;
+        s[9] = RewardCustodyFacet.rewardCustodyNativeHeld.selector;
+        s[10] = RewardCustodyFacet.recoverVpfiFromPredecessor.selector;
+        s[11] = RewardCustodyFacet.sweepERC721FromRewardCustody.selector;
+        s[12] = RewardCustodyFacet.sweepERC1155FromRewardCustody.selector;
+        s[13] = RewardCustodyFacet.sweepUnattributedVpfiFromRewardCustody.selector;
         // #1566 slice 4 PR B — activation, funding, bootstrap, overage, ledger.
-        s[16] = RewardCustodyFacet.activateRewardCustody.selector;
-        s[17] = RewardCustodyFacet.fundRewardPool.selector;
-        s[18] = RewardCustodyFacet.fundRewardCustodyRow.selector;
-        s[19] = RewardCustodyFacet.relocateRewardCustodyRow.selector;
-        s[20] = RewardCustodyFacet.releaseRewardCustodyOverage.selector;
-        s[21] = RewardCustodyFacet.rewardCustodyActivated.selector;
-        s[22] = RewardCustodyFacet.custodyDeliverClaim.selector; // 3b-ii-A (the freeze getter retired with the freeze)
-        s[23] = RewardCustodyFacet.rewardCustodyLedger.selector;
+        s[14] = RewardCustodyFacet.activateRewardCustody.selector;
+        s[15] = RewardCustodyFacet.fundRewardPool.selector;
+        s[16] = RewardCustodyFacet.fundRewardCustodyRow.selector;
+        s[17] = RewardCustodyFacet.relocateRewardCustodyRow.selector;
+        s[18] = RewardCustodyFacet.releaseRewardCustodyOverage.selector;
+        s[19] = RewardCustodyFacet.rewardCustodyActivated.selector;
+        s[20] = RewardCustodyFacet.custodyDeliverClaim.selector; // 3b-ii-A (the freeze getter retired with the freeze)
+        s[21] = RewardCustodyFacet.rewardCustodyLedger.selector;
         // #1566 slice 4 PR B — the Diamond-internal custody entry points.
-        s[24] = RewardCustodyFacet.custodyRelocateToRow.selector;
-        s[25] = RewardCustodyFacet.custodyMove.selector;
-        s[27] = RewardCustodyFacet.custodyUnclassifiedQuarantine.selector;
-        s[28] = RewardCustodyFacet.custodyReleaseFromRow.selector;
-        s[29] = RewardCustodyFacet.custodyPayoutToWallet.selector;
-        s[30] = RewardCustodyFacet.custodyDrawForTransport.selector;
+        s[22] = RewardCustodyFacet.custodyRelocateToRow.selector;
+        s[23] = RewardCustodyFacet.custodyMove.selector;
+        s[25] = RewardCustodyFacet.custodyUnclassifiedQuarantine.selector;
+        s[26] = RewardCustodyFacet.custodyReleaseFromRow.selector;
+        s[27] = RewardCustodyFacet.custodyPayoutToWallet.selector;
+        s[28] = RewardCustodyFacet.custodyDrawForTransport.selector;
         // #1566 slice 4 PR B (Codex #2186 r1) — restitution dispositions + the versioned snapshot.
-        s[31] = RewardCustodyFacet.releaseRestitutionAsPaidCorrection.selector;
-        s[32] = RewardCustodyFacet.releaseRestitutionToTreasury.selector;
-        s[33] = RewardCustodyFacet.getRecycleBackingSnapshotV2.selector;
+        s[29] = RewardCustodyFacet.releaseRestitutionAsPaidCorrection.selector;
+        s[30] = RewardCustodyFacet.releaseRestitutionToTreasury.selector;
+        s[31] = RewardCustodyFacet.getRecycleBackingSnapshotV2.selector;
         // #1566 slice 4 PR B (Codex #2186 r3) — the bootstrap release.
-        s[34] = RewardCustodyFacet.releaseRewardCustodyRow.selector;
+        s[32] = RewardCustodyFacet.releaseRewardCustodyRow.selector;
         // #1566 slice 4 PR B (Codex #2186 r4) — the complete-cut record.
-        s[35] = RewardCustodyFacet.stampRewardCustodyCutover.selector;
-        s[36] = RewardCustodyFacet.rewardCustodyCutoverStatus.selector;
+        s[33] = RewardCustodyFacet.stampRewardCustodyCutover.selector;
+        s[34] = RewardCustodyFacet.rewardCustodyCutoverStatus.selector;
         // #1566 closure 2 cutover PR 1 — the UNCLASSIFIED ingress attribution's
-        // Diamond-internal entry points (the quarantine one took slot 27).
-        s[37] = RewardCustodyFacet.custodyRecordIngressPacket.selector;
-        s[38] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
-        s[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
+        // Diamond-internal entry points (the quarantine one took slot 25).
+        s[35] = RewardCustodyFacet.custodyRecordIngressPacket.selector;
+        s[36] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
+        s[38] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
         // #1566 sanctions rule (owner 2026-10-14) — reward set apart / released.
-        s[39] = RewardCustodyFacet.custodySetApartReward.selector;
-        s[26] = RewardCustodyFacet.custodyReleaseSanctionsHeld.selector;
+        s[37] = RewardCustodyFacet.custodySetApartReward.selector;
+        s[24] = RewardCustodyFacet.custodyReleaseSanctionsHeld.selector;
     }
 
     /// #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch.
@@ -3598,27 +3551,24 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](19);
+        s = new bytes4[](16);
         s[0] = RewardReconciliationFacet.classifyLegacyPacket.selector;
         s[1] = RewardReconciliationFacet.reclassifyReconciliationEntry.selector;
-        s[2] = RewardReconciliationFacet.importLegacyEnvelope.selector;
-        s[3] = RewardReconciliationFacet.previewLegacyEnvelope.selector;
-        s[4] = RewardReconciliationFacet.getLegacyEnvelope.selector;
-        s[5] = RewardReconciliationFacet.getPacketReconciliation.selector;
-        s[18] = RewardReconciliationFacet.getPacketClassificationExcess.selector; // 3b-ii-A r15
-        s[6] = RewardReconciliationFacet.getReconciliationEntry.selector;
-        s[7] = RewardReconciliationFacet.getReconciliationEntrySpent.selector;
-        s[8] = RewardReconciliationFacet.getFreshQueueState.selector;
-        s[9] = RewardReconciliationFacet.getReconciliationTotals.selector;
-        s[10] = RewardReconciliationFacet.isReconciliationEntryUsed.selector;
+        s[2] = RewardReconciliationFacet.getPacketReconciliation.selector;
+        s[15] = RewardReconciliationFacet.getPacketClassificationExcess.selector; // 3b-ii-A r15
+        s[3] = RewardReconciliationFacet.getReconciliationEntry.selector;
+        s[4] = RewardReconciliationFacet.getReconciliationEntrySpent.selector;
+        s[5] = RewardReconciliationFacet.getFreshQueueState.selector;
+        s[6] = RewardReconciliationFacet.getReconciliationTotals.selector;
+        s[7] = RewardReconciliationFacet.isReconciliationEntryUsed.selector;
         // Codex #2206 r5 — the segment views and the Diamond-internal queue entries.
-        s[11] = RewardReconciliationFacet.getRecycledQueueState.selector;
-        s[12] = RewardReconciliationFacet.getEntryRecords.selector;
-        s[13] = RewardReconciliationFacet.advanceReconciliationQueue.selector;
-        s[14] = RewardReconciliationFacet.reconciliationTakeFresh.selector;
-        s[15] = RewardReconciliationFacet.reconciliationReleaseAbsorbed.selector;
-        s[16] = RewardReconciliationFacet.reconciliationTakeRecycled.selector;
-        s[17] = RewardReconciliationFacet.reconciliationReverseRemitTake.selector;
+        s[8] = RewardReconciliationFacet.getRecycledQueueState.selector;
+        s[9] = RewardReconciliationFacet.getEntryRecords.selector;
+        s[10] = RewardReconciliationFacet.advanceReconciliationQueue.selector;
+        s[11] = RewardReconciliationFacet.reconciliationTakeFresh.selector;
+        s[12] = RewardReconciliationFacet.reconciliationReleaseAbsorbed.selector;
+        s[13] = RewardReconciliationFacet.reconciliationTakeRecycled.selector;
+        s[14] = RewardReconciliationFacet.reconciliationReverseRemitTake.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split).

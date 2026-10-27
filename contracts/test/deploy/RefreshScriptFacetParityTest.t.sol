@@ -469,12 +469,14 @@ contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
     /// @notice #2313 — the refresh REMOVES every route outside its selector
     ///         set (`_sweepStaleRoutes`), so a function that must stay callable
     ///         under an older signature has to be IN that set. The four-argument
-    ///         vault credit is the one such compatibility entry today, and the
-    ///         legacy one-argument seed is the retirement this test used to pin
-    ///         by name: it must be outside the set, so the sweep removes it.
-    ///         (Until #2313 the refresh removed retirements from a hand-kept
-    ///         list, and this test pinned that list instead.)
-    function test_RefreshScript_SweepKeepsCompatibilityEntries_AndDropsTheLegacySeed() public {
+    ///         vault credit is the one such compatibility entry today. The
+    ///         paid-side seed is the retirement this test pins by name: both
+    ///         its one-argument form and (since #2910) its epoch-bound form
+    ///         must be outside the set, so the sweep removes either from a
+    ///         Diamond that still routes it. (Until #2313 the refresh removed
+    ///         retirements from a hand-kept list, and this test pinned that
+    ///         list instead.)
+    function test_RefreshScript_SweepKeepsCompatibilityEntries_AndDropsTheRetiredSeed() public {
         // forge-lint: disable-next-line(unsafe-cheatcode)
         vm.setEnv("DEPLOY_SKIP_ARTIFACTS", "true");
         DeployDiamond deployScript = new DeployDiamond();
@@ -483,10 +485,24 @@ contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
         address diamond = deployScript.diamond();
 
         RefreshAllFacetsInPlace.Item[] memory items = new RefreshItemsProbe().deployItemsForTest();
-        assertFalse(
-            _inItems(items, bytes4(keccak256("seedArmedFreshPaid(uint256)"))),
-            "the legacy seedArmedFreshPaid(uint256) is in the refresh's selector set - the sweep would keep it routed"
-        );
+        string[4] memory retired = [
+            "seedArmedFreshPaid(uint256)",
+            "seedArmedFreshPaid(uint256,uint64)",
+            "rebaseArmedFreshPaid(uint256,uint64)",
+            "armedFreshPaidRebased()"
+        ];
+        for (uint256 i; i < retired.length; ++i) {
+            bytes4 sel = bytes4(keccak256(bytes(retired[i])));
+            assertFalse(
+                _inItems(items, sel),
+                string.concat("retired ", retired[i], " is in the refresh's selector set - the sweep would keep it routed")
+            );
+            assertEq(
+                IDiamondLoupe(diamond).facetAddress(sel),
+                address(0),
+                string.concat("retired ", retired[i], " is routed by a fresh deploy")
+            );
+        }
         // 3b-ii-A (Codex #2276 r3 P1, r14 P2) — the four-argument vault credit
         // is NOT retired: it is a compatibility entry on the refreshed
         // VaultFactoryFacet, routed by the deploy to the SAME facet as its
@@ -503,10 +519,6 @@ contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
         address vaultFacet = IDiamondLoupe(diamond).facetAddress(fiveArg);
         assertTrue(vaultFacet != address(0), "the five-argument vault credit is not routed");
         assertEq(IDiamondLoupe(diamond).facetAddress(fourArg), vaultFacet, "the four-argument vault credit is not routed to the same facet");
-        assertTrue(
-            IDiamondLoupe(diamond).facetAddress(bytes4(keccak256("seedArmedFreshPaid(uint256,uint64)"))) != address(0),
-            "the epoch-bound seed is not routed"
-        );
     }
 
     function _inItems(RefreshAllFacetsInPlace.Item[] memory items, bytes4 sel) private pure returns (bool) {

@@ -7,7 +7,9 @@
  * Where the new surface deliberately differs the case says so — chiefly,
  * a withheld cell now NAMES its reason instead of being left blank (a
  * blank reads as zero to anyone who skips the footnote), and the backing
- * verdict is the indexer's, not one this page computes.
+ * verdict is the indexer's, not one this page computes. The two
+ * "recomputed" badge cases were removed with the backfill they described
+ * (#2937): no indexer serves a recomputed day any more.
  *
  * These pin HONESTY properties, not layout. Each test is one way a refusal
  * could reach the screen as a zero, a dash or a blank.
@@ -202,11 +204,11 @@ describe('RecyclingAccount — refusals must survive rendering', () => {
       series({
         cumulative: cumulative({
           runwayExtensionDays: null,
-          runwayUnavailableReason: 'backfilled-mirror-absorption-not-decomposable',
+          runwayUnavailableReason: 'no-armed-finalized-days',
         }),
       }),
     );
-    expect(r.textOf('recycling-runway')).toBe(R.runwayBackfilledMirror);
+    expect(r.textOf('recycling-runway')).toBe(R.runwayNoArmedDays);
     expect(r.textOf('recycling-runway')).not.toBe('—');
   });
 
@@ -314,11 +316,6 @@ describe('RecyclingAccount — M5 content requirements', () => {
     expect(r.textOf('absorbed-mirror-13')).toBe('9');
   });
 
-  it('marks a recomputed day as reconstructed, not recorded', () => {
-    const r = render(series({ daily: [day({ dayId: 4, origin: 'backfill' })] }));
-    expect(r.textOf('recomputed-4')).toBe(R.recomputedBadge);
-  });
-
   it('shows the self-funded share the endpoint already computes', () => {
     const r = render(series({ daily: [day({ dayId: 5, selfFundingRatio: 0.25 })] }));
     expect(r.textOf('selffunded-5')).toBe('25%');
@@ -331,14 +328,6 @@ describe('RecyclingAccount — M5 content requirements', () => {
       series({ daily: [day({ dayId: 7, armed: false, estimate: true, netEmission: null })] }),
     );
     expect(withIt.textOf('recycling-footnote-estimate')).toBe(R.footnoteEstimate);
-  });
-
-  it('explains the recomputed badge only when a row on screen carries it', () => {
-    const without = render(series());
-    expect(without.has('recycling-footnote-recomputed')).toBe(false);
-    const withIt = render(series({ daily: [day({ dayId: 4, origin: 'backfill' })] }));
-    expect(withIt.textOf('recycling-footnote-recomputed')).toBe(R.footnoteRecomputed);
-    expect(withIt.has('recycling-footnote-estimate')).toBe(false);
   });
 
   it('always states how cells and precision work — that holds on every render', () => {

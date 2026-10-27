@@ -16,7 +16,6 @@ import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol"
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {VPFITokenFacet} from "../../src/facets/VPFITokenFacet.sol";
 import {RewardCustodyFacet} from "../../src/facets/RewardCustodyFacet.sol";
-import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
 import {RewardCustodyHolder} from "../../src/RewardCustodyHolder.sol";
 import {IVaipakamErrors} from "../../src/interfaces/IVaipakamErrors.sol";
 
@@ -321,14 +320,15 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
     }
 
     /// @notice #1566 slice 4 PR A — a fresh deploy binds a
-    ///         `RewardCustodyHolder` built for THIS Diamond, and consumes
-    ///         BOTH one-shot paid-side migration guards (the P1-b seed and
-    ///         the slice-4 rebase) so neither writer can ever run on a chain
-    ///         that has no history to import.
-    function test_DeployedDiamond_RewardCustodyHolderBoundAndRebaseConsumed()
+    ///         `RewardCustodyHolder` built for THIS Diamond. #2910 — and
+    ///         routes none of the retired paid-side migration surface (the
+    ///         P1-b seed, the slice-4 rebase and their one-shot guards): a
+    ///         fresh deploy has no history to import, so the writers are not
+    ///         cut at all rather than cut and consumed.
+    function test_DeployedDiamond_RewardCustodyHolderBoundAndNoPaidSideMigration()
         public
     {
-        (address diamond, address admin,) = _deploy(true);
+        (address diamond,,) = _deploy(true);
         address holder = RewardCustodyFacet(diamond).rewardCustodyHolder();
         assertTrue(holder != address(0), "holder not bound");
         assertGt(holder.code.length, 0, "holder has no code");
@@ -337,24 +337,19 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
             diamond,
             "holder answers to another diamond"
         );
-        assertTrue(
-            RewardCustodyFacet(diamond).armedFreshPaidRebased(),
-            "rebase guard not consumed at deploy"
-        );
-        assertTrue(
-            RewardReporterFacet(diamond).armedFreshPaidSeeded(),
-            "seed guard not consumed at deploy"
-        );
-
-        // Neither migration writer is callable afterwards, even by the
-        // admin and even paused.
-        vm.startPrank(admin);
-        AdminFacet(diamond).pause();
-        vm.expectRevert(IVaipakamErrors.ArmedFreshPaidAlreadyRebased.selector);
-        RewardCustodyFacet(diamond).rebaseArmedFreshPaid(1, 0); // consumed: any epoch
-        vm.expectRevert(IVaipakamErrors.ArmedFreshPaidAlreadySeeded.selector);
-        RewardReporterFacet(diamond).seedArmedFreshPaid(1, 0); // consumed: any epoch
-        vm.stopPrank();
+        string[4] memory retired = [
+            "rebaseArmedFreshPaid(uint256,uint64)",
+            "armedFreshPaidRebased()",
+            "seedArmedFreshPaid(uint256,uint64)",
+            "armedFreshPaidSeeded()"
+        ];
+        for (uint256 i; i < retired.length; ++i) {
+            assertEq(
+                DiamondLoupeFacet(diamond).facetAddress(bytes4(keccak256(bytes(retired[i])))),
+                address(0),
+                string.concat("retired selector still routed: ", retired[i])
+            );
+        }
     }
 
     // ─── 5. Skip-artifacts gate is purely opt-in ──────────────────────

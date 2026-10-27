@@ -2099,6 +2099,16 @@ callable after reconciliation defeats the delivered bound entirely. Same shape a
 the existing one-shot `seedArmedFreshPaid` on the paid side, and for the same
 reason.
 
+> **Superseded (#2910).** Neither paid-side importer exists any more: the
+> P1-b `seedArmedFreshPaid`, the `rebaseArmedFreshPaid` this section designs
+> and their two one-shot guards were retired, with the bootstrap writers' and
+> the activation's rebase prerequisite and the in-place refresh's bootstrap
+> mode. A paid history to import exists only on a Diamond upgraded in place,
+> and every chain is a fresh deploy (owner decision O1 = A), whose paid and
+> received sides both start at zero, so `received == paid` holds at deploy and
+> the activation still verifies it on the canonical chain. The reasoning below
+> is kept as the record of why the importer had the shape it had.
+
 **The paid side needs a NEW importer; `seedArmedFreshPaid` cannot serve.** An
 earlier revision routed the broadened paid history through it, and it is
 unusable for two independent reasons: it is one-shot, guarded by
@@ -6514,7 +6524,8 @@ remains possible and shows only as the unattributed remainder — review r5).**
 
 - The holder contract, its ledger and its lifecycle as above, plus its
   deployment-artifact key and `Deployment` field.
-- `rebaseArmedFreshPaid(total)` — the paid-side importer §5b requires: ADMIN,
+- (Retired in #2910 with the P1-b seeder; see the note in §5b.)
+  `rebaseArmedFreshPaid(total)` — the paid-side importer §5b requires: ADMIN,
   paused, one-shot under its own guard, sets `paid = max(existing, total)` and
   on the canonical chain sets `received` to that same figure (the zero-headroom
   baseline, `received = paid`, never `received = 0`), and consumes
@@ -6828,6 +6839,12 @@ PR C.**
 > on chain at the import, resolved whole and once (relocated measured,
 > replacement-funded delta-checked, or written down) and entered into the
 > same log, so the snapshot-keyed error path IS the packet reclassification.
+> *(Superseded for (c), #2910: the envelope import is retired. Every chain
+> reaches this build by a fresh deploy, which has no pre-stamp inventory,
+> and the ingress now refuses any delivery whose fresh and recycled figures
+> do not add up to what arrived, on both paths, so nothing ever enters the
+> uncounted aggregate without a packet to classify it. Its storage keeps its
+> place, renamed retired.)*
 > Four things the landed shape settles differently from this section's
 > pre-PR-1 prose, each stated so it is not re-argued: **(1) the aggregate
 > wire bound is STRUCTURAL.** PR 1 protects exactly a packet's untyped part
@@ -7064,6 +7081,8 @@ PR C.**
   the first draft covered Canonical only while the same deploy switches every
   Mirror to holder custody). Canonical (Base Sepolia first): pause →
   recovery/overage and recycled reconciliations above → VERIFY the paid-side
+  (since #2910 the rebase and its guard are gone, so only `received == paid`
+  is verified; the rest of this step is the pre-#2910 record)
   baseline PR A already installed (`armedFreshPaidRebased()` true and
   `received == paid` through `armedFreshLedger()`; review r7 — a fresh
   deploy consumes the one-shot at deploy and an active-role in-place refresh

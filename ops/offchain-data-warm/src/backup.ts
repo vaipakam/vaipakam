@@ -120,14 +120,13 @@ const ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED: Array<{
   migrationPrefix: string;
 }> = [
   { table: 'support_tickets', migrationPrefix: '0028' },
-  //   - recycle_day_backfill (#1349 M5, migration 0047) — pre-cutover
-  //     recycling day figures. The ONLY born-off-chain table in the
-  //     recycling set: every other one is a fold of chain logs and is
-  //     rebuilt by the block-zero replay, but these are recomputed from a
-  //     getter whose input a role demotion can overwrite, after which a
-  //     re-run yields different numbers and the original is unrecoverable.
-  //     A D1 loss without backup silently rewrites published history.
-  { table: 'recycle_day_backfill', migrationPrefix: '0047' },
+  //   (recycle_day_backfill, migration 0047, was archived here until #2937
+  //   retired it: nothing ever wrote it, every chain is a fresh deploy with
+  //   no pre-cutover recycling day to recover, and a later migration drops
+  //   it — which this list must not outlive, or the nightly would read the
+  //   dropped table as a post-migration table LOSS and abort. The restore
+  //   converter still recognises it in older archives; see
+  //   RETIRED_ARCHIVE_TABLES in scripts/restore-from-archive.mjs.)
   //   - loan_orphans (#2197, migration 0065) — `loans` rows the indexer
   //     proved the chain has no loan for, moved out of publication with the
   //     whole row kept. A block-zero replay cannot recreate one (its

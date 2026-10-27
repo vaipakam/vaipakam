@@ -1405,9 +1405,18 @@ For each table:
    `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`,
    `notify_state`, `pre_grace_notify_state` (absent from pre-#1480
    archives), `telegram_links`, `support_tickets`,
-   `recycle_day_backfill` (absent from pre-#1349-M5 archives),
    `loan_orphans` (absent from pre-#2197 archives) and `signed_offers`
    (absent from pre-#1481 archives).
+
+   > **`recycle_day_backfill` is retired, not imported** (#2937). Archives
+   > written between migration 0047 and #2937 carry it, always empty:
+   > nothing ever wrote it, and every chain reaches the current build by a
+   > fresh deploy, so there is no pre-cutover recycling day to recover. The
+   > converter recognises it in those archives and skips it, saying so: it
+   > emits no batch and no clear. Nothing reads the table, and #2937's
+   > follow-up migration drops it from the live schema, after which a clear
+   > would fail the apply. An archive carrying ROWS for it is refused, since no writer ever
+   > produced one. Pick a different archive, or escalate.
 
    > **`signed_offers` is HYBRID** (#1481): each row is something a user
    > created off chain, with columns the indexer then maintains from chain
@@ -1450,32 +1459,20 @@ For each table:
    > `loan_orphans` entry is a record of the earlier withdrawal, nothing
    > more.
 
-   > **`recycle_day_backfill` is the one recycling table that is restored
-   > rather than replayed**, and the distinction is load-bearing. Almost
-   > every other `recycle_*` table is a fold of chain logs, so §6's replay
-   > rebuilds it exactly — those are in the clear-before-replay command
-   > and must NOT be imported here.
+   > **No `recycle_*` table is imported here.** Almost every one is a fold
+   > of chain logs, so §6's replay rebuilds it exactly — those are in the
+   > clear-before-replay command and must NOT be imported here.
    >
-   > **`recycle_backing_snapshot` is a second exception, in the opposite
-   > direction** (#1525). It is cleared like the replayed tables, but the
-   > replay does NOT rebuild it: it holds a periodic reading of LIVE
-   > contract state, written only by the scheduled capture pass, so it
-   > stays empty until that pass next runs — within one round-robin cycle
-   > of restore. Do not wait for it during the replay and do not verify it
-   > as replay output; an empty table there is the expected state, and the
-   > dashboard withholds the backing block rather than publishing zeros.
-   > It is deliberately NOT imported from the archive either: a restored
-   > copy would republish an old backing verdict as a current one.
-   >
-   > **Back to `recycle_day_backfill`** — the table this section is about,
-   > and the one that IS imported here. It holds pre-cutover day figures
-   > recomputed from `getRecycleDayMetrics`, whose `dayCapThreshold18`
-   > input `setBroadcastDayCapThreshold` can overwrite for an
-   > already-finalized day on a demoted Diamond. After that, re-running
-   > the backfill yields DIFFERENT numbers and the original is
-   > unrecoverable — those days carry no widened event to fall back on.
-   > Restoring it is the only way to keep published history intact; a
-   > re-run is not a substitute.
+   > **`recycle_backing_snapshot` is the exception** (#1525). It is cleared
+   > like the replayed tables, but the replay does NOT rebuild it: it holds
+   > a periodic reading of LIVE contract state, written only by the
+   > scheduled capture pass, so it stays empty until that pass next runs —
+   > within one round-robin cycle of restore. Do not wait for it during the
+   > replay and do not verify it as replay output; an empty table there is
+   > the expected state, and the dashboard withholds the backing block
+   > rather than publishing zeros. It is deliberately NOT imported from the
+   > archive either: a restored copy would republish an old backing verdict
+   > as a current one.
 
    ```bash
    wrangler d1 execute vaipakam-warm --file=restore/d1/<table>.sql --remote

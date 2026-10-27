@@ -25,19 +25,6 @@
   },
   {
     "type": "function",
-    "name": "armedFreshPaidSeeded",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "closeDay",
     "inputs": [
       {
@@ -402,24 +389,6 @@
   },
   {
     "type": "function",
-    "name": "seedArmedFreshPaid",
-    "inputs": [
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "pauseEpoch",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "setBaseChainId",
     "inputs": [
       {
@@ -482,19 +451,6 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "event",
-    "name": "ArmedFreshPaidSeeded",
-    "inputs": [
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
   },
   {
     "type": "event",
@@ -878,106 +834,6 @@
     "type": "error",
     "name": "AlreadyLaunched",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ArmedFreshPaidAlreadyRebased",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ArmedFreshPaidAlreadySeeded",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ArmedFreshRebaseRequiresActiveRole",
-    "inputs": [
-      {
-        "name": "role",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "total",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "paidBefore",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "receivedBefore",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ArmedFreshRebaseStalePauseEpoch",
-    "inputs": [
-      {
-        "name": "stated",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "live",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ArmedFreshRebaseTotalExceedsCap",
-    "inputs": [
-      {
-        "name": "total",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cap",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ArmedFreshSeedExceedsCap",
-    "inputs": [
-      {
-        "name": "resulting",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cap",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ArmedFreshSeedStalePauseEpoch",
-    "inputs": [
-      {
-        "name": "stated",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "live",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ]
   },
   {
     "type": "error",
@@ -2012,11 +1868,6 @@
   },
   {
     "type": "error",
-    "name": "ExpectedManualPause",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "ExpectedSourceListUnusable",
     "inputs": []
   },
@@ -2480,49 +2331,6 @@
     "type": "error",
     "name": "LaunchGateCallInvalid",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "LegacyEnvelopeAlreadyImported",
-    "inputs": [
-      {
-        "name": "snapshotId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "LegacyEnvelopeEmpty",
-    "inputs": [
-      {
-        "name": "snapshotId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "LegacyEnvelopeMismatch",
-    "inputs": [
-      {
-        "name": "snapshotId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "stated",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "netTotal",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",
@@ -3726,11 +3534,6 @@
   },
   {
     "type": "error",
-    "name": "RewardCustodyActivationRequiresRebase",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "RewardCustodyActivationStalePauseEpoch",
     "inputs": [
       {
@@ -3823,11 +3626,6 @@
         "internalType": "uint8"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "RewardCustodyBootstrapRequiresRebase",
-    "inputs": []
   },
   {
     "type": "error",

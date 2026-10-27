@@ -137,10 +137,10 @@ contract NoopERC721 {
  * @notice The holder's Diamond gate, the one-shot Diamond-constructed
  *         binding, the paused replacement ceremony (successor constructed
  *         in the same transaction, whole balance moves, pointer flips,
- *         growth verified, dust reported not refused), the paid-side rebase
- *         (paused, ADMIN, one-shot, a FLOOR, canonical-only received
- *         rewrite, inactive-role gate, seeder consumed), and the read
- *         surface that says what it does not know.
+ *         growth verified, dust reported not refused), and the read
+ *         surface that says what it does not know. (The paid-side rebase
+ *         this suite also covered was retired in #2910: a fresh deploy has
+ *         no paid history to import.)
  */
 contract RewardCustodyFacetTest is SetupTest {
     // Mirrors of the facet's / holder's events, for `vm.expectEmit`.
@@ -151,14 +151,6 @@ contract RewardCustodyFacetTest is SetupTest {
         address indexed token,
         uint256 balanceMoved,
         uint256 successorPreBalance
-    );
-    event ArmedFreshPaidRebased(
-        uint8 role,
-        uint256 requestedTotal,
-        uint256 paidBefore,
-        uint256 paidAfter,
-        uint256 receivedBefore,
-        uint256 receivedAfter
     );
     event RewardCustodyReleased(
         address indexed token,
@@ -248,12 +240,6 @@ contract RewardCustodyFacetTest is SetupTest {
 
     function _pause() internal {
         AdminFacet(address(diamond)).pause();
-    }
-
-    /// @dev The received counter as stored — read through the custody
-    ///      facet's raw pair, since the bound getter cannot report it.
-    function _received() internal view returns (uint256 received) {
-        (received,) = _custody().armedFreshLedger();
     }
 
     /// @dev The address the Diamond's NEXT `new` will land on — what an
@@ -495,12 +481,12 @@ contract RewardCustodyFacetTest is SetupTest {
         assertEq(_custody().rewardCustodyHolder(), holder, "pointer untouched");
     }
 
-    // ─── 4. The paid-side rebase ────────────────────────────────────────────
+    // ─── 4. The manual-pause ceremonies ─────────────────────────────────────
 
     /// @dev Codex #2158 r18 P2 — an auto-pause window does not qualify: it
     ///      lapses on its own, so a ceremony run under it alone would be
     ///      followed by service resuming by no one's decision. Only the manual
-    ///      pause lets the replacement and the rebase through.
+    ///      pause lets the replacement through.
     function test_CeremoniesRequireTheManualPauseNotAnAutoPause() public {
         _bind();
         _becomeCanonical();
@@ -511,8 +497,6 @@ contract RewardCustodyFacetTest is SetupTest {
         assertTrue(AdminFacet(address(diamond)).paused(), "auto-paused");
         vm.expectRevert(LibPausable.ExpectedManualPause.selector);
         _custody().replaceRewardCustodyHolder();
-        vm.expectRevert(LibPausable.ExpectedManualPause.selector);
-        _custody().rebaseArmedFreshPaid(1, _epoch());
         _pause(); // the manual pause
         _custody().replaceRewardCustodyHolder();
     }
@@ -569,29 +553,6 @@ contract RewardCustodyFacetTest is SetupTest {
     function _epoch() internal view returns (uint64 transitions) {
         (,,, transitions) =
             LibPausable.decodePausableSlot(vm.load(address(diamond), LibPausable.PAUSABLE_STORAGE_POSITION));
-    }
-
-    /// @dev Codex #2158 r27 P1 — the rebase is bound to the pause epoch the
-    ///      figure was established at: lifting and re-applying the pause
-    ///      moves the transition count, and the stale epoch is refused ON
-    ///      CHAIN, whatever tooling paired it with the fresh pause.
-    /// @dev Codex #2158 r29 P1 — the legacy seed is bound to the pause the
-    ///      same way as the rebase: manual pause required, stale epoch
-    ///      refused ON CHAIN.
-    function test_Seed_RequiresTheManualPauseAndTheLiveEpoch() public {
-        vm.expectRevert(LibPausable.ExpectedManualPause.selector);
-        _rep().seedArmedFreshPaid(1 ether, 0);
-        _pause();
-        uint64 established = _epoch();
-        AdminFacet(address(diamond)).unpause();
-        _pause();
-        vm.expectRevert(
-            abi.encodeWithSelector(IVaipakamErrors.ArmedFreshSeedStalePauseEpoch.selector, established, _epoch())
-        );
-        _rep().seedArmedFreshPaid(1 ether, established);
-        assertFalse(_rep().armedFreshPaidSeeded(), "guard still open");
-        _rep().seedArmedFreshPaid(1 ether, _epoch());
-        assertTrue(_rep().armedFreshPaidSeeded());
     }
 
     /// @dev Codex #2158 post-cap P2 (reversing the r29 pin) — a Diamond that
@@ -721,318 +682,22 @@ contract RewardCustodyFacetTest is SetupTest {
         _custody().sweepERC721FromRewardCustody(holder, address(nft), 5);
     }
 
-    function test_Rebase_RefusesAStalePauseEpoch() public {
-        _becomeCanonical();
-        _pause();
-        uint64 established = _epoch();
-        AdminFacet(address(diamond)).unpause(); // a payout could happen here
-        _pause();
-        uint64 live = _epoch();
-        assertEq(live, established + 2, "two transitions");
-        vm.expectRevert(
-            abi.encodeWithSelector(IVaipakamErrors.ArmedFreshRebaseStalePauseEpoch.selector, established, live)
-        );
-        _custody().rebaseArmedFreshPaid(1_000 ether, established);
-        assertFalse(_custody().armedFreshPaidRebased(), "guard still open");
-        _custody().rebaseArmedFreshPaid(1_000 ether, live);
-        assertTrue(_custody().armedFreshPaidRebased());
-    }
-
-    function test_Rebase_RequiresPause() public {
-        _becomeCanonical();
-        vm.expectRevert(LibPausable.ExpectedManualPause.selector);
-        _custody().rebaseArmedFreshPaid(1, _epoch());
-    }
-
-    function test_Rebase_IsAdminOnly() public {
-        _becomeCanonical();
-        _pause();
-        vm.prank(nonAdmin);
-        _expectNotAdmin(nonAdmin);
-        _custody().rebaseArmedFreshPaid(1, _epoch());
-    }
-
-    function test_Rebase_Canonical_SetsPaidAndReceivedToTheTotal() public {
-        _becomeCanonical();
-        _mut().setArmedFreshLedgerRaw(1_000 ether, 400 ether);
-        _pause();
-
-        vm.expectEmit(false, false, false, true, address(diamond));
-        emit ArmedFreshPaidRebased(
-            uint8(LibVaipakam.RewardRole.Canonical),
-            700 ether, 400 ether, 700 ether, 1_000 ether, 700 ether
-        );
-        _custody().rebaseArmedFreshPaid(700 ether, _epoch());
-
-        (uint256 paid,) = _lens().getDeliveredFreshBound();
-        assertEq(paid, 700 ether, "paid set to the total");
-        assertEq(_received(), 700 ether, "canonical: received rewritten to the zero-headroom baseline");
-        assertTrue(_custody().armedFreshPaidRebased());
-    }
-
-    function test_Rebase_Canonical_IsAFloorNeverALowering() public {
-        _becomeCanonical();
-        _mut().setArmedFreshLedgerRaw(1_000 ether, 400 ether);
-        _pause();
-
-        // 60 of payouts followed by a retirement at 400: importing 100 must
-        // keep 400, and received follows the RESULT, not the request.
-        _custody().rebaseArmedFreshPaid(100 ether, _epoch());
-
-        (uint256 paid,) = _lens().getDeliveredFreshBound();
-        assertEq(paid, 400 ether, "existing counter is the floor");
-        assertEq(_received(), 400 ether, "received = resulting paid");
-    }
-
-    function test_Rebase_Mirror_LeavesReceivedAlone() public {
-        _becomeMirror();
-        _mut().setArmedFreshLedgerRaw(1_000 ether, 400 ether);
-        _pause();
-
-        vm.expectEmit(false, false, false, true, address(diamond));
-        emit ArmedFreshPaidRebased(
-            uint8(LibVaipakam.RewardRole.Mirror),
-            700 ether, 400 ether, 700 ether, 1_000 ether, 1_000 ether
-        );
-        _custody().rebaseArmedFreshPaid(700 ether, _epoch());
-
-        (uint256 paid, uint256 remaining) = _lens().getDeliveredFreshBound();
-        assertEq(paid, 700 ether, "paid set to the total");
-        assertEq(_received(), 1_000 ether, "mirror: received untouched");
-        assertEq(remaining, 300 ether, "bound = received - paid");
-    }
-
-    function test_Rebase_Mirror_AboveReceivedSaturatesTheBoundToZero() public {
-        _becomeMirror();
-        _mut().setArmedFreshLedgerRaw(500 ether, 0);
-        _pause();
-        _custody().rebaseArmedFreshPaid(800 ether, _epoch());
-        (uint256 paid, uint256 remaining) = _lens().getDeliveredFreshBound();
-        assertEq(paid, 800 ether);
-        assertEq(remaining, 0, "over-paid mirror has no headroom, not an underflow");
-    }
-
-    /// @dev Codex #2158 r11 P1 — the one-shot floor must not accept a total
-    ///      no honest history can reach; above the pool cap it is refused
-    ///      before any guard is consumed.
-    function test_Rebase_RefusesATotalAboveThePoolCap() public {
-        _becomeCanonical();
-        _pause();
-        uint256 cap = LibVaipakam.VPFI_INTERACTION_POOL_CAP;
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.ArmedFreshRebaseTotalExceedsCap.selector, cap + 1, cap
-            )
-        );
-        _custody().rebaseArmedFreshPaid(cap + 1, _epoch());
-        assertFalse(_custody().armedFreshPaidRebased(), "guard untouched");
-        assertFalse(_rep().armedFreshPaidSeeded(), "seed guard untouched");
-
-        // Exactly the cap is the largest honest figure and is accepted.
-        _custody().rebaseArmedFreshPaid(cap, _epoch());
-        (uint256 received, uint256 paid) = _custody().armedFreshLedger();
-        assertEq(paid, cap);
-        assertEq(received, cap);
-    }
-
-    /// @dev Codex #2158 r13 P1 — the RESULT is bounded too: a paid counter
-    ///      already above the cap (the seeder used to allow it) is refused
-    ///      with the guard left open, never sealed in by `max`. And the
-    ///      seeder itself now refuses to create such a counter.
-    function test_Rebase_RefusesAPaidCounterAlreadyAboveTheCap() public {
-        _becomeCanonical();
-        uint256 cap = LibVaipakam.VPFI_INTERACTION_POOL_CAP;
-        _mut().setArmedFreshLedgerRaw(0, cap + 1);
-        _pause();
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.ArmedFreshRebaseTotalExceedsCap.selector, cap + 1, cap
-            )
-        );
-        _custody().rebaseArmedFreshPaid(0, _epoch());
-        assertFalse(_custody().armedFreshPaidRebased(), "guard left open for correction");
-    }
-
-    function test_Seed_RefusesToPushPaidAboveTheCap() public {
-        _pause();
-        uint256 cap = LibVaipakam.VPFI_INTERACTION_POOL_CAP;
-        vm.expectRevert(
-            abi.encodeWithSelector(IVaipakamErrors.ArmedFreshSeedExceedsCap.selector, cap + 1, cap)
-        );
-        _rep().seedArmedFreshPaid(cap + 1, _epoch());
-        assertFalse(_rep().armedFreshPaidSeeded(), "seed guard untouched");
-        _rep().seedArmedFreshPaid(cap, _epoch());
-        (, uint256 paid) = _custody().armedFreshLedger();
-        assertEq(paid, cap, "exactly the cap is accepted");
-    }
-
-    function test_Rebase_IsOneShot() public {
-        _becomeCanonical();
-        _pause();
-        _custody().rebaseArmedFreshPaid(10 ether, _epoch());
-        vm.expectRevert(IVaipakamErrors.ArmedFreshPaidAlreadyRebased.selector);
-        _custody().rebaseArmedFreshPaid(20 ether, _epoch());
-        (uint256 paid,) = _lens().getDeliveredFreshBound();
-        assertEq(paid, 10 ether, "a refused re-run changes nothing");
-    }
-
-    function test_Rebase_ConsumesTheAdditiveSeeder() public {
-        _becomeMirror();
-        _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
-        assertFalse(_rep().armedFreshPaidSeeded(), "seeder never ran");
-        _pause();
-        _custody().rebaseArmedFreshPaid(300 ether, _epoch());
-        assertTrue(_rep().armedFreshPaidSeeded(), "rebase consumed the seed guard");
-
-        // The stale additive path can no longer double-count on top.
-        vm.expectRevert(IVaipakamErrors.ArmedFreshPaidAlreadySeeded.selector);
-        _rep().seedArmedFreshPaid(300 ether, _epoch());
-        (uint256 paid,) = _lens().getDeliveredFreshBound();
-        assertEq(paid, 300 ether, "the absolute total stands");
-    }
-
-    function test_Rebase_StillAvailableAfterTheSeederRan() public {
-        _becomeMirror();
-        _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
-        _pause(); // the seed is bound to the manual pause too (Codex #2158 r29 P1)
-        _rep().seedArmedFreshPaid(400 ether, _epoch());
-        assertTrue(_rep().armedFreshPaidSeeded());
-        // Closure 2 widened the paid history: the reconciled total is 650.
-        _custody().rebaseArmedFreshPaid(650 ether, _epoch());
-        (uint256 paid, uint256 remaining) = _lens().getDeliveredFreshBound();
-        assertEq(paid, 650 ether, "set, not added: 400 + 650 would be wrong");
-        assertEq(remaining, 350 ether);
-    }
-
-    function test_Rebase_Unconfigured_ConsumesGuardsWithoutTouchingTheBound() public {
-        // The fresh-deploy use: role Unconfigured, total 0, paid 0. Both
-        // guards close, the bound stays `max`.
-        _pause();
-        vm.expectEmit(false, false, false, true, address(diamond));
-        emit ArmedFreshPaidRebased(
-            uint8(LibVaipakam.RewardRole.Unconfigured), 0, 0, 0, 0, 0
-        );
-        _custody().rebaseArmedFreshPaid(0, _epoch());
-        assertTrue(_custody().armedFreshPaidRebased());
-        assertTrue(_rep().armedFreshPaidSeeded());
-        (uint256 paid, uint256 remaining) = _lens().getDeliveredFreshBound();
-        assertEq(paid, 0);
-        assertEq(remaining, type(uint256).max, "Unconfigured never reads this ledger");
-    }
-
-    /// @dev Codex #2158 r1 P2 — an inactive role may not import history:
-    ///      the role decides whether the received baseline is installed, so
-    ///      a one-shot that ran before the role was known would close the
-    ///      door on a deficit.
-    function test_Rebase_Unconfigured_RefusesANonzeroTotal() public {
-        _pause();
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.ArmedFreshRebaseRequiresActiveRole.selector,
-                uint8(LibVaipakam.RewardRole.Unconfigured),
-                5 ether,
-                0,
-                0
-            )
-        );
-        _custody().rebaseArmedFreshPaid(5 ether, _epoch());
-        assertFalse(_custody().armedFreshPaidRebased(), "guard stays open");
-        assertFalse(_rep().armedFreshPaidSeeded(), "seed guard untouched");
-    }
-
-    function test_Rebase_Unconfigured_RefusesToCloseOverAnExistingPaidCounter() public {
-        // A seeded-but-unconfigured chain: consuming the guard with a zero
-        // total would leave the seeded paid figure without its baseline.
-        _pause();
-        _rep().seedArmedFreshPaid(300 ether, _epoch());
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.ArmedFreshRebaseRequiresActiveRole.selector,
-                uint8(LibVaipakam.RewardRole.Unconfigured),
-                0,
-                300 ether,
-                0
-            )
-        );
-        _custody().rebaseArmedFreshPaid(0, _epoch());
-        assertFalse(_custody().armedFreshPaidRebased(), "guard stays open");
-    }
-
-    function test_Rebase_Detached_HistoryFreeChainConsumesGuards() public {
-        _becomeDetached();
-        _pause();
-        _custody().rebaseArmedFreshPaid(0, _epoch());
-        assertTrue(_custody().armedFreshPaidRebased());
-        assertTrue(_rep().armedFreshPaidSeeded());
-    }
-
-    function test_Rebase_Detached_WithPaidHistoryKeepsTheGuardOpen() public {
-        // A detached mirror carrying history: the rebase waits for the
-        // re-attachment ceremony, where the active role decides the baseline.
-        _becomeDetached();
-        _mut().setArmedFreshLedgerRaw(0, 500 ether);
-        _pause();
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.ArmedFreshRebaseRequiresActiveRole.selector,
-                uint8(LibVaipakam.RewardRole.Detached),
-                0,
-                500 ether,
-                0
-            )
-        );
-        _custody().rebaseArmedFreshPaid(0, _epoch());
-        assertFalse(_custody().armedFreshPaidRebased(), "guard stays open for re-attachment");
-
-        // Re-attached as a mirror, the same call now runs.
-        _becomeMirror();
-        _custody().rebaseArmedFreshPaid(700 ether, _epoch());
-        (, uint256 paid) = _custody().armedFreshLedger();
-        assertEq(paid, 700 ether);
-        assertTrue(_custody().armedFreshPaidRebased());
-    }
-
-    /// @dev Codex #2158 r5 P1 — a pre-role-field chain detached before its
-    ///      residual was retired carries `received > 0, paid == 0`. That is
-    ///      NOT history-free: a zero rebase must not close the door, or a
-    ///      later direct promotion to Canonical would expose the stale
-    ///      received side as headroom with no way to install the baseline.
-    ///      Slice 4 PR C-1 closes that hole by construction: EVERY effective
-    ///      role change retires the live era, levelling paid up to the stale
-    ///      received side first, so the chain leaves Detached with zero
-    ///      headroom; the guard still has to stay open for the baseline.
-    function test_Rebase_Detached_WithReceivedHistoryKeepsTheGuardOpen() public {
+    /// @dev Codex #2158 r5 P1, slice 4 PR C-1 — a chain detached carrying a
+    ///      stale received side (`received > 0, paid == 0`) and then promoted
+    ///      DIRECTLY to Canonical exposes none of it as headroom: the promotion
+    ///      is an effective role change, so it retires the live era and levels
+    ///      paid up to the stale received side before anything else. (Until
+    ///      #2910 this was pinned beside the retired paid-side rebase; the
+    ///      levelling is the role change's own, so it stands without it.)
+    function test_RoleChange_FromDetachedLevelsAStaleReceivedSide() public {
         _becomeDetached();
         _mut().setArmedFreshLedgerRaw(800 ether, 0);
-        _pause();
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.ArmedFreshRebaseRequiresActiveRole.selector,
-                uint8(LibVaipakam.RewardRole.Detached),
-                0,
-                0,
-                800 ether
-            )
-        );
-        _custody().rebaseArmedFreshPaid(0, _epoch());
-        assertFalse(_custody().armedFreshPaidRebased(), "guard stays open");
-
-        // Promoted DIRECTLY to Canonical. The promotion is an effective role
-        // change, so it retires the live era (PR C-1) and levels paid up to the
-        // stale received side before anything else: the stale side is kept as
-        // history, it is no headroom, and the baseline can still be installed
-        // because the guard stayed open.
         vm.chainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(true);
         assertEq(uint8(_rep().getRewardRole()), uint8(LibVaipakam.RewardRole.Canonical));
-        (uint256 receivedBefore, uint256 paidBefore) = _custody().armedFreshLedger();
-        assertEq(receivedBefore, 800 ether, "the stale received side is kept as history");
-        assertEq(paidBefore, 800 ether, "the era retirement levelled paid to it: no stale headroom");
-        _custody().rebaseArmedFreshPaid(0, _epoch());
         (uint256 received, uint256 paid) = _custody().armedFreshLedger();
-        assertEq(paid, 800 ether, "a rebase never lowers the paid counter");
-        assertEq(received, 800 ether, "canonical: received levelled to paid, still no headroom");
-        assertTrue(_custody().armedFreshPaidRebased());
+        assertEq(received, 800 ether, "the stale received side is kept as history");
+        assertEq(paid, 800 ether, "the era retirement levelled paid to it: no stale headroom");
     }
 
     // ─── 4b. Foreign-token sweep ────────────────────────────────────────────

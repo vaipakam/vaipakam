@@ -6175,8 +6175,6 @@ const copySource = {
     runwaySelfFunded: 'Self-funding — the scheduled floor is currently zero',
     runwayNoArmedDays:
       'Not calculable yet: no closed day has run under the committed schedule.',
-    runwayBackfilledMirror:
-      'Not calculable: recovered cross-chain absorption cannot be attributed per chain, so any figure would be a guess.',
     runwayAttributionRebuilding:
       'Not calculable yet: the attribution records are still being rebuilt.',
     runwayUnknown: 'Not calculable from the records available.',
@@ -6219,7 +6217,6 @@ const copySource = {
     colAbsorbed: 'Absorbed (combined)',
     dayLabel: tmpl('Day {{day}}', ['day']),
     estimateBadge: 'estimate',
-    recomputedBadge: 'recomputed',
     // Per-cell refusals. Each names its reason in the cell itself.
     cellNoPool: 'no pool — the day has not closed',
     cellEmptyPool: 'not applicable — the day’s pool was empty',
@@ -6236,8 +6233,6 @@ const copySource = {
     // a row on screen carries that badge; the cell rules always apply.
     footnoteEstimate:
       'An “estimate” day is one the programme had scheduled but not yet committed to, so nothing is shown as drawn for it.',
-    footnoteRecomputed:
-      'A “recomputed” day was reconstructed afterwards rather than recorded as it happened, from state a later role handover can rewrite.',
     footnoteCells:
       'Where a figure is not determined, its cell says why — no unknown is shown as a blank or as zero. Amounts are in VPFI, shown to four decimal places; a positive amount smaller than that is labelled as such rather than shown as zero.',
     drawnBounds:

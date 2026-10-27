@@ -56,7 +56,12 @@ export interface RecyclingDay {
   armed: boolean;
   /** The day's figures are a schedule, not a commitment. Honour it. */
   estimate: boolean;
-  origin: 'event' | 'backfill' | null;
+  /**
+   * `'event'` for a day with a stored row (every stored day is event-derived
+   * since #2937 retired the recomputed backfill), `null` for a dense-series
+   * gap with no stored row at all.
+   */
+  origin: 'event' | null;
   scheduleFloor: string | null;
   recycledBudget: string | null;
   aBar: string | null;
@@ -236,7 +241,7 @@ function isDay(v: unknown): v is RecyclingDay {
     isBool(v.stamped) &&
     isBool(v.armed) &&
     isBool(v.estimate) &&
-    (v.origin === 'event' || v.origin === 'backfill' || v.origin === null) &&
+    (v.origin === 'event' || v.origin === null) &&
     DAY_AMOUNTS.every((f) => isWeiOrNull(v[f])) &&
     // The two live components are always published, so never null.
     isWeiString(v.absorbedLocal) &&
