@@ -8,6 +8,7 @@ import {LibPeerLTV} from "../libraries/LibPeerLTV.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {FeedRegistryInterface} from "@vaipakam-vendor/chainlink/FeedRegistryInterface.sol";
+import {IFeedRegistryPairBase} from "../interfaces/IFeedRegistryPairBase.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import {AggregatorV2V3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV2V3Interface.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -958,18 +959,20 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         }
     }
 
-    // ─── Phase 7b.2 — symbol-derived secondary oracles + Soft 2-of-N ─
+    // ─── Phase 7b.2 — secondary oracles + Soft 2-of-N ────────────────
     //
-    // Three cross-validation oracles (Tellor, API3, DIA), all keyed
-    // by the asset's ERC-20 symbol read on-chain at call time. Zero
-    // per-asset governance config — operators set ONE chain-level
-    // address per oracle; the OracleFacet derives query ids / dapi
-    // names / DIA keys from `asset.symbol()`.
+    // Three cross-validation oracles (Tellor, API3, DIA), all keyed by
+    // the asset's registered price identity: the base symbol of its
+    // Chainlink pair in the chain's `VaipakamFeedRegistry`
+    // ({_secondarySymbol}, #2745), never the token's own `symbol()`.
+    // Operators set ONE chain-level address per oracle; the identity
+    // comes with the asset's feed registration, under the registry's
+    // delay and veto, so a token cannot re-point its own cross-check.
     //
     // Combine rule (Soft 2-of-N quorum):
     //   1. Each enforcer probes its source and returns a status:
-    //        - {Unavailable}: oracle not configured / symbol unreadable
-    //          / no data / stale → silent skip, doesn't count.
+    //        - {Unavailable}: oracle not configured / no registered
+    //          identity / no data / stale → silent skip, doesn't count.
     //        - {Agree}: data fresh AND within deviation tolerance → +1.
     //        - {Disagree}: data fresh AND beyond tolerance.
     //   2. The aggregator counts how many secondaries agree and how
@@ -993,9 +996,13 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         uint256 primaryPrice,
         uint8 primaryDec
     ) private view {
-        SecondaryStatus tellor = _checkTellor(asset, primaryPrice, primaryDec);
-        SecondaryStatus api3 = _checkApi3(asset, primaryPrice, primaryDec);
-        SecondaryStatus dia = _checkDia(asset, primaryPrice, primaryDec);
+        // #2745 - no registered identity means no secondary can be asked
+        // about this asset: every source reads Unavailable.
+        bytes32 symbol = _secondarySymbol(asset);
+        if (symbol == bytes32(0)) return;
+        SecondaryStatus tellor = _checkTellor(symbol, primaryPrice, primaryDec);
+        SecondaryStatus api3 = _checkApi3(symbol, primaryPrice, primaryDec);
+        SecondaryStatus dia = _checkDia(symbol, primaryPrice, primaryDec);
 
         bool anyAgree = tellor == SecondaryStatus.Agree ||
             api3 == SecondaryStatus.Agree ||
@@ -1052,10 +1059,12 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         address asset
     ) external view returns (uint8 agreeing, uint8 disagreeing) {
         (uint256 primaryPrice, uint8 primaryDec) = _primaryPrice(asset);
+        bytes32 symbol = _secondarySymbol(asset);
+        if (symbol == bytes32(0)) return (0, 0);
         SecondaryStatus[3] memory statuses = [
-            _checkTellor(asset, primaryPrice, primaryDec),
-            _checkApi3(asset, primaryPrice, primaryDec),
-            _checkDia(asset, primaryPrice, primaryDec)
+            _checkTellor(symbol, primaryPrice, primaryDec),
+            _checkApi3(symbol, primaryPrice, primaryDec),
+            _checkDia(symbol, primaryPrice, primaryDec)
         ];
         for (uint256 i; i < 3; ++i) {
             if (statuses[i] == SecondaryStatus.Agree) agreeing++;
@@ -1066,13 +1075,13 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     /// @dev Tellor probe — returns the per-source status against
     ///      Chainlink. Standard SpotPrice queryId derivation:
     ///      `keccak256(abi.encode("SpotPrice", abi.encode(symbol, "usd")))`
-    ///      where `symbol` is the asset's lowercased ERC-20 symbol. Reads
+    ///      where `symbol` is the asset's registered identity, lowercased. Reads
     ///      the newest value reported at least
     ///      `LibVaipakam.TELLOR_DISPUTE_BUFFER` ago (#665), so a value
     ///      submitted in this block, or too recently to have been
     ///      disputed, is never consumed.
     function _checkTellor(
-        address asset,
+        bytes32 symbol,
         uint256 primaryPrice,
         uint8 primaryDec
     ) private view returns (SecondaryStatus) {
@@ -1080,9 +1089,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         address oracle = s.tellorOracle;
         if (oracle == address(0)) return SecondaryStatus.Unavailable;
 
-        (string memory symbol, bool symOk) = _safeSymbol(asset);
-        if (!symOk) return SecondaryStatus.Unavailable;
-        string memory lower = _toLower(symbol);
+        string memory lower = _toLower(_wordToString(symbol));
 
         // T-034 Numeraire generalization (b1): lower-case numeraire symbol from
         // storage (e.g. "usd", "eur", "xau"). Empty bytes32 default
@@ -1122,7 +1129,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     /// @dev API3 probe. dAPI name = `<UPPER_SYMBOL>/USD` packed
     ///      left-aligned into bytes32, hashed with keccak256.
     function _checkApi3(
-        address asset,
+        bytes32 symbol,
         uint256 primaryPrice,
         uint8 primaryDec
     ) private view returns (SecondaryStatus) {
@@ -1130,9 +1137,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         address server = s.api3ServerV1;
         if (server == address(0)) return SecondaryStatus.Unavailable;
 
-        (string memory symbol, bool symOk) = _safeSymbol(asset);
-        if (!symOk) return SecondaryStatus.Unavailable;
-        string memory upper = _toUpper(symbol);
+        string memory upper = _toUpper(_wordToString(symbol));
 
         // T-034 Numeraire generalization (b1): dAPI name uses the active numeraire's
         // upper-case symbol from storage (default "USD").
@@ -1172,7 +1177,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     /// @dev DIA probe. Key = `<UPPER_SYMBOL>/USD` (e.g. "ETH/USD").
     ///      DIA returns 8-decimal `(uint128 value, uint128 timestamp)`.
     function _checkDia(
-        address asset,
+        bytes32 symbol,
         uint256 primaryPrice,
         uint8 primaryDec
     ) private view returns (SecondaryStatus) {
@@ -1180,11 +1185,9 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         address oracle = s.diaOracleV2;
         if (oracle == address(0)) return SecondaryStatus.Unavailable;
 
-        (string memory symbol, bool symOk) = _safeSymbol(asset);
-        if (!symOk) return SecondaryStatus.Unavailable;
         // T-034 Numeraire generalization (b1): DIA key uses the active numeraire's
         // upper-case symbol from storage (default "USD").
-        string memory key = string(abi.encodePacked(_toUpper(symbol), "/", _numeraireUpperSymbol()));
+        string memory key = string(abi.encodePacked(_toUpper(_wordToString(symbol)), "/", _numeraireUpperSymbol()));
 
         uint128 value;
         uint128 reportedAt;
@@ -1218,16 +1221,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     function _numeraireLowerSymbol() private view returns (string memory) {
         bytes32 raw = LibVaipakam.storageSlot().numeraireSymbol;
         if (raw == bytes32(0)) return "usd";
-        // Walk to the first null byte (max length 32).
-        uint256 len;
-        for (len = 0; len < 32; ++len) {
-            if (raw[len] == 0) break;
-        }
-        bytes memory out = new bytes(len);
-        for (uint256 i = 0; i < len; ++i) {
-            out[i] = raw[i];
-        }
-        return string(out);
+        return _wordToString(raw);
     }
 
     /// @dev T-034 Numeraire generalization (b1) — uppercase variant for API3 / DIA
@@ -1251,43 +1245,49 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         return SecondaryStatus.Agree;
     }
 
-    /// @dev Read `IERC20.symbol()` via try/staticcall. Falls back
-    ///      gracefully on tokens that revert, return bytes32, or
-    ///      omit the function entirely. Returns `(symbol, true)` on
-    ///      success, `("", false)` otherwise.
-    function _safeSymbol(address asset) private view returns (string memory, bool) {
-        (bool ok, bytes memory ret) = asset.staticcall(
-            abi.encodeWithSignature("symbol()")
+    /// @dev #2745 - the asset's price identity for the secondary sources:
+    ///      the base symbol of its registered Chainlink pair ("LINK" for
+    ///      "LINK / USD"), read from the chain's `VaipakamFeedRegistry`, never
+    ///      from the token's own `symbol()`. A token controls its symbol (an
+    ///      upgradeable one can change it), so a symbol-keyed lookup let a
+    ///      token point its own cross-check at another asset's price, and a
+    ///      malformed `symbol()` reply reverted the whole price read. The
+    ///      pair name was checked against the feed's own `description()` when
+    ///      governance registered it, behind the registry's delay and veto.
+    ///
+    ///      Looked up under the same two quotes the primary read tries, in
+    ///      the same order (`asset/PAD`, then `asset/ETH`). WETH is priced
+    ///      from the ETH anchor feed, so its identity is ETH. Zero - every
+    ///      secondary Unavailable - when no registry is set, the asset has no
+    ///      registered pair (an industrial-fork direct-feed override is one
+    ///      such case), or the registry's answer is not exactly one word.
+    function _secondarySymbol(address asset) private view returns (bytes32) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (asset != address(0) && asset == s.wethContract) return bytes32("ETH");
+        address registry = s.chainlnkRegistry;
+        if (registry == address(0)) return bytes32(0);
+        bytes32 symbol = _pairBase(registry, asset, LibVaipakam.effectivePadDenominator());
+        if (symbol == bytes32(0)) symbol = _pairBase(registry, asset, s.ethChainlinkDenominator);
+        return symbol;
+    }
+
+    /// @dev One `pairBase` read; any failure or a reply that is not exactly
+    ///      one word reads as zero, so it can never revert a price read.
+    function _pairBase(address registry, address base, address quote) private view returns (bytes32 symbol) {
+        if (quote == address(0)) return bytes32(0);
+        (bool ok, bytes memory ret) = registry.staticcall(
+            abi.encodeCall(IFeedRegistryPairBase.pairBase, (base, quote))
         );
-        if (!ok || ret.length == 0) return ("", false);
-        // String return: ABI-encoded as offset(32) + length(32) + data.
-        // Detect by checking the offset is exactly 32.
-        if (ret.length >= 64) {
-            uint256 off;
-            assembly { off := mload(add(ret, 32)) }
-            if (off == 32) {
-                string memory s = abi.decode(ret, (string));
-                if (bytes(s).length == 0) return ("", false);
-                return (s, true);
-            }
-        }
-        // Bytes32 return (legacy bytes32-symbol tokens). Strip
-        // trailing zeros and convert.
-        if (ret.length == 32) {
-            bytes32 raw;
-            assembly { raw := mload(add(ret, 32)) }
-            uint256 len = 0;
-            while (len < 32 && raw[len] != 0) {
-                ++len;
-            }
-            if (len == 0) return ("", false);
-            bytes memory out = new bytes(len);
-            for (uint256 i = 0; i < len; ++i) {
-                out[i] = raw[i];
-            }
-            return (string(out), true);
-        }
-        return ("", false);
+        if (ok && ret.length == 32) symbol = abi.decode(ret, (bytes32));
+    }
+
+    /// @dev A left-aligned word as a string, up to its first zero byte.
+    function _wordToString(bytes32 word) private pure returns (string memory) {
+        uint256 len;
+        while (len < 32 && word[len] != 0) ++len;
+        bytes memory out = new bytes(len);
+        for (uint256 i; i < len; ++i) out[i] = word[i];
+        return string(out);
     }
 
     /// @dev Returns the lowercase form of an ASCII string. Non-ASCII
