@@ -1750,31 +1750,22 @@ async function censusDeployment(dep) {
   // before enumeration.)
 
   // ── Enumerate every loan id ever created ──────────────────────────────
-  // #2930 — the view reads a bounded window of the id range per call and
-  // returns the cursor to resume from; the end is the cursor making no
-  // progress, never a short or empty page (sale-vehicle ids are skipped).
+  // The id range IS the source: ids are assigned sequentially from 1, and
+  // `getGlobalCounts().totalLoansCreated` is the high-water mark (it counts
+  // sale vehicles, whose ids sit in the same range). The census walks
+  // `1..highWater` itself rather than through a paginated view, so it reads
+  // every Diamond the same way whichever version of the enumeration views
+  // that Diamond carries (#2930 changed their shape; a retired Diamond keeps
+  // the old one). A vehicle id simply holds no custody row.
+  const [loanIdHighWater] = await read('getGlobalCounts');
+  if (loanIdHighWater < totalLoansEverCreated) {
+    throw new Error(
+      `${who}: the loan id high-water mark ${loanIdHighWater} is below the ${totalLoansEverCreated} loans ` +
+        `the chain reports ever created — refusing to scan a range that cannot hold them all`,
+    );
+  }
   const loanIds = [];
-  let cursor = 0n;
-  let reportedTotal = 0n;
-  for (;;) {
-    const [ids, next, total] = await read('getAllLoansPaginated', [cursor, PAGE]);
-    reportedTotal = total;
-    loanIds.push(...ids);
-    if (next === cursor) break;
-    cursor = next;
-  }
-
-  if (totalLoansEverCreated > 0n && loanIds.length === 0) {
-    throw new Error(
-      `${who}: the chain reports ${totalLoansEverCreated} loans ever created but enumeration returned NONE — ` +
-        `refusing to report an empty census from a scan that read nothing`,
-    );
-  }
-  if (BigInt(loanIds.length) !== reportedTotal) {
-    throw new Error(
-      `${who}: enumerated ${loanIds.length} loan ids but pagination reports ${reportedTotal} — incomplete scan`,
-    );
-  }
+  for (let id = 1n; id <= loanIdHighWater; id++) loanIds.push(id);
 
   // (4) NO LOAN EVER CREATED ⇒ every class is empty. Both classes are
   //     per-loan rows (`fallbackSnapshot[loanId]`, `intentCommits[loanId]`),
@@ -1783,8 +1774,8 @@ async function censusDeployment(dep) {
   //     This bound needs no VPFI token and no asset scoping, which is exactly
   //     what settles a `--fresh` snapshot whose artifact names no token and
   //     whose Diamond never minted a loan. Sound only when BOTH the counter
-  //     and the enumeration agree on zero (the enumeration guard above has
-  //     already refused a non-zero counter with an empty scan).
+  //     and the id range agree on zero (the high-water guard above has
+  //     already refused a counter the id range cannot hold).
   const noLoansEver = totalLoansEverCreated === 0n && loanIds.length === 0;
   const provenByEnumerable = noLoansEver ? 'no-loans-ever-created' : null;
 
