@@ -1,7 +1,0 @@
-## Thread — Zeroed-day compensation loses its upgrade-in-place shims (PR #2911)
-
-The zeroed-day compensation machinery carried a migration for Diamonds upgraded in place across its w4 slice: an admin stamp that bound an old untagged receipt to a zeroed day as its compensation, an admin seed that wrote a day's per-side funded record by hand, a Base-side inventory of old manual reservations, a permissionless armer for compensated days that predated the deadline clocks, and a one-shot admin arm that kept both lapse terminals switched off until that migration was attested. Base also refused to dispatch a compensation for a finalized day with no frozen lapse clock. Every chain reaches this build by fresh deploy (owner decision O1 = A), and on a fresh Diamond none of those states can exist: finalization writes the day's clock in the same step, every manual compensation stamps its funded record, and every settled credit starts the deadline clock. All of it is removed. Two storage fields are kept in place under retired names, so the layout is unchanged.
-
-The visible change is that the two permissionless lapse terminals now work from deploy. Before, no deploy script armed them, so on every chain an unpaid zeroed day could never close and a short-compensated day could never settle at what was funded. Now each day closes on its own frozen clock. A day is still lapse-eligible only if a lapse schedule was in force when it finalized; schedule version 0 never lapses.
-
-Refs #2875.
