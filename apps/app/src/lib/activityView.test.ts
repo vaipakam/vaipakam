@@ -6,6 +6,7 @@ import {
   coalesceByTx,
   legText,
   rowValue,
+  saleProceedsShares,
   valueLeg,
   type LegLabels,
   humanizeKind,
@@ -515,5 +516,62 @@ describe('#2383 — the row’s value, from the indexer’s normalized fields on
       ]);
       expect(rowValue(row).legs.map((l) => l.asset)).toEqual([USDC]);
     });
+  });
+});
+
+describe('collateral sale proceeds (#2876)', () => {
+  const USDC_ = '0x00000000000000000000000000000000000000a1';
+  const LENDER = '0x00000000000000000000000000000000000000e1';
+  const BORROWER = '0x00000000000000000000000000000000000000e2';
+  const split = (args: Record<string, unknown>, p: Partial<IndexedActivityEvent> = {}) =>
+    ev({
+      kind: 'CollateralSaleProceedsSplit',
+      loanId: 5,
+      asset: USDC_,
+      assetType: 0,
+      amount: '1000',
+      args: {
+        loanId: '5',
+        offerId: '0',
+        asset: USDC_,
+        proceeds: '1000',
+        lender: LENDER,
+        lenderAmount: '700',
+        lenderDiscount: '0',
+        treasuryAmount: '20',
+        borrower: BORROWER,
+        borrowerAmount: '280',
+        borrowerHeld: false,
+        ...args,
+      },
+      ...p,
+    });
+  const rowOf = (e: IndexedActivityEvent) => coalesceByTx([e, ev({ kind: 'LoanRepaid', loanId: 5, logIndex: 1 })])[0];
+
+  it('the row states what the buyer paid', () => {
+    expect(rowValue(rowOf(split({}))).legs).toEqual([
+      { kind: 'token', asset: USDC_, amount: 1000n, amountMax: null },
+    ]);
+  });
+
+  it('the lender sees their part, held for their claim', () => {
+    expect(saleProceedsShares(rowOf(split({})), LENDER.toUpperCase())).toEqual([
+      { role: 'lender', leg: { kind: 'token', asset: USDC_, amount: 700n, amountMax: null }, held: true },
+    ]);
+  });
+
+  it('the borrower sees their remainder, paid or held as the event says', () => {
+    expect(saleProceedsShares(rowOf(split({})), BORROWER)).toMatchObject([{ role: 'borrower', held: false }]);
+    expect(saleProceedsShares(rowOf(split({ borrowerHeld: true })), BORROWER)).toMatchObject([
+      { role: 'borrower', held: true, leg: { amount: 280n } },
+    ]);
+  });
+
+  it('states nothing to a third party, for a zero part, or without an established ERC-20 amount', () => {
+    expect(saleProceedsShares(rowOf(split({})), '0x00000000000000000000000000000000000000e3')).toEqual([]);
+    expect(saleProceedsShares(rowOf(split({})), undefined)).toEqual([]);
+    expect(saleProceedsShares(rowOf(split({ borrowerAmount: '0' })), BORROWER)).toEqual([]);
+    expect(saleProceedsShares(rowOf(split({}, { assetType: null, amount: null })), LENDER)).toEqual([]);
+    expect(saleProceedsShares(rowOf(split({ borrowerHeld: undefined })), BORROWER)).toEqual([]);
   });
 });

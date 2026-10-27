@@ -3800,6 +3800,13 @@ Its intended behaviour, as the test oracle for this surface:
   lender from earlier top-ups, which its event does not include in the amount
   shown. A neighbouring loan or offer in the same batched transaction is never
   folded into the row.
+- A collateral sale's row states what the buyer paid, in the loan's lending
+  asset. To each party it also states their own part: the lender's part
+  always waits for the lender's claim, and the borrower's remainder is either
+  sent to their wallet or held for their claim, whichever the sale did. A part
+  is stated only when the sale event names it and the history service
+  established the amount; a party with no part, or a viewer who is neither
+  party, sees no part. (#2876)
 - A token amount names its contract beside its symbol, because a symbol is
   whatever the token reports and two contracts can share one. While the
   token's details load, the row says the amount is loading; if they cannot be

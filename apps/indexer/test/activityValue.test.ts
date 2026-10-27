@@ -433,6 +433,41 @@ describe('collateral top-up (#2383 r1)', () => {
   });
 });
 
+describe('collateral sale proceeds (#2876)', () => {
+  const split = (loanId: bigint, asset: string, proceeds: bigint, logIndex = 0) =>
+    realLog('CollateralSaleProceedsSplit', {
+      loanId,
+      offerId: 0n,
+      asset,
+      proceeds,
+      lender: A1,
+      lenderAmount: 700n,
+      lenderDiscount: 0n,
+      treasuryAmount: 20n,
+      borrower: A2,
+      borrowerAmount: proceeds - 720n,
+      borrowerHeld: false,
+    }, 1, logIndex);
+
+  it('states what the buyer paid, in the loan’s principal asset', async () => {
+    const h = createSqliteD1(migrations());
+    seedLoan(h, 5, { lending_asset: USDC, collateral_asset: NFT, collateral_asset_type: 1, collateral_token_id: '77' });
+    const [r] = await record(h, [split(5n, USDC, 1_000n)]);
+    expect(value(r)).toEqual({ asset: USDC, assetType: 0, amount: '1000', amountMax: null, tokenId: null, quantity: null });
+  });
+
+  it('states no type and no amount when the asset is not the loan’s principal, or the record is absent', async () => {
+    const h = createSqliteD1(migrations());
+    seedLoan(h, 5, { lending_asset: USDC, collateral_asset: NFT, collateral_asset_type: 1 });
+    const rows = await record(h, [
+      split(5n, WETH, 1_000n),
+      split(6n, USDC, 1_000n, 1),
+    ]);
+    expect(value(rows[0])).toEqual({ asset: WETH, assetType: null, amount: null, amountMax: null, tokenId: null, quantity: null });
+    expect(value(rows[1])).toEqual({ asset: USDC, assetType: null, amount: null, amountMax: null, tokenId: null, quantity: null });
+  });
+});
+
 describe('/activity serves the value — and a database before 0055 still serves', () => {
   const fetchRows = async (h: ReturnType<typeof createSqliteD1>) => {
     const res = await handleActivity(new Request(`https://x/activity?chainId=${CHAIN}`), {

@@ -278,9 +278,29 @@ export function activityValue(
         r.collateralQuantity,
       );
     }
+    case 'CollateralSaleProceedsSplit':
+      return saleProceedsValue(id(args.loanId), args, ctx);
     default:
       return NO_VALUE;
   }
+}
+
+/**
+ * #2876 — what a collateral sale's buyer paid the Diamond (`proceeds`), in the
+ * asset the event names. The event carries no asset type; the asset is the
+ * loan's principal, so the type comes from the loan record when the two
+ * match, and is unknown (with the amount) when they do not or the record is
+ * absent. The per-party split stays in the event's own fields.
+ */
+function saleProceedsValue(
+  loanId: number | null,
+  args: Record<string, unknown>,
+  ctx: ActivityValueContext,
+): ActivityValue {
+  const asset = lower(args.asset);
+  const r = loanId === null ? undefined : ctx.loans.get(loanId);
+  if (!asset || !r || r.lendingAsset.toLowerCase() !== asset) return { ...NO_VALUE, asset };
+  return value(asset, r.assetType, big(args.proceeds), r.tokenId, null, r.quantity);
 }
 
 /** The ids of the records a batch's values need, plus its sibling maps. */
@@ -332,7 +352,8 @@ export function collectBatch(
       case 'CollateralAdded':
       case 'LenderFundsClaimed':
       case 'BorrowerFundsClaimed':
-      case 'BorrowerSurplusClaimed': {
+      case 'BorrowerSurplusClaimed':
+      case 'CollateralSaleProceedsSplit': {
         const l = id(a.loanId);
         if (l !== null) loanIds.add(l);
         break;
