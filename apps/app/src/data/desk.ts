@@ -10,7 +10,7 @@
  *    best rates). Drives the pair chips + tenor emphasis; the desk
  *    NEVER derives markets from walking the paginated active feed.
  *  - `useDeskBook` — the order book for one pair. Two-step CHAIN read
- *    first (`getActiveOffersByAssetPairRanked` for ids, then
+ *    first (`getActiveOffersByAssetPairRanked` for ids, one capped page, then
  *    `getOffersWithState` hydration chunked at ≤250 — the skinny
  *    ranking DTO omits `amountFilled`, so remaining depth needs the
  *    hydration); falls back to the indexer's market-scoped
@@ -175,42 +175,32 @@ export function useDeskBook(pair: DeskPair | null, durationDays: number) {
       // Chain leg — authoritative and fresh this block.
       if (publicClient) {
         try {
-          // #1247 PAG-012 — the ranked view returns the WHOLE active
-          // pair bucket (no offset/limit args), so probe the bucket
-          // SIZE first with the paged view's cheap `total` (a
-          // one-row page) and skip the ranked call entirely when the
-          // bucket is past the cap (Codex #1265 r1 — a post-hoc cap
-          // would still transfer/allocate the oversized response).
+          // #2751 — the ranked view is paged and reports the pair
+          // bucket's full size (`total`) in the same call, so one read
+          // both fetches up to the cap and says whether the cap held.
           // Past the cap, fail over to the indexer fallback: market-
-          // scoped, server-filtered, hard-capped at 500 —
-          // degraded-honest beats an unbounded hydrate. (The ranked
-          // view is best-first, but the ladder aggregates by rate, so
-          // a truncated hydrate could misstate level depth — don't
-          // render a silently-partial chain book.)
+          // scoped, server-filtered, hard-capped at 500 — degraded-
+          // honest beats an unbounded hydrate. (The ladder aggregates
+          // by rate, so a truncated hydrate could misstate level depth
+          // — never render a silently-partial chain book.) Before
+          // #2751 the view returned the whole bucket, which needed a
+          // separate size probe first (#1247 PAG-012) and could still
+          // be outgrown between the two reads.
           const HYDRATE_CAP = 600n;
-          const [, pairTotal] = (await publicClient.readContract({
-            address: readChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'getActiveOffersByAssetPair',
-            args: [
-              pair!.lendingAsset as `0x${string}`,
-              pair!.collateralAsset as `0x${string}`,
-              0n,
-              1n,
-            ],
-          })) as readonly [readonly bigint[], bigint];
-          if (pairTotal > HYDRATE_CAP) {
-            throw new Error('pair bucket past hydrate cap');
-          }
-          const [rankings] = (await publicClient.readContract({
+          const [rankings, pairTotal] = (await publicClient.readContract({
             address: readChain.diamondAddress,
             abi: DIAMOND_ABI_VIEM,
             functionName: 'getActiveOffersByAssetPairRanked',
             args: [
               pair!.lendingAsset as `0x${string}`,
               pair!.collateralAsset as `0x${string}`,
+              0n,
+              HYDRATE_CAP,
             ],
           })) as readonly [readonly { id: bigint }[], bigint];
+          if (pairTotal > HYDRATE_CAP) {
+            throw new Error('pair bucket past hydrate cap');
+          }
           const ids = rankings.map((r) => Number(r.id));
           // Hydration is chunked at MAX_BATCH_IDS (250) inside the
           // helper; it also maps the canonical OfferState and applies

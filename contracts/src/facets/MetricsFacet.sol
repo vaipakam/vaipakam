@@ -380,39 +380,46 @@ contract MetricsFacet {
     ///         (B.2) bot uses this to discover match-eligible
     ///         candidates per block — see
     ///         `docs/DesignsAndPlans/InternalLiquidationLedger.md`.
-    /// @dev    Iterates `s.activeLoanIdsList` from `startIdx`, calls
-    ///         `RiskFacet.calculateLTV(loanId)` per row, returns up
-    ///         to `pageSize` hits where the live LTV lies in the
-    ///         requested band. Illiquid loans (LTV math reverts)
-    ///         are skipped silently — bots scan only HF-eligible
-    ///         positions anyway. The view is gas-bounded only by
-    ///         `pageSize` × oracle-read cost; callers that need
-    ///         to walk the whole active-loan set must paginate via
-    ///         the returned `nextIdx`. Returns `nextIdx == src.length`
-    ///         when the scan reached the end.
+    /// @dev    Iterates `s.activeLoanIdsList` from `startIdx` and calls
+    ///         `RiskFacet.calculateLTV(loanId)` per row, returning the
+    ///         rows whose live LTV lies in the band. Illiquid loans (LTV
+    ///         math reverts) are skipped silently — bots scan only
+    ///         HF-eligible positions anyway.
     ///
-    ///         While `internalMatchEnabled == false` returns an empty
-    ///         array — keeps the protocol's match-advertise surface
-    ///         off until governance flips the kill-switch (PR3 of
-    ///         the internal-match scaffold work).
+    ///         #2751 — bounded by rows SCANNED, not rows returned: one call
+    ///         reads at most `maxScan` rows, so its cost is `maxScan` ×
+    ///         one oracle-backed LTV read whatever the band matches. (It
+    ///         used to stop only after filling a page, so a band few loans
+    ///         fall in walked the whole active list in one call.) A page
+    ///         may therefore come back EMPTY with the scan not finished:
+    ///         the end is `nextIdx == activeLoanIdsList.length`, and a call
+    ///         starting there returns `(empty, startIdx)` — no progress —
+    ///         which is how a caller that does not know the length stops.
+    ///         Never stop on an empty page.
+    ///
+    ///         While `internalMatchEnabled == false` returns `(empty, 0)`
+    ///         — keeps the protocol's match-advertise surface off until
+    ///         governance flips the kill-switch (PR3 of the internal-match
+    ///         scaffold work).
     /// @param  minLtvBps  Inclusive lower bound on current LTV (BPS).
     /// @param  maxLtvBps  Inclusive upper bound on current LTV (BPS).
     /// @param  startIdx   Index into `activeLoanIdsList` to begin from.
-    /// @param  pageSize   Max number of match-eligible IDs returned.
-    /// @return loanIds    The match-eligible loan IDs in order.
+    /// @param  maxScan    Max number of active-list rows read by this call.
+    /// @return loanIds    The match-eligible loan IDs among the rows read.
     /// @return nextIdx    Resume index for the next page; equals
-    ///                    `activeLoanIdsList.length` when exhausted.
+    ///                    `activeLoanIdsList.length` once the scan has
+    ///                    reached the end.
     function getMatchEligibleLoans(
         uint16 minLtvBps,
         uint16 maxLtvBps,
         uint256 startIdx,
-        uint256 pageSize
+        uint256 maxScan
     ) external view returns (uint256[] memory loanIds, uint256 nextIdx) {
         if (!LibVaipakam.cfgInternalMatchEnabled()) {
             // Kill-switch off — surface stays inert.
             return (new uint256[](0), 0);
         }
-        if (minLtvBps > maxLtvBps || pageSize == 0) {
+        if (minLtvBps > maxLtvBps || maxScan == 0) {
             return (new uint256[](0), startIdx);
         }
         uint256[] storage src = LibVaipakam.storageSlot().activeLoanIdsList;
@@ -420,10 +427,12 @@ contract MetricsFacet {
         if (startIdx >= len) {
             return (new uint256[](0), len);
         }
-        uint256[] memory buf = new uint256[](pageSize);
+        // Compared before adding, so an oversized `maxScan` reads as "to
+        // the end" rather than overflowing.
+        uint256 end = maxScan > len - startIdx ? len : startIdx + maxScan;
+        uint256[] memory buf = new uint256[](end - startIdx);
         uint256 filled;
-        uint256 i = startIdx;
-        for (; i < len && filled < pageSize; ++i) {
+        for (uint256 i = startIdx; i < end; ++i) {
             uint256 id = src[i];
             try RiskFacet(address(this)).calculateLTV(id) returns (uint256 ltv) {
                 if (ltv >= uint256(minLtvBps) && ltv <= uint256(maxLtvBps)) {
@@ -436,7 +445,7 @@ contract MetricsFacet {
         }
         loanIds = new uint256[](filled);
         for (uint256 k = 0; k < filled; ++k) loanIds[k] = buf[k];
-        nextIdx = i;
+        nextIdx = end;
     }
 
     /// @notice EC-003 Phase 2 — does `loanId` have an opposing-direction
@@ -649,48 +658,51 @@ contract MetricsFacet {
         uint64 createdAt;
     }
 
-    /// @notice Skinny ranking view of every active offer in the
-    ///         (lendingAsset, collateralAsset) bucket, returned in
-    ///         one round trip. Pairs with {getActiveOffersByAssetPair}
-    ///         (id-only, paged) and {getOffer} (full struct, single-id).
+    /// @notice Skinny ranking view of the active offers in the
+    ///         (lendingAsset, collateralAsset) bucket, one page at a time.
+    ///         Pairs with {getActiveOffersByAssetPair} (id-only, paged) and
+    ///         {getOffer} (full struct, single-id).
     ///
-    /// @dev    Designed for the frontend OfferBook 2-filter UX:
-    ///         - One call returns the full bucket's sortable shape
-    ///           (~256 bytes per offer × bucket size).
-    ///         - Frontend sorts / slices client-side across the entire
-    ///           bucket without paying a per-offer hydration cost.
-    ///         - Only the page-N slice the user is viewing then gets
-    ///           hydrated via per-id `getOffer` multicalls.
-    ///         The on-chain alternative (maintaining sorted indices
-    ///         per sort-key × direction) was rejected — it adds a
-    ///         per-edge gas tax to every offer create / accept /
-    ///         cancel for a feature that's purely a read-side
-    ///         optimisation.
+    /// @dev    Designed for the frontend OfferBook 2-filter UX: the client
+    ///         reads the bucket's sortable shape (~256 bytes per offer) in
+    ///         pages and sorts / slices across it without a per-offer
+    ///         hydration, then hydrates only what it shows. The on-chain
+    ///         alternative (sorted indices per sort-key × direction) was
+    ///         rejected — it adds a per-edge gas tax to every offer create
+    ///         / accept / cancel for a read-side optimisation.
     ///
-    /// @dev    No offset / limit — the whole bucket is returned. The
-    ///         pair-keyed index keeps buckets bounded by the number
-    ///         of currently-active offers in a given pair (typically
-    ///         tens, even at protocol scale only the few canonical
-    ///         pairs reach the low hundreds). For pathologically
-    ///         large buckets the frontend is expected to fall back
-    ///         to {getActiveOffersByAssetPair}'s paged id list.
+    /// @dev    #2751 — paged: O(limit), whatever the bucket's size. It used
+    ///         to return the whole bucket, so enough cheap offers in one
+    ///         pair could push the read past an RPC's gas or payload limit
+    ///         and blank the book. `total` is the bucket's full size, so a
+    ///         caller that must see the whole bucket knows from the first
+    ///         page whether it can (and how many pages remain), in the same
+    ///         call that returns the rows — no separate count read that
+    ///         the bucket can outgrow in between. Order is the bucket's
+    ///         swap-pop order (not ranked on chain). Pages read in
+    ///         different blocks can repeat or miss an offer the bucket
+    ///         gained or lost in between; a caller that needs one
+    ///         consistent view reads it in one call.
     ///
     /// @param  lendingAsset    Required filter (no wildcard).
     /// @param  collateralAsset Required filter (no wildcard).
-    /// @return rankings        Skinny ranking row per active offer.
-    /// @return total           `rankings.length`; surfaced for UI
-    ///                         total-count rendering without a
-    ///                         second `.length` round trip.
+    /// @param  offset          Skip this many entries.
+    /// @param  limit           Max page size.
+    /// @return rankings        Skinny ranking row per active offer in the page.
+    /// @return total           The bucket's full size (not the page's).
     function getActiveOffersByAssetPairRanked(
         address lendingAsset,
-        address collateralAsset
+        address collateralAsset,
+        uint256 offset,
+        uint256 limit
     ) external view returns (OfferRanking[] memory rankings, uint256 total) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256[] storage src = s.assetPairActiveOfferIds[lendingAsset][collateralAsset];
         total = src.length;
-        rankings = new OfferRanking[](total);
-        for (uint256 i = 0; i < total; i++) {
-            LibVaipakam.Offer storage o = s.offers[src[i]];
+        uint256[] memory ids = _slice(src, offset, limit);
+        rankings = new OfferRanking[](ids.length);
+        for (uint256 i = 0; i < ids.length; i++) {
+            LibVaipakam.Offer storage o = s.offers[ids[i]];
             rankings[i] = OfferRanking({
                 id: o.id,
                 offerType: o.offerType,
@@ -1644,8 +1656,9 @@ contract MetricsFacet {
     {
         uint256 len = src.length;
         if (offset >= len || limit == 0) return new uint256[](0);
-        uint256 end = offset + limit;
-        if (end > len) end = len;
+        // Compared before adding, so a "give me everything" limit
+        // (type(uint256).max) reads as the rest of the list, not an overflow.
+        uint256 end = limit > len - offset ? len : offset + limit;
         out = new uint256[](end - offset);
         for (uint256 i = offset; i < end; i++) out[i - offset] = src[i];
     }

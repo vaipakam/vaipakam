@@ -3142,6 +3142,7 @@ General design requirements:
   lookup is already empty, the indexer should leave a lightweight placeholder for
   the cancel handler instead of committing blank creator or asset fields.
 - active-loan discovery should include a paginated, current-state view for match-eligible loans while internal matching is enabled. This view should include active distressed loans and fallback-pending loans, filter active loans by current LTV against their snapshotted liquidation threshold, require oracle-priceability for fallback-pending legs, and return empty when the internal-match switch is off.
+- every paginated view is bounded by the rows it reads, not by the rows it returns, so no single call's cost depends on how many records exist or how few match. A filtered view reads at most the number of rows the caller asks for and returns a cursor to resume from; a page may come back empty while the scan is not finished, and the end is reported by the cursor, never by an empty page. A view that returns a whole bucket in one call (such as the per-pair offer ranking the Rate Desk reads) is paged instead, and reports the bucket's full size in the same call so a caller learns from one read whether it can show the whole bucket.
 - internal-match candidate discovery should support exact asset-pair indexing so matchers can find reciprocal and cyclic candidates without scanning every loan. Fallback-pending loans should remain in the index until they are fully rescued, claimed, or otherwise terminally resolved.
 
 #### 1. Protocol-Wide Metrics
