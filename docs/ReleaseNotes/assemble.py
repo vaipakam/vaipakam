@@ -2597,6 +2597,45 @@ class Assembly:
             err("these hold newer text. Compare each before deleting it.")
             err("")
 
+    # ── the read-through prompt (#1831) ──────────────────────────────────
+
+    CAVEAT_PREFIX = "> Caveat:"
+
+    def read_through_items(self) -> list[tuple[str, list[str]]]:
+        """Each folded fragment's name and its `> Caveat:` lines, in order.
+
+        Read from the working copy, the same bytes `build` folds in. A
+        prompt, never a checker: fragments are written independently against
+        different states of the code, so two can each be true and jointly
+        contradict. Nothing here decides whether they do; it names the set
+        that now sits in one file and what each one flagged as a limit, so a
+        person reads them side by side before the commit.
+        """
+        items: list[tuple[str, list[str]]] = []
+        for f in self.frags:
+            caveats: list[str] = []
+            with open(self.frag_snap[f], encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    stripped = line.strip()
+                    if stripped.startswith(self.CAVEAT_PREFIX):
+                        caveats.append(stripped[len(self.CAVEAT_PREFIX):].strip())
+            items.append((self.frag_name[f], caveats))
+        return items
+
+    def print_read_through(self, items: list[tuple[str, list[str]]]) -> None:
+        if len(items) < 2:
+            return
+        out_line("")
+        out_line(f"Read these {len(items)} together before committing. Each was written")
+        out_line("on its own, against the code as it stood then, so a limit or")
+        out_line("caveat true in one can be false next to another:")
+        for name, caveats in items:
+            out_line(f"  - {name}")
+            for c in caveats:
+                out_line(f"      caveat: {c}")
+        if not any(c for _, c in items):
+            out_line("  (none marks a caveat line; read each one's limits in full)")
+
     # ── the run, end to end ──────────────────────────────────────────────
 
     def run(self) -> None:
@@ -2651,14 +2690,21 @@ class Assembly:
             self.clear_already_assembled(already)
         if not pending:
             self.nothing_pending()
+        # Read from the working copies BEFORE the sources are consumed: the
+        # read-through prompt below names what the run folded together, and
+        # once `clear` runs the fragments themselves are gone (#1831).
+        read_through = self.read_through_items()
         self.build()
         self.publish()
         self.clear()
 
         out_line(f"Assembled {len(self.frags)} fragment(s) -> {self.out}")
+        self.print_read_through(read_through)
         out_line("")
         out_line("Next:")
         out_line(f"  - review {self.out} and add an intro paragraph")
+        if len(read_through) > 1:
+            out_line("  - read the fragments listed above against each other")
         out_line("  - git add -A docs/ReleaseNotes/")
         out_line(f"  - git commit -m 'docs: release notes {self.date}'")
 
