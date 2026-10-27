@@ -10,7 +10,11 @@ day remitted only once the parts add up to it. Each part reserves and records
 exactly its own value; the amount a day's commitments clamp away is retired
 once, with the first part. Every part is checked against what the day still
 owes, not against the part alone, so a part goes only when the rest of the day
-sent at once would, and no day is started on room it does not fit. Releasing
+sent at once would, and no day is started on room it does not fit. Once a
+day's first part has gone, the rest of its fresh is held for it in the 69M
+pool, so another mirror's send or a claim on Base cannot use up the room its
+later parts need; the pool counts the day as used exactly as a single send
+would, and the held figure is published. Releasing
 an undeliverable part restores exactly that part and leaves the day owing it
 again. The quotes and planning views now take the same
 part size the send uses, so the quote always matches the send, and a new status

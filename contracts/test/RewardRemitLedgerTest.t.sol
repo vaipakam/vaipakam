@@ -4010,6 +4010,44 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), 3e18);
     }
 
+    /// @notice #918 (Codex #2959 r1) — an UNARMED day holds the rest of its
+    ///         fresh in the pool between parts, and a released part's fresh
+    ///         stops being held: the re-send must find room for it again, as a
+    ///         re-send of a released whole day always has.
+    function test_918_AnUnarmedDay_HoldsItsRest_AndAReleasedPartNeedsRoomAgain() public {
+        _finalizeDay(1);
+        (uint256 whole, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        uint256 cap = whole / 3 + 1;
+        uint256 p1 = _sendPart(1, cap);
+        assertFalse(_ledger(1).armed, "fixture: unarmed");
+        assertEq(rlens.getRemitDayFreshReserved(), whole - p1, "the first part holds the rest");
+        uint256 p2 = _sendPart(1, cap);
+        uint256 held = whole - p1 - p2;
+        assertEq(rlens.getRemitDayFreshReserved(), held, "each part moves itself out of the hold");
+
+        vm.warp(block.timestamp + 7 days);
+        comp.releaseRemitReservation(2);
+        assertEq(_ledger(1).freshUncovered, p2, "stored: the released part is uncovered");
+        assertEq(rlens.getRemitDayFreshReserved(), held, "the hold is unchanged by a release");
+        assertEq(rlens.getRewardBudgetRemittedGlobal(), p1 + p2, "the released part stays charged");
+
+        // One wei short of the room the released part needs: refused.
+        mutator.setInteractionPoolPaidOut(CAP - (p1 + p2) - held - (p2 - 1));
+        vm.expectRevert(
+            abi.encodeWithSelector(RewardRemittanceFacet.RewardPoolCapExceeded.selector, p2, p2 - 1)
+        );
+        remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, _days(1), whole);
+
+        // Exactly enough: the rest of the day goes in one, and the hold empties.
+        mutator.setInteractionPoolPaidOut(CAP - (p1 + p2) - held - p2);
+        uint256 rest = _sendPart(1, whole);
+        assertEq(rest, whole - p1, "the re-send moves the released part and the rest");
+        assertEq(rlens.getRemitDayFreshReserved(), 0, "a whole day holds nothing");
+        assertEq(_ledger(1).freshUncovered, 0, "stored: nothing uncovered");
+        assertEq(rlens.getRewardBudgetRemittedGlobal(), whole + p2, "the re-sent part is charged twice, as documented");
+        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), whole, "and the day completes");
+    }
+
     /// @notice #918 case 5 — the backing verdict does not depend on the part
     ///         size: a day the whole send would refuse for recycled backing is
     ///         refused at every cap, and one it would admit is admitted.
