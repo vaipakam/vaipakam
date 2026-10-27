@@ -818,7 +818,7 @@ An offer may be created two ways, both reaching the same on-chain offer state:
 
 - **For ERC-20 Tokens:**
   - Specify the desired ERC-20 asset and amount, maximum acceptable interest rate, offered collateral (type and amount), and loan duration.
-  - The frontend must clearly disclose that when an ERC-20 loan is actually initiated, a `Loan Initiation Fee` equal to `0.1%` of the lending-asset amount will be charged to treasury before the lending asset is delivered to the borrower. In other words, if the matched lending amount is `1000 USDC`, the borrower receives `999 USDC` and `1 USDC` is routed to treasury at initiation.
+  - The frontend must clearly disclose that when an ERC-20 loan is actually initiated, a `Loan Initiation Fee` equal to `0.2%` of the lending-asset amount will be charged to treasury before the lending asset is delivered to the borrower. In other words, if the matched lending amount is `1000 USDC` and the borrower has no fee discount, the borrower receives `998 USDC` and `2 USDC` is routed to treasury at initiation.
   - If the borrower has consented to fee discounts and holds an effective VPFI tier, that tier discount reduces the lending-asset fee directly at acceptance. The fee is never paid in VPFI, nothing is held for the loan, and there is no later rebate, as defined in `docs/FunctionalSpecs/TokenomicsTechSpec.md` §6b.
   - Lock the collateral in the Vaipakam smart contract upon offer submission.
   - For ERC-20 collateral, that escrowed collateral is **locked against withdrawal for as long as the offer is live** — the borrower-side counterpart of the lender principal lock (§3 Lenders / ERC-20). The borrower cannot pull the pledged collateral (or the unfilled remainder of a range offer) back out of their vault while the offer stays open, including via a side door such as unstaking VPFI that is simultaneously pledged as collateral. This closes the pre-acceptance drain that would otherwise let a borrower post an offer, withdraw the pledged collateral, and have a lender accept into a loan that is under-collateralized from birth. At acceptance the lock is **handed off** to the loan's own collateral protection (the collateral never moves — it transitions from "committed to an open offer" to "backing a live loan"); on cancel, on a downward collateral-size edit, and on the unused-collateral refund at acceptance, the relevant portion is released before the funds move, so an offer can always return its own collateral. NFT collateral is held in custody (the token itself, no fungible drain door) and is out of scope. This is the §2207 collateral-protection invariant extended into the pre-loan offer window.
@@ -1509,7 +1509,7 @@ Range Orders let users express lender and borrower intent as canonical limit ord
   - For ERC-20 Loans: The borrower’s collateral is locked in an vault contract.
   - For NFT Renting: The borrower’s prepayment (total rental fees + 5% buffer in ERC-20 tokens) is confirmed as locked.
 - **Asset Transfer/NFT User Assignment:**
-  - For ERC-20 Loans: Before the lending asset is delivered to the borrower, the protocol deducts a `Loan Initiation Fee` equal to `0.1%` of the lending-asset amount and routes that fee to treasury. The remaining net lending amount is then transferred from the lender or lender's locked funds (in the Vault) to the borrower.
+  - For ERC-20 Loans: Before the lending asset is delivered to the borrower, the protocol deducts a `Loan Initiation Fee` equal to `0.2%` of the lending-asset amount and routes that fee to treasury. The remaining net lending amount is then transferred from the lender or lender's locked funds (in the Vault) to the borrower.
     - For direct acceptance of ranged ERC-20 offers, the accepted principal and rate must be resolved from the role of the offer creator rather than from whichever raw field happens to be smallest. This prevents a ranged order's safety floor from becoming the loan's unintended economic value.
     - For loans initiated through a permissionless Range Orders match, the deterministic matched amount, midpoint rate, required collateral, actual counterparty, and matcher address are used instead of raw caller context. This prevents the bot / relayer from being treated as the lender or borrower while still paying that caller the configured matcher share of the LIF flow.
     - If a borrower pre-vaulted more collateral than a direct-accept loan actually locks, the unused collateral must be returned as part of the acceptance flow. Match-based fills continue to retain only the collateral needed for live child loans and refund the unfilled remainder at close or cancellation.
@@ -1549,7 +1549,7 @@ The preview should preserve the resolved economic terms even when acceptance is 
 
 - Bob (Borrower) accepts Alice's (Lender) offer for 1000 USDC.
 - Bob locks his required ETH collateral. Gas fees for this acceptance transaction are paid by Bob.
-- A `Loan Initiation Fee` of `0.1%` of the lending asset is charged at initiation, so `1 USDC` is routed to treasury and `999 USDC` is transferred to Bob.
+- A `Loan Initiation Fee` of `0.2%` of the lending asset is charged at initiation, so, with no fee discount for Bob, `2 USDC` is routed to treasury and `998 USDC` is transferred to Bob.
 - Alice's "Vaipakam NFT" status (with lender role) is updated as "Loan Initiated".
 - A new "Vaipakam NFT" is minted for Bob (status: "Loan Initiated" and role: "Borrower").
 
@@ -1777,7 +1777,7 @@ considers it finished.
 
 ### Treasury Fees
 
-- For ERC-20 loan initiation, the Vaipakam platform treasury collects a `Loan Initiation Fee` equal to `0.1%` of the lending-asset amount before net loan proceeds are delivered to the borrower.
+- For ERC-20 loan initiation, the Vaipakam platform treasury collects a `Loan Initiation Fee` equal to `0.2%` of the lending-asset amount before net loan proceeds are delivered to the borrower.
 - The Vaipakam platform treasury collects a fee of 1% of any interest earned by lenders or rental fees earned by NFT owners.
 - The treasury also collects late fees paid.
 - These fees are automatically deducted by the smart contract at the relevant stage of the lifecycle: the `Loan Initiation Fee` at ERC-20 loan start, and the treasury share on interest, rental fees, and late fees when those amounts are settled or claimed.
@@ -2764,7 +2764,7 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
 
 ### Treasury and Revenue Sharing
 
-- **Treasury Collection:** Treasury continues to collect protocol fees according to the live protocol rules, including the `0.1%` `Loan Initiation Fee` on ERC-20 loans, the `Yield Fee` on accrued interest / rental-fee earnings, the `1%` late-fee intake, and any other explicitly documented treasury charges such as liquidation-handling or fallback treasury entitlements.
+- **Treasury Collection:** Treasury continues to collect protocol fees according to the live protocol rules, including the `0.2%` `Loan Initiation Fee` on ERC-20 loans, the `Yield Fee` on accrued interest / rental-fee earnings, the `1%` late-fee intake, and any other explicitly documented treasury charges such as liquidation-handling or fallback treasury entitlements.
 - **Lender Yield Fee Discount:** Lenders who maintain a sufficient canonical vaulted VPFI balance are eligible for the tiered `Yield Fee` discount schedule defined by the tokenomics spec.
   - The lender discount applied at settlement is the current effective discount: Base resolves it from the canonical TWA tier accumulator, while mirror chains read the authenticated mirror cache.
   - Vault-held VPFI counts toward the balance-based fee-discount model.

@@ -706,19 +706,21 @@ auf einem nicht berechtigten Angebot ankreuzen kannst.
   zuerst direkt an ihre konfigurierten Empfänger, und der
   Executor übergibt nur die **Netto-Erlöse** (Verkaufspreis minus
   Marketplace- / Creator-Fees) an die Waterfall des Diamonds.
-  Die Waterfall routet diesen Netto-Betrag dann: der Verleiher
-  erhält sein Settlement-Entitlement (das
-  `LibEntitlement.settlementInterest` als vollen Coupon
-  berechnet, wenn der Kredit mit `useFullTermInterest = true`
-  erstellt wurde, oder ansonsten als die zum Settlement-
-  Timestamp aufgelaufenen Pro-Rata-Zinsen — das Gate ist die
-  Kreditpolitik, nicht ob der Verkauf vor oder nach der
-  geplanten Fälligkeit stattfindet), der Treasury-Anteil geht an
-  die Treasury und der Rest wird DIREKT in das Vault des
-  aktuellen Kreditnehmer-Position-NFT-Holders deponiert (via
-  `LibUserVault.getOrCreate` + ein Vault-Deposit). Es wird kein
-  Claim-Center-Claim erstellt — prüfe deinen Vault-Saldo, nachdem
-  der Verkauf gelandet ist.
+  Der Verkauf ist eine aus dem Collateral finanzierte Rückzahlung,
+  also settelt der Diamond diesen Netto-Betrag genau so, wie es eine
+  Rückzahlung im Moment des Fills täte: der Kredit wird
+  zurückgezahlt; der Anspruch des Verleihers (der volle Coupon, wenn
+  der Kredit mit `useFullTermInterest = true` erstellt wurde, sonst
+  die bis dahin aufgelaufenen Zinsen, plus ein etwaiger
+  Yield-Fee-Rabatt des Verleihers) wird in das Vault des Verleihers
+  gelegt und dem aktuellen Lender-Position-Halter über den normalen
+  Lender-Claim ausgezahlt; die Treasury erhält ihren Anteil abzüglich
+  dieses Rabatts; und der Rest geht an die Wallet des aktuellen
+  Borrower-Position-Halters. Kann der Rest nicht an diese Wallet
+  gezahlt werden, wird er stattdessen gehalten und über den normalen Borrower-Claim
+  im Claim Center ausgezahlt. Der Verleiher wird nie innerhalb des
+  Verkaufs selbst bezahlt, daher kann nichts an seiner Wallet den
+  Verkauf stoppen.
 
 **Womit du es nicht kombinieren kannst.** Zwei verschiedene
 Konfliktklassen, in unterschiedlichen Protokollphasen
@@ -1238,7 +1240,7 @@ Bidder-Erfüllung, das Listing-seitige Leg der Counter-Order
 hattest oder nicht; der Atomic-Pfad unterstützt `existingHash ==
 0`) und die Settlement-Waterfall des Diamonds landen atomar in
 einem Block. Die Transaktion hat entweder vollen Erfolg
-(Kredit gesettelt, NFT transferiert, Verkaufserlöse aufgeteilt)
+(Kredit als zurückgezahlt geschlossen, NFT transferiert, Verkaufserlöse aufgeteilt)
 oder revertiert vollständig (nichts bewegt sich), und es gibt
 KEIN Fenster zwischen Listing-Rotation und Settlement, in dem
 ein Dritt-Käufer beim matched price eingreifen könnte.
@@ -1646,7 +1648,10 @@ Atomares Settlement, nachdem der neue Lender akzeptiert hat:
 1. Finanziert den neuen Loan durch den akzeptierenden Lender.
 2. Zahlt den alten Loan vollständig zurück (Principal + Zinsen,
    abzüglich Treasury-Anteil).
-3. Verbrennt die alten Position-NFTs.
+3. Markiert den alten Loan als zurückgezahlt. Seine Position-NFTs
+   werden nicht verbrannt: beide bleiben bei ihren Haltern, mit dem
+   Status Loan Repaid. Der alte Lender beansprucht die Rückzahlung
+   mit seinem, der alte Borrower-NFT bleibt als Beleg.
 4. Mintet die neuen Position-NFTs.
 
 Revertet, wenn HF unter den neuen Konditionen unter 1,5 läge.
