@@ -164,33 +164,6 @@ const EXPECTED_VIEWS: ReadonlyArray<{
     outputs: ['acked:uint256', 'forceFinalized:uint256'],
     facet: 'remittanceLens',
   },
-  // Codex #2489 r7 — whether the acknowledged share above is comparable yet:
-  // how much reservation history the permissionless backfill has still to
-  // book. Non-zero (or a history longer than one scan) reads the share as
-  // UNKNOWN rather than comparing an undercount.
-  {
-    name: 'getRemitHistoryPending',
-    inputs: ['uint256', 'uint256'],
-    outputs: ['strandedPending:uint256', 'bookingPending:uint256', 'nonce:uint256'],
-    facet: 'remittanceLens',
-  },
-  // Codex #2489 r9 — the declared-share history figure, compared on top of the
-  // exact acknowledged share at ADVISORY severity only.
-  {
-    name: 'getChainRemittedRecycledHistory',
-    inputs: ['uint32'],
-    outputs: ['ackedDeclared:uint256'],
-    facet: 'remittanceLens',
-  },
-  // Codex #2489 r10 — the rows behind that figure, joined with the chain's own
-  // receipt records (`getReceivedRemit`, a struct view read through the
-  // compiled ABI) to reconstruct what the chain actually relocated for them.
-  {
-    name: 'getRemitHistoryBooked',
-    inputs: ['uint32', 'uint256', 'uint256'],
-    outputs: ['ids:uint256[]', 'recycled:uint256[]', 'totals:uint256[]'],
-    facet: 'remittanceLens',
-  },
   // #1569 M4 C3 — the keeper-earmark draw, the THIRD subtrahend of
   // `expectedAvail` and the subject of the `keeper-cap` check. On the
   // aggregator facet (it reads the same per-chain books), so no separate

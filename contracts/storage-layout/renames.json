@@ -200,6 +200,22 @@
       "from": "rewardCustodyUnclassifiedReturned",
       "to": "retiredRewardCustodyUnclassifiedReturned",
       "reason": "#2910 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the #1662 recovery-attribution watermark retired receipts created before per-receipt attribution on a Diamond refreshed in place. Receipt ids come from remitReservationNonce, which advances only on canonical-gated surfaces, and a fresh canonical deploy armed at zero before its first receipt, so no receipt on this build predates attribution; the watermark, its arming, the custody-activation pre-check and the Unclassified row's returned figure for pre-attribution receipts are removed. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 628,
+      "offset": 0,
+      "from": "chainRemittedRecycledAckedFromHistory",
+      "to": "retiredChainRemittedRecycledAckedFromHistory",
+      "reason": "#2910 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the #2489 reservation history rule stamped released reservations' stranded records and booked consumed reservations' recycled shares for records written before those fields existed on a Diamond upgraded in place. On a fresh deploy a release writes its stranded record in the same transaction that sets status 3, and every attested consumption books its share in the transaction that stamps it, so the rule, its permissionless walk, the history figure and the lens views are removed. The field keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam@390[uint256]",
+      "slot": 18,
+      "offset": 0,
+      "from": "remitReservations[].strandedStamped",
+      "to": "remitReservations[].retiredStrandedStamped",
+      "reason": "#2910 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the #2489 reservation history rule stamped released reservations' stranded records and booked consumed reservations' recycled shares for records written before those fields existed on a Diamond upgraded in place. On a fresh deploy a release writes its stranded record in the same transaction that sets status 3, and every attested consumption books its share in the transaction that stamps it, so the rule, its permissionless walk, the history figure and the lens views are removed. The field keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
     }
   ]
 }

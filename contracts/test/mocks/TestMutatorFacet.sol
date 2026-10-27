@@ -2580,65 +2580,10 @@ contract TestMutatorFacet {
         r.recycled = recycled;
     }
 
-    /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r9) test-only — a
-    ///         RELEASED reservation row as the one-time stranded seed scans
-    ///         it (status 3, its recycled share), the nonce raised to cover
-    ///         it, so the ceremony can run over a raw-driven release.
-    /// @notice Codex #2489 r7 test-only — a FINALIZED reservation row as the
-    ///         history rule meets it on an upgraded-in-place Diamond: status 2,
-    ///         its destination, split and acknowledgement flags, NO booking
-    ///         (`recycledBooked` 0), the nonce raised to cover it.
-    function setRemitReservationFinalizedRaw(
-        uint256 remitId,
-        uint32 dst,
-        uint256 total,
-        uint256 recycled,
-        bool consumedAcked,
-        bool quarantineAcked,
-        bool forcedFinalized
-    ) external {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
-        r.status = 2;
-        r.dstChainId = dst;
-        r.total = total;
-        r.recycled = recycled;
-        r.consumedAcked = consumedAcked;
-        r.quarantineAcked = quarantineAcked;
-        r.forcedFinalized = forcedFinalized;
-        if (s.remitReservationNonce < remitId) s.remitReservationNonce = remitId;
-    }
-
-    /// @notice Codex #2489 r7 test-only — a RELEASED reservation's per-reservation
-    ///         ceremony records as #1662 left them before the stranded record
-    ///         existed, and its acknowledgement flags.
-    function setReleasedRemitHistoryRaw(
-        uint256 remitId,
-        uint256 recycledRecovered,
-        uint256 recycledLoss,
-        bool consumedAcked,
-        bool quarantineAcked
-    ) external {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        s.ceremonyRecycledRecovered[remitId] = recycledRecovered;
-        s.ceremonyRecycledLoss[remitId] = recycledLoss;
-        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
-        r.consumedAcked = consumedAcked;
-        r.quarantineAcked = quarantineAcked;
-    }
-
     /// @notice Codex #2489 r15 test-only — the per-loan reward entry pointers.
     function getLoanEntryIdsRaw(uint256 loanId) external view returns (uint256 lenderId, uint256 borrowerId) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return (s.loanActiveLenderEntryId[loanId], s.loanBorrowerEntryId[loanId]);
-    }
-
-    function setRemitReservationReleasedRaw(uint256 remitId, uint256 recycled) external {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
-        r.status = 3;
-        r.recycled = recycled;
-        if (s.remitReservationNonce < remitId) s.remitReservationNonce = remitId;
     }
 
     /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) test-only — set a

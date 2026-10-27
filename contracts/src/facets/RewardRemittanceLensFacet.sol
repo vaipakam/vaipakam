@@ -5,7 +5,6 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
-import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
 import {ICrossChainMessenger} from "../crosschain/ICrossChainMessenger.sol";
 
@@ -159,90 +158,6 @@ contract RewardRemittanceLensFacet {
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return (s.chainRemittedRecycledAcked[chainId], s.chainRemittedRecycledForceFinalized[chainId]);
-    }
-
-    /// @notice Codex #2489 r9 — the DECLARED recycled share of every remittance to
-    ///         `chainId` acknowledged as consumed before the booking existed,
-    ///         booked by the history walk and kept apart from
-    ///         {getChainRemittedRecycled}'s exact `acked`: no received figure
-    ///         survives for history, so a pre-upgrade short delivery relocated
-    ///         less than this. The watcher compares `acked` alone as a hard
-    ///         invariant and `acked + this` only as an advisory.
-    function getChainRemittedRecycledHistory(uint32 chainId) external view returns (uint256 ackedDeclared) {
-        return LibVaipakam.storageSlot().chainRemittedRecycledAckedFromHistory[chainId];
-    }
-
-    /// @notice Codex #2489 r10 — the reservations to `dst` in `[fromId, fromId +
-    ///         count)` (clipped to the nonce) that the history walk booked at
-    ///         their DECLARED share (booked state 3), with the declared split
-    ///         each was sent with. The mesh watcher joins these with the
-    ///         destination's own receipt records (`getReceivedRemit` there,
-    ///         which hold the amount that actually arrived) to reconstruct what
-    ///         the destination relocated for them — `recycled × received /
-    ///         total`, the receiver's own flooring — so the relocated-custody
-    ///         invariant stays HARD across an in-place upgrade instead of
-    ///         carrying the history as a cushion or a false alarm.
-    /// @return ids      Reservation ids, in id order.
-    /// @return recycled Each one's declared recycled share.
-    /// @return totals   Each one's declared total.
-    function getRemitHistoryBooked(uint32 dst, uint256 fromId, uint256 count)
-        external
-        view
-        returns (uint256[] memory ids, uint256[] memory recycled, uint256[] memory totals)
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 nonce = s.remitReservationNonce;
-        if (fromId == 0) fromId = 1;
-        uint256 end = fromId + count;
-        if (end > nonce + 1) end = nonce + 1;
-        uint256 n;
-        for (uint256 id = fromId; id < end; ) {
-            LibVaipakam.RemitReservation storage r = s.remitReservations[id];
-            if (r.recycledBooked == 3 && r.dstChainId == dst) { unchecked { ++n; } }
-            unchecked { ++id; }
-        }
-        ids = new uint256[](n);
-        recycled = new uint256[](n);
-        totals = new uint256[](n);
-        uint256 k;
-        for (uint256 id = fromId; id < end && k < n; ) {
-            LibVaipakam.RemitReservation storage r = s.remitReservations[id];
-            if (r.recycledBooked == 3 && r.dstChainId == dst) {
-                ids[k] = id;
-                recycled[k] = r.recycled;
-                totals[k] = r.total;
-                unchecked { ++k; }
-            }
-            unchecked { ++id; }
-        }
-    }
-
-    /// @notice Codex #2489 r7 — how many reservations in `[fromId, fromId +
-    ///         count)` (clipped to the nonce) the history rule would still
-    ///         write ({RewardRemittanceFacet.backfillRemitHistory}): stranded
-    ///         records to stamp, recycled shares to book. Both zero over
-    ///         `1..nonce` means the per-destination booked counters cover the
-    ///         whole history; until then the mesh watcher reads them as UNKNOWN.
-    /// @return strandedPending Released reservations without a stranded record.
-    /// @return bookingPending  Finalized reservations whose share is unbooked.
-    /// @return nonce           The highest reservation id, so a reader knows
-    ///                         when its range covered everything.
-    function getRemitHistoryPending(uint256 fromId, uint256 count)
-        external
-        view
-        returns (uint256 strandedPending, uint256 bookingPending, uint256 nonce)
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        nonce = s.remitReservationNonce;
-        if (fromId == 0) fromId = 1;
-        uint256 end = fromId + count;
-        if (end > nonce + 1) end = nonce + 1;
-        for (uint256 id = fromId; id < end; ) {
-            LibVaipakam.RemitReservation storage r = s.remitReservations[id];
-            if (LibVpfiRecycle.strandedStampPending(r)) { unchecked { ++strandedPending; } }
-            if (LibVpfiRecycle.recycledBookingPending(r)) { unchecked { ++bookingPending; } }
-            unchecked { ++id; }
-        }
     }
 
     /// @notice Σ VPFI in ACKED (delivery-finalized) reservations to `chainId`.
