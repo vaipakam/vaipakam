@@ -37,19 +37,6 @@
   },
   {
     "type": "function",
-    "name": "armedFreshPaidRebased",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "bindRewardCustodyHolder",
     "inputs": [],
     "outputs": [
@@ -481,24 +468,6 @@
   },
   {
     "type": "function",
-    "name": "rebaseArmedFreshPaid",
-    "inputs": [
-      {
-        "name": "total",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "pauseEpoch",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "recoverVpfiFromPredecessor",
     "inputs": [
       {
@@ -926,49 +895,6 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "event",
-    "name": "ArmedFreshPaidRebased",
-    "inputs": [
-      {
-        "name": "role",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      },
-      {
-        "name": "requestedTotal",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "paidBefore",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "paidAfter",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "receivedBefore",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "receivedAfter",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
   },
   {
     "type": "event",
@@ -1708,69 +1634,6 @@
   },
   {
     "type": "error",
-    "name": "ArmedFreshPaidAlreadyRebased",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ArmedFreshRebaseRequiresActiveRole",
-    "inputs": [
-      {
-        "name": "role",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "total",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "paidBefore",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "receivedBefore",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ArmedFreshRebaseStalePauseEpoch",
-    "inputs": [
-      {
-        "name": "stated",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "live",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ArmedFreshRebaseTotalExceedsCap",
-    "inputs": [
-      {
-        "name": "total",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cap",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "ExpectedManualPause",
     "inputs": []
   },
@@ -1877,11 +1740,6 @@
   },
   {
     "type": "error",
-    "name": "RewardCustodyActivationRequiresRebase",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "RewardCustodyActivationStalePauseEpoch",
     "inputs": [
       {
@@ -1974,11 +1832,6 @@
         "internalType": "uint8"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "RewardCustodyBootstrapRequiresRebase",
-    "inputs": []
   },
   {
     "type": "error",
