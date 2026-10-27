@@ -3221,7 +3221,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](11);
+        s = new bytes4[](10);
         s[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         s[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         s[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -3231,8 +3231,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[6] = RewardRemittanceFacet.onRemitAckReceived.selector;
         s[7] = RewardRemittanceFacet.finalizeRemitReservation.selector;
         s[8] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
-        s[9] = RewardRemittanceFacet.backfillRemitHistory.selector; // #2489 r7: the history walk
-        s[10] = RewardRemittanceFacet.quoteRemitDayStatuses.selector; // #2760: why a day closes or not
+        s[9] = RewardRemittanceFacet.quoteRemitDayStatuses.selector; // #2760: why a day closes or not
     }
 
     /// #1566 transport epochs PR 3a — the mirror-side ingress half of the
@@ -3628,7 +3627,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](42);
+        s = new bytes4[](39);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -3682,12 +3681,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // target) and its two operator reads.
         s[37] = RewardRemittanceLensFacet.dayAwaitsFreshDelivery.selector;
         s[38] = RewardRemittanceLensFacet.getDayDeliveryState.selector;
-        s[39] = RewardRemittanceLensFacet.getPacketDeliveryProof.selector;
+        s[30] = RewardRemittanceLensFacet.getPacketDeliveryProof.selector;
         // #1452 — the acknowledged recycled share per destination.
-        s[40] = RewardRemittanceLensFacet.getChainRemittedRecycled.selector;
-        s[41] = RewardRemittanceLensFacet.getRemitHistoryPending.selector; // #2489 r7
-        s[30] = RewardRemittanceLensFacet.getChainRemittedRecycledHistory.selector; // #2489 r9
-        s[31] = RewardRemittanceLensFacet.getRemitHistoryBooked.selector; // #2489 r10
+        s[31] = RewardRemittanceLensFacet.getChainRemittedRecycled.selector;
         s[35] = RewardRemittanceLensFacet.getRemitRoute.selector; // #2561
     }
 

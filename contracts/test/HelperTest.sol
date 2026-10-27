@@ -112,7 +112,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](261); // #2910 -setRecoveryAttributionRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](258); // #2910 PR 2 -setRemitReservationFinalizedRaw -setReleasedRemitHistoryRaw -setRemitReservationReleasedRaw (was 261); #2910 -setRecoveryAttributionRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -160,7 +160,6 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.restoreReleasedRemitRaw.selector;
         selectors[n++] = TestMutatorFacet.consumeRecycleRawBounded.selector;
         selectors[n++] = TestMutatorFacet.consumeRecycleRawAsRemit.selector;
-        selectors[n++] = TestMutatorFacet.setRemitReservationReleasedRaw.selector;
         selectors[n++] = TestMutatorFacet.setRemitReservationSplitRaw.selector;
         // #1566 slice 4 PR B — raw role inputs + the freeze flag.
         selectors[n++] = TestMutatorFacet.setRewardRoleRaw.selector;
@@ -545,8 +544,6 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setChainConsumedRecycledRaw.selector; // #2459 r6
         selectors[n++] = TestMutatorFacet.setRewardEntryExpiryBegunRaw.selector; // PR 1 re-review B-N1
         selectors[n++] = TestMutatorFacet.setFreshReCreditedRaw.selector; // PR 1 re-review C-1
-        selectors[n++] = TestMutatorFacet.setRemitReservationFinalizedRaw.selector; // #2489 r7
-        selectors[n++] = TestMutatorFacet.setReleasedRemitHistoryRaw.selector; // #2489 r7
         selectors[n++] = TestMutatorFacet.getLoanEntryIdsRaw.selector; // #2489 r15
         selectors[n++] = TestMutatorFacet.setArmingFeeRateRaw.selector; // #1219 Codex #2556 r1
         selectors[n++] = TestMutatorFacet.setPerkStateRaw.selector; // #2559 r2
@@ -2398,7 +2395,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](11);
+        selectors = new bytes4[](10);
         selectors[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         selectors[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         selectors[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -2408,8 +2405,7 @@ contract HelperTest {
         selectors[6] = RewardRemittanceFacet.onRemitAckReceived.selector;
         selectors[7] = RewardRemittanceFacet.finalizeRemitReservation.selector;
         selectors[8] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
-        selectors[9] = RewardRemittanceFacet.backfillRemitHistory.selector; // #2489 r7: the history walk
-        selectors[10] = RewardRemittanceFacet.quoteRemitDayStatuses.selector; // #2760: why a day closes or not
+        selectors[9] = RewardRemittanceFacet.quoteRemitDayStatuses.selector; // #2760: why a day closes or not
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair (mirrors DeployDiamond).
@@ -2799,7 +2795,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](42);
+        selectors = new bytes4[](39);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2853,11 +2849,8 @@ contract HelperTest {
         // target) and its two operator reads.
         selectors[37] = RewardRemittanceLensFacet.dayAwaitsFreshDelivery.selector;
         selectors[38] = RewardRemittanceLensFacet.getDayDeliveryState.selector;
-        selectors[39] = RewardRemittanceLensFacet.getPacketDeliveryProof.selector;
-        selectors[40] = RewardRemittanceLensFacet.getChainRemittedRecycled.selector; // #1452
-        selectors[41] = RewardRemittanceLensFacet.getRemitHistoryPending.selector; // #2489 r7
-        selectors[30] = RewardRemittanceLensFacet.getChainRemittedRecycledHistory.selector; // #2489 r9
-        selectors[31] = RewardRemittanceLensFacet.getRemitHistoryBooked.selector; // #2489 r10
+        selectors[30] = RewardRemittanceLensFacet.getPacketDeliveryProof.selector;
+        selectors[31] = RewardRemittanceLensFacet.getChainRemittedRecycled.selector; // #1452
         selectors[35] = RewardRemittanceLensFacet.getRemitRoute.selector; // #2561
     }
 

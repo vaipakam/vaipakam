@@ -176,14 +176,12 @@ export function parseUndeliveredAlertKey(key: string): { reason: UndeliveredReas
 
 /** What a released reservation still waits on, as far as Base shows it. */
 export type LateOutstanding =
-  /** Its recycled share counted as stranded, stamped on Base. */
+  /** Its recycled share counted as stranded on Base, written at its release. */
   | { kind: 'stranded'; wei: bigint }
-  /** Its stranded share is not stamped yet, so its size is not known. */
-  | { kind: 'unstamped' }
   /** It holds its destination's compensation gate: a fresh-only remittance,
    *  with no recycled share stranded. */
   | { kind: 'gate' }
-  /** Its stamped stranded share is zero, and its destination's compensation
+  /** Its stranded share is zero, and its destination's compensation
    *  gate could not be read this run, so whether it holds it is not known
    *  (Codex #2607 r9): reported as unknown, never as settled. */
   | { kind: 'gate-unread' };
@@ -268,10 +266,8 @@ export function undeliveredAlertDetail(e: UndeliveredEvidence): string {
       ? ''
       : o.kind === 'stranded'
         ? `; stranded share ${o.wei} VPFI wei still unresolved`
-        : o.kind === 'unstamped'
-          ? '; its stranded share is not stamped on Base yet, so its size is not known'
-          : o.kind === 'gate-unread'
-            ? `; no recycled share stranded, and whether it holds chain ${e.dstChainId}'s compensation gate is not known (the gate could not be read this run)`
-            : `; holds chain ${e.dstChainId}'s compensation gate (fresh-only, no recycled share stranded)`;
+        : o.kind === 'gate-unread'
+          ? `; no recycled share stranded, and whether it holds chain ${e.dstChainId}'s compensation gate is not known (the gate could not be read this run)`
+          : `; holds chain ${e.dstChainId}'s compensation gate (fresh-only, no recycled share stranded)`;
   return `to chain ${e.dstChainId}; sent ${hours(e.ageSec)} ago; ${route}; CCIP message ${e.ccipMessageId}; total ${e.totalWei} VPFI wei${outstanding}.`;
 }

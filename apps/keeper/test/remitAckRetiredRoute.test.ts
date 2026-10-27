@@ -235,7 +235,6 @@ function install(book: Book): { routeReads: () => number; routeIds: number[]; po
           ccipMessageId: MESSAGE_ID,
           total: 5n * 10n ** 18n,
           sentAt: BigInt(Math.floor(Date.now() / 1000) - (book.ageSec ?? 60)),
-          strandedStamped: true,
         }),
       };
     }
@@ -881,10 +880,9 @@ describe('undelivered alert keys and text (#2561)', () => {
   });
 
   it('an unread gate on a zero stranded share is stated as unknown, never as nothing outstanding', () => {
-    expect(lateOutstanding({ strandedRecycled: 0n, strandedStamped: true }, 'unread')).toEqual({ kind: 'gate-unread' });
-    // A known share or an unstamped one is stated as it is, gate read or not.
-    expect(lateOutstanding({ strandedRecycled: 3n, strandedStamped: true }, 'unread')).toEqual({ kind: 'stranded', wei: 3n });
-    expect(lateOutstanding({ strandedRecycled: 0n, strandedStamped: false }, 'unread')).toEqual({ kind: 'unstamped' });
+    expect(lateOutstanding({ strandedRecycled: 0n }, 'unread')).toEqual({ kind: 'gate-unread' });
+    // A known share is stated as it is, gate read or not.
+    expect(lateOutstanding({ strandedRecycled: 3n }, 'unread')).toEqual({ kind: 'stranded', wei: 3n });
     expect(undeliveredAlertDetail({ ...base, outstanding: { kind: 'gate-unread' } })).toMatch(/compensation gate is not known \(the gate could not be read this run\)/);
   });
 
@@ -900,16 +898,11 @@ describe('undelivered alert keys and text (#2561)', () => {
   });
 
   it('a released compensation remittance names the gate it holds, never a zero stranded share', () => {
-    const outstanding = lateOutstanding({ strandedRecycled: 0n, strandedStamped: true }, true);
+    const outstanding = lateOutstanding({ strandedRecycled: 0n }, true);
     expect(outstanding).toEqual({ kind: 'gate' });
     const detail = undeliveredAlertDetail({ ...base, outstanding });
     expect(detail).toContain(`holds chain ${ARB}'s compensation gate`);
     expect(detail).not.toMatch(/stranded share 0/);
-  });
-
-  it('an unstamped stranded share is stated as unknown, not as zero', () => {
-    const outstanding = lateOutstanding({ strandedRecycled: 0n, strandedStamped: false }, false);
-    expect(undeliveredAlertDetail({ ...base, outstanding })).toMatch(/not stamped on Base yet, so its size is not known/);
   });
 
   it('the Pending text names both valves and no outstanding share', () => {

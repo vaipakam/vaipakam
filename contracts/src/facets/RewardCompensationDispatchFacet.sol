@@ -971,7 +971,6 @@ contract RewardCompensationDispatchFacet is
         s.remitPendingTotal[dst] = pending > r.total ? pending - r.total : 0;
         LibInteractionRewards.restoreArmedFresh(r.armedFreshFull);
         r.strandedRecycled = LibVpfiRecycle.restoreReleasedRemit(r.recycledFull, r.recycled, remitId);
-        r.strandedStamped = true;
         emit RemitReservationReleased(
             remitId, dst, r.total, r.fresh, r.recycled
         );
@@ -1094,10 +1093,6 @@ contract RewardCompensationDispatchFacet is
         uint256 amount = freshInflow + recycledInflow;
         if (amount == 0) revert NothingToRemit();
         if (r.status != 3) revert CeremonyReservationNotReleased(remitId);
-        // Codex #2489 r7 — a reservation released before its stranded record
-        // existed is stamped from history FIRST, so the deduction below lands
-        // on the record and the derivation does not count this resolution.
-        LibVpfiRecycle.ensureReleasedStrandedStamped(s, remitId);
         if (_consumptionTrusted(r)) {
             revert StrandedReturnConsumedReceipt(remitId);
         }
@@ -1179,10 +1174,6 @@ contract RewardCompensationDispatchFacet is
         uint256 amount = freshLoss + recycledLoss;
         if (amount == 0) revert NothingToRemit();
         if (r.status != 3) revert CeremonyReservationNotReleased(remitId);
-        // Codex #2489 r7 — a reservation released before its stranded record
-        // existed is stamped from history FIRST, so the deduction below lands
-        // on the record and the derivation does not count this resolution.
-        LibVpfiRecycle.ensureReleasedStrandedStamped(s, remitId);
         // #1662 r1 — a CONSUMED receipt's value backs mirror claims:
         // recording it as "terminal loss" would clear the gate over
         // value that is neither lost nor recoverable. #1662 r2 — only a

@@ -1542,7 +1542,7 @@ contract RewardRemittanceFacet is
         bool forced
     ) private {
         uint8 booked = r.recycledBooked;
-        if (booked >= RECYCLED_BOOKED_ACKED) return; // acknowledged, or booked from history
+        if (booked == RECYCLED_BOOKED_ACKED) return; // booked once, at the first consumption
         uint32 dst = r.dstChainId;
         uint256 declared = r.recycled;
         if (forced) {
@@ -1570,73 +1570,9 @@ contract RewardRemittanceFacet is
         return Math.mulDiv(declared, received, total);
     }
 
-    /// @notice A reservation's recycled share booked for its destination from
-    ///         its HISTORY (finalized before the booking existed), by
-    ///         {backfillRemitHistory}: `booked` is the state written (1 forced,
-    ///         2 acknowledged).
-    /// @custom:event-category informational/reward-transport
-    event RemitRecycledBookedFromHistory(uint256 indexed remitId, uint8 booked);
-
-    /// @notice Bring the reservations `[fromId, fromId + count)` (clipped to
-    ///         the nonce) up to the record shape this facet keeps (Codex #2489
-    ///         r7): a RELEASED reservation gets its stranded record from history
-    ///         and, if its consumption is trusted, resolves it; a FINALIZED one
-    ///         — or a RELEASED one acknowledged as consumed, the late delivery
-    ///         the live ack path books — books its recycled share for its
-    ///         destination: a consumed row's DECLARED share goes to the history
-    ///         figure (`chainRemittedRecycledAckedFromHistory`, booked state 3),
-    ///         kept apart from the exact acknowledged counter because the record
-    ///         keeps no received figure — a pre-upgrade short delivery relocated
-    ///         less than declared (Codex #2489 r9) — and because a pre-upgrade
-    ///         FORCED finalization carries the same consumed mark as an
-    ///         acknowledgement (security review of #2489): the record cannot
-    ///         route it to the forced bucket, so the figure is "acknowledged or
-    ///         forced", and the watcher resolves each row against the
-    ///         destination's receipt. Permissionless and
-    ///         idempotent: every write is of a fact the record lacks, derived
-    ///         from the record itself, so anyone may run it at any time and a
-    ///         second pass writes nothing. Until it has covered `1..nonce`,
-    ///         the per-destination booked counters undercount history and the
-    ///         mesh watcher's relocated leg treats them as UNKNOWN
-    ///         ({RewardRemittanceLensFacet.getRemitHistoryPending}).
-    /// @return stranded How many stranded records this call wrote.
-    /// @return booked   How many recycled shares this call booked.
-    function backfillRemitHistory(uint256 fromId, uint256 count)
-        external
-        returns (uint256 stranded, uint256 booked)
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 nonce = s.remitReservationNonce;
-        if (fromId == 0) fromId = 1;
-        uint256 end = fromId + count;
-        if (end > nonce + 1) end = nonce + 1;
-        for (uint256 id = fromId; id < end; ) {
-            LibVaipakam.RemitReservation storage r = s.remitReservations[id];
-            if (LibVpfiRecycle.ensureReleasedStrandedStamped(s, id)) {
-                unchecked { ++stranded; }
-                LibVpfiRecycle.settleReleasedRemitStranded(s, id);
-            }
-            if (LibVpfiRecycle.recycledBookingPending(r)) {
-                // The DECLARED share, into the history figure — never the
-                // exact counter (no received figure survives) and never the
-                // forced bucket (a forced finalization and an acknowledgement
-                // leave the same consumed mark; the destination's receipt is
-                // what tells them apart, off chain).
-                s.chainRemittedRecycledAckedFromHistory[r.dstChainId] += r.recycled;
-                r.recycledBooked = RECYCLED_BOOKED_HISTORY;
-                emit RemitRecycledBookedFromHistory(id, r.recycledBooked);
-                unchecked { ++booked; }
-            }
-            unchecked { ++id; }
-        }
-    }
-
-    /// @dev {RemitReservation.recycledBooked} states (0 = not booked). HISTORY
-    ///      is an acknowledged row booked by {backfillRemitHistory} at its
-    ///      declared share into the history figure; like ACKED it is final.
+    /// @dev {RemitReservation.recycledBooked} states (0 = not booked).
     uint8 private constant RECYCLED_BOOKED_FORCED = 1;
     uint8 private constant RECYCLED_BOOKED_ACKED = 2;
-    uint8 private constant RECYCLED_BOOKED_HISTORY = 3;
 
     function _finalizeReservation(
         LibVaipakam.Storage storage s,

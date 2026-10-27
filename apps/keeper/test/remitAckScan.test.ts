@@ -96,14 +96,12 @@ function enc(f: AbiFunction, result: unknown): string {
 }
 
 /** A reservation tuple built from the compiled ABI, zeroed but for `status`
- *  (and the stranded-share stamp, set). */
+ *  and its destination. */
 function reservation(status: number): string {
   const out = F.reservation.outputs;
   const one = (p: { name?: string; type: string; components?: readonly unknown[] }): unknown => {
     if (p.name === 'status') return status;
     if (p.name === 'dstChainId') return CHAIN_ID;
-    // A stamped history: "nothing stranded" is a positive read, not a default (#2497 r1).
-    if (p.name === 'strandedStamped') return true;
     const t = p.type;
     if (t.endsWith('[]')) return [];
     if (t === 'tuple') return ((p.components ?? []) as { name?: string; type: string }[]).map(one);
