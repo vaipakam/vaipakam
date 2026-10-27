@@ -1,4 +1,4 @@
-## Thread — One rule for the initiation risk gate (PR #TBD)
+## Thread — One rule for the initiation risk gate (PR #2976)
 
 The range-match preview now decides whether a matched pair carries the
 initiation risk gate (the loan-to-value cap and the health-factor floor) by
