@@ -2714,49 +2714,6 @@
   },
   {
     "type": "error",
-    "name": "LegacyEnvelopeAlreadyImported",
-    "inputs": [
-      {
-        "name": "snapshotId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "LegacyEnvelopeEmpty",
-    "inputs": [
-      {
-        "name": "snapshotId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "LegacyEnvelopeMismatch",
-    "inputs": [
-      {
-        "name": "snapshotId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "stated",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "netTotal",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "LegacySliceNotPending",
     "inputs": [
       {
