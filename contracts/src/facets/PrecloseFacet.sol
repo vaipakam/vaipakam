@@ -588,35 +588,19 @@ contract PrecloseFacet is
         // lender-forfeit route). The borrower side is CLEAN only for an IN-GRACE
         // full repayment — a LATE preclose (past grace, before anyone triggered
         // default) is a non-clean close and forfeits the borrower reward, per the
-        // {RepayFacet.repayLoan} convention (Codex #1061 P2). Best-effort hook
-        // (see {_rewardHook}).
+        // {RepayFacet.repayLoan} convention (Codex #1061 P2). Bubbling (#2739):
+        // a terminal transition closes its reward entry in the same transaction
+        // or reverts, so a caller cannot starve the hook of gas and keep a
+        // reward the late close should forfeit.
         uint256 graceEnd = LibLoanClock.graceEnd(loan);
-        _rewardHook(
+        LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 InteractionRewardsFacet.precloseRewardClose.selector,
                 loanId,
                 block.timestamp <= graceEnd // borrowerClean
-            )
+            ),
+            RewardHookCallFailed.selector
         );
-    }
-
-    /// @dev #969 / S5 — best-effort reward-lifecycle hook. Two purposes:
-    ///      (1) the reward call-graph lives on {InteractionRewardsFacet}, not
-    ///          inlined into this EIP-170-bounded facet; and
-    ///      (2) reward bookkeeping is STRICTLY SUBORDINATE to the fund-critical
-    ///          preclose — the close (borrower reclaims collateral) must never
-    ///          revert because of reward accounting, so the low-level call's
-    ///          failure is intentionally not bubbled. Production always cuts
-    ///          InteractionRewardsFacet (deploy-sanity guarantees full-surface
-    ///          routing) so the hook always runs there; a focused test harness
-    ///          that omits that facet simply skips reward bookkeeping. The
-    ///          hook's effect is asserted by RewardLifecycleCloseTest on the
-    ///          full diamond.
-    function _rewardHook(bytes memory data) private {
-        (bool ok, ) = address(this).call(data);
-        if (!ok) {
-            // best-effort — see doc above; the close proceeds regardless.
-        }
     }
 
     // ─── Option 2: Transfer Obligation ──────────────────────────────────────
@@ -1162,12 +1146,13 @@ contract PrecloseFacet is
         // they earned pre-transfer, and fresh entries cover the continuing loan
         // under the new rate/duration — so the incoming borrower only earns from
         // the transfer forward and never the previous borrower's history (Codex
-        // #1061 P2). Best-effort reward hook (see {_rewardHook}).
-        _rewardHook(
+        // #1061 P2). Bubbling (#2739), like every terminal reward close.
+        LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 InteractionRewardsFacet.precloseRewardTransferObligation.selector,
                 loanId
-            )
+            ),
+            RewardHookCallFailed.selector
         );
 
         // #569 Codex #572 P1 #3 (2026-06-13) — verify the incoming
@@ -2115,14 +2100,15 @@ contract PrecloseFacet is
         // completes IN GRACE — an offset (default `expiresAt == 0`) accepted after
         // the old loan's grace window is a non-clean close and forfeits the old
         // borrower reward, matching the preclose/refinance grace checks (Codex
-        // #1061 P2). Best-effort reward hook (see {_rewardHook}).
+        // #1061 P2). Bubbling (#2739), like every terminal reward close.
         uint256 offsetGraceEnd = LibLoanClock.graceEnd(loan);
-        _rewardHook(
+        LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 InteractionRewardsFacet.precloseRewardClose.selector,
                 originalLoanId,
                 block.timestamp <= offsetGraceEnd // borrowerClean
-            )
+            ),
+            RewardHookCallFailed.selector
         );
 
         // Phase 5 / §5.2b — proper-close settlement on the offset path.

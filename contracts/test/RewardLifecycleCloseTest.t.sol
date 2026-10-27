@@ -10,6 +10,8 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
+import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
@@ -146,6 +148,51 @@ contract RewardLifecycleCloseTest is SetupTest {
         // In-grace clean preclose → neither side forfeits (lender repaid).
         assertFalse(_entries(lender)[0].forfeited, "lender not forfeited");
         assertFalse(_entries(borrower)[0].forfeited, "borrower not forfeited (in grace)");
+    }
+
+    /// @dev #2739 — a terminal transition closes its reward entry in the
+    ///      same transaction or reverts. The reward close used to run behind a
+    ///      best-effort hook that swallowed a failure, leaving a Repaid loan
+    ///      whose reward entries were still open. A failing close now reverts
+    ///      the whole preclose, carrying the close's own revert data.
+    function testPrecloseRevertsWhenRewardCloseFails() public {
+        uint256 loanId = _createLoan();
+        bytes memory reason = abi.encodeWithSignature("RewardCloseBroke()");
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(InteractionRewardsFacet.precloseRewardClose.selector),
+            reason
+        );
+        vm.startPrank(borrower);
+        IERC20Mint(mockERC20).approve(address(diamond), type(uint256).max);
+        vm.expectRevert(reason);
+        PrecloseFacet(address(diamond)).precloseDirect(loanId);
+        vm.stopPrank();
+
+        // Nothing moved: the loan is still Active and both entries open.
+        assertEq(
+            uint8(LibVaipakam.LoanStatus.Active),
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            "loan still Active after the failed close"
+        );
+        assertFalse(_entries(lender)[0].closed, "lender entry still open");
+        assertFalse(_entries(borrower)[0].closed, "borrower entry still open");
+    }
+
+    /// @dev #2739 — a reward close that fails WITHOUT revert data still
+    ///      reverts the terminal, under the typed `RewardHookCallFailed`.
+    function testPrecloseRevertsTypedWhenRewardCloseFailsSilently() public {
+        uint256 loanId = _createLoan();
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(InteractionRewardsFacet.precloseRewardClose.selector),
+            ""
+        );
+        vm.startPrank(borrower);
+        IERC20Mint(mockERC20).approve(address(diamond), type(uint256).max);
+        vm.expectRevert(IVaipakamErrors.RewardHookCallFailed.selector);
+        PrecloseFacet(address(diamond)).precloseDirect(loanId);
+        vm.stopPrank();
     }
 
     /// @dev Pass-2 A1/D5 (#1189) — a preclose PAST the grace window is now
