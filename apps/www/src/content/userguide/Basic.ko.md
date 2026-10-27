@@ -65,9 +65,11 @@ Vaipakam은 여러 chains에서 동작합니다. 그중 Base가 새 VPFI가 mint
 
 ### Fee-discount 동의
 
-Vaipakam은 vault에 둔 VPFI 일부를 사용해 protocol fees 할인을 적용할
-수 있습니다. 이 switch는 "네, 그렇게 해 주세요"라는 consent toggle
-입니다. 한 번만 켜면 됩니다.
+Vaipakam은 vault에 둔 VPFI 양에 따라 protocol fees 할인을 적용할 수
+있습니다. borrower에게 이 할인은 loan이 시작될 때 loan 자체의 asset으로
+떼어 가는 더 낮은 Loan Initiation Fee일 뿐이며 — 이를 위해 VPFI가
+쓰이지는 않습니다. 이 switch는 "네, 그렇게 해 주세요"라는 consent
+toggle입니다. 한 번만 켜면 됩니다.
 
 할인의 크기는 vault에 얼마나 많은 VPFI를 보관하느냐에 따라
 달라집니다:
@@ -347,14 +349,7 @@ loan 자체의 asset으로 지급됩니다. 대부분은 견적을 가져오지 
 claim을 읽으세요. 할인된 값의 직접 인수는 예외이고, 반대 방향으로 예측 가능합니다: 팔지 않으므로 언제나
 collateral이 남습니다.
 값을 매길 수 없는 collateral에 대한 default에서는
-바스켓 전체가 나가 아무것도 남지 않는 경우가 많지만, 이 경로에서는 그것이 우연이 아니라 규칙입니다. 수수료 rebate가 돌아오는지는 loan이 어떻게
-끝났는지에 달려 있습니다. 폐지된 VPFI 수수료 경로에 남아 있는 loan이라도
-정상 종료라면(repayment, early close, refinance, 또는 loan을 정산하는 매각) Loan Initiation Fee를 위해
-보관되던 VPFI의 rebate가 정산됩니다. 금액은 정산 시점의 할인으로
-정해지므로, 그때 보유가 없으면 rebate가 0이 되어 남은 금액은 돌아오지
-않습니다. 처음부터 rebate 없이 전액이 몰수되는 것은 default 또는
-liquidation일 때이며, prepay 매각으로 닫힌 loan은 현재 지급 자체가
-되지 않습니다.
+바스켓 전체가 나가 아무것도 남지 않는 경우가 많지만, 이 경로에서는 그것이 우연이 아니라 규칙입니다.
 claim은 borrower position NFT를 consume합니다. 그 역은 성립하지
 않습니다. liquidation 이후 NFT가 남아 있다는 사실은 무언가가 기다리고
 있다는 증거가 아닙니다. 남은 것이 없으면 받아 갈 것도 없고, claim을 시도하면
@@ -553,8 +548,7 @@ side의 options를 정리합니다. 지금 사용할 수 없는 buttons는 greye
   default 시에도 surplus가 남을 수 있습니다: collateral은 빚과 그것을
   정리하는 비용에 필요한 만큼만 가져가며, 그보다 많이 맡긴 몫은 내
   claim으로 기록됩니다. 그것이 무엇인지는 경로에 따라 다릅니다 —
-  Claim Center 절을 참고하세요. 폐지된 수수료 경로에서 보관되던
-  VPFI는 default 또는 liquidation에서만 몰수되며, 정상 종료에서는 rebate가 정산됩니다(0일 수도 있습니다).
+  Claim Center 절을 참고하세요.
 
 ---
 

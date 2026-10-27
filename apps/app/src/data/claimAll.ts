@@ -13,7 +13,7 @@
  *
  * Scope (this slice): the four data-ready payout types —
  *   - `claimAsLender(loanId)`   — lender loan/rental proceeds
- *   - `claimAsBorrower(loanId)` — borrower collateral/buffer + LIF rebate
+ *   - `claimAsBorrower(loanId)` — borrower collateral/buffer + swap surplus
  *   - `claimInteractionRewards()` — pending interaction-reward VPFI
  *   - `withdrawVPFIFromVault(amount)` — free (unencumbered) vault VPFI
  * Lender-intent capital and payroll salary are a documented follow-up
@@ -122,7 +122,7 @@ export function buildClaimAllItems({
     } else {
       // Status-aware, mirroring the detailed Claim Center row copy: a
       // defaulted/liquidated or internally-matched borrower gets at most
-      // a surplus residual (+ VPFI rebate), NOT their collateral back —
+      // a surplus residual, NOT their collateral back —
       // labelling every borrower ERC-20 claim "collateral back" would
       // overstate what the batch returns (Codex #1291 r1).
       let borrowerWhat: string;

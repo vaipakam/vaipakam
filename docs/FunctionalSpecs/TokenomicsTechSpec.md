@@ -272,7 +272,7 @@ Claim horizon (RL-3, `VpfiRecyclingLoopClosureDesign.md` §6 — ratified §10.2
 - the countdown the claim surface exposes is a **conservative estimate** of the earliest removal that errs OPTIMISTIC — it never reports a removal *later* than the contract would enforce, so it only ever urges the owner to claim sooner. It folds in the interval a sweep at the current block would credit, but only while the entry is currently claim-executable — mirroring the sweep's funding gate (owner not barred by the sanctions screen, protocol not paused, a non-zero post-cap payable, and the local balance covering the claimant's legacy figures together with the entry's own day) and dropping any interval that straddled a pause window. It deliberately does NOT mirror the recycle-bucket backing check that gates a reap before the removal point: when backing room is short the real removal can be deferred slightly past the estimate, which is safe (the owner can still claim right up to the removal point). An already-claimed or already-expired (processed) entry carries no countdown at all — and neither does a REMOVED entry still mid-settlement: past the removal point the deadline is one the owner can no longer act on, so what remains is settlement progress (signalled by the removal event), never a claimant countdown. A FORFEITED entry carries no countdown either, settled or not: its value belongs to the recycle bucket, never again to its owner. A horizon reconfiguration's re-notice and the final-notice signal are both timed from the true crossing, not the sweep timestamp, so the free notice pipeline can never schedule a last-call that lands after the entry is already reapable
 - this is a genuine **soundness guarantee up to the sampling resolution**, not best-effort: no outage longer than the max observation gap (observed or not), and no observed outage of any length, is ever credited — only a sub-max-gap unobserved outage can slip through, bounded by that gap. The cost is a keeper **heartbeat**: an entry only ever expires if keepers observed it claim-executable throughout, with no gap over the bound; if they don't, the entry simply never reaps (a safe failure mode that errs toward not-reaping). A tighter max gap tightens the guarantee at the cost of a denser required heartbeat
 - the **platform keeper provides that heartbeat** on every reward chain: it keeps track of every reward entry that is not yet settled and touches each one about twice a day — far more often than the max observation gap, so one failed round costs nothing the next round cannot make up. It runs before governance switches the horizon on (while the horizon is off it only keeps its list current, and finishes the settlement of any reward whose removal had already begun), so the clocks start as soon as the horizon is switched on. The heartbeat itself moves value only into the recycle bucket, never to the keeper. The operator is told, on the internal operations channel, when a touch is refused (naming the reward and the reason), when any tracked reward has not been reached for two rounds — whether its touches are not landing or there are more rewards than the keeper can reach in a round, whose capacity the message states — and when a reward's clock did not advance across two landed touches — stated as either an owner who could not claim in that time (a funding shortfall, the pool cap, a sanctions bar, a pause), which is expected, or touches landing without being credited, which is a fault. A change to the horizon setting restarts every reward's notice and is not reported as a stalled clock. While the protocol is deliberately paused the keeper sends no touches and raises or clears none of these reports. A reward that keeps failing must not cost other rewards their round: each round takes the rewards least recently tried first. Arming the horizon on a chain where this heartbeat is not running is a deployment error: the knob would read as live while nothing is measured
-- a sanctioned owner cannot claim, and their entries' removal clock does not run while barred (flagged, or carrying a committed flag (the #1123 marker) while the oracle is unreachable). **The reward rule (owner 2026-10-14):** after a wallet is flagged, no interaction reward is paid to it until the flag is revoked; reward it earned WHILE flagged is forfeited, never delivered; reward it earned BEFORE the flag is held for it and paid once the flag is revoked. A flag counts once it is CONFIRMED: the oracle has reported the wallet flagged — directly, or through a stuck-token recovery source the wallet declared as its own — on a chain of committed observations spanning the confirmation window with no gap longer than the maximum observation gap. A flag revoked before its chain confirms forfeits nothing, and what was withheld meanwhile is paid. "Earned while flagged" is counted by reward day: from the day of the confirmed chain's first flagged observation through the day of its last. When such a chain ends — the flag is cleared, or a new chain starts over it — those days are recorded and announced, so a day settled later, by the wallet's own claim after the flag was revoked included, is still forfeited; days after the last flagged observation are not counted. Forfeited reward goes into the recycle bucket as forfeited reward, permanently: a later delisting does not restore it. Once a flag is confirmed anyone may run the permissionless SETTLEMENT for that wallet: it settles the wallet's reward exactly as the wallet's own claim would — the same pricing, caps and bounds — routes the days earned while flagged into the recycle bucket, and SETS the rest APART for the wallet in a held balance of its own, each amount announced with the wallet; nothing reaches the wallet. Settling ends the reward obligation the way any claim does, so a flag that is never lifted holds back no day, no delivery, no staged record and no custody step, and the held balance needs no deadline. The wallet's first claim after the flag is revoked pays its whole held balance together with anything else it is owed, to the venue that claim names; it was charged to the reward pool when it was set apart, so paying it out charges nothing again. The wallet can also take the held balance on its own, through a claim that pays only that balance, so nothing else that holds up its ordinary claim (an exhausted pool, say) can keep the held balance from it. Every claim's sanctions check is itself a committed observation: a clean reading at a claim commits the clear, so a later flag starts a new confirmation window instead of continuing one the clean reading should have ended. The held-apart destination can be chosen by no caller. A staged claim day follows the same rule at its payout: a day earned while flagged is forfeited there, a day earned before is set apart while the flag stands confirmed, and an unconfirmed flag still makes the payout wait. An unset or unreachable oracle never forfeits; a first flag, a gap, a pause or an oracle unset longer than that gap, or a change of oracle, only starts the window. Reward already in the owner's vault stays frozen; loan proceeds, collateral, principal and the borrower's fee rebate are unaffected A flag chain that ended before the rewards programme launched forfeits nothing — no reward day existed for it to cover; a chain still open at the launch counts from the programme's first reward day. Settling a day costs the same however long the wallet's listing history is. A reward entry whose earner or whose position's current holder carries sanctions history is never re-priced against the holder: at the loan's close it stays whole with the wallet that earned it, and at a consolidation while the loan is open it is split at that day — the days earned so far stay with the earner as a claimable entry, the days from the next accrue to the holder as a new one — each settling under its own wallet's rule (flagged days forfeited, the rest paid or set aside), so a flagged owner cannot pass flagged days to a clean holder, a clean owner's days are not forfeited under a flagged recipient's history, and a seller never keeps accruing a buyer's days; a transfer between two wallets with no history moves the entry intact.
+- a sanctioned owner cannot claim, and their entries' removal clock does not run while barred (flagged, or carrying a committed flag (the #1123 marker) while the oracle is unreachable). **The reward rule (owner 2026-10-14):** after a wallet is flagged, no interaction reward is paid to it until the flag is revoked; reward it earned WHILE flagged is forfeited, never delivered; reward it earned BEFORE the flag is held for it and paid once the flag is revoked. A flag counts once it is CONFIRMED: the oracle has reported the wallet flagged — directly, or through a stuck-token recovery source the wallet declared as its own — on a chain of committed observations spanning the confirmation window with no gap longer than the maximum observation gap. A flag revoked before its chain confirms forfeits nothing, and what was withheld meanwhile is paid. "Earned while flagged" is counted by reward day: from the day of the confirmed chain's first flagged observation through the day of its last. When such a chain ends — the flag is cleared, or a new chain starts over it — those days are recorded and announced, so a day settled later, by the wallet's own claim after the flag was revoked included, is still forfeited; days after the last flagged observation are not counted. Forfeited reward goes into the recycle bucket as forfeited reward, permanently: a later delisting does not restore it. Once a flag is confirmed anyone may run the permissionless SETTLEMENT for that wallet: it settles the wallet's reward exactly as the wallet's own claim would — the same pricing, caps and bounds — routes the days earned while flagged into the recycle bucket, and SETS the rest APART for the wallet in a held balance of its own, each amount announced with the wallet; nothing reaches the wallet. Settling ends the reward obligation the way any claim does, so a flag that is never lifted holds back no day, no delivery, no staged record and no custody step, and the held balance needs no deadline. The wallet's first claim after the flag is revoked pays its whole held balance together with anything else it is owed, to the venue that claim names; it was charged to the reward pool when it was set apart, so paying it out charges nothing again. The wallet can also take the held balance on its own, through a claim that pays only that balance, so nothing else that holds up its ordinary claim (an exhausted pool, say) can keep the held balance from it. Every claim's sanctions check is itself a committed observation: a clean reading at a claim commits the clear, so a later flag starts a new confirmation window instead of continuing one the clean reading should have ended. The held-apart destination can be chosen by no caller. A staged claim day follows the same rule at its payout: a day earned while flagged is forfeited there, a day earned before is set apart while the flag stands confirmed, and an unconfirmed flag still makes the payout wait. An unset or unreachable oracle never forfeits; a first flag, a gap, a pause or an oracle unset longer than that gap, or a change of oracle, only starts the window. Reward already in the owner's vault stays frozen; loan proceeds, collateral and principal are unaffected A flag chain that ended before the rewards programme launched forfeits nothing — no reward day existed for it to cover; a chain still open at the launch counts from the programme's first reward day. Settling a day costs the same however long the wallet's listing history is. A reward entry whose earner or whose position's current holder carries sanctions history is never re-priced against the holder: at the loan's close it stays whole with the wallet that earned it, and at a consolidation while the loan is open it is split at that day — the days earned so far stay with the earner as a claimable entry, the days from the next accrue to the holder as a new one — each settling under its own wallet's rule (flagged days forfeited, the rest paid or set aside), so a flagged owner cannot pass flagged days to a clean holder, a clean owner's days are not forfeited under a flagged recipient's history, and a seller never keeps accruing a buyer's days; a transfer between two wallets with no history moves the entry intact.
 - the confirmation window is **three days** and the maximum observation gap **one day**, both fixed: a forfeit can never follow from a single read, and the window completes only if some caller — the settlement itself, or the permissionless evidence recorder anyone may call — observes the flag at least once per gap. Until the settlement runs on a confirmed owner the reward is only withheld (the claim is refused and the removal clock paused). The platform's keeper is that caller (#2450): it observes every held claimant several times within each maximum gap, so a held claimant's window completes or clears instead of restarting, and once a verdict is final it runs the owner settlement and resolves the claimant's held staging records — the step that releases the custody-activation and role-change block a held record carries. Operators are alerted when a held claimant's next observation is due within one keeper interval, when a hold outlasts its confirmation by more than the maximum gap, or when a claimant is held with no observation chain at all (the oracle is not answering). However many claimants and conditions a run finds, they reach operators as one message per chain per run (#2565): the chain-wide conditions first, then the claimants grouped by condition. What one message cannot hold is counted per condition, and every line is written to the keeper's own log, so none is lost. Each condition repeats while it holds and stops once a fresh read shows it gone. A message that could not be delivered is sent again on the next run. Operators are also told, once per event and after the standing alerts so the notices can never crowd them out, when one of the keeper's own settlements or staging resolutions moved reward value, and when a held claimant's chain had lapsed and was started again. A value notice states only what that transaction's own events record, and says whose each figure is: the amounts set apart for or paid to the owner and the owner's forfeited staged payout are the owner's, while the forfeited-reward credit to the recycle bucket is the whole transaction's, and where part of a forfeited payout sits inside that credit the notice says the two overlap rather than letting them read as separate moves; a settlement whose outcome the keeper could not see by the end of its run is reported as unknown, never left out. A restart is read from the keeper's own transaction's event, and its cause is stated only as far as the contract's own state proves it, never from a remembered copy: a chain that had already lapsed when the keeper first read it (the contract no longer reports its last observation, so the gap is given only as more than the maximum observation gap), a chain that was live then but lapsed while the keeper's transaction waited to be included (its last observation and the gap are then known exactly), or a restart whose cause the reads do not determine, which is said as such. A transaction whose broadcast got no answer is treated as possibly sent, and its outcome is looked up rather than read as a failure. These notices are best-effort and cover only the claimants the keeper itself touched that run: a lapse that another caller restarts before the keeper reads it is not reported. Both calls stay permissionless: the keeper guarantees they happen, it does not gate who may make them. Every observation is an authoritative oracle read, so no caller can break or forge another owner's chain; an authoritative clean read ends the chain, so a re-flag starts the window again
 - the sweep marks only entries that are claimable and not already on another route: an entry whose loan is still open or awaiting its fallback resolution is marked once the loan resolves; an entry whose expiry has already begun finishes as an expiry; and an entry whose day a staging record is resolving, an expiry's staging record holds, or a resolving staging domain holds is left to that record: a claim record's or a domain's last page applies the same confirmation rule (staging change, below), and an expiry's record finishes the entry as an expiry. The sweep is bounded per call and always advances its position, reporting how many entries still need another pass, and the forfeitable entries and an owner's confirmation status (when the window completes and by when the next observation is due) are readable on-chain through the same eligibility rule the marking uses
 - a **horizon reconfiguration** (dark reset, or any retune) re-earns a fresh executable notice: on the next touch after a reconfiguration the accumulator is capped back to the horizon threshold, so the full 90-day notice must be re-accrued under the new configuration — an already-due entry can never be reaped without a fresh funded notice after governance changes the rules
@@ -541,7 +541,7 @@ This fee is automatically collected and directed to Treasury for protocol sustai
 
 ### 5a. Loan Initiation Fee Matcher Share
 
-For ERC-20 loans, the borrower-facing `Loan Initiation Fee` remains the normal fee source documented in the borrower VPFI path below. On loan initiation, a configurable share of the treasury-directed LIF flow is paid to the **recorded `matcher`**, and the remainder flows to treasury. The share is paid on **every** initiation path, not only permissionless Range Orders matches. The recorded `matcher` is the **immediate caller of the match** (`msg.sender` at the match-execution step), which resolves as follows:
+For ERC-20 loans, the borrower-facing `Loan Initiation Fee` is charged in the lending asset at acceptance, as documented in §6b. On loan initiation, a configurable share of the treasury-directed LIF flow is paid to the **recorded `matcher`**, and the remainder flows to treasury. The share is paid on **every** initiation path, not only permissionless Range Orders matches. The recorded `matcher` is the **immediate caller of the match** (`msg.sender` at the match-execution step), which resolves as follows:
 
 - `matchOffers` — the relayer / bot that submitted the match transaction;
 - a direct `acceptOffer` or a signed-offer fill — the EOA caller (`msg.sender`) that submitted the fill;
@@ -554,7 +554,7 @@ Rules:
 - the default matcher share is `1%` of the LIF amount that would otherwise flow to treasury; the complementary `99%` (default) always flows to treasury regardless of which path initiated the loan
 - governance may tune the matcher share through live protocol config (`ProtocolConfig.lifMatcherFeeBps` / `ConfigFacet.setLifMatcherFeeBps(uint16)`), with zero meaning "use the default"
 - the setter should enforce `MAX_FEE_BPS = 5000` (50%) so a bad governance or admin action cannot accidentally starve Treasury
-- the matcher share applies to both the lending-asset LIF path and the VPFI LIF custody path; for deferred VPFI settlements, the matched loan must retain the matcher address so the share can be paid on proper settlement or forfeiture
+- the matcher share is a slice of the lending-asset LIF and is paid at initiation. The borrower LIF is never held in VPFI custody, so no part of the share waits for a later settlement or forfeiture (the VPFI-custody LIF path that once deferred it was removed in #1980)
 - the frontend and bot should read the live matcher-fee BPS from `getProtocolConfigBundle()` where they display economics or compute expected match outcomes
 - this incentive is intentionally compatible with permissionless matching: community bots can compete to find valid pairs, while protocol logic still determines terms and protects both offer creators
 
@@ -565,15 +565,16 @@ Rules:
 > **M2 PR-1 supersession (recycling completion plan §M2; D1 decided (b);
 > intent source:
 > [`VpfiAbsorptionDistributionFormulaRedesign.md`](../DesignsAndPlans/VpfiAbsorptionDistributionFormulaRedesign.md)
-> rev 15).** Two intent changes for **new** loans (open loans are
-> grandfathered — see §6b):
+> rev 15).** Two intent changes. The platform is pre-live and every chain
+> is deployed fresh, so they govern every loan (see §6b):
 > - **List fees frozen at `0.2%` LIF / `2%` yield** (was `0.1%` / `1%`).
 >   The Tiered Discount Table's effective-fee columns below are **derived
 >   off the legacy `0.1%`/`1%` list rates**; under the freeze the same
 >   discount **percentages** apply to the doubled base (e.g. a Tier-1 10%
 >   discount yields `0.18%` effective LIF / `1.8%` effective yield). The
 >   discount **bps** are unchanged; only the base list rate doubles.
-> - **Two opt-in fee modes replace the peg-custody borrower path** (§6b):
+> - **Two opt-in fee modes replace the peg-custody borrower path, which
+>   is removed from the platform (#1980)** (§6b):
 >   **HoldOnly** (tier discount only, delivered as a direct reduction of
 >   the lending-asset fee — E-1) and **Full (dual-fee)** — a per-party
 >   opt-in where that party pays a native-VPFI **tariff** `C*` from their
@@ -709,47 +710,24 @@ Every resolver must key on the **current position-NFT holder** (`ownerOf(lenderT
 - **a loan extended in place is repriced for the new term.** The `+10%` bump is delivered **per term** — the current term's interest is settled (with the Full stamp intact) at the extension boundary before the loan rolls onto its new term. Because an extension pays **no fresh `C*` tariff** for the added term, the lender Full stamp is **downgraded** on extension so no unpriced `+10%` survives on the added term. The lender's ordinary consent-gated hold discount is unaffected. Everything else is left intact: the loan-side reward-cap budget is a per-loan **lifetime** ceiling funded by the single `C*` and consumed lazily as rewards are counted, so it is **not** reset on extension (resetting it would wipe an unclaimed original-term reward budget; the per-day proration already clamps at the origination term so no over-crediting is possible). The **borrower** stamp is not repriced — no settlement path reads the borrower mode, so there is no per-term borrower benefit to adjust
 - this bump is **dark** until the Full opt-in path (`feeEntitlementEnabled`) is enabled: no loan carries a `Full` lender stamp before then, so every current settlement resolves to exactly the pre-existing consent-gated hold discount
 
-Borrower rules (Phase 5 and later):
+Borrower rules:
 
-> **M2 PR-1 supersession (D1 (b); see §6 banner + §6b).** The borrower
-> rules below describe the **legacy peg-custody path** — full `0.1%` LIF
-> paid up front in VPFI → Diamond custody (`vpfiHeld`) → rebate at proper
-> close / forfeit on default — **and the rebate must REACH the borrower on
-> every proper close, by whichever route that close makes available.** Where a
-> close leaves the position claimable, the rebate waits there for the holder to
-> take. Where a close settles everything in one transaction and declares nothing
-> left to claim — the prepay-collateral-sale terminal is the case — the rebate
-> is delivered in that same transaction, to **the party it was priced from —
-> the borrower who paid the fee**. A close that declares "nothing to claim"
-> while holding a rebate has stranded it: the claim path refuses that state by
-> design, so nobody can retrieve it. The rule for a transferred position, which
-> is the case that makes the recipient ambiguous: sale PROCEEDS follow the
-> position, a fee REFUND follows the fee payer. Keeping the two apart is what
-> makes the amount and the recipient agree, since the refund is sized from the
-> fee payer's own discount history. Screening does not weaken this and does not
-> except it: the refund is the borrower's own money and reaches them either way.
-> What is never acceptable on this route is refusing the close — neither a
-> screen nor a delivery failure may take a settled sale down over one
-> grandfathered rebate, so delivery falls back rather than reverting — nor
-> leaving the rebate on a position the claim path will not serve, which is the
-> same stranding under another name — and `100%` principal delivery once the VPFI
-> LIF is satisfied. They are **grandfather-only** (open custody-path loans
-> with `vpfiHeld > 0`). For **new** loans the borrower model is HoldOnly /
-> Full per §6b (HoldOnly moves no VPFI and charges the LIF in the lending
-> asset; Full is an optional non-refundable native-VPFI tariff with no
-> rebate; `borrowerLifRebate[loanId].vpfiHeld == 0` for every new loan) —
-> M2 implementers build against §6b, not the legacy bullets below.
+> **The peg-custody borrower path is removed (#1980).** These rules once
+> described a path where the borrower paid the full Loan Initiation Fee up
+> front in VPFI, that VPFI sat in protocol custody for the life of the loan,
+> and at the end a rebate was paid on a proper close or the whole amount was
+> forfeited on default. No loan could reach that path after #1352 moved the
+> fee into the lending asset. The platform is pre-live and every chain is
+> deployed fresh, so no loan anywhere ever carried that custody. The path is
+> gone from the platform, and §6b is the only borrower model.
 
-- the borrower-side discount applies to the `Loan Initiation Fee`
-- the borrower VPFI path applies only when the lending asset is liquid under the active-chain `RiskFacet` / `OracleFacet` checks; illiquid assets use the normal lending-asset `0.1%` `Loan Initiation Fee` with no VPFI discount path
-- the borrower must have the shared platform-level fee-discount consent enabled; no separate offer-level or loan-level VPFI consent is required once that setting is active
-- when consent is active and sufficient VPFI is available, the system deducts the FULL (non-discounted) `Loan Initiation Fee` equivalent in VPFI from the borrower's vault at loan acceptance; this VPFI is held in protocol custody (the Diamond) for the life of the loan rather than flowing immediately to Treasury
-- when the VPFI path succeeds, `100%` of the requested lending asset is delivered to the borrower because the initiation fee has been satisfied entirely from vaulted VPFI
-- the borrower-side rebate bps at proper settlement must equal the user's current effective discount at that fee-application moment: Base reads the canonical accumulator, and mirrors read the authenticated cached tier
-- on proper close (normal repay, borrower preclose, refinance), the Diamond splits the held VPFI into a borrower rebate (held × effective-discount-bps / 10000) and a treasury share (the remainder); the rebate becomes claimable on the borrower's position NFT and is paid out atomically with the normal borrower claim; the treasury share is accrued to Treasury at settlement
-- on default or HF-based liquidation, the borrower receives no rebate and the entire held VPFI is forfeited; for a matched loan the matcher's configured share is paid to the matcher first and the net is directed to Treasury, and for an unmatched loan the full held VPFI goes to Treasury (consistent with the matcher-share-applies-on-forfeiture rule above and the VPFI discount design)
-- on refinance, the OLD loan's borrower rebate is credited at settlement (the borrower earned that window fairly); the NEW loan gets a fresh opening snapshot and tracks a new independent window
-- pre-upgrade loans that predate Phase 5 carry zero-valued custody and no opening snapshot, so they silently settle with no rebate — they never paid VPFI up front
+- the borrower-side discount applies to the `Loan Initiation Fee`, which is charged in the **lending asset** at acceptance
+- the discount applies only when the lending asset is liquid under the active-chain risk and oracle checks; an illiquid loan pays the full, undiscounted lending-asset LIF
+- the hold-tier discount needs the shared platform-level fee-discount consent; no separate offer-level or loan-level consent is required once that setting is active
+- the hold-tier discount is delivered as a **direct reduction** of the lending-asset LIF at acceptance (HoldOnly). It uses the borrower's effective tier at that moment: Base reads the canonical accumulator, and mirrors read the authenticated cached tier. The borrower receives the requested principal net of the reduced fee
+- where the per-party Full tariff is enabled and the borrower has opted in, the borrower also pays the Full tariff in VPFI from their own vault. It is credited to the recycle bucket at initiation, it is non-refundable, and it adds the extra own-side discount to the same lending-asset fee (§6b)
+- no VPFI is collected up front for the LIF, none is held in custody for the life of the loan, no rebate is paid on any close, and the borrower claim carries no VPFI rebate
+- a default or an HF-based liquidation forfeits nothing VPFI-related on the borrower side: the LIF was paid in full at acceptance, and any Full tariff was credited to the recycle bucket then
 
 Received VPFI from protocol-fee flows should be handled under the Treasury Recycling Rule below.
 
@@ -783,7 +761,7 @@ Mirror-cache mechanics:
 
 Discount application:
 
-- Lender yield-fee discounts and borrower LIF rebates both read the current effective discount bps at the settlement moment.
+- Lender yield-fee discounts read the current effective discount bps at the settlement moment. The borrower LIF discount is read once, at acceptance, and pinned for the loan (§6b); there is no borrower rebate to read at settlement.
 - On Base, settlement reads the canonical effective tier. On mirrors, settlement reads the mirror cache.
 - If the user's shared fee-discount consent is disabled, the effective discount is `0` even if the user has sufficient vaulted VPFI balance.
 - The dapp should distinguish "balance qualifies for a raw tier" from "effective tier is active now." During the min-history window, a user may see that their vaulted balance qualifies for a tier while the fee path still applies tier `0`.
@@ -796,26 +774,40 @@ Governance effects:
 
 ---
 
-### 6b. Borrower Loan-Initiation Fee VPFI Path
+### 6b. Borrower Loan-Initiation Fee
 
-> **M2 PR-1 supersession (recycling completion plan §M2; D1 decided (b);
-> intent source:
-> [`VpfiAbsorptionDistributionFormulaRedesign.md`](../DesignsAndPlans/VpfiAbsorptionDistributionFormulaRedesign.md)
-> rev 15).** For **new** loans, the "borrower pays the FULL LIF in VPFI at a
-> fixed peg → Diamond custody (`vpfiHeld`) → rebate/forfeit at terminal"
-> path described below is **retired**. It is replaced by the §6
-> two-mode model:
+> **The VPFI-custody borrower path is removed (#1980).** An earlier design
+> had the borrower pay the full Loan Initiation Fee up front in VPFI at a
+> fixed price peg, held that VPFI in protocol custody for the life of the
+> loan, and then split it at the end: a rebate to the borrower on a proper
+> close, the whole amount forfeited on a default or liquidation. #1352 moved
+> the fee into the lending asset and no new loan could reach that path from
+> then on. The platform is pre-live and every chain is deployed fresh, so no
+> loan anywhere was ever left on it. It is now removed from the platform in
+> full: there is **no** up-front VPFI collection of the borrower LIF, **no**
+> VPFI custody for the life of the loan, **no** rebate at settlement, the
+> borrower claim pays **no** VPFI rebate, and a default or liquidation
+> forfeits **nothing** VPFI-related on the borrower side. The per-loan record
+> that held that custody keeps its storage position, marked retired, and
+> nothing writes or reads it. The two recycle-source labels that once
+> classified a forfeited or treasury-bound LIF stay in the source list,
+> because that list only ever grows, but nothing produces them.
+
+The borrower's LIF follows the §6 two-mode model (M2 PR-1; D1 decided (b);
+intent source:
+[`VpfiAbsorptionDistributionFormulaRedesign.md`](../DesignsAndPlans/VpfiAbsorptionDistributionFormulaRedesign.md)
+rev 15):
+
 > - **HoldOnly (default when a tier holder consents):** the borrower's LIF
 >   is charged in the **lending asset**, reduced by the borrower's tier
->   discount (E-1 direct reduction). No VPFI is moved, no custody, no
->   rebate — a hybrid asset-LIF path, not the peg-custody path. The tier
->   is resolved at **acceptance** (pinned at origination, so a settle-time
->   top-up cannot game it), and the discount applies on a **liquid**
->   lending asset only — an illiquid loan pays the full (undiscounted)
->   lending-asset LIF, consistent with the prior borrower-path posture and
->   with a reward-eligible origination requiring a priceable asset. The
->   **accept charge and the accept-preview quote** compute this from one
->   shared formula, so a borrower is quoted exactly what they are charged.
+>   discount (E-1 direct reduction). No VPFI is moved, nothing is held in
+>   custody and there is no rebate. The tier is resolved at **acceptance**
+>   (pinned at origination, so a settle-time top-up cannot game it), and the
+>   discount applies on a **liquid** lending asset only — an illiquid loan
+>   pays the full (undiscounted) lending-asset LIF, consistent with a
+>   reward-eligible origination requiring a priceable asset. The **accept
+>   charge and the accept-preview quote** compute this from one shared
+>   formula, so a borrower is quoted exactly what they are charged.
 >   The **offer-match event's `lifMatcherFee` field is gross/display-only**:
 >   it reports the **list-rate** matcher slice (`principal × LIF_bps ×
 >   matcherFee_bps`), NOT the borrower's tier-discounted figure — the actual
@@ -888,40 +880,25 @@ Governance effects:
 >     canonical-only) are bounded by the D1 `(user, side, day)` share cap on their
 >     local claim, not the loan-side cap. The arming-time enforcement of this
 >     precondition is a deploy-assert (PR-9) coupled with the joint cutover.
-> - **Tier timing — pinned at acceptance (new loans):** because the
->   new-loan borrower LIF is taken as an **origination cash haircut** (not
->   a settle-time rebate), the borrower's effective discount tier for that
->   LIF is resolved **at accept/match** and **overrides §6a's settlement-
->   time "borrower LIF rebate" tier read** for new loans. Reading the
->   borrower's later settlement tier would reopen exactly the
->   top-up-at-close gaming the peg-custody rebate model was retired to
->   prevent. (§6a's settlement-time read still governs the **legacy**
->   custody-path rebate and the **lender** yield-fee discount.)
-> - **Invariant for new loans:** `borrowerLifRebate[loanId].vpfiHeld == 0`
->   for every loan originated under this package (Full, HoldOnly, or
->   None) — the peg-custody hold is never taken.
-> **Grandfathering:** loans **already open** with `vpfiHeld > 0` keep
-> settling/forfeiting through the legacy custody path exactly as described
-> below (they paid VPFI up front and earned their rebate window fairly);
-> the legacy terminal call sites are retained for them. The prose below
-> documents that legacy path; read it as the **open-loan** behaviour, not
-> the new-loan intent.
+> - **Tier timing — pinned at acceptance:** because the borrower LIF is
+>   taken as an **origination cash haircut**, the borrower's effective
+>   discount tier for that LIF is resolved **at accept/match**, not at
+>   settlement. Reading the borrower's later settlement tier would reopen
+>   exactly the top-up-at-close gaming the removed rebate model was built
+>   around. (§6a's settlement-time read governs the **lender** yield-fee
+>   discount only.)
+> - **No borrower VPFI custody:** no loan — Full, HoldOnly, or None — takes
+>   any VPFI into protocol custody for its Loan Initiation Fee. The only VPFI
+>   an origination moves for the borrower is a confirmed Full tariff, and that
+>   is credited to the recycle bucket at initiation.
 
-Objective:
+Eligibility:
 
-- borrowers who hold VPFI deposit it into their canonical Vaipakam Vault on Base, and use the resulting effective tier to satisfy the full `0.1%` `Loan Initiation Fee` up front on Base or any mirror chain with a fresh cache (VPFI is acquired by transfer/holding — the fixed-rate sale was removed; see the supersede banner)
-- the borrower then earns the documented discount as an effective-tier VPFI rebate only if the loan closes properly
-- this removes the old point-in-time gaming vector where a borrower could briefly top up VPFI only at acceptance or settlement time to capture a full discount
-
-Eligibility and fallback:
-
-- the lending asset must be liquid on the active lending chain according to the existing `RiskFacet` / `OracleFacet` path
-- the borrower must have enabled the shared platform-level VPFI fee-discount consent
-- the borrower must have enough protocol-tracked VPFI in their canonical Vaipakam Vault, and enough usable fee-payment balance on the settlement chain where the up-front VPFI LIF is deducted, to cover the full, non-discounted `0.1%` `Loan Initiation Fee` equivalent
+- the borrower discount needs a liquid lending asset on the active lending chain, according to the existing risk and oracle path; an illiquid loan pays the full lending-asset LIF
+- the hold-tier slice needs the shared platform-level VPFI fee-discount consent and an effective tier above zero; a borrower without consent, or at tier 0 (for example within the minimum-history window), pays the undiscounted lending-asset LIF
 - Vault-held VPFI is a special non-collateral asset: it does not count toward collateral value, Health Factor, liquidation value, or LTV support
 - Vault-held VPFI on Base continues to count toward the canonical fee-utility balance for borrower discounts
-- if the asset is illiquid, the borrower has insufficient VPFI, or consent is disabled, the system falls back to the normal lending-asset fee path: the borrower pays `0.1%` in the loan asset and receives the net amount after that treasury deduction
-- the VPFI-LIF payment path is doubly gated: (a) it engages only when governance has configured the VPFI fee-discount pricing route — BOTH the price peg (`vpfiDiscountWeiPerVpfi`, historically `1 VPFI = 0.001 ETH`) AND an oracle-priceable ETH reference asset (`vpfiDiscountEthPriceAsset`); calling `setVPFIDiscountRate` alone, without a priceable reference asset, still leaves every VPFI quote unavailable — AND the borrower has consent enabled + sufficient tracked VPFI, and (b) it requires the borrower's effective discount tier to be `> 0` — a tier-0 borrower (for example within the minimum-history window) earns a zero rebate and is routed to the lending-asset fee path, since paying the LIF in VPFI would gain them nothing. Consistent with the near-zero-legal-surface posture (§7 and `docs/DesignsAndPlans/VPFISecuritiesFeatureExcision.md`), the conservative retail posture is that this pricing route **should remain unconfigured at Phase-1 launch until an organic VPFI secondary market exists** to anchor VPFI's value. Note this pricing route is **shared across all VPFI-*payment* discounts**: while it is unconfigured, the borrower LIF path is inert (every borrower pays the LIF in the lending asset). The **lender yield-fee discount, however, is NOT off while the peg is unset** — E-1 (#1203) delivers it in **direct-reduction mode** (a proportional cut of the lending-asset treasury fee; no VPFI moves), so a consenting, tier-holding lender still gets their discount at Phase-1 launch. What the unset peg gates is only the *VPFI-payment* delivery (lender paying the fee in VPFI, and the borrower LIF-in-VPFI path), not the lender discount itself. The deploy pipeline now realizes this posture rather than contradicting it: the configure phase no longer prices VPFI unless an operator explicitly asks it to, so a launch deploy lands peg-unset and the discount is delivered by direct reduction. Pricing VPFI is a deliberate, separately-invoked step, like every other ceremony knob. Treasury buyback (which would create demand pressure on VPFI) likewise remains **dormant** in Phase 1 for the same reason — see §C of the excision plan: the cross-chain pipe may be wired by `ConfigureCcip` (messenger + `setBuybackRemittanceReceiver`), but the valve stays closed because no buyback allowed-token, funded budget, or committed intent is ever configured. Turning it on is a deliberate, legally-reviewed operator decision
+- **the VPFI pricing route is not part of the borrower path.** The VPFI fee-discount pricing route — BOTH the price peg (`vpfiDiscountWeiPerVpfi`, historically `1 VPFI = 0.001 ETH`) AND an oracle-priceable ETH reference asset (`vpfiDiscountEthPriceAsset`); calling `setVPFIDiscountRate` alone, without a priceable reference asset, still leaves every VPFI quote unavailable — serves only VPFI-*payment* discounts, and the borrower LIF is never paid in VPFI. Consistent with the near-zero-legal-surface posture (§7 and `docs/DesignsAndPlans/VPFISecuritiesFeatureExcision.md`), the conservative retail posture is that this pricing route **should remain unconfigured at Phase-1 launch until an organic VPFI secondary market exists** to anchor VPFI's value. The **lender yield-fee discount is NOT off while the peg is unset** — E-1 (#1203) delivers it in **direct-reduction mode** (a proportional cut of the lending-asset treasury fee; no VPFI moves), so a consenting, tier-holding lender still gets their discount at Phase-1 launch. What the unset peg gates is only the lender's *VPFI-payment* delivery, not the lender discount itself. The deploy pipeline realizes this posture rather than contradicting it: the configure phase does not price VPFI unless an operator explicitly asks it to, so a launch deploy lands peg-unset and the discount is delivered by direct reduction. Pricing VPFI is a deliberate, separately-invoked step, like every other ceremony knob. Treasury buyback (which would create demand pressure on VPFI) likewise remains **dormant** in Phase 1 for the same reason — see §C of the excision plan: the cross-chain pipe may be wired by `ConfigureCcip` (messenger + `setBuybackRemittanceReceiver`), but the valve stays closed because no buyback allowed-token, funded budget, or committed intent is ever configured. Turning it on is a deliberate, legally-reviewed operator decision
 
 Acceptance-time flow:
 
@@ -929,38 +906,30 @@ Acceptance-time flow:
 2. the protocol checks active-chain liquidity through the existing risk / oracle logic
 3. the protocol verifies the platform-level VPFI-discount consent flag
 4. the protocol resolves the borrower's current effective discount from Base or the active mirror cache
-5. for a liquid lending asset, the protocol converts the loan amount into ETH equivalent using the Chainlink-led active-chain pricing path
-6. the protocol calculates the full `0.1%` `Loan Initiation Fee`
-7. the protocol converts that full ETH-equivalent fee into the exact VPFI required at the governance-configured price peg `vpfiDiscountWeiPerVpfi` (historically `1 VPFI = 0.001 ETH`, i.e. `1e15` wei/VPFI); when the peg is unset the conversion is unavailable and the borrower takes the lending-asset fee path instead
-8. if vault balance is sufficient, the protocol deducts that VPFI from borrower vault into Diamond custody and sends `100%` of the requested lending asset to the borrower
+5. the protocol computes the `Loan Initiation Fee` in the lending asset at the list rate, reduced by the hold-tier discount and, for a confirmed Full opt-in, by the extra own-side discount, within the uniform `50%` ceiling
+6. for a confirmed Full opt-in, the protocol takes the borrower's `C*` tariff in VPFI from their vault and credits it to the recycle bucket
+7. the protocol directs the fee to Treasury (less the matcher share, §5a) and delivers the requested principal to the borrower net of that fee
 
 Settlement:
 
-- on normal repayment, borrower preclose, or refinance, the protocol resolves the borrower's current effective discount from Base or the active mirror cache
-- borrower rebate formula: `rebate = heldVPFI * effectiveDiscountBps / 10000`
-- the borrower rebate is claimable by the borrower-side Vaipakam NFT holder and is paid with the ordinary borrower claim
-- the unrewarded remainder of the held VPFI becomes Treasury's share
-- on default or HF-based liquidation, the borrower rebate is `0` and the held VPFI is forfeited: for a matched loan the matcher's configured share is paid to the matcher first and the net is forfeited to Treasury; for an unmatched loan the full held VPFI is forfeited to Treasury
+- nothing in the borrower LIF is settled later: every proper close, default, and liquidation leaves it as charged at acceptance, with no rebate and no forfeit
 
 Storage requirements:
 
 - store or derive borrower discount tiers from canonical protocol-tracked vaulted VPFI balances and authenticated mirror cache entries
-- for each loan that uses the VPFI LIF path, store the full VPFI amount held in protocol custody and any rebate claimable after proper settlement
-- track borrower LIF custody and rebate state by loan ID
-- keep all storage additions append-only in the existing Diamond storage libraries
+- the Full-tariff state (per-loan notional `C*`, reward-haircut snapshot, per-party paid amounts, recycle-bucket credit) is the only per-loan VPFI state the borrower fee needs; the lending-asset LIF moves no VPFI and needs no custody state
+- the retired custody record keeps its storage position, renamed as retired, and is never written; keep all storage additions append-only in the existing Diamond storage libraries
 
 Events:
 
-- emit when the VPFI LIF path is selected and the full up-front VPFI amount is custody-held, including loan ID, borrower, lending asset, and VPFI amount
-- emit when a borrower VPFI rebate is credited
-- emit when borrower-held VPFI for a loan is forfeited to Treasury on default or HF-based liquidation
+- the Full tariff emits its recycle-bucket credit when it is taken; there are no borrower LIF custody, rebate, or forfeit events
 
 Integration surface:
 
 - reuse the existing `VaultFactory`, loan lifecycle facets, `VPFITokenFacet`, `TreasuryFacet`, shared settlement libraries, and Chainlink-led oracle path wherever possible
 - extend vault handling so VPFI can be deducted for fee utility without being treated as collateral
 - Treasury must be able to receive and record VPFI fee flows for later recycling under §9
-- keep all existing Phase 1 lending, vault, treasury, oracle, risk, and loan-funding semantics unchanged except for the explicit fee-source and VPFI-custody behavior described in this borrower LIF path
+- keep all existing Phase 1 lending, vault, treasury, oracle, risk, and loan-funding semantics unchanged except for the explicit fee-source behaviour described in this section
 
 ---
 
@@ -968,7 +937,7 @@ Integration surface:
 
 An operator — a solver or matcher, or a keeper acting under granted actions — may post VPFI as a **service capacity deposit** for one role. The deposit is an operational capacity deposit: it is refundable at will, it earns nothing, it is never described as earning anything, and it is never at risk — version one has no slash of any kind. It is not a bond, not staking, and not a condition of participation: no role requires a deposit, and the permissionless free tier stands whether or not one is posted.
 
-- **Custody.** The principal lives in an escrow of its own, a holder that moves tokens only at the platform's instruction. It is never commingled with loan-initiation-fee custody, with reward budgets, or with the platform's own balance, and reward payouts never read it.
+- **Custody.** The principal lives in an escrow of its own, a holder that moves tokens only at the platform's instruction. It is never commingled with reward budgets or with the platform's own balance, and reward payouts never read it.
 - **Records.** A deposit is kept per role, per operator and per VPFI rotation epoch, with the armed balance beside the principal — the principal armed when it was armed, never more than the deposit at which capacity stops growing (the arming fee is paid beside the principal, never out of it). The escrow's total for the live epoch is published. Every post, raise, withdrawal, park and release emits an event carrying the resulting balance.
 - **Withdrawal** is immediate.
 - **Dark by default.** The channel ships disabled. While disabled, posting is refused by name; withdrawals work whatever the switch says (like every value-moving entry, they stop only while the protocol itself is paused); the free tier is unaffected. Enabling it is a deliberate later act by the admin (governance later), gated on VPFI being widely enough distributed that the roles it raises remain contestable.
@@ -1111,11 +1080,11 @@ Recycle bucket (recycling governor PR-3a, `VpfiRecyclingBalanceGovernorDesign.md
 - a **perk is sold, not deposited**. Buying one is a consumable purchase at a published price: the spend is not refundable and confers no return, and what the buyer receives is an entitlement to a convenience — never a change to risk parameters, to the terms of offers already posted, or to any settlement outcome. A perk with no published price is not for sale at all, which is the state every perk is in until governance sets one, so the channel is dormant on a fresh deployment. A timed entitlement bought while one is still running EXTENDS it rather than replacing it, so buying early never costs the buyer the unused remainder. Withdrawing a perk from sale stops further purchases and leaves entitlements already bought untouched — governance may close a shop, not reclaim what it sold, and it may close one **while the protocol is paused**, since a pause is when withdrawing an armed offer is most wanted and the purchase path is closed by that same pause anyway. A purchase settles on the terms the BUYER stated, never on terms the chain substituted after they committed: the buyer names the most they will pay in total and the entitlement they are buying, and a re-priced or re-shaped perk makes the purchase fail rather than silently charging more or delivering something else — bound in both directions, because a more generous substitution is still not the one that was agreed. And once a perk has sold its first unit its KIND is settled for good: a timed perk stays timed and a counted one stays counted. Price remains governance's to change and the perk remains withdrawable, but the basis on which existing holders hold it cannot be redefined underneath them — a different meaning is a different perk, and perk identifiers are free
 - **priority routing for lender intents** (#2550) is the first perk with an effect. Its unit is a counted credit, and one credit buys one fill of the buyer's own intent that the filling solver's service capacity would otherwise have refused. When the solver can afford the fill, it is charged as usual and no credit is spent, so a credit only ever buys a fill that would not have happened. Nobody else is reordered or charged more. The buyer opts a specific live intent in. Opting in is refused while the platform is paused, and opting out is always allowed. Rewriting that intent resets the opt-in, cancelling it clears it, and every change is recorded. Intents run by the protocol itself, the aggregator adapters and the backstop vault, cannot opt in. The perk is never sold in a form it cannot deliver. It can only be priced as counted credits, though taking its price down is always allowed, and it cannot be bought unless it is configured as counted credits, the solver capacity limit is on and lender-intent matching is switched on. A deployment that sold it as a timed perk before it gained its effect therefore never sells it again. The effect is switched on only by the operator's own pricing of it after the upgrade, once: a price or credits for this perk left over from before it had an effect never activate by themselves, and if any were ever sold, the perk cannot be switched on for priority routing on that deployment at all, since those buyers paid for something else. That check is made at the purchase itself, so a later change that switches either off stops sales at once. A solver can read whether its own capacity covers a fill, or whether the intent owner's credit would; that reading is a snapshot that can change before the fill lands, and the fill's own record is what says a credit was spent. The platform's own keeper delivers the perk: once its capacity is spent, it stops filling ordinary intents for that round but keeps going for any intent a credit unlocks, judged by that same reading. On a deployment that does not yet carry the perk, it fills nothing more that round
 - forfeits continue to **consume the reward pool's hard cap exactly as before** — only the destination ledger changed (treasury → bucket); pool-cap accounting, claim availability, and the sanctions posture are unchanged by that destination change (the later sanctions rule — a confirmed flag forfeits the reward earned while it stood and sets the owner's earlier earnings aside for them — is a separate change, stated in the claim-horizon rules)
-- separation invariant: the protocol's VPFI balance always covers LIF custody plus the unclaimed reward budget plus the recycle bucket — the bucket can never claim value that belongs to users. **Enforced on both INFLOW and at claim time (#1460):** every credit into the bucket checks the balance behind it, and a payout is refused unless its non-recycled component fits in the balance outside the bucket — so the recycled ledger can never be left claiming tokens that have already left. **The invariant names three holdings; the platform actually has more, and the payout check reserves only one of them.** That is stated plainly because it is the current, known position rather than a claim of completeness. Successive reviews have identified a growing list of distinct owners of the same holding — the list has grown in every round it was declared complete, so no total is given here — two of them **user collateral** (a live swap-to-repay intent's held collateral, and liquidation fallback custody), which makes a mis-scoped payout a fund-safety matter rather than a bookkeeping one — the recycled reserve, borrower-LIF rebate custody (grandfathered loans only), the per-party tariff (already covered, since it credits the recycled reserve), treasury revenue on a self-custodying deployment, the reward-emissions budget, and the keeper reward budget. Each review round produced another, and the rate did not fall. The sixth was found in the round *after* a sweep that presented the list as complete — which is the point: the list has been declared finished several times and has grown every time.
+- separation invariant: the protocol's VPFI balance always covers the unclaimed reward budget plus the recycle bucket (an earlier statement also named borrower-LIF custody, which #1980 removed) — the bucket can never claim value that belongs to users. **Enforced on both INFLOW and at claim time (#1460):** every credit into the bucket checks the balance behind it, and a payout is refused unless its non-recycled component fits in the balance outside the bucket — so the recycled ledger can never be left claiming tokens that have already left. **The invariant names two holdings; the platform actually has more, and the payout check reserves only one of them.** That is stated plainly because it is the current, known position rather than a claim of completeness. Successive reviews have identified a growing list of distinct owners of the same holding — the list has grown in every round it was declared complete, so no total is given here — two of them **user collateral** (a live swap-to-repay intent's held collateral, and liquidation fallback custody), which makes a mis-scoped payout a fund-safety matter rather than a bookkeeping one — the recycled reserve, the per-party tariff (already covered, since it credits the recycled reserve), treasury revenue on a self-custodying deployment, the reward-emissions budget, and the keeper reward budget. Each review round produced another, and the rate did not fall. The sixth was found in the round *after* a sweep that presented the list as complete — which is the point: the list has been declared finished several times and has grown every time.
 
 The conclusion drawn, which now governs: **a payout limited to "everything held, minus the owners we remembered to list" cannot be made reliable.** Completeness of such a list is unverifiable and a missing entry fails silently — which is how each of these survived. An attempt to reserve one of them individually was made and withdrawn: it immediately disagreed with the separate expiry-eligibility rule that mirrors the same condition, so reward-expiry clocks advanced while every payout was refused, and an entitlement could lapse without its holder ever having had a usable window. A remedy that manufactures a second fault is the signal to change instrument rather than continue.
 
-So the remaining owners are recorded as **known and unreserved**, and the figure is an upper bound on genuinely free tokens on every deployment. The durable rule — that a reward payout is bounded by **funding delivered for rewards**, which needs no enumeration and covers every owner at once — is the tracked remedy, and is the same bound the cross-chain work needs. New custody classes should not be added to the subtraction; they should wait for it. Of the three holdings the invariant does name, the payout check subtracts exactly one, and each choice is deliberate. The recycle bucket is subtracted, because surviving a payout is the whole point of the rule. The unclaimed reward budget is **not** subtracted: it is precisely what a reward claim is entitled to draw on, so netting it would refuse claimants their own funding — the invariant requires the platform to be holding it, not that a payout may not touch it. Borrower-LIF rebate custody is not subtracted, and whether that is safe depends on how the platform was deployed. No loan opened under the current rules creates any **borrower-LIF rebate custody** — the up-front-fee-then-rebate path is retired — so on a platform deployed **fresh** under those rules there is nothing of that kind to subtract and the figure is exact. This is specifically about rebate custody, and it is **not** a claim that origination moves no VPFI at all: with the current per-party tariff enabled, an originating loan does hand each participating party's tariff into protocol custody. That VPFI is a different thing — it is credited straight to the recycled ledger, so it lands inside the balance that *is* subtracted, and is therefore already accounted for rather than overlooked. On a platform **upgraded** from an older deployment it is not: custody held against loans that were already open at the upgrade sits inside the figure, so a reward payout can spend it and the borrower's later settlement is then short — it either fails or leaves them unpaid. **That case is a known open gap, not a resolved one.** Its root is the same one that governs cross-chain reward funding: payouts are bounded by what the platform *holds un-earmarked* rather than by what was *delivered for rewards*, and only the delivered bound closes both. Reviving the retired collection path would reintroduce the gap on a fresh deployment too
+So the remaining owners are recorded as **known and unreserved**, and the figure is an upper bound on genuinely free tokens on every deployment. The durable rule — that a reward payout is bounded by **funding delivered for rewards**, which needs no enumeration and covers every owner at once — is the tracked remedy, and is the same bound the cross-chain work needs. New custody classes should not be added to the subtraction; they should wait for it. Of the two holdings the invariant does name, the payout check subtracts exactly one, and each choice is deliberate. The recycle bucket is subtracted, because surviving a payout is the whole point of the rule. The unclaimed reward budget is **not** subtracted: it is precisely what a reward claim is entitled to draw on, so netting it would refuse claimants their own funding — the invariant requires the platform to be holding it, not that a payout may not touch it. Borrower-LIF rebate custody, which earlier versions of this invariant also named and listed, no longer exists: #1980 removed the up-front-fee-then-rebate path, and because every chain is deployed fresh no deployment holds any of it. This is **not** a claim that origination moves no VPFI at all: with the per-party tariff enabled, an originating loan hands each participating party's tariff into protocol custody. That VPFI is credited straight to the recycled ledger, so it lands inside the balance that *is* subtracted, and is already accounted for rather than overlooked. The open gap this paragraph used to record — custody held against loans already open when an older deployment was upgraded, which a reward payout could spend — cannot arise, because no chain is upgraded in place across that boundary. Its root is still the general one that governs cross-chain reward funding: payouts are bounded by what the platform *holds un-earmarked* rather than by what was *delivered for rewards*, and the delivered bound remains the tracked remedy
 - the bucket balance and the per-day credited series are publicly readable; consumption of the bucket (the absorption-coupled reward budget) arrives with the governor's later stages and is **zero until then** — absorption without distribution coupling is the accepted launch posture
 
 Delivered-funding position (recycling completion plan §M7 / #1434 P1-a — records-only):
@@ -1603,41 +1572,22 @@ Coding standards:
 - use project-standard custom errors via `IVaipakamErrors`
 - emit events for every mint, claim, buyback, discount-sensitive action where relevant, and every rate change
 - prioritize gas efficiency and reuse shared protocol libraries where it makes sense, including `LibVaipakam`, existing oracle logic, and shared accounting helpers
-- protect all new VPFI purchase, vault deposit, fee deduction, rebate settlement, and treasury-receipt functions with the project-standard reentrancy guard and global pausable mechanism unless the function is a pure/view helper
-- every public or external function added for VPFI purchase, vault deposit, fee deduction, rebate settlement, or treasury receipt must have NatSpec that describes the fee source, custody behavior, and settlement outcome
+- protect all new VPFI purchase, vault deposit, fee deduction, and treasury-receipt functions with the project-standard reentrancy guard and global pausable mechanism unless the function is a pure/view helper
+- every public or external function added for VPFI purchase, vault deposit, fee deduction, or treasury receipt must have NatSpec that describes the fee source, custody behavior, and settlement outcome
 
 Storage and event requirements:
 
-> **M2 PR-1 supersession (D1 (b); see §6/§6b).** The two borrower-LIF
-> **custody** storage/event bullets below are **grandfather-only** (open
-> `vpfiHeld > 0` loans). A new-loan M2 implementation must NOT reintroduce
-> the `vpfiHeld` custody / rebate state or the LIF-custody / rebate-credit
-> events; instead it tracks the **Full-tariff** state — the per-loan
-> notional `cStar` + reward-haircut snapshot, per-party `tariffPaid` /
-> `loanSideRewardPaidVpfi`, and the recycle-bucket credit — and emits the
-> `credit(FullTariff, …)` / `VpfiRecycled` event on the tariff pull. (The
-> lending-asset LIF for HoldOnly/None moves no VPFI, so it needs no
-> custody state at all.)
-
-- track VPFI held for borrower LIF custody, claimable borrower rebates, and forfeited treasury shares by loan ID *(legacy custody-path loans only)*
-- emit vault-deposit, LIF-custody, rebate-credit, rebate-forfeit, and treasury-receipt events in the relevant facets *(legacy custody-path loans only)*
+- track the **Full-tariff** state — the per-loan notional `cStar` + reward-haircut snapshot, per-party `tariffPaid` / `loanSideRewardPaidVpfi`, and the recycle-bucket credit — and emit the `credit(FullTariff, …)` / `VpfiRecycled` event on the tariff pull
+- the lending-asset LIF (HoldOnly / None) moves no VPFI and needs no custody state. There is no borrower-LIF custody, rebate, or forfeit state and no such event: that path was removed in #1980 (§6b), and its per-loan record keeps its storage position only, marked retired
+- emit vault-deposit and treasury-receipt events in the relevant facets
 
 Testing requirements:
 
-> **M2 PR-1 supersession (D1 decided (b); see §6/§6b).** The borrower
-> **VPFI-LIF peg-custody** test bullets below — the liquid-asset borrower
-> LIF-in-VPFI tests across tiers, the effective-tier rebate-crediting
-> cases, the up-front-custody + rebate-on-proper-close and
-> forfeit-on-default cases — are **grandfather / legacy-only**: they cover
-> loans **already open** on the retired custody path (`vpfiHeld > 0`), not
-> new-loan behaviour. For **new** loans the model is HoldOnly / Full
-> (§6b), and M2 must instead test: HoldOnly charges the LIF in the
-> **lending asset** (direct-reduction, **no VPFI moved**); Full pulls the
-> per-party `C*` tariff into the recycle bucket (non-refundable, no
-> rebate); and the invariant `borrowerLifRebate[loanId].vpfiHeld == 0`
-> holds for **every** new loan (Full, HoldOnly, or None). An M2 implementer
-> must not preserve or rebuild the peg-custody path for new loans to
-> satisfy the legacy bullets below.
+> **Borrower LIF tests (#1980).** The borrower model is HoldOnly / Full
+> (§6b). The peg-custody tests that once covered an up-front VPFI LIF, a
+> rebate on proper close and a forfeit on default were removed with that
+> path; nothing below asks for them, and no implementation may rebuild the
+> path to satisfy an older copy of this list.
 
 - extend the existing scenario tests
 - extend invariant coverage
@@ -1646,28 +1596,21 @@ Testing requirements:
 - include reward-accounting and vesting tests
 - include buyback-routing tests
 - include explicit wallet-to-vault deposit tests for both Permit2 and classic approve-plus-deposit paths
-- include liquid-asset borrower LIF VPFI tests across every discount tier
-- include effective-tier borrower rebate tests for min-history pending, last-minute top-up, withdraw-down, mirror-cache stale, and governance-tier-version-change cases
+- include liquid-asset borrower LIF tests across every discount tier, proving the HoldOnly reduction is charged in the lending asset and moves no VPFI
+- include effective-tier borrower discount tests at acceptance for min-history pending, last-minute top-up, withdraw-down, mirror-cache stale, and governance-tier-version-change cases
 - include illiquid-asset fallback tests where the borrower pays the normal lending-asset LIF
-- include default and HF-liquidation tests proving held VPFI is forfeited with no rebate, covering BOTH cases: a matched loan pays the matcher's configured share first and forfeits the net to Treasury, and an unmatched loan forfeits the full held VPFI to Treasury
-- include normal repayment, borrower preclose, and refinance tests proving proper rebate crediting
+- include Full-tariff tests proving each opted-in party's `C*` is credited to the recycle bucket at initiation and is refunded on no outcome
+- include normal repayment, borrower preclose, refinance, default, and HF-liquidation tests proving that no loan takes VPFI into protocol custody for its LIF and that no close pays a borrower VPFI rebate or forfeits borrower VPFI
 - include tests that vault-held VPFI updates fee-discount accrual without being counted as collateral
 
 Frontend integration requirements:
 
-> **M2 PR-1 supersession (D1 decided (b); see §6/§6b).** The **borrower
-> VPFI-LIF peg-custody** frontend + acceptance bullets in §12 — the Offer
-> Book accept-review copy that says the borrower "pays the full `0.1%` LIF
-> up front in VPFI and earns … a rebate", and any acceptance criterion
-> requiring the exact up-front VPFI deduction before sending `100%` of
-> principal — are **grandfather / legacy-only** (open custody-path loans).
-> For **new** loans the UI/acceptance target is the §6b HoldOnly / Full
-> model: HoldOnly charges the LIF in the **lending asset** (no VPFI
-> moved), Full is an optional non-refundable native-VPFI **tariff** (no
-> rebate), and no new-loan copy tells a borrower they pay the full LIF in
-> VPFI for a rebate. An M2 implementer must not build new-loan UI or
-> acceptance tests against the retired custody/rebate model. (The full
-> new-loan copy treatment ships with the M2 frontend card #1355.)
+> **Borrower LIF copy (#1980).** The borrower model is HoldOnly / Full
+> (§6b): HoldOnly charges the LIF in the **lending asset** (no VPFI moved),
+> and Full is an optional, non-refundable native-VPFI **tariff** with no
+> rebate. No copy tells a borrower they pay the LIF in VPFI, that VPFI is
+> held for the loan, or that a rebate follows. (The full copy treatment ships
+> with the M2 frontend card #1355.)
 
 - Phase 1 frontend requirements should focus on token-address transparency, supply
   visibility, mint/cap visibility where exposed, fee-discount status, and clear
@@ -1696,20 +1639,18 @@ Frontend integration requirements:
   classic approval, and explain that Permit2 is optional convenience rather than
   a replacement for token-level allowance control
 - transaction review for depositing / withdrawing VPFI and accepting a loan
-  through the VPFI path should include the standard transaction-preview surface
+  should include the standard transaction-preview surface
   where available and fail soft if preview is unavailable
 - borrower-facing pages should show current protocol-tracked VPFI balance,
   current tier, discount eligibility for liquid assets, and whether the current
   chain is using canonical or mirror-cached tier data
 - `Create Offer` and `Loan Details` may provide clear entry points into the VPFI
   vault page when fee-discount utility is relevant
-- `Offer Book` accept-review copy should explain that the borrower pays the full
-  `0.1%` LIF up front in VPFI and earns any discount over the loan lifetime as a
-  rebate
-- `Create Offer` borrower-tip copy should frame the benefit as earning up to a
-  `24%` VPFI rebate, not as paying a reduced up-front fee
-- `Claim Center` should show a VPFI rebate line whenever a borrower claim includes
-  a pending LIF rebate
+- `Offer Book` accept-review copy should explain that the borrower's LIF is
+  charged in the lending asset at acceptance, reduced by their effective tier
+  discount, and that the borrower receives the principal net of that fee
+- `Create Offer` borrower-tip copy should frame the benefit as a reduced Loan
+  Initiation Fee at acceptance, never as a later VPFI rebate
 - `Claim Center` should host platform-interaction reward claims, including
   lifetime claimed and contributing-loan context
 - `Claim Center` should treat the chain as authoritative for per-loan claimability.
@@ -1726,14 +1667,13 @@ Acceptance criteria:
   withdraw only the free, protocol-tracked portion
 - the connected app does not expose a protocol fixed-rate VPFI purchase flow or
   staking-yield claim path
-- *(legacy / grandfather-only — open custody-path loans; see the §12 Testing/Frontend supersession + §6b)* eligible liquid-asset loan acceptance checks liquidity, fee-discount consent,
-  borrower fee-payment balance, effective-tier availability, Chainlink-led ETH
-  conversion, full `0.1%` LIF computation, and exact VPFI deduction before
-  sending `100%` of requested lending asset to the borrower. **For new loans** acceptance instead follows §6b: HoldOnly charges the LIF in the lending asset (no VPFI deduction, no custody); Full pulls the per-party `C*` tariff to the recycle bucket (non-refundable); and `borrowerLifRebate[loanId].vpfiHeld == 0` holds for every new loan.
-- *(legacy / grandfather-only — open custody-path loans)* properly closed loans credit an effective-tier VPFI rebate; defaulted or
-  HF-liquidated loans forfeit the held VPFI with no rebate — a matched loan
-  pays the matcher's configured share first and forfeits the net to Treasury,
-  an unmatched loan forfeits the full amount to Treasury. **New loans have no up-front VPFI custody and no rebate** (HoldOnly/Full per §6b).
+- eligible liquid-asset loan acceptance checks liquidity, fee-discount consent,
+  and effective-tier availability, charges the LIF in the lending asset reduced
+  by the borrower's discount (HoldOnly), takes a confirmed Full opt-in's `C*`
+  tariff into the recycle bucket (non-refundable), and delivers the principal
+  net of the fee. No loan takes VPFI into protocol custody for its LIF
+- no proper close, default, or HF-based liquidation pays a borrower VPFI rebate
+  or forfeits borrower VPFI
 - event transparency, NatSpec coverage, and Diamond storage compatibility are
   satisfied
 

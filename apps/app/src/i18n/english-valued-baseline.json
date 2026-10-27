@@ -301,13 +301,6 @@
       "ko"
     ]
   },
-  "copy.claims.row.rebateAmount": {
-    "source": "{{amount}} VPFI rebate",
-    "locales": [
-      "hi",
-      "ko"
-    ]
-  },
   "copy.claims.row.rental": {
     "source": "Rental",
     "locales": [

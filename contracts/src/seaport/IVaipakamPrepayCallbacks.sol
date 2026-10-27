@@ -16,10 +16,9 @@ pragma solidity ^0.8.29;
  *             floor + recipient invariants at fill time (so a paused
  *             diamond can't accept a stale-signature theft).
  *           - Diamond owns `loans[loanId].status` mutation,
- *             `LibERC721._unlock(borrowerNftId)` invocation, and the
- *             load-bearing `LibVPFIDiscount.settleBorrowerLifProper`
- *             call — anything that touches diamond storage stays in
- *             the diamond.
+ *             and `LibERC721._unlock(borrowerNftId)` invocation —
+ *             anything that touches diamond storage stays in the
+ *             diamond.
  *
  *         The diamond-side method is added in step 5 alongside this
  *         executor; step 6 wires the borrower-facing entry points
@@ -31,19 +30,22 @@ interface IVaipakamPrepayCallbacks {
     ///         proceeds the Diamond just received and close the loan.
     /// @dev    #2876 — a loan-keyed listing pays ONE proceeds leg
     ///         (`consideration[0]`) to the Diamond, the same shape as the
-    ///         offer-keyed parallel-sale order. The Diamond then pays, at
-    ///         what a repayment at THIS block would owe:
-    ///           - the current lender-position holder its due, plus any
-    ///             lender yield-fee discount the holder qualifies for;
+    ///         offer-keyed parallel-sale order. The Diamond then splits
+    ///         it at what a repayment at THIS block would owe, by the one
+    ///         rule both listing types share:
+    ///           - the lender's due, plus any lender yield-fee discount,
+    ///             into the stored lender's vault behind `claimAsLender`;
     ///           - the treasury its share net of that discount;
-    ///           - the current borrower-position holder's vault the rest.
+    ///           - the rest to the current borrower-position holder's
+    ///             wallet, or held for their `claimAsBorrower` when the
+    ///             holder is flagged or the wallet refuses it.
     ///         The implementation MUST assert:
     ///           - `msg.sender == collateralListingExecutor`;
     ///           - `loan.status == LoanStatus.Active`;
     ///           - `proceeds` covers the repayment floor at this block;
-    ///         and then atomically split the proceeds, mark the loan
-    ///         Settled, unlock the borrower NFT and settle the borrower's
-    ///         Phase-5 LIF (`settleBorrowerLifProper`).
+    ///         and then atomically close the loan as a repayment
+    ///         (Active -> Repaid, borrower NFT unlocked) and split the
+    ///         proceeds.
     /// @param  loanId   Loan whose collateral was sold.
     /// @param  proceeds The proceeds leg's amount, which the executor has
     ///                  measured as having reached the Diamond in full.

@@ -166,11 +166,11 @@ runs half of it on old code:
   DefaultedFacet, EarlyWithdrawalFacet, EarlyWithdrawalDirectFacet,
   IntentDispatchFacet (the intent settlement), OfferAcceptFeeFacet,
   ForcedSaleFacet, PrecloseFacet, PrepayListingFacet, RefinanceFacet, RepayFacet,
-  RepayPeriodicFacet, RiskFacet, RiskMatchLiquidationFacet and
-  RiskSplitLiquidationFacet (the VPFI LIF settle or forfeit), SwapToRepayFacet
-  and SwapToRepayPartialFacet. Find it again with a grep for those three
-  helpers plus `settleBorrowerLifProper` / `forfeitBorrowerLif`, not from this
-  list. A caller refreshed without the host reverts `FunctionDoesNotExist` on
+  RepayPeriodicFacet, RiskFacet, SwapToRepayFacet and SwapToRepayPartialFacet.
+  Find it again with a grep for those three helpers, not from this list.
+  RiskMatchLiquidationFacet and RiskSplitLiquidationFacet left the family
+  with #1980: they reached the host only through the VPFI LIF forfeit
+  (`forfeitBorrowerLif`), which #1980 removed. A caller refreshed without the host reverts `FunctionDoesNotExist` on
   every fee or share it moves (a hard revert, never a skipped fee).
   `RefreshAllFacetsInPlace`, `RedeployFacets` and `ReplaceStaleFacets` all
   carry the host; ordinary in-place refresh material. The backstop vault's
@@ -336,11 +336,12 @@ are not, and had not been for some time: each is cut into the Diamond by
 mirrors that `cuts[]` array and is what the deploy-sanity suite checks against
 — update the script when adding a facet, not only the mirror), each moves
 funds, and several
-carry invariants **this document states elsewhere**: the VPFI-LIF
-settle/forfeit rules below name Preclose and Refinance as proper-settlement
-terminal paths, and the retail-deploy section lists both among the Tier-1
-entry points that revert for sanctioned callers. The retired line contradicted
-its own document in two places.
+carry invariants **this document states elsewhere**: the retail-deploy section
+lists Preclose and Refinance among the Tier-1 entry points that revert for
+sanctioned callers. When the retired line was written it contradicted its own
+document in a second place as well — the VPFI-LIF settle/forfeit rules then
+named both as proper-settlement terminal paths. #1980 removed those rules with
+the path they governed.
 
 "Placeholder" reads as *do not expect behaviour here*, which is the opposite of
 true on a settlement path, and it cost real time in #1503.
@@ -390,8 +391,8 @@ snapshot (#1566 S2a).
   from 1% → 2% at repay
 - `LOAN_INITIATION_FEE_BPS = 20` — 0.2% of ERC-20 principal, charged once
   at accept (also the #1352 freeze; was `10` = 0.1%). Since #1352 it is
-  charged in the **lending asset**, not VPFI — see the scope banner in
-  "VPFI Fee Discounts" below
+  charged in the **lending asset**, not VPFI — see "VPFI Fee Discounts"
+  below
 - `MAX_FEE_BPS = 5_000` (in `ConfigFacet`) — 50% ceiling for
   `treasuryFeeBps` / `loanInitiationFeeBps`; `MAX_FEE_DISCOUNT_BPS = 5000`
   — the uniform 50% clamp on any party's effective fee discount, which
@@ -1379,21 +1380,31 @@ reasons.
   and the `RewardRemittanceReceiver` / `BuybackRemittanceReceiver`
   remittance receivers (see the Cross-Chain Security Policy section above).
 
-## VPFI Fee Discounts — Time-Weighted + Claim-Based (Phase 5)
+## VPFI Fee Discounts — Time-Weighted Tier (Phase 5)
 
-> **⚠ SCOPE — the borrower half of this section is GRANDFATHERED-ONLY.**
-> #1352 retired the peg-custody borrower path. **New loans take no VPFI
-> into `vpfiHeld` custody and earn no rebate**: the borrower's hold-tier
-> discount is applied **directly to the lending-asset LIF at acceptance**
-> (HoldOnly), or, where the per-party Full tariff is enabled, the party's
-> `C*` is charged into Diamond custody and credited to
-> `RecycleSource.FullTariff`. Everything below about up-front VPFI
-> collection, Diamond custody for the life of the loan, and the rebate at
-> settlement describes **only loans already open on the retired path** —
-> they still settle through the retained lifecycle, which is why the
-> settle/forfeit invariants remain live. **Do not reconnect
-> `tryApplyBorrowerLif` on the strength of this section.** The LENDER half
-> (yield-fee discount) is unaffected and current. See #1352, #1555.
+> **Borrower LIF — the current rule, and the only one.** The borrower
+> Loan Initiation Fee (0.2% of ERC-20 principal, #1352) is charged in the
+> **lending asset** at acceptance. The borrower's hold-tier discount reduces
+> that fee directly at acceptance (HoldOnly), with the tier pinned then.
+> Where the per-party Full tariff is enabled, the party's `C*` is charged
+> in VPFI into Diamond custody and credited to `RecycleSource.FullTariff`.
+> **The VPFI peg-custody borrower path is REMOVED (#1980)** — no up-front
+> VPFI collection, no `vpfiHeld` custody for the life of the loan, no
+> rebate at settlement, no VPFI rebate in `claimAsBorrower`, and nothing
+> VPFI-related forfeited on default or liquidation. No loan could reach it
+> after #1352, the platform is pre-live and every chain is deployed fresh,
+> so no loan was ever grandfathered onto it. `tryApplyBorrowerLif`,
+> `settleBorrowerLifProper`, `forfeitBorrowerLif`,
+> `creditBorrowerLifRebateToVault`, `borrowerHoldTierDiscountBps`, the
+> `getBorrowerLifRebate` view, the `BorrowerLifRebateClaimed` /
+> `VPFIDiscountApplied` events, the position summary's `vpfiHeld` /
+> `vpfiRebatePending` fields and the close-out freeze's LIF-rebate claim
+> lane are gone. The `borrowerLifRebate` mapping keeps its storage slot
+> under a retired name, and the `RecycleSource` members `BorrowerLifForfeit`
+> / `BorrowerLifTreasuryShare` stay in the append-only enum with nothing
+> producing them. **Do not rebuild the path, and do not reuse that slot or
+> those enum members for anything else.** The LENDER half (yield-fee
+> discount) is unaffected and current.
 
 Both sides of the VPFI fee discount (lender yield-fee + borrower Loan
 Initiation Fee) are **not** a point-in-time tier lookup — but the
@@ -1401,9 +1412,9 @@ time-weighting is in the **TIER**, not in a per-loan average.
 **There is no averaging over a loan's own window; T-087 Sub 1.B
 removed it** (#1981, owner decision 2026-08-31: the code is the
 intended behaviour, the docs were stale). The lender discount reduces
-the yield-fee treasury haircut at settlement; the borrower discount is
-delivered as a VPFI **rebate** paid out alongside `claimAsBorrower` on
-the grandfathered peg-custody path (see the scope banner above).
+the yield-fee treasury haircut at settlement; the borrower discount
+reduces the lending-asset LIF at acceptance (see the borrower banner
+above). There is no borrower rebate.
 
 **What actually resolves a discount —
 `VPFIDiscountAccumulatorFacet.effectiveTierAndBps`**, three gates, all
@@ -1492,51 +1503,26 @@ compatibility or analytics surface):
 An earlier version of this section said "don't bypass"
 `borrowerDiscountAccAtInit` — that invariant no longer exists.
 
-**Naming caveat**: `LibVPFIDiscount.lenderHoldTierDiscountBps` /
-`borrowerHoldTierDiscountBps` were called `lenderTimeWeightedDiscountBps`
+**Naming caveat**: `LibVPFIDiscount.lenderHoldTierDiscountBps` (and its
+borrower twin, `borrowerHoldTierDiscountBps`, which #1980 removed with the
+rebate it sized) were called `lenderTimeWeightedDiscountBps`
 / `borrowerTimeWeightedDiscountBps` until #1981. The old names claimed
 a per-loan averaging they had not performed since T-087 Sub 1.B, and
 are the likeliest reason this whole section went stale — a reader
 checking the name instead of the body would have concluded the docs
 were right.
 
-**Borrower LIF — Phase 5 flow**:
-
-1. At `OfferFacet.acceptOffer` on the VPFI path: borrower pays the
-   FULL LIF equivalent in VPFI (not tier-discounted) from their
-   vault into **Diamond custody** (not treasury). Amount recorded
-   in `s.borrowerLifRebate[loanId].vpfiHeld`. (The rate that path was
-   built against was the pre-#1352 0.1%; grandfathered loans settle at
-   whatever they stamped. The live rate is 0.2% and is **not** charged
-   this way — see the scope banner above.)
-2. At proper settlement (`RepayFacet` terminal, `PrecloseFacet`
-   direct + offset, `RefinanceFacet`):
-   `LibVPFIDiscount.settleBorrowerLifProper(loan)` splits `vpfiHeld`
-   into a borrower rebate (`vpfiHeld × avgBps / BPS`) and a treasury
-   share; stores rebate in `s.borrowerLifRebate[loanId].rebateAmount`
-   and forwards the treasury share.
-3. At default / HF-liquidation (`DefaultedFacet.markDefaulted`,
-   `RiskFacet` HF-terminal): `LibVPFIDiscount.forfeitBorrowerLif(loan)`
-   forwards the full held amount to treasury; no rebate.
-4. At claim (`ClaimFacet.claimAsBorrower`): pays out the rebate in
-   VPFI atomically with the normal collateral claim.
-
-**Mainnet invariants to preserve**:
-
-- Every proper-close terminal path MUST call
-  `LibVPFIDiscount.settleBorrowerLifProper(loan)`.
-- Every default / liquidation terminal path MUST call
-  `LibVPFIDiscount.forfeitBorrowerLif(loan)`.
-- ~~Loan struct `borrowerDiscountAccAtInit` is snapshotted in
-  `LoanFacet._snapshotBorrowerDiscount` at loan-init; don't bypass.~~
-  **Retired (#1981)** — nothing writes the anchor and no fee path reads
-  it, so this is no longer an invariant. Left struck through
-  rather than deleted because it was stated as a mainnet invariant for
-  long enough that a reader may remember it and wonder where it went.
-  Do not restore it without also restoring the loan-window averaging
-  T-087 Sub 1.B removed.
-- The diamond holds the custody VPFI until terminal; no intermediate
-  transfer. A leaked `vpfiHeld` (non-zero on a Settled loan) is a bug.
+**Mainnet invariants — the borrower LIF set is RETIRED (#1980).** This
+section used to require every proper-close terminal path to call
+`settleBorrowerLifProper`, every default / liquidation path to call
+`forfeitBorrowerLif`, and the Diamond to hold the custody VPFI until
+terminal. Those functions and that custody no longer exist, so there is
+nothing to preserve. The one rule that replaces them: **no path may take
+borrower VPFI into custody for the LIF, and no path may pay a borrower
+LIF rebate.** (The `borrowerDiscountAccAtInit` snapshot invariant, which
+#1981 had already retired and which sat in the same list, is gone with it —
+see the DEAD list above; do not restore it without also restoring the
+loan-window averaging T-087 Sub 1.B removed.)
 
 Full detail — **current** — in
 [`docs/FunctionalSpecs/TokenomicsTechSpec.md`](docs/FunctionalSpecs/TokenomicsTechSpec.md)
@@ -1546,10 +1532,10 @@ The Phase 5 section of
 [`docs/ReleaseNotes/ReleaseNotes-2026-04-23-to-24.md`](docs/ReleaseNotes/ReleaseNotes-2026-04-23-to-24.md)
 is **HISTORY, not current behaviour**, and was cited here as "full detail"
 until #2140 — which is how a reader could have rebuilt retired funds
-handling from it. It is the record of the peg-custody path and is worth
-reading only for how GRANDFATHERED loans settle. It states three things in
-the present tense that the scope banner above retires: the **full LIF
-charged up front in VPFI** (#1352 moved the charge to the lending asset and
+handling from it. It is the record of the peg-custody path, which #1980
+removed, and describes nothing that can happen on any deployment. It
+states three things in the present tense that are no longer true: the
+**full LIF charged up front in VPFI** (#1352 moved the charge to the lending asset and
 the rate to 0.2%), a **time-weighted average over the loan's own window**
 (T-087 Sub 1.B removed loan-window averaging — the weighting is in the TIER),
 and a refinance **starting a fresh window "with its own snapshot"** (nothing

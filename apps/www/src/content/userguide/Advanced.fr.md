@@ -153,13 +153,11 @@ rabais à réclamer ensuite.
 > **Si tu attends un rabais sur le Loan Initiation Fee, lis
 > ceci.** Un modèle antérieur prélevait la totalité des frais en
 > VPFI d'avance, les conservait pendant toute la durée du prêt et
-> en restituait une partie lors de la réclamation. **Cette voie
-> est retirée.** Les prêts ouverts pendant qu'elle était active se
-> règlent toujours ainsi, et les passages sur le rabais plus bas
-> décrivent ces prêts. Un prêt ouvert aujourd'hui n'a aucun VPFI
-> retenu contre ses frais d'initiation ni rabais en attente —
-> l'attendre reviendrait à attendre un argent qui ne peut pas
-> arriver.
+> en restituait une partie lors de la réclamation. **Cette voie a
+> été supprimée.** Aucun prêt n'a jamais été ouvert par elle : aucun
+> prêt n'a donc de VPFI retenu contre ses frais d'initiation ni de
+> rabais en attente — l'attendre reviendrait à attendre un argent
+> qui ne peut pas arriver.
 
 > **Le gas du réseau est séparé.** La remise ci-dessus s'applique
 > aux **frais de protocole** de Vaipakam (yield-fee
@@ -497,10 +495,8 @@ déplacer d'actifs.
   n'importe qui peut le déclencher dès que ton HF descend
   sous 1,0.
 - **Défauts sur collatéral illiquide** — le défaut transfère ton
-  collatéral intégral au prêteur. Aucune réclamation
-  résiduelle. Sur un prêt encore soumis à la voie de frais VPFI
-  retirée, le VPFI retenu au titre des frais d'initiation est acquis
-  au trésor plutôt que restitué : il n'y a rien à encaisser.
+  collatéral intégral au prêteur. Il ne reste aucune réclamation
+  résiduelle.
 
 <a id="create-offer.advanced-options"></a>
 
@@ -796,16 +792,14 @@ La réclamation de l'emprunteur rend, selon la manière dont le
 prêt s'est réglé :
 
 - **Remboursement total / preclose / refinance** — ton panier de
-  collatéral ; sur un prêt encore soumis à la voie de frais VPFI
-  retirée, le rabais VPFI pondéré dans le temps issu de la Loan
-  Initiation Fee est réglé en même temps, et peut être nul.
+  collatéral. Aucun rabais sur la Loan Initiation Fee ne
+  l'accompagne : ta remise a déjà été déduite des frais à
+  l'acceptation.
 - **Une vente prepay qui solde le prêt** — le collatéral part chez
   l'acheteur et ne te revient pas. Tu reçois le prix de vente moins
   le droit du prêteur, la coupe de trésorerie et les frais vendeur
   éventuels de l'annonce, versés au détenteur du NFT de position
-  d'emprunteur. Sur un prêt de la voie retirée, ne compte pas sur le
-  rabais ici : il est calculé au règlement mais ne peut
-  actuellement pas être encaissé ensuite.
+  d'emprunteur.
 - **Swap-to-repay** — ton collatéral est vendu pour couvrir la
   dette, jusqu'à un plafond que tu fixes. Fixé largement, il peut en
   être consommé plus que la dette n'exigeait strictement ; ce qui ne
@@ -837,13 +831,7 @@ prêt s'est réglé :
   et aucune créance n'est créée. Consulte la créance plutôt que
   de supposer laquelle tu as. Sur un défaut portant sur un actif illiquide, tout le
   panier part et il ne reste rien — et sur cette voie c'est la
-  règle, non une issue malheureuse. Que le rabais revienne dépend de la
-  clôture : sur un prêt encore soumis à la voie de frais VPFI
-  retirée, le VPFI retenu au titre des frais d'initiation est
-  **acquis au trésor** lors d'un défaut ou d'une liquidation. Une
-  clôture régulière règle au contraire le rabais pondéré dans le
-  temps — qui peut être nul, tout le montant étant alors
-  perdu, si ta remise est nulle au moment du règlement.
+  règle, non une issue malheureuse.
 
 Le NFT de position d'emprunteur est brûlé au moment où tu
 réclames, pas quand le prêt se résout — un excédent laissé par une
@@ -1103,10 +1091,7 @@ Une fois HF descendu sous 1,0, n'importe qui peut déclencher une
 liquidation basée sur HF ; le swap vend ton collatéral à des
 prix érodés par le slippage pour rembourser le prêteur. Sur
 collatéral illiquide, le défaut transfère ton collatéral
-intégral au prêteur, et il ne reste rien à réclamer : sur un prêt
-encore soumis à la voie de frais VPFI retirée, le VPFI retenu au
-titre des frais d'initiation est acquis au trésor plutôt que
-restitué.
+intégral au prêteur, et il ne reste rien à réclamer.
 
 <a id="loan-details.parties"></a>
 
@@ -1158,10 +1143,9 @@ Actions permissionless disponibles à tous quel que soit le rôle :
 
 - **Rembourser** — total ou partiel. Le partiel réduit le solde
   restant et remonte HF ; le total déclenche le règlement
-  terminal, y compris le rabais VPFI Loan Initiation Fee
-  pondéré dans le temps.
+  terminal.
 - **Preclose direct** — paie le solde restant depuis ton wallet
-  maintenant, libère le collatéral, règle le rabais.
+  maintenant et libère le collatéral.
 - **Preclose offset** — vend une partie du collatéral via le
   routeur de swap du protocole, rembourse depuis le produit, et
   retourne le reste. Deux étapes : initier, puis finaliser.
@@ -1173,10 +1157,7 @@ Actions permissionless disponibles à tous quel que soit le rôle :
   le collatéral en cas de remboursement total ; en défaut ou
   liquidation il peut rester un excédent, car on ne prélève que le
   collatéral qu'exigent la dette et le coût de sa clôture — voir la
-  section Claim Center ci-dessus. Le VPFI retenu sous la voie
-  retirée n'est acquis au trésor qu'en cas de défaut ou de
-  liquidation ; une clôture régulière règle le rabais
-  pondéré dans le temps, qui peut être nul. Brûle le NFT de position
+  section Claim Center ci-dessus. Brûle le NFT de position
   d'emprunteur.
 
 ---
@@ -1639,9 +1620,6 @@ dans ton vault tout du long — pas de fenêtre non garantie. Le
 nouveau prêt doit franchir le verrou HF ≥ 1,5 à
 l'initialisation, comme tout autre prêt.
 
-Le rabais inutilisé de la Loan Initiation Fee de l'ancien prêt
-est correctement réglé dans le cadre de l'échange.
-
 <a id="refinance.position-summary"></a>
 
 ### Ta position actuelle
@@ -1674,8 +1652,6 @@ Règlement atomique après que le nouveau prêteur a accepté :
    moins la coupe de trésorerie).
 3. Brûle les anciens NFT de position.
 4. Mint les nouveaux NFT de position.
-5. Règle le rabais inutilisé de la Loan Initiation Fee de
-   l'ancien prêt.
 
 Revert si HF sous les nouvelles conditions serait inférieur à 1,5.
 
@@ -1693,16 +1669,13 @@ est initiée par l'emprunteur sur son prêt.
 Une terminaison anticipée pilotée par l'emprunteur. Deux voies :
 
 - **Direct** — paie le solde restant (principal + intérêts
-  accumulés) depuis ton wallet, libère le collatéral, règle le
-  rabais inutilisé de la Loan Initiation Fee.
+  accumulés) depuis ton wallet et libère le collatéral.
 - **Offset** — initie l'offset pour vendre une partie du
   collatéral via le failover de swap 4-DEX du protocole contre
   l'actif principal, finalise l'offset pour rembourser depuis
-  le produit, et le reste du collatéral te revient. Même
-  règlement de rabais.
+  le produit, et le reste du collatéral te revient.
 
-Pas de pénalité forfaitaire de clôture anticipée. La
-mathématique VPFI pondérée dans le temps gère l'équité.
+Pas de pénalité forfaitaire de clôture anticipée.
 
 <a id="preclose.position-summary"></a>
 

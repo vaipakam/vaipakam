@@ -2032,7 +2032,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // Claimable proper-close terminals: repaid or internal_matched
     // (ClaimFacet accepts both; the on-chain claimables discovery
     // (#988) surfaces them). For the borrower an internal match may
-    // hold only a residual/rebate — the submit path preflights
+    // hold only a residual — the submit path preflights
     // getClaimable so a zero-entitlement claim errors gracefully
     // instead of prompting a doomed write.
     if (role === 'borrower' && properClose) return 'claim-borrower';
@@ -3010,8 +3010,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           ? copy.positions.details.actions.claimBuffer
           : row.status === 'repaid'
             ? copy.positions.details.actions.claimCollateral
-            : // defaulted/liquidated surplus OR internal-match residual +
-              // VPFI rebate — either may be zero, so never promise it.
+            : // defaulted/liquidated surplus OR internal-match residual —
+              // it may be zero, so never promise it.
               copy.positions.details.actions.claimResidual
         : action === 'claim-lender'
           ? isRental

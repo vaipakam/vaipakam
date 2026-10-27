@@ -24,8 +24,7 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
  *         Storage layout note: every v1.1 cfg slot lives on the
  *         top-level `LibVaipakam.Storage` struct. Growing the nested
  *         `ProtocolConfig` would shift every subsequent slot on
- *         upgrade and corrupt deployed `borrowerLifRebate` / swap-
- *         adapter state.
+ *         upgrade and corrupt deployed swap-adapter state.
  *
  *         See `docs/DesignsAndPlans/SwapToRepayIntentBased.md` §5.6
  *         for the full surface + rationale.

@@ -21,8 +21,7 @@ receives everything above that in their wallet. When that holder is flagged,
 or their wallet refuses the payment, the remainder is held for them and paid
 by the ordinary borrower claim, using the same pay-or-hold rule the periodic
 forced sale already used. The loan settles when the lender claims, as after
-any repayment. A grandfathered borrower fee refund on the same close also
-waits for the borrower claim now, as it does after a repayment.
+any repayment.
 
 The sale is neutral between the two sides. Before, the whole sale was
 refused when either position holder was flagged, or when the lender's wallet

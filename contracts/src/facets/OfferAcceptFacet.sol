@@ -1299,11 +1299,9 @@ contract OfferAcceptFacet is
             // DIRECTLY to the lending-asset LIF at accept — `lifAsset =
             // base × (BPS − d_borrower) / BPS`, `d_borrower` resolved at
             // origination (pinned, so no settle-time top-up gaming). No VPFI
-            // is moved and no `vpfiHeld` is taken; the peg-custody VPFI path
-            // (tryApplyBorrowerLif → Diamond custody → time-weighted rebate)
-            // is retired for new loans. Open custody loans keep settling via
-            // settleBorrowerLifProper / forfeitBorrowerLif. The per-party VPFI
-            // Full tariff is a separate later card (#1347 PR-5).
+            // is moved for the LIF itself (the peg-custody VPFI path was
+            // removed in #1980). The per-party VPFI Full tariff is a
+            // separate card (#1347 PR-5).
             // #951 (Codex #959 round-4) — a lender-sale-vehicle accept is a
             // SECONDARY-MARKET position transfer, not a fresh origination: the
             // underlying loan already paid its 0.1% LIF when it was first
@@ -1363,12 +1361,9 @@ contract OfferAcceptFacet is
                 // HoldOnly hybrid borrower LIF (#1352, redesign §F3): charge the
                 // consent-gated, hold-tier-discounted lending-asset LIF and
                 // deliver the net principal to the borrower. No VPFI is moved
-                // and no `vpfiHeld` custody is taken — the peg-custody path
-                // (LibVPFIDiscount.tryApplyBorrowerLif) is RETIRED for new
-                // loans, so a new loan never sets `vpfiHeld`; open custody-path
-                // loans (`vpfiHeld > 0`) still settle via settleBorrowerLifProper
-                // / forfeitBorrowerLif (untouched). The per-party VPFI Full
-                // tariff is a separate later card (#1347 PR-5). Incidence
+                // for the LIF itself (the peg-custody path was removed in
+                // #1980). The per-party VPFI Full tariff is a separate card
+                // (#1347 PR-5). Incidence
                 // unchanged: the fee is a borrower cash haircut sourced from the
                 // lender's funded principal; borrower debt stays the full
                 // `effectivePrincipal`. The whole charge + net delivery runs
@@ -1521,19 +1516,16 @@ contract OfferAcceptFacet is
         loanId = abi.decode(result, (uint256));
         _recordRenter(loanId);
 
-        // Range Orders Phase 1 — record the matcher on the loan so the
-        // VPFI-path 1% LIF kickback (deferred to terminal in
-        // `LibVPFIDiscount.settleBorrowerLifProper` /
-        // `forfeitBorrowerLif`) knows where to route. On the legacy
+        // Range Orders Phase 1 — record the matcher on the loan. On the legacy
         // `acceptOffer` path, `matcher` resolves to `msg.sender` (the
         // acceptor — same person who triggered the match). Under
         // `matchOffers`, `matcher` resolves via the matchOverride slot
         // to the bot/relayer that submitted the match (NOT the
         // borrower-offer's creator, which would otherwise be
-        // `msg.sender` of the inner _acceptOffer call frame). Stored
-        // unconditionally — lender-asset paths already paid the matcher
-        // synchronously above, so this only matters for VPFI-path loans,
-        // but recording on every loan keeps the read cheap and uniform.
+        // `msg.sender` of the inner _acceptOffer call frame). The matcher
+        // share itself was paid synchronously above, in the lending asset;
+        // the address is recorded on every loan for attribution
+        // (`getLoanDetails` reports it).
         s.loans[loanId].matcher = s.matchOverride.active
             ? s.matchOverride.matcher
             : (s.signedOfferAcceptor != address(0)
@@ -1652,14 +1644,6 @@ contract OfferAcceptFacet is
                 );
             }
         }
-
-        // #1352 — the peg-custody borrower-LIF origination path is retired for
-        // new loans, so nothing sets `vpfiHeld` here any more (HoldOnly charges
-        // the discounted LIF in the lending asset at accept; no VPFI custody).
-        // The `borrowerLifRebate[loanId].vpfiHeld` write + the
-        // `emitDiscountApplied` event were removed with it. Open custody-path
-        // loans keep their existing `vpfiHeld` and still settle via
-        // settleBorrowerLifProper / forfeitBorrowerLif.
 
         // Auto-complete linked flows atomically so there is no gap where the
         // live loan could be repaid/defaulted between acceptance and completion.

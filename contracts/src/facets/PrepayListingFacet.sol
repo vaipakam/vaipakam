@@ -11,7 +11,6 @@ import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibReentrancyGuard, DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
-import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
@@ -60,9 +59,7 @@ import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
  *              borrower's remainder is paid to the holder's wallet or
  *              held for their claim. The close also releases the
  *              listing lock (LockReason.PrepayCollateralListing from
- *              #285) and settles the borrower's Phase-5 LIF
- *              (`LibVPFIDiscount.settleBorrowerLifProper`, load-bearing
- *              per CLAUDE.md).
+ *              #285).
  *
  *           3. **`setCollateralListingExecutor(address)`** — ADMIN_ROLE-
  *              gated setter. Governance configures which executor
@@ -593,10 +590,7 @@ contract PrepayListingFacet is
     ///      (the swap-to-repay full close is the template): the validated
     ///      Active -> Repaid edge with both holders' fail-closed claimant
     ///      markers ({EncumbranceMutateFacet.terminalize}), both position NFTs
-    ///      to `LoanRepaid`, the borrower-position lock released, the
-    ///      borrower's Phase-5 LIF settled (every proper-close path calls
-    ///      `settleBorrowerLifProper`, per CLAUDE.md; a rebate it writes is
-    ///      paid by `claimAsBorrower`, as after a repayment), and the
+    ///      to `LoanRepaid`, the borrower-position lock released, and the
     ///      terminal reward close. The lender's claim then moves the loan to
     ///      Settled once the borrower side has nothing left
     ///      ({LibCloseoutFreeze.borrowerSideOpen}). Shared by both listing
@@ -614,7 +608,6 @@ contract PrepayListingFacet is
         LibERC721._unlock(loan.borrowerTokenId);
         _markPositionRepaid(loan.borrowerTokenId, loan.id);
         _markPositionRepaid(loan.lenderTokenId, loan.id);
-        LibVPFIDiscount.settleBorrowerLifProper(loan);
         // #1067 — DURABLE terminal reward close: a sale is a proper close,
         // so shrink both reward entries' active windows to today and
         // re-anchor each open side to the live NFT holder.

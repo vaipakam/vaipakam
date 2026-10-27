@@ -67,9 +67,11 @@ balance you see is real on whichever chain you're on.
 
 ### Fee-discount consent
 
-Vaipakam can pay you a discount on protocol fees by using some of
-the VPFI you've parked in the vault. This switch is the "yes, please
-do that" toggle. You only flip it once.
+Vaipakam can give you a discount on protocol fees based on the VPFI
+you keep in the vault. For a borrower the discount is simply a
+smaller Loan Initiation Fee, taken in the loan's own asset when the
+loan starts — no VPFI is spent on it. This switch is the "yes,
+please do that" toggle. You only flip it once.
 
 How big the discount is depends on how much VPFI you keep in the vault:
 
@@ -365,15 +367,7 @@ claim rather than guessing from how the loan closed. A discounted
 seizure is the exception, and it is predictable the other way: it
 never sells, so it always leaves you the collateral. Often — on a default over collateral we
 cannot price — the whole basket goes and nothing is left, and on that route
-that is the rule rather than how it happened to turn out. Whether the fee rebate comes
-back depends on how the loan ended: on a loan still using the
-retired VPFI fee path, any proper close
-settles the rebate on the VPFI held against the
-Loan Initiation Fee — sized by your discount at the moment it settles,
-so it can be zero, leaving the whole amount forfeited, if you hold
-nothing by then. A default or a liquidation forfeits it outright —
-and a loan closed by a prepay sale currently cannot pay it out
-either, so treat that route as one where it does not arrive.
+that is the rule rather than how it happened to turn out.
 Claiming consumes your borrower position NFT. The reverse does
 not follow: an NFT still sitting there after a liquidation is not
 evidence that anything is waiting. Where nothing was left over there is
@@ -578,9 +572,7 @@ will be greyed out, with a small tooltip explaining why.
   surplus: only enough collateral is taken to cover the debt and
   the cost of closing it, so anything you put up beyond that is
   recorded as yours to claim. What that is depends on the path —
-  see the Claim Center section. VPFI held under the retired fee
-  path is forfeited only on default or liquidation; any proper close settles the rebate,
-  which can be zero.
+  see the Claim Center section.
 
 ---
 

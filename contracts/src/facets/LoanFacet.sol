@@ -1009,10 +1009,8 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // terms (amount / rate / collateral) and the matcher address.
         // Read from override; fall back to offer fields on the legacy
         // single-value path that doesn't set the override. matcher
-        // also stamped here when active so the VPFI-path 1% LIF
-        // kickback (deferred to terminal in
-        // `LibVPFIDiscount.settleBorrowerLifProper` / `forfeitBorrowerLif`)
-        // knows where to route on a matched-via-bot loan.
+        // also stamped here when active, recording the bot/relayer that
+        // submitted the match.
         LibVaipakam.MatchOverride storage mo =
             LibVaipakam.storageSlot().matchOverride;
         if (mo.active) {

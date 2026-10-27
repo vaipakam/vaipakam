@@ -53,8 +53,8 @@ import {LibPrepayOrder} from "../libraries/LibPrepayOrder.sol";
  *              `Seaport.validate()` pre-registration per design doc
  *              §5.7), then calls back into the diamond via
  *              {IVaipakamPrepayCallbacks.executorFinalizePrepaySale}
- *              for the load-bearing state mutations (status flip,
- *              `_unlock` of the borrower NFT, LIF settlement).
+ *              for the load-bearing state mutations (the repayment
+ *              close, `_unlock` of the borrower NFT, the proceeds split).
  *
  *           3. **Governance-managed conduit allow-list** — only orders
  *              whose conduits are in this map can fill. Conduit
@@ -1299,12 +1299,14 @@ contract CollateralListingExecutor is
         uint256 balanceAtCheck = _consumeBookedLeg(params);
 
         // ── Atomic settlement: callback to the diamond ──────────────────
-        // #2876 — the Diamond splits the proceeds (lender, treasury net of
-        // the lender's yield-fee discount, borrower-position vault) at
-        // what a repayment at this block would owe, then closes the loan:
-        // Settled, borrower NFT unlocked, `settleBorrowerLifProper`. The
-        // proceeds figure is the leg's amount at this block (a Dutch
-        // order's leg has already decayed to it in `params`).
+        // #2876 — the Diamond closes the loan as a repayment (Active ->
+        // Repaid, borrower NFT unlocked) and splits the proceeds at what a
+        // repayment at this block would owe: the lender's leg into the
+        // stored lender's vault behind the claim, the treasury's share net
+        // of the lender's yield-fee discount, and the rest to the
+        // borrower-position holder. The proceeds figure is the leg's amount
+        // at this block (a Dutch order's leg has already decayed to it in
+        // `params`).
         // After this returns we clear the orderContext so an already-
         // filled hash can't double-fill (Seaport itself blocks re-fills
         // on the same order, but defense-in-depth).

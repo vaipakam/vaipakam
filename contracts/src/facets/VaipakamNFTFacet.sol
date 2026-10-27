@@ -651,9 +651,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
                         " (terminal)"
                     ))
                     : "None",
-                '"},{"trait_type":"VPFI Rebate Pending","display_type":"number","value":',
-                s.vpfiRebatePending.toString(),
-                '},{"trait_type":"Created At","display_type":"date","value":',
+                '"},{"trait_type":"Created At","display_type":"date","value":',
                 s.createdAt.toString(),
                 '},{"trait_type":"Offer ID","value":"',
                 s.offerId.toString(),

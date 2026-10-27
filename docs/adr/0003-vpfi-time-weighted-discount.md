@@ -2,7 +2,8 @@
 
 **Status:** Accepted — **borrower half superseded by #1352** (2026-07-20);
 **loan-window averaging superseded by T-087 Sub 1.B** (recorded #1981,
-2026-08-31)
+2026-08-31); **borrower peg-custody path removed — superseded in part by
+#1980** (2026-10-27)
 **Date:** 2026-04-23 (Phase 5 implementation date; ADR backfilled 2026-05-20)
 
 > **Supersession note (T-087 Sub 1.B, recorded in #1981).** The core
@@ -49,6 +50,18 @@
 > hold-tier discount is now applied directly to the lending-asset LIF at
 > acceptance, resolved from the live tier at that moment. Loans opened
 > before the freeze still settle through the flow described here.
+
+> **Superseded in part by #1980 (2026-10-27, owner decision "Retire
+> it").** The previous note's last sentence no longer holds: no loan was
+> ever opened on the peg-custody path, because the platform is pre-live and
+> every chain is deployed fresh, and #1980 removed the path from the code.
+> The up-front VPFI charge, the Diamond custody for the life of the loan,
+> the settle-or-forfeit split, the rebate at `claimAsBorrower`, and the two
+> terminal-path invariants listed under Decision are all gone; the
+> per-loan custody record keeps its storage slot under a retired name, and
+> nothing writes it. Read the borrower half of the Decision and Consequences
+> below as the record of what was decided on 2026-04-23, not as behaviour
+> any deployment can show. The lender half stands as amended above.
 >
 > The fee rates quoted below (0.1% LIF, 1% yield fee) are the rates in
 > force when this ADR was written. The live rates are **0.2%** and

@@ -167,7 +167,8 @@ function getDeployBlock(chainId: number): number | undefined {
  *  events — `LoanRepaid` (4 args typed vs 7 emitted), `LoanDefaulted`
  *  (2 vs 3), `PartialRepaid` (3 vs 4), `OfferAccepted` (3 vs 6),
  *  `OfferMatched` (8 vs 10), `LenderFundsClaimed` / `BorrowerFundsClaimed`
- *  (4 vs 5), `BorrowerLifRebateClaimed` (3 vs 4). A wrong arg count
+ *  (4 vs 5), and the since-retired borrower LIF-rebate claim event
+ *  (3 vs 4). A wrong arg count
  *  changes the keccak event signature → different topic0 → the indexer
  *  never matches the log → loans silently stay `active` forever. Same
  *  drift class the CLAUDE.md "Watcher offer-decode" incident warns

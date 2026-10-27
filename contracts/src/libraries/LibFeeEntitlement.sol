@@ -25,9 +25,8 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
  *         Full is **per-party** (double absorption): each of borrower and lender
  *         that opts into Full pays ONE `C*` from THEIR OWN vault into the
  *         recycle bucket (`RecycleSource.FullTariff`). Both Full ⇒ `2 × C*`
- *         absorbed. The tariff is non-refundable and lives OUTSIDE the
- *         `borrowerLifRebate` settle/forfeit machinery — it is credited straight
- *         to the bucket at initiation and never recorded as `vpfiHeld`.
+ *         absorbed. The tariff is non-refundable — it is credited straight to
+ *         the bucket at initiation.
  *
  * @dev    Library, delegatecalled from {FeeEntitlementFacet}. `address(this)`
  *         resolves to the Diamond in every function below, exactly as in

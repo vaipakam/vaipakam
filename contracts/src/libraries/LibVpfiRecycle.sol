@@ -32,9 +32,9 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
  *         that was transferred out.
  *
  *         Separation invariant (governor §5), preserved by construction at
- *         this chokepoint: `diamondVpfiBalance ≥ userLifCustody +
- *         unclaimedRewardBudget + recycleBucket` — a credit always
- *         corresponds to value LEAVING one of the other two custody classes
+ *         this chokepoint: `diamondVpfiBalance ≥ unclaimedRewardBudget +
+ *         recycleBucket` — a credit always corresponds to value LEAVING
+ *         the other custody class
  *         (e.g. a forfeited reward leaves the unclaimed reward budget) or
  *         arriving fresh from a user (e.g. a tariff), so the right-hand side
  *         never grows past the balance.
@@ -487,9 +487,10 @@ library LibVpfiRecycle {
      *
      *         It measures ONE term of the separation invariant, not the
      *         invariant. This library's own natspec states that invariant
-     *         over THREE custody classes — `userLifCustody +
-     *         unclaimedRewardBudget + recycleBucket` — and `unearmarked`
-     *         nets only the last. That is deliberate — it serves #1460's
+     *         over TWO custody classes — `unclaimedRewardBudget +
+     *         recycleBucket` — and `unearmarked` nets only the second.
+     *         (A third, `userLifCustody` — borrower LIF held in VPFI — was
+     *         removed with the peg-custody path in #1980.) That is deliberate — it serves #1460's
      *         third condition — but it is no longer the expression the
      *         completion plan §M7 step 0 writes that condition as. The plan
      *         says `balanceOf − recycleBucket`; this returns that MINUS the
@@ -536,33 +537,12 @@ library LibVpfiRecycle {
      *           netting it would refuse claims their own funding. Its
      *           presence in the invariant says the Diamond must HOLD it, not
      *           that a reward payout may not draw on it.
-     *         • `userLifCustody` — NOT subtracted, and whether that is SAFE
-     *           depends on the deployment. The checkable fact, stated over
-     *           the CUSTODY STORAGE rather than over the identifier: **every
-     *           surviving write to `borrowerLifRebate[...].vpfiHeld` in
-     *           `src/` assigns zero.** (Scoped this way deliberately — the
-     *           earlier "no non-zero assignment to `vpfiHeld` anywhere in
-     *           `src/`" disagreed with a literal source sweep, because
-     *           `MetricsFacet` copies the slot into a memory summary
-     *           (`s.vpfiHeld = r.vpfiHeld`) where it can be non-zero for a
-     *           grandfathered loan. That read changes no custody and does not
-     *           touch the conclusion — but a "checkable fact" that fails when
-     *           checked is worse than none. Codex #1555 r2.)
-     *           Those zeroing writes are the drains inside
-     *           {LibVPFIDiscount.settleBorrowerLifProper} /
-     *           {LibVPFIDiscount.forfeitBorrowerLif}, which return early at
-     *           `held == 0` — so the ~15 terminal paths calling them
-     *           (preclose, refinance, prepay, swap-to-repay, repay, every
-     *           default / liquidation route) are custody no-ops.
-     *           {LibVPFIDiscount.tryApplyBorrowerLif} is the PRODUCER of the
-     *           amount, not a writer — it moves the VPFI and returns
-     *           `vpfiDeducted`, and its own natspec makes recording it the
-     *           caller's job. The write was that caller, in
-     *           `OfferAcceptFacet`, and #1352 removed it; the producer now
-     *           has no caller at all. (An earlier revision of this comment
-     *           called the producer "the only writer" — a false
-     *           code-reachability claim at the exact point used to justify
-     *           omitting the aggregate. Codex #1555 r1.)
+     *         • `userLifCustody` — no longer a class. Borrower LIF has been
+     *           charged in the lending asset since #1352, and #1980 removed
+     *           the peg-custody path that once held it in VPFI (its producer,
+     *           its settle / forfeit drains and its storage reader), so
+     *           nothing in this Diamond's balance is owed to a borrower as a
+     *           LIF rebate.
      *
      *         **The invariant's three classes are NOT the whole list, and
      *         that is the real lesson here.** Owners of this one balance keep
@@ -573,8 +553,9 @@ library LibVpfiRecycle {
      *         subtracted:**
      *
      *           1. `recycleBucket` — SUBTRACTED (see the body).
-     *           2. borrower-LIF rebate custody — grandfathered loans only;
-     *              zero on a deployment originated from this source.
+     *           2. borrower-LIF rebate custody — removed in #1980; nothing
+     *              holds it. (Kept as a numbered entry so the numbers below
+     *              keep their meaning.)
      *           3. Full-tariff `C*` — covered, it credits the bucket.
      *           4. `treasuryBalances[vpfi]` — {LibFacet.recordTreasuryAccrual}
      *              on a Diamond-as-treasury deployment. **NOT subtracted.**
@@ -672,27 +653,10 @@ library LibVpfiRecycle {
      *         claim-versus-expiry divergence that forced the treasury
      *         subtraction to be reverted. Codex #1555 r6.)
      *
-     *         So on a deployment ORIGINATED from this source the borrower-LIF
-     *         term is zero. `unearmarked` is exact only to the extent this
-     *         list is complete. On a Diamond **UPGRADED** from
-     *         a pre-#1352 deployment it is NOT: custody against loans open at
-     *         the upgrade sits inside this figure, a reward claim or the RL-3
-     *         sweep can spend or relabel it, and the borrower's later
-     *         settlement then reverts or leaves them unpaid. **That exposure
-     *         is real and is NOT closed here — #1566 stays open for it.**
-     *         (#1498 was the original card and now reads closed; #1555's
-     *         `Closes #1498` fired on the de-duplication half alone, and the
-     *         fund-safety half was re-filed. Do not read that green label as
-     *         this exposure being handled.) Its
-     *         root is shared with #1434 prerequisite 1: reward payout is
-     *         bounded by un-earmarked BALANCE rather than by funding
-     *         DELIVERED FOR REWARDS, and only the delivered bound fixes both.
-     *         Re-wiring the producer re-opens it on a fresh deployment too;
-     *         the guard there is `testAcceptOfferWithVPFIDiscountApplied`,
-     *         which stakes the borrower to tier 1, clears the history gate,
-     *         opts into consent and asserts `dBorrower == 1000` BEFORE
-     *         asserting no custody is taken — so it fails on re-wiring rather
-     *         than passing vacuously on an unmet precondition.
+     *         There is no borrower-LIF term: #1980 removed the peg-custody
+     *         path, and every chain reaches this build by a fresh deploy, so no
+     *         Diamond holds borrower LIF custody inside this figure.
+     *         `unearmarked` is exact only to the extent this list is complete.
      *
      *         `unearmarked` is exactly the quantity #1460's third condition
      *         turns on — the defect needs a non-zero bucket AND a

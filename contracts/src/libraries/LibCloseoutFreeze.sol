@@ -166,8 +166,9 @@ library LibCloseoutFreeze {
     /**
      * @notice Whether the borrower side of `loanId` still has something to
      *         claim: an unclaimed collateral row that names an amount or an
-     *         NFT, an unclaimed surplus row with an amount, or a pending LIF
-     *         rebate.
+     *         NFT, or an unclaimed surplus row with an amount. (A third lane,
+     *         the borrower LIF rebate, was removed with the peg-custody path
+     *         in #1980.)
      * @dev    #2795 — the ONE rule for "the borrower side is done", read by
      *         `ClaimFacet.claimAsBorrower` (which refuses only when it is
      *         false) and by every lender-side path that settles the loan once
@@ -183,8 +184,7 @@ library LibCloseoutFreeze {
     ) internal view returns (bool) {
         if (collateralLaneOpen(s.borrowerClaims[loanId])) return true;
         LibVaipakam.ClaimInfo storage surplus = s.borrowerSurplusClaims[loanId];
-        if (!surplus.claimed && surplus.amount > 0) return true;
-        return s.borrowerLifRebate[loanId].rebateAmount > 0;
+        return !surplus.claimed && surplus.amount > 0;
     }
 
     /**

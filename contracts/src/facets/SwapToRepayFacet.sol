@@ -397,9 +397,6 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // #569 Codex #572 round-4 P2 — `ClaimFacet.claimAsBorrower` now
         // releases the lien on this residual atomically with the claim
         // withdrawal (no longer at the Repaid transition).
-        // Codex round-2 P1 #2 — `claimed: false` regardless of amount
-        // so `settleBorrowerLifProper` below can credit
-        // `borrowerLifRebate` for later claim.
         uint256 unconsumedCollateral = loan.collateralAmount - actualCollateralConsumed;
         // Push the partial-fill leftover (= sellAmount -
         // actualCollateralConsumed) back into the borrower vault
@@ -491,7 +488,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // flip declares the listing dead.
         LibPrepayCleanup.clearActiveListing(loan, loanId);
 
-        // ── Transition + LIF VPFI settlement ─────────────────────────
+        // ── Transition ───────────────────────────────────────────────
         // #1132 (S10 central enforcement) — route through the
         // `EncumbranceMutateFacet.terminalize` host so the validated Active→Repaid
         // transition AND both holders' fail-closed frozen-claimant markers land
@@ -505,14 +502,6 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             ),
             bytes4(0)
         );
-
-        // Codex round-1 PR #390 P1 #2 — Phase 5 / §5.2b proper-close
-        // settlement for the borrower LIF VPFI path. Splits any
-        // diamond-held VPFI between the borrower's claimable rebate
-        // (scaled by time-weighted avg discount BPS) and the
-        // treasury share. No-op on loans that took the lending-asset
-        // fee path at init (vpfiHeld == 0). Mirror RepayFacet:561.
-        LibVPFIDiscount.settleBorrowerLifProper(loan);
 
         // ── Phase-2 reward accrual close ─────────────────────────────
         // Through the diamond-internal hook InteractionRewardsFacet hosts for

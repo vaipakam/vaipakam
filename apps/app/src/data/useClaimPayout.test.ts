@@ -193,18 +193,17 @@ describe('borrowerPayoutWhat', () => {
     status: 'defaulted' as const,
     base: null,
     returnedNft: null,
-    rebate: null,
     surplus: null,
     extraCollateral: null,
     collateral: '1 WETH',
     labels,
   };
 
-  it('keeps the base amount while its token details load, beside a rebate, in every status', () => {
+  it('keeps the base amount while its token details load, beside a surplus, in every status', () => {
     for (const status of ['repaid', 'defaulted', 'liquidated', 'internal_matched'] as const) {
-      const what = borrowerPayoutWhat({ ...base, status, base: loading, rebate: '2 VPFI rebate' });
+      const what = borrowerPayoutWhat({ ...base, status, base: loading, surplus: known('1 USDC') });
       expect(what.toLowerCase()).toContain(labels.amountLoadingInline.toLowerCase());
-      expect(what).toContain('2 VPFI rebate');
+      expect(what).toContain(labels.swapSurplus('1 USDC'));
     }
   });
 
@@ -218,14 +217,12 @@ describe('borrowerPayoutWhat', () => {
       ...base,
       status: 'repaid',
       base: known('5 USDC'),
-      rebate: '2 VPFI rebate',
       surplus: known('1 USDC'),
       extraCollateral: known('0.5 WETH'),
     });
     expect(what).toBe(
       [
-        labels.collateralBackWithAmount('5 USDC', ''),
-        '2 VPFI rebate',
+        labels.collateralBackWithAmount('5 USDC'),
         labels.swapSurplus('1 USDC'),
         labels.extraCollateral('0.5 WETH'),
       ].join(' + '),
@@ -238,14 +235,14 @@ describe('borrowerPayoutWhat', () => {
     expect(what).toContain(labels.extraCollateral(labels.amountUnreadableInline));
   });
 
-  it('keeps a returned NFT when a rebate is also paid', () => {
+  it('keeps a returned NFT when a surplus is also paid', () => {
     const what = borrowerPayoutWhat({
       ...base,
       status: 'repaid',
       returnedNft: 'NFT 0xab…cd #7',
-      rebate: '2 VPFI rebate',
+      surplus: known('1 USDC'),
     });
-    expect(what).toBe(`${labels.collateralBack('NFT 0xab…cd #7')} + 2 VPFI rebate`);
+    expect(what).toBe(`${labels.collateralBack('NFT 0xab…cd #7')} + ${labels.swapSurplus('1 USDC')}`);
   });
 
   it('opens with a capital when the only lane is written as a continuation', () => {

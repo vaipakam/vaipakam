@@ -74,8 +74,8 @@ export function useClaimPayoutText(
   const isRental = loan !== undefined && loan.assetType !== AssetType.ERC20;
   const principalMeta = useTokenMeta(!loan || isRental ? undefined : loan.lendingAsset);
   const collateralMeta = useTokenMeta(loan?.collateralAsset);
-  // Every lane the claim transaction pays, each with its own token. The
-  // VPFI rebate is always 18-decimal VPFI. Held proceeds are paid in ONE
+  // Every lane the claim transaction pays, each with its own token. Held
+  // proceeds are paid in ONE
   // asset — the loan asset for an ERC-20 loan, the prepay asset for a
   // rental (ClaimFacet withdraws the whole accumulator in `principalAsset` /
   // `prepayAsset`) — so they are stated as an amount too (#2373 r5; an
@@ -94,10 +94,6 @@ export function useClaimPayoutText(
   const held = hasHeld
     ? laneAmount(loan.claim.heldForLender, loan.claim.heldAsset ? heldMeta : { isError: true }, fmt)
     : null;
-  const rebateStr =
-    loan.claim.lifRebate > 0n
-      ? labels.rebateAmount(fmt(loan.claim.lifRebate, 18))
-      : null;
   const defaulted = loan.status === 'defaulted' || loan.status === 'liquidated';
   // Claimable proper-close group: repaid or internal_matched. NOT
   // `settled` — ClaimFacet rejects Settled on both claim paths (claims
@@ -200,7 +196,6 @@ export function useClaimPayoutText(
       status: loan.status,
       base,
       returnedNft: nftClaimLabel(loan.claim),
-      rebate: rebateStr,
       // The frozen swap-to-repay surplus.
       surplus: loan.claim.surplus ? laneAmount(loan.claim.surplus.amount, surplusMeta, fmt) : null,
       // Collateral still liened in a different asset from the claim row.
@@ -359,9 +354,8 @@ export function borrowerPayoutWhat(args: {
   status: ClaimableLoan['status'];
   base: LaneAmount | null;
   /** An NFT handed back with no fungible amount — a lane in its own right,
-   *  never one a rebate may stand in for. */
+   *  never one another lane may stand in for. */
   returnedNft: string | null;
-  rebate: string | null;
   surplus: LaneAmount | null;
   extraCollateral: LaneAmount | null;
   /** Describes the collateral when no lane names an amount. */
@@ -372,14 +366,13 @@ export function borrowerPayoutWhat(args: {
   const lanes: string[] = [];
   if (args.base?.kind === 'known') {
     lanes.push(
-      args.status === 'repaid' ? labels.collateralBackWithAmount(args.base.text, '') : args.base.text,
+      args.status === 'repaid' ? labels.collateralBackWithAmount(args.base.text) : args.base.text,
     );
   } else if (args.base) {
     lanes.push(amountPhrase(args.base, labels));
   } else if (args.returnedNft) {
     lanes.push(labels.collateralBack(args.returnedNft));
   }
-  if (args.rebate) lanes.push(args.rebate);
   if (args.surplus) lanes.push(labels.swapSurplus(amountPhrase(args.surplus, labels)));
   if (args.extraCollateral) lanes.push(labels.extraCollateral(amountPhrase(args.extraCollateral, labels)));
   if (lanes.length > 0) return joinLanes(lanes);

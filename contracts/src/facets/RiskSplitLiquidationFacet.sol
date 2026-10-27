@@ -7,7 +7,6 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
-import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -208,7 +207,6 @@ contract RiskSplitLiquidationFacet is
             ),
             bytes4(0)
         );
-        LibVPFIDiscount.forfeitBorrowerLif(loan);
         LibInteractionRewards.closeLoan(loanId, false, false);
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
