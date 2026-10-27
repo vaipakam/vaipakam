@@ -510,7 +510,11 @@ GIT_AUTHOR_DATE='2026-08-15T12:00:00Z' GIT_COMMITTER_DATE='2026-08-15T12:00:00Z'
 printf '## new\n' > "$W/docs/ReleaseNotes/unreleased/0009-reused.md"  # name reused
 msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 2>&1)"
 check "the 08-17 run succeeds"          "$?"                              "0"
-check "the reused name is not held"     "$(says "$msg" '0009-reused.md')" "0"
+# The held-back list prints `<name>  (<day> UTC)`; the name alone also
+# appears in the read-through list of what WAS folded (#1831), so match the
+# held form, not the bare name.
+check "the reused name is not held"     "$(says "$msg" '0009-reused.md  (')" "0"
+check "it is folded instead"            "$(says "$msg" '  - 0009-reused.md')" "1"
 check "not dated to the old file's day" "$(says "$msg" '2026-08-15 UTC')" "0"
 check "folded with 08-17's own"         "$(sections "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md")" "2"
 
@@ -580,6 +584,31 @@ msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-16 2>&1)"
 check "the run succeeds"            "$?"                                                            "0"
 check "its own day is folded"       "$(sections "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-16.md")" "1"
 check "the other day is held back"  "$(says "$msg" '2026-08-17 UTC')"                               "1"
+
+# ── Fragments folded into one file are named for a read-through (#1831) ─────
+# Fragments are written independently, against different states of the code,
+# so two can each be true and jointly contradict once they sit in one file —
+# and the run consumes the sources, so nobody re-reads them afterwards. The
+# run therefore names every fragment it folded together, with each one's
+# `> Caveat:` lines. A prompt, not a checker: nothing claims they agree.
+case_start "T10d2: several folded fragments are named for one read-through"
+W="$ROOT/t10d2"; build "$W"
+printf '## caveated (PR #4211)\n\nBody.\n\n> Caveat: estimates do not model the ceiling\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0005-c.md"   # untracked, so this day
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 2>&1)"
+check "the run succeeds"              "$?"                                                 "0"
+check "it asks for one read-through"  "$(says "$msg" 'Read these 2 together')"             "1"
+check "naming the dated fragment"     "$(says "$msg" '  - 0002-b.md')"                     "1"
+check "and the new one"               "$(says "$msg" '  - 0005-c.md')"                     "1"
+check "with its caveat line"          "$(says "$msg" 'caveat: estimates do not model the ceiling')" "1"
+check "and a next step for it"        "$(says "$msg" 'read the fragments listed above against each other')" "1"
+
+case_start "T10d3: a single folded fragment needs no read-through"
+W="$ROOT/t10d3"; build "$W"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 2>&1)"
+check "the run succeeds"              "$?"                                                 "0"
+check "one fragment is folded"        "$(says "$msg" 'Assembled 1 fragment')"              "1"
+check "and no read-through is asked"  "$(says "$msg" 'Read these')"                        "0"
 
 # ── A damaged checkout must not read as a clean export ──────────────────────
 # Both fail `rev-parse --is-inside-work-tree`, but only an export can honestly
