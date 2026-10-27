@@ -733,6 +733,7 @@
       "wantPathBlurb": "Pay up front, use the NFT until the rental ends.",
       "switchPrompt": "{{path}}? Switch",
       "prepaymentTokenLabel": "prepayment token",
+      "listingNamesCollateral": "This listing names a collateral asset, but a rental takes no collateral: a renter pays only the prepayment. The app does not accept a rental listing in this shape, because accepting it would mean acknowledging an asset the rental never uses.",
       "browseCta": "Browse NFTs available to rent",
       "custodyNote": "The NFT never leaves vault custody. The renter receives temporary use rights only — not ownership.",
       "postListing": "Post rental listing",

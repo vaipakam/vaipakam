@@ -685,6 +685,7 @@
       "wantPathBlurb": "선불로 결제하고 임대가 끝날 때까지 NFT를 사용하세요.",
       "switchPrompt": "{{path}}? 전환",
       "prepaymentTokenLabel": "선불 토큰",
+      "listingNamesCollateral": "이 등록은 담보 자산을 지정하지만, 대여는 담보를 받지 않습니다. 대여자는 선불금만 지불합니다. 이런 형태의 대여 등록은 앱에서 수락하지 않습니다. 수락하면 대여가 전혀 사용하지 않는 자산을 승인하게 되기 때문입니다.",
       "browseCta": "임대 가능한 NFT 둘러보기",
       "custodyNote": "NFT는 Vault 보관에서 절대 벗어나지 않습니다. 임차인은 소유권이 아니라 임시 사용 권리만 받습니다.",
       "postListing": "임대 매물 등록",

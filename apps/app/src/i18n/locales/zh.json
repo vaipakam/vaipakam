@@ -685,6 +685,7 @@
       "wantPathBlurb": "预先付款，并在租赁结束前使用 NFT。",
       "switchPrompt": "{{path}}？切换",
       "prepaymentTokenLabel": "预付 token",
+      "listingNamesCollateral": "此挂单指定了抵押资产，但租赁不收取任何抵押：租用者只支付预付款。应用不接受这种形式的租赁挂单，因为接受它就意味着确认一个租赁从不使用的资产。",
       "browseCta": "浏览可租赁 NFT",
       "custodyNote": "NFT 永不离开 vault 托管。租用者只获得临时使用权 — 不获得所有权。",
       "postListing": "发布租赁 listing",

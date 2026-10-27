@@ -154,6 +154,37 @@ export function illiquidLegUnreviewed(
   return (live.lending && !legs.lending) || (live.collateral && !legs.collateral);
 }
 
+/** The collateral fields of an offer, as the indexer row (decimal strings)
+ *  or the canonical `getOffer` struct (bigints) carries them. */
+export interface CollateralFields {
+  collateralAsset: string;
+  collateralAmount: string | bigint;
+  collateralTokenId: string | bigint;
+  collateralQuantity: string | bigint;
+}
+
+/** #2938 — true when a rental listing names any collateral. A rental takes
+ *  none: the accept pulls only the prepayment and a rental default never
+ *  reads the collateral fields, so a listing that sets them asks the renter
+ *  to acknowledge an asset the rental does not use. The rental review
+ *  refuses such a listing by name (the contract-side shape rule is #2949).
+ *  An unreadable field counts as named, so the refusal fails closed. */
+export function rentalNamesCollateral(o: CollateralFields): boolean {
+  const nonZero = (v: string | bigint) => {
+    try {
+      return BigInt(v) !== 0n;
+    } catch {
+      return true;
+    }
+  };
+  return (
+    (Boolean(o.collateralAsset) && o.collateralAsset.toLowerCase() !== ZERO_ADDRESS) ||
+    nonZero(o.collateralAmount) ||
+    nonZero(o.collateralTokenId) ||
+    nonZero(o.collateralQuantity)
+  );
+}
+
 /** The lifecycle terms of a canonical `getOffer` struct plus its linked loan
  *  id (`getOfferLinkedLoanId`, which `getOffer` does not carry). */
 export function lifecycleFromOffer(

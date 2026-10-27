@@ -685,6 +685,7 @@
       "wantPathBlurb": "Payez d'avance, utilisez le NFT jusqu'à la fin de la location.",
       "switchPrompt": "{{path}} ? Changer",
       "prepaymentTokenLabel": "token de prépaiement",
+      "listingNamesCollateral": "Cette annonce désigne un actif de garantie, mais une location ne prend aucune garantie : le locataire ne paie que le prépaiement. L’app n’accepte pas une annonce de location sous cette forme, car l’accepter reviendrait à reconnaître un actif que la location n’utilise jamais.",
       "browseCta": "Parcourir les NFT disponibles à la location",
       "custodyNote": "Le NFT ne quitte jamais la garde du vault. Le locataire reçoit seulement des droits d'usage temporaires — pas la propriété.",
       "postListing": "Publier une annonce de location",
