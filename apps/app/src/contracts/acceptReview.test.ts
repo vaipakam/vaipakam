@@ -6,6 +6,7 @@ import {
   illiquidLegUnreviewed,
   lifecycleRows,
   reviewedMismatches,
+  rentalNamesCollateral,
   reviewedTermsFromOrder,
   type ReviewedAcceptTerms,
 } from './acceptReview';
@@ -251,5 +252,38 @@ describe('#2725 signed-order review', () => {
     const borrower = reviewedTermsFromOrder({ ...order, offerType: '1' } as SignedOrderWire);
     expect(borrower.amount).toBe(100n);
     expect(borrower.interestRateBps).toBe(900n);
+  });
+});
+
+describe('#2938 rentalNamesCollateral', () => {
+  const none = {
+    collateralAsset: ZERO,
+    collateralAmount: '0',
+    collateralTokenId: '0',
+    collateralQuantity: '0',
+  };
+
+  it('is false for a rental with no collateral (indexer row or canonical struct)', () => {
+    expect(rentalNamesCollateral(none)).toBe(false);
+    expect(
+      rentalNamesCollateral({
+        collateralAsset: ZERO,
+        collateralAmount: 0n,
+        collateralTokenId: 0n,
+        collateralQuantity: 0n,
+      }),
+    ).toBe(false);
+    expect(rentalNamesCollateral({ ...none, collateralAsset: '' })).toBe(false);
+  });
+
+  it('is true when any collateral field is set', () => {
+    expect(rentalNamesCollateral({ ...none, collateralAsset: B })).toBe(true);
+    expect(rentalNamesCollateral({ ...none, collateralAmount: 5n })).toBe(true);
+    expect(rentalNamesCollateral({ ...none, collateralTokenId: '7' })).toBe(true);
+    expect(rentalNamesCollateral({ ...none, collateralQuantity: '1' })).toBe(true);
+  });
+
+  it('fails closed on an unreadable field', () => {
+    expect(rentalNamesCollateral({ ...none, collateralAmount: 'not-a-number' })).toBe(true);
   });
 });

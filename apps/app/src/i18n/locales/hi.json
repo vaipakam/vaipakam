@@ -685,6 +685,7 @@
       "wantPathBlurb": "Up front pay करें, rental end तक NFT use करें।",
       "switchPrompt": "{{path}}? Switch करें",
       "prepaymentTokenLabel": "prepayment token",
+      "listingNamesCollateral": "यह लिस्टिंग एक collateral asset का नाम देती है, लेकिन rental में कोई collateral नहीं लिया जाता: किराएदार केवल prepayment देता है। ऐप इस रूप की rental लिस्टिंग स्वीकार नहीं करता, क्योंकि इसे स्वीकार करने का मतलब होगा ऐसे asset को स्वीकार करना जिसका rental कभी उपयोग नहीं करता।",
       "browseCta": "Rent के लिए available NFTs browse करें",
       "custodyNote": "NFT vault custody से कभी बाहर नहीं जाता। Renter को सिर्फ temporary use rights मिलते हैं — ownership नहीं।",
       "postListing": "Rental listing post करें",

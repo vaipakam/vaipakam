@@ -40,6 +40,8 @@ import type { TxSimInput } from '../contracts/useTxSimulation';
 import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
 import {
   lifecycleFromOffer,
+  rentalNamesCollateral,
+  type CollateralFields,
   type LifecycleTerms,
   type ReviewedAcceptTerms,
 } from '../contracts/acceptReview';
@@ -947,12 +949,25 @@ function RentNftFlow() {
           args: [offerId],
         }) as Promise<bigint>,
       ]);
-      return lifecycleFromOffer(o, linked);
+      return {
+        lifecycle: lifecycleFromOffer(o, linked),
+        // #2938 — from the canonical struct, not the indexer row, so a row
+        // that lags the chain cannot hide a named collateral.
+        namesCollateral: rentalNamesCollateral(o as unknown as CollateralFields),
+      };
     },
   });
   const rentLifecycle: LifecycleTerms | undefined = rentLifecycleQuery.isError
     ? undefined
-    : rentLifecycleQuery.data;
+    : rentLifecycleQuery.data?.lifecycle;
+  // #2938 — a rental takes no collateral (the accept pulls only the
+  // prepayment, and a rental default never reads the collateral fields). A
+  // listing that names one would have the renter acknowledge an asset the
+  // rental does not use, so the review refuses it by name. Either source
+  // naming one is enough: the indexer row decides before the live read lands.
+  const listingNamesCollateral =
+    (selected !== null && rentalNamesCollateral(selected)) ||
+    rentLifecycleQuery.data?.namesCollateral === true;
   // Consent is given against the terms on screen: when the listed terms
   // change (first arrival included), the tick does not carry over. Adjusted
   // during render, like OfferFlow's assertion epoch, so no frame can sign
@@ -982,6 +997,7 @@ function RentNftFlow() {
     receipt !== null &&
     // #2725 — every lifecycle term the signature binds has been read and shown.
     rentLifecycle !== undefined &&
+    !listingNamesCollateral &&
     Boolean(walletClient) &&
     Boolean(publicClient) &&
     !prepaySecBlocked &&
@@ -1071,6 +1087,9 @@ function RentNftFlow() {
       if (!rentLifecycle) {
         throw new Error(copy.match.termsChanged);
       }
+      if (listingNamesCollateral) {
+        throw new Error(copy.rent.listingNamesCollateral);
+      }
       const reviewedRentTerms: ReviewedAcceptTerms = {
         offerCreator: selected.creator as Address,
         offerType: selected.offerType,
@@ -1090,10 +1109,9 @@ function RentNftFlow() {
         ...rentLifecycle,
         // #2728 — the rental review discloses the NFT leg's own model up
         // front (it stays in custody, fees are prepaid, nothing is
-        // liquidated on price), so that leg is acknowledged. The review
-        // shows no collateral leg, so none is acknowledged: a listing whose
-        // collateral reads illiquid is refused before signing rather than
-        // signed against a disclosure the renter never saw.
+        // liquidated on price), so that leg is acknowledged. A rental takes
+        // no collateral, and a listing that names one was refused above
+        // (#2938), so no collateral leg is acknowledged.
         illiquidLegs: { lending: true, collateral: false },
       };
       let signed: Awaited<ReturnType<typeof signAcceptTerms>>;
@@ -1379,6 +1397,11 @@ function RentNftFlow() {
                 {copy.acceptTerms.checking}
               </p>
             )}
+            {listingNamesCollateral ? (
+              <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
+                <span className="banner-body">{copy.rent.listingNamesCollateral}</span>
+              </div>
+            ) : null}
             <TokenScreenBanner screen={tokenScreen} style={{ marginTop: 16 }} />
             {killed ? (
               <div className="banner banner-warn" role="alert" style={{ marginTop: 16 }}>
