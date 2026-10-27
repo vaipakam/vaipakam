@@ -1,0 +1,26 @@
+-- #2937 — drop the retired pre-cutover recycle-day backfill table.
+--
+-- `recycle_day_backfill` (0047, #1349 M5) was to hold recycling days closed
+-- before `GovernorDayPoolStamped` was widened, recomputed later from
+-- `getRecycleDayMetrics` by an operator pass (#1523). That pass never
+-- shipped and nothing ever wrote the table. Every chain reaches the current
+-- build by a fresh deploy (owner decision O1 = A), whose Diamond announces
+-- every day in the widened shape, so there is no pre-cutover day to recover.
+--
+-- This is the contract step of a two-step retirement. The expand step
+-- (#2937, step 1) removed every reader and registration while the table
+-- still existed: the indexer's /metrics/recycling read and runway refusal,
+-- the table-classification entry, the nightly archive's
+-- ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED entry, and the restore converter's
+-- import (it now skips the table, empty, in older archives). The indexer that
+-- served before step 1 already tolerated the table's absence.
+--
+-- ORDERING: apply only after the step-1 `ops/offchain-data-warm` Worker is
+-- deployed. The archive Worker before step 1 lists this table as required
+-- once 0047 is applied, so it would read the drop as a table LOSS and abort
+-- the nightly.
+--
+-- A fresh environment replays 0047 (creates it) and then this file.
+-- `recycle_chain_reported.attributed_cumulative`, which 0047 also added, is
+-- live and is not touched.
+DROP TABLE IF EXISTS recycle_day_backfill;
