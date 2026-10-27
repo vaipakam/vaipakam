@@ -559,11 +559,21 @@ From WebsiteReadme.md:
 The direct-recipient marketplace model quoted below is superseded by the
 owner's one-proceeds-leg decision in #2916, merged while #2958 was under review.
 The current functional spec records the platform-received proceeds and
-repayment-equivalent settlement; this paragraph is retained only as history.
+repayment-equivalent settlement. The following text from the earlier spec is
+retained only as history, not as a current settlement requirement:
 
-and verification evidence is retained in the
-  [internal implementation notes](../internal/FunctionalSpecImplementationNotes.md#lender-entitlement-implementation-findings).
+- A marketplace sale of the collateral is paid by the buyer straight to its recipients, so the listing checks the arrival itself. The share the platform records as paid (the lender's share in a sale of a loan's collateral, on which the loan closes as repaid, and the platform's proceeds in a sale of an offer's collateral, which it credits onward) must reach its recipient in full, or the whole sale is refused and the buyer's payment never leaves the buyer. The other shares record nobody as paid: the treasury's share is a fee its recipient bears a token's charge on, the borrower's share is the seller's own remainder, and the marketplace and royalty fees the seller agreed to go to third parties. A lender who buys the collateral of their own loan by filling that listing on its own pays their own share to themselves, which is complete as it stands. In a purchase that combines several orders (a listing matched against a bid, or a batch of listings) the account that submits the purchase need not be the one paying, so the share is measured there whoever submitted it; a lender who pays their own listing inside such a purchase is refused, and buys the collateral by filling the listing on its own instead. When one purchase covers several listings, each listing is measured against its own share of what arrived, and what one listing's settlement pays onward is never counted as another listing's arrival.
 
-The earlier collateral-sale discount findings above motivated #2876. Its
-settlement design was resolved by #2916; live activation still requires
-evidence from each compatible deployment.
+## Dashboard coding and build guidance
+
+From WebsiteReadme.md, separated from its functional quality requirements:
+
+Coding and quality requirements:
+
+- new dashboard code should follow TypeScript strict mode
+- frontend verification should use `tsc -b --force` for production-build parity because Cloudflare Pages runs the project build graph rather than only isolated no-emit checks
+- new hooks and components should include clear JSDoc comments
+- errors should use the existing contract-error decoding approach where relevant
+- production code should not leave debug browser console output statements behind
+- interactive controls and charts should remain accessible, including sensible ARIA labeling where needed
+- the page should include appropriate SEO-friendly metadata because it is a public transparency surface

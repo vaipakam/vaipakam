@@ -1212,15 +1212,14 @@ Data-fetching strategy:
 - for aggregates that are too expensive to reconstruct repeatedly on the client, the protocol may expose lightweight read-only helper functions such as `getProtocolTVL`, `getUserCount`, `getActiveLoansCountAndValue`, and `getTotalInterestEarned`
 - direct contract reads and browser log indexing remain the fallback path whenever the worker is unavailable, times out, or has no configured origin; the cache must never become an oracle for money-moving actions
 
-Coding and quality requirements:
+Quality requirements:
 
-- new dashboard code should follow TypeScript strict mode
-- frontend verification should use `tsc -b --force` for production-build parity because Cloudflare Pages runs the project build graph rather than only isolated no-emit checks
-- new hooks and components should include clear JSDoc comments
-- errors should use the existing contract-error decoding approach where relevant
-- production code should not leave debug browser console output statements behind
-- interactive controls and charts should remain accessible, including sensible ARIA labeling where needed
-- the page should include appropriate SEO-friendly metadata because it is a public transparency surface
+- errors explain the relevant protocol failure in terms the user can act on
+- interactive controls and charts remain accessible, including meaningful labels for assistive technology
+- the public transparency page includes descriptive search and sharing metadata
+
+Dashboard coding and build guidance is preserved in the
+[internal implementation notes](../internal/FunctionalSpecImplementationNotes.md#dashboard-coding-and-build-guidance).
 
 Security, privacy, and compliance requirements:
 
@@ -1245,7 +1244,7 @@ Acceptance expectations for the dashboard:
 - exports must work and include verifiable metadata
 - the page must match the broader Vaipakam design system
 - the page must be responsive and accessibility-conscious
-- the frontend test suite should include coverage for the new hooks and major dashboard rendering states
+- loading, successful, empty, stale, and failed dashboard states must each present an accurate and usable result
 
 ## Troubleshooting And Observability
 
@@ -1261,7 +1260,7 @@ The website/app should support:
 - clear user-facing error states together with internal diagnostic context for debugging
 - user-facing labels should prefer friendly issue-reporting language such as `Report Issue` for the floating entry point and `Issue Details` for the drawer title, while internal code may still call the feature diagnostics
 
-Implementation requirements:
+Troubleshooting behavior:
 
 - every important action path should emit frontend telemetry or logs for step start, step success, and step failure
 - logs should identify the relevant area such as wallet connect, create offer, accept offer, repay, claim, liquidation-related view, preclose, refinance, or early withdrawal
