@@ -1178,6 +1178,50 @@ const copySource = {
     suffix: '.',
   },
 
+  // #2725 — the lifecycle terms every accept signature binds, shown on every
+  // accept review (`lifecycleRows` in contracts/acceptReview.ts). Each term is
+  // stated even at its default, so nothing the signature binds is implied.
+  acceptTerms: {
+    heading: 'Terms of the loan for its whole life',
+    checking: 'Reading the offer’s loan terms from the chain…',
+    checkFailed:
+      'Couldn’t read the offer’s loan terms from the chain, so there is nothing to sign yet.',
+    interestLabel: 'Interest',
+    interestFullTerm:
+      'Full term: the whole term’s interest is owed even if the loan is repaid early.',
+    interestProRata: 'Day by day: repaying early costs less.',
+    scheduleLabel: 'Interest payments',
+    cadenceNone: 'Once, when the loan is repaid.',
+    cadenceMonthly:
+      'Every month. A period left unpaid past its grace can be settled by anyone, selling collateral to cover what is owed.',
+    cadenceQuarterly:
+      'Every quarter. A period left unpaid past its grace can be settled by anyone, selling collateral to cover what is owed.',
+    cadenceSemiAnnual:
+      'Every six months. A period left unpaid past its grace can be settled by anyone, selling collateral to cover what is owed.',
+    cadenceAnnual:
+      'Every year. A period left unpaid past its grace can be settled by anyone, selling collateral to cover what is owed.',
+    cadenceUnknown:
+      'A payment schedule this app does not recognise. Do not sign until it is shown here.',
+    partialRepayLabel: 'Repaying in parts',
+    partialRepayAllowed: 'Allowed: the borrower may repay part of the loan before it is due.',
+    partialRepayNotAllowed: 'Not allowed: the loan is repaid in one payment.',
+    prepayListingLabel: 'Selling the collateral during the loan',
+    prepayListingAllowed:
+      'Allowed: the borrower may list the collateral for sale while the loan runs, and the sale repays the loan first.',
+    prepayListingNotAllowed: 'Not allowed.',
+    parallelSaleLabel: 'Selling the collateral before acceptance',
+    parallelSaleAllowed:
+      'Allowed: the borrower may list the collateral NFT for sale while the offer is open. A listing still open when the loan starts carries into the loan, and its sale repays the loan first.',
+    parallelSaleNotAllowed: 'Not allowed.',
+    liveListingLabel: 'Collateral listed for sale now',
+    liveListing:
+      'The collateral is listed for sale right now. The listing carries into the loan, and its sale repays the loan first.',
+    refinanceLabel: 'Refinance',
+    refinanceOf: tmpl('Accepting also pays off and closes loan #{{id}}.', ['id']),
+    linkedLabel: 'Linked loan',
+    linkedTo: tmpl('Accepting also settles against loan #{{id}}, as described above.', ['id']),
+  },
+
   match: {
     borrowTitle: 'Lenders ready to fund you now',
     borrowLede:
