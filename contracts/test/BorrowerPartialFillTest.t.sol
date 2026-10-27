@@ -744,6 +744,34 @@ contract BorrowerPartialFillTest is SetupTest {
         _assertTermsMismatch(lo, bo);
     }
 
+    function test_matchErrorLifecycleTerms_prepayListingDiffers() public {
+        (uint256 lo, uint256 bo) = _pairForTerms();
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(bo);
+        o.allowsPrepayListing = !o.allowsPrepayListing;
+        TestMutatorFacet(address(diamond)).setOffer(bo, o);
+        _assertTermsMismatch(lo, bo);
+    }
+
+    function test_matchErrorLifecycleTerms_cadenceDiffers() public {
+        (uint256 lo, uint256 bo) = _pairForTerms();
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(bo);
+        o.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.Monthly;
+        TestMutatorFacet(address(diamond)).setOffer(bo, o);
+        _assertTermsMismatch(lo, bo);
+    }
+
+    /// @dev An ERC-20 loan never reads `prepayAsset`, so a differing
+    ///      placeholder there must not block the match.
+    function test_matchLifecycleTerms_erc20IgnoresPrepayAsset() public {
+        (uint256 lo, uint256 bo) = _pairForTerms();
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(bo);
+        o.prepayAsset = address(0xBEEF);
+        TestMutatorFacet(address(diamond)).setOffer(bo, o);
+        LibOfferMatch.MatchResult memory r =
+            OfferMatchFacet(address(diamond)).previewMatch(lo, bo, address(this), address(this));
+        assertEq(uint8(r.errorCode), uint8(LibOfferMatch.MatchError.Ok), "ERC-20 match ignores prepayAsset");
+    }
+
     function test_matchLifecycleTerms_agreeingTermsMatchAndReachTheLoan() public {
         (uint256 lo, uint256 bo) = _pairForTerms();
         _setTerms(bo, true, true);
