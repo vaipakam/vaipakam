@@ -475,19 +475,21 @@ contract SeaportSettlementForkTest is SetupTest {
     ///              `wire`.
     ///           4. Real `Seaport.fulfillAdvancedOrder` from the buyer.
     ///           5. Asserts six post-fill state changes (per #378):
-    ///              a. Lender-NFT holder balance ↑ by `pctx.lenderLeg`.
+    ///              a. Stored lender's vault ↑ by `pctx.lenderLeg`, owed
+    ///                 to the lender-NFT holder as a claim.
     ///              b. Treasury balance ↑ by `pctx.treasuryLeg`.
-    ///              c. Borrower-NFT holder's VAULT ↑ by the remainder.
-    ///              d. Loan transitioned to `Settled`.
+    ///              c. Borrower-NFT holder's wallet ↑ by the remainder.
+    ///              d. Loan transitioned to `Repaid`.
     ///              e. Borrower-NFT lock released.
     ///              f. Buyer holds the collateral NFT.
     ///
     ///         Note on payment recipients (#2876): the order pays ONE
     ///         proceeds leg to the Diamond, which splits it in the zone's
-    ///         `validateOrder` callback: the lender holder (`ownerOf
-    ///         (lenderTokenId)`, the EOA `phase2Lender` here) is paid
-    ///         directly, the treasury its share, and the borrower holder's
-    ///         VAULT the remainder.
+    ///         `validateOrder` callback as a repayment: the lender's due
+    ///         into the stored lender's vault for the claim, the treasury
+    ///         its share, and the borrower holder (`ownerOf
+    ///         (borrowerTokenId)`, the EOA `phase2Borrower` here) the
+    ///         remainder in their wallet.
     function test_Fork_BuyerFulfillsAndSettles() public {
         if (!forkEnabled) return;
 
@@ -527,15 +529,17 @@ contract SeaportSettlementForkTest is SetupTest {
         IERC20(address(phase2Principal)).approve(SEAPORT_ADDR, askPrice);
 
         // ── Snapshot balances + state BEFORE fulfillment ─────────
-        // #2876 — the Diamond pays the lender-position holder (the EOA
-        // `phase2Lender`) and the borrower-position holder's vault.
+        // #2876 — the lender's due lands in the stored lender's vault for
+        // the claim; the borrower-position holder's wallet takes the rest.
         address treasury = AdminFacet(address(diamond)).getTreasury();
+        address lenderVault =
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(phase2Lender);
         uint256 lenderBefore =
-            IERC20(address(phase2Principal)).balanceOf(phase2Lender);
+            IERC20(address(phase2Principal)).balanceOf(lenderVault);
         uint256 treasuryBefore =
             IERC20(address(phase2Principal)).balanceOf(treasury);
         uint256 borrowerBefore =
-            IERC20(address(phase2Principal)).balanceOf(phase2BorrowerVault);
+            IERC20(address(phase2Principal)).balanceOf(phase2Borrower);
 
         // ── Build AdvancedOrder from OrderComponents ─────────────
         // `OrderParameters` is `OrderComponents` minus `counter` plus
@@ -608,13 +612,13 @@ contract SeaportSettlementForkTest is SetupTest {
         assertTrue(ok, "Seaport.fulfillAdvancedOrder must return true on a full fill");
 
         // ── Six post-fill assertions (per Issue #378) ────────────
-        // 1. Lender NFT holder balance ↑ by lender leg.
+        // 1. Stored lender's vault ↑ by lender leg, for the claim.
         uint256 lenderAfter =
-            IERC20(address(phase2Principal)).balanceOf(phase2Lender);
+            IERC20(address(phase2Principal)).balanceOf(lenderVault);
         assertEq(
             lenderAfter - lenderBefore,
             pctx.lenderLeg,
-            "lender NFT holder balance must increase by pctx.lenderLeg"
+            "lender vault must increase by pctx.lenderLeg"
         );
         // 2. Treasury balance ↑ by treasury leg.
         uint256 treasuryAfter =
@@ -624,22 +628,22 @@ contract SeaportSettlementForkTest is SetupTest {
             pctx.treasuryLeg,
             "treasury balance must increase by pctx.treasuryLeg"
         );
-        // 3. Borrower NFT holder's vault ↑ by the remainder.
+        // 3. Borrower NFT holder's wallet ↑ by the remainder.
         uint256 borrowerAfter =
-            IERC20(address(phase2Principal)).balanceOf(phase2BorrowerVault);
+            IERC20(address(phase2Principal)).balanceOf(phase2Borrower);
         uint256 expectedRemainder = askPrice - pctx.lenderLeg - pctx.treasuryLeg;
         assertEq(
             borrowerAfter - borrowerBefore,
             expectedRemainder,
-            "borrower holder's vault must increase by ask minus lender+treasury legs"
+            "borrower holder's wallet must increase by ask minus lender+treasury legs"
         );
-        // 4. Loan transitioned to Settled.
+        // 4. Loan transitioned to Repaid (the lender's claim settles it).
         LibVaipakam.Loan memory loanAfter =
             LoanFacet(address(diamond)).getLoanDetails(LOAN_ID);
         assertEq(
             uint256(loanAfter.status),
-            uint256(LibVaipakam.LoanStatus.Settled),
-            "loan.status must be Settled after fulfillment"
+            uint256(LibVaipakam.LoanStatus.Repaid),
+            "loan.status must be Repaid after fulfillment"
         );
         // 5. Borrower-NFT lock released. Diamond storage clears the
         //    prepay-listing slot at settlement; assert it's zero.

@@ -11,12 +11,17 @@
 > retired design. A loan-keyed listing now carries the same shape the
 > offer-keyed parallel sale (§19) always had: ONE proceeds leg, the ask net
 > of the fee legs, paid to the Diamond, followed by the fee legs. In the
-> zone's `validateOrder` the Diamond splits it by one function shared by
-> both listing types (`PrepayListingFacet._settleSaleProceeds`), at what a
-> repayment at the fill would owe: the current lender holder its due plus
-> its yield-fee discount, the treasury its share net of that discount, the
-> current borrower holder's vault the rest, reported in
-> `CollateralSaleProceedsSplit`. The executor checks the leg pays the
+> zone's `validateOrder` the Diamond settles the loan by one function
+> shared by both listing types (`PrepayListingFacet._settleSale`), as a
+> repayment at the fill: the loan goes Active -> Repaid (the Active ->
+> Settled edge is retired); the lender's due plus its yield-fee discount
+> waits in the stored lender's vault for `claimAsLender`; the treasury gets
+> its share net of that discount; the current borrower holder is paid the
+> rest in their wallet, or it is held for `claimAsBorrower` when they are
+> flagged or the wallet refuses it; all reported in
+> `CollateralSaleProceedsSplit`. Neither side's holder can stop the other's
+> payout; only a flagged borrower holder's own sale is refused (owner
+> direction 2026-10-27). The executor checks the leg pays the
 > Diamond and covers the live floor (`ProceedsShortPaid`,
 > `WrongProceedsRecipient`) and measures it arriving in full; auto-list's
 > B-cond-2 reads the proceeds leg at the current block against the live

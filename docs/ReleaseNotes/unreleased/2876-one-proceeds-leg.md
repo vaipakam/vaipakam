@@ -10,34 +10,48 @@ the lender the yield-fee discount a repayment gives, and its signed amounts
 went stale as interest accrued or a position changed hands.
 
 Both listing types now pay the platform one proceeds leg (the sale price
-net of the marketplace fee legs), and the platform splits it in the same
-transaction by one rule, at what a full repayment at the moment of the fill
-would owe: the current lender-position holder its due plus any yield-fee
-discount it qualifies for, the treasury its share net of that discount, and
-the current borrower-position holder everything above that, into their
-vault, or into their wallet when they have no vault or theirs is waiting on
-a mandatory upgrade. That is the delivery the borrower's fee refund on the
-same close already used: the borrower side's vault can never stop the sale
-that pays the lender, and a payout never creates a vault. The loan is
-marked settled before any of these payments moves, so nothing a payment
-reaches can repay, claim or sell it again. The platform's own vault credit
-now records what the vault actually received, which matters for the sale's
-lending asset as it can be any token. A fill
-that pays less than the lender's due plus the treasury's share is refused,
-both by the listing's zone and again by the platform, and so is a fill after
-the grace boundary. One event, CollateralSaleProceedsSplit, names every
-amount as its recipient received it and says whether the remainder reached
-the vault or the wallet, for either listing type; it replaces
-the parallel-sale-only split event. A Dutch listing's posting floor is still
+net of the marketplace fee legs), and the platform settles the loan in the
+same transaction by one rule, as a repayment funded by the collateral, at
+what a full repayment at the moment of the fill would owe. The loan becomes
+repaid, exactly as after a repayment: the lender's due, plus any yield-fee
+discount the current lender-position holder qualifies for, waits in the
+lender's vault for the ordinary lender claim; the treasury receives its
+share net of that discount; and the current borrower-position holder
+receives everything above that in their wallet. When that holder is flagged,
+or their wallet refuses the payment, the remainder is held for them and paid
+by the ordinary borrower claim, using the same pay-or-hold rule the periodic
+forced sale already used. The loan settles when the lender claims, as after
+any repayment. A grandfathered borrower fee refund on the same close also
+waits for the borrower claim now, as it does after a repayment.
+
+The sale is neutral between the two sides. Before, the whole sale was
+refused when either position holder was flagged, or when the lender's wallet
+refused the token, so one side could stop the other's payout. Now a flagged
+lender holder, or a lender wallet that would refuse the token, cannot stop
+the borrower's sale, because the lender is paid through the claim, which
+decides on its own screen when the money may leave. A refusing borrower
+wallet cannot stop it either. The one refusal left is the borrower's own: a
+borrower-position holder flagged by the time of the fill cannot sell their
+collateral, and the loan simply stays open with all of the lender's rights.
+
+The loan is marked repaid before any payment moves, so nothing a payment
+reaches can repay or sell it again. A fill that pays less than the lender's
+due plus the treasury's share is refused, both by the listing's zone and
+again by the platform, and so is a fill after the grace boundary. One event,
+CollateralSaleProceedsSplit, names every amount and says whether the
+borrower's remainder was paid or held, for either listing type; it replaces
+the parallel-sale-only split event. The indexer now records a sold loan as
+repaid (claimable) instead of settled, and the inbox tells both sides about
+the sale. A Dutch listing's posting floor is still
 priced at its auction's end; its payout is what is owed at the fill, with
 the excess going to the borrower side. The grace-period auto-list now
 decides that an old order can no longer fill by reading its proceeds leg at
 the current block against the live floor, and the executor no longer keeps
 a per-order copy of the signed lender and treasury amounts.
 
-Closes #2876 (owner decision 2026-10-26, "One proceeds leg"). This changes
-the executor's storage and the order shape, so it reaches a chain only by
-fresh deploy; the storage-layout break is acknowledged. The off-chain order
+Closes #2876 (owner decision 2026-10-26, "One proceeds leg"; neutrality per
+owner direction 2026-10-27). This changes the executor's storage, the order
+shape and the sale's close, so it reaches a chain only by fresh deploy; the storage-layout break is acknowledged. The off-chain order
 builder the indexer uses to publish a listing to OpenSea builds the same
 one-leg shape in the same change, so a published listing's reconstructed
 order still matches the one the platform signed.

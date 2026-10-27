@@ -10,6 +10,7 @@ import {IVaipakamPrepayContext} from "../src/seaport/IVaipakamPrepayContext.sol"
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @notice Integration tests for the diamond-side `PrepayListingFacet`
@@ -146,30 +147,26 @@ contract PrepayListingFacetTest is SetupTest {
             IVaipakamPrepayContext(address(diamond)).getPrepayContext(TEST_LOAN_ID, block.timestamp);
         uint256 proceeds = pctx.lenderLeg + pctx.treasuryLeg + 3 ether;
         ERC20Mock(mockERC20).mint(address(diamond), proceeds);
-        // The holder has a vault (a payout never creates one; a holder
-        // without one is paid in their wallet, covered in VPFIDiscountFacetTest).
-        address holderVault =
-            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(_scBorrower);
 
         vm.prank(mockExecutor);
         PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(TEST_LOAN_ID, proceeds);
 
-        // The split: the lender holder its due, the borrower holder's vault
-        // everything above the floor.
-        assertEq(IERC20(mockERC20).balanceOf(_scLender), pctx.lenderLeg, "lender paid its due");
-        assertEq(
-            IERC20(mockERC20).balanceOf(holderVault),
-            3 ether,
-            "borrower holder's vault took the remainder"
-        );
-        assertEq(IERC20(mockERC20).balanceOf(_scBorrower), 0, "nothing reached the wallet");
+        // The sale closes the loan as a repayment: the lender's due waits in
+        // the stored lender's vault for the claim, and the borrower holder's
+        // wallet takes everything above the floor.
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(_scLender);
+        assertEq(IERC20(mockERC20).balanceOf(lenderVault), pctx.lenderLeg, "lender's due in the lender vault");
+        assertEq(IERC20(mockERC20).balanceOf(_scLender), 0, "nothing paid to the lender wallet at the sale");
+        (, uint256 owed, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(TEST_LOAN_ID, true);
+        assertEq(owed, pctx.lenderLeg, "the lender's claim names its due");
+        assertFalse(claimed, "the lender has not claimed yet");
+        assertEq(IERC20(mockERC20).balanceOf(_scBorrower), 3 ether, "borrower holder paid the remainder");
 
-        // Verify loan transitioned Active → Settled.
         LibVaipakam.Loan memory readBack = _readLoan(TEST_LOAN_ID);
         assertEq(
             uint256(readBack.status),
-            uint256(LibVaipakam.LoanStatus.Settled),
-            "loan transitioned to Settled"
+            uint256(LibVaipakam.LoanStatus.Repaid),
+            "loan transitioned to Repaid"
         );
     }
 
@@ -188,8 +185,8 @@ contract PrepayListingFacetTest is SetupTest {
         loan.interestRateBps = 1_200;
         loan.startTime = uint64(block.timestamp);
         loan.durationDays = 30;
-        // #2876 — the split pays the live position holders, so the two
-        // position NFTs exist. LibVPFIDiscount on a loan with no LIF state
+        // #2876 — the settlement resolves the live position holders, so the
+        // two position NFTs exist. LibVPFIDiscount on a loan with no LIF state
         // is a no-op.
         TestMutatorFacet(address(diamond)).setLoan(id, loan);
         TestMutatorFacet(address(diamond)).mintNFTRaw(_scLender, loan.lenderTokenId);

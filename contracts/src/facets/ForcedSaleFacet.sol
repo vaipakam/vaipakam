@@ -405,11 +405,13 @@ contract ForcedSaleFacet is IVaipakamErrors {
     /**
      * @notice Pay `amount` of `asset` to `to`'s wallet, refused unless all of
      *         it arrived (a wallet reading is trusted only to refuse).
-     * @dev    Called by this facet on itself so a refusal — a token that
-     *         blocks the address, a short reading, a receiving hook that
-     *         reverts — unwinds this attempt alone and the extra falls through
-     *         to the held route. A forced settlement never depends on the
-     *         borrower's wallet.
+     * @dev    Reached by a self-call from
+     *         {LibCloseoutFreeze.payOrHoldBorrowerExtra} (this facet's
+     *         periodic sale and `PrepayListingFacet`'s collateral sale, #2876)
+     *         so a refusal — a token that blocks the address, a short reading,
+     *         a receiving hook that reverts — unwinds this payment alone and
+     *         the extra falls through to the held route. A settlement never
+     *         depends on the borrower's wallet.
      */
     function payBorrowerWallet(address asset, address to, uint256 amount) external onlySelf {
         LibDelivery.pushExact(asset, to, amount);
@@ -647,7 +649,12 @@ contract ForcedSaleFacet is IVaipakamErrors {
         // #2795 — credit exactly what the lender received, never more than the
         // shortfall: the extra above it is the borrower's, not prepaid interest.
         loan.interestSettled += out.lenderPaid;
-        (out.borrowerExtraHeld, out.borrowerExtra) = _payBorrowerExtra(s, loanId, loan, sp.extra);
+        // The owner decision of 2026-10-25: an unflagged holder is paid to
+        // their wallet; a flagged holder, or a refused payment, has the extra
+        // held for the claim at loan end.
+        (out.borrowerExtraHeld, out.borrowerExtra) = LibCloseoutFreeze.payOrHoldBorrowerExtra(
+            s, loanId, loan, LibERC721.ownerOf(loan.borrowerTokenId), sp.extra
+        );
     }
 
     /// @dev Terminal booking (the caller ends the loan): the fee and the
@@ -738,33 +745,5 @@ contract ForcedSaleFacet is IVaipakamErrors {
         // lender's does in {_bookTerminal}.
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
         loan.collateralAmount = unsold + sold;
-    }
-
-    /// @dev The borrower's extra on an OPEN loan (owner decision 2026-10-25):
-    ///      an unflagged current holder of the borrower position is paid to
-    ///      their wallet through {payBorrowerWallet}; a flagged holder, or a
-    ///      wallet payment that was refused, has it held in the stored
-    ///      borrower's vault for the claim at loan end
-    ///      ({LibCloseoutFreeze.holdBorrowerExtra}).
-    /// @return held   True when the extra was held rather than paid out.
-    /// @return amount What the borrower got: all of `extra` when paid to the
-    ///                wallet (a short arrival there is refused), or what the
-    ///                stored borrower's vault received when held.
-    function _payBorrowerExtra(
-        LibVaipakam.Storage storage s,
-        uint256 loanId,
-        LibVaipakam.Loan storage loan,
-        uint256 extra
-    ) private returns (bool held, uint256 amount) {
-        if (extra == 0) return (false, 0);
-        address holder = LibERC721.ownerOf(loan.borrowerTokenId);
-        if (!LibSanctionedLock.mustFreezeParty(s, holder)) {
-            (bool paid, ) = address(this).call(
-                abi.encodeCall(this.payBorrowerWallet, (loan.principalAsset, holder, extra))
-            );
-            if (paid) return (false, extra);
-        }
-        amount = LibCloseoutFreeze.holdBorrowerExtra(s, loanId, loan, holder, loan.principalAsset, extra);
-        held = true;
     }
 }

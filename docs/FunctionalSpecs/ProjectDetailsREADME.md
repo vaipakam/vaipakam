@@ -1205,21 +1205,37 @@ sale proceeds, without weakening the lender's default rights.
   lender and the treasury only; it never changes what the borrower side
   receives.
 - Every collateral sale pays the platform, in one payment, the whole
-  sale price net of the marketplace fee legs, and the platform splits it
-  in the same transaction by one rule, whichever listing type sold the
+  sale price net of the marketplace fee legs, and the platform settles the
+  loan in the same transaction by one rule, whichever listing type sold the
   collateral (a loan's own listing, or a borrow-or-sell listing carried
-  into a loan): the current lender-position holder its due, the treasury
-  its share net of any lender discount, and the current borrower-position
-  holder the rest, into their Vault, or into their wallet when they have
-  no Vault or theirs is behind a mandatory upgrade. The borrower side's
-  Vault never stops the sale that pays the lender, and a payout never
-  creates a Vault; the platform's report of the split says which of the
-  two the remainder reached. A sale that pays less than the lender's due
-  plus the treasury's share at the moment of the fill does not fill. The
-  marketplace order names no position holder, so a position that changes
-  hands after the listing is posted is still paid correctly, and the
-  platform reports the split in one event that names every amount as its
-  recipient received it (owner decision 2026-10-26, #2876).
+  into a loan). The sale is a repayment funded by the collateral, so it
+  closes the loan exactly as a repayment does: the loan becomes repaid,
+  the lender's due (plus any lender discount) is placed in the lender's
+  Vault and owed to the current lender-position holder through the
+  ordinary lender claim, the treasury receives its share net of any lender
+  discount, and the current borrower-position holder receives the rest in
+  their wallet. When that holder is flagged, or their wallet refuses the
+  payment, the rest is held for them instead and paid by the ordinary
+  borrower claim. The loan settles when the lender claims and the borrower
+  side has nothing left, as after any repayment. A sale that pays less than
+  the lender's due plus the treasury's share at the moment of the fill does
+  not fill. The marketplace order names no position holder, so a position
+  that changes hands after the listing is posted is still paid correctly,
+  and the platform reports the settlement in one event that names every
+  amount as its recipient received it and says whether the borrower's
+  remainder was paid or held (owner decision 2026-10-26, #2876).
+- A collateral sale is neutral between the two sides (owner direction
+  2026-10-27): nothing about one side's position holder may stop the other
+  side's payout. A lender-position holder who is flagged, or whose wallet
+  would refuse the token, does not stop the borrower's sale, because the
+  lender is never paid inside the sale itself; the lender's share waits in
+  the lender's Vault, and the lender claim's own screen decides when it may
+  leave. A borrower-side wallet that refuses the remainder does not stop
+  the sale either; the remainder is held. The one refusal is the borrower's
+  own: a sale is the borrower's dealing in their collateral, so a
+  borrower-position holder who is flagged by the time of the fill cannot
+  sell. That refusal stops only the flagged side's own action: the loan
+  stays open with every repayment and default right the lender had.
 - Settlement recipients must follow the current Vaipakam position NFT
   owners at fill time, not only the original lender and borrower
   wallets. This preserves secondary-transfer semantics for both
@@ -1286,10 +1302,10 @@ sale proceeds, without weakening the lender's default rights.
 - **Fail-closed backstop for collateral-sale recipients.** The prepay /
   parallel collateral sale settles inside the marketplace fill: the
   marketplace pays the recorded fee recipients directly, and the platform
-  pays the live position holders (the current lender- and borrower-position
-  owners) out of the proceeds, in the same transaction and after the loan
-  has flipped to settled (so nothing a payout reaches can repay, claim or
-  sell the loan again). The sign-time and fill-time recipient screens are *fail-open*
+  settles the live position holders (the current lender- and
+  borrower-position owners) out of the proceeds, in the same transaction
+  and after the loan has flipped to repaid (so nothing a payout reaches can
+  repay or sell the loan again). The sign-time and fill-time recipient screens are *fail-open*
   oracle reads, so a recipient flagged during a sanctions-oracle outage could
   otherwise be paid; and because the fill is atomic, a screen that merely
   *reverts* on a flagged recipient would roll its own registry write back with

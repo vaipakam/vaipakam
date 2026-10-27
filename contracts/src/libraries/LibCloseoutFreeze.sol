@@ -12,6 +12,14 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
+/// @dev The wallet payment {LibCloseoutFreeze.payOrHoldBorrowerExtra} makes,
+///      hosted by `ForcedSaleFacet` and reached by a self-call so a refusal
+///      unwinds that payment alone. Declared here, not imported, so the
+///      library does not depend on the facet.
+interface IBorrowerWalletPush {
+    function payBorrowerWallet(address asset, address to, uint256 amount) external;
+}
+
 /**
  * @title  LibCloseoutFreeze
  * @author Vaipakam Developer Team
@@ -269,6 +277,54 @@ library LibCloseoutFreeze {
         if (credited == 0) return 0;
         addBorrowerSurplus(s, loanId, holder, asset, credited);
         LibEncumbrance.encumberBorrowerProceeds(loanId, loan.borrower, asset, credited);
+    }
+
+    /**
+     * @notice #2795 / #2876 — pay a borrower's extra to the current
+     *         borrower-position holder's wallet, or hold it for their claim
+     *         when it cannot be paid. The one rule for an extra that must
+     *         never stop the settlement that produced it: the periodic
+     *         forced sale (the loan stays open) and the collateral sale
+     *         (the loan closes as repaid).
+     * @dev    An unflagged `holder` is paid through
+     *         {IBorrowerWalletPush.payBorrowerWallet}, a self-call hosted by
+     *         `ForcedSaleFacet`, so a refusal (a token that blocks the
+     *         address, a short reading, a receiving hook that reverts)
+     *         unwinds that payment alone. A flagged holder
+     *         ({LibSanctionedLock.mustFreezeParty}, fail-closed), or a refused
+     *         payment, has the extra held through {holdBorrowerExtra}: in the
+     *         stored borrower's vault, on the surplus row, for
+     *         `ClaimFacet.claimAsBorrower`. Neither route depends on anything
+     *         but the holder's own state, so the other side's payout never
+     *         waits on it. A Diamond that does not route the push (a facet
+     *         refreshed without `ForcedSaleFacet`) holds every extra rather
+     *         than paying it: the funds stay claimable, never lost.
+     * @param  holder The current borrower-position holder the extra is owed to.
+     * @return held   True when the extra was held rather than paid out.
+     * @return amount What the borrower got: all of `extra` when paid to the
+     *                wallet (a short arrival there is refused), or what the
+     *                stored borrower's vault received when held.
+     */
+    function payOrHoldBorrowerExtra(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        LibVaipakam.Loan storage loan,
+        address holder,
+        uint256 extra
+    ) internal returns (bool held, uint256 amount) {
+        if (extra == 0) return (false, 0);
+        if (!LibSanctionedLock.mustFreezeParty(s, holder)) {
+            // slither-disable-next-line low-level-calls
+            (bool paid, ) = address(this).call(
+                abi.encodeCall(
+                    IBorrowerWalletPush.payBorrowerWallet,
+                    (loan.principalAsset, holder, extra)
+                )
+            );
+            if (paid) return (false, extra);
+        }
+        amount = holdBorrowerExtra(s, loanId, loan, holder, loan.principalAsset, extra);
+        held = true;
     }
 
     /// @notice #2795 — a borrower extra held on an open loan was paid out

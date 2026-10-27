@@ -582,32 +582,22 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      *         (the claim entry point Tier-1-gates `msg.sender` already);
      *         onlyDiamondInternal keeps external parties out.
      *
-     *         The credit is booked by what the vault RECEIVED
-     *         ({LibDelivery.pushMeasured}, #2440), never more than `amount`,
-     *         so a lending asset that charges on transfer cannot leave the
-     *         tracked balance above what the vault holds. The collateral-sale
-     *         remainder (#2876) credits an arbitrary lending asset through
-     *         here; the reward and LIF-refund callers credit VPFI, where the
-     *         two figures agree.
-     *
      * @param user   User whose vault is credited (counter increments under
      *               this address).
      * @param token  ERC-20 token address (the tier record is refreshed only
      *               when this is the registered VPFI token).
      * @param amount Amount to credit from the Diamond's balance.
-     * @return delivered What the vault received and the tracked balance
-     *                   recorded.
      */
     // forge-lint: disable-next-line(mixed-case-function)
     function vaultCreditFromDiamondERC20(
         address user,
         address token,
         uint256 amount
-    ) external onlyDiamondInternal returns (uint256 delivered) {
+    ) external onlyDiamondInternal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address proxy = _currentVault(s, user);
-        delivered = LibDelivery.pushMeasured(token, proxy, amount);
-        LibVaipakam.recordVaultDeposit(user, token, delivered);
+        IERC20(token).safeTransfer(proxy, amount);
+        LibVaipakam.recordVaultDeposit(user, token, amount);
     }
 
     /**

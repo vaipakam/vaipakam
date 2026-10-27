@@ -192,7 +192,13 @@ runs half of it on old code:
   through `EncumbranceMutateFacet.payHeldBorrowerExtra`). A seller refreshed
   without the host reverts `FunctionDoesNotExist` on every forced sale (a
   hard revert, never the old waterfall). `RefreshAllFacetsInPlace` and
-  `RedeployFacets` both carry the host and all four sellers.
+  `RedeployFacets` both carry the host and all four sellers. The borrower's
+  wallet payment is a self-call to `ForcedSaleFacet.payBorrowerWallet`, made
+  through `LibCloseoutFreeze.payOrHoldBorrowerExtra` by the periodic sale and
+  by the collateral sale's settlement (PrepayListingFacet, #2876). A Diamond
+  that does not route it HOLDS every such payment for the borrower claim
+  instead of paying it (never lost, but a silent change of route), so
+  refresh PrepayListingFacet with ForcedSaleFacet too.
 
 - **VaultFactoryFacet + every facet that withdraws from a vault (#2440).**
   `vaultWithdrawERC20` now returns what the recipient received, and every
@@ -202,10 +208,7 @@ runs half of it on old code:
   the old route returns no data (a hard revert, never a misread amount). The
   set is effectively every facet that moves ERC-20s out of a vault, so refresh
   VaultFactoryFacet in the same cut as any of them. All three refresh scripts
-  carry it. The Diamond-funded credit `vaultCreditFromDiamondERC20` likewise
-  returns what the vault received (#2876), and the collateral-sale settlement
-  (PrepayListingFacet) decodes it: on a pre-#2876 VaultFactoryFacet every sale
-  that pays a borrower holder's vault reverts.
+  carry it.
 
 - **OracleFacet + every facet that prices a fallback split (#666).**
   `LibFallback.tryOracleRate` reads `getAssetPriceStatus`, a selector only

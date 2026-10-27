@@ -390,13 +390,7 @@
         "internalType": "uint256"
       }
     ],
-    "outputs": [
-      {
-        "name": "delivered",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
+    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {

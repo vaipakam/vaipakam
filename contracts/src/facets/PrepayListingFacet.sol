@@ -10,10 +10,10 @@ import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibReentrancyGuard, DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol";
-import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
+import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -23,6 +23,7 @@ import {IVaipakamPrepayCallbacks} from "../seaport/IVaipakamPrepayCallbacks.sol"
 import {IListingExecutorRecorder} from "../seaport/IListingExecutorRecorder.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 
 /**
@@ -49,18 +50,19 @@ import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
  *              privileged finalization callback. Called by the
  *              executor's `validateOrder` post-transfer hook. Gated
  *              by `msg.sender == storedExecutor`; the executor
- *              singleton is the ONLY caller authorized to flip a loan
- *              from Active → Settled via this path. Splits the
- *              proceeds the Diamond received (#2876, {_settleSale},
- *              shared with the offer-keyed parallel sale), then:
- *                a. `loan.status = Settled` via `LibLifecycle.transition`.
- *                b. `LibERC721._unlock(loan.borrowerTokenId)` — releases
- *                   the listing lock (LockReason.PrepayCollateralListing
- *                   from #285).
- *                c. `LibVPFIDiscount.settleBorrowerLifProper(loan)` —
- *                   load-bearing per CLAUDE.md; ensures the borrower's
- *                   Phase-5 VPFI rebate accrues correctly on this
- *                   proper-close path.
+ *              singleton is the ONLY caller authorized to close a
+ *              loan through a collateral sale. The sale settles as a
+ *              repayment funded by the proceeds the Diamond received
+ *              (#2876, {_settleSale}, shared with the offer-keyed
+ *              parallel sale): the loan goes Active → Repaid, the
+ *              lender's leg waits in the stored lender's vault for
+ *              `claimAsLender`, the treasury is paid, and the
+ *              borrower's remainder is paid to the holder's wallet or
+ *              held for their claim. The close also releases the
+ *              listing lock (LockReason.PrepayCollateralListing from
+ *              #285) and settles the borrower's Phase-5 LIF
+ *              (`LibVPFIDiscount.settleBorrowerLifProper`, load-bearing
+ *              per CLAUDE.md).
  *
  *           3. **`setCollateralListingExecutor(address)`** — ADMIN_ROLE-
  *              gated setter. Governance configures which executor
@@ -266,7 +268,7 @@ contract PrepayListingFacet is
         // TRUE Scenario A (no loan ever existed). For the keep-listing-
         // live Scenario B (loan was accepted, sale-fill settled the
         // loan), `_settleLoanFromParallelSale` has already transitioned
-        // the loan Active → Settled and emitted
+        // the loan Active → Repaid and emitted
         // `PrepayCollateralSaleSettled`; the offer terminal stays as
         // `Accepted` (which the round-3 user-directed redesign codified
         // in `MetricsFacet.getOfferState`'s precedence order:
@@ -487,42 +489,58 @@ contract PrepayListingFacet is
 
         // Codex round-4 P2 #3 — also emit the loan-keyed terminal event
         // the existing indexer (`chainIndexer.ts`) listens for to flip
-        // the D1 loan row to `settled`. Without this, accept-then-sold
-        // loans would stay `active` in the indexer even after the
-        // on-chain settle. Reuses the established
+        // the D1 loan row to `repaid` (#2876: the sale closes the loan as
+        // a repayment, and the lender's claim settles it). Without this,
+        // accept-then-sold loans would stay `active` in the indexer even
+        // after the on-chain close. Reuses the established
         // `PrepayCollateralSaleSettled` event; the indexer's
         // existing handler runs verbatim with no schema work.
         emit PrepayCollateralSaleSettled(loanId, msg.sender);
     }
 
-    /// @dev #2876 — the ONE split of a collateral sale's proceeds, for both
-    ///      listing types. The order paid `proceeds` to the Diamond (the
-    ///      executor measured them arriving in full); this pays, at what a
-    ///      repayment at this block would owe (`LibCollateralSettlement.salePlan`):
-    ///        1. the CURRENT lender-position holder its due, plus the lender
-    ///           yield-fee discount that holder qualifies for — resolved by
-    ///           the same host repayment uses ({LibLenderYieldFeeHost});
-    ///        2. the treasury its share net of that discount (accrued as it
-    ///           arrived, `LibFacet.transferToTreasury`);
-    ///        3. the CURRENT borrower-position holder everything the
-    ///           sale raised above the floor.
-    ///      The discount moves value between legs 1 and 2 only, so the
-    ///      floor (legs 1 + 2 before it) is what the sale must cover and
-    ///      leg 3 is the same with or without it.
+    /// @dev #2876 — the ONE settlement of a collateral sale, for both listing
+    ///      types. The order paid `proceeds` to the Diamond (the executor
+    ///      measured them arriving in full); this settles the loan as a
+    ///      repayment funded by the sale, at what a repayment at this block
+    ///      would owe (`LibCollateralSettlement.salePlan`):
+    ///        1. the lender's due, plus the lender yield-fee discount the
+    ///           CURRENT lender-position holder qualifies for (resolved by the
+    ///           same host repayment uses, {LibLenderYieldFeeHost}), is placed
+    ///           in the stored lender's vault behind the receive-side
+    ///           exemption and owed to the current holder as a lender claim
+    ///           ({LibCloseoutFreeze.freezeLenderProceeds}, the swap-to-repay
+    ///           close's own lender leg);
+    ///        2. the treasury gets its share net of that discount (accrued as
+    ///           it arrived, `LibFacet.transferToTreasury`);
+    ///        3. everything the sale raised above the floor goes to the
+    ///           CURRENT borrower-position holder's wallet, or is held for
+    ///           their claim when they are flagged or the wallet refuses it
+    ///           ({LibCloseoutFreeze.payOrHoldBorrowerExtra}).
+    ///      The discount moves value between legs 1 and 2 only, so the floor
+    ///      (legs 1 + 2 before it) is what the sale must cover and leg 3 is
+    ///      the same with or without it.
     ///
-    ///      The lender's leg must arrive in full (`pushExact`): the loan is
-    ///      closed as repaid on it, and a short arrival reverts the whole
-    ///      Seaport fill (the buyer's funds are never committed). Both
-    ///      position holders are screened here, fail-closed on the committed
-    ///      sanctions marker (#1144), since the sign-time screen cannot see a
-    ///      holder that changed or was flagged after the listing.
+    ///      NEUTRAL BETWEEN THE SIDES (owner direction 2026-10-27). Nothing
+    ///      about one side's holder can stop the other side's payout. A
+    ///      lender holder who is flagged, or whose wallet would refuse the
+    ///      token, never meets this transaction: the lender's leg lands in
+    ///      the stored lender's vault and waits for `claimAsLender`, whose
+    ///      own screen decides when it may leave, exactly as after a
+    ///      repayment. A borrower wallet that refuses the remainder has it
+    ///      held instead. The one refusal is the borrower's own: a sale is
+    ///      the borrower's dealing in their collateral, so a borrower-position
+    ///      holder flagged by the time of the fill cannot sell (screened here
+    ///      fail-closed on the committed marker, #1144, since the sign-time
+    ///      screen cannot see a holder that changed or was flagged after the
+    ///      listing). That refusal costs the lender nothing: the loan stays
+    ///      Active with every repayment and default right intact.
     ///
-    ///      ORDER. Everything the split needs (the plan, both holders, the
-    ///      discount) is resolved first; then the loan takes its proper close
-    ///      ({_closeSoldLoan}, Active -> Settled); only then does any token
-    ///      move. A hook reached from a payout therefore finds the loan
-    ///      already Settled, so it can neither repay, claim nor sell it a
-    ///      second time.
+    ///      ORDER. Everything the settlement needs (the plan, both holders,
+    ///      the discount) is resolved first; then the loan takes its proper
+    ///      close ({_closeSoldLoan}, Active -> Repaid); only then does any
+    ///      token move. A hook reached from a payout therefore finds the loan
+    ///      already Repaid, so it can neither repay nor sell it a second
+    ///      time.
     /// @param  offerId The parallel-sale offer, or 0 for a loan-keyed listing.
     function _settleSale(LibVaipakam.Loan storage loan, uint96 offerId, uint256 proceeds)
         private
@@ -540,10 +558,8 @@ contract PrepayListingFacet is
         uint256 floor = plan.lenderDue + plan.treasuryShare;
         if (proceeds < floor) revert SaleProceedsBelowFloor(loanId, proceeds, floor);
 
-        address asset = loan.principalAsset;
-        address lender = VaipakamNFTFacet(address(this)).ownerOf(loan.lenderTokenId);
-        address borrower = VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId);
-        LibVaipakam.assertRecipientNotBarred(lender);
+        address lender = LibERC721.ownerOf(loan.lenderTokenId);
+        address borrower = LibERC721.ownerOf(loan.borrowerTokenId);
         LibVaipakam.assertRecipientNotBarred(borrower);
 
         (uint256 lenderExtra, uint256 treasuryNet) = LibLenderYieldFeeHost.resolve(
@@ -552,84 +568,52 @@ contract PrepayListingFacet is
 
         _closeSoldLoan(loan);
 
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 lenderAmount = plan.lenderDue + lenderExtra;
-        LibDelivery.pushExact(asset, lender, lenderAmount);
-        uint256 treasuryAmount = LibFacet.transferToTreasury(asset, treasuryNet);
+        LibCloseoutFreeze.freezeLenderProceeds(s, loanId, loan, lenderAmount);
+        uint256 treasuryAmount = LibFacet.transferToTreasury(loan.principalAsset, treasuryNet);
 
         // `lenderExtra + treasuryNet == plan.treasuryShare`, so this is
         // `proceeds - floor`, which the check above keeps non-negative.
-        uint256 borrowerAmount = proceeds - lenderAmount - treasuryNet;
-        bool borrowerInVault;
-        if (borrowerAmount > 0) {
-            (borrowerAmount, borrowerInVault) =
-                _payBorrowerRemainder(borrower, asset, borrowerAmount);
-        }
+        (bool borrowerHeld, uint256 borrowerAmount) = LibCloseoutFreeze.payOrHoldBorrowerExtra(
+            s, loanId, loan, borrower, proceeds - lenderAmount - treasuryNet
+        );
 
         emit CollateralSaleProceedsSplit(
-            loanId, offerId, asset, proceeds,
+            loanId, offerId, loan.principalAsset, proceeds,
             lender, lenderAmount, lenderExtra,
             treasuryAmount,
-            borrower, borrowerAmount, borrowerInVault
+            borrower, borrowerAmount, borrowerHeld
         );
-    }
-
-    /// @dev #2876 — pays the borrower-position holder the sale's remainder:
-    ///      into their vault when it can take it, to their wallet when it
-    ///      cannot, and the sale closes either way. This is the settlement
-    ///      credit shape the LIF refund on this same close already uses (RL-1,
-    ///      {LibVPFIDiscount.creditBorrowerLifRebateToVault}): the borrower's
-    ///      vault state must never refuse the close that pays the lender
-    ///      (lender first), and a payout must not mint a vault as a side
-    ///      effect. {VaultFactoryFacet.vaultCreditFromDiamondERC20} resolves
-    ///      the vault read-only, so a holder with no vault (`NoVault`) or one
-    ///      behind a mandatory upgrade (`VaultUpgradeRequired`) is paid in the
-    ///      wallet; the credit runs in its own revert-isolated frame, so a
-    ///      failure leaves no vault-side effect before the wallet pays.
-    ///
-    ///      The holder was screened by the caller. A vault credit is booked by
-    ///      what the vault received. The wallet payment is the holder's own
-    ///      surplus and is booked by nobody, so it is sent as a plain payout
-    ///      ({LibDelivery.pushOut}) and reported as the amount sent. A holder
-    ///      whose wallet cannot receive the asset AND whose vault cannot take
-    ///      it makes the fill revert as a whole (the buyer is never charged).
-    /// @return paid     What the vault received, or what the wallet was sent.
-    /// @return inVault  True when the vault took it.
-    function _payBorrowerRemainder(address holder, address asset, uint256 amount)
-        private
-        returns (uint256 paid, bool inVault)
-    {
-        // slither-disable-next-line low-level-calls
-        (bool ok, bytes memory ret) = address(this).call(
-            abi.encodeWithSignature(
-                "vaultCreditFromDiamondERC20(address,address,uint256)",
-                holder,
-                asset,
-                amount
-            )
-        );
-        if (ok) return (abi.decode(ret, (uint256)), true);
-        LibDelivery.pushOut(asset, holder, amount);
-        return (amount, false);
     }
 
     /// @dev The proper close every collateral sale takes, inside
-    ///      {_settleSale} before any proceeds move: Active → Settled, release the borrower-position lock, and settle
-    ///      the borrower's Phase-5 LIF (every proper-close path calls
-    ///      `settleBorrowerLifProper`, per CLAUDE.md). Shared by both listing
+    ///      {_settleSale} before any proceeds move. It is a repayment's close
+    ///      (the swap-to-repay full close is the template): the validated
+    ///      Active -> Repaid edge with both holders' fail-closed claimant
+    ///      markers ({EncumbranceMutateFacet.terminalize}), both position NFTs
+    ///      to `LoanRepaid`, the borrower-position lock released, the
+    ///      borrower's Phase-5 LIF settled (every proper-close path calls
+    ///      `settleBorrowerLifProper`, per CLAUDE.md; a rebate it writes is
+    ///      paid by `claimAsBorrower`, as after a repayment), and the
+    ///      terminal reward close. The lender's claim then moves the loan to
+    ///      Settled once the borrower side has nothing left
+    ///      ({LibCloseoutFreeze.borrowerSideOpen}). Shared by both listing
     ///      types so their closes cannot drift.
     function _closeSoldLoan(LibVaipakam.Loan storage loan) private {
-        LibLifecycle.transition(
-            loan, LibVaipakam.LoanStatus.Active, LibVaipakam.LoanStatus.Settled
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.terminalize.selector,
+                loan.id,
+                LibVaipakam.LoanStatus.Active,
+                LibVaipakam.LoanStatus.Repaid
+            ),
+            bytes4(0)
         );
         LibERC721._unlock(loan.borrowerTokenId);
+        _markPositionRepaid(loan.borrowerTokenId, loan.id);
+        _markPositionRepaid(loan.lenderTokenId, loan.id);
         LibVPFIDiscount.settleBorrowerLifProper(loan);
-        // #1867 — and PAY it, rather than leaving it in custody for a claim
-        // this terminal can never serve: `claimAsBorrower` rejects `Settled`
-        // by design. Credited to `loan.borrower`'s vault, the party it was
-        // PRICED from (Codex #1906 r2; see
-        // {LibVPFIDiscount.creditBorrowerLifRebateToVault}). No-op unless the
-        // loan is grandfathered from pre-#1352 custody.
-        LibVPFIDiscount.creditBorrowerLifRebateToVault(loan);
         // #1067 — DURABLE terminal reward close: a sale is a proper close,
         // so shrink both reward entries' active windows to today and
         // re-anchor each open side to the live NFT holder.
@@ -645,6 +629,20 @@ contract PrepayListingFacet is
         );
     }
 
+    /// @dev A position NFT's status after a sale closed its loan: the loan is
+    ///      repaid and the position waits for its claim, as after a repayment.
+    function _markPositionRepaid(uint256 tokenId, uint256 loanId) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaipakamNFTFacet.updateNFTStatus.selector,
+                tokenId,
+                loanId,
+                LibVaipakam.LoanPositionStatus.LoanRepaid
+            ),
+            NFTStatusUpdateFailed.selector
+        );
+    }
+
     /// @notice #2876 — how a collateral sale's proceeds were split, from
     ///         either listing type. Every figure is what its recipient
     ///         received.
@@ -653,21 +651,25 @@ contract PrepayListingFacet is
     ///                         loan-keyed listing.
     /// @param  asset           The lending asset the proceeds were paid in.
     /// @param  proceeds        What the buyer's proceeds leg paid the Diamond.
-    /// @param  lender          The lender-position holder paid.
-    /// @param  lenderAmount    The lender's due plus `lenderDiscount`.
+    /// @param  lender          The lender-position holder the lender's leg
+    ///                         is owed to, through `claimAsLender`.
+    /// @param  lenderAmount    The lender's due plus `lenderDiscount`, as the
+    ///                         stored lender's vault received it for that
+    ///                         claim.
     /// @param  lenderDiscount  The part of the treasury's share the holder's
     ///                         yield-fee discount moved to them (0 if none,
     ///                         or if the discount was paid in VPFI instead).
     /// @param  treasuryAmount  What the treasury received.
-    /// @param  borrower        The borrower-position holder paid the
-    ///                         remainder.
+    /// @param  borrower        The borrower-position holder the remainder
+    ///                         is owed to.
     /// @param  borrowerAmount  The remainder above the floor: what the
-    ///                         holder's vault received, or what their wallet
-    ///                         was sent.
-    /// @param  borrowerInVault True when the holder's vault took the
-    ///                         remainder; false when it went to the wallet
-    ///                         (no vault, or one behind a mandatory upgrade)
-    ///                         or there was none.
+    ///                         holder's wallet was sent, or what the stored
+    ///                         borrower's vault received when it was held.
+    /// @param  borrowerHeld    True when the remainder was held for the
+    ///                         holder's `claimAsBorrower` (the holder is
+    ///                         flagged, or their wallet refused it); false
+    ///                         when it was paid to the wallet or there was
+    ///                         none.
     /// @custom:event-category state-change/loan-mutation
     event CollateralSaleProceedsSplit(
         uint256 indexed loanId,
@@ -680,7 +682,7 @@ contract PrepayListingFacet is
         uint256 treasuryAmount,
         address borrower,
         uint256 borrowerAmount,
-        bool borrowerInVault
+        bool borrowerHeld
     );
 
     /// @notice #2876 — a collateral sale's proceeds do not cover what a
