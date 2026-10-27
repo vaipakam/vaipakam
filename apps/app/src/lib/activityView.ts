@@ -197,6 +197,7 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   OfferSaleProceedsCredited: { label: 'Sale proceeds credited to the vault', category: 'offer', priority: 60 },
   CollateralSaleProceedsSplit: { label: 'Sale proceeds split', category: 'loan-close', priority: 75 },
   ParallelSaleLockReleased: { label: 'Collateral sale listing released', category: 'offer', priority: 45 },
+  ParallelSaleReleaseConsolidationDeferred: { label: 'Collateral move deferred', category: 'collateral', priority: 40 },
   PartialCollateralWithdrawn: { label: 'Collateral partly withdrawn', category: 'collateral', priority: 75 },
   PostParallelSaleListing: { label: 'Collateral sale listing posted', category: 'offer', priority: 55 },
   PrepaySaleListingSynced: { label: 'Collateral sale listing rechecked', category: 'loan-modify', priority: 15 },

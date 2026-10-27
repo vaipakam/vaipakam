@@ -2492,6 +2492,7 @@
         "OfferSaleProceedsCredited": "Ingresos de la venta abonados en la bóveda",
         "CollateralSaleProceedsSplit": "Ingresos de la venta repartidos",
         "ParallelSaleLockReleased": "Anuncio de venta de la garantía liberado",
+        "ParallelSaleReleaseConsolidationDeferred": "Traslado de la garantía aplazado",
         "PartialCollateralWithdrawn": "Garantía retirada parcialmente",
         "PostParallelSaleListing": "Anuncio de venta de la garantía publicado",
         "PrepaySaleListingSynced": "Anuncio de venta de la garantía revisado",

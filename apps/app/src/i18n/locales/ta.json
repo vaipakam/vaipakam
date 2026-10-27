@@ -2492,6 +2492,7 @@
         "OfferSaleProceedsCredited": "விற்பனை வருவாய் பெட்டகத்தில் வரவு வைக்கப்பட்டது",
         "CollateralSaleProceedsSplit": "விற்பனை வருவாய் பகிரப்பட்டது",
         "ParallelSaleLockReleased": "பிணைய விற்பனைப் பட்டியல் விடுவிக்கப்பட்டது",
+        "ParallelSaleReleaseConsolidationDeferred": "பிணைய நகர்வு ஒத்திவைக்கப்பட்டது",
         "PartialCollateralWithdrawn": "பிணையம் பகுதியளவு எடுக்கப்பட்டது",
         "PostParallelSaleListing": "பிணைய விற்பனைப் பட்டியல் வெளியிடப்பட்டது",
         "PrepaySaleListingSynced": "பிணைய விற்பனைப் பட்டியல் மீண்டும் சரிபார்க்கப்பட்டது",

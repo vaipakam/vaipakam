@@ -2492,6 +2492,7 @@
         "OfferSaleProceedsCredited": "出售所得已计入金库",
         "CollateralSaleProceedsSplit": "出售所得已分配",
         "ParallelSaleLockReleased": "抵押品出售挂单已解除",
+        "ParallelSaleReleaseConsolidationDeferred": "抵押品转移已推迟",
         "PartialCollateralWithdrawn": "已部分提取抵押品",
         "PostParallelSaleListing": "已发布抵押品出售挂单",
         "PrepaySaleListingSynced": "已重新检查抵押品出售挂单",

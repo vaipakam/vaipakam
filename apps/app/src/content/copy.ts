@@ -5594,6 +5594,7 @@ const copySource = {
       OfferSaleProceedsCredited: 'Sale proceeds credited to the vault',
       CollateralSaleProceedsSplit: 'Sale proceeds split',
       ParallelSaleLockReleased: 'Collateral sale listing released',
+      ParallelSaleReleaseConsolidationDeferred: 'Collateral move deferred',
       PartialCollateralWithdrawn: 'Collateral partly withdrawn',
       PostParallelSaleListing: 'Collateral sale listing posted',
       PrepaySaleListingSynced: 'Collateral sale listing rechecked',

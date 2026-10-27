@@ -2492,6 +2492,7 @@
         "OfferSaleProceedsCredited": "बिक्री आय वॉल्ट में जमा",
         "CollateralSaleProceedsSplit": "बिक्री आय विभाजित",
         "ParallelSaleLockReleased": "संपार्श्विक बिक्री लिस्टिंग मुक्त",
+        "ParallelSaleReleaseConsolidationDeferred": "संपार्श्विक स्थानांतरण स्थगित",
         "PartialCollateralWithdrawn": "संपार्श्विक आंशिक रूप से निकाला गया",
         "PostParallelSaleListing": "संपार्श्विक बिक्री लिस्टिंग पोस्ट की गई",
         "PrepaySaleListingSynced": "संपार्श्विक बिक्री लिस्टिंग की पुनः जाँच",
