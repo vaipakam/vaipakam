@@ -169,6 +169,7 @@ import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
+import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
@@ -394,6 +395,7 @@ contract SetupTest is Test {
     NotificationFeeFacet notificationFeeFacet;
     ForcedSaleFacet forcedSaleFacet;
     RateModelFacet rateModelFacet;
+    VaipakamNFTMetadataFacet nftMetadataFacet;
     RewardCompensationDispatchFacet rewardCompensationDispatchFacet;
     RewardCommitmentFacet rewardCommitmentFacet;
     RepatriationFacet repatriationFacet;
@@ -546,6 +548,7 @@ contract SetupTest is Test {
         notificationFeeFacet = NotificationFeeFacet(ArtifactDeploy.deploy(type(NotificationFeeFacet).name));
         forcedSaleFacet = ForcedSaleFacet(ArtifactDeploy.deploy(type(ForcedSaleFacet).name));
         rateModelFacet = RateModelFacet(ArtifactDeploy.deploy(type(RateModelFacet).name));
+        nftMetadataFacet = VaipakamNFTMetadataFacet(ArtifactDeploy.deploy(type(VaipakamNFTMetadataFacet).name));
         rewardCompensationDispatchFacet = RewardCompensationDispatchFacet(ArtifactDeploy.deploy(type(RewardCompensationDispatchFacet).name));
         rewardCommitmentFacet = RewardCommitmentFacet(ArtifactDeploy.deploy(type(RewardCommitmentFacet).name));
         repatriationFacet = RepatriationFacet(ArtifactDeploy.deploy(type(RepatriationFacet).name));
@@ -578,7 +581,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](101);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](102);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -986,6 +989,12 @@ contract SetupTest is Test {
             facetAddress: address(rateModelFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRateModelFacetSelectors()
+        });
+        // #2957 - the position NFT's public metadata (tokenURI, contractURI).
+        cuts[101] = IDiamondCut.FacetCut({
+            facetAddress: address(nftMetadataFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getVaipakamNFTMetadataFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

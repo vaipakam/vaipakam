@@ -48,6 +48,7 @@ import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
+import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {OwnershipFacet} from "../src/facets/OwnershipFacet.sol";
@@ -886,46 +887,53 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](25);
+        selectors = new bytes4[](18);
         selectors[0] = VaipakamNFTFacet.mintNFT.selector;
         selectors[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         selectors[2] = VaipakamNFTFacet.burnNFT.selector;
-        selectors[3] = VaipakamNFTFacet.tokenURI.selector;
-        selectors[4] = VaipakamNFTFacet.initializeNFT.selector;
-        selectors[5] = bytes4(keccak256("ownerOf(uint256)")); // ERC721 ownerOf for ClaimFacet
-        selectors[6] = VaipakamNFTFacet.contractURI.selector;
-        selectors[7] = VaipakamNFTFacet.setContractImageURI.selector;
-        selectors[8] = VaipakamNFTFacet.royaltyInfo.selector;
-        selectors[9] = VaipakamNFTFacet.setDefaultRoyalty.selector;
-        // Status-keyed image URI scheme (replaces the prior 4-slot
-        // setLoanImageURIs).
-        selectors[10] = VaipakamNFTFacet.setImageURIForStatus.selector;
+        selectors[3] = VaipakamNFTFacet.initializeNFT.selector;
+        selectors[4] = bytes4(keccak256("ownerOf(uint256)")); // ERC721 ownerOf for ClaimFacet
+        selectors[5] = VaipakamNFTFacet.royaltyInfo.selector;
+        selectors[6] = VaipakamNFTFacet.setDefaultRoyalty.selector;
         // IERC721Enumerable views (totalSupply, tokenByIndex, tokenOfOwnerByIndex)
-        selectors[11] = bytes4(keccak256("totalSupply()"));
-        selectors[12] = bytes4(keccak256("tokenByIndex(uint256)"));
-        selectors[13] = bytes4(keccak256("tokenOfOwnerByIndex(address,uint256)"));
-        // OpenSea external_url admin config (Tier 2 metadata polish).
-        selectors[14] = VaipakamNFTFacet.setExternalUrlBase.selector;
-        // Status-keyed image scheme companions.
-        selectors[15] = VaipakamNFTFacet.setDefaultImage.selector;
-        selectors[16] = VaipakamNFTFacet.getImageURIFor.selector;
+        selectors[7] = bytes4(keccak256("totalSupply()"));
+        selectors[8] = bytes4(keccak256("tokenByIndex(uint256)"));
+        selectors[9] = bytes4(keccak256("tokenOfOwnerByIndex(address,uint256)"));
         // ERC721 approval surface + position-lock view — needed by the
         // PR #282 LibERC721LockApprovalTest coverage. Production cuts
         // these as part of DeployDiamond.s.sol; SetupTest historically
         // omitted them because no pre-#282 test exercised approval
         // semantics on the position NFT directly.
-        selectors[17] = bytes4(keccak256("approve(address,uint256)"));
-        selectors[18] = bytes4(keccak256("getApproved(uint256)"));
-        selectors[19] = bytes4(keccak256("setApprovalForAll(address,bool)"));
-        selectors[20] = bytes4(keccak256("isApprovedForAll(address,address)"));
-        selectors[21] = VaipakamNFTFacet.positionLock.selector;
+        selectors[10] = bytes4(keccak256("approve(address,uint256)"));
+        selectors[11] = bytes4(keccak256("getApproved(uint256)"));
+        selectors[12] = bytes4(keccak256("setApprovalForAll(address,bool)"));
+        selectors[13] = bytes4(keccak256("isApprovedForAll(address,address)"));
+        selectors[14] = VaipakamNFTFacet.positionLock.selector;
         // ERC-721 transfer entrypoints — production cuts these
-        // (DeployDiamond.s.sol s[18-20]); the harness historically omitted them.
+        // (DeployDiamond.s.sol); the harness historically omitted them.
         // Required to exercise the #1123 fail-closed position-movement gate.
-        selectors[22] = VaipakamNFTFacet.transferFrom.selector;
-        selectors[23] = bytes4(keccak256("safeTransferFrom(address,address,uint256)"));
-        selectors[24] = bytes4(keccak256("safeTransferFrom(address,address,uint256,bytes)"));
+        selectors[15] = VaipakamNFTFacet.transferFrom.selector;
+        selectors[16] = bytes4(keccak256("safeTransferFrom(address,address,uint256)"));
+        selectors[17] = bytes4(keccak256("safeTransferFrom(address,address,uint256,bytes)"));
         return selectors;
+    }
+
+    /// @dev #2957 - the position NFT's public metadata, split off
+    ///      VaipakamNFTFacet. Mirrors `DeployDiamond._getNftMetadataSelectors`.
+    // forge-lint: disable-next-line(mixed-case-function)
+    function getVaipakamNFTMetadataFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](7);
+        selectors[0] = VaipakamNFTMetadataFacet.tokenURI.selector;
+        selectors[1] = VaipakamNFTMetadataFacet.contractURI.selector;
+        selectors[2] = VaipakamNFTMetadataFacet.setContractImageURI.selector;
+        selectors[3] = VaipakamNFTMetadataFacet.setImageURIForStatus.selector;
+        selectors[4] = VaipakamNFTMetadataFacet.setDefaultImage.selector;
+        selectors[5] = VaipakamNFTMetadataFacet.getImageURIFor.selector;
+        selectors[6] = VaipakamNFTMetadataFacet.setExternalUrlBase.selector;
     }
 
     function getVaultFactoryFacetSelectors()

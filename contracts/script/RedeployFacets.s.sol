@@ -19,6 +19,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
+import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
@@ -93,6 +94,9 @@ contract RedeployFacets is Script {
     /// @notice #1820 - the target Diamond predates the tier record seam; see
     ///         {_requireTierRecordSeam}.
     error PredatesTierRecordSeam(address diamond);
+    /// @notice #2957 - the target Diamond predates the position NFT metadata
+    ///         split; see {_requireNftMetadataSplit}.
+    error PredatesNftMetadataSplit(address diamond);
 
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -149,6 +153,9 @@ contract RedeployFacets is Script {
         // #1820 - and one from before the tier record seam; see
         // {_requireTierRecordSeam}.
         _requireTierRecordSeam(diamond);
+        // #2957 - and one from before the NFT metadata split; see
+        // {_requireNftMetadataSplit}.
+        _requireNftMetadataSplit(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -859,6 +866,24 @@ contract RedeployFacets is Script {
         if (IDiamondLoupe(diamond).facetAddress(LoanFacet.getLoanDeadlines.selector) == address(0)) {
             revert PredatesLoanClock(diamond);
         }
+    }
+
+    /// @dev #2957 - refuse a Diamond from before the position NFT metadata
+    ///      split. The split moved `tokenURI`, `contractURI` and their image /
+    ///      `external_url` configuration off VaipakamNFTFacet, which this script
+    ///      cuts, onto VaipakamNFTMetadataFacet, which it does not. On an older
+    ///      Diamond those selectors stay routed to the old VaipakamNFTFacet,
+    ///      which this cut no longer names, so they would keep running the old
+    ///      code beside a refreshed facet: a split Diamond. Crossing it is a
+    ///      fresh deploy or `RefreshAllFacetsInPlace`. The marker is whether
+    ///      `tokenURI` is routed to a facet other than the one hosting
+    ///      `mintNFT`. Called before the broadcast starts.
+    function _requireNftMetadataSplit(address diamond) internal view {
+        address metadataHost = IDiamondLoupe(diamond).facetAddress(VaipakamNFTMetadataFacet.tokenURI.selector);
+        if (
+            metadataHost == address(0)
+                || metadataHost == IDiamondLoupe(diamond).facetAddress(VaipakamNFTFacet.mintNFT.selector)
+        ) revert PredatesNftMetadataSplit(diamond);
     }
 
     /// @dev #1820 - refuse a Diamond from before the tier record seam. The

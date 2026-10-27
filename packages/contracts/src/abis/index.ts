@@ -69,6 +69,7 @@ import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
 import VaultFactoryFacetABI from './VaultFactoryFacet.json';
 import VaipakamNFTFacetABI from './VaipakamNFTFacet.json';
+import VaipakamNFTMetadataFacetABI from './VaipakamNFTMetadataFacet.json';
 import ProfileFacetABI from './ProfileFacet.json';
 import FeeEntitlementFacetABI from './FeeEntitlementFacet.json';
 import AdminFacetABI from './AdminFacet.json';
@@ -227,6 +228,7 @@ export {
   OracleAdminFacetABI,
   VaultFactoryFacetABI,
   VaipakamNFTFacetABI,
+  VaipakamNFTMetadataFacetABI,
   ProfileFacetABI,
   FeeEntitlementFacetABI,
   AdminFacetABI,

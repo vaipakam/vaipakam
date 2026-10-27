@@ -42,6 +42,7 @@
     "OracleAdminFacet",
     "VaultFactoryFacet",
     "VaipakamNFTFacet",
+    "VaipakamNFTMetadataFacet",
     "ProfileFacet",
     "FeeEntitlementFacet",
     "AdminFacet",

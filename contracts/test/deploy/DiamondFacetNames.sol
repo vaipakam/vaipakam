@@ -94,7 +94,10 @@ abstract contract DiamondFacetNames {
     ///      99 → 100 with `RateModelFacet` (#2748 — the reference-rate model,
     ///      its band and the offer-rate clamp, moved off AdminFacet and
     ///      OfferCreateFacet).
-    function cutFacetNames() internal pure returns (string[100] memory) {
+    ///      100 → 101 with `VaipakamNFTMetadataFacet` (#2957 — the position
+    ///      NFT's tokenURI, contractURI and their configuration, moved off
+    ///      VaipakamNFTFacet).
+    function cutFacetNames() internal pure returns (string[101] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -221,6 +224,8 @@ abstract contract DiamondFacetNames {
             "ForcedSaleFacet",
             // #2748 - the rate model, its band and the offer-rate clamp.
             "RateModelFacet",
+            // #2957 - the position NFT's public metadata.
+            "VaipakamNFTMetadataFacet",
             "RiskFacet",
             "RiskMatchLiquidationFacet",
             "RiskSplitLiquidationFacet",

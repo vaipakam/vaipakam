@@ -102,6 +102,7 @@ import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
+import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
@@ -438,6 +439,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #2748 - the quote-time rate model: registration, the band and the
         // quote, moved off AdminFacet and OfferCreateFacet.
         RateModelFacet rateModelFacet = RateModelFacet(ArtifactDeploy.deploy(type(RateModelFacet).name));
+        // #2957 - the position NFT's public metadata, split off VaipakamNFTFacet.
+        VaipakamNFTMetadataFacet nftMetadataFacet = VaipakamNFTMetadataFacet(ArtifactDeploy.deploy(type(VaipakamNFTMetadataFacet).name));
         // #2795 - the forced-sale host: size a forced sale to the debt, sell it,
         // split the proceeds lender first. Self-called by RepayPeriodicFacet.
         ForcedSaleFacet forcedSaleFacet = ForcedSaleFacet(ArtifactDeploy.deploy(type(ForcedSaleFacet).name));
@@ -478,7 +481,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](100);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](101);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -573,6 +576,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[97] = _buildCut(address(notificationFeeFacet), _getNotificationFeeSelectors());
         cuts[98] = _buildCut(address(forcedSaleFacet), _getForcedSaleSelectors());
         cuts[99] = _buildCut(address(rateModelFacet), _getRateModelSelectors());
+        cuts[100] = _buildCut(address(nftMetadataFacet), _getNftMetadataSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1215,6 +1219,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("numeraireValueFacet", address(numeraireValueFacet));
         Deployments.writeFacet("notificationFeeFacet", address(notificationFeeFacet));
         Deployments.writeFacet("rateModelFacet", address(rateModelFacet));
+        Deployments.writeFacet("vaipakamNFTMetadataFacet", address(nftMetadataFacet));
         Deployments.writeFacet("forcedSaleFacet", address(forcedSaleFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
@@ -1599,46 +1604,53 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // supportsInterface is intentionally omitted — DiamondLoupeFacet owns
         // that selector. _registerNftInterfaces() writes the ERC-721 / metadata
         // interface IDs into LibDiamond storage so the Loupe's implementation
-        // returns true for them.
-        s = new bytes4[](29);
+        // returns true for them. The token's metadata (tokenURI, contractURI
+        // and their image / external_url configuration) is cut to
+        // VaipakamNFTMetadataFacet (#2957), see {_getNftMetadataSelectors}.
+        s = new bytes4[](22);
         s[0] = VaipakamNFTFacet.mintNFT.selector;
         s[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         s[2] = VaipakamNFTFacet.burnNFT.selector;
-        s[3] = VaipakamNFTFacet.tokenURI.selector;
-        s[4] = VaipakamNFTFacet.initializeNFT.selector;
-        s[5] = bytes4(keccak256("ownerOf(uint256)"));
-        s[6] = VaipakamNFTFacet.contractURI.selector;
-        s[7] = VaipakamNFTFacet.setContractImageURI.selector;
-        s[8] = VaipakamNFTFacet.royaltyInfo.selector;
-        s[9] = VaipakamNFTFacet.setDefaultRoyalty.selector;
-        // Status-keyed image URI scheme (replaces the prior 4-slot
-        // setLoanImageURIs). Granular per-(LoanPositionStatus,
-        // isLender) overrides + per-side defaults + a read-back view.
-        s[10] = VaipakamNFTFacet.setImageURIForStatus.selector;
+        s[3] = VaipakamNFTFacet.initializeNFT.selector;
+        s[4] = bytes4(keccak256("ownerOf(uint256)"));
+        s[5] = VaipakamNFTFacet.royaltyInfo.selector;
+        s[6] = VaipakamNFTFacet.setDefaultRoyalty.selector;
         // Native ERC-721 + lock API added in the transfer-lock refactor.
-        s[11] = VaipakamNFTFacet.name.selector;
-        s[12] = VaipakamNFTFacet.symbol.selector;
-        s[13] = VaipakamNFTFacet.balanceOf.selector;
-        s[14] = VaipakamNFTFacet.approve.selector;
-        s[15] = VaipakamNFTFacet.getApproved.selector;
-        s[16] = VaipakamNFTFacet.setApprovalForAll.selector;
-        s[17] = VaipakamNFTFacet.isApprovedForAll.selector;
-        s[18] = VaipakamNFTFacet.transferFrom.selector;
+        s[7] = VaipakamNFTFacet.name.selector;
+        s[8] = VaipakamNFTFacet.symbol.selector;
+        s[9] = VaipakamNFTFacet.balanceOf.selector;
+        s[10] = VaipakamNFTFacet.approve.selector;
+        s[11] = VaipakamNFTFacet.getApproved.selector;
+        s[12] = VaipakamNFTFacet.setApprovalForAll.selector;
+        s[13] = VaipakamNFTFacet.isApprovedForAll.selector;
+        s[14] = VaipakamNFTFacet.transferFrom.selector;
         // `safeTransferFrom` is overloaded, so we hash the full signatures.
-        s[19] = bytes4(keccak256("safeTransferFrom(address,address,uint256)"));
-        s[20] = bytes4(keccak256("safeTransferFrom(address,address,uint256,bytes)"));
-        s[21] = VaipakamNFTFacet.positionLock.selector;
+        s[15] = bytes4(keccak256("safeTransferFrom(address,address,uint256)"));
+        s[16] = bytes4(keccak256("safeTransferFrom(address,address,uint256,bytes)"));
+        s[17] = VaipakamNFTFacet.positionLock.selector;
         // IERC721Enumerable — enumerable without event scans.
-        s[22] = bytes4(keccak256("totalSupply()"));
-        s[23] = bytes4(keccak256("tokenByIndex(uint256)"));
-        s[24] = bytes4(keccak256("tokenOfOwnerByIndex(address,uint256)"));
-        s[25] = VaipakamNFTFacet.nftStatusOf.selector;
-        // OpenSea `external_url` admin config — sets the base URL
-        // emitted in tokenURI's JSON for marketplace deep-links.
-        s[26] = VaipakamNFTFacet.setExternalUrlBase.selector;
-        // Status-keyed image URI scheme companions:
-        s[27] = VaipakamNFTFacet.setDefaultImage.selector;
-        s[28] = VaipakamNFTFacet.getImageURIFor.selector;
+        s[18] = bytes4(keccak256("totalSupply()"));
+        s[19] = bytes4(keccak256("tokenByIndex(uint256)"));
+        s[20] = bytes4(keccak256("tokenOfOwnerByIndex(address,uint256)"));
+        s[21] = VaipakamNFTFacet.nftStatusOf.selector;
+    }
+
+    /// @dev #2957 - the position NFT's public metadata: the token and
+    ///      collection URIs and the image / external_url configuration they
+    ///      render from.
+    function _getNftMetadataSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](7);
+        s[0] = VaipakamNFTMetadataFacet.tokenURI.selector;
+        s[1] = VaipakamNFTMetadataFacet.contractURI.selector;
+        s[2] = VaipakamNFTMetadataFacet.setContractImageURI.selector;
+        // Status-keyed image URI scheme: granular per-(LoanPositionStatus,
+        // isLender) overrides, per-side defaults and a read-back view.
+        s[3] = VaipakamNFTMetadataFacet.setImageURIForStatus.selector;
+        s[4] = VaipakamNFTMetadataFacet.setDefaultImage.selector;
+        s[5] = VaipakamNFTMetadataFacet.getImageURIFor.selector;
+        // OpenSea `external_url` admin config — the base URL emitted in
+        // tokenURI's JSON for marketplace deep-links.
+        s[6] = VaipakamNFTMetadataFacet.setExternalUrlBase.selector;
     }
 
     function _getVaultFactorySelectors() internal pure returns (bytes4[] memory s) {

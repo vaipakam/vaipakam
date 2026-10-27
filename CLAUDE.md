@@ -107,6 +107,7 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 | **OracleFacet**        | Chainlink price feeds, v3-style concentrated-liquidity AMM liquidity checks |
 | **VaultFactoryFacet** | Per-user UUPS vault proxy deployment                                       |
 | **VaipakamNFTFacet**   | Mint/update/burn position NFTs (ERC721, on-chain metadata)                  |
+| **VaipakamNFTMetadataFacet** | The position NFT's on-chain metadata: `tokenURI`, `contractURI` and the image / external-URL setters. Split off `VaipakamNFTFacet` in #2957, which had reached 24 bytes under EIP-170. **`tokenURI` is NOT on VaipakamNFTFacet any more.** Refreshed together with MetricsFacet, whose position summary it renders; `RedeployFacets` refuses a Diamond that still routes `tokenURI` to the token facet (`PredatesNftMetadataSplit`) |
 | **ProfileFacet**       | User country (sanctions), KYC verification                                  |
 | **AdminFacet**         | Treasury, 0x proxy, allowance target config                                 |
 | **NotificationFeeFacet** | The paid-notification fee: `markNotifBilled` (`NOTIF_BILLER_ROLE`) and the wallet's own consent to it (`setNotificationFeeConsent` / `getNotificationFeeConsent`). Split off `LoanFacet` and `ProfileFacet` in #2769, when screening the payer pushed `LoanFacet` over EIP-170. **`markNotifBilled` is NOT on LoanFacet any more** |

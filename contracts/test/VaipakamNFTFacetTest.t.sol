@@ -6,6 +6,7 @@ import {Test} from "forge-std/Test.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
+import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
@@ -42,25 +43,24 @@ contract VaipakamNFTFacetTest is Test {
     uint256 constant LOAN_ID = 5;
 
     function _getAllNftSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](17);
+        selectors = new bytes4[](16);
         selectors[0] = VaipakamNFTFacet.mintNFT.selector;
         selectors[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         selectors[2] = VaipakamNFTFacet.burnNFT.selector;
-        selectors[3] = VaipakamNFTFacet.tokenURI.selector;
-        selectors[4] = VaipakamNFTFacet.initializeNFT.selector;
-        selectors[5] = bytes4(keccak256("ownerOf(uint256)"));
+        selectors[3] = VaipakamNFTFacet.initializeNFT.selector;
+        selectors[4] = bytes4(keccak256("ownerOf(uint256)"));
         // ERC721 interface functions
-        selectors[6] = VaipakamNFTFacet.name.selector;
-        selectors[7] = VaipakamNFTFacet.symbol.selector;
-        selectors[8] = VaipakamNFTFacet.balanceOf.selector;
-        selectors[9] = bytes4(keccak256("approve(address,uint256)"));
-        selectors[10] = VaipakamNFTFacet.getApproved.selector;
-        selectors[11] = VaipakamNFTFacet.setApprovalForAll.selector;
-        selectors[12] = VaipakamNFTFacet.isApprovedForAll.selector;
-        selectors[13] = bytes4(keccak256("transferFrom(address,address,uint256)"));
-        selectors[14] = bytes4(keccak256("safeTransferFrom(address,address,uint256)"));
-        selectors[15] = bytes4(keccak256("safeTransferFrom(address,address,uint256,bytes)"));
-        selectors[16] = VaipakamNFTFacet.supportsInterface.selector;
+        selectors[5] = VaipakamNFTFacet.name.selector;
+        selectors[6] = VaipakamNFTFacet.symbol.selector;
+        selectors[7] = VaipakamNFTFacet.balanceOf.selector;
+        selectors[8] = bytes4(keccak256("approve(address,uint256)"));
+        selectors[9] = VaipakamNFTFacet.getApproved.selector;
+        selectors[10] = VaipakamNFTFacet.setApprovalForAll.selector;
+        selectors[11] = VaipakamNFTFacet.isApprovedForAll.selector;
+        selectors[12] = bytes4(keccak256("transferFrom(address,address,uint256)"));
+        selectors[13] = bytes4(keccak256("safeTransferFrom(address,address,uint256)"));
+        selectors[14] = bytes4(keccak256("safeTransferFrom(address,address,uint256,bytes)"));
+        selectors[15] = VaipakamNFTFacet.supportsInterface.selector;
     }
 
     function setUp() public {
@@ -78,7 +78,7 @@ contract VaipakamNFTFacetTest is Test {
         profileFacet = ProfileFacet(ArtifactDeploy.deploy(type(ProfileFacet).name));
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](4);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](5);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(nftFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -100,6 +100,12 @@ contract VaipakamNFTFacetTest is Test {
             facetAddress: address(profileFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getProfileFacetSelectors()
+        });
+        // #2957 - the token's metadata (tokenURI) is its own facet.
+        cuts[4] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(VaipakamNFTMetadataFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getVaipakamNFTMetadataFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -214,7 +220,7 @@ contract VaipakamNFTFacetTest is Test {
 
     function testTokenURILenderActive() public {
         _mintViaProxy(user, TOKEN_ID_1, true, LibVaipakam.LoanPositionStatus.LoanInitiated);
-        string memory uri = VaipakamNFTFacet(address(diamond)).tokenURI(TOKEN_ID_1);
+        string memory uri = VaipakamNFTMetadataFacet(address(diamond)).tokenURI(TOKEN_ID_1);
         // Should start with base64 data URI
         assertGt(bytes(uri).length, 0);
         // Starts with data:application/json;base64,
@@ -227,7 +233,7 @@ contract VaipakamNFTFacetTest is Test {
 
     function testTokenURIBorrowerActive() public {
         _mintViaProxy(user, TOKEN_ID_1, false, LibVaipakam.LoanPositionStatus.LoanInitiated);
-        string memory uri = VaipakamNFTFacet(address(diamond)).tokenURI(TOKEN_ID_1);
+        string memory uri = VaipakamNFTMetadataFacet(address(diamond)).tokenURI(TOKEN_ID_1);
         assertGt(bytes(uri).length, 0);
     }
 
@@ -242,7 +248,7 @@ contract VaipakamNFTFacetTest is Test {
         ];
         for (uint256 i = 0; i < closedStatuses.length; i++) {
             _mintViaProxy(user, i + 1, i % 2 == 0, closedStatuses[i]);
-            string memory uri = VaipakamNFTFacet(address(diamond)).tokenURI(i + 1);
+            string memory uri = VaipakamNFTMetadataFacet(address(diamond)).tokenURI(i + 1);
             assertGt(bytes(uri).length, 0);
         }
     }
@@ -250,7 +256,7 @@ contract VaipakamNFTFacetTest is Test {
     function testTokenURIRevertsInvalidToken() public {
         // ownerOf(999) reverts via ERC721 for non-existent token before InvalidTokenId fires
         vm.expectRevert();
-        VaipakamNFTFacet(address(diamond)).tokenURI(999);
+        VaipakamNFTMetadataFacet(address(diamond)).tokenURI(999);
     }
 
     function testTokenURIAfterStatusUpdate() public {
@@ -258,7 +264,7 @@ contract VaipakamNFTFacetTest is Test {
         vm.prank(address(diamond));
         VaipakamNFTFacet(address(diamond)).updateNFTStatus(TOKEN_ID_1, LOAN_ID, LibVaipakam.LoanPositionStatus.LoanRepaid);
 
-        string memory uri = VaipakamNFTFacet(address(diamond)).tokenURI(TOKEN_ID_1);
+        string memory uri = VaipakamNFTMetadataFacet(address(diamond)).tokenURI(TOKEN_ID_1);
         assertGt(bytes(uri).length, 0);
     }
 
@@ -279,7 +285,7 @@ contract VaipakamNFTFacetTest is Test {
         vm.prank(address(diamond));
         VaipakamNFTFacet(address(diamond)).updateNFTStatus(TOKEN_ID_1, LOAN_ID, LibVaipakam.LoanPositionStatus.LoanInitiated);
         // Verify status was actually updated by querying tokenURI
-        string memory uri = VaipakamNFTFacet(address(diamond)).tokenURI(TOKEN_ID_1);
+        string memory uri = VaipakamNFTMetadataFacet(address(diamond)).tokenURI(TOKEN_ID_1);
         assertGt(bytes(uri).length, 0);
     }
 
@@ -299,7 +305,7 @@ contract VaipakamNFTFacetTest is Test {
     /// @dev tokenURI with a LibVaipakam.LoanPositionStatus.LoanClosed status — covers `isClosed = true` branch via lender role.
     function testTokenURILenderClosedStatus() public {
         _mintViaProxy(user, TOKEN_ID_1, true, LibVaipakam.LoanPositionStatus.LoanClosed);
-        string memory uri = VaipakamNFTFacet(address(diamond)).tokenURI(TOKEN_ID_1);
+        string memory uri = VaipakamNFTMetadataFacet(address(diamond)).tokenURI(TOKEN_ID_1);
         assertGt(bytes(uri).length, 0);
         // URI exists and is base64 encoded
         bytes memory prefix = bytes("data:application/json;base64,");
@@ -312,14 +318,14 @@ contract VaipakamNFTFacetTest is Test {
     /// @dev tokenURI with an active status and borrower role — covers `isClosed = false` + borrower path.
     function testTokenURIBorrowerActiveSeparate() public {
         _mintViaProxy(user, TOKEN_ID_1, false, LibVaipakam.LoanPositionStatus.LoanInitiated); // isLender=false
-        string memory uri = VaipakamNFTFacet(address(diamond)).tokenURI(TOKEN_ID_1);
+        string memory uri = VaipakamNFTMetadataFacet(address(diamond)).tokenURI(TOKEN_ID_1);
         assertGt(bytes(uri).length, 0);
     }
 
     /// @dev tokenURI with a LibVaipakam.LoanPositionStatus.LoanDefaulted status and borrower role — covers borrower closed image path.
     function testTokenURIBorrowerClosedStatus() public {
         _mintViaProxy(user, TOKEN_ID_1, false, LibVaipakam.LoanPositionStatus.LoanDefaulted); // isLender=false, isClosed=true
-        string memory uri = VaipakamNFTFacet(address(diamond)).tokenURI(TOKEN_ID_1);
+        string memory uri = VaipakamNFTMetadataFacet(address(diamond)).tokenURI(TOKEN_ID_1);
         assertGt(bytes(uri).length, 0);
     }
 
@@ -407,19 +413,19 @@ contract VaipakamNFTFacetTest is Test {
 
     function testTokenURILoanRepaidStatus() public {
         _mintViaProxy(user, TOKEN_ID_1, true, LibVaipakam.LoanPositionStatus.LoanRepaid);
-        string memory uri = VaipakamNFTFacet(address(diamond)).tokenURI(TOKEN_ID_1);
+        string memory uri = VaipakamNFTMetadataFacet(address(diamond)).tokenURI(TOKEN_ID_1);
         assertGt(bytes(uri).length, 0);
     }
 
     function testTokenURILoanLiquidatedStatus() public {
         _mintViaProxy(user, TOKEN_ID_1, false, LibVaipakam.LoanPositionStatus.LoanLiquidated);
-        string memory uri = VaipakamNFTFacet(address(diamond)).tokenURI(TOKEN_ID_1);
+        string memory uri = VaipakamNFTMetadataFacet(address(diamond)).tokenURI(TOKEN_ID_1);
         assertGt(bytes(uri).length, 0);
     }
 
     function testTokenURINonClosedStatus() public {
         _mintViaProxy(user, TOKEN_ID_1, true, LibVaipakam.LoanPositionStatus.OfferCreated);
-        string memory uri = VaipakamNFTFacet(address(diamond)).tokenURI(TOKEN_ID_1);
+        string memory uri = VaipakamNFTMetadataFacet(address(diamond)).tokenURI(TOKEN_ID_1);
         assertGt(bytes(uri).length, 0);
     }
 

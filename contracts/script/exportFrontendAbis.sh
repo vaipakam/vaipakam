@@ -348,6 +348,9 @@ FACETS=(
   "IntentConfigFacet"
   "TreasuryFacet"
   "VaipakamNFTFacet"
+  # #2957 — the position NFT's metadata (tokenURI, contractURI and the
+  # image / external-URL setters), split off VaipakamNFTFacet.
+  "VaipakamNFTMetadataFacet"
   "VPFIDiscountFacet"
   "VPFIDiscountAccumulatorFacet"
   "VPFITokenFacet"

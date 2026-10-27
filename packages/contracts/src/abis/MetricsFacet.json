@@ -674,6 +674,11 @@
             "internalType": "address"
           },
           {
+            "name": "principalAssetType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
             "name": "principalSymbol",
             "type": "string",
             "internalType": "string"
@@ -685,6 +690,41 @@
           },
           {
             "name": "principalAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "principalTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "principalQuantity",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "prepayAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "prepaySymbol",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "prepayDecimals",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "prepayAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "bufferAmount",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -735,6 +775,31 @@
           },
           {
             "name": "claimableAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "claimableAssetType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "claimableSymbol",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "claimableDecimals",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "claimableTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "claimableQuantity",
             "type": "uint256",
             "internalType": "uint256"
           },

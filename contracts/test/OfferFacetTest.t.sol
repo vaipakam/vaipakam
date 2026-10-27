@@ -420,11 +420,10 @@ contract OfferFacetTest is Test {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](3);
         selectors[0] = VaipakamNFTFacet.mintNFT.selector;
         selectors[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         selectors[2] = VaipakamNFTFacet.burnNFT.selector;
-        selectors[3] = VaipakamNFTFacet.tokenURI.selector;
         // selectors[4] = VaipakamNFTFacet.supportsInterface.selector; // ERC721
         return selectors;
     }

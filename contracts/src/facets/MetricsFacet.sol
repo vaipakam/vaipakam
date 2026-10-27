@@ -1764,7 +1764,7 @@ contract MetricsFacet {
     ///         loan's current state, what's locked in vault against it,
     ///         and what (if anything) is claimable right now.
     /// @dev    Pure view. Consumed by:
-    ///           1. `VaipakamNFTFacet.tokenURI` for marketplace metadata
+    ///           1. `VaipakamNFTMetadataFacet.tokenURI` for marketplace metadata
     ///              (OpenSea reads the JSON returned there).
     ///           2. The frontend's NFT verifier UI for a structured render
     ///              that doesn't need to parse JSON.
@@ -1783,9 +1783,24 @@ contract MetricsFacet {
         // The realized loan terms (or offer terms for offer-only NFTs,
         // though Phase 1 only mints NFTs at loan-init).
         address principalAsset;
-        string principalSymbol;
-        uint8 principalDecimals;
+        // #2957 — the lent asset's kind: ERC20 for a loan, ERC721 / ERC1155
+        // for a rental. A rental has no collateral leg (#2949), so every
+        // collateral field below is empty for it.
+        LibVaipakam.AssetType principalAssetType;
+        string principalSymbol;        // ERC-20 symbol; an NFT's contract name
+        uint8 principalDecimals;       // 0 for an NFT
+        // The lent amount for a loan. For a rental it is the DAILY RENTAL
+        // FEE, in the prepay asset below, never an amount of the NFT.
         uint256 principalAmount;
+        uint256 principalTokenId;      // the rented NFT (rental only)
+        uint256 principalQuantity;     // ERC-1155 units rented (rental only)
+        // The rental's prepay asset and what the borrower prepaid in it (the
+        // rental fees, then the buffer). Empty for a loan.
+        address prepayAsset;
+        string  prepaySymbol;
+        uint8   prepayDecimals;
+        uint256 prepayAmount;
+        uint256 bufferAmount;
         uint256 interestRateBps;
         uint256 durationDays;
         address collateralAsset;
@@ -1797,6 +1812,15 @@ contract MetricsFacet {
         uint256 collateralLockedNow;     // collateral still in borrower vault against this loan; 0 once claimed/forfeit
         address claimableAsset;          // asset the holder receives at terminal (0x0 if none)
         uint256 claimableAmount;
+        // #2957 — the claim's own shape, read from its claim row, so a renderer
+        // scales and names the claim by the asset it is actually in (a rental's
+        // claim is in the prepay token; a lender's can be the collateral after
+        // an in-kind default) instead of guessing from the holder's role.
+        LibVaipakam.AssetType claimableAssetType;
+        string  claimableSymbol;         // ERC-20 symbol; an NFT's contract name; "" if none
+        uint8   claimableDecimals;       // 0 for an NFT or no claim
+        uint256 claimableTokenId;        // NFT claim only
+        uint256 claimableQuantity;       // ERC-1155 claim only
         bool    isClaimable;             // !claim.claimed && something to claim
         // #954 (§2.3) — borrower-side frozen swap-to-repay principal SURPLUS lane
         // (parked in loan.borrower's vault for THIS holder when the holder was
@@ -1843,7 +1867,13 @@ contract MetricsFacet {
             LibVaipakam.Loan storage loan = vs.loans[s.loanId];
             s.loanStatus = loan.status;
             s.principalAsset = loan.principalAsset;
+            s.principalAssetType = loan.assetType;
             s.principalAmount = loan.principal;
+            s.principalTokenId = loan.tokenId;
+            s.principalQuantity = loan.quantity;
+            s.prepayAsset = loan.prepayAsset;
+            s.prepayAmount = loan.prepayAmount;
+            s.bufferAmount = loan.bufferAmount;
             s.interestRateBps = loan.interestRateBps;
             s.durationDays = loan.durationDays;
             s.collateralAsset = loan.collateralAsset;
@@ -1851,7 +1881,11 @@ contract MetricsFacet {
             s.collateralAssetType = loan.collateralAssetType;
         } else {
             s.principalAsset = offer.lendingAsset;
+            s.principalAssetType = offer.assetType;
             s.principalAmount = offer.amount;
+            s.principalTokenId = offer.tokenId;
+            s.principalQuantity = offer.quantity;
+            s.prepayAsset = offer.prepayAsset;
             s.interestRateBps = offer.interestRateBps;
             s.durationDays = offer.durationDays;
             s.collateralAsset = offer.collateralAsset;
@@ -1863,14 +1897,15 @@ contract MetricsFacet {
         // doesn't block the whole tokenURI render. Falls back to "?" /
         // 18 which is what a marketplace would render anyway for a
         // contract that doesn't implement IERC20Metadata.
-        (s.principalSymbol, s.principalDecimals) = _erc20Meta(s.principalAsset);
-        if (s.collateralAssetType == LibVaipakam.AssetType.ERC20) {
-            (s.collateralSymbol, s.collateralDecimals) = _erc20Meta(s.collateralAsset);
+        (s.principalSymbol, s.principalDecimals) =
+            _assetMeta(s.principalAsset, s.principalAssetType);
+        // #2957 — a rental has no collateral leg (#2949): its collateral
+        // fields are left empty rather than read as an ERC-20 at address 0.
+        if (s.principalAssetType == LibVaipakam.AssetType.ERC20) {
+            (s.collateralSymbol, s.collateralDecimals) =
+                _assetMeta(s.collateralAsset, s.collateralAssetType);
         } else {
-            // NFT collateral: surface the contract's name() if available
-            // for marketplace display; decimals is a no-op for NFTs.
-            s.collateralSymbol = _erc721Name(s.collateralAsset);
-            s.collateralDecimals = 0;
+            (s.prepaySymbol, s.prepayDecimals) = _erc20Meta(s.prepayAsset);
         }
 
         // Claim state — read whichever side this NFT represents.
@@ -1880,6 +1915,13 @@ contract MetricsFacet {
                 : vs.borrowerClaims[s.loanId];
             s.claimableAsset = claim.asset;
             s.claimableAmount = claim.amount;
+            if (claim.asset != address(0)) {
+                s.claimableAssetType = claim.assetType;
+                (s.claimableSymbol, s.claimableDecimals) =
+                    _assetMeta(claim.asset, claim.assetType);
+                s.claimableTokenId = claim.tokenId;
+                s.claimableQuantity = claim.quantity;
+            }
             // A claim is actionable when it's been recorded (claim.asset != 0)
             // and not yet collected. Mirrors the gate in claimAsLender /
             // claimAsBorrower; doesn't capture every nuance (heldForLender,
@@ -1921,6 +1963,18 @@ contract MetricsFacet {
     /// @dev Best-effort ERC-20 symbol + decimals lookup. Falls back to
     ///      `("?" , 18)` when the asset doesn't implement IERC20Metadata
     ///      (rare on production tokens but possible on bespoke deploys).
+    /// @dev #2957 — symbol and decimals for an asset of a known kind. An
+    ///      ERC-20 reads its own metadata; an NFT shows its contract name and
+    ///      has no decimals, so it is never scaled as a fungible amount.
+    function _assetMeta(address asset, LibVaipakam.AssetType kind)
+        private
+        view
+        returns (string memory symbol, uint8 decimals)
+    {
+        if (kind == LibVaipakam.AssetType.ERC20) return _erc20Meta(asset);
+        return (_erc721Name(asset), 0);
+    }
+
     function _erc20Meta(address asset)
         private
         view
