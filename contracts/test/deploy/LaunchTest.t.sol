@@ -548,6 +548,10 @@ contract LaunchTest is Test {
         d.vpfiPool = wiredPool[registry];
         d.rateGovernor = wiredGovernor[registry];
         if (d.vpfiPool != address(0)) d.lanes = _decl(1, 0);
+        // The fixture runs no reward configure, so its Diamond is
+        // Unconfigured: the declaration a deployment with no reward stack
+        // makes (#2920).
+        d.rewardRole = LibLaunchReadiness.RewardRoleIntent.None;
     }
 
     function _epoch() internal view returns (uint64) {
@@ -1702,6 +1706,105 @@ contract LaunchTest is Test {
             c[8].detail,
             "version 1: days lapse 604800s after finalizing, compensation dispatch closes 86400s before"
         );
+    }
+
+    /// @dev #2920 — the issue's case: a Base Diamond whose reward configure
+    ///      never ran reads Unconfigured, so the lapse check says it does not
+    ///      apply. Against the declared Canonical role it is NOT MET, and a
+    ///      testnet launch refuses.
+    function test_RewardRole_NotMetWhenBaseIsUnconfigured() public {
+        vm.chainId(84532);
+        _configure();
+        LibLaunchReadiness.Declared memory d = _d(address(0));
+        d.rewardRole = LibLaunchReadiness.RewardRoleIntent.Canonical;
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, d);
+        assertEq(c[9].label, "the reward role is the one the launch declares");
+        assertTrue(c[9].checkable);
+        assertFalse(c[9].met);
+        assertEq(
+            c[9].detail,
+            "the reward role is Unconfigured, but the launch declares Canonical: run the reward configure step (ConfigureRewardReporter)"
+        );
+        assertTrue(c[8].met, "the lapse check alone still reads as not applicable");
+        vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
+        launcher.launch(diamond, d, address(0), admin, ADMIN_KEY);
+    }
+
+    /// @dev #2920 — each declaration is met by its own role: Canonical by a
+    ///      Base Diamond, Mirror by one pointed at Base, None by an
+    ///      Unconfigured one.
+    function test_RewardRole_MetForEachDeclaredRole() public {
+        _configure();
+        LibLaunchReadiness.Declared memory d = _d(address(0));
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, d);
+        assertTrue(c[9].checkable && c[9].met);
+        assertEq(
+            c[9].detail,
+            "the Diamond runs no rewards (Unconfigured), as declared for a deployment with no reward messenger"
+        );
+
+        vm.prank(admin);
+        RewardReporterFacet(diamond).setBaseChainId(84532);
+        d.rewardRole = LibLaunchReadiness.RewardRoleIntent.Mirror;
+        c = _gate().checks(diamond, d);
+        assertTrue(c[9].checkable && c[9].met);
+        assertEq(c[9].detail, "the Diamond is a reward mirror, as declared");
+
+        vm.prank(admin);
+        RewardReporterFacet(diamond).setIsCanonicalRewardChain(true);
+        d.rewardRole = LibLaunchReadiness.RewardRoleIntent.Canonical;
+        c = _gate().checks(diamond, d);
+        assertTrue(c[9].checkable && c[9].met);
+        assertEq(c[9].detail, "the Diamond is the canonical reward chain, as declared");
+    }
+
+    /// @dev #2920 — a role the declaration does not name is NOT MET: a
+    ///      configured role where the launch declares no reward stack, the
+    ///      wrong one of the two, and Detached, which no launch intends.
+    function test_RewardRole_NotMetForAnotherRole() public {
+        _configure();
+        vm.prank(admin);
+        RewardReporterFacet(diamond).setIsCanonicalRewardChain(true);
+        LibLaunchReadiness.Declared memory d = _d(address(0));
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, d);
+        assertTrue(c[9].checkable);
+        assertFalse(c[9].met);
+        assertEq(
+            c[9].detail,
+            "the reward role is Canonical, but the launch declares no reward stack (the deployment records no reward messenger)"
+        );
+
+        d.rewardRole = LibLaunchReadiness.RewardRoleIntent.Mirror;
+        c = _gate().checks(diamond, d);
+        assertFalse(c[9].met);
+        assertEq(
+            c[9].detail,
+            "the reward role is Canonical, but the launch declares Mirror: run the reward configure step (ConfigureRewardReporter)"
+        );
+
+        vm.prank(admin);
+        RewardReporterFacet(diamond).setIsCanonicalRewardChain(false);
+        d.rewardRole = LibLaunchReadiness.RewardRoleIntent.Canonical;
+        c = _gate().checks(diamond, d);
+        assertTrue(c[9].checkable);
+        assertFalse(c[9].met);
+        assertEq(
+            c[9].detail,
+            "the reward role is Detached, but the launch declares Canonical: run the reward configure step (ConfigureRewardReporter)"
+        );
+    }
+
+    /// @dev #2920 — nothing declared is never read as met: NOT CHECKED,
+    ///      naming the role found, and a production launch refuses it.
+    function test_RewardRole_UndeclaredIsNotChecked() public {
+        _configure();
+        LibLaunchReadiness.Declared memory d = _d(address(0));
+        d.rewardRole = LibLaunchReadiness.RewardRoleIntent.Undeclared;
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, d);
+        assertFalse(c[9].checkable);
+        assertFalse(c[9].met);
+        assertEq(c[9].detail, "no reward role declared to compare the Diamond's (Unconfigured) against");
+        assertFalse(LibLaunchReadiness.allMet(c));
     }
 
     /// @dev `--skip-vpfi`: no VPFI token and none declared. Both CCIP checks
