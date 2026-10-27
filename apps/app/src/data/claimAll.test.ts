@@ -42,7 +42,6 @@ function loan(
       amount: 0n,
       heldForLender: 0n,
       hasRentalNftReturn: false,
-      lifRebate: 0n,
     },
   } as unknown as ClaimableLoan;
 }

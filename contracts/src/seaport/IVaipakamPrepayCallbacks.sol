@@ -16,10 +16,9 @@ pragma solidity ^0.8.29;
  *             floor + recipient invariants at fill time (so a paused
  *             diamond can't accept a stale-signature theft).
  *           - Diamond owns `loans[loanId].status` mutation,
- *             `LibERC721._unlock(borrowerNftId)` invocation, and the
- *             load-bearing `LibVPFIDiscount.settleBorrowerLifProper`
- *             call — anything that touches diamond storage stays in
- *             the diamond.
+ *             and `LibERC721._unlock(borrowerNftId)` invocation —
+ *             anything that touches diamond storage stays in the
+ *             diamond.
  *
  *         The diamond-side method is added in step 5 alongside this
  *         executor; step 6 wires the borrower-facing entry points
@@ -28,10 +27,7 @@ pragma solidity ^0.8.29;
  */
 interface IVaipakamPrepayCallbacks {
     /// @notice Finalize a Seaport prepay-listing fill. Marks the loan
-    ///         Settled, unlocks the borrower NFT, and calls
-    ///         `LibVPFIDiscount.settleBorrowerLifProper` so the
-    ///         borrower's VPFI rebate (Phase-5 LIF) accrues correctly
-    ///         on this proper-close path.
+    ///         Settled and unlocks the borrower NFT.
     /// @dev    The diamond's implementation MUST assert:
     ///           - `msg.sender == collateralListingExecutor` (the
     ///             diamond's stored executor address — only this
@@ -41,7 +37,6 @@ interface IVaipakamPrepayCallbacks {
     ///         and then atomically:
     ///           - `loan.status = LoanStatus.Settled` via LibLifecycle.
     ///           - `LibERC721._unlock(loan.borrowerTokenId)`.
-    ///           - `LibVPFIDiscount.settleBorrowerLifProper(loan)`.
     function executorFinalizePrepaySale(uint256 loanId) external;
 
     // ─── T-086 Round-8 (#358) — offer-keyed callbacks ──────────────────

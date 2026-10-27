@@ -19,12 +19,14 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 /**
  * @title VPFIDiscountFacet
  * @author Vaipakam Developer Team
- * @notice Phase 1 borrower VPFI discount mechanism — spec in
+ * @notice VPFI fee-discount surfaces (vault deposits and withdrawals, the
+ *         discount consent, tier reads, the price config and the lender
+ *         yield-fee discount passthroughs) — spec in
  *         docs/TokenomicsTechSpec.md.
  * @dev #687-A removed the issuer fixed-rate ETH → VPFI sale (`buyVPFIWithETH`,
  *      the bridged-buy ingress, and the global/per-wallet caps) to reduce the
  *      platform's securities-law surface. What remains is the consumptive
- *      fee-discount utility, with four user-facing surfaces:
+ *      fee-discount utility, with three user-facing surfaces:
  *        1. `depositVPFIToVault(amount)` — explicit wallet → vault move that
  *           stakes VPFI so it can back fee discounts. Users acquire VPFI
  *           through external markets / the CCIP CCT bridge, not the protocol.
@@ -32,10 +34,7 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
  *           vault VPFI back to the caller's wallet, respecting the
  *           collateral-encumbrance lien, and checkpoints staking accrual
  *           before the balance change.
- *        3. `quoteVPFIDiscount(offerId)` / `quoteVPFIDiscountFor(id, user)`
- *           — views used by the frontend to show the VPFI that will be
- *           deducted at accept time.
- *        4. `setVPFIDiscountConsent(bool)` / `getVPFIDiscountConsent(user)`
+ *        3. `setVPFIDiscountConsent(bool)` / `getVPFIDiscountConsent(user)`
  *           — the single platform-level user setting that governs whether
  *           vaulted VPFI may be spent on protocol-fee discounts. This same
  *           flag governs BOTH the borrower Loan Initiation Fee discount
@@ -49,8 +48,11 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
  *          oracle) used for the USD→ETH leg of the quote.
  *        - `getVPFIDiscountConfig()` — reads back both of the above.
  *
- *      Chain scope: the DISCOUNT (vault VPFI → treasury at acceptance) works
- *      on every chain, gated purely on borrower vault VPFI balance.
+ *      The borrower's discount moves no VPFI: it reduces the lending-asset
+ *      LIF directly at acceptance (#1352). The peg-custody path that took
+ *      the borrower's LIF in VPFI, its quote views and its event were
+ *      removed in #1980. The lender's yield-fee discount may be paid in VPFI
+ *      from the lender's vault at settlement.
  *
  *      Security: `depositVPFIToVault` / `withdrawVPFIFromVault` are
  *      reentrancy-guarded and pausable. The discount path in OfferFacet
@@ -109,22 +111,6 @@ contract VPFIDiscountFacet is
         address indexed user,
         uint256 amount,
         uint256 newVaultBalance
-    );
-
-    /// @notice Emitted when the discount is successfully applied at loan
-    ///         acceptance. Fired from the OfferFacet mutating path via
-    ///         `LibVPFIDiscount.tryApply` — this facet re-emits it as a
-    ///         passthrough so indexers can filter on one facet.
-    /// @param loanId       The newly-initiated loan id.
-    /// @param borrower     The borrower who paid the discounted fee in VPFI.
-    /// @param lendingAsset The loan's principal asset.
-    /// @param vpfiDeducted VPFI moved from borrower's vault to treasury.
-    /// @custom:event-category informational/settlement
-    event VPFIDiscountApplied(
-        uint256 indexed loanId,
-        address indexed borrower,
-        address indexed lendingAsset,
-        uint256 vpfiDeducted
     );
 
     /// @notice Emitted when the VPFI fee-discount price config is changed by
@@ -465,140 +451,6 @@ contract VPFIDiscountFacet is
     }
 
     /**
-     * @notice Quote the VPFI required to apply the borrower discount on a
-     *         given offer — only meaningful when the borrower address is
-     *         known (offer is a Borrower offer).
-     * @dev **DEPRECATED (#1352 HoldOnly hybrid).** This view models the
-     *      retired peg-custody borrower LIF: it returns a fee-sized
-     *      `vpfiRequired` the borrower must HOLD in vault and gates on the
-     *      VPFI price peg. Under the #1352 HoldOnly mechanic no VPFI is moved
-     *      at accept — the discount is a consent-gated, liquidity-gated
-     *      hold-tier reduction applied directly to the lending-asset LIF, with
-     *      no peg dependency — so a consenting tier holder can be shown "no
-     *      discount" here even though the accept path WILL charge the
-     *      discounted LIF. The #1352-accurate surface is
-     *      `OfferPreviewFacet.previewAccept(...).lifEstimate`
-     *      ({LibVPFIDiscount.holdOnlyBorrowerLif}); the frontend switch to it
-     *      is tracked under PR-8 (#1355). Retained only until that switch
-     *      lands, to keep the modal's current ABI stable.
-     *      Frontend helper and acceptance-time pre-flight check. Returns
-     *      `eligible == false` if the offer is non-ERC20, the lending asset
-     *      is illiquid, any oracle is missing/stale, the admin has not
-     *      configured the rate / ETH reference asset, or the known borrower
-     *      sits in tier 0 (no discount). Never reverts.
-     *
-     *      For LENDER offers the acceptor (the future borrower) is unknown
-     *      at quote time; this view returns `eligible == false` because the
-     *      tier depends on the acceptor's vault balance. Frontend should
-     *      call {quoteVPFIDiscountFor} with the connected wallet address
-     *      instead.
-     *
-     *      Matching the spec: the discount applies only to liquid lending
-     *      assets. Liquidity is checked via OracleFacet at accept time; this
-     *      quote only enforces the preconditions it can verify statically
-     *      without re-running liquidity checks.
-     * @param offerId Offer to quote against.
-     * @return eligible          True iff the full quote succeeded.
-     * @return vpfiRequired      VPFI (18 dec) borrower must hold in vault.
-     * @return borrowerVaultBal Borrower's current vault VPFI balance.
-     * @return tier              Resolved tier 1..4 (0 when ineligible).
-     */
-    // forge-lint: disable-next-line(mixed-case-function)
-    function quoteVPFIDiscount(uint256 offerId)
-        external
-        view
-        returns (
-            bool eligible,
-            uint256 vpfiRequired,
-            uint256 borrowerVaultBal,
-            uint8 tier
-        )
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.Offer storage offer = s.offers[offerId];
-        if (offer.creator == address(0) || offer.accepted) {
-            return (false, 0, 0, 0);
-        }
-        if (offer.assetType != LibVaipakam.AssetType.ERC20) {
-            return (false, 0, 0, 0);
-        }
-
-        // Tier depends on the borrower's vault balance. For a Borrower offer
-        // the creator is the borrower; for a Lender offer the borrower is the
-        // acceptor (unknown here). Surface a negative quote in the Lender
-        // case — the frontend knows to call {quoteVPFIDiscountFor}.
-        address knownBorrower = offer.offerType == LibVaipakam.OfferType.Borrower
-            ? offer.creator
-            : address(0);
-        if (knownBorrower == address(0)) return (false, 0, 0, 0);
-
-        (bool canQuote, uint256 vpfi, uint8 t) = LibVPFIDiscount.quote(
-            offer.lendingAsset,
-            offer.amount,
-            knownBorrower
-        );
-
-        uint256 bal;
-        address vault = s.userVaipakamVaults[knownBorrower];
-        if (vault != address(0) && s.vpfiToken != address(0)) {
-            bal = IERC20(s.vpfiToken).balanceOf(vault);
-        }
-
-        if (!canQuote) return (false, 0, bal, 0);
-        return (true, vpfi, bal, t);
-    }
-
-    /**
-     * @notice Quote the borrower discount for `offerId` assuming `borrower`
-     *         would be the loan's borrower — used by the frontend to render
-     *         the acceptor-side preview on LENDER offers where the creator
-     *         is not the future borrower.
-     * @dev Same failure contract as {quoteVPFIDiscount}; never reverts.
-     * @param offerId  Offer to quote against.
-     * @param borrower Address to resolve the tier against.
-     * @return eligible          True iff the full quote succeeded.
-     * @return vpfiRequired      VPFI (18 dec) `borrower` must hold in vault.
-     * @return borrowerVaultBal `borrower`'s current vault VPFI balance.
-     * @return tier              Resolved tier 1..4 (0 when ineligible).
-     */
-    // forge-lint: disable-next-line(mixed-case-function)
-    function quoteVPFIDiscountFor(uint256 offerId, address borrower)
-        external
-        view
-        returns (
-            bool eligible,
-            uint256 vpfiRequired,
-            uint256 borrowerVaultBal,
-            uint8 tier
-        )
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.Offer storage offer = s.offers[offerId];
-        if (offer.creator == address(0) || offer.accepted) {
-            return (false, 0, 0, 0);
-        }
-        if (offer.assetType != LibVaipakam.AssetType.ERC20) {
-            return (false, 0, 0, 0);
-        }
-        if (borrower == address(0)) return (false, 0, 0, 0);
-
-        (bool canQuote, uint256 vpfi, uint8 t) = LibVPFIDiscount.quote(
-            offer.lendingAsset,
-            offer.amount,
-            borrower
-        );
-
-        uint256 bal;
-        address vault = s.userVaipakamVaults[borrower];
-        if (vault != address(0) && s.vpfiToken != address(0)) {
-            bal = IERC20(s.vpfiToken).balanceOf(vault);
-        }
-
-        if (!canQuote) return (false, 0, bal, 0);
-        return (true, vpfi, bal, t);
-    }
-
-    /**
      * @notice Resolve `user`'s current VPFI discount tier purely from their
      *         vault balance. Cheap, pure, no oracle dependency.
      * @param user Address whose tier to resolve.
@@ -848,34 +700,14 @@ contract VPFIDiscountFacet is
         emit VPFIDiscountConfigUpdated(s.vpfiDiscountWeiPerVpfi, asset);
     }
 
-    // ─── Internal passthrough for OfferFacet ─────────────────────────────────
+    // ─── Internal passthrough for the settlement facets ──────────────────────
 
-    /// @dev Emits the discount-applied event from this facet. Called via
-    ///      cross-facet call by OfferFacet so indexers only need to
-    ///      subscribe to one contract for discount analytics. Gated to
-    ///      `msg.sender == address(this)` — only the diamond's
+    /// @dev Emits the lender Yield Fee discount event from this facet.
+    ///      Called via cross-facet call by RepayFacet so the analytics
+    ///      surface for the VPFI-discount path lives on this single facet.
+    ///      Gated to `msg.sender == address(this)` — only the diamond's
     ///      `LibFacet.crossFacetCall` can reach this selector. Reverts
     ///      {UnauthorizedCrossFacetCall} on any external caller.
-    /// @param loanId       Newly-initiated loan id.
-    /// @param borrower     Borrower who paid the discounted fee in VPFI.
-    /// @param lendingAsset Loan's principal asset.
-    /// @param vpfiDeducted VPFI moved from borrower vault to treasury.
-    function emitDiscountApplied(
-        uint256 loanId,
-        address borrower,
-        address lendingAsset,
-        uint256 vpfiDeducted
-    ) external {
-        // Restrict to the diamond's own cross-facet path — same policy as
-        // VaultFactoryFacet.onlyDiamondInternal (msg.sender == diamond).
-        if (msg.sender != address(this)) revert UnauthorizedCrossFacetCall();
-        emit VPFIDiscountApplied(loanId, borrower, lendingAsset, vpfiDeducted);
-    }
-
-    /// @dev Mirror of {emitDiscountApplied} for the lender Yield Fee
-    ///      discount path. Called via cross-facet call by RepayFacet so the
-    ///      analytics surface for all VPFI-discount paths lives on this
-    ///      single facet. Same cross-facet gating as {emitDiscountApplied}.
     /// @param loanId       Loan being settled.
     /// @param lender       Lender who paid the discounted yield fee in VPFI.
     /// @param lendingAsset Loan's principal asset.

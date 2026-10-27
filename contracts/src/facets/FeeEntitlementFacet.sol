@@ -404,10 +404,8 @@ contract FeeEntitlementFacet is IVaipakamErrors {
      *           - **The borrower stamp** (`borrowerMode`, `borrowerTariffPaid`).
      *             No settlement path reads `borrowerMode` — it is an
      *             informational record — so there is no per-term borrower benefit
-     *             to reprice. (A NEW #1347 Full borrower's `C*` was routed to the
-     *             recycle bucket at origination, not held per-loan; the legacy
-     *             peg-custody `borrowerLifRebate[loanId].vpfiHeld` path is a
-     *             separate, pre-#1347 mechanism and is untouched here regardless.)
+     *             to reprice. (A #1347 Full borrower's `C*` was routed to the
+     *             recycle bucket at origination, not held per-loan.)
      *
      *         No-op on an unstamped loan (`openDays == 0`) — a plain loan that
      *         never touched the tariff/discount path stays unstamped. Ships DARK

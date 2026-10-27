@@ -2,8 +2,8 @@
  * RPC read-diet PR C (Alpha02RpcReadDietDesign §4.2.3) — the
  * per-candidate claim-verdict memo.
  *
- * The Claims verification fan-out (`ownerOf` + `getClaimable` +
- * `getBorrowerLifRebate` per candidate) is the app's single most
+ * The Claims verification fan-out (`ownerOf` + `getClaimable` and the
+ * borrower-side lane reads per candidate) is the app's single most
  * expensive recurring read surface. PR A already keys the query on the
  * candidate-set CONTENT fingerprint, but the fingerprint is
  * set-granular: ONE changed candidate re-probes EVERY candidate. This

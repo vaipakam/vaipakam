@@ -3794,8 +3794,8 @@ Its intended behaviour, as the test oracle for this surface:
   principal surplus in different assets states both. A companion event that
   restates the same value (an offer's creation and its details, a loan start
   and the acceptance that made it) is counted once. When the same action moved
-  something the history service does not itemise — a borrower's fee rebate, or
-  a value it could not establish — the row says an amount is not itemised. A
+  something the history service does not itemise — a value it could not
+  establish — the row says an amount is not itemised. A
   lender claim always notes that it also pays out any funds held for the
   lender from earlier top-ups, which its event does not include in the amount
   shown. A neighbouring loan or offer in the same batched transaction is never

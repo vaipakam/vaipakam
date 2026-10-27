@@ -158,12 +158,10 @@ claimen.
 > das hier.** Ein früheres Modell zog die volle Gebühr vorab in
 > VPFI ein, hielt sie über die gesamte Laufzeit des Loans in
 > Verwahrung und gab beim Claim einen Teil zurück. **Dieser Weg
-> ist eingestellt.** Loans, die noch unter dem alten Modell
-> eröffnet wurden, werden weiterhin so abgerechnet, und die
-> Rebate-Abschnitte weiter unten beschreiben genau diese Loans.
-> Ein heute eröffneter Loan hat kein VPFI gegen seine
-> Initiation-Fee verwahrt und keinen ausstehenden Rebate — darauf
-> zu warten hieße, auf Geld zu warten, das nicht kommen kann.
+> wurde entfernt.** Kein Loan wurde je darüber eröffnet, also hat
+> kein Loan VPFI gegen seine Initiation-Fee verwahrt und es steht
+> kein Rebate aus — darauf zu warten hieße, auf Geld zu warten,
+> das nicht kommen kann.
 
 > **Netzwerk-Gas ist separat.** Der obige Rabatt gilt für die
 > **Protokollgebühren** von Vaipakam (Yield-Fee
@@ -497,11 +495,8 @@ Timelock abgesichert und können keine Assets bewegen.
   Slippage ausgehöhlt sind, um den Lender zurückzuzahlen. Der Swap ist permissionless — jeder
   kann ihn in dem Moment auslösen, in dem dein HF unter 1,0 fällt.
 - **Defaults bei illiquidem Collateral** — der Default überträgt
-  dein gesamtes Collateral an den Lender. Es gibt keinen
-  Restanspruch; nur ein eventuell ungenutzter VPFI-Loan-
-  Initiation-Fee-Rebate. Bei einem Loan auf dem eingestellten
-  VPFI-Gebührenweg wird dieses VPFI an die Treasury verwirkt, nicht
-  an dich zurückgegeben.
+  dein gesamtes Collateral an den Lender. Es gibt überhaupt
+  keinen Restanspruch.
 
 <a id="create-offer.advanced-options"></a>
 
@@ -802,16 +797,14 @@ wird in derselben Transaktion verbrannt.
 Der Borrower-Claim gibt je nach Settlement des Loans zurück:
 
 - **Volle Rückzahlung / Preclose / Refinance** — dein
-  Collateral-Korb zurück; bei einem Loan auf dem eingestellten
-  VPFI-Gebührenweg wird dabei der zeitgewichtete VPFI-Rebate aus
-  der Loan Initiation Fee abgerechnet, der auch null sein kann.
+  Collateral-Korb zurück. Ein Loan-Initiation-Fee-Rebate kommt
+  nicht dazu: dein Rabatt wurde bei Annahme bereits von der Gebühr
+  abgezogen.
 - **Ein Prepay-Sale, der den Loan abschließt** — das Collateral
   geht an den Käufer, nicht an dich zurück. Du erhältst den
   Verkaufspreis abzüglich des Lender-Anspruchs, des Treasury-Anteils
   und etwaiger Verkäufergebühren des Listings, ausgezahlt an den
-  Inhaber des Borrower-Position-NFT. Bei einem Loan auf dem
-  eingestellten Weg rechne hier NICHT mit dem Rebate: er wird beim
-  Settlement berechnet, ist danach aber derzeit nicht abrufbar.
+  Inhaber des Borrower-Position-NFT.
 - **Swap-to-Repay** — dein Collateral wird zur Deckung der Schuld
   verkauft, bis zu einer Obergrenze, die du setzt. Setzt du sie
   großzügig, kann mehr verbraucht werden, als die Schuld strikt
@@ -844,13 +837,6 @@ Der Borrower-Claim gibt je nach Settlement des Loans zurück:
   raten. Bei
   einem Default auf ein illiquides Asset geht meist der ganze Korb
   weg, dann bleibt nichts — das ist auf diesem Weg die Regel, kein unglücklicher Ausgang.
-  Ob das Rebate zurückkommt, hängt vom Abschluss ab: bei einem Loan auf dem
-  eingestellten VPFI-Gebührenweg wird das gegen die Initiation-Fee
-  verwahrte VPFI bei einem Default oder einer Liquidation **an die
-  Treasury verwirkt**. Ein ordnungsgemäßer Abschluss rechnet
-  stattdessen das zeitgewichtete Rebate ab — das null sein kann,
-  womit der ganze Betrag verfällt, wenn dein Rabatt im Moment
-  der Abrechnung null ist.
 
 Der Borrower-Position-NFT wird beim Claim verbrannt, nicht bei der
 Auflösung des Loans — ein von einer Liquidation übrig gelassener
@@ -1109,10 +1095,7 @@ Sobald HF unter 1,0 fällt, kann jeder eine HF-basierte
 Liquidation auslösen; der Swap verkauft dein Collateral zu Preisen,
 die durch Slippage ausgehöhlt sind, um den Lender zurückzuzahlen.
 Bei illiquidem Collateral überträgt der Default dein gesamtes
-Collateral an den Lender, und es bleibt nichts zum Claimen: bei
-einem Loan auf dem eingestellten VPFI-Gebührenweg wird das gegen
-die Initiation-Fee verwahrte VPFI an die Treasury verwirkt statt
-zurückgegeben.
+Collateral an den Lender, und es bleibt nichts zum Claimen.
 
 <a id="loan-details.parties"></a>
 
@@ -1165,11 +1148,9 @@ verfügbar sind:
 
 - **Repay** — vollständig oder teilweise. Teilweise reduziert
   den ausstehenden Saldo und hebt HF; vollständig triggert das
-  terminale Settlement, einschließlich des zeitgewichteten
-  VPFI-Loan-Initiation-Fee-Rebates.
+  terminale Settlement.
 - **Direkter Preclose** — zahle den ausstehenden Betrag jetzt
-  aus deinem Wallet, gib das Collateral frei, settle den
-  Rebate.
+  aus deinem Wallet und gib das Collateral frei.
 - **Offset-Preclose** — verkaufe einen Teil des Collaterals über
   den Swap-Router des Protokolls, zahle aus dem Erlös zurück,
   und gib den Rest zurück. Zwei Schritte: initiieren, dann
@@ -1182,10 +1163,7 @@ verfügbar sind:
   Collateral bei voller Rückzahlung zurück; bei Default oder
   Liquidation kann ein Überschuss bleiben, da nur so viel Collateral
   genommen wird, wie Schuld und Auflösungskosten erfordern — siehe
-  den Claim-Center-Abschnitt oben. VPFI, das unter dem eingestellten
-  Gebührenweg verwahrt war, wird nur bei Default oder Liquidation
-  verwirkt; ein ordnungsgemäßer Abschluss rechnet das
-  zeitgewichtete Rebate ab, das null sein kann. Verbrennt den Borrower-Position-NFT.
+  den Claim-Center-Abschnitt oben. Verbrennt den Borrower-Position-NFT.
 
 ---
 
@@ -1638,9 +1616,6 @@ deinem Vault; es gibt kein ungesichertes Fenster. Der neue Loan
 must bei der Initiierung das HF ≥ 1,5-Gate genauso bestehen wie
 jeder andere Loan.
 
-Der ungenutzte Loan-Initiation-Fee-Rebate des alten Loans wird
-als Teil des Tauschs korrekt abgerechnet.
-
 <a id="refinance.position-summary"></a>
 
 ### Deine aktuelle Position
@@ -1673,8 +1648,6 @@ Atomares Settlement, nachdem der neue Lender akzeptiert hat:
    abzüglich Treasury-Anteil).
 3. Verbrennt die alten Position-NFTs.
 4. Mintet die neuen Position-NFTs.
-5. Rechnet den ungenutzten Loan-Initiation-Fee-Rebate des alten
-   Loans ab.
 
 Revertet, wenn HF unter den neuen Konditionen unter 1,5 läge.
 
@@ -1692,16 +1665,15 @@ seinem Loan initiiert.
 Eine Borrower-getriebene vorzeitige Beendigung. Zwei Pfade:
 
 - **Direkt** — zahle den ausstehenden Betrag (Principal +
-  aufgelaufene Zinsen) aus deinem Wallet, gib das Collateral
-  frei und settle den ungenutzten Loan-Initiation-Fee-Rebate.
+  aufgelaufene Zinsen) aus deinem Wallet und gib das Collateral
+  frei.
 - **Offset** — initiiere den Offset, um einen Teil des
   Collaterals über das 4-DEX-Swap-Failover des Protokolls gegen
   das Principal-Asset zu verkaufen, schließe den Offset ab, um aus
   dem Erlös zurückzuzahlen, und der Rest des Collaterals geht
-  an dich zurück. Gleiches Rebate-Settlement.
+  an dich zurück.
 
-Keine pauschale Early-Close-Strafe. Die zeitgewichtete
-VPFI-Mathematik übernimmt die Fairness.
+Keine pauschale Early-Close-Strafe.
 
 <a id="preclose.position-summary"></a>
 

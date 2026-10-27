@@ -879,8 +879,7 @@ const copySource = {
       // `liquidated` / `internal_matched`, so a `settled` loan NEVER has a
       // claim — and that is by design rather than by omission: the prepay
       // fill distributes everything atomically, which is why
-      // `PrepayListingFacet` pays the rebate outright instead of leaving it
-      // for a claim, and why `claimAsBorrower` rejects `Settled`. That same
+      // `claimAsBorrower` rejects `Settled`. That same
       // route is how this line actually reaches anyone — it UNLOCKS the
       // borrower NFT rather than burning it, so `ownerOf` still resolves —
       // so the one case that renders this row is exactly the case with
@@ -3652,7 +3651,7 @@ const copySource = {
         endsPreclose: 'Immediately — the loan settles today and your collateral is released.',
         endsClaim: 'The claim pays out immediately and this position closes for you.',
         owedNoCollateral: 'Whatever this side is still owed (this loan had no collateral, so there may be nothing).',
-        internalResidual: 'Any residual the internal match left for you, plus any VPFI rebate (may be zero).',
+        internalResidual: 'Any residual the internal match left for you (may be zero).',
         liquidationResidual: 'Anything left after liquidation (may be zero).',
         rentalFeesAndNft: 'Your earned rental fees, plus your NFT back.',
         recoveredNoCollateral: 'Whatever this loan recovered (it had no collateral, so there may be nothing).',
@@ -3902,7 +3901,7 @@ const copySource = {
     whatNextDefaultedViewer:
       'This loan already ended in default — the settlement’s recovery belongs to the position holders.',
     whatNextInternalMatchBorrower:
-      'This loan closed by internal matching. Collect any residual and VPFI rebate below (either may be zero).',
+      'This loan closed by internal matching. Collect any residual below (it may be zero).',
     whatNextInternalMatchLender:
       'This loan closed by internal matching — collect your funds below if you haven’t yet.',
     whatNextInternalMatchViewer:
@@ -3941,9 +3940,8 @@ const copySource = {
     checking: 'Checking for claims…',
     row: {
       // Interpolated claim-row "what you get" lines (extracted from
-      // Claims.tsx). The " + rebate" / held-proceeds suffixes are
-      // composed at the call site from these catalog pieces.
-      rebateAmount: tmpl('{{amount}} VPFI rebate', ['amount']),
+      // Claims.tsx). The held-proceeds suffixes are composed at the call
+      // site from these catalog pieces.
       amountWithSuffix: tmpl('{{amount}}{{suffix}}', ['amount', 'suffix']),
       feesNftBack: tmpl('{{amount}} fees + your {{nft}} back', ['amount', 'nft']),
       rentalFeesNftBack: tmpl('Rental fees + your {{nft}} back', ['nft']),
@@ -3972,10 +3970,7 @@ const copySource = {
       ),
       defaultRecovery: tmpl('Default recovery — {{collateral}}', ['collateral']),
       collateralBack: tmpl('{{collateral}} collateral back', ['collateral']),
-      collateralBackWithAmount: tmpl(
-        '{{amount}} collateral back{{rebateSuffix}}',
-        ['amount', 'rebateSuffix'],
-      ),
+      collateralBackWithAmount: tmpl('{{amount}} collateral back', ['amount']),
       rental: 'Rental',
       loan: 'Loan',
       prepaidBufferBack: 'Your prepaid buffer back',
@@ -5529,7 +5524,6 @@ const copySource = {
       LoanPreclosedDirect: 'Loan closed early',
       LenderFundsClaimed: 'Funds claimed',
       BorrowerFundsClaimed: 'Collateral claimed',
-      BorrowerLifRebateClaimed: 'Fee rebate claimed',
       OffsetCompleted: 'Loan offset',
       OffsetOfferCreated: 'Offset offer created',
       LoanSold: 'Loan sold',
@@ -5609,7 +5603,6 @@ const copySource = {
       SwapAdapterSucceeded: 'Swap route used',
       SwapAllAdaptersFailed: 'Every swap route failed',
       TierExclusionUpdated: 'VPFI discount-tier exclusion updated',
-      VPFIDiscountApplied: 'Fee discount applied (paid in VPFI)',
       VPFIYieldFeeDiscountApplied: 'Yield fee discount applied (paid in VPFI)',
       VaultRentalUpdated: 'Rental access updated',
       ApprovalForAll: 'Approval for all position NFTs',

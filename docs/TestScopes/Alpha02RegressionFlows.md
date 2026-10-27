@@ -129,7 +129,7 @@ Conventions used below:
 | # | Flow | Steps | Verify | Script |
 |---|------|-------|--------|--------|
 | 9.1 | Claim as lender | Claim Center → row → claim | chain: heldForLender paid out; UI row keyed (loanId, role) | s08-claims |
-| 9.2 | Claim as borrower (+ LIF rebate) | same, borrower side | chain: collateral + Phase-5 VPFI rebate atomically; UI preflights entitlement (no doomed NothingToClaim prompt) | s08-claims |
+| 9.2 | Claim as borrower | same, borrower side | chain: collateral paid out, no VPFI rebate leg (removed in #1980); UI preflights entitlement (no doomed NothingToClaim prompt) | s08-claims |
 | 9.3 | Secondary-market buyer discovery | wallet holds bought position NFT only | UI: row appears via chain enumeration (`getUserPositionLoansPaginated` UNION indexed) even when the indexer never saw the wallet | (verified after 6.4) |
 | 9.4 | Indexer-down honesty | indexer unreachable | UI: claims still complete via chain enumeration; unavailable only when BOTH sources fail | (fault-injected during #982) |
 

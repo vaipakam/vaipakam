@@ -145,12 +145,11 @@ accept होते समय लागू होती है। वह fee च
 > **अगर आप Loan Initiation Fee के rebate का इंतज़ार कर रहे हैं,
 > तो यह पढ़ें।** पुराने model में पूरी fee पहले VPFI में ली जाती
 > थी, loan की पूरी अवधि तक custody में रखी जाती थी, और claim के
-> समय उसका एक हिस्सा लौटाया जाता था। **वह रास्ता बंद कर दिया गया
-> है।** जो loan उस समय खुले थे वे आज भी उसी तरह settle होते हैं,
-> और नीचे rebate वाले हिस्से उन्हीं loans का वर्णन करते हैं। आज
-> खोले गए loan की initiation fee के बदले कोई VPFI custody में
-> नहीं है और कोई rebate बकाया नहीं है — उसका इंतज़ार करना ऐसे पैसे
-> का इंतज़ार करना होगा जो आ ही नहीं सकता।
+> समय उसका एक हिस्सा लौटाया जाता था। **वह रास्ता हटा दिया गया
+> है।** उस रास्ते पर कभी कोई loan खोला ही नहीं गया, इसलिए किसी भी
+> loan की initiation fee के बदले कोई VPFI custody में नहीं है और
+> कोई rebate बकाया नहीं है — उसका इंतज़ार करना ऐसे पैसे का इंतज़ार
+> करना होगा जो आ ही नहीं सकता।
 
 > **Network gas अलग है।** ऊपर बताया गया discount Vaipakam की
 > **protocol fees** (yield fee `{liveValue:treasuryFeeBps}`%,
@@ -467,9 +466,7 @@ timelock-gated हैं, और assets move नहीं कर सकते।
   trigger कर सकता है।
 - **Illiquid-collateral defaults** — default आपका पूरा
   collateral lender को transfer कर देता है और claim करने को कुछ
-  नहीं बचता: बंद किए गए VPFI fee रास्ते वाले loan में initiation
-  fee के बदले रखा गया VPFI treasury को ज़ब्त हो जाता है, लौटाया
-  नहीं जाता।
+  भी नहीं बचता।
 
 <a id="create-offer.advanced-options"></a>
 
@@ -753,15 +750,12 @@ Borrower claim इस आधार पर return करता है कि loan
 हुआ:
 
 - **पूरा repayment / preclose / refinance** — आपकी collateral
-  basket वापस; और अगर वह loan अब भी बंद किए गए VPFI fee रास्ते पर
-  है, तो साथ में Loan Initiation Fee का VPFI rebate
-  settle होता है, जो शून्य भी हो सकता है।
+  basket वापस। इसके साथ कोई Loan Initiation Fee rebate नहीं आता:
+  आपका discount acceptance के समय ही fee में से घटा दिया गया था।
 - **loan को settle करने वाली prepay sale** — collateral खरीदार को
   जाता है, आपको वापस नहीं। आपको बिक्री मूल्य में से lender का हक,
   treasury कटौती और listing पर लगे seller fees घटाकर मिलता है, जो
-  borrower position NFT रखने वाले को चुकाया जाता है। बंद किए गए
-  रास्ते वाले loan में यहाँ rebate की उम्मीद न रखें: वह settlement
-  पर गणना तो होता है, पर उसके बाद फ़िलहाल वसूला नहीं जा सकता।
+  borrower position NFT रखने वाले को चुकाया जाता है।
 - **Swap-to-repay** — कर्ज़ चुकाने के लिए आपका collateral बेचा
   जाता है, आपकी तय की हुई सीमा तक। सीमा उदारता से रखें तो कर्ज़ की
   सख़्त ज़रूरत से ज़्यादा भी खर्च हो सकता है; जो खर्च नहीं होता वह
@@ -789,12 +783,7 @@ Borrower claim इस आधार पर return करता है कि loan
   loan खुला रहता है और कोई claim बनता ही नहीं। अनुमान लगाने के बजाय
   claim देखें। Illiquid asset के default में आम तौर पर पूरी
   basket चली जाती है और कुछ नहीं बचता — इस रास्ते पर यही नियम है, कोई दुर्भाग्यपूर्ण
-  नतीजा नहीं। rebate वापस आएगा या नहीं यह इस पर निर्भर है कि loan कैसे ख़त्म हुआ: बंद किए गए VPFI fee रास्ते
-  वाले loan में initiation fee के बदले रखा गया VPFI default या
-  liquidation पर **treasury को ज़ब्त** हो जाता है। Proper close
-  पर उसके बजाय rebate settle होता है — जो शून्य भी
-  हो सकता है, और तब पूरी राशि ज़ब्त हो जाती है, यदि settle
-  होने के समय आपका discount शून्य हो।
+  नतीजा नहीं।
 
 Borrower position NFT तब burn होता है जब आप claim करते हैं, तब
 नहीं जब loan resolve होता है — इसलिए liquidation से बचा surplus
@@ -1039,8 +1028,7 @@ HF 1.0 से नीचे जाते ही कोई भी HF-based liquida
 सकता है; swap आपके collateral को slippage-hit prices पर बेचकर
 lender को चुकाता है। Illiquid collateral पर default आपका पूरा
 collateral lender को transfer कर देता है और claim करने के लिए कुछ
-नहीं बचता: बंद किए गए रास्ते में रखा VPFI treasury को ज़ब्त हो
-जाता है।
+नहीं बचता।
 
 <a id="loan-details.parties"></a>
 
@@ -1091,10 +1079,9 @@ actions:
 
 - **Repay** — पूरा या partial. Partial repayment outstanding
   कम करता है और HF ऊपर लाता है; full repayment terminal
-  settlement trigger करता है, जिसमें VPFI Loan
-  Initiation Fee rebate शामिल है।
+  settlement trigger करता है।
 - **Preclose direct** — अपने wallet से अभी outstanding amount
-  चुकाएँ, collateral release करें, rebate settle करें।
+  चुकाएँ और collateral release करें।
 - **Preclose offset** — protocol के swap router के ज़रिए
   collateral का कुछ हिस्सा बेचें, proceeds से चुकाएँ, और बाक़ी
   वापस लौटाएँ। दो-step: initiate, फिर complete।
@@ -1106,9 +1093,7 @@ actions:
   collateral लौटाता है; default / liquidation पर भी surplus बच
   सकता है, क्योंकि collateral में से उतना ही लिया जाता है जितना
   कर्ज़ और उसे बंद करने की लागत माँगे — ऊपर का Claim Center भाग
-  देखें। बंद किए गए रास्ते में रखा VPFI सिर्फ़ default या liquidation
-  पर ज़ब्त होता है; proper close पर rebate settle होता है, जिसका
-  आकार settle होने के समय आपके discount से तय होता है — शून्य भी हो सकता है। Borrower position NFT को burn करता है।
+  देखें। Borrower position NFT को burn करता है।
 
 ---
 
@@ -1558,9 +1543,6 @@ transaction में। Collateral पूरे समय आपके vault �
 — कोई unsecured window नहीं। किसी भी अन्य loan की तरह, नए loan
 को initiation पर HF ≥ 1.5 gate clear करना होगा।
 
-पुराने loan की unused Loan Initiation Fee rebate को swap
-के हिस्से के रूप में सही ढंग से settle किया जाता है।
-
 <a id="refinance.position-summary"></a>
 
 ### आपकी मौजूदा Position
@@ -1593,8 +1575,6 @@ lender उसे accept कर सकता है। आप acceptance से �
    cut घटाकर)।
 3. पुराने position NFTs को burn करता है।
 4. नए position NFTs mint करता है।
-5. पुराने loan की unused Loan Initiation Fee rebate को
-   settle करता है।
 
 यदि नई terms पर HF 1.5 से नीचे होगा तो transaction revert करता है।
 
@@ -1612,16 +1592,13 @@ lender उसे accept कर सकता है। आप acceptance से �
 borrower-driven early termination. दो रास्ते:
 
 - **Direct** — अपने wallet से outstanding amount (principal +
-  accrued interest) चुकाएँ, collateral release करें, unused
-  Loan Initiation Fee rebate settle करें।
+  accrued interest) चुकाएँ और collateral release करें।
 - **Offset** — collateral का हिस्सा protocol के 4-DEX swap
   failover के ज़रिए principal asset के लिए बेचने के लिए
   offset initiate करें, proceeds से चुकाने के लिए offset
-  complete करें, और बाक़ी collateral आपको वापस। वही rebate
-  settlement।
+  complete करें, और बाक़ी collateral आपको वापस।
 
-कोई flat early-close penalty नहीं। Time-weighted VPFI math
-fairness को संभालती है।
+कोई flat early-close penalty नहीं।
 
 <a id="preclose.position-summary"></a>
 

@@ -316,7 +316,7 @@ This repository has been reviewed internally. External audit status is tracked i
 - Per-user vault proxy deployment, mandatory upgrade gating, and the storage append-only invariant
 - CCIP surface: `CcipMessenger` peer / channel / chainSelector registry authentication, message replay protection, and the cross-chain reward mesh REPORT / BROADCAST finalisation
 - The `VpfiPoolRateGovernor` bounds-checked per-lane CCIP rate limits on the canonical-chain `LockReleaseTokenPool` and the mirror-chain `BurnMintTokenPool`s
-- Phase 5 borrower LIF custody (`LibVPFIDiscount.settleBorrowerLifProper` / `forfeitBorrowerLif`) — the held VPFI must never leak through any terminal path
+- Borrower Loan Initiation Fee charge at acceptance (`OfferAcceptFeeFacet`) — the fee is taken in the lending asset, the hold-tier discount and any Full tariff are applied once at acceptance, and no path takes borrower VPFI into custody for the fee or pays a borrower fee rebate (the earlier VPFI-custody path was removed in #1980; its storage slot is retired, not reused)
 - Phase 6 keeper per-action authorization (lender-side vs borrower-side scoping)
 - Permit2 integration (signature replay protection, deadline enforcement, exact scope)
 - Role separation under the post-handover timelock; the read-only `HandoverGate.s.sol` (`--phase handover-gate`) rebuilds every role holder on the live chain from its role events and fails on any key the governance plan does not name, including the deploy key

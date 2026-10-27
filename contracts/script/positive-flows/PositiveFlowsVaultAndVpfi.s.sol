@@ -12,7 +12,6 @@ import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../../src/facets/RepayFacet.sol";
-import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {VPFITokenFacet} from "../../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../../src/facets/VPFIDiscountFacet.sol";
@@ -315,49 +314,29 @@ contract PositiveFlowsVaultAndVpfi is PositiveFlowsBase {
         console.log("disown(USDC) by newBorrower emitted (audit-trail only)");
     }
 
-    // ─── PF-250: VPFI Deposit + Fee-Discount + Claim Rebate ─────────────────
+    // ─── PF-250: VPFI Deposit + Fee-Discount consent + HoldOnly loan ────────
 
-    /// @dev End-to-end Phase 5 borrower-LIF rebate flow:
+    /// @dev End-to-end borrower VPFI fee-discount flow under HoldOnly (#1352):
     ///        1. Deploy a VPFI ERC20 mock; admin sets it on the
     ///           diamond via `VPFITokenFacet.setVPFIToken` and
     ///           configures the discount conversion (fixed wei-per-VPFI
     ///           rate + ETH price reference asset = WETH).
-    ///        2. Mint 5,000 VPFI to borrower (Tier-3 territory).
-    ///        3. Borrower approves diamond, deposits 2,000 VPFI to
-    ///           vault (Tier-2: 15% rebate band) via
-    ///           `depositVPFIToVault`, then opts in via
+    ///        2. Mint 5,000 VPFI to borrower.
+    ///        3. Borrower approves diamond, deposits 2,000 VPFI to vault
+    ///           via `depositVPFIToVault`, then opts in via
     ///           `setVPFIDiscountConsent(true)`.
-    ///        4. Lender + borrower take a normal loan. Under the
-    ///           **HoldOnly** model (#1352) the borrower's hold-tier
-    ///           discount is applied DIRECTLY to the lending-asset LIF
-    ///           at acceptance: no VPFI leaves the borrower's vault and
-    ///           NO custody is taken, so `vpfiHeld` stays 0.
-    ///        5. Borrower repays. `settleBorrowerLifProper` still runs
-    ///           on every proper-close path, but returns immediately at
-    ///           `held == 0` — it is a no-op for a HoldOnly loan.
-    ///        6. `claimAsBorrower` therefore pays no VPFI rebate; there
-    ///           is no rebate slot to pay.
+    ///        4. Lender + borrower take a normal loan. The borrower's
+    ///           hold-tier discount, when one resolves, is applied
+    ///           DIRECTLY to the lending-asset LIF at acceptance; no VPFI
+    ///           leaves the borrower's vault for the LIF.
+    ///        5. Borrower repays and both sides claim.
     ///
-    ///      **Required assertion: `vpfiHeld == 0` after acceptance** — the
-    ///      observable end state of a HoldOnly loan. It is NOT a guard
-    ///      against reconnecting the peg-custody path; see the long note at
-    ///      the assertion for why three attempts to make it one failed and
-    ///      where that guard actually lives.
-    ///
-    ///      #1555 r2 — this natspec previously described acceptance as
-    ///      calling `tryApplyBorrowerLif`, moving VPFI into custody and
-    ///      paying a rebate at close. That path was retired by #1352 and
-    ///      the producer has had no caller since. Because the scenario's
-    ///      only hard requirement was "the loan settled" and the rebate
-    ///      check was explicitly best-effort, it kept PASSING while
-    ///      exercising none of what it advertised — and taught every
-    ///      reader the inverse of the current behaviour. The tier setup
-    ///      in steps 1-3 is kept as it was, but it does NOT establish the
-    ///      full preconditions the retired path required (this drive never
-    ///      sets `isCanonicalVpfiChain`, so the mirror-tier cache is empty
-    ///      and the effective tier reads zero) — so the assertion below
-    ///      pins the observable HoldOnly end state and is NOT a guard
-    ///      against reconnection. See the note at the assertion.
+    ///      **Required assertion: the borrower's vault VPFI is unchanged
+    ///      across acceptance and the claims.** The LIF never moves VPFI and
+    ///      there is no borrower VPFI rebate to pay (the peg-custody path was
+    ///      removed in #1980). This drive never sets `isCanonicalVpfiChain`,
+    ///      so the effective tier reads zero here; the discount arithmetic
+    ///      itself is covered by the focused unit tests, not by this drive.
     // ─── VPFI-config snapshot (taken when PF-250 starts, restored at its end) ───
     //
     // PF-250's deposit, discount and withdraw steps need the mock VPFI token
@@ -411,58 +390,14 @@ contract PositiveFlowsVaultAndVpfi is PositiveFlowsBase {
         vm.stopBroadcast();
         console.log("Borrower deposited 2,000 VPFI + opted in to discount path");
 
-        // #1555 r3 — CLEAR THE MIN-HISTORY GATE FIRST. `effectiveTierAndBps`
-        // returns tier 0 until the current holding has lasted the minimum
-        // holding period (default three days),
-        // and the retired `tryApplyBorrowerLif` took its eligibility from
-        // that gated tier. Accepting immediately after the deposit would
-        // therefore leave the borrower ineligible, so the no-custody
-        // assertion below would have held whether or not the path were
-        // reconnected — vacuous, exactly what the previous revision claimed
-        // it had fixed. The focused unit test warps four days for the same
-        // reason; this drive must too.
+        // Clear the min-history gate so the drive runs the accept with a
+        // holding that has lasted the minimum period (default three days).
         vm.warp(block.timestamp + 4 days);
 
-        // #1555 r4 — READ THIS BEFORE CALLING THE CHECK BELOW A GUARD.
-        //
-        // I have now claimed three times that PF-250's `vpfiHeld == 0` assertion
-        // is non-vacuous, and been wrong three times. The claim is therefore
-        // WITHDRAWN rather than made a fourth time, and what the assertion
-        // actually establishes is stated instead.
-        //
-        // Round 2: added the assertion, ignoring that tier is gated.
-        // Round 3: added the four-day warp, ignoring that
-        //   `getVPFIDiscountTier` returns the RAW vault-balance tier and
-        //   bypasses the effective history/cache gates the retired
-        //   `quote()` path actually consulted.
-        // Round 4: `anvil-bootstrap.sh` never sets `isCanonicalVpfiChain`
-        //   and PF-250 only calls `setVPFIToken`, so the mirror-tier cache is
-        //   empty and a reconnected `tryApplyBorrowerLif` would return
-        //   `(false, 0)` regardless — leaving `vpfiHeld == 0` for the wrong
-        //   reason.
-        //
-        // So: this asserts the OBSERVABLE END STATE (no custody receipt on a
-        // HoldOnly loan), which is worth pinning and is true. It is NOT a
-        // guard against reconnecting the peg-custody path — that guard is
-        // `testAcceptOfferWithVPFIDiscountApplied`, which runs against a
-        // fully-configured diamond. Making it one here requires configuring
-        // the canonical/cache state this drive does not set up, and asserting
-        // `getEffectiveDiscount` or the full borrower quote rather than the
-        // raw tier.
-        (, , uint256 dBorrowerN10) = VPFIDiscountFacet(diamond)
-            .getVPFIDiscountTier(borrower);
-        console.log(
-            "Raw vault-balance tier bps (NOT the effective gate):",
-            dBorrowerN10
-        );
+        address borrowerVault = VaultFactoryFacet(diamond).getUserVaultAddress(borrower);
+        uint256 vaultVpfiBefore = vpfi.balanceOf(borrowerVault);
 
-        // Step 4: take a loan. The borrower holds a tier-worthy vault balance
-        // with consent enabled on a liquid lending asset. That is NOT the
-        // full set of preconditions the retired peg-custody path required —
-        // this drive never configures `isCanonicalVpfiChain`, so the
-        // mirror-tier cache stays empty and the effective tier reads zero
-        // regardless. Stated so nobody reads the setup as establishing more
-        // than it does (#1555 r6).
+        // Step 4: take a loan.
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
         uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
@@ -474,51 +409,23 @@ contract PositiveFlowsVaultAndVpfi is PositiveFlowsBase {
         uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t9, _sig9);
         vm.stopBroadcast();
         console.log("Loan initiated under HoldOnly borrower LIF:", loanId);
+        require(
+            vpfi.balanceOf(borrowerVault) == vaultVpfiBefore,
+            "PF-250: the LIF must move no VPFI from the borrower's vault"
+        );
 
-        // The scenario's required check: a HoldOnly loan takes no VPFI
-        // custody, so the rebate receipt must be empty on both fields.
-        //
-        // #1555 r6 — this is an OBSERVABLE END-STATE check and nothing more.
-        // An earlier revision said it "fails loudly if the retired
-        // peg-custody origination path is re-wired"; that was the same
-        // overclaim withdrawn in the note above and it survived there.
-        // Re-wiring would NOT fail this on the fresh-Anvil path, because the
-        // empty mirror-tier cache leaves the retired path returning
-        // `(false, 0)` anyway. The re-wiring guard is
-        // `testAcceptOfferWithVPFIDiscountApplied`.
-        {
-            (uint256 rebateAmt_, uint256 vpfiHeld_) =
-                ClaimFacet(diamond).getBorrowerLifRebate(loanId);
-            require(vpfiHeld_ == 0, "PF-250: HoldOnly loan must take NO VPFI custody");
-            require(rebateAmt_ == 0, "PF-250: HoldOnly loan must have no rebate slot");
-        }
-        console.log("Asserted: no VPFI custody taken (vpfiHeld == 0)");
-
-        // Step 5: repay. settleBorrowerLifProper still runs on the proper
-        // -close path but is a no-op here, returning at `held == 0`.
+        // Step 5: repay, then both sides claim.
         vm.startBroadcast(borrowerKey);
         uint256 repayAmt = RepayFacet(diamond).calculateRepaymentAmount(loanId);
         usdc.approve(diamond, repayAmt + 100e6);
         RepayFacet(diamond).repayLoan(loanId);
         vm.stopBroadcast();
-        console.log("Loan repaid; settleBorrowerLifProper was a no-op (held == 0)");
-
-        // Step 6: claim borrower → rebate atomically delivered.
-        uint256 vpfiBalBefore = vpfi.balanceOf(borrower);
         _claimBoth(lenderKey, borrowerKey, loanId);
-        uint256 vpfiBalAfter = vpfi.balanceOf(borrower);
-        console.log("VPFI wallet pre-claim:", vpfiBalBefore);
-        console.log("VPFI wallet post-claim:", vpfiBalAfter);
-        // #1555 r2 — no rebate is expected: HoldOnly took no custody, so
-        // there is nothing for `claimAsBorrower` to pay back in VPFI. The
-        // wallet figures above are logged for the operator, not asserted
-        // against. The custody assertion that carries this scenario is the
-        // `vpfiHeld == 0` require at acceptance; this one confirms the loan
-        // reached a terminal state through the no-op settlement path.
-        //
-        // The previous comment described this as "best-effort depending on
-        // whether the LIF→VPFI quote succeeded" — a fall-through that has
-        // not been reachable since #1352 retired the path it fell back from.
+        require(
+            vpfi.balanceOf(borrowerVault) == vaultVpfiBefore,
+            "PF-250: closing the loan must move no VPFI either"
+        );
+        console.log("Asserted: borrower vault VPFI unchanged across the loan");
         LibVaipakam.Loan memory loanAfter = LoanFacet(diamond).getLoanDetails(loanId);
         require(
             loanAfter.status != LibVaipakam.LoanStatus.Active,

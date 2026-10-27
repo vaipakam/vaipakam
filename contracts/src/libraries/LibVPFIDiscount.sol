@@ -3,8 +3,6 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
-import {LibOfferMatch} from "./LibOfferMatch.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
@@ -16,10 +14,14 @@ import {VPFIDiscountAccumulatorFacet} from "../facets/VPFIDiscountAccumulatorFac
  * @author Vaipakam Developer Team
  * @notice Shared quote / apply helpers for both VPFI fee discount paths
  *         (docs/TokenomicsTechSpec.md §6):
- *           - Borrower Loan Initiation Fee discount (normal 0.1%)
- *           - Lender Yield Fee discount             (normal 1%)
- *         Both paths share the same tier-by-vault-balance gate and the
- *         same platform-level consent flag `s.vpfiDiscountConsent[user]`.
+ *           - Borrower Loan Initiation Fee discount — applied directly
+ *             to the lending-asset LIF at acceptance
+ *             ({holdOnlyBorrowerLif}); no VPFI moves for it (#1352). The
+ *             peg-custody path that took the borrower's LIF in VPFI and
+ *             rebated it at settlement was removed in #1980.
+ *           - Lender Yield Fee discount
+ *         Both paths share the same effective-tier gate and the same
+ *         platform-level consent flag `s.vpfiDiscountConsent[user]`.
  * @dev Tier semantics (`LibVaipakam` constants):
  *
  *        Tier | Vault VPFI range              | Discount
@@ -32,9 +34,8 @@ import {VPFIDiscountAccumulatorFacet} from "../facets/VPFIDiscountAccumulatorFac
  *      Tier resolution is a pure VPFI balance check — no Chainlink
  *      dependency — so the tier gate is deterministic and cheap.
  *
- *      The tier-adjusted fee is still paid IN VPFI out of the user's vault
- *      (spec: "the system should automatically deduct the required VPFI
- *      amount from vault to Treasury"). That conversion still uses
+ *      On the lender's VPFI-payment path the tier-adjusted yield fee is
+ *      paid IN VPFI out of the lender's vault. That conversion uses
  *      Chainlink USD feeds:
  *
  *        normalFeeInAsset      = feeBase × normalFeeBps / BASIS_POINTS
@@ -186,8 +187,9 @@ library LibVPFIDiscount {
     ///         the last written day forward for every day since. Fee paths
     ///         deliberately read without rolling up — a rollup here would
     ///         put the mirror-broadcast lifecycle inside read-only fee
-    ///         resolution, which is what the T-087 note in
-    ///         {settleBorrowerLifProper} exists to prevent. Mirror chains
+    ///         resolution, and into the inlined bytecode of every settlement
+    ///         facet that resolves a fee (T-087 Sub 1.B: `PrecloseFacet`
+    ///         would breach EIP-170). Mirror chains
     ///         read from `s.userTierCache[user]` instead (Sub 1.C wires
     ///         that path).
     function effectiveTierAndBps(address user)
@@ -264,12 +266,12 @@ library LibVPFIDiscount {
         address user
     ) private view returns (uint8 effTier, uint16 effBps) {
         // Sub 1.C round-1 P2 #3: a mirror with a valid cached
-        // entry but no local `vpfiToken` set would otherwise let
-        // `quote()` succeed; the downstream `tryApplyBorrowerLif`
-        // then reaches `IERC20(vpfi).balanceOf(...)` with
-        // `vpfi == address(0)` and reverts instead of taking the
-        // documented silent fallback path. Treat unconfigured VPFI
-        // as "no discount available on this chain" upfront.
+        // entry but no local `vpfiToken` set would otherwise resolve
+        // a discount whose VPFI-payment path then reaches
+        // `IERC20(vpfi).balanceOf(...)` with `vpfi == address(0)` and
+        // reverts instead of taking the documented silent fallback.
+        // Treat unconfigured VPFI as "no discount available on this
+        // chain" upfront.
         if (s.vpfiToken == address(0)) return (0, 0);
         LibVaipakam.CachedTier storage cache = s.userTierCache[user];
         if (cache.effectiveTier == 0) return (0, 0);
@@ -442,40 +444,6 @@ library LibVPFIDiscount {
     }
 
     /**
-     * @notice The borrower's hold-tier discount BPS for this loan (Phase 5 /
-     *         §5.2b), resolved from their EFFECTIVE tier at the moment of
-     *         the call and clamped to `MAX_FEE_DISCOUNT_BPS`. Borrower
-     *         mirror of {lenderHoldTierDiscountBps}.
-     *
-     * @dev Rollup is required at MUTATION sites, NOT immediately before
-     *      this read — {settleBorrowerLifProper} calls this with no
-     *      preceding rollup, deliberately and with its reason recorded.
-     *      A zero `loan.startTime` or zero-duration window returns 0.
-     *
-     *      NOT an average over the loan's own window — see the naming and
-     *      supersession note on {lenderHoldTierDiscountBps}. The condition
-     *      this comment used to list last, "a loan that took the
-     *      lending-asset fee path at init (no anchor set, delta == 0)",
-     *      described the removed anchor arithmetic and no longer applies:
-     *      nothing here reads `borrowerDiscountAccAtInit`, so such a loan
-     *      resolves the borrower's live tier like any other.
-     */
-    function borrowerHoldTierDiscountBps(
-        LibVaipakam.Loan storage loan
-    ) internal view returns (uint256 bps) {
-        // T-087 Sub 1.B — instant EFFECTIVE_BPS lookup, symmetric with
-        // {lenderHoldTierDiscountBps}. See the rationale there.
-        if (loan.startTime == 0 || block.timestamp <= loan.startTime) return 0;
-        ( , uint16 effBps) = effectiveTierAndBps(loan.borrower);
-        bps = uint256(effBps);
-        // #1352 (Codex P2): uniform 50% fee-discount ceiling — symmetric with
-        // {lenderHoldTierDiscountBps} and `holdOnlyBorrowerLif`.
-        if (bps > LibVaipakam.MAX_FEE_DISCOUNT_BPS) {
-            bps = LibVaipakam.MAX_FEE_DISCOUNT_BPS;
-        }
-    }
-
-    /**
      * @notice HoldOnly hybrid borrower Loan-Initiation Fee (#1352, redesign
      *         §F3) — the LENDING-ASSET LIF reduced by the borrower's
      *         consent-gated hold-tier discount. Two-step per §F3:
@@ -553,60 +521,6 @@ library LibVPFIDiscount {
     // ─── Quotes (view) ───────────────────────────────────────────────────────
 
     /**
-     * @notice Quote the VPFI amount required for the borrower Loan
-     *         Initiation Fee on an ERC-20 principal offer (Phase 5).
-     * @dev Phase 5 semantics: the borrower pays the FULL 0.1% LIF up front
-     *      in VPFI (no tier discount at init). The tier gates eligibility
-     *      only — tier-0 users stay on the lending-asset path because they
-     *      earn no time-weighted rebate. Tiers ≥ 1 get the discount as a
-     *      claimable rebate at proper settlement, sized by the time-
-     *      weighted average BPS across the loan's lifetime.
-     *
-     *      Caller must have already verified the offer is ERC-20 principal.
-     *      Returns `(false, 0, 0)` when the borrower is in T0, or when any
-     *      Chainlink / config input is unavailable. Never reverts.
-     * @param principalAsset The offer's lending asset (ERC-20).
-     * @param principal      The offer principal amount in lending asset wei.
-     * @param borrower       The borrower whose tier is resolved.
-     * @return canQuote      True iff the borrower is eligible for the VPFI
-     *                       path (tier ≥ 1) and the oracle route resolves.
-     * @return vpfiRequired  VPFI (18 dec) equivalent of the FULL LIF; the
-     *                       amount actually pulled from borrower vault at
-     *                       init on the VPFI path.
-     * @return tier          Resolved tier 1..4 (0 on canQuote == false).
-     *                       Surfaces the rebate scale the borrower is
-     *                       positioned to earn if they hold VPFI through
-     *                       settlement.
-     */
-    function quote(
-        address principalAsset,
-        uint256 principal,
-        address borrower
-    )
-        internal
-        view
-        returns (bool canQuote, uint256 vpfiRequired, uint8 tier)
-    {
-        if (principal == 0 || borrower == address(0)) return (false, 0, 0);
-
-        // T-087 Sub 1.B — read EFFECTIVE_TIER from the ring-buffer
-        // accumulator, NOT raw vault balance. The min-history gate
-        // and min-tier-over-history clamp must apply here too;
-        // otherwise a fresh wallet could quote a tier-4 LIF on Base
-        // even though the discount path will refuse to apply
-        // (Codex round-6 P1 #5).
-        (tier, ) = effectiveTierAndBps(borrower);
-        if (tier == 0) return (false, 0, 0);
-
-        uint256 normalFee = (principal * LibVaipakam.cfgLoanInitiationFeeBps()) /
-            LibVaipakam.BASIS_POINTS;
-
-        (bool ok, uint256 vpfi) = _feeAssetWeiToVpfi(principalAsset, normalFee);
-        if (!ok) return (false, 0, 0);
-        return (true, vpfi, tier);
-    }
-
-    /**
      * @notice Quote the VPFI required for the lender yield-fee discount on
      *         a given interest amount, from the lender's EFFECTIVE tier at
      *         the settlement moment.
@@ -628,8 +542,8 @@ library LibVPFIDiscount {
      *         record is refreshed where the tier balance is written (#1820),
      *         so the day history is written when a balance actually moves;
      *         the read then extends the last written day forward. Settlement deliberately does
-     *         not roll up — see the T-087 note in {settleBorrowerLifProper},
-     *         which cites `PrecloseFacet`'s EIP-170 budget as the reason.
+     *         not roll up — see {effectiveTierAndBps}, which cites
+     *         `PrecloseFacet`'s EIP-170 budget as the reason.
      *
      * @param loan           The loan the yield fee is settling against.
      * @param interestAmount The lender's pre-split interest in principal-
@@ -709,302 +623,6 @@ library LibVPFIDiscount {
     // ─── Apply (mutating) ────────────────────────────────────────────────────
 
     /**
-     * @notice Attempt to pay the borrower's FULL Loan Initiation Fee in
-     *         VPFI out of the borrower's vault into Diamond custody
-     *         (Phase 5 / §5.2b).
-     *
-     * @dev Phase 5 semantics: pays the FULL 0.1% LIF equivalent (not
-     *      tier-discounted) in VPFI at init. The discount is delivered as
-     *      a time-weighted rebate at proper settlement via
-     *      {settleBorrowerLifProper}. Tier ≥ 1 gate prevents tier-0 users
-     *      from paying VPFI with no expected rebate.
-     *
-     *      Silent fallback on any failure (tier-0, oracle gap, vault
-     *      short, sub-call reverts) — caller falls through to the normal
-     *      lending-asset fee path. On success the VPFI lands in the
-     *      Diamond; caller MUST record the amount against the loan via
-     *      `s.borrowerLifRebate[loanId].vpfiHeld` once the loan id is
-     *      known. Treasury accrual is NOT recorded here — it happens at
-     *      settlement when the final split (rebate vs. treasury) is
-     *      determined.
-     *
-     * @param principalAsset The offer's lending asset.
-     * @param principal      The offer principal.
-     * @param borrower       The borrower funding the LIF in VPFI.
-     * @return applied       True iff VPFI was successfully deducted.
-     * @return vpfiDeducted  VPFI amount moved from borrower vault to
-     *                       Diamond custody — caller records as vpfiHeld.
-     */
-    function tryApplyBorrowerLif(
-        address principalAsset,
-        uint256 principal,
-        address borrower
-    ) internal returns (bool applied, uint256 vpfiDeducted) {
-        (bool canQuote, uint256 vpfiRequired, ) = quote(
-            principalAsset,
-            principal,
-            borrower
-        );
-        if (!canQuote) return (false, 0);
-
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address vpfi = s.vpfiToken;
-        address borrowerVault = s.userVaipakamVaults[borrower];
-        if (borrowerVault == address(0)) return (false, 0);
-
-        uint256 vaultBal = IERC20(vpfi).balanceOf(borrowerVault);
-        if (vaultBal < vpfiRequired) return (false, 0);
-
-        // Withdraw VPFI from borrower's vault into Diamond custody (the
-        // Diamond holds it until settlement splits it between rebate and
-        // treasury). The withdraw reverts on insufficient balance /
-        // vault misconfiguration (#569: including VPFI locked as loan
-        // collateral); silent-fallback via the call wrapper. The withdraw
-        // refreshes the borrower's tier record itself (#1820), so a failed
-        // one leaves the record untouched.
-        (bool ok, ) = address(this).call(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                borrower,
-                vpfi,
-                address(this),
-                vpfiRequired
-            )
-        );
-        if (!ok) return (false, 0);
-
-        return (true, vpfiRequired);
-    }
-
-    // ─── Settlement helpers (Phase 5 / §5.2b) ────────────────────────────────
-
-    /**
-     * @notice Close out the borrower LIF custody at a proper loan
-     *         settlement (repay / preclose / refinance-old-loan). Splits
-     *         the held VPFI between the borrower's claimable rebate and
-     *         the treasury share, sized by the borrower's EFFECTIVE
-     *         hold-tier discount at settlement — NOT, as this line said
-     *         until #1981, "the time-weighted average discount BPS across
-     *         the loan window", which T-087 Sub 1.B removed.
-     *
-     * @dev No-op when `vpfiHeld == 0` (the loan took the lending-asset
-     *      fee path at init, so there's nothing to split). Silently does
-     *      the right thing for pre-upgrade loans — they have zero anchor
-     *      and zero vpfiHeld, so the helper returns without side-effects.
-     *
-     *      Ordering: the caller must NOT roll up before invoking this
-     *      helper. This header required the opposite until #1981 r2 —
-     *      contradicting, in the same comment block, the T-087 note 25
-     *      lines below that explains why the rollup was deliberately
-     *      dropped here (it would drag the lifecycle / nonce-bump
-     *      broadcast into settlement and breach `PrecloseFacet`'s
-     *      EIP-170 budget). Rollup belongs at mutation sites.
-     *
-     *      Treasury accrual is recorded for the treasury share; the
-     *      rebate slice stays at the Diamond pending the borrower's
-     *      claim via {ClaimFacet.claimAsBorrower}.
-     *
-     * @param loan Loan being settled.
-     */
-    function settleBorrowerLifProper(LibVaipakam.Loan storage loan) internal {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.BorrowerLifRebate storage r = s.borrowerLifRebate[loan.id];
-        uint256 held = r.vpfiHeld;
-        if (held == 0) return;
-
-        address vpfi = s.vpfiToken;
-        if (vpfi == address(0)) {
-            // Unrecoverable oracle/config gap — flush to treasury (no
-            // rebate) rather than leave VPFI orphaned at the Diamond.
-            r.vpfiHeld = 0;
-            LibFacet.transferToTreasury(vpfi, held);
-            return;
-        }
-
-        // T-087 Sub 1.B — no rollup at settlement: EFFECTIVE_BPS is
-        // an instantaneous read from the ring buffer (design §3 reuse
-        // row), so settlement only needs to LOOK at the borrower's
-        // current effective state, not mutate it. Dropping the rollup
-        // here keeps the heavy lifecycle / nonce-bump path out of
-        // every settlement facet's inlined bytecode (PrecloseFacet
-        // would otherwise breach EIP-170).
-        uint256 effBps = borrowerHoldTierDiscountBps(loan);
-        uint256 rebate = (held * effBps) / LibVaipakam.BASIS_POINTS;
-        if (rebate > held) rebate = held;
-        uint256 treasuryShare = held - rebate;
-
-        r.vpfiHeld = 0;
-        r.rebateAmount = rebate;
-
-        if (treasuryShare > 0) {
-            // Range Orders Phase 1 — VPFI-path 1% LIF matcher kickback.
-            // Per design §"1% match fee mechanic": when LIF flows to
-            // treasury, 1% goes to the matcher recorded on the loan.
-            // VPFI path kickback fires here at proper-close (rather
-            // than at match) because the borrower's VPFI sits in
-            // Diamond custody until terminal. Zero-matcher loans
-            // (legacy pre-Phase-1) skip the split — full amount goes
-            // to treasury.
-            uint256 matcherCut = loan.matcher == address(0)
-                ? 0
-                : LibOfferMatch.matcherShareOf(treasuryShare);
-            uint256 net = treasuryShare - matcherCut;
-            if (matcherCut > 0) {
-                SafeERC20.safeTransfer(IERC20(vpfi), loan.matcher, matcherCut);
-            }
-            if (net > 0) {
-                LibFacet.transferToTreasury(vpfi, net);
-            }
-        }
-    }
-
-    /**
-     * @notice Forward the borrower LIF custody directly to treasury on a
-     *         non-proper settlement (default / HF-liquidation). No
-     *         rebate is credited — the borrower forfeits the entire
-     *         up-front VPFI.
-     *
-     * @dev No-op when `vpfiHeld == 0`. Always safe to call; the
-     *      settlement helpers on default/liquidation paths invoke this
-     *      unconditionally to drain any Diamond-held VPFI for the loan.
-     */
-    /// @notice Same signature as {ClaimFacet.BorrowerLifRebateClaimed} on
-    ///         purpose — identical topic0, so the existing indexer handler
-    ///         and every downstream consumer see one event for "the rebate
-    ///         reached the borrower side", however it got there.
-    event BorrowerLifRebateClaimed(
-        uint256 indexed loanId,
-        address indexed claimant,
-        uint256 amount,
-        uint256 newVaultVpfiBalance
-    );
-
-    /// @notice Credit a just-settled borrower LIF rebate to the borrower's
-    ///         vault, instead of leaving it in custody for a later claim.
-    /// @dev    #1867. The prepay-collateral-sale terminal takes
-    ///         `LibLifecycle`'s `Active -> Settled` edge, whose documented
-    ///         premise is that the Seaport fill distributes everything
-    ///         atomically and there is therefore NO separate claim step.
-    ///         `settleBorrowerLifProper` breaks that premise when it writes a
-    ///         non-zero `rebateAmount`: the loan is then `Settled` — a state
-    ///         every other site constructs to mean "the borrower has nothing
-    ///         left to claim" — while holding something claimable, and
-    ///         `ClaimFacet.claimAsBorrower` rejects `Settled` outright, so the
-    ///         rebate is stranded.
-    ///
-    ///         Paying it here RESTORES the premise rather than working around
-    ///         it: no lifecycle edge changes, no observable status changes, and
-    ///         the claim gate keeps both of its independent barriers.
-    ///
-    ///         The recipient is `loan.borrower` — the party
-    ///         `settleBorrowerLifProper` PRICED the rebate from — and delivery
-    ///         is {VaultFactoryFacet.vaultCreditFromDiamondERC20} behind a
-    ///         revert-isolated self-call with a wallet fallback, so no
-    ///         delivery failure can refuse the close. See the inline note in
-    ///         the body for both decisions.
-    ///
-    ///         **No-op on any deployment originated from current source.**
-    ///         #1352 retired the peg-custody path and every surviving write to
-    ///         `vpfiHeld` in `src/` assigns zero, so `settleBorrowerLifProper`
-    ///         returns without writing a rebate and this returns 0. Only a
-    ///         Diamond upgraded from pre-#1352, carrying loans opened on the
-    ///         retired path, can reach a non-zero payout.
-    /// @param  loan the just-settled loan (call AFTER
-    ///              `settleBorrowerLifProper`).
-    /// @return paid the amount credited; 0 when nothing was owed.
-    function creditBorrowerLifRebateToVault(
-        LibVaipakam.Loan storage loan
-    ) internal returns (uint256 paid) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        paid = s.borrowerLifRebate[loan.id].rebateAmount;
-        if (paid == 0) return 0;
-        address vpfi = s.vpfiToken;
-        s.borrowerLifRebate[loan.id].rebateAmount = 0;
-        if (vpfi == address(0)) return 0;
-
-        // Codex #1906 r2 — the rebate goes to `loan.borrower`, and that is a
-        // deliberate answer rather than a convenience.
-        //
-        // PAYEE. `settleBorrowerLifProper` prices this from `loan.borrower`'s
-        // effective tier. Paying a different party a figure computed from this
-        // one's tier is a mispricing; making payee and pricing anchor the same
-        // party removes it, and does so WITHOUT diverging from every other
-        // close path (moving the pricing instead would). The principle the two
-        // halves of a prepay sale now follow: sale PROCEEDS follow the
-        // position, a fee REFUND follows the fee payer.
-        //
-        // NO `ownerOf`. Resolving a position holder and paying them raw is the
-        // S10 Invariant B shape, and it forced a choice between a fail-open
-        // screen, a freeze with no release path (`claimAsBorrower` never runs
-        // on a `Settled` loan, so a recorded frozen claimant and an
-        // encumbrance would both be inert — one silently, one permanently),
-        // and refusing the close. Not resolving a holder at all dissolves the
-        // question instead of answering it badly.
-        //
-        // DELIVERY is {VaultFactoryFacet.vaultCreditFromDiamondERC20} behind a
-        // revert-isolated self-call with a wallet fallback — the RL-1 shape,
-        // and its natspec is the design note for this case (Codex #1906 r3).
-        // A settlement credit must never be able to REFUSE the close, and
-        // three separate paths could:
-        //
-        //   * the BROADCASTING rollup used to bubble anything the CCIP tier
-        //     push raised. Since #898 / #911 the push defers instead, but
-        //     that primitive still restamps with the broadcast-free local
-        //     variant (#2849 tracks retiring it); the next broadcasting
-        //     mutation commits the push.
-        //   * a pending MANDATORY VAULT UPGRADE reverts vault resolution. There
-        //     it is a fallback trigger rather than a hard failure.
-        //   * resolving a vault that does not exist would MINT one as a side
-        //     effect of a payout. That primitive resolves READ-ONLY and
-        //     reverts `NoVault`, which the fallback also absorbs.
-        //
-        // So the refund lands in the borrower's vault whenever the vault can
-        // take it, in their wallet when it cannot, and the sale closes either
-        // way. Both destinations are equally reachable by the borrower, so the
-        // fallback is a delivery detail rather than a policy difference.
-        // slither-disable-next-line low-level-calls
-        (bool ok, ) = address(this).call(
-            abi.encodeWithSignature(
-                "vaultCreditFromDiamondERC20(address,address,uint256)",
-                loan.borrower,
-                vpfi,
-                paid
-            )
-        );
-        if (!ok) {
-            SafeERC20.safeTransfer(IERC20(vpfi), loan.borrower, paid);
-        }
-        emit BorrowerLifRebateClaimed(
-            loan.id, loan.borrower, paid, vaultVpfiBalance(loan.borrower)
-        );
-    }
-
-    function forfeitBorrowerLif(LibVaipakam.Loan storage loan) internal {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.BorrowerLifRebate storage r = s.borrowerLifRebate[loan.id];
-        uint256 held = r.vpfiHeld;
-        if (held == 0) return;
-        r.vpfiHeld = 0;
-        // rebateAmount stays at 0 — no claim on forfeiture.
-        // Range Orders Phase 1 — VPFI-path 1% LIF matcher kickback.
-        // Default / HF-liquidation forfeits the full VPFI to treasury;
-        // the matcher's slice still applies because LIF reaching
-        // treasury is the trigger (per design §"1% match fee mechanic").
-        // Zero-matcher loans (legacy) skip the split.
-        address vpfi = s.vpfiToken;
-        uint256 matcherCut = loan.matcher == address(0)
-            ? 0
-            : LibOfferMatch.matcherShareOf(held);
-        uint256 net = held - matcherCut;
-        if (matcherCut > 0) {
-            SafeERC20.safeTransfer(IERC20(vpfi), loan.matcher, matcherCut);
-        }
-        if (net > 0) {
-            LibFacet.transferToTreasury(vpfi, net);
-        }
-    }
-
-    /**
      * @notice Attempt to pay the lender's hold-tier Yield-Fee discount
      *         in VPFI out of the lender's vault into the treasury.
      *
@@ -1031,7 +649,7 @@ library LibVPFIDiscount {
      *      The direction matters: a rollup before the quote would put
      *      the lifecycle / mirror-broadcast path in front of a
      *      read-only fee resolution, which is the failure the T-087
-     *      note in {settleBorrowerLifProper} records.
+     *      note on {effectiveTierAndBps} records.
      *
      *      Read-only callers that need the quote should not invoke this
      *      mutating entrypoint; they can call {quoteYieldFee} or

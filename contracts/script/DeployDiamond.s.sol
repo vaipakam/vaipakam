@@ -2243,20 +2243,19 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](12);
+        s = new bytes4[](11);
         s[0] = ClaimFacet.claimAsLender.selector;
         s[1] = ClaimFacet.claimAsBorrower.selector;
         s[2] = ClaimFacet.getClaimableAmount.selector;
         s[3] = ClaimFacet.getClaimable.selector;
-        s[4] = ClaimFacet.getBorrowerLifRebate.selector;
-        s[5] = ClaimFacet.claimAsLenderWithRetry.selector;
-        s[6] = ClaimFacet.getFallbackSnapshot.selector;
+        s[4] = ClaimFacet.claimAsLenderWithRetry.selector;
+        s[5] = ClaimFacet.getFallbackSnapshot.selector;
         // #399 backstop v0 Role B — liquidator-of-last-resort.
-        s[7] = ClaimFacet.setLenderBackstopOptIn.selector;
-        s[8] = ClaimFacet.claimAsLenderViaBackstop.selector;
-        s[9] = ClaimFacet.getBorrowerSurplusClaim.selector;
-        s[10] = ClaimFacet.getOwedAtDefault.selector; // #2374
-        s[11] = ClaimFacet.getOwedAtInternalMatch.selector; // #2427
+        s[6] = ClaimFacet.setLenderBackstopOptIn.selector;
+        s[7] = ClaimFacet.claimAsLenderViaBackstop.selector;
+        s[8] = ClaimFacet.getBorrowerSurplusClaim.selector;
+        s[9] = ClaimFacet.getOwedAtDefault.selector; // #2374
+        s[10] = ClaimFacet.getOwedAtInternalMatch.selector; // #2427
     }
 
     function _getAddCollateralSelectors() internal pure returns (bytes4[] memory s) {
@@ -2518,32 +2517,29 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // setVPFIBuyRate). The kept consumptive fee-discount surface remains,
         // plus the renamed discount-price config (getVPFIDiscountConfig /
         // setVPFIDiscountRate) that the discount quote depends on.
-        s = new bytes4[](19);
+        s = new bytes4[](16);
         s[0] = VPFIDiscountFacet.depositVPFIToVault.selector;
-        s[1] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
-        s[2] = VPFIDiscountFacet.getVPFIDiscountConfig.selector;
-        s[3] = VPFIDiscountFacet.setVPFIDiscountRate.selector;
-        s[4] = VPFIDiscountFacet.setVPFIDiscountETHPriceAsset.selector;
-        s[5] = VPFIDiscountFacet.emitDiscountApplied.selector;
-        s[6] = VPFIDiscountFacet.setVPFIDiscountConsent.selector;
-        s[7] = VPFIDiscountFacet.getVPFIDiscountConsent.selector;
-        s[8] = VPFIDiscountFacet.emitYieldFeeDiscountApplied.selector;
-        s[9] = VPFIDiscountFacet.quoteVPFIDiscountFor.selector;
-        s[10] = VPFIDiscountFacet.getVPFIDiscountTier.selector;
-        s[11] = VPFIDiscountFacet.withdrawVPFIFromVault.selector;
-        s[12] = VPFIDiscountFacet.getUserVpfiDiscountState.selector;
+        s[1] = VPFIDiscountFacet.getVPFIDiscountConfig.selector;
+        s[2] = VPFIDiscountFacet.setVPFIDiscountRate.selector;
+        s[3] = VPFIDiscountFacet.setVPFIDiscountETHPriceAsset.selector;
+        s[4] = VPFIDiscountFacet.setVPFIDiscountConsent.selector;
+        s[5] = VPFIDiscountFacet.getVPFIDiscountConsent.selector;
+        s[6] = VPFIDiscountFacet.emitYieldFeeDiscountApplied.selector;
+        s[7] = VPFIDiscountFacet.getVPFIDiscountTier.selector;
+        s[8] = VPFIDiscountFacet.withdrawVPFIFromVault.selector;
+        s[9] = VPFIDiscountFacet.getUserVpfiDiscountState.selector;
         // Phase 8b.1 Permit2 addition.
-        s[13] = VPFIDiscountFacet.depositVPFIToVaultWithPermit.selector;
+        s[10] = VPFIDiscountFacet.depositVPFIToVaultWithPermit.selector;
         // T-087 Sub 1.D — post-gate EFFECTIVE_TIER + EFFECTIVE_BPS getter.
-        s[14] = VPFIDiscountFacet.getEffectiveDiscount.selector;
+        s[11] = VPFIDiscountFacet.getEffectiveDiscount.selector;
         // T-087 Sub 4 — balance-mutation-free tier rollup.
-        s[15] = VPFIDiscountFacet.pokeMyTier.selector;
+        s[12] = VPFIDiscountFacet.pokeMyTier.selector;
         // T-087 Sub 4 round-2 P2 — public tracked-balance getter.
-        s[16] = VPFIDiscountFacet.getTrackedVPFIBalance.selector;
+        s[13] = VPFIDiscountFacet.getTrackedVPFIBalance.selector;
         // T-087 Sub 4 round-3 P2 #1 — tracked-tier getter.
-        s[17] = VPFIDiscountFacet.getTrackedVPFIDiscountTier.selector;
+        s[14] = VPFIDiscountFacet.getTrackedVPFIDiscountTier.selector;
         // #1383 — secondary-settlement lender yield-fee resolve host.
-        s[18] = VPFIDiscountFacet.resolveLenderYieldFeeFor.selector;
+        s[15] = VPFIDiscountFacet.resolveLenderYieldFeeFor.selector;
     }
 
     // #687-B: _getStakingRewardsSelectors removed with the 5% VPFI staking yield.

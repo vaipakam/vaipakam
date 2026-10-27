@@ -345,8 +345,8 @@ liquid loans, not prove settlement economics or learn token mechanics.
    fee impact.
 8. Claim Center shows interaction rewards separately.
 
-Settlement economics such as lender yield-fee discount and borrower LIF rebate are
-covered by borrow/lend settlement journeys, not this vault-only setup journey.
+Fee economics such as the lender yield-fee discount at settlement and the borrower
+LIF discount at acceptance are covered by borrow/lend journeys, not this vault-only setup journey.
 
 ### Acceptance checks
 

@@ -13,7 +13,6 @@ import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
-import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -648,13 +647,6 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             // the {VaultFactoryFacet.vaultWithdrawERC20} guard clears
             // for every mid-flow withdraw. See the explanatory
             // comment at the new call site.
-
-            // Phase 5 / §5.2b — default is NOT a proper close, so the
-            // borrower forfeits any up-front VPFI paid for the LIF. The
-            // Diamond flushes the full held amount to treasury; no
-            // rebate is credited. No-op on loans that paid LIF in the
-            // lending asset (vpfiHeld == 0).
-            LibVPFIDiscount.forfeitBorrowerLif(loan);
 
             // Terminal NFT status ("Loan Defaulted" or "Loan Liquidated" per README §7).
             // Burns happen in ClaimFacet after the lender/borrower claims.

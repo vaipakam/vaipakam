@@ -152,12 +152,11 @@ reclamar después.
 > **Si esperas un reembolso de la Loan Initiation Fee, lee esto.**
 > Un modelo anterior cobraba la comisión completa en VPFI por
 > adelantado, la mantenía en custodia durante toda la vida del
-> préstamo y devolvía una parte al reclamar. **Esa vía está
-> retirada.** Los préstamos abiertos mientras estuvo vigente siguen
-> liquidándose así, y los pasajes sobre reembolsos más abajo
-> describen esos préstamos. Un préstamo abierto hoy no tiene VPFI
-> retenido contra su comisión de inicio ni reembolso pendiente:
-> esperarlo sería esperar un dinero que no puede llegar.
+> préstamo y devolvía una parte al reclamar. **Esa vía se ha
+> eliminado.** Nunca se abrió ningún préstamo con ella, así que
+> ningún préstamo tiene VPFI retenido contra su comisión de inicio
+> ni reembolso pendiente: esperarlo sería esperar un dinero que no
+> puede llegar.
 
 > **El gas de red es independiente.** El descuento anterior se
 > aplica a las **comisiones del protocolo** de Vaipakam (Comisión
@@ -497,10 +496,7 @@ timelock, y no pueden mover activos.
   slippage para repagar al prestamista. El swap es permissionless —cualquiera puede
   dispararlo en el instante en que tu HF cae por debajo de 1,0.
 - **Defaults con colateral ilíquido** — el default transfiere
-  todo tu colateral al prestamista y no queda nada por reclamar:
-  en un préstamo que siga en la vía de comisión VPFI retirada, el
-  VPFI retenido contra la comisión de inicio se pierde en favor
-  del tesoro en lugar de devolverse.
+  todo tu colateral al prestamista y no queda nada por reclamar.
 
 <a id="create-offer.advanced-options"></a>
 
@@ -797,17 +793,14 @@ La reclamación del prestatario devuelve, dependiendo de cómo se
 liquidó el préstamo:
 
 - **Repago total / preclose / refinance** — tu canasta de
-  colateral de vuelta; en un préstamo que siga en la vía de
-  comisión VPFI retirada se liquida además el reembolso de VPFI
-  ponderado por tiempo de la Loan Initiation Fee, que puede ser
-  cero.
+  colateral de vuelta. No llega con ella ningún reembolso de la
+  Loan Initiation Fee: tu descuento ya se restó de la comisión al
+  aceptarse el préstamo.
 - **Una venta prepay que liquide el préstamo** — el colateral va al
   comprador, no vuelve a ti. Recibes el precio de venta menos el
   derecho del prestamista, el recorte de tesorería y las comisiones
   de vendedor que llevara el listado, pagado a quien tenga el NFT
-  de posición de prestatario. En un préstamo de la vía retirada, no
-  cuentes aquí con el reembolso: se calcula al liquidar pero
-  actualmente no puede cobrarse después.
+  de posición de prestatario.
 - **Swap-to-repay** — tu colateral se vende para cubrir la deuda,
   hasta un techo que tú fijas. Si lo fijas con holgura puede
   consumirse más de lo que la deuda exigía estrictamente; lo que no
@@ -839,13 +832,7 @@ liquidó el préstamo:
   y no se crea ninguna reclamación. Consulta la reclamación en
   lugar de suponer cuál tienes. En un default sobre un activo ilíquido suele irse la
   canasta entera y no queda nada — y en esa vía es la regla, no un
-  resultado desafortunado. Que el reembolso vuelva depende de cómo terminó el préstamo: en un
-  préstamo que siga en la vía de comisión VPFI retirada, el VPFI
-  retenido contra la comisión de inicio **se pierde en favor del
-  tesoro** en un incumplimiento o una liquidación. Un cierre
-  correcto liquida en cambio el reembolso ponderado por tiempo —
-  que puede ser cero, y entonces todo el importe se pierde, si
-  tu descuento es cero en el momento de la liquidación.
+  resultado desafortunado.
 
 El NFT de posición de prestatario se quema cuando reclamas, no
 cuando se resuelve el préstamo — así que un excedente dejado por
@@ -1102,9 +1089,7 @@ Una vez que HF cae por debajo de 1,0, cualquiera puede disparar
 una liquidación basada en HF; el swap vende tu colateral a
 precios mermados por slippage para repagar al prestamista. Sobre
 colateral ilíquido, el default transfiere todo tu colateral al
-prestamista y no queda nada por reclamar: en un préstamo que siga
-en la vía retirada, el VPFI retenido contra la comisión de inicio
-se pierde en favor del tesoro.
+prestamista y no queda nada por reclamar.
 
 <a id="loan-details.parties"></a>
 
@@ -1156,11 +1141,9 @@ del rol:
 #### Si eres el prestatario
 
 - **Repagar** — total o parcial. El parcial reduce el saldo
-  pendiente y sube HF; el total dispara la liquidación terminal,
-  incluyendo el reembolso de VPFI Loan Initiation Fee ponderado
-  por tiempo.
+  pendiente y sube HF; el total dispara la liquidación terminal.
 - **Preclose directo** — paga el monto pendiente desde tu
-  billetera ahora, libera colateral, liquida el reembolso.
+  billetera ahora y libera colateral.
 - **Preclose offset** — vende parte del colateral vía el router
   de swap del protocolo, repaga con lo recibido, y devuelve el
   remanente. Dos pasos: iniciar, luego completar.
@@ -1172,10 +1155,7 @@ del rol:
   colateral en repago total; en default o liquidación puede quedar un
   excedente, ya que sólo se toma el colateral que exigen la deuda y
   el coste de cerrarla — véase la sección del Claim Center más
-  arriba. El VPFI retenido bajo la vía retirada sólo se pierde en
-  default o liquidación; un cierre correcto liquida el reembolso
-  ponderado por tiempo, que puede ser cero. Quema el NFT de posición de
-  prestatario.
+  arriba. Quema el NFT de posición de prestatario.
 
 ---
 
@@ -1634,9 +1614,6 @@ vault durante todo el proceso —no hay ventana sin garantizar.
 El nuevo préstamo debe pasar el gate de HF ≥ 1,5 en la
 inicialización, igual que cualquier otro préstamo.
 
-El reembolso no usado de la Loan Initiation Fee del préstamo
-viejo se liquida correctamente como parte del intercambio.
-
 <a id="refinance.position-summary"></a>
 
 ### Tu posición actual
@@ -1670,8 +1647,6 @@ aceptado:
    intereses, menos el corte de tesorería).
 3. Quema los NFTs de posición viejos.
 4. Mintea los NFTs de posición nuevos.
-5. Liquida el reembolso no usado de la Loan Initiation Fee del
-   préstamo viejo.
 
 Revierte si HF bajo los nuevos términos quedaría por debajo de
 1,5.
@@ -1691,16 +1666,13 @@ Una terminación anticipada impulsada por el prestatario. Dos
 caminos:
 
 - **Directo** — paga el monto pendiente (principal + intereses
-  acumulados) desde tu billetera, libera colateral, liquida el
-  reembolso no usado de la Loan Initiation Fee.
+  acumulados) desde tu billetera y libera colateral.
 - **Offset** — inicia el offset para vender parte del colateral
   vía el failover de swap de 4 DEX del protocolo por el activo
   principal, completa el offset para repagar con lo recibido, y
-  el remanente del colateral te vuelve. Misma liquidación de
-  reembolso.
+  el remanente del colateral te vuelve.
 
-No hay penalización fija de cierre anticipado. La matemática VPFI
-ponderada por tiempo maneja la equidad.
+No hay penalización fija de cierre anticipado.
 
 <a id="preclose.position-summary"></a>
 

@@ -567,7 +567,7 @@ describe('robustness (Codex #1310 round 1)', () => {
     expect(body.cumulative.cumAbsorbed).toBe('40');
   });
 
-  it('backfill replays historical fee debits (NotificationFeeBilled / VPFIDiscountApplied) pre-boundary, with (block, log_index) precision', async () => {
+  it('backfill replays historical fee debits (NotificationFeeBilled) pre-boundary, with (block, log_index) precision', async () => {
     const { h, env } = makeHarness();
     const seed = (
       block: number,
@@ -602,12 +602,6 @@ describe('robustness (Codex #1310 round 1)', () => {
       vpfiAmount: '15',
       configuredFeeVpfi1e18: '15',
     });
-    seed(21, 0, 'VPFIDiscountApplied', {
-      loanId: '2',
-      borrower: ALICE,
-      lendingAsset: ZERO,
-      vpfiDeducted: '25',
-    });
     // Upgrade block 30: an old-facet withdraw at log_index 1 (BEFORE the
     // first debit at log_index 5) must replay; the fee twin AFTER it must
     // not.
@@ -631,9 +625,9 @@ describe('robustness (Codex #1310 round 1)', () => {
 
     await applyRewardLoopLedger([], env, CHAIN, ts([]));
 
-    // 100 − 15 (fee) − 25 (discount) − 10 (same-block pre-boundary
-    // withdraw) − 20 (canonical debit; its fee twin skipped) = 30.
-    expect(await retained(h, ALICE)).toBe('30');
+    // 100 − 15 (fee) − 10 (same-block pre-boundary withdraw) − 20
+    // (canonical debit; its fee twin skipped) = 55.
+    expect(await retained(h, ALICE)).toBe('55');
   });
 
   it('backfills historical reward events from activity_events once, dedup-safe against live replay', async () => {

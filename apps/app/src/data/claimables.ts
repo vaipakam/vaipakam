@@ -13,7 +13,7 @@
  * Per candidate loan we confirm on-chain: the wallet still HOLDS that
  * side's position NFT (`ownerOf`), and `getClaimable(loanId, isLender)`
  * reports an unclaimed, actionable payout (mirroring ClaimFacet's own
- * actionability guard, incl. the Phase-5 borrower LIF rebate). A
+ * actionability guard). A
  * `fallback_pending` lender loan surfaces naturally — `getClaimable`
  * reports the recoverable collateral the claim-time fallback resolves —
  * so the client-side special-case merge is gone.
@@ -192,7 +192,6 @@ export interface ClaimDetail {
    *  are none, or when a rental's prepay asset could not be read. */
   heldAsset: string | null;
   hasRentalNftReturn: boolean;
-  lifRebate: bigint;
   /** #2373 r2 — the borrower's frozen swap-to-repay surplus, a SEPARATE lane
    *  in the principal asset that `claimAsBorrower` pays alongside the
    *  ordinary claim (`getBorrowerSurplusClaim`). Null when there is none,
@@ -289,7 +288,7 @@ export async function probeClaim(
     return UNCONFIRMED;
   }
 
-  // 2. Authoritative claimable probe + Phase-5 borrower rebate.
+  // 2. Authoritative claimable probe.
   try {
     const res = (await publicClient.readContract({
       address: diamond,
@@ -305,25 +304,6 @@ export async function probeClaim(
     const quantity = res.quantity ?? res[5] ?? 0n;
     const heldForLender = res.heldForLender ?? res[6] ?? 0n;
     const hasRentalNftReturn = res.hasRentalNftReturn ?? res[7] ?? false;
-
-    let lifRebate = 0n;
-    if (!isLender) {
-      try {
-        const rebate = (await publicClient.readContract({
-          address: diamond,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getBorrowerLifRebate',
-          args: [BigInt(loan.loanId)],
-        })) as readonly [bigint, bigint] | { rebateAmount?: bigint };
-        lifRebate = Array.isArray(rebate)
-          ? (rebate[0] ?? 0n)
-          : ((rebate as { rebateAmount?: bigint }).rebateAmount ?? 0n);
-      } catch (e) {
-        // Old ABI without the Phase-5 view reverts → treat as no
-        // rebate; a transport error is a real "couldn't confirm".
-        if (!isRevert(e)) return UNCONFIRMED;
-      }
-    }
 
     // #2373 r2 — the frozen swap-to-repay surplus. A claim can consist of
     // ONLY this lane (a full swap-to-repay that consumed all the collateral
@@ -438,13 +418,12 @@ export async function probeClaim(
       assetType !== AssetType.ERC20 ||
       heldForLender > 0n ||
       hasRentalNftReturn ||
-      lifRebate > 0n ||
       surplus !== null;
     // #2795 — ClaimFacet pays each borrower lane on its own flag: a collateral
     // row already claimed (a close-out that left the borrower nothing of the
-    // collateral writes it so) never hides a pending surplus row or rebate,
-    // and the claim then pays only those lanes.
-    const borrowerOtherLaneOpen = !isLender && (surplus !== null || lifRebate > 0n);
+    // collateral writes it so) never hides a pending surplus row, and the
+    // claim then pays only that lane.
+    const borrowerOtherLaneOpen = !isLender && surplus !== null;
     const collateralLaneOpen = !claimed;
     return (collateralLaneOpen && actionable) || borrowerOtherLaneOpen
       ? claimable({
@@ -462,7 +441,6 @@ export async function probeClaim(
             heldForLender,
             heldAsset,
             hasRentalNftReturn,
-            lifRebate,
             surplus,
             extraCollateral,
             owedAtDefault,

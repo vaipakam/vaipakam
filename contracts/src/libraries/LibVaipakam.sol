@@ -1507,7 +1507,7 @@ library LibVaipakam {
         bool peerLtvReadsPaused;
         // NOTE: #395 graduated partial-liquidation sizing knobs are NOT here —
         // appending to `ProtocolConfig` (embedded before live `Storage` fields
-        // like `borrowerLifRebate` / `swapAdapters`) would shift every
+        // like `swapAdapters`) would shift every
         // subsequent top-level slot. They live at the append-only TAIL of
         // `Storage` instead (search `partialLiqTargetHfCeilingBps`).
     }
@@ -2171,28 +2171,17 @@ library LibVaipakam {
         // Defeats last-minute vault top-ups that used to steal the full
         // tier-4 discount for a loan the lender was mostly at tier-1 on.
         uint256 lenderDiscountAccAtInit;
-        // Slot 22 — Borrower-side mirror of the lender snapshot above
-        // (Phase 5 / §5.2b). Borrower's
-        // `UserVpfiDiscountState.cumulativeDiscountBpsSeconds` at offer
-        // acceptance. Only populated on loans that take the VPFI-fee path
-        // (the borrower chose to pay the full 0.1% LIF in VPFI); zero on
-        // lending-asset-fee loans. On proper settlement the delta between
-        // the borrower's current accumulator and this anchor, divided by
-        // loan duration, yields the time-weighted average discount BPS
-        // — which scales the VPFI rebate paid out via ClaimFacet. The
-        // gameable one-shot tier lookup at init is replaced by this
-        // time-weighted window, so a borrower who tops up to tier 3 at
-        // accept and unstakes the next block earns only a prorated
-        // rebate (~0) instead of the full discount.
+        // Slot 22 — DEAD. Was the borrower-side anchor for the VPFI LIF
+        // rebate: nothing has written it since T-087 Sub 1.B, and the
+        // rebate it priced was removed with the peg-custody path in
+        // #1980. The slot keeps its place in the loan record.
         uint256 borrowerDiscountAccAtInit;
         // ── Range Orders Phase 1 — matcher address ─────────────────────
         // Recorded at loan init from the matching write's `msg.sender`
         // (`matchOffers` / `acceptOffer` / preclose-offset / refinance).
-        // Consumed by `LibVPFIDiscount.settleBorrowerLifProper` and
-        // `forfeitBorrowerLif` to route 1% of any LIF flowing to
-        // treasury (lender-asset path: directly at match; VPFI path:
-        // deferred to terminal). Zero on legacy loans created before
-        // the Range Orders Phase 1 cutover. See
+        // The 1% LIF matcher share is paid at match, in the lending
+        // asset (the VPFI path that deferred it to the terminal was
+        // removed in #1980). See
         // docs/RangeOffersDesign.md §"1% match fee mechanic."
         address matcher;
         // ── T-032 — notification-fee billed flags ──────────────────────
@@ -2798,28 +2787,17 @@ library LibVaipakam {
     }
 
     /**
-     * @notice Per-loan custody + claim bookkeeping for the borrower Loan
-     *         Initiation Fee VPFI-path (Phase 5 / §5.2b).
-     *
-     * @dev Lifecycle:
-     *        init (VPFI path):      vpfiHeld = full LIF-equivalent VPFI
-     *                               pulled from borrower vault to the
-     *                               Diamond; rebateAmount = 0
-     *        proper settlement:     rebateAmount = vpfiHeld × avgBps / BPS
-     *                               (Diamond sends treasury share to
-     *                               treasury, retains rebateAmount for
-     *                               the borrower claim); vpfiHeld = 0
-     *        default / liquidation: both zeroed, full vpfiHeld forwarded
-     *                               to treasury (no rebate)
-     *        claim:                 rebateAmount cleared to zero as the
-     *                               Diamond transfers VPFI to the claimant
-     *
-     *      Non-VPFI-path loans keep this struct at the zero default; no
-     *      settlement side-effects and no claim.
+     * @notice RETIRED (#1980). The value shape of {Storage.retiredBorrowerLifRebate}:
+     *         per-loan custody and claim bookkeeping for the peg-custody
+     *         borrower Loan Initiation Fee path, which took the LIF in VPFI
+     *         at acceptance and rebated part of it at settlement. #1352
+     *         stopped every write; #1980 removed the path and every reader.
+     *         Kept only so the mapping keeps its slot. Nothing reads or
+     *         writes it.
      */
-    struct BorrowerLifRebate {
-        uint256 vpfiHeld; // Diamond's custody while the loan is live
-        uint256 rebateAmount; // Claimable VPFI after proper settlement
+    struct RetiredBorrowerLifRebate {
+        uint256 vpfiHeld;
+        uint256 rebateAmount;
     }
 
     /**
@@ -2855,10 +2833,8 @@ library LibVaipakam {
      *         (both modes `None`, tariffs 0). `cStarOpen` is stamped as a
      *         NOTIONAL value for EVERY reward-eligible loan (even None/HoldOnly)
      *         because the loan-side reward cap is defined from it — see the
-     *         formula doc §F6b. Full is NON-refundable and lives OUTSIDE the
-     *         `borrowerLifRebate` settle/forfeit machinery: `*TariffPaid` is
-     *         credited straight to the recycle bucket at init and is never
-     *         recorded as `vpfiHeld`.
+     *         formula doc §F6b. Full is NON-refundable: `*TariffPaid` is
+     *         credited straight to the recycle bucket at init.
      *
      *         Field packing (rev 15): the two `uint8` modes + `uint32 openDays`
      *         + `uint16 rewardHaircutBpsAtOpen` co-pack; the three VPFI amounts
@@ -3764,13 +3740,10 @@ library LibVaipakam {
         ///      {ConfigFacet} under ADMIN_ROLE (routed through the 48h
         ///      Timelock post-handover).
         ProtocolConfig protocolCfg;
-        // ─── Borrower LIF discount claim bookkeeping (Phase 5 / §5.2b) ─
-        /// @dev Per-loan custody + claimable rebate for the borrower
-        ///      VPFI-path LIF. Keys are loan ids. A loan that took the
-        ///      lending-asset path (no VPFI discount) never touches this
-        ///      mapping — the zero struct reads correctly and settlement
-        ///      helpers no-op on zero vpfiHeld.
-        mapping(uint256 => BorrowerLifRebate) borrowerLifRebate;
+        /// @dev RETIRED (#1980): the peg-custody borrower LIF custody and
+        ///      rebate rows. Nothing reads or writes it; the field keeps its
+        ///      slot. See {RetiredBorrowerLifRebate}.
+        mapping(uint256 => RetiredBorrowerLifRebate) retiredBorrowerLifRebate;
         // ─── Phase 7a: liquidation swap adapter failover chain ──────────
         /// @dev Priority-ordered list of {ISwapAdapter} contracts.
         ///      {LibSwap.swapWithFailover} iterates from index 0 and
@@ -5636,8 +5609,8 @@ library LibVaipakam {
         ///      {LibVpfiRecycle.credit} at every recyclable VPFI receipt;
         ///      consumed only by the governor's coupled reward budget (PR-3b/3c)
         ///      and Phase-C surplus tooling. Separation invariant (governor §5):
-        ///      `diamondVpfiBalance ≥ userLifCustody + unclaimedRewardBudget +
-        ///      recycleBucket`. Appended at struct end — no layout shift for an
+        ///      `diamondVpfiBalance ≥ unclaimedRewardBudget + recycleBucket`.
+        ///      Appended at struct end — no layout shift for an
         ///      in-place facet refresh.
         uint256 recycleBucket;
         /// @dev Day-bucketed credit totals feeding the trailing-window
@@ -12065,7 +12038,7 @@ library LibVaipakam {
     /// claim refused, its entries' expiry clock paused, a staged payout
     /// waiting. Reward value already delivered into the wallet's vault stays
     /// frozen with everything else there, and loan value — principal,
-    /// interest, collateral, claimables, the borrower-LIF rebate — is
+    /// interest, collateral, claimables — is
     /// untouched. WHY the split: a loan's value rests on a contract entered
     /// before the listing (the wind-down reasoning above), and reward earned
     /// before the flag is likewise already the wallet's; reward emitted to a

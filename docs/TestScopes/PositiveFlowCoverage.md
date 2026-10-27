@@ -288,8 +288,8 @@ walked the same flow as PF-230 and is not carried twice.
 | PF-251 | Basic | User withdraws free VPFI from vault. | Free tracked balance exits; encumbered/reserved balance stays. | scripted but stale naming | Rename/update script and add reserved-balance case. |
 | PF-252 | Basic | User enables fee-discount consent. | Platform-level flag active for future settlements. | scripted | Keep. |
 | PF-253 | Basic | Lender receives yield-fee discount at settlement. | Discounted fee calculation uses current effective tier. | unit/integration | Add script assertion. |
-| PF-254 | Basic | Borrower pays full VPFI LIF upfront and receives rebate on proper close. | Rebate claim line appears; treasury share accrues. | scripted | Keep; update terminology. |
-| PF-255 | Basic | Borrower defaults / is liquidated and loses VPFI LIF rebate. | Full held VPFI goes to treasury. | unit/integration | Add script if not time-dependent. |
+| PF-254 | Basic | Borrower with consent and an effective tier accepts a loan; the LIF is charged in the lending asset, reduced by the tier discount. | Discounted lending-asset LIF taken at acceptance; no VPFI moves for the fee; no rebate line at claim. | scripted (stale: written for the removed VPFI-custody path, #1980) | Rewrite script and assertions for the HoldOnly reduction. |
+| PF-255 | Basic | Borrower defaults / is liquidated. | Nothing VPFI-related is forfeited on the borrower side: no borrower VPFI was held for the LIF. | unit/integration | Retarget the old forfeit assertion (#1980) to this; add script if not time-dependent. |
 | PF-256 | Advanced | Min-history gate: deposit qualifies raw tier, effective tier activates later. | Tier remains 0 until gate; poke can refresh after aging. | unit/integration | not broadcast-script friendly. |
 | PF-257 | Advanced | `pokeMyTier` broadcasts/pushes tier when eligible. | Mirror cache receives fresh tier or budget-handled result. | anvil e2e | Covered: the mirror's cache and discount read match Base's after consent there. |
 | PF-258 | Advanced | Mirror-chain fee discount uses authenticated Base-resolved cache. | Mirror settlement reads cache, not local balance. | unit/integration | The Anvil suite proves the cached discount read, not a mirror settlement priced by it; add that scenario. |
@@ -369,7 +369,7 @@ counterpart.
 | ERC-1155 collateral loan starts and closes. | PF-093, PF-110, PF-112, PF-113 |
 | ERC-721 rental completes normally. | PF-042, PF-140, PF-142, PF-143 |
 | ERC-1155 rental completes normally. | PF-043, PF-141, PF-142, PF-143 |
-| Basic VPFI utility: deposit, enable consent, receive fee discount/rebate, withdraw free balance. | PF-250, PF-252, PF-253, PF-254, PF-251 |
+| Basic VPFI utility: deposit, enable consent, receive fee discount, withdraw free balance. | PF-250, PF-252, PF-253, PF-254, PF-251 |
 | Rewards: earn interaction reward and claim from Claim Center. | PF-120, PF-025 |
 | Dashboard and activity reflect a complete lifecycle. | PF-021, PF-024, PF-026 |
 
