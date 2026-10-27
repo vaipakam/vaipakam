@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibRiskMath} from "./LibRiskMath.sol";
+import {LibInitRiskGate} from "./LibInitRiskGate.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 
 /**
@@ -83,10 +84,14 @@ library LibOfferBounds {
         ) {
             return (true, BoundsFail.None);
         }
+        // The bounds are the create-time view of the initiation risk gate, so
+        // they key on the same rule the accept reads (#2956).
         OracleFacet oracle = OracleFacet(address(this));
         if (
-            oracle.checkLiquidity(lendingAsset) != LibVaipakam.LiquidityStatus.Liquid ||
-            oracle.checkLiquidity(collateralAsset) != LibVaipakam.LiquidityStatus.Liquid
+            !LibInitRiskGate.applies(
+                oracle.checkLiquidity(lendingAsset),
+                oracle.checkLiquidity(collateralAsset)
+            )
         ) {
             return (true, BoundsFail.None);
         }
