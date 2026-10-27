@@ -1382,6 +1382,29 @@ jobs:
       - name: Shards partition the regression and the verifier refuses gaps
         run: bash contracts/script/run-regression.test.sh
 
+  # -------------------------------------------------------------------
+  # abi-drift — the classifier predeploy-check.sh step 4 uses to tell a
+  # keeper-bot ABI whose functions changed (a warning: the bot's calls may
+  # not match) from one whose error/event list alone changed (a note: only
+  # revert decoding degrades), #1564. The gate itself runs inside
+  # contracts-fast, which only runs on contract changes; this runs the
+  # classifier's cases on every PR, because a classifier that called a
+  # changed function "decode" would silence exactly the drift that breaks
+  # the bot. Bash and jq only.
+  abi-drift:
+    name: ABI drift classifier (unconditional)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+
+      - name: Function drift is never classified as decode-only
+        run: bash contracts/script/lib/abi-drift.test.sh
+
   offchain-data-warm:
     name: ops/offchain-data-warm (typecheck + tests)
     needs: detect-changes

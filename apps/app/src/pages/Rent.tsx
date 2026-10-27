@@ -22,8 +22,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { CircleCheck, Images, KeyRound, LoaderCircle } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import { useQueryClient } from '@tanstack/react-query';
-import { encodeFunctionData } from 'viem';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { encodeFunctionData, type Address } from 'viem';
 import { copy } from '../content/copy';
 import {
   disablePermit2ForSession,
@@ -38,6 +38,12 @@ import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { SimulationPreview } from '../components/SimulationPreview';
 import type { TxSimInput } from '../contracts/useTxSimulation';
 import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
+import {
+  lifecycleFromOffer,
+  type LifecycleTerms,
+  type ReviewedAcceptTerms,
+} from '../contracts/acceptReview';
+import { LifecycleTermsList } from '../components/LifecycleTermsList';
 import { ensureAllowance, isAddressLike, useTokenBalance, useTokenMeta } from '../contracts/erc20';
 import {
   makeStepper,
@@ -46,14 +52,10 @@ import {
   useAllowanceForPlan,
   type SubmitProgress,
 } from '../lib/submitProgress';
-import {
-  fetchTokenSecurity,
-  isCuratedAsset,
-  needsSecurityCheck,
-  useTokenSecurity,
-  verdictFingerprint,
-} from '../data/tokenSecurity';
+import { screenTargets, useTokenScreen } from '../contracts/acceptTokenScreen';
+import { TokenScreenBanner } from '../components/TokenScreenBanner';
 import { flowDisabled } from '../lib/killSwitch';
+import { idleAware } from '../lib/idle';
 import {
   ensureNftApproval,
   readNftOwnershipLive,
@@ -722,6 +724,7 @@ function RentNftFlow() {
   const { address, walletChain, readChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
+  const readClient = usePublicClient({ chainId: readChain.chainId });
   const { write } = useDiamondWrite();
   const permit2 = usePermit2Signing();
   const { sign: signAcceptTerms } = useAcceptTermsSigning();
@@ -842,37 +845,22 @@ function RentNftFlow() {
   const rentPlanKnown =
     totalPrepay !== undefined && planAllowance.data !== undefined;
   const rentPlanTotal = 2 + rentPlanApprove;
-  // #1036 — screen the prepay token (the leg the renter pays; the
-  // listed NFT itself has no ERC-20 security surface). Fail closed:
-  // 'block'/'unknown' hold the accept button.
-  const prepaySec = useTokenSecurity(
+  // #1036 / #2726 — screen every ERC-20 leg the rental moves: the
+  // prepayment token the renter pays (the listed NFT itself has no ERC-20
+  // security surface) and a collateral leg if the listing carries one. The
+  // shared screen the accept signer enforces; fail closed: a block, a
+  // pending verdict or a failed check holds the accept button.
+  const tokenScreen = useTokenScreen(
     readChain.chainId,
-    selected?.prepayAsset,
+    selected ? screenTargets(selected) : [],
   );
-  // 'needed' derives from the check's inputs, never query lifecycle
-  // state (fetchStatus idles after settling — must not un-gate).
-  const prepaySecNeeded = needsSecurityCheck(
-    readChain.chainId,
-    selected?.prepayAsset,
-  );
-  // Fail-closed on THREE states: no data yet, a 'block' verdict, and
-  // an errored REFETCH — react-query keeps the prior verdict in
-  // `data` when a later refetch fails, so `isError` must dominate
-  // the stale verdict or an outage would silently un-gate.
-  const prepaySecBlocked =
-    prepaySecNeeded &&
-    (prepaySec.isError ||
-      prepaySec.data === undefined ||
-      prepaySec.data.kind === 'block');
-  const prepaySecWarned =
-    prepaySecNeeded && !prepaySec.isError && prepaySec.data?.kind === 'warn';
+  const prepaySecBlocked = !tokenScreen.ok;
+  const prepaySecWarned = tokenScreen.warned.length > 0;
   // Late-disclosure rule: a warning/block arriving after the consent
   // box was ticked voids the consent. Fingerprinted on the REASON
   // content too — changed warning text is a new disclosure even when
   // the verdict kind stayed 'warn'.
-  const prepaySecFingerprint = prepaySec.isError
-    ? 'errored'
-    : verdictFingerprint(prepaySec.data);
+  const prepaySecFingerprint = tokenScreen.fingerprint;
   // Fingerprint current when consent was LAST ticked (stamped in the
   // checkbox handler). canSign requires a match while a warning is
   // disclosed — the clear-effect below only runs after a commit,
@@ -934,11 +922,66 @@ function RentNftFlow() {
     };
   }, [selected, prepayMeta.data, totalPrepay, bufferBps]);
 
+  // #2725 — the lifecycle terms the accept signature binds, read LIVE from
+  // the listing (the indexer row carries only some of them) together with
+  // its linked loan. The review lists every one and the signer compares each
+  // against what it signs. A failed refresh counts as unread.
+  const rentLifecycleQuery = useQuery({
+    queryKey: ['offerLifecycle', readChain.chainId, selected?.offerId, 'rent'],
+    enabled: step === 'review' && Boolean(readClient) && Boolean(selected),
+    staleTime: 30_000,
+    refetchInterval: idleAware(60_000),
+    queryFn: async () => {
+      const offerId = BigInt(selected!.offerId);
+      const [o, linked] = await Promise.all([
+        readClient!.readContract({
+          address: readChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getOffer',
+          args: [offerId],
+        }) as Promise<Record<string, unknown>>,
+        readClient!.readContract({
+          address: readChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getOfferLinkedLoanId',
+          args: [offerId],
+        }) as Promise<bigint>,
+      ]);
+      return lifecycleFromOffer(o, linked);
+    },
+  });
+  const rentLifecycle: LifecycleTerms | undefined = rentLifecycleQuery.isError
+    ? undefined
+    : rentLifecycleQuery.data;
+  // Consent is given against the terms on screen: when the listed terms
+  // change (first arrival included), the tick does not carry over. Adjusted
+  // during render, like OfferFlow's assertion epoch, so no frame can sign
+  // against consent that predates the change.
+  const rentLifecycleFp = rentLifecycle
+    ? [
+        rentLifecycle.useFullTermInterest,
+        rentLifecycle.allowsPartialRepay,
+        rentLifecycle.allowsPrepayListing,
+        rentLifecycle.allowsParallelSale,
+        rentLifecycle.periodicInterestCadence,
+        rentLifecycle.refinanceTargetLoanId,
+        rentLifecycle.linkedLoanId,
+        rentLifecycle.parallelSaleOrderHash,
+      ].join(':')
+    : 'pending';
+  const [seenRentLifecycleFp, setSeenRentLifecycleFp] = useState(rentLifecycleFp);
+  if (seenRentLifecycleFp !== rentLifecycleFp) {
+    setSeenRentLifecycleFp(rentLifecycleFp);
+    if (consent) setConsent(false);
+  }
+
   // #1028 — operator kill switch (position-opening flows only).
   const killed = flowDisabled('nft-rent');
   const canSign =
     allChecksPass(checks) &&
     receipt !== null &&
+    // #2725 — every lifecycle term the signature binds has been read and shown.
+    rentLifecycle !== undefined &&
     Boolean(walletClient) &&
     Boolean(publicClient) &&
     !prepaySecBlocked &&
@@ -1018,71 +1061,56 @@ function RentNftFlow() {
       // comparison (incl. ERC-1155 quantity and asset type) runs
       // before the wallet is asked to sign, so the renter never signs
       // terms that differ from the reviewed listing.
-      // #1036 — re-verify the prepay token at submit time (fail
-      // closed; curated tokens are pre-vetted and skipped). A live
-      // result differing from the reviewed disclosure is pushed into
-      // the query cache before aborting, so the re-review renders the
-      // new finding and the fingerprint effect voids stale consent.
-      if (!isCuratedAsset(walletChain.chainId, selected.prepayAsset)) {
-        const v = await fetchTokenSecurity(walletChain.chainId, selected.prepayAsset);
-        const cacheKey = [
-          'tokenSecurity',
-          readChain.chainId,
-          selected.prepayAsset.toLowerCase(),
-        ];
-        if (v.kind === 'block') {
-          queryClient.setQueryData(cacheKey, v);
-          throw new Error(copy.tokenSecurity.gateBlock(copy.rent.prepaymentTokenLabel, v.reasons.join('; ')));
-        }
-        if (v.kind === 'unknown') {
-          // RESET (not invalidate): reset drops `data` to undefined
-          // immediately, closing the gate the moment the submit lock
-          // clears — invalidate keeps the stale verdict readable
-          // while the forced refetch is in flight. A persistent
-          // outage then errors into the blocked banner + "Check
-          // again".
-          void queryClient.resetQueries({ queryKey: cacheKey });
-          throw new Error(copy.tokenSecurity.gateUnknown(copy.rent.prepaymentTokenLabel));
-        }
-        // A live 'warn' passes ONLY when the review already disclosed
-        // this exact warning (same reasons) — anything else was never
-        // consented to.
-        if (
-          v.kind === 'warn' &&
-          verdictFingerprint(v) !== verdictFingerprint(prepaySec.data)
-        ) {
-          queryClient.setQueryData(cacheKey, v);
-          // Synchronous consent clear — the fingerprint effect fires
-          // next render; a fast retry inside that window would pass
-          // un-consented.
-          setConsent(false);
-          throw new Error(copy.tokenSecurity.gateChanged(copy.rent.prepaymentTokenLabel));
-        }
+      // #1036 / #2726 — the token screen is re-run at SIGN time by the
+      // accept signer itself, on every ERC-20 leg of the canonical terms
+      // (the prepayment token, and a collateral leg if the listing has one),
+      // against what this review showed (`screen` below).
+      // #2725 — EVERY term the signature binds, as this review showed it; the
+      // signer compares each against the canonical terms before the wallet
+      // prompt.
+      if (!rentLifecycle) {
+        throw new Error(copy.match.termsChanged);
       }
+      const reviewedRentTerms: ReviewedAcceptTerms = {
+        offerCreator: selected.creator as Address,
+        offerType: selected.offerType,
+        lendingAsset: selected.lendingAsset as Address,
+        collateralAsset: selected.collateralAsset as Address,
+        amount: BigInt(selected.amount),
+        collateralAmount: BigInt(selected.collateralAmount),
+        interestRateBps: BigInt(selected.interestRateBps),
+        durationDays: BigInt(selected.durationDays),
+        tokenId: BigInt(selected.tokenId),
+        collateralTokenId: BigInt(selected.collateralTokenId),
+        quantity: BigInt(selected.quantity || '1'),
+        collateralQuantity: BigInt(selected.collateralQuantity),
+        assetType: selected.assetType,
+        collateralAssetType: selected.collateralAssetType,
+        prepayAsset: selected.prepayAsset as Address,
+        ...rentLifecycle,
+        // #2728 — the rental review discloses the NFT leg's own model up
+        // front (it stays in custody, fees are prepaid, nothing is
+        // liquidated on price), so that leg is acknowledged. The review
+        // shows no collateral leg, so none is acknowledged: a listing whose
+        // collateral reads illiquid is refused before signing rather than
+        // signed against a disclosure the renter never saw.
+        illiquidLegs: { lending: true, collateral: false },
+      };
       let signed: Awaited<ReturnType<typeof signAcceptTerms>>;
       try {
         stepper.next('sign');
         signed = await signAcceptTerms({
           offerId: BigInt(selected.offerId),
           consent,
-          expected: {
-            lendingAsset: selected.lendingAsset,
-            prepayAsset: selected.prepayAsset,
-            amount: BigInt(selected.amount),
-            durationDays: selected.durationDays,
-            tokenId: BigInt(selected.tokenId),
-            quantity: BigInt(selected.quantity || '1'),
-            assetType: selected.assetType,
-            // Rentals disclose their own model up front (NFT custody,
-            // prepaid fees, no price-based liquidation) — the illiquid
-            // re-check is for ERC-20 loan pairs.
-            illiquidWarned: true,
-          },
+          expected: reviewedRentTerms,
+          // #2726 — the token-security verdicts this review showed.
+          screen: tokenScreen.reviewed,
         });
       } catch (err) {
         if (err instanceof Error && err.message === copy.match.termsChanged) {
           void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
           void queryClient.invalidateQueries({ queryKey: ['offer'] });
+          void queryClient.invalidateQueries({ queryKey: ['offerLifecycle'] });
         }
         throw err;
       }
@@ -1333,45 +1361,25 @@ function RentNftFlow() {
           </div>
           <div className="card">
             {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">{copy.rent.preparingReview}</p>}
-            {prepaySecBlocked ? (
-              <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
-                <span className="banner-body">
-                  {prepaySec.isError || prepaySec.data === undefined
-                    ? copy.tokenSecurity.gateUnknown(copy.rent.prepaymentTokenLabel)
-                    : copy.tokenSecurity.gateBlock(
-                        copy.rent.prepaymentTokenLabel,
-                        (prepaySec.data.kind === 'block' ? prepaySec.data.reasons : []).join('; '),
-                      )}
-                </span>
-                {prepaySec.isError ? (
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    style={{ marginTop: 8 }}
-                    onClick={() => {
-                      void prepaySec.refetch();
-                    }}
-                  >
-                    {copy.tokenSecurity.retry}
-                  </button>
-                ) : null}
+            {rentLifecycle ? (
+              <LifecycleTermsList terms={rentLifecycle} />
+            ) : rentLifecycleQuery.isError ? (
+              <div className="banner banner-warn" role="alert">
+                <span className="banner-body">{copy.acceptTerms.checkFailed}</span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => void rentLifecycleQuery.refetch()}
+                >
+                  {copy.offerFlow.retry}
+                </button>
               </div>
-            ) : prepaySecWarned ? (
-              <div className="banner banner-warn" role="alert" style={{ marginTop: 16 }}>
-                <span className="banner-body">
-                  {copy.tokenSecurity.gateWarn(
-                    copy.rent.prepaymentTokenLabel,
-                    (prepaySec.data?.kind === 'warn' ? prepaySec.data.reasons : []).join('; '),
-                  )}
-                </span>
-              </div>
-            ) : prepaySecNeeded && prepaySec.data?.kind === 'unsupported' ? (
-              <div className="banner banner-info" role="note" style={{ marginTop: 16 }}>
-                <span className="banner-body">
-                  {copy.tokenSecurity.gateUnsupported(copy.rent.prepaymentTokenLabel)}
-                </span>
-              </div>
-            ) : null}
+            ) : (
+              <p className="muted" style={{ margin: 0 }}>
+                {copy.acceptTerms.checking}
+              </p>
+            )}
+            <TokenScreenBanner screen={tokenScreen} style={{ marginTop: 16 }} />
             {killed ? (
               <div className="banner banner-warn" role="alert" style={{ marginTop: 16 }}>
                 <span className="banner-body">{copy.killSwitch.disabled}</span>

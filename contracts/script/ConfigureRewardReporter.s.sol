@@ -102,10 +102,10 @@ contract ConfigureRewardReporter is Script {
     uint256 internal constant DEFAULT_LAPSE_WINDOW_SECONDS = 7 days;
     uint256 internal constant DEFAULT_DISPATCH_CUTOFF_GAP_SECONDS = 24 hours;
 
-    /// @dev Base chainIds (8453 mainnet, 84532 sepolia) are canonical.
+    /// @dev Base chainIds (8453 mainnet, 84532 sepolia) are canonical, by the
+    ///      one rule `Launch` also declares the expected role from (#2920).
     function _isCanonicalRewardChain() internal view returns (bool) {
-        uint256 chainId = block.chainid;
-        return chainId == 84532 || chainId == 8453;
+        return Deployments.isCanonicalRewardChainId(block.chainid);
     }
 
     function run() external {

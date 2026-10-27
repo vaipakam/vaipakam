@@ -141,6 +141,26 @@ library LibLaunchReadiness {
         ///      routed pool and the token to be governed by the Diamond's
         ///      owner (Codex #2686 r12).
         bool mirrorToken;
+        /// @dev The reward role the deployment intends for this chain
+        ///      (#2920). The stored role is the configure step's output, so
+        ///      reading it back alone cannot tell a Base Diamond whose reward
+        ///      configure never ran from a chain that runs no rewards. The
+        ///      zero value is {RewardRoleIntent.Undeclared}, never a role, so
+        ///      a launch that forgets to declare is NOT CHECKED, not met.
+        RewardRoleIntent rewardRole;
+    }
+
+    /// @notice The reward role a launch declares for its chain (#2920).
+    /// @dev Kept separate from `LibVaipakam.RewardRole` on purpose: its zero
+    ///      member is `Canonical`, so an undeclared field would read as a
+    ///      declaration that the chain is Base. `None` declares a deployment
+    ///      with no reward stack, whose Diamond stays `Unconfigured`; no
+    ///      launch may intend `Detached`.
+    enum RewardRoleIntent {
+        Undeclared,
+        Canonical,
+        Mirror,
+        None
     }
 
     /// @notice One declared CCIP lane: the remote chain and the peer the
@@ -180,7 +200,7 @@ library LibLaunchReadiness {
     ///        no pool address is ever taken on trust.
     function check(address diamond, Declared memory declared) internal view returns (Check[] memory checks) {
         VpfiRoute memory route = _vpfiRoute(diamond, declared.tokenAdminRegistry);
-        checks = new Check[](9);
+        checks = new Check[](10);
         checks[0] = _treasury(diamond);
         checks[1] = _sanctions(diamond);
         checks[2] = _priceFeed(diamond, declared.weth);
@@ -190,6 +210,7 @@ library LibLaunchReadiness {
         checks[6] = _wethQuoteRoute(diamond);
         checks[7] = _feedRegistry(diamond, declared.feedRegistry);
         checks[8] = _lapseSchedule(diamond);
+        checks[9] = _rewardRole(diamond, declared.rewardRole);
     }
 
     /// @notice Whether every check was answered and met.
@@ -257,14 +278,12 @@ library LibLaunchReadiness {
             c.detail = "getRewardRole() unreadable";
             return c;
         }
-        // LibVaipakam.RewardRole: 0 Canonical, 1 Mirror, 2 Unconfigured,
-        // 3 Detached (RewardReporterFacet.getRewardRole).
         if (role != 0) {
             c.checkable = true;
             c.met = true;
             c.detail = string.concat(
                 "does not apply: the reward role is ",
-                role == 1 ? "Mirror" : role == 2 ? "Unconfigured" : role == 3 ? "Detached" : "unknown",
+                _roleName(role),
                 ", and only the canonical reward chain sets a lapse schedule"
             );
             return c;
@@ -293,6 +312,70 @@ library LibLaunchReadiness {
         } catch {
             c.detail = "getCurrentLapseScheduleVersion() unreadable";
         }
+    }
+
+    /// @dev #2920 — the reward role is the configure step's output, so it is
+    ///      compared with the role the launch DECLARES for the chain, never
+    ///      with itself. Read alone, a Base Diamond whose reward configure
+    ///      did not run, or stopped partway, reads `Unconfigured` and every
+    ///      reward check downstream of it (the lapse schedule above among
+    ///      them) says it does not apply, which is true of the stored role
+    ///      and hides that the role is wrong for the chain. `Detached` is
+    ///      never an intended state, so it is NOT MET under every
+    ///      declaration.
+    function _rewardRole(address diamond, RewardRoleIntent intent) private view returns (Check memory c) {
+        c.label = "the reward role is the one the launch declares";
+        uint8 role;
+        try ILaunchReadableDiamond(diamond).getRewardRole() returns (uint8 r) {
+            role = r;
+        } catch {
+            c.detail = "getRewardRole() unreadable";
+            return c;
+        }
+        if (role > 3) {
+            c.detail = "getRewardRole() returned an unknown role";
+            return c;
+        }
+        if (intent == RewardRoleIntent.Undeclared) {
+            c.detail = string.concat(
+                "no reward role declared to compare the Diamond's (", _roleName(role), ") against"
+            );
+            return c;
+        }
+        // The stored role each declaration expects: Canonical 0, Mirror 1,
+        // and a deployment with no reward stack stays Unconfigured (2).
+        uint8 expected = intent == RewardRoleIntent.Canonical ? 0 : intent == RewardRoleIntent.Mirror ? 1 : 2;
+        c.checkable = true;
+        c.met = role == expected;
+        if (c.met) {
+            c.detail = intent == RewardRoleIntent.Canonical
+                ? "the Diamond is the canonical reward chain, as declared"
+                : intent == RewardRoleIntent.Mirror
+                    ? "the Diamond is a reward mirror, as declared"
+                    : "the Diamond runs no rewards (Unconfigured), as declared for a deployment with no reward messenger";
+            return c;
+        }
+        c.detail = intent == RewardRoleIntent.None
+            ? string.concat(
+                "the reward role is ",
+                _roleName(role),
+                ", but the launch declares no reward stack (the deployment records no reward messenger)"
+            )
+            : string.concat(
+                "the reward role is ",
+                _roleName(role),
+                ", but the launch declares ",
+                intent == RewardRoleIntent.Canonical ? "Canonical" : "Mirror",
+                ": run the reward configure step (ConfigureRewardReporter)"
+            );
+    }
+
+    /// @dev `LibVaipakam.RewardRole` by number, as `getRewardRole` returns
+    ///      it: 0 Canonical, 1 Mirror, 2 Unconfigured, 3 Detached.
+    function _roleName(uint8 role) private pure returns (string memory) {
+        return role == 0
+            ? "Canonical"
+            : role == 1 ? "Mirror" : role == 2 ? "Unconfigured" : role == 3 ? "Detached" : "unknown";
     }
 
     /// @dev Until a sanctions oracle is set, every wallet reads as not

@@ -27,7 +27,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { CircleCheck, LoaderCircle, Search } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { encodeFunctionData } from 'viem';
+import { encodeFunctionData, type Address } from 'viem';
 import { useActiveChain } from '../chain/useActiveChain';
 import { getSupportedChain } from '../chain/chains';
 import { useMode } from '../app/ModeContext';
@@ -107,20 +107,26 @@ import {
 } from '../lib/errors';
 import { copy } from '../content/copy';
 import { ConsentLabel } from './ConsentLabel';
+import { LifecycleTermsList } from './LifecycleTermsList';
+import { TokenScreenBanner } from './TokenScreenBanner';
+import {
+  lifecycleFromOffer,
+  type LifecycleTerms,
+  type ReviewedAcceptTerms,
+  type ReviewedIlliquidLegs,
+} from '../contracts/acceptReview';
 import {
   FullTariffOptIn,
   FULL_TARIFF_OFF,
   type FullTariffChoice,
 } from './FullTariffOptIn';
 import { flowDisabled } from '../lib/killSwitch';
+import { useBookTokenSecurity } from '../data/tokenSecurity';
 import {
-  fetchTokenSecurity,
-  isCuratedAsset,
-  needsSecurityCheck,
-  useBookTokenSecurity,
-  useTokenSecurity,
-  verdictFingerprint,
-} from '../data/tokenSecurity';
+  assertTokenScreenLive,
+  screenTargets,
+  useTokenScreen,
+} from '../contracts/acceptTokenScreen';
 import {
   OfferRiskBadge,
   offerScreenableLegs,
@@ -698,6 +704,43 @@ export function OfferFlow({ side }: { side: Side }) {
     offsetData === undefined ? undefined : offsetReviewBlock(offsetData);
   const offsetReviewReady = acceptIsOffset && offsetBlock === null;
 
+  // #2725 — the lifecycle terms the accept signature binds (interest mode,
+  // schedule, partial repay, prepay listing, parallel sale, a live listing,
+  // a refinance target, the linked loan), read LIVE from the offer — the
+  // indexer row carries only some of them. The review lists every one
+  // (`LifecycleTermsList`) and the signer compares each against what it is
+  // about to sign, so the user never signs a lifecycle term they were not
+  // shown. A failed refresh counts as unread, like the other live reviews.
+  const offerLifecycleKey = [
+    'offerLifecycle',
+    readChain.chainId,
+    selected?.offerId,
+    linkedLoan.data,
+  ];
+  const offerLifecycle = useQuery({
+    queryKey: offerLifecycleKey,
+    enabled:
+      mode === 'accept' &&
+      Boolean(readClient) &&
+      Boolean(selected) &&
+      linkedLoan.data !== undefined,
+    staleTime: 30_000,
+    refetchInterval: idleAware(60_000),
+    queryFn: async () => {
+      const o = (await readClient!.readContract({
+        address: readChain.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getOffer',
+        args: [BigInt(selected!.offerId)],
+      })) as Record<string, unknown>;
+      return lifecycleFromOffer(o, BigInt(linkedLoan.data!));
+    },
+  });
+  const lifecycle: LifecycleTerms | undefined = offerLifecycle.isError
+    ? undefined
+    : offerLifecycle.data;
+  const lifecycleKnown = mode !== 'accept' || lifecycle !== undefined;
+
   const lockedAmount = useMemo(() => {
     if (mode === 'accept' && selected) {
       if (side === 'borrower') return BigInt(selected.collateralAmount);
@@ -948,10 +991,10 @@ export function OfferFlow({ side }: { side: Side }) {
   // re-review that still shows no warning — an inescapable loop), and
   // indexer-united because a live blip must not hide a warning the
   // row already carries.
-  const indexerSaysIlliquid =
-    mode === 'accept' &&
-    selected !== null &&
-    (selected.principalLiquidity === 1 || selected.collateralLiquidity === 1);
+  const indexerLendingIlliquid =
+    mode === 'accept' && selected !== null && selected.principalLiquidity === 1;
+  const indexerCollateralIlliquid =
+    mode === 'accept' && selected !== null && selected.collateralLiquidity === 1;
   const liqLegA = mode === 'post' ? form.lendingAsset : (selected?.lendingAsset ?? '');
   const liqLegB =
     mode === 'post' ? form.collateralAsset : (selected?.collateralAsset ?? '');
@@ -983,14 +1026,20 @@ export function OfferFlow({ side }: { side: Side }) {
           failClosed: true,
         }),
       ]);
-      return lending || collateral;
+      // Per leg (#2728): the signer acknowledges exactly the legs the
+      // review showed as illiquid, so the review must know which.
+      return { lending, collateral };
     },
   });
   // The liquidity answer gates a DISCLOSURE — signing waits until it
   // is known (in accept mode the indexer flags alone don't count:
   // they can lag the chain in BOTH directions).
   const liquidityKnown = legLiquidity.data !== undefined;
-  const reviewIsIlliquid = indexerSaysIlliquid || legLiquidity.data === true;
+  const reviewIlliquidLegs: ReviewedIlliquidLegs = {
+    lending: indexerLendingIlliquid || legLiquidity.data?.lending === true,
+    collateral: indexerCollateralIlliquid || legLiquidity.data?.collateral === true,
+  };
+  const reviewIsIlliquid = reviewIlliquidLegs.lending || reviewIlliquidLegs.collateral;
 
   // The liquidity query resolves asynchronously — if the illiquid
   // warning appears AFTER the user already ticked consent, that
@@ -1205,7 +1254,10 @@ export function OfferFlow({ side }: { side: Side }) {
           : '';
         // The offer's interest MODE changes what early repayment costs
         // — state it in the consent text (ProjectDetailsREADME).
-        const acceptModeNote = interestModeNote(selected.useFullTermInterest, side);
+        // #2725 — from the LIVE offer, the same value the lifecycle list
+        // shows and the signer binds; no receipt until it is read.
+        if (!lifecycle) return null;
+        const acceptModeNote = interestModeNote(lifecycle.useFullTermInterest, side);
 
         if (side === 'borrower') {
           // #2523 — an offset offer's terms ARE the taker's loan, so the
@@ -1307,6 +1359,7 @@ export function OfferFlow({ side }: { side: Side }) {
     refinanceKnown,
     refinanceBlocked,
     refinanceInfo,
+    lifecycle,
   ]);
 
   const isOwnSelectedOffer =
@@ -1326,79 +1379,26 @@ export function OfferFlow({ side }: { side: Side }) {
   // 'unsupported' (allowed, noticed); 'block' and 'unknown' (couldn't
   // verify) hold the sign button — fail closed, with copy telling the
   // user why.
-  const secLendingLeg =
-    mode === 'accept'
-      ? {
-          addr: selected?.lendingAsset,
-          isErc20: selected?.assetType === AssetType.ERC20,
-        }
-      : { addr: form.lendingAsset, isErc20: form.assetType === 'erc20' };
-  const secCollateralLeg =
-    mode === 'accept'
-      ? {
-          addr: selected?.collateralAsset,
-          isErc20: selected?.collateralAssetType === AssetType.ERC20,
-        }
-      : {
-          addr: form.collateralAsset,
-          isErc20: form.collateralAssetType === 'erc20',
-        };
-  const acceptLendingSec = useTokenSecurity(
-    readChain.chainId,
-    secLendingLeg.isErc20 ? secLendingLeg.addr || undefined : undefined,
+  // #2726 — the legs come from the shared screen (`acceptTokenScreen`),
+  // the same one the accept signers enforce at sign time.
+  const screenTargetsNow = useMemo(
+    () =>
+      mode === 'accept'
+        ? selected
+          ? screenTargets(selected)
+          : []
+        : screenTargets({
+            assetType: form.assetType === 'erc20' ? AssetType.ERC20 : AssetType.ERC721,
+            lendingAsset: form.lendingAsset,
+            collateralAssetType:
+              form.collateralAssetType === 'erc20' ? AssetType.ERC20 : AssetType.ERC721,
+            collateralAsset: form.collateralAsset,
+            prepayAsset: '',
+          }),
+    [mode, selected, form.assetType, form.lendingAsset, form.collateralAssetType, form.collateralAsset],
   );
-  const acceptCollateralSec = useTokenSecurity(
-    readChain.chainId,
-    secCollateralLeg.isErc20 ? secCollateralLeg.addr || undefined : undefined,
-  );
-  // 'needed' derives from the check's INPUTS (shape + curated), never
-  // from query lifecycle state — fetchStatus returns to idle once a
-  // query settles, which must not un-gate a bad verdict.
-  // Stable, language-independent leg ids for MATCHING (the submit-time
-  // recheck loops compare by `key`, never by the display label). `leg` is
-  // the LOCALIZED label shown in the security banner / gate messages —
-  // matching on it would break in a translated locale (Codex #1400).
-  const legLabel = {
-    loanAsset: copy.offerFlow.securityLegLoanAsset,
-    collateral: copy.offerFlow.securityLegCollateral,
-  } as const;
-  const securityLegs = [
-    {
-      key: 'loanAsset' as const,
-      leg: legLabel.loanAsset,
-      needed:
-        secLendingLeg.isErc20 &&
-        needsSecurityCheck(readChain.chainId, secLendingLeg.addr),
-      verdict: acceptLendingSec.data,
-      errored: acceptLendingSec.isError,
-    },
-    {
-      key: 'collateral' as const,
-      leg: legLabel.collateral,
-      needed:
-        secCollateralLeg.isErc20 &&
-        needsSecurityCheck(readChain.chainId, secCollateralLeg.addr),
-      verdict: acceptCollateralSec.data,
-      errored: acceptCollateralSec.isError,
-    },
-  ].filter((l) => l.needed);
-  // Fail-closed on THREE states: no data yet (loading), a 'block'
-  // verdict, and an errored REFETCH — react-query keeps the prior
-  // verdict in `data` when a later refetch fails, so `isError` must
-  // dominate the stale verdict or an outage would silently un-gate.
-  const securityBlocked = securityLegs.filter(
-    (l) => l.errored || l.verdict === undefined || l.verdict.kind === 'block',
-  );
-  const securityWarned = securityLegs.filter(
-    (l) => !l.errored && l.verdict?.kind === 'warn',
-  );
-  const securityUnsupported = securityLegs.filter(
-    (l) => l.verdict?.kind === 'unsupported',
-  );
-  // No mode bypass: post-mode deposits hit the same requested-amount
-  // vault accounting the accept path does, so both modes hold on a
-  // blocked/unverified leg.
-  const securityGateOk = securityBlocked.length === 0;
+  const tokenScreen = useTokenScreen(readChain.chainId, screenTargetsNow);
+  const { unsupported: securityUnsupported, ok: securityGateOk } = tokenScreen;
   // #1028 — operator kill switch. Position-opening flows only; the
   // banner explains, and close-out paths are structurally unkillable
   // (see lib/killSwitch.ts).
@@ -1409,12 +1409,7 @@ export function OfferFlow({ side }: { side: Side }) {
   // The fingerprint includes the REASON text, not just the verdict
   // kind: consent given against "10% sell tax" must not survive the
   // warning changing to "the owner can pause all transfers".
-  const securityFingerprint = securityLegs
-    .map(
-      (l) =>
-        `${l.key}:${l.errored ? 'errored' : verdictFingerprint(l.verdict)}`,
-    )
-    .join('|');
+  const securityFingerprint = tokenScreen.fingerprint;
   /**
    * EVERYTHING disclosed on the review screen that consent is given
    * against — not just the security verdicts (#1678).
@@ -1454,6 +1449,23 @@ export function OfferFlow({ side }: { side: Side }) {
           : '?'
     }`,
     `sale:${saleFingerprint ?? ''}`,
+    // #2725 — the lifecycle terms the review lists and the signature binds.
+    `life:${
+      lifecycle
+        ? [
+            lifecycle.useFullTermInterest,
+            lifecycle.allowsPartialRepay,
+            lifecycle.allowsPrepayListing,
+            lifecycle.allowsParallelSale,
+            lifecycle.periodicInterestCadence,
+            lifecycle.refinanceTargetLoanId,
+            lifecycle.linkedLoanId,
+            lifecycle.parallelSaleOrderHash,
+          ].join(':')
+        : mode === 'accept'
+          ? 'pending'
+          : '0'
+    }`,
     // #1679 r1 F1 — these settle ASYNCHRONOUSLY. While they are pending the
     // receipt shows fallback numbers and `fees.ready`/`grace.ready` hold the
     // button closed; when the live values land, the receipt and the gate
@@ -1564,6 +1576,8 @@ export function OfferFlow({ side }: { side: Side }) {
     // unmatured, seller settlement funding covered); an OFFSET link once
     // its own review is (#2523, below); any other link never signs here.
     linkedLoanKnown &&
+    // #2725 — every lifecycle term the signature binds has been read and shown.
+    lifecycleKnown &&
     (!acceptIsLoanSale || saleReviewReady) &&
     // #2523 — an OFFSET link signs once its own review is positively clear
     // (earlier loan active, term fits, no swap order, poster funded). A
@@ -1773,47 +1787,20 @@ export function OfferFlow({ side }: { side: Side }) {
     // approval can mine. Same disclosure rules as the accept path —
     // a live verdict differing from the reviewed one is pushed into
     // the query cache so the re-review renders it and voids consent.
-    for (const [key, addr, isErc20] of [
-      ['loanAsset', form.lendingAsset, form.assetType === 'erc20'],
-      [
-        'collateral',
-        form.collateralAsset,
-        form.collateralAssetType === 'erc20',
-      ],
-    ] as const) {
-      if (!isErc20 || !addr) continue;
-      if (isCuratedAsset(walletChain.chainId, addr)) continue; // pre-vetted
-      const leg = legLabel[key];
-      const v = await fetchTokenSecurity(walletChain.chainId, addr);
-      const cacheKey = ['tokenSecurity', readChain.chainId, addr.toLowerCase()];
-      if (v.kind === 'block') {
-        queryClient.setQueryData(cacheKey, v);
-        throw new Error(copy.tokenSecurity.gateBlock(leg, v.reasons.join('; ')));
-      }
-      if (v.kind === 'unknown') {
-        // RESET (not invalidate) the cached pass: reset drops `data`
-        // to undefined immediately, so the gate is closed the moment
-        // the submit lock clears — invalidate would keep the stale
-        // verdict readable (and the button enabled) while the forced
-        // refetch is still in flight. If the outage persists the
-        // refetch errors into the blocked banner + "Check again".
-        void queryClient.resetQueries({ queryKey: cacheKey });
-        throw new Error(copy.tokenSecurity.gateUnknown(leg));
-      }
-      if (v.kind === 'warn') {
-        const reviewed = securityLegs.find((l) => l.key === key);
-        if (verdictFingerprint(v) !== verdictFingerprint(reviewed?.verdict)) {
-          queryClient.setQueryData(cacheKey, v);
-          // Clear consent SYNCHRONOUSLY — the fingerprint effect only
-          // fires on the next render, and in that window a fast retry
-          // would find the (now-cached) warn equal to the reviewed
-          // one and sail through un-consented.
-          setForm((f) =>
-            f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
-          );
-          throw new Error(copy.tokenSecurity.gateChanged(leg));
-        }
-      }
+    try {
+      await assertTokenScreenLive({
+        chainId: walletChain.chainId,
+        targets: screenTargetsNow,
+        reviewed: tokenScreen.reviewed,
+        queryClient,
+      });
+    } catch (err) {
+      // Untick at once as well: the assertion epoch voids consent on the
+      // next render, and this keeps the box from showing a stale tick.
+      setForm((f) =>
+        f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
+      );
+      throw err;
     }
     // Permit2 first (#1038): one gasless signature replaces the
     // approval TRANSACTION (and leaves no standing Diamond allowance
@@ -1998,6 +1985,34 @@ export function OfferFlow({ side }: { side: Side }) {
       if (acceptIsLoanSale && !saleReviewed) {
         throw new Error(copy.match.termsChanged);
       }
+      // #2725 — the lifecycle terms the review listed; without them there is
+      // nothing reviewed to compare the signature against.
+      if (!lifecycle) {
+        throw new Error(copy.match.termsChanged);
+      }
+      const reviewedAcceptTerms: ReviewedAcceptTerms = {
+        offerCreator: selected.creator as Address,
+        offerType: selected.offerType,
+        lendingAsset: selected.lendingAsset as Address,
+        collateralAsset: selected.collateralAsset as Address,
+        amount: saleReviewed ? saleReviewed.principal : offerPrincipal(selected),
+        collateralAmount: saleReviewed
+          ? saleReviewed.collateralAmount
+          : BigInt(selected.collateralAmount),
+        interestRateBps: BigInt(offerRateBps(selected)),
+        durationDays: saleReviewed
+          ? BigInt(saleReviewed.durationDays)
+          : BigInt(selected.durationDays),
+        tokenId: BigInt(selected.tokenId),
+        collateralTokenId: BigInt(selected.collateralTokenId),
+        quantity: BigInt(selected.quantity),
+        collateralQuantity: BigInt(selected.collateralQuantity),
+        assetType: selected.assetType,
+        collateralAssetType: selected.collateralAssetType,
+        prepayAsset: selected.prepayAsset as Address,
+        ...lifecycle,
+        illiquidLegs: reviewIlliquidLegs,
+      };
       if (saleReviewed) {
         // The review's settlement/maturity/status gates ran on a CACHED
         // read — the loan can move inside the refetch window, and the
@@ -2054,65 +2069,9 @@ export function OfferFlow({ side }: { side: Side }) {
           );
         }
       }
-      // #1036 — re-verify both legs at SUBMIT time (fail closed): the
-      // review's verdicts are cached; a flag can land inside their
-      // window, and a doomed deal must abort before any signature.
-      // A live result that DIFFERS from what the reviewed screen
-      // disclosed is pushed into the query cache before aborting, so
-      // the re-review renders the new finding (and the fingerprint
-      // effect voids the stale consent) — the abort message alone
-      // would otherwise be the only place the user ever saw it.
-      for (const [key, addr, isErc20] of [
-        ['loanAsset', selected.lendingAsset, selected.assetType === AssetType.ERC20],
-        [
-          'collateral',
-          selected.collateralAsset,
-          selected.collateralAssetType === AssetType.ERC20,
-        ],
-      ] as const) {
-        if (!isErc20) continue;
-        if (isCuratedAsset(walletChain.chainId, addr)) continue; // pre-vetted
-        const leg = legLabel[key];
-        const v = await fetchTokenSecurity(walletChain.chainId, addr);
-        const cacheKey = [
-          'tokenSecurity',
-          readChain.chainId,
-          addr.toLowerCase(),
-        ];
-        if (v.kind === 'block') {
-          queryClient.setQueryData(cacheKey, v);
-          throw new Error(copy.tokenSecurity.gateBlock(leg, v.reasons.join('; ')));
-        }
-        if (v.kind === 'unknown') {
-          // RESET (not invalidate): reset drops `data` to undefined
-          // immediately, closing the gate the moment the submit lock
-          // clears — invalidate keeps the stale verdict readable
-          // while the forced refetch is in flight. A persistent
-          // outage then errors into the blocked banner + "Check
-          // again".
-          void queryClient.resetQueries({ queryKey: cacheKey });
-          throw new Error(copy.tokenSecurity.gateUnknown(leg));
-        }
-        // A live 'warn' may pass ONLY if the reviewed screen already
-        // disclosed this exact warning (same reasons) and consent was
-        // given against it. A warn that landed after review — or
-        // whose content changed — was never consented to: abort,
-        // surface it, re-collect consent.
-        if (v.kind === 'warn') {
-          const reviewed = securityLegs.find((l) => l.key === key);
-          if (verdictFingerprint(v) !== verdictFingerprint(reviewed?.verdict)) {
-            queryClient.setQueryData(cacheKey, v);
-            // Synchronous consent clear — the fingerprint effect only
-            // fires next render; a fast retry inside that window would
-            // find the cached warn equal to the reviewed one and pass
-            // un-consented.
-            setForm((f) =>
-              f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
-            );
-            throw new Error(copy.tokenSecurity.gateChanged(leg));
-          }
-        }
-      }
+      // #1036 / #2726 — the token screen is re-run at SIGN time by the
+      // accept signer itself (`assertTokenScreenLive`), on the legs of the
+      // canonical terms, against what this review showed (`screen` below).
       // #1645 — ask the contract whether it would accept this at all,
       // BEFORE the wallet prompt. `previewAccept` classifies every
       // blocker `_acceptOffer` reverts on, in the accept's own order,
@@ -2138,27 +2097,14 @@ export function OfferFlow({ side }: { side: Side }) {
         // #1355 — the review screen's Full tariff opt-in. Undefined
         // (⇒ non-Full) unless the user engaged the control.
         fullTariff: fullTariff.full ? fullTariff : undefined,
-        expected: {
-          lendingAsset: selected.lendingAsset,
-          collateralAsset: selected.collateralAsset,
-          amount: saleReviewed ? saleReviewed.principal : offerPrincipal(selected),
-          interestRateBps: BigInt(offerRateBps(selected)),
-          collateralAmount: saleReviewed
-            ? saleReviewed.collateralAmount
-            : BigInt(selected.collateralAmount),
-          durationDays: saleReviewed
-            ? Number(saleReviewed.durationDays)
-            : selected.durationDays,
-          // The interest MODE the reviewed consent line described — a
-          // stale indexer flag must abort before the wallet prompt
-          // like any other reviewed term.
-          useFullTermInterest: selected.useFullTermInterest,
-          // What the review actually SHOWED (indexer flags ∪ live
-          // read). If a leg flips illiquid between review and sign,
-          // the signer aborts and the re-review — live-driven — now
-          // renders the warning, so consent can be re-given against it.
-          illiquidWarned: reviewIsIlliquid,
-        },
+        // #2725 — EVERY term the signature binds, as this review showed it.
+        // The signer compares each against the canonical terms before the
+        // wallet prompt; #2728 — and acknowledges only the legs shown here
+        // as illiquid.
+        expected: reviewedAcceptTerms,
+        // #2726 — the token-security verdicts this review showed; the signer
+        // re-screens live and refuses anything the review did not show.
+        screen: tokenScreen.reviewed,
       });
     } catch (err) {
       if (err instanceof Error && err.message === copy.match.termsChanged) {
@@ -2171,6 +2117,7 @@ export function OfferFlow({ side }: { side: Side }) {
         // against the same stale review.
         void queryClient.invalidateQueries({ queryKey: ['offerSaleReview'] });
         void queryClient.invalidateQueries({ queryKey: ['offerLinkedLoan'] });
+        void queryClient.invalidateQueries({ queryKey: ['offerLifecycle'] });
       }
       throw err;
     }
@@ -2978,62 +2925,32 @@ export function OfferFlow({ side }: { side: Side }) {
           </div>
           <div className="card">
             {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">{copy.offerFlow.preparingReview}</p>}
+            {mode === 'accept' ? (
+              lifecycle ? (
+                <LifecycleTermsList terms={lifecycle} />
+              ) : offerLifecycle.isError ? (
+                // Same dead-Sign-button rule as the other live checks: name
+                // the blocked check and offer the retry.
+                <div className="banner banner-warn" role="alert">
+                  <span className="banner-body">{copy.acceptTerms.checkFailed}</span>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => void offerLifecycle.refetch()}
+                  >
+                    {copy.offerFlow.retry}
+                  </button>
+                </div>
+              ) : (
+                <p className="muted" style={{ margin: 0 }}>
+                  {copy.acceptTerms.checking}
+                </p>
+              )
+            ) : null}
             {receipt ? (
               <SimulationPreview tx={simTx} result={preSign.result} />
             ) : null}
-            {securityBlocked.length > 0 ? (
-              <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
-                <span className="banner-body">
-                  {securityBlocked
-                    .map((l) =>
-                      // An errored leg may still carry a STALE prior
-                      // verdict in `data` — report "couldn't check",
-                      // never the stale text.
-                      l.errored || l.verdict === undefined
-                        ? copy.tokenSecurity.gateUnknown(l.leg)
-                        : copy.tokenSecurity.gateBlock(
-                            l.leg,
-                            (l.verdict.kind === 'block' ? l.verdict.reasons : []).join('; '),
-                          ),
-                    )
-                    .join(' ')}
-                </span>
-                {securityBlocked.some((l) => l.errored) ? (
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    style={{ marginTop: 8 }}
-                    onClick={() => {
-                      void acceptLendingSec.refetch();
-                      void acceptCollateralSec.refetch();
-                    }}
-                  >
-                    {copy.tokenSecurity.retry}
-                  </button>
-                ) : null}
-              </div>
-            ) : securityWarned.length > 0 ? (
-              <div className="banner banner-warn" role="alert" style={{ marginTop: 16 }}>
-                <span className="banner-body">
-                  {securityWarned
-                    .map((l) =>
-                      copy.tokenSecurity.gateWarn(
-                        l.leg,
-                        (l.verdict?.kind === 'warn' ? l.verdict.reasons : []).join('; '),
-                      ),
-                    )
-                    .join(' ')}
-                </span>
-              </div>
-            ) : securityUnsupported.length > 0 ? (
-              <div className="banner banner-info" role="note" style={{ marginTop: 16 }}>
-                <span className="banner-body">
-                  {securityUnsupported
-                    .map((l) => copy.tokenSecurity.gateUnsupported(l.leg))
-                    .join(' ')}
-                </span>
-              </div>
-            ) : null}
+            <TokenScreenBanner screen={tokenScreen} style={{ marginTop: 16 }} />
             {killed ? (
               <div className="banner banner-warn" role="alert" style={{ marginTop: 16 }}>
                 <span className="banner-body">{copy.killSwitch.disabled}</span>

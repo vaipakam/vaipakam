@@ -25,7 +25,7 @@
  * submit preflights re-check that funding live so a taker never pays
  * gas into `SignedOfferInsufficientFreeBalance`.
  */
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { CircleCheck } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
@@ -45,6 +45,10 @@ import {
 } from '../../contracts/preflights';
 import { assertWalletNotSanctionedLive } from '../../data/sanctions';
 import { ConsentLabel } from '../ConsentLabel';
+import { LifecycleTermsList } from '../LifecycleTermsList';
+import { reviewedTermsFromOrder } from '../../contracts/acceptReview';
+import { screenTargets, useTokenScreen } from '../../contracts/acceptTokenScreen';
+import { TokenScreenBanner } from '../TokenScreenBanner';
 import {
   FullTariffOptIn,
   FULL_TARIFF_OFF,
@@ -74,7 +78,7 @@ export function SignedFillConfirm({
   signed: SignedRowMeta;
   onDone: () => void;
 }) {
-  const { address, walletChain, onSupportedChain } = useActiveChain();
+  const { address, walletChain, readChain, onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
@@ -83,6 +87,10 @@ export function SignedFillConfirm({
   const signTerms = useSignedOfferAcceptTermsSigning();
 
   const o = signed.order;
+  // #2725 — every term the fill signature binds, built from the order this
+  // card displays; the lifecycle rows below render from it and the signer
+  // refuses to sign anything else.
+  const reviewed = useMemo(() => reviewedTermsFromOrder(o), [o]);
   const isLenderOrder = Number(o.offerType) === 0;
   // The taker's escrowed leg (see the header note). Role amount for a
   // borrower order is its `amount` (the direct-accept headline the
@@ -102,6 +110,30 @@ export function SignedFillConfirm({
   const payMeta = isLenderOrder ? collateralMeta : lendingMeta;
 
   const [consent, setConsent] = useState(false);
+  // #2726 — the token screen the other accepts run, on the order's ERC-20
+  // legs. The signed-offer routes admit any ERC-20 pair, so this card is
+  // where a honeypot or fee-on-transfer token is caught before the taker
+  // signs; the signer re-screens live and refuses anything not shown here.
+  const screenLegs = useMemo(
+    () =>
+      screenTargets({
+        assetType: Number(o.assetType),
+        lendingAsset: o.lendingAsset,
+        collateralAssetType: Number(o.collateralAssetType),
+        collateralAsset: o.collateralAsset,
+        prepayAsset: o.prepayAsset,
+      }),
+    [o],
+  );
+  const tokenScreen = useTokenScreen(readChain.chainId, screenLegs);
+  // Consent is given against what the card shows: a verdict that arrives
+  // or changes after the tick voids it, in the same render (no frame can
+  // sign against consent that predates the disclosure).
+  const [seenScreen, setSeenScreen] = useState(tokenScreen.fingerprint);
+  if (seenScreen !== tokenScreen.fingerprint) {
+    setSeenScreen(tokenScreen.fingerprint);
+    if (consent) setConsent(false);
+  }
   // #1355 — the TAKER's own Full VPFI tariff opt-in for this fill (the
   // maker of a signed order cannot opt in — #1369).
   const [fullTariff, setFullTariff] = useState<FullTariffChoice>(FULL_TARIFF_OFF);
@@ -249,6 +281,9 @@ export function SignedFillConfirm({
       // legs, risk-terms hash) BEFORE the wallet is asked to sign.
       const { payload, orderHash } = await signTerms.sign({
         order: o,
+        reviewed,
+        // #2726 — the token-security verdicts this card showed.
+        screen: tokenScreen.reviewed,
         consent,
         // #1355 — undefined (⇒ non-Full) unless the taker engaged it.
         fullTariff: fullTariff.full ? fullTariff : undefined,
@@ -415,6 +450,8 @@ export function SignedFillConfirm({
           : '…'}
       </p>
 
+      <LifecycleTermsList terms={reviewed} />
+
       {Number(o.assetType) === 0 ? (
         // #1355 — ERC-20 fills only (a rental order bears no tariff).
         <FullTariffOptIn
@@ -448,6 +485,8 @@ export function SignedFillConfirm({
           }}
         />
       ) : null}
+
+      <TokenScreenBanner screen={tokenScreen} style={{ margin: '8px 0' }} />
 
       <label
         className="cluster"
@@ -494,6 +533,7 @@ export function SignedFillConfirm({
             disabled={
               busy ||
               !consent ||
+              !tokenScreen.ok ||
               !onSupportedChain ||
               killed ||
               own ||

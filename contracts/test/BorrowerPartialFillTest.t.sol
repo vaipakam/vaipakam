@@ -6,6 +6,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -685,5 +686,99 @@ contract BorrowerPartialFillTest is SetupTest {
 
         vm.expectRevert(abi.encodeWithSignature("RateNoOverlap()"));
         OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, borrowerOfferId);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // #2727 — a match binds both parties to the loan's lifecycle terms
+    // ─────────────────────────────────────────────────────────────────
+
+    /// @dev Rewrite one stored offer's lifecycle terms, so each case varies
+    ///      exactly one term against otherwise identical offers.
+    function _setTerms(uint256 offerId, bool fullTerm, bool partialRepay) internal {
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(offerId);
+        o.useFullTermInterest = fullTerm;
+        o.allowsPartialRepay = partialRepay;
+        TestMutatorFacet(address(diamond)).setOffer(offerId, o);
+    }
+
+    function _pairForTerms() internal returns (uint256 lenderOfferId, uint256 borrowerOfferId) {
+        borrowerOfferId = _postBorrowerOffer({
+            creator: borrower,
+            amountMin: 1_000,
+            amountMax: 5_000,
+            rateMin: 500,
+            rateMax: 600,
+            collateralMin: 500,
+            collateralMax: 5_000
+        });
+        lenderOfferId = _postLenderOffer({
+            creator: lender,
+            amount: 2_000,
+            rateMin: 500,
+            rateMax: 600,
+            collateralRequired: 500
+        });
+    }
+
+    function _assertTermsMismatch(uint256 lenderOfferId, uint256 borrowerOfferId) internal {
+        LibOfferMatch.MatchResult memory r =
+            OfferMatchFacet(address(diamond)).previewMatch(lenderOfferId, borrowerOfferId, address(this), address(this));
+        assertEq(
+            uint8(r.errorCode),
+            uint8(LibOfferMatch.MatchError.LifecycleTermsMismatch),
+            "preview reports LifecycleTermsMismatch"
+        );
+        vm.expectRevert(abi.encodeWithSignature("LifecycleTermsMismatch()"));
+        OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, borrowerOfferId);
+    }
+
+    function test_matchErrorLifecycleTerms_interestModeDiffers() public {
+        (uint256 lo, uint256 bo) = _pairForTerms();
+        _setTerms(bo, true, false); // borrower full-term, lender pro-rata
+        _assertTermsMismatch(lo, bo);
+    }
+
+    function test_matchErrorLifecycleTerms_partialRepayDiffers() public {
+        (uint256 lo, uint256 bo) = _pairForTerms();
+        _setTerms(bo, false, true); // borrower allows partial repay, lender does not
+        _assertTermsMismatch(lo, bo);
+    }
+
+    function test_matchErrorLifecycleTerms_prepayListingDiffers() public {
+        (uint256 lo, uint256 bo) = _pairForTerms();
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(bo);
+        o.allowsPrepayListing = !o.allowsPrepayListing;
+        TestMutatorFacet(address(diamond)).setOffer(bo, o);
+        _assertTermsMismatch(lo, bo);
+    }
+
+    function test_matchErrorLifecycleTerms_cadenceDiffers() public {
+        (uint256 lo, uint256 bo) = _pairForTerms();
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(bo);
+        o.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.Monthly;
+        TestMutatorFacet(address(diamond)).setOffer(bo, o);
+        _assertTermsMismatch(lo, bo);
+    }
+
+    /// @dev An ERC-20 loan never reads `prepayAsset`, so a differing
+    ///      placeholder there must not block the match.
+    function test_matchLifecycleTerms_erc20IgnoresPrepayAsset() public {
+        (uint256 lo, uint256 bo) = _pairForTerms();
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(bo);
+        o.prepayAsset = address(0xBEEF);
+        TestMutatorFacet(address(diamond)).setOffer(bo, o);
+        LibOfferMatch.MatchResult memory r =
+            OfferMatchFacet(address(diamond)).previewMatch(lo, bo, address(this), address(this));
+        assertEq(uint8(r.errorCode), uint8(LibOfferMatch.MatchError.Ok), "ERC-20 match ignores prepayAsset");
+    }
+
+    function test_matchLifecycleTerms_agreeingTermsMatchAndReachTheLoan() public {
+        (uint256 lo, uint256 bo) = _pairForTerms();
+        _setTerms(bo, true, true);
+        _setTerms(lo, true, true);
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchOffers(lo, bo);
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertTrue(loan.useFullTermInterest, "loan carries the agreed interest model");
+        assertTrue(loan.allowsPartialRepay, "loan carries the agreed partial-repay term");
     }
 }

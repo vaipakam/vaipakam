@@ -21,7 +21,8 @@ import {ILaunchGate} from "../interfaces/ILaunchGate.sol";
  *
  *        - `declared` ({LibLaunchReadiness.Declared}) is the CCIP registry
  *          and the WETH, VPFI pool, rate governor and lanes (each with its
- *          remote pool and token) the chain must match, and `handover`
+ *          remote pool and token), feed registry and reward role (#2920)
+ *          the chain must match, and `handover`
  *          ({ILaunchGate.Handover}) is the deploy key, the Diamond owner, the
  *          role epoch the handover gate proved and the Timelock's call count
  *          when the launch was proposed — all in the calldata, so the Safe
