@@ -100,50 +100,23 @@ fi
 # ── Every Diamond preset must name an event or error the Diamond has (#2869) ──
 # The presets name their signal by signature, and a signature that drifts from
 # the contract matches nothing: Tenderly accepts the alert and it never fires.
-# Three presets had drifted that way unnoticed (LoanDefaulted gained a field,
-# LiquidationFallback lost two, and LoanLiquidated is declared but nothing
-# emits it). So each preset whose contract is the Diamond is checked against
-# the generated combined Diamond ABI, and the run refuses, before anything is
-# written, on any signature the ABI does not carry.
-#
-# What this proves, and what it does not: the signature EXISTS on the Diamond.
-# It cannot prove that some code path emits it (LoanLiquidated would pass).
-# Presets on any other contract (the timelock) are printed as unchecked, because
-# no ABI for them is committed here. The parse reads the template's own fixed
-# shape (`  - id:`, `    contract:`, `    event:` / `    error:`); a preset
-# that names no contract or no signature is refused rather than skipped.
+# Three presets had drifted that way unnoticed. The check lives in
+# packages/contracts/scripts/tenderly-presets.mjs, which PARSES the template as
+# YAML (a line-by-line read recognised nothing after a re-indent and passed,
+# #2979 r1) and compares each Diamond preset with the committed combined
+# Diamond ABI in canonical form (struct parameters as component tuples). It
+# refuses a template with no presets, a preset missing a field, and any
+# signature the ABI lacks; a preset on another contract comes back as
+# unchecked and is printed by name after the run. It needs the workspace's
+# node_modules (`pnpm install`); without them it fails, and so does this run.
 DIAMOND_ABI="$REPO_ROOT/packages/contracts/src/diamondAbi.json"
+PRESET_CHECK="$REPO_ROOT/packages/contracts/scripts/tenderly-presets.mjs"
 if [ ! -f "$DIAMOND_ABI" ]; then
   echo "Error: $DIAMOND_ABI not found; cannot check the presets' signatures." >&2
   exit 1
 fi
-DIAMOND_SIGS="$(jq -r '.[] | select(.type == "event" or .type == "error")
-  | "\(.type) \(.name)(\(.inputs | map(.type) | join(",")))"' "$DIAMOND_ABI" | sort -u)"
-PRESETS="$(awk '
-  function flush() { if (id != "") print id "|" contract "|" kind "|" sig }
-  /^  - id: / { flush(); id = substr($0, 9); contract = ""; kind = ""; sig = "" }
-  /^    contract: / { contract = substr($0, 15); gsub(/"/, "", contract) }
-  /^    event: / { kind = "event"; sig = substr($0, 12) }
-  /^    error: / { kind = "error"; sig = substr($0, 12) }
-  END { flush() }
-' "$TEMPLATE")"
-SIG_BAD=()
-SIG_UNCHECKED=()
-while IFS='|' read -r p_id p_contract p_kind p_sig; do
-  [ -z "$p_id" ] && continue
-  if [ -z "$p_contract" ] || [ -z "$p_sig" ]; then
-    SIG_BAD+=("$p_id (names no contract or no event/error signature)")
-  elif [ "$p_contract" = '${DIAMOND_ADDRESS}' ]; then
-    if ! grep -qxF "$p_kind $p_sig" <<<"$DIAMOND_SIGS"; then
-      SIG_BAD+=("$p_id ($p_kind $p_sig is not in the Diamond ABI)")
-    fi
-  else
-    SIG_UNCHECKED+=("$p_id ($p_contract: $p_kind $p_sig)")
-  fi
-done <<<"$PRESETS"
-if [ ${#SIG_BAD[@]} -gt 0 ]; then
-  echo "Error: $TEMPLATE has presets that would never fire:" >&2
-  for b in "${SIG_BAD[@]}"; do echo "  - $b" >&2; done
+if ! PRESET_UNCHECKED="$(node "$PRESET_CHECK" "$TEMPLATE" "$DIAMOND_ABI")"; then
+  echo "Error: $TEMPLATE has presets that would never fire (listed above)." >&2
   echo "Fix each signature against packages/contracts/src/diamondAbi.json." >&2
   echo "Nothing was published — the previous manifests are untouched." >&2
   exit 1
@@ -344,9 +317,9 @@ if [ ${#SKIPPED[@]} -gt 0 ]; then
   for s in "${SKIPPED[@]}"; do echo "  - $s"; done
 fi
 
-if [ ${#SIG_UNCHECKED[@]} -gt 0 ]; then
+if [ -n "$PRESET_UNCHECKED" ]; then
   echo "Signatures NOT checked (no committed ABI for the contract):"
-  for u in "${SIG_UNCHECKED[@]}"; do echo "  - $u"; done
+  sed 's/^UNCHECKED /  - /' <<<"$PRESET_UNCHECKED"
 fi
 
 echo
