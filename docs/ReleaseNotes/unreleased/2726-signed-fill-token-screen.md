@@ -1,4 +1,4 @@
-## Thread — Every accept runs the token screen, signed-offer fills included (PR #<n>)
+## Thread — Every accept runs the token screen, signed-offer fills included (PR #2936)
 
 The independent token-security screen (honeypots, sell restrictions,
 fee-on-transfer tokens and similar) is meant to stand between a user and any

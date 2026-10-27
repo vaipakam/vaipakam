@@ -1,4 +1,4 @@
-## Thread — An accept signs only what its review showed (PR #<n>)
+## Thread — An accept signs only what its review showed (PR #2936)
 
 Accepting an offer means signing a typed statement of the deal, and the
 contract refuses the accept if any signed term differs from the stored offer.
