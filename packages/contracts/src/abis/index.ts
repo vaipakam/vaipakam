@@ -61,6 +61,8 @@ import NumeraireValueFacetABI from './NumeraireValueFacet.json';
 import NotificationFeeFacetABI from './NotificationFeeFacet.json';
 // #2795 — the forced-sale host (sized to the debt, lender first).
 import ForcedSaleFacetABI from './ForcedSaleFacet.json';
+// #2748 — the rate-model host (model, band, offer-rate clamp).
+import RateModelFacetABI from './RateModelFacet.json';
 import RiskSplitLiquidationFacetABI from './RiskSplitLiquidationFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
@@ -159,7 +161,7 @@ import RewardSweepWalkFacetABI from './RewardSweepWalkFacet.json';
 // DIAMOND_ABI below (it's not part of the diamond's selector set).
 import FlashLoanLiquidatorABI from './FlashLoanLiquidator.json';
 // #394 Lever B — standalone dual-factor risk-premium rate model (an
-// `IRateModel` registered via `AdminFacet.setRateModel`). Named export only;
+// `IRateModel` registered via `RateModelFacet.setRateModel`). Named export only;
 // deliberately NOT spread into DIAMOND_ABI below (not part of the diamond's
 // selector set) — admin tooling / keeper call it as a separate contract.
 import RiskPremiumRateModelABI from './RiskPremiumRateModel.json';
@@ -218,6 +220,7 @@ export {
   NumeraireValueFacetABI,
   NotificationFeeFacetABI,
   ForcedSaleFacetABI,
+  RateModelFacetABI,
   RiskSplitLiquidationFacetABI,
   ClaimFacetABI,
   OracleFacetABI,

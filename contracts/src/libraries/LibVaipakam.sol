@@ -556,11 +556,26 @@ library LibVaipakam {
     // legitimate distressed-borrower offers; higher would let pranks
     // / typo-grade offers spam the book.
     uint256 constant MAX_INTEREST_BPS = 10_000;
-    // #400 (hardening) — bounds for the rate-model deviation cap (the max ±
-    // BPS a model may move a quote from the caller's reference rate).
-    uint256 constant RATE_MODEL_MAX_DEVIATION_BPS_DEFAULT = 500; // 5%
-    uint256 constant MIN_RATE_MODEL_MAX_DEVIATION_BPS = 50;      // 0.5% floor — a model that can't move at all is pointless
-    uint256 constant MAX_RATE_MODEL_MAX_DEVIATION_BPS = 2_500;   // 25% ceiling — caps how far automation can drift from market
+    // #400 (hardening) / #2748 — the band a registered rate model's quote is
+    // clamped to around the caller's reference (market) rate. Its half-width
+    // is the tighter of a POINTS cap and a share of the reference, widened to
+    // a points floor:
+    //     halfWidth = max(minPoints, min(maxPoints, ref × relative / 10_000))
+    // so the band is [ref − halfWidth, ref + halfWidth] (floored at 0). Points
+    // are absolute APR basis points (500 = 5 percentage points). With the
+    // defaults a 1% market allows 0%–2% (the floor), a 4% market 2%–6% (the
+    // share) and a 12% market 7%–17% (the cap). The share keeps a low market
+    // from admitting a multiple of itself; the floor keeps a zero or tiny
+    // market from pinning every automated quote to the reference.
+    uint256 constant RATE_MODEL_MAX_DEVIATION_BPS_DEFAULT = 500;   // cap: ± 5 percentage points
+    uint256 constant MIN_RATE_MODEL_MAX_DEVIATION_BPS = 50;        // ± 0.5 points — a model that can't move at all is pointless
+    uint256 constant MAX_RATE_MODEL_MAX_DEVIATION_BPS = 2_500;     // ± 25 points — caps how far automation can drift from market
+    uint256 constant RATE_MODEL_RELATIVE_DEVIATION_BPS_DEFAULT = 5_000; // share: ± 50% of the reference rate
+    uint256 constant MIN_RATE_MODEL_RELATIVE_DEVIATION_BPS = 500;       // ± 5% of the reference
+    uint256 constant MAX_RATE_MODEL_RELATIVE_DEVIATION_BPS = 10_000;    // ± 100% of the reference (0% to twice the market)
+    uint256 constant RATE_MODEL_MIN_DEVIATION_BPS_DEFAULT = 100;   // floor: ± 1 percentage point
+    uint256 constant MIN_RATE_MODEL_MIN_DEVIATION_BPS = 10;        // ± 0.1 points
+    uint256 constant MAX_RATE_MODEL_MIN_DEVIATION_BPS = 500;       // ± 5 points (and never above the cap; the setter checks)
 
     // ─── T-034 — Periodic Interest Payment defaults + bounds ─────────────
     // See docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md.
@@ -5097,22 +5112,25 @@ library LibVaipakam {
         // ─── #400 — pluggable quote-time rate model (APPEND-ONLY tail) ──────
         /// @dev The active {IRateModel}. `address(0)` ⇒ the IDENTITY model —
         ///      the user-supplied offer rate stands unchanged (today's
-        ///      behaviour, zero-config). When set, `OfferCreateFacet` evaluates
-        ///      it ONCE at offer-create and writes the concrete rate into the
-        ///      offer; it is never consulted at match/accept or on a live loan
-        ///      (E2). Registering a model is risk-increasing → timelock +
+        ///      behaviour, zero-config). When set, it is read only as a QUOTE by
+        ///      `RateModelFacet.quoteOfferRateBps`; a caller that opted into
+        ///      automated pricing passes the quote as its offer rate, and the
+        ///      manual create path never calls it. It is never consulted at
+        ///      match/accept or on a live loan (E2). Registering a model is risk-increasing → timelock +
         ///      guardian-revocable after handover. Declared at the `Storage`
         ///      tail so the upgrade never shifts existing slots.
         address rateModel;
-        /// @dev #400 (hardening) — max ± deviation, in BPS, a registered model
-        ///      may move a quote from the caller's reference (market) rate. The
-        ///      resolver CLAMPS the model's output to `[ref - dev, ref + dev]`,
-        ///      so a model — even buggy/registered — can never push an
-        ///      automated offer far off the market reference (the anti-rate-
-        ///      setting / anti-reflexivity guarantee, baked into the substrate
-        ///      rather than trusted to each consumer). 0 ⇒
-        ///      RATE_MODEL_MAX_DEVIATION_BPS_DEFAULT. Range-clamped at the setter.
-        uint16 rateModelMaxDeviationBps; // 0 ⇒ default (500 = 5%)
+        /// @dev #400 (hardening) / #2748 — the POINTS cap of the rate-model
+        ///      band: the most, in absolute APR basis points, a registered
+        ///      model may move a quote from the caller's reference (market)
+        ///      rate. The resolver CLAMPS the model's output to the band (see
+        ///      {cfgRateModelBandHalfWidthBps}), so a model — even buggy or
+        ///      adversarial — can never push an automated offer far off the
+        ///      market reference (the anti-rate-setting guarantee, baked into
+        ///      the substrate rather than trusted to each consumer). 0 ⇒
+        ///      RATE_MODEL_MAX_DEVIATION_BPS_DEFAULT. Set with the band's other
+        ///      two knobs by `RateModelFacet.setRateModelBand`.
+        uint16 rateModelMaxDeviationBps; // 0 ⇒ default (± 5 points)
         /// @dev #394 Lever A — runtime override for the loan-admission Health
         ///      Factor floor (the value the NON-tiered init gate, and every
         ///      restore/maintain/preview HF check, compares against). `0` ⇒
@@ -8118,6 +8136,20 @@ library LibVaipakam {
         ///      [{MIN_TIER_PUSH_SPACING_SEC}, {MAX_TIER_PUSH_SPACING_SEC}].
         ///      Appended — append-only.
         uint32 cfgTierPushSpacingSec;
+        /// @dev #2748 — the SHARE of the rate-model band: the most a model may
+        ///      move a quote, as basis points of the reference rate itself
+        ///      (5_000 = ± 50% of the market rate). The band's half-width is
+        ///      the tighter of this share and the points cap. 0 ⇒
+        ///      {RATE_MODEL_RELATIVE_DEVIATION_BPS_DEFAULT}; written only by
+        ///      `RateModelFacet.setRateModelBand`. Appended — append-only.
+        uint16 rateModelRelativeDeviationBps;
+        /// @dev #2748 — the FLOOR of the rate-model band, in absolute APR
+        ///      basis points: the half-width never falls below it, so a zero
+        ///      or tiny reference rate still leaves a model room to move. 0 ⇒
+        ///      {RATE_MODEL_MIN_DEVIATION_BPS_DEFAULT}; written only by
+        ///      `RateModelFacet.setRateModelBand`, never above the points cap.
+        ///      Appended — append-only.
+        uint16 rateModelMinDeviationBps;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -10011,16 +10043,52 @@ library LibVaipakam {
     }
 
     /// @dev #400 — active quote-time rate model; `address(0)` ⇒ identity
-    ///      (user-supplied rate stands). Consumed only by `OfferCreateFacet`.
+    ///      (user-supplied rate stands). Consumed only by `RateModelFacet`.
     function cfgRateModel() internal view returns (address) {
         return storageSlot().rateModel;
     }
 
-    /// @dev #400 (hardening) — max ± BPS a model may move a quote from the
-    ///      reference; 0 ⇒ default. The resolver clamps to this band.
+    /// @dev #400 (hardening) / #2748 — the band's points cap, in absolute APR
+    ///      basis points; 0 ⇒ default.
     function cfgRateModelMaxDeviationBps() internal view returns (uint256) {
         uint16 v = storageSlot().rateModelMaxDeviationBps;
         return v == 0 ? RATE_MODEL_MAX_DEVIATION_BPS_DEFAULT : uint256(v);
+    }
+
+    /// @dev #2748 — the band's share of the reference rate, in basis points of
+    ///      that rate; 0 ⇒ default.
+    function cfgRateModelRelativeDeviationBps() internal view returns (uint256) {
+        uint16 v = storageSlot().rateModelRelativeDeviationBps;
+        return v == 0 ? RATE_MODEL_RELATIVE_DEVIATION_BPS_DEFAULT : uint256(v);
+    }
+
+    /// @dev #2748 — the band's EFFECTIVE points floor, in absolute APR basis
+    ///      points: the stored value (0 ⇒ default), never above the effective
+    ///      points cap. The setter refuses a floor above the cap, but the
+    ///      floor field is appended storage: a Diamond refreshed in place
+    ///      keeps a cap set under the old single-knob setter (as low as 50)
+    ///      while the new floor field reads 0, which would resolve to the
+    ///      100-point default and widen the band past that cap. Bounding it
+    ///      here makes "the floor never exceeds the cap" hold for every
+    ///      storage state, not only for one the setter wrote.
+    function cfgRateModelMinDeviationBps() internal view returns (uint256) {
+        uint16 v = storageSlot().rateModelMinDeviationBps;
+        uint256 floor = v == 0 ? RATE_MODEL_MIN_DEVIATION_BPS_DEFAULT : uint256(v);
+        uint256 cap = cfgRateModelMaxDeviationBps();
+        return floor < cap ? floor : cap;
+    }
+
+    /// @dev #2748 — the ONE rule for the rate-model band's half-width around
+    ///      a reference rate, in absolute APR basis points:
+    ///      `max(floor, min(cap, ref × share / 10_000))`. The effective floor
+    ///      is never above the effective cap ({cfgRateModelMinDeviationBps}),
+    ///      so the result never exceeds the cap, whatever the storage holds.
+    function cfgRateModelBandHalfWidthBps(uint256 refBps) internal view returns (uint256) {
+        uint256 cap = cfgRateModelMaxDeviationBps();
+        uint256 share = (refBps * cfgRateModelRelativeDeviationBps()) / BASIS_POINTS;
+        uint256 half = share < cap ? share : cap;
+        uint256 floor = cfgRateModelMinDeviationBps();
+        return half > floor ? half : floor;
     }
 
     /// @dev #394 Lever A — the live loan-ADMISSION Health Factor floor (the

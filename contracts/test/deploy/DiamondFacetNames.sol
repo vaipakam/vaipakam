@@ -91,7 +91,10 @@ abstract contract DiamondFacetNames {
     ///      ProfileFacet).
     ///      98 → 99 with `ForcedSaleFacet` (#2795 — the one forced-sale rule:
     ///      sized to the debt, lender first; self-called by RepayPeriodicFacet).
-    function cutFacetNames() internal pure returns (string[99] memory) {
+    ///      99 → 100 with `RateModelFacet` (#2748 — the reference-rate model,
+    ///      its band and the offer-rate clamp, moved off AdminFacet and
+    ///      OfferCreateFacet).
+    function cutFacetNames() internal pure returns (string[100] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -216,6 +219,8 @@ abstract contract DiamondFacetNames {
             "NotificationFeeFacet",
             // #2795 - the forced-sale host (sizing, sale, lender-first split).
             "ForcedSaleFacet",
+            // #2748 - the rate model, its band and the offer-rate clamp.
+            "RateModelFacet",
             "RiskFacet",
             "RiskMatchLiquidationFacet",
             "RiskSplitLiquidationFacet",

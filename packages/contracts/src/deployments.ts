@@ -141,6 +141,10 @@ export interface DeploymentFacets {
    *  it and splits the proceeds lender first. Optional: a chain deployed
    *  before it has no such key. */
   forcedSaleFacet?: HexAddress;
+  /** #2748 - the rate-model host: the reference-rate model, its band and
+   *  the offer-rate clamp. Optional: a chain deployed before it has no such
+   *  key. */
+  rateModelFacet?: HexAddress;
   rewardReporterFacet?: HexAddress;
   riskFacet?: HexAddress;
   stakingRewardsFacet?: HexAddress;

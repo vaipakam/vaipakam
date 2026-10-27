@@ -28,6 +28,7 @@
     "NumeraireValueFacet",
     "NotificationFeeFacet",
     "ForcedSaleFacet",
+    "RateModelFacet",
     "IntentDispatchFacet",
     "AutoLifecycleFacet",
     "EncumbranceMutateFacet",
