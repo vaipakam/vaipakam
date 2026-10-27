@@ -3905,30 +3905,43 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, _days(1), cap);
     }
 
-    /// @notice #918 — the clamp residual of an armed day retires ONCE, with
-    ///         the first part, so the parts retire exactly the whole armed
-    ///         commitment, the same as one send would.
-    function test_918_AnArmedDay_RetiresItsResidualOnce() public {
+    /// @notice #918 (Codex #2959 r3) — an armed day's FIRST part converts its
+    ///         whole fresh commitment, clamp residual included, into the pool
+    ///         hold, so every spender of the pool sees the rest of the day as
+    ///         used. A Base claim or sweep reads `poolRemaining` and never nets
+    ///         the commitments; before r3 the rest of a partly sent armed day
+    ///         was held only by its commitment and a claim could take it.
+    ///         Mutation: leave the commitment standing for the unsent rest
+    ///         (retire per part) and the pool reads the rest as free.
+    function test_918_AnArmedDay_ConvertsItsWholeCommitmentIntoTheHold_AtItsFirstPart() public {
         _finalizeDay(1);
         _armDayForArb(1, 100e18, 0);
         rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 2e18, 1e18);
         mutator.setOutstandingCommitRaw(1_000e18, 0);
         (, uint256 f0, , ) = RewardAggregatorFacet(address(diamond)).getGovernorCommitState();
+        InteractionRewardsLensFacet ilens = InteractionRewardsLensFacet(address(diamond));
+        uint256 room0 = ilens.getInteractionPoolRemaining();
 
         uint256 p1 = _sendPart(1, 1e18);
         LibVaipakam.RemitDayLedger memory l = _ledger(1);
         assertTrue(l.armed, "stored: armed");
         assertEq(l.wholeFresh, 3e18, "the clamped whole");
         assertGt(l.armedWholeFresh, l.wholeFresh, "fixture: a residual exists");
-        assertEq(l.residualRemitId, 1, "stored: the first part retired it");
-        LibVaipakam.RemitReservation memory r1 = rlens.getRemitReservation(1);
-        assertEq(r1.armedFreshFull, p1 + (l.armedWholeFresh - l.wholeFresh), "part 1 retires its part + the residual");
+        assertEq(l.residualRemitId, 1, "stored: the first part retired the residual");
+        assertEq(rlens.getRemitReservation(1).armedFreshFull, l.armedWholeFresh, "part 1 retires the whole commitment");
+        (, uint256 f1, , ) = RewardAggregatorFacet(address(diamond)).getGovernorCommitState();
+        assertEq(f0 - f1, l.armedWholeFresh, "the commitment is gone after the first part");
+        assertEq(rlens.getRemitDayFreshReserved(), l.wholeFresh - p1, "the hold carries the rest of the day");
+        assertEq(ilens.getInteractionPoolRemaining(), room0 - l.wholeFresh, "the pool, as a claim reads it, has the whole day as used");
 
         _sendPart(1, 1e18);
         _sendPart(1, 1e18);
-        assertEq(rlens.getRemitReservation(2).armedFreshFull, 1e18, "a later part retires only itself");
+        assertEq(rlens.getRemitReservation(2).armedFreshFull, 0, "a later part retires no fresh commitment");
+        assertEq(rlens.getRemitReservation(3).armedFreshFull, 0);
         (, uint256 f3, , ) = RewardAggregatorFacet(address(diamond)).getGovernorCommitState();
         assertEq(f0 - f3, l.armedWholeFresh, "the whole armed commitment retired exactly once");
+        assertEq(rlens.getRemitDayFreshReserved(), 0, "a whole day holds nothing");
+        assertEq(ilens.getInteractionPoolRemaining(), room0 - l.wholeFresh, "and the pool use is the whole, once");
         assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), 3e18, "remitted at the clamp");
     }
 
@@ -3966,8 +3979,12 @@ contract RewardRemitLedgerTest is SetupTest {
 
     /// @notice #918 case 4 — releasing one part restores exactly that part:
     ///         the day re-opens owing it, the other parts stand, and the
-    ///         re-send moves exactly the released amount. Releasing the part
-    ///         that retired the residual hands the residual to the next part.
+    ///         re-send moves exactly the released amount. On an armed day the
+    ///         fresh commitment is NOT restored (Codex #2959 r3): it became the
+    ///         day's pool hold at the first part, so the released fresh is
+    ///         uncovered instead and the re-send must find room for it, as on
+    ///         an unarmed day. Releasing the part that retired the residual
+    ///         hands the residual marker to the next part.
     function test_918_ReleasingAPart_RestoresExactlyThatPart() public {
         _finalizeDay(1);
         _armDayForArb(1, 100e18, 0);
@@ -3986,26 +4003,32 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(l.sentFresh, 2e18, "stored: the other parts stand");
         assertEq(l.partsLive, 2);
         assertEq(l.residualRemitId, 1, "the residual stays with part 1");
+        assertEq(l.freshUncovered, 1e18, "stored: the released fresh is uncovered");
         assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), 0, "no longer whole: unmarked");
         assertEq(rlens.getDayClosedByRemitId(CHAIN_ARB, 1), 0);
         (uint256 owed, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
         assertEq(owed, 1e18, "owes exactly the released part");
         (, uint256 fMid, , ) = RewardAggregatorFacet(address(diamond)).getGovernorCommitState();
-        assertEq(fMid, f0 - armedWhole + 1e18, "the part's commitment restored, no more");
+        assertEq(fMid, f0 - armedWhole, "no fresh commitment is restored");
 
-        // The residual-holder: its release hands the residual on.
+        // The residual-holder: its release hands the residual marker on.
         comp.releaseRemitReservation(1);
         l = _ledger(1);
         assertEq(l.residualRemitId, 0, "the residual is unretired again");
         assertEq(l.wholeFresh, 3e18, "the whole stays locked");
+        assertEq(l.freshUncovered, 2e18, "stored: both released parts are uncovered");
         (, uint256 fBoth, , ) = RewardAggregatorFacet(address(diamond)).getGovernorCommitState();
-        assertEq(fBoth, f0 - 1e18, "only part 3 stays retired");
+        assertEq(fBoth, f0 - armedWhole, "still none restored");
 
+        uint256 globalBefore = rlens.getRewardBudgetRemittedGlobal();
         uint256 re = _sendPart(1, 5e18);
         assertEq(re, 2e18, "the re-send moves exactly what was released");
-        assertEq(rlens.getRemitReservation(4).armedFreshFull, 2e18 + armedWhole - 3e18, "and re-retires the residual");
+        assertEq(rlens.getRemitReservation(4).armedFreshFull, 0, "and retires no fresh commitment");
+        assertEq(_ledger(1).residualRemitId, 4, "it takes the residual marker");
+        assertEq(rlens.getRewardBudgetRemittedGlobal(), globalBefore + 2e18, "the re-sent fresh is charged again");
         (, uint256 fEnd, , ) = RewardAggregatorFacet(address(diamond)).getGovernorCommitState();
         assertEq(f0 - fEnd, armedWhole, "the whole commitment retired exactly once, net");
+        assertEq(rlens.getRemitDayFreshReserved(), 0, "a whole day holds nothing");
         assertEq(rlens.getDayClosedByRemitId(CHAIN_ARB, 1), 4, "re-closed by the re-send");
         assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), 3e18);
     }

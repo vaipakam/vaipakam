@@ -8181,9 +8181,11 @@ library LibVaipakam {
         ///      first part reserves its whole here, every part moves its own
         ///      fresh from here into `rewardBudgetRemittedGlobal`, so a day
         ///      sent in parts holds the pool exactly as a send of its whole in
-        ///      one would. An ARMED day needs none: its finalize-time
-        ///      commitment (`outstandingCommitFresh`) already holds its unsent
-        ///      fresh. Read only through `LibInteractionRewards.poolRemaining`,
+        ///      one would. Armed days too (Codex #2959 r3): an armed day's
+        ///      first part converts its whole fresh commitment
+        ///      (`outstandingCommitFresh`) into this hold, because only day
+        ///      sizing and sends net the commitments out of the pool, while a
+        ///      claim, sweep or staging read sees this hold. Read only through `LibInteractionRewards.poolRemaining`,
         ///      the one definition of the pool's hard headroom; written only by
         ///      `LibRemitDayLedger.applyPart`. Base-only. Appended — append-only.
         uint256 remitDayFreshReserved;
@@ -8204,11 +8206,13 @@ library LibVaipakam {
     ///      sent and `partsLive` those not released. The day is WHOLE when
     ///      both sums equal the whole and the residual is retired
     ///      (`residualRemitId != 0`); only then do the day-close markers stand.
-    ///      POOL HOLD (unarmed days only, Codex #2959 r1): `freshUncovered` is
+    ///      POOL HOLD (every day, Codex #2959 r1, r3): `freshUncovered` is
     ///      the owed fresh the day has NOT reserved against the 69M pool — what
     ///      a released part gave back. The next part re-reserves it, tested
     ///      against the pool's headroom; everything else the day owes is held
-    ///      in `Storage.remitDayFreshReserved`. Always zero on an armed day.
+    ///      in `Storage.remitDayFreshReserved`. An armed day's fresh commitment
+    ///      was converted into that hold at its first part, so a release
+    ///      restores none of it.
     struct RemitDayLedger {
         uint128 wholeFresh;
         uint128 wholeRecycled;
@@ -9315,15 +9319,19 @@ library LibVaipakam {
     ///      emission counters / bucket consumption recorded);
     ///      `armedFreshFull`/`recycledFull` are the PRE-clamp armed-day
     ///      totals whose outstanding commitments were retired/released at
-    ///      send — release restores exactly these, so a re-remit's
-    ///      retirement pairs off without drift. `dayIds` is every day the
+    ///      send. A COMPENSATION reservation's release restores exactly
+    ///      these, so a re-remit's retirement pairs off without drift; an
+    ///      ordinary one's restores `recycledFull` only, because its day's
+    ///      fresh commitment became the day's pool hold at its first part
+    ///      (#918, Codex #2959 r3). `dayIds` is every day the
     ///      batch ACTED on (#918): the funded day's part, and each close-only
     ///      day that rode along — release re-opens them all. Since #918 an
     ///      ordinary reservation is ONE PART of its funded day: `fresh` /
     ///      `recycled` are that part, and `armedFreshFull` / `recycledFull`
-    ///      the commitments that part retired (its own amounts, plus a day's
-    ///      clamp residual when this part is the one that retired it — see
-    ///      `RemitDayLedger.residualRemitId`).
+    ///      the commitments that part retired: the day's whole fresh
+    ///      commitment on its first part (none on a later one), and its own
+    ///      recycled plus the day's recycled clamp residual when this part is
+    ///      the one that retired it — see `RemitDayLedger.residualRemitId`.
     struct RemitReservation {
         uint32 dstChainId;
         // 0 = none, 1 = Pending (in flight), 2 = Acked (delivered,

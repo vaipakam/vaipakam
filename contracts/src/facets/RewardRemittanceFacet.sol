@@ -86,8 +86,9 @@ contract RewardRemittanceFacet is
 
     /// @dev B2-d2 / #918: `fresh` / `recycled` are the CLAMPED part this batch
     ///      sends; `armedFresh` / `recycledFull` the commitments it retires
-    ///      (each part's own amounts, plus a day's clamp residual on the part
-    ///      that retires it — see {LibRemitDayLedger}).
+    ///      (fresh: a day's whole commitment on its first part, none later;
+    ///      recycled: each part's own amount, plus a day's clamp residual on
+    ///      the part that retires it — see {LibRemitDayLedger}).
     struct RemitSplitTotals {
         uint256 totalAll;
         uint256 fresh;
@@ -115,9 +116,9 @@ contract RewardRemittanceFacet is
         uint256 bucketLeft;
         uint256 outRecycledLeft;
         // #918 — the gate figures ({LibRemitDayLedger.DayPlan}): the fresh the
-        // acted days must find new pool room for (an armed day's remaining
-        // owed; an unarmed day's owed not yet held for it) and what sending
-        // all of it would retire of the armed fresh commitments. The
+        // acted days must find new pool room for (each day's owed fresh not
+        // yet held for it) and the armed fresh commitments the send converts
+        // into that hold (a day's whole, on its first part). The
         // fresh-headroom gate tests these, never the part alone, so a part
         // passes exactly when the rest of its day sent in one would.
         uint256 gateFresh;
@@ -462,7 +463,7 @@ contract RewardRemittanceFacet is
 
         uint256 remitId = ++s.remitReservationNonce;
         // APPLY - per acted day, in plan order: lock its whole on its first
-        // part, hold an unarmed day's unsent fresh in the pool, add this part,
+        // part, hold the day's unsent fresh in the pool, add this part,
         // retire its clamp residual when this part does, and close it once
         // whole ({LibRemitDayLedger.applyPart}).
         for (uint256 k; k < dl.actedCount; ) {
@@ -480,8 +481,9 @@ contract RewardRemittanceFacet is
         // the governor stamp and the claim cap both read it that way);
         // `rewardBudgetRemittedTotal` keeps the full funding record. B2-d2 /
         // #918: `armedFresh` is what this part retires of the armed fresh
-        // commitments — its own fresh, plus the day's clamp residual when this
-        // part is the one that retires it.
+        // commitments — a day's whole commitment, residual included, on its
+        // first part, which the pool hold replaces (Codex #2959 r3); nothing
+        // on a later part.
         s.rewardBudgetRemittedGlobal += st.fresh;
         s.rewardBudgetRemittedTotal[dstChainId] += st.totalAll;
         if (st.recycled > 0) {

@@ -44,29 +44,43 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *         margin its whole exceeds, and stall it half sent once the margin
  *         ran out.
  *
- *         THE POOL HOLD (Codex #2959 r1). Passing the gate is not enough on
- *         its own: between two parts, another mirror's send or a Base claim
- *         could take the margin the rest of the day needs, and the mirror,
- *         waiting for the whole, would never open the day. An ARMED day
- *         already has a hold: its finalize-time commitment
- *         (`outstandingCommitFresh`) stands for its unsent fresh in the pool's
- *         day sizing and in every send's headroom until a part retires it,
- *         exactly as before #918. An UNARMED day has no
- *         commitment, so its first part RESERVES the day's whole fresh in
+ *         THE POOL HOLD (Codex #2959 r1, r3). Passing the gate is not enough
+ *         on its own: between two parts, another mirror's send or a Base
+ *         claim could take the margin the rest of the day needs, and the
+ *         mirror, waiting for the whole, would never open the day. So EVERY
+ *         day, armed or not, holds its own unsent fresh from its first part
+ *         on: that part RESERVES the day's whole fresh in
  *         `remitDayFreshReserved`, which the one pool-headroom definition
- *         ({LibInteractionRewards.poolRemaining}) counts as used. Each part
- *         then moves its own fresh from the hold into
+ *         ({LibInteractionRewards.poolRemaining}) counts as used, so every
+ *         spender of the pool sees it (claims, sweeps, staging, day sizing,
+ *         sends). Each part then moves its own fresh from the hold into
  *         `rewardBudgetRemittedGlobal`, so a day sent in parts holds the pool
  *         exactly as a send of its whole in one would. A released part's
  *         fresh is uncovered again (its first charge stays spent) and the
  *         next part re-reserves it against the headroom.
  *
+ *         An ARMED day's finalize-time commitment (`outstandingCommitFresh`)
+ *         is not that hold, and r3 is why: only day sizing and sends net the
+ *         commitments out of the pool, while a Base claim or sweep for an
+ *         unarmed day reads `poolRemaining` alone, so a commitment left
+ *         standing for the unsent rest could be spent from under the day.
+ *         The first part therefore CONVERTS the day's whole fresh commitment
+ *         into the hold: it retires all of it (the clamp residual included)
+ *         and reserves the clamped whole. The pool is unchanged for everyone
+ *         else except the residual, which is never sent and is freed exactly
+ *         as before. The conversion is permanent: the whole is locked, so a
+ *         release never restores the fresh commitment; the released fresh is
+ *         uncovered, as on an unarmed day. The RECYCLED commitments are
+ *         unchanged: a part retires its own, and a release restores them.
+ *
  *         THE CLAMP RESIDUAL — what an armed day committed and will never send
  *         (`armedWhole* − whole*`) — is retired by the FIRST live part (the
  *         part that finds `residualRemitId == 0`), not by the last, so the
- *         margin a later part is tested against already carries it. A release
- *         of the part that retired it clears `residualRemitId`, and the next
- *         part re-retires it — exactly once per live set of parts.
+ *         margin a later part is tested against already carries it. The fresh
+ *         residual goes with the conversion above, once. The recycled
+ *         residual is the part's to retire: a release of the part that
+ *         retired it clears `residualRemitId`, and the next part re-retires
+ *         it — exactly once per live set of parts.
  *
  *         A whole-in-one send is the case where the part cap is at least the
  *         day's remaining owed: one part that both retires and completes.
@@ -138,12 +152,12 @@ library LibRemitDayLedger {
         uint256 owedRecycled;
         uint256 gateArmedFresh;
         uint256 gateRecycledFull;
-        // #918 (Codex #2959 r1) — the POOL HOLD. `gateFresh` is the fresh this
-        // send must find NEW room for in the 69M pool: the day's whole owed on
-        // an armed day (its commitment is retired by the gate's armed figure),
-        // the unreserved owed on an unarmed one. `cover` is what an unarmed
-        // day reserves now (`remitDayFreshReserved`), so the rest of the day
-        // is held for it between parts.
+        // #918 (Codex #2959 r1, r3) — the POOL HOLD. `gateFresh` is the fresh
+        // this send must find NEW room for in the 69M pool, and `cover` what
+        // the day reserves now (`remitDayFreshReserved`): both are the day's
+        // owed fresh not yet held — its whole at the first part, a released
+        // part's fresh after that, otherwise nothing. An armed day's first part
+        // finds that room net of the commitment it converts (`gateArmedFresh`).
         uint256 gateFresh;
         uint256 cover;
     }
@@ -234,7 +248,7 @@ library LibRemitDayLedger {
             p.armedWholeRecycled = l.armedWholeRecycled;
             _part(
                 p, l.sentFresh, l.sentRecycled, l.freshUncovered,
-                l.residualRemitId == 0, partCap
+                l.residualRemitId == 0, false, partCap
             );
             return p;
         }
@@ -294,23 +308,26 @@ library LibRemitDayLedger {
             p.wholeFresh = sliceFresh;
             p.wholeRecycled = sliceRecycled;
         }
-        // Unlocked: nothing of the day is reserved yet, so all of it is
-        // uncovered (read only on an unarmed day).
-        _part(p, 0, 0, p.wholeFresh, true, partCap);
+        // Unlocked: nothing of the day is held yet, so all of it is uncovered,
+        // and this part is the one that locks the day.
+        _part(p, 0, 0, p.wholeFresh, true, true, partCap);
     }
 
     /// @dev The part of `p`'s whole one send moves, given what the day's live
     ///      parts have already sent. Fresh first: the fresh component is what
     ///      the mirror's delivery gate waits on, so it is sent ahead of the
     ///      recycled one. `retires` is whether this part retires the day's
-    ///      clamp residual (no live part has). `uncovered` is the day's owed
-    ///      fresh not yet reserved against the pool (unarmed days only).
+    ///      recycled clamp residual (no live part has). `uncovered` is the
+    ///      day's owed fresh not yet held in the pool. `locking` is whether
+    ///      this is the day's first part, which converts an armed day's fresh
+    ///      commitment into the hold.
     function _part(
         DayPlan memory p,
         uint256 sentFresh,
         uint256 sentRecycled,
         uint256 uncovered,
         bool retires,
+        bool locking,
         uint256 partCap
     ) private pure {
         uint256 owedFresh = p.wholeFresh - sentFresh;
@@ -324,25 +341,26 @@ library LibRemitDayLedger {
         p.owedFresh = owedFresh;
         p.owedRecycled = owedRecycled;
         if (p.armed) {
-            // Armed figures carry the commitment regime: a part retires its
-            // own amounts, and the retiring part the clamp residual as well.
-            // The armed whole is never below the clamped whole (the clamp only
-            // lowers it), so neither residual can underflow.
-            uint256 freshResidual = retires ? p.armedWholeFresh - p.wholeFresh : 0;
+            // RECYCLED keeps the commitment regime: a part retires its own
+            // amount, and the retiring part the clamp residual as well.
+            // FRESH: the first part retires the day's whole fresh commitment,
+            // residual included, because the hold takes its place (see THE
+            // POOL HOLD); no later part retires any. The armed whole is never
+            // below the clamped whole (the clamp only lowers it), so the
+            // residual cannot underflow.
             uint256 recycledResidual = retires ? p.armedWholeRecycled - p.wholeRecycled : 0;
-            p.armedFresh = p.fresh + freshResidual;
             p.recycledFull = p.recycled + recycledResidual;
             p.residual = recycledResidual;
-            p.gateArmedFresh = owedFresh + freshResidual;
             p.gateRecycledFull = owedRecycled + recycledResidual;
-            p.gateFresh = owedFresh;
-        } else {
-            // No commitment holds an unarmed day's unsent fresh, so the day
-            // holds it itself: the part reserves everything uncovered, and
-            // only that needs new room. The rest is already reserved.
-            p.gateFresh = uncovered;
-            p.cover = uncovered;
+            if (locking) {
+                p.armedFresh = p.armedWholeFresh;
+                p.gateArmedFresh = p.armedWholeFresh;
+            }
         }
+        // The day holds its own unsent fresh: the part reserves everything
+        // uncovered, and only that needs new room. The rest is already held.
+        p.gateFresh = uncovered;
+        p.cover = uncovered;
         p.act = true;
         p.status = p.completes ? RemitDayStatus.Closeable : RemitDayStatus.Partial;
     }
@@ -407,16 +425,14 @@ library LibRemitDayLedger {
             ++l.partsSent;
             ++l.partsLive;
         }
-        if (!p.armed) {
-            // The POOL HOLD (Codex #2959 r1): reserve what was uncovered, then
-            // move this part's fresh out of the hold — the caller charges it to
-            // `rewardBudgetRemittedGlobal`. The hold already carries the rest
-            // of the day (owed − uncovered), so it covers this part and the
-            // subtraction cannot underflow. Afterwards the day holds exactly
-            // what it still owes.
-            s.remitDayFreshReserved = s.remitDayFreshReserved + p.cover - p.fresh;
-            l.freshUncovered = 0;
-        }
+        // The POOL HOLD (Codex #2959 r1, r3), armed day or not: reserve what
+        // was uncovered, then move this part's fresh out of the hold — the
+        // caller charges it to `rewardBudgetRemittedGlobal`. The hold already
+        // carries the rest of the day (owed − uncovered), so it covers this
+        // part and the subtraction cannot underflow. Afterwards the day holds
+        // exactly what it still owes.
+        s.remitDayFreshReserved = s.remitDayFreshReserved + p.cover - p.fresh;
+        l.freshUncovered = 0;
         if (p.retires) {
             l.residualRemitId = remitId;
             if (p.residual > 0) {
@@ -467,14 +483,16 @@ library LibRemitDayLedger {
      *         this part retired it, and the day-close markers are deleted
      *         whenever the day is no longer whole — whichever part set them.
      * @dev    The lock stays: the next send plans exactly the released amount
-     *         against the same whole (and re-retires the residual only if it
-     *         was this part's), and the mirror's whole is untouched. On an
-     *         unarmed day the released fresh becomes UNCOVERED: its first
-     *         charge stays spent (`rewardBudgetRemittedGlobal` is append-only),
-     *         so the next part must find room for it again, as a re-send of a
-     *         released whole-day reservation always has. The caller restores the part's commitment retirement
-     *         (`restoreArmedFresh` / `restoreReleasedRemit`) from the
-     *         reservation, which records exactly what this part retired.
+     *         against the same whole (and re-retires the recycled residual
+     *         only if it was this part's), and the mirror's whole is
+     *         untouched. The released fresh becomes UNCOVERED, armed day or
+     *         not: its first charge stays spent (`rewardBudgetRemittedGlobal`
+     *         is append-only), so the next part must find room for it again,
+     *         as a re-send of a released whole-day reservation always has. The
+     *         caller restores the part's RECYCLED commitment retirement
+     *         (`restoreReleasedRemit`) from the reservation. It restores no
+     *         fresh commitment: an armed day's was converted into the hold at
+     *         its first part, for good.
      * @param fresh / recycled This reservation's part of THIS day (zero for a
      *                         close-only day that rode along).
      */
@@ -492,7 +510,7 @@ library LibRemitDayLedger {
         l.sentFresh = uint128(sentFresh);
         l.sentRecycled = uint128(sentRecycled);
         // Bounded by the whole (a part never sends more than the day owes).
-        if (!l.armed) l.freshUncovered = uint128(uint256(l.freshUncovered) + fresh);
+        l.freshUncovered = uint128(uint256(l.freshUncovered) + fresh);
         unchecked {
             --l.partsLive;
         }

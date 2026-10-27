@@ -928,9 +928,14 @@ contract RewardCompensationDispatchFacet is
         // belongs to its single funded day: the send funds at most one.
         (bool funded, uint256 fundedAt) =
             LibRemitDayLedger.fundedDayIndex(remitId, n, r.fundedDayBits);
+        // #918 (Codex #2959 r3) — whether this is an ordinary remit, whose
+        // days carry a ledger. Its armed days' fresh commitments became their
+        // pool hold at their first part, so none is restored below.
+        bool ledgerRemit;
         for (uint256 i; i < n; ) {
             uint256 d = closed[i];
             if (LibRemitDayLedger.hasLedger(s, dst, d)) {
+                ledgerRemit = true;
                 // #918 — take exactly this part off the day's ledger; the
                 // day's close markers go whenever it is no longer whole,
                 // whichever part set them.
@@ -989,7 +994,13 @@ contract RewardCompensationDispatchFacet is
         // ceremony that re-credits the bucket (B2-d5 class).
         uint256 pending = s.remitPendingTotal[dst];
         s.remitPendingTotal[dst] = pending > r.total ? pending - r.total : 0;
-        LibInteractionRewards.restoreArmedFresh(r.armedFreshFull);
+        // A COMPENSATION reservation restores the fresh commitment it retired.
+        // An ordinary one restores none: the day's whole fresh commitment was
+        // converted into the pool hold when its first part went, the released
+        // part's fresh is now uncovered on the day's ledger, and restoring the
+        // commitment as well would hold the same fresh twice, with nothing
+        // left to retire it (#918, Codex #2959 r3).
+        if (!ledgerRemit) LibInteractionRewards.restoreArmedFresh(r.armedFreshFull);
         r.strandedRecycled = LibVpfiRecycle.restoreReleasedRemit(r.recycledFull, r.recycled, remitId);
         emit RemitReservationReleased(
             remitId, dst, r.total, r.fresh, r.recycled

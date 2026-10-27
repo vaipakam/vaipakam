@@ -193,8 +193,11 @@ Functional consolidation through 2026-07-12:
   is held for it: the 69M pool counts the whole day as used, exactly as if it
   had been sent at once, so no other send and no claim on the canonical chain
   can take the room its later parts need, and a mirror is never left waiting
-  for a whole that can no longer be sent. (A day under the commitment regime
-  is already held by its commitment.) A released part's fresh is no longer
+  for a whole that can no longer be sent. This holds for every day alike: a
+  day under the commitment regime turns its whole fresh commitment into this
+  hold when its first part goes, because a commitment is respected only when
+  days are sized and sent, while the hold is respected by every use of the
+  pool, claims included. A released part's fresh is no longer
   held, because its first transfer still counts against the pool; sending it
   again needs room, as re-sending any released remittance always has. The
   pool's figure for what is held is public. The day counts as remitted only

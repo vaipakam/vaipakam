@@ -14,7 +14,9 @@ sent at once would, and no day is started on room it does not fit. Once a
 day's first part has gone, the rest of its fresh is held for it in the 69M
 pool, so another mirror's send or a claim on Base cannot use up the room its
 later parts need; the pool counts the day as used exactly as a single send
-would, and the held figure is published. Releasing
+would, and the held figure is published. This applies to committed days too:
+their fresh commitment becomes the hold when the first part goes, since a claim
+on Base respects the hold but not a commitment. Releasing
 an undeliverable part restores exactly that part and leaves the day owing it
 again. The quotes and planning views now take the same
 part size the send uses, so the quote always matches the send, and a new status
