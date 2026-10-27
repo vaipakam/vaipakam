@@ -1,4 +1,4 @@
-## Thread — Activity shows what a collateral sale paid, and each party's part (PR #PRNUM)
+## Thread — Activity shows what a collateral sale paid, and each party's part (PR #2962)
 
 A collateral sale now appears in Activity with the amount the buyer paid, in the loan's lending asset. Below that, each party sees their own part. The lender's part is held until they claim it. The borrower's remainder is shown as either sent to their wallet or held until they claim it, matching what the sale did. Before this, the row named the split but stated no amounts, so neither party could tell from Activity what they were owed or where it had gone.
 
