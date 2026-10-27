@@ -3,7 +3,7 @@ pragma solidity ^0.8.29;
 
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
-import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
+import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
@@ -11,7 +11,7 @@ import {Deployments} from "./lib/Deployments.sol";
  * @title ConfigureNFTImageURIs
  * @notice Post-deploy URL rotation for the position-NFT artwork +
  *         the OpenSea `external_url` deep-link base. Uses the
- *         status-keyed image scheme on `VaipakamNFTFacet`:
+ *         status-keyed image scheme on `VaipakamNFTMetadataFacet`:
  *         per-side defaults + granular per-`LoanPositionStatus`
  *         overrides + a single base URL for marketplace deep-links.
  *
@@ -58,7 +58,7 @@ contract ConfigureNFTImageURIs is Script {
         console.log("Diamond:     ", diamond);
         console.log("Admin:       ", vm.addr(adminKey));
 
-        VaipakamNFTFacet nft = VaipakamNFTFacet(diamond);
+        VaipakamNFTMetadataFacet nft = VaipakamNFTMetadataFacet(diamond);
 
         vm.startBroadcast(adminKey);
 
@@ -131,7 +131,7 @@ contract ConfigureNFTImageURIs is Script {
     }
 
     function _maybeSet(
-        VaipakamNFTFacet nft,
+        VaipakamNFTMetadataFacet nft,
         LibVaipakam.LoanPositionStatus status,
         bool isLender,
         string memory uri

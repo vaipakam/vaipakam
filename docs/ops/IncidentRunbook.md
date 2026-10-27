@@ -1831,7 +1831,7 @@ is open until someone records it as done:
 - **Domain hygiene**: registrar lock, DNSSEC, CAA records and HSTS preload on
   the two canonical domains. This runbook has not verified their state.
 - **The position NFT's `external_url`.** The metadata carries a link only when
-  an admin sets a base URL (`VaipakamNFTFacet.setExternalUrlBase`; the
+  an admin sets a base URL (`VaipakamNFTMetadataFacet.setExternalUrlBase`; the
   configuration script reads `NFT_EXTERNAL_URL_BASE` and leaves it unset by
   default). A link inside an NFT teaches buyers to follow links found in NFTs,
   which is how a counterfeit sends them to a clone. Leave it unset, or point it

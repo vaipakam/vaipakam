@@ -150,6 +150,10 @@ export interface DeploymentFacets {
   stakingRewardsFacet?: HexAddress;
   treasuryFacet?: HexAddress;
   vaipakamNFTFacet?: HexAddress;
+  /** #2957 — the position NFT's metadata facet (tokenURI, contractURI and
+   *  the image / external-URL setters), split off `vaipakamNFTFacet`.
+   *  Optional: a chain deployed before the split has no such key. */
+  vaipakamNFTMetadataFacet?: HexAddress;
   vpfiDiscountFacet?: HexAddress;
   vpfiTokenFacet?: HexAddress;
   // ── Extended facet set (post-#67 splits + later features) ────────

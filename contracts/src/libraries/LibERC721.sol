@@ -55,14 +55,14 @@ library LibERC721 {
         // Image-URI configuration — granular per (LoanPositionStatus,
         // isLender) pair, with per-side defaults for any state that
         // wasn't explicitly populated. Lookup chain consumed by
-        // `VaipakamNFTFacet.tokenURI`:
+        // `VaipakamNFTMetadataFacet.tokenURI`:
         //   1. statusImageUris[status][isLender]      — exact match
         //   2. defaultLenderImage / defaultBorrowerImage — per-side fallback
         //   3. contractImageURI                          — collection-level fallback
         //   4. empty string                              — last resort
         // Replaces the prior 4-slot scheme (lenderActive/Closed +
         // borrowerActive/Closed). Pre-launch reorder; admin-only
-        // setters via VaipakamNFTFacet.setImageURIForStatus +
+        // setters via VaipakamNFTMetadataFacet.setImageURIForStatus +
         // setDefaultImage. Governance-transferable at any time by
         // rotating ADMIN_ROLE.
         mapping(LibVaipakam.LoanPositionStatus => mapping(bool => string)) statusImageUris;
@@ -97,7 +97,7 @@ library LibERC721 {
         // in tokenURI's JSON `external_url` field. OpenSea renders a
         // "View on Vaipakam" link that deep-links from the marketplace
         // back into the dApp. Empty string ⇒ field is omitted from
-        // the JSON; setter is `VaipakamNFTFacet.setExternalUrlBase`.
+        // the JSON; setter is `VaipakamNFTMetadataFacet.setExternalUrlBase`.
         string externalUrlBase;
         // ─── Per-owner locked-token counter ─────────────────────────────
         // Maintained by {_lock} (++) / {_unlock} (--) / {_burn} (--) so
@@ -255,7 +255,7 @@ library LibERC721 {
     /// @dev Initialize the ERC721 surface for a fresh diamond. Only
     ///      the per-side default image URLs seed at deploy; granular
     ///      per-(status, isLender) overrides are set later by the
-    ///      admin via `VaipakamNFTFacet.setImageURIForStatus` (or via
+    ///      admin via `VaipakamNFTMetadataFacet.setImageURIForStatus` (or via
     ///      `ConfigureNFTImageURIs.s.sol`). Reverts on second call.
     function initialize(
         string memory name_,
