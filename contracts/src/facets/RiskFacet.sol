@@ -14,7 +14,6 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
-import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
@@ -750,11 +749,6 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             bytes4(0)
         );
 
-        // Phase 5 / §5.2b — HF liquidation is NOT a proper close, so
-        // the borrower forfeits any up-front VPFI paid for the LIF.
-        // Full held amount flushes to treasury; no rebate.
-        LibVPFIDiscount.forfeitBorrowerLif(loan);
-
         // HF liquidation → borrower loses interaction rewards, lender keeps hers.
         LibInteractionRewards.closeLoan(loanId, /* borrowerClean */ false, /* lenderForfeit */ false);
 
@@ -842,9 +836,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
      *         {LoanPartiallyLiquidated}. The terminal event is whichever
      *         close-out path eventually fires.
      *
-     *         VPFI / interaction rewards: NOT settled here — the loan is
-     *         still alive, so `forfeitBorrowerLif` / `LibInteractionRewards.closeLoan`
-     *         do NOT fire. They run at the eventual terminal event.
+     *         Interaction rewards: NOT settled here — the loan is still
+     *         alive, so `LibInteractionRewards.closeLoan` does NOT fire. It
+     *         runs at the eventual terminal event.
      *
      *         NFTs: stay Active (the borrower and lender position NFTs
      *         continue to represent the now-smaller position).
@@ -1520,10 +1514,6 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             ),
             bytes4(0)
         );
-
-        // HF liquidation is NOT a proper close — borrower's VPFI LIF
-        // forfeits to treasury. Mirrors {triggerLiquidation}.
-        LibVPFIDiscount.forfeitBorrowerLif(loan);
 
         // Interaction-rewards close — borrower forfeits, lender does
         // not (`borrowerClean=false, lenderForfeit=false`), identical

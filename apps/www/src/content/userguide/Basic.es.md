@@ -70,9 +70,12 @@ saldo que ves es real en cualquier cadena en la que estés.
 
 ### Consentimiento de descuento en comisiones
 
-Vaipakam puede pagarte un descuento sobre las comisiones del
-protocolo usando parte del VPFI que tienes guardado en vault. Este
-interruptor es el "sí, hazlo". Sólo lo activas una vez.
+Vaipakam puede darte un descuento sobre las comisiones del
+protocolo según el VPFI que mantienes en vault. Para un prestatario
+el descuento es simplemente una Loan Initiation Fee más baja,
+cobrada en el propio activo del préstamo cuando este empieza — no se
+gasta VPFI en ello. Este interruptor es el "sí, hazlo". Sólo lo
+activas una vez.
 
 Cuán grande es el descuento depende de cuánto VPFI mantienes en
 vault:
@@ -387,13 +390,7 @@ y es previsible al revés: nunca vende, así que siempre te deja el
 colateral. A menudo —en un
 default sobre colateral que no podemos valorar— se va la canasta
 entera y no queda nada, y en esa vía es la regla, no un resultado desafortunado.
-Que el reembolso de la comisión vuelva depende de cómo terminó el
-préstamo: en uno que siga en la vía de comisión VPFI retirada, cualquier cierre correcto liquida el reembolso sobre el VPFI retenido
-contra la Loan Initiation Fee — su importe lo fija tu descuento en el
-momento de la liquidación, así que puede ser cero y perderse por
-completo si para entonces no mantienes nada. Un incumplimiento o una liquidación lo pierden por completo, y un
-préstamo cerrado mediante una venta prepay tampoco puede pagarlo
-actualmente, así que no cuentes con él por esa vía. Reclamar consume tu NFT de posición de prestatario.
+Reclamar consume tu NFT de posición de prestatario.
 Lo contrario no se sigue: un NFT que sigue ahí tras una
 liquidación no es prueba de que algo te espere. Si no quedó nada,
 no hay nada que recoger, el intento se rechaza y el NFT puede
@@ -605,10 +602,7 @@ explicando por qué.
   excedente: sólo se toma el colateral que exigen la deuda y el coste
   de cerrarla, y lo que aportaste de más queda registrado como tu
   reclamación. Qué es exactamente depende de la vía —
-  véase la sección del Claim Center. El VPFI retenido bajo la vía
-  retirada sólo se pierde en default o liquidación; un repago
-  total, un preclose o un refinance liquidan el reembolso ponderado
-  por tiempo, que puede ser cero.
+  véase la sección del Claim Center.
 
 ---
 

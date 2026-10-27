@@ -12,11 +12,8 @@ import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
-import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -62,7 +59,6 @@ contract ClaimFacet is
     DiamondAccessControl,
     IVaipakamErrors
 {
-    using SafeERC20 for IERC20;
 
     // ─── Events ──────────────────────────────────────────────────────────────
 
@@ -134,22 +130,6 @@ contract ClaimFacet is
         uint256 indexed loanId,
         bool succeeded,
         uint256 proceeds
-    );
-
-    /// @notice Emitted when a borrower claims their Phase 5 LIF VPFI rebate.
-    /// @param loanId The loan whose rebate was credited at proper settlement.
-    /// @param claimant The address receiving the VPFI (borrower NFT holder).
-    /// @param amount VPFI wei transferred.
-    /// @param newVaultVpfiBalance Borrower's post-claim VPFI vault balance
-    ///        (sum of any prior staked / discount-tier balance plus this
-    ///        rebate). EventSourcingAudit §3.20 — frontend updates the
-    ///        "VPFI balance is now X" UI directly from the event.
-    /// @custom:event-category state-change/reward-claim
-    event BorrowerLifRebateClaimed(
-        uint256 indexed loanId,
-        address indexed claimant,
-        uint256 amount,
-        uint256 newVaultVpfiBalance
     );
 
     // ─── Errors ───────────────────────────────────────────────────────────────
@@ -444,7 +424,7 @@ contract ClaimFacet is
                 // lender), so the borrower forfeits any LIF VPFI and interaction
                 // rewards close. The deferred fallback entry never ran them; no
                 // double-run (this returns; the absorb branch isn't reached).
-                _closeDefaultTerminalRewards(loanId, loan);
+                _closeDefaultTerminalRewards(loanId);
                 // Emit a terminal signal: no claim/absorb event fires in this
                 // keeper tx, so without this the indexer would leave the loan
                 // stuck pre-terminal until the lender later claims.
@@ -657,20 +637,18 @@ contract ClaimFacet is
             }
         }
 
-        // Terminal hooks the direct default/liquidation paths run (DefaultedFacet /
-        // RiskFacet) but the deferred FallbackPending entry did NOT: forfeit any
-        // up-front borrower LIF VPFI to treasury (a default is not a proper close)
-        // and close interaction-reward accounting (borrower forfeits, lender keeps).
-        // Both are no-ops when there's nothing held/open; the full-internal-match
-        // path returns earlier (these don't double-run). Per the CLAUDE.md invariant
-        // that every default terminal MUST forfeitBorrowerLif.
+        // Terminal hook the direct default/liquidation paths run (DefaultedFacet /
+        // RiskFacet) but the deferred FallbackPending entry did NOT: close
+        // interaction-reward accounting (borrower forfeits, lender keeps). A
+        // no-op when nothing is open; the full-internal-match path returns
+        // earlier (this doesn't double-run).
         //
         // #1067 — run the reward close BEFORE the lender NFT burns below:
         // `closeLoan`'s centralized re-anchor reads `ownerOf`, which reverts
         // once the token is burned (its try/catch would then skip and strand
         // the kept lender entry on a stale holder). Running it here, while the
         // NFT still resolves, re-anchors the lender side to the live holder.
-        _closeDefaultTerminalRewards(loanId, loan);
+        _closeDefaultTerminalRewards(loanId);
 
         // Burn the lender NFT + go terminal (mirrors the vanilla claim tail).
         LibFacet.crossFacetCall(
@@ -884,16 +862,14 @@ contract ClaimFacet is
                 );
                 // #1067 — this claim-time FallbackPending → Defaulted force IS
                 // the loan's terminal: fallback ENTRY is reversible (cure back
-                // to Active) so neither the LIF forfeit nor the reward close
-                // ran there — they are deferred to here, exactly as the two
-                // sibling default terminals do (`_absorbLenderSlice` and the
-                // backstop early-Defaulted branch). forfeitBorrowerLif honours
-                // the CLAUDE.md invariant "every default terminal MUST
-                // forfeitBorrowerLif" (idempotent no-op when nothing is held);
-                // closeLoan durably closes both reward sides (borrower forfeits,
+                // to Active) so the reward close did not run there — it is
+                // deferred to here, exactly as the two sibling default
+                // terminals do (`_absorbLenderSlice` and the backstop
+                // early-Defaulted branch). closeLoan durably closes both reward
+                // sides (borrower forfeits,
                 // lender keeps) and re-anchors the still-live lender NFT holder
                 // BEFORE the lender NFT burns in the payout tail below.
-                _closeDefaultTerminalRewards(loanId, loan);
+                _closeDefaultTerminalRewards(loanId);
             }
             // #569 Gap C (round-6 P1 + round-9 P1) — fold the borrower's
             // vault collateral lien into the borrower claim. The lien
@@ -1138,10 +1114,6 @@ contract ClaimFacet is
         );
 
         // If borrower already claimed or has nothing to claim, settle the loan.
-        // Phase 5: a pending borrower LIF rebate counts as "something to
-        // claim" so the loan stays in Repaid/Defaulted until the borrower
-        // also runs their claim — this preserves the NFT-owner gating on
-        // the rebate payout inside `claimAsBorrower`.
         LibVaipakam.ClaimInfo storage borrowerClaim = s.borrowerClaims[loanId];
         // #954 (§2.4) — a full swap-to-repay that consumes ALL collateral and
         // freezes ONLY a principal surplus leaves `borrowerClaim.amount == 0`,
@@ -1254,7 +1226,7 @@ contract ClaimFacet is
         // refuses only when every lane is empty or claimed. A collateral row a
         // terminal wrote claimed (nothing left of the collateral) never blocks
         // a surplus row held earlier in the loan (a periodic forced sale's
-        // extra) or a pending rebate.
+        // extra).
         if (!LibCloseoutFreeze.borrowerSideOpen(s, loanId)) {
             if (claim.claimed) revert AlreadyClaimed();
             revert NothingToClaim();
@@ -1296,11 +1268,6 @@ contract ClaimFacet is
                 LibSanctionedLock.clearFrozenClaimant(s, loanId, false);
             }
         }
-        // Phase 5 / §5.2b adds a second claimable lane: any pending VPFI
-        // rebate credited at proper settlement (borrowerLifRebate). Loans
-        // that paid LIF in the lending asset, or defaulted/liquidated,
-        // have rebateAmount == 0 and no-op that branch below.
-        uint256 lifRebate = s.borrowerLifRebate[loanId].rebateAmount;
         // #954 (Codex #981 P2) — the borrower surplus row (a frozen swap
         // surplus, or #2795 a periodic forced sale's held extra) is a further
         // lane in the principal asset, paid below on its own flag.
@@ -1432,24 +1399,6 @@ contract ClaimFacet is
 
         LibSanctionedLock.endMoveOut(s);
 
-        // Phase 5 / §5.2b — transfer any pending borrower LIF VPFI rebate.
-        // The Diamond custody-holds the rebate slice between settlement
-        // (settleBorrowerLifProper) and this claim; zero it out and
-        // transfer to the claimant in one step.
-        if (lifRebate > 0) {
-            s.borrowerLifRebate[loanId].rebateAmount = 0;
-            address vpfi = s.vpfiToken;
-            if (vpfi != address(0)) {
-                IERC20(vpfi).safeTransfer(msg.sender, lifRebate);
-                emit BorrowerLifRebateClaimed(
-                    loanId,
-                    msg.sender,
-                    lifRebate,
-                    LibVPFIDiscount.vaultVpfiBalance(msg.sender)
-                );
-            }
-        }
-
         // Update borrower's NFT to "Loan Closed" before burning (per README)
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
@@ -1469,9 +1418,6 @@ contract ClaimFacet is
 
         // If lender already claimed or truly has nothing to claim, settle the loan.
         // Must check heldForLender, NFT rental returns, and NFT collateral claims.
-        // Note: the borrower LIF rebate is paid out in the same tx above, so
-        // it doesn't gate the Settled transition — once the borrower's
-        // claimAsBorrower has run, every borrower-side payout has cleared.
         // #2440 — "has nothing" is {_lenderSideOpen}'s rule, the one the
         // lender's own claim reads: a written claim of zero (a forced close-out
         // that received nothing) still has to run, so it keeps the loan open.
@@ -1858,30 +1804,6 @@ contract ClaimFacet is
         return (claim.asset, claim.amount, claim.claimed);
     }
 
-    /// @notice Phase 5 borrower LIF VPFI rebate state for a given loan.
-    /// @dev `vpfiHeld` > 0 while the loan is live and took the VPFI fee
-    ///      path at init; zero once settlement runs. `rebateAmount` > 0
-    ///      after a proper settlement (repay / preclose / refinance-old-
-    ///      loan) credited the borrower; zero after
-    ///      `claimAsBorrower` paid it out, after a default/liquidation
-    ///      forfeiture, or on loans that never took the VPFI path. A
-    ///      loan is "rebate-actionable" iff `rebateAmount > 0`.
-    /// @param loanId Loan to query.
-    /// @return rebateAmount Claimable VPFI (18 dec) the borrower NFT owner
-    ///                      receives on their next `claimAsBorrower`.
-    /// @return vpfiHeld     VPFI currently held by the Diamond against this
-    ///                      loan pending settlement. Zero after any
-    ///                      terminal transition.
-    function getBorrowerLifRebate(uint256 loanId)
-        external
-        view
-        returns (uint256 rebateAmount, uint256 vpfiHeld)
-    {
-        LibVaipakam.BorrowerLifRebate storage r =
-            LibVaipakam.storageSlot().borrowerLifRebate[loanId];
-        return (r.rebateAmount, r.vpfiHeld);
-    }
-
     /// @notice Full claim payload for the requested side of a loan — use
     ///         this over `getClaimableAmount` when the claim may be an
     ///         NFT (ERC-721/1155) or when held-for-lender funds exist, as
@@ -1894,8 +1816,6 @@ contract ClaimFacet is
     ///      `amount` (`asset != address(0)`, #2440): a forced close-out books
     ///      what arrived, so one that received nothing leaves a claim of zero
     ///      that still closes the position.
-    ///      Phase 5 adds the borrower LIF rebate; query
-    ///      {getBorrowerLifRebate} for that lane.
     function getClaimable(
         uint256 loanId,
         bool isLender
@@ -2111,15 +2031,13 @@ contract ClaimFacet is
         return (o.principal, o.interest, o.lateFee, o.lenderProceeds, o.recordedAt, false);
     }
 
-    /// @dev #1067 — shared default/liquidation-terminal reward + LIF close used
+    /// @dev #1067 — shared default/liquidation-terminal reward close used
     ///      by the three claim-time default terminals (the backstop retry-swap
     ///      branch, `_absorbLenderSlice`, and the vanilla FallbackPending→Defaulted
-    ///      force). `forfeitBorrowerLif` honours the CLAUDE.md invariant that
-    ///      every default terminal MUST forfeitBorrowerLif (idempotent no-op when
-    ///      nothing is held); `closeLoan` durably closes both reward sides
+    ///      force). `closeLoan` durably closes both reward sides
     ///      (borrower forfeits, lender keeps) and re-anchors the kept lender side
     ///      to its live NFT holder. Factored to ONE call site so the terminals
-    ///      don't each inline the pair — keeps ClaimFacet under EIP-170.
+    ///      don't each inline it — keeps ClaimFacet under EIP-170.
     /// @dev  The reward close routes through the `liquidationRewardClose`
     ///       SELF-HOOK (not an inline `LibInteractionRewards.closeLoan`) so the
     ///       heavy close/re-anchor body lives on {InteractionRewardsFacet}, not
@@ -2127,12 +2045,8 @@ contract ClaimFacet is
     ///       {RiskMatchLiquidationFacet} uses. It BUBBLES (#2739): a terminal
     ///       transition closes its reward entry in the same transaction or
     ///       reverts, so an unclosed entry can never read as claimable after
-    ///       a forfeiting close. `forfeitBorrowerLif` stays inline + hard.
-    function _closeDefaultTerminalRewards(
-        uint256 loanId,
-        LibVaipakam.Loan storage loan
-    ) private {
-        LibVPFIDiscount.forfeitBorrowerLif(loan);
+    ///       a forfeiting close.
+    function _closeDefaultTerminalRewards(uint256 loanId) private {
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 InteractionRewardsFacet.liquidationRewardClose.selector,

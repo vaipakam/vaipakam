@@ -92,9 +92,6 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // settled" and bury the real action in "+1 more".
   LenderFundsClaimed: { label: 'Funds claimed', category: 'loan-close', priority: 92 },
   BorrowerFundsClaimed: { label: 'Collateral claimed', category: 'loan-close', priority: 92 },
-  // Borrower's VPFI loan-initiation-fee rebate, paid alongside the
-  // borrower claim (lower priority than it so the claim represents).
-  BorrowerLifRebateClaimed: { label: 'Fee rebate claimed', category: 'loan-close', priority: 60 },
   OffsetCompleted: { label: 'Loan offset', category: 'loan-close', priority: 80 },
   OffsetOfferCreated: { label: 'Offset offer created', category: 'offer', priority: 50 },
   LoanSold: { label: 'Loan sold', category: 'loan-modify', priority: 80 },
@@ -213,7 +210,6 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // zero amount, when the position NFT returns to the stored party). One
   // static label serves both, so it names the update, not a direction.
   TierExclusionUpdated: { label: 'VPFI discount-tier exclusion updated', category: 'other', priority: 12 },
-  VPFIDiscountApplied: { label: 'Fee discount applied (paid in VPFI)', category: 'loan-open', priority: 12 },
   VPFIYieldFeeDiscountApplied: { label: 'Yield fee discount applied (paid in VPFI)', category: 'loan-close', priority: 12 },
   VaultRentalUpdated: { label: 'Rental access updated', category: 'loan-modify', priority: 12 },
   // #2703 — kinds the participants rule (@vaipakam/lib/activityParticipants)
@@ -474,9 +470,6 @@ export function valueLeg(ev: IndexedActivityEvent): ValueLeg | null {
  * match that made it state one fill. Every claim lane is its own value — a
  * borrower claim can pay residual collateral AND a frozen principal surplus,
  * in different assets, in one transaction (#2383 r1).
- *
- * `BorrowerLifRebateClaimed` moves VPFI but the indexer does not itemise it, so
- * it is listed here only so the row can say an amount went unstated.
  */
 const VALUE_GROUP: Record<string, string> = {
   OfferCreated: 'offer',
@@ -492,7 +485,6 @@ const VALUE_GROUP: Record<string, string> = {
   BorrowerFundsClaimed: 'borrower-claim',
   BorrowerSurplusClaimed: 'borrower-surplus',
   CollateralAdded: 'collateral-added',
-  BorrowerLifRebateClaimed: 'lif-rebate',
 };
 
 /** Everything a row can say about value. */
@@ -500,8 +492,8 @@ export interface RowValue {
   /** Each distinct value the transaction moved for the row's loan or offer. */
   legs: ValueLeg[];
   /** The same action moved or offered something the indexer did not state
-   *  (an unitemised rebate, a value it could not establish, or a row
-   *  recorded before values were). */
+   *  (a value it could not establish, or a row recorded before values
+   *  were). */
   unstated: boolean;
   /** A lender claim also pays out any funds held for the lender from earlier
    *  top-ups, and its event names only the claim's own amount. */

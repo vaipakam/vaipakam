@@ -69,9 +69,12 @@ VPFI が mint される **canonical** chain です。その他の chains
 
 ### 手数料割引の同意
 
-Vaipakam は、vault に置いてある VPFI の一部を使って protocol
-fees の割引を適用できます。この switch は「はい、それを使って
-ください」という同意 toggle です。一度 on にすれば十分です。
+Vaipakam は、vault に置いてある VPFI の量に応じて protocol fees
+の割引を適用できます。borrower にとっての割引は、loan の開始時に
+loan 自身の asset で差し引かれる、より安い Loan Initiation Fee
+です — そのために VPFI が使われることはありません。この switch は
+「はい、お願いします」という同意 toggle です。一度 on にすれば
+十分です。
 
 割引の大きさは、vault に保有する VPFI の量で決まります:
 
@@ -364,15 +367,7 @@ asset で支払われます。大半は持ち込みません。通常の liquida
 default も、取引所に向かう前にその内部マッチを探します。つまりこの二つは結果が一定ではないということで、終わり方から推測せず claim
 を読んでください。割引での引き取りは例外で、逆向きに確定しています: 売ることがないので、残るのは常に collateral です。価格を付けられない collateral の
 default では、バスケット全体が失われ何も残りません。
-この経路ではそれが結果ではなくルールです。手数料の rebate が戻るかどうかは
-loan の終わり方によります。廃止された VPFI 手数料経路のままの loan
-でも、正常なクローズであれば（repayment、early close、refinance、または loan を決済する売却）Loan Initiation Fee
-のために保管されていた VPFI の rebate が精算されます。金額は決済時点の
-割引で決まるため、その時点で何も保有していなければゼロとなり、全額が
-treasury に入ります。
-全額が没収されるのは default または liquidation のときです。prepay
-売却で閉じられた loan では、現状そもそも支払われないため、その経路では
-当てにしないでください。
+この経路ではそれが結果ではなくルールです。
 claim はあなたの borrower position NFT を consume します。逆は成り立ち
 ません。liquidation のあとに NFT が残っていることは、何かが待っている
 証拠ではありません。残余がなかった場合、受け取るものはなく、claim しようとすると
@@ -580,10 +575,7 @@ role-specific tabs で各 side の options を確認できます。今は
   collateral を返します。default でも surplus が残ることがあります。
   collateral は債務とその清算費用に必要なぶんだけが取られ、それを
   超えて預けていた分はあなたの claim として記録されます。それが何かは経路によります —
-  Claim Center の節を参照してください。廃止された手数料経路で
-  保管されていた VPFI が没収されるのは default または
-  liquidation のときだけで、正常なクローズ
-  ではrebate が精算されます（ゼロのこともあります）。
+  Claim Center の節を参照してください。
 
 ---
 

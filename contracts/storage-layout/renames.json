@@ -248,6 +248,14 @@
       "from": "reconciliationLog[].envelope",
       "to": "reconciliationLog[].retiredEnvelope",
       "reason": "#2910 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the bootstrap envelope import (#1566 closure 2 cutover PR 2) classified inventory that reached a Diamond upgraded in place before its packets were stamped. On a fresh deploy that inventory is zero: the budget ingress now refuses a split that does not account for the whole delivery on the pre-activation path as well as the epoch path, so no untyped remainder enters the uncounted aggregate before activation, and every other pre-activation uncounted arrival is a quarantine the stranded-recovery reservation and the returned cumulative already explain. The import, its preview and record getter, its event, errors and recycle helper are removed. The field keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 137,
+      "offset": 0,
+      "from": "borrowerLifRebate",
+      "to": "retiredBorrowerLifRebate",
+      "reason": "#1980 (owner decision: retire the peg-custody borrower LIF path; every chain gets a fresh deploy, O1 = A): since #1352 the borrower Loan Initiation Fee is charged in the lending asset at acceptance and nothing writes this custody row. Its producer, its settle / forfeit / credit drains, the claim lane that paid its rebate, its view and its NFT-summary fields are removed. The mapping keeps its slot and is no longer read or written. Same type and position; marked retired, not repurposed."
     }
   ]
 }

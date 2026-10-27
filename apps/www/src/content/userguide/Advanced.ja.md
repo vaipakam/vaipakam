@@ -139,11 +139,10 @@ Loan Initiation Fee に適用されます。後者では、**lending asset で
 > **Loan Initiation Fee の rebate を待っている場合は、ここを
 > 読んでください。** 以前のモデルでは、全額を VPFI で前払いし、
 > loan の存続期間中それを保管し、claim 時に一部を返していました。
-> **この経路は廃止されています。** 廃止前に開かれた loan は今も
-> その方式で決済され、以下の rebate に関する記述はそれらの loan
-> を指します。今日開かれた loan には initiation fee に対して保管
-> された VPFI はなく、未受取の rebate もありません。待っても、
-> 届きようのないお金を待つことになります。
+> **この経路は削除されました。** この経路で開かれた loan は一つも
+> ないため、initiation fee に対して VPFI が保管されている loan は
+> なく、未受取の rebate もありません。待っても、届きようのない
+> お金を待つことになります。
 
 > **Network gas は別物です。** 上記の discount は Vaipakam の
 > **protocol fees**（yield fee `{liveValue:treasuryFeeBps}`%、
@@ -453,10 +452,8 @@ cross-chain-facing contracts にのみあり、timelock-gated で、assets
   あります。swap は permissionless です — HF が 1.0 を下回った
   瞬間、誰でも trigger できます。
 - **Illiquid-collateral defaults** — default はあなたの collateral
-  全体を lender に transfer します。residual claim はありません。
-  残るのは、claim 時に borrower として受け取る unused VPFI Loan
-  Initiation Fee rebate だけで、それも廃止された VPFI 手数料経路の
-  ままの loan に限られます。
+  全体を lender に transfer します。residual claim はまったく
+  ありません。
 
 <a id="create-offer.advanced-options"></a>
 
@@ -734,15 +731,12 @@ Borrower claim は、loan がどう settle されたかによって次を返し
 ます:
 
 - **full repayment / preclose / refinance** — あなたの collateral
-  basket。廃止された VPFI 手数料経路のままの loan であれば、Loan
-  Initiation Fee の VPFI rebate も同時に精算されます
-  （ゼロのこともあります）。
+  basket。Loan Initiation Fee の rebate は付きません。割引は
+  acceptance の時点ですでに手数料から差し引かれています。
 - **loan を決済する prepay sale** — collateral は買い手に渡り、
   あなたには戻りません。受け取るのは、売却価格から lender の取り分、
   treasury の控除、listing に付いていた seller fee を差し引いた額で、
-  borrower position NFT の保有者に支払われます。廃止経路の loan では
-  ここでの rebate を当てにしないでください。決済時に計算はされますが、
-  その後は現状回収できません。
+  borrower position NFT の保有者に支払われます。
 - **swap-to-repay** — collateral は債務を賄うために、あなたが定めた
   上限まで売られます。上限を緩く設定すると、債務が厳密に必要とした
   以上に消費されることがあります。消費されなかった分は戻ります。
@@ -764,12 +758,7 @@ Borrower claim は、loan がどう settle されたかによって次を返し
   collateral です。部分 liquidation はそもそも close-out
   ではありません — loan は開いたままで、claim は作られません。
   どちらかを推測せず、claim を確認してください。Illiquid asset の default ではバスケット全体が失われ何も
-  残りません。この経路ではそれがルールであり、結果ではありません。rebate が戻るかどうかは
-  loan の終わり方によります。廃止された VPFI 手数料経路のままの loan では、開始手数料の
-  ために保管されていた VPFI は default または liquidation のとき
-  **没収されて treasury に入ります**。正常なクローズでは代わりに
-  rebate が精算されます。金額は決済時点のあなたの割引で決まるため、
-  その時点で何も保有していなければゼロとなり、全額が没収されます。
+  残りません。この経路ではそれがルールであり、結果ではありません。
 
 Borrower position NFT が burn されるのは claim したときであって、loan が
 解決したときではありません。liquidation が残した surplus は、あとからでも
@@ -1008,8 +997,6 @@ HF が 1.0 を下回ると、誰でも HF-based liquidation を trigger でき
 ます。swap は lender へ返済するため、slippage-hit price であなたの
 collateral を売ります。Illiquid collateral では、default により
 collateral 全体が lender に transfer され、claim できるものはありません。
-廃止された手数料経路のままの loan では、保管されていた VPFI は treasury に
-没収されます。
 
 <a id="loan-details.parties"></a>
 
@@ -1059,10 +1046,9 @@ role に関係なく誰でも利用できる permissionless actions:
 
 - **Repay** — full または partial。Partial repayment は outstanding
   を減らし、HF を上げます。Full repayment は terminal settlement
-  を trigger し、VPFI Loan Initiation Fee rebate を
-  含みます。
+  を trigger します。
 - **Preclose direct** — outstanding amount を今すぐ wallet から
-  支払い、collateral を release し、rebate を settle します。
+  支払い、collateral を release します。
 - **Preclose offset** — protocol の swap router 経由で collateral
   の一部を売り、proceeds で repay し、残りを返します。2-step:
   initiate、その後 complete。
@@ -1072,10 +1058,7 @@ role に関係なく誰でも利用できる permissionless actions:
 - **Borrower として claim** — terminal state のみ。full repayment では
   collateral を返します。default / liquidation でも surplus が
   残ることがあります。collateral は債務とその清算費用に必要なぶんだけが
-  取られるためです — 上の Claim Center の節を参照してください。廃止された
-  手数料経路で保管されていた VPFI が没収されるのは default または
-  liquidation のときだけで、正常なクローズではrebate が
-  精算されます（ゼロのこともあります）。
+  取られるためです — 上の Claim Center の節を参照してください。
   Borrower position NFT を burn します。
 
 ---
@@ -1514,9 +1497,6 @@ Refinance は、あなたの既存 loan を新しい principal で atomically
 loan と同様に initiation 時に HF ≥ 1.5 gate を clear する必要が
 あります。
 
-古い loan の unused Loan Initiation Fee rebate は swap の一部として
-正しく settle されます。
-
 <a id="refinance.position-summary"></a>
 
 ### あなたの現在のポジション
@@ -1546,7 +1526,6 @@ offer は public Offer Book に表示され、どの lender でも accept
 2. 古い loan を full repay (principal + interest、treasury cut 後)。
 3. 古い position NFTs を burn。
 4. 新しい position NFTs を mint。
-5. 古い loan の unused Loan Initiation Fee rebate を settle。
 
 新しい terms で HF が 1.5 を下回る場合は revert します。
 
@@ -1564,15 +1543,13 @@ loan に対して開始します。
 borrower-driven early termination です。2 つの paths:
 
 - **Direct** — outstanding amount (principal + accrued interest) を
-  wallet から支払い、collateral を release し、unused Loan
-  Initiation Fee rebate を settle します。
+  wallet から支払い、collateral を release します。
 - **Offset** — protocol の 4-DEX swap failover 経由で collateral
   の一部を principal asset に swap するため offset を initiate
   します。Offset を complete すると proceeds で repay し、残りの
-  collateral はあなたに返ります。同じ rebate settlement です。
+  collateral はあなたに返ります。
 
-flat early-close penalty はありません。time-weighted VPFI math が
-fairness を処理します。
+flat early-close penalty はありません。
 
 <a id="preclose.position-summary"></a>
 

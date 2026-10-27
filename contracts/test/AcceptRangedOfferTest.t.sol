@@ -194,12 +194,10 @@ contract AcceptRangedOfferTest is SetupTest {
     ///                                     borrower)
     ///           - loan.collateralAmount == 500
     ///         + the lender's vault is fully drained of the 10k
-    ///         + the borrower receives 10k principal (less LIF in VPFI
-    ///           if applicable; LIF math sits on `effectivePrincipal`,
-    ///           which is the role-aware read — wallet credit equals
-    ///           principal minus LIF, but this test uses no VPFI so LIF
-    ///           is paid in the principal token and lands in treasury
-    ///           via `tryApplyBorrowerLif`).
+    ///         + the borrower receives 10k principal less the LIF (LIF
+    ///           math sits on `effectivePrincipal`, which is the
+    ///           role-aware read — wallet credit equals principal minus
+    ///           LIF, paid in the principal token to the treasury).
     ///         + offer.accepted = true; offer.amountFilled = amountMax
     ///           (direct-accept is single-fill — entire offer consumed).
     function test_lenderRangedOffer_borrowerAccepts_principalAndRateRoleAware() public {

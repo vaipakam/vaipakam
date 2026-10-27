@@ -1395,7 +1395,6 @@ contract CollateralListingExecutor is
         // `msg.sender == address(this)` + Active status, then atomically:
         //   - loan.status = Settled (via LibLifecycle).
         //   - LibERC721._unlock(loan.borrowerTokenId).
-        //   - LibVPFIDiscount.settleBorrowerLifProper(loan).
         // After this returns we clear the orderContext so an already-
         // filled hash can't double-fill (Seaport itself blocks re-fills
         // on the same order, but defense-in-depth).

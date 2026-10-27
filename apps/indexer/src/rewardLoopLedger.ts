@@ -133,9 +133,8 @@ const HANDLED = new Set([
 /** Kinds applied as retention DEBITS. Beyond the canonical
  *  `VaultVpfiDebited`, the backfill replays the pre-boundary historical
  *  debit-observable events (Codex #1310 post-merge round): unstakes
- *  (`VPFIWithdrawnFromVault`), notification fee pulls
- *  (`NotificationFeeBilled`), and VPFI discount deductions
- *  (`VPFIDiscountApplied`) — all of which route through
+ *  (`VPFIWithdrawnFromVault`) and notification fee pulls
+ *  (`NotificationFeeBilled`) — both of which route through
  *  `vaultWithdrawERC20` and therefore emit `VaultVpfiDebited` too once
  *  the RL-2 facet is live (the boundary rule prevents double-counting).
  */
@@ -143,7 +142,6 @@ const DEBIT_KINDS = new Set([
   'VaultVpfiDebited',
   'VPFIWithdrawnFromVault',
   'NotificationFeeBilled',
-  'VPFIDiscountApplied',
 ]);
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
@@ -275,7 +273,7 @@ async function applyOne(
     retainedDelta = ev.amount;
   } else {
     // A DEBIT_KINDS event (VaultVpfiDebited live, or a pre-boundary
-    // historical withdraw/fee/discount replayed by the backfill) —
+    // historical withdraw/fee replayed by the backfill) —
     // min-clamped retention decrement.
     const dec = ev.amount < retained ? ev.amount : retained;
     retained -= dec;
@@ -354,7 +352,6 @@ function eventFromActivityRow(row: {
     const args = JSON.parse(row.args_json) as Record<string, unknown>;
     // Per-kind arg shapes (serializeArgs coerces bigints to strings):
     //   NotificationFeeBilled(loanId, isLenderSide, payer, vpfiAmount, …)
-    //   VPFIDiscountApplied(loanId, borrower, lendingAsset, vpfiDeducted)
     //   VpfiRecycled(source, refId, amount, dayId) — not user-keyed
     //   everything else carries (user, amount).
     let user: string;
@@ -362,9 +359,6 @@ function eventFromActivityRow(row: {
     if (row.kind === 'NotificationFeeBilled') {
       user = String(args.payer ?? '').toLowerCase();
       amount = BigInt(String(args.vpfiAmount ?? '0'));
-    } else if (row.kind === 'VPFIDiscountApplied') {
-      user = String(args.borrower ?? '').toLowerCase();
-      amount = BigInt(String(args.vpfiDeducted ?? '0'));
     } else if (
       row.kind === 'VpfiRecycled' || row.kind === 'VpfiRecycledPreLaunch'
     ) {
@@ -430,8 +424,7 @@ export async function ensureRewardLoopBackfill(
                      'VpfiRecycled',
                      'VpfiRecycledPreLaunch',
                      'VPFIWithdrawnFromVault',
-                     'NotificationFeeBilled',
-                     'VPFIDiscountApplied')
+                     'NotificationFeeBilled')
       ORDER BY block_number ASC, log_index ASC`,
   )
     .bind(chainId)
@@ -445,8 +438,8 @@ export async function ensureRewardLoopBackfill(
     }>();
 
   for (const row of rows.results ?? []) {
-    // Historical debit-observable kinds (withdraw / notification fee /
-    // discount deduction) replay ONLY strictly before the first
+    // Historical debit-observable kinds (withdraw / notification fee)
+    // replay ONLY strictly before the first
     // VaultVpfiDebited (block, log_index) — from that point each such tx
     // also emits the canonical debit event and replaying the twin would
     // double-decrement. A missing boundary means NO VaultVpfiDebited has

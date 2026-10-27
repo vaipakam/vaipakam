@@ -89,11 +89,10 @@ staked/tracked-balance stranding anyway — see "Decision" below).
      VPFI or deposited-but-uncommitted VPFI, **even with no active
      offer/loan/lien** (this is the class that strands after rotation — no
      public exit; see "Why a rotation needs care");
-   - **VPFI held in the Diamond's own custody for the borrower-LIF rebate**
-     (`borrowerLifRebate[loanId].vpfiHeld`) — a loan can hold this even when
-     its principal/collateral are NOT VPFI, so it does not appear in the leg
-     scans above; check the rebate ledger separately and let those loans reach
-     terminal (settle/forfeit) so the held VPFI is released before rotating.
+   - (No borrower-LIF rebate custody to check: that per-loan VPFI hold was
+     removed in #1980 and no loan ever carried it, so there is no ledger for it
+     to scan. A Full tariff is credited to the recycle bucket at origination;
+     it is never held against a loan.)
    - **The reward custody holder's rows (#1566), retired custody ERA rows
      included.** The token setter refuses the rotation while any reward custody
      row — or the era rows' total (`RewardEraFacet.getCustodyEraRowsTotal`) — is
@@ -218,7 +217,7 @@ operator does not over-trust it:
   acceptable pre-live (low volume), but not eliminated.
 - **Many VPFI touch-points.** Old-token VPFI can live as offer
   principal/prepay/collateral, loan principal/prepay/collateral, encumbrances,
-  staked balances, uncommitted deposits, and the borrower-LIF rebate custody —
+  staked balances, and uncommitted deposits —
   the step-2 list is the known set but is explicitly **non-exhaustive**; the
   step-5 under-freeze re-verify is what makes the procedure correct regardless
   of any surface the list omits.

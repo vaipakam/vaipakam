@@ -77,11 +77,6 @@
       "reason": "Cross-chain receiver forwarding a CCIP-delivered token to the Diamond. It reads the Diamond's balance around its own move and books the measured figure (actualReceived). VPFI recycling and reward transport, outside #2440's scope."
     },
     {
-      "site": "src/facets/ClaimFacet.sol:ClaimFacet.claimAsBorrower",
-      "moves": 1,
-      "reason": "VPFI LIF rebate payout on the grandfathered peg-custody path (#1352): a recorded rebate paid in VPFI, the protocol's own token, which charges no transfer fee. VPFI fee custody is outside #2440's scope."
-    },
-    {
       "site": "src/facets/RepatriationFacet.sol:RepatriationFacet.sendStrandedReturn",
       "moves": 1,
       "reason": "VPFI repatriation of a stranded return. VPFI recycling is outside #2440's scope (owned by the recycling work)."
@@ -135,21 +130,6 @@
       "site": "src/libraries/LibServiceCapacity.sol:LibServiceCapacity._pull",
       "moves": 1,
       "reason": "Service-capacity deposit pull, measured on the destination and refused unless all of it arrived (ServiceCapacityMoveUnverified)."
-    },
-    {
-      "site": "src/libraries/LibVPFIDiscount.sol:LibVPFIDiscount.creditBorrowerLifRebateToVault",
-      "moves": 1,
-      "reason": "VPFI LIF rebate on the grandfathered peg-custody path (#1352), in VPFI, the protocol's own token, which charges no transfer fee. VPFI fee custody is outside #2440's scope."
-    },
-    {
-      "site": "src/libraries/LibVPFIDiscount.sol:LibVPFIDiscount.forfeitBorrowerLif",
-      "moves": 1,
-      "reason": "VPFI LIF forfeit to the treasury on the grandfathered peg-custody path (#1352), in VPFI, the protocol's own token, which charges no transfer fee. VPFI fee custody is outside #2440's scope."
-    },
-    {
-      "site": "src/libraries/LibVPFIDiscount.sol:LibVPFIDiscount.settleBorrowerLifProper",
-      "moves": 1,
-      "reason": "VPFI LIF treasury share on the grandfathered peg-custody path (#1352), in VPFI, the protocol's own token, which charges no transfer fee. VPFI fee custody is outside #2440's scope."
     },
     {
       "site": "src/libraries/LibVpfiRecycle.sol:LibVpfiRecycle.debitRepatriationSurplus",

@@ -13,7 +13,6 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
-import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -49,16 +48,12 @@ import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
  *              executor's `validateOrder` post-transfer hook. Gated
  *              by `msg.sender == storedExecutor`; the executor
  *              singleton is the ONLY caller authorized to flip a loan
- *              from Active → Settled via this path. Performs three
+ *              from Active → Settled via this path. Performs two
  *              atomic mutations:
  *                a. `loan.status = Settled` via `LibLifecycle.transition`.
  *                b. `LibERC721._unlock(loan.borrowerTokenId)` — releases
  *                   the listing lock (LockReason.PrepayCollateralListing
  *                   from #285).
- *                c. `LibVPFIDiscount.settleBorrowerLifProper(loan)` —
- *                   load-bearing per CLAUDE.md; ensures the borrower's
- *                   Phase-5 VPFI rebate accrues correctly on this
- *                   proper-close path.
  *
  *           3. **`setCollateralListingExecutor(address)`** — ADMIN_ROLE-
  *              gated setter. Governance configures which executor
@@ -185,27 +180,8 @@ contract PrepayListingFacet is
         //    hook via LibLifecycle).
         // 2. Release the borrower-NFT lock so the borrower can transfer
         //    / re-list / etc. after the sale.
-        // 3. Settle the borrower's Phase-5 VPFI LIF rebate — every
-        //    proper-close path in this codebase calls this (per
-        //    CLAUDE.md "VPFI Fee Discounts — Phase 5 flow" §5).
         LibLifecycle.transition(loan, LibVaipakam.LoanStatus.Active, LibVaipakam.LoanStatus.Settled);
         LibERC721._unlock(loan.borrowerTokenId);
-        LibVPFIDiscount.settleBorrowerLifProper(loan);
-        // #1867 — and PAY it, rather than leaving it in custody for a claim
-        // this terminal can never serve. `Settled` is the state every other
-        // site constructs to mean "the borrower has nothing left to claim",
-        // and `claimAsBorrower` rejects it outright; a stored rebate here is
-        // stranded. Paying restores this edge's documented premise (the fill
-        // distributes everything atomically, so there IS no claim step)
-        // instead of weakening the claim gate to accommodate the exception.
-        // Codex #1906 r2 — no `ownerOf` here. The rebate is credited to
-        // `loan.borrower`'s vault: the party it was PRICED from, and the same
-        // anchor this whole vehicle uses (the signed Seaport offerer is
-        // `loan.borrower`'s vault). See the rationale on
-        // {LibVPFIDiscount.creditBorrowerLifRebateToVault} for why resolving a
-        // holder here was the wrong shape rather than a wrong guard.
-        // No-op unless the loan is grandfathered from pre-#1352 custody.
-        LibVPFIDiscount.creditBorrowerLifRebateToVault(loan);
         // #1067 — DURABLE terminal reward close: a prepay-sale finalize is a
         // proper close, so shrink both reward entries' active windows to
         // today and re-anchor each open side to the live NFT holder here.
@@ -393,9 +369,7 @@ contract PrepayListingFacet is
         // settle the loan atomically. Listing carries through accept
         // without a teardown step in `_acceptOffer`.
         if (offer.accepted) {
-            _settleLoanFromParallelSale(
-                offerId, principalAsset, amount, vaultAddr, borrower
-            );
+            _settleLoanFromParallelSale(offerId, principalAsset, amount);
             return;
         }
 
@@ -428,15 +402,13 @@ contract PrepayListingFacet is
     ///      pays lender + treasury directly from the proceeds the
     ///      diamond just received, credits remainder to the borrower's
     ///      vault, then runs the standard proper-close finalization
-    ///      (status → Settled, unlock borrower NFT, Phase 5 LIF settle).
+    ///      (status → Settled, unlock borrower NFT).
     ///      Factored to keep `recordOfferSaleProceeds` under viaIR's
     ///      stack budget.
     function _settleLoanFromParallelSale(
         uint96 offerId,
         address principalAsset,
-        uint256 amount,
-        address borrowerVault,
-        address borrower
+        uint256 amount
     ) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 loanId = s.offerIdToLoanId[uint256(offerId)];
@@ -579,16 +551,6 @@ contract PrepayListingFacet is
             loan, LibVaipakam.LoanStatus.Active, LibVaipakam.LoanStatus.Settled
         );
         LibERC721._unlock(loan.borrowerTokenId);
-        LibVPFIDiscount.settleBorrowerLifProper(loan);
-        // #1867 — pay it here too, to the same holder this function already
-        // pays the borrower remainder to. Same reasoning as the loan-keyed
-        // twin: a `Settled` loan holding a claimable rebate is stranded,
-        // because the claim gate rejects `Settled` by design.
-        // Codex #1906 r2 — the remainder above follows the POSITION
-        // (`remainderRecipient`); this refund follows the FEE PAYER, because
-        // that is who it was priced from. Same primitive as the loan-keyed
-        // twin, so the two prepay-sale routes cannot drift.
-        LibVPFIDiscount.creditBorrowerLifRebateToVault(loan);
         // #1067 — DURABLE terminal reward close (offer-keyed parallel-sale
         // twin of executorFinalizePrepaySale). Proper close, so shrink both
         // reward entries to today and re-anchor each open side to the live

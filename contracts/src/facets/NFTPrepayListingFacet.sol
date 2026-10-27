@@ -71,9 +71,8 @@ import {PrepayListingFacet} from "./PrepayListingFacet.sol";
  *              callback. The executor's zone callback then
  *              call-backs into the diamond's
  *              {PrepayListingFacet.executorFinalizePrepaySale} —
- *              that's the path that flips Active → Settled,
- *              unlocks the borrower NFT, settles the borrower's
- *              VPFI LIF rebate.
+ *              that's the path that flips Active → Settled and
+ *              unlocks the borrower NFT.
  *
  *           5. If the buyer never shows: the borrower can
  *              {cancelPrepayListing} pre-grace, or anyone can
