@@ -6467,23 +6467,22 @@ library LibVaipakam {
         ///      The field keeps its name: renaming a storage field is a
         ///      layout event the provenance walker gates on.
         uint256 rewardBudgetArmedFreshReceived;
-        /// @dev The reconciliation counterpart: Σ of the fresh-looking
-        ///      amount of every delivery this chain declined to count above.
-        ///      Per delivery that is `amount − recycledShare` — the whole
-        ///      delivery for a legacy/d2 payload, whose recycled share was
-        ///      never transmitted.
+        /// @dev The reconciliation counterpart: Σ of the fresh-looking value
+        ///      this chain holds without counting it — an activated
+        ///      delivery's transport epoch until its draws type it, and
+        ///      quarantined compensation or a demoted provisional hold until
+        ///      its return.
         ///
-        ///      Not decorative. Both sources are silent by construction — an
-        ///      unstated composition (the day-vintage exclusion was retired
-        ///      by #1566 closure 2) and the flooring residue of a
-        ///      composition-known delivery scaled to what actually arrived —
-        ///      an uncounted delivery moves real VPFI into this Diamond and
-        ///      changes no other figure, so without this counter the only
-        ///      symptom would be armed claims deferring for funding the
-        ///      operator can see arriving. Read the pair together —
-        ///      `{RewardRemittanceFacet.getDeliveredFreshPosition}` returns
-        ///      both — and a non-zero value here is the signal that this
-        ///      chain's counted funding understates what Base actually sent.
+        ///      A typed (pre-activation) delivery never adds here: its split
+        ///      is whole by construction (the receiver sends the fresh share
+        ///      as what landed less the scaled recycled share) and the ingress
+        ///      refuses any other (#2910). The unstated-composition and
+        ///      flooring-residue sources this counter once caught belonged to
+        ///      retired wires. Read the pair together —
+        ///      `{RewardRemittanceLensFacet.getDeliveredFreshPosition}`
+        ///      returns both — and a non-zero value here is the signal that
+        ///      this chain's counted funding understates what Base actually
+        ///      sent.
         uint256 rewardBudgetFreshUncounted;
         /// @notice #1222 M4 C1 (#1567) — the surplus-flag multiple `N`.
         ///         A chain is flagged operator-visible when its
@@ -7520,7 +7519,7 @@ library LibVaipakam {
         ///      immutable thing), the two queues that distribute spent-ness
         ///      among the entries, the absorbed records, the recycled
         ///      consumption record, the
-        ///      per-entry replay guard, the envelopes, and the two
+        ///      per-entry replay guard, the retired envelope slot, and the two
         ///      reattribution cumulatives that keep the bucket's composition
         ///      identity stated: `bucket == credited + relocated +
         ///      reattributedIn − paidOut − repatriatedOut − reattributedOut`
@@ -7573,7 +7572,11 @@ library LibVaipakam {
         mapping(uint64 => uint256) freshPendingAmountByEra;
         uint256 recycledPendingAmount;
         mapping(bytes32 => bool) reconciliationEntryUsed;
-        mapping(bytes32 => LegacyEnvelope) legacyEnvelopes;
+        /// @dev RETIRED (#2910) — the bootstrap envelope records. The import
+        ///      that wrote them existed for pre-stamp inventory on a Diamond
+        ///      upgraded in place; every chain is a fresh deploy (owner decision
+        ///      O1 = A), so the slot keeps its place and is never written.
+        mapping(bytes32 => RetiredLegacyEnvelope) retiredLegacyEnvelopes;
         uint256 recycleReattributedInCumulative;
         uint256 recycleReattributedOutCumulative;
         /// @dev #1566 transport epochs PR 3b — the transport epochs.
@@ -8896,12 +8899,11 @@ library LibVaipakam {
 
     /// @notice #1566 closure 2 cutover PR 2 — one entry of the legacy
     ///         reconciliation epoch's classification log: what a
-    ///         classification (or the bootstrap envelope's import) put on
-    ///         each side, as CURRENTLY attributed.
-    /// @dev    `key` is the packet's ingress stamp, or the envelope's
-    ///         snapshot id (`envelope` says which, so a correction knows
-    ///         whether a packet's component counters follow it and whose
-    ///         evidence bounds its fresh side).
+    ///         classification put on each side, as CURRENTLY attributed.
+    /// @dev    `key` is the packet's ingress stamp. `retiredEnvelope` is
+    ///         RETIRED (#2910): it marked an entry the bootstrap envelope's
+    ///         import wrote, and that import is gone, so every entry is a
+    ///         packet's and the field is always false. It keeps its place.
     ///         The ORDER of the log is the immutable thing (design §5c):
     ///         spent-ness is distributed among the entries FIFO by that
     ///         order. Per side, the entry's credit splits into what is
@@ -8923,7 +8925,7 @@ library LibVaipakam {
     ///         index), never inferred (Codex #2206 r5, r6).
     struct ReconciliationEntry {
         bytes32 key;
-        bool envelope;
+        bool retiredEnvelope;
         uint64 era;
         uint64 landedAt;
         uint256 freshCredit;
@@ -8967,16 +8969,11 @@ library LibVaipakam {
         uint8 kind;
     }
 
-    /// @notice #1566 closure 2 cutover PR 2 — the bootstrap envelope: the
-    ///         pre-stamp inventory as one bounded aggregate, its netting
-    ///         figures all read on chain at the import, and the disposition
-    ///         of every unit of it (relocated as recycled — the inventory
-    ///         has no evidence source, so its fresh share is exactly what
-    ///         is replacement-funded; replacement-funded as fresh or
-    ///         recycled; or written down). Its log entry (`entryIndex`) is
-    ///         what the snapshot-keyed error path reclassifies, its fresh
-    ///         side bounded by `replacedFresh`.
-    struct LegacyEnvelope {
+    /// @notice RETIRED (#2910) — the layout of the bootstrap envelope record
+    ///         (#1566 closure 2 cutover PR 2), kept only so the retired
+    ///         `retiredLegacyEnvelopes` slot keeps its recorded shape. Nothing
+    ///         reads or writes it.
+    struct RetiredLegacyEnvelope {
         uint64 importedAt;
         uint256 rawUncounted;
         uint256 holderUncounted;

@@ -1211,11 +1211,14 @@ contract RepatriationTransportTest is SetupTest {
         assertEq(unclassified + cf + cr, 0);
     }
 
-    /// #1566 closure 2 cutover PR 2 — the envelope nets the RETURNED overlap
-    /// (design L4209-4213): quarantine 100 then return 100 before the
-    /// activation, and the envelope reads 0 — the return left the aggregate
-    /// un-decremented, the cumulative nets it out.
-    function test_Envelope_NetsTheReturnedOverlap_QuarantineThenReturnReadsZero() public {
+    /// The uncounted aggregate is an ARRIVAL tally: a stranded return does not
+    /// decrement it, the returned cumulative records the return instead, so
+    /// the two together explain the aggregate exactly. Quarantine 100 then
+    /// return 100 before the activation: 100 uncounted, 100 returned, nothing
+    /// unexplained. (Until #2910 this was read through the legacy envelope's
+    /// netting; that import is retired, so the identity is asserted here on
+    /// the figures themselves.)
+    function test_UncountedAggregate_QuarantineThenReturn_IsExplainedByTheReturn() public {
         _armMirror();
         RewardRemittanceFacet(address(diamond)).setRewardRemittanceReceiver(address(this));
         vpfi.mint(address(diamond), 100 ether);
@@ -1231,12 +1234,8 @@ contract RepatriationTransportTest is SetupTest {
         assertEq(uncounted, 100 ether, "the return never decremented the aggregate");
         assertEq(_rlens().getStrandedReturnedCumulative(), 100 ether);
         activateRewardCustodyForTest(address(vpfi), 0);
-        (uint256 net, uint256 raw, , uint256 diamondReserved, uint256 returned) =
-            RewardReconciliationFacet(address(diamond)).previewLegacyEnvelope();
-        assertEq(raw, 100 ether);
-        assertEq(diamondReserved, 0);
-        assertEq(returned, 100 ether);
-        assertEq(net, 0, "quarantined then returned: nothing to import");
+        (, uncounted) = _rlens().getDeliveredFreshPosition();
+        assertEq(uncounted, _rlens().getStrandedReturnedCumulative(), "quarantined then returned: nothing unexplained");
     }
 
     function test_StrandedReturn_UnknownRecordReverts() public {

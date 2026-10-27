@@ -13,8 +13,8 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  * @title RewardReconciliationFacet
  * @notice #1566 closure 2 cutover PR 2 — the LEGACY RECONCILIATION EPOCH
  *         (design §5c): the administrator's classification of the value the
- *         ingress could only PROTECT. Three entries, every one ADMIN-only,
- *         under the manual pause, on an activated deployment:
+ *         ingress could only PROTECT. Two entries, both ADMIN-only, under
+ *         the manual pause, on an activated deployment:
  *
  *  1. **`classifyLegacyPacket`** — a packet's untyped remainder (what it put
  *     into the holder's `Unclassified` row) leaves the row for fresh, recycled
@@ -70,17 +70,13 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *     to live, spent when the deficit was paid with it. A packet's component
  *     counters follow its entry. A correction requires the side's pending
  *     takes drained; anyone may drain them (`advanceReconciliationQueue`).
- *  3. **`importLegacyEnvelope`** — the inventory that arrived BEFORE packets
- *     were stamped, as ONE netted aggregate every figure of which is read on
- *     chain at the import (`uncounted − holder-held − Diamond-side reserved −
- *     returned`), resolved whole and once: relocated from the Diamond's own
- *     balance (measured) as RECYCLED, replacement-funded by the caller
- *     (delta-checked) as fresh or recycled, or written down — and entered
- *     into the same log, so the snapshot-keyed error path is the same
- *     reclassification. The envelope has no evidence source (its history
- *     has no packet identities), so its fresh share is exactly what was
- *     replacement-funded: the same rule as a packet's, with delta-checked
- *     custody as the authenticated figure.
+ *  (A third entry, `importLegacyEnvelope`, imported the inventory that
+ *  arrived before packets were stamped as one netted envelope. It was retired
+ *  in #2910: that inventory exists only on a Diamond upgraded in place, and on
+ *  a fresh deploy the uncounted aggregate nets to zero against the holder's
+ *  remainders and the stranded-recovery reservation, because the ingress now
+ *  refuses a split that does not account for the whole delivery on both of
+ *  its paths.)
  *
  *     The epoch stays open, without exception: no finalization exists here
  *     (design §5c, "what an operator's off-chain confidence buys is the
@@ -118,18 +114,6 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
     ///         the recycled record, spent and uncharged (Codex #2206 r9).
     /// @custom:event-category state-change/reward-custody
     event ReconciliationInheritanceUndone(uint256 indexed remitId, uint256 indexed entryIndex, uint256 amount);
-    /// @notice The pre-stamp envelope was imported, whole and once.
-    /// @custom:event-category state-change/reward-custody
-    event LegacyEnvelopeImported(
-        bytes32 indexed snapshotId,
-        uint256 entryIndex,
-        uint256 netTotal,
-        uint256 relocatedRecycled,
-        uint256 replacedFresh,
-        uint256 replacedRecycled,
-        uint256 writtenDown
-    );
-
     // ─── The entries ────────────────────────────────────────────────────────
 
     /**
@@ -197,7 +181,7 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         );
         LibVpfiRecycle.creditCustodyFromUnclassified(p.remitId, recycledShare);
         uint256 index = _pushEntry(
-            s, packetHash, false, freshShare, recycledShare, toRestitution, freshShare - toLive - toRestitution
+            s, packetHash, freshShare, recycledShare, toRestitution, freshShare - toLive - toRestitution
         );
         emit LegacyPacketClassified(packetHash, entryId, index, freshShare, recycledShare, toLive, toRestitution);
     }
@@ -214,9 +198,8 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
      *         row's outstanding fresh commitments stay) and raises the
      *         bucket; the spent part (paid) lowers `received` and `paid`
      *         together and raises the recycled consumption. Recycled →
-     *         fresh: bounded by the entry's evidence (a packet's
-     *         authenticated fresh figure; the envelope's replacement-funded
-     *         fresh); the unspent part leaves the bucket (bounded by its
+     *         fresh: bounded by the entry's evidence (its packet's
+     *         authenticated fresh figure); the unspent part leaves the bucket (bounded by its
      *         uncommitted balance) into live or restitution under the split;
      *         the spent part (consumption) raises `received` and `paid`
      *         together and gives the recycled consumption back. The queues
@@ -248,11 +231,8 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
             // ... and only while its PACKET belongs to the live era: an entry made
             // now for a retired era's packet booked its fresh into that era's row,
             // which a correction would move as if it were live custody.
-            LibVaipakam.ReconciliationEntry storage entry = s.reconciliationLog[index];
-            if (!entry.envelope) {
-                uint64 packetEra = s.ingressPackets[entry.key].custodyEra;
-                if (packetEra != s.custodyEraCurrent) revert ReconciliationEntryEraRetired(index, packetEra);
-            }
+            uint64 packetEra = s.ingressPackets[s.reconciliationLog[index].key].custodyEra;
+            if (packetEra != s.custodyEraCurrent) revert ReconciliationEntryEraRetired(index, packetEra);
         }
         uint64 era = s.reconciliationLog[index].era;
         if (!LibRewardCustody.queueSettled(s, LibRewardCustody.SIDE_FRESH, era)) {
@@ -270,71 +250,6 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
             (movingUnspent, movingSpent) = _moveToFresh(s, index, amount);
         }
         emit ReconciliationEntryReclassified(index, entryId, freshToRecycled, movingUnspent, movingSpent);
-    }
-
-    /**
-     * @notice Import the pre-stamp inventory as one netted envelope, whole
-     *         and once: every unit of it relocated from the Diamond's own
-     *         balance (measured) as recycled backing, replacement-funded by
-     *         the caller (delta-checked into the holder) as fresh or
-     *         recycled, or written down.
-     * @dev    ADMIN, MANUAL pause, activated. The envelope's figures are all
-     *         read on chain at the call — the operator asserts nothing the
-     *         chain can state — and the four dispositions must sum to the
-     *         netted total exactly. The inventory has no evidence source,
-     *         so it relocates as recycled only (design §5c: absent
-     *         authenticated source evidence or delta-checked replacement
-     *         custody, value classifies conservatively); the fresh
-     *         disposition is the replacement-funded one, credited to the
-     *         received side under the deficit split. The whole leaves the
-     *         global uncounted aggregate, the written-down part recorded as
-     *         such: it is value pre-holder outflows spent, not custody. The
-     *         envelope's log entry is reclassifiable like any other, its
-     *         fresh side bounded by what was replacement-funded.
-     * @param  snapshotId       The ceremony's record id; one import per id.
-     * @param  relocateRecycled Relocated from the Diamond as recycled.
-     * @param  replaceFresh     Pulled from the caller as fresh.
-     * @param  replaceRecycled  Pulled from the caller as recycled.
-     * @param  writeDown        Recorded as gone.
-     */
-    function importLegacyEnvelope(
-        bytes32 snapshotId,
-        uint256 relocateRecycled,
-        uint256 replaceFresh,
-        uint256 replaceRecycled,
-        uint256 writeDown
-    ) external nonReentrant onlyRole(LibAccessControl.ADMIN_ROLE) {
-        LibPausable.requireManuallyPaused();
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (!LibRewardCustody.active(s)) revert RewardCustodyNotActivated();
-        LibVaipakam.LegacyEnvelope storage env = s.legacyEnvelopes[snapshotId];
-        if (env.importedAt != 0) revert LegacyEnvelopeAlreadyImported(snapshotId);
-        (uint256 netTotal, uint256 raw, uint256 holderUncounted, uint256 diamondReserved, uint256 returned) =
-            _envelope(s);
-        if (netTotal == 0) revert LegacyEnvelopeEmpty(snapshotId);
-        uint256 stated = relocateRecycled + replaceFresh + replaceRecycled + writeDown;
-        if (stated != netTotal) revert LegacyEnvelopeMismatch(snapshotId, stated, netTotal);
-        s.rewardBudgetFreshUncounted = raw - netTotal;
-        uint256 refId = uint256(snapshotId);
-        LibVpfiRecycle.creditCustodyRelocated(refId, relocateRecycled, LibVpfiRecycle.RecycleSource.LegacyReconciliation);
-        LibRewardCustody.pullFromCaller(s, msg.sender, replaceFresh + replaceRecycled);
-        (, uint256 absorbed) = LibRewardCustody.creditFreshIngress(s, replaceFresh);
-        LibVpfiRecycle.creditCustodyFundedInHolder(refId, replaceRecycled);
-        uint256 index = _pushEntry(s, snapshotId, true, replaceFresh, relocateRecycled + replaceRecycled, absorbed, 0);
-        env.importedAt = uint64(block.timestamp);
-        env.rawUncounted = raw;
-        env.holderUncounted = holderUncounted;
-        env.diamondReserved = diamondReserved;
-        env.returnedCumulative = returned;
-        env.netTotal = netTotal;
-        env.relocatedRecycled = relocateRecycled;
-        env.replacedFresh = replaceFresh;
-        env.replacedRecycled = replaceRecycled;
-        env.writtenDown = writeDown;
-        env.entryIndex = index;
-        emit LegacyEnvelopeImported(
-            snapshotId, index, netTotal, relocateRecycled, replaceFresh, replaceRecycled, writeDown
-        );
     }
 
     /// @notice Write a queue's pending takes into its records, visiting at
@@ -446,25 +361,6 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
 
     // ─── Views ──────────────────────────────────────────────────────────────
 
-    /// @notice The envelope as the import would read it now: the global
-    ///         uncounted aggregate net of what the holder already holds of
-    ///         it (post-stamp remainders, protected at ingress), of the
-    ///         Diamond-side quarantine reservation, and of every return ever
-    ///         sent (which never decremented the aggregate) — each clamped.
-    function previewLegacyEnvelope()
-        external
-        view
-        returns (
-            uint256 netTotal,
-            uint256 rawUncounted,
-            uint256 holderUncounted,
-            uint256 diamondReserved,
-            uint256 returnedCumulative
-        )
-    {
-        return _envelope(LibVaipakam.storageSlot());
-    }
-
     /// @notice By how much `packetHash`'s classification PLUS what its epoch
     ///         drew of each component exceeds that component's attested cap: a
     ///         divergence recorded for the correction path — a classification
@@ -519,12 +415,6 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         fresh = usedF > p.freshAttested ? usedF - p.freshAttested : 0;
         recycled = usedR > p.recycledAttested ? usedR - p.recycledAttested : 0;
         return (true, fresh, recycled);
-    }
-
-    /// @notice An imported envelope's record; `importedAt == 0` for an
-    ///         unknown snapshot id.
-    function getLegacyEnvelope(bytes32 snapshotId) external view returns (LibVaipakam.LegacyEnvelope memory) {
-        return LibVaipakam.storageSlot().legacyEnvelopes[snapshotId];
     }
 
     /// @notice A packet's reconciliation figures: when it was recorded
@@ -724,9 +614,8 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
     /// @dev The evidence rule (design §5c): an entry's fresh side never
     ///      exceeds its authenticated fresh figure. ONE rule for both doors
     ///      into fresh — the classification and the correction toward fresh
-    ///      — and for both kinds of entry: a packet's figure is what the
-    ///      transport attestation authenticated of its remainder; the
-    ///      envelope's is what was replacement-funded, delta-checked.
+    ///      — the packet's figure being what the transport attestation
+    ///      authenticated of its remainder.
     function _requireEvidence(bytes32 key, uint256 cumulativeFresh, uint256 authenticated) private pure {
         if (cumulativeFresh > authenticated) revert ReconciliationFreshUnevidenced(key, cumulativeFresh, authenticated);
     }
@@ -734,12 +623,11 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
     /// @dev An entry's fresh side as it stands against its evidence: a
     ///      packet's cumulative over all its entries (`classifiedFresh`,
     ///      which every correction keeps current) against its authenticated
-    ///      figure; the envelope's own credit against its replaced fresh.
+    ///      figure.
     function _freshEvidence(
         LibVaipakam.Storage storage s,
         LibVaipakam.ReconciliationEntry storage e
     ) private view returns (uint256 current, uint256 authenticated) {
-        if (e.envelope) return (e.freshCredit, s.legacyEnvelopes[e.key].replacedFresh);
         LibVaipakam.IngressPacket storage p = s.ingressPackets[e.key];
         return (p.classifiedFresh, LibRewardCustody.authenticatedFresh(p));
     }
@@ -891,7 +779,6 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
     function _pushEntry(
         LibVaipakam.Storage storage s,
         bytes32 key,
-        bool envelope,
         uint256 fresh,
         uint256 recycled,
         uint256 absorbed,
@@ -902,7 +789,7 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         s.reconciliationLog.push(
             LibVaipakam.ReconciliationEntry({
                 key: key,
-                envelope: envelope,
+                retiredEnvelope: false,
                 era: era,
                 landedAt: uint64(block.timestamp),
                 freshCredit: fresh,
@@ -927,14 +814,13 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
 
     /// @dev A packet-backed entry's correction moves the packet's component
     ///      counters with it, so the packet's cumulative fresh — what its
-    ///      evidence bounds — stays current. An envelope entry has no packet.
+    ///      evidence bounds — stays current.
     function _packetFollows(
         LibVaipakam.Storage storage s,
         LibVaipakam.ReconciliationEntry storage e,
         uint256 amount,
         bool freshToRecycled
     ) private {
-        if (e.envelope) return;
         // Through the one library write, which never retypes a drawn leg
         // (Codex #2276 r26) — see {LibRewardCustody.moveClassification}.
         LibRewardCustody.moveClassification(s, e.key, amount, freshToRecycled);
@@ -952,29 +838,5 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         r.recycledInheritable = rc.charged;
         LibVaipakam.AbsorbedRecord storage a = s.absorbedRecords[index];
         r.freshAbsorbed = a.amount - a.released;
-    }
-
-    /// @dev The envelope's netting (design §5c, "uncounted − reservedLive −
-    ///      returnedCumulative, each clamped"), on the landed shape: the
-    ///      holder-held uncounted figure is the post-stamp part the ingress
-    ///      protected and is not the envelope's; the Diamond-side part of the
-    ///      quarantine reservation is; and every return ever sent left the
-    ///      aggregate un-decremented, so the cumulative nets out whole.
-    function _envelope(
-        LibVaipakam.Storage storage s
-    )
-        private
-        view
-        returns (uint256 netTotal, uint256 raw, uint256 holderUncounted, uint256 diamondReserved, uint256 returned)
-    {
-        raw = s.rewardBudgetFreshUncounted;
-        holderUncounted = s.rewardCustodyUnclassifiedUncounted;
-        uint256 reservedAll = s.strandedRecoveryReserved;
-        uint256 held = s.strandedRecoveryReservedHeld;
-        diamondReserved = reservedAll > held ? reservedAll - held : 0;
-        returned = s.strandedReturnedCumulative;
-        netTotal = raw > holderUncounted ? raw - holderUncounted : 0;
-        netTotal = netTotal > diamondReserved ? netTotal - diamondReserved : 0;
-        netTotal = netTotal > returned ? netTotal - returned : 0;
     }
 }

@@ -3551,27 +3551,24 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](19);
+        s = new bytes4[](16);
         s[0] = RewardReconciliationFacet.classifyLegacyPacket.selector;
         s[1] = RewardReconciliationFacet.reclassifyReconciliationEntry.selector;
-        s[2] = RewardReconciliationFacet.importLegacyEnvelope.selector;
-        s[3] = RewardReconciliationFacet.previewLegacyEnvelope.selector;
-        s[4] = RewardReconciliationFacet.getLegacyEnvelope.selector;
-        s[5] = RewardReconciliationFacet.getPacketReconciliation.selector;
-        s[18] = RewardReconciliationFacet.getPacketClassificationExcess.selector; // 3b-ii-A r15
-        s[6] = RewardReconciliationFacet.getReconciliationEntry.selector;
-        s[7] = RewardReconciliationFacet.getReconciliationEntrySpent.selector;
-        s[8] = RewardReconciliationFacet.getFreshQueueState.selector;
-        s[9] = RewardReconciliationFacet.getReconciliationTotals.selector;
-        s[10] = RewardReconciliationFacet.isReconciliationEntryUsed.selector;
+        s[2] = RewardReconciliationFacet.getPacketReconciliation.selector;
+        s[15] = RewardReconciliationFacet.getPacketClassificationExcess.selector; // 3b-ii-A r15
+        s[3] = RewardReconciliationFacet.getReconciliationEntry.selector;
+        s[4] = RewardReconciliationFacet.getReconciliationEntrySpent.selector;
+        s[5] = RewardReconciliationFacet.getFreshQueueState.selector;
+        s[6] = RewardReconciliationFacet.getReconciliationTotals.selector;
+        s[7] = RewardReconciliationFacet.isReconciliationEntryUsed.selector;
         // Codex #2206 r5 — the segment views and the Diamond-internal queue entries.
-        s[11] = RewardReconciliationFacet.getRecycledQueueState.selector;
-        s[12] = RewardReconciliationFacet.getEntryRecords.selector;
-        s[13] = RewardReconciliationFacet.advanceReconciliationQueue.selector;
-        s[14] = RewardReconciliationFacet.reconciliationTakeFresh.selector;
-        s[15] = RewardReconciliationFacet.reconciliationReleaseAbsorbed.selector;
-        s[16] = RewardReconciliationFacet.reconciliationTakeRecycled.selector;
-        s[17] = RewardReconciliationFacet.reconciliationReverseRemitTake.selector;
+        s[8] = RewardReconciliationFacet.getRecycledQueueState.selector;
+        s[9] = RewardReconciliationFacet.getEntryRecords.selector;
+        s[10] = RewardReconciliationFacet.advanceReconciliationQueue.selector;
+        s[11] = RewardReconciliationFacet.reconciliationTakeFresh.selector;
+        s[12] = RewardReconciliationFacet.reconciliationReleaseAbsorbed.selector;
+        s[13] = RewardReconciliationFacet.reconciliationTakeRecycled.selector;
+        s[14] = RewardReconciliationFacet.reconciliationReverseRemitTake.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split).

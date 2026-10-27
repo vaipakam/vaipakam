@@ -2506,27 +2506,24 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](19);
+        selectors = new bytes4[](16);
         selectors[0] = RewardReconciliationFacet.classifyLegacyPacket.selector;
         selectors[1] = RewardReconciliationFacet.reclassifyReconciliationEntry.selector;
-        selectors[2] = RewardReconciliationFacet.importLegacyEnvelope.selector;
-        selectors[3] = RewardReconciliationFacet.previewLegacyEnvelope.selector;
-        selectors[4] = RewardReconciliationFacet.getLegacyEnvelope.selector;
-        selectors[5] = RewardReconciliationFacet.getPacketReconciliation.selector;
-        selectors[18] = RewardReconciliationFacet.getPacketClassificationExcess.selector; // 3b-ii-A r15
-        selectors[6] = RewardReconciliationFacet.getReconciliationEntry.selector;
-        selectors[7] = RewardReconciliationFacet.getReconciliationEntrySpent.selector;
-        selectors[8] = RewardReconciliationFacet.getFreshQueueState.selector;
-        selectors[9] = RewardReconciliationFacet.getReconciliationTotals.selector;
-        selectors[10] = RewardReconciliationFacet.isReconciliationEntryUsed.selector;
+        selectors[2] = RewardReconciliationFacet.getPacketReconciliation.selector;
+        selectors[15] = RewardReconciliationFacet.getPacketClassificationExcess.selector; // 3b-ii-A r15
+        selectors[3] = RewardReconciliationFacet.getReconciliationEntry.selector;
+        selectors[4] = RewardReconciliationFacet.getReconciliationEntrySpent.selector;
+        selectors[5] = RewardReconciliationFacet.getFreshQueueState.selector;
+        selectors[6] = RewardReconciliationFacet.getReconciliationTotals.selector;
+        selectors[7] = RewardReconciliationFacet.isReconciliationEntryUsed.selector;
         // Codex #2206 r5 — the segment views and the Diamond-internal queue entries.
-        selectors[11] = RewardReconciliationFacet.getRecycledQueueState.selector;
-        selectors[12] = RewardReconciliationFacet.getEntryRecords.selector;
-        selectors[13] = RewardReconciliationFacet.advanceReconciliationQueue.selector;
-        selectors[14] = RewardReconciliationFacet.reconciliationTakeFresh.selector;
-        selectors[15] = RewardReconciliationFacet.reconciliationReleaseAbsorbed.selector;
-        selectors[16] = RewardReconciliationFacet.reconciliationTakeRecycled.selector;
-        selectors[17] = RewardReconciliationFacet.reconciliationReverseRemitTake.selector;
+        selectors[8] = RewardReconciliationFacet.getRecycledQueueState.selector;
+        selectors[9] = RewardReconciliationFacet.getEntryRecords.selector;
+        selectors[10] = RewardReconciliationFacet.advanceReconciliationQueue.selector;
+        selectors[11] = RewardReconciliationFacet.reconciliationTakeFresh.selector;
+        selectors[12] = RewardReconciliationFacet.reconciliationReleaseAbsorbed.selector;
+        selectors[13] = RewardReconciliationFacet.reconciliationTakeRecycled.selector;
+        selectors[14] = RewardReconciliationFacet.reconciliationReverseRemitTake.selector;
     }
 
     /// #1566 transport epochs PR 3a — the mirror-side ingress half of the
