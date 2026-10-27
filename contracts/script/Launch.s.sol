@@ -648,7 +648,10 @@ contract Launch is Script {
     ///             the chain's bridged WETH9). The gate then refuses any
     ///             other;
     ///           - the feed registry: the artifact's `feedRegistry` (#2880),
-    ///             the only registry the Diamond may price through.
+    ///             the only registry the Diamond may price through;
+    ///           - the reward role: Canonical on the reward base chain,
+    ///             Mirror elsewhere, by the derivation the reward configure
+    ///             step sets it from (#2920).
     function declaredFromEnv(address diamond) public view returns (LibLaunchReadiness.Declared memory d) {
         d.tokenAdminRegistry = vm.envOr("CCIP_TOKEN_ADMIN_REGISTRY", address(0));
         d.vpfiPool = Deployments.readVpfiTokenPoolOptional();
@@ -669,6 +672,9 @@ contract Launch is Script {
         } catch {}
         d.mirrorToken = !Deployments.isCanonicalVpfiChainId(block.chainid);
         d.feedRegistry = Deployments.readFeedRegistryOptional();
+        d.rewardRole = Deployments.isCanonicalRewardChainId(block.chainid)
+            ? LibLaunchReadiness.RewardRoleIntent.Canonical
+            : LibLaunchReadiness.RewardRoleIntent.Mirror;
     }
 
     /// @dev How a launch record names its gate: nothing for a plain unpause,
@@ -763,6 +769,13 @@ contract Launch is Script {
         console.log("        never the wrapped native token (OracleAdminFacet.setWethContract policy)");
         console.log("      feed registry (the artifact's feedRegistry):", declared.feedRegistry);
         console.log("        the chain's VaipakamFeedRegistry; its owner and veto are proven by the handover gate");
+        console.log(
+            declared.rewardRole == LibLaunchReadiness.RewardRoleIntent.Canonical
+                ? "      reward role: Canonical (this chain is the reward base chain)"
+                : declared.rewardRole == LibLaunchReadiness.RewardRoleIntent.Mirror
+                    ? "      reward role: Mirror (reports to the reward base chain)"
+                    : "      reward role: none declared - the gate refuses it as NOT CHECKED"
+        );
         console.log("    handover - the governance state the launch is bound to:");
         console.log("      admin key, which must hold no role:", d.handover.deployKey);
         console.log("      Diamond owner:", d.handover.owner);

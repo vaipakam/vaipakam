@@ -141,6 +141,22 @@ library LibLaunchReadiness {
         ///      routed pool and the token to be governed by the Diamond's
         ///      owner (Codex #2686 r12).
         bool mirrorToken;
+        /// @dev The reward role the deploy intends for this chain (#2920):
+        ///      Canonical on the reward base chain, Mirror everywhere else.
+        ///      The role is a deploy convention, not a protocol rule, so the
+        ///      gate takes it from the launch rather than from a chain-id
+        ///      table of its own. Undeclared leaves the role unchecked.
+        RewardRoleIntent rewardRole;
+    }
+
+    /// @notice The reward role a launch declares for its chain (#2920). Only
+    ///         the two roles a chain that runs rewards may launch in can be
+    ///         declared: `Unconfigured` (the configure step did not run) and
+    ///         `Detached` (a mirror written with no base) are never intended.
+    enum RewardRoleIntent {
+        Undeclared,
+        Canonical,
+        Mirror
     }
 
     /// @notice One declared CCIP lane: the remote chain and the peer the
@@ -180,7 +196,7 @@ library LibLaunchReadiness {
     ///        no pool address is ever taken on trust.
     function check(address diamond, Declared memory declared) internal view returns (Check[] memory checks) {
         VpfiRoute memory route = _vpfiRoute(diamond, declared.tokenAdminRegistry);
-        checks = new Check[](9);
+        checks = new Check[](10);
         checks[0] = _treasury(diamond);
         checks[1] = _sanctions(diamond);
         checks[2] = _priceFeed(diamond, declared.weth);
@@ -189,7 +205,8 @@ library LibLaunchReadiness {
         checks[5] = _ccipLanes(route, declared);
         checks[6] = _wethQuoteRoute(diamond);
         checks[7] = _feedRegistry(diamond, declared.feedRegistry);
-        checks[8] = _lapseSchedule(diamond);
+        checks[8] = _rewardRole(diamond, declared.rewardRole);
+        checks[9] = _lapseSchedule(diamond);
     }
 
     /// @notice Whether every check was answered and met.
@@ -238,6 +255,51 @@ library LibLaunchReadiness {
         }
     }
 
+    /// @dev #2920 — the reward role is the one the deploy intends for the
+    ///      chain. The configure step decides it from the chain id; when that
+    ///      step did not run, or stopped partway, the Diamond is left
+    ///      Unconfigured (no reward accounting is anchored anywhere) or
+    ///      Detached (a mirror with no base: nothing is claimable), and a
+    ///      Base Diamond left a mirror would wait for broadcasts nobody
+    ///      sends. Each of those launches into reward accounting that cannot
+    ///      settle, so the role is compared with the declared intent, and the
+    ///      detail names the role found either way.
+    function _rewardRole(address diamond, RewardRoleIntent intended) private view returns (Check memory c) {
+        c.label = "reward role is the one the deploy intends";
+        uint8 role;
+        try ILaunchReadableDiamond(diamond).getRewardRole() returns (uint8 r) {
+            role = r;
+        } catch {
+            c.detail = "getRewardRole() unreadable";
+            return c;
+        }
+        string memory found = string.concat("the reward role is ", _rewardRoleName(role));
+        if (intended == RewardRoleIntent.Undeclared) {
+            c.detail = string.concat(found, ", and the launch declares no intended role to compare it with");
+            return c;
+        }
+        // Canonical is role 0 and Mirror role 1 (RewardReporterFacet.getRewardRole).
+        uint8 want = intended == RewardRoleIntent.Canonical ? 0 : 1;
+        c.checkable = true;
+        c.met = role == want;
+        c.detail = c.met
+            ? string.concat(found, ", as the deploy intends")
+            : string.concat(
+                found,
+                ", but the deploy intends ",
+                _rewardRoleName(want),
+                ": run the reward configure step (ConfigureRewardReporter) for this chain"
+            );
+    }
+
+    /// @dev LibVaipakam.RewardRole: 0 Canonical, 1 Mirror, 2 Unconfigured,
+    ///      3 Detached (RewardReporterFacet.getRewardRole).
+    function _rewardRoleName(uint8 role) private pure returns (string memory) {
+        return role == 0
+            ? "Canonical"
+            : role == 1 ? "Mirror" : role == 2 ? "Unconfigured" : role == 3 ? "Detached" : "unknown";
+    }
+
     /// @dev #2909 — on the canonical reward chain every day freezes the lapse
     ///      schedule in force when it finalizes, and keeps it. Version 0
     ///      means "never lapses, no dispatch cutoff": a zeroed day nobody
@@ -257,14 +319,14 @@ library LibLaunchReadiness {
             c.detail = "getRewardRole() unreadable";
             return c;
         }
-        // LibVaipakam.RewardRole: 0 Canonical, 1 Mirror, 2 Unconfigured,
-        // 3 Detached (RewardReporterFacet.getRewardRole).
+        // Whether that role is the right one for the chain is the reward
+        // role check's question (#2920), not this one's.
         if (role != 0) {
             c.checkable = true;
             c.met = true;
             c.detail = string.concat(
                 "does not apply: the reward role is ",
-                role == 1 ? "Mirror" : role == 2 ? "Unconfigured" : role == 3 ? "Detached" : "unknown",
+                _rewardRoleName(role),
                 ", and only the canonical reward chain sets a lapse schedule"
             );
             return c;

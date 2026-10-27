@@ -1687,6 +1687,13 @@ On **every** chain, unconditionally:
 3. `RewardReporterFacet.setRewardGraceSeconds(<REWARD_GRACE_SECONDS>)` — default 14400 (4h)
 4. `RewardReporterFacet.setIsCanonicalRewardChain(<true on Base, false elsewhere>)`
 
+These four leave the Diamond in the reward role the chain needs: Canonical on
+Base, Mirror elsewhere (read it back with `getRewardRole()`: 0 Canonical,
+1 Mirror, 2 Unconfigured, 3 Detached). Launch readiness compares that role with
+the one the launch declares by the same chain-id rule, and refuses a mismatch
+("reward role is the one the deploy intends", #2920). So a configure phase that
+did not run this script, or stopped before step 4, cannot launch.
+
 On **Base only** (the canonical reward chain), two registrations, **each
 driven by its own env var**:
 

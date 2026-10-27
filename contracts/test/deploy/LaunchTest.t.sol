@@ -472,6 +472,9 @@ contract LaunchTest is Test {
         OracleAdminFacet(diamond).setChainlinkRegistry(feedRegistry);
         OracleAdminFacet(diamond).setUsdChainlinkDenominator(reg.USD());
         OracleAdminFacet(diamond).setEthChainlinkDenominator(reg.ETH());
+        // #2920 — the reward configure step leaves a mirror chain naming its
+        // base reward chain: the Mirror role `_d` declares.
+        RewardReporterFacet(diamond).setBaseChainId(84532);
         vm.stopPrank();
         _setUsdFeed(stableQuote, address(new LaunchUsdcFeed()));
     }
@@ -548,6 +551,7 @@ contract LaunchTest is Test {
         d.vpfiPool = wiredPool[registry];
         d.rateGovernor = wiredGovernor[registry];
         if (d.vpfiPool != address(0)) d.lanes = _decl(1, 0);
+        d.rewardRole = LibLaunchReadiness.RewardRoleIntent.Mirror;
     }
 
     function _epoch() internal view returns (uint64) {
@@ -1655,17 +1659,115 @@ contract LaunchTest is Test {
         );
     }
 
+    /// @dev `_d` declaring the Canonical role, for the canonical-chain cases.
+    function _dCanonical() internal view returns (LibLaunchReadiness.Declared memory d) {
+        d = _d(address(0));
+        d.rewardRole = LibLaunchReadiness.RewardRoleIntent.Canonical;
+    }
+
+    /// @dev #2920 — the reward role the deploy intends is met, and the detail
+    ///      names it.
+    function test_RewardRole_MetWhenItIsTheIntendedOne() public {
+        _configure();
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
+        assertEq(c[8].label, "reward role is the one the deploy intends");
+        assertTrue(c[8].checkable && c[8].met);
+        assertEq(c[8].detail, "the reward role is Mirror, as the deploy intends");
+    }
+
+    /// @dev #2920 — a Base Diamond whose reward configure step never ran is
+    ///      left Unconfigured. Before #2920 nothing noticed (the lapse
+    ///      schedule reported "does not apply"); now the role check is NOT
+    ///      MET and names both roles. A fresh deploy is the Unconfigured
+    ///      state: no role write can return the suite's Diamond to it.
+    function test_RewardRole_UnconfiguredBaseRefused() public {
+        DeployDiamond script = new DeployDiamond();
+        script.runWith(admin, TREASURY, DEPLOYER_KEY);
+        LibLaunchReadiness.Check[] memory c = _gate().checks(script.diamond(), _dCanonical());
+        assertTrue(c[8].checkable);
+        assertFalse(c[8].met);
+        assertEq(
+            c[8].detail,
+            "the reward role is Unconfigured, but the deploy intends Canonical: run the reward configure step (ConfigureRewardReporter) for this chain"
+        );
+        assertEq(c[9].detail, "does not apply: the reward role is Unconfigured, and only the canonical reward chain sets a lapse schedule");
+    }
+
+    /// @dev #2920 — the wrong configured role is refused too: a mirror
+    ///      Diamond on the chain the deploy intends as canonical.
+    function test_RewardRole_MirrorWhereCanonicalIntendedRefused() public {
+        _configure();
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _dCanonical());
+        assertFalse(c[8].met);
+        assertEq(
+            c[8].detail,
+            "the reward role is Mirror, but the deploy intends Canonical: run the reward configure step (ConfigureRewardReporter) for this chain"
+        );
+    }
+
+    /// @dev #2920 — a mirror written with no base is Detached, which no
+    ///      deploy intends.
+    function test_RewardRole_DetachedRefused() public {
+        _configure();
+        vm.prank(admin);
+        RewardReporterFacet(diamond).setBaseChainId(0);
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
+        assertFalse(c[8].met);
+        assertEq(
+            c[8].detail,
+            "the reward role is Detached, but the deploy intends Mirror: run the reward configure step (ConfigureRewardReporter) for this chain"
+        );
+        // No other answered requirement is unmet, so the role alone refuses
+        // a testnet.
+        for (uint256 i; i < c.length; ++i) {
+            if (i != 8 && c[i].checkable) assertTrue(c[i].met, c[i].label);
+        }
+        vm.chainId(84532);
+        vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
+    }
+
+    /// @dev #2920 — with no intent declared the role is NOT CHECKED, never
+    ///      met: the detail still names the role found, and a production
+    ///      launch refuses it.
+    function test_RewardRole_UndeclaredIsNotChecked() public {
+        _configure();
+        LibLaunchReadiness.Declared memory d = _d(address(0));
+        d.rewardRole = LibLaunchReadiness.RewardRoleIntent.Undeclared;
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, d);
+        assertFalse(c[8].checkable);
+        assertEq(c[8].detail, "the reward role is Mirror, and the launch declares no intended role to compare it with");
+        assertFalse(LibLaunchReadiness.allMet(c));
+    }
+
+    /// @dev #2920 — the launch declares the role by the configure step's own
+    ///      derivation: Canonical on Base and Base Sepolia, Mirror elsewhere.
+    function test_RewardRole_DeclaredFromTheChainId() public {
+        vm.chainId(84532);
+        assertEq(
+            uint8(launcher.declaredFromEnv(diamond).rewardRole), uint8(LibLaunchReadiness.RewardRoleIntent.Canonical)
+        );
+        vm.chainId(8453);
+        assertEq(
+            uint8(launcher.declaredFromEnv(diamond).rewardRole), uint8(LibLaunchReadiness.RewardRoleIntent.Canonical)
+        );
+        vm.chainId(421614);
+        assertEq(
+            uint8(launcher.declaredFromEnv(diamond).rewardRole), uint8(LibLaunchReadiness.RewardRoleIntent.Mirror)
+        );
+    }
+
     /// @dev #2909 — off the canonical reward chain no lapse schedule is set
     ///      here (Base's rides the broadcast), so the requirement is met as
     ///      not applicable, and the detail names the role found.
     function test_LapseSchedule_DoesNotApplyOffCanonical() public {
         _configure();
         LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
-        assertEq(c[8].label, "zeroed-day lapse schedule in force");
-        assertTrue(c[8].checkable && c[8].met);
+        assertEq(c[9].label, "zeroed-day lapse schedule in force");
+        assertTrue(c[9].checkable && c[9].met);
         assertEq(
-            c[8].detail,
-            "does not apply: the reward role is Unconfigured, and only the canonical reward chain sets a lapse schedule"
+            c[9].detail,
+            "does not apply: the reward role is Mirror, and only the canonical reward chain sets a lapse schedule"
         );
     }
 
@@ -1677,15 +1779,15 @@ contract LaunchTest is Test {
         _configure();
         vm.prank(admin);
         RewardReporterFacet(diamond).setIsCanonicalRewardChain(true);
-        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
-        assertTrue(c[8].checkable);
-        assertFalse(c[8].met);
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _dCanonical());
+        assertTrue(c[9].checkable);
+        assertFalse(c[9].met);
         assertEq(
-            c[8].detail,
+            c[9].detail,
             "no lapse schedule is set: every day finalized now would never lapse and carry no dispatch cutoff"
         );
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
-        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
+        launcher.launch(diamond, _dCanonical(), address(0), admin, ADMIN_KEY);
     }
 
     /// @dev #2909 — with a schedule in force the canonical chain meets it,
@@ -1696,10 +1798,10 @@ contract LaunchTest is Test {
         RewardReporterFacet(diamond).setIsCanonicalRewardChain(true);
         RewardCommitmentFacet(diamond).setLapseSchedule(7 days, 24 hours);
         vm.stopPrank();
-        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
-        assertTrue(c[8].checkable && c[8].met);
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _dCanonical());
+        assertTrue(c[9].checkable && c[9].met);
         assertEq(
-            c[8].detail,
+            c[9].detail,
             "version 1: days lapse 604800s after finalizing, compensation dispatch closes 86400s before"
         );
     }

@@ -466,6 +466,13 @@ library Deployments {
     function isCanonicalVpfiChainId(uint256 chainId) internal pure returns (bool) {
         return chainId == 8453 || chainId == 84532;
     }
+    /// @notice Whether `chainId` is the canonical reward chain (Base, Base
+    ///         Sepolia); every other chain that runs rewards is a mirror. The
+    ///         ONE derivation `ConfigureRewardReporter` sets the role from and
+    ///         `Launch` declares the intended role from (#2920).
+    function isCanonicalRewardChainId(uint256 chainId) internal pure returns (bool) {
+        return chainId == 8453 || chainId == 84532;
+    }
     /// @notice The VPFI token a CCIP lane to `chainId` must reach — the
     ///         `.vpfiToken` on the canonical chain, the `.vpfiMirror` on a
     ///         mirror — or zero when that chain's artifact records none. The
