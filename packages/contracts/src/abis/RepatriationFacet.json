@@ -78,6 +78,25 @@
   },
   {
     "type": "function",
+    "name": "getChainRetiredSurplusReturned",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRepatriationAuthorization",
     "inputs": [
       {
@@ -289,6 +308,39 @@
   },
   {
     "type": "function",
+    "name": "onRetiredSurplusReturnReceived",
+    "inputs": [
+      {
+        "name": "sourceChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "issuingBase",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "declaredAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "actualReceived",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "requestRepatriationCancel",
     "inputs": [
       {
@@ -346,6 +398,30 @@
     "inputs": [
       {
         "name": "authId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "refundAddress",
+        "type": "address",
+        "internalType": "address payable"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "sendRetiredSurplusReturn",
+    "inputs": [
+      {
+        "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -706,6 +782,62 @@
   },
   {
     "type": "event",
+    "name": "RetiredSurplusReturnDispatched",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "remainingAfter",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RetiredSurplusReturnSettled",
+    "inputs": [
+      {
+        "name": "sourceChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "declaredAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "actualReceived",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "StrandedReturnDispatched",
     "inputs": [
       {
@@ -1000,6 +1132,27 @@
         "internalType": "uint32"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RetiredSurplusBadAmount",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "pending",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RetiredSurplusChainNotRetired",
+    "inputs": []
   },
   {
     "type": "error",

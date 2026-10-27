@@ -2858,6 +2858,32 @@
   },
   {
     "type": "error",
+    "name": "RewardChainIsRetired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardChainNotRetirable",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "detachedFrom",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "detachedFromDeployment",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyActivationBlockedByStagedEarmark",
     "inputs": [
       {
