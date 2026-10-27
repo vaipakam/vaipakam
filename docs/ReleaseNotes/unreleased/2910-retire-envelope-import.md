@@ -1,4 +1,4 @@
-## Rewards — the legacy envelope import is retired, and every reward delivery must add up (PR #TBD)
+## Rewards — the legacy envelope import is retired, and every reward delivery must add up (PR #2945)
 
 A mirror chain keeps an "uncounted" tally of reward value that arrived without
 a split saying how much of it was fresh funding and how much was recycled.
