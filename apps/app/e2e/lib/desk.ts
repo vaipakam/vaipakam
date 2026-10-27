@@ -285,13 +285,15 @@ export async function getOffer(offerId: bigint): Promise<Record<string, unknown>
  *  CUSTOM-pair branch — deterministic even before anything is seeded
  *  (the markets summary only lists pairs with live offers). The
  *  dropdown selection path is exercised separately by spec 17's
- *  ticket test. */
+ *  ticket test. `base` targets an alternate dev server (the GoPlus-screened
+ *  one in `lib/goplus.ts`); empty means the suite's own. */
 export async function openMarketViaCustomPair(
   page: Page,
   days: number,
   coll: `0x${string}` = TLIQ,
+  base = '',
 ): Promise<void> {
-  await page.goto('/desk', { waitUntil: 'domcontentloaded' });
+  await page.goto(`${base}/desk`, { waitUntil: 'domcontentloaded' });
   await chooseMenuValue(page, 'desk-pair', '__custom__');
   await page.locator('#desk-custom-lend').fill(WETH);
   await page.locator('#desk-custom-coll').fill(coll);
