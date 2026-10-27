@@ -2495,6 +2495,7 @@
         "OfferSaleProceedsCredited": "Produit de la vente crédité dans le coffre",
         "CollateralSaleProceedsSplit": "Produit de la vente réparti",
         "ParallelSaleLockReleased": "Annonce de vente de la garantie libérée",
+        "ParallelSaleReleaseConsolidationDeferred": "Transfert de la garantie reporté",
         "PartialCollateralWithdrawn": "Garantie partiellement retirée",
         "PostParallelSaleListing": "Annonce de vente de la garantie publiée",
         "PrepaySaleListingSynced": "Annonce de vente de la garantie revérifiée",

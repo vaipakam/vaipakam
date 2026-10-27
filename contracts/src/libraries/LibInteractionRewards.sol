@@ -258,6 +258,19 @@ library LibInteractionRewards {
             (LibVaipakam.BASIS_POINTS * 365 * 2);
     }
 
+    /// @notice #918 — the largest FRESH reward slice any one day can carry to
+    ///         any one chain: both halves of the day with the highest emission
+    ///         rate (day 1 — the schedule only steps down, {annualRateBpsForDay}).
+    /// @dev    A chain's fresh slice of a day is a share of that day's two
+    ///         halves, so no fresh remit part ever exceeds this. A VPFI CCIP
+    ///         lane whose capacity is at least this sends every day's fresh
+    ///         slice in one part; a smaller one still works, in several parts
+    ///         (`LibRemitDayLedger`). Recycled value can add to a day's slice
+    ///         beyond this figure, so it bounds the fresh component only.
+    function maxFreshDaySlice() internal pure returns (uint256) {
+        return 2 * halfPoolForDay(1);
+    }
+
     /// @notice #1222 M3 B2-d3 — a chain's day budget, per SIDE and per
     ///         funding source, GROSS of that chain's own local commitment.
     struct ChainDayBudget {
@@ -454,7 +467,7 @@ library LibInteractionRewards {
     ///         this aggregate — it nets and clamps per SIDE, because the two
     ///         sides carry different fresh:recycled compositions and the
     ///         mirror reports its liability per side. See
-    ///         {chainRewardBudgetSideSplitForDay} and `_planDay`.
+    ///         {chainRewardBudgetSideSplitForDay} and `LibRemitDayLedger.planDay`.
     function chainRewardBudgetSplitForDay(
         LibVaipakam.Storage storage s,
         uint32 chainId,
@@ -1704,12 +1717,12 @@ library LibInteractionRewards {
     ///         #1944 c1 — and two edges this twin deliberately does NOT
     ///         share. (1) The delivery rung {_dayPoolHalves} gained is not
     ///         mirrored here: the commitment report is what releases Base's
-    ///         armed send (Base's `_planDay` waits on a complete commitment),
+    ///         armed send (Base's `LibRemitDayLedger.planDay` waits on a complete commitment),
     ///         so a report held behind the delivery it releases would
     ///         deadlock both. It reads the stamp directly and stays priceable
     ///         while the claim path holds the day. (2) Across chains, the
     ///         mirror predicate {LibRewardCustody.dayAwaitsFreshDelivery}
-    ///         restates Base's send rule (`RewardRemittanceFacet._planDay` /
+    ///         restates Base's send rule (`LibRemitDayLedger.planDay` /
     ///         `_sideLegs`) from stored Base-authored figures — the stamp, the
     ///         report, the fresh half, the local total, the armed liability.
     ///         Lockstep by construction, not by shared code: a change to
@@ -5864,11 +5877,19 @@ library LibInteractionRewards {
 
     function poolRemaining() internal view returns (uint256) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // The HARD figure — paid and remitted only. What staging records have
+        // The HARD figure — paid, remitted, and what partly sent unarmed
+        // remit days hold for their mirrors. What staging records have
         // RESERVED is a separate, recoverable term ({poolAvailable}): pricing
         // and the lifetime truncation read this, so a reservation never reads
         // as exhaustion; availability reads the other (Codex #2308 r2).
-        uint256 reserved = s.interactionPoolPaidOut + s.rewardBudgetRemittedGlobal;
+        // #918 (Codex #2959 r1) — `remitDayFreshReserved` is NOT that kind of
+        // reservation: it is a whole-day remittance already under way, which a
+        // send of the whole in one would have charged to
+        // `rewardBudgetRemittedGlobal` outright, so it counts as used here.
+        // This is the ONE definition of the pool's hard headroom; every
+        // consumer (claims, the sweeps, day sizing, the remit gate) reads it.
+        uint256 reserved = s.interactionPoolPaidOut + s.rewardBudgetRemittedGlobal
+            + s.remitDayFreshReserved;
         return
             LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
                 ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved

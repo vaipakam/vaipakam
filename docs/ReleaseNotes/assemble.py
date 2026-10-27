@@ -68,6 +68,27 @@ MARKER_PREFIX = "<!-- assembled-fragment: "
 MARKER_RE = re.compile(
     r"^" + re.escape(MARKER_PREFIX) + r"(.+) sha256=([0-9a-f]{64}) -->\r?$"
 )
+# THE COMMIT NOTE (owner decision 2026-10-27). Every folded section ends with
+# one line saying when the commit that ADDED its fragment was made, in UTC, and
+# which commit that was. A fragment carries no date of its own: git's record is
+# the one source of truth, and the date that decides which dated file a
+# fragment belongs in is read from the same commit, so the note and the filing
+# cannot disagree. On `main`, whose pull requests merge as one squashed commit,
+# that commit IS the merge. The note says "Committed" rather than "Merged"
+# because that is what the script can actually see.
+#
+# When the run could not date a fragment it SAYS SO, with the reason, rather
+# than writing nothing: a section without a time reads as one whose time was
+# lost.
+#
+# The note sits between the fragment's text and its marker. `build()` writes
+# it and `assert_section_present` accepts it there in any form this script has
+# ever written, including no note at all (sections folded before it existed).
+COMMIT_NOTE_DATED = "_Committed {stamp} UTC ({sha})._"
+COMMIT_NOTE_UNDATED = "_Commit time not recorded: {reason}._"
+COMMIT_NOTE_LINE = rb"_(?:Committed |Commit time not recorded: )[^\n]*_\n"
+COMMIT_SHA_LEN = 9
+
 # Markdown allows an ATX heading up to THREE leading spaces; at four it is
 # an indented code block. Anchoring on `#` made ` # Thread — x (PR #1)`
 # invisible here while GitHub still rendered it as a level-1 heading, so a
@@ -604,8 +625,12 @@ def test_hook(phase: str, **paths: str) -> None:
 
 
 class Assembly:
-    def __init__(self, directory: str, date: str, allow_mixed: bool, force: bool):
+    def __init__(
+        self, directory: str, date: str, allow_mixed: bool, force: bool,
+        list_only: bool = False,
+    ):
         self.dir = directory
+        self.list_only = list_only
         self.unrel = os.path.join(directory, "unreleased")
         self.qdir = os.path.join(self.unrel, ".assembled")
         self.lock = os.path.join(self.unrel, ".assemble.lock")
@@ -637,6 +662,11 @@ class Assembly:
         self.frag_snap: dict[str, str] = {}
         self.frag_hash: dict[str, str] = {}
         self.held_paths: list[str] = []
+        # Each dated fragment's add-commit: (full sha, "YYYY-MM-DD HH:MM" UTC).
+        # A fragment absent here was not dated, and `undated_reason` says why
+        # when the whole run went undated; otherwise it was not committed.
+        self.frag_commit: dict[str, tuple[str, str]] = {}
+        self.undated_reason = ""
         self.frags: list[str] = []
         self.expected_id: str | None = None
         self.published_id: str | None = None
@@ -992,6 +1022,7 @@ class Assembly:
         tomorrow, which misfiled fragments twice before this existed.
         """
         if self.allow_mixed:
+            self.undated_reason = "assembled with --allow-mixed-dates, which does not date fragments"
             return
 
         probe = self.git("rev-parse", "--is-inside-work-tree")
@@ -1025,8 +1056,10 @@ class Assembly:
                     err("or pass --allow-mixed-dates to assemble without dating.")
                 raise SystemExit(1)
             if probe.returncode == 127:
+                self.undated_reason = "no git executable was available to date it"
                 err("note: no git executable — cannot date fragments, assembling all pending.")
             else:
+                self.undated_reason = "assembled outside a git work tree"
                 err("note: not a git work tree — cannot date fragments, assembling all pending.")
             return
 
@@ -1145,12 +1178,12 @@ class Assembly:
                 if ls.stdout.strip():
                     probe_path = f
 
-            added = added_sha = ""
+            added = added_sha = stamp = ""
             if probe_path:
                 log = subprocess.run(
                     ["git", "-C", self.dir, "log", "--no-show-signature", "--follow",
                      "--diff-filter=A", "--format=%H %cd",
-                     "--date=format-local:%Y-%m-%d", "-1", "--", probe_path],
+                     "--date=format-local:%Y-%m-%d %H:%M", "-1", "--", probe_path],
                     capture_output=True, text=True, env=dict(os.environ, TZ="UTC"),
                 )
                 if log.returncode != 0:
@@ -1162,7 +1195,10 @@ class Assembly:
                     raise SystemExit(1)
                 raw = log.stdout.strip()
                 if raw and " " in raw:
-                    added_sha, added = raw.split(" ", 1)
+                    # The day decides the filing and the minute goes in the
+                    # commit note: one read, so the two cannot disagree.
+                    added_sha, stamp = raw.split(" ", 1)
+                    added = stamp[:10]
 
             if added_sha and added_sha in shallow_boundary:
                 err("")
@@ -1174,12 +1210,19 @@ class Assembly:
                 err("pass --allow-mixed-dates to assemble without dating.")
                 raise SystemExit(1)
 
+            if added_sha and added:
+                self.frag_commit[f] = (added_sha, stamp)
+
             if not added or added == self.date:
                 selected.append(f)
             else:
                 held.append(f"{name}  ({added} UTC)")
                 self.held_paths.append(f)
 
+        if self.list_only:
+            # A preview files nothing, so it filters nothing: `run_list`
+            # prints every pending fragment with the day it would go under.
+            return
         if held:
             out_line(f"Holding back {len(held)} fragment(s) that belong to another UTC day:")
             for h in held:
@@ -1526,11 +1569,8 @@ class Assembly:
         # dated file whose section had been edited to `extended body\n`,
         # so the marker still authorised the deletion while the run
         # claimed the section was present byte for byte.
-        appended = b"\n" + body if body.endswith(b"\n") else b"\n" + body + b"\n"
-        appended += os.fsencode(
-            f"{MARKER_PREFIX}{self.frag_name[f]} "
-            f"sha256={self.frag_hash[f]} -->\n"
-        )
+        head = b"\n" + body if body.endswith(b"\n") else b"\n" + body + b"\n"
+        marker = self.marker_line(f)
         with open(self.out_copy or self.out, "rb") as fh:
             haystack = fh.read()
         # Line endings normalised on BOTH sides before comparing. The
@@ -1540,7 +1580,22 @@ class Assembly:
         # this check refuses on that. Normalising keeps the exact-bytes
         # intent, which is about not matching a PREFIX, while tolerating
         # the same ending difference everything else does.
-        if appended.replace(b"\r\n", b"\n") in haystack.replace(b"\r\n", b"\n"):
+        #
+        # THE COMMIT NOTE IS OPTIONAL HERE, and in any form (see
+        # `COMMIT_NOTE_LINE`). The fragment's text and its marker are
+        # still matched exactly, with nothing allowed between them but
+        # one note line, so no prefix hole opens. What is accepted is any
+        # note this script has written: none at all for a section folded
+        # before notes existed, and a different note for a fragment whose
+        # dating changed between an interrupted run and this one (it was
+        # committed in between). The note is the script's own metadata;
+        # the invariant is about the fragment's text.
+        pattern = (
+            re.escape(head.replace(b"\r\n", b"\n"))
+            + b"(?:\n" + COMMIT_NOTE_LINE + b")?"
+            + re.escape(marker)
+        )
+        if re.search(pattern, haystack.replace(b"\r\n", b"\n")):
             return
         name = self.frag_name[f]
         err(f"Error: {os.path.basename(self.out)} carries the marker for {name},")
@@ -2332,15 +2387,30 @@ class Assembly:
                 fh.write(body)
                 if not body.endswith(b"\n"):
                     fh.write(b"\n")
-                # os.fsencode, not .encode(): a name carrying a
-                # surrogate from an undecodable byte raises on the
-                # latter, aborting with a traceback before publication.
-                fh.write(
-                    os.fsencode(
-                        f"{MARKER_PREFIX}{self.frag_name[f]} "
-                        f"sha256={self.frag_hash[f]} -->\n"
-                    )
-                )
+                # A blank line, then the note as its own paragraph.
+                fh.write(b"\n" + self.commit_note(f) + b"\n")
+                fh.write(self.marker_line(f))
+
+    def marker_line(self, f: str) -> bytes:
+        """The marker `build()` writes after fragment `f`, newline included."""
+        # os.fsencode, not .encode(): a name carrying a surrogate from an
+        # undecodable byte raises on the latter, aborting with a traceback
+        # before publication.
+        return os.fsencode(
+            f"{MARKER_PREFIX}{self.frag_name[f]} "
+            f"sha256={self.frag_hash[f]} -->\n"
+        )
+
+    def commit_note(self, f: str) -> bytes:
+        """The one-line commit note for fragment `f` — see `COMMIT_NOTE_DATED`."""
+        dated = self.frag_commit.get(f)
+        if dated:
+            sha, stamp = dated
+            return COMMIT_NOTE_DATED.format(stamp=stamp, sha=sha[:COMMIT_SHA_LEN]).encode()
+        reason = self.undated_reason or (
+            "the fragment was not committed when this file was assembled"
+        )
+        return COMMIT_NOTE_UNDATED.format(reason=reason).encode()
 
     # ── the gate ─────────────────────────────────────────────────────────
 
@@ -2636,6 +2706,37 @@ class Assembly:
         if not any(c for _, c in items):
             out_line("  (none marks a caveat line; read each one's limits in full)")
 
+    # ── the preview ──────────────────────────────────────────────────────
+
+    def run_list(self) -> None:
+        """`--list`: every pending fragment, its commit time and its day.
+
+        READ-ONLY. It takes no lock and creates nothing, so it is a
+        snapshot: a fragment committed or assembled after it prints is not
+        reflected. The dating is `select_by_day`'s own, refusals included,
+        so the day printed is the day a run would file the fragment under.
+        """
+        self.discover()
+        self.select_by_day()
+        days: dict[str, int] = {}
+        out_line(f"{len(self.frags)} pending fragment(s):")
+        for f in self.frags:
+            name = self.frag_name.get(f) or os.path.basename(f)
+            dated = self.frag_commit.get(f)
+            if dated:
+                sha, stamp = dated
+                day = stamp[:10]
+                days[day] = days.get(day, 0) + 1
+                out_line(f"  {name}  committed {stamp} UTC ({sha[:COMMIT_SHA_LEN]})  -> {day}")
+            else:
+                reason = self.undated_reason or "not committed yet"
+                out_line(f"  {name}  not dated: {reason}  -> the day it is assembled")
+        if days:
+            out_line("")
+            out_line("Run once per day, oldest first:")
+            for day in sorted(days):
+                out_line(f"  bash docs/ReleaseNotes/assemble.sh {day}   # {days[day]} fragment(s)")
+
     # ── the run, end to end ──────────────────────────────────────────────
 
     def run(self) -> None:
@@ -2726,9 +2827,11 @@ def _on_sigterm(_signum, _frame):
 
 def main(argv: list[str]) -> int:
     date = ""
-    allow_mixed = force = False
+    allow_mixed = force = list_only = False
     for a in argv:
-        if a == "--allow-mixed-dates":
+        if a == "--list":
+            list_only = True
+        elif a == "--allow-mixed-dates":
             allow_mixed = True
         elif a == "--force-append":
             force = True
@@ -2741,6 +2844,11 @@ def main(argv: list[str]) -> int:
                 return 1
             date = a
 
+    if list_only and (date or allow_mixed or force):
+        # A preview of what the default, dated run would do; the flags that
+        # change that run have nothing to change here.
+        err("Error: --list takes no date and no other option")
+        return 1
     if not date:
         date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
@@ -2750,9 +2858,12 @@ def main(argv: list[str]) -> int:
     signal.signal(signal.SIGTERM, _on_sigterm)
 
     directory = os.path.dirname(os.path.realpath(__file__))
-    run = Assembly(directory, date, allow_mixed, force)
+    run = Assembly(directory, date, allow_mixed, force, list_only)
     try:
-        run.run()
+        if list_only:
+            run.run_list()
+        else:
+            run.run()
     except SystemExit as e:
         return int(e.code or 0)
     except KeyboardInterrupt:

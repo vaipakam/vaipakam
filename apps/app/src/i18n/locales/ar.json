@@ -2495,6 +2495,7 @@
         "OfferSaleProceedsCredited": "أُضيفت عائدات البيع إلى الخزنة",
         "CollateralSaleProceedsSplit": "تم تقسيم عائدات البيع",
         "ParallelSaleLockReleased": "تم تحرير إدراج بيع الضمان",
+        "ParallelSaleReleaseConsolidationDeferred": "تأجيل نقل الضمان",
         "PartialCollateralWithdrawn": "تم سحب جزء من الضمان",
         "PostParallelSaleListing": "تم نشر إدراج بيع الضمان",
         "PrepaySaleListingSynced": "أُعيد فحص إدراج بيع الضمان",

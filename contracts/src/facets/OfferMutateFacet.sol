@@ -603,13 +603,17 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // shared with create. An edit is never the lender-sale vehicle (that
         // offer is frozen by {_assertMutableBy}), so it gets no zero-collateral
         // exception: an ERC-20 loan against ERC-20 collateral keeps a positive
-        // floor and ceiling through every edit.
+        // floor and ceiling through every edit, and a rental keeps naming no
+        // collateral (#2949).
         LibOfferShape.assertCollateral(
             offer.offerType,
             offer.assetType,
+            offer.collateralAsset,
             offer.collateralAssetType,
             newCollateralAmount,
             newCollateralAmountMax,
+            offer.collateralTokenId,
+            offer.collateralQuantity,
             false
         );
 

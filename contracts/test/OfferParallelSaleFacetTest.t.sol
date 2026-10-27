@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
+import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -350,6 +351,55 @@ contract OfferParallelSaleFacetTest is SetupTest {
         // Test by expecting revert on the OOB read.)
         vm.expectRevert();
         mockExecutor.clearOfferOrderCalls(0);
+    }
+
+    /// @dev #2735 — a release stands even when the follow-on consolidation
+    ///      of the borrower side to the holder reverts: the listing is
+    ///      cleared and the failed move is reported, never rolled back with it.
+    function test_releaseParallelSaleLock_standsWhenConsolidationReverts() public {
+        _scaffoldDefaultOffer();
+        vm.prank(borrowerHolder);
+        bytes32 orderHash = OfferParallelSaleFacet(address(diamond))
+            .postParallelSaleListing(
+                uint96(OFFER_ID), SAFE_ASK, conduitKey, _emptyFeeLegs()
+            );
+
+        // The offer became a loan the holder still owns.
+        LibVaipakam.Offer memory o = _baseOffer();
+        o.accepted = true;
+        _scaffoldOffer(o);
+        uint256 loanId = 9_200;
+        uint256 borrowerTokenId = 602;
+        LibVaipakam.Loan memory loan;
+        loan.status = LibVaipakam.LoanStatus.Active;
+        loan.borrowerTokenId = borrowerTokenId;
+        TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(borrowerHolder, borrowerTokenId);
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanId(OFFER_ID, loanId);
+
+        // The move to the holder's vault fails (a vault withdrawal, a
+        // non-standard NFT transfer).
+        bytes memory reason = abi.encodeWithSignature("Error(string)", "move failed");
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(ConsolidationFacet.eagerConsolidateToHolder.selector),
+            reason
+        );
+
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit OfferParallelSaleFacet.ParallelSaleReleaseConsolidationDeferred(
+            uint96(OFFER_ID), loanId, reason
+        );
+        vm.expectEmit(true, true, false, false, address(diamond));
+        emit OfferParallelSaleFacet.ParallelSaleLockReleased(uint96(OFFER_ID), borrowerHolder);
+        vm.prank(borrowerHolder);
+        OfferParallelSaleFacet(address(diamond)).releaseParallelSaleLock(uint96(OFFER_ID));
+
+        assertEq(
+            mockExecutor.clearOfferOrderCalls(0),
+            orderHash,
+            "the listing MUST be cleared despite the failed move"
+        );
     }
 
     function test_releaseParallelSaleLock_revertsForNonCreator() public {

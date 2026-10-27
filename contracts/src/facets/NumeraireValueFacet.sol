@@ -55,7 +55,10 @@ contract NumeraireValueFacet {
     ///         has no trusted price and is valued at 0 (README: illiquid
     ///         assets count for nothing in a KYC comparison). A liquid asset
     ///         is valued by the shared rule, rounded down (a value compared
-    ///         against a threshold).
+    ///         against a threshold). A zero amount is worth 0 without a
+    ///         price read, so an empty leg — a rental's collateral, which
+    ///         names no asset (#2949) — values as nothing rather than
+    ///         reverting on the missing asset.
     /// @param asset  Token to value.
     /// @param amount Amount in `asset`'s base units.
     function getLiquidNumeraireValue(address asset, uint256 amount)
@@ -63,6 +66,7 @@ contract NumeraireValueFacet {
         view
         returns (uint256 value)
     {
+        if (amount == 0) return 0;
         if (
             OracleFacet(address(this)).checkLiquidity(asset)
                 != LibVaipakam.LiquidityStatus.Liquid

@@ -144,6 +144,12 @@ library LibRiskAccess {
         view
         returns (LibVaipakam.RiskAccessLevel level, address classAsset)
     {
+        // #2949 — a rental (an NFT lending leg) carries no collateral leg, so
+        // it adds no requirement: the lowest level, and no classification
+        // asset. Its risk is the prepay token, classified on the lend leg.
+        if (_isNft(p.lendType)) {
+            return (LibVaipakam.RiskAccessLevel.BlueChipOnly, address(0));
+        }
         // An NFT collateral is always genuine illiquid collateral.
         if (_isNft(p.collType)) {
             return (LibVaipakam.RiskAccessLevel.IlliquidCustom, p.collAsset);

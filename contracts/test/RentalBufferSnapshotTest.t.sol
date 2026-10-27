@@ -143,8 +143,8 @@ contract RentalBufferSnapshotTest is SetupTest {
                 amountMax: 12 ether,
                 interestRateBps: 0,
                 interestRateBpsMax: 0,
-                collateralAmount: 1 ether, // unchanged
-                collateralAmountMax: 1 ether // unchanged
+                collateralAmount: 0, // a rental carries no collateral (#2949)
+                collateralAmountMax: 0
             })
         );
         assertEq(
@@ -166,8 +166,8 @@ contract RentalBufferSnapshotTest is SetupTest {
             lendingAsset: mockNft721,
             amount: dailyFee,
             interestRateBps: 0,
-            collateralAsset: mockERC20,
-            collateralAmount: totalPrepay,
+            collateralAsset: address(0),
+            collateralAmount: 0,
             durationDays: duration,
             assetType: LibVaipakam.AssetType.ERC721,
             tokenId: 1,
@@ -182,7 +182,7 @@ contract RentalBufferSnapshotTest is SetupTest {
             allowsParallelSale: false,
             amountMax: dailyFee,
             interestRateBpsMax: 0,
-            collateralAmountMax: totalPrepay,
+            collateralAmountMax: 0,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
@@ -201,8 +201,8 @@ contract RentalBufferSnapshotTest is SetupTest {
             lendingAsset: mockNft721,
             amount: dailyFee,
             interestRateBps: 0,
-            collateralAsset: mockCollateralERC20,
-            collateralAmount: 1 ether,
+            collateralAsset: address(0),
+            collateralAmount: 0,
             durationDays: duration,
             assetType: LibVaipakam.AssetType.ERC721,
             tokenId: tokenId,
@@ -217,7 +217,7 @@ contract RentalBufferSnapshotTest is SetupTest {
             allowsParallelSale: false,
             amountMax: dailyFee,
             interestRateBpsMax: 0,
-            collateralAmountMax: 1 ether,
+            collateralAmountMax: 0,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,

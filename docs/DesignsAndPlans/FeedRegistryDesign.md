@@ -139,6 +139,33 @@ writes the file:
    every source's answer, and nothing is drafted for it. A feed for which no
    source names any token on the chain (SOL / USD on an L2) is listed under
    `skipped` instead, with every other feed the tool did not draft and why.
+3b. On Arbitrum, Polygon, Base and Optimism it adds bridge provenance
+   (`packages/contracts/scripts/feed-bindings-bridge.mjs`). For each symbol
+   Ethereum's own file has settled (its drafted and manual bindings, never its
+   review; a symbol bound to two tokens there is left out), it asks the
+   chain's canonical bridge which token stands for that Ethereum token:
+   Arbitrum's L2 gateway router (`calculateL2TokenAddress`, counted only where
+   a token answers at that address), Polygon's child chain manager
+   (`rootToChildToken`), and, on the OP Stack chains, the L1 standard bridge's
+   deposit ledger on Ethereum (`deposits(l1Token, l2Token)`): the candidate
+   holding more than half of the bridge's balance of the Ethereum token. An
+   OP Stack token's own `remoteToken()` is not used, since anyone can deploy a
+   token that reports one. The proof sits beside the three sources, never
+   instead of them:
+   - a drafted binding it confirms gains `bridge` in `agreedBy` and a
+     `bridgeProof`;
+   - a drafted binding it contradicts (the bridge names a different deployed
+     token, as with native USDC against bridged USDC.e) goes to review;
+   - a review entry is settled into a binding only when at least two sources
+     name the bridge's token and no source names any other address, so a
+     source that merely omits the token no longer blocks it, while a source
+     naming another token, alone or beside the bridge's, still does: the
+     bridge never chooses between two candidates a list offers. The binding
+     records `settledFrom`, the
+     reason it had been in review.
+   The file's `bridge` record states the method, the contract read, the
+   block, and the SHA-256 of the Ethereum file the originals came from.
+   Ethereum's file is drafted first.
 4. It reads each drafted binding on chain the way the registry will check
    it: the feed's `description()` becomes the binding's pair name, and the
    feed's decimals, the age of its latest answer against its heartbeat plus the grace, and

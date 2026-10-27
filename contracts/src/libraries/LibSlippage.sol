@@ -106,31 +106,46 @@ library LibSlippage {
      * @dev    For the constant product, `executedPrice / midPrice`
      *         collapses to a ratio of like-unit (token-in) quantities:
      *
-     *             exec/mid = (1 − fee) · reserveIn / (reserveIn + dxNet)
+     *             exec/mid = (dxNet / amountIn) · reserveIn / (reserveIn + dxNet)
      *
-     *         where `dxNet = amountIn · (1 − fee)` — *no token-out
+     *         where `dxNet = ⌊amountIn · (1 − fee)⌋` is the fee-net input
+     *         in the input token's base units, floored exactly as
+     *         {constantProductAmountOut} floors it — *no token-out
      *         quantity appears*, so the caller never needs the token-out
      *         decimals, and the metric is identical whether the pool is
      *         WETH/USDC, USDC/USDT (≈0 impact — correctly "deep"), or
-     *         WETH/SHIB. Hence:
+     *         WETH/SHIB.
      *
-     *             impactBps = BPS − BPS·(FEE_DENOM − feePips)·reserveIn
-     *                               ÷ (FEE_DENOM·(reserveIn + dxNet))
+     *         The fee factor is the REALISED `dxNet / amountIn`, not the
+     *         continuous `1 − fee` (#2752). The two agree to within one
+     *         base unit of `amountIn`; they part only on a trade so small
+     *         that the fee's rounding is a visible share of it. There the
+     *         realised factor is the true one: a trade whose `dxNet`
+     *         floors to 0 receives nothing ({constantProductAmountOut}
+     *         returns 0), so its impact is the full `BPS`, where the
+     *         continuous factor read it as just the fee (≈30 bps at
+     *         0.30%). The deviation is always toward MORE impact, the
+     *         fail-safe direction for a tier gate. (A V2-style pool that
+     *         charges its fee fractionally would fill a dust trade
+     *         slightly better than this; the gate is conservative there,
+     *         and the probe's sizes are thousands of dollars, far from it.)
      *
-     *         computed via one `Math.mulDiv(BPS·(FEE_DENOM − feePips),
-     *         reserveIn, FEE_DENOM·(reserveIn + dxNet))` — the
-     *         `BPS·(FEE_DENOM − feePips)` factor is ≤ 1e10, the divisor
-     *         `FEE_DENOM·(reserveIn + dxNet)` is bounded by `uint256` for
-     *         any real ERC-20 reserve, and `mulDiv` carries the 512-bit
-     *         `· reserveIn` intermediate. Result clamped to `[0, BPS]`.
-     *         Reverts {InvalidReserves}/{FeeTooHigh} like
-     *         {constantProductAmountOut}; returns `0` for `amountIn == 0`.
+     *         Computed as `mulDiv(mulDiv(dxNet, reserveIn, amountIn), BPS,
+     *         reserveIn + dxNet)`: the inner quotient is
+     *         `reserveIn · (dxNet / amountIn)`, at most `reserveIn` and
+     *         floored by under one unit of a reserve-sized quantity, and
+     *         `mulDiv` carries both 512-bit intermediates. The divisor
+     *         `reserveIn + dxNet` is bounded by `uint256` for any real
+     *         ERC-20 reserve. Result clamped to `[0, BPS]`. Reverts
+     *         {InvalidReserves}/{FeeTooHigh} like
+     *         {constantProductAmountOut}; returns `0` for `amountIn == 0`
+     *         (no trade, no impact).
      *
      *         The `ratioBps` is `mulDiv`-floored, which biases the
      *         returned `impactBps` *upward* by at most 1 bp — a
      *         deliberate, fail-safe direction for a tier gate (it can
      *         only ever *under*-tier a borderline asset, never over-tier
-     *         it). Note also that even an infinitesimal trade returns
+     *         it). Note also that even a negligible trade returns at least
      *         ≈ `feePips/100` bps of impact — the swap fee is part of
      *         what a liquidator eats, so the "≤ 2%" tier bound is
      *         *inclusive* of it (a 0.30% pool starts at 30 bps, leaving
@@ -152,12 +167,13 @@ library LibSlippage {
         if (reserveIn == 0) revert InvalidReserves();
         if (amountIn == 0) return 0;
         uint256 dxNet = Math.mulDiv(amountIn, FEE_DENOM - feePips, FEE_DENOM);
-        // exec/mid · BPS, rounded down. dxNet == 0 ⇒ ratio = (1−fee)·BPS
-        // exactly (an all-but-dust trade still eats the fee).
+        // exec/mid · BPS, rounded down, with the REALISED fee factor
+        // dxNet / amountIn (#2752). dxNet == 0 ⇒ ratio = 0 ⇒ full impact:
+        // the trade receives nothing.
         uint256 ratioBps = Math.mulDiv(
-            BPS * (FEE_DENOM - feePips),
-            reserveIn,
-            FEE_DENOM * (reserveIn + dxNet)
+            Math.mulDiv(dxNet, reserveIn, amountIn),
+            BPS,
+            reserveIn + dxNet
         );
         return ratioBps >= BPS ? 0 : BPS - ratioBps;
     }

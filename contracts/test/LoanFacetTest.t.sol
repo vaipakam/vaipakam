@@ -489,6 +489,8 @@ contract LoanFacetTest is Test {
         uint256 tokenId,
         uint256 quantity
     ) internal returns (uint256 offerId) {
+        // #2949 — a rental carries no collateral, so a rental caller's
+        // collateral arguments are not sent.
         vm.prank(lender);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
@@ -496,8 +498,8 @@ contract LoanFacetTest is Test {
                 lendingAsset: lendingAsset,
                 amount: amount,
                 interestRateBps: 500,
-                collateralAsset: collateralAsset,
-                collateralAmount: collateralAmount,
+                collateralAsset: assetType == LibVaipakam.AssetType.ERC20 ? collateralAsset : address(0),
+                collateralAmount: assetType == LibVaipakam.AssetType.ERC20 ? collateralAmount : 0,
                 durationDays: durationDays,
                 assetType: assetType,
                 tokenId: tokenId,
@@ -512,7 +514,7 @@ contract LoanFacetTest is Test {
                 allowsParallelSale: false,
                 amountMax: amount,
                 interestRateBpsMax: 500,
-                collateralAmountMax: collateralAmount,
+                collateralAmountMax: assetType == LibVaipakam.AssetType.ERC20 ? collateralAmount : 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
@@ -1008,8 +1010,8 @@ contract LoanFacetTest is Test {
                 lendingAsset: mockNft721,
                 amount: 10 ether, // daily rental fee
                 interestRateBps: 500,
-                collateralAsset: mockERC20,
-                collateralAmount: 15 ether,
+                collateralAsset: address(0),
+                collateralAmount: 0,
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC721,
                 tokenId: 1,
@@ -1024,7 +1026,7 @@ contract LoanFacetTest is Test {
                 allowsParallelSale: false,
                 amountMax: 10 ether,
                 interestRateBpsMax: 500,
-                collateralAmountMax: 15 ether,
+                collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,

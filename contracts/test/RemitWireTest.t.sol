@@ -6,7 +6,7 @@ import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProo
 import {RemitWire} from "../src/crosschain/RemitWire.sol";
 import {MerkleFixture} from "./mocks/MerkleFixture.sol";
 
-/// @title RemitWireTest — #1566 transport epochs 3d-1: the d6 wire's codec and
+/// @title RemitWireTest — #1566 transport epochs 3d-1 / #918: the d7 wire's codec and
 ///        commitment rules.
 contract RemitWireTest is Test {
     function _days(uint256 n) internal pure returns (uint256[] memory d) {
@@ -14,20 +14,42 @@ contract RemitWireTest is Test {
         for (uint256 i; i < n; ++i) d[i] = 100 + i;
     }
 
-    function test_D6_RoundTrip_CarriesRootExtentSplitAndEra() public pure {
-        bytes memory p = RemitWire.encodeD6(bytes32(uint256(0xABC)), 33, 3, 9e18, 77, address(0xD1A), 4e18, 5);
-        (uint256 tag, bytes32 root, uint256 e, uint256 c, uint256 total, uint256 remitId, address remitter, uint256 rec, uint256 era) =
+    function test_D7_RoundTrip_CarriesRootExtentSplitEraAndTheDaysWhole() public pure {
+        bytes memory p = RemitWire.encodeD7(
+            RemitWire.D7({
+                dayListRoot: bytes32(uint256(0xABC)),
+                elementCount: 33,
+                chunkCount: 3,
+                total: 9e18,
+                remitId: 77,
+                remitter: address(0xD1A),
+                recycledShare: 4e18,
+                intendedEra: 5,
+                dayWholeFresh: 11e18,
+                dayWholeRecycled: 6e18
+            })
+        );
+        assertEq(p.length, 11 * 32, "eleven static words");
+        (uint256 tag, RemitWire.D7 memory w) = abi.decode(p, (uint256, RemitWire.D7));
+        assertEq(tag, RemitWire.REMIT_WIRE_TAG_D7, "leads with the d7 tag");
+        assertEq(w.dayListRoot, bytes32(uint256(0xABC)));
+        assertEq(w.elementCount, 33);
+        assertEq(w.chunkCount, 3);
+        assertEq(w.total, 9e18);
+        assertEq(w.remitId, 77);
+        assertEq(w.remitter, address(0xD1A));
+        assertEq(w.recycledShare, 4e18);
+        assertEq(w.intendedEra, 5);
+        assertEq(w.dayWholeFresh, 11e18, "#918: the day's whole rides per component");
+        assertEq(w.dayWholeRecycled, 6e18);
+        // The era rides as a full word, at the same place d6 put it.
+        (, , , , , , , , uint256 era) =
             abi.decode(p, (uint256, bytes32, uint256, uint256, uint256, uint256, address, uint256, uint256));
-        assertEq(tag, RemitWire.REMIT_WIRE_TAG_D6, "leads with the d6 tag");
-        assertEq(root, bytes32(uint256(0xABC)));
-        assertEq(e, 33);
-        assertEq(c, 3);
-        assertEq(total, 9e18);
-        assertEq(remitId, 77);
-        assertEq(remitter, address(0xD1A));
-        assertEq(rec, 4e18);
         assertEq(era, 5, "the era rides as a full word");
-        assertTrue(RemitWire.REMIT_WIRE_TAG_D6 != RemitWire.REMIT_WIRE_TAG_P2, "a tag per shape");
+        assertTrue(RemitWire.REMIT_WIRE_TAG_D7 != RemitWire.REMIT_WIRE_TAG_P2, "a tag per shape");
+        assertTrue(
+            RemitWire.REMIT_WIRE_TAG_D7 != uint256(keccak256("vaipakam.remit.wire.d6")), "d7 is not the retired d6 tag"
+        );
     }
 
     function test_D6_Chunking_IsFixedSize_LastChunkShort() public pure {

@@ -31,6 +31,7 @@ interface ILaunchReadableDiamond {
         external
         view
         returns (uint64 lapseWindowSeconds, uint64 dispatchCutoffGap);
+    function getInteractionHalfPoolForDay(uint256 day) external view returns (uint256);
 }
 
 /**
@@ -206,7 +207,7 @@ library LibLaunchReadiness {
         checks[2] = _priceFeed(diamond, declared.weth);
         checks[3] = _swapRoute(diamond);
         checks[4] = _vpfiPool(diamond, route, declared);
-        checks[5] = _ccipLanes(route, declared);
+        checks[5] = _ccipLanes(diamond, route, declared);
         checks[6] = _wethQuoteRoute(diamond);
         checks[7] = _feedRegistry(diamond, declared.feedRegistry);
         checks[8] = _lapseSchedule(diamond);
@@ -801,7 +802,18 @@ library LibLaunchReadiness {
     ///      declared peer, the remote token and the one remote pool, since a
     ///      selector alone says nothing about where its messages go (Codex
     ///      #2686 r11).
-    function _ccipLanes(VpfiRoute memory route, Declared memory declared) private view returns (Check memory c) {
+    ///
+    ///      #918 adds an ADVISORY that never changes `met`: when the smallest
+    ///      lane capacity is below the largest fresh day slice the schedule
+    ///      can owe (twice the day-1 half-pool), the detail says such a day is
+    ///      remitted in several parts. That is supported behaviour (the owner's
+    ///      "send in parts" decision), so it is disclosed, not refused; the
+    ///      blocking form of the same comparison is in ConfigureCcip.
+    function _ccipLanes(address diamond, VpfiRoute memory route, Declared memory declared)
+        private
+        view
+        returns (Check memory c)
+    {
         c.label = "CCIP lanes are exactly the declared set, rate-limited";
         if (!route.readable) {
             c.detail = route.detail;
@@ -875,9 +887,12 @@ library LibLaunchReadiness {
                 return c;
             }
         }
+        uint256 minCapacity = type(uint256).max;
         for (uint256 i; i < count; ++i) {
             for (uint256 dir; dir < 2; ++dir) {
-                (bool readable, bool bounded) = _laneLimited(route.pool, uint64(selectors[i]), dir == 0);
+                (bool readable, bool bounded, uint256 capacity) =
+                    _laneLimited(route.pool, uint64(selectors[i]), dir == 0);
+                if (capacity < minCapacity) minCapacity = capacity;
                 if (!readable) {
                     c.checkable = false;
                     c.detail = "a lane's rate-limiter state is unreadable on the registry's VPFI pool";
@@ -895,7 +910,31 @@ library LibLaunchReadiness {
         c.detail = string.concat(
             "the registry's VPFI pool carries exactly the ",
             Strings.toString(count),
-            " declared lane(s), each reaching exactly its declared remote pool and token and rate-limited both ways within the governor's bounds"
+            " declared lane(s), each reaching exactly its declared remote pool and token and rate-limited both ways within the governor's bounds",
+            _partsAdvisory(diamond, minCapacity)
+        );
+    }
+
+    /// @dev #918: the advisory suffix for the lane check — empty unless the
+    ///      smallest lane capacity is below the largest fresh day slice the
+    ///      emission schedule can owe, in which case it says such a day goes
+    ///      in several parts. An unreadable schedule says so rather than
+    ///      staying silent, since the comparison was then not made.
+    function _partsAdvisory(address diamond, uint256 minCapacity) private view returns (string memory) {
+        (bool ok, bytes memory ret) = diamond.staticcall{gas: PROBE_GAS}(
+            abi.encodeCall(ILaunchReadableDiamond.getInteractionHalfPoolForDay, (uint256(1)))
+        );
+        if (!ok || ret.length != 32) {
+            return "; advisory: the day-1 half-pool is unreadable, so whether a day's fresh slice fits one lane transfer is unknown";
+        }
+        uint256 slice = 2 * abi.decode(ret, (uint256));
+        if (minCapacity >= slice) return "";
+        return string.concat(
+            "; advisory: the smallest lane capacity (",
+            Strings.toString(minCapacity),
+            ") is below the largest fresh day slice (",
+            Strings.toString(slice),
+            "), so such a day is remitted in several parts and opens on the mirror only once every part has landed (#918)"
         );
     }
 
@@ -952,7 +991,7 @@ library LibLaunchReadiness {
     function _laneLimited(address pool, uint64 chainSelector, bool inbound)
         private
         view
-        returns (bool readable, bool bounded)
+        returns (bool readable, bool bounded, uint256 capacity)
     {
         (bool ok, bytes memory ret) = pool.staticcall{gas: PROBE_GAS}(
             abi.encodeWithSignature(
@@ -960,10 +999,11 @@ library LibLaunchReadiness {
                 chainSelector
             )
         );
-        if (!ok || ret.length != 160) return (false, false);
-        (, , uint256 enabled, uint256 capacity, uint256 rate) =
-            abi.decode(ret, (uint256, uint256, uint256, uint256, uint256));
-        if (enabled > 1) return (false, false);
+        if (!ok || ret.length != 160) return (false, false, 0);
+        uint256 enabled;
+        uint256 rate;
+        (, , enabled, capacity, rate) = abi.decode(ret, (uint256, uint256, uint256, uint256, uint256));
+        if (enabled > 1) return (false, false, 0);
         readable = true;
         bounded = enabled == 1 && capacity >= VpfiPoolRateBounds.MIN_CAPACITY
             && capacity <= VpfiPoolRateBounds.MAX_CAPACITY

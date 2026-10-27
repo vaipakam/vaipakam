@@ -32,6 +32,14 @@
  *      source's answer, and nothing is drafted for it. A feed for which no
  *      source names any token on the chain (SOL / USD on an L2, say) is
  *      `skipped` instead: there is nothing to review.
+ *   3b. On a chain with a canonical bridge from Ethereum (Arbitrum, Polygon,
+ *      Base, Optimism), reads which token the bridge holds for the Ethereum
+ *      token Ethereum's own bindings file settled for the same symbol, and
+ *      uses it beside the three sources (`feed-bindings-bridge.mjs`): it
+ *      confirms a drafted binding or sends it to review when the bridge names
+ *      another deployed token, and it settles a review entry only when at
+ *      least two sources name the bridge's token and no source names a
+ *      different one. Ethereum's file must be drafted first.
  *   4. Reads every drafted binding on chain through `--rpc` (a public RPC per
  *      chain by default) the way the registry will check it: the feed's
  *      `description()` (which becomes the binding's `pair`), its
@@ -53,7 +61,7 @@
  *
  * Usage (from the repository root):
  *   node packages/contracts/scripts/chainlink-feed-bindings.mjs \
- *     --chain base --env-file contracts/.env [--rpc <url>] \
+ *     --chain base --env-file contracts/.env [--rpc <url>] [--l1-rpc <url>] \
  *     [--directory <saved.json> | --save-directory <path>] [--date YYYYMMDD] \
  *     [--out <path>]
  */
@@ -63,6 +71,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, getAddress, http, isAddress, parseAbi } from 'viem';
 import { isEntryPoint } from './entry-point.mjs';
+import { BRIDGES, applyBridgeProofs, ethereumOriginals, readBridgeProofs, wantedProofs } from './feed-bindings-bridge.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
@@ -145,7 +154,7 @@ const MANUAL_CATEGORIES = new Set(['low', 'medium', 'high', 'new', 'custom']);
 
 // ---------------------------------------------------------------- arguments
 
-const FLAGS = new Set(['chain', 'env-file', 'rpc', 'directory', 'save-directory', 'date', 'out']);
+const FLAGS = new Set(['chain', 'env-file', 'rpc', 'l1-rpc', 'directory', 'save-directory', 'date', 'out']);
 
 /** Parses `--flag value` pairs; refuses an unknown flag or a missing value. */
 export function parseArgs(argv) {
@@ -347,11 +356,19 @@ export function resolveBindings(kept, { coingecko, coinmarketcap, tokenList }, m
       ...(Object.keys(others).length ? { otherCandidates: others } : {}),
     });
   }
-  // Two feeds may resolve to one (token, quote): the registry holds one, so
-  // neither is drafted and both go to review.
+  const separated = separateDuplicates(drafts);
+  return { bindings: separated.bindings, review: [...review, ...separated.review], skipped };
+}
+
+/**
+ * Two feeds may resolve to one (token, quote): the registry holds one, so
+ * neither is drafted and both go to review. Pure.
+ */
+export function separateDuplicates(drafts) {
+  const review = [];
   const byKey = new Map();
   for (const d of drafts) {
-    const k = `${d.token}|${d.quote}`;
+    const k = `${lower(d.token)}|${d.quote}`;
     byKey.set(k, [...(byKey.get(k) ?? []), d]);
   }
   const bindings = [];
@@ -371,7 +388,7 @@ export function resolveBindings(kept, { coingecko, coinmarketcap, tokenList }, m
       });
     }
   }
-  return { bindings, review, skipped };
+  return { bindings, review };
 }
 
 // ---------------------------------------------------------------- step 4
@@ -562,17 +579,75 @@ async function main(argv) {
   const cmc = coinmarketcapIndex(cmcResponses, chain.cmcPlatforms);
 
   // 3. Resolve.
-  const resolved = resolveBindings(
+  const tokenIdx = tokenListIndex(lists, chain.chainId);
+  let resolved = resolveBindings(
     kept,
-    { coingecko: coingeckoIndex(coins, chain.coingeckoPlatform), coinmarketcap: cmc.idx, tokenList: tokenListIndex(lists, chain.chainId) },
+    { coingecko: coingeckoIndex(coins, chain.coingeckoPlatform), coinmarketcap: cmc.idx, tokenList: tokenIdx },
     manual,
   );
 
-  // 4. On-chain reads.
+  // The block every chain read below is pinned to (3b and 4).
   const client = createPublicClient({ transport: http(args.rpc ?? chain.rpc) });
   const chainId = await client.getChainId();
   if (chainId !== chain.chainId) throw new Error(`--rpc serves chain ${chainId}, not ${args.chain} (${chain.chainId})`);
   const block = await client.getBlock({ blockTag: 'latest' });
+
+  // 3b. Bridge provenance, beside the three sources.
+  let bridge;
+  if (BRIDGES[args.chain]) {
+    const ethPath = join(REPO, 'contracts', 'deployments', 'ethereum', 'feed-bindings.json');
+    let ethBytes;
+    try {
+      ethBytes = readFileSync(ethPath);
+    } catch (err) {
+      if (err?.code === 'ENOENT') throw new Error(`${args.chain} proves bridged tokens against Ethereum's bindings: draft --chain ethereum first`);
+      throw err;
+    }
+    const ethFile = JSON.parse(ethBytes.toString('utf8'));
+    const { originals, ambiguous } = ethereumOriginals(ethFile);
+    const keptByPath = new Map(kept.map((f) => [f.directoryPath, f]));
+    const wanted = wantedProofs({ resolved, keptByPath, originals });
+    let l1;
+    let l1Block;
+    if (BRIDGES[args.chain].l1Bridge) {
+      l1 = createPublicClient({ transport: http(args['l1-rpc'] ?? CHAINS.ethereum.rpc) });
+      const l1Id = await l1.getChainId();
+      if (l1Id !== CHAINS.ethereum.chainId) throw new Error(`--l1-rpc serves chain ${l1Id}, not Ethereum`);
+      l1Block = await l1.getBlockNumber();
+    }
+    const { proofs, record } = await readBridgeProofs({
+      slug: args.chain,
+      l2: client,
+      l2Block: block.number,
+      l1,
+      l1Block,
+      wanted,
+      multicallAddress: MULTICALL3,
+    });
+    const applied = applyBridgeProofs({
+      resolved,
+      keptByPath,
+      proofs,
+      tokenDecimals: (symbol, address) => tokenIdx.get(lower(symbol))?.get(lower(address)),
+      quotes: QUOTES,
+      manualCovered: new Set(manual.map((m) => `${lower(m.token)}|${m.quote}`)),
+    });
+    const separated = separateDuplicates(applied.bindings);
+    resolved = {
+      bindings: separated.bindings,
+      review: [...applied.review, ...separated.review],
+      skipped: [...resolved.skipped, ...applied.skipped],
+    };
+    bridge = {
+      ...record,
+      ethereumBindings: { sha256: sha256(ethBytes), checkedAtBlock: ethFile.checkedAtBlock },
+      ...(ambiguous.length ? { ambiguousOriginals: ambiguous } : {}),
+      proved: [...proofs.values()].filter((p) => p.canonical).length,
+      settled: applied.settled.sort(),
+    };
+  }
+
+  // 4. On-chain reads.
   const reads = await readChain(client, resolved.bindings, block.number);
   const checked = applyChainReads(resolved.bindings, reads, block.timestamp);
 
@@ -587,6 +662,7 @@ async function main(argv) {
       tokenLists: listMeta,
     },
     checkedAtBlock: Number(block.number),
+    ...(bridge ? { bridge } : {}),
     bindings: checked.kept.sort((a, b) => a.symbol.localeCompare(b.symbol) || a.quote.localeCompare(b.quote)),
     manual,
     review: [...resolved.review, ...checked.review].sort(byPair),
@@ -597,6 +673,7 @@ async function main(argv) {
 
   console.log(`${args.chain}: ${file.bindings.length} drafted, ${manual.length} manual, ${file.review.length} to review, ${file.skipped.length} skipped`);
   console.log(`directory sha256 ${file.directory.sha256}, date ${file.directory.date}`);
+  if (bridge) console.log(`bridge (${bridge.method}): ${bridge.proved} symbols proved, ${bridge.settled.length} review entries settled`);
   const near = cmc.platformsSeen.filter((n) => chain.cmcPlatforms.some((p) => lower(n).includes(lower(p))));
   console.log(`CoinMarketCap platform names matching this chain: ${near.join(', ') || '(none)'}`);
   console.log(`wrote ${out}`);

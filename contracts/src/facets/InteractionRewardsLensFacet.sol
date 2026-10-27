@@ -276,8 +276,9 @@ contract InteractionRewardsLensFacet {
     }
 
     /// @notice The 69M interaction pool's HARD headroom: `cap − paidOut −
-    ///         rewardBudgetRemittedGlobal`, the lifetime figure the pool's cap
-    ///         is measured against. What a settlement may spend NOW is less
+    ///         rewardBudgetRemittedGlobal − remitDayFreshReserved` (the last is
+    ///         what partly sent remit days hold for their mirrors, #918), the
+    ///         lifetime figure the pool's cap is measured against. What a settlement may spend NOW is less
     ///         by what staging records have reserved (3b-ii-A2, #2305) —
     ///         {getRewardReservations} reports both, so this figure is never
     ///         read as spendable (Codex #2308 r5).

@@ -2495,6 +2495,7 @@
         "OfferSaleProceedsCredited": "매각 대금이 금고에 입금됨",
         "CollateralSaleProceedsSplit": "매각 대금 분배됨",
         "ParallelSaleLockReleased": "담보 매각 등록 해제됨",
+        "ParallelSaleReleaseConsolidationDeferred": "담보 이동 보류됨",
         "PartialCollateralWithdrawn": "담보 일부 인출됨",
         "PostParallelSaleListing": "담보 매각 등록 게시됨",
         "PrepaySaleListingSynced": "담보 매각 등록 재확인됨",

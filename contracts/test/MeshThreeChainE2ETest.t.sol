@@ -1453,7 +1453,7 @@ contract MeshThreeChainE2ETest is Test {
         // for the deliveries, exactly as the seeded ledger above stands in
         // for their value.
         for (uint256 d = 4; d <= 8; ++d) {
-            _mut(ARB).setDayDeliveryProvedByRaw(d, keccak256(abi.encode("witness-delivery", d)));
+            _mut(ARB).setDayDeliveryLandedRaw(d, keccak256(abi.encode("witness-delivery", d)));
         }
         vm.prank(alice);
         (uint256 paid,,) = RewardClaimFacet(arbD).claimInteractionRewards();
@@ -1688,7 +1688,7 @@ contract MeshThreeChainE2ETest is Test {
      *         (day, destination) here, Base's quoted slice is non-zero IFF the
      *         mirror's `dayAwaitsFreshDelivery` is true for some side, before
      *         any delivery landed. The two are separate code on separate
-     *         diamonds -- the mirror restates Base's `_planDay` / `_sideLegs`
+     *         diamonds -- the mirror restates Base's `LibRemitDayLedger.planDay` / `_sideLegs`
      *         from stored Base-authored figures -- so only a real mesh can pin
      *         that they agree.
      *

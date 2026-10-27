@@ -73,14 +73,16 @@ library LibRewardRemitDispatch {
     ///         matched to another receiver's (#1566 PR 1 review): the Diamond's
     ///         rooted (d6) ingress, the one wire a remittance takes since #2669
     ///         retired the typed (d5) one, as measured by the cell that pins it
-    ///         in `RewardTransportD6Test` — cold, over the widest list — plus
+    ///         in `RewardTransportD7Test` — cold, over the widest list — plus
     ///         {REWARD_BUDGET_RECEIVER_RESERVE} for the receiver's own work,
     ///         with a quarter's margin, rounded up to the next 50,000.
-    ///         Re-measured 2026-10-24 (#2777): rooted 710,205, so
-    ///         (710,205 + 100,000) x 1.25 = 1,012,756, rounded up to 1,050,000.
-    ///         The 2026-10-12 figure was 685,689 under a limit of 1,000,000; the
-    ///         ingress has grown by 24,516 since (not attributed commit by
-    ///         commit), which left the margin short. Re-derive it whenever the cell's figure
+    ///         Re-measured 2026-10-27 (#918, the day's whole and per-part
+    ///         sums on the D7 wire): rooted 735,327, so
+    ///         (735,327 + 100,000) x 1.25 = 1,044,159, still rounded up to
+    ///         1,050,000. Earlier: 710,205 on 2026-10-24 (#2777) and 685,689
+    ///         on 2026-10-12 under a limit of 1,000,000. The next growth of
+    ///         about 4,700 gas crosses the rounding step and moves the limit to
+    ///         1,100,000. Re-derive it whenever the cell's figure
     ///         moves; the cell fails once the margin is gone. Raising it raises only the
     ///         destination-execution part of each remittance's CCIP fee, which
     ///         the sender quotes on-chain from this same constant. The 300,000
@@ -97,8 +99,10 @@ library LibRewardRemitDispatch {
     /**
      * @dev #1222 M3 B2-d2 (Codex #1426 r6) — NET fresh headroom for a remit
      *      that will retire `retires` of the outstanding armed-fresh
-     *      commitments: `CAP − remitted − paid − (outstandingFresh −
-     *      retires)`, floored at zero. The gross `CAP − remitted − paid`
+     *      commitments: `CAP − remitted − paid − held − (outstandingFresh −
+     *      retires)`, floored at zero, where the first three terms are
+     *      {LibInteractionRewards.poolRemaining} (`held` = what partly sent
+     *      unarmed days reserve, #918). The gross `CAP − remitted − paid`
      *      figure ignores commitments other days (and Base-side claims)
      *      still hold against the pool — after an operator RELEASE (which
      *      keeps the sent amount counted while restoring the obligation),
@@ -111,10 +115,7 @@ library LibRewardRemitDispatch {
         LibVaipakam.Storage storage s,
         uint256 retires
     ) internal view returns (uint256 remaining) {
-        uint256 used = s.rewardBudgetRemittedGlobal + s.interactionPoolPaidOut;
-        remaining = used >= LibVaipakam.VPFI_INTERACTION_POOL_CAP
-            ? 0
-            : LibVaipakam.VPFI_INTERACTION_POOL_CAP - used;
+        remaining = LibInteractionRewards.poolRemaining();
         uint256 outFresh = s.outstandingCommitFresh;
         uint256 encumbered = outFresh > retires ? outFresh - retires : 0;
         remaining = remaining > encumbered ? remaining - encumbered : 0;

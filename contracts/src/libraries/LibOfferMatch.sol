@@ -688,51 +688,56 @@ library LibOfferMatch {
         // — must mirror `LoanFacet._checkInitialLtvAndHf` so a bot's
         // preview never admits a pair the binding gate would revert. Two
         // regimes, switched by `depthTieredLtvEnabled`:
-        if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
-            // ON: the effective init-LTV cap = min(per-asset ceiling,
-            // tierMaxInitLtvBps[effectiveTier(collateral)]). An unset
-            // per-asset row is no ceiling (#2696); a Tier-0 collateral ⇒
-            // cap 0 ⇒ no positive amount works.
-            uint8 effTier =
-                OracleFacet(address(this)).getEffectiveLiquidityTier(L.collateralAsset);
-            uint256 maxLtv = LibVaipakam.assetInitLtvCeilingBps(L.collateralAsset);
-            // Phase 5 of AutonomousLtvAndOracleFallback.md — read the
-            // autonomous tier-LTV cache (peer-derived + bound-checked,
-            // refreshable permissionlessly) instead of the governance
-            // setter. Hard-stale cache falls back to per-tier library
-            // defaults. Keeps `matchOffers`' synthetic-HF check in sync
-            // with `LoanFacet._checkInitialLtvAndHf` — both consult
-            // the same effective cap.
-            uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
-            uint256 cap = maxLtv < tierCap ? maxLtv : tierCap;
-            uint256 capFloor = LibRiskMath.minCollateralForLtvCap(
-                r.matchAmount,
-                L.lendingAsset,
-                L.collateralAsset,
-                cap
-            );
-            // `capFloor == type(uint256).max` ⇒ cap is 0 (no borrow) ⇒
-            // reject. `capFloor == 0` only for a zero match amount (a
-            // missing or zero price reverts, #2419). Otherwise the matched
-            // collateral must meet the floor.
-            if (
-                capFloor == type(uint256).max
-                || (capFloor != 0 && r.reqCollateral < capFloor)
-            ) {
-                r.errorCode = MatchError.LtvAboveTier;
-                return r;
-            }
-        } else {
-            // OFF (the default): HF >= 1.5e18 — reuse the LibRiskMath
-            // floor; matched collateral >= floor(matchAmount) ⇒ satisfied.
-            uint256 floor = LibRiskMath.minCollateralForLending(
-                r.matchAmount,
-                L.lendingAsset,
-                L.collateralAsset
-            );
-            if (floor > 0 && r.reqCollateral < floor) {
-                r.errorCode = MatchError.HFTooLow;
-                return r;
+        // #2949 — a rental carries no collateral leg, so it has no LTV to
+        // gate (the binding accept never runs the gate on a rental: its
+        // lending leg is an NFT, so the pair is never both-liquid).
+        if (L.assetType == LibVaipakam.AssetType.ERC20) {
+            if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
+                // ON: the effective init-LTV cap = min(per-asset ceiling,
+                // tierMaxInitLtvBps[effectiveTier(collateral)]). An unset
+                // per-asset row is no ceiling (#2696); a Tier-0 collateral ⇒
+                // cap 0 ⇒ no positive amount works.
+                uint8 effTier =
+                    OracleFacet(address(this)).getEffectiveLiquidityTier(L.collateralAsset);
+                uint256 maxLtv = LibVaipakam.assetInitLtvCeilingBps(L.collateralAsset);
+                // Phase 5 of AutonomousLtvAndOracleFallback.md — read the
+                // autonomous tier-LTV cache (peer-derived + bound-checked,
+                // refreshable permissionlessly) instead of the governance
+                // setter. Hard-stale cache falls back to per-tier library
+                // defaults. Keeps `matchOffers`' synthetic-HF check in sync
+                // with `LoanFacet._checkInitialLtvAndHf` — both consult
+                // the same effective cap.
+                uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
+                uint256 cap = maxLtv < tierCap ? maxLtv : tierCap;
+                uint256 capFloor = LibRiskMath.minCollateralForLtvCap(
+                    r.matchAmount,
+                    L.lendingAsset,
+                    L.collateralAsset,
+                    cap
+                );
+                // `capFloor == type(uint256).max` ⇒ cap is 0 (no borrow) ⇒
+                // reject. `capFloor == 0` only for a zero match amount (a
+                // missing or zero price reverts, #2419). Otherwise the matched
+                // collateral must meet the floor.
+                if (
+                    capFloor == type(uint256).max
+                    || (capFloor != 0 && r.reqCollateral < capFloor)
+                ) {
+                    r.errorCode = MatchError.LtvAboveTier;
+                    return r;
+                }
+            } else {
+                // OFF (the default): HF >= 1.5e18 — reuse the LibRiskMath
+                // floor; matched collateral >= floor(matchAmount) ⇒ satisfied.
+                uint256 floor = LibRiskMath.minCollateralForLending(
+                    r.matchAmount,
+                    L.lendingAsset,
+                    L.collateralAsset
+                );
+                if (floor > 0 && r.reqCollateral < floor) {
+                    r.errorCode = MatchError.HFTooLow;
+                    return r;
+                }
             }
         }
 

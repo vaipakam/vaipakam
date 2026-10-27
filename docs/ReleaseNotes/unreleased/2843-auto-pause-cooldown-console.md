@@ -1,7 +1,0 @@
-## Thread — the protocol console shows the auto-pause cooldown and when the next automatic pause may start (#2843)
-
-The cooldown between automatic pauses (#2744) was enforced on chain but shown nowhere. The protocol console now shows it beside the automatic pause's length, together with the earliest time the incident monitor may pause the protocol automatically again. That time is shown as a date with its time zone, followed by either "now", once it has passed, or how long remains. When no automatic pause has ever stopped the protocol, the row says so in words instead of showing a date. Each row also says what the cooldown does not cover. An automatic pause that starts while the protocol is already paused by hand neither waits for the cooldown nor starts it, and changing the cooldown moves the time at once.
-
-Both values go through the same shared reader as every other single-value setting. So the indexer publishes them in its configuration snapshot, and the console reads them from the contracts whenever that snapshot falls short. The next-pause time is not a setting. It is a time the protocol records, so the reader's rule now admits recorded facts that only an announced transaction moves. The snapshot refreshes that time on an automatic pause as well as on a change to the cooldown. A Diamond that predates #2744 reports both values as not reported. The parameter reference's cooldown entry is now marked as shown, and all nine translated languages carry the new wording.
-
-Closes #2843.
