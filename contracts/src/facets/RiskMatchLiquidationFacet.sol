@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibFallbackCustody} from "../libraries/LibFallbackCustody.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
@@ -919,13 +920,14 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // is the one item no status fallback can cover — a later
                 // ClaimFacet `InternalMatched → Settled` would otherwise drop the
                 // status-derived forfeit and pay the liquidated borrower (Codex
-                // #1061 P1). Best-effort (reward bookkeeping never blocks the
-                // fund-critical close).
-                _rewardHook(
+                // #1061 P1). Bubbling (#2739): a terminal transition closes
+                // its reward entry in the same transaction or reverts.
+                LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         InteractionRewardsFacet.liquidationRewardClose.selector,
                         loan.id
-                    )
+                    ),
+                    IVaipakamErrors.RewardHookCallFailed.selector
                 );
                 // #577 — a full internal-match closes the loan, but an
                 // OVER-collateralized loan leaves a residual
@@ -1103,13 +1105,14 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // is the one item no status fallback can cover — a later
                 // ClaimFacet `InternalMatched → Settled` would otherwise drop the
                 // status-derived forfeit and pay the liquidated borrower (Codex
-                // #1061 P1). Best-effort (reward bookkeeping never blocks the
-                // fund-critical close).
-                _rewardHook(
+                // #1061 P1). Bubbling (#2739): a terminal transition closes
+                // its reward entry in the same transaction or reverts.
+                LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         InteractionRewardsFacet.liquidationRewardClose.selector,
                         loan.id
-                    )
+                    ),
+                    IVaipakamErrors.RewardHookCallFailed.selector
                 );
                 // #1132 (S10 central enforcement) — route through the terminalize
                 // host (both holders' markers recorded there).
@@ -1207,13 +1210,14 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // is the one item no status fallback can cover — a later
                 // ClaimFacet `InternalMatched → Settled` would otherwise drop the
                 // status-derived forfeit and pay the liquidated borrower (Codex
-                // #1061 P1). Best-effort (reward bookkeeping never blocks the
-                // fund-critical close).
-                _rewardHook(
+                // #1061 P1). Bubbling (#2739): a terminal transition closes
+                // its reward entry in the same transaction or reverts.
+                LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         InteractionRewardsFacet.liquidationRewardClose.selector,
                         loan.id
-                    )
+                    ),
+                    IVaipakamErrors.RewardHookCallFailed.selector
                 );
                 // #1132 (S10 central enforcement) — route through the terminalize host.
                 LibFacet.crossFacetCall(
@@ -1346,19 +1350,5 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
             r.incentiveX, r.incentiveY, 0
         );
         return true;
-    }
-
-    /// @dev #1067 — best-effort reward-lifecycle hook. The reward call-graph
-    ///      lives on {InteractionRewardsFacet} (this facet is EIP-170-tight), and
-    ///      reward bookkeeping is STRICTLY SUBORDINATE to the fund-critical
-    ///      internal-match close — so the low-level call's failure is
-    ///      intentionally not bubbled. Production always cuts
-    ///      InteractionRewardsFacet; a focused test harness that omits it simply
-    ///      skips reward bookkeeping.
-    function _rewardHook(bytes memory data) private {
-        (bool ok, ) = address(this).call(data);
-        if (!ok) {
-            // best-effort — the close proceeds regardless.
-        }
     }
 }

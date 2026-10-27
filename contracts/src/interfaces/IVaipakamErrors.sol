@@ -523,8 +523,8 @@ interface IVaipakamErrors {
     /// @notice The entry asks for more than the packet still holds in the row.
     error ReconciliationExceedsPacketRemainder(bytes32 packetHash, uint256 requested, uint256 remainder);
     /// @notice A row figure cannot cover the exit.
-    /// @param figure 0 the row's uncounted figure, 1 its returned figure,
-    ///        2 the global uncounted aggregate.
+    /// @param figure 0 the row's uncounted figure, 1 the global uncounted
+    ///        aggregate.
     error ReconciliationFigureShort(uint8 figure, uint256 requested, uint256 available);
     /// @notice No log entry at this index.
     error ReconciliationEntryUnknown(uint256 index);
@@ -664,11 +664,6 @@ interface IVaipakamErrors {
     /// @notice The envelope nets to nothing: there is no pre-stamp inventory
     ///         to import.
     error LegacyEnvelopeEmpty(bytes32 snapshotId);
-    /// @notice #1566 slice 4 PR B — a canonical chain must have armed
-    ///         per-receipt recovery attribution before activation: arming
-    ///         retires the legacy pooled recovery position, and a recovery
-    ///         row funded before that retirement would be left over-backed.
-    error RewardCustodyActivationRequiresRecoveryArming();
     /// @notice #1566 slice 4 PR B — the pause epoch the operator established
     ///         the activation figures under is no longer the live one.
     /// @param stated The epoch stated by the caller.
@@ -1029,9 +1024,9 @@ interface IVaipakamErrors {
     ///         Re-executable once the permissionless ack lands.
     error StrandedReturnAwaitingAck(uint256 remitId, uint8 status);
 
-    /// @notice #1660 r6 - the ack wire's classification word is zero or
-    ///         out of range: zero is the retired generation-1 bool-false
-    ///         shape, refused re-executably rather than misread.
+    /// @notice #1660 r6 - the ack wire's classification word is zero (an
+    ///         unassigned value) or out of range, refused re-executably
+    ///         rather than misread.
     error RemitAckClassificationInvalid(uint8 classification);
 
     // -- #1434 P2-w6 - the recovery ceremony + R6e rotation --
@@ -1067,14 +1062,6 @@ interface IVaipakamErrors {
     ///         its old-era remit id (the operator read the retiring
     ///         deployment's visible gate instead of its imported record).
     error ImportedTupleIsSentinel();
-
-    /// @notice #1662 r7 — this receipt predates per-receipt recovery
-    ///         attribution, so its unspent figure is not reconstructible
-    ///         and it may not fund an uncharged re-dispatch.
-    error RecoveryReceiptPredatesAttribution(uint256 sourceRemitId);
-
-    /// @notice #1662 r7 — attribution is a one-shot arming.
-    error RecoveryAttributionAlreadyArmed();
 
     /// @notice #1662 r5 — this tuple was already imported once. One
     ///         parcel, one import: the gate returns to zero at settlement,

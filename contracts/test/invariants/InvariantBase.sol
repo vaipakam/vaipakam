@@ -35,6 +35,7 @@ import {HelperTest} from "../HelperTest.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
+import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.sol";
 
 /**
  * @title InvariantBase
@@ -134,7 +135,7 @@ contract InvariantBase is Test {
         TestMutatorFacet mutatorFacet = new TestMutatorFacet();
         MetricsFacet metricsFacet = MetricsFacet(ArtifactDeploy.deploy(type(MetricsFacet).name));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](25);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](26);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -224,6 +225,15 @@ contract InvariantBase is Test {
             facetAddress: ArtifactDeploy.deploy(type(ForcedSaleFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getForcedSaleFacetSelectors()
+        });
+        // #2739 - terminal reward closes run by a BUBBLING self-call into
+        // InteractionRewardsFacet, so a Diamond without it reverts the claim
+        // and default terminals the handlers drive (and their try/catch would
+        // hide that as lost coverage, not a failure).
+        cuts[25] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(InteractionRewardsFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getInteractionRewardsFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

@@ -112,7 +112,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](263); // #2876 +setOfferPrepayListingExecutorRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](262); // #2876 +setOfferPrepayListingExecutorRaw (was 261); #2910 -setRecoveryAttributionRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -484,9 +484,6 @@ contract HelperTest {
         // #1662 r2 — unrelated recovery-position capacity, so an over-claw
         // on one receipt is observable against another's credit.
         selectors[n++] = TestMutatorFacet.setRecoveryPositionRaw.selector;
-        // #1662 r9 - reproduce the legacy pre-attribution shape.
-        selectors[n++] =
-            TestMutatorFacet.setRecoveryAttributionRaw.selector;
         // #1434 P1-b - stage / read back the mirror delivered-fresh ledger.
         selectors[n++] = TestMutatorFacet.setArmedFreshLedgerRaw.selector;
         selectors[n++] = TestMutatorFacet.setDayDeliveryProvedByRaw.selector; // #1944: the gate binds by role
@@ -2422,7 +2419,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](11);
+        selectors = new bytes4[](10);
         selectors[0] =
             RewardCompensationDispatchFacet.remitManualBudget.selector;
         selectors[1] =
@@ -2450,9 +2447,6 @@ contract HelperTest {
         // #1662 r4 - relocated off the remittance facet (EIP-170).
         selectors[9] =
             RewardCompensationDispatchFacet.releaseRemitReservation.selector;
-        // #1662 r7 - the one-shot attribution watermark.
-        selectors[10] =
-            RewardCompensationDispatchFacet.armRecoveryAttribution.selector;
     }
 
     /// #1566 slice 4 PR A — custody lifecycle, ledger views, paid-side
@@ -2462,7 +2456,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](42);
+        selectors = new bytes4[](41);
         selectors[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         selectors[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         selectors[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -2508,10 +2502,9 @@ contract HelperTest {
         // Diamond-internal entry points (the quarantine one took slot 27).
         selectors[37] = RewardCustodyFacet.custodyRecordIngressPacket.selector;
         selectors[38] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
-        selectors[39] = RewardCustodyFacet.custodyUnclassifiedReturn.selector;
         selectors[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
         // #1566 sanctions rule (owner 2026-10-14) — reward set apart / released.
-        selectors[41] = RewardCustodyFacet.custodySetApartReward.selector;
+        selectors[39] = RewardCustodyFacet.custodySetApartReward.selector;
         selectors[26] = RewardCustodyFacet.custodyReleaseSanctionsHeld.selector;
     }
 
@@ -2807,7 +2800,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](44);
+        selectors = new bytes4[](42);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2855,11 +2848,6 @@ contract HelperTest {
         selectors[29] = RewardRemittanceLensFacet
             .getRecoveryCreditForReceipt
             .selector;
-        // #1662 r8 - the attribution watermark, read by the refresh.
-        selectors[30] =
-            RewardRemittanceLensFacet.recoveryAttributionArmed.selector;
-        selectors[31] =
-            RewardRemittanceLensFacet.recoveryAttributionArmedAt.selector;
         // #2459 r5 — the provisional compensation value held apart.
         selectors[36] = RewardRemittanceLensFacet.getProvisionalFreshHeld.selector;
         // #1944 consequence 1 — the delivery gate's rule (the self-staticcall
@@ -2869,8 +2857,8 @@ contract HelperTest {
         selectors[39] = RewardRemittanceLensFacet.getPacketDeliveryProof.selector;
         selectors[40] = RewardRemittanceLensFacet.getChainRemittedRecycled.selector; // #1452
         selectors[41] = RewardRemittanceLensFacet.getRemitHistoryPending.selector; // #2489 r7
-        selectors[42] = RewardRemittanceLensFacet.getChainRemittedRecycledHistory.selector; // #2489 r9
-        selectors[43] = RewardRemittanceLensFacet.getRemitHistoryBooked.selector; // #2489 r10
+        selectors[30] = RewardRemittanceLensFacet.getChainRemittedRecycledHistory.selector; // #2489 r9
+        selectors[31] = RewardRemittanceLensFacet.getRemitHistoryBooked.selector; // #2489 r10
         selectors[35] = RewardRemittanceLensFacet.getRemitRoute.selector; // #2561
     }
 

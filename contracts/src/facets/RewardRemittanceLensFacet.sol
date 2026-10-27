@@ -618,21 +618,6 @@ contract RewardRemittanceLensFacet {
         );
     }
 
-    /// @notice #1434 P2-w6 (#1662 r8) — whether per-receipt recovery
-    ///         attribution has been armed, and the reservation nonce it
-    ///         was armed at. Receipts at or below the watermark predate
-    ///         attribution: their spends were tracked globally only, so
-    ///         they may neither fund an uncharged re-dispatch nor be
-    ///         clawed. Read by the in-place refresh, which arms this in
-    ///         the same paused block that retires the old selectors.
-    function recoveryAttributionArmed() external view returns (bool) {
-        return LibVaipakam.storageSlot().recoveryAttributionArmed;
-    }
-
-    function recoveryAttributionArmedAt() external view returns (uint256) {
-        return LibVaipakam.storageSlot().recoveryAttributionArmedAt;
-    }
-
     /// @notice #1434 P2-w6 (#1662 r2) — the per-receipt TERMINAL-LOSS
     ///         split by provenance. Their sum is {getCeremonyTerminalLoss};
     ///         the recycled half is what leaves the coverage allowance.
@@ -666,20 +651,6 @@ contract RewardRemittanceLensFacet {
         returns (uint256 credit, uint256 redispatched, uint256 clawed)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // #1662 r9 — a RETIRED (pre-attribution) receipt reports zero
-        // across the board. Its historical credit is real but unreachable:
-        // neither `_drawFromRecovery` nor `_voidRecoveryCredit` will act on
-        // it, and the pooled position it belonged to was released at
-        // arming. Reporting the raw figures would advertise
-        // `credit − redispatched − clawed` of spendable capacity that
-        // every dispatch rejects — a lens that disagrees with the ledger
-        // it exists to describe.
-        if (
-            s.recoveryAttributionArmed
-                && remitId <= s.recoveryAttributionArmedAt
-        ) {
-            return (0, 0, 0);
-        }
         uint256 c = s.remitRecoveredForReceipt[remitId]
             - s.ceremonyRecycledRecovered[remitId];
         return (
@@ -756,23 +727,20 @@ contract RewardRemittanceLensFacet {
 
     /// @notice #1566 closure 2 cutover PR 1 — the UNCLASSIFIED ingress
     ///         attribution's figures, the way every custody row is
-    ///         auditable: `uncountedHeld + returnedHeld` equals the holder's
+    ///         auditable: `uncountedHeld` equals the holder's
     ///         `Unclassified` row, and `reservedHeld` is the part of the
     ///         stranded-recovery reservation whose tokens are in the holder
     ///         (the Diamond's backing position subtracts only the rest).
     /// @return uncountedHeld Untyped delivery remainders and quarantined
     ///         compensation held in the row, net of R4 returns.
-    /// @return returnedHeld  Stranded returns for receipts that predate
-    ///         recovery attribution, held in the row.
     /// @return reservedHeld  The held part of `strandedRecoveryReserved`.
     function getUnclassifiedPosition()
         external
         view
-        returns (uint256 uncountedHeld, uint256 returnedHeld, uint256 reservedHeld)
+        returns (uint256 uncountedHeld, uint256 reservedHeld)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uncountedHeld = s.rewardCustodyUnclassifiedUncounted;
-        returnedHeld = s.rewardCustodyUnclassifiedReturned;
         reservedHeld = s.strandedRecoveryReservedHeld;
     }
 }

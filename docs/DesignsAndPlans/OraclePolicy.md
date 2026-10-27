@@ -76,25 +76,30 @@ Three secondary oracles are wired alongside Chainlink:
 | **API3** | `keccak256(abi.encodePacked(bytes32("<SYMBOL>/USD")))` | First-party publisher, sub-minute updates typical. | 18 |
 | **DIA** | string `"<SYMBOL>/USD"` passed to `getValue(string)` | Daily updates; configurable per feed at the DIA side. | 8 |
 
-All three keys are derived **on-chain** from `IERC20.symbol()` of the
-asset being priced. **No per-asset governance config** — the operator
-only sets the chain-level oracle address per source, plus the
-chain-level deviation tolerance + staleness ceiling. New collateral
-assets are picked up automatically as long as the asset's ERC-20
-symbol matches the upstream oracle's naming convention.
+All three keys are derived **on-chain** from the asset's registered
+price identity (#2745): the base symbol of the Chainlink pair registered
+for it in the chain's `VaipakamFeedRegistry` ("LINK" for "LINK / USD"),
+read through `pairBase(asset, quote)` under the same quotes, in the same
+order, as the primary read (`asset/PAD`, then `asset/ETH`). WETH's identity
+is ETH, since it is priced from the ETH anchor feed. The token's own
+`symbol()` is never read: a token controls it, and an upgradeable token
+could change it to point its own cross-check at another asset's price.
+**No second per-asset mapping** — the identity is part of the feed
+registration, reviewed and governed with it (delay, guardian veto). The
+operator only sets the chain-level oracle address per source, plus the
+chain-level deviation tolerance + staleness ceiling.
 
-### Symbol-derivation fragility
+### When a source reads as unavailable
 
-The on-chain `asset.symbol()` read can fail to map cleanly to an
-upstream symbol convention. Cases the policy accepts as silently
-unavailable rather than reverting:
+Cases the policy accepts as silently unavailable rather than reverting:
 
-- The asset's `symbol()` reverts (non-standard token).
-- The asset returns `bytes32` instead of `string` (legacy a major DeFi protocol-
-  style tokens) — handled with a fallback path that strips trailing
-  zeros and converts to string.
-- The derived key has no reporter on the upstream oracle (very
-  long-tail tokens).
+- The asset has no registered pair (for example one priced by an
+  industrial-fork direct-feed override), or its pair's base name does not
+  fit in 32 bytes: no secondary is asked, so the price stands on
+  Chainlink alone.
+- The registry reverts or answers anything but exactly one word.
+- The registered name has no reporter on the upstream oracle (very
+  long-tail tokens, or a ticker the source spells differently).
 - The upstream returned a stale or zero value.
 
 Each "unavailable" path counts as no information from that source —
@@ -294,12 +299,11 @@ keeper's submission identically to any other caller's.
   V3-clone pool.** Such assets are classified Illiquid and cannot
   back a loan. The Liquid / Illiquid split is the oracle layer's
   escape hatch for coverage gaps.
-- **Symbol collision across chains** (e.g. `USDC` on Ethereum vs
-  `USDC.e` on Arbitrum returning `USDC`). The symbol-derivation
-  approach reads `IERC20.symbol()` and uses it verbatim — it does
-  NOT resolve to a chain-specific canonical asset. If a wrapped
-  variant returns the same symbol as the canonical, the upstream
-  oracle's price for the canonical is what gets compared against,
-  which is usually correct but can drift on bridged-asset incidents.
-  Operators should track this in the Audit Intake / monitoring
-  surface.
+- **A bridged variant shares its canonical's identity.** The secondary
+  identity is the registered Chainlink pair's base name (#2745), so a
+  bridged token bound to the canonical's feed (e.g. `USDC.e` bound to
+  `USDC / USD`) is cross-checked against the canonical's price. That is the
+  same quantity the primary price reports, so the check is consistent, but
+  it does not detect a bridged variant de-pegging from its canonical.
+  Whether a bridged token is bound to the canonical feed at all is decided
+  in the reviewed bindings, not by the token.

@@ -1062,12 +1062,9 @@ contract RewardRemittanceFacet is
         // confirm/demote the stored classification changes and the ack
         // re-presents with the new value.
         // #1660 r6 - WIRE classification = storage classification + 1:
-        // value 0 is deliberately unassigned so the widened word is
-        // unambiguous against a generation-1 bool ack in flight - a
-        // legacy consumed ack (bool true = 1) decodes as CONSUMED with
-        // identical semantics, and a legacy non-consumed ack (bool
-        // false = 0) decodes as INVALID and stays re-executable until
-        // anyone re-presents it under the current encoding.
+        // value 0 is deliberately unassigned, so an all-zero or truncated
+        // word can never read as a classification and fails closed at
+        // both ends.
         messageId = IRewardMessenger(messenger).sendRemitAck{value: msg.value}(
             remitId,
             rec.amount,
@@ -1129,9 +1126,8 @@ contract RewardRemittanceFacet is
         // old-era remitters now fall through to the ordinary era check
         // like any other stale sender. An imported gate is released only
         // by the operator's evidenced {clearImportedOutstanding}.
-        // #1660 r6 - the wire offsets classification by one (0 is the
-        // RETIRED generation-1 bool-false shape): 1 consumed /
-        // 2 quarantined / 3 provisional. Zero or out-of-range fails
+        // #1660 r6 - the wire offsets classification by one (0 is
+        // unassigned): 1 consumed / 2 quarantined / 3 provisional. Zero or out-of-range fails
         // closed and re-executable - never guessed at. (#1662 r1 -
         // validated BEFORE the imported branch, so an imported tuple's
         // malformed ack fails closed too, never "observes".)
@@ -1341,19 +1337,6 @@ contract RewardRemittanceFacet is
         LibVaipakam.Storage storage s,
         uint256 receiptId
     ) private returns (uint256 claw, uint256 unspent) {
-        // #1662 r8 — the attribution watermark gates the CLAW as well as
-        // the draw. A legacy receipt's spends were tracked GLOBALLY only,
-        // so its per-receipt counters read zero and it would present its
-        // whole (already-spent) legacy credit as unspent — moving a LATER
-        // receipt's backing into the overage quarantine the moment that
-        // receipt replenished the pool. Round 7 guarded only
-        // `_drawFromRecovery`, which left this path open.
-        if (
-            s.recoveryAttributionArmed
-                && receiptId <= s.recoveryAttributionArmedAt
-        ) {
-            return (0, 0);
-        }
         uint256 credit = s.remitRecoveredForReceipt[receiptId]
             - s.ceremonyRecycledRecovered[receiptId];
         uint256 spent = s.recoveryRedispatchedForReceipt[receiptId]

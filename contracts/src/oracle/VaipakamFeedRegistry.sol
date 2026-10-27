@@ -5,6 +5,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {TestnetChains} from "../compliance/TestnetChains.sol";
+import {IFeedRegistryPairBase} from "../interfaces/IFeedRegistryPairBase.sol";
 
 /**
  * @title  VaipakamFeedRegistry
@@ -68,7 +69,7 @@ import {TestnetChains} from "../compliance/TestnetChains.sol";
  *            from state (`entriesPage`), with the directory file each was
  *            last checked against.
  */
-contract VaipakamFeedRegistry is Ownable2Step {
+contract VaipakamFeedRegistry is Ownable2Step, IFeedRegistryPairBase {
     using EnumerableSet for EnumerableSet.Bytes32Set;
 
     /// @notice Chainlink's own risk categories, as its directory publishes
@@ -300,6 +301,24 @@ contract VaipakamFeedRegistry is Ownable2Step {
     /// @notice The full entry for (`base`, `quote`); `feed` is zero when none.
     function entry(address base, address quote) external view returns (Entry memory) {
         return _entries[_key(base, quote)];
+    }
+
+    /// @inheritdoc IFeedRegistryPairBase
+    /// @dev The Diamond keys its secondary price sources (Tellor, API3, DIA)
+    ///      on this, never on the token's own `symbol()` (#2745). The pair
+    ///      name was checked against the feed's `description()` when the
+    ///      entry was registered, behind the same delay and veto as the feed
+    ///      itself, so a token cannot point its own cross-check at another
+    ///      asset by changing its symbol. The symbol is the text before the
+    ///      pair's last " / " separator.
+    function pairBase(address base, address quote) external view returns (bytes32 symbol) {
+        Entry storage e = _entries[_key(base, quote)];
+        if (e.feed == address(0)) return bytes32(0);
+        bytes memory p = bytes(e.pair);
+        uint256 end = p.length;
+        while (end >= 3 && !(p[end - 3] == " " && p[end - 2] == "/" && p[end - 1] == " ")) --end;
+        if (end < 4 || end - 3 > 32) return bytes32(0);
+        for (uint256 i; i < end - 3; ++i) symbol |= bytes32(p[i]) >> (i * 8);
     }
 
     /// @notice How many pairs are registered.

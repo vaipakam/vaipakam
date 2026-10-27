@@ -337,6 +337,10 @@ function requireAbiMember(name, kind) {
 }
 
 /** Diamond read that fails BLOCKED on a missing ABI member. */
+/** #2751 — the ranked pair view is paged; this `limit` asks for the rest
+ *  of the bucket in one page (the view compares before it adds). */
+const RANKED_PAGE_ALL = 2n ** 256n - 1n;
+
 function diamondRead(functionName, args) {
   requireAbiMember(functionName, 'function');
   return pub.readContract({ address: DIAMOND, abi: ABI, functionName, args });
@@ -451,7 +455,7 @@ async function noncesSettled(address, { timeoutMs = 120_000, intervalMs = 5_000 
  *  now (the ranked view is active-only); falls back to the least-
  *  populated bucket if every one is taken. */
 async function pickTenor() {
-  const [rankings] = await diamondRead('getActiveOffersByAssetPairRanked', [WETH, TLIQ]);
+  const [rankings] = await diamondRead('getActiveOffersByAssetPairRanked', [WETH, TLIQ, 0n, RANKED_PAGE_ALL]);
   const counts = new Map();
   for (const r of rankings) {
     const d = Number(r.durationDays);

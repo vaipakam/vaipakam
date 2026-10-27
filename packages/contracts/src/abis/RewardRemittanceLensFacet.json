@@ -1288,11 +1288,6 @@
         "internalType": "uint256"
       },
       {
-        "name": "returnedHeld",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
         "name": "reservedHeld",
         "type": "uint256",
         "internalType": "uint256"
@@ -1318,32 +1313,6 @@
     "outputs": [
       {
         "name": "fee",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "recoveryAttributionArmed",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "recoveryAttributionArmedAt",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }

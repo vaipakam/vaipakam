@@ -53,6 +53,11 @@ export const ZERO = '0x0000000000000000000000000000000000000000';
  *  posts into. */
 export const BUCKET_PREFERENCE = [60, 90, 14, 180, 7, 30] as const;
 
+/** #2751 — `getActiveOffersByAssetPairRanked` is paged; this `limit` asks
+ *  for the rest of the bucket in one page (the view compares before it
+ *  adds, so it does not overflow). Test buckets are a handful of rows. */
+const RANKED_PAGE_ALL = 2n ** 256n - 1n;
+
 /** Tenor buckets with live offers for the pair on the fork right now
  *  (default WETH/tLIQ). The ranked view is active-only; treating its
  *  lazily-expired GTT rows as live is a safe over-approximation — it
@@ -65,7 +70,8 @@ export async function liveOfferTenors(
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
     functionName: 'getActiveOffersByAssetPairRanked',
-    args: [lend, coll],
+    // #2751 — paged; a fork pair bucket is small, so one page holds it.
+    args: [lend, coll, 0n, RANKED_PAGE_ALL],
   })) as readonly [readonly { durationDays: bigint }[], bigint];
   return new Set(rankings.map((r) => Number(r.durationDays)));
 }

@@ -1460,6 +1460,14 @@ the bounds are the design's actual commitment.
    >    rather than attempting a migration the chain has no per-receipt
    >    history to reconstruct. The value stays reachable through the
    >    ordinary CHARGED path.
+   >
+   >    **Retired (#2910).** Every chain reaches the current build by fresh
+   >    deploy (owner decision O1 = A), and a fresh canonical deploy armed
+   >    at watermark zero before its first receipt, so no receipt can
+   >    predate attribution. The watermark, `armRecoveryAttribution`, the
+   >    refresh's arming step and every rule that read the predicate are
+   >    removed; every stranded return and ceremony inflow credits its
+   >    receipt's recovery position.
    > 4. The `importedTupleSeen` storage comment still described the
    >    attribution tombstone deleted in round 6, and documented the wrong
    >    key.

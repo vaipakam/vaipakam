@@ -33,7 +33,8 @@ import {
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { compiledAbi, compileScript, readContractsJson, REPO_ROOT, runForgeScript } from './fixture';
-import { assertLoopbackUrl } from './rpc';
+import { explainMinedRevert } from './minedRevert';
+import { anvilControl, assertLoopbackUrl } from './rpc';
 
 const LANE_SCRIPT = 'script/e2e/DeployE2ELocalCcip.s.sol';
 const RAMPS_SOURCE = 'script/e2e/E2ELocalCcip.sol';
@@ -242,7 +243,11 @@ export class CcipRelay {
       const hash = await wallet.writeContract(request as never);
       // eslint-disable-next-line no-await-in-loop
       const receipt = await dstClient.waitForTransactionReceipt({ hash, timeout: 60_000 });
-      if (receipt.status !== 'success') throw new Error(`relay: executing message ${message.header.messageId} on chain ${toChainId} reverted (tx ${hash})`);
+      if (receipt.status !== 'success') {
+        // eslint-disable-next-line no-await-in-loop
+        const why = await explainMinedRevert(dstClient, anvilControl(dst.url).rpc, receipt, [this.offRampAbi]);
+        throw new Error(`relay: executing message ${message.header.messageId} on chain ${toChainId} reverted when mined (tx ${hash}): ${why}`);
+      }
       delivered.push({
         messageId: message.header.messageId,
         sequenceNumber: message.header.sequenceNumber,

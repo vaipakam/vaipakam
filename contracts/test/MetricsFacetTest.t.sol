@@ -610,9 +610,9 @@ contract MetricsFacetTest is SetupTest {
         TestMutatorFacet(address(diamond)).scaffoldOpenOffer(offerId, o);
     }
 
-    /// @dev Skinny getter returns every active offer in the pair
-    ///      bucket with the rank-relevant fields populated. The
-    ///      frontend sorts and slices client-side from this payload.
+    /// @dev Skinny getter returns the active offers in the pair bucket
+    ///      with the rank-relevant fields populated (one page covering the
+    ///      whole bucket here). The frontend sorts client-side.
     function testGetActiveOffersByAssetPairRanked_returnsSortableFields() public {
         _seedRankedOffer(1, LibVaipakam.OfferType.Lender, 1000 ether, 500, 30, 1_700_000_000);
         _seedRankedOffer(2, LibVaipakam.OfferType.Borrower, 2000 ether, 800, 60, 1_700_000_500);
@@ -622,7 +622,9 @@ contract MetricsFacetTest is SetupTest {
         (MetricsFacet.OfferRanking[] memory rows, uint256 total) =
             MetricsFacet(address(diamond)).getActiveOffersByAssetPairRanked(
                 mockERC20,
-                mockCollateralERC20
+                mockCollateralERC20,
+                0,
+                type(uint256).max
             );
 
         assertEq(total, 3);
@@ -647,6 +649,36 @@ contract MetricsFacetTest is SetupTest {
         assertEq(rows[2].durationDays, 14);
     }
 
+    /// @dev #2751 — paged: a page holds at most `limit` rows while `total`
+    ///      reports the whole bucket, so a caller learns from one call
+    ///      whether it can read the bucket whole.
+    function testGetActiveOffersByAssetPairRanked_pages() public {
+        _seedRankedOffer(1, LibVaipakam.OfferType.Lender, 1000 ether, 500, 30, 1_700_000_000);
+        _seedRankedOffer(2, LibVaipakam.OfferType.Borrower, 2000 ether, 800, 60, 1_700_000_500);
+        _seedRankedOffer(3, LibVaipakam.OfferType.Lender, 1500 ether, 650, 14, 1_700_000_900);
+        TestMutatorFacet(address(diamond)).setNextOfferId(4);
+
+        (MetricsFacet.OfferRanking[] memory rows, uint256 total) =
+            MetricsFacet(address(diamond)).getActiveOffersByAssetPairRanked(
+                mockERC20, mockCollateralERC20, 1, 1
+            );
+        assertEq(total, 3, "total is the bucket, not the page");
+        assertEq(rows.length, 1);
+        assertEq(rows[0].id, 2);
+
+        (rows, total) = MetricsFacet(address(diamond)).getActiveOffersByAssetPairRanked(
+            mockERC20, mockCollateralERC20, 2, 5
+        );
+        assertEq(rows.length, 1, "the last page is short");
+        assertEq(rows[0].id, 3);
+
+        (rows, total) = MetricsFacet(address(diamond)).getActiveOffersByAssetPairRanked(
+            mockERC20, mockCollateralERC20, 3, 5
+        );
+        assertEq(rows.length, 0, "past the end is empty");
+        assertEq(total, 3);
+    }
+
     /// @dev Empty pair returns empty array + zero total — the
     ///      frontend probes safely on chain start-up before any
     ///      offers exist.
@@ -654,7 +686,9 @@ contract MetricsFacetTest is SetupTest {
         (MetricsFacet.OfferRanking[] memory rows, uint256 total) =
             MetricsFacet(address(diamond)).getActiveOffersByAssetPairRanked(
                 mockERC20,
-                mockCollateralERC20
+                mockCollateralERC20,
+                0,
+                type(uint256).max
             );
         assertEq(total, 0);
         assertEq(rows.length, 0);
@@ -690,7 +724,9 @@ contract MetricsFacetTest is SetupTest {
         (MetricsFacet.OfferRanking[] memory rows,) =
             MetricsFacet(address(diamond)).getActiveOffersByAssetPairRanked(
                 mockERC20,
-                mockCollateralERC20
+                mockCollateralERC20,
+                0,
+                type(uint256).max
             );
 
         assertEq(rows.length, 1);

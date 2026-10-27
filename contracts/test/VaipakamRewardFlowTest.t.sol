@@ -342,7 +342,7 @@ contract VaipakamRewardFlowTest is Test {
             ),
             _empty()
         , bytes32(0));
-        // The retired generation-1 bool-false shape (0) fails closed too.
+        // The unassigned value 0 fails closed too.
         vm.prank(address(messengerBase));
         vm.expectRevert(
             abi.encodeWithSelector(

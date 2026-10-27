@@ -6797,6 +6797,14 @@ PR C.**
 > reconciliation verdict), and the transport epochs PR C depends on — the
 > classification EXITS of the `Unclassified` row, in-holder under the
 > deficit split, are PR 2's; PR 1 gives it only the R4 return exit.
+>
+> **Superseded in part (#2910).** The third untyped arrival is retired: a
+> stranded return or ceremony inflow for a receipt that predates recovery
+> attribution exists only on a Diamond upgraded in place, and every chain is
+> a fresh deploy (owner decision O1 = A). The row now holds delivery
+> remainders and quarantined compensation only, and equals
+> `rewardCustodyUnclassifiedUncounted`; the returned figure's slot is
+> retired in place.
 
 > **LANDED — closure 2's cutover apparatus, PR 2 of 2 (the legacy
 > reconciliation epoch).** A new facet, `RewardReconciliationFacet`, hosts

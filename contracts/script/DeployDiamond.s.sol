@@ -3506,7 +3506,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](11);
+        s = new bytes4[](10);
         s[0] = RewardCompensationDispatchFacet.remitManualBudget.selector;
         s[1] =
             RewardCompensationDispatchFacet.remitSupplementalBudget.selector;
@@ -3533,9 +3533,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #1662 r4 - relocated off the remittance facet (EIP-170).
         s[9] =
             RewardCompensationDispatchFacet.releaseRemitReservation.selector;
-        // #1662 r7 - the one-shot attribution watermark.
-        s[10] =
-            RewardCompensationDispatchFacet.armRecoveryAttribution.selector;
     }
 
     /// #1566 slice 4 PR A — custody lifecycle, ledger views, paid-side rebase.
@@ -3544,7 +3541,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](42);
+        s = new bytes4[](41);
         s[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         s[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         s[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -3590,10 +3587,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // Diamond-internal entry points (the quarantine one took slot 27).
         s[37] = RewardCustodyFacet.custodyRecordIngressPacket.selector;
         s[38] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
-        s[39] = RewardCustodyFacet.custodyUnclassifiedReturn.selector;
         s[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
         // #1566 sanctions rule (owner 2026-10-14) — reward set apart / released.
-        s[41] = RewardCustodyFacet.custodySetApartReward.selector;
+        s[39] = RewardCustodyFacet.custodySetApartReward.selector;
         s[26] = RewardCustodyFacet.custodyReleaseSanctionsHeld.selector;
     }
 
@@ -3632,7 +3628,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](44);
+        s = new bytes4[](42);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -3680,11 +3676,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[29] = RewardRemittanceLensFacet
             .getRecoveryCreditForReceipt
             .selector;
-        // #1662 r8 - the attribution watermark, read by the refresh.
-        s[30] =
-            RewardRemittanceLensFacet.recoveryAttributionArmed.selector;
-        s[31] =
-            RewardRemittanceLensFacet.recoveryAttributionArmedAt.selector;
         // #2459 r5 — the provisional compensation value held apart.
         s[36] = RewardRemittanceLensFacet.getProvisionalFreshHeld.selector;
         // #1944 consequence 1 — the delivery gate's rule (the self-staticcall
@@ -3695,8 +3686,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #1452 — the acknowledged recycled share per destination.
         s[40] = RewardRemittanceLensFacet.getChainRemittedRecycled.selector;
         s[41] = RewardRemittanceLensFacet.getRemitHistoryPending.selector; // #2489 r7
-        s[42] = RewardRemittanceLensFacet.getChainRemittedRecycledHistory.selector; // #2489 r9
-        s[43] = RewardRemittanceLensFacet.getRemitHistoryBooked.selector; // #2489 r10
+        s[30] = RewardRemittanceLensFacet.getChainRemittedRecycledHistory.selector; // #2489 r9
+        s[31] = RewardRemittanceLensFacet.getRemitHistoryBooked.selector; // #2489 r10
         s[35] = RewardRemittanceLensFacet.getRemitRoute.selector; // #2561
     }
 

@@ -42,6 +42,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, createWalletClient, getAddress, http, keccak256, toBytes, type Abi, type Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
+import { explainMinedRevert } from './minedRevert';
 import { anvilControl, assertLoopbackUrl, type AnvilControl } from './rpc';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -283,12 +284,14 @@ async function installCanonical(anvil: AnvilControl, c: Canonical, deployerKey: 
   const hash = await wallet.sendTransaction({ data: creation, to: null });
   // WAIT for the receipt. Reading it straight after sending races the
   // mining and reads null — observed as an intermittent setup failure.
-  const receipt = await createPublicClient({ transport: http(anvil.url) }).waitForTransactionReceipt({
-    hash,
-    timeout: 60_000,
-  });
-  if (receipt.status !== 'success' || !receipt.contractAddress) {
-    throw new Error(`constructing ${c.name} for the canonical copy reverted (tx ${hash})`);
+  const pub = createPublicClient({ transport: http(anvil.url) });
+  const receipt = await pub.waitForTransactionReceipt({ hash, timeout: 60_000 });
+  if (receipt.status !== 'success') {
+    const why = await explainMinedRevert(pub, anvil.rpc, receipt, [compiledAbi(c.source, c.contract)]);
+    throw new Error(`constructing ${c.name} for the canonical copy reverted when mined (tx ${hash}): ${why}`);
+  }
+  if (!receipt.contractAddress) {
+    throw new Error(`constructing ${c.name} for the canonical copy left no contract address (tx ${hash})`);
   }
   const built = receipt.contractAddress;
   const code = await anvil.rpc<`0x${string}`>('eth_getCode', [built, 'latest']);

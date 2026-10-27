@@ -278,7 +278,7 @@ contract MockRewardMessenger is IRewardMessenger {
     }
 
     /// @dev #1660 r5/r6 - raw WIRE-classification delivery (1 consumed /
-    ///      2 quarantined / 3 provisional; 0 = the retired legacy shape).
+    ///      2 quarantined / 3 provisional; 0 is unassigned).
     function deliverRemitAckWithClassification(
         uint32 sourceChainId,
         uint256 remitId,

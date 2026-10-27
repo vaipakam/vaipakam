@@ -633,14 +633,15 @@ contract PrepayListingFacet is
         // #1067 — DURABLE terminal reward close: a sale is a proper close,
         // so shrink both reward entries' active windows to today and
         // re-anchor each open side to the live NFT holder.
-        // `borrowerClean = true`. Best-effort — reward bookkeeping is
-        // strictly subordinate to the fund-critical settlement.
-        _rewardHook(
+        // `borrowerClean = true`. Bubbling (#2739): a terminal transition
+        // closes its reward entry in the same transaction or reverts.
+        LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 InteractionRewardsFacet.terminalRewardClose.selector,
                 loan.id,
                 true
-            )
+            ),
+            RewardHookCallFailed.selector
         );
     }
 
@@ -785,19 +786,5 @@ contract PrepayListingFacet is
     ///         prepay-listing path is disabled (no executor configured).
     function getCollateralListingExecutor() external view returns (address) {
         return LibVaipakam.storageSlot().collateralListingExecutor;
-    }
-
-    /// @dev #1067 — best-effort reward close-out hook. The reward window
-    ///      logic lives on {InteractionRewardsFacet}; this facet only fires
-    ///      the self-call at its proper-close terminals. Reward bookkeeping
-    ///      is STRICTLY SUBORDINATE to the fund-critical settlement, so a
-    ///      failed low-level call is intentionally not bubbled. Production
-    ///      always cuts InteractionRewardsFacet; a focused test harness that
-    ///      omits it simply skips reward bookkeeping.
-    function _rewardHook(bytes memory data) private {
-        (bool ok, ) = address(this).call(data);
-        if (!ok) {
-            // best-effort — the close proceeds regardless.
-        }
     }
 }

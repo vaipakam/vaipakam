@@ -257,6 +257,34 @@ contract VaipakamFeedRegistryTest is Test {
         reg.execute(b, first);
     }
 
+    /// @dev #2745 - the base symbol of a registered pair is the asset's
+    ///      identity for the Diamond's secondary price sources.
+    function test_PairBase_IsTheTextBeforeTheSeparator() public {
+        assertEq(reg.pairBase(link, USD), bytes32(0), "zero before registration");
+        _proposeAndExecute(_change(link, USD, address(0), address(linkUsd), "LINK / USD"));
+        assertEq(reg.pairBase(link, USD), bytes32("LINK"));
+        assertEq(reg.pairBase(link, ETH), bytes32(0), "another quote has no entry");
+    }
+
+    function test_PairBase_TakesTheLastSeparatorAndBoundsTheLength() public {
+        address tok = address(new RegistryTokenStub());
+        RegistryFeedStub spaced = new RegistryFeedStub("Calculated A / B / USD", 8);
+        _proposeAndExecute(_change(tok, USD, address(0), address(spaced), "Calculated A / B / USD"));
+        assertEq(reg.pairBase(tok, USD), bytes32("Calculated A / B"));
+
+        address tok2 = address(new RegistryTokenStub());
+        string memory longPair = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456 / USD"; // 33-byte base
+        RegistryFeedStub longFeed = new RegistryFeedStub(longPair, 8);
+        _proposeAndExecute(_change(tok2, USD, address(0), address(longFeed), longPair));
+        assertEq(reg.pairBase(tok2, USD), bytes32(0), "a base longer than a word reads as none");
+    }
+
+    function test_PairBase_ClearsWithTheEntry() public {
+        _proposeAndExecute(_change(link, USD, address(0), address(linkUsd), "LINK / USD"));
+        _proposeAndExecute(_change(link, USD, address(linkUsd), address(0), ""));
+        assertEq(reg.pairBase(link, USD), bytes32(0));
+    }
+
     function test_ReplaceAndRemoveWaitTheDelayToo() public {
         _proposeAndExecute(_change(link, USD, address(0), address(linkUsd), "LINK / USD"));
         RegistryFeedStub successor = new RegistryFeedStub("LINK / USD", 8);
