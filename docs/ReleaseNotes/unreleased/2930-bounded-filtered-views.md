@@ -1,4 +1,4 @@
-## Thread — Every filtered list view is bounded by the rows it reads (PR #TBD)
+## Thread — Every filtered list view is bounded by the rows it reads (PR #2972)
 
 The platform's filtered list views now all follow one paging rule, the one the
 match-eligible loan view already used: a call reads at most the number of rows
