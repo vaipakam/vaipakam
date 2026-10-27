@@ -667,6 +667,8 @@ contract DefaultedFacetTest is Test {
         uint256 tokenId,
         uint256 quantity
     ) internal returns (uint256 loanId) {
+        // #2949 — a rental carries no collateral, so a rental caller's
+        // collateral arguments are not sent.
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
@@ -674,12 +676,12 @@ contract DefaultedFacetTest is Test {
                 lendingAsset: lendingAsset,
                 amount: amount,
                 interestRateBps: 500,
-                collateralAsset: collateralAsset,
+                collateralAsset: assetType == LibVaipakam.AssetType.ERC20 ? collateralAsset : address(0),
                 // #998 S15: liquid-both-legs ERC-20 lender offers must post
                 // collateral >= ~1.765x the lending amount (amount * 1.5 / 0.85)
                 // to clear the create-time floor (LibOfferBounds). Callers that
                 // used 1500 ether against 1000 ether lending were bumped to 2000.
-                collateralAmount: collateralAmount,
+                collateralAmount: assetType == LibVaipakam.AssetType.ERC20 ? collateralAmount : 0,
                 durationDays: durationDays,
                 assetType: assetType,
                 tokenId: tokenId,
@@ -694,7 +696,7 @@ contract DefaultedFacetTest is Test {
                 allowsParallelSale: false,
                 amountMax: amount,
                 interestRateBpsMax: 500,
-                collateralAmountMax: collateralAmount,
+                collateralAmountMax: assetType == LibVaipakam.AssetType.ERC20 ? collateralAmount : 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,

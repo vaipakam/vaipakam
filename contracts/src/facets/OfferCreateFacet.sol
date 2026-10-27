@@ -863,8 +863,13 @@ contract OfferCreateFacet is
 
         LibVaipakam.LiquidityStatus principalLiq = OracleFacet(address(this))
             .checkLiquidity(params.lendingAsset);
-        LibVaipakam.LiquidityStatus collateralLiq = OracleFacet(address(this))
-            .checkLiquidity(params.collateralAsset);
+        // #2949 — a rental carries no collateral leg ({LibOfferShape.
+        // assertCollateral} holds every collateral field at zero), so there
+        // is no asset to price; it records Illiquid, the class an NFT-lend
+        // offer is already in, and nothing reads a price for it.
+        LibVaipakam.LiquidityStatus collateralLiq = params.assetType == LibVaipakam.AssetType.ERC20
+            ? OracleFacet(address(this)).checkLiquidity(params.collateralAsset)
+            : LibVaipakam.LiquidityStatus.Illiquid;
         offer.principalLiquidity = principalLiq;
         offer.collateralLiquidity = collateralLiq;
 
@@ -1767,14 +1772,17 @@ contract OfferCreateFacet is
         // Keyed on who is creating, not on the offer's shape: a shape-keyed
         // exception let any creator post zero collateral, and against illiquid
         // collateral nothing else refused it. NFT collateral (locked by token
-        // id / quantity) and NFT rentals (committed by the prepaid fee) carry
-        // no amount rule.
+        // id / quantity) carries no amount rule, and an NFT rental (committed
+        // by the prepaid fee) carries no collateral at all (#2949).
         LibOfferShape.assertCollateral(
             params.offerType,
             params.assetType,
+            params.collateralAsset,
             params.collateralAssetType,
             params.collateralAmount,
             params.collateralAmountMax,
+            params.collateralTokenId,
+            params.collateralQuantity,
             LibVaipakam.storageSlot().saleVehicleCreate
         );
         // Canonical Limit-Order Phase 2 (#183) — the Phase 1 #169

@@ -421,7 +421,7 @@ contract WorkflowComplianceAndRejection is Test {
                 lendingAsset: address(mockNft),
                 amount: 1 ether,
                 interestRateBps: 500,
-                collateralAsset: address(mockUsdc),
+                collateralAsset: address(0),
                 collateralAmount: 0,
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC721,

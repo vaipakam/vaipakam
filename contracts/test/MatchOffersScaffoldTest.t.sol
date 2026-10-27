@@ -5,6 +5,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
+import {LibOfferMatchExecute} from "../src/libraries/LibOfferMatchExecute.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
@@ -82,17 +83,13 @@ contract MatchOffersScaffoldTest is SetupTest {
     ///         the selector".
     function test_matchOffersSelectorReachable() public {
         // A pair of zero ids passes the kill-switch (we flipped it
-        // ON in setUp) and lands in `previewMatch`, which surfaces
-        // a structured `MatchError`. `matchOffers` then maps that to
-        // a typed revert via the explicit `if (...)` chain. We
-        // expect the call to revert — but specifically with one of
-        // the facet's named errors, not a generic fallback. Use
-        // `expectRevert()` with no arg to catch any revert; if the
-        // selector weren't cut, viem/forge would surface "function
-        // selector was not recognized" which is also caught here —
-        // but the regression mode we'd see in that case is a missing
-        // selector, easy to spot in the test output.
-        vm.expectRevert();
+        // ON in setUp) and lands in `previewMatch`, which classifies two
+        // never-created offers as `WrongOfferType`; `matchOffers` maps
+        // that to the typed `InvalidOfferType`. Match that exact error
+        // (#2752): a bare `expectRevert()` would also pass on the
+        // Diamond's `FunctionDoesNotExist` for an unrouted selector,
+        // which is the regression this test exists to catch.
+        vm.expectRevert(LibOfferMatchExecute.InvalidOfferType.selector);
         OfferMatchFacet(address(diamond)).matchOffers(0, 0);
     }
 

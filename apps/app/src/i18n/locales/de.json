@@ -2495,6 +2495,7 @@
         "OfferSaleProceedsCredited": "Verkaufserlös im Tresor gutgeschrieben",
         "CollateralSaleProceedsSplit": "Verkaufserlös aufgeteilt",
         "ParallelSaleLockReleased": "Verkaufsangebot der Sicherheiten freigegeben",
+        "ParallelSaleReleaseConsolidationDeferred": "Übertragung der Sicherheiten zurückgestellt",
         "PartialCollateralWithdrawn": "Sicherheiten teilweise abgezogen",
         "PostParallelSaleListing": "Verkaufsangebot der Sicherheiten veröffentlicht",
         "PrepaySaleListingSynced": "Verkaufsangebot der Sicherheiten erneut geprüft",

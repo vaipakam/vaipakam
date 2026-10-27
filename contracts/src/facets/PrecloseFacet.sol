@@ -1048,41 +1048,46 @@ contract PrecloseFacet is
         // `ownerOf(loan.borrowerTokenId)` here is still the EXITING
         // borrower — the rightful recipient. Common case (the holder calls
         // directly, `msg.sender == holder == loan.borrower`) is unchanged.
+        // #2949 — a rental carries no collateral (`isErc20` is false), so
+        // there is nothing to return; the zero `collateralAssetType` must not
+        // read as an ERC-20 leg.
         address exitingBorrowerHolder = LibERC721.ownerOf(loan.borrowerTokenId);
-        if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    loan.borrower,
-                    loan.collateralAsset,
-                    exitingBorrowerHolder,
-                    loan.collateralAmount
-                ),
-                IVaipakamErrors.VaultWithdrawFailed.selector
-            );
-        } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC721.selector,
-                    loan.borrower,
-                    loan.collateralAsset,
-                    loan.collateralTokenId,
-                    exitingBorrowerHolder
-                ),
-                IVaipakamErrors.VaultWithdrawFailed.selector
-            );
-        } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC1155.selector,
-                    loan.borrower,
-                    loan.collateralAsset,
-                    loan.collateralTokenId,
-                    loan.collateralQuantity,
-                    exitingBorrowerHolder
-                ),
-                IVaipakamErrors.VaultWithdrawFailed.selector
-            );
+        if (isErc20) {
+            if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        VaultFactoryFacet.vaultWithdrawERC20.selector,
+                        loan.borrower,
+                        loan.collateralAsset,
+                        exitingBorrowerHolder,
+                        loan.collateralAmount
+                    ),
+                    IVaipakamErrors.VaultWithdrawFailed.selector
+                );
+            } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        VaultFactoryFacet.vaultWithdrawERC721.selector,
+                        loan.borrower,
+                        loan.collateralAsset,
+                        loan.collateralTokenId,
+                        exitingBorrowerHolder
+                    ),
+                    IVaipakamErrors.VaultWithdrawFailed.selector
+                );
+            } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        VaultFactoryFacet.vaultWithdrawERC1155.selector,
+                        loan.borrower,
+                        loan.collateralAsset,
+                        loan.collateralTokenId,
+                        loan.collateralQuantity,
+                        exitingBorrowerHolder
+                    ),
+                    IVaipakamErrors.VaultWithdrawFailed.selector
+                );
+            }
         }
 
         // #2795 — a borrower extra held on this open loan (a periodic forced
@@ -1159,8 +1164,9 @@ contract PrecloseFacet is
         // being rekeyed onto absent collateral. (Full pre-loan
         // offer-collateral lock for the normal acceptance path is the
         // follow-up card; this is the targeted guard for the obligation-
-        // transfer path that this PR newly liens.)
-        if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+        // transfer path that this PR newly liens.) A rental carries no
+        // collateral (#2949), so it has nothing to verify here.
+        if (isErc20 && loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
             // #573 — release the new borrower's offer-collateral lock
             // (set when they created the borrow offer) BEFORE the
             // free-balance check + lien recreate below. The obligation

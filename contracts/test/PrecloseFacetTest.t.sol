@@ -2262,6 +2262,82 @@ contract PrecloseFacetTest is Test {
         vm.clearMockedCalls();
     }
 
+    /// @dev #2949 — a rental carries no collateral, so handing it to a
+    ///      replacement renter returns none and checks none. The zero
+    ///      `collateralAssetType` (the enum's ERC-20 value) must not read as an
+    ///      ERC-20 leg: before the fix the transfer called a vault withdrawal
+    ///      of token `address(0)` and a `balanceOf` on it, and reverted.
+    function testTransferObligationNFTRentalWithNoCollateral() public {
+        uint256 fullRental = PRINCIPAL * 30;
+        _setLoanAsNftRental(activeLoanId, fullRental, (fullRental * 500) / 10000);
+        LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.collateralAsset = address(0);
+        ld.collateralAssetType = LibVaipakam.AssetType.ERC20;
+        ld.collateralAmount = 0;
+        ld.collateralTokenId = 0;
+        ld.collateralQuantity = 0;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        vm.prank(newBorrower);
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: COLLATERAL,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+        // The incoming offer names no collateral either, as a rental's does.
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(validOffer);
+        o.collateralAsset = address(0);
+        o.collateralAmount = 0;
+        o.collateralAmountMax = 0;
+        TestMutatorFacet(address(diamond)).setOffer(validOffer, o);
+
+        MockVaultWithdraw.deliversAll(address(diamond));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        // No withdrawal of the empty collateral leg is attempted.
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, borrower, address(0)),
+            0
+        );
+
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        assertEq(loan.borrower, newBorrower, "the replacement renter holds the rental");
+        assertEq(loan.collateralAsset, address(0), "still no collateral");
+        assertEq(loan.collateralAmount, 0, "still no collateral amount");
+        vm.clearMockedCalls();
+    }
+
     /// @dev #1193 (Pass-2 D3) — an Option-2 obligation transfer must reset
     ///      `loan.bufferAmount` from the INCOMING borrower offer's create-time
     ///      buffer snapshot, not live `cfgRentalBufferBps()`. Here the incoming

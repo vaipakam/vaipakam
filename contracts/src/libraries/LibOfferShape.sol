@@ -59,6 +59,14 @@ library LibOfferShape {
     ///         `collateralAmount` is the requirement at `amountMax`, and a
     ///         separate maximum would carry no meaning.
     error LenderCollateralRangeNotAllowed();
+    /// @notice #2949 — an NFT-rental offer (`assetType` ERC721 / ERC1155)
+    ///         named a collateral asset, asset type, amount, token id or
+    ///         quantity. A rental carries no collateral: its commitment is the
+    ///         prepaid fee, and the rented NFT never leaves the vault, so any
+    ///         collateral field it named would move nothing yet still be read
+    ///         (an acknowledgement asked of the renter, a risk-access pair, the
+    ///         loan record).
+    error RentalCollateralNotAllowed();
 
     /**
      * @notice Revert unless the principal range is well-formed for the
@@ -117,13 +125,20 @@ library LibOfferShape {
      *         admitted on mutual consent, nothing else refused it, and a
      *         lender could fund a loan backed by nothing. NFT collateral is
      *         locked by token id / quantity rather than an amount, and an NFT
-     *         rental's commitment is its prepaid fee, so neither shape is
-     *         subject to the positive-amount rule.
+     *         rental carries no collateral at all (#2949, spec:
+     *         ProjectDetailsREADME, NFT renting): its commitment is its
+     *         prepaid fee, so every collateral field must be empty — no asset,
+     *         the zero asset type, and a zero amount, ceiling, token id and
+     *         quantity. The same rule binds at create and at every edit, so a
+     *         rental can never come to name collateral.
      * @param offerType            Lender or borrower side.
      * @param assetType            The lending leg's asset type.
+     * @param collateralAsset      The collateral leg's asset.
      * @param collateralAssetType  The collateral leg's asset type.
      * @param collateralAmount     The range floor.
      * @param collateralAmountMax  The range ceiling.
+     * @param collateralTokenId    The collateral NFT's token id.
+     * @param collateralQuantity   The collateral ERC-1155 quantity.
      * @param saleVehicle          True only inside the protocol's own
      *                             lender-sale-vehicle create
      *                             (`Storage.saleVehicleCreate`).
@@ -131,14 +146,24 @@ library LibOfferShape {
     function assertCollateral(
         LibVaipakam.OfferType offerType,
         LibVaipakam.AssetType assetType,
+        address collateralAsset,
         LibVaipakam.AssetType collateralAssetType,
         uint256 collateralAmount,
         uint256 collateralAmountMax,
+        uint256 collateralTokenId,
+        uint256 collateralQuantity,
         bool saleVehicle
     ) internal pure {
+        if (assetType != LibVaipakam.AssetType.ERC20) {
+            if (
+                collateralAsset != address(0)
+                || collateralAssetType != LibVaipakam.AssetType.ERC20
+                || (collateralAmount | collateralAmountMax | collateralTokenId | collateralQuantity) != 0
+            ) revert RentalCollateralNotAllowed();
+            return;
+        }
         if (
-            assetType == LibVaipakam.AssetType.ERC20
-            && collateralAssetType == LibVaipakam.AssetType.ERC20
+            collateralAssetType == LibVaipakam.AssetType.ERC20
             && !(saleVehicle && collateralAmount == 0 && collateralAmountMax == 0)
         ) {
             if (collateralAmount == 0) revert CollateralMustBePositive();

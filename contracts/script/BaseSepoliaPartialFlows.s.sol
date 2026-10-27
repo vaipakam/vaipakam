@@ -294,7 +294,7 @@ contract BaseSepoliaPartialFlows is Script {
                 lendingAsset: address(nft721),
                 amount: DAILY_FEE,
                 interestRateBps: 0,
-                collateralAsset: address(usdc), // placeholder; rentals don't use collateral
+                collateralAsset: address(0), // a rental names no collateral (#2949)
                 collateralAmount: 0,
                 durationDays: 7,
                 assetType: LibVaipakam.AssetType.ERC721,

@@ -2495,6 +2495,7 @@
         "OfferSaleProceedsCredited": "売却代金を保管庫に入金",
         "CollateralSaleProceedsSplit": "売却代金を分配",
         "ParallelSaleLockReleased": "担保売却の出品を解除",
+        "ParallelSaleReleaseConsolidationDeferred": "担保の移動を保留",
         "PartialCollateralWithdrawn": "担保を一部引き出し",
         "PostParallelSaleListing": "担保売却を出品",
         "PrepaySaleListingSynced": "担保売却の出品を再確認",

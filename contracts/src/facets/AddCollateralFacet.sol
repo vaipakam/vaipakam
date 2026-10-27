@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibOfferShape} from "../libraries/LibOfferShape.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
@@ -133,6 +134,10 @@ contract AddCollateralFacet is DiamondReentrancyGuard, IVaipakamErrors {
             loan.status != LibVaipakam.LoanStatus.FallbackPending
         ) revert LoanNotActive();
         if (amount == 0) revert InvalidAmount();
+        // #2949 — a rental carries no collateral, so there is none to top up.
+        if (loan.assetType != LibVaipakam.AssetType.ERC20) {
+            revert LibOfferShape.RentalCollateralNotAllowed();
+        }
 
         // Per-asset pause: topping up new collateral into a paused asset
         // is a creation path (it increases diamond-held exposure).
