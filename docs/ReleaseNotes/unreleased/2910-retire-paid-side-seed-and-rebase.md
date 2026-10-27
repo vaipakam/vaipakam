@@ -1,4 +1,4 @@
-## Rewards — the paid-side seed and rebase are retired (PR #TBD)
+## Rewards — the paid-side seed and rebase are retired (PR #2944)
 
 Every chain that runs delivered reward accounting keeps two running totals:
 how much reward funding has been delivered to it and how much it has paid
