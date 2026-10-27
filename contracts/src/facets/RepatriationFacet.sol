@@ -61,6 +61,13 @@ interface IVpfiReturnSender {
         uint256 remainingAfter,
         address payable refundAddress
     ) external payable returns (bytes32 messageId);
+
+    function sendRetiredSurplusReturn(
+        uint256 dstChainId,
+        uint256 amount,
+        uint256 remainingAfter,
+        address payable refundAddress
+    ) external payable returns (bytes32 messageId);
 }
 
 /**
@@ -204,6 +211,28 @@ contract RepatriationFacet is
         bytes32 messageId
     );
 
+    /// @notice #917 — mirror side: a RETIRED chain sent `amount` of its
+    ///         pending reward surplus home to `dstChainId`; `remainingAfter`
+    ///         is what the pending-surplus row still holds.
+    /// @custom:event-category state-change/reward-transport
+    event RetiredSurplusReturnDispatched(
+        uint32 indexed dstChainId,
+        uint256 amount,
+        uint256 remainingAfter,
+        bytes32 messageId
+    );
+
+    /// @notice #917 — Base side: a retired mirror's return arrived and
+    ///         `actualReceived` was credited to the recycle bucket as
+    ///         relocated custody. `declaredAmount - actualReceived` (zero for
+    ///         standard VPFI) arrived short and was not credited.
+    /// @custom:event-category state-change/treasury-mutation
+    event RetiredSurplusReturnSettled(
+        uint32 indexed sourceChainId,
+        uint256 declaredAmount,
+        uint256 actualReceived
+    );
+
     event RepatriationCancelDispatched(
         uint256 indexed authId,
         uint32 indexed dstChainId,
@@ -288,6 +317,13 @@ contract RepatriationFacet is
 
     /// @notice #1660 r2 — zero, or above the record's remaining amount.
     error StrandedReturnBadAmount(uint256 requested, uint256 recorded);
+
+    /// @notice #917 — the surplus return opens only on a RETIRED chain
+    ///         (`RewardReporterFacet.retireRewardChain`).
+    error RetiredSurplusChainNotRetired();
+
+    /// @notice #917 — zero, or above what the pending-surplus row holds.
+    error RetiredSurplusBadAmount(uint256 requested, uint256 pending);
 
     error RepatriationInstructionWrongState(
         address issuingBase,
@@ -902,6 +938,103 @@ contract RepatriationFacet is
         );
     }
 
+    /**
+     * @notice #917 — send a RETIRED mirror's pending reward surplus home to
+     *         the base chain it detached from, over the shared return
+     *         channel. The surplus is the VPFI its finalized custody eras
+     *         released while Detached: nobody is owed it, because every day of
+     *         those eras is proven closed, and on a chain that will not
+     *         re-attach it has no other exit.
+     * @dev    PERMISSIONLESS payable, so the keeper or anyone may run it: the
+     *         caller pays only the CCIP fee (quote via
+     *         {VpfiReturnSender.quoteRetiredSurplusReturn}) and can neither
+     *         redirect it (the destination is the recorded detach origin)
+     *         nor inflate it (`amount` is bounded by the row). CHUNKED like
+     *         the stranded return (#1660 r2): the mirror cannot read Base's
+     *         inbound lane ceiling, so a partial send leaves the rest
+     *         retryable. Mirror-outbound capacity is checked before any
+     *         effect, and the row is debited and the tokens released
+     *         (measured at both ends) in the same transaction as the send,
+     *         so a failed send reverts with the row intact. The row has no
+     *         reconciliation queue, and the era release that filled it
+     *         already levelled the delivered-fresh ledger, so no other
+     *         figure moves.
+     * @param  amount VPFI to return this call — at most the pending surplus.
+     */
+    function sendRetiredSurplusReturn(uint256 amount, address payable refundAddress)
+        external
+        payable
+        nonReentrant
+        whenNotPaused
+        onlyMirror
+        returns (bytes32 messageId)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.rewardChainRetired) revert RetiredSurplusChainNotRetired();
+        address sender = s.repatriationSender;
+        if (sender == address(0)) revert RepatriationNotConfigured();
+        uint256 pending = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.PendingSurplus];
+        if (amount == 0 || amount > pending) {
+            revert RetiredSurplusBadAmount(amount, pending);
+        }
+        uint32 dst = s.rewardDetachedFromBaseChainId;
+        _assertWithinLaneCapacity(s, dst, amount, false);
+
+        uint256 remainingAfter = pending - amount;
+        s.retiredSurplusReturnedCumulative += amount;
+        LibRewardCustody.callReleaseFromRow(
+            LibVaipakam.RewardCustodyRow.PendingSurplus, sender, amount
+        );
+        messageId = IVpfiReturnSender(sender).sendRetiredSurplusReturn{
+            value: msg.value
+        }(uint256(dst), amount, remainingAfter, refundAddress);
+        emit RetiredSurplusReturnDispatched(dst, amount, remainingAfter, messageId);
+    }
+
+    /**
+     * @notice #917 — Base ingress for a retired mirror's surplus return,
+     *         forwarded by the `repatriationReceiver` after it moved the
+     *         tokens here. Credits exactly what arrived to the recycle
+     *         bucket as RELOCATED custody under {RecycleSource.RetiredSurplusReturn}.
+     * @dev    The value was fresh emission Base already charged against the
+     *         cap when it remitted it, so coming home is not new absorption:
+     *         relocated custody stays out of the `credited[d]` feed that sizes
+     *         Ā and out of the first-time-absorption cumulative, and it never
+     *         reopens fresh headroom. It still backs the bucket, because the
+     *         tokens are physically here. Base cannot know a mirror's pending
+     *         surplus and needs no entitlement bound: the messenger's channel
+     *         peers authenticate the source, a mirror sends only from a row it
+     *         holds, and the credit is the measured arrival. Not
+     *         `whenNotPaused`, like the other receive ingresses: an inbound
+     *         delivery is never refused by a local pause.
+     */
+    function onRetiredSurplusReturnReceived(
+        uint32 sourceChainId,
+        address token,
+        uint256 declaredAmount,
+        uint256 actualReceived
+    ) external nonReentrant onlyCanonical {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address receiver = s.repatriationReceiver;
+        if (receiver == address(0) || msg.sender != receiver) {
+            revert OnlyRepatriationReceiver(msg.sender);
+        }
+        if (
+            token != s.vpfiToken ||
+            actualReceived == 0 ||
+            actualReceived > declaredAmount
+        ) {
+            revert RepatriationDeliveryInvalid();
+        }
+        s.chainRetiredSurplusReturned[sourceChainId] += actualReceived;
+        LibVpfiRecycle.creditCustodyRelocated(
+            sourceChainId,
+            actualReceived,
+            LibVpfiRecycle.RecycleSource.RetiredSurplusReturn
+        );
+        emit RetiredSurplusReturnSettled(sourceChainId, declaredAmount, actualReceived);
+    }
+
     // ── Config ──────────────────────────────────────────────────────────────
 
     /**
@@ -1001,6 +1134,16 @@ contract RepatriationFacet is
             s.chainRepatriationDebited[chainId],
             s.chainRepatriationReleased[chainId]
         );
+    }
+
+    /// @notice #917 — Base side: the VPFI credited to the recycle bucket from
+    ///         `chainId`'s retired-surplus returns (what arrived, cumulative).
+    function getChainRetiredSurplusReturned(uint32 chainId)
+        external
+        view
+        returns (uint256)
+    {
+        return LibVaipakam.storageSlot().chainRetiredSurplusReturned[chainId];
     }
 
     /// @notice A mirror instruction record, keyed by its issuing deployment

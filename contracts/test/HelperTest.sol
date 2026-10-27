@@ -2276,7 +2276,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](19);
+        selectors = new bytes4[](21);
         selectors[0] = RewardReporterFacet.closeDay.selector;
         // #1434 P2-w1 — V3 (kind-10) ingress + the mirror-side clock reads
         // + the era ground truth (#1632 r1).
@@ -2304,6 +2304,9 @@ contract HelperTest {
         // #2277 — the permissionless frontier catch-up and its view.
         selectors[17] = RewardReporterFacet.advanceInterestFrontiers.selector;
         selectors[18] = RewardReporterFacet.getInterestFrontiers.selector;
+        // #917 — the one-way retirement and its record.
+        selectors[19] = RewardReporterFacet.retireRewardChain.selector;
+        selectors[20] = RewardReporterFacet.getRewardChainRetirement.selector;
         return selectors;
     }
 
@@ -2926,7 +2929,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](17);
+        selectors = new bytes4[](20);
         selectors[0] = RepatriationFacet.authorizeRepatriation.selector;
         selectors[1] = RepatriationFacet.onRepatriationReturnReceived.selector;
         selectors[2] = RepatriationFacet.onRepatriationCancelAck.selector;
@@ -2950,6 +2953,11 @@ contract HelperTest {
         selectors[15] = RepatriationFacet.getRepatriationTokenAdminRegistry.selector;
         // #1434 P2-w5 — the Mode-B stranded return dispatch.
         selectors[16] = RepatriationFacet.sendStrandedReturn.selector;
+        // #917 — a retired mirror's surplus return, its Base ingress, and
+        // Base's per-source record.
+        selectors[17] = RepatriationFacet.sendRetiredSurplusReturn.selector;
+        selectors[18] = RepatriationFacet.onRetiredSurplusReturnReceived.selector;
+        selectors[19] = RepatriationFacet.getChainRetiredSurplusReturned.selector;
     }
 
     function getVaultFactoryFacetSelectorsExtended()

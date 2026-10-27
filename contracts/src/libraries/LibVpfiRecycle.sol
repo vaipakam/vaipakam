@@ -133,7 +133,15 @@ library LibVpfiRecycle {
         ///      escrow). GENUINE absorption, fresh from the payer and never
         ///      Ā-counted before — so it belongs in the day-bucketed feed and the
         ///      reported cumulative, like the notification tariff.
-        ServiceCapacityArmingFee
+        ServiceCapacityArmingFee,
+        /// @dev #917 — CUSTODY-RELOCATION class (append-only enum): the VPFI a
+        ///      RETIRED mirror sent back to Base from its pending surplus.
+        ///      That value was fresh emission Base already charged against
+        ///      the cap when it remitted it, so its return is not new
+        ///      absorption: it stays out of the day-bucketed `credited[d]`
+        ///      feed and the first-time-absorption cumulative, and it never
+        ///      reopens fresh headroom. refId is the SOURCE CHAIN id.
+        RetiredSurplusReturn
     }
 
     /// @notice Emitted once per recycle-bucket credit — the on-chain feed

@@ -57,6 +57,18 @@ interface IStrandedReturnIngress {
     ) external;
 }
 
+/// @notice #917 — the Diamond's retired-surplus ingress: the satellite
+///         authenticates the transport and forwards the tokens; the Diamond
+///         checks the token and credits what arrived to the recycle bucket.
+interface IRetiredSurplusReturnIngress {
+    function onRetiredSurplusReturnReceived(
+        uint32 sourceChainId,
+        address token,
+        uint256 declaredAmount,
+        uint256 actualReceived
+    ) external;
+}
+
 /**
  * @title VpfiReturnReceiver — #1568 C2 (mirror→Base VPFI return channel, receive leg)
  *
@@ -88,8 +100,9 @@ interface IStrandedReturnIngress {
 ///      in-place refresh script imports the same durable constant the
 ///      contract publishes (the receiver/messenger probe pattern).
 ///      Generation 2 = the B1 stranded-return decode branch (#1434 P2-w5); a proxy
-///      without the selector is generation 1.
-uint256 constant VPFI_RETURN_RECEIVER_WIRE_GENERATION = 3;
+///      without the selector is generation 1. Generation 4 = the
+///      retired-surplus decode branch (#917).
+uint256 constant VPFI_RETURN_RECEIVER_WIRE_GENERATION = 4;
 
 contract VpfiReturnReceiver is
     Initializable,
@@ -141,6 +154,12 @@ contract VpfiReturnReceiver is
         uint256 indexed sourceChainId,
         address indexed remitter,
         uint256 indexed remitId,
+        address token,
+        uint256 actualReceived
+    );
+    /// @custom:event-category informational/reward-transport
+    event RetiredSurplusReturnForwarded(
+        uint256 indexed sourceChainId,
         address token,
         uint256 actualReceived
     );
@@ -231,6 +250,8 @@ contract VpfiReturnReceiver is
             _handleRepatCancelAck(uint32(sourceChainId), payload, tokens);
         } else if (head == ReturnWire.RETURN_WIRE_TAG_STRANDED_B1) {
             _handleStrandedReturn(uint32(sourceChainId), payload, tokens, transportMessageId);
+        } else if (head == ReturnWire.RETURN_WIRE_TAG_RETIRED_SURPLUS_R1) {
+            _handleRetiredSurplusReturn(uint32(sourceChainId), payload, tokens);
         } else {
             // Fail-closed rollout (the {ReturnWire} property): an unknown
             // keccak tag can never be coerced into a known shape, and the
@@ -256,30 +277,11 @@ contract VpfiReturnReceiver is
         (, address issuingBase, uint256 authId, uint256 declaredAmount) =
             abi.decode(payload, (uint256, address, uint256, uint256));
 
-        address deliveredToken = tokens[0].token;
-        uint256 deliveredAmount = tokens[0].amount;
-        if (deliveredAmount != declaredAmount) {
-            revert AmountMismatch(declaredAmount, deliveredAmount);
-        }
-        if (deliveredAmount == 0) revert ZeroAmount();
-
-        // Fee-on-transfer safety (the remittance-receiver idiom): spend what
-        // this contract actually holds and report what actually lands in the
-        // Diamond. VPFI is a standard token, so this is normally exact; a
-        // short actual is settled by the Diamond at the declared amount with
-        // the gap recorded as shortfall (§3.6a 6a/7 — the source debit never
-        // silently resizes).
-        uint256 spendable = IERC20(deliveredToken).balanceOf(address(this));
-        if (spendable == 0) revert ZeroAmount();
-        uint256 toTransfer = spendable < deliveredAmount
-            ? spendable
-            : deliveredAmount;
-
-        uint256 diamondBalBefore = IERC20(deliveredToken).balanceOf(diamond);
-        IERC20(deliveredToken).safeTransfer(diamond, toTransfer);
-        uint256 actualReceived = IERC20(deliveredToken).balanceOf(diamond) -
-            diamondBalBefore;
-        if (actualReceived == 0) revert ZeroAmount();
+        // A short actual is settled by the Diamond at the declared amount
+        // with the gap recorded as shortfall (§3.6a 6a/7 — the source debit
+        // never silently resizes).
+        (address deliveredToken, uint256 actualReceived) =
+            _forwardToDiamond(tokens[0], declaredAmount);
 
         IRepatriationReturnIngress(diamond).onRepatriationReturnReceived(
             authId,
@@ -345,24 +347,8 @@ contract VpfiReturnReceiver is
             payload, (uint256, address, uint256, uint256, uint256, uint256)
         );
 
-        address deliveredToken = tokens[0].token;
-        uint256 deliveredAmount = tokens[0].amount;
-        if (deliveredAmount != declaredAmount) {
-            revert AmountMismatch(declaredAmount, deliveredAmount);
-        }
-        if (deliveredAmount == 0) revert ZeroAmount();
-
-        uint256 spendable = IERC20(deliveredToken).balanceOf(address(this));
-        if (spendable == 0) revert ZeroAmount();
-        uint256 toTransfer = spendable < deliveredAmount
-            ? spendable
-            : deliveredAmount;
-
-        uint256 diamondBalBefore = IERC20(deliveredToken).balanceOf(diamond);
-        IERC20(deliveredToken).safeTransfer(diamond, toTransfer);
-        uint256 actualReceived = IERC20(deliveredToken).balanceOf(diamond) -
-            diamondBalBefore;
-        if (actualReceived == 0) revert ZeroAmount();
+        (address deliveredToken, uint256 actualReceived) =
+            _forwardToDiamond(tokens[0], declaredAmount);
 
         IStrandedReturnIngress(diamond).onStrandedReturnReceived(
             remitter,
@@ -379,6 +365,65 @@ contract VpfiReturnReceiver is
         emit StrandedReturnForwarded(
             sourceChainId, remitter, remitId, deliveredToken, actualReceived
         );
+    }
+
+    /// @dev #917 — RETIRED-SURPLUS return: one token, declared must match the
+    ///      transport amount, forwarded with the same measured idiom. Base
+    ///      credits exactly what landed; the Diamond checks the token.
+    function _handleRetiredSurplusReturn(
+        uint32 sourceChainId,
+        bytes calldata payload,
+        ICrossChainMessenger.TokenAmount[] calldata tokens
+    ) internal {
+        if (payload.length != 2 * 32) {
+            revert PayloadSizeMismatch(payload.length, 2 * 32);
+        }
+        if (tokens.length != 1) revert WrongTokenCount(tokens.length);
+        (, uint256 declaredAmount) = abi.decode(payload, (uint256, uint256));
+
+        (address deliveredToken, uint256 actualReceived) =
+            _forwardToDiamond(tokens[0], declaredAmount);
+
+        IRetiredSurplusReturnIngress(diamond).onRetiredSurplusReturnReceived(
+            sourceChainId,
+            deliveredToken,
+            declaredAmount,
+            actualReceived
+        );
+
+        emit RetiredSurplusReturnForwarded(
+            sourceChainId, deliveredToken, actualReceived
+        );
+    }
+
+    /// @dev The one forwarding rule every value-carrying kind shares: the
+    ///      delivered amount must equal the payload's declared amount and be
+    ///      non-zero; then spend what this contract actually holds (never
+    ///      more than delivered) and report what actually landed in the
+    ///      Diamond, read around the move (fee-on-transfer safe — VPFI is a
+    ///      standard token, so this is normally exact). The Diamond ingress
+    ///      decides what a short actual means for its kind.
+    function _forwardToDiamond(
+        ICrossChainMessenger.TokenAmount calldata delivered,
+        uint256 declaredAmount
+    ) internal returns (address token, uint256 actualReceived) {
+        token = delivered.token;
+        uint256 deliveredAmount = delivered.amount;
+        if (deliveredAmount != declaredAmount) {
+            revert AmountMismatch(declaredAmount, deliveredAmount);
+        }
+        if (deliveredAmount == 0) revert ZeroAmount();
+
+        uint256 spendable = IERC20(token).balanceOf(address(this));
+        if (spendable == 0) revert ZeroAmount();
+        uint256 toTransfer = spendable < deliveredAmount
+            ? spendable
+            : deliveredAmount;
+
+        uint256 diamondBalBefore = IERC20(token).balanceOf(diamond);
+        IERC20(token).safeTransfer(diamond, toTransfer);
+        actualReceived = IERC20(token).balanceOf(diamond) - diamondBalBefore;
+        if (actualReceived == 0) revert ZeroAmount();
     }
 
     // ─── Emergency pause ──────────────────────────────────────────────

@@ -67,14 +67,9 @@
       "reason": "Cross-chain receiver forwarding a CCIP-delivered token to the Diamond. It reads the Diamond's balance around its own move and books the measured figure (actualReceived). VPFI recycling and reward transport, outside #2440's scope."
     },
     {
-      "site": "src/crosschain/VpfiReturnReceiver.sol:VpfiReturnReceiver._handleRepatReturn",
+      "site": "src/crosschain/VpfiReturnReceiver.sol:VpfiReturnReceiver._forwardToDiamond",
       "moves": 1,
-      "reason": "Cross-chain receiver forwarding a CCIP-delivered token to the Diamond. It reads the Diamond's balance around its own move and books the measured figure (actualReceived). VPFI recycling and reward transport, outside #2440's scope."
-    },
-    {
-      "site": "src/crosschain/VpfiReturnReceiver.sol:VpfiReturnReceiver._handleStrandedReturn",
-      "moves": 1,
-      "reason": "Cross-chain receiver forwarding a CCIP-delivered token to the Diamond. It reads the Diamond's balance around its own move and books the measured figure (actualReceived). VPFI recycling and reward transport, outside #2440's scope."
+      "reason": "Cross-chain receiver forwarding a CCIP-delivered token to the Diamond, the one forwarding rule every value-carrying return kind shares (#917). It reads the Diamond's balance around its own move and books the measured figure (actualReceived). VPFI recycling and reward transport, outside #2440's scope."
     },
     {
       "site": "src/facets/RepatriationFacet.sol:RepatriationFacet.sendStrandedReturn",

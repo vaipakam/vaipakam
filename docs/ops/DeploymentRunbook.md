@@ -510,6 +510,34 @@ surface stays inert.
    `REWARD_ROLE_EXPECTED_<PREFIX>` — the refresh reads the role back while
    paused and backfills a pre-field detached chain.
 
+   **Retiring a detached mirror (#917).** A mirror you will never
+   re-attach can be retired so its leftover reward VPFI (the
+   `PendingSurplus` custody row, filled when `finalizeCustodyEra`
+   releases a closed era while the chain is `Detached`) goes back to
+   the base it detached from. The steps:
+   1. Detach it first with `setBaseChainId(0)`. The chain records that
+      base, and `getRewardChainRetirement()` shows it as
+      `returnChainId`. Check it is the base you expect.
+   2. Finalize each retired era once its days are closed
+      (`RewardEraFacet.finalizeCustodyEra(era)`), so the value reaches
+      `PendingSurplus`. Read the row with `rewardCustodyRow(PendingSurplus)`.
+   3. Call `RewardReporterFacet.retireRewardChain()` (ADMIN, one-way).
+      After this, both role setters refuse every write
+      (`RewardChainIsRetired`), so this step cannot be undone. Do not run
+      it on a chain you might re-attach.
+   4. Anyone, the operator included, sends the row home with
+      `RepatriationFacet.sendRetiredSurplusReturn(amount, refund)`. Pay
+      the fee from `VpfiReturnSender.quoteRetiredSurplusReturn(base,
+      amount)`. Send it in parts if the lane's rate limit is lower than
+      the row. Base needs a `VpfiReturnReceiver` at wire generation 4 or
+      later; an older receiver refuses the message and CCIP keeps it
+      re-executable.
+   5. On Base, check `getChainRetiredSurplusReturned(<mirror chain id>)`
+      against the mirror's sent total (the third value of
+      `getRewardChainRetirement()`). Then take the mirror off Base's
+      expected-source list with `RewardAggregatorFacet.setExpectedSourceChainIds`,
+      in a separate admin write. Retiring does not do that for you.
+
 7. `ConfigFacet.setMirrorTierMaxAgeSec(<seconds>)` — cache
    staleness threshold (default 60 days; setter floor 30 days).
    Higher = mirror applies stale tiers longer; lower = mirrors
