@@ -67,4 +67,17 @@ library ReturnWire {
     /// @dev Value is `uint256(keccak256("vaipakam.return.wire.stranded.b1"))`.
     uint256 internal constant RETURN_WIRE_TAG_STRANDED_B1 =
         uint256(keccak256("vaipakam.return.wire.stranded.b1"));
+
+    /// @notice Leading word of a RETIRED-SURPLUS return payload (#917):
+    ///         `abi.encode(RETURN_WIRE_TAG_RETIRED_SURPLUS_R1, address issuingBase,
+    ///         uint256 amount)`, carried with exactly one `TokenAmount` (the
+    ///         mirror VPFI a retired chain sends home from its pending
+    ///         surplus). `issuingBase` is the Base Diamond the mirror detached
+    ///         from; only that Diamond credits it. It settles no record: Base
+    ///         credits what arrives, attributed to the authenticated source
+    ///         chain.
+    /// @dev Value is
+    ///      `uint256(keccak256("vaipakam.return.wire.retired-surplus.r1"))`.
+    uint256 internal constant RETURN_WIRE_TAG_RETIRED_SURPLUS_R1 =
+        uint256(keccak256("vaipakam.return.wire.retired-surplus.r1"));
 }

@@ -8189,6 +8189,42 @@ library LibVaipakam {
         ///      the one definition of the pool's hard headroom; written only by
         ///      `LibRemitDayLedger.applyPart`. Base-only. Appended — append-only.
         uint256 remitDayFreshReserved;
+        /// @dev #917 — the base chain a MIRROR detached from: written by the
+        ///      reward-role setters on the effective Mirror → Detached change
+        ///      (the old `baseChainId`), and cleared on every other effective
+        ///      role change. It is the destination of a retired chain's
+        ///      surplus return, so that destination is the chain that last
+        ///      funded this mirror, never an admin argument. Mirror-only.
+        ///      Appended — append-only.
+        uint32 rewardDetachedFromBaseChainId;
+        /// @dev #917 — the Base reward DEPLOYMENT (Diamond) the mirror
+        ///      detached from: `rewardEraLastNonzero` at the same
+        ///      Mirror → Detached change, written and cleared together with
+        ///      `rewardDetachedFromBaseChainId` so the pair always names one
+        ///      funding source. A later `setBaseRewardDeployment` while
+        ///      Detached cannot move it. It rides the retired-surplus wire as
+        ///      `issuingBase`, so a Base Diamond that replaced it refuses the
+        ///      return instead of crediting it. Mirror-only. Appended —
+        ///      append-only.
+        address rewardDetachedFromBaseDeployment;
+        /// @dev #917 — the one-way RETIRED flag. Set once by
+        ///      `RewardReporterFacet.retireRewardChain`, only on a Detached
+        ///      chain with a recorded detach origin (chain and deployment); never
+        ///      cleared, and while set both reward-role setters refuse every
+        ///      write. Opens `RepatriationFacet.sendRetiredSurplusReturn`.
+        ///      Mirror-only. Appended — append-only.
+        bool rewardChainRetired;
+        /// @dev #917 — cumulative VPFI a retired mirror has sent back to Base
+        ///      from its pending-surplus row. Written only by
+        ///      `RepatriationFacet.sendRetiredSurplusReturn`. Mirror-only.
+        ///      Appended — append-only.
+        uint256 retiredSurplusReturnedCumulative;
+        /// @dev #917 — per source chain, the VPFI Base credited to the recycle
+        ///      bucket from that chain's retired-surplus returns: what
+        ///      actually arrived, never a declared figure. Written only by
+        ///      `RepatriationFacet.onRetiredSurplusReturnReceived`. Base-only.
+        ///      Appended — append-only.
+        mapping(uint32 => uint256) chainRetiredSurplusReturned;
     }
 
     /// @notice #918 — one (destination, day)'s remit ledger on Base. See

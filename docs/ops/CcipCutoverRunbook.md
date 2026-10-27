@@ -381,8 +381,34 @@ flight, in this order when **lowering**:
    the new value fails retryably and the canonical side releases the
    draw through the normal cancellation ceremony. Drain or cancel
    any such pending authorizations at your convenience.
-3. **Raising** a capacity needs nothing: the live bounds simply accept
-   larger amounts from that moment.
+3. **Raising** a capacity needs nothing beyond the pairing rule below:
+   the live bounds simply accept larger amounts from that moment.
+
+**The pairing rule — a mirror's OUTBOUND capacity toward Base never
+exceeds Base's INBOUND capacity from that mirror** (#917, Codex #2969).
+Two mirror→Base returns are permissionless and chunked: the stranded
+return (`sendStrandedReturn`) and a retired mirror's surplus return
+(`sendRetiredSurplusReturn`). Each bounds a chunk by the mirror's own
+outbound limiter, read live, because the mirror cannot read Base's
+inbound one and every recorded copy of it was shown to go stale (#1618
+r1→r7). `ConfigureCcip` wires every lane on every chain from the one
+`CCIP_RATE_CAPACITY`, so the two capacities start equal. They can drift
+apart only through a later `setLaneRateLimits` that changes one side, and
+that write must keep the rule:
+
+- **Lowering Base's inbound** from a mirror: first lower that mirror's
+  outbound toward Base to the new value or below, let every return
+  already in flight settle, and only then lower Base's inbound (together
+  with step 1 above for repatriation authorizations).
+- **Raising a mirror's outbound** toward Base: raise Base's inbound from
+  that mirror first.
+
+If the rule is broken, a chunk the mirror admits can exceed Base's
+inbound capacity. CCIP then refuses that delivery on Base. The value is
+not lost: the source debit has happened and the tokens wait in the lane,
+and the delivery lands once Base's inbound capacity is raised back to at
+least the chunk and the message is manually executed. But recovering it
+takes a governance write, so keep the rule.
 
 ### Rotating a Diamond or a pool under in-flight repatriations
 

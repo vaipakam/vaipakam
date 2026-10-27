@@ -255,6 +255,7 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
       'RateModelSet',
       'RepatriationEndpointsSet',
       'RepatriationTokenAdminRegistrySet',
+      'RewardChainRetired',
       'RewardRemittanceKeeperUpdated',
       'RewardRemittanceReceiverUpdated',
       'RoleGranted',

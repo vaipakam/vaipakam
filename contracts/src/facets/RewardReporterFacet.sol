@@ -112,6 +112,12 @@ contract RewardReporterFacet is
         bytes32 newValue
     );
 
+    /// @notice #917 — this chain was RETIRED from the reward mesh, one-way.
+    ///         Its pending reward surplus may now be sent back to
+    ///         `returnDeployment` on `returnChainId`, the Base it detached from.
+    /// @custom:event-category state-change/treasury-mutation
+    event RewardChainRetired(uint32 indexed returnChainId, address indexed returnDeployment);
+
     // ─── Day-close emission (public, permissionless) ────────────────────────
 
     /**
@@ -902,10 +908,11 @@ contract RewardReporterFacet is
         if (wasMirror && old != 0 && chainId != 0 && chainId != old) {
             revert IVaipakamErrors.RewardBaseChainRebindRequiresDetach(old, chainId);
         }
-        // The role freeze: refuse an EFFECTIVE role change while holder
-        // allocations exist or custody is activated (see
-        // {_requireRoleChangeAllowed}). Computed on the would-be role BEFORE
-        // the write, so a refused call leaves nothing half-written.
+        // The role freeze: refuse an EFFECTIVE role change while staged
+        // records encumber the delivered allowance, and refuse every write on
+        // a retired chain (see {_requireRoleChangeAllowed}). Computed on the
+        // would-be role BEFORE the write, so a refused call leaves nothing
+        // half-written.
         _requireRoleChangeAllowed(
             s,
             s.isCanonicalRewardChain
@@ -931,7 +938,7 @@ contract RewardReporterFacet is
         // whose backing was already spent. One helper, called on the
         // EFFECTIVE role predicate, so a third role input can never repeat
         // this by construction.
-        _retireDeliveredResidualOnRoleChange(s, before);
+        _retireDeliveredResidualOnRoleChange(s, before, old);
         emit RewardReporterConfigUpdated(
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes32("baseChainId"),
@@ -950,6 +957,11 @@ contract RewardReporterFacet is
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardRole next
     ) private view {
+        // #917 — a retired chain's role is frozen for good, so its return
+        // destination can never move. Refused before the no-change return:
+        // a retired chain takes no role write at all, not even an idempotent
+        // one that would read as a configuration change in the event log.
+        if (s.rewardChainRetired) revert IVaipakamErrors.RewardChainIsRetired();
         LibVaipakam.RewardRole current = LibVaipakam.rewardRole(s);
         if (next == current) return; // not a change at all
         // A role change moves the DELIVERED ALLOWANCE a reserved record's
@@ -988,12 +1000,24 @@ contract RewardReporterFacet is
     ///      what the old era delivered stays consumable by the obligations it
     ///      accrued (PR C-2) and reaches live headroom only through the era's
     ///      terminal release.
+    ///
+    ///      #917 — the same effective-change point records where a mirror
+    ///      detached FROM on Mirror → Detached — the base chain id before the
+    ///      write (`previousBase`) and the Base deployment it last served
+    ///      (`rewardEraLastNonzero`) — and clears both on every other
+    ///      effective change, so the pair always names the source that last
+    ///      funded the mirror while it stays detached.
     function _retireDeliveredResidualOnRoleChange(
         LibVaipakam.Storage storage s,
-        LibVaipakam.RewardRole before
+        LibVaipakam.RewardRole before,
+        uint32 previousBase
     ) private {
         LibVaipakam.RewardRole current = LibVaipakam.rewardRole(s);
         if (before == current) return;
+        bool detachedFromMirror =
+            before == LibVaipakam.RewardRole.Mirror && current == LibVaipakam.RewardRole.Detached;
+        s.rewardDetachedFromBaseChainId = detachedFromMirror ? previousBase : 0;
+        s.rewardDetachedFromBaseDeployment = detachedFromMirror ? s.rewardEraLastNonzero : address(0);
         if (before == LibVaipakam.RewardRole.Unconfigured) {
             LibRewardCustody.levelDeliveredResidual(s);
             return;
@@ -1061,7 +1085,7 @@ contract RewardReporterFacet is
         // because mirror-ness has two inputs and `setBaseChainId` mutates
         // the other one. Guarding each knob's own delta re-created the
         // one-fix-two-sites defect r2 already catalogued.
-        _retireDeliveredResidualOnRoleChange(s, before);
+        _retireDeliveredResidualOnRoleChange(s, before, s.baseChainId);
         emit RewardReporterConfigUpdated(
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes32("isCanonicalRewardChain"),
@@ -1188,6 +1212,59 @@ contract RewardReporterFacet is
             s.rewardGraceSeconds == 0
                 ? LibRewardDayReport.DEFAULT_REWARD_GRACE_SECONDS
                 : s.rewardGraceSeconds
+        );
+    }
+
+    /// @notice #917 — RETIRE this chain from the reward mesh, one-way.
+    /// @dev    Only on a mirror that has DETACHED (`setBaseChainId(0)`), with
+    ///         the base it detached from recorded (chain and Diamond): that
+    ///         base is where the leftover goes, so it is never an argument here. Plain Detached
+    ///         never opens an exit, because every rebind to a new base passes
+    ///         through Detached; retiring is the deliberate statement that
+    ///         this mirror will not re-attach.
+    ///
+    ///         The resolved role stays `Detached`, so everything Detached means
+    ///         holds unchanged: a zero delivered-fresh bound, retired eras
+    ///         releasing into pending surplus, no drain back to a live era.
+    ///         Retired is a flag, not a fifth role, so no role reader changes
+    ///         meaning. What it adds is the freeze (both reward-role setters
+    ///         refuse every write, {RewardChainIsRetired}) and the exit
+    ///         ({RepatriationFacet.sendRetiredSurplusReturn}).
+    function retireRewardChain() external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.rewardChainRetired) revert RewardChainIsRetired();
+        LibVaipakam.RewardRole role = LibVaipakam.rewardRole(s);
+        uint32 returnChainId = s.rewardDetachedFromBaseChainId;
+        address returnDeployment = s.rewardDetachedFromBaseDeployment;
+        if (
+            role != LibVaipakam.RewardRole.Detached || returnChainId == 0
+                || returnDeployment == address(0)
+        ) {
+            revert RewardChainNotRetirable(uint8(role), returnChainId, returnDeployment);
+        }
+        s.rewardChainRetired = true;
+        emit RewardChainRetired(returnChainId, returnDeployment);
+    }
+
+    /// @notice #917 — this chain's retirement record.
+    /// @return retired             Whether {retireRewardChain} has run.
+    /// @return returnChainId       The base chain this chain detached from
+    ///                             (zero unless it detached as a mirror) —
+    ///                             the surplus return's destination once retired.
+    /// @return returnDeployment    The Base Diamond it detached from, which the
+    ///                             return names so only that Diamond credits it.
+    /// @return returnedCumulative  VPFI sent back to Base so far.
+    function getRewardChainRetirement()
+        external
+        view
+        returns (bool retired, uint32 returnChainId, address returnDeployment, uint256 returnedCumulative)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (
+            s.rewardChainRetired,
+            s.rewardDetachedFromBaseChainId,
+            s.rewardDetachedFromBaseDeployment,
+            s.retiredSurplusReturnedCumulative
         );
     }
 
