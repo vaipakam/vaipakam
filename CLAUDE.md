@@ -2485,6 +2485,16 @@ work and never lag behind a merge.
   Bash 3.2 runs it. `docs/ReleaseNotes/assemble.test.sh` covers all of it and
   DOES still want Bash 4 — a contributor requirement, not an operator one —
   run it after touching the assembler.
+- **A fragment carries no date or time** (owner decision 2026-10-27). Git
+  is the one record of when a change landed: the assembler files a
+  fragment under the UTC day of the commit that added it, and writes that
+  commit's time and sha as the last line of the folded section
+  (`_Committed <YYYY-MM-DD HH:MM> UTC (<sha>)._`), from the same query, so
+  the filing and the note cannot disagree. On `main` that commit is the
+  squash merge. A section it could not date says so and why. Preview a
+  backlog with `bash docs/ReleaseNotes/assemble.sh --list`, which is
+  read-only and prints each fragment's commit time, its day and one
+  command per day.
 - A non-blocking CI check (`.github/workflows/release-notes-drift.yml`)
   warns in the Actions tab if a merge to `main` changed `contracts/src/`
   or `apps/` but added no `docs/ReleaseNotes/` entry.
