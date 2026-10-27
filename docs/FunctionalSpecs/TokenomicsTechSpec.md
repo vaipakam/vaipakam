@@ -185,9 +185,16 @@ Functional consolidation through 2026-07-12:
   day still owes, not to the part alone: a part is admitted exactly when
   sending the rest of the day at once would be, so splitting a day can never
   admit what the whole day would be refused, and no day is started on room its
-  whole does not fit. Other sends may still use that room between parts, and
-  the next part then waits for it. The day counts as remitted only when every
-  part has been sent.
+  whole does not fit. Once a day's first part has gone, the rest of its fresh
+  is held for it: the 69M pool counts the whole day as used, exactly as if it
+  had been sent at once, so no other send and no claim on the canonical chain
+  can take the room its later parts need, and a mirror is never left waiting
+  for a whole that can no longer be sent. (A day under the commitment regime
+  is already held by its commitment.) A released part's fresh is no longer
+  held, because its first transfer still counts against the pool; sending it
+  again needs room, as re-sending any released remittance always has. The
+  pool's figure for what is held is public. The day counts as remitted only
+  when every part has been sent.
   Releasing a part's undeliverable remittance restores exactly that part and
   leaves the day owing it again; the rest of the day is untouched. The fee
   quote and the planning views answer for the same part size the send uses,
