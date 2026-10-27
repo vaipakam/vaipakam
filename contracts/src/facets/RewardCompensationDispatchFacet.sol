@@ -6,6 +6,7 @@ import {LibRewardRemitDispatch} from "../libraries/LibRewardRemitDispatch.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
+import {LibRemitDayLedger} from "../libraries/LibRemitDayLedger.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -189,6 +190,11 @@ contract RewardCompensationDispatchFacet is
                 || s.dayClosedByRemitId[dstChainId][dayId] != 0
         ) {
             revert RemitDayAlreadyClosed(dayId, dstChainId);
+        }
+        // #918 — a day the ordinary path has sent any part of is not a
+        // compensation day (it was remit-eligible when that part went).
+        if (LibRemitDayLedger.hasLedger(s, dstChainId, dayId)) {
+            revert RemitDayPartlySent(dayId, dstChainId);
         }
         address vpfi = s.vpfiToken;
         if (vpfi == address(0)) revert VPFITokenNotSet();
@@ -917,15 +923,34 @@ contract RewardCompensationDispatchFacet is
         uint32 dst = r.dstChainId;
         uint256[] storage closed = r.dayIds;
         uint256 n = closed.length;
+        // #918 — an ordinary reservation is ONE PART of its funded day (and
+        // a zero part of each close-only day that rode along). Its part
+        // belongs to its single funded day: the send funds at most one.
+        (bool funded, uint256 fundedAt) =
+            LibRemitDayLedger.fundedDayIndex(remitId, n, r.fundedDayBits);
+        // #918 (Codex #2959 r3) — whether this is an ordinary remit, whose
+        // days carry a ledger. Its armed days' fresh commitments became their
+        // pool hold at their first part, so none is restored below.
+        bool ledgerRemit;
         for (uint256 i; i < n; ) {
             uint256 d = closed[i];
-            // #1656 r1 - delete the day markers ONLY when this reservation
-            // OWNS the closure: a SUPPLEMENTAL reservation names the same
-            // day for its record/ACK lifecycle, but the closure belongs to
-            // the original acknowledged manual remit - releasing a failed
-            // supplement must not erase it (that would re-open funding on
-            // an already-funded day and free its standing quote).
-            if (s.dayClosedByRemitId[dst][d] == remitId) {
+            if (LibRemitDayLedger.hasLedger(s, dst, d)) {
+                ledgerRemit = true;
+                // #918 — take exactly this part off the day's ledger; the
+                // day's close markers go whenever it is no longer whole,
+                // whichever part set them.
+                bool own = funded && i == fundedAt;
+                LibRemitDayLedger.releasePart(
+                    s, dst, d, remitId, own ? r.fresh : 0, own ? r.recycled : 0
+                );
+            } else if (s.dayClosedByRemitId[dst][d] == remitId) {
+                // #1656 r1 - a COMPENSATION day: delete the day markers ONLY
+                // when this reservation OWNS the closure. A SUPPLEMENTAL
+                // reservation names the same day for its record/ACK
+                // lifecycle, but the closure belongs to the original
+                // acknowledged manual remit - releasing a failed supplement
+                // must not erase it (that would re-open funding on an
+                // already-funded day and free its standing quote).
                 delete s.rewardBudgetRemitted[dst][d];
                 delete s.dayClosedByRemitId[dst][d];
             }
@@ -969,7 +994,13 @@ contract RewardCompensationDispatchFacet is
         // ceremony that re-credits the bucket (B2-d5 class).
         uint256 pending = s.remitPendingTotal[dst];
         s.remitPendingTotal[dst] = pending > r.total ? pending - r.total : 0;
-        LibInteractionRewards.restoreArmedFresh(r.armedFreshFull);
+        // A COMPENSATION reservation restores the fresh commitment it retired.
+        // An ordinary one restores none: the day's whole fresh commitment was
+        // converted into the pool hold when its first part went, the released
+        // part's fresh is now uncovered on the day's ledger, and restoring the
+        // commitment as well would hold the same fresh twice, with nothing
+        // left to retire it (#918, Codex #2959 r3).
+        if (!ledgerRemit) LibInteractionRewards.restoreArmedFresh(r.armedFreshFull);
         r.strandedRecycled = LibVpfiRecycle.restoreReleasedRemit(r.recycledFull, r.recycled, remitId);
         emit RemitReservationReleased(
             remitId, dst, r.total, r.fresh, r.recycled

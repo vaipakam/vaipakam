@@ -5434,6 +5434,99 @@ bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/nul
 check "the run succeeds"     "$?"              "0"
 check "nothing left pending" "$(pending "$W")" "0"
 
+# ── The commit note (owner decision 2026-10-27) ──────────────────────────────
+# A fragment carries no date of its own. Each folded section ends with one line
+# naming the time and the sha of the commit that ADDED its fragment, read from
+# the same git query that decides the day it is filed under, so the two cannot
+# disagree. 0001-a is committed at 23:00 UTC on 2026-08-16, which is already
+# 2026-08-17 at +05:30: the note must say the UTC time, as the filing does.
+case_start "T218: each folded section names its add-commit's UTC time and sha"
+W="$ROOT/t218"; build "$W"
+out="$W/docs/ReleaseNotes"
+sha_a="$(git -C "$W" log --format=%H -1 -- docs/ReleaseNotes/unreleased/0001-a.md | cut -c1-9)"
+TZ=Asia/Kolkata bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+check "the run succeeds"                 "$?" "0"
+check "the note gives the UTC time and the sha" \
+  "$(count_in "^_Committed 2026-08-16 23:00 UTC \\(${sha_a}\\)\\._\$" "$out/ReleaseNotes-2026-08-16.md")" "1"
+check "the note is the line above the marker" \
+  "$(grep -A1 '^_Committed ' "$out/ReleaseNotes-2026-08-16.md" | grep -c '^<!-- assembled-fragment: 0001-a\.md ')" "1"
+check "the note is its own paragraph" \
+  "$(grep -B1 '^_Committed ' "$out/ReleaseNotes-2026-08-16.md" | head -1)" ""
+check "the note is not a heading"        "$(sections "$out/ReleaseNotes-2026-08-16.md")" "1"
+
+# A run that could not date a fragment SAYS SO, and why, rather than writing
+# nothing: a section with no time would read as one whose time was lost.
+case_start "T219: an undated section says why it carries no commit time"
+W="$ROOT/t219"; build "$W"
+out="$W/docs/ReleaseNotes"
+printf '## Thread — not committed yet (PR #9)\n' > "$out/unreleased/0003-c.md"
+bash "$out/assemble.sh" 2026-08-17 >/dev/null 2>&1
+check "the run succeeds"                 "$?" "0"
+check "the uncommitted one says it was not committed" \
+  "$(count_in '^_Commit time not recorded: the fragment was not committed when this file was assembled\._$' "$out/ReleaseNotes-2026-08-17.md")" "1"
+check "the committed one is still dated" \
+  "$(count_in '^_Committed 2026-08-17 10:00 UTC \([0-9a-f]{9}\)\._$' "$out/ReleaseNotes-2026-08-17.md")" "1"
+W="$ROOT/t219b"; build "$W"
+out="$W/docs/ReleaseNotes"
+bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
+check "an undated run succeeds"          "$?" "0"
+check "each section names --allow-mixed-dates as the reason" \
+  "$(count_in '^_Commit time not recorded: assembled with --allow-mixed-dates, which does not date fragments\._$' "$out/ReleaseNotes-2026-08-17.md")" "2"
+
+# `--list` previews the backlog: every pending fragment, its commit time and
+# the day a dated run would file it under. It is READ-ONLY, so nothing about
+# the tree may change, and it takes no argument that would change a run.
+case_start "T220: --list previews every pending fragment and changes nothing"
+W="$ROOT/t220"; build "$W"
+out="$W/docs/ReleaseNotes"
+printf '## Thread — not committed yet (PR #9)\n' > "$out/unreleased/0003-c.md"
+before="$(cd "$W" && find . -path ./.git -prune -o -print | sort | fixture_hash /dev/stdin)"
+msg="$(TZ=Asia/Kolkata bash "$out/assemble.sh" --list 2>&1)"
+check "the preview succeeds"             "$?" "0"
+check "it counts what is pending"        "$(says "$msg" '3 pending fragment(s):')" "1"
+check "it gives a's UTC time and day"    "$(says "$msg" 'committed 2026-08-16 23:00 UTC')" "1"
+check "and files a under its UTC day"    "$(printf '%s\n' "$msg" | grep -c '^  0001-a\.md .*-> 2026-08-16$')" "1"
+check "it files b under its own day"     "$(printf '%s\n' "$msg" | grep -c '^  0002-b\.md .*-> 2026-08-17$')" "1"
+check "it says c is not dated, and why"  "$(printf '%s\n' "$msg" | grep -c '^  0003-c\.md  not dated: not committed yet')" "1"
+check "it prints one run per day"        "$(printf '%s\n' "$msg" | grep -c '^  bash docs/ReleaseNotes/assemble.sh 2026-08-1[67]   # 1 fragment(s)$')" "2"
+after="$(cd "$W" && find . -path ./.git -prune -o -print | sort | fixture_hash /dev/stdin)"
+check "no file or directory was created or removed" "$after" "$before"
+check "nothing was consumed"             "$(pending "$W")" "3"
+for extra in 2026-08-17 --allow-mixed-dates --force-append; do
+  bash "$out/assemble.sh" --list "$extra" >/dev/null 2>&1
+  check "--list refuses $extra"          "$?" "1"
+done
+check "and still consumed nothing"       "$(pending "$W")" "3"
+
+# Recovery must still recognise a section folded BEFORE the note existed
+# (no note), and one whose note differs from what this run would write (the
+# fragment was committed between an interrupted run and this one). The note is
+# the script's own metadata; the fragment's text and its marker are still
+# matched exactly, so anything else between them is still refused.
+case_start "T221: recovery accepts a section with no note or a different note"
+for shape in legacy othernote; do
+  W="$ROOT/t221-$shape"; build "$W"
+  out="$W/docs/ReleaseNotes"
+  h="$(fixture_hash "$out/unreleased/0002-b.md")"
+  {
+    printf '# Release Notes — 2026-08-17\n\n## 0002-b\n'
+    [ "$shape" = othernote ] && printf '\n_Commit time not recorded: the fragment was not committed when this file was assembled._\n'
+    printf '<!-- assembled-fragment: 0002-b.md sha256=%s -->\n' "$h"
+  } > "$out/ReleaseNotes-2026-08-17.md"
+  bash "$out/assemble.sh" 2026-08-17 >/dev/null 2>&1
+  check "$shape: the folded fragment is cleared" "$(pending "$W")" "1"
+  check "$shape: and not appended again" "$(sections "$out/ReleaseNotes-2026-08-17.md")" "1"
+done
+W="$ROOT/t221-edited"; build "$W"
+out="$W/docs/ReleaseNotes"
+h="$(fixture_hash "$out/unreleased/0002-b.md")"
+printf '# Release Notes — 2026-08-17\n\n## 0002-b\n\nAn edit that is not a note.\n<!-- assembled-fragment: 0002-b.md sha256=%s -->\n' "$h" \
+  > "$out/ReleaseNotes-2026-08-17.md"
+msg="$(bash "$out/assemble.sh" 2026-08-17 2>&1)"
+check "other text before the marker is refused" "$?" "1"
+check "naming the missing section" "$(says "$msg" 'but not the section it stands for')" "1"
+check "and the fragment is kept" "$(pending "$W")" "2"
+
 echo ""
 if (( RETIRED > 0 )); then
   echo "assemble.test.sh: $RETIRED assertion(s) RETIRED — the shell construct each"

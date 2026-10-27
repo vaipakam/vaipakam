@@ -7,6 +7,8 @@ import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
 import {ICrossChainMessenger} from "../crosschain/ICrossChainMessenger.sol";
+import {LibVpfiLane} from "../libraries/LibVpfiLane.sol";
+import {RateLimiter} from "@chainlink/contracts-ccip/contracts/libraries/RateLimiter.sol";
 
 /**
  * @title RewardRemittanceLensFacet — the remittance ledger's READ surface.
@@ -168,12 +170,49 @@ contract RewardRemittanceLensFacet {
     }
 
     /// @notice The reservation that terminally closed `(chainId, dayId)`
-    ///         (0 = still open).
+    ///         (0 = still open). #918: on a day sent in parts, the part that
+    ///         completed it; 0 while any of its slice is still owed.
     function getDayClosedByRemitId(
         uint32 chainId,
         uint256 dayId
     ) external view returns (uint256) {
         return LibVaipakam.storageSlot().dayClosedByRemitId[chainId][dayId];
+    }
+
+    /// @notice #918 — Base's remit ledger for `(chainId, dayId)`: the day's
+    ///         whole slice (locked at its first part), what its live parts have
+    ///         sent, and which part retired its clamp residual. All zero, with
+    ///         `locked` false, until a part is sent. See
+    ///         {LibVaipakam.RemitDayLedger}.
+    function getRemitDayLedger(
+        uint32 chainId,
+        uint256 dayId
+    ) external view returns (LibVaipakam.RemitDayLedger memory) {
+        return LibVaipakam.storageSlot().remitDayLedger[chainId][dayId];
+    }
+
+    /// @notice #918 — the live outbound VPFI CCIP lane bucket toward
+    ///         `chainId`: how much one remittance part can move there right now.
+    /// @dev    Resolved by the same rule the repatriation bounds enforce
+    ///         ({LibVpfiLane.liveBucket}). `readable` false means a rung is
+    ///         missing (no registry or messenger configured, no pool for the
+    ///         token, or a lane the pool does not carry) and nothing is known
+    ///         about the bucket — never that it is unlimited. `limited` false
+    ///         on a readable lane means the pool's limiter is disabled, so the
+    ///         lane imposes no bound.
+    /// @return readable The lane resolved.
+    /// @return limited  The lane's outbound limiter is enabled.
+    /// @return tokens   The bucket's tokens, refilled to this block.
+    /// @return capacity The bucket's capacity.
+    function getRemitLaneBucket(uint32 chainId)
+        external
+        view
+        returns (bool readable, bool limited, uint256 tokens, uint256 capacity)
+    {
+        (LibVpfiLane.LaneStatus status, RateLimiter.TokenBucket memory b) =
+            LibVpfiLane.liveBucket(LibVaipakam.storageSlot(), chainId, false);
+        if (status != LibVpfiLane.LaneStatus.Read) return (false, false, 0, 0);
+        return (true, b.isEnabled, b.tokens, b.capacity);
     }
 
     /// @notice Mirror-side receipt record for `remitId` (`receivedAt` 0 =
@@ -205,6 +244,18 @@ contract RewardRemittanceLensFacet {
     /// @notice Σ VPFI remitted across every mirror.
     function getRewardBudgetRemittedGlobal() external view returns (uint256) {
         return LibVaipakam.storageSlot().rewardBudgetRemittedGlobal;
+    }
+
+    /// @notice #918 — fresh VPFI the 69M pool holds for partly sent
+    ///         pre-commitment (unarmed) remit days: what those days still owe
+    ///         their mirrors and have already reserved. The pool's hard
+    ///         headroom counts it as used alongside Base's payouts and
+    ///         {getRewardBudgetRemittedGlobal}, so a day sent in parts holds
+    ///         the pool exactly as a send of its whole in one would. A released
+    ///         part's fresh is not in it until the next part re-reserves it
+    ///         (`RemitDayLedger.freshUncovered`, {getRemitDayLedger}).
+    function getRemitDayFreshReserved() external view returns (uint256) {
+        return LibVaipakam.storageSlot().remitDayFreshReserved;
     }
 
     /// @notice The configured keeper EOA (address(0) = owner-only).
@@ -321,10 +372,12 @@ contract RewardRemittanceLensFacet {
      *                       landed here.
      * @return freshStamped  That stamp prices a non-zero FRESH half for
      *                       either side.
-     * @return landed        A delivery listing the day has landed: an
-     *                       indexed transport epoch, or a proven mark.
-     * @return provedBy      The first packet PROVEN to list the day (zero
-     *                       for an epoch-path day, whose fact is the index).
+     * @return landed        The day's whole slice has landed here: the parts
+     *                       counted toward it (indexed or proven) sum, per
+     *                       component, to the whole Base declared (#918).
+     * @return firstPart     The first packet counted toward the day, by
+     *                       either route (zero before any part has landed).
+     *                       The full per-day record is {getDayDeliveryParts}.
      * @return epochCount    Transport epochs indexed under the day.
      * @return reported      This chain's day report has been sent to Base.
      * @return reportSent    The day's commitment report has been sent.
@@ -339,7 +392,7 @@ contract RewardRemittanceLensFacet {
             bool stamped,
             bool freshStamped,
             bool landed,
-            bytes32 provedBy,
+            bytes32 firstPart,
             uint256 epochCount,
             bool reported,
             bool reportSent,
@@ -355,12 +408,25 @@ contract RewardRemittanceLensFacet {
             freshStamped = stamped && (f.freshLenderHalf != 0 || f.freshBorrowerHalf != 0);
         }
         landed = LibRewardCustody.dayDeliveryLanded(s, dayId);
-        provedBy = s.dayDeliveryProvedBy[dayId];
+        firstPart = s.dayDeliveryParts[dayId].firstPacket;
         epochCount = s.transportBatchesByDay[dayId].length;
         reported = s.chainReportSentAt[dayId] != 0;
         reportSent = s.commitmentReportSent[dayId];
         awaitsLender = LibRewardCustody.dayAwaitsFreshDelivery(s, 0, dayId);
         awaitsBorrower = LibRewardCustody.dayAwaitsFreshDelivery(s, 1, dayId);
+    }
+
+    /// @notice #918 — this mirror's delivery record for `dayId`: the whole slice
+    ///         Base declared, the parts landed so far summed per component, when
+    ///         the day landed (0 = not yet), how many parts were counted, whether
+    ///         a part declared a different whole, and the first packet counted.
+    ///         See {LibVaipakam.DayDeliveryParts}.
+    function getDayDeliveryParts(uint256 dayId)
+        external
+        view
+        returns (LibVaipakam.DayDeliveryParts memory)
+    {
+        return LibVaipakam.storageSlot().dayDeliveryParts[dayId];
     }
 
     /**

@@ -91,10 +91,7 @@ contract InteractionRewardsFacet is
         uint256 headroom;
         uint256 backingCap;
         {
-            uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
-            headroom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
-                ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
-                : 0;
+            headroom = LibInteractionRewards.poolRemaining();
             uint256 backingRoom = LibVpfiRecycle.freshBackingRoom(s);
             // The two bounds reach the engine separately (the pool cap as
             // `headroom`, backing in the delivered allowance), so no per-batch

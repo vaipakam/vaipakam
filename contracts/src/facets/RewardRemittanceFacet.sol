@@ -6,6 +6,7 @@ import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibRewardRemitDispatch} from "../libraries/LibRewardRemitDispatch.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
+import {LibRemitDayLedger} from "../libraries/LibRemitDayLedger.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -72,18 +73,22 @@ contract RewardRemittanceFacet is
     IVaipakamErrors
 {
     /// @dev PR-3c — remit-batch funding decomposition (memory struct so the
-    ///      send path stays under the viaIR stack ceiling). B2-d2: `fresh` /
-    ///      `recycled` are the CLAMPED shares actually sent; `armedFresh` is
-    ///      the PRE-clamp armed-day fresh (the full finalize-time commitment
-    ///      a terminally-closed day retires — remitted + clamp residual);
-    ///      `recycledFull` is the pre-clamp recycled likewise.
+    ///      send path stays under the viaIR stack ceiling). #918: the batch
+    ///      ACTS on each day it applies a part to (`actedDays`, the funded
+    ///      day plus any close-only day riding along) and FUNDS the days whose
+    ///      part moves value (`fundedDays`, the list the wire commits to).
     struct RemitDayLists {
         uint256[] fundedDays;
         uint256 fundedCount;
-        uint256[] closedDays;
-        uint256 closedCount;
+        uint256[] actedDays;
+        uint256 actedCount;
     }
 
+    /// @dev B2-d2 / #918: `fresh` / `recycled` are the CLAMPED part this batch
+    ///      sends; `armedFresh` / `recycledFull` the commitments it retires
+    ///      (fresh: a day's whole commitment on its first part, none later;
+    ///      recycled: each part's own amount, plus a day's clamp residual on
+    ///      the part that retires it — see {LibRemitDayLedger}).
     struct RemitSplitTotals {
         uint256 totalAll;
         uint256 fresh;
@@ -92,22 +97,38 @@ contract RewardRemittanceFacet is
         uint256 armedFrom;
         uint256 recycledFull;
         // Codex #1426 r2/r6 — running NET recycled-backing gate, applied
-        // IDENTICALLY at all four planning sites (send + three quotes). A
-        // closed day may fund only when the POST-close invariant holds:
+        // IDENTICALLY at every planning site (send + quotes). An acted day may
+        // apply its part only when the POST-part invariant holds:
         // `bucket' >= outstanding'`, i.e.
-        // `bucketLeft + recycledFull_day >= outRecycledLeft + clamped_day`
-        // (the close retires the day's FULL commitment while sending only
-        // the clamped share). Comparing against the gross bucket (r2's
-        // first cut) let an operator-released reservation's stranded hole
-        // migrate onto innocent later days: release keeps the bucket
-        // custody-true but RESTORES the full outstanding commitment, so
-        // outstanding deliberately exceeds backing by the stranded amount —
-        // the net gate makes every recycled remit wait until the B2-d5
-        // recovery ceremony heals that hole, and is a structural no-op on
-        // the healthy path (finalize reserves commitments ⊆ fundable =
-        // bucket − outstanding).
+        // `bucketLeft + recycledFull_part >= outRecycledLeft + recycled_part`
+        // (the part retires its commitments while sending only its clamped
+        // share). Comparing against the gross bucket (r2's first cut) let an
+        // operator-released reservation's stranded hole migrate onto innocent
+        // later days: release keeps the bucket custody-true but RESTORES the
+        // full outstanding commitment, so outstanding deliberately exceeds
+        // backing by the stranded amount — the net gate makes every recycled
+        // remit wait until the B2-d5 recovery ceremony heals that hole, and is
+        // a structural no-op on the healthy path (finalize reserves
+        // commitments ⊆ fundable = bucket − outstanding). #918: the gate is
+        // tested on the day's remaining owed (`owedRecycled`,
+        // `gateRecycledFull`), not on the part, so a part passes exactly when
+        // the rest of its day sent in one would.
         uint256 bucketLeft;
         uint256 outRecycledLeft;
+        // #918 — the gate figures ({LibRemitDayLedger.DayPlan}): the fresh the
+        // acted days must find new pool room for (each day's owed fresh not
+        // yet held for it) and the armed fresh commitments the send converts
+        // into that hold (a day's whole, on its first part). The
+        // fresh-headroom gate tests these, never the part alone, so a part
+        // passes exactly when the rest of its day sent in one would.
+        uint256 gateFresh;
+        uint256 gateArmedFresh;
+        // #918 — the FUNDED day's whole slice, per component, for the d7 wire
+        // (every part of a day carries it). The send funds at most one day
+        // ({LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP}); a plan funding more is
+        // refused before a payload is built.
+        uint256 fundedWholeFresh;
+        uint256 fundedWholeRecycled;
     }
 
     /// @dev #1222 M3 B2-d5 — the scalar payload fields {_sendRemitPayload}
@@ -130,88 +151,37 @@ contract RewardRemittanceFacet is
         uint256 recycledShare;
     }
 
-    /// @dev #1222 M3 B2-d2 — one day's remit plan, produced by {_planDay}:
-    ///      the SINGLE eligibility + gate + clamp computation all three remit
-    ///      sites (send + both quotes) consume, so `quote == send` holds
-    ///      structurally. `close` marks a day this batch terminally closes
-    ///      (all filters passed, slice non-zero pre-clamp) — including an
-    ///      armed day whose Σcommitments clamp lands at ZERO, whose
-    ///      commitments must still retire exactly once.
     /// @notice ONE plan of a remittance batch, produced by {_planBatch} and
     ///         read by the send and by every quote view.
     /// @dev    #1566 transport epochs PR 3b (#2232 r16 root arrest). The day
     ///         walk - dedupe, finalization, per-day plan, the net recycled-
-    ///         backing gate, the funded and closed lists, the totals - used to
+    ///         backing gate, the funded and acted lists, the totals - used to
     ///         be hand-copied FOUR times (the send, {quoteRemitDayPlans},
     ///         {quoteRewardBudget}, {quoteRemittanceFee}), and each copy
-    ///         enforced a different subset of the rules. That is why a quote
-    ///         priced what the send refused three separate times in this
-    ///         programme: a rule added to one copy missed another. There is
-    ///         one walk now. It REPORTS what it would refuse rather than
-    ///         throwing, because its callers legitimately differ in what they
-    ///         do about a refusal: the send and the fee quote revert (a dry
-    ///         run must fail where the run fails), while the discovery views
-    ///         stay tolerant (the keeper scans a window and relies on a
-    ///         non-remittable day reading zero, not reverting).
+    ///         enforced a different subset of the rules. There is one walk
+    ///         now. It REPORTS what it would refuse rather than throwing,
+    ///         because its callers legitimately differ in what they do about a
+    ///         refusal: the send and the fee quote revert (a dry run must fail
+    ///         where the run fails), while the discovery views stay tolerant
+    ///         (the keeper scans a window and relies on a non-remittable day
+    ///         reading zero, not reverting).
     ///
-    ///         `dl` and `st` are the send's own working structs, populated
-    ///         here so its apply phase and everything after it read exactly
-    ///         what they always read. `perDay` / `closeable` are aligned to
-    ///         the INPUT list; `closedSlices` / `residuals` to `dl.closedDays`.
+    ///         `dl` and `st` are the send's own working structs. `perDay` /
+    ///         `actionable` / `status` are aligned to the INPUT list; `acted`
+    ///         (each acted day's {LibRemitDayLedger.DayPlan}) to
+    ///         `dl.actedDays`.
     struct BatchPlan {
         RemitDayLists dl;
         RemitSplitTotals st;
         uint256[] perDay;
-        bool[] closeable;
-        uint256[] closedSlices;
-        uint256[] residuals;
-        /// @dev Aligned to the INPUT list: each day's {RemitDayStatus}.
-        RemitDayStatus[] status;
+        bool[] actionable;
+        LibRemitDayLedger.DayPlan[] acted;
+        /// @dev Aligned to the INPUT list: each day's status.
+        LibRemitDayLedger.RemitDayStatus[] status;
         /// @dev The first unfinalized day in INPUT order, reported rather than
         ///      thrown; `anyUnfinalized` says whether it is meaningful.
         uint256 firstUnfinalized;
         bool anyUnfinalized;
-    }
-
-    /// @notice Why a day of a remittance plan does or does not close, one value
-    ///         per input day (#2760 remit warning). Read with
-    ///         {quoteRemitDayStatuses}.
-    /// @dev    Produced by the same walk the send applies ({_planBatch} /
-    ///         {_planDay}), so a status is the send's own verdict, not a
-    ///         reconstruction. Before it, a zero, non-closeable day read the
-    ///         same for every reason below, and a keeper could not tell an
-    ///         owed day from one that owed nothing.
-    ///         Settled: `Remitted`, `Closed`. Nothing owed: `NothingOwed`.
-    ///         Still owed: `Ineligible` (funded by the manual-budget path),
-    ///         `AwaitingCommitment` (an armed day with a budget for this
-    ///         mirror whose commitment report is not complete; a zero-budget
-    ///         day reads `NothingOwed` whether or not its report has arrived),
-    ///         `Unbacked` (its recycled share fails the net backing gate in
-    ///         THIS batch, after the days listed before it).
-    ///         Not judged: `NotFinalized`, `Repeated` (a later copy of an
-    ///         earlier entry; the first copy carries the verdict).
-    ///         `Closeable`: this batch would close it, possibly moving zero.
-    ///         The zero value is not `Closeable`, so a status left unset can
-    ///         never read as one.
-    enum RemitDayStatus {
-        NotFinalized,
-        Repeated,
-        Remitted,
-        Closed,
-        NothingOwed,
-        Ineligible,
-        AwaitingCommitment,
-        Unbacked,
-        Closeable
-    }
-
-    struct DayRemitPlan {
-        RemitDayStatus status;
-        bool close;
-        uint256 fresh;
-        uint256 recycled;
-        uint256 armedFreshFull;
-        uint256 recycledFull;
     }
 
     using SafeERC20 for IERC20;
@@ -230,9 +200,11 @@ contract RewardRemittanceFacet is
 
     /// @notice Emitted when a reward-budget remittance is sent to a mirror.
     /// @param dstChainId Mirror funded.
-    /// @param total      VPFI remitted in this batch (sum of un-remitted slices).
+    /// @param total      VPFI remitted in this batch: the funded day's PART
+    ///                   (#918; the day's per-part record is
+    ///                   {LibRemitDayLedger.RemitDayPartSent}).
     /// @param fundedDayCount Number of days that ACTUALLY funded VPFI in this
-    ///                   batch (skipped/duplicate/zero-slice days excluded) —
+    ///                   batch (skipped/duplicate/zero-part days excluded) —
     ///                   matches the day set carried in the CCIP payload.
     /// @param messageId  CCIP message id, for tracing (zero on a close-only
     ///                   batch — every covered day clamped to zero, nothing
@@ -333,11 +305,13 @@ contract RewardRemittanceFacet is
     error NothingToRemit();
     /// @notice `dayIds` was empty.
     error EmptyDayList();
-    /// @notice `perRemittanceCap` is zero or above the whole interaction pool.
+    /// @notice `partCap` is zero or above the whole interaction pool.
     error InvalidRemittanceCap();
-    /// @notice The batch total exceeds the caller-supplied per-call cap.
-    error RemittanceExceedsCap(uint256 total, uint256 cap);
-    /// @notice The batch would push remitted + Base-paid over the 69M pool cap.
+    /// @notice The batch would push the pool's used figure (Base-paid,
+    ///         remitted, and what partly sent days hold) over the 69M cap.
+    ///         `requested` is the fresh the acted days need NEW room for
+    ///         (#918): an armed day's remaining owed, an unarmed day's owed
+    ///         not yet held for it — never only this part.
     error RewardPoolCapExceeded(uint256 requested, uint256 remaining);
     /// @notice `msg.value` is below the quoted CCIP fee.
     error InsufficientRemittanceFee(uint256 provided, uint256 required);
@@ -408,28 +382,36 @@ contract RewardRemittanceFacet is
 
     /**
      * @notice Remit the un-remitted VPFI reward budget for `dayIds` to
-     *         mirror `dstChainId` over the CCIP token path.
-     * @dev    Idempotent: a `(dstChainId, dayId)` already remitted is skipped
-     *         (not re-sent), so re-running a partially-sent batch is safe.
-     *         CEI order: mark + accounting BEFORE the external send; if the
-     *         send reverts the whole tx (and the marks) roll back. Forwards
-     *         exactly the quoted CCIP native fee and refunds any surplus
-     *         `msg.value` to the caller.
-     * @param dstChainId      Mirror to fund.
-     * @param dayIds          Finalized days to remit (any already-sent are
-     *                        skipped; every day must be finalized). At most
-     *                        ONE of them may carry VPFI (#2821, see
-     *                        {LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP});
-     *                        close-only days may ride along.
-     * @param perRemittanceCap Caller-set ceiling on this batch's total, so the
-     *                        operator/keeper keeps a single send under the live
-     *                        VPFI CCIP lane bucket. Must be in (0, 69M].
-     * @return messageId      CCIP message id.
+     *         mirror `dstChainId` over the CCIP token path — one PART of the
+     *         funded day's slice, no larger than `partCap` (#918).
+     * @dev    Idempotent: a `(dstChainId, dayId)` whose whole slice has gone is
+     *         skipped (not re-sent), so re-running a batch is safe; a day sent
+     *         in part plans only what it still owes. CEI order: marks +
+     *         accounting BEFORE the external send; if the send reverts the
+     *         whole tx (and the marks) roll back. Forwards exactly the quoted
+     *         CCIP native fee and refunds any surplus `msg.value` to the caller.
+     *
+     *         #918 — a day's slice may go in several sends. Each send moves
+     *         `min(owed, partCap)` of the funded day, fresh first, as its own
+     *         reservation; the day-close markers stand only when its WHOLE
+     *         slice has gone, and the mirror holds the day until every part
+     *         has landed there ({LibRemitDayLedger}). A day whose slice exceeds
+     *         the lane's capacity is therefore no longer stranded.
+     * @param dstChainId Mirror to fund.
+     * @param dayIds     Finalized days to remit (any already whole are
+     *                   skipped; every day must be finalized). At most ONE of
+     *                   them may carry VPFI (#2821, see
+     *                   {LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP});
+     *                   close-only days may ride along.
+     * @param partCap    The most VPFI the funded day moves in THIS call, so the
+     *                   operator/keeper keeps a single send under the live VPFI
+     *                   CCIP lane bucket. Must be in (0, 69M].
+     * @return messageId CCIP message id.
      */
     function remitRewardBudget(
         uint32 dstChainId,
         uint256[] calldata dayIds,
-        uint256 perRemittanceCap
+        uint256 partCap
     )
         external
         payable
@@ -442,57 +424,50 @@ contract RewardRemittanceFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
         if (dayIds.length == 0) revert EmptyDayList();
-        if (
-            perRemittanceCap == 0 ||
-            perRemittanceCap > LibVaipakam.VPFI_INTERACTION_POOL_CAP
-        ) {
-            revert InvalidRemittanceCap();
-        }
+        _checkPartCap(partCap);
 
         address vpfi = s.vpfiToken;
         if (vpfi == address(0)) revert VPFITokenNotSet();
         address messenger = s.crossChainMessenger;
         if (messenger == address(0)) revert RewardBudgetMessengerNotSet();
 
-        // Walk the requested days through the SHARED plan helper ({_planDay} —
-        // the same eligibility + B2-d2 commitment gate + Σcommitments clamp
-        // both quote views consume, so quote == send structurally). Every day
-        // must be finalized (its denominator is immutable). Collect ONLY the
-        // days that actually contribute VPFI into `dl.fundedDays` (skipping
-        // skipped/duplicate/zero days) — that filtered set, not the caller's
-        // raw `dayIds`, rides the payload so the mirror's reconciliation
-        // events name exactly the funded days. `dl.closedDays` additionally
-        // collects every day this batch terminally closes (funded + armed
-        // clamped-to-zero) — the reservation records those for release.
-        // (One memory struct for the four day-list locals — the w4 split
-        // moved this function's compilation shape and four stack slots
-        // became one; same lever as {RemitSplitTotals} below.)
         // #2232 r16 root arrest - ONE plan, then apply it. Every refusal a
         // dry run must reproduce is decided on the plan before any write, so
         // the fee quote, which calls the same {_planBatch}, cannot price a
-        // batch this refuses. See {BatchPlan}.
-        BatchPlan memory plan = _planBatch(s, dstChainId, dayIds);
+        // batch this refuses. See {BatchPlan}. Only the days that actually
+        // move VPFI ride the payload (`dl.fundedDays`), so the mirror's
+        // records name exactly the funded day; `dl.actedDays` also holds every
+        // close-only day the batch closes, which the reservation records for
+        // release.
+        BatchPlan memory plan = _planBatch(s, dstChainId, dayIds, partCap);
         if (plan.anyUnfinalized) revert RewardDayNotFinalized(plan.firstUnfinalized);
         RemitDayLists memory dl = plan.dl;
         RemitSplitTotals memory st = plan.st;
-        if (dl.closedCount == 0) revert NothingToRemit();
+        if (dl.actedCount == 0) revert NothingToRemit();
+        // Global 69M-cap guard: everything remitted so far, plus what Base has
+        // itself paid out locally, plus what partly sent days hold, plus the
+        // FRESH this send needs new room for, must stay within the pool.
+        // PR-3c — the recycled share is bucket-backed (its finalize-time
+        // commitment already reserved it against `fundable`) and never
+        // consumes the fresh cap: at fresh exhaustion recycled remittances
+        // keep flowing, the promised steady state.
+        // #918 — tested on the acted days' remaining owed fresh, not on this
+        // part: a day is not started on a margin its whole does not fit. It
+        // runs BEFORE the apply loop, which moves the pool hold
+        // (`remitDayFreshReserved`): the gate reads the pool as it stood
+        // before this send, exactly as every quote does.
+        uint256 remaining = _headroom(s, st.gateArmedFresh);
+        if (st.gateFresh > remaining) {
+            revert RewardPoolCapExceeded(st.gateFresh, remaining);
+        }
+
         uint256 remitId = ++s.remitReservationNonce;
-        // APPLY - the writes the walk used to interleave, in the same per-day
-        // order: close the day under this remit, record what it funds, and
-        // release the clamp residual its commitment does not send.
-        for (uint256 k; k < dl.closedCount; ) {
-            uint256 dayId = dl.closedDays[k];
-            s.dayClosedByRemitId[dstChainId][dayId] = remitId;
-            uint256 slice = plan.closedSlices[k];
-            if (slice > 0) s.rewardBudgetRemitted[dstChainId][dayId] = slice;
-            uint256 residual = plan.residuals[k];
-            if (residual > 0) {
-                LibVpfiRecycle.releaseCommitment(
-                    LibVpfiRecycle.RecycleSource.RemitClampResidual,
-                    dayId,
-                    residual
-                );
-            }
+        // APPLY - per acted day, in plan order: lock its whole on its first
+        // part, hold the day's unsent fresh in the pool, add this part,
+        // retire its clamp residual when this part does, and close it once
+        // whole ({LibRemitDayLedger.applyPart}).
+        for (uint256 k; k < dl.actedCount; ) {
+            LibRemitDayLedger.applyPart(s, dstChainId, dl.actedDays[k], remitId, plan.acted[k]);
             unchecked {
                 ++k;
             }
@@ -500,28 +475,15 @@ contract RewardRemittanceFacet is
         // The fan-out bound on the list the destination will receive, by the
         // same rule the fee quote applies to the same plan.
         LibRewardCustody.requireRemittableFanout(dl.fundedCount);
-        if (st.totalAll > perRemittanceCap) {
-            revert RemittanceExceedsCap(st.totalAll, perRemittanceCap);
-        }
-
-        // Global 69M-cap guard: everything remitted so far, plus what Base has
-        // itself paid out locally, plus this batch's FRESH share, must stay
-        // within the pool. PR-3c — the recycled share is bucket-backed (its
-        // finalize-time commitment already reserved it against `fundable`)
-        // and never consumes the fresh cap: at fresh exhaustion recycled
-        // remittances keep flowing, the promised steady state.
-        uint256 remaining = _headroom(s, st.armedFresh);
-        if (st.fresh > remaining) {
-            revert RewardPoolCapExceeded(st.fresh, remaining);
-        }
 
         // Effects (CEI) — before the external send. `rewardBudgetRemittedGlobal`
         // stays the FRESH-only reservation counter (the availability terms in
         // the governor stamp and the claim cap both read it that way);
-        // `rewardBudgetRemittedTotal` keeps the full funding record. B2-d2:
-        // `armedFresh` is the PRE-clamp armed fresh — a terminally-closed
-        // day's full finalize-time fresh commitment retires here (the clamp
-        // residual is dead the moment the day closes).
+        // `rewardBudgetRemittedTotal` keeps the full funding record. B2-d2 /
+        // #918: `armedFresh` is what this part retires of the armed fresh
+        // commitments — a day's whole commitment, residual included, on its
+        // first part, which the pool hold replaces (Codex #2959 r3); nothing
+        // on a later part.
         s.rewardBudgetRemittedGlobal += st.fresh;
         s.rewardBudgetRemittedTotal[dstChainId] += st.totalAll;
         if (st.recycled > 0) {
@@ -533,7 +495,7 @@ contract RewardRemittanceFacet is
         LibInteractionRewards.consumeArmedFresh(st.armedFresh);
 
         // B2-d2 — delivered-backing reservation, written BEFORE the external
-        // send (CEI). A close-only batch (every covered day clamped to zero)
+        // send (CEI). A close-only batch (every acted day moves nothing)
         // dispatches nothing: its reservation is born terminal (Acked) with
         // zero value so the closed days stay traceable, and the full
         // `msg.value` refunds.
@@ -547,11 +509,11 @@ contract RewardRemittanceFacet is
             r.recycled = st.recycled;
             r.armedFreshFull = st.armedFresh;
             r.recycledFull = st.recycledFull;
-            r.dayIds = dl.closedDays;
-            // #2489 (Codex r2) — which closed days were FUNDED, kept immutably:
-            // the d6 root commits to exactly these, and a release clears the
+            r.dayIds = dl.actedDays;
+            // #2489 (Codex r2) — which acted days were FUNDED, kept immutably:
+            // the d7 root commits to exactly these, and a release clears the
             // live per-day mark they would otherwise be rebuilt from.
-            r.fundedDayBits = _fundedDayBits(dl.closedDays, dl.fundedDays);
+            r.fundedDayBits = _fundedDayBits(dl.actedDays, dl.fundedDays);
             if (st.totalAll == 0) {
                 r.status = 2; // Acked — nothing in flight, terminal.
             } else {
@@ -575,11 +537,12 @@ contract RewardRemittanceFacet is
         // carries the commitment the mirror indexes against. B2-d5's
         // `recycledShare` still rides it: the mirror cannot re-derive it
         // (`p.recycled` is computed after Base's Σcommitments clamp, which is
-        // Base-global state), so it drives the arrival's typed caps.
+        // Base-global state), so it drives the arrival's typed caps. #918: so
+        // does the day's whole, which the mirror waits for.
         bytes memory payload;
         {
             bytes32 root;
-            (payload, root) = _remitPayload(s, dstChainId, dl.fundedDays, st.totalAll, remitId, st.recycled);
+            (payload, root) = _remitPayload(s, dstChainId, dl.fundedDays, st, remitId);
             s.remitReservations[remitId].dayListRoot = root;
         }
         messageId = _sendRemitPayload(
@@ -600,11 +563,20 @@ contract RewardRemittanceFacet is
         );
     }
 
-    /// @dev #2489 (Codex r2) — the funded-day bitmap over `closed`: bit `i` set
-    ///      when `closed[i]` is in `funded`. The planner appends a day to
-    ///      `funded` exactly when it appends it to `closed` with a non-zero
-    ///      slice, so `funded` is an in-order subsequence of `closed` and one
-    ///      forward pass with two cursors marks it.
+    /// @dev The part cap the send and the strict dry run both accept: a
+    ///      positive figure no larger than the whole interaction pool.
+    function _checkPartCap(uint256 partCap) private pure {
+        if (partCap == 0 || partCap > LibVaipakam.VPFI_INTERACTION_POOL_CAP) {
+            revert InvalidRemittanceCap();
+        }
+    }
+
+    /// @dev #2489 (Codex r2) — the funded-day bitmap over `closed` (the ACTED
+    ///      days, #918): bit `i` set when `closed[i]` is in `funded`. The
+    ///      planner appends a day to `funded` exactly when it appends it to the
+    ///      acted list with a non-zero part, so `funded` is an in-order
+    ///      subsequence of `closed` and one forward pass with two cursors marks
+    ///      it.
     function _fundedDayBits(uint256[] memory closed, uint256[] memory funded)
         private
         pure
@@ -680,16 +652,18 @@ contract RewardRemittanceFacet is
     /// @notice The ONE builder of an ordinary remittance's payload — the send
     ///         and its fee quote both call it, so the quote prices exactly the
     ///         bytes the send emits (one walk for a send and all its quotes).
-    /// @dev    3d-2 — the d6 (ROOTED) wire: the funded days are committed to by
+    /// @dev    #918 — the d7 (ROOTED) wire: the funded days are committed to by
     ///         a Merkle root over fixed-size indexed chunks
     ///         ({RemitWire.d6Chunks}, {RemitWire.d6Root}) and travel with the
-    ///         extent, the typed split and the era. The funded list is bounded
-    ///         by {LibRewardCustody.requireRemittableFanout} before this runs,
-    ///         so it holds one day (#2821) and the root is over one chunk.
-    ///         The era word is the custody era the DESTINATION last reported
-    ///         (its B4 day report; #1566 PR C revision) — eras are numbered per
-    ///         chain, so the receiver compares like with like: a delivery the
-    ///         destination has since moved past lands in the era it was sent for.
+    ///         extent, the typed split, the era and the funded day's WHOLE
+    ///         slice per component. The funded list is bounded by
+    ///         {LibRewardCustody.requireRemittableFanout} before this runs, so
+    ///         it holds one day (#2821), the root is over one chunk, and the
+    ///         whole is that day's. The era word is the custody era the
+    ///         DESTINATION last reported (its B4 day report; #1566 PR C
+    ///         revision) — eras are numbered per chain, so the receiver
+    ///         compares like with like: a delivery the destination has since
+    ///         moved past lands in the era it was sent for.
     /// @return payload The wire bytes.
     /// @return root    The day-list root the payload commits to; the send keeps
     ///                 it on the reservation.
@@ -697,9 +671,8 @@ contract RewardRemittanceFacet is
         LibVaipakam.Storage storage s,
         uint32 dstChainId,
         uint256[] memory fundedDays,
-        uint256 total,
-        uint256 remitId,
-        uint256 recycledShare
+        RemitSplitTotals memory st,
+        uint256 remitId
     ) private view returns (bytes memory payload, bytes32 root) {
         bytes32[] memory leaves = RemitWire.d6Chunks(fundedDays);
         root = RemitWire.d6Root(leaves);
@@ -707,53 +680,52 @@ contract RewardRemittanceFacet is
         // reported it. A remittance funding days of an era the destination has
         // since retired is stamped the newer era and files there; its days still
         // draw from its epoch (a draw reads batch membership, never the era), so
-        // only where an unused remainder goes once those days close differs. The
-        // older wire placed a delivery by its days instead: a rooted list's days
-        // are not known at ingress, so the destination cannot.
-        payload = RemitWire.encodeD6(
-            root,
-            fundedDays.length,
-            leaves.length,
-            total,
-            remitId,
-            address(this),
-            recycledShare,
-            s.chainCustodyEraReported[dstChainId]
+        // only where an unused remainder goes once those days close differs.
+        payload = RemitWire.encodeD7(
+            RemitWire.D7({
+                dayListRoot: root,
+                elementCount: fundedDays.length,
+                chunkCount: leaves.length,
+                total: st.totalAll,
+                remitId: remitId,
+                remitter: address(this),
+                recycledShare: st.recycled,
+                intendedEra: s.chainCustodyEraReported[dstChainId],
+                dayWholeFresh: st.fundedWholeFresh,
+                dayWholeRecycled: st.fundedWholeRecycled
+            })
         );
     }
-
-
 
     /// @notice THE day walk. See {BatchPlan} for why there is exactly one.
     /// @dev    Pure planning: reads state, writes none, so the same call serves
     ///         a view and the send's planning phase alike. The send applies
     ///         the plan afterwards ({remitRewardBudget}); planning is
-    ///         write-independent within a batch because {_planDay} reads only
-    ///         the CURRENT day's cells and the send writes only the current
-    ///         day's cells, which is also the assumption the quotes have
-    ///         always silently made - it is now the stated contract of one
-    ///         function instead of a coincidence across four.
+    ///         write-independent within a batch because
+    ///         {LibRemitDayLedger.planDay} reads only the CURRENT day's cells
+    ///         and the send writes only the current day's cells.
     ///
-    ///         Duplicates are dropped by an explicit scan (the send used to
-    ///         rely on its own just-written state to plan a repeated day
-    ///         empty; the same outcome, now by one rule). An unfinalized day
-    ///         is skipped and REPORTED, not thrown: the send and the fee
-    ///         quote revert on it with the first such day in input order,
-    ///         exactly as the send did mid-walk, and the discovery views keep
-    ///         reading it as zero.
+    ///         Duplicates are dropped by an explicit scan. An unfinalized day
+    ///         is skipped and REPORTED, not thrown: the send and the fee quote
+    ///         revert on it with the first such day in input order, and the
+    ///         discovery views keep reading it as zero.
+    /// @param partCap The most VPFI one day's part moves (#918). The send and
+    ///                the strict dry run pass the caller's cap; the cap-free
+    ///                discovery view passes `type(uint256).max`, which plans
+    ///                each day's whole remaining owed.
     function _planBatch(
         LibVaipakam.Storage storage s,
         uint32 dstChainId,
-        uint256[] calldata dayIds
+        uint256[] calldata dayIds,
+        uint256 partCap
     ) private view returns (BatchPlan memory plan) {
         uint256 n = dayIds.length;
         plan.dl.fundedDays = new uint256[](n);
-        plan.dl.closedDays = new uint256[](n);
+        plan.dl.actedDays = new uint256[](n);
         plan.perDay = new uint256[](n);
-        plan.closeable = new bool[](n);
-        plan.closedSlices = new uint256[](n);
-        plan.residuals = new uint256[](n);
-        plan.status = new RemitDayStatus[](n);
+        plan.actionable = new bool[](n);
+        plan.acted = new LibRemitDayLedger.DayPlan[](n);
+        plan.status = new LibRemitDayLedger.RemitDayStatus[](n);
         plan.st.armedFrom = s.governorCommitArmedFromDay;
         // Net of what staging records have reserved (Codex #2308 r11): a
         // remit may not send a resolving record's recycled backing away.
@@ -772,205 +744,86 @@ contract RewardRemittanceFacet is
                 }
             }
             if (seen) {
-                plan.status[i] = RemitDayStatus.Repeated;
-            } else {
-                if (!s.dailyGlobalFinalized[dayId]) {
-                    plan.status[i] = RemitDayStatus.NotFinalized;
-                    if (!plan.anyUnfinalized) {
-                        plan.anyUnfinalized = true;
-                        plan.firstUnfinalized = dayId;
-                    }
-                } else {
-                    DayRemitPlan memory p = _planDay(s, dstChainId, dayId, plan.st.armedFrom);
-                    plan.status[i] = p.status;
-                    // The net recycled-backing gate, applied identically for
-                    // every caller because it is applied HERE (Codex #1426
-                    // r2/r6): a closed day funds only when the post-close
-                    // invariant `bucket' >= outstanding'` still holds.
-                    if (
-                        p.close
-                            && plan.st.bucketLeft + p.recycledFull
-                                >= plan.st.outRecycledLeft + p.recycled
-                    ) {
-                        plan.st.bucketLeft -= p.recycled;
-                        plan.st.outRecycledLeft = plan.st.outRecycledLeft > p.recycledFull
-                            ? plan.st.outRecycledLeft - p.recycledFull
-                            : 0;
-                        uint256 slice = p.fresh + p.recycled;
-                        plan.perDay[i] = slice;
-                        plan.closeable[i] = true;
-                        uint256 c = plan.dl.closedCount;
-                        plan.dl.closedDays[c] = dayId;
-                        plan.closedSlices[c] = slice;
-                        plan.residuals[c] = p.recycledFull - p.recycled;
-                        plan.dl.closedCount = c + 1;
-                        if (slice > 0) {
-                            plan.dl.fundedDays[plan.dl.fundedCount] = dayId;
-                            unchecked {
-                                ++plan.dl.fundedCount;
-                            }
-                            plan.st.totalAll += slice;
-                            plan.st.fresh += p.fresh;
-                            plan.st.recycled += p.recycled;
-                        }
-                        plan.st.armedFresh += p.armedFreshFull;
-                        plan.st.recycledFull += p.recycledFull;
-                    } else if (p.close) {
-                        plan.status[i] = RemitDayStatus.Unbacked;
-                    }
+                plan.status[i] = LibRemitDayLedger.RemitDayStatus.Repeated;
+            } else if (!s.dailyGlobalFinalized[dayId]) {
+                plan.status[i] = LibRemitDayLedger.RemitDayStatus.NotFinalized;
+                if (!plan.anyUnfinalized) {
+                    plan.anyUnfinalized = true;
+                    plan.firstUnfinalized = dayId;
                 }
+            } else {
+                _planOne(s, dstChainId, dayId, i, partCap, plan);
             }
             unchecked {
                 ++i;
             }
         }
         // Truncate the two lists to what was written (memory-safe: lengths
-        // only ever shrink), so every consumer reads exact arrays.
+        // only ever shrink), so every consumer reads exact arrays. `acted`
+        // stays at its allocated length; its readers index it by
+        // `dl.actedCount`.
         {
             uint256[] memory fundedDays_ = plan.dl.fundedDays;
             uint256 fundedCount_ = plan.dl.fundedCount;
-            uint256[] memory closedDays_ = plan.dl.closedDays;
-            uint256 closedCount_ = plan.dl.closedCount;
+            uint256[] memory actedDays_ = plan.dl.actedDays;
+            uint256 actedCount_ = plan.dl.actedCount;
             assembly ("memory-safe") {
                 mstore(fundedDays_, fundedCount_)
-                mstore(closedDays_, closedCount_)
+                mstore(actedDays_, actedCount_)
             }
         }
     }
 
-    /**
-     * @dev #1222 M3 B2-d2 — the SINGLE per-day eligibility + gate + clamp
-     *      computation behind all three remit sites. Zeros (no close) when
-     *      the day is already funded/closed, remit-ineligible, gated (armed
-     *      day whose commitment report is not `.complete` — §M3's "delays,
-     *      never zeroes"), or has a zero pre-clamp slice. On an armed
-     *      gate-passing day the Σcommitments clamp bounds the slice by the
-     *      reported per-side liability total — safe because the per-entry
-     *      report is the SUPREMUM of the mirror's eventual capped claims
-     *      (design record §2c: it can never under-state, so clamping to it
-     *      can never brick a claim) — apportioned pro-rata across the
-     *      fresh/recycled sources (floor on fresh; the PR-3c combined-cap
-     *      convention). Pre-cutover days pass through unclamped (no
-     *      commitment regime exists for them).
-     */
-    function _planDay(
+    /// @dev One finalized, first-seen day of {_planBatch}: plan its part and
+    ///      apply the net recycled-backing gate to it, in its own frame (the
+    ///      walk sits at the viaIR stack ceiling).
+    function _planOne(
         LibVaipakam.Storage storage s,
         uint32 dstChainId,
         uint256 dayId,
-        uint256 armedFrom
-    ) private view returns (DayRemitPlan memory p) {
-        if (s.rewardBudgetRemitted[dstChainId][dayId] != 0) {
-            p.status = RemitDayStatus.Remitted;
-            return p;
+        uint256 i,
+        uint256 partCap,
+        BatchPlan memory plan
+    ) private view {
+        LibRemitDayLedger.DayPlan memory p =
+            LibRemitDayLedger.planDay(s, dstChainId, dayId, plan.st.armedFrom, partCap);
+        plan.status[i] = p.status;
+        if (!p.act) return;
+        RemitSplitTotals memory st = plan.st;
+        // The net recycled-backing gate, applied identically for every caller
+        // because it is applied HERE (Codex #1426 r2/r6): a part applies only
+        // when the post-part invariant `bucket' >= outstanding'` still holds.
+        if (st.bucketLeft + p.gateRecycledFull < st.outRecycledLeft + p.owedRecycled) {
+            plan.status[i] = LibRemitDayLedger.RemitDayStatus.Unbacked;
+            return;
         }
-        if (s.dayClosedByRemitId[dstChainId][dayId] != 0) {
-            p.status = RemitDayStatus.Closed;
-            return p;
+        st.bucketLeft -= p.recycled;
+        st.outRecycledLeft = st.outRecycledLeft > p.recycledFull
+            ? st.outRecycledLeft - p.recycledFull
+            : 0;
+        uint256 part = p.fresh + p.recycled;
+        plan.perDay[i] = part;
+        plan.actionable[i] = true;
+        RemitDayLists memory dl = plan.dl;
+        uint256 c = dl.actedCount;
+        dl.actedDays[c] = dayId;
+        plan.acted[c] = p;
+        dl.actedCount = c + 1;
+        if (part > 0) {
+            dl.fundedDays[dl.fundedCount] = dayId;
+            unchecked {
+                ++dl.fundedCount;
+            }
+            st.totalAll += part;
+            st.fresh += p.fresh;
+            st.recycled += p.recycled;
+            st.fundedWholeFresh = p.wholeFresh;
+            st.fundedWholeRecycled = p.wholeRecycled;
         }
-        LibVaipakam.ChainDayCommitments storage c =
-            s.chainDayCommitments[dayId][dstChainId];
-        // #1222 M3 B2-c — never remit a (chain, day) a force-finalize marked
-        // remit-ineligible-pending-reconciliation: its ShareOfPool budget was
-        // sized without the chain's real demand. The funding vehicle is the
-        // manual-budget path ({remitManualBudget}), never this slice.
-        if (c.remitIneligible) {
-            p.status = RemitDayStatus.Ineligible;
-            return p;
-        }
-        LibInteractionRewards.ChainDayBudget memory b = LibInteractionRewards
-            .chainRewardBudgetSideSplitForDay(s, dstChainId, dayId);
-        uint256 grossRecycled = b.recycledLender + b.recycledBorrower;
-        uint256 localBacking =
-            s.chainDayRecycledFunding[dayId][dstChainId].recycleConsume;
-        if (localBacking > grossRecycled) localBacking = grossRecycled;
-        uint256 sliceFresh = b.freshLender + b.freshBorrower;
-        uint256 sliceRecycled = grossRecycled - localBacking;
-        if (sliceFresh + sliceRecycled == 0 && localBacking == 0) {
-            p.status = RemitDayStatus.NothingOwed;
-            return p;
-        }
-        // The commitment gate runs AFTER the zero-budget test (#2760 r1): a
-        // finalized day's budget is fixed, and the report can only clamp it
-        // down, so a day that gave this mirror nothing owes nothing whether
-        // or not its report has arrived. Gating first would name it owed and
-        // waiting. Eligibility is unchanged: neither branch closes the day.
-        bool armed = armedFrom != 0 && dayId >= armedFrom;
-        if (armed && !c.complete) {
-            p.status = RemitDayStatus.AwaitingCommitment;
-            return p;
-        }
-        p.status = RemitDayStatus.Closeable;
-        p.close = true;
-        if (armed) {
-            p.armedFreshFull = sliceFresh;
-            p.recycledFull = sliceRecycled;
-            // #1222 M3 B2-d3 (Codex #1430 r1→r2→r3) — the clamp is applied
-            // PER SIDE, because all three of these differ by side and
-            // collapsing them first misprices the legs:
-            //   * the mirror reports `liabilityLender18` / `liabilityBorrower18`
-            //     separately, and the liability can concentrate on one side;
-            //   * the two sides carry genuinely different fresh:recycled
-            //     compositions (the reason B2-b introduced per-side halves);
-            //   * local RECYCLED backing can only cover a recycled leg — Base
-            //     funds all fresh — so it must net against that side's
-            //     recycled leg alone.
-            // The local backing is ONE fungible pool of recycled tokens on
-            // the mirror — it is NOT earmarked per side — so only the LEG
-            // SPLIT is per-side; the netting is aggregate. (Apportioning the
-            // backing per side too would strand it: a day whose liability
-            // lands entirely on one side would only be allowed to use that
-            // side's notional share, and Base would over-remit the rest.)
-            (uint256 freshLegL, uint256 recycledLegL) = _sideLegs(
-                b.freshLender, b.recycledLender, c.liabilityLender18
-            );
-            (uint256 freshLegB, uint256 recycledLegB) = _sideLegs(
-                b.freshBorrower, b.recycledBorrower, c.liabilityBorrower18
-            );
-            uint256 recycledLegs = recycledLegL + recycledLegB;
-            p.fresh = freshLegL + freshLegB;
-            p.recycled = recycledLegs > localBacking
-                ? recycledLegs - localBacking
-                : 0;
-        } else {
-            p.fresh = sliceFresh;
-            p.recycled = sliceRecycled;
-        }
-    }
-
-    /**
-     * @dev #1222 M3 B2-d3 (Codex #1430 r3) — split ONE reward side's claim
-     *      exposure into its fresh and recycled LEGS, using that side's OWN
-     *      pool composition and its OWN reported liability.
-     *
-     *      The mirror's claim path splits every payout pro-rata over the
-     *      side's fresh:recycled composition, and the two sides genuinely
-     *      differ (that is why B2-b introduced per-side halves), so a
-     *      liability concentrated on one side must be priced against that
-     *      side — blending them first misprices whichever leg it lands on.
-     *      Netting the chain's local backing is deliberately NOT done here:
-     *      that backing is one fungible pool across both sides, so the
-     *      caller nets it against the SUMMED recycled legs.
-     * @param sideFresh    This side's Base-funded fresh budget.
-     * @param sideRecycled This side's GROSS recycled budget (local included).
-     * @param liability    This side's reported claimable liability.
-     */
-    function _sideLegs(
-        uint256 sideFresh,
-        uint256 sideRecycled,
-        uint256 liability
-    ) private pure returns (uint256 freshLeg, uint256 recycledLeg) {
-        uint256 gross = sideFresh + sideRecycled;
-        if (gross == 0) return (0, 0);
-        if (liability >= gross) return (sideFresh, sideRecycled);
-        // Codex #1430 r4 — use the CLAIM PATH's rounding convention:
-        // `_splitDayAmount` floors the RECYCLED share and gives fresh the
-        // remainder (and `_attributeLegs` repeats that per entry). Flooring
-        // fresh here instead would round the recycled leg UP, over-net it
-        // against the local backing, and under-remit the fresh leg — leaving
-        // fresh claims short by up to a wei per entry, which is the unsafe
-        // direction.
-        recycledLeg = (liability * sideRecycled) / gross;
-        freshLeg = liability - recycledLeg;
+        st.armedFresh += p.armedFresh;
+        st.recycledFull += p.recycledFull;
+        st.gateFresh += p.gateFresh;
+        st.gateArmedFresh += p.gateArmedFresh;
     }
 
     // ─── Admin ────────────────────────────────────────────────────────────
@@ -1633,158 +1486,143 @@ contract RewardRemittanceFacet is
         emit RemitReservationAcked(remitId, dst, total, amountReceived, forced);
     }
 
-
-
-
-
-
-
-
-
-
     // ─── #1222 M3 B2-d2 — ledger views ────────────────────────────────────
 
     /**
-     * @notice #1222 M3 B2-d2 (Codex #1426 r1) — batch remit planner: for
-     *         each day, the amount a remit would move AND whether the day is
-     *         actionable at all (`closeable` — it would terminally close in
-     *         a batch: true for fundable days and for gate-passing armed
-     *         days whose Σcommitments clamp lands at ZERO, which move no
+     * @notice #1222 M3 B2-d2 (Codex #1426 r1) / #918 — batch remit planner:
+     *         for each day, the amount a remit with this `partCap` would move
+     *         for it AND whether the batch would act on the day at all
+     *         (`actionable` — it applies a part: true for days owing value,
+     *         whether the part completes them or not, and for gate-passing
+     *         armed days whose Σcommitments clamp lands at ZERO, which move no
      *         VPFI but must still close to retire their finalize-time
      *         commitments).
      * @dev    {quoteRewardBudget} alone cannot surface the zero-clamp case —
      *         a zero amount there is indistinguishable from a gated /
-     *         already-closed / remit-ineligible day — so a keeper reading
-     *         only amounts would never drive the close-only batch and such a
-     *         day's commitments would stay outstanding forever. Mirrors the
-     *         send's in-batch de-duplication (a repeated day contributes
-     *         only on first occurrence) and skips non-finalized days.
+     *         already-closed / remit-ineligible day — so a keeper reading only
+     *         amounts would never drive the close-only batch. Whether an
+     *         actionable day COMPLETES under this cap or stays open owing the
+     *         rest is {quoteRemitDayStatuses}' `Closeable` / `Partial`. Mirrors
+     *         the send's in-batch de-duplication and skips non-finalized days.
+     *         Tolerant for days (no DAY reverts); `partCap` is refused on the
+     *         send's own terms, because a plan under an invalid cap is a plan
+     *         of a send that cannot happen.
      */
     function quoteRemitDayPlans(
         uint32 dstChainId,
-        uint256[] calldata dayIds
+        uint256[] calldata dayIds,
+        uint256 partCap
     )
         external
         view
-        returns (uint256[] memory amounts, bool[] memory closeable)
+        returns (uint256[] memory amounts, bool[] memory actionable)
     {
+        _checkPartCap(partCap);
         // #2232 r16 - the same plan the send applies (see {BatchPlan}).
-        // Tolerant by contract: an unfinalized, repeated or already-remitted
-        // day reads as zero and not closeable, never as a revert.
-        BatchPlan memory plan = _planBatch(LibVaipakam.storageSlot(), dstChainId, dayIds);
-        return (plan.perDay, plan.closeable);
+        BatchPlan memory plan = _planBatch(LibVaipakam.storageSlot(), dstChainId, dayIds, partCap);
+        return (plan.perDay, plan.actionable);
     }
 
     /**
-     * @notice #2760 — why each day of a remittance plan does or does not
-     *         close: one {RemitDayStatus} per entry of `dayIds`, aligned to
-     *         the input.
+     * @notice #2760 / #918 — why each day of a remittance plan does or does not
+     *         move under `partCap`: one {LibRemitDayLedger.RemitDayStatus} per
+     *         entry of `dayIds`, aligned to the input.
      * @dev    The same plan the send applies ({_planBatch}), so the statuses
-     *         and {quoteRemitDayPlans}' figures for one list always agree: a
-     *         day is `Closeable` exactly when it is `closeable` there.
-     *         `Unbacked` depends on the days listed before it, as the send's
-     *         backing gate does. Tolerant like the other discovery views: no
-     *         input reverts.
+     *         and {quoteRemitDayPlans}' figures for one list and one cap always
+     *         agree: a day is `Closeable` or `Partial` exactly when it is
+     *         `actionable` there. `Unbacked` depends on the days listed before
+     *         it, as the send's backing gate does. Tolerant for days; `partCap`
+     *         is refused on the send's terms.
      */
     function quoteRemitDayStatuses(
         uint32 dstChainId,
-        uint256[] calldata dayIds
-    ) external view returns (RemitDayStatus[] memory statuses) {
-        return _planBatch(LibVaipakam.storageSlot(), dstChainId, dayIds).status;
+        uint256[] calldata dayIds,
+        uint256 partCap
+    ) external view returns (LibRemitDayLedger.RemitDayStatus[] memory statuses) {
+        _checkPartCap(partCap);
+        return _planBatch(LibVaipakam.storageSlot(), dstChainId, dayIds, partCap).status;
     }
-
-
-
-
-
-
-
-
-
 
     // ─── Views ────────────────────────────────────────────────────────────
 
     /**
-     * @notice Plan a remittance: the un-remitted VPFI a {remitRewardBudget}
-     *         call over `dayIds` would send to `dstChainId`, and the per-day
-     *         breakdown. Non-reverting — non-finalized or already-remitted days
-     *         contribute 0.
-     * @dev    Mirrors {remitRewardBudget}'s in-call de-duplication: a `dayId`
-     *         repeated in `dayIds` contributes only on its FIRST occurrence
-     *         (later duplicates yield 0). Without this the quote would
-     *         over-count a duplicated day — remit marks it on the first pass, so
-     *         the send would fit under a cap the quote reported as too large.
-     * @return total  Sum of the un-remitted slices (each day counted once).
-     * @return perDay `perDay[i]` = amount `dayIds[i]` would contribute (0 if
-     *                not finalized, already remitted, or a repeat of an earlier
-     *                entry in `dayIds`).
+     * @notice Plan a remittance: the VPFI each of `dayIds` still OWES
+     *         `dstChainId`, and their sum. Non-reverting — non-finalized or
+     *         already-whole days contribute 0.
+     * @dev    CAP-FREE (#918): a day's figure is everything it still owes —
+     *         its whole slice less the parts already sent — not what one send
+     *         would move under a lane-sized cap; {quoteRemitDayPlans} with a
+     *         `partCap` answers that. Mirrors {remitRewardBudget}'s in-call
+     *         de-duplication: a `dayId` repeated in `dayIds` contributes only
+     *         on its FIRST occurrence.
+     *
+     *         This is the DISCOVERY view and it stays tolerant on purpose: the
+     *         keeper scans a recent window every tick and relies on an
+     *         unfinalized, repeated or already-remitted day reading ZERO here,
+     *         not reverting. What it does NOT do is claim the send would accept
+     *         the whole list: the send funds ONE day per remittance
+     *         (`TRANSPORT_DAY_FANOUT_CAP`, #2821), in parts no larger than its
+     *         cap, and {quoteRemittanceFee} is the strict dry run that refuses
+     *         the same lists the send refuses.
+     * @return total  Sum of what the days still owe (each day counted once).
+     * @return perDay `perDay[i]` = what `dayIds[i]` still owes (0 if not
+     *                finalized, already whole, gated, or a repeat).
      */
     function quoteRewardBudget(
         uint32 dstChainId,
         uint256[] calldata dayIds
     ) external view returns (uint256 total, uint256[] memory perDay) {
-        // #2232 r16 - the same plan the send applies (see {BatchPlan}), so a
-        // per-day figure here IS the slice the send would fund for that day.
-        //
-        // This is the DISCOVERY view and it stays tolerant on purpose: the
-        // keeper scans a recent window every tick and relies on an
-        // unfinalized, repeated or already-remitted day reading ZERO here, not
-        // reverting. What it does NOT do is claim the send would accept the
-        // whole list: the send funds ONE day per remittance
-        // (`TRANSPORT_DAY_FANOUT_CAP`, #2821), and the number of days this
-        // list would fund is the count of NON-ZERO entries in `perDay`. A
-        // caller sizing a batch sends one of them per remittance, with any
-        // close-only days alongside; {quoteRemittanceFee} is the
-        // strict dry run and refuses the same lists the send refuses.
-        BatchPlan memory plan = _planBatch(LibVaipakam.storageSlot(), dstChainId, dayIds);
+        BatchPlan memory plan =
+            _planBatch(LibVaipakam.storageSlot(), dstChainId, dayIds, type(uint256).max);
         return (plan.st.totalAll, plan.perDay);
     }
 
     /**
-     * @notice Quote the CCIP native fee a {remitRewardBudget} over `dayIds`
-     *         would cost, plus the VPFI total it would send.
+     * @notice Quote the CCIP native fee a {remitRewardBudget} over `dayIds` with
+     *         `partCap` would cost, plus the VPFI total it would send.
      * @dev    The keeper/operator EOA cannot call
      *         `CcipMessenger.quoteMessageFee` directly — the messenger
      *         authorizes quotes by `channelOf[msg.sender]` and only the Diamond
      *         is a registered reward-budget handler. This view runs the quote
      *         AS the Diamond, building the exact same funded-day payload +
-     *         token list the send would (same not-already-remitted /
-     *         non-duplicate / non-zero-slice filter), so `fee` is what to pass
-     *         as `msg.value` (overpayment is refunded anyway).
+     *         token list the send would, for the same part, so `fee` is what to
+     *         pass as `msg.value` (overpayment is refunded anyway). The part
+     *         size matters: the d7 payload carries the part, and a CCIP token
+     *         fee may scale with the amount moved.
      *
      *         It is a faithful DRY-RUN of the send's intrinsic guards: it
-     *         reverts `RewardDayNotFinalized` on an unfinalized day and
-     *         `RewardPoolCapExceeded` when the batch would breach the 69M pool,
-     *         exactly like {remitRewardBudget} — so a keeper that gets a
-     *         successful quote knows the same send won't be rejected by those
-     *         guards (the caller-supplied `perRemittanceCap` is the keeper's own
-     *         concern, sized from the returned `total`). Returns (0, 0) when
-     *         nothing is remittable, or the messenger/VPFI is unset.
+     *         reverts `InvalidRemittanceCap` on a cap the send refuses,
+     *         `RewardDayNotFinalized` on an unfinalized day and
+     *         `RewardPoolCapExceeded` when the fresh the acted days need new
+     *         room for would breach the 69M pool (#918: tested on the rest of
+     *         the day, not on the part),
+     *         exactly like {remitRewardBudget}. Returns (0, 0) when nothing is
+     *         remittable, or the messenger/VPFI is unset.
      * @return fee   CCIP native fee for the send (0 if nothing to remit).
      * @return total VPFI the send would move (0 if nothing to remit).
      */
     function quoteRemittanceFee(
         uint32 dstChainId,
-        uint256[] calldata dayIds
+        uint256[] calldata dayIds,
+        uint256 partCap
     ) external view returns (uint256 fee, uint256 total) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vpfi = s.vpfiToken;
         address messenger = s.crossChainMessenger;
         if (vpfi == address(0) || messenger == address(0)) return (0, 0);
+        _checkPartCap(partCap);
 
         // #2232 r16 root arrest - the STRICT dry run: the same plan the send
         // applies, refused on the same terms and in the same order, so this
         // can never price a batch the send would reject. See {BatchPlan}.
-        BatchPlan memory plan = _planBatch(s, dstChainId, dayIds);
+        BatchPlan memory plan = _planBatch(s, dstChainId, dayIds, partCap);
         if (plan.anyUnfinalized) revert RewardDayNotFinalized(plan.firstUnfinalized);
         total = plan.st.totalAll;
         if (total == 0) return (0, 0);
-        uint256 totalFresh = plan.st.fresh;
-        uint256 remaining = _headroom(s, plan.st.armedFresh);
-        if (totalFresh > remaining) {
-            revert RewardPoolCapExceeded(totalFresh, remaining);
+        uint256 remaining = _headroom(s, plan.st.gateArmedFresh);
+        if (plan.st.gateFresh > remaining) {
+            revert RewardPoolCapExceeded(plan.st.gateFresh, remaining);
         }
-        uint256[] memory fundedDays = plan.dl.fundedDays;
         LibRewardCustody.requireRemittableFanout(plan.dl.fundedCount);
 
         ICrossChainMessenger.TokenAmount[] memory tokens =
@@ -1793,12 +1631,10 @@ contract RewardRemittanceFacet is
         // B2-d2 — price exactly the bytes the send builds; the fee depends on
         // payload length, so the placeholder id (the next nonce the send would
         // draw) keeps the quote exact. 3d-2 — the SAME builder as the send
-        // ({_remitPayload}), so `quote == send` holds by construction.
-        // `total − totalFresh` IS the recycled share: every funded day
-        // contributes `slice = p.fresh + p.recycled` to `total` and `p.fresh`
-        // to `totalFresh`.
+        // ({_remitPayload}) over the SAME totals, so `quote == send` holds by
+        // construction.
         (bytes memory payload, ) =
-            _remitPayload(s, dstChainId, fundedDays, total, s.remitReservationNonce + 1, total - totalFresh);
+            _remitPayload(s, dstChainId, plan.dl.fundedDays, plan.st, s.remitReservationNonce + 1);
         // #2561 — the send refuses a remittance with no bound remote adapter,
         // so the dry run refuses it too, by the same rule.
         LibRewardRemitDispatch.boundRemoteMessenger(messenger, dstChainId);
@@ -1809,11 +1645,4 @@ contract RewardRemittanceFacet is
             LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT
         );
     }
-
-
-
-
-
-
-
 }

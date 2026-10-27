@@ -1406,16 +1406,20 @@ submitted from the canonical chain, so an unfunded Base EOA lets commitment
 reports complete while every reward-budget send fails. Read balances back per
 chain, **including Base**.
 
-**3e. Raise BOTH capacity limits, and understand that only one of them is the
-keeper's.** The keeper excludes a day whose eligible slice exceeds
-`REWARD_REMIT_LANE_CAP` — its own configured value — and logs that exclusion.
-**It does not read the on-chain CCIP token-bucket capacity at all.** So a lane
-cap configured above the live bucket capacity does not produce an exclusion: the
-oversized send is planned, dispatched, and **rejected by the rate limiter
-on-chain**. The two limits must be raised together, and the 50,000-VPFI default
-bucket capacity can sit below an early high-concentration daily slice. Read back
-each destination's bucket capacity *and* the keeper lane cap against the largest
-supported single-day slice (#918).
+**3e. Size the lane, and know what happens when a day does not fit it.**
+Since #918 (owner decision 2026-10-27, "send in parts") a day larger than one
+lane transfer is no longer excluded: it is sent in **parts**. Each tick the
+keeper sizes its part to the smaller of `REWARD_REMIT_LANE_CAP` and the Base
+lane bucket's live tokens (`RewardRemittanceLensFacet.getRemitLaneBucket`), so
+a part never asks the pool for more than it can release, and the mirror opens
+the day only once every part has landed. Two checks still guard the lane
+itself: `ConfigureCcip.s.sol` **refuses** to configure a lane whose capacity is
+below the largest fresh day slice the schedule can owe (both halves of day 1,
+about 20,164 VPFI), and the launch-readiness lane check states in its detail
+when the smallest lane capacity is below that figure (an advisory; it does not
+fail the check). Read back each destination's bucket capacity; a lane below the
+largest slice is supported but makes every such day take several sends, and
+each send pays its own CCIP fee.
 
 **Capacity alone is not the check.** A lane has SEPARATE outbound and inbound
 rate-limiter states, each with its own `capacity`, `rate`, `isEnabled` and
@@ -1492,7 +1496,7 @@ read back on every chain:
   `whenNotPaused`, so a Base Diamond left paused after an incident stops every
   remit even when every cross-chain contract is unpaused and every wiring
   readback is clean. A paused MIRROR Diamond fails differently, and the
-  difference is easy to miss. Its budget ingress, `onRewardBudgetReceivedD6`, is
+  difference is easy to miss. Its budget ingress, `onRewardBudgetReceivedD7`, is
   deliberately NOT `whenNotPaused` (migration mode, design §5c), so a delivery
   still lands on a paused mirror. Only the transport stops it, at the edge: the
   destination `CcipMessenger` and the `RewardRemittanceReceiver` each carry their
@@ -2204,18 +2208,26 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   `RewardEpochFacet.materializeTransportBatchChunk` for a delivery that carries a
   transport epoch (unchanged: indexing the day's chunk IS the landing);
   `RewardEpochFacet.proveDeliveryDayChunk(packetHash, chunkIndex, dayIds, proof)`
-  for a rooted (d6) delivery that holds no epoch (one received before custody
+  for a rooted (d7) delivery that holds no epoch (one received before custody
   activation). Every budget delivery is rooted: the mirror receiver refuses any
   older wire shape (`UnknownRemitWireShape`), so there is no flat-list route.
   Refusals by name: `IngressPacketUnknown`, `DeliveryProofRouteIsBatch` (use the
   epoch route), `DeliveryProofNotBudget`, `DeliveryPacketDisposed`, and
-  `TransportChunkAlreadyIndexed` for a chunk already proven. Each newly proven day emits
-  `DayDeliveryProved(dayId, packetHash, remitId, route)`; the first delivery to
-  list a day stays recorded, and a repeat proof writes nothing. A proof moves no
-  value.
+  `TransportChunkAlreadyIndexed` for a chunk already proven. Each proven
+  (packet, day) pair emits `DayDeliveryProved(dayId, packetHash, remitId,
+  route)`, and a repeat proof writes nothing. A proof moves no value. **Since
+  #918 a day may arrive in several parts**, one packet each: every one-day
+  packet that lands (indexed or proven) adds its declared fresh and recycled
+  part to the day's landed sums (`getDayDeliveryParts(dayId)` — the whole each
+  part declared, the sums so far, the part count, the first packet, and
+  `wholeConflict` if two parts declared different wholes). The day is landed
+  only when both sums reach the whole, so prove or index EVERY part, not just
+  the first; a day whose parts disagree on the whole before it opened does not
+  open and needs investigation on Base (`getRemitDayLedger(dst, dayId)`).
 - **Keeper reconstruction rule — the funded list is NOT the reservation's day
   list, and it is read from the IMMUTABLE bitmap.** `getRemitReservation(remitId)`
-  returns `dayIds` — every day the remit CLOSED, a superset — and `fundedDayBits`,
+  returns `dayIds` — every day the remit ACTED on (sent a part of, or closed), a
+  superset — and `fundedDayBits`,
   a bitmap over that array written at the send and never rewritten: bit `i`
   (word `i >> 8`, bit `i & 255`) set means `dayIds[i]` was FUNDED on the wire.
   Rebuild the wire's list as `dayIds` filtered by that bitmap, in order, and
@@ -2232,11 +2244,14 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   the payload is on chain in that transaction's message), never the live map.
   `RewardBudgetRemitted` carries only the funded-day COUNT, never the list.
 - **Readbacks.** `RewardRemittanceLensFacet.getDayDeliveryState(dayId)` returns
-  `(gateArmed, stamped, freshStamped, landed, provedBy, epochCount, reported,
-  reportSent, awaitsLender, awaitsBorrower)`: not `stamped` = not applied yet;
+  `(gateArmed, stamped, freshStamped, landed, firstPart, epochCount, reported,
+  reportSent, awaitsLender, awaitsBorrower)` (`firstPart` is the first packet
+  that carried a part of the day; #918 renamed it from `provedBy`, same
+  position): not `stamped` = not applied yet;
   an `awaits*` flag on an armed day with `reportSent == false` = waiting on the
-  commitment report; an `awaits*` flag otherwise = waiting on delivery; `landed` =
-  delivered. `getPacketDeliveryProof(packetHash)` shows a delivery's list
+  commitment report; an `awaits*` flag otherwise = waiting on delivery (on a
+  day sent in parts, on its remaining parts — compare `getDayDeliveryParts`'
+  landed sums with the whole); `landed` = every part delivered. `getPacketDeliveryProof(packetHash)` shows a delivery's list
   commitments, chunk progress and its batch / classification /
   disposal state. **Landed is not drawable**: an epoch still needs to be whole and
   attested before value moves from it; the delivered bound governs that.
@@ -2446,7 +2461,7 @@ DEAD-END LIST so the next person does not re-derive them under time pressure:
 | Remit + receipts BEFORE arming | `broadcastGlobal`'s only day-state gate is `dailyGlobalFinalized`; arming is irrelevant to it. A pre-arm application used to spend that day for propagation; since #1944 it does not — `_applyBroadcastV2Core`'s replay installs `armedFromDay` on a mirror that has none — so this row's remaining force is the first sentence, not the day cost. |
 | Pause, fund the candidate, unpause, broadcast | `broadcastGlobal` accepts ANY finalized day, so unpausing re-opens every other unfunded finalized day at once. |
 | Reconcile every broadcastable day first | An applied-but-unfunded day is ALREADY open and pausing Base cannot close it; and `finalizeDay` is permissionless, so new broadcastable days can appear after the inventory. |
-| Contain the destination's claim path meanwhile | `AdminFacet.pause()` on the mirror stops `claimInteractionRewards` and does NOT stop funding: `onRewardBudgetReceivedD6` is deliberately not `whenNotPaused` (migration mode, design §5c), and neither is the broadcast apply, so the days already in flight can be funded while claims are stopped. The procedure fails at the unpause instead. Unpausing is never atomic with the check that every applied day is funded: `finalizeDay` is permissionless, so a day finalized and broadcast after that check is applied but unfunded when claims reopen. That is row 3's inventory gap, moved to the mirror, and holding broadcasts back with a messenger pause only moves it to that unpause (row 2). The pause is also the Diamond's single global flag, so for as long as it is held it halts every other `whenNotPaused` path on that chain, lending and the mirror's own `closeDay` reports included. |
+| Contain the destination's claim path meanwhile | `AdminFacet.pause()` on the mirror stops `claimInteractionRewards` and does NOT stop funding: `onRewardBudgetReceivedD7` is deliberately not `whenNotPaused` (migration mode, design §5c), and neither is the broadcast apply, so the days already in flight can be funded while claims are stopped. The procedure fails at the unpause instead. Unpausing is never atomic with the check that every applied day is funded: `finalizeDay` is permissionless, so a day finalized and broadcast after that check is applied but unfunded when claims reopen. That is row 3's inventory gap, moved to the mirror, and holding broadcasts back with a messenger pause only moves it to that unpause (row 2). The pause is also the Diamond's single global flag, so for as long as it is held it halts every other `whenNotPaused` path on that chain, lending and the mirror's own `closeDay` reports included. |
 | Safe-only executor + fresh reconciliation before execution | Restricting the executor controls only WHO unpauses. It does not make reconciliation and unpause atomic, and `finalizeDay` — permissionless and not routed through the paused messenger — lets a new unfunded day be created after the inventory, including by front-running the Safe's own unpause. |
 
 *(Scope, #1944 consequence 1: every row above, and the one safe branch below,

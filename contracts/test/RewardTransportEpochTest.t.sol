@@ -30,7 +30,7 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
  *         by it, the reads refuse an id nothing opened, and a day's index is
  *         arrival-ordered whoever indexes first.
  *
- *         Admission and the chunk index themselves are `RewardTransportD6Test`'s
+ *         Admission and the chunk index themselves are `RewardTransportD7Test`'s
  *         subject. Before the pre-d6 retirement this suite drove an older
  *         flat-list wire, whose untyped admission, paged index and rollout
  *         entry are gone; the lifecycle below is the part of it that never

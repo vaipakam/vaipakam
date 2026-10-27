@@ -38,7 +38,12 @@ contract RetiredIngressSelectorsTest is Test {
     ///      signatures, so a silent truncation or reorder is loud.
     function test_RetiredList_HoldsEveryPastIngressSignature() public view {
         string[] memory sigs = script.retiredIngressSignatures();
-        assertEq(sigs.length, 6, "one entry per retirement; add yours rather than replacing one");
+        assertEq(sigs.length, 7, "one entry per retirement; add yours rather than replacing one");
+        assertEq(
+            sigs[6],
+            "onRewardBudgetReceivedD6(address,uint256,bytes32,uint256,uint256,uint256,uint256,address,uint256,uint256,bytes32,uint64)",
+            "the d6 ingress #918 retired with its wire"
+        );
         assertEq(
             sigs[3],
             "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address,uint256,uint256,bytes32)",
@@ -67,14 +72,14 @@ contract RetiredIngressSelectorsTest is Test {
     ///      the pin below. That sequence is the whole point — the pin is what
     ///      makes the omission impossible to ship quietly.
     function test_CurrentIngressSelectors_ArePinned_AndNotInTheRetiredList() public view {
-        bytes4 currentBudget = RewardIngressFacet.onRewardBudgetReceivedD6.selector;
+        bytes4 currentBudget = RewardIngressFacet.onRewardBudgetReceivedD7.selector;
         bytes4 currentComp = RewardIngressFacet.onCompensationBudgetReceived.selector;
 
         assertEq(
             currentBudget,
             bytes4(
                 keccak256(
-                    "onRewardBudgetReceivedD6(address,uint256,bytes32,uint256,uint256,uint256,uint256,address,uint256,uint256,bytes32,uint64)"
+                    "onRewardBudgetReceivedD7(address,uint256,bytes32,uint256,uint256,uint256,uint256,address,uint256,uint256,bytes32,uint64,uint256,uint256,uint256,uint256)"
                 )
             ),
             "budget ingress signature moved - retire the previous one first"
@@ -105,7 +110,7 @@ contract RetiredIngressSelectorsTest is Test {
     function test_ReceiverGeneration_AdvancedWithTheWidenedIngress() public pure {
         assertEq(
             REMIT_RECEIVER_WIRE_GENERATION,
-            7,
+            8, // #918: the d7 wire (the day's part and whole) retired d6
             "the receiver changed, so its generation advances or the refresh skips the upgrade"
         );
     }
