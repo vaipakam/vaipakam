@@ -1434,7 +1434,7 @@ async function censusDeployment(dep) {
   const claim = pick(loadAbi('ClaimFacet'), ['getFallbackSnapshot']);
   const loanView = pick(loadAbi('LoanFacet'), ['getLoanDetails']);
   const vpfiView = pick(loadAbi('VPFITokenFacet'), ['getVPFIToken']);
-  const metrics = pick(loadAbi('MetricsFacet'), ['getProtocolStats', 'getAllLoansPaginated']);
+  const metrics = pick(loadAbi('MetricsFacet'), ['getProtocolStats', 'getGlobalCounts']);
   // The error entry must travel with the function: `getIntentCommit` REVERTS
   // `IntentNoCommit` when no commit is live, and that revert is the proof of
   // absence. Without the error in the ABI viem cannot name it, and an absent
