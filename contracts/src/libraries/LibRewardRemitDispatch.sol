@@ -76,11 +76,13 @@ library LibRewardRemitDispatch {
     ///         in `RewardTransportD7Test` — cold, over the widest list — plus
     ///         {REWARD_BUDGET_RECEIVER_RESERVE} for the receiver's own work,
     ///         with a quarter's margin, rounded up to the next 50,000.
-    ///         Re-measured 2026-10-24 (#2777): rooted 710,205, so
-    ///         (710,205 + 100,000) x 1.25 = 1,012,756, rounded up to 1,050,000.
-    ///         The 2026-10-12 figure was 685,689 under a limit of 1,000,000; the
-    ///         ingress has grown by 24,516 since (not attributed commit by
-    ///         commit), which left the margin short. Re-derive it whenever the cell's figure
+    ///         Re-measured 2026-10-27 (#918, the day's whole and per-part
+    ///         sums on the D7 wire): rooted 735,327, so
+    ///         (735,327 + 100,000) x 1.25 = 1,044,159, still rounded up to
+    ///         1,050,000. Earlier: 710,205 on 2026-10-24 (#2777) and 685,689
+    ///         on 2026-10-12 under a limit of 1,000,000. The next growth of
+    ///         about 4,700 gas crosses the rounding step and moves the limit to
+    ///         1,100,000. Re-derive it whenever the cell's figure
     ///         moves; the cell fails once the margin is gone. Raising it raises only the
     ///         destination-execution part of each remittance's CCIP fee, which
     ///         the sender quotes on-chain from this same constant. The 300,000
