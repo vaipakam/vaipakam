@@ -113,9 +113,6 @@ interface RemitReservationView {
   /** #1461 — the acknowledgement stamps; a late ack resolves only while neither is set. */
   consumedAcked?: boolean;
   quarantineAcked?: boolean;
-  /** #2497 r1 — whether the stranded share above has been STAMPED; until it
-   *  is, `strandedRecycled` is a default 0, not a resolved share. */
-  strandedStamped?: boolean;
   sentAt: bigint;
   ccipMessageId: `0x${string}`;
   total: bigint;
@@ -1095,16 +1092,14 @@ async function planLateDeliveries(
 }
 
 /** What a released candidate still waits on, as Base shows it (#2561 r2): the
- *  compensation gate it holds, else that the share is not stamped yet (a
- *  default zero is not a resolved share), else its stamped stranded share, or
- *  — when that share is zero and the gate was unread — that the gate is not
- *  known (Codex #2607 r9). */
+ *  compensation gate it holds, else its stranded share (written at the
+ *  release), or — when that share is zero and the gate was unread — that the
+ *  gate is not known (Codex #2607 r9). */
 export function lateOutstanding(
-  v: { strandedRecycled?: bigint; strandedStamped?: boolean },
+  v: { strandedRecycled?: bigint },
   holdsCompensationGate: boolean | 'unread',
 ): LateOutstanding {
   if (holdsCompensationGate === true) return { kind: 'gate' };
-  if (v.strandedStamped !== true) return { kind: 'unstamped' };
   const wei = BigInt(v.strandedRecycled ?? 0n);
   if (wei === 0n && holdsCompensationGate === 'unread') return { kind: 'gate-unread' };
   return { kind: 'stranded', wei };
@@ -1158,7 +1153,6 @@ export function lateAckDone(
     strandedRecycled?: bigint;
     consumedAcked?: boolean;
     quarantineAcked?: boolean;
-    strandedStamped?: boolean;
   },
   /** This reservation still holds its destination's compensation gate
    *  (#2571 r2), whose clearing is the late ack's work too. */
@@ -1166,40 +1160,39 @@ export function lateAckDone(
 ): boolean {
   if (Number(v.status) !== 3) return false;
   // An acknowledgement stamp is positive evidence the ack did its work
-  // (#2571 r1) — whether or not the stranded-share history was stamped, which a
-  // QUARANTINED delivery never triggers (Base's settle returns before the
-  // history stamp when the consumption is not trusted).
+  // (#2571 r1), whatever its stranded share reads: a QUARANTINED delivery
+  // leaves the share to the recovery ceremony or the terminal-loss record.
   if (v.consumedAcked === true || v.quarantineAcked === true) return true;
   if (holdsCompensationGate) return false;
-  return v.strandedStamped === true && (v.strandedRecycled ?? 0n) === 0n;
+  // A release writes its stranded share in the transaction that sets status 3
+  // (#2910 retired the history rule that stamped older releases), so a READ
+  // zero is a resolved share. A view without the field is not evidence of
+  // anything and never enters the permanent done set (#2497 r1).
+  return v.strandedRecycled !== undefined && BigInt(v.strandedRecycled) === 0n;
 }
 
-/** #2497 r1 — POSITIVE evidence only. A released reservation whose stranded
- *  share has not been STAMPED yet (the remittance facet's lazy history stamp,
- *  or `backfillRemitHistory`, has not reached it) reads `strandedRecycled == 0`
- *  by default, which is not the same as "nothing stranded". It stays a
- *  candidate, so the acknowledgement can perform that stamp, and it is never
- *  entered into the permanent done set on a default-decoded field. */
+/** A released reservation the late acknowledgement can still change: one that
+ *  holds its destination's compensation gate, or still carries a stranded
+ *  share, and is not acknowledged yet. */
 export function isLateDeliveryCandidate(
   v: {
     status: number | bigint;
     strandedRecycled?: bigint;
     consumedAcked?: boolean;
     quarantineAcked?: boolean;
-    strandedStamped?: boolean;
   },
   /** See {@link lateAckDone}: a held compensation gate is work for the ack. */
   holdsCompensationGate = false,
 ): boolean {
   if (Number(v.status) !== 3) return false;
-  // Acked already (consumed OR quarantined): nothing an ack can change, even
-  // with the history unstamped — re-sending would pay the CCIP fee every
-  // backoff window forever (#2571 r1).
+  // Acked already (consumed OR quarantined): nothing an ack can change, and
+  // re-sending would pay the CCIP fee every backoff window forever (#2571 r1).
   if (v.consumedAcked === true || v.quarantineAcked === true) return false;
   // A released COMPENSATION remit is fresh-only, so its stranded share is 0 —
   // but the ack still clears the gate it holds (#2571 r2).
   if (holdsCompensationGate) return true;
-  if (v.strandedStamped !== true) return true;
-  return (v.strandedRecycled ?? 0n) > 0n;
+  // A view without the field stays a candidate: it is not evidence the share
+  // resolved (#2497 r1).
+  return v.strandedRecycled === undefined || BigInt(v.strandedRecycled) > 0n;
 }
 

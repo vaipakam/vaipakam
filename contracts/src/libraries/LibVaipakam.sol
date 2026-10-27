@@ -7991,16 +7991,14 @@ library LibVaipakam {
         /// @dev #1452 — the same share for FORCED finalizations: evidenced by an
         ///      operator, not acknowledged by a delivery, so kept apart.
         mapping(uint32 => uint256) chainRemittedRecycledForceFinalized;
-        /// @dev Codex #2489 r9 — per destination, the DECLARED recycled share of
-        ///      every remittance acknowledged as consumed BEFORE the booking
-        ///      existed, booked by the history walk and kept APART from
-        ///      `chainRemittedRecycledAcked`: the record keeps no received
-        ///      figure (only the authenticated `RemitReservationAcked` event
-        ///      carried it), so for a pre-upgrade short delivery the declared
-        ///      share overstates what the mirror relocated. The exact counter
-        ///      stays exact; the watcher compares this figure at advisory
-        ///      severity only.
-        mapping(uint32 => uint256) chainRemittedRecycledAckedFromHistory;
+        /// @dev RETIRED (#2910). Was the per-destination DECLARED recycled
+        ///      share of remittances acknowledged before the booking existed,
+        ///      booked by the #2489 history walk on a Diamond upgraded in
+        ///      place. Every chain reaches this build by a fresh deploy, where
+        ///      every consumption books at its acknowledgement, so the walk
+        ///      and this figure are gone. The slot keeps its place and is no
+        ///      longer read or written.
+        mapping(uint32 => uint256) retiredChainRemittedRecycledAckedFromHistory;
         /// @dev #1566 sanctions rule (owner 2026-10-14) — per wallet, the
         ///      RECORDED windows of its ended confirmed chains, each packed
         ///      `fromDay(128) | toDay(128)` (the one codec is
@@ -9328,12 +9326,14 @@ library LibVaipakam {
         ///      root and the delivery could never be indexed or proven. Empty for
         ///      a reservation dispatched before it existed, or with no closed day.
         uint256[] fundedDayBits;
-        /// @dev #1461 (Codex #2489 r7) — whether `strandedRecycled` has been
-        ///      WRITTEN for this reservation: at its release, or by the history
-        ///      rule ({LibVpfiRecycle.ensureReleasedStrandedStamped}) for one
-        ///      released before the field existed. Without it a zero share is
-        ///      ambiguous — "resolved" and "never stamped" both read 0.
-        bool strandedStamped;
+        /// @dev RETIRED (#2910). Was whether `strandedRecycled` had been
+        ///      written, so the #2489 history rule could stamp a reservation
+        ///      released before that field existed on a Diamond upgraded in
+        ///      place. On a fresh deploy a release writes `strandedRecycled`
+        ///      in the same transaction that sets status 3, so status 3 alone
+        ///      says the record is written. The field keeps its place and is
+        ///      no longer read or written (it reads false).
+        bool retiredStrandedStamped;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered
