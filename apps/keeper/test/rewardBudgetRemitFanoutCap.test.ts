@@ -95,7 +95,7 @@ describe('reward-budget remittance fan-out cap', () => {
       window.map((_, i) => (i < riders ? 0n : ONE)),
       window.map((_, i) => i < riders),
       LANE_CAP,
-      0,
+      [],
       solidityCap(),
     );
     expect(batch.length).toBe(riders + cap);
@@ -112,7 +112,7 @@ describe('reward-budget remittance fan-out cap', () => {
       window.map(() => ONE),
       window.map(() => false),
       LANE_CAP,
-      0,
+      [],
       solidityCap(),
     );
     expect(batch.length).toBe(cap);
@@ -135,7 +135,7 @@ describe('reward-budget remittance fan-out cap', () => {
       window.map((_, i) => (i < riders ? 0n : ONE)),
       window.map((_, i) => i < riders),
       LANE_CAP,
-      0,
+      [],
       solidityCap(),
     );
     expect(batch.length).toBe(riders + cap); // every rider, plus every funded day
@@ -158,7 +158,7 @@ describe('reward-budget remittance fan-out cap', () => {
       window.map((_, i) => i < riders),
       // A lane cap that admits exactly one funded day, so two are left behind.
       ONE,
-      0,
+      [],
       solidityCap(),
     );
     expect(batch.length).toBe(riders + 1);
@@ -174,7 +174,7 @@ describe('reward-budget remittance fan-out cap', () => {
       window.map(() => ONE),
       window.map(() => false),
       LANE_CAP,
-      0,
+      [],
       solidityCap(),
     );
     expect(batch.length).toBe(cap);
@@ -189,7 +189,7 @@ describe('reward-budget remittance fan-out cap', () => {
       window.map(() => 30n * ONE),
       window.map(() => false),
       50n * ONE,
-      0,
+      [],
       solidityCap(),
     );
     expect(batch).toEqual([window[0]]);
@@ -197,18 +197,19 @@ describe('reward-budget remittance fan-out cap', () => {
     expect(deferred).toBe(2);
   });
 
-  it('carries days already dropped while replanning into the same total', () => {
-    const cap = solidityCap();
-    const window = days(cap, 5000);
-    const { deferred } = planRemitBatch(
+  it('counts a sent PART as still owed (#918)', () => {
+    // One funded day whose part leaves it owing: it is sent AND deferred, so
+    // the tick never reports the mirror settled on a part.
+    const window = days(2, 5000);
+    const { batch, deferred } = planRemitBatch(
       window,
       window.map(() => ONE),
-      window.map(() => false),
-      LANE_CAP,
-      3,
-      cap,
+      window.map(() => true),
+      ONE,
+      [true, false],
     );
-    expect(deferred).toBe(3);
+    expect(batch).toEqual([window[0]]);
+    expect(deferred).toBe(2); // the partial day, and the day behind it
   });
 });
 
@@ -257,7 +258,7 @@ describe('reward-budget remittance: one funded day per send (#2821)', () => {
       window.map(() => ONE),
       window.map(() => false),
       LANE_CAP,
-      0,
+      [],
       cap + 100,
     );
     expect(batch.length).toBe(cap);

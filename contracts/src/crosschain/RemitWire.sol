@@ -12,7 +12,7 @@ import {Hashes} from "@openzeppelin/contracts/utils/cryptography/Hashes.sol";
  *         so the tag can never drift between the two sides.
  *
  * @dev    Every remit payload LEADS WITH A TAG naming its shape, and the
- *         receiver accepts exactly two: {REMIT_WIRE_TAG_D6} for a budget
+ *         receiver accepts exactly two: {REMIT_WIRE_TAG_D7} for a budget
  *         remittance and {REMIT_WIRE_TAG_P2} for a manual compensation. Any
  *         other leading word is refused by name
  *         (`RewardRemittanceReceiver.UnknownRemitWireShape`).
@@ -20,12 +20,16 @@ import {Hashes} from "@openzeppelin/contracts/utils/cryptography/Hashes.sol";
  *         The earlier shapes are RETIRED, not merely superseded, and the
  *         receiver refuses them: the two untagged payloads discriminated by
  *         their ABI head word (`abi.encode(uint256[] dayIds, uint256 total)`,
- *         and the d2 shape that added `remitId` and `remitter`), and the
- *         tagged d5 payload that added `recycledShare`. Each carried its day
+ *         and the d2 shape that added `remitId` and `remitter`), the tagged d5
+ *         payload that added `recycledShare`, and the tagged d6 payload
+ *         (`keccak256("vaipakam.remit.wire.d6")`, #918) that d7 extends with
+ *         the funded day's whole slice. The flat-list shapes carried their day
  *         list flat, so each needed its own index, proof and admission route
- *         on the mirror, and the untagged two carried no split at all. The
- *         platform is pre-live and every chain running the rooted wire is a
- *         fresh deploy, so no such payload is in flight to any of them.
+ *         on the mirror, and the untagged two carried no split at all; d6
+ *         carried no whole, so a mirror could not tell one part of a day from
+ *         all of it. The platform is pre-live and every chain running d7 is a
+ *         fresh deploy (decision O1 = A), so no such payload is in flight to
+ *         any of them.
  *
  *         WHY A TAG and not a head-word ladder (#1222 M3 B2-d5, Codex #1432
  *         r2). The tag is keccak-derived, so it is astronomically larger than
@@ -76,15 +80,27 @@ library RemitWire {
     uint256 internal constant REMIT_WIRE_TAG_P2 =
         uint256(keccak256("vaipakam.remit.wire.p2"));
 
-    /// @notice Leading word of the #1566 transport-epochs d6 remit payload — a
-    ///         NEW tag per the standing rule.
+    /// @notice Leading word of the #918 d7 remit payload — a NEW tag per the
+    ///         standing rule.
     /// @dev    Shape:
     ///
-    ///           d6 : `abi.encode(REMIT_WIRE_TAG_D6, bytes32 dayListRoot,
+    ///           d7 : `abi.encode(REMIT_WIRE_TAG_D7, bytes32 dayListRoot,
     ///                            uint256 elementCount, uint256 chunkCount,
     ///                            uint256 total, uint256 remitId,
     ///                            address remitter, uint256 recycledShare,
-    ///                            uint256 intendedEra)`
+    ///                            uint256 intendedEra,
+    ///                            uint256 dayWholeFresh,
+    ///                            uint256 dayWholeRecycled)`
+    ///
+    ///         The d6 shape (#1566 transport epochs 3d-1) with the funded
+    ///         day's WHOLE slice appended, per component. Since #918 a day's
+    ///         slice may be sent in several parts, each its own packet: `total`
+    ///         and `recycledShare` are THIS part, and the two whole words are
+    ///         the day's slice in all, locked on Base at the day's first part
+    ///         and identical on every part. The mirror sums the parts it has
+    ///         landed per component against that whole and opens the day only
+    ///         once both sums reach it, so it never needs to know how many
+    ///         parts there are, and the parts may land in any order.
     ///
     ///         In place of the day list itself the wire carries an
     ///         AUTHENTICATED COMMITMENT to it: a Merkle root over fixed-size
@@ -92,28 +108,37 @@ library RemitWire {
     ///         days, so a chunk proves its place and not only its membership)
     ///         together with the list's EXTENT — how many days, in how many
     ///         chunks. A root alone would prove a submitted chunk belongs to
-    ///         SOME tree, never that every member day has been seen; the
-    ///         extent is what lets the receiver know when the membership is
-    ///         whole, which is what gates the delivery's spendability. The
-    ///         chunks are the unit of destination-side verification and
-    ///         writing: one bounded chunk plus its proof per call, O(page)
-    ///         rather than a re-hash of the whole list, which is what lets the
-    ///         per-remittance day cap move once every lane speaks d6.
+    ///         SOME tree, never that every member day has been seen; the extent
+    ///         is what lets the receiver know when the membership is whole. The
+    ///         chunk and leaf rules are d6's, unchanged (hence the `d6` names
+    ///         below): only the header grew. The chunk SIZE is fixed by the
+    ///         shape ({D6_CHUNK_DAYS}), not carried, so both sides derive every
+    ///         chunk's bounds from the element count alone; changing it is a
+    ///         new shape — a new tag.
     ///
-    ///         `intendedEra` is the era the packet was dispatched in. It is
-    ///         CARRIED and stored by the receive side from this wire on and
-    ///         validated by the era registry's receive rules (PR C); no wire
-    ///         before d6 carries one, which is why d6 precedes that PR.
-    ///
-    ///         The chunk SIZE is fixed by this shape ({D6_CHUNK_DAYS}), not
-    ///         carried: both sides derive every chunk's bounds from the
-    ///         element count alone, so there is no per-packet degree of
-    ///         freedom to validate and the leaf encoding is one rule. Changing
-    ///         the size is a new shape — a new tag.
-    uint256 internal constant REMIT_WIRE_TAG_D6 =
-        uint256(keccak256("vaipakam.remit.wire.d6"));
+    ///         `intendedEra` is the era the packet was dispatched in, stored by
+    ///         the receive side and validated by the era registry's receive
+    ///         rules (PR C).
+    uint256 internal constant REMIT_WIRE_TAG_D7 =
+        uint256(keccak256("vaipakam.remit.wire.d7"));
 
-    /// @notice Days per d6 leaf-chunk. Half the destination's index page so an
+    /// @notice The d7 header fields, in wire order after the tag.
+    /// @dev    A memory struct so the one encoder takes one argument: an
+    ///         internal library call, never an ABI boundary.
+    struct D7 {
+        bytes32 dayListRoot;
+        uint256 elementCount;
+        uint256 chunkCount;
+        uint256 total;
+        uint256 remitId;
+        address remitter;
+        uint256 recycledShare;
+        uint64 intendedEra;
+        uint256 dayWholeFresh;
+        uint256 dayWholeRecycled;
+    }
+
+    /// @notice Days per d6 (and d7) leaf-chunk. Half the destination's index page so an
     ///         ordinary within-cap remittance already exercises the multi-chunk
     ///         path, and each chunk's writes stay well inside one call.
     uint256 internal constant D6_CHUNK_DAYS = 16;
@@ -125,27 +150,20 @@ library RemitWire {
     /// @notice A d6 root over no leaves is not a commitment.
     error D6EmptyLeaves();
 
-    /// @notice The ONE d6 encoder; see {REMIT_WIRE_TAG_D6} for the shape.
-    function encodeD6(
-        bytes32 dayListRoot,
-        uint256 elementCount,
-        uint256 chunkCount,
-        uint256 total,
-        uint256 remitId,
-        address remitter,
-        uint256 recycledShare,
-        uint64 intendedEra
-    ) internal pure returns (bytes memory) {
+    /// @notice The ONE d7 encoder; see {REMIT_WIRE_TAG_D7} for the shape.
+    function encodeD7(D7 memory w) internal pure returns (bytes memory) {
         return abi.encode(
-            REMIT_WIRE_TAG_D6,
-            dayListRoot,
-            elementCount,
-            chunkCount,
-            total,
-            remitId,
-            remitter,
-            recycledShare,
-            uint256(intendedEra)
+            REMIT_WIRE_TAG_D7,
+            w.dayListRoot,
+            w.elementCount,
+            w.chunkCount,
+            w.total,
+            w.remitId,
+            w.remitter,
+            w.recycledShare,
+            uint256(w.intendedEra),
+            w.dayWholeFresh,
+            w.dayWholeRecycled
         );
     }
 

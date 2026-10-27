@@ -165,6 +165,8 @@ function remitRewardBudget(
     //        (writing the marker on the first pass also de-dupes a dayId repeated in this call)
     // if total == 0 → revert NothingToRemit
     // guard: total <= perRemittanceCap                    (else RemittanceExceedsCap)
+    //   [#918, 2026-10-27: SUPERSEDED — the cap now sizes each day's PART, so
+    //    nothing exceeds it and RemittanceExceedsCap is retired; see §7]
     // guard: rewardBudgetRemittedGlobal + interactionPoolPaidOut + total <= CAP (else RewardPoolCapExceeded)
     // effects (CEI): rewardBudgetRemittedGlobal += total; rewardBudgetRemittedTotal[dst] += total
     // approve CcipMessenger for `total` canonical VPFI (exact amount, per feedback_token_approvals)
@@ -275,6 +277,19 @@ whose failure mode is already "revert and retry." *(Rejected then; adopted under
 revert — see the banner at the head of this subsection.)*
 
 ## 7. Rate-limit & fee handling
+
+> **Superseded in part by #918 (owner decision 2026-10-27, "send in parts").**
+> The "single day is remitted atomically" rule below no longer holds, and the
+> "future option" at the end of this section is what shipped: a day's slice may
+> leave Base in several parts, each no larger than the cap the send carries.
+> Base locks the day's whole at its first part and records the parts sent
+> against it; the mirror sums the parts that land, fresh and recycled
+> separately, and opens the day for claims only when both sums reach the whole.
+> The lane-provisioning bound stays as a pre-flight — `ConfigureCcip.s.sol`
+> refuses a lane below `2 × halfPoolForDay(1)` and launch readiness reports it
+> as an advisory — but a day above the live bucket is now sent in parts rather
+> than being unsendable. The rest of this section is kept as the record of the
+> original design.
 
 - `VpfiPoolRateGovernor` caps VPFI CCIP lanes (the buyback/general
   starting point is ≈ 50k capacity, ≈ 5.8 VPFI/s refill). Batching over

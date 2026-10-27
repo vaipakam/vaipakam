@@ -1436,6 +1436,20 @@ interface IVaipakamErrors {
     ///         reservation re-opens its days).
     error RemitDayAlreadyClosed(uint256 dayId, uint32 chainId);
 
+    /// @notice #918 — the (chain, day) has an ordinary remit ledger: at least
+    ///         one part of its slice was sent, so it is not a manual
+    ///         compensation day. (Unreachable on an honest path — the
+    ///         ordinary planner never acts on a remit-ineligible day — and
+    ///         refused by name rather than relied on.)
+    error RemitDayPartlySent(uint256 dayId, uint32 chainId);
+
+    /// @notice #918 — a remittance reservation names more than one FUNDED day,
+    ///         so its part cannot be attributed to a day on release. The send
+    ///         funds at most `LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP` (one)
+    ///         day, so no such reservation exists; raising the cap must give
+    ///         the reservation a per-day split first.
+    error RemitReleaseFanoutUnsupported(uint256 remitId, uint256 fundedDays);
+
     /// @notice #1780 — the lender-sale errors are shared by BOTH early-
     ///         withdrawal routes. The direct route ({EarlyWithdrawalDirectFacet})
     ///         and the listed route ({EarlyWithdrawalFacet}) were one facet

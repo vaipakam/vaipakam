@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {RateLimiter} from "@chainlink/contracts-ccip/contracts/libraries/RateLimiter.sol";
+import {LibVpfiLane} from "../libraries/LibVpfiLane.sol";
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
@@ -27,42 +28,6 @@ interface IRepatRewardMessenger {
         uint256 authId,
         address payable refundAddress
     ) external payable returns (bytes32 messageId);
-}
-
-/// @dev The slice of {CcipMessenger}'s registry the lane-capacity bounds
-///      read — the chainId → CCIP-selector mapping ConfigureCcip wires.
-interface ICcipSelectorRegistry {
-    function chainSelectorOf(uint256 chainId) external view returns (uint64);
-}
-
-/// @dev The slice of the CCIP TokenAdminRegistry the lane-capacity bounds
-///      read — token → ACTIVE pool. Resolving the pool here, live, is
-///      what makes a CCT pool rotation (TokenAdminRegistry.setPool)
-///      auto-track: there is no stored pool address to go stale (r7).
-interface ITokenAdminRegistryView {
-    function getPool(address token) external view returns (address);
-}
-
-/// @dev The slice of the CCIP VPFI TokenPool the lane-capacity bounds
-///      read — lane membership + the LIVE per-lane limiter state. The
-///      struct comes from the pinned CCIP library itself, never a
-///      hand-typed copy, so the decode shape cannot drift from the
-///      audited pool's.
-interface IVpfiPoolRateLimitView {
-    function isSupportedChain(uint64 remoteChainSelector)
-        external
-        view
-        returns (bool);
-
-    function getCurrentInboundRateLimiterState(uint64 remoteChainSelector)
-        external
-        view
-        returns (RateLimiter.TokenBucket memory);
-
-    function getCurrentOutboundRateLimiterState(uint64 remoteChainSelector)
-        external
-        view
-        returns (RateLimiter.TokenBucket memory);
 }
 
 /// @dev The slice of {VpfiReturnSender} the mirror-side surfaces drive —
@@ -362,26 +327,13 @@ contract RepatriationFacet is
         uint256 amount,
         bool inbound
     ) private view {
-        address registry = s.repatriationTokenAdminRegistry;
-        address messenger = s.crossChainMessenger;
-        if (registry == address(0) || messenger == address(0)) {
-            revert RepatriationNotConfigured();
-        }
-        uint64 selector =
-            ICcipSelectorRegistry(messenger).chainSelectorOf(remoteChainId);
-        if (selector == 0) revert RepatriationLaneUnknown(remoteChainId);
-        address pool = ITokenAdminRegistryView(registry).getPool(s.vpfiToken);
-        if (pool == address(0)) revert RepatriationNotConfigured();
-        if (!IVpfiPoolRateLimitView(pool).isSupportedChain(selector)) {
-            revert RepatriationLaneUnknown(remoteChainId);
-        }
-        RateLimiter.TokenBucket memory bucket = inbound
-            ? IVpfiPoolRateLimitView(pool).getCurrentInboundRateLimiterState(
-                selector
-            )
-            : IVpfiPoolRateLimitView(pool).getCurrentOutboundRateLimiterState(
-                selector
-            );
+        // #918 — the resolution is {LibVpfiLane.liveBucket}, shared with the
+        // reward remittance's part sizing; the rungs and their order are the
+        // ones this check always had.
+        (LibVpfiLane.LaneStatus status, RateLimiter.TokenBucket memory bucket) =
+            LibVpfiLane.liveBucket(s, remoteChainId, inbound);
+        if (status == LibVpfiLane.LaneStatus.NotConfigured) revert RepatriationNotConfigured();
+        if (status == LibVpfiLane.LaneStatus.LaneUnknown) revert RepatriationLaneUnknown(remoteChainId);
         if (bucket.isEnabled && amount > uint256(bucket.capacity)) {
             revert RepatriationExceedsLaneCapacity(
                 amount, uint256(bucket.capacity)

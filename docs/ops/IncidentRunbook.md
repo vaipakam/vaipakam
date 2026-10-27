@@ -154,9 +154,13 @@ recoverable back-pressure — not a fund-loss event.
 ### Execute (fund the mirror)
 1. On **Base**, an ADMIN (or the configured `rewardRemittanceKeeper`) calls
    `remitRewardBudget(mirrorChainId, dayIds, perRemittanceCap)` with `msg.value`
-   covering the CCIP fee (overpay is refunded). Size `perRemittanceCap` **and**
-   the `dayIds` batch so the total stays under the live reward-budget CCIP lane
-   bucket — early-schedule days are large; use `quoteRewardBudget` to confirm.
+   covering the CCIP fee (overpay is refunded). The cap is the size of the
+   **part** this send moves (#918): size it at or under the live reward-budget
+   CCIP lane bucket (`getRemitLaneBucket(mirrorChainId)` reads it). A day larger
+   than the cap is sent in several parts — repeat the call until
+   `quoteRemitDayStatuses(mirrorChainId, [day], cap)` stops reading `Partial`
+   and the day reads `Remitted`; the mirror opens the day only once every part
+   has landed. `quoteRewardBudget` reports what each day still owes, cap-free.
    **A remittance funds at most one day** (`TRANSPORT_DAY_FANOUT_CAP = 1`,
    #2821): the send refuses a list that would fund more with
    `TransportDayFanoutExceeded(funded, 1)`, and so does `quoteRemittanceFee`,
@@ -196,8 +200,21 @@ recoverable back-pressure — not a fund-loss event.
   later days' claims. Any true terminal-wind-down residual is a governance
   action (there is no permissionless Diamond-balance sweep — the mirror VPFI is
   commingled with LIF custody + treasury). Tracked: #917.
-- **Lane capacity:** a single day is remitted atomically, so the reward-budget
-  lane capacity must exceed the largest single-day slice. Tracked: #918.
+- **Lane capacity (#918, "send in parts"):** a day's slice larger than one
+  lane transfer is remitted in several **parts**, each no larger than the part
+  cap the send carries. Base records each part against the day's locked whole
+  (`getRemitDayLedger`), and the mirror opens the day for claims only once the
+  landed parts sum to that whole, fresh and recycled separately
+  (`getDayDeliveryParts`). While parts are still in flight the day reads as
+  partly sent on Base and not yet landed on the mirror — that is expected, not
+  an incident. A day stuck with only some parts landed means a later part was
+  never sent or never delivered: send the rest (the keeper does each tick) or
+  re-execute the parked part. A released part restores exactly that part's
+  backing and leaves the day owing it again. The manual-budget path refuses a
+  day that already has a part sent (`RemitDayPartlySent`). `ConfigureCcip`
+  still refuses a lane capacity below the largest fresh day slice, so on a
+  configured lane parts arise only from a drained bucket or a lowered
+  `REWARD_REMIT_LANE_CAP`.
 
 ### Automated remittance (keeper, #925)
 
@@ -337,13 +354,16 @@ sudo systemctl try-restart vaipakam-keeper
 ```
 
 Optional tuning vars: `REWARD_REMIT_LOOKBACK_DAYS` (default 45) and
-`REWARD_REMIT_LANE_CAP` (wei, default `50000e18` — must stay ≤ the provisioned
-lane bucket; a day whose slice exceeds it is skipped with a loud log until the
-lane + cap are raised together, #918). **Caveat:** the keeper only re-scans the
-last `REWARD_REMIT_LOOKBACK_DAYS`, so a skipped over-cap day is auto-retried only
-while it is still inside that window. If the lane + cap are raised *after* the day
-has aged past the lookback, widen `REWARD_REMIT_LOOKBACK_DAYS` to re-include it or
-remit it with the manual §2b procedure — it will not be picked up otherwise.
+`REWARD_REMIT_LANE_CAP` (wei, default `50000e18`). Since #918 the cap is a
+ceiling on each **part**, not a filter: every tick the pass sizes its part to
+the smaller of this cap and the Base lane bucket's live tokens
+(`getRemitLaneBucket`), and a day larger than that is sent over several ticks
+instead of being skipped. A tick that sends a part which leaves its day owing
+logs `partial:` and does not count the mirror as covered. A drained bucket logs
+`lane bucket empty` and sends nothing that tick. **Caveat:** the keeper only
+re-scans the last `REWARD_REMIT_LOOKBACK_DAYS`, so a day still owing parts is
+auto-continued only while it is inside that window; past it, widen the window or
+finish it with the manual §2b procedure.
 
 **To disable in an incident** (e.g. a misconfigured lane, or to hand back to
 manual control): set `REWARD_REMIT_ENABLED=false` (leaves the rest of the keeper
