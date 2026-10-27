@@ -536,7 +536,7 @@ From ProjectDetailsREADME.md:
 
 From ProjectDetailsREADME.md:
 
-- **Tenderly Operations Setup:** Tenderly project configuration should live under `ops/tenderly/` with the account / project identifiers required for `tenderly actions deploy`. Contract tracking should not depend on unsupported bulk REST imports by address; contracts may auto-import from live traffic or be added individually through Tenderly's UI when first-traffic visibility is needed.
+- **Tenderly Operations Setup:** Tenderly project configuration should live under `ops/tenderly/` with the account / project identifiers its alert presets need (`tenderly alerts apply`; the repository carries no Tenderly Web3 Actions since #2869). Contract tracking should not depend on unsupported bulk REST imports by address; contracts may auto-import from live traffic or be added individually through Tenderly's UI when first-traffic visibility is needed.
 
 From ProjectDetailsREADME.md:
 
