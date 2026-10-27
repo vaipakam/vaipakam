@@ -1,4 +1,4 @@
-## Thread — Two read views bounded by the rows they read (PR #<n>)
+## Thread — Two read views bounded by the rows they read (PR #2932)
 
 Two views could grow past what a node will serve in one call (#2751). The per-pair offer ranking the Rate Desk reads returned the whole bucket for a pair, so enough cheap offers in one pair could push the read past an RPC's gas or payload limit and blank the book. It now takes an offset and a limit, and still reports the bucket's full size in the same call. The Rate Desk reads one page up to its existing 600-offer cap and falls back to the indexer when the bucket is larger, as before; it no longer needs a separate size probe that the bucket could outgrow between the two reads.
 
