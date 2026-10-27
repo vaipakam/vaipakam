@@ -1,4 +1,4 @@
-## Thread — the borrower fee's old VPFI-custody path is removed (PR #TBD)
+## Fees — the borrower fee's old VPFI-custody path is removed (PR #2954)
 
 An early design charged the borrower's Loan Initiation Fee in full, up front, in VPFI. That VPFI sat in protocol custody for the life of the loan. At the end it was split: a rebate went back to the borrower on a proper close, and the whole amount was forfeited on a default or liquidation. Since #1352 the fee has been charged in the lending asset at acceptance, and no new loan could reach the old path. The platform is pre-live and every chain gets a fresh deploy, so no loan was ever left on it either. The code that remained only served loans that do not exist, and every reader of it had to work out that it was dead. The owner decided to retire it (#1980).
 
