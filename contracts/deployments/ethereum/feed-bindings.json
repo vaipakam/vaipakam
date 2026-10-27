@@ -7,7 +7,7 @@
   "directory": {
     "url": "https://reference-data-directory.vercel.app/feeds-mainnet.json",
     "sha256": "0xcf13ccee5ebd84a6427f25e490f77ad88a991cc040c655d55088c404ab1bd0d4",
-    "date": 20261026
+    "date": 20261027
   },
   "sources": {
     "coingecko": {
@@ -28,12 +28,12 @@
       {
         "url": "https://static.optimism.io/optimism.tokenlist.json",
         "name": "Superchain Token List",
-        "version": "10.0.1770",
-        "sha256": "0x04daa3fff6c486946a7312685180f3297fe6545f489dadb5f70a128967bdedf3"
+        "version": "10.0.1771",
+        "sha256": "0xa51a12e3f6a59d79b45255e1b728f0dcd0d9f26a78118b7824326416d58f76fa"
       }
     ]
   },
-  "checkedAtBlock": 26277470,
+  "checkedAtBlock": 26285345,
   "bindings": [
     {
       "token": "0x111111111117dC0aa78b770fA6A738034120C302",
