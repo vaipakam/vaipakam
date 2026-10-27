@@ -328,6 +328,10 @@ function requireAbiMember(name, kind) {
   return found;
 }
 
+/** #2751 — the ranked pair view is paged; this `limit` asks for the rest
+ *  of the bucket in one page (the view compares before it adds). */
+const RANKED_PAGE_ALL = 2n ** 256n - 1n;
+
 const diamondRead = (functionName, args) => {
   requireAbiMember(functionName, 'function');
   return pub.readContract({ address: DIAMOND, abi: ABI, functionName, args });
@@ -468,7 +472,7 @@ async function noncesSettled(address, { timeoutMs = 120_000, intervalMs = 5_000 
  *  re-verify would wave past a band justified by nothing more than a
  *  single one-sided third-party offer. */
 async function pickTenor() {
-  const [rankings] = await diamondRead('getActiveOffersByAssetPairRanked', [WETH, TLIQ]);
+  const [rankings] = await diamondRead('getActiveOffersByAssetPairRanked', [WETH, TLIQ, 0n, RANKED_PAGE_ALL]);
   const counts = new Map();
   for (const r of rankings) {
     const d = Number(r.durationDays);
@@ -1303,6 +1307,8 @@ try {
     const [rankingsNow] = await diamondRead('getActiveOffersByAssetPairRanked', [
       WETH,
       TLIQ,
+      0n,
+      RANKED_PAGE_ALL,
     ]);
     const bucketNow = rankingsNow.filter((r) => Number(r.durationDays) === tenor);
     const asksNow = bucketNow.filter((r) => Number(r.offerType) === 0);

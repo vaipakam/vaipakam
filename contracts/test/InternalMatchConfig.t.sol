@@ -5,6 +5,8 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /**
  * @title InternalMatchConfig.t.sol
@@ -165,12 +167,68 @@ contract InternalMatchConfigTest is SetupTest {
         assertEq(nextIdx, 7, "nextIdx echoes startIdx on degenerate filter");
     }
 
-    function test_getMatchEligibleLoans_emptyOnPageSizeZero() public {
+    function test_getMatchEligibleLoans_emptyOnMaxScanZero() public {
         vm.prank(owner);
         ConfigFacet(address(diamond)).setInternalMatchEnabled(true);
         (uint256[] memory loanIds, uint256 nextIdx) =
             MetricsFacet(address(diamond)).getMatchEligibleLoans(0, 10_000, 3, 0);
         assertEq(loanIds.length, 0);
-        assertEq(nextIdx, 3, "nextIdx echoes startIdx on pageSize == 0");
+        assertEq(nextIdx, 3, "nextIdx echoes startIdx on maxScan == 0");
+    }
+    /// @dev Five active loans, every one reading 99% LTV.
+    function _scaffoldFiveHighLtvLoans() internal {
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setInternalMatchEnabled(true);
+        for (uint256 id = 1; id <= 5; ++id) {
+            LibVaipakam.Loan memory l;
+            l.id = id;
+            l.lender = lender;
+            l.borrower = borrower;
+            l.status = LibVaipakam.LoanStatus.Active;
+            TestMutatorFacet(address(diamond)).scaffoldActiveLoan(id, l);
+        }
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector),
+            abi.encode(uint256(9_900))
+        );
+    }
+
+    /// @dev #2751 — one call reads at most `maxScan` rows, whatever the band
+    ///      matches: a band no loan falls in costs `maxScan` LTV reads, not
+    ///      a walk of the whole list.
+    function test_getMatchEligibleLoans_readsAtMostMaxScanRows() public {
+        _scaffoldFiveHighLtvLoans();
+        vm.expectCall(
+            address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), 2
+        );
+        (uint256[] memory ids, uint256 nextIdx) =
+            MetricsFacet(address(diamond)).getMatchEligibleLoans(0, 5_000, 0, 2);
+        assertEq(ids.length, 0, "no row matched");
+        assertEq(nextIdx, 2, "the empty page still advanced by maxScan rows");
+    }
+
+    /// @dev #2751 — empty pages advance the cursor to the end, and a call
+    ///      from the end makes no progress, which is how a caller stops.
+    function test_getMatchEligibleLoans_cursorReachesTheEnd() public {
+        _scaffoldFiveHighLtvLoans();
+        (uint256[] memory ids, uint256 nextIdx) =
+            MetricsFacet(address(diamond)).getMatchEligibleLoans(0, 5_000, 2, 2);
+        assertEq(ids.length, 0);
+        assertEq(nextIdx, 4);
+        (ids, nextIdx) = MetricsFacet(address(diamond)).getMatchEligibleLoans(0, 5_000, 4, 2);
+        assertEq(nextIdx, 5, "the scan stops at the list's end");
+        (ids, nextIdx) = MetricsFacet(address(diamond)).getMatchEligibleLoans(0, 5_000, 5, 2);
+        assertEq(ids.length, 0);
+        assertEq(nextIdx, 5, "a call from the end makes no progress: the caller stops");
+
+        // An oversized maxScan reads to the end instead of overflowing, and
+        // a matching band returns every row it read.
+        (ids, nextIdx) = MetricsFacet(address(diamond)).getMatchEligibleLoans(
+            0, 10_000, 1, type(uint256).max
+        );
+        assertEq(ids.length, 4);
+        assertEq(ids[0], 2);
+        assertEq(nextIdx, 5);
     }
 }
