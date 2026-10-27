@@ -583,7 +583,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](6);
         selectors[0] = OfferCreateFacet.createOffer.selector;
         selectors[1] = OfferCreateFacet.getUserVault.selector;
         // Phase 8b.1 Permit2 addition.
@@ -596,8 +596,7 @@ contract HelperTest {
         // signed off-chain offer (vault-backed + wallet-backed Permit2).
         selectors[4] = OfferCreateFacet.createSignedOfferVault.selector;
         selectors[5] = OfferCreateFacet.createSignedOfferWallet.selector;
-        // #400 — quote-time rate-model resolver (read-only).
-        selectors[6] = OfferCreateFacet.quoteOfferRateBps.selector;
+        // The #400 rate-model quote moved to `OfferPreviewFacet` (#2949).
         return selectors;
     }
 
@@ -670,8 +669,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](1);
+        selectors = new bytes4[](2);
         selectors[0] = OfferPreviewFacet.previewAccept.selector;
+        // #2949 — the #400 rate-model quote moved here from OfferCreateFacet.
+        selectors[1] = OfferPreviewFacet.quoteOfferRateBps.selector;
         return selectors;
     }
 

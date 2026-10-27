@@ -459,7 +459,7 @@ The platform distinguishes between liquid and illiquid assets, which affects how
 - **Prepayment for NFT Renting:**
   - For NFT renting, the borrower must lock ERC-20 tokens as collateral. This collateral will cover the total rental amount plus a 5% buffer. This entire amount is considered a prepayment. The 5% buffer is refunded to the borrower upon successful and timely rental closure of the NFT and payment of all rental fees.
   - No separate NFT collateral is required for NFT renting in Phase 1. The vault-controlled custody model already protects return-of-asset risk, while the ERC-20 prepayment and buffer cover the rental-payment obligation.
-  - A rental therefore carries no collateral at all. A rental listing that names a collateral asset, amount, token id or quantity is not a valid rental: the platform refuses to create one, and an interface refuses to accept one and says why, rather than asking the renter to acknowledge an asset the rental never uses.
+  - A rental therefore carries no collateral at all. A rental listing that names a collateral asset, amount, token id or quantity is not a valid rental: the platform refuses to create one or to edit an existing rental offer into one, and an interface refuses to accept one and says why, rather than asking the renter to acknowledge an asset the rental never uses. With no collateral there is nothing to price on that side: the rental is never treated as having a collateral asset to acknowledge, to classify for risk access or to value, and its risk is judged on the prepayment token alone.
 
 ## 2. Loan Durations and Flexibility
 

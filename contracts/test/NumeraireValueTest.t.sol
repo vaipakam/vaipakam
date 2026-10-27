@@ -278,6 +278,9 @@ contract NumeraireValueRiskTest is SetupTest {
         assertEq(v.getLiquidNumeraireValue(mockCollateralERC20, 1 ether), 3e10);
         mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
         assertEq(v.getLiquidNumeraireValue(mockCollateralERC20, 1 ether), 0, "illiquid is 0");
+        // #2949 — an empty leg (a rental's collateral names no asset) is worth
+        // nothing, with no price read on the missing asset.
+        assertEq(v.getLiquidNumeraireValue(address(0), 0), 0, "an empty leg is 0");
     }
 
     /// @dev The one health-factor rule: both divisions floored, each step at

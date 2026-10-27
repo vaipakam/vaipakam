@@ -12,12 +12,15 @@ import {LibPausable} from "../libraries/LibPausable.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
+import {IRateModel} from "../interfaces/IRateModel.sol";
 
 /**
  * @title OfferPreviewFacet
  * @author Vaipakam Developer Team
- * @notice #980 — the read-only accept-preview surface, extracted out of
- *         `OfferAcceptFacet`. That facet was chronically at the EIP-170
+ * @notice The read-only offer preview surface: the accept preview (#980) and
+ *         the quote-time rate guidance (#400, moved here from
+ *         `OfferCreateFacet` in #2949). The accept preview was extracted out
+ *         of `OfferAcceptFacet`. That facet was chronically at the EIP-170
  *         24,576-byte runtime ceiling, so any further behaviour on the accept
  *         path (e.g. #951 v2's live-binding) overflowed it. Moving the large,
  *         self-contained `previewAccept` view here frees ~2.5 KB and cleanly
@@ -482,5 +485,50 @@ contract OfferPreviewFacet {
         // folding it in is a possible follow-up.)
 
         // Happy path: errorCode stays `None`.
+    }
+
+    /// @notice #400 — resolve the active quote-time {IRateModel} for a given
+    ///         input. Returns `input.referenceRateBps` verbatim when no
+    ///         model is registered (the IDENTITY default), else the model's
+    ///         quote. A read-only quote, so it lives with the offer previews
+    ///         rather than on `OfferCreateFacet` (moved in #2949, selector and
+    ///         behaviour unchanged).
+    /// @dev    PURE READ — this never mutates an offer and is never called by
+    ///         the manual create path (a human's typed rate is binding). It is
+    ///         the single resolver the dApp calls for rate *guidance* and the
+    ///         automated/delegated-pricing flows (#393 auto-lend / auto-roll /
+    ///         keeper-posted intents, #394 risk premiums) call to price the
+    ///         offers they create on a user's behalf — they then pass the
+    ///         result as that offer's rate via the normal create path. Keeping
+    ///         pricing in the *caller* (not forced on every offer) is what
+    ///         preserves the human order book's market-driven price discovery.
+    ///         The returned value is still subject to the usual
+    ///         range-ordering + `MAX_INTEREST_BPS` checks when an offer is
+    ///         actually created with it.
+    function quoteOfferRateBps(
+        IRateModel.RateModelInput calldata input
+    ) external view returns (uint256 rateBps) {
+        address rateModel = LibVaipakam.cfgRateModel();
+        if (rateModel == address(0)) return input.referenceRateBps; // identity
+
+        uint256 quoted = IRateModel(rateModel).quoteRateBps(input);
+
+        // #400 (hardening) — CLAMP the model to within ±maxDeviation of the
+        // reference (market) rate. This is the anti-rate-setting guarantee: a
+        // registered model — even a buggy or adversarial one — can only nudge
+        // the rate around the market anchor the caller supplies, never drive an
+        // automated offer far off-market (instant-loss-fill if too low,
+        // idle-capital if too high). Enforced HERE in the substrate so every
+        // consumer inherits it, not trusted to each caller.
+        uint256 ref = input.referenceRateBps;
+        uint256 dev = LibVaipakam.cfgRateModelMaxDeviationBps();
+        uint256 lo = ref > dev ? ref - dev : 0;
+        uint256 hi = ref + dev;
+        if (quoted < lo) quoted = lo;
+        else if (quoted > hi) quoted = hi;
+        // The usual protocol ceiling still binds when an offer is created with
+        // this rate; mirror it here so a guidance read never returns above it.
+        if (quoted > LibVaipakam.MAX_INTEREST_BPS) quoted = LibVaipakam.MAX_INTEREST_BPS;
+        return quoted;
     }
 }

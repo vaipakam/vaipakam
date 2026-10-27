@@ -5,6 +5,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IRateModel} from "../src/interfaces/IRateModel.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -42,7 +43,7 @@ contract RateModelTest is SetupTest {
 
     /// @notice Identity default (no model) → the resolver returns the reference verbatim.
     function test_quote_identityDefault_returnsReference() public view {
-        uint256 q = OfferCreateFacet(address(diamond)).quoteOfferRateBps(_input(500));
+        uint256 q = OfferPreviewFacet(address(diamond)).quoteOfferRateBps(_input(500));
         assertEq(q, 500, "identity model returns the reference rate unchanged");
     }
 
@@ -50,7 +51,7 @@ contract RateModelTest is SetupTest {
     function test_quote_withModel_returnsModelOutput() public {
         vm.prank(owner);
         AdminFacet(address(diamond)).setRateModel(address(model));
-        uint256 q = OfferCreateFacet(address(diamond)).quoteOfferRateBps(_input(500));
+        uint256 q = OfferPreviewFacet(address(diamond)).quoteOfferRateBps(_input(500));
         assertEq(q, 800, "registered model adjusts the reference (+300)");
     }
 
@@ -103,7 +104,7 @@ contract RateModelTest is SetupTest {
         RateModelMock wild = new RateModelMock(5_000);
         vm.prank(owner);
         AdminFacet(address(diamond)).setRateModel(address(wild));
-        uint256 q = OfferCreateFacet(address(diamond)).quoteOfferRateBps(_input(500));
+        uint256 q = OfferPreviewFacet(address(diamond)).quoteOfferRateBps(_input(500));
         assertEq(q, 1_000, "model clamped to reference + default 500-bps cap");
     }
 
@@ -124,7 +125,7 @@ contract RateModelTest is SetupTest {
         RateModelMock wild = new RateModelMock(5_000);
         vm.prank(owner);
         AdminFacet(address(diamond)).setRateModel(address(wild));
-        uint256 q = OfferCreateFacet(address(diamond)).quoteOfferRateBps(_input(500));
+        uint256 q = OfferPreviewFacet(address(diamond)).quoteOfferRateBps(_input(500));
         assertEq(q, 600, "clamped to reference + tightened 100-bps cap");
     }
 
@@ -209,7 +210,7 @@ contract RateModelTest is SetupTest {
             abi.encode(uint8(0))
         );
 
-        uint256 q = OfferCreateFacet(address(diamond)).quoteOfferRateBps(_input(500));
+        uint256 q = OfferPreviewFacet(address(diamond)).quoteOfferRateBps(_input(500));
         assertEq(q, 1_000, "ref 500 + premium clamped to the default 500-bps deviation band");
     }
 }

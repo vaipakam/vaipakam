@@ -223,10 +223,9 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
 
     // ─── PF-140 / PF-141 ──────────────────────────────────────────────────
 
-    /// @dev A 7-day rental at `dailyFee`. Rentals take no collateral; the
-    ///      collateral asset is the prepay token, a non-zero placeholder
-    ///      distinct from the lending asset so the `SelfCollateralizedOffer`
-    ///      check passes. The renter prepays 7 days plus the 5% buffer, the
+    /// @dev A 7-day rental at `dailyFee`. A rental names no collateral
+    ///      (#2949), so every collateral field is left empty; the prepay
+    ///      token is its commitment. The renter prepays 7 days plus the 5% buffer, the
     ///      rental is closed, and the lender reclaims the NFT and fees while
     ///      the renter takes back what the close did not consume.
     function _rental(
@@ -242,7 +241,8 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
         p.amountMax = dailyFee;
         p.interestRateBps = 0;
         p.interestRateBpsMax = 0;
-        p.collateralAsset = address(usdc);
+        // A rental names no collateral (#2949): the prepay is its commitment.
+        p.collateralAsset = address(0);
         p.collateralAmount = 0;
         p.collateralAmountMax = 0;
         p.durationDays = 7;

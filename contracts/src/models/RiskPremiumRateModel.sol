@@ -42,7 +42,7 @@ interface ILiquidityTierSource {
  * @dev    **E2 / market-discovery safety is inherited, not re-implemented here.**
  *         This model only ever ADDS to the caller-supplied `referenceRateBps`
  *         (the live cleared-market rate the automated caller anchors to, per
- *         {IRateModel}). The #400 resolver (`OfferCreateFacet.quoteOfferRateBps`)
+ *         {IRateModel}). The #400 resolver (`OfferPreviewFacet.quoteOfferRateBps`)
  *         then CLAMPS the result to the governance deviation band `[ref-δ, ref+δ]`
  *         and the `MAX_INTEREST_BPS` ceiling. Consequences worth stating:
  *           • the deviation cap (δ, default 5%) is the REAL binding limit on how

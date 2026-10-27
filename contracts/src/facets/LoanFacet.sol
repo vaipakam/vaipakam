@@ -259,9 +259,14 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         LibVaipakam.LiquidityStatus lendingAssetLiquidity = OracleFacet(
             address(this)
         ).checkLiquidity(offer.lendingAsset);
-        LibVaipakam.LiquidityStatus collateralLiquidity = OracleFacet(
-            address(this)
-        ).checkLiquidity(offer.collateralAsset);
+        // #2949 — a rental carries no collateral leg, so there is no asset to
+        // price: Illiquid, as at create. Its acknowledged-illiquid identity is
+        // then `address(0)`, the empty leg itself, so no acceptor has to name
+        // an asset the rental never uses.
+        LibVaipakam.LiquidityStatus collateralLiquidity =
+            offer.assetType == LibVaipakam.AssetType.ERC20
+                ? OracleFacet(address(this)).checkLiquidity(offer.collateralAsset)
+                : LibVaipakam.LiquidityStatus.Illiquid;
 
         if (!isLenderSaleVehicle) {
             // Liquidation-fallback terms consent is mandatory on every loan

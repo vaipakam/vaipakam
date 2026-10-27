@@ -10,6 +10,7 @@ import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../../src/facets/OfferAcceptFeeFacet.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {LibOfferShape} from "../../src/libraries/LibOfferShape.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -339,8 +340,8 @@ contract Scenario2_NFTRentalLending is Test {
                 lendingAsset: address(mockNft721),
                 amount: DAILY_FEE,
                 interestRateBps: 0,
-                collateralAsset: mockUsdc,
-                collateralAmount: TOTAL_PREPAY,
+                collateralAsset: address(0),
+                collateralAmount: 0,
                 durationDays: DURATION_DAYS,
                 assetType: LibVaipakam.AssetType.ERC721,
                 tokenId: 1,
@@ -355,7 +356,7 @@ contract Scenario2_NFTRentalLending is Test {
                 allowsParallelSale: false,
                 amountMax: DAILY_FEE,
                 interestRateBpsMax: 0,
-                collateralAmountMax: TOTAL_PREPAY,
+                collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
@@ -381,6 +382,25 @@ contract Scenario2_NFTRentalLending is Test {
      *         6. Borrower claims -> gets buffer refund
      *         7. Verify balances
      */
+    /// @dev #2949 — a rental carries no collateral: the accepted loan names
+    ///      none, records its collateral side as illiquid (there is no asset to
+    ///      price), and refuses a collateral top-up by name.
+    function test_Scenario2a_ERC721Rental_CarriesNoCollateral() public {
+        uint256 loanId = _createAndAcceptNftRental();
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(loan.collateralAsset, address(0), "no collateral asset");
+        assertEq(loan.collateralAmount, 0, "no collateral amount");
+        assertEq(
+            uint8(loan.collateralLiquidity),
+            uint8(LibVaipakam.LiquidityStatus.Illiquid),
+            "an empty leg has no price"
+        );
+
+        vm.prank(borrower);
+        vm.expectRevert(LibOfferShape.RentalCollateralNotAllowed.selector);
+        AddCollateralFacet(address(diamond)).addCollateral(loanId, 1e6);
+    }
+
     function test_Scenario2a_ERC721Rental_FullLifecycle() public {
         uint256 borrowerUsdcBefore = IERC20(mockUsdc).balanceOf(borrower);
 

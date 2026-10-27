@@ -419,8 +419,10 @@ library FacetSelectors {
     ///         the preview/accept divergence #1503 exists to remove,
     ///         reintroduced by a partial refresh.
     function offerPreview() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](2);
         s[0] = OfferPreviewFacet.previewAccept.selector;
+        // #2949 — the #400 rate-model quote moved here from OfferCreateFacet.
+        s[1] = OfferPreviewFacet.quoteOfferRateBps.selector;
     }
 
     /// @notice Full external selector surface of {FallbackCustodyFacet} (4).

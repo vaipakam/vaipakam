@@ -12,6 +12,7 @@ import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 
 /// @title OfferModificationTest
 /// @notice #193 — coverage for the in-place offer modification surface.
@@ -500,8 +501,8 @@ contract OfferModificationTest is SetupTest {
                 lendingAsset: mockNft721,
                 amount: 10 ether,         // daily fee
                 interestRateBps: 0,
-                collateralAsset: mockCollateralERC20,
-                collateralAmount: 1 ether,
+                collateralAsset: address(0), // a rental names no collateral (#2949)
+                collateralAmount: 0,
                 durationDays: 5,
                 assetType: LibVaipakam.AssetType.ERC721,
                 tokenId: 1,
@@ -516,7 +517,7 @@ contract OfferModificationTest is SetupTest {
                 allowsParallelSale: false,
                 amountMax: 10 ether,
                 interestRateBpsMax: 0,
-                collateralAmountMax: 1 ether,
+                collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
@@ -537,13 +538,13 @@ contract OfferModificationTest is SetupTest {
                 amountMax: 12 ether,
                 interestRateBps: 0,
                 interestRateBpsMax: 0,
-                collateralAmount: 1 ether,    // unchanged
-                collateralAmountMax: 1 ether  // unchanged
+                collateralAmount: 0,    // unchanged
+                collateralAmountMax: 0         // unchanged
             })
         );
         LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(id);
         assertEq(o.amount, 12 ether, "amount updated");
-        assertEq(o.collateralAmount, 1 ether, "collateral untouched");
+        assertEq(o.collateralAmount, 0, "collateral untouched");
     }
 
     function testModifyOfferStillRevertsWhenChangingCollateralOnBorrowerNftRental() public {
@@ -559,8 +560,8 @@ contract OfferModificationTest is SetupTest {
                 lendingAsset: mockNft721,
                 amount: 10 ether,
                 interestRateBps: 0,
-                collateralAsset: mockCollateralERC20,
-                collateralAmount: 1 ether,
+                collateralAsset: address(0), // a rental names no collateral (#2949)
+                collateralAmount: 0,
                 durationDays: 5,
                 assetType: LibVaipakam.AssetType.ERC721,
                 tokenId: 2,
@@ -575,7 +576,7 @@ contract OfferModificationTest is SetupTest {
                 allowsParallelSale: false,
                 amountMax: 10 ether,
                 interestRateBpsMax: 0,
-                collateralAmountMax: 1 ether,
+                collateralAmountMax: 0,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
@@ -659,8 +660,8 @@ contract OfferModificationTest is SetupTest {
             lendingAsset: mockNft721,
             amount: amount,
             interestRateBps: 0,
-            collateralAsset: mockCollateralERC20,
-            collateralAmount: 1 ether,
+            collateralAsset: address(0), // a rental names no collateral (#2949)
+            collateralAmount: 0,
             durationDays: 5,
             assetType: LibVaipakam.AssetType.ERC721,
             tokenId: 1,
@@ -675,7 +676,7 @@ contract OfferModificationTest is SetupTest {
             allowsParallelSale: false,
             amountMax: amountMax,
             interestRateBpsMax: 0,
-            collateralAmountMax: 1 ether,
+            collateralAmountMax: 0,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
@@ -719,8 +720,8 @@ contract OfferModificationTest is SetupTest {
                 amountMax: 12 ether,
                 interestRateBps: 0,
                 interestRateBpsMax: 0,
-                collateralAmount: 1 ether,
-                collateralAmountMax: 1 ether
+                collateralAmount: 0,
+                collateralAmountMax: 0
             })
         );
 
@@ -729,6 +730,66 @@ contract OfferModificationTest is SetupTest {
         LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(id);
         assertEq(o.amount, 12 ether, "a single-value edit still applies");
         assertEq(o.amountMax, 12 ether, "and stays single-value");
+    }
+
+    // ─── NFT rentals carry no collateral (#2949) ─────────────────────
+
+    /// @notice A rental offer naming ANY collateral field is refused at
+    ///         create, one field at a time, and the same offer with every
+    ///         collateral field empty is accepted.
+    function testCreateRentalOfferNamingCollateralReverts() public {
+        vm.prank(borrower);
+        ERC20Mock(mockERC20).approve(address(diamond), type(uint256).max);
+
+        LibVaipakam.CreateOfferParams memory p;
+        for (uint256 field; field < 6; ++field) {
+            p = _rentalBorrowerParams(10 ether, 10 ether);
+            if (field == 0) p.collateralAsset = mockCollateralERC20;
+            if (field == 1) p.collateralAssetType = LibVaipakam.AssetType.ERC721;
+            if (field == 2) p.collateralAmount = 1;
+            if (field == 3) p.collateralAmountMax = 1;
+            if (field == 4) p.collateralTokenId = 1;
+            if (field == 5) p.collateralQuantity = 1;
+            vm.prank(borrower);
+            vm.expectRevert(LibOfferShape.RentalCollateralNotAllowed.selector);
+            OfferCreateFacet(address(diamond)).createOffer(p);
+        }
+
+        vm.prank(borrower);
+        uint256 id = OfferCreateFacet(address(diamond)).createOffer(_rentalBorrowerParams(10 ether, 10 ether));
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(id);
+        assertEq(o.collateralAsset, address(0), "the rental names no collateral asset");
+        assertEq(o.collateralAmountMax, 0, "and no collateral amount");
+    }
+
+    /// @notice A lender rental offer cannot be edited into naming a
+    ///         collateral amount through either edit route. (A borrower
+    ///         rental's collateral cluster is already frozen by shape.)
+    function testEditLenderRentalOfferIntoCollateralReverts() public {
+        vm.prank(lender);
+        MockRentableNFT721(mockNft721).approve(address(diamond), 1);
+        LibVaipakam.CreateOfferParams memory p = _rentalBorrowerParams(10 ether, 10 ether);
+        p.offerType = LibVaipakam.OfferType.Lender;
+        vm.prank(lender);
+        uint256 id = OfferCreateFacet(address(diamond)).createOffer(p);
+
+        vm.prank(lender);
+        vm.expectRevert(LibOfferShape.RentalCollateralNotAllowed.selector);
+        _mutate().setOfferCollateral(id, 1 ether, 1 ether);
+
+        vm.prank(lender);
+        vm.expectRevert(LibOfferShape.RentalCollateralNotAllowed.selector);
+        _mutate().modifyOffer(
+            id,
+            LibVaipakam.OfferModifyParams({
+                amount: 10 ether,
+                amountMax: 10 ether,
+                interestRateBps: 0,
+                interestRateBpsMax: 0,
+                collateralAmount: 1 ether,
+                collateralAmountMax: 1 ether
+            })
+        );
     }
 
     // ─── Sanctions screening ─────────────────────────────────────────

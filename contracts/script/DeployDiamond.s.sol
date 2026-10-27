@@ -1678,7 +1678,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      `_getOfferSelectors()` seven entries are partitioned across
     ///      the two getters below; selector VALUES are unchanged.
     function _getOfferCreateSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](6);
         s[0] = OfferCreateFacet.createOffer.selector;
         s[1] = OfferCreateFacet.getUserVault.selector;
         // Phase 8b.1 Permit2 addition.
@@ -1694,9 +1694,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // witness). `address(this)`-only gated inside the facet body.
         s[4] = OfferCreateFacet.createSignedOfferVault.selector;
         s[5] = OfferCreateFacet.createSignedOfferWallet.selector;
-        // #400 — quote-time rate-model resolver (read-only guidance / the
-        // entry automated pricing flows call; manual offers are untouched).
-        s[6] = OfferCreateFacet.quoteOfferRateBps.selector;
+        // The #400 rate-model quote moved to `OfferPreviewFacet` (#2949).
     }
 
     /// @dev T-086 Round-8 (#358) — borrow-OR-sell parallel-sale facet
@@ -1765,8 +1763,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev #980 — `OfferPreviewFacet.previewAccept`, split out of
     ///      OfferAcceptFacet for EIP-170 headroom. Single view selector.
     function _getOfferPreviewSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](2);
         s[0] = OfferPreviewFacet.previewAccept.selector;
+        // #400 — quote-time rate-model resolver (read-only guidance / the
+        // entry automated pricing flows call; manual offers are untouched).
+        // Moved here from `OfferCreateFacet` in #2949.
+        s[1] = OfferPreviewFacet.quoteOfferRateBps.selector;
     }
 
     /// @dev OfferMatchFacet — Range Orders Phase 1 bot-driven offer

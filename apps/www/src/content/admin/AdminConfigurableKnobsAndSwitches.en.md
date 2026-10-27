@@ -265,7 +265,7 @@ risk premiums, #394) that price the offers they post on a user's behalf.
   rate, so a registered model — even buggy or adversarial — can only nudge the
   rate around the market anchor, never drive an automated offer far off-market
   (instant-loss-fill if too low, idle capital if too high). This is enforced in
-  the resolver (`OfferCreateFacet.quoteOfferRateBps`).
+  the resolver (`OfferPreviewFacet.quoteOfferRateBps`).
 
   **The resolver is a DORMANT opt-in quote, not a substrate every offer
   passes through — read this before registering a model.** A rate a human
