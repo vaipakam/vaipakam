@@ -1,4 +1,4 @@
-## Feed bindings — redrafted with bridge proofs (PR #<n>)
+## Feed bindings — redrafted with bridge proofs (PR #2971)
 
 The reviewed feed-bindings files for Ethereum, Base, Optimism, Arbitrum and Polygon were redrafted with the bridge-provenance check from #2965, against the price-feed directory as it stood on the day of the run. On each L2, an entry the market-data sources and token lists had left for review is now drafted when the chain's canonical bridge names the same token those sources name and no source names a different one. The bridge's evidence (method, the Ethereum original and the bridged address) is recorded beside each such binding, so a reviewer can check it.
 
