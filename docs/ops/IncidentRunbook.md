@@ -213,8 +213,9 @@ recoverable back-pressure — not a fund-loss event.
   backing and leaves the day owing it again. The manual-budget path refuses a
   day that already has a part sent (`RemitDayPartlySent`). `ConfigureCcip`
   still refuses a lane capacity below the largest fresh day slice, so on a
-  configured lane parts arise only from a drained bucket or a lowered
-  `REWARD_REMIT_LANE_CAP`.
+  configured lane parts arise from a drained bucket, a lowered
+  `REWARD_REMIT_LANE_CAP`, or a day whose recycled component pushes its slice
+  past the lane (the recycled component is not bounded by the schedule).
 
 ### Automated remittance (keeper, #925)
 

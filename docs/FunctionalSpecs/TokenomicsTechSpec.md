@@ -181,13 +181,17 @@ Functional consolidation through 2026-07-12:
   part size the sender names. The day's whole slice — its fresh and its
   recycled portion — is fixed when its first part is sent and never changes
   afterwards; every later part is measured against that same whole, and the
-  sum of the parts sent never exceeds it. Each part reserves, records and
-  retires exactly its own value once, and any amount the day's commitments
-  clamped away is retired exactly once for the whole day. A part's checks
-  (the remaining fresh schedule, the recycled backing) give the same answer
-  whatever size the parts are, so splitting a day can neither admit what the
-  whole day would have been refused nor refuse what it would have been
-  admitted. The day counts as remitted only when every part has been sent.
+  parts standing at any time never add up to more than it (a released part is
+  owed, and sent, again). Each part reserves, records and retires exactly its
+  own value once, and any amount the day's commitments clamped away is
+  retired exactly once for the whole day. Each check a part must pass
+  (the remaining fresh schedule, the recycled backing) is applied to what the
+  day still owes, not to the part alone: a part is admitted exactly when
+  sending the rest of the day at once would be, so splitting a day can never
+  admit what the whole day would be refused, and no day is started on room its
+  whole does not fit. Other sends may still use that room between parts, and
+  the next part then waits for it. The day counts as remitted only when every
+  part has been sent.
   Releasing a part's undeliverable remittance restores exactly that part and
   leaves the day owing it again; the rest of the day is untouched. The fee
   quote and the planning views answer for the same part size the send uses,
