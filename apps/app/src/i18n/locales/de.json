@@ -685,6 +685,7 @@
       "wantPathBlurb": "Zahlen Sie im Voraus und nutzen Sie das NFT bis zum Ende der Mietdauer.",
       "switchPrompt": "{{path}}? Wechseln",
       "prepaymentTokenLabel": "Vorauszahlungs-Token",
+      "listingNamesCollateral": "Dieses Angebot nennt einen Sicherheiten-Vermögenswert, aber eine Miete nimmt keine Sicherheiten: Der Mieter zahlt nur die Vorauszahlung. Die App nimmt ein Mietangebot in dieser Form nicht an, weil die Annahme bedeuten würde, einen Vermögenswert zu bestätigen, den die Miete nie verwendet.",
       "browseCta": "Mietbare NFTs durchsuchen",
       "custodyNote": "Das NFT verlässt nie die Vault-Verwahrung. Der Mieter erhält nur vorübergehende Nutzungsrechte — kein Eigentum.",
       "postListing": "Vermietungenlisting veröffentlichen",

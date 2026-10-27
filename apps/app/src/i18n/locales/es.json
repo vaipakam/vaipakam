@@ -685,6 +685,7 @@
       "wantPathBlurb": "Paga por adelantado, usa el NFT hasta que termine el alquiler.",
       "switchPrompt": "¿{{path}}? Cambiar",
       "prepaymentTokenLabel": "token de prepago",
+      "listingNamesCollateral": "Este anuncio indica un activo de garantía, pero un alquiler no toma garantía: el arrendatario solo paga el prepago. La app no acepta un anuncio de alquiler con esta forma, porque aceptarlo supondría reconocer un activo que el alquiler nunca usa.",
       "browseCta": "Explorar NFTs disponibles para alquilar",
       "custodyNote": "El NFT nunca sale de la custodia del vault. El arrendatario recibe solo derechos de uso temporales — no propiedad.",
       "postListing": "Publicar listado de alquiler",

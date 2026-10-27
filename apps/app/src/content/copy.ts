@@ -1501,6 +1501,10 @@ const copySource = {
     switchPrompt: tmpl('{{path}}? Switch', ['path']),
     // Fallback label for the prepayment token in the security-gate banners.
     prepaymentTokenLabel: 'prepayment token',
+    // #2938 — a rental listing that names collateral. A rental takes none
+    // (only the prepayment), so the review refuses the listing by name.
+    listingNamesCollateral:
+      'This listing names a collateral asset, but a rental takes no collateral: a renter pays only the prepayment. The app does not accept a rental listing in this shape, because accepting it would mean acknowledging an asset the rental never uses.',
     // UX-047 — a direct browse action on the otherwise-sparse landing.
     browseCta: 'Browse NFTs available to rent',
     custodyNote:
