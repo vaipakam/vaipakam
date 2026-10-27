@@ -97,7 +97,7 @@
   },
   {
     "type": "function",
-    "name": "onRewardBudgetReceivedD6",
+    "name": "onRewardBudgetReceivedD7",
     "inputs": [
       {
         "name": "token",
@@ -158,6 +158,26 @@
         "name": "intendedEra",
         "type": "uint64",
         "internalType": "uint64"
+      },
+      {
+        "name": "declaredTotal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "declaredRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayWholeFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayWholeRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -487,6 +507,30 @@
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      },
+      {
+        "name": "declaredFresh",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "declaredRecycled",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayWholeFresh",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayWholeRecycled",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -3114,6 +3158,38 @@
         "name": "chainId",
         "type": "uint32",
         "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitDayPartlySent",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitReleaseFanoutUnsupported",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fundedDays",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
