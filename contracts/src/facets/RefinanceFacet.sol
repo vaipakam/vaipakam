@@ -15,6 +15,7 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
+import {LibInitRiskGate} from "../libraries/LibInitRiskGate.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -959,22 +960,19 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
      *      (`LoanFacet`'s initiation gate), so refinance can neither admit a
      *      position initiation would reject nor reject one it admitted.
      *
-     *      #2380 — the CONSENTED-ILLIQUID branch. Initiation skips the LTV and
-     *      health-factor checks when either leg is not liquid AND both parties
-     *      gave the illiquid risk-and-terms consent: an illiquid leg is valued
-     *      at zero, so there is no LTV or health factor to compute, and the
-     *      consent is what admits the loan instead. Refinance used to run the
+     *      #2380 / #2956 — the ILLIQUID branch. Initiation runs the LTV and
+     *      health-factor checks only on a pair liquid on both legs
+     *      ({LibInitRiskGate.applies}); a pair with an illiquid leg has no LTV
+     *      or health factor to compute and is admitted on the illiquid
+     *      risk-and-terms consent every loan carries. Refinance used to run the
      *      checks unconditionally and so reverted `IlliquidLoanNoRiskMath` on
      *      every such replacement, after the payoff had run. The branch reads
-     *      the replacement loan's OWN stamps — the liquidity of each leg and
-     *      `riskAndTermsConsentFromBoth`, which acceptance wrote from exactly
-     *      the values initiation tested — so it re-derives nothing live: a
-     *      liquidity change between acceptance and here cannot strand a
+     *      the replacement loan's OWN liquidity stamps, which acceptance wrote
+     *      from exactly the values initiation tested, so it re-derives nothing
+     *      live: a liquidity change between acceptance and here cannot strand a
      *      replacement the borrower was admitted into, the same race the
      *      snapshotted caps below close for the liquid branch.
      *
-     *      A replacement that is not fully liquid WITHOUT mutual consent falls
-     *      through to the checks and reverts there, as initiation would have.
      *      The exiting lender gives no consent: they are paid out in full.
      */
     function _requirePostRolloverRisk(
@@ -982,9 +980,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         LibVaipakam.Loan storage newLoan,
         address oldCollateralAsset
     ) private view {
-        bool bothLiquid = newLoan.principalLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
-            newLoan.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid;
-        if (!bothLiquid && newLoan.riskAndTermsConsentFromBoth) return;
+        if (!LibInitRiskGate.applies(newLoan.principalLiquidity, newLoan.collateralLiquidity)) return;
 
         // Mirrors
         // `LoanFacet._checkInitialLtvAndHf` exactly so refinance can't

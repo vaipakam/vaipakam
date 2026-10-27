@@ -6,6 +6,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
+import {LibInitRiskGate} from "../libraries/LibInitRiskGate.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
@@ -602,9 +603,11 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     }
 
     /**
-     * @dev LTV/HF gating skipped for lender-sale vehicles and for loans where
-     *      both parties consented to illiquid collateral terms. Split out so
-     *      the caller's stack frame doesn't carry these locals.
+     * @dev LTV/HF gating skipped for lender-sale vehicles and, by the one
+     *      rule {LibInitRiskGate.applies}, for any pair that is not liquid on
+     *      both legs (admitted on the illiquid consent every loan carries
+     *      instead, #2956). Split out so the caller's stack frame doesn't
+     *      carry these locals.
      */
     function _maybeRunInitialRiskGates(InitCtx memory ctx) private view {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -717,11 +720,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
                 ctx.collateralLiquidity == LibVaipakam.LiquidityStatus.Illiquid
             );
         }
-        bool bothLiquid = ctx.lendingAssetLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
-            ctx.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid;
-        bool mutualIlliquidConsent = ctx.acceptorRiskAndTermsConsent &&
-            offer.creatorRiskAndTermsConsent;
-        if (!bothLiquid && mutualIlliquidConsent) return;
+        // #2956 — the one rule every admitting path and preview reads. The
+        // illiquid consent is not a term of it: `initiateLoan` has already
+        // refused a loan without both parties' consent.
+        if (!LibInitRiskGate.applies(ctx.lendingAssetLiquidity, ctx.collateralLiquidity)) return;
         address collateralAsset = LibVaipakam
             .storageSlot()
             .loans[ctx.loanId]

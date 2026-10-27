@@ -5,6 +5,7 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibRiskMath} from "./LibRiskMath.sol";
 import {LibOfferBounds} from "./LibOfferBounds.sol";
+import {LibInitRiskGate} from "./LibInitRiskGate.sol";
 import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
 import {LibAuth} from "./LibAuth.sol";
 import {LibPausable} from "./LibPausable.sol";
@@ -686,12 +687,14 @@ library LibOfferMatch {
 
         // Synthetic init-gate check at the matched (amount, reqCollateral)
         // — must mirror `LoanFacet._checkInitialLtvAndHf` so a bot's
-        // preview never admits a pair the binding gate would revert. Two
-        // regimes, switched by `depthTieredLtvEnabled`:
-        // #2949 — a rental carries no collateral leg, so it has no LTV to
-        // gate (the binding accept never runs the gate on a rental: its
-        // lending leg is an NFT, so the pair is never both-liquid).
-        if (L.assetType == LibVaipakam.AssetType.ERC20) {
+        // preview never admits a pair the binding gate would revert, nor
+        // refuses one it would admit. #2956 — it runs under the SAME rule as
+        // the binding gate ({LibInitRiskGate.applies}) on the same live
+        // liquidity reads: a pair with an illiquid leg (a rental among them,
+        // #2949) carries no init-LTV check, so a consented illiquid pair is
+        // matchable whichever regime is on. Two regimes, switched by
+        // `depthTieredLtvEnabled`:
+        if (_initRiskGateApplies(L)) {
             if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
                 // ON: the effective init-LTV cap = min(per-asset ceiling,
                 // tierMaxInitLtvBps[effectiveTier(collateral)]). An unset
@@ -744,6 +747,20 @@ library LibOfferMatch {
         r.lenderRemainingPostMatch = lenderRemaining - r.matchAmount;
         r.errorCode = MatchError.Ok;
         return r;
+    }
+
+    /// @dev #2956 — whether the loan this match would create carries the
+    ///      initiation risk gate, by the one rule the binding accept applies
+    ///      ({LibInitRiskGate.applies}) to the same live reads
+    ///      (`OracleFacet.checkLiquidity` on each leg). A rental has no
+    ///      collateral leg, which reads Illiquid (#2949), so it never carries
+    ///      the gate and needs no read.
+    function _initRiskGateApplies(LibVaipakam.Offer memory L) private view returns (bool) {
+        if (L.assetType != LibVaipakam.AssetType.ERC20) return false;
+        return LibInitRiskGate.applies(
+            OracleFacet(address(this)).checkLiquidity(L.lendingAsset),
+            OracleFacet(address(this)).checkLiquidity(L.collateralAsset)
+        );
     }
 
     /// @dev #2727 — whether the two offers agree on every term the loan
@@ -893,12 +910,12 @@ library LibOfferMatch {
         //     enforced at MATERIALIZATION via `createSignedOfferVault` (which
         //     runs the full `LibOfferBounds` create-time check).
         {
-            bool bothLiquid =
-                OracleFacet(address(this)).checkLiquidity(lendingAsset)
-                    == LibVaipakam.LiquidityStatus.Liquid
-                && OracleFacet(address(this)).checkLiquidity(collateralAsset)
-                    == LibVaipakam.LiquidityStatus.Liquid;
-            if (bothLiquid) {
+            // #2956 — the one rule for whether the slice's loan carries the
+            // initiation risk gate ({LibInitRiskGate.applies}).
+            if (LibInitRiskGate.applies(
+                OracleFacet(address(this)).checkLiquidity(lendingAsset),
+                OracleFacet(address(this)).checkLiquidity(collateralAsset)
+            )) {
                 // #1104 — mirror the shared `LibOfferBounds` no-borrow guard.
                 // A tier-0 / zero-init-LTV-cap collateral admits NO new borrow at
                 // loan-init, yet `minCollateralForLending` returns a FINITE
