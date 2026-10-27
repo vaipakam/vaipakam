@@ -145,12 +145,9 @@ contract RewardHorizonSweepFacet is
         uint256 headroom;
         uint256 backingCap;
         {
-        // Block-scoped so `reserved` and `backingRoom` die before the loop —
+        // Block-scoped so `backingRoom` dies before the loop —
         // the loop frame sits exactly at the viaIR stack ceiling.
-        uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
-        headroom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
-            ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
-            : 0;
+        headroom = LibInteractionRewards.poolRemaining();
         // The fresh credit also grows the recycle bucket, so it must stay
         // within the bucket's BACKING headroom — {LibVpfiRecycle.credit}
         // reverts unless `balance >= recycleBucket + freshTotal`, and a
@@ -360,10 +357,7 @@ contract RewardHorizonSweepFacet is
         uint256 paidOut = s.interactionPoolPaidOut;
         uint256 headroom;
         {
-            uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
-            headroom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
-                ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
-                : 0;
+            headroom = LibInteractionRewards.poolRemaining();
         }
         uint256 allowance = LibInteractionRewards.deliveredFreshBound(s);
         {

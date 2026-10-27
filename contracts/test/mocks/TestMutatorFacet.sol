@@ -2304,10 +2304,13 @@ contract TestMutatorFacet {
     ///         keeper's delivery-proof pass would by proving a delivery's day
     ///         list. The gate binds on every mirror by role, so a fixture that
     ///         stands in for the delivered ledger with {setArmedFreshLedgerRaw}
-    ///         must stand in for the landing too. Writes the proof mark only;
-    ///         moves no value.
-    function setDayDeliveryProvedByRaw(uint256 dayId, bytes32 packetHash) external {
-        LibVaipakam.storageSlot().dayDeliveryProvedBy[dayId] = packetHash;
+    ///         must stand in for the landing too. #918: writes the day's
+    ///         delivery record as landed (`landedAt`, the one word the gate
+    ///         reads, and the first packet) and nothing else; moves no value.
+    function setDayDeliveryLandedRaw(uint256 dayId, bytes32 packetHash) external {
+        LibVaipakam.DayDeliveryParts storage dp = LibVaipakam.storageSlot().dayDeliveryParts[dayId];
+        dp.landedAt = uint64(block.timestamp);
+        dp.firstPacket = packetHash;
     }
 
     /// @notice #1434 P1-b test-only — read the paid half back, so a test can

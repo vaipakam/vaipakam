@@ -256,6 +256,14 @@
       "from": "borrowerLifRebate",
       "to": "retiredBorrowerLifRebate",
       "reason": "#1980 (owner decision: retire the peg-custody borrower LIF path; every chain gets a fresh deploy, O1 = A): since #1352 the borrower Loan Initiation Fee is charged in the lending asset at acceptance and nothing writes this custody row. Its producer, its settle / forfeit / credit drains, the claim lane that paid its rebate, its view and its NFT-summary fields are removed. The mapping keeps its slot and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 624,
+      "offset": 0,
+      "from": "dayDeliveryProvedBy",
+      "to": "retiredDayDeliveryProvedBy",
+      "reason": "#918 (owner decision 2026-10-27, send in parts): a mirror day now opens only when every part of its slice has landed, recorded per component in the appended dayDeliveryParts; the one-packet proof marker is retired, the slot keeps its place and is no longer written. Same type and position; marked retired, not repurposed."
     }
   ]
 }

@@ -160,7 +160,7 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
     /// @dev Deliver `amount` VPFI as a reward-budget remittance through the real
     ///      receiver: the CCIP adapter transfers the tokens to the receiver
     ///      first, then invokes the callback — so pre-fund the receiver. The
-    ///      payload is the rooted (d6) wire, the only budget shape the receiver
+    ///      payload is the rooted (d7) wire, the only budget shape the receiver
     ///      accepts, carrying day 1 as a whole-fresh delivery.
     function _fundViaReceiver(uint256 amount) internal {
         vpfi.mint(address(receiver), amount);
@@ -171,8 +171,19 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
             receiver,
             SRC_BASE,
             address(0xBA5E),
-            RemitWire.encodeD6(
-                RemitWire.d6Root(RemitWire.d6Chunks(_days1())), 1, 1, amount, 1, address(0xBA5E), 0, 0
+            RemitWire.encodeD7(
+                RemitWire.D7({
+                    dayListRoot: RemitWire.d6Root(RemitWire.d6Chunks(_days1())),
+                    elementCount: 1,
+                    chunkCount: 1,
+                    total: amount,
+                    remitId: 1,
+                    remitter: address(0xBA5E),
+                    recycledShare: 0,
+                    intendedEra: 0,
+                    dayWholeFresh: amount,
+                    dayWholeRecycled: 0
+                })
             ),
             tokens
         );

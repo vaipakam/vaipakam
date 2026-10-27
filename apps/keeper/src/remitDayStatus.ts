@@ -2,7 +2,7 @@
 //
 // #2760 — why a finalized day was neither remitted nor closed.
 //
-// `quoteRemitDayPlans` reads a day as zero and not closeable for many reasons:
+// `quoteRemitDayPlans` reads a day as zero and not actionable for many reasons:
 // already settled, nothing owed to this mirror, or still owed but gated. The
 // remit pass used to warn about every such day that was not closed, which on a
 // quiet mirror is every day that owed it nothing, every tick. Base now reports
@@ -21,9 +21,10 @@ const REMIT_ABI = RewardRemittanceFacetABI as Abi;
 /** `FunctionDoesNotExist()`: the Diamond's fallback for an unrouted selector. */
 const FUNCTION_DOES_NOT_EXIST_SELECTOR = '0xa9ad62f8';
 
-/** `RewardRemittanceFacet.RemitDayStatus`, in declaration order (the ABI
- *  carries the enum as a `uint8`). `remitDayStatus.test.ts` pins this list to
- *  the contract's own declaration. */
+/** `LibRemitDayLedger.RemitDayStatus`, in declaration order (the ABI carries
+ *  the enum as a `uint8`). `remitDayStatus.test.ts` pins this list to the
+ *  contract's own declaration. `Partial` (#918): the day acts, but the part
+ *  this cap allows leaves it still owing the rest. */
 export const REMIT_DAY_STATUSES = [
   'NotFinalized',
   'Repeated',
@@ -34,6 +35,7 @@ export const REMIT_DAY_STATUSES = [
   'AwaitingCommitment',
   'Unbacked',
   'Closeable',
+  'Partial',
 ] as const;
 export type RemitDayStatus = (typeof REMIT_DAY_STATUSES)[number];
 
@@ -72,6 +74,9 @@ export async function readRemitDayStatuses(
   diamond: Address,
   mirrorId: number,
   days: readonly bigint[],
+  /** #918 — the part cap the plan was quoted under; the statuses are that
+   *  plan's own (a day is `Partial` or `Closeable` only relative to a cap). */
+  partCap: bigint,
   /** The block the batch was planned at, so the status is that plan's own
    *  verdict; omitted, the latest head. */
   blockNumber?: bigint,
@@ -82,7 +87,7 @@ export async function readRemitDayStatuses(
       address: diamond,
       abi: REMIT_ABI,
       functionName: 'quoteRemitDayStatuses',
-      args: [mirrorId, days],
+      args: [mirrorId, days, partCap],
       blockNumber,
     })) as readonly unknown[];
   } catch (err) {

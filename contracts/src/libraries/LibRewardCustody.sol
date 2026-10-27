@@ -143,12 +143,43 @@ library LibRewardCustody {
         uint256 receivedAfter
     );
 
-    /// @notice #1944 consequence 1 — day `dayId`'s delivery was PROVEN landed on this mirror by budget packet
-    ///         `packetHash` (remit `remitId`), through `route` (1 = the packet's flat day-list hash, 2 = one
-    ///         chunk of its rooted d6 list). Provenance only: no value moves and no row changes — the mark is
-    ///         what lets the day's FRESH pricing proceed. Emitted once per day (the first lister stays).
+    /// @notice #1944 consequence 1 — budget packet `packetHash` (remit `remitId`) was PROVEN to list day
+    ///         `dayId` on this mirror, through `route` (2 = one chunk of its rooted list; 1 was the retired
+    ///         flat day-list hash). Provenance only: no value moves and no row changes. Since #918 it is
+    ///         emitted for EVERY proven (packet, day) pair — a day may arrive in several parts — and it no
+    ///         longer means the day has landed: {DayDeliveryPartLanded} says what the proof counted, and the
+    ///         day lands when those sums reach its whole.
     /// @custom:event-category informational/reward-transport
     event DayDeliveryProved(uint256 indexed dayId, bytes32 indexed packetHash, uint256 remitId, uint8 route);
+
+    /// @notice #918 — a single-day budget packet's part of day `dayId` was counted toward the day on this
+    ///         mirror (its chunk was indexed or proven): the day's landed sums per component after it, and the
+    ///         whole they wait for. The day has LANDED once both landed figures reach the whole
+    ///         (`landedAt` in {LibVaipakam.DayDeliveryParts}); they may exceed it after an operator release
+    ///         whose original and re-send both landed, which is value-true.
+    /// @custom:event-category informational/reward-transport
+    event DayDeliveryPartLanded(
+        uint256 indexed dayId,
+        bytes32 indexed packetHash,
+        uint256 landedFresh,
+        uint256 landedRecycled,
+        uint256 wholeFresh,
+        uint256 wholeRecycled
+    );
+
+    /// @notice #918 — a part of day `dayId` declared a whole slice different from the one its first part
+    ///         set. Only a source breaking its own rule (Base locks the whole at the day's first part) can
+    ///         cause it; the first whole stands, so the day never opens on a smaller target, and the part's
+    ///         components still count toward the sums.
+    /// @custom:event-category informational/reward-transport
+    event DayDeliveryWholeConflict(
+        uint256 indexed dayId,
+        bytes32 indexed packetHash,
+        uint256 wholeFresh,
+        uint256 wholeRecycled,
+        uint256 declaredWholeFresh,
+        uint256 declaredWholeRecycled
+    );
 
     // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -1763,6 +1794,34 @@ library LibRewardCustody {
         emit IngressPacketDayListRooted(h, root, elementCount, chunkCount, intendedEra);
     }
 
+    /// @notice #918 — stamp a d7 packet's DECLARED part of its funded day and
+    ///         the day's WHOLE slice, per component.
+    /// @dev    Written once, at ingress, and read when the packet's chunk is
+    ///         indexed or proven ({_noteDayDeliveryPart}), which is when the
+    ///         mirror learns the day. Declared figures, not received ones: a
+    ///         part "lands" when Base's send arrives, the meaning the #1944
+    ///         gate has always had, and a short delivery is the
+    ///         acknowledgement's to surface. A declared recycled share above
+    ///         the declared total is refused by the existing name: no honest
+    ///         sender writes one.
+    function stampPacketDayPart(
+        LibVaipakam.Storage storage s,
+        bytes32 h,
+        uint256 declaredTotal,
+        uint256 declaredRecycled,
+        uint256 wholeFresh,
+        uint256 wholeRecycled
+    ) internal {
+        if (declaredRecycled > declaredTotal) {
+            revert IVaipakamErrors.RecycledShareExceedsDelivery(declaredRecycled, declaredTotal);
+        }
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
+        p.declaredFresh = SafeCast.toUint128(declaredTotal - declaredRecycled);
+        p.declaredRecycled = SafeCast.toUint128(declaredRecycled);
+        p.dayWholeFresh = SafeCast.toUint128(wholeFresh);
+        p.dayWholeRecycled = SafeCast.toUint128(wholeRecycled);
+    }
+
     // ─── The transport epochs (#1566 PR 3b) ──────────────────────────────────
 
     /// @notice How many FUNDED days one remittance may carry: ONE (#2821).
@@ -1781,6 +1840,14 @@ library LibRewardCustody {
     ///         ({GATE_MULTI_DAY}). A backlog drains one funded day per send. A day that only CLOSES (moves no
     ///         VPFI) is outside the bound: the send trims the destination list
     ///         to the funded days, so a close-only day never reaches it.
+    ///
+    ///         #918 — two more readers depend on the cap being ONE. A
+    ///         reservation records its part as one (fresh, recycled) pair, and
+    ///         Base's release attributes that pair to the reservation's single
+    ///         funded day (`LibRemitDayLedger.fundedDayIndex`, which refuses a
+    ///         reservation naming more); and the d7 wire carries ONE day's
+    ///         whole. Raising the cap means giving the reservation and the wire
+    ///         a per-day split first.
     ///
     ///         It is enforced at DISPATCH ({requireRemittableFanout}, on the
     ///         send and on its fee quote) and NOT at ingress. A transport
@@ -1802,7 +1869,10 @@ library LibRewardCustody {
     /// @notice #1566 transport epochs PR 3b-ii-A — how many of a day's indexed
     ///         epochs one coverage read, and the draw that follows it, scans.
     /// @dev    A ceiling on the scan, well above the epochs a day funded one
-    ///         day per remittance carries. Past it the read
+    ///         day per remittance usually carries — one per part (#918: a day
+    ///         whose slice exceeds the lane's bucket arrives in several parts,
+    ///         and Base caps neither their size nor their number, so the count
+    ///         is not bounded by construction). Past it the read
     ///         reports the cap HIT and the day primitive DEFERS the day rather
     ///         than pull era/live funding for a residual that unseen epochs
     ///         may cover — transport-first is not optional (§5c). 3b-ii-A
@@ -1969,6 +2039,10 @@ library LibRewardCustody {
         indexedDays = b.indexedDays + uint32(expected);
         b.indexedDays = indexedDays;
         emit TransportBatchChunkIndexed(batchId, chunkIndex, indexedDays, b.dayCount);
+        // #918 — the day is known now: count this packet's part toward it.
+        // Only a single-day packet funds a day (a wider epoch is withheld for
+        // good, `GATE_MULTI_DAY`), so only it is counted.
+        if (p.dayCount == 1) _noteDayDeliveryPart(s, dayIds[0], batchId, p);
     }
 
     /// @dev THE rooted-chunk membership rule (#1944 c1 factored it out of
@@ -4087,24 +4161,77 @@ library LibRewardCustody {
     // fresh funding arrived. The gate is ONE predicate, read at TWO rungs (the
     // day-halves derivation and the window clamp, both in
     // LibInteractionRewards) — never a per-call-site guard. Nothing here moves
-    // value: the proof entries write provenance, and the predicate only HOLDS
-    // a fold before the day, which every consumer already turns into a named
-    // deferral.
+    // value: the index and proof entries count each landed part toward its day
+    // (#918), and the predicate only HOLDS a fold before the day, which every
+    // consumer already turns into a named deferral.
 
-    /// @dev {DayDeliveryProved}'s `route`: one proven chunk of a rooted (d6) list.
+    /// @dev {DayDeliveryProved}'s `route`: one proven chunk of a rooted (d6/d7) list.
     uint8 internal constant DELIVERY_ROUTE_ROOTED_CHUNK = 2;
 
-    /// @notice #1944 c1 — whether day `d`'s delivery has LANDED here: an
-    ///         indexed transport epoch lists it, or a batchless budget packet
-    ///         was proven to list it.
-    /// @dev    THE one reader of "landed". Two facts, one per population, and
-    ///         neither restated beside the other: a batched packet's membership
-    ///         IS `transportBatchesByDay` (written by the epoch index), and a
-    ///         batchless packet's is the proof mark. Landed is not drawable — a
-    ///         landed epoch is spendable only when whole and attested, which the
-    ///         delivered bound governs, not this gate.
+    /// @notice #1944 c1 / #918 — whether day `d`'s delivery has LANDED here:
+    ///         the parts that have landed sum, per component, to the whole
+    ///         slice Base said it is sending for the day.
+    /// @dev    THE one reader of "landed", and ONE word: `landedAt` is written
+    ///         once, by {_noteDayDeliveryPart}, the moment both sums first reach
+    ///         the whole, and never cleared, so the predicate is monotone. Both
+    ///         populations reach it — a batched packet when its chunk is
+    ///         indexed (the epoch index), a batchless one when its chunk is
+    ///         proven — because each counts its part through the same writer.
+    ///         Per component, not in total: after an operator release where
+    ///         both the original and the re-send land, a total-only sum could
+    ///         open the day while a fresh part is still missing. Landed is not
+    ///         drawable — a landed epoch is spendable only when whole and
+    ///         attested, which the delivered bound governs, not this gate.
+    ///         LOCKSTEP: Base's whole is `LibRemitDayLedger.planDay`'s, locked at
+    ///         the day's first part; a change to what Base sends for a day
+    ///         changes this predicate in the same diff.
     function dayDeliveryLanded(LibVaipakam.Storage storage s, uint256 d) internal view returns (bool) {
-        return s.transportBatchesByDay[d].length != 0 || s.dayDeliveryProvedBy[d] != bytes32(0);
+        return s.dayDeliveryParts[d].landedAt != 0;
+    }
+
+    /// @dev #918 — THE one writer of {LibVaipakam.Storage.dayDeliveryParts}:
+    ///      count single-day packet `h`'s DECLARED part toward day `d`, and
+    ///      mark the day landed once both sums reach its whole. Called once
+    ///      per packet — the chunk bit that the index and the proof share
+    ///      refuses a second call, and the ingress stamp refuses a replayed
+    ///      packet — so a part is counted once, and the sums are commutative,
+    ///      so parts may land in any order. The whole comes from the FIRST part
+    ///      and stays; a part declaring another sets `wholeConflict`.
+    function _noteDayDeliveryPart(
+        LibVaipakam.Storage storage s,
+        uint256 d,
+        bytes32 h,
+        LibVaipakam.IngressPacket storage p
+    ) private {
+        LibVaipakam.DayDeliveryParts storage dp = s.dayDeliveryParts[d];
+        uint128 wholeFresh = p.dayWholeFresh;
+        uint128 wholeRecycled = p.dayWholeRecycled;
+        if (dp.parts == 0) {
+            dp.wholeFresh = wholeFresh;
+            dp.wholeRecycled = wholeRecycled;
+            dp.firstPacket = h;
+        } else if (dp.wholeFresh != wholeFresh || dp.wholeRecycled != wholeRecycled) {
+            dp.wholeConflict = true;
+            emit DayDeliveryWholeConflict(d, h, dp.wholeFresh, dp.wholeRecycled, wholeFresh, wholeRecycled);
+        }
+        uint256 landedFresh = uint256(dp.landedFresh) + p.declaredFresh;
+        uint256 landedRecycled = uint256(dp.landedRecycled) + p.declaredRecycled;
+        dp.landedFresh = SafeCast.toUint128(landedFresh);
+        dp.landedRecycled = SafeCast.toUint128(landedRecycled);
+        unchecked {
+            ++dp.parts;
+        }
+        // A day whose parts disagree on the whole does not open: Base locks
+        // the whole at the first part, so a disagreement is a fault to
+        // investigate, never a figure to pick between. Once open it stays open
+        // (the predicate is monotone).
+        if (
+            dp.landedAt == 0 && !dp.wholeConflict && landedFresh >= dp.wholeFresh
+                && landedRecycled >= dp.wholeRecycled
+        ) {
+            dp.landedAt = uint64(block.timestamp);
+        }
+        emit DayDeliveryPartLanded(d, h, landedFresh, landedRecycled, dp.wholeFresh, dp.wholeRecycled);
     }
 
     /// @notice #1944 c1 — whether day `d` is priced to owe FRESH value on
@@ -4113,7 +4240,7 @@ library LibRewardCustody {
     ///         day on.
     /// @dev    Exact by construction, not by shared code: every exit below is a
     ///         stored, Base-authored (or write-once local) figure that makes
-    ///         Base's own remit plan (`RewardRemittanceFacet._planDay` /
+    ///         Base's own remit plan (`LibRemitDayLedger.planDay` /
     ///         `_sideLegs`) send this chain NO fresh value for the day, so
     ///         `true` implies Base lists the day in the remit's funded days. A
     ///         change to Base's send rule must change this predicate in the
@@ -4134,7 +4261,9 @@ library LibRewardCustody {
     ///             and folded unproven before the chain becomes a mirror.
     ///          2. not a Mirror — Base funds itself; Unconfigured / Detached are
     ///             bounded elsewhere (Detached's delivered bound is zero).
-    ///          3. landed — the wait is over.
+    ///          3. landed — every part of the day's whole slice has arrived,
+    ///             per component (#918: a day may be sent in several parts).
+    ///             The wait is over.
     ///          4. no broadcast applied the day here — either it has not
     ///             landed yet, or the day was funded LOCALLY. The fact read is
     ///             `broadcastV2Applied`, the write-once flag only the
@@ -4261,26 +4390,9 @@ library LibRewardCustody {
         if (p.disposed != 0) revert IVaipakamErrors.DeliveryPacketDisposed(h, p.disposed);
     }
 
-    /// @dev THE one writer of {LibVaipakam.Storage.dayDeliveryProvedBy}. The
-    ///      FIRST proven lister stays: a later packet listing the same day
-    ///      changes nothing and emits nothing, so the mark is idempotent per
-    ///      day and its provenance names the delivery that actually unblocked
-    ///      the day. Provenance only — no row, no balance, no value moves.
-    function _markDayDeliveryProved(
-        LibVaipakam.Storage storage s,
-        bytes32 h,
-        LibVaipakam.IngressPacket storage p,
-        uint256 d,
-        uint8 route
-    ) private {
-        if (s.dayDeliveryProvedBy[d] != bytes32(0)) return;
-        s.dayDeliveryProvedBy[d] = h;
-        emit DayDeliveryProved(d, h, p.remitId, route);
-    }
-
-    /// @notice #1944 c1 — prove ONE chunk of a batchless rooted (d6,
-    ///         pre-activation) packet's day list and mark each of its days
-    ///         landed.
+    /// @notice #1944 c1 / #918 — prove ONE chunk of a batchless rooted (d7,
+    ///         pre-activation) packet's day list and count its part toward its
+    ///         day.
     /// @dev    The same rule the epoch index proves a chunk by
     ///         ({_verifyRootedChunk}), and the same `chunksIndexed` bit with the
     ///         same meaning (chunk `i` proven), so a chunk is proven once. No
@@ -4296,10 +4408,13 @@ library LibRewardCustody {
         LibVaipakam.IngressPacket storage p = _requireProvablePacket(s, h);
         uint256 expected = _verifyRootedChunk(p, h, chunkIndex, dayIds, proof);
         for (uint256 i; i < expected; ) {
-            _markDayDeliveryProved(s, h, p, dayIds[i], DELIVERY_ROUTE_ROOTED_CHUNK);
+            emit DayDeliveryProved(dayIds[i], h, p.remitId, DELIVERY_ROUTE_ROOTED_CHUNK);
             unchecked { ++i; }
         }
         p.chunksIndexed |= 1 << chunkIndex;
+        // The same rule the epoch index applies: only a single-day packet
+        // funds a day, so only it counts toward one.
+        if (p.dayCount == 1) _noteDayDeliveryPart(s, dayIds[0], h, p);
     }
 
     /// @dev {drawTransportForDay} through the epoch facet. With both legs zero

@@ -122,7 +122,9 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         NOT `whenNotPaused`, for the facet's stated reason: this records
     ///         a membership the delivery already committed to and pays nobody.
     ///         NO VALUE MOVES — the mark is provenance
-    ///         (`LibRewardCustody.DayDeliveryProved`).
+    ///         (`LibRewardCustody.DayDeliveryProved`), and for a one-day
+    ///         packet it adds the packet's declared part to the day's landed
+    ///         sums (#918), which open the day once they reach its whole.
     /// @param  packetHash The packet's ingress stamp.
     /// @param  chunkIndex The chunk of the committed list being proven.
     /// @param  dayIds     That chunk's days, in committed order.

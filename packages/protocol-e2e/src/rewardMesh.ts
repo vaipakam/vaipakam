@@ -101,7 +101,7 @@ export async function remitDays(m: MeshScenario, days: readonly number[]): Promi
   const dayIds = days.map(BigInt);
   const [quoted] = await m.base.read<readonly [bigint, readonly bigint[]]>('quoteRewardBudget', [MIRROR_ID, dayIds]);
   if (quoted === 0n) throw new Error(`Base quotes no mirror budget for days ${days.join(',')}`);
-  const [fee] = await m.base.read<readonly [bigint, bigint]>('quoteRemittanceFee', [MIRROR_ID, dayIds]);
+  const [fee] = await m.base.read<readonly [bigint, bigint]>('quoteRemittanceFee', [MIRROR_ID, dayIds, REMIT_LANE_CAP]);
   // The remittance carries the quoted VPFI over the same rate-limited lane.
   await waitForLane(m, m.base, m.mirror, quoted);
   const pool = m.base.fixture.artifact.vpfiTokenPool as Address;
@@ -157,7 +157,7 @@ export async function remitRefusals(
       return refusal;
     }
   };
-  const quote = await attempt(() => m.base.read('quoteRemittanceFee', [MIRROR_ID, dayIds]));
+  const quote = await attempt(() => m.base.read('quoteRemittanceFee', [MIRROR_ID, dayIds, REMIT_LANE_CAP]));
   const send = await attempt(() =>
     m.base.pub.simulateContract({
       address: m.base.diamond,

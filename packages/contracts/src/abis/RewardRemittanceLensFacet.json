@@ -272,6 +272,67 @@
   },
   {
     "type": "function",
+    "name": "getDayDeliveryParts",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct LibVaipakam.DayDeliveryParts",
+        "components": [
+          {
+            "name": "wholeFresh",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "wholeRecycled",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "landedFresh",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "landedRecycled",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "landedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "parts",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "wholeConflict",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "firstPacket",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getDayDeliveryState",
     "inputs": [
       {
@@ -302,7 +363,7 @@
         "internalType": "bool"
       },
       {
-        "name": "provedBy",
+        "name": "firstPart",
         "type": "bytes32",
         "internalType": "bytes32"
       },
@@ -554,6 +615,26 @@
             "name": "eraQuarantined",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "declaredFresh",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "declaredRecycled",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "dayWholeFresh",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "dayWholeRecycled",
+            "type": "uint128",
+            "internalType": "uint128"
           }
         ]
       }
@@ -765,6 +846,105 @@
   },
   {
     "type": "function",
+    "name": "getRemitDayFreshReserved",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRemitDayLedger",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct LibVaipakam.RemitDayLedger",
+        "components": [
+          {
+            "name": "wholeFresh",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "wholeRecycled",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "armedWholeFresh",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "armedWholeRecycled",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "sentFresh",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "sentRecycled",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "residualRemitId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "partsSent",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "partsLive",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "armed",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "locked",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "freshUncovered",
+            "type": "uint128",
+            "internalType": "uint128"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRemitIdByMessageId",
     "inputs": [
       {
@@ -776,6 +956,40 @@
     "outputs": [
       {
         "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRemitLaneBucket",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "readable",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "limited",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "tokens",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "capacity",
         "type": "uint256",
         "internalType": "uint256"
       }

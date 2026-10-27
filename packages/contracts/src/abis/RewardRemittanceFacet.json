@@ -58,6 +58,11 @@
         "name": "dayIds",
         "type": "uint256[]",
         "internalType": "uint256[]"
+      },
+      {
+        "name": "partCap",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -67,7 +72,7 @@
         "internalType": "uint256[]"
       },
       {
-        "name": "closeable",
+        "name": "actionable",
         "type": "bool[]",
         "internalType": "bool[]"
       }
@@ -87,13 +92,18 @@
         "name": "dayIds",
         "type": "uint256[]",
         "internalType": "uint256[]"
+      },
+      {
+        "name": "partCap",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
       {
         "name": "statuses",
         "type": "uint8[]",
-        "internalType": "enum RewardRemittanceFacet.RemitDayStatus[]"
+        "internalType": "enum LibRemitDayLedger.RemitDayStatus[]"
       }
     ],
     "stateMutability": "view"
@@ -111,6 +121,11 @@
         "name": "dayIds",
         "type": "uint256[]",
         "internalType": "uint256[]"
+      },
+      {
+        "name": "partCap",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -171,7 +186,7 @@
         "internalType": "uint256[]"
       },
       {
-        "name": "perRemittanceCap",
+        "name": "partCap",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -380,6 +395,73 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RemitDayPartSent",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "fresh",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycled",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "sentFresh",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "sentRecycled",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "wholeFresh",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "wholeRecycled",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "whole",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
       }
     ],
     "anonymous": false
@@ -3176,6 +3258,38 @@
   },
   {
     "type": "error",
+    "name": "RemitDayPartlySent",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitReleaseFanoutUnsupported",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fundedDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RemitReleaseTooEarly",
     "inputs": [
       {
@@ -3220,22 +3334,6 @@
         "name": "dstChainId",
         "type": "uint32",
         "internalType": "uint32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "RemittanceExceedsCap",
-    "inputs": [
-      {
-        "name": "total",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cap",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ]
   },
@@ -3932,6 +4030,22 @@
     "type": "error",
     "name": "RiskAndTermsConsentRequired",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SafeCastOverflowedUintDowncast",
+    "inputs": [
+      {
+        "name": "bits",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

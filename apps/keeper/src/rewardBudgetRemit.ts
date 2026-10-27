@@ -50,13 +50,16 @@ const INTERACTION_ABI = InteractionRewardsLensFacetABI as Abi;
 /** How many recent days to re-scan for un-remitted budget each tick. */
 const DEFAULT_LOOKBACK_DAYS = 45;
 /**
- * Per-send VPFI ceiling (the `perRemittanceCap` arg + the greedy batch bound).
- * Defaults to the SAME 50k VPFI as `ConfigureCcip.s.sol`'s `CCIP_RATE_CAPACITY`
- * default, so out-of-the-box the batch can never exceed the deployed lane
- * bucket and wedge on a rate-limit revert. Early high-APR days can have a
- * single-day slice above this (and above the 50k lane); the operator raises BOTH
- * the on-chain lane capacity and `REWARD_REMIT_LANE_CAP` together for those (see
- * #918). A day whose slice exceeds the cap is skipped with a loud log.
+ * The operator's per-send VPFI ceiling (`REWARD_REMIT_LANE_CAP`). Defaults to
+ * the SAME 50k VPFI as `ConfigureCcip.s.sol`'s `CCIP_RATE_CAPACITY` default.
+ *
+ * #918 (owner decision 2026-10-27, "send in parts"): this is no longer a
+ * filter that skips a day whose slice is larger. A day is sent in PARTS no
+ * larger than the part cap the pass resolves each tick ({@link resolvePartCap}:
+ * the smaller of this ceiling and the lane bucket's live tokens), and the
+ * mirror opens the day only once every part has landed. An early high-APR day
+ * above the lane capacity therefore drains over several ticks instead of
+ * waiting for an operator to raise the lane.
  */
 const DEFAULT_LANE_CAP = 50_000n * 10n ** 18n;
 /**
@@ -91,13 +94,13 @@ const ARMED_BACKSCAN_DAYS = 90;
  * the steady-state cost.
  *
  * Days beyond the bound are DEFERRED, not dropped — they are counted into the
- * same `deferred` total the lane cap's overflow feeds, so the coverage signal
- * reports the mirror as not settled and the next tick takes the next one.
+ * same `deferred` total a part that leaves its day owing feeds, so the coverage
+ * signal reports the mirror as not settled and the next tick takes the next one.
  *
  * It bounds FUNDED days only (Codex #2232 r5). The send and its quote trim the
  * payload to the days that actually carry VPFI and apply the bound to that
  * count, so a close-only day never reaches the destination list and rides
- * along free of this cap exactly as it is free of `laneCap`.
+ * along free of this cap exactly as it is free of the part cap.
  *
  * `rewardBudgetRemitFanoutCap.test.ts` pins BOTH halves against the contract
  * source: the figure against `TRANSPORT_DAY_FANOUT_CAP`, and the population
@@ -122,37 +125,42 @@ export const REMIT_FUNDED_DAYS_PER_SEND = TRANSPORT_DAY_FANOUT_CAP;
  * and a restated rule is the drift this programme keeps paying for. The pass
  * calls this; the suite calls this; there is one rule.
  *
- * @param window    The planned day ids, in the order they are offered.
- * @param perDay    Each day's VPFI slice, positionally.
- * @param closeable Whether a zero-slice day can still be closed.
- * @param laneCap   The per-send VPFI ceiling.
- * @param deferredIn Days already known to be owed (dropped while replanning).
+ * @param window     The planned day ids, in the order they are offered.
+ * @param perDay     Each day's PART under `partCap`, positionally — what
+ *                   `quoteRemitDayPlans(…, partCap)` returns, never more than
+ *                   the cap.
+ * @param actionable Whether the send would act on the day (a zero-amount
+ *                   actionable day is close-only).
+ * @param partCap    The part cap the plan was quoted under.
+ * @param partial    #918 — whether the day's part leaves it still owing
+ *                   (`Partial`), positionally. A partial day is sent and ALSO
+ *                   counted as deferred: the send moved a part, not the day.
  * @param maxFundedDays Funded days one send may carry; defaults to
- *                  {@link REMIT_FUNDED_DAYS_PER_SEND} (#2821), and never
- *                  exceeds {@link TRANSPORT_DAY_FANOUT_CAP}.
+ *                   {@link REMIT_FUNDED_DAYS_PER_SEND} (#2821), and never
+ *                   exceeds {@link TRANSPORT_DAY_FANOUT_CAP}.
  */
 export function planRemitBatch(
   window: readonly bigint[],
   perDay: readonly bigint[],
-  closeable: readonly boolean[],
-  laneCap: bigint,
-  deferredIn = 0,
+  actionable: readonly boolean[],
+  partCap: bigint,
+  partial: readonly boolean[] = [],
   maxFundedDays: number = REMIT_FUNDED_DAYS_PER_SEND,
 ): { batch: bigint[]; total: bigint; deferred: number } {
   // The destination's fan-out cap is the ceiling whatever the caller asks for.
   const fundedBound = Math.min(Math.max(1, Math.floor(maxFundedDays)), TRANSPORT_DAY_FANOUT_CAP);
-  // Greedily batch the un-remitted days, keeping the total under the lane
-  // cap. Close-only days (closeable, zero amount) ride along for free.
+  // Greedily batch the un-remitted days, keeping the total under the part
+  // cap. Close-only days (actionable, zero amount) ride along for free.
   const batch: bigint[] = [];
   let total = 0n;
   // Days that are ACTIONABLE but did not make this tick's batch. This is the
   // discriminator the coverage signal turns on, and getting it wrong has now
   // gone both ways: r19 treated an empty batch as always-unsettled, which made
   // the steady state (every day already remitted, so every entry comes back
-  // amount=0 / closeable=false) report 0/A forever and put the stand-down
+  // amount=0 / actionable=false) report 0/A forever and put the stand-down
   // permanently out of reach. An empty batch is settled ONLY when nothing was
   // left behind (Codex #1924 r20).
-  let deferred = deferredIn;
+  let deferred = 0;
   // FUNDED days in the batch, which is the population the destination bound
   // counts — NOT `batch.length` (Codex #2232 r5). The send and its quote both
   // trim the payload to the funded days and call `requireRemittableFanout` on
@@ -161,7 +169,7 @@ export function planRemitBatch(
   //
   // Counting the whole batch was wrong twice over. It refused batches the
   // chain would have accepted; and because the cap was checked before the
-  // close-only branch, a plan with more than 32 closeable zero-slice days
+  // close-only branch, a plan with more than 32 actionable zero-slice days
   // filled the cap with free riders and then left every later day behind —
   // dropping close-only ones silently, since the deferral count only ever
   // counts positive slices. `remitToMirror` would then have reported the
@@ -175,21 +183,26 @@ export function planRemitBatch(
   for (let i = 0; i < window.length; i++) {
     const slice = perDay[i] ?? 0n;
     if (slice === 0n) {
-      // Zero-amount and not closeable = nothing to do for this day. Already
+      // Zero-amount and not actionable = nothing to do for this day. Already
       // remitted, or otherwise not eligible; NOT a deferral. Closeable ones
       // ride along free of BOTH caps: they move no VPFI and reach no
       // destination list.
-      if (closeable[i]) batch.push(window[i]);
+      if (actionable[i]) batch.push(window[i]);
       continue;
     }
-    if (slice > laneCap) {
-      deferred += 1; // appeared oversized on the final pass
+    if (slice > partCap) {
+      // Not reachable from a plan quoted under `partCap` (the chain sizes
+      // every part to it). Kept so a plan read under a different cap than
+      // the one passed here can never put an over-cap part in the batch; the
+      // day stays owed and is counted.
+      deferred += 1;
       continue;
     }
-    if (fundedInBatch >= fundedBound || total + slice > laneCap) {
+    if (fundedInBatch >= fundedBound || total + slice > partCap) {
       // A cap is reached — the funded-days bound (one per send, #2821, never
-      // above the destination's day fan-out), or the lane's VPFI ceiling. Either way this day and EVERY later actionable one wait for a
-      // later tick. Counting only this one would under-report (r20).
+      // above the destination's day fan-out), or the part cap. Either way
+      // this day and EVERY later actionable one wait for a later tick.
+      // Counting only this one would under-report (r20).
       //
       // Reached only on a FUNDED day, so `deferred` is always at least one
       // here and the tick reports the mirror unsettled. That is what stops a
@@ -203,8 +216,50 @@ export function planRemitBatch(
     batch.push(window[i]);
     total += slice;
     fundedInBatch += 1;
+    // #918 — a part that leaves its day owing is a send, not a settlement:
+    // the rest of the day goes on a later tick, so the mirror is not settled.
+    if (partial[i]) deferred += 1;
   }
   return { batch, total, deferred };
+}
+
+/** The Base-side outbound lane bucket toward one mirror, as
+ *  `RewardRemittanceLensFacet.getRemitLaneBucket` reports it. */
+export type RemitLaneBucket = {
+  /** The lane resolved (registry, messenger, pool and lane all present). */
+  readable: boolean;
+  /** The lane's limiter is enabled. */
+  limited: boolean;
+  /** Tokens the bucket holds now, refilled to the read block. */
+  tokens: bigint;
+  capacity: bigint;
+};
+
+/**
+ * #918 — the part cap for this tick: the operator's ceiling, lowered to the
+ * lane bucket's live tokens when the lane is rate-limited, so a part never
+ * asks the pool for more than it can release in this block.
+ *
+ * Pure and exported so the rule is tested where it lives. `bucket` undefined
+ * means the read failed; the ceiling is used and the reason is returned, so
+ * the pass states what it could not read instead of implying a sized part. A
+ * `partCap` of zero means the bucket is empty: nothing is sent this tick.
+ */
+export function resolvePartCap(
+  laneCap: bigint,
+  bucket: RemitLaneBucket | undefined,
+): { partCap: bigint; note?: string } {
+  if (bucket === undefined) {
+    return { partCap: laneCap, note: 'lane bucket unreadable; parts sized by REWARD_REMIT_LANE_CAP alone' };
+  }
+  if (!bucket.readable) {
+    return {
+      partCap: laneCap,
+      note: 'lane not resolvable from Base (registry, messenger, pool or lane unset); parts sized by REWARD_REMIT_LANE_CAP alone',
+    };
+  }
+  if (!bucket.limited) return { partCap: laneCap };
+  return { partCap: bucket.tokens < laneCap ? bucket.tokens : laneCap };
 }
 
 function readNumber(env: Env, key: PlainVarKey, fallback: number): number {
@@ -380,98 +435,78 @@ export async function remitToMirror(
   // finalize-time commitments retire (an amount-only quote cannot
   // distinguish it from a gated/closed day).
   //
-  // Codex #1426 r2/r3 — the planner allocates the recycled-BACKING budget
-  // sequentially across the whole window, so a day this loop then drops
-  // for exceeding the lane cap has still consumed backing that a later day
-  // could have used; with an identical full-window plan every tick, that
-  // later day would stay non-closeable forever. Re-plan WITHOUT the
-  // dropped oversized days (bounded: each pass removes at least one day,
-  // and oversized days are rare operator-attention cases).
-  let planWindow: bigint[] = window;
-  let perDay: readonly bigint[] = [];
-  let closeable: readonly boolean[] = [];
-  // Codex #1426 r4/r6 — batch only a STABILIZED plan: loop until a quote
-  // reports no oversized day (each filtering pass removes at least one, so
-  // this terminates within the window length; tight recycled backing can
-  // expose oversized days one per pass). If the safety cap trips before
-  // stabilization, BAIL for this tick rather than batch from a plan whose
-  // backing allocation still includes an excluded day — an unstabilized
-  // batch would starve affordable later days every tick.
-  const MAX_REPLAN_PASSES = 24;
-  // Every planning read (each re-plan, the per-day statuses, the closure
-  // probe) is taken at ONE block. Read at successive heads, a commitment
-  // report landing between the plan and the status read made a day
-  // `Closeable` by its status but absent from the batch, and the empty
+  // Every planning read (the lane bucket, the plan, the per-day statuses, the
+  // closure probe) is taken at ONE block. Read at successive heads, a
+  // commitment report landing between the plan and the status read made a
+  // day `Closeable` by its status but absent from the batch, and the empty
   // batch then read as settled while that day was still owed (Codex #2826
   // r3). At one block the status is the plan's own verdict for every day.
   // The send itself runs later and re-plans on chain, so pinning the plan
   // costs nothing but a day that became closeable after this block, which
   // the next tick picks up.
   const planBlock = await publicClient.getBlockNumber({ cacheTime: 0 });
-  let droppedInReplan = 0;
-  let stabilized = false;
-  for (let pass = 0; pass < MAX_REPLAN_PASSES; pass++) {
-    // Each re-plan is a read; past the cutoff the remit it feeds would be
-    // refused at its turn, so the plan stops and the next run plans afresh.
-    if (Date.now() >= readCutoff) {
-      console.log(
-        `[keeper] rewardBudgetRemit mirror=${mirrorId} read cutoff reached during planning (pass ${pass + 1}); nothing sent, next run re-plans`,
-      );
-      return false;
-    }
-    [perDay, closeable] = (await publicClient.readContract({
+
+  // #918 — size this tick's part. The chain plans every day under the SAME
+  // cap the send carries, so the plan, the fee quote and the send agree for
+  // every part size; there is no oversized day to drop and no re-plan.
+  // (Before #918 a day above the lane cap was excluded and the plan re-run
+  // until stable, and such a day waited for an operator to raise the lane.)
+  let bucket: RemitLaneBucket | undefined;
+  try {
+    const raw = (await publicClient.readContract({
       address: diamond,
-      abi: REMIT_ABI,
-      functionName: 'quoteRemitDayPlans',
-      args: [mirrorId, planWindow],
+      abi: REMIT_LENS_ABI,
+      functionName: 'getRemitLaneBucket',
+      args: [mirrorId],
       blockNumber: planBlock,
-    })) as readonly [readonly bigint[], readonly boolean[]];
-    const oversized: bigint[] = [];
-    for (let i = 0; i < planWindow.length; i++) {
-      if ((perDay[i] ?? 0n) > laneCap) {
-        console.warn(
-          `[keeper] rewardBudgetRemit day=${planWindow[i]} slice=${perDay[i]} > laneCap=${laneCap} mirror=${mirrorId} — raise the reward-budget CCIP lane capacity (#918); day excluded from planning`,
-        );
-        oversized.push(planWindow[i]);
-      }
-    }
-    if (oversized.length === 0) {
-      stabilized = true;
-      break;
-    }
-    const drop = new Set(oversized.map((d) => d.toString()));
-    // Days dropped during REPLANNING are still owed. `deferred` is computed
-    // later from the filtered plan, so without carrying these forward a mixed
-    // plan — one oversized day plus several sendable ones — sent the sendable
-    // batch, finished with deferred === 0, and reported the destination
-    // settled while the oversized day stayed unfunded (Codex #1924 r21).
-    droppedInReplan += oversized.length;
-    planWindow = planWindow.filter((d) => !drop.has(d.toString()));
-    if (planWindow.length === 0) {
-      // NOT settled (Codex #1924 r19). Reaching here means every owed day was
-      // dropped for exceeding the lane cap — the days are still un-remitted
-      // and the warning above is an explicit call for operator attention.
-      // Returning true would count this destination as covered and let manual
-      // funding stand down over mirrors that received nothing.
-      return false;
-    }
-  }
-  if (!stabilized) {
+    })) as readonly [boolean, boolean, bigint, bigint];
+    bucket = { readable: raw[0], limited: raw[1], tokens: raw[2], capacity: raw[3] };
+  } catch (err) {
+    bucket = undefined;
     console.warn(
-      `[keeper] rewardBudgetRemit mirror=${mirrorId} plan did not stabilize within ${MAX_REPLAN_PASSES} passes — skipping this tick (raise the lane capacity per #918)`,
+      `[keeper] rewardBudgetRemit mirror=${mirrorId} lane bucket read failed: ${redactedError(err, { stack: false })}`,
+    );
+  }
+  const { partCap, note } = resolvePartCap(laneCap, bucket);
+  if (note) console.warn(`[keeper] rewardBudgetRemit mirror=${mirrorId} ${note}`);
+  if (partCap === 0n) {
+    // Not settled: the bucket is empty, so no part can cross this block. It
+    // refills at the lane's rate; the next tick sizes again.
+    console.warn(
+      `[keeper] rewardBudgetRemit mirror=${mirrorId} lane bucket empty at block ${planBlock}; nothing sent this tick`,
     );
     return false;
   }
+  if (Date.now() >= readCutoff) {
+    console.log(
+      `[keeper] rewardBudgetRemit mirror=${mirrorId} read cutoff reached during planning; nothing sent, next run re-plans`,
+    );
+    return false;
+  }
+  const planWindow: bigint[] = window;
+  const [perDay, actionable] = (await publicClient.readContract({
+    address: diamond,
+    abi: REMIT_ABI,
+    functionName: 'quoteRemitDayPlans',
+    args: [mirrorId, planWindow, partCap],
+    blockNumber: planBlock,
+  })) as readonly [readonly bigint[], readonly boolean[]];
 
-  const { batch, total, deferred } = planRemitBatch(planWindow, perDay, closeable, laneCap, droppedInReplan);
   // #2760 — the send's own verdict for each day, so a day still owed but
   // gated (awaiting its commitment report, short of recycled backing, or
   // remit-ineligible) is named as owed and holds this mirror unsettled, while a
   // day that owed this mirror nothing is not reported at all. A Diamond
   // without the view keeps the earlier closure probe and its warning.
+  //
+  // #918 — the same verdict says which funded day's part leaves it still
+  // owing (`Partial`). Without the statuses that is unknown, so a part that
+  // fills the cap is taken as possibly partial: the mirror is reported
+  // unsettled, which the next tick corrects, rather than settled on a guess.
   let blockedOwed = 0;
-  const statusRead = await readRemitDayStatuses(publicClient, diamond, mirrorId, planWindow, planBlock);
+  let partial: boolean[];
+  const statusRead = await readRemitDayStatuses(publicClient, diamond, mirrorId, planWindow, partCap, planBlock);
   if (statusRead.kind === 'read') {
+    partial = statusRead.statuses.map((st) => st === 'Partial');
     const blocked = owedButBlocked(planWindow, statusRead.statuses);
     blockedOwed = blocked.length;
     if (blocked.length > 0) {
@@ -480,17 +515,20 @@ export async function remitToMirror(
       );
     }
   } else {
+    partial = planWindow.map((_, i) => (perDay[i] ?? 0n) >= partCap);
     if (statusRead.kind === 'unread') {
       console.warn(`[keeper] rewardBudgetRemit Base->${mirrorId} day status read failed: ${statusRead.error}; using the closure probe`);
     }
-    await reportUnclosedDays(publicClient, diamond, mirrorId, planWindow, perDay, closeable, planBlock);
+    await reportUnclosedDays(publicClient, diamond, mirrorId, planWindow, perDay, actionable, planBlock);
   }
+
+  const { batch, total, deferred } = planRemitBatch(planWindow, perDay, actionable, partCap, partial);
 
   if (batch.length === 0) {
     if (deferred === 0 && blockedOwed === 0) return true; // genuinely nothing owed
     if (deferred === 0) return false; // owed days named above, none closeable yet
     console.warn(
-      `[keeper] rewardBudgetRemit Base->${mirrorId} no day fits laneCap=${laneCap} this tick — ${deferred} actionable day(s) still owed`,
+      `[keeper] rewardBudgetRemit Base->${mirrorId} nothing sendable under partCap=${partCap} this tick — ${deferred} actionable day(s) still owed`,
     );
     return false;
   }
@@ -502,7 +540,7 @@ export async function remitToMirror(
     address: diamond,
     abi: REMIT_ABI,
     functionName: 'quoteRemittanceFee',
-    args: [mirrorId, batch],
+    args: [mirrorId, batch, partCap],
   })) as readonly [bigint, bigint];
   // A race (another tick / a manual-admin remit) can consume the selected days
   // between `quoteRewardBudget` above and here, or the messenger/VPFI wiring can
@@ -524,7 +562,7 @@ export async function remitToMirror(
     address: diamond,
     abi: REMIT_ABI,
     functionName: 'remitRewardBudget',
-    args: [mirrorId, batch, laneCap],
+    args: [mirrorId, batch, partCap],
     value: fee,
     chain: undefined,
     account: ctx.wallet.account ?? null,
@@ -560,12 +598,13 @@ export async function remitToMirror(
     return false;
   }
   console.log(
-    `[keeper] rewardBudgetRemit Base->${mirrorId} days=${batch.length} total=${total} fee=${fee} tx=${hash}`,
+    `[keeper] rewardBudgetRemit Base->${mirrorId} days=${batch.length} total=${total} partCap=${partCap} fee=${fee} tx=${hash}`,
   );
   if (deferred > 0) {
     // The send succeeded, but only for a PREFIX of the plan — a cap cut the
-    // rest (the lane's VPFI ceiling, or the destination's day fan-out), and
-    // those finalized obligations are still unfunded. A successful tx is not
+    // rest (the destination's day fan-out), or the day it funded went as a
+    // PART and still owes the rest (#918) — and those finalized obligations
+    // are still unfunded. A successful tx is not
     // the same as a settled destination (Codex #1924 r20).
     console.warn(
       `[keeper] rewardBudgetRemit Base->${mirrorId} partial: ${deferred} actionable day(s) deferred to a later tick`,
@@ -595,7 +634,7 @@ export async function remitToMirror(
 
 /**
  * The closure probe for a Diamond without `quoteRemitDayStatuses`: a
- * zero-amount, non-closeable day is reported when `getDayClosedByRemitId`
+ * zero-amount, non-actionable day is reported when `getDayClosedByRemitId`
  * says it is still open. It cannot tell an owed, gated day from one that
  * owed this mirror nothing, so it reports and decides nothing.
  */
@@ -605,10 +644,10 @@ async function reportUnclosedDays(
   mirrorId: number,
   planWindow: readonly bigint[],
   perDay: readonly bigint[],
-  closeable: readonly boolean[],
+  actionable: readonly boolean[],
   planBlock: bigint,
 ): Promise<void> {
-  // A zero-amount, non-closeable day is AMBIGUOUS: `quoteRemitDayPlans`
+  // A zero-amount, non-actionable day is AMBIGUOUS: `quoteRemitDayPlans`
   // returns exactly that both for a day already remitted AND for one that is
   // still owed but gated — an armed day awaiting its commitment report, or a
   // recycled day without backing (Codex #1924 r34). Treating them alike let
@@ -619,7 +658,7 @@ async function reportUnclosedDays(
   // many of them there are — and in the steady state, where every day really
   // is closed, this is exactly the set that would otherwise have been silently
   // counted as covered.
-  const ambiguous = planWindow.filter((_, i) => (perDay[i] ?? 0n) === 0n && !closeable[i]);
+  const ambiguous = planWindow.filter((_, i) => (perDay[i] ?? 0n) === 0n && !actionable[i]);
   // ONE subrequest, not one per day (Codex #1924 r36). The default window is
   // 45 days and in steady state EVERY already-closed day lands here, so the
   // sequential loop this replaces issued up to 45 subrequests per mirror —

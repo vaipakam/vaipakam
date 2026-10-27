@@ -1438,7 +1438,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///
     ///         `public` so a test can read it without broadcasting anything.
     function retiredIngressSignatures() public pure returns (string[] memory sigs) {
-        sigs = new string[](6);
+        sigs = new string[](7);
         // #1222 B2-d5 — `recycledShare` (6 → 7 args).
         sigs[0] = "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address)";
         // #1434 P1-a — `freshShare` (7 → 8).
@@ -1450,9 +1450,14 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // #1566 closure 2 cutover PR 1 — the compensation ingress's own stamp.
         sigs[4] = "onCompensationBudgetReceived(address,uint256,uint256,uint256,uint256,address,uint256,uint256,uint64,uint32,uint64,uint64)";
         // Pre-d6 budget wire retired — the whole flat-list ingress (10 args).
-        // The d6 ingress `onRewardBudgetReceivedD6` is now the only budget
-        // ingress, and the receiver (generation 7) refuses every earlier shape.
+        // The d6 ingress then became the only budget ingress, and the receiver
+        // (generation 7) refused every earlier shape.
         sigs[5] = "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address,uint256,uint256,bytes32,bool)";
+        // #918 — the d6 rooted ingress (12 args). The d7 ingress
+        // `onRewardBudgetReceivedD7` (16 args: the part as declared and the
+        // funded day's whole) replaces it, and the receiver (generation 8)
+        // refuses the d6 wire.
+        sigs[6] = "onRewardBudgetReceivedD6(address,uint256,bytes32,uint256,uint256,uint256,uint256,address,uint256,uint256,bytes32,uint64)";
     }
 
     /// @dev Codex #2232 r3 — the LIVE receiver the refreshed ingress will
@@ -1576,7 +1581,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             );
         }
         console.log(
-            "remit ingress: removed retired onRewardBudgetReceived selectors (6-arg #1222 B2-d5 / 7-arg #1434 P1-a / 8-arg #1566 cutover / 9-arg #1566 transport epochs 3b / 10-arg pre-d6 flat-list) and the 12-arg onCompensationBudgetReceived"
+            "remit ingress: removed retired onRewardBudgetReceived selectors (6-arg #1222 B2-d5 / 7-arg #1434 P1-a / 8-arg #1566 cutover / 9-arg #1566 transport epochs 3b / 10-arg pre-d6 flat-list / 12-arg d6 rooted, #918) and the 12-arg onCompensationBudgetReceived"
         );
     }
 

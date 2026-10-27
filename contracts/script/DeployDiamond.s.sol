@@ -3192,8 +3192,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s = new bytes4[](3);
         s[0] = RewardIngressFacet.onCompensationBudgetReceived.selector;
         s[1] = RewardIngressFacet.onCompensationDayBroadcastArrived.selector;
-        // 3d-1 — the rooted (d6) ingress.
-        s[2] = RewardIngressFacet.onRewardBudgetReceivedD6.selector;
+        // 3d-1 / #918 — the rooted (d7) ingress.
+        s[2] = RewardIngressFacet.onRewardBudgetReceivedD7.selector;
     }
 
     /// #1566 transport epochs PR 3b — the transport epochs' post-ingress
@@ -3584,7 +3584,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](39);
+        s = new bytes4[](43);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -3642,6 +3642,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #1452 — the acknowledged recycled share per destination.
         s[31] = RewardRemittanceLensFacet.getChainRemittedRecycled.selector;
         s[35] = RewardRemittanceLensFacet.getRemitRoute.selector; // #2561
+        // #918 — a day sent in parts: Base's per-day ledger, the mirror's
+        // per-day delivery record, and the live lane bucket a part is sized by.
+        s[39] = RewardRemittanceLensFacet.getRemitDayLedger.selector;
+        s[40] = RewardRemittanceLensFacet.getDayDeliveryParts.selector;
+        s[41] = RewardRemittanceLensFacet.getRemitLaneBucket.selector;
+        s[42] = RewardRemittanceLensFacet.getRemitDayFreshReserved.selector;
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {

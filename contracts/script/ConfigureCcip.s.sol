@@ -19,6 +19,7 @@ import {VpfiPoolRateGovernor} from "../src/crosschain/VpfiPoolRateGovernor.sol";
 import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger.sol";
 import {GuardianPausable} from "../src/crosschain/GuardianPausable.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {LibInteractionRewards} from "../src/libraries/LibInteractionRewards.sol";
 
 /// @dev T-087 Sub 3.A — minimal selector surface for the
 ///      `TreasuryFacet` setters this script needs. Avoids dragging
@@ -189,6 +190,20 @@ contract ConfigureCcip is Script {
         uint256[] laneChainIds;
     }
 
+    /// @notice #918 — the lane pre-flight: the per-lane rate-limit capacity
+    ///         this run would set must hold the largest fresh reward day slice
+    ///         ({LibInteractionRewards.maxFreshDaySlice}), so a full lane
+    ///         carries any day's FRESH component in one send. A day's recycled
+    ///         component is not bounded by the schedule, so a day with a large
+    ///         one can still go in parts. Public and pure so a test pins it
+    ///         without a broadcast.
+    function requireLaneFitsFreshDaySlice(uint256 capacity) public pure {
+        require(
+            capacity >= LibInteractionRewards.maxFreshDaySlice(),
+            "ConfigureCcip: CCIP_RATE_CAPACITY is below the largest fresh reward day slice (LibInteractionRewards.maxFreshDaySlice, both halves of day 1) - raise it so a full lane carries a day's fresh slice in one send (#918)"
+        );
+    }
+
     function run() external {
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
 
@@ -216,6 +231,15 @@ contract ConfigureCcip is Script {
             c.guardian != address(0),
             "ConfigureCcip: CCIP_GUARDIAN unset (or zero) - required to wire the incident guardian onto every GuardianPausable contract before handover"
         );
+        // #918 — a lane narrower than the largest fresh day slice still works
+        // (the reward remittance sends a day in several parts), but every
+        // early high-emission day would then cost several sends and several
+        // CCIP fees, and the mirror would hold the day until the last part
+        // lands. Refused here, before ANY broadcast, for the guardian check's
+        // reason: a half-wired stack is worse than a clean refusal. Launch
+        // readiness reports the same figure as advisory, since by then the
+        // lane exists and parts keep it correct.
+        requireLaneFitsFreshDaySlice(c.rateCapacity);
 
         // Local deployed addresses — written by `DeployCrosschain.s.sol`.
         c.messenger =
@@ -693,7 +717,7 @@ contract ConfigureCcip is Script {
     }
 
     /// @dev #776 — mirror only: authorize the local RewardRemittanceReceiver
-    ///      as the caller of the Diamond's `onRewardBudgetReceivedD6` ingress.
+    ///      as the caller of the Diamond's `onRewardBudgetReceivedD7` ingress.
     ///      Without this, the receiver forwards the VPFI but the ingress call
     ///      reverts `NotRewardRemittanceReceiver`, so CCIP parks the message as
     ///      re-executable (no funds lost) until it is wired. Base sends and so

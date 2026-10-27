@@ -20,6 +20,7 @@ import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensF
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {RemitWire} from "../src/crosschain/RemitWire.sol";
+import {LibRemitDayLedger} from "../src/libraries/LibRemitDayLedger.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -50,6 +51,10 @@ contract RewardRemitLedgerTest is SetupTest {
     uint32 internal constant CHAIN_BASE = 8453;
     uint32 internal constant CHAIN_ARB = 42161;
     uint32 internal constant CHAIN_OP = 10;
+    /// @dev #918 — the part cap the quotes are asked about; the remits here pass
+    ///      the same 69M ceiling, so every day goes in one part unless a cell
+    ///      says otherwise.
+    uint256 internal constant CAP = 69_000_000 ether;
 
     address internal stranger = address(0xCAFE);
 
@@ -224,7 +229,7 @@ contract RewardRemitLedgerTest is SetupTest {
         bytes memory refusal =
             abi.encodeWithSelector(LibRewardRemitDispatch.RemitRouteUndeclared.selector, CHAIN_ARB);
         vm.expectRevert(refusal);
-        remit.quoteRemittanceFee(CHAIN_ARB, _days(1));
+        remit.quoteRemittanceFee(CHAIN_ARB, _days(1), CAP);
         vm.expectRevert(refusal);
         remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, _days(1), 69_000_000 ether);
 
@@ -462,10 +467,10 @@ contract RewardRemitLedgerTest is SetupTest {
         // Codex r1 — the batch planner distinguishes GATED (not actionable)
         // from close-only (actionable at zero): while gated, closeable=false.
         (uint256[] memory pa, bool[] memory pc) =
-            remit.quoteRemitDayPlans(CHAIN_ARB, _days(1));
+            remit.quoteRemitDayPlans(CHAIN_ARB, _days(1), CAP);
         assertEq(pa[0], 0, "planner amount gated");
         assertFalse(pc[0], "planner not closeable while gated");
-        (uint256 fee, uint256 ft) = remit.quoteRemittanceFee(CHAIN_ARB, _days(1));
+        (uint256 fee, uint256 ft) = remit.quoteRemittanceFee(CHAIN_ARB, _days(1), CAP);
         assertEq(fee + ft, 0, "gated fee quote");
         vm.expectRevert(RewardRemittanceFacet.NothingToRemit.selector);
         remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, _days(1), 1e24);
@@ -558,7 +563,7 @@ contract RewardRemitLedgerTest is SetupTest {
         // day: zero amount but closeable=true (quoteRewardBudget alone
         // cannot distinguish it from a gated/closed day).
         (uint256[] memory pa, bool[] memory pc) =
-            remit.quoteRemitDayPlans(CHAIN_ARB, _days(1));
+            remit.quoteRemitDayPlans(CHAIN_ARB, _days(1), CAP);
         assertEq(pa[0], 0, "planner zero amount");
         assertTrue(pc[0], "planner closeable");
 
@@ -576,7 +581,7 @@ contract RewardRemitLedgerTest is SetupTest {
 
         // Closed forever: a repeat is NothingToRemit, and the planner no
         // longer marks the day actionable.
-        (, bool[] memory pc2) = remit.quoteRemitDayPlans(CHAIN_ARB, _days(1));
+        (, bool[] memory pc2) = remit.quoteRemitDayPlans(CHAIN_ARB, _days(1), CAP);
         assertFalse(pc2[0], "planner closed");
         vm.expectRevert(RewardRemittanceFacet.NothingToRemit.selector);
         remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, _days(1), 1e24);
@@ -605,12 +610,12 @@ contract RewardRemitLedgerTest is SetupTest {
         // the send alike (#2821); each day is sent on its own.
         bytes memory refusal = abi.encodeWithSelector(IVaipakamErrors.TransportDayFanoutExceeded.selector, 2, 1);
         vm.expectRevert(refusal);
-        remit.quoteRemittanceFee(CHAIN_ARB, both);
+        remit.quoteRemittanceFee(CHAIN_ARB, both, CAP);
         vm.expectRevert(refusal);
         remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, both, 1e24);
 
         for (uint256 d = 1; d <= 2; ++d) {
-            (, uint256 feeTotal) = remit.quoteRemittanceFee(CHAIN_ARB, _days(d));
+            (, uint256 feeTotal) = remit.quoteRemittanceFee(CHAIN_ARB, _days(d), CAP);
             assertEq(feeTotal, perDay[d - 1], "fee-quote total == the plan's day");
             remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, _days(d), 1e24);
             LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(d);
@@ -1683,7 +1688,7 @@ contract RewardRemitLedgerTest is SetupTest {
         // actionable at any planning site — no close, no quote, no remit.
         mutator.setRecycleBucketRaw(liab - 1);
         (uint256[] memory pa, bool[] memory pc) =
-            remit.quoteRemitDayPlans(CHAIN_ARB, _days(1));
+            remit.quoteRemitDayPlans(CHAIN_ARB, _days(1), CAP);
         assertEq(pa[0], 0, "under-backed amount 0");
         assertFalse(pc[0], "under-backed not actionable");
         (uint256 qt, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
@@ -3726,24 +3731,24 @@ contract RewardRemitLedgerTest is SetupTest {
 
     // ─── #2760 — why a day does or does not close ─────────────────────────
 
-    function _statuses(uint256[] memory list) internal view returns (RewardRemittanceFacet.RemitDayStatus[] memory) {
-        return remit.quoteRemitDayStatuses(CHAIN_ARB, list);
+    function _statuses(uint256[] memory list) internal view returns (LibRemitDayLedger.RemitDayStatus[] memory) {
+        return remit.quoteRemitDayStatuses(CHAIN_ARB, list, CAP);
     }
 
-    function _status1(uint256 d) internal view returns (RewardRemittanceFacet.RemitDayStatus) {
+    function _status1(uint256 d) internal view returns (LibRemitDayLedger.RemitDayStatus) {
         return _statuses(_days(d))[0];
     }
 
     /// A status agrees with the planner's figure for the same list: a day is
     /// `Closeable` exactly when `quoteRemitDayPlans` calls it closeable.
     function _assertAgrees(uint256[] memory list) internal view {
-        (, bool[] memory closeable) = remit.quoteRemitDayPlans(CHAIN_ARB, list);
-        RewardRemittanceFacet.RemitDayStatus[] memory st = _statuses(list);
+        (, bool[] memory closeable) = remit.quoteRemitDayPlans(CHAIN_ARB, list, CAP);
+        LibRemitDayLedger.RemitDayStatus[] memory st = _statuses(list);
         assertEq(st.length, list.length, "aligned to the input");
         for (uint256 i; i < list.length; ++i) {
-            assertEq(
-                st[i] == RewardRemittanceFacet.RemitDayStatus.Closeable, closeable[i], "status agrees with the plan"
-            );
+            bool acts = st[i] == LibRemitDayLedger.RemitDayStatus.Closeable
+                || st[i] == LibRemitDayLedger.RemitDayStatus.Partial;
+            assertEq(acts, closeable[i], "status agrees with the plan");
         }
     }
 
@@ -3753,14 +3758,14 @@ contract RewardRemitLedgerTest is SetupTest {
         list[0] = 1;
         list[1] = 1;
         list[2] = 2; // not finalized
-        RewardRemittanceFacet.RemitDayStatus[] memory st = _statuses(list);
-        assertEq(uint8(st[0]), uint8(RewardRemittanceFacet.RemitDayStatus.Closeable), "owed and closeable");
-        assertEq(uint8(st[1]), uint8(RewardRemittanceFacet.RemitDayStatus.Repeated), "the copy is not judged");
-        assertEq(uint8(st[2]), uint8(RewardRemittanceFacet.RemitDayStatus.NotFinalized), "not finalized");
+        LibRemitDayLedger.RemitDayStatus[] memory st = _statuses(list);
+        assertEq(uint8(st[0]), uint8(LibRemitDayLedger.RemitDayStatus.Closeable), "owed and closeable");
+        assertEq(uint8(st[1]), uint8(LibRemitDayLedger.RemitDayStatus.Repeated), "the copy is not judged");
+        assertEq(uint8(st[2]), uint8(LibRemitDayLedger.RemitDayStatus.NotFinalized), "not finalized");
         _assertAgrees(list);
 
         _remitDay1ToArb();
-        assertEq(uint8(_status1(1)), uint8(RewardRemittanceFacet.RemitDayStatus.Remitted), "settled by a remit");
+        assertEq(uint8(_status1(1)), uint8(LibRemitDayLedger.RemitDayStatus.Remitted), "settled by a remit");
         _assertAgrees(list);
     }
 
@@ -3768,26 +3773,26 @@ contract RewardRemitLedgerTest is SetupTest {
         _finalizeDay(1);
         _armDayForArb(1, 100e18, 0);
         rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 0, 0);
-        assertEq(uint8(_status1(1)), uint8(RewardRemittanceFacet.RemitDayStatus.Closeable), "close-only is closeable");
+        assertEq(uint8(_status1(1)), uint8(LibRemitDayLedger.RemitDayStatus.Closeable), "close-only is closeable");
         remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, _days(1), 1e24);
-        assertEq(uint8(_status1(1)), uint8(RewardRemittanceFacet.RemitDayStatus.Closed), "closed with nothing sent");
+        assertEq(uint8(_status1(1)), uint8(LibRemitDayLedger.RemitDayStatus.Closed), "closed with nothing sent");
     }
 
     function test_Status_ArmedDayAwaitsItsCommitmentReport() public {
         _finalizeDay(1);
         _armDayForArb(1, 100e18, 0);
         assertEq(
-            uint8(_status1(1)), uint8(RewardRemittanceFacet.RemitDayStatus.AwaitingCommitment), "owed, waiting on the report"
+            uint8(_status1(1)), uint8(LibRemitDayLedger.RemitDayStatus.AwaitingCommitment), "owed, waiting on the report"
         );
         _assertAgrees(_days(1));
         rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 1e30, 1e30);
-        assertEq(uint8(_status1(1)), uint8(RewardRemittanceFacet.RemitDayStatus.Closeable), "the report releases it");
+        assertEq(uint8(_status1(1)), uint8(LibRemitDayLedger.RemitDayStatus.Closeable), "the report releases it");
     }
 
     function test_Status_RemitIneligibleDayIsNamed() public {
         _finalizeDay(1);
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
-        assertEq(uint8(_status1(1)), uint8(RewardRemittanceFacet.RemitDayStatus.Ineligible), "owed via the manual path");
+        assertEq(uint8(_status1(1)), uint8(LibRemitDayLedger.RemitDayStatus.Ineligible), "owed via the manual path");
         _assertAgrees(_days(1));
     }
 
@@ -3797,10 +3802,10 @@ contract RewardRemitLedgerTest is SetupTest {
         rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
         mutator.setRecycleBucketRaw(0);
         mutator.setOutstandingCommitRaw(0, 1_000e18);
-        assertEq(uint8(_status1(1)), uint8(RewardRemittanceFacet.RemitDayStatus.Unbacked), "owed, backing short");
+        assertEq(uint8(_status1(1)), uint8(LibRemitDayLedger.RemitDayStatus.Unbacked), "owed, backing short");
         _assertAgrees(_days(1));
         mutator.setRecycleBucketRaw(2_000e18);
-        assertEq(uint8(_status1(1)), uint8(RewardRemittanceFacet.RemitDayStatus.Closeable), "backed again");
+        assertEq(uint8(_status1(1)), uint8(LibRemitDayLedger.RemitDayStatus.Closeable), "backed again");
     }
 
     /// A finalized day that gave this mirror no budget owes nothing and is
@@ -3811,7 +3816,7 @@ contract RewardRemitLedgerTest is SetupTest {
         rewardMessenger.deliverChainReport(CHAIN_ARB, 1, 0, 0);
         rewardMessenger.deliverChainReport(CHAIN_OP, 1, 30e18, 15e18);
         RewardAggregatorFacet(address(diamond)).finalizeDay(1);
-        assertEq(uint8(_status1(1)), uint8(RewardRemittanceFacet.RemitDayStatus.NothingOwed), "nothing owed");
+        assertEq(uint8(_status1(1)), uint8(LibRemitDayLedger.RemitDayStatus.NothingOwed), "nothing owed");
         _assertAgrees(_days(1));
     }
 
@@ -3824,14 +3829,310 @@ contract RewardRemitLedgerTest is SetupTest {
         rewardMessenger.deliverChainReport(CHAIN_OP, 1, 30e18, 15e18);
         RewardAggregatorFacet(address(diamond)).finalizeDay(1);
         _armDayForArb(1, 0, 0);
-        assertEq(uint8(_status1(1)), uint8(RewardRemittanceFacet.RemitDayStatus.NothingOwed), "nothing owed, no report");
+        assertEq(uint8(_status1(1)), uint8(LibRemitDayLedger.RemitDayStatus.NothingOwed), "nothing owed, no report");
         _assertAgrees(_days(1));
     }
 
     /// The zero value is never `Closeable`, so a status a path forgot to set
     /// cannot read as one.
     function test_Status_ZeroValueIsNotCloseable() public pure {
-        assertEq(uint8(RewardRemittanceFacet.RemitDayStatus.NotFinalized), 0);
-        assertTrue(uint8(RewardRemittanceFacet.RemitDayStatus.Closeable) != 0);
+        assertEq(uint8(LibRemitDayLedger.RemitDayStatus.NotFinalized), 0);
+        assertTrue(uint8(LibRemitDayLedger.RemitDayStatus.Closeable) != 0);
+    }
+
+    // ─── #918 — a day sent in parts ───────────────────────────────────────
+
+    function _ledger(uint256 d) internal view returns (LibVaipakam.RemitDayLedger memory) {
+        return RewardRemittanceLensFacet(address(diamond)).getRemitDayLedger(CHAIN_ARB, d);
+    }
+
+    function _partStatus(uint256 d, uint256 partCap) internal view returns (LibRemitDayLedger.RemitDayStatus) {
+        return remit.quoteRemitDayStatuses(CHAIN_ARB, _days(d), partCap)[0];
+    }
+
+    /// @dev Send day `d`'s next part under `partCap`, asserting the fee quote
+    ///      names exactly what the send then moves. Returns the part.
+    function _sendPart(uint256 d, uint256 partCap) internal returns (uint256 part) {
+        (uint256[] memory plan, bool[] memory acts) = remit.quoteRemitDayPlans(CHAIN_ARB, _days(d), partCap);
+        assertTrue(acts[0], "the part is actionable");
+        (, uint256 quoted) = remit.quoteRemittanceFee(CHAIN_ARB, _days(d), partCap);
+        assertEq(quoted, plan[0], "fee quote == plan");
+        uint256 nonce = rlens.getRemitReservationNonce();
+        remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, _days(d), partCap);
+        LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(nonce + 1);
+        part = r.total;
+        assertEq(part, quoted, "send == quote");
+        assertLe(part, partCap, "a part never exceeds its cap");
+        assertEq(r.dayIds.length, 1, "the reservation names its one day");
+        assertEq(r.fundedDayBits[0], part == 0 ? 0 : 1, "funded iff it moved VPFI");
+    }
+
+    /// @notice #918 case 1 — an unarmed fresh-only day larger than the cap goes
+    ///         in three fresh parts. Every part is reserved and counted once,
+    ///         the day stays open (no marker) until the last, and the parts
+    ///         sum to the whole the first part locked.
+    function test_918_AFreshDay_GoesInParts_AndClosesOnlyOnTheLast() public {
+        _finalizeDay(1);
+        (uint256 whole, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        assertGt(whole, 2, "fixture: a slice to split");
+        uint256 cap = whole / 3 + 1;
+
+        assertEq(uint8(_partStatus(1, cap)), uint8(LibRemitDayLedger.RemitDayStatus.Partial), "first part is partial");
+        uint256 p1 = _sendPart(1, cap);
+        assertEq(p1, cap, "fresh-first, cap-sized");
+        LibVaipakam.RemitDayLedger memory l = _ledger(1);
+        assertTrue(l.locked, "stored: the whole is locked at the first part");
+        assertEq(l.wholeFresh, whole, "stored: the whole");
+        assertEq(l.sentFresh, p1, "stored: the part");
+        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), 0, "not remitted until whole");
+        assertEq(rlens.getDayClosedByRemitId(CHAIN_ARB, 1), 0, "not closed until whole");
+        (uint256 owed, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        assertEq(owed, whole - p1, "the cap-free quote names what is still owed");
+
+        uint256 p2 = _sendPart(1, cap);
+        assertEq(uint8(_partStatus(1, cap)), uint8(LibRemitDayLedger.RemitDayStatus.Closeable), "the last part completes");
+        uint256 p3 = _sendPart(1, cap);
+        assertEq(p1 + p2 + p3, whole, "the parts sum to the whole");
+        l = _ledger(1);
+        assertEq(l.partsSent, 3, "stored: three parts");
+        assertEq(l.partsLive, 3);
+        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), whole, "remitted at the whole");
+        assertEq(rlens.getDayClosedByRemitId(CHAIN_ARB, 1), 3, "closed by the completing part");
+        assertEq(rlens.getRewardBudgetRemittedGlobal(), whole, "global counted once per VPFI");
+        assertEq(rlens.getRemitPendingTotal(CHAIN_ARB), whole, "pending = every part in flight");
+        assertEq(uint8(_partStatus(1, cap)), uint8(LibRemitDayLedger.RemitDayStatus.Remitted), "and settled");
+        vm.expectRevert(RewardRemittanceFacet.NothingToRemit.selector);
+        remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, _days(1), cap);
+    }
+
+    /// @notice #918 (Codex #2959 r3) — an armed day's FIRST part converts its
+    ///         whole fresh commitment, clamp residual included, into the pool
+    ///         hold, so every spender of the pool sees the rest of the day as
+    ///         used. A Base claim or sweep reads `poolRemaining` and never nets
+    ///         the commitments; before r3 the rest of a partly sent armed day
+    ///         was held only by its commitment and a claim could take it.
+    ///         Mutation: leave the commitment standing for the unsent rest
+    ///         (retire per part) and the pool reads the rest as free.
+    function test_918_AnArmedDay_ConvertsItsWholeCommitmentIntoTheHold_AtItsFirstPart() public {
+        _finalizeDay(1);
+        _armDayForArb(1, 100e18, 0);
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 2e18, 1e18);
+        mutator.setOutstandingCommitRaw(1_000e18, 0);
+        (, uint256 f0, , ) = RewardAggregatorFacet(address(diamond)).getGovernorCommitState();
+        InteractionRewardsLensFacet ilens = InteractionRewardsLensFacet(address(diamond));
+        uint256 room0 = ilens.getInteractionPoolRemaining();
+
+        uint256 p1 = _sendPart(1, 1e18);
+        LibVaipakam.RemitDayLedger memory l = _ledger(1);
+        assertTrue(l.armed, "stored: armed");
+        assertEq(l.wholeFresh, 3e18, "the clamped whole");
+        assertGt(l.armedWholeFresh, l.wholeFresh, "fixture: a residual exists");
+        assertEq(l.residualRemitId, 1, "stored: the first part retired the residual");
+        assertEq(rlens.getRemitReservation(1).armedFreshFull, l.armedWholeFresh, "part 1 retires the whole commitment");
+        (, uint256 f1, , ) = RewardAggregatorFacet(address(diamond)).getGovernorCommitState();
+        assertEq(f0 - f1, l.armedWholeFresh, "the commitment is gone after the first part");
+        assertEq(rlens.getRemitDayFreshReserved(), l.wholeFresh - p1, "the hold carries the rest of the day");
+        assertEq(ilens.getInteractionPoolRemaining(), room0 - l.wholeFresh, "the pool, as a claim reads it, has the whole day as used");
+
+        _sendPart(1, 1e18);
+        _sendPart(1, 1e18);
+        assertEq(rlens.getRemitReservation(2).armedFreshFull, 0, "a later part retires no fresh commitment");
+        assertEq(rlens.getRemitReservation(3).armedFreshFull, 0);
+        (, uint256 f3, , ) = RewardAggregatorFacet(address(diamond)).getGovernorCommitState();
+        assertEq(f0 - f3, l.armedWholeFresh, "the whole armed commitment retired exactly once");
+        assertEq(rlens.getRemitDayFreshReserved(), 0, "a whole day holds nothing");
+        assertEq(ilens.getInteractionPoolRemaining(), room0 - l.wholeFresh, "and the pool use is the whole, once");
+        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), 3e18, "remitted at the clamp");
+    }
+
+    /// @notice #918 — a mixed day goes fresh-first; the bucket is debited by
+    ///         the recycled parts only, and the recycled residual retires once.
+    function test_918_AMixedDay_GoesFreshFirst_AndDebitsTheBucketByItsRecycledParts() public {
+        _finalizeDay(1);
+        _armDayForArb(1, 100e18, 50e18);
+        mutator.setRecycleBucketRaw(1_000e18);
+        mutator.setOutstandingCommitRaw(1_000e18, 1_000e18);
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 1e30, 1e30);
+        (uint256 whole, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+
+        uint256 sentFresh;
+        uint256 sentRecycled;
+        uint256 cap = whole / 4 + 1;
+        for (uint256 i; i < 8 && rlens.getDayClosedByRemitId(CHAIN_ARB, 1) == 0; ++i) {
+            uint256 n = rlens.getRemitReservationNonce();
+            _sendPart(1, cap);
+            LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(n + 1);
+            if (sentFresh < _ledger(1).wholeFresh) {
+                assertEq(sentRecycled, 0, "no recycled before the fresh is sent");
+            }
+            sentFresh += r.fresh;
+            sentRecycled += r.recycled;
+        }
+        LibVaipakam.RemitDayLedger memory l = _ledger(1);
+        assertEq(sentFresh, l.wholeFresh, "every fresh unit sent once");
+        assertEq(sentRecycled, l.wholeRecycled, "every recycled unit sent once");
+        assertEq(sentFresh + sentRecycled, whole, "and nothing else");
+        assertEq(ConfigFacet(address(diamond)).getRecycleBucket(), 1_000e18 - l.wholeRecycled, "bucket debit = recycled parts");
+        (, , uint256 outRecycled, ) = RewardAggregatorFacet(address(diamond)).getGovernorCommitState();
+        assertEq(1_000e18 - outRecycled, l.armedWholeRecycled, "the whole recycled commitment retired once");
+    }
+
+    /// @notice #918 case 4 — releasing one part restores exactly that part:
+    ///         the day re-opens owing it, the other parts stand, and the
+    ///         re-send moves exactly the released amount. On an armed day the
+    ///         fresh commitment is NOT restored (Codex #2959 r3): it became the
+    ///         day's pool hold at the first part, so the released fresh is
+    ///         uncovered instead and the re-send must find room for it, as on
+    ///         an unarmed day. Releasing the part that retired the residual
+    ///         hands the residual marker to the next part.
+    function test_918_ReleasingAPart_RestoresExactlyThatPart() public {
+        _finalizeDay(1);
+        _armDayForArb(1, 100e18, 0);
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 2e18, 1e18);
+        mutator.setOutstandingCommitRaw(1_000e18, 0);
+        (, uint256 f0, , ) = RewardAggregatorFacet(address(diamond)).getGovernorCommitState();
+        _sendPart(1, 1e18);
+        _sendPart(1, 1e18);
+        _sendPart(1, 1e18);
+        uint256 armedWhole = _ledger(1).armedWholeFresh;
+
+        vm.warp(block.timestamp + 7 days);
+        // A middle part: the day re-opens owing exactly it.
+        comp.releaseRemitReservation(2);
+        LibVaipakam.RemitDayLedger memory l = _ledger(1);
+        assertEq(l.sentFresh, 2e18, "stored: the other parts stand");
+        assertEq(l.partsLive, 2);
+        assertEq(l.residualRemitId, 1, "the residual stays with part 1");
+        assertEq(l.freshUncovered, 1e18, "stored: the released fresh is uncovered");
+        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), 0, "no longer whole: unmarked");
+        assertEq(rlens.getDayClosedByRemitId(CHAIN_ARB, 1), 0);
+        (uint256 owed, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        assertEq(owed, 1e18, "owes exactly the released part");
+        (, uint256 fMid, , ) = RewardAggregatorFacet(address(diamond)).getGovernorCommitState();
+        assertEq(fMid, f0 - armedWhole, "no fresh commitment is restored");
+
+        // The residual-holder: its release hands the residual marker on.
+        comp.releaseRemitReservation(1);
+        l = _ledger(1);
+        assertEq(l.residualRemitId, 0, "the residual is unretired again");
+        assertEq(l.wholeFresh, 3e18, "the whole stays locked");
+        assertEq(l.freshUncovered, 2e18, "stored: both released parts are uncovered");
+        (, uint256 fBoth, , ) = RewardAggregatorFacet(address(diamond)).getGovernorCommitState();
+        assertEq(fBoth, f0 - armedWhole, "still none restored");
+
+        uint256 globalBefore = rlens.getRewardBudgetRemittedGlobal();
+        uint256 re = _sendPart(1, 5e18);
+        assertEq(re, 2e18, "the re-send moves exactly what was released");
+        assertEq(rlens.getRemitReservation(4).armedFreshFull, 0, "and retires no fresh commitment");
+        assertEq(_ledger(1).residualRemitId, 4, "it takes the residual marker");
+        assertEq(rlens.getRewardBudgetRemittedGlobal(), globalBefore + 2e18, "the re-sent fresh is charged again");
+        (, uint256 fEnd, , ) = RewardAggregatorFacet(address(diamond)).getGovernorCommitState();
+        assertEq(f0 - fEnd, armedWhole, "the whole commitment retired exactly once, net");
+        assertEq(rlens.getRemitDayFreshReserved(), 0, "a whole day holds nothing");
+        assertEq(rlens.getDayClosedByRemitId(CHAIN_ARB, 1), 4, "re-closed by the re-send");
+        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), 3e18);
+    }
+
+    /// @notice #918 (Codex #2959 r1) — an UNARMED day holds the rest of its
+    ///         fresh in the pool between parts, and a released part's fresh
+    ///         stops being held: the re-send must find room for it again, as a
+    ///         re-send of a released whole day always has.
+    function test_918_AnUnarmedDay_HoldsItsRest_AndAReleasedPartNeedsRoomAgain() public {
+        _finalizeDay(1);
+        (uint256 whole, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        uint256 cap = whole / 3 + 1;
+        uint256 p1 = _sendPart(1, cap);
+        assertFalse(_ledger(1).armed, "fixture: unarmed");
+        assertEq(rlens.getRemitDayFreshReserved(), whole - p1, "the first part holds the rest");
+        uint256 p2 = _sendPart(1, cap);
+        uint256 held = whole - p1 - p2;
+        assertEq(rlens.getRemitDayFreshReserved(), held, "each part moves itself out of the hold");
+
+        vm.warp(block.timestamp + 7 days);
+        comp.releaseRemitReservation(2);
+        assertEq(_ledger(1).freshUncovered, p2, "stored: the released part is uncovered");
+        assertEq(rlens.getRemitDayFreshReserved(), held, "the hold is unchanged by a release");
+        assertEq(rlens.getRewardBudgetRemittedGlobal(), p1 + p2, "the released part stays charged");
+
+        // One wei short of the room the released part needs: refused.
+        mutator.setInteractionPoolPaidOut(CAP - (p1 + p2) - held - (p2 - 1));
+        vm.expectRevert(
+            abi.encodeWithSelector(RewardRemittanceFacet.RewardPoolCapExceeded.selector, p2, p2 - 1)
+        );
+        remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, _days(1), whole);
+
+        // Exactly enough: the rest of the day goes in one, and the hold empties.
+        mutator.setInteractionPoolPaidOut(CAP - (p1 + p2) - held - p2);
+        uint256 rest = _sendPart(1, whole);
+        assertEq(rest, whole - p1, "the re-send moves the released part and the rest");
+        assertEq(rlens.getRemitDayFreshReserved(), 0, "a whole day holds nothing");
+        assertEq(_ledger(1).freshUncovered, 0, "stored: nothing uncovered");
+        assertEq(rlens.getRewardBudgetRemittedGlobal(), whole + p2, "the re-sent part is charged twice, as documented");
+        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), whole, "and the day completes");
+    }
+
+    /// @notice #918 case 5 — the backing verdict does not depend on the part
+    ///         size: a day the whole send would refuse for recycled backing is
+    ///         refused at every cap, and one it would admit is admitted.
+    function test_918_TheBackingVerdict_IsPartSizeIndependent() public {
+        _finalizeDay(1);
+        _armDayForArb(1, 0, 50e18);
+        mutator.setOutstandingCommitRaw(0, 1_000e18);
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 1e30, 1e30);
+        mutator.setRecycleBucketRaw(1_000e18);
+        (uint256 whole, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        assertGt(whole, 0, "fixture: a recycled slice");
+        uint256[3] memory caps = [whole, whole / 2 + 1, whole / 7 + 1];
+
+        // At the margin: the bucket one wei short of the outstanding recycled
+        // commitment (no clamp residual to retire) fails the net backing gate
+        // whatever the part size, and exactly level passes it at every size.
+        mutator.setRecycleBucketRaw(1_000e18 - 1);
+        for (uint256 i; i < 3; ++i) {
+            assertEq(uint8(_partStatus(1, caps[i])), uint8(LibRemitDayLedger.RemitDayStatus.Unbacked), "refused at every cap");
+        }
+        mutator.setRecycleBucketRaw(1_000e18);
+        for (uint256 i; i < 3; ++i) {
+            LibRemitDayLedger.RemitDayStatus st = _partStatus(1, caps[i]);
+            assertTrue(
+                st == LibRemitDayLedger.RemitDayStatus.Closeable || st == LibRemitDayLedger.RemitDayStatus.Partial,
+                "admitted at every cap"
+            );
+        }
+    }
+
+    /// @notice #918 — a partly-sent day has one funding record: the manual
+    ///         path refuses it even when the day is (made) remit-ineligible.
+    function test_918_TheManualPath_RefusesAPartlySentDay() public {
+        _finalizeDay(1);
+        (uint256 whole, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        _sendPart(1, whole / 2);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RemitDayPartlySent.selector, uint256(1), CHAIN_ARB));
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 1e18, 0);
+    }
+
+    /// @notice #918 — `partCap` is validated on the quotes as on the send.
+    function test_918_TheQuotes_RefuseAZeroPartCap() public {
+        _finalizeDay(1);
+        vm.expectRevert(RewardRemittanceFacet.InvalidRemittanceCap.selector);
+        remit.quoteRemitDayPlans(CHAIN_ARB, _days(1), 0);
+        vm.expectRevert(RewardRemittanceFacet.InvalidRemittanceCap.selector);
+        remit.quoteRemitDayStatuses(CHAIN_ARB, _days(1), 0);
+        vm.expectRevert(RewardRemittanceFacet.InvalidRemittanceCap.selector);
+        remit.quoteRemittanceFee(CHAIN_ARB, _days(1), 0);
+    }
+
+    /// @notice #918 case 9 — an ordinary fresh-only PART is a one-day
+    ///         reservation with no declared split, so the stranded-return
+    ///         ingress (compensation receipts only) refuses it by name. Parts
+    ///         make that shape common; it must not read as a compensation.
+    function test_918_TheStrandedReturn_RefusesAnOrdinaryPart() public {
+        _finalizeDay(1);
+        (uint256 whole, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        uint256 part = _sendPart(1, whole / 2);
+        _armReturnIngress();
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StrandedReturnNotCompensation.selector, uint256(1)));
+        comp.onStrandedReturnReceived(address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), part, part, 0, bytes32(0));
     }
 }

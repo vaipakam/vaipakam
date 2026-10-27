@@ -214,7 +214,7 @@ describe('cross-chain flows on a canonical chain and a mirror', () => {
     await m.mirror.write('other', receiver, PAUSABLE_ABI, 'pause');
     expect(await m.mirror.pub.readContract({ address: receiver, abi: PAUSABLE_ABI, functionName: 'paused' })).toBe(true);
 
-    const [fee] = await m.base.read<readonly [bigint, bigint]>('quoteRemittanceFee', [MIRROR_ID, owed.map(BigInt)]);
+    const [fee] = await m.base.read<readonly [bigint, bigint]>('quoteRemittanceFee', [MIRROR_ID, owed.map(BigInt), REMIT_LANE_CAP]);
     await waitForLane(m, m.base, m.mirror, quoted);
     await m.base.diamondWrite('keeper', 'remitRewardBudget', [MIRROR_ID, owed.map(BigInt), REMIT_LANE_CAP], fee);
     const mirrorSupply = await totalSupply(m.mirror, m.fixture.vpfiMirror);

@@ -5426,6 +5426,10 @@ library LibVaipakam {
         // dstChainId => dayId => VPFI already remitted for that (chain, day).
         // A non-zero entry blocks re-remittance, so re-running a partially-sent
         // batch is safe (already-sent days are skipped).
+        // #918 — an ordinary day may be sent in several PARTS
+        // (`remitDayLedger` below holds the running figures); this mark is
+        // written only once the day's WHOLE slice has been sent, and then
+        // holds that whole. A release of any one part deletes it again.
         mapping(uint32 => mapping(uint256 => uint256)) rewardBudgetRemitted;
         // dstChainId => cumulative VPFI remitted to that mirror. Monitoring +
         // reconciliation.
@@ -5450,7 +5454,7 @@ library LibVaipakam {
         // ─── #776 receive side (mirror chains) ────────────────────────────
         // The mirror-side `RewardRemittanceReceiver` authorized to call the
         // Diamond's budget and compensation ingresses
-        // (`onRewardBudgetReceivedD6`, `onCompensationBudgetReceived`). `address(0)` = ingress
+        // (`onRewardBudgetReceivedD7`, `onCompensationBudgetReceived`). `address(0)` = ingress
         // disabled (Base, or an unconfigured mirror).
         address rewardRemittanceReceiver;
         // Cumulative VPFI reward budget received from Base on this mirror.
@@ -6069,10 +6073,17 @@ library LibVaipakam {
         //   (`rewardBudgetRemitted` keeps amount semantics and cannot mark a
         //   zero), so a closed day's commitments release exactly once and the
         //   day never lingers half-open. Cleared on release (day re-fundable).
+        //   #918 — an ordinary day's whole slice may go in several parts
+        //   (`remitDayLedger`), each its own reservation; the marker is
+        //   written when the day becomes WHOLE and names the part that
+        //   completed it. A release of ANY live part of the day deletes it,
+        //   whichever part set it: the day owes the released amount again.
+        //   A compensation (manual) day keeps the single-reservation rule.
         mapping(uint32 => mapping(uint256 => uint256)) dayClosedByRemitId;
         // Per-chain in-flight vs ack-finalized aggregates (observability +
         //   the d3 netting inputs; the per-day clamp itself collapses to the
-        //   day-close state machine above — a day funds at most once).
+        //   day-close state machine above — a day's whole slice funds at
+        //   most once, possibly across several parts, #918).
         mapping(uint32 => uint256) remitPendingTotal;
         mapping(uint32 => uint256) remitAckedTotal;
         // Mirror-side receipt records, keyed by the echoed `remitId` (0 =
@@ -6416,7 +6427,7 @@ library LibVaipakam {
         ///      skew, because the pre-arming delivery never enters.
         ///
         ///      DELIBERATELY CONSERVATIVE at the cutover boundary. A remit
-        ///      may cover armed and unarmed days together — `_planDay`
+        ///      may cover armed and unarmed days together — `LibRemitDayLedger.planDay`
         ///      decides armedness per day and the batch carries one summed
         ///      amount — and the wire does not break the total down by day.
         ///      Such a batch is counted as ZERO fresh rather than
@@ -7934,17 +7945,14 @@ library LibVaipakam {
         ///      (`LibRewardCustody.dayAwaitsFreshDelivery`). Same type and position; no
         ///      longer read or written.
         uint256 retiredDayDeliveryGateFromDay;
-        /// @dev #1944 consequence 1 — the ingress stamp of the FIRST undisposed
-        ///      budget packet PROVEN to list `day`, for packets holding NO
-        ///      transport batch (a d6 delivery that landed before custody
-        ///      activation). Written only by the proof entry
-        ///      (`RewardEpochFacet.proveDeliveryDayChunk`),
-        ///      never at ingress (the 300k destination budget — `TransportBatch`'s note)
-        ///      and never by the broadcast. Batched packets do NOT write it: their fact
-        ///      is `transportBatchesByDay[day]`, and a flag beside an index is a second
-        ///      statement of one fact. ONE reader ORs the two:
-        ///      `LibRewardCustody.dayDeliveryLanded`.
-        mapping(uint256 => bytes32) dayDeliveryProvedBy;
+        /// @dev RETIRED (#918). Was the #1944 ingress stamp of the FIRST
+        ///      batchless budget packet proven to list a day, which made the
+        ///      day landed on its own. A day's slice now arrives in one or more
+        ///      PARTS, so one proven lister no longer means the day has landed:
+        ///      `dayDeliveryParts` (appended below) sums every landed part per
+        ///      component, and `LibRewardCustody.dayDeliveryLanded` reads only
+        ///      that. Same type and position; no longer read or written.
+        mapping(uint256 => bytes32) retiredDayDeliveryProvedBy;
         /// @dev #1566 sanctions reward-forfeit — per wallet, the EVIDENCE CHAIN
         ///      that its sanctions flag is CONFIRMED, packed
         ///      `oracle(160) | flaggedAt(48) | lastSeenAt(48)` (the one codec is
@@ -8150,6 +8158,97 @@ library LibVaipakam {
         ///      `RateModelFacet.setRateModelBand`, never above the points cap.
         ///      Appended — append-only.
         uint16 rateModelMinDeviationBps;
+        /// @dev #918 — Base's per-(destination, day) remit LEDGER: a day's whole
+        ///      slice may go in several sends ("parts"), and this is the record
+        ///      of what the whole is and how much of it has gone. Locked at the
+        ///      day's first part and never changed by a release; every ordinary
+        ///      day a remittance acts on goes through it, close-only days
+        ///      included. Written only by `LibRemitDayLedger`. Base-only.
+        ///      Appended — append-only.
+        mapping(uint32 => mapping(uint256 => RemitDayLedger)) remitDayLedger;
+        /// @dev #918 — the mirror's per-day DELIVERY record: the whole slice
+        ///      Base said it is sending for the day, and the sum of the parts
+        ///      that have landed here, per component. Written only by
+        ///      `LibRewardCustody._noteDayDeliveryPart`, when a single-day
+        ///      packet's chunk is indexed or proven; `landedAt` is the one
+        ///      word `LibRewardCustody.dayDeliveryLanded` reads. Mirror-only.
+        ///      Appended — append-only.
+        mapping(uint256 => DayDeliveryParts) dayDeliveryParts;
+        /// @dev #918 (Codex #2959 r1) — fresh VPFI the LOCKED pre-commitment
+        ///      (unarmed) remit days still owe their mirrors and have already
+        ///      claimed against the 69M pool: the sum, over those days, of
+        ///      their owed fresh less `RemitDayLedger.freshUncovered`. A day's
+        ///      first part reserves its whole here, every part moves its own
+        ///      fresh from here into `rewardBudgetRemittedGlobal`, so a day
+        ///      sent in parts holds the pool exactly as a send of its whole in
+        ///      one would. Armed days too (Codex #2959 r3): an armed day's
+        ///      first part converts its whole fresh commitment
+        ///      (`outstandingCommitFresh`) into this hold, because only day
+        ///      sizing and sends net the commitments out of the pool, while a
+        ///      claim, sweep or staging read sees this hold. Read only through `LibInteractionRewards.poolRemaining`,
+        ///      the one definition of the pool's hard headroom; written only by
+        ///      `LibRemitDayLedger.applyPart`. Base-only. Appended — append-only.
+        uint256 remitDayFreshReserved;
+    }
+
+    /// @notice #918 — one (destination, day)'s remit ledger on Base. See
+    ///         `Storage.remitDayLedger`.
+    /// @dev The WHOLE (locked at the day's first part, never changed after):
+    ///      `wholeFresh` / `wholeRecycled` are the CLAMPED shares the day sends
+    ///      this destination in all; `armedWholeFresh` / `armedWholeRecycled`
+    ///      are the PRE-clamp armed commitments the day retires (zero on a day
+    ///      before the commitment regime, `armed` false). The difference
+    ///      between the pre-clamp and clamped figures is the day's clamp
+    ///      RESIDUAL: committed, never sent, and retired exactly once, by the
+    ///      part named in `residualRemitId`.
+    ///      PROGRESS: `sentFresh` / `sentRecycled` sum the day's LIVE parts (a
+    ///      released part is subtracted); `partsSent` counts every part ever
+    ///      sent and `partsLive` those not released. The day is WHOLE when
+    ///      both sums equal the whole and the residual is retired
+    ///      (`residualRemitId != 0`); only then do the day-close markers stand.
+    ///      POOL HOLD (every day, Codex #2959 r1, r3): `freshUncovered` is
+    ///      the owed fresh the day has NOT reserved against the 69M pool — what
+    ///      a released part gave back. The next part re-reserves it, tested
+    ///      against the pool's headroom; everything else the day owes is held
+    ///      in `Storage.remitDayFreshReserved`. An armed day's fresh commitment
+    ///      was converted into that hold at its first part, so a release
+    ///      restores none of it.
+    struct RemitDayLedger {
+        uint128 wholeFresh;
+        uint128 wholeRecycled;
+        uint128 armedWholeFresh;
+        uint128 armedWholeRecycled;
+        uint128 sentFresh;
+        uint128 sentRecycled;
+        uint256 residualRemitId;
+        uint32 partsSent;
+        uint32 partsLive;
+        bool armed;
+        bool locked;
+        uint128 freshUncovered;
+    }
+
+    /// @notice #918 — one day's delivery record on a mirror. See
+    ///         `Storage.dayDeliveryParts`.
+    /// @dev `wholeFresh` / `wholeRecycled` are set from the FIRST part that
+    ///      lands and never changed: a later part declaring a different whole
+    ///      sets `wholeConflict` (which only a source breaking its own rule
+    ///      could cause) and the first target stands. `landedFresh` /
+    ///      `landedRecycled` sum every landed part's DECLARED components; they
+    ///      may exceed the whole (an operator released a part in error and both
+    ///      the original and its re-send landed), which is value-true.
+    ///      `landedAt` is set once, when BOTH sums first reach the whole, and is
+    ///      never cleared: the day has landed. `parts` counts landed parts and
+    ///      `firstPacket` names the first.
+    struct DayDeliveryParts {
+        uint128 wholeFresh;
+        uint128 wholeRecycled;
+        uint128 landedFresh;
+        uint128 landedRecycled;
+        uint64 landedAt;
+        uint32 parts;
+        bool wholeConflict;
+        bytes32 firstPacket;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -8621,6 +8720,22 @@ library LibVaipakam {
         bool eraCounted;
         bool classificationFinal;
         bool eraQuarantined;
+        /// @dev #918, appended — the d7 wire's DECLARED part of its funded day,
+        ///      per component, as Base sent it: `declaredFresh` + `declaredRecycled`
+        ///      is the wire's `total`, before the receiver scales the recycled
+        ///      share to a short delivery. Declared, not received, so a part
+        ///      "lands" in the sense the #1944 gate has always used: Base's send
+        ///      arrived (a short delivery is surfaced by the ack's received
+        ///      figure, not by holding the day). Written once, at ingress; zero
+        ///      on a packet that carries no budget day.
+        uint128 declaredFresh;
+        uint128 declaredRecycled;
+        /// @dev #918, appended — the funded day's WHOLE slice per component, as
+        ///      Base locked it when it sent the day's first part. Every part of
+        ///      one day carries the same whole, so the mirror knows how much to
+        ///      wait for without knowing how many parts there are.
+        uint128 dayWholeFresh;
+        uint128 dayWholeRecycled;
     }
 
     /// @notice #1566 transport epochs PR 3b — the TRANSPORT EPOCH of one
@@ -9204,10 +9319,19 @@ library LibVaipakam {
     ///      emission counters / bucket consumption recorded);
     ///      `armedFreshFull`/`recycledFull` are the PRE-clamp armed-day
     ///      totals whose outstanding commitments were retired/released at
-    ///      send — release restores exactly these, so a re-remit's
-    ///      retirement pairs off without drift. `dayIds` is every day the
-    ///      batch terminally CLOSED (funded + clamped-to-zero) — release
-    ///      re-opens them all.
+    ///      send. A COMPENSATION reservation's release restores exactly
+    ///      these, so a re-remit's retirement pairs off without drift; an
+    ///      ordinary one's restores `recycledFull` only, because its day's
+    ///      fresh commitment became the day's pool hold at its first part
+    ///      (#918, Codex #2959 r3). `dayIds` is every day the
+    ///      batch ACTED on (#918): the funded day's part, and each close-only
+    ///      day that rode along — release re-opens them all. Since #918 an
+    ///      ordinary reservation is ONE PART of its funded day: `fresh` /
+    ///      `recycled` are that part, and `armedFreshFull` / `recycledFull`
+    ///      the commitments that part retired: the day's whole fresh
+    ///      commitment on its first part (none on a later one), and its own
+    ///      recycled plus the day's recycled clamp residual when this part is
+    ///      the one that retired it — see `RemitDayLedger.residualRemitId`.
     struct RemitReservation {
         uint32 dstChainId;
         // 0 = none, 1 = Pending (in flight), 2 = Acked (delivered,
