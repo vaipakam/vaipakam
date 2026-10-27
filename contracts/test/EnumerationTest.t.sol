@@ -145,44 +145,50 @@ contract EnumerationTest is SetupTest {
 
     // ─── getUserLoansPaginated + status filter ──────────────────────────────
 
+    /// @dev #2930 — the cursor is a position in the user's index and each
+    ///      call reads at most `maxScan` rows of it, so a page holds only
+    ///      the matches among the rows read and may be empty mid-scan.
     function testUserLoansByStatusFilterPagination() public {
         _seedLoan(1, u1, u2, LibVaipakam.LoanStatus.Active);
         _seedLoan(2, u1, u2, LibVaipakam.LoanStatus.Repaid);
         _seedLoan(3, u1, u2, LibVaipakam.LoanStatus.Active);
         _seedLoan(4, u1, u2, LibVaipakam.LoanStatus.Defaulted);
         _seedLoan(5, u1, u2, LibVaipakam.LoanStatus.Active);
+        MetricsFacet m = MetricsFacet(address(diamond));
 
-        (uint256[] memory active, uint256 matched) = MetricsFacet(address(diamond))
-            .getUserLoansByStatusPaginated(
-                u1,
-                LibVaipakam.LoanStatus.Active,
-                0,
-                2
-            );
-        assertEq(matched, 3);
-        assertEq(active.length, 2);
-        assertEq(active[0], 1);
-        assertEq(active[1], 3);
+        (uint256[] memory p0, uint256 c0) =
+            m.getUserLoansByStatusPaginated(u1, LibVaipakam.LoanStatus.Active, 0, 2);
+        assertEq(p0.length, 1, "rows 0-1 hold one active loan");
+        assertEq(p0[0], 1);
+        assertEq(c0, 2, "resumes after the two rows read");
 
-        (uint256[] memory activePage2, ) = MetricsFacet(address(diamond))
-            .getUserLoansByStatusPaginated(
-                u1,
-                LibVaipakam.LoanStatus.Active,
-                2,
-                2
-            );
-        assertEq(activePage2.length, 1);
-        assertEq(activePage2[0], 5);
+        (uint256[] memory p1, uint256 c1) =
+            m.getUserLoansByStatusPaginated(u1, LibVaipakam.LoanStatus.Active, c0, 2);
+        assertEq(p1.length, 1);
+        assertEq(p1[0], 3);
+        assertEq(c1, 4);
 
-        (uint256[] memory repaid, uint256 repaidMatched) =
-            MetricsFacet(address(diamond)).getUserLoansByStatusPaginated(
-                u1,
-                LibVaipakam.LoanStatus.Repaid,
-                0,
-                10
-            );
-        assertEq(repaidMatched, 1);
+        (uint256[] memory p2, uint256 c2) =
+            m.getUserLoansByStatusPaginated(u1, LibVaipakam.LoanStatus.Active, c1, 2);
+        assertEq(p2.length, 1);
+        assertEq(p2[0], 5);
+        assertEq(c2, 5, "the end is the index length");
+
+        (uint256[] memory p3, uint256 c3) =
+            m.getUserLoansByStatusPaginated(u1, LibVaipakam.LoanStatus.Active, c2, 2);
+        assertEq(p3.length, 0);
+        assertEq(c3, c2, "a call at the end makes no progress");
+
+        (uint256[] memory defaulted, uint256 cd) =
+            m.getUserLoansByStatusPaginated(u1, LibVaipakam.LoanStatus.Defaulted, 0, 3);
+        assertEq(defaulted.length, 0, "no match in rows 0-2: an empty page mid-scan");
+        assertEq(cd, 3, "and the cursor still advances");
+
+        (uint256[] memory repaid, uint256 cr) =
+            m.getUserLoansByStatusPaginated(u1, LibVaipakam.LoanStatus.Repaid, 0, type(uint256).max);
+        assertEq(repaid.length, 1);
         assertEq(repaid[0], 2);
+        assertEq(cr, 5, "an oversized maxScan reads to the end");
     }
 
     // ─── getUserOffersByStatePaginated (Open / Accepted / Cancelled) ─────────
@@ -193,36 +199,36 @@ contract EnumerationTest is SetupTest {
         _seedCancelledOffer(3, u1);
         _seedOpenOffer(4, u1);
 
-        (uint256[] memory open, uint256 openMatched) = MetricsFacet(address(diamond))
+        (uint256[] memory open, uint256 openNext) = MetricsFacet(address(diamond))
             .getUserOffersByStatePaginated(
                 u1,
                 LibMetricsTypes.OfferState.Open,
                 0,
                 10
             );
-        assertEq(openMatched, 2);
+        assertEq(openNext, 4, "read the whole four-row index");
         assertEq(open.length, 2);
         assertEq(open[0], 1);
         assertEq(open[1], 4);
 
-        (uint256[] memory accepted, uint256 acceptedMatched) = MetricsFacet(address(diamond))
+        (uint256[] memory accepted, ) = MetricsFacet(address(diamond))
             .getUserOffersByStatePaginated(
                 u1,
                 LibMetricsTypes.OfferState.Accepted,
                 0,
                 10
             );
-        assertEq(acceptedMatched, 1);
+        assertEq(accepted.length, 1);
         assertEq(accepted[0], 2);
 
-        (uint256[] memory cancelled, uint256 cancelledMatched) = MetricsFacet(address(diamond))
+        (uint256[] memory cancelled, ) = MetricsFacet(address(diamond))
             .getUserOffersByStatePaginated(
                 u1,
                 LibMetricsTypes.OfferState.Cancelled,
                 0,
                 10
             );
-        assertEq(cancelledMatched, 1);
+        assertEq(cancelled.length, 1);
         assertEq(cancelled[0], 3);
     }
 
@@ -294,13 +300,21 @@ contract EnumerationTest is SetupTest {
         _seedLoan(3, u1, u2, LibVaipakam.LoanStatus.Repaid);
         _seedLoan(4, u1, u2, LibVaipakam.LoanStatus.Active);
 
-        (uint256[] memory page, uint256 total) =
+        (uint256[] memory page, uint256 next, uint256 total) =
             MetricsFacet(address(diamond)).getAllLoansPaginated(0, 10);
         assertEq(total, 5); // mirrors nextLoanId
+        assertEq(next, 5, "read ids 1-5, the whole range");
         assertEq(page.length, 3); // slot 2 and 5 skipped (5 never seeded)
         assertEq(page[0], 1);
         assertEq(page[1], 3);
         assertEq(page[2], 4);
+
+        // #2930 — a window of two ids from cursor 1 reads ids 2 and 3 only.
+        (uint256[] memory w, uint256 wNext, ) =
+            MetricsFacet(address(diamond)).getAllLoansPaginated(1, 2);
+        assertEq(w.length, 1, "id 2 is empty, id 3 is a loan");
+        assertEq(w[0], 3);
+        assertEq(wNext, 3);
     }
 
     function testAllOffersPaginatedIncludesCancelled() public {
@@ -309,9 +323,10 @@ contract EnumerationTest is SetupTest {
         // slot 2: never seeded
         _seedCancelledOffer(3, u1); // offer record was deleted, marker survives
 
-        (uint256[] memory page, uint256 total) =
+        (uint256[] memory page, uint256 next, uint256 total) =
             MetricsFacet(address(diamond)).getAllOffersPaginated(0, 10);
         assertEq(total, 3);
+        assertEq(next, 3);
         assertEq(page.length, 2); // slot 2 skipped
         assertEq(page[0], 1);
         assertEq(page[1], 3);
@@ -327,13 +342,13 @@ contract EnumerationTest is SetupTest {
         _seedLoan(2, u1, u2, LibVaipakam.LoanStatus.Defaulted);
         _seedLoan(3, u1, u2, LibVaipakam.LoanStatus.Active);
 
-        (uint256[] memory active, uint256 matched) =
+        (uint256[] memory active, uint256 next) =
             MetricsFacet(address(diamond)).getLoansByStatusPaginated(
                 LibVaipakam.LoanStatus.Active,
                 0,
                 10
             );
-        assertEq(matched, 2);
+        assertEq(next, 3, "read ids 1-3, the whole range");
         assertEq(active.length, 2);
         assertEq(active[0], 1);
         assertEq(active[1], 3);

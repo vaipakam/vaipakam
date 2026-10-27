@@ -1750,15 +1750,18 @@ async function censusDeployment(dep) {
   // before enumeration.)
 
   // ── Enumerate every loan id ever created ──────────────────────────────
+  // #2930 — the view reads a bounded window of the id range per call and
+  // returns the cursor to resume from; the end is the cursor making no
+  // progress, never a short or empty page (sale-vehicle ids are skipped).
   const loanIds = [];
-  let offset = 0n;
+  let cursor = 0n;
   let reportedTotal = 0n;
   for (;;) {
-    const [ids, total] = await read('getAllLoansPaginated', [offset, PAGE]);
+    const [ids, next, total] = await read('getAllLoansPaginated', [cursor, PAGE]);
     reportedTotal = total;
     loanIds.push(...ids);
-    if (ids.length === 0 || BigInt(loanIds.length) >= total) break;
-    offset += PAGE;
+    if (next === cursor) break;
+    cursor = next;
   }
 
   if (totalLoansEverCreated > 0n && loanIds.length === 0) {

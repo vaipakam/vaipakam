@@ -285,11 +285,19 @@ contract MetricsFacetTest is SetupTest {
         TestMutatorFacet(address(diamond)).setNextOfferId(4);
         assertEq(MetricsFacet(address(diamond)).getActiveOffersCount(), 3);
 
-        uint256[] memory byLiquid =
+        (uint256[] memory byLiquid, uint256 next) =
             MetricsFacet(address(diamond)).getActiveOffersByAsset(mockERC20, 0, 10);
         assertEq(byLiquid.length, 2);
         assertEq(byLiquid[0], 1);
         assertEq(byLiquid[1], 2);
+        assertEq(next, 3, "read the whole three-row list");
+
+        // #2930 — a window over row 2 alone holds no match: an empty page
+        // that is not the end.
+        (uint256[] memory tail, uint256 tailNext) =
+            MetricsFacet(address(diamond)).getActiveOffersByAsset(mockERC20, 2, 1);
+        assertEq(tail.length, 0);
+        assertEq(tailNext, 3);
     }
 
     // ── getLoanSummary ─────────────────────────────────────────────────────

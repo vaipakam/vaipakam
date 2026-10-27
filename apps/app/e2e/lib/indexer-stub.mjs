@@ -391,16 +391,19 @@ async function userPositionLoans(addr) {
 }
 
 // Cross-status loan-id walk (Rate Desk #1130). getAllLoansPaginated
-// pages over the 1-INDEXED ID SPACE (offset is an id offset, not a
-// row offset; `total` is the highest assigned id), so completeness is
-// judged on `offset + PAGE >= total`, never on page length — pages
-// legitimately come back short where ids were skipped.
+// reads a bounded window of the id range per call (#2930): it takes a
+// cursor and a scan bound and returns (ids, nextCursor, total), where
+// the cursor is a position in the id range and `nextCursor` reaching
+// `nextLoanId` is the end. Completeness is judged on the cursor making
+// no progress, never on page length — pages legitimately come back
+// short or empty where ids were skipped.
 async function allLoanIds() {
   const ids = [];
-  for (let offset = 0n; ; offset += PAGE) {
-    const [page, total] = await read('getAllLoansPaginated', [offset, PAGE]);
+  for (let cursor = 0n; ; ) {
+    const [page, next] = await read('getAllLoansPaginated', [cursor, PAGE]);
     ids.push(...page);
-    if (offset + PAGE >= total) return ids;
+    if (next === cursor) return ids;
+    cursor = next;
     if (ids.length >= WALK_CAP) {
       throw new Error(`all-loan walk exceeded the ${WALK_CAP} cap`);
     }

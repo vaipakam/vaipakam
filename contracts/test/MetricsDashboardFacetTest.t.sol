@@ -140,7 +140,7 @@ contract MetricsDashboardFacetTest is SetupTest {
         _seedActiveLoan(3, lender2, borrower); // not for `lender`
         TestMutatorFacet(address(diamond)).setNextLoanId(4);
 
-        MetricsDashboardFacet.LoanWithRisk[] memory rows = dash.getUserDashboardLoans(
+        (MetricsDashboardFacet.LoanWithRisk[] memory rows, ) = dash.getUserDashboardLoans(
             lender, /* borrowerSide */ false, 0, 50
         );
         assertEq(rows.length, 2);
@@ -155,20 +155,34 @@ contract MetricsDashboardFacetTest is SetupTest {
         assertTrue(rows[0].loan.id != rows[1].loan.id);
     }
 
-    function testLoans_pagination_offsetAndLimit() public {
+    /// @dev #2930 — the cursor is a position in the user's loan index and
+    ///      each call reads at most `maxScan` rows of it: a page may be empty
+    ///      mid-scan (rows that do not match), and the end is the cursor.
+    function testLoans_pagination_cursorAndMaxScan() public {
         _seedActiveLoan(1, lender, borrower);
-        _seedActiveLoan(2, lender, borrower2);
-        _seedActiveLoan(3, lender, borrower);
-        TestMutatorFacet(address(diamond)).setNextLoanId(4);
+        _seedActiveLoan(2, borrower, lender2); // `lender` is not a party
+        _seedActiveLoan(3, lender, borrower2);
+        _seedActiveLoan(4, lender, borrower);
+        TestMutatorFacet(address(diamond)).setNextLoanId(5);
 
-        MetricsDashboardFacet.LoanWithRisk[] memory page1 = dash.getUserDashboardLoans(
-            lender, false, 0, 2
-        );
-        MetricsDashboardFacet.LoanWithRisk[] memory page2 = dash.getUserDashboardLoans(
-            lender, false, 2, 2
-        );
-        assertEq(page1.length, 2);
+        (MetricsDashboardFacet.LoanWithRisk[] memory page1, uint256 c1) =
+            dash.getUserDashboardLoans(lender, false, 0, 2);
+        assertEq(page1.length, 2, "rows 0-1 of lender's index are loans 1 and 3");
+        assertEq(c1, 2);
+        (MetricsDashboardFacet.LoanWithRisk[] memory page2, uint256 c2) =
+            dash.getUserDashboardLoans(lender, false, c1, 2);
         assertEq(page2.length, 1);
+        assertEq(page2[0].loan.id, 4);
+        assertEq(c2, 3, "the end is the index length");
+        (MetricsDashboardFacet.LoanWithRisk[] memory page3, uint256 c3) =
+            dash.getUserDashboardLoans(lender, false, c2, 2);
+        assertEq(page3.length, 0);
+        assertEq(c3, c2, "a call at the end makes no progress");
+
+        (MetricsDashboardFacet.LoanWithRisk[] memory borrowerPage, uint256 cb) =
+            dash.getUserDashboardLoans(lender, true, 0, 2);
+        assertEq(borrowerPage.length, 0, "lender holds no borrower side in rows 0-1");
+        assertEq(cb, 2, "an empty page still advances the cursor");
     }
 
     function testLoans_revertsOnLimitTooLarge() public {
@@ -192,12 +206,12 @@ contract MetricsDashboardFacetTest is SetupTest {
         TestMutatorFacet(address(diamond)).setNextLoanId(3);
 
         // Lender-side paginated view surfaces BOTH loans.
-        MetricsDashboardFacet.LoanWithRisk[] memory rows =
+        (MetricsDashboardFacet.LoanWithRisk[] memory rows, ) =
             dash.getUserDashboardLoans(lender, /* borrowerSide */ false, 0, 50);
         assertEq(rows.length, 2, "FallbackPending loan surfaces in dashboard loans");
 
         // Unified both-sides view surfaces BOTH.
-        MetricsDashboardFacet.LoanWithRiskAndSide[] memory both =
+        (MetricsDashboardFacet.LoanWithRiskAndSide[] memory both, ) =
             dash.getUserDashboardLoansBothSides(lender, 0, 50);
         assertEq(both.length, 2, "both-sides view surfaces FallbackPending");
 
@@ -216,7 +230,7 @@ contract MetricsDashboardFacetTest is SetupTest {
         _seedActiveLoan(4, lender2, borrower2);
         TestMutatorFacet(address(diamond)).setNextLoanId(5);
 
-        MetricsDashboardFacet.LoanWithRiskAndSide[] memory rows =
+        (MetricsDashboardFacet.LoanWithRiskAndSide[] memory rows, ) =
             dash.getUserDashboardLoansBothSides(lender, 0, 50);
         assertEq(rows.length, 3);
 
@@ -246,7 +260,7 @@ contract MetricsDashboardFacetTest is SetupTest {
         _seedOpenOffer(3, lender2); // not for `lender`
         TestMutatorFacet(address(diamond)).setNextOfferId(4);
 
-        LibMetricsTypes.OfferSummary[] memory openOffers =
+        (LibMetricsTypes.OfferSummary[] memory openOffers, ) =
             dash.getUserDashboardOffers(lender, /* filledOnly */ false, 0, 50);
         assertEq(openOffers.length, 2);
         // The lean OfferSummary DTO omits the `creator` address; assert
@@ -255,7 +269,7 @@ contract MetricsDashboardFacetTest is SetupTest {
         // read the single-struct {OfferCancelFacet.getOffer}.
         assertTrue(openOffers[0].id == 1 || openOffers[0].id == 2);
 
-        LibMetricsTypes.OfferSummary[] memory filledOffers =
+        (LibMetricsTypes.OfferSummary[] memory filledOffers, ) =
             dash.getUserDashboardOffers(lender, true, 0, 50);
         assertEq(filledOffers.length, 0);
     }
@@ -278,7 +292,7 @@ contract MetricsDashboardFacetTest is SetupTest {
         TestMutatorFacet(address(diamond)).setLenderClaimAssetRaw(1, mockERC20);
         TestMutatorFacet(address(diamond)).setLenderClaimAmountRaw(1, 200 ether);
 
-        (uint256[] memory loanIds, LibVaipakam.ClaimInfo[] memory claims) =
+        (uint256[] memory loanIds, LibVaipakam.ClaimInfo[] memory claims, ) =
             dash.getUserDashboardClaimables(lender, /* borrowerSide */ false, 0, 50);
         assertEq(loanIds.length, 1);
         assertEq(loanIds[0], 1);
