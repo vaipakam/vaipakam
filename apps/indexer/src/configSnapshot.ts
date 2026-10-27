@@ -110,7 +110,7 @@ const CONFIG_EVENT_NAMES: ReadonlySet<string> = new Set([
   'AggregatorAdaptersPausedSet',
   'PeerLtvReadsPausedSet',
   'RateModelSet',
-  'RateModelMaxDeviationBpsSet',
+  'RateModelBandSet',
   'PartialLiquidationSizingSet',
   'SwapAdapterAdded',
   'SwapAdapterRemoved',

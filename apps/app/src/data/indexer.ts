@@ -1037,6 +1037,8 @@ export interface ProtocolKnobValues {
   maxSwapToRepaySlippageBps?: string;
   rateModel?: string;
   rateModelMaxDeviationBps?: string;
+  rateModelRelativeDeviationBps?: string;
+  rateModelMinDeviationBps?: string;
   secondaryOracleMaxDeviationBps?: string;
   secondaryOracleMaxStalenessSeconds?: string;
   pythOracle?: string;

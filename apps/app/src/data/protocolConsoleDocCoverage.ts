@@ -53,7 +53,7 @@ export const DOC_COVERAGE: Readonly<Record<string, DocCoverage>> = {
   },
   'Graduated partial-liquidation sizing (#395)': { notShown: 'not-yet' },
   'Loan-admission HF floor (#394)': { shown: ['minHealthFactor'] },
-  'Quote-time interest-rate model (#400)': { shown: ['rateModel', 'rateModelMaxDeviationBps'] },
+  'Quote-time interest-rate model (#400)': { shown: ['rateModel', 'rateModelMaxDeviationBps', 'rateModelRelativeDeviationBps', 'rateModelMinDeviationBps'] },
   'Swap-to-Repay max slippage (T-090)': { shown: ['maxSwapToRepaySlippageBps'] },
   'Risk config — volatility-LTV threshold + rental buffer': {
     shown: ['volatilityLtvThresholdBps', 'rentalBufferBps'],

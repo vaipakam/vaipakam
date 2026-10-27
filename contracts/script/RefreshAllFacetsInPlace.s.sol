@@ -104,6 +104,7 @@ import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
+import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -248,7 +249,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // already-routed moves are cut as Replaces pointing here.
     // 98 -> 99: ForcedSaleFacet (#2795) - the one forced-sale rule (sized to
     // the debt, lender first), self-called by RepayPeriodicFacet.
-    uint256 public constant EXPECTED_FACETS = 99;
+    // 99 -> 100: RateModelFacet (#2748) - the reference-rate model, its band
+    // and the offer-rate clamp, moved off AdminFacet and OfferCreateFacet.
+    // The already-routed moves are cut as Replaces pointing here.
+    uint256 public constant EXPECTED_FACETS = 100;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1229,6 +1233,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[97] = Item("notificationFeeFacet", ArtifactDeploy.deploy(type(NotificationFeeFacet).name), _getNotificationFeeSelectors());
         // #2795 - the forced-sale host RepayPeriodicFacet self-calls.
         items[98] = Item("forcedSaleFacet", ArtifactDeploy.deploy(type(ForcedSaleFacet).name), _getForcedSaleSelectors());
+        items[99] = Item("rateModelFacet", ArtifactDeploy.deploy(type(RateModelFacet).name), _getRateModelSelectors());
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

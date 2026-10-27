@@ -336,6 +336,8 @@ FACETS=(
   "NotificationFeeFacet"
   # #2795 -- the forced-sale host RepayPeriodicFacet self-calls.
   "ForcedSaleFacet"
+  # #2748 -- the rate-model host (model, band, offer-rate clamp).
+  "RateModelFacet"
   "RiskSplitLiquidationFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
@@ -383,7 +385,7 @@ FACETS=(
   # constructs calls to it directly by named ABI export.
   "FlashLoanLiquidator"
   # #394 Lever B — standalone dual-factor risk-premium rate model
-  # (an `IRateModel` registered via `AdminFacet.setRateModel`). NOT a
+  # (an `IRateModel` registered via `RateModelFacet.setRateModel`). NOT a
   # diamond facet, so deliberately NOT spread into `DIAMOND_ABI` in the
   # barrel; admin tooling / keeper construct calls (setTierPremiumBps,
   # getTierPremiums, …) to it directly by named ABI export.

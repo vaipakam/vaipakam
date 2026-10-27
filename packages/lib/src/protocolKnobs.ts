@@ -78,7 +78,9 @@ export const PROTOCOL_KNOB_GETTERS = [
   { key: 'minHealthFactor', getter: 'getMinHealthFactor', setterEvents: ['MinHealthFactorSet'] },
   { key: 'maxSwapToRepaySlippageBps', getter: 'getMaxSwapToRepaySlippageBps', setterEvents: ['MaxSwapToRepaySlippageBpsSet'] },
   { key: 'rateModel', getter: 'getRateModel', setterEvents: ['RateModelSet'] },
-  { key: 'rateModelMaxDeviationBps', getter: 'getRateModelMaxDeviationBps', setterEvents: ['RateModelMaxDeviationBpsSet'] },
+  { key: 'rateModelMaxDeviationBps', getter: 'getRateModelMaxDeviationBps', setterEvents: ['RateModelBandSet'] },
+  { key: 'rateModelRelativeDeviationBps', getter: 'getRateModelRelativeDeviationBps', setterEvents: ['RateModelBandSet'] },
+  { key: 'rateModelMinDeviationBps', getter: 'getRateModelMinDeviationBps', setterEvents: ['RateModelBandSet'] },
   // Oracle stack
   { key: 'secondaryOracleMaxDeviationBps', getter: 'getSecondaryOracleMaxDeviationBps', setterEvents: ['SecondaryOracleMaxDeviationBpsSet'] },
   { key: 'secondaryOracleMaxStalenessSeconds', getter: 'getSecondaryOracleMaxStaleness', setterEvents: ['SecondaryOracleMaxStalenessSet'] },

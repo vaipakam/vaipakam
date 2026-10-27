@@ -98,7 +98,9 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
       { key: 'rentalBufferBps', label: 'rentalBuffer', format: 'bps' },
       { key: 'maxSwapToRepaySlippageBps', label: 'swapToRepaySlippage', format: 'bps' },
       { key: 'rateModel', label: 'rateModel', hint: 'rateModelHint', format: 'address' },
-      { key: 'rateModelMaxDeviationBps', label: 'rateModelMaxDeviation', format: 'bps' },
+      { key: 'rateModelMaxDeviationBps', label: 'rateBandPointsCap', hint: 'rateBandHint', format: 'bps' },
+      { key: 'rateModelRelativeDeviationBps', label: 'rateBandMarketShare', format: 'bps' },
+      { key: 'rateModelMinDeviationBps', label: 'rateBandPointsFloor', format: 'bps' },
     ],
   },
   {
