@@ -224,17 +224,6 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
                 "ActivateRewardCustody: the routing is not the one a COMPLETE refresh recorded (RefreshAllFacetsInPlace / DeployDiamond) -- the custody facet was cut alone, a partial cut of a facet or a selector ran since, or the record is from an older tree; run the complete refresh, then activate"
             );
         }
-        // Mirrors the contract's canonical prerequisite BEFORE anything is
-        // sent (Codex #2186 r2 P2): a canonical chain whose recovery
-        // attribution was never armed (a partial refresh) would otherwise
-        // refuse only at the activation call, after the pause, the approval
-        // and the row credits had already mined.
-        if (f.role == uint8(LibVaipakam.RewardRole.Canonical)) {
-            require(
-                RewardRemittanceLensFacet(diamond).recoveryAttributionArmed(),
-                "ActivateRewardCustody: this canonical chain has not armed per-receipt recovery attribution (the refresh's armRecoveryAttribution migration) -- activation would refuse after the row credits had mined; run that migration first"
-            );
-        }
         // Mirrors the activation's HOLDER-WIDE check BEFORE anything is sent
         // (Codex #2193 r6): the holder's balance in the configured token
         // must be readable and must cover the total of every attribution —

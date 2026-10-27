@@ -706,27 +706,7 @@ contract RewardCompensationDispatchFacet is
         uint256 overage = actualReceived - credited;
 
         s.remitRecoveredForReceipt[remitId] = already + credited;
-        // #1662 r10 — THE invariant for legacy receipts: the pooled
-        // recovery position holds credit ONLY for post-watermark receipts.
-        //
-        // A pre-cut receipt can still have a return in flight when the
-        // upgrade arms. Crediting it here would add to a position it can
-        // never draw from (the watermark blocks `_drawFromRecovery`) and
-        // that can never be clawed back out (the watermark blocks
-        // `_voidRecoveryCredit`) — so `backingPosition` would subtract it
-        // forever and the tokens would be unreachable. Arming retires the
-        // position standing AT that instant; this is the other half of the
-        // same rule, stopping it from being refilled afterwards.
-        //
-        // The tokens are not lost: on a deployment whose custody is not
-        // activated they stay as ordinary unearmarked balance, which is
-        // exactly what the CHARGED dispatch path spends; on an activated
-        // one they are protected into the holder's `Unclassified` row
-        // (closure 2 cutover PR 1, below).
-        bool attributable = !_receiptPredatesAttribution(s, remitId);
-        if (attributable) {
-            s.rewardBudgetRecovered += credited;
-        }
+        s.rewardBudgetRecovered += credited;
         if (overage != 0) s.strandedReturnOverage += overage;
         // #1566 closure 2 cutover PR 1 — the packet under its ingress stamp,
         // recorded ON EVERY DEPLOYMENT, activated or not (Codex #2198 r1):
@@ -734,7 +714,7 @@ contract RewardCompensationDispatchFacet is
         // guard is the record's, so a return landing before the activation
         // is stamped like any other. Only the holder relocations below are
         // activation-gated.
-        bytes32 h = LibRewardCustody.callRecordIngressPacket(
+        LibRewardCustody.callRecordIngressPacket(
             sourceChainId,
             transportMessageId,
             LibRewardCustody.PACKET_KIND_STRANDED_RETURN,
@@ -747,17 +727,9 @@ contract RewardCompensationDispatchFacet is
         // #1566 slice 4 PR B — the recovery custody switch (design §5d): on
         // an activated deployment the entitlement-bounded portion is
         // relocated from this balance into the holder's RECOVERY row and
-        // any excess into the protected OVERAGE row, measured. #1566
-        // closure 2 cutover PR 1 — a pre-attribution receipt's credit
-        // belongs to no position: protected into `Unclassified` at ingress
-        // under the packet's stamp rather than resting in this balance
-        // (design §5c).
+        // any excess into the protected OVERAGE row, measured.
         if (LibRewardCustody.active(s)) {
-            if (attributable) {
-                LibRewardCustody.callRelocateToHolder(LibVaipakam.RewardCustodyRow.Recovery, credited);
-            } else {
-                LibRewardCustody.callUnclassifiedReturn(h, credited);
-            }
+            LibRewardCustody.callRelocateToHolder(LibVaipakam.RewardCustodyRow.Recovery, credited);
             LibRewardCustody.callRelocateToHolder(LibVaipakam.RewardCustodyRow.Overage, overage);
         }
         // #1660 r1 — a short actual is TRANSPORT LOSS, not recoverable
@@ -1295,98 +1267,6 @@ contract RewardCompensationDispatchFacet is
         }
     }
 
-    /**
-     * @notice ADMIN — #1662 r7: arm PER-RECEIPT recovery attribution on an
-     *         in-place-upgraded Diamond, fixing the watermark at the
-     *         current reservation nonce.
-     * @dev    One-shot. Everything at or below the watermark predates
-     *         attribution: recovery credit was recorded per receipt, but
-     *         the spending and claws against it were tracked only
-     *         GLOBALLY, so the new per-receipt counters start at zero and
-     *         would report already-spent credit as still unspent. Arming
-     *         retires that legacy capacity conservatively rather than
-     *         attempting a migration the chain has no per-receipt history
-     *         to reconstruct — removing the old unattributed selectors
-     *         stops new unattributed writes but repairs nothing existing.
-     *         The retired value is not lost: it stays reachable through
-     *         the ordinary CHARGED dispatch path.
-     */
-    /// @dev #1662 r11 — deliberately NOT `onlyCanonical`. Round 9 gated the
-    /// refresh's arming call on the live canonical flag so a mirror refresh
-    /// would not revert, reasoning that "mirrors hold no recovery position".
-    /// That is false for a DEMOTED former canonical: it keeps every
-    /// reservation and every recovered token it accrued while canonical, so
-    /// a canonical-gated arm skips it, and a later re-promotion cannot
-    /// repair the omission either (the fresh-deploy auto-arm in
-    /// `setIsCanonicalRewardChain` requires a zero nonce, which a Diamond
-    /// with history does not have). It would resume canonical operation
-    /// with the watermark disabled — exactly the state arming exists to
-    /// prevent.
-    ///
-    /// Arming a genuine mirror is harmless rather than merely tolerable:
-    /// `remitReservationNonce` only ever advances on the canonical-gated
-    /// Base surfaces, so a chain that was never canonical is still at 0,
-    /// the watermark records 0, and every receipt id (which starts at 1)
-    /// is post-watermark. Nothing is retired and nothing is constrained.
-    /// So the rule needs no branch: every refresh arms, exactly once,
-    /// whatever the chain's current or future canonical status.
-    function armRecoveryAttribution()
-        external
-        onlyRole(LibAccessControl.ADMIN_ROLE)
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.recoveryAttributionArmed) {
-            revert RecoveryAttributionAlreadyArmed();
-        }
-        s.recoveryAttributionArmed = true;
-        s.recoveryAttributionArmedAt = s.remitReservationNonce;
-        // #1662 r9 — RETIRE the pooled position too. Blocking the receipts
-        // is only half the migration: the aggregate
-        // `recovered − redispatched` stays subtracted from ordinary
-        // backing by {LibVpfiRecycle.backingPosition}, and the charged
-        // dispatch path increments `rewardBudgetRemittedGlobal` without
-        // ever drawing it down — so the recovered tokens would be
-        // earmarked forever, reachable by nothing. (Round 8 claimed the
-        // value "stays reachable through the ordinary charged path";
-        // without this it did not.)
-        //
-        // Safe as a one-shot at arming: the refresh arms while PAUSED,
-        // before any post-cut receipt can have contributed, so the whole
-        // standing position is legacy by construction. Retiring it
-        // releases those tokens back to ordinary unearmarked backing,
-        // which is exactly what the charged path then spends.
-        uint256 retired =
-            s.rewardBudgetRecovered - s.rewardBudgetRedispatched;
-        if (retired != 0) {
-            s.rewardBudgetRedispatched = s.rewardBudgetRecovered;
-        }
-        emit RecoveryAttributionArmed(s.remitReservationNonce, retired);
-    }
-
-    /// @notice #1662 r7 — per-receipt recovery attribution armed; receipts
-    ///         at or below `watermark` are no longer drawable or clawable.
-    /// @param  retiredPosition #1662 r9 — the legacy pooled recovery
-    ///         position released back to ordinary backing by the same
-    ///         one-shot, so those tokens are spendable through the charged
-    ///         path rather than earmarked forever.
-    /// @custom:event-category state-change/reward-compensation
-    event RecoveryAttributionArmed(uint256 watermark, uint256 retiredPosition);
-
-    /// @dev #1662 r10 — the ONE predicate every legacy-receipt rule reads.
-    ///      A receipt at or below the armed watermark predates per-receipt
-    ///      attribution: its spends and claws were tracked GLOBALLY only,
-    ///      so no per-receipt figure about it can be trusted. The rule that
-    ///      follows is single — such a receipt never touches the pooled
-    ///      recovery position: it cannot draw from it, cannot be clawed
-    ///      out of it, and (r10) cannot be credited INTO it either.
-    function _receiptPredatesAttribution(
-        LibVaipakam.Storage storage s,
-        uint256 receiptId
-    ) private view returns (bool) {
-        return s.recoveryAttributionArmed
-            && receiptId <= s.recoveryAttributionArmedAt;
-    }
-
     /// @dev #1662 r2 — draw `amount` of uncharged re-dispatch capacity
     ///      against the NAMED source receipt's own recovery credit.
     ///
@@ -1410,15 +1290,6 @@ contract RewardCompensationDispatchFacet is
         uint256 sourceRemitId,
         uint256 amount
     ) private {
-        // #1662 r7 — a receipt that predates per-receipt attribution has
-        // credit on record but no per-receipt spend/claw history (those
-        // were tracked GLOBALLY only), so its unspent figure would read as
-        // the FULL credit however much was already drawn — and it could
-        // then consume a LATER receipt's backing. Refused outright; the
-        // value stays reachable through the ordinary charged path.
-        if (_receiptPredatesAttribution(s, sourceRemitId)) {
-            revert RecoveryReceiptPredatesAttribution(sourceRemitId);
-        }
         uint256 credit = s.remitRecoveredForReceipt[sourceRemitId]
             - s.ceremonyRecycledRecovered[sourceRemitId];
         // #1662 r3 — CONFISCATED credit is not merely un-clawable, it is
@@ -1483,35 +1354,9 @@ contract RewardCompensationDispatchFacet is
         if (bal < earmarks) {
             revert CeremonyInflowNotBacked(refId, bal, earmarks);
         }
-        // #1662 r10 — same invariant as the return path: a late ceremony
-        // for a pre-cut receipt must not refill a position that receipt
-        // can neither draw nor have clawed. (`refId` is the OLD-era remit
-        // id on the imported path, which is never a local receipt, so the
-        // predicate correctly leaves imported settlements alone — they
-        // credit no fresh position at all since r6.)
-        if (!_receiptPredatesAttribution(s, refId)) {
-            s.rewardBudgetRecovered += freshInflow;
-            if (holderCustody) {
-                LibRewardCustody.callRelocateToHolder(LibVaipakam.RewardCustodyRow.Recovery, freshInflow);
-            }
-        } else if (freshInflow != 0) {
-            // #1566 closure 2 cutover PR 1 — a ceremony inflow for a receipt
-            // that predates attribution is the same untyped custody as a
-            // pre-attribution return: recorded under a ceremony-kind packet
-            // ON EVERY DEPLOYMENT (no transport packet — the per-source
-            // sequence keys it; Codex #2198 r1) and, on an activated one,
-            // protected into `Unclassified` under it.
-            bytes32 h = LibRewardCustody.callRecordIngressPacket(
-                0,
-                bytes32(0),
-                LibRewardCustody.PACKET_KIND_CEREMONY_INFLOW,
-                freshInflow,
-                freshInflow,
-                0,
-                address(this),
-                refId
-            );
-            if (holderCustody) LibRewardCustody.callUnclassifiedReturn(h, freshInflow);
+        s.rewardBudgetRecovered += freshInflow;
+        if (holderCustody) {
+            LibRewardCustody.callRelocateToHolder(LibVaipakam.RewardCustodyRow.Recovery, freshInflow);
         }
         if (recycledInflow != 0) {
             LibVpfiRecycle.creditCustodyRelocated(

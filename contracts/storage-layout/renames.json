@@ -176,6 +176,30 @@
       "from": "recycleStrandedSeedBaselineCount",
       "to": "retiredRecycleStrandedSeedBaselineCount",
       "reason": "#2875 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the #1448 upgrade-in-place seeding state (the recycled-accounting-seeded flag, and the released-remit stranded-seed ceremony's applied flag, scan state, race baselines and the release count it backfilled) migrated a Diamond refreshed over pre-#1222 / pre-#1448 state, which a fresh deploy never is; the flag and the ceremony are removed. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 476,
+      "offset": 0,
+      "from": "recoveryAttributionArmedAt",
+      "to": "retiredRecoveryAttributionArmedAt",
+      "reason": "#2910 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the #1662 recovery-attribution watermark retired receipts created before per-receipt attribution on a Diamond refreshed in place. Receipt ids come from remitReservationNonce, which advances only on canonical-gated surfaces, and a fresh canonical deploy armed at zero before its first receipt, so no receipt on this build predates attribution; the watermark, its arming, the custody-activation pre-check and the Unclassified row's returned figure for pre-attribution receipts are removed. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 477,
+      "offset": 0,
+      "from": "recoveryAttributionArmed",
+      "to": "retiredRecoveryAttributionArmed",
+      "reason": "#2910 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the #1662 recovery-attribution watermark retired receipts created before per-receipt attribution on a Diamond refreshed in place. Receipt ids come from remitReservationNonce, which advances only on canonical-gated surfaces, and a fresh canonical deploy armed at zero before its first receipt, so no receipt on this build predates attribution; the watermark, its arming, the custody-activation pre-check and the Unclassified row's returned figure for pre-attribution receipts are removed. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 513,
+      "offset": 0,
+      "from": "rewardCustodyUnclassifiedReturned",
+      "to": "retiredRewardCustodyUnclassifiedReturned",
+      "reason": "#2910 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the #1662 recovery-attribution watermark retired receipts created before per-receipt attribution on a Diamond refreshed in place. Receipt ids come from remitReservationNonce, which advances only on canonical-gated surfaces, and a fresh canonical deploy armed at zero before its first receipt, so no receipt on this build predates attribution; the watermark, its arming, the custody-activation pre-check and the Unclassified row's returned figure for pre-attribution receipts are removed. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
     }
   ]
 }
