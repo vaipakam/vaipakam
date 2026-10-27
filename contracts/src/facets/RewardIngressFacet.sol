@@ -37,11 +37,13 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     /// @notice The credited token is not this Diamond's VPFI token.
     error RewardBudgetTokenMismatch(address expected, address delivered);
 
-    /// @notice 3d-1 — a d6 (rooted) reward budget landed: what arrived, the
-    ///         commitment and extent it arrived under, the split the wire typed
-    ///         and the era it was dispatched in. Whether it opened an epoch is
-    ///         {LibRewardCustody.TransportBatchAdmitted}'s fact, as for every
-    ///         other delivery.
+    /// @notice 3d-1 / #918 — a d7 (rooted) reward budget landed: what arrived,
+    ///         the commitment and extent it arrived under, the split the wire
+    ///         typed, the era it was dispatched in, and (#918, appended) the
+    ///         part Base declared and the funded day's whole slice. Whether it
+    ///         opened an epoch is {LibRewardCustody.TransportBatchAdmitted}'s
+    ///         fact, as for every other delivery; when the part counts toward
+    ///         its day is {LibRewardCustody.DayDeliveryPartLanded}'s.
     /// @custom:event-category informational/reward-transport
     event RewardBudgetRootReceived(
         uint256 indexed sourceChainId,
@@ -53,10 +55,14 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         uint256 remitId,
         uint256 recycledShare,
         uint256 freshShare,
-        uint64 intendedEra
+        uint64 intendedEra,
+        uint256 declaredFresh,
+        uint256 declaredRecycled,
+        uint256 dayWholeFresh,
+        uint256 dayWholeRecycled
     );
 
-    /// @notice A d6 delivery was stamped for era `intended`, AHEAD of this chain's
+    /// @notice A d7 delivery was stamped for era `intended`, AHEAD of this chain's
     ///         live era `live`, and was filed into the live era. A mirror's own
     ///         reports never put the canonical chain ahead of it, so this means
     ///         the Diamond that reported was REPLACED (a new one restarts at era
@@ -66,7 +72,7 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
 
     /**
      * @notice Record a reward budget the {RewardRemittanceReceiver} forwarded
-     *         on the d6 (ROOTED) wire — #1566 transport epochs 3d-1.
+     *         on the d7 (ROOTED) wire — #1566 transport epochs 3d-1, #918.
      * @dev    The one accounting path for a rooted delivery on an activated
      *         custody: the WHOLE delivery becomes its own transport epoch.
      *         Nothing is credited to the live delivered ledger or the recycle
@@ -103,6 +109,15 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
      *         `intendedEra` is STORED, not validated — PR C's receive rules
      *         read it.
      *
+     *         #918 — the delivery may be one PART of its day's slice. The
+     *         part as Base DECLARED it (`declaredTotal`, `declaredRecycled`,
+     *         before the receiver's short-delivery scaling) and the day's
+     *         WHOLE slice are stamped on the packet here and summed per day
+     *         when its chunk is indexed or proven — the moment the mirror
+     *         learns which day the packet funds — so the #1944 delivery gate
+     *         opens the day only once every part has landed. Nothing is
+     *         written per day here: the day is behind the root.
+     *
      *         `transportMessageId` is the transport's message id, as the
      *         adapter delivered it (#1566 closure 2 cutover PR 1): the Diamond
      *         records the packet under `keccak256(sourceChainId,
@@ -118,7 +133,7 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
      *         protected at ingress. The receiver's own guardian pause remains
      *         the lever to stop inbound packets at the edge.
      */
-    function onRewardBudgetReceivedD6(
+    function onRewardBudgetReceivedD7(
         address token,
         uint256 amount,
         bytes32 dayListRoot,
@@ -130,7 +145,11 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         uint256 recycledShare,
         uint256 freshShare,
         bytes32 transportMessageId,
-        uint64 intendedEra
+        uint64 intendedEra,
+        uint256 declaredTotal,
+        uint256 declaredRecycled,
+        uint256 dayWholeFresh,
+        uint256 dayWholeRecycled
     ) external nonReentrant {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (msg.sender != s.rewardRemittanceReceiver) {
@@ -161,6 +180,7 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             remitId
         );
         LibRewardCustody.stampPacketDayListRoot(s, h, dayListRoot, elementCount, chunkCount, intendedEra);
+        LibRewardCustody.stampPacketDayPart(s, h, declaredTotal, declaredRecycled, dayWholeFresh, dayWholeRecycled);
         // The INTENDED ERA — the destination's own, as it last reported it to
         // the canonical chain (#1566 PR C revision) — against the live one.
         // Ahead of us: impossible while this Diamond is the one that reported its
@@ -203,7 +223,11 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             remitId,
             recycledShare,
             freshShare,
-            intendedEra
+            intendedEra,
+            declaredTotal - declaredRecycled,
+            declaredRecycled,
+            dayWholeFresh,
+            dayWholeRecycled
         );
     }
 
@@ -303,11 +327,11 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
      *         counted + uncounted always reconciles against what Base
      *         sent.
      * @param transportMessageId The transport's message id (#1566 closure 2
-     *         cutover PR 1) — see {onRewardBudgetReceivedD6}; the packet is
+     *         cutover PR 1) — see {onRewardBudgetReceivedD7}; the packet is
      *         recorded under its ingress stamp, and a quarantine lands in
      *         the holder's `Unclassified` row on an activated deployment.
      *         Not `whenNotPaused`, for the migration-mode reason
-     *         {onRewardBudgetReceivedD6} gives.
+     *         {onRewardBudgetReceivedD7} gives.
      */
     function onCompensationBudgetReceived(
         address token,

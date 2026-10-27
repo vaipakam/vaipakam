@@ -177,7 +177,7 @@ contract RewardRemittanceFacetTest is SetupTest {
     function test_QuoteRemittanceFee_ReturnsFeeAndTotal() public {
         _finalizeDay1();
         (uint256 expectedTotal, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
-        (uint256 fee, uint256 total) = remit.quoteRemittanceFee(CHAIN_ARB, _days(1));
+        (uint256 fee, uint256 total) = remit.quoteRemittanceFee(CHAIN_ARB, _days(1), CAP);
         assertEq(total, expectedTotal, "total matches quoteRewardBudget");
         assertEq(fee, ccip.fee(), "fee routed through the messenger");
         assertGt(total, 0, "non-zero remittable total");
@@ -259,7 +259,7 @@ contract RewardRemittanceFacetTest is SetupTest {
         _finalizeDay1();
         // Remit day 1, then re-quote it — nothing left to send → (0, 0).
         remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), CAP);
-        (uint256 fee, uint256 total) = remit.quoteRemittanceFee(CHAIN_ARB, _days(1));
+        (uint256 fee, uint256 total) = remit.quoteRemittanceFee(CHAIN_ARB, _days(1), CAP);
         assertEq(total, 0, "already-remitted day contributes 0");
         assertEq(fee, 0, "no fee when nothing to remit");
     }
@@ -277,7 +277,7 @@ contract RewardRemittanceFacetTest is SetupTest {
                 uint256(2)
             )
         );
-        remit.quoteRemittanceFee(CHAIN_ARB, d);
+        remit.quoteRemittanceFee(CHAIN_ARB, d, CAP);
     }
 
     function test_QuoteRemittanceFee_RevertsWhenPoolNearlyExhausted() public {
@@ -293,7 +293,7 @@ contract RewardRemittanceFacetTest is SetupTest {
                 total - 1
             )
         );
-        remit.quoteRemittanceFee(CHAIN_ARB, _days(1));
+        remit.quoteRemittanceFee(CHAIN_ARB, _days(1), CAP);
     }
 
     /// @notice #1944 c1 — an UNARMED day finalized near the 69M cap remits the
@@ -418,17 +418,19 @@ contract RewardRemittanceFacetTest is SetupTest {
         remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(2), CAP);
     }
 
-    function test_Remit_RevertsWhenTotalExceedsPerCallCap() public {
+    /// @dev #918 — a cap below the day's slice no longer refuses the send: it
+    ///      sizes a PART. The day stays open (unmarked) owing the rest, and
+    ///      the next send completes it.
+    function test_Remit_ACapBelowTheSlice_SendsAPart() public {
         _finalizeDay1();
         (uint256 expected, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                RewardRemittanceFacet.RemittanceExceedsCap.selector,
-                expected,
-                expected - 1
-            )
-        );
         remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), expected - 1);
+        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), 0, "a part does not mark the day");
+        (uint256 owed, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        assertEq(owed, 1, "it owes the rest");
+        remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), expected - 1);
+        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), expected, "the last part marks the whole");
+        assertEq(rlens.getRewardBudgetRemittedGlobal(), expected, "counted once");
     }
 
     function test_Remit_RevertsOnZeroCap() public {
@@ -493,7 +495,7 @@ contract RewardRemittanceFacetTest is SetupTest {
                 cap
             )
         );
-        remit.quoteRemittanceFee(CHAIN_ARB, _dayList(cap + 1));
+        remit.quoteRemittanceFee(CHAIN_ARB, _dayList(cap + 1), CAP);
 
         // The discovery view does NOT refuse - it is what a caller chunks
         // FROM - and it exposes exactly the chunking figure: as many non-zero
@@ -507,7 +509,7 @@ contract RewardRemittanceFacetTest is SetupTest {
 
         // At the cap the quote gets past the bound, exactly as the send does.
         (bool ok, bytes memory err) = address(remit).staticcall(
-            abi.encodeCall(RewardRemittanceFacet.quoteRemittanceFee, (CHAIN_ARB, _dayList(cap)))
+            abi.encodeCall(RewardRemittanceFacet.quoteRemittanceFee, (CHAIN_ARB, _dayList(cap), CAP))
         );
         if (!ok && err.length >= 4) {
             assertTrue(
@@ -534,7 +536,7 @@ contract RewardRemittanceFacetTest is SetupTest {
         list[2] = 2; // a duplicate in the middle
         list[3] = 3;
         (uint256 total, uint256[] memory perDay) = remit.quoteRewardBudget(CHAIN_ARB, list);
-        (uint256[] memory amounts, bool[] memory closeable) = remit.quoteRemitDayPlans(CHAIN_ARB, list);
+        (uint256[] memory amounts, bool[] memory closeable) = remit.quoteRemitDayPlans(CHAIN_ARB, list, CAP);
         assertEq(perDay[2], 0, "a repeated day reads once");
         assertFalse(closeable[2], "and is not closeable twice");
         uint256 sum;
@@ -548,13 +550,13 @@ contract RewardRemittanceFacetTest is SetupTest {
         // alike (#2821), and the caller sends one funded day at a time.
         bytes memory refusal = abi.encodeWithSelector(IVaipakamErrors.TransportDayFanoutExceeded.selector, 3, 1);
         vm.expectRevert(refusal);
-        remit.quoteRemittanceFee(CHAIN_ARB, list);
+        remit.quoteRemittanceFee(CHAIN_ARB, list, CAP);
         vm.expectRevert(refusal);
         remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, list, CAP);
 
         uint256[3] memory at = [uint256(0), 1, 3]; // each day's slot in `list`
         for (uint256 d = 1; d <= 3; ++d) {
-            (, uint256 feeTotal) = remit.quoteRemittanceFee(CHAIN_ARB, _days(d));
+            (, uint256 feeTotal) = remit.quoteRemittanceFee(CHAIN_ARB, _days(d), CAP);
             assertEq(feeTotal, perDay[at[d - 1]], "the fee quote's total is the same plan, day by day");
             remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(d), CAP);
             assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, d), perDay[at[d - 1]], "each day funded exactly what was quoted");
@@ -574,11 +576,11 @@ contract RewardRemittanceFacetTest is SetupTest {
         vm.expectRevert(abi.encodeWithSelector(RewardRemittanceFacet.RewardDayNotFinalized.selector, 2));
         remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, list, CAP);
         vm.expectRevert(abi.encodeWithSelector(RewardRemittanceFacet.RewardDayNotFinalized.selector, 2));
-        remit.quoteRemittanceFee(CHAIN_ARB, list);
+        remit.quoteRemittanceFee(CHAIN_ARB, list, CAP);
         (uint256 total, uint256[] memory perDay) = remit.quoteRewardBudget(CHAIN_ARB, list);
         assertEq(perDay[1], 0, "discovery reads the unfinalized day as zero");
         assertEq(total, perDay[0], "and its total counts only what is fundable");
-        (, bool[] memory closeable) = remit.quoteRemitDayPlans(CHAIN_ARB, list);
+        (, bool[] memory closeable) = remit.quoteRemitDayPlans(CHAIN_ARB, list, CAP);
         assertFalse(closeable[1], "and does not call it closeable");
     }
 
@@ -639,13 +641,15 @@ contract RewardRemittanceFacetTest is SetupTest {
         dup[0] = 1;
         dup[1] = 1;
         remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, dup, CAP);
-        // 3d-2 — the payload is the ROOTED (d6) shape: it names no days, it
-        // commits to them. The extent says ONE day, and the root is the root
+        // 3d-2 / #918 — the payload is the ROOTED (d7) shape: it names no
+        // days, it commits to them. The extent says ONE day, and the root is the root
         // over exactly [1] — a list echoing the caller's [1, 1] would root
         // differently.
-        (uint256 tag, bytes32 root, uint256 n, uint256 chunks, uint256 sentTotal, uint256 remitId, address remitter, , uint256 era) =
-            abi.decode(ccip.sentPayload(0), (uint256, bytes32, uint256, uint256, uint256, uint256, address, uint256, uint256));
-        assertEq(tag, RemitWire.REMIT_WIRE_TAG_D6, "the rooted wire");
+        (uint256 tag, bytes32 root, uint256 n, uint256 chunks, uint256 sentTotal, uint256 remitId, address remitter, , uint256 era, uint256 wholeFresh, uint256 wholeRecycled) =
+            abi.decode(ccip.sentPayload(0), (uint256, bytes32, uint256, uint256, uint256, uint256, address, uint256, uint256, uint256, uint256));
+        assertEq(tag, RemitWire.REMIT_WIRE_TAG_D7, "the rooted wire");
+        // #918 — a whole-in-one send: the day's whole is the part it carries.
+        assertEq(wholeFresh + wholeRecycled, sentTotal, "the day's whole rides the wire");
         assertEq(n, 1, "the extent names only the funded day");
         assertEq(chunks, 1);
         assertEq(root, RemitWire.d6Root(RemitWire.d6Chunks(_days(1))), "the root is over exactly [1]");

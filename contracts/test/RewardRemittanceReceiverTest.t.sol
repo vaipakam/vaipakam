@@ -66,8 +66,13 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
     uint256 public lastChunkCount;
     uint64 public lastIntendedEra;
     uint256 public rootedCalls;
+    // #918 — the day's part (as Base sent it, unscaled) and its whole.
+    uint256 public lastDeclaredTotal;
+    uint256 public lastDeclaredRecycled;
+    uint256 public lastWholeFresh;
+    uint256 public lastWholeRecycled;
 
-    function onRewardBudgetReceivedD6(
+    function onRewardBudgetReceivedD7(
         address token,
         uint256 amount,
         bytes32 dayListRoot,
@@ -79,7 +84,11 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
         uint256 recycledShare,
         uint256 freshShare,
         bytes32 transportMessageId,
-        uint64 intendedEra
+        uint64 intendedEra,
+        uint256 declaredTotal,
+        uint256 declaredRecycled,
+        uint256 dayWholeFresh,
+        uint256 dayWholeRecycled
     ) external override {
         require(token == vpfi, "ingress: token");
         lastAmount = amount;
@@ -93,6 +102,10 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
         lastFreshShare = freshShare;
         lastTransportMessageId = transportMessageId;
         lastIntendedEra = intendedEra;
+        lastDeclaredTotal = declaredTotal;
+        lastDeclaredRecycled = declaredRecycled;
+        lastWholeFresh = dayWholeFresh;
+        lastWholeRecycled = dayWholeRecycled;
         rootedCalls++;
     }
 }
@@ -161,9 +174,37 @@ contract RewardRemittanceReceiverTest is Test {
         );
     }
 
-    /// @dev A d6 (rooted) budget payload declaring `total`, wholly fresh.
+    /// @dev A d7 (rooted) budget payload declaring `total`, wholly fresh,
+    ///      as its day's one part.
     function _d6Payload(uint256 total) internal pure returns (bytes memory) {
-        return RemitWire.encodeD6(bytes32(uint256(1)), 2, 1, total, 0, address(0xD1A), 0, 0);
+        return _d7(bytes32(uint256(1)), 2, 1, total, 0, address(0xD1A), 0, 0);
+    }
+
+    /// @dev A d7 payload carrying its day's whole as its one part.
+    function _d7(
+        bytes32 root,
+        uint256 elementCount,
+        uint256 chunkCount,
+        uint256 total,
+        uint256 remitId,
+        address remitter,
+        uint256 recycled,
+        uint64 era
+    ) internal pure returns (bytes memory) {
+        return RemitWire.encodeD7(
+            RemitWire.D7({
+                dayListRoot: root,
+                elementCount: elementCount,
+                chunkCount: chunkCount,
+                total: total,
+                remitId: remitId,
+                remitter: remitter,
+                recycledShare: recycled,
+                intendedEra: era,
+                dayWholeFresh: total - recycled,
+                dayWholeRecycled: recycled
+            })
+        );
     }
 
     // ── happy path ───────────────────────────────────────────────────────────
@@ -200,7 +241,7 @@ contract RewardRemittanceReceiverTest is Test {
             receiver,
             SRC_BASE,
             address(0xBA5E),
-            RemitWire.encodeD6(bytes32(uint256(0xBEEF)), 33, 3, 500e18, 78, address(0xD1A), 120e18, 4),
+            _d7(bytes32(uint256(0xBEEF)), 33, 3, 500e18, 78, address(0xD1A), 120e18, 4),
             _tokens(address(vpfi), 500e18),
             keccak256("d6-msg")
         );
@@ -215,6 +256,10 @@ contract RewardRemittanceReceiverTest is Test {
         assertEq(diamond.lastFreshShare(), 380e18, "fresh is the remainder of what landed");
         assertEq(diamond.lastIntendedEra(), 4, "the era surfaces");
         assertEq(diamond.lastTransportMessageId(), keccak256("d6-msg"));
+        assertEq(diamond.lastDeclaredTotal(), 500e18, "#918: the part as sent");
+        assertEq(diamond.lastDeclaredRecycled(), 120e18);
+        assertEq(diamond.lastWholeFresh(), 380e18, "and the day's whole");
+        assertEq(diamond.lastWholeRecycled(), 120e18);
         assertEq(vpfi.balanceOf(address(diamond)), 500e18, "the tokens were forwarded");
     }
 
@@ -228,13 +273,15 @@ contract RewardRemittanceReceiverTest is Test {
             receiver,
             SRC_BASE,
             address(0xBA5E),
-            RemitWire.encodeD6(bytes32(uint256(1)), 2, 1, 500e18, 79, address(0xD1A), 120e18, 0),
+            _d7(bytes32(uint256(1)), 2, 1, 500e18, 79, address(0xD1A), 120e18, 0),
             _tokens(address(vpfi), 500e18)
         );
         assertEq(diamond.lastAmount(), 300e18, "what landed");
         assertEq(diamond.lastRecycledShare(), 72e18, "recycled scaled to what landed");
         assertEq(diamond.lastFreshShare(), 228e18, "fresh is the rest");
         assertEq(diamond.lastRecycledShare() + diamond.lastFreshShare(), diamond.lastAmount(), "whole");
+        assertEq(diamond.lastDeclaredTotal(), 500e18, "#918: the declared part is NOT scaled");
+        assertEq(diamond.lastDeclaredRecycled(), 120e18, "it is what Base sent for the day");
     }
 
     /// @dev Every budget shape older than d6 is refused by name, before any
@@ -243,13 +290,19 @@ contract RewardRemittanceReceiverTest is Test {
     ///      carried a flat day list, and the two untagged ones no split; the
     ///      Diamond ingress that took them is gone. CCIP records the refusal as
     ///      a failed message rather than delivering it.
-    function test_Deliver_RefusesEveryPreD6BudgetShape() public {
+    function test_Deliver_RefusesEveryPreD7BudgetShape() public {
         uint256 d5Tag = uint256(keccak256("vaipakam.remit.wire.d5"));
-        bytes[] memory shapes = new bytes[](3);
+        // #918 retired d6 outright: the literal tag, since the codec no longer
+        // names it.
+        uint256 d6Tag = uint256(keccak256("vaipakam.remit.wire.d6"));
+        bytes[] memory shapes = new bytes[](4);
         shapes[0] = abi.encode(_days(1, 2), uint256(1e18));
         shapes[1] = abi.encode(_days(1, 2), uint256(1e18), uint256(77), address(0xD1A));
         shapes[2] = abi.encode(d5Tag, _days(1, 2), uint256(1e18), uint256(77), address(0xD1A), uint256(1e17));
-        uint256[3] memory heads = [uint256(0x40), uint256(0x80), d5Tag];
+        shapes[3] = abi.encode(
+            d6Tag, bytes32(uint256(1)), uint256(2), uint256(1), uint256(1e18), uint256(77), address(0xD1A), uint256(0), uint256(0)
+        );
+        uint256[4] memory heads = [uint256(0x40), uint256(0x80), d5Tag, d6Tag];
         vpfi.mint(address(receiver), 1e18);
         for (uint256 i; i < shapes.length; ++i) {
             vm.expectRevert(abi.encodeWithSelector(RewardRemittanceReceiver.UnknownRemitWireShape.selector, heads[i]));

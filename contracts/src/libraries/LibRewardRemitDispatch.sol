@@ -73,7 +73,7 @@ library LibRewardRemitDispatch {
     ///         matched to another receiver's (#1566 PR 1 review): the Diamond's
     ///         rooted (d6) ingress, the one wire a remittance takes since #2669
     ///         retired the typed (d5) one, as measured by the cell that pins it
-    ///         in `RewardTransportD6Test` — cold, over the widest list — plus
+    ///         in `RewardTransportD7Test` — cold, over the widest list — plus
     ///         {REWARD_BUDGET_RECEIVER_RESERVE} for the receiver's own work,
     ///         with a quarter's margin, rounded up to the next 50,000.
     ///         Re-measured 2026-10-24 (#2777): rooted 710,205, so

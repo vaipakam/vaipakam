@@ -24,16 +24,17 @@ import {LibRewardRemitDispatch} from "../src/libraries/LibRewardRemitDispatch.so
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {MerkleFixture} from "./mocks/MerkleFixture.sol";
+import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
-/// @title RewardTransportD6Test — #1566 transport epochs 3d-1, the d6 wire's
+/// @title RewardTransportD7Test — #1566 transport epochs 3d-1 / #918, the d7 wire's
 ///        RECEIVE side on an activated custody.
 /// @notice A rooted delivery is held whole as its own attested epoch and credits
 ///         no shared ledger; its membership is indexed one proven chunk at a time
 ///         in any order; it is allocatable only when whole; an armed-day claim
 ///         draws it transport-first; its remainder parks from the kept list. The
 ///         fixture is the draw suite's (mirror, activated custody, day 1 armed).
-contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
+contract RewardTransportD7Test is SetupTest, IVaipakamErrors {
     VPFIToken internal vpfi;
     address internal alice;
     MockRewardMessenger internal closeMessenger;
@@ -143,12 +144,27 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
         internal
         returns (bytes32 h, bytes32[] memory leaves)
     {
-        leaves = RemitWire.d6Chunks(dayIds);
-        _ingress().onRewardBudgetReceivedD6(
-            address(vpfi), amount, RemitWire.d6Root(leaves), dayIds.length, leaves.length,
-            CHAIN_BASE, remitId, REMITTER, recycled, amount - recycled, id, era
-        );
-        h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
+        // The day's one part: the delivery is its whole (LibD6Delivery.wholeDay).
+        (h, leaves) = LibD6Delivery.deliver(address(diamond), _delivery(amount, dayIds, remitId, id, recycled, era));
+    }
+
+    function _delivery(uint256 amount, uint256[] memory dayIds, uint256 remitId, bytes32 id, uint256 recycled, uint64 era)
+        internal
+        view
+        returns (LibD6Delivery.Delivery memory)
+    {
+        return LibD6Delivery.Delivery({
+            token: address(vpfi),
+            amount: amount,
+            dayIds: dayIds,
+            sourceChainId: CHAIN_BASE,
+            remitId: remitId,
+            remitter: REMITTER,
+            recycled: recycled,
+            fresh: amount - recycled,
+            messageId: id,
+            era: era
+        });
     }
 
     function _prove(bytes32 h, uint256[] memory dayIds, bytes32[] memory leaves, uint256 c) internal returns (uint32) {
@@ -171,13 +187,9 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
     ///      executed automatically.
     function test_TheRootedIngress_FitsTheDestinationBudget() public {
         uint256[] memory dayIds = _days(LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP, 1);
-        bytes32[] memory leaves = RemitWire.d6Chunks(dayIds);
-        bytes32 root = RemitWire.d6Root(leaves);
+        LibD6Delivery.Delivery memory d = _delivery(10e18, dayIds, 91, keccak256("gas-d6"), 4e18, 0);
         uint256 before = gasleft();
-        _ingress().onRewardBudgetReceivedD6(
-            address(vpfi), 10e18, root, dayIds.length, leaves.length,
-            CHAIN_BASE, 91, REMITTER, 4e18, 6e18, keccak256("gas-d6"), 0
-        );
+        LibD6Delivery.deliver(address(diamond), d);
         uint256 used = before - gasleft();
         emit log_named_uint("rooted ingress gas", used);
         LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("gas-d6"))));
@@ -377,14 +389,14 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
     function test_AMalformedExtent_IsRefused_ByName() public {
         bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("bad-extent")));
         vm.expectRevert(abi.encodeWithSelector(TransportRootExtentInvalid.selector, h, 20, 1));
-        _ingress().onRewardBudgetReceivedD6(address(vpfi), 1e18, bytes32(uint256(1)), 20, 1, CHAIN_BASE, 21, REMITTER, 0, 1e18, keccak256("bad-extent"), 0);
+        _ingress().onRewardBudgetReceivedD7(address(vpfi), 1e18, bytes32(uint256(1)), 20, 1, CHAIN_BASE, 21, REMITTER, 0, 1e18, keccak256("bad-extent"), 0, 1e18, 0, 1e18, 0);
         vm.expectRevert(abi.encodeWithSelector(TransportRootExtentInvalid.selector, h, 0, 0));
-        _ingress().onRewardBudgetReceivedD6(address(vpfi), 1e18, bytes32(uint256(1)), 0, 0, CHAIN_BASE, 21, REMITTER, 0, 1e18, keccak256("bad-extent"), 0);
+        _ingress().onRewardBudgetReceivedD7(address(vpfi), 1e18, bytes32(uint256(1)), 0, 0, CHAIN_BASE, 21, REMITTER, 0, 1e18, keccak256("bad-extent"), 0, 1e18, 0, 1e18, 0);
         vm.expectRevert(abi.encodeWithSelector(TransportRootExtentInvalid.selector, h, 20, 2));
-        _ingress().onRewardBudgetReceivedD6(address(vpfi), 1e18, bytes32(0), 20, 2, CHAIN_BASE, 21, REMITTER, 0, 1e18, keccak256("bad-extent"), 0);
+        _ingress().onRewardBudgetReceivedD7(address(vpfi), 1e18, bytes32(0), 20, 2, CHAIN_BASE, 21, REMITTER, 0, 1e18, keccak256("bad-extent"), 0, 1e18, 0, 1e18, 0);
         uint256 tooMany = (RemitWire.D6_MAX_CHUNKS + 1) * S;
         vm.expectRevert(abi.encodeWithSelector(TransportRootExtentInvalid.selector, h, tooMany, RemitWire.D6_MAX_CHUNKS + 1));
-        _ingress().onRewardBudgetReceivedD6(address(vpfi), 1e18, bytes32(uint256(1)), tooMany, RemitWire.D6_MAX_CHUNKS + 1, CHAIN_BASE, 21, REMITTER, 0, 1e18, keccak256("bad-extent"), 0);
+        _ingress().onRewardBudgetReceivedD7(address(vpfi), 1e18, bytes32(uint256(1)), tooMany, RemitWire.D6_MAX_CHUNKS + 1, CHAIN_BASE, 21, REMITTER, 0, 1e18, keccak256("bad-extent"), 0, 1e18, 0, 1e18, 0);
     }
 
     /// @dev The whole delivery becomes one epoch typed by two caps, so a split
@@ -392,7 +404,7 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
     function test_ASplitNotWhole_IsRefused() public {
         bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("not-whole")));
         vm.expectRevert(abi.encodeWithSelector(TransportSplitNotWhole.selector, h, 6e18, 3e18, 10e18));
-        _ingress().onRewardBudgetReceivedD6(address(vpfi), 10e18, bytes32(uint256(1)), 1, 1, CHAIN_BASE, 22, REMITTER, 3e18, 6e18, keccak256("not-whole"), 0);
+        _ingress().onRewardBudgetReceivedD7(address(vpfi), 10e18, bytes32(uint256(1)), 1, 1, CHAIN_BASE, 22, REMITTER, 3e18, 6e18, keccak256("not-whole"), 0, 10e18, 3e18, 10e18 - 3e18, 3e18);
     }
 
     /// @dev Spendable only when whole: the existing completeness rule, reached
@@ -479,8 +491,8 @@ contract RewardTransportD6PreActivationTest is SetupTest, IVaipakamErrors {
     function test_AD6Delivery_BeforeActivation_TakesTheTypedLedgerPath() public {
         RewardRemittanceLensFacet lens = RewardRemittanceLensFacet(address(diamond));
         (uint256 countedBefore, ) = lens.getDeliveredFreshPosition();
-        RewardIngressFacet(address(diamond)).onRewardBudgetReceivedD6(
-            address(vpfi), 10e18, bytes32(uint256(0xC0DE)), 2, 1, CHAIN_BASE, 99, REMITTER, 0, 10e18, keccak256("pre-act-d6"), 0
+        RewardIngressFacet(address(diamond)).onRewardBudgetReceivedD7(
+            address(vpfi), 10e18, bytes32(uint256(0xC0DE)), 2, 1, CHAIN_BASE, 99, REMITTER, 0, 10e18, keccak256("pre-act-d6"), 0, 10e18, 0, 10e18, 0
         );
         bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("pre-act-d6")));
         (bytes32 packetHash, uint256 balance, , uint32 dayCount, , ) = RewardEpochFacet(address(diamond)).getTransportBatch(h);
