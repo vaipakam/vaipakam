@@ -34,6 +34,11 @@ export interface WalletFlags {
    *  fails estimation still counts). That makes `=== 1` the strong
    *  claim a spec wants: one attempt, no hidden failed extras. */
   sentTransactions: number;
+  /** eth_signTypedData_v4 requests SEEN, by primary type (`AcceptTerms`,
+   *  `SignedOffer`, `PermitTransferFrom`, ...). Lets a spec prove a signer
+   *  refused BEFORE the wallet was asked: a refusal that still opened the
+   *  prompt would count here. */
+  typedDataRequests: Record<string, number>;
 }
 
 export interface WalletSession {
@@ -118,6 +123,8 @@ async function wireWallet(
         // params: [address, typedDataJson]
         assertSessionAccount(p[0], method);
         const typed = JSON.parse(p[1] as string);
+        const primary = String(typed.primaryType ?? 'unknown');
+        flags.typedDataRequests[primary] = (flags.typedDataRequests[primary] ?? 0) + 1;
         // Spec-controlled Permit2 refusal — matched on the canonical
         // Permit2 domain name so AcceptTerms signing stays untouched.
         if (typed.domain?.name === 'Permit2') {
@@ -300,6 +307,7 @@ export const test = base.extend<{
         permit2Rejections: 0,
         permit2SignatureRequests: 0,
         sentTransactions: 0,
+        typedDataRequests: {},
       };
       await wireWallet(ctx, account, flags, opts.preAuthorized ?? true);
       if (opts.advanced) {
