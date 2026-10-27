@@ -106,30 +106,31 @@ export function ethereumOriginals(ethFile) {
 /**
  * Decides one REVIEW entry against its proof. `candidates` is the entry's
  * per-source answer (arrays of addresses); `canonical` is the address the
- * bridge names, or null. Returns `{ settle: true, token, agreedBy,
- * otherCandidates }` or `{ settle: false, why }`. Pure.
+ * bridge names, or null. A source agrees only when the bridge's token is the
+ * ONLY address it names: a source that also names another address leaves the
+ * token's identity open, and the bridge never decides between two candidates
+ * a list offers. So it settles only when at least two sources name the
+ * bridge's token and no source names any other. Returns `{ settle: true,
+ * token, agreedBy }` or `{ settle: false, why }`. Pure.
  */
 export function settleReview(candidates, canonical) {
   if (!canonical) return { settle: false, why: 'the bridge names no token for the Ethereum original' };
   const c = lower(canonical);
   const naming = SOURCES.filter((k) => (candidates[k] ?? []).length > 0);
-  const agreeing = naming.filter((k) => candidates[k].some((a) => lower(a) === c));
-  const dissenting = naming.filter((k) => !agreeing.includes(k));
+  const others = (k) => candidates[k].filter((a) => lower(a) !== c);
+  const dissenting = naming.filter((k) => others(k).length > 0);
   if (dissenting.length > 0) {
+    const named = [...new Set(dissenting.flatMap(others).map((a) => getAddress(a)))];
     return {
       settle: false,
-      why: `the bridge names ${getAddress(canonical)}, which ${dissenting.join(' and ')} ${dissenting.length > 1 ? 'do' : 'does'} not name`,
+      why: `the bridge names ${getAddress(canonical)}, but ${dissenting.join(' and ')} ${dissenting.length > 1 ? 'name' : 'names'} another token: ${named.join(', ')}`,
     };
   }
+  const agreeing = naming;
   if (agreeing.length < 2) {
     return { settle: false, why: `the bridge names ${getAddress(canonical)}, but only ${agreeing.join(', ') || 'no source'} names it` };
   }
-  const otherCandidates = {};
-  for (const k of agreeing) {
-    const extra = candidates[k].filter((a) => lower(a) !== c).map((a) => getAddress(a));
-    if (extra.length) otherCandidates[k] = extra;
-  }
-  return { settle: true, token: getAddress(canonical), agreedBy: [...agreeing, 'bridge'], otherCandidates };
+  return { settle: true, token: getAddress(canonical), agreedBy: [...agreeing, 'bridge'] };
 }
 
 /**
@@ -212,7 +213,6 @@ export function applyBridgeProofs({ resolved, keptByPath, proofs, tokenDecimals,
       category: f.category,
       directoryPath: f.directoryPath,
       agreedBy: d.agreedBy,
-      ...(Object.keys(d.otherCandidates).length ? { otherCandidates: d.otherCandidates } : {}),
       bridgeProof: evidence(p),
       settledFrom: r.reason,
     });

@@ -157,9 +157,11 @@ writes the file:
    - a drafted binding it contradicts (the bridge names a different deployed
      token, as with native USDC against bridged USDC.e) goes to review;
    - a review entry is settled into a binding only when at least two sources
-     name the bridge's token and every source naming anything names it, so a
+     name the bridge's token and no source names any other address, so a
      source that merely omits the token no longer blocks it, while a source
-     naming another token still does. The binding records `settledFrom`, the
+     naming another token, alone or beside the bridge's, still does: the
+     bridge never chooses between two candidates a list offers. The binding
+     records `settledFrom`, the
      reason it had been in review.
    The file's `bridge` record states the method, the contract read, the
    block, and the SHA-256 of the Ethereum file the originals came from.

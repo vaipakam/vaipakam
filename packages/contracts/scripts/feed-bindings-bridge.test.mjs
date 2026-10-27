@@ -57,13 +57,19 @@ test('a review entry settles only when the bridge names an address at least two 
   assert.equal(d.settle, true);
   assert.equal(d.token, LINK);
   assert.deepEqual(d.agreedBy, ['coingecko', 'tokenList', 'bridge']);
-  // Extras beside the bridged token are kept for the reviewer, as in a draft.
+  // A source naming another token beside the bridged one blocks it: the
+  // bridge never decides between two candidates a list offers.
   d = settleReview({ coingecko: [LINK, FAKE], coinmarketcap: [], tokenList: [LINK] }, LINK);
-  assert.deepEqual(d.otherCandidates, { coingecko: [FAKE] });
+  assert.equal(d.settle, false);
+  assert.match(d.why, /coingecko names another token/);
+  // Even when every source offers the same two.
+  d = settleReview({ coingecko: [LINK, FAKE], coinmarketcap: [LINK, FAKE], tokenList: [LINK, FAKE] }, LINK);
+  assert.equal(d.settle, false);
+  assert.match(d.why, /coingecko and coinmarketcap and tokenList name another token/);
   // A source naming only another token blocks it.
   d = settleReview({ coingecko: [FAKE], coinmarketcap: [], tokenList: [LINK] }, LINK);
   assert.equal(d.settle, false);
-  assert.match(d.why, /which coingecko does not name/);
+  assert.match(d.why, /coingecko names another token/);
   // One source alone is not enough, even with the bridge.
   d = settleReview({ coingecko: [], coinmarketcap: [], tokenList: [LINK] }, LINK);
   assert.equal(d.settle, false);
@@ -150,7 +156,7 @@ test('a settled review entry becomes a full binding from the directory row; othe
   assert.deepEqual(b.agreedBy, ['coingecko', 'tokenList', 'bridge']);
   const c = out.review.find((r) => r.pair === 'COMP / USD');
   assert.equal(c.reason, 'the sources name different addresses');
-  assert.match(c.bridgeProof.outcome, /which coingecko does not name/);
+  assert.match(c.bridgeProof.outcome, /coingecko names another token/);
   // A duplicate (token, quote) is not a question of identity: untouched.
   const f = out.review.find((r) => r.pair === 'FOO / USD');
   assert.equal(f.bridgeProof, undefined);
