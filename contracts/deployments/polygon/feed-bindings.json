@@ -7,7 +7,7 @@
   "directory": {
     "url": "https://reference-data-directory.vercel.app/feeds-matic-mainnet.json",
     "sha256": "0x66ac7f92110fe91172b47776ed647602582a0758f104be563b9a1ad396553830",
-    "date": 20261026
+    "date": 20261027
   },
   "sources": {
     "coingecko": {
@@ -27,7 +27,24 @@
       }
     ]
   },
-  "checkedAtBlock": 96213133,
+  "checkedAtBlock": 96276263,
+  "bridge": {
+    "method": "polygon-child-chain-manager",
+    "contract": "0xA6FA4fB5f76172d178d61B04b0ecd319C5d1C0aa",
+    "checkedAtBlock": 96276263,
+    "ethereumBindings": {
+      "sha256": "0x900dad71a2ae3428b7eb5a5076e7a3faba55fc92e6383ee1e8aac89e2d6ec848",
+      "checkedAtBlock": 26285345
+    },
+    "proved": 21,
+    "settled": [
+      "ape-usd",
+      "comp-usd",
+      "grt-usd",
+      "mana-usd",
+      "yfi-eth"
+    ]
+  },
   "bindings": [
     {
       "token": "0xD6DF932A45C0f255f85145f286eA0b292B21C90B",
@@ -44,8 +61,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9",
+        "canonical": "0xD6DF932A45C0f255f85145f286eA0b292B21C90B",
+        "detail": "the child chain manager's token for the Ethereum original"
+      }
     },
     {
       "token": "0xD6DF932A45C0f255f85145f286eA0b292B21C90B",
@@ -62,8 +86,40 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9",
+        "canonical": "0xD6DF932A45C0f255f85145f286eA0b292B21C90B",
+        "detail": "the child chain manager's token for the Ethereum original"
+      }
+    },
+    {
+      "token": "0xB7b31a6BC18e48888545CE79e83E06003bE70930",
+      "symbol": "APE",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0x2Ac3F3Bfac8fC9094BC3f0F9041a51375235B992",
+      "feedDecimals": 8,
+      "pair": "APE / USD",
+      "heartbeat": 86400,
+      "category": "low",
+      "directoryPath": "ape-usd",
+      "agreedBy": [
+        "coingecko",
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0x4d224452801ACEd8B2F0aebE155379bb5D594381",
+        "canonical": "0xB7b31a6BC18e48888545CE79e83E06003bE70930",
+        "detail": "the child chain manager's token for the Ethereum original"
+      },
+      "settledFrom": "no address from coinmarketcap"
     },
     {
       "token": "0x9a71012B13CA4d3D0Cdc72A177DF3ef03b0E76A3",
@@ -80,8 +136,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0xba100000625a3754423978a60c9317c58a424e3D",
+        "canonical": "0x9a71012B13CA4d3D0Cdc72A177DF3ef03b0E76A3",
+        "detail": "the child chain manager's token for the Ethereum original"
+      }
     },
     {
       "token": "0x9a71012B13CA4d3D0Cdc72A177DF3ef03b0E76A3",
@@ -98,8 +161,40 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0xba100000625a3754423978a60c9317c58a424e3D",
+        "canonical": "0x9a71012B13CA4d3D0Cdc72A177DF3ef03b0E76A3",
+        "detail": "the child chain manager's token for the Ethereum original"
+      }
+    },
+    {
+      "token": "0x8505b9d2254A7Ae468c0E9dd10Ccea3A837aef5c",
+      "symbol": "COMP",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0x2A8758b7257102461BC958279054e372C2b1bDE6",
+      "feedDecimals": 8,
+      "pair": "COMP / USD",
+      "heartbeat": 27,
+      "category": "low",
+      "directoryPath": "comp-usd",
+      "agreedBy": [
+        "coingecko",
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0xc00e94Cb662C3520282E6f5717214004A7f26888",
+        "canonical": "0x8505b9d2254A7Ae468c0E9dd10Ccea3A837aef5c",
+        "detail": "the child chain manager's token for the Ethereum original"
+      },
+      "settledFrom": "no address from coinmarketcap"
     },
     {
       "token": "0x172370d5Cd63279eFa6d502DAB29171933a610AF",
@@ -116,8 +211,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0xD533a949740bb3306d119CC777fa900bA034cd52",
+        "canonical": "0x172370d5Cd63279eFa6d502DAB29171933a610AF",
+        "detail": "the child chain manager's token for the Ethereum original"
+      }
     },
     {
       "token": "0x172370d5Cd63279eFa6d502DAB29171933a610AF",
@@ -134,8 +236,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0xD533a949740bb3306d119CC777fa900bA034cd52",
+        "canonical": "0x172370d5Cd63279eFa6d502DAB29171933a610AF",
+        "detail": "the child chain manager's token for the Ethereum original"
+      }
     },
     {
       "token": "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063",
@@ -152,8 +261,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        "canonical": "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063",
+        "detail": "the child chain manager's token for the Ethereum original"
+      }
     },
     {
       "token": "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063",
@@ -170,8 +286,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        "canonical": "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063",
+        "detail": "the child chain manager's token for the Ethereum original"
+      }
     },
     {
       "token": "0x385Eeac5cB85A38A9a07A70c73e0a3271CfB54A7",
@@ -210,6 +333,31 @@
       ]
     },
     {
+      "token": "0x5fe2B58c013d7601147DcdD68C143A77499f5531",
+      "symbol": "GRT",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0x3FabBfb300B1e2D7c9B84512fe9D30aeDF24C410",
+      "feedDecimals": 8,
+      "pair": "GRT / USD",
+      "heartbeat": 27,
+      "category": "medium",
+      "directoryPath": "grt-usd",
+      "agreedBy": [
+        "coingecko",
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0xc944E90C64B2c07662A292be6244BDf05Cda44a7",
+        "canonical": "0x5fe2B58c013d7601147DcdD68C143A77499f5531",
+        "detail": "the child chain manager's token for the Ethereum original"
+      },
+      "settledFrom": "no address from coinmarketcap"
+    },
+    {
       "token": "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39",
       "symbol": "LINK",
       "tokenDecimals": 18,
@@ -224,8 +372,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0x514910771AF9Ca656af840dff83E8264EcF986CA",
+        "canonical": "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39",
+        "detail": "the child chain manager's token for the Ethereum original"
+      }
     },
     {
       "token": "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39",
@@ -242,8 +397,40 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0x514910771AF9Ca656af840dff83E8264EcF986CA",
+        "canonical": "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39",
+        "detail": "the child chain manager's token for the Ethereum original"
+      }
+    },
+    {
+      "token": "0xA1c57f48F0Deb89f569dFbE6E2B7f46D33606fD4",
+      "symbol": "MANA",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0xA1CbF3Fe43BC3501e3Fc4b573e822c70e76A7512",
+      "feedDecimals": 8,
+      "pair": "MANA / USD",
+      "heartbeat": 27,
+      "category": "medium",
+      "directoryPath": "mana-usd",
+      "agreedBy": [
+        "coingecko",
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0x0F5D2fB29fb7d3CFeE444a200298f468908cC942",
+        "canonical": "0xA1c57f48F0Deb89f569dFbE6E2B7f46D33606fD4",
+        "detail": "the child chain manager's token for the Ethereum original"
+      },
+      "settledFrom": "no address from coinmarketcap"
     },
     {
       "token": "0xa9f37D84c856fDa3812ad0519Dad44FA0a3Fe207",
@@ -260,8 +447,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0xec67005c4E498Ec7f55E092bd1d35cbC47C91892",
+        "canonical": "0xa9f37D84c856fDa3812ad0519Dad44FA0a3Fe207",
+        "detail": "the child chain manager's token for the Ethereum original"
+      }
     },
     {
       "token": "0xBbba073C31bF03b8ACf7c28EF0738DeCF3695683",
@@ -278,8 +472,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0x3845badAde8e6dFF049820680d1F14bD3903a5d0",
+        "canonical": "0xBbba073C31bF03b8ACf7c28EF0738DeCF3695683",
+        "detail": "the child chain manager's token for the Ethereum original"
+      }
     },
     {
       "token": "0x50B728D8D964fd00C2d0AAD81718b71311feF68a",
@@ -296,8 +497,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0xC011a73ee8576Fb46F5E1c5751cA3B9Fe0af2a6F",
+        "canonical": "0x50B728D8D964fd00C2d0AAD81718b71311feF68a",
+        "detail": "the child chain manager's token for the Ethereum original"
+      }
     },
     {
       "token": "0x0b3F868E0BE5597D5DB7fEB59E1CADBb0fdDa50a",
@@ -314,8 +522,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0x6B3595068778DD592e39A122f4f5a5cF09C90fE2",
+        "canonical": "0x0b3F868E0BE5597D5DB7fEB59E1CADBb0fdDa50a",
+        "detail": "the child chain manager's token for the Ethereum original"
+      }
     },
     {
       "token": "0x0b3F868E0BE5597D5DB7fEB59E1CADBb0fdDa50a",
@@ -332,8 +547,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0x6B3595068778DD592e39A122f4f5a5cF09C90fE2",
+        "canonical": "0x0b3F868E0BE5597D5DB7fEB59E1CADBb0fdDa50a",
+        "detail": "the child chain manager's token for the Ethereum original"
+      }
     },
     {
       "token": "0xb33EaAd8d922B1083446DC23f610c2567fB5180f",
@@ -350,8 +572,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
+        "canonical": "0xb33EaAd8d922B1083446DC23f610c2567fB5180f",
+        "detail": "the child chain manager's token for the Ethereum original"
+      }
     },
     {
       "token": "0xb33EaAd8d922B1083446DC23f610c2567fB5180f",
@@ -368,44 +597,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
-    },
-    {
-      "token": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
-      "symbol": "USDC",
-      "tokenDecimals": 6,
-      "quote": "ETH",
-      "quoteAddress": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
-      "feed": "0xefb7e6be8356cCc6827799B6A7348eE674A80EaE",
-      "feedDecimals": 18,
-      "pair": "USDC / ETH",
-      "heartbeat": 86400,
-      "category": "medium",
-      "directoryPath": "usdc-eth",
-      "agreedBy": [
-        "coingecko",
-        "coinmarketcap",
-        "tokenList"
-      ]
-    },
-    {
-      "token": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
-      "symbol": "USDC",
-      "tokenDecimals": 6,
-      "quote": "USD",
-      "quoteAddress": "0x0000000000000000000000000000000000000348",
-      "feed": "0xfE4A8cc5b5B2366C1B58Bea3858e81843581b2F7",
-      "feedDecimals": 8,
-      "pair": "USDC / USD",
-      "heartbeat": 27,
-      "category": "low",
-      "directoryPath": "usdc-usd",
-      "agreedBy": [
-        "coingecko",
-        "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
+        "canonical": "0xb33EaAd8d922B1083446DC23f610c2567fB5180f",
+        "detail": "the child chain manager's token for the Ethereum original"
+      }
     },
     {
       "token": "0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6",
@@ -452,6 +652,31 @@
           "0x5D49c278340655B56609FdF8976eb0612aF3a0C3"
         ]
       }
+    },
+    {
+      "token": "0xDA537104D6A5edd53c6fBba9A898708E465260b6",
+      "symbol": "YFI",
+      "tokenDecimals": 18,
+      "quote": "ETH",
+      "quoteAddress": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+      "feed": "0x9896A1eA7A00F5f32Ab131eBbeE07487B0af31D0",
+      "feedDecimals": 18,
+      "pair": "YFI / ETH",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "yfi-eth",
+      "agreedBy": [
+        "coingecko",
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e",
+        "canonical": "0xDA537104D6A5edd53c6fBba9A898708E465260b6",
+        "detail": "the child chain manager's token for the Ethereum original"
+      },
+      "settledFrom": "no address from coinmarketcap"
     }
   ],
   "manual": [],
@@ -468,22 +693,13 @@
         "tokenList": [
           "0x9c2C5fd7b07E95EE044DDeba0E97a665F142394f"
         ]
-      }
-    },
-    {
-      "pair": "APE / USD",
-      "directoryPath": "ape-usd",
-      "feed": "0x2Ac3F3Bfac8fC9094BC3f0F9041a51375235B992",
-      "quote": "USD",
-      "reason": "no address from coinmarketcap",
-      "candidates": {
-        "coingecko": [
-          "0xB7b31a6BC18e48888545CE79e83E06003bE70930"
-        ],
-        "coinmarketcap": [],
-        "tokenList": [
-          "0xB7b31a6BC18e48888545CE79e83E06003bE70930"
-        ]
+      },
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0x111111111117dC0aa78b770fA6A738034120C302",
+        "canonical": "0x9c2C5fd7b07E95EE044DDeba0E97a665F142394f",
+        "detail": "the child chain manager's token for the Ethereum original",
+        "outcome": "the bridge names 0x9c2C5fd7b07E95EE044DDeba0E97a665F142394f, but only tokenList names it"
       }
     },
     {
@@ -529,6 +745,13 @@
         "tokenList": [
           "0x3Cef98bb43d732E2F285eE605a8158cDE967D219"
         ]
+      },
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0x0D8775F648430679A709E98d2b0Cb6250d2887EF",
+        "canonical": "0x3Cef98bb43d732E2F285eE605a8158cDE967D219",
+        "detail": "the child chain manager's token for the Ethereum original",
+        "outcome": "the bridge names 0x3Cef98bb43d732E2F285eE605a8158cDE967D219, but coingecko names another token: 0xD9a1070f832Cc02ff9d839500EEf6E8c64983726"
       }
     },
     {
@@ -543,6 +766,13 @@
         ],
         "coinmarketcap": [],
         "tokenList": []
+      },
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0xBe9895146f7AF43049ca1c1AE358B0541Ea49704",
+        "canonical": null,
+        "detail": "the bridge maps the Ethereum token to nothing",
+        "outcome": "the bridge names no token for the Ethereum original"
       }
     },
     {
@@ -560,22 +790,6 @@
       }
     },
     {
-      "pair": "COMP / USD",
-      "directoryPath": "comp-usd",
-      "feed": "0x2A8758b7257102461BC958279054e372C2b1bDE6",
-      "quote": "USD",
-      "reason": "no address from coinmarketcap",
-      "candidates": {
-        "coingecko": [
-          "0x8505b9d2254A7Ae468c0E9dd10Ccea3A837aef5c"
-        ],
-        "coinmarketcap": [],
-        "tokenList": [
-          "0x8505b9d2254A7Ae468c0E9dd10Ccea3A837aef5c"
-        ]
-      }
-    },
-    {
       "pair": "CVX / USD",
       "directoryPath": "cvx-usd",
       "feed": "0x5ec151834040B4D453A1eA46aA634C1773b36084",
@@ -587,22 +801,13 @@
         "tokenList": [
           "0x4257EA7637c355F81616050CbB6a9b709fd72683"
         ]
-      }
-    },
-    {
-      "pair": "GRT / USD",
-      "directoryPath": "grt-usd",
-      "feed": "0x3FabBfb300B1e2D7c9B84512fe9D30aeDF24C410",
-      "quote": "USD",
-      "reason": "no address from coinmarketcap",
-      "candidates": {
-        "coingecko": [
-          "0x5fe2B58c013d7601147DcdD68C143A77499f5531"
-        ],
-        "coinmarketcap": [],
-        "tokenList": [
-          "0x5fe2B58c013d7601147DcdD68C143A77499f5531"
-        ]
+      },
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B",
+        "canonical": "0x4257EA7637c355F81616050CbB6a9b709fd72683",
+        "detail": "the child chain manager's token for the Ethereum original",
+        "outcome": "the bridge names 0x4257EA7637c355F81616050CbB6a9b709fd72683, but only tokenList names it"
       }
     },
     {
@@ -616,22 +821,6 @@
         "coinmarketcap": [],
         "tokenList": [
           "0xFA46dAf9909e116DBc40Fe1cC95fC0Bb1f452aBE"
-        ]
-      }
-    },
-    {
-      "pair": "MANA / USD",
-      "directoryPath": "mana-usd",
-      "feed": "0xA1CbF3Fe43BC3501e3Fc4b573e822c70e76A7512",
-      "quote": "USD",
-      "reason": "no address from coinmarketcap",
-      "candidates": {
-        "coingecko": [
-          "0xA1c57f48F0Deb89f569dFbE6E2B7f46D33606fD4"
-        ],
-        "coinmarketcap": [],
-        "tokenList": [
-          "0xA1c57f48F0Deb89f569dFbE6E2B7f46D33606fD4"
         ]
       }
     },
@@ -677,6 +866,13 @@
         "tokenList": [
           "0x6f8a06447Ff6FcF75d803135a7de15CE88C1d4ec"
         ]
+      },
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE",
+        "canonical": "0x6f8a06447Ff6FcF75d803135a7de15CE88C1d4ec",
+        "detail": "the child chain manager's token for the Ethereum original",
+        "outcome": "the bridge names 0x6f8a06447Ff6FcF75d803135a7de15CE88C1d4ec, but only tokenList names it"
       }
     },
     {
@@ -694,6 +890,48 @@
       }
     },
     {
+      "pair": "USDC / ETH",
+      "directoryPath": "usdc-eth",
+      "feed": "0xefb7e6be8356cCc6827799B6A7348eE674A80EaE",
+      "quote": "ETH",
+      "reason": "the three sources name 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359, but the canonical bridge maps the Ethereum USDC to 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174: two tokens claim the symbol",
+      "candidates": {
+        "token": [
+          "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
+        ],
+        "bridge": [
+          "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+        ]
+      },
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "canonical": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+        "detail": "the child chain manager's token for the Ethereum original"
+      }
+    },
+    {
+      "pair": "USDC / USD",
+      "directoryPath": "usdc-usd",
+      "feed": "0xfE4A8cc5b5B2366C1B58Bea3858e81843581b2F7",
+      "quote": "USD",
+      "reason": "the three sources name 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359, but the canonical bridge maps the Ethereum USDC to 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174: two tokens claim the symbol",
+      "candidates": {
+        "token": [
+          "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
+        ],
+        "bridge": [
+          "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+        ]
+      },
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "canonical": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+        "detail": "the child chain manager's token for the Ethereum original"
+      }
+    },
+    {
       "pair": "USDS / USD",
       "directoryPath": "usds-usd",
       "feed": "0x3B21a277babcB73b5a2325106FC04Df8AA1aC5b6",
@@ -705,6 +943,13 @@
           "0x2f1b1662A895C6Ba01a99DcAf56778E7d77e5609"
         ],
         "tokenList": []
+      },
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
+        "canonical": null,
+        "detail": "the bridge maps the Ethereum token to nothing",
+        "outcome": "the bridge names no token for the Ethereum original"
       }
     },
     {
@@ -721,6 +966,13 @@
         "tokenList": [
           "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"
         ]
+      },
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        "canonical": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
+        "detail": "the child chain manager's token for the Ethereum original",
+        "outcome": "the bridge names 0xc2132D05D31c914a87C6611C10748AEb04B58e8F, but coingecko names another token: 0x9417669fBF23357D2774e9D421307bd5eA1006d2"
       }
     },
     {
@@ -737,6 +989,13 @@
         "tokenList": [
           "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"
         ]
+      },
+      "bridgeProof": {
+        "method": "polygon-child-chain-manager",
+        "l1Token": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        "canonical": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
+        "detail": "the child chain manager's token for the Ethereum original",
+        "outcome": "the bridge names 0xc2132D05D31c914a87C6611C10748AEb04B58e8F, but coingecko names another token: 0x9417669fBF23357D2774e9D421307bd5eA1006d2"
       }
     },
     {
@@ -753,22 +1012,6 @@
           "0x03b54A6e9a984069379fae1a4fC4dBAE93B3bCCD"
         ],
         "tokenList": []
-      }
-    },
-    {
-      "pair": "YFI / ETH",
-      "directoryPath": "yfi-eth",
-      "feed": "0x9896A1eA7A00F5f32Ab131eBbeE07487B0af31D0",
-      "quote": "ETH",
-      "reason": "no address from coinmarketcap",
-      "candidates": {
-        "coingecko": [
-          "0xDA537104D6A5edd53c6fBba9A898708E465260b6"
-        ],
-        "coinmarketcap": [],
-        "tokenList": [
-          "0xDA537104D6A5edd53c6fBba9A898708E465260b6"
-        ]
       }
     }
   ],

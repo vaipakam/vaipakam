@@ -7,7 +7,7 @@
   "directory": {
     "url": "https://reference-data-directory.vercel.app/feeds-ethereum-mainnet-base-1.json",
     "sha256": "0x37e41779fbafec3d57a536c040c9c1132149a07053294625742ffea2bec0e482",
-    "date": 20261026
+    "date": 20261027
   },
   "sources": {
     "coingecko": {
@@ -22,8 +22,8 @@
       {
         "url": "https://static.optimism.io/optimism.tokenlist.json",
         "name": "Superchain Token List",
-        "version": "10.0.1770",
-        "sha256": "0x04daa3fff6c486946a7312685180f3297fe6545f489dadb5f70a128967bdedf3"
+        "version": "10.0.1771",
+        "sha256": "0xa51a12e3f6a59d79b45255e1b728f0dcd0d9f26a78118b7824326416d58f76fa"
       },
       {
         "url": "https://tokens.uniswap.org",
@@ -33,8 +33,52 @@
       }
     ]
   },
-  "checkedAtBlock": 53117851,
+  "checkedAtBlock": 53165191,
+  "bridge": {
+    "method": "op-standard-bridge-deposits",
+    "l1Bridge": "0x3154Cf16ccdb4C6d922629664174b904d80F2C35",
+    "l1CheckedAtBlock": 26285346,
+    "ethereumBindings": {
+      "sha256": "0x900dad71a2ae3428b7eb5a5076e7a3faba55fc92e6383ee1e8aac89e2d6ec848",
+      "checkedAtBlock": 26285345
+    },
+    "proved": 13,
+    "settled": [
+      "aave-usd",
+      "comp-usd",
+      "link-eth",
+      "link-usd",
+      "reth-eth",
+      "snx-usd",
+      "yfi-usd"
+    ]
+  },
   "bindings": [
+    {
+      "token": "0x63706e401c06ac8513145b7687A14804d17f814b",
+      "symbol": "AAVE",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0x3d6774EF702A10b20FCa8Ed40FC022f7E4938e07",
+      "feedDecimals": 8,
+      "pair": "AAVE / USD",
+      "heartbeat": 86400,
+      "category": "low",
+      "directoryPath": "aave-usd",
+      "agreedBy": [
+        "coingecko",
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9",
+        "canonical": "0x63706e401c06ac8513145b7687A14804d17f814b",
+        "detail": "holds 9999 bps of the standard bridge's balance of the Ethereum token"
+      },
+      "settledFrom": "no address from coinmarketcap"
+    },
     {
       "token": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
       "symbol": "CBBTC",
@@ -50,12 +94,19 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
+        "tokenList",
+        "bridge"
       ],
       "otherCandidates": {
         "coinmarketcap": [
           "0x805aF152eebc7e280628A0Bb30Dd916b5B7716fb"
         ]
+      },
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
+        "canonical": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
+        "detail": "holds 10000 bps of the standard bridge's balance of the Ethereum token"
       }
     },
     {
@@ -73,8 +124,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0xBe9895146f7AF43049ca1c1AE358B0541Ea49704",
+        "canonical": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
+        "detail": "holds 9999 bps of the standard bridge's balance of the Ethereum token"
+      }
     },
     {
       "token": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
@@ -91,8 +149,40 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0xBe9895146f7AF43049ca1c1AE358B0541Ea49704",
+        "canonical": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
+        "detail": "holds 9999 bps of the standard bridge's balance of the Ethereum token"
+      }
+    },
+    {
+      "token": "0x9e1028F5F1D5eDE59748FFceE5532509976840E0",
+      "symbol": "COMP",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0x9DDa783DE64A9d1A60c49ca761EbE528C35BA428",
+      "feedDecimals": 8,
+      "pair": "COMP / USD",
+      "heartbeat": 86400,
+      "category": "low",
+      "directoryPath": "comp-usd",
+      "agreedBy": [
+        "coingecko",
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0xc00e94Cb662C3520282E6f5717214004A7f26888",
+        "canonical": "0x9e1028F5F1D5eDE59748FFceE5532509976840E0",
+        "detail": "holds 9999 bps of the standard bridge's balance of the Ethereum token"
+      },
+      "settledFrom": "no address from coinmarketcap"
     },
     {
       "token": "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
@@ -109,8 +199,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        "canonical": "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
+        "detail": "holds 9999 bps of the standard bridge's balance of the Ethereum token"
+      }
     },
     {
       "token": "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed",
@@ -146,7 +243,13 @@
         "coingecko",
         "coinmarketcap",
         "tokenList"
-      ]
+      ],
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0x1aBaEA1f7C830bD89Acc67eC4af516284b1bC33c",
+        "canonical": null,
+        "detail": "the bridge holds none of the Ethereum token"
+      }
     },
     {
       "token": "0x4BfAa776991E85e5f8b1255461cbbd216cFc714f",
@@ -183,6 +286,56 @@
         "coinmarketcap",
         "tokenList"
       ]
+    },
+    {
+      "token": "0x88Fb150BDc53A65fe94Dea0c9BA0a6dAf8C6e196",
+      "symbol": "LINK",
+      "tokenDecimals": 18,
+      "quote": "ETH",
+      "quoteAddress": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+      "feed": "0xc5E65227fe3385B88468F9A01600017cDC9F3A12",
+      "feedDecimals": 18,
+      "pair": "LINK / ETH",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "link-eth",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0x514910771AF9Ca656af840dff83E8264EcF986CA",
+        "canonical": "0x88Fb150BDc53A65fe94Dea0c9BA0a6dAf8C6e196",
+        "detail": "holds 9997 bps of the standard bridge's balance of the Ethereum token"
+      },
+      "settledFrom": "no address from tokenList"
+    },
+    {
+      "token": "0x88Fb150BDc53A65fe94Dea0c9BA0a6dAf8C6e196",
+      "symbol": "LINK",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0x17CAb8FE31E32f08326e5E27412894e49B0f9D65",
+      "feedDecimals": 8,
+      "pair": "LINK / USD",
+      "heartbeat": 86400,
+      "category": "low",
+      "directoryPath": "link-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0x514910771AF9Ca656af840dff83E8264EcF986CA",
+        "canonical": "0x88Fb150BDc53A65fe94Dea0c9BA0a6dAf8C6e196",
+        "detail": "holds 9997 bps of the standard bridge's balance of the Ethereum token"
+      },
+      "settledFrom": "no address from tokenList"
     },
     {
       "token": "0x2Da56AcB9Ea78330f947bD57C54119Debda7AF71",
@@ -226,6 +379,31 @@
       ]
     },
     {
+      "token": "0xB6fe221Fe9EeF5aBa221c348bA20A1Bf5e73624c",
+      "symbol": "RETH",
+      "tokenDecimals": 18,
+      "quote": "ETH",
+      "quoteAddress": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+      "feed": "0xf397bF97280B488cA19ee3093E81C0a77F02e9a5",
+      "feedDecimals": 18,
+      "pair": "RETH / ETH",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "reth-eth",
+      "agreedBy": [
+        "coingecko",
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0xae78736Cd615f374D3085123A210448E74Fc6393",
+        "canonical": "0xB6fe221Fe9EeF5aBa221c348bA20A1Bf5e73624c",
+        "detail": "holds 9999 bps of the standard bridge's balance of the Ethereum token"
+      },
+      "settledFrom": "no address from coinmarketcap"
+    },
+    {
       "token": "0xaB36452DbAC151bE02b16Ca17d8919826072f64a",
       "symbol": "RSR",
       "tokenDecimals": 18,
@@ -240,8 +418,40 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0x320623b8E4fF03373931769A31Fc52A4E78B5d70",
+        "canonical": "0xaB36452DbAC151bE02b16Ca17d8919826072f64a",
+        "detail": "holds 10000 bps of the standard bridge's balance of the Ethereum token"
+      }
+    },
+    {
+      "token": "0x22e6966B799c4D5B13BE962E1D117b56327FDa66",
+      "symbol": "SNX",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0xe3971Ed6F1A5903321479Ef3148B5950c0612075",
+      "feedDecimals": 8,
+      "pair": "SNX / USD",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "snx-usd",
+      "agreedBy": [
+        "coingecko",
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0xC011a73ee8576Fb46F5E1c5751cA3B9Fe0af2a6F",
+        "canonical": "0x22e6966B799c4D5B13BE962E1D117b56327FDa66",
+        "detail": "holds 10000 bps of the standard bridge's balance of the Ethereum token"
+      },
+      "settledFrom": "no address from coinmarketcap"
     },
     {
       "token": "0x236aa50979D5f3De3Bd1Eeb40E81137F22ab794b",
@@ -258,8 +468,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0x18084fbA666a33d37592fA2633fD49a74DD93a88",
+        "canonical": "0x236aa50979D5f3De3Bd1Eeb40E81137F22ab794b",
+        "detail": "holds 10000 bps of the standard bridge's balance of the Ethereum token"
+      }
     },
     {
       "token": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
@@ -277,7 +494,13 @@
         "coingecko",
         "coinmarketcap",
         "tokenList"
-      ]
+      ],
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "canonical": null,
+        "detail": "no candidate holds a majority of the standard bridge's balance of the Ethereum token"
+      }
     },
     {
       "token": "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2",
@@ -294,8 +517,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        "canonical": "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2",
+        "detail": "holds 9999 bps of the standard bridge's balance of the Ethereum token"
+      }
     },
     {
       "token": "0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b",
@@ -352,6 +582,31 @@
       ]
     },
     {
+      "token": "0x9EaF8C1E34F05a589EDa6BAfdF391Cf6Ad3CB239",
+      "symbol": "YFI",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0xD40e758b5eC80820B68DFC302fc5Ce1239083548",
+      "feedDecimals": 8,
+      "pair": "YFI / USD",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "yfi-usd",
+      "agreedBy": [
+        "coingecko",
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e",
+        "canonical": "0x9EaF8C1E34F05a589EDa6BAfdF391Cf6Ad3CB239",
+        "detail": "holds 10000 bps of the standard bridge's balance of the Ethereum token"
+      },
+      "settledFrom": "no address from coinmarketcap"
+    },
+    {
       "token": "0x6985884C4392D348587B19cb9eAAf157F13271cd",
       "symbol": "ZRO",
       "tokenDecimals": 18,
@@ -372,22 +627,6 @@
   ],
   "manual": [],
   "review": [
-    {
-      "pair": "AAVE / USD",
-      "directoryPath": "aave-usd",
-      "feed": "0x3d6774EF702A10b20FCa8Ed40FC022f7E4938e07",
-      "quote": "USD",
-      "reason": "no address from coinmarketcap",
-      "candidates": {
-        "coingecko": [
-          "0x63706e401c06ac8513145b7687A14804d17f814b"
-        ],
-        "coinmarketcap": [],
-        "tokenList": [
-          "0x63706e401c06ac8513145b7687A14804d17f814b"
-        ]
-      }
-    },
     {
       "pair": "AERO / USD",
       "directoryPath": "aero-usd",
@@ -438,22 +677,6 @@
       }
     },
     {
-      "pair": "COMP / USD",
-      "directoryPath": "comp-usd",
-      "feed": "0x9DDa783DE64A9d1A60c49ca761EbE528C35BA428",
-      "quote": "USD",
-      "reason": "no address from coinmarketcap",
-      "candidates": {
-        "coingecko": [
-          "0x9e1028F5F1D5eDE59748FFceE5532509976840E0"
-        ],
-        "coinmarketcap": [],
-        "tokenList": [
-          "0x9e1028F5F1D5eDE59748FFceE5532509976840E0"
-        ]
-      }
-    },
-    {
       "pair": "GHO / USD",
       "directoryPath": "gho-usd",
       "feed": "0x42868EFcee13C0E71af89c04fF7d96f5bec479b0",
@@ -484,38 +707,6 @@
       }
     },
     {
-      "pair": "LINK / ETH",
-      "directoryPath": "link-eth",
-      "feed": "0xc5E65227fe3385B88468F9A01600017cDC9F3A12",
-      "quote": "ETH",
-      "reason": "no address from tokenList",
-      "candidates": {
-        "coingecko": [
-          "0x88Fb150BDc53A65fe94Dea0c9BA0a6dAf8C6e196"
-        ],
-        "coinmarketcap": [
-          "0x88Fb150BDc53A65fe94Dea0c9BA0a6dAf8C6e196"
-        ],
-        "tokenList": []
-      }
-    },
-    {
-      "pair": "LINK / USD",
-      "directoryPath": "link-usd",
-      "feed": "0x17CAb8FE31E32f08326e5E27412894e49B0f9D65",
-      "quote": "USD",
-      "reason": "no address from tokenList",
-      "candidates": {
-        "coingecko": [
-          "0x88Fb150BDc53A65fe94Dea0c9BA0a6dAf8C6e196"
-        ],
-        "coinmarketcap": [
-          "0x88Fb150BDc53A65fe94Dea0c9BA0a6dAf8C6e196"
-        ],
-        "tokenList": []
-      }
-    },
-    {
       "pair": "MLN / USD",
       "directoryPath": "mln-usd",
       "feed": "0x122b5334A8b55861dBc6729c294451471FbF318D",
@@ -527,6 +718,13 @@
         "tokenList": [
           "0x7C298664BD6582f6f264c2Cb5a4B9cC09b6E3889"
         ]
+      },
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0xec67005c4E498Ec7f55E092bd1d35cbC47C91892",
+        "canonical": null,
+        "detail": "the bridge holds none of the Ethereum token",
+        "outcome": "the bridge names no token for the Ethereum original"
       }
     },
     {
@@ -567,22 +765,6 @@
       }
     },
     {
-      "pair": "RETH / ETH",
-      "directoryPath": "reth-eth",
-      "feed": "0xf397bF97280B488cA19ee3093E81C0a77F02e9a5",
-      "quote": "ETH",
-      "reason": "no address from coinmarketcap",
-      "candidates": {
-        "coingecko": [
-          "0xB6fe221Fe9EeF5aBa221c348bA20A1Bf5e73624c"
-        ],
-        "coinmarketcap": [],
-        "tokenList": [
-          "0xB6fe221Fe9EeF5aBa221c348bA20A1Bf5e73624c"
-        ]
-      }
-    },
-    {
       "pair": "RLUSD / USD",
       "directoryPath": "rlusd-usd",
       "feed": "0x900E653c6b25eCf1eF43525fcCC5263E654085cc",
@@ -594,6 +776,13 @@
           "0x8d58C0C60B8D6b88Fa98B291a646dB34d0F98258"
         ],
         "tokenList": []
+      },
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0x8292Bb45bf1Ee4d140127049757C2E0fF06317eD",
+        "canonical": null,
+        "detail": "the bridge holds none of the Ethereum token",
+        "outcome": "the bridge names no token for the Ethereum original"
       }
     },
     {
@@ -612,22 +801,13 @@
           "0xbfFb921F1a95727E5Db5c36bCb9080056f0C5761"
         ],
         "tokenList": []
-      }
-    },
-    {
-      "pair": "SNX / USD",
-      "directoryPath": "snx-usd",
-      "feed": "0xe3971Ed6F1A5903321479Ef3148B5950c0612075",
-      "quote": "USD",
-      "reason": "no address from coinmarketcap",
-      "candidates": {
-        "coingecko": [
-          "0x22e6966B799c4D5B13BE962E1D117b56327FDa66"
-        ],
-        "coinmarketcap": [],
-        "tokenList": [
-          "0x22e6966B799c4D5B13BE962E1D117b56327FDa66"
-        ]
+      },
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE",
+        "canonical": null,
+        "detail": "no candidate holds a majority of the standard bridge's balance of the Ethereum token",
+        "outcome": "the bridge names no token for the Ethereum original"
       }
     },
     {
@@ -656,6 +836,13 @@
         ],
         "coinmarketcap": [],
         "tokenList": []
+      },
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0xAf5191B0De278C7286d6C7CC6ab6BB8A73bA2Cd6",
+        "canonical": null,
+        "detail": "the bridge holds none of the Ethereum token",
+        "outcome": "the bridge names no token for the Ethereum original"
       }
     },
     {
@@ -735,6 +922,13 @@
           "0x820C137fa70C8691f0e44Dc420a5e53c168921Dc"
         ],
         "tokenList": []
+      },
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
+        "canonical": null,
+        "detail": "the bridge holds none of the Ethereum token",
+        "outcome": "the bridge names no token for the Ethereum original"
       }
     },
     {
@@ -767,22 +961,13 @@
         "tokenList": [
           "0x4c94DE27c94962Dba6Ebb77924Ac54189db75EFA"
         ]
-      }
-    },
-    {
-      "pair": "YFI / USD",
-      "directoryPath": "yfi-usd",
-      "feed": "0xD40e758b5eC80820B68DFC302fc5Ce1239083548",
-      "quote": "USD",
-      "reason": "no address from coinmarketcap",
-      "candidates": {
-        "coingecko": [
-          "0x9EaF8C1E34F05a589EDa6BAfdF391Cf6Ad3CB239"
-        ],
-        "coinmarketcap": [],
-        "tokenList": [
-          "0x9EaF8C1E34F05a589EDa6BAfdF391Cf6Ad3CB239"
-        ]
+      },
+      "bridgeProof": {
+        "method": "op-standard-bridge-deposits",
+        "l1Token": "0xCd5fE23C85820F7B72D0926FC9b05b43E359b7ee",
+        "canonical": "0x4c94DE27c94962Dba6Ebb77924Ac54189db75EFA",
+        "detail": "holds 10000 bps of the standard bridge's balance of the Ethereum token",
+        "outcome": "the bridge names 0x4c94DE27c94962Dba6Ebb77924Ac54189db75EFA, but coingecko and coinmarketcap name another token: 0x04C0599Ae5A44757c0af6F9eC3b93da8976c150A"
       }
     }
   ],

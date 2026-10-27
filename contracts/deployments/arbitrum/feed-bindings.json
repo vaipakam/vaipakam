@@ -6,8 +6,8 @@
   },
   "directory": {
     "url": "https://reference-data-directory.vercel.app/feeds-ethereum-mainnet-arbitrum-1.json",
-    "sha256": "0xe7dc0b17345ee36a8312ca89ef4baadd5afdde7ab55db86315b42199ff02a49a",
-    "date": 20261026
+    "sha256": "0xde8581721065beb7356cfd38414e1fb226f7cef23a1c2596f2180d0c68648712",
+    "date": 20261027
   },
   "sources": {
     "coingecko": {
@@ -23,17 +23,34 @@
         "url": "https://tokenlist.arbitrum.io/ArbTokenLists/arbed_arb_whitelist_era.json",
         "name": "Arb Whitelist Era",
         "version": "2.0.0",
-        "sha256": "0xe18a5ffc7ddb2cf1a3150448cb174a60aa9f177e19f70836294c72963d0bcb75"
+        "sha256": "0xee7a0574011df817ec5989d86090a62d4620232ae4300be9d9fc282542e16af2"
       },
       {
         "url": "https://tokenlist.arbitrum.io/ArbTokenLists/arbed_uniswap_labs.json",
         "name": "Arbed Uniswap Labs 42161",
         "version": "75.1.0",
-        "sha256": "0x1b5d3f142c040afd4982a64efbb883967748dae62e182f02d62c876bfc2a1488"
+        "sha256": "0x32210a8b313b8dd9c3c74c6e51d24ac174f6106ccde8d525a1cfd211577af9d0"
       }
     ]
   },
-  "checkedAtBlock": 518466409,
+  "checkedAtBlock": 518797140,
+  "bridge": {
+    "method": "arbitrum-gateway-router",
+    "contract": "0x5288c571Fd7aD117beA99bF60FE0846C4E84F933",
+    "checkedAtBlock": 518797140,
+    "ethereumBindings": {
+      "sha256": "0x900dad71a2ae3428b7eb5a5076e7a3faba55fc92e6383ee1e8aac89e2d6ec848",
+      "checkedAtBlock": 26285345
+    },
+    "proved": 29,
+    "settled": [
+      "cbeth-eth",
+      "comp-usd",
+      "crvusd-usd",
+      "rsr-usd",
+      "weeth-eth"
+    ]
+  },
   "bindings": [
     {
       "token": "0x6314C31A7a1652cE482cffe247E9CB7c3f4BB9aF",
@@ -50,8 +67,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0x111111111117dC0aa78b770fA6A738034120C302",
+        "canonical": "0x6314C31A7a1652cE482cffe247E9CB7c3f4BB9aF",
+        "detail": "the gateway router's token for the Ethereum original"
+      }
     },
     {
       "token": "0xba5DdD1f9d7F570dc94a51479a000E3BCE967196",
@@ -68,8 +92,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9",
+        "canonical": "0xba5DdD1f9d7F570dc94a51479a000E3BCE967196",
+        "detail": "the gateway router's token for the Ethereum original"
+      }
     },
     {
       "token": "0x912CE59144191C1204E64559FE8253a0e49E6548",
@@ -86,8 +117,65 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0xB50721BCf8d664c30412Cfbc6cf7a15145234ad1",
+        "canonical": "0x912CE59144191C1204E64559FE8253a0e49E6548",
+        "detail": "the gateway router's token for the Ethereum original"
+      }
+    },
+    {
+      "token": "0x1DEBd73E752bEaF79865Fd6446b0c970EaE7732f",
+      "symbol": "CBETH",
+      "tokenDecimals": 18,
+      "quote": "ETH",
+      "quoteAddress": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+      "feed": "0xa668682974E3f121185a3cD94f00322beC674275",
+      "feedDecimals": 18,
+      "pair": "CBETH / ETH",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "cbeth-eth",
+      "agreedBy": [
+        "coingecko",
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0xBe9895146f7AF43049ca1c1AE358B0541Ea49704",
+        "canonical": "0x1DEBd73E752bEaF79865Fd6446b0c970EaE7732f",
+        "detail": "the gateway router's token for the Ethereum original"
+      },
+      "settledFrom": "no address from coinmarketcap"
+    },
+    {
+      "token": "0x354A6dA3fcde098F8389cad84b0182725c6C91dE",
+      "symbol": "COMP",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0xe7C53FFd03Eb6ceF7d208bC4C13446c76d1E5884",
+      "feedDecimals": 8,
+      "pair": "COMP / USD",
+      "heartbeat": 3600,
+      "category": "low",
+      "directoryPath": "comp-usd",
+      "agreedBy": [
+        "coingecko",
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0xc00e94Cb662C3520282E6f5717214004A7f26888",
+        "canonical": "0x354A6dA3fcde098F8389cad84b0182725c6C91dE",
+        "detail": "the gateway router's token for the Ethereum original"
+      },
+      "settledFrom": "no address from coinmarketcap"
     },
     {
       "token": "0x11cDb42B0EB46D95f990BeDD4695A6e3fA034978",
@@ -104,8 +192,40 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0xD533a949740bb3306d119CC777fa900bA034cd52",
+        "canonical": "0x11cDb42B0EB46D95f990BeDD4695A6e3fA034978",
+        "detail": "the gateway router's token for the Ethereum original"
+      }
+    },
+    {
+      "token": "0x498Bf2B1e120FeD3ad3D42EA2165E9b73f99C1e5",
+      "symbol": "CRVUSD",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0x0a32255dd4BB6177C994bAAc73E0606fDD568f66",
+      "feedDecimals": 8,
+      "pair": "CRVUSD / USD",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "crvusd-usd",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E",
+        "canonical": "0x498Bf2B1e120FeD3ad3D42EA2165E9b73f99C1e5",
+        "detail": "the gateway router's token for the Ethereum original"
+      },
+      "settledFrom": "no address from tokenList"
     },
     {
       "token": "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1",
@@ -122,8 +242,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        "canonical": "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1",
+        "detail": "the gateway router's token for the Ethereum original"
+      }
     },
     {
       "token": "0x9623063377AD1B27544C965cCd7342f7EA7e88C7",
@@ -140,8 +267,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0xc944E90C64B2c07662A292be6244BDf05Cda44a7",
+        "canonical": "0x9623063377AD1B27544C965cCd7342f7EA7e88C7",
+        "detail": "the gateway router's token for the Ethereum original"
+      }
     },
     {
       "token": "0x13Ad51ed4F1B7e9Dc168d8a00cB3f4dDD85EfA60",
@@ -158,8 +292,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32",
+        "canonical": "0x13Ad51ed4F1B7e9Dc168d8a00cB3f4dDD85EfA60",
+        "detail": "the gateway router's token for the Ethereum original"
+      }
     },
     {
       "token": "0xf97f4df75117a78c1A5a0DBb814Af92458539FB4",
@@ -176,8 +317,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0x514910771AF9Ca656af840dff83E8264EcF986CA",
+        "canonical": "0xf97f4df75117a78c1A5a0DBb814Af92458539FB4",
+        "detail": "the gateway router's token for the Ethereum original"
+      }
     },
     {
       "token": "0xf97f4df75117a78c1A5a0DBb814Af92458539FB4",
@@ -194,8 +342,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0x514910771AF9Ca656af840dff83E8264EcF986CA",
+        "canonical": "0xf97f4df75117a78c1A5a0DBb814Af92458539FB4",
+        "detail": "the gateway router's token for the Ethereum original"
+      }
     },
     {
       "token": "0x539bdE0d7Dbd336b79148AA742883198BBF60342",
@@ -239,6 +394,31 @@
       ]
     },
     {
+      "token": "0xCa5Ca9083702c56b481D1eec86F1776FDbd2e594",
+      "symbol": "RSR",
+      "tokenDecimals": 18,
+      "quote": "USD",
+      "quoteAddress": "0x0000000000000000000000000000000000000348",
+      "feed": "0xcfF9349ec6d027f20fC9360117fef4a1Ad38B488",
+      "feedDecimals": 8,
+      "pair": "RSR / USD",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "rsr-usd",
+      "agreedBy": [
+        "coingecko",
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0x320623b8E4fF03373931769A31Fc52A4E78B5d70",
+        "canonical": "0xCa5Ca9083702c56b481D1eec86F1776FDbd2e594",
+        "detail": "the gateway router's token for the Ethereum original"
+      },
+      "settledFrom": "no address from coinmarketcap"
+    },
+    {
       "token": "0x3E6648C5a70A150A88bCE65F4aD4d506Fe15d2AF",
       "symbol": "SPELL",
       "tokenDecimals": 18,
@@ -253,8 +433,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0x090185f2135308BaD17527004364eBcC2D37e5F6",
+        "canonical": "0x3E6648C5a70A150A88bCE65F4aD4d506Fe15d2AF",
+        "detail": "the gateway router's token for the Ethereum original"
+      }
     },
     {
       "token": "0xd4d42F0b6DEF4CE0383636770eF773390d85c61A",
@@ -271,8 +458,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0x6B3595068778DD592e39A122f4f5a5cF09C90fE2",
+        "canonical": "0xd4d42F0b6DEF4CE0383636770eF773390d85c61A",
+        "detail": "the gateway router's token for the Ethereum original"
+      }
     },
     {
       "token": "0xFa7F8980b0f1E64A2062791cc3b0871572f1F7f0",
@@ -289,8 +483,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
+        "canonical": "0xFa7F8980b0f1E64A2062791cc3b0871572f1F7f0",
+        "detail": "the gateway router's token for the Ethereum original"
+      }
     },
     {
       "token": "0x6491c05A82219b8D1479057361ff1654749b876b",
@@ -307,7 +508,8 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
+        "tokenList",
+        "bridge"
       ],
       "otherCandidates": {
         "coingecko": [
@@ -317,6 +519,12 @@
           "0x2Ea0bE86990E8Dac0D09e4316Bb92086F304622d",
           "0xD74f5255D557944cf7Dd0E45FF521520002D5748"
         ]
+      },
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
+        "canonical": "0x6491c05A82219b8D1479057361ff1654749b876b",
+        "detail": "the gateway router's token for the Ethereum original"
       }
     },
     {
@@ -336,6 +544,31 @@
         "coinmarketcap",
         "tokenList"
       ]
+    },
+    {
+      "token": "0x35751007a407ca6FEFfE80b3cB397736D2cf4dbe",
+      "symbol": "WEETH",
+      "tokenDecimals": 18,
+      "quote": "ETH",
+      "quoteAddress": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+      "feed": "0xE141425bc1594b8039De6390db1cDaf4397EA22b",
+      "feedDecimals": 18,
+      "pair": "weETH / ETH",
+      "heartbeat": 86400,
+      "category": "medium",
+      "directoryPath": "weeth-eth",
+      "agreedBy": [
+        "coingecko",
+        "coinmarketcap",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0xCd5fE23C85820F7B72D0926FC9b05b43E359b7ee",
+        "canonical": "0x35751007a407ca6FEFfE80b3cB397736D2cf4dbe",
+        "detail": "the gateway router's token for the Ethereum original"
+      },
+      "settledFrom": "no address from tokenList"
     },
     {
       "token": "0xcAFcD85D8ca7Ad1e1C6F82F651fA15E33AEfD07b",
@@ -370,8 +603,15 @@
       "agreedBy": [
         "coingecko",
         "coinmarketcap",
-        "tokenList"
-      ]
+        "tokenList",
+        "bridge"
+      ],
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e",
+        "canonical": "0x82e3A8F066a6989666b031d916c43672085b1582",
+        "detail": "the gateway router's token for the Ethereum original"
+      }
     }
   ],
   "manual": [],
@@ -390,6 +630,13 @@
         "tokenList": [
           "0x74885b4D524d497261259B38900f54e6dbAd2210"
         ]
+      },
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0x4d224452801ACEd8B2F0aebE155379bb5D594381",
+        "canonical": "0x74885b4D524d497261259B38900f54e6dbAd2210",
+        "detail": "the gateway router's token for the Ethereum original",
+        "outcome": "the bridge names 0x74885b4D524d497261259B38900f54e6dbAd2210, but coingecko names another token: 0x7f9FBf9bDd3F4105C478b996B648FE6e828a1e98"
       }
     },
     {
@@ -461,38 +708,6 @@
       }
     },
     {
-      "pair": "CBETH / ETH",
-      "directoryPath": "cbeth-eth",
-      "feed": "0xa668682974E3f121185a3cD94f00322beC674275",
-      "quote": "ETH",
-      "reason": "no address from coinmarketcap",
-      "candidates": {
-        "coingecko": [
-          "0x1DEBd73E752bEaF79865Fd6446b0c970EaE7732f"
-        ],
-        "coinmarketcap": [],
-        "tokenList": [
-          "0x1DEBd73E752bEaF79865Fd6446b0c970EaE7732f"
-        ]
-      }
-    },
-    {
-      "pair": "COMP / USD",
-      "directoryPath": "comp-usd",
-      "feed": "0xe7C53FFd03Eb6ceF7d208bC4C13446c76d1E5884",
-      "quote": "USD",
-      "reason": "no address from coinmarketcap",
-      "candidates": {
-        "coingecko": [
-          "0x354A6dA3fcde098F8389cad84b0182725c6C91dE"
-        ],
-        "coinmarketcap": [],
-        "tokenList": [
-          "0x354A6dA3fcde098F8389cad84b0182725c6C91dE"
-        ]
-      }
-    },
-    {
       "pair": "CRO / USD",
       "directoryPath": "cro-usd",
       "feed": "0xea320E4d688B143A3bFBF1b4a5cc4B986fCa086c",
@@ -504,22 +719,6 @@
         "tokenList": [
           "0x8ea3156f834A0dfC78F1A5304fAC2CdA676F354C"
         ]
-      }
-    },
-    {
-      "pair": "CRVUSD / USD",
-      "directoryPath": "crvusd-usd",
-      "feed": "0x0a32255dd4BB6177C994bAAc73E0606fDD568f66",
-      "quote": "USD",
-      "reason": "no address from tokenList",
-      "candidates": {
-        "coingecko": [
-          "0x498Bf2B1e120FeD3ad3D42EA2165E9b73f99C1e5"
-        ],
-        "coinmarketcap": [
-          "0x498Bf2B1e120FeD3ad3D42EA2165E9b73f99C1e5"
-        ],
-        "tokenList": []
       }
     },
     {
@@ -536,6 +735,13 @@
         "tokenList": [
           "0xaAFcFD42c9954C6689ef1901e03db742520829c5"
         ]
+      },
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B",
+        "canonical": "0xaAFcFD42c9954C6689ef1901e03db742520829c5",
+        "detail": "the gateway router's token for the Ethereum original",
+        "outcome": "the bridge names 0xaAFcFD42c9954C6689ef1901e03db742520829c5, but coingecko names another token: 0x0e929101c4fA7c91EAA64d7216161ba3eeE387FE"
       }
     },
     {
@@ -581,6 +787,13 @@
           "0xBb0289E4d059A14548b451E9507580fb80f0511B"
         ],
         "tokenList": []
+      },
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0x1aBaEA1f7C830bD89Acc67eC4af516284b1bC33c",
+        "canonical": "0x863708032B5c328e11aBcbC0DF9D79C71Fc52a48",
+        "detail": "the gateway router's token for the Ethereum original",
+        "outcome": "the bridge names 0x863708032B5c328e11aBcbC0DF9D79C71Fc52a48, but coinmarketcap names another token: 0x6fb0252CF5F27cDacDE3A37164301bFc632fa85f, 0xBb0289E4d059A14548b451E9507580fb80f0511B"
       }
     },
     {
@@ -688,6 +901,13 @@
         "tokenList": [
           "0xfEb4DfC8C4Cf7Ed305bb08065D08eC6ee6728429"
         ]
+      },
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0x45804880De22913dAFE09f4980848ECE6EcbAf78",
+        "canonical": "0xfEb4DfC8C4Cf7Ed305bb08065D08eC6ee6728429",
+        "detail": "the gateway router's token for the Ethereum original",
+        "outcome": "the bridge names 0xfEb4DfC8C4Cf7Ed305bb08065D08eC6ee6728429, but only tokenList names it"
       }
     },
     {
@@ -754,6 +974,13 @@
         "tokenList": [
           "0x327006c8712FE0AbdbbD55B7999DB39b0967342E"
         ]
+      },
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0x6c3ea9036406852006290770BEdFcAbA0e23A0e8",
+        "canonical": "0x327006c8712FE0AbdbbD55B7999DB39b0967342E",
+        "detail": "the gateway router's token for the Ethereum original",
+        "outcome": "the bridge names 0x327006c8712FE0AbdbbD55B7999DB39b0967342E, but coingecko and coinmarketcap name another token: 0x46850aD61C2B7d64d08c9C754F45254596696984"
       }
     },
     {
@@ -784,6 +1011,13 @@
         ],
         "coinmarketcap": [],
         "tokenList": []
+      },
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0xae78736Cd615f374D3085123A210448E74Fc6393",
+        "canonical": "0xEC70Dcb4A1EFa46b8F2D97C310C9c4790ba5ffA8",
+        "detail": "the gateway router's token for the Ethereum original",
+        "outcome": "the bridge names 0xEC70Dcb4A1EFa46b8F2D97C310C9c4790ba5ffA8, but only coingecko names it"
       }
     },
     {
@@ -801,22 +1035,6 @@
       }
     },
     {
-      "pair": "RSR / USD",
-      "directoryPath": "rsr-usd",
-      "feed": "0xcfF9349ec6d027f20fC9360117fef4a1Ad38B488",
-      "quote": "USD",
-      "reason": "no address from coinmarketcap",
-      "candidates": {
-        "coingecko": [
-          "0xCa5Ca9083702c56b481D1eec86F1776FDbd2e594"
-        ],
-        "coinmarketcap": [],
-        "tokenList": [
-          "0xCa5Ca9083702c56b481D1eec86F1776FDbd2e594"
-        ]
-      }
-    },
-    {
       "pair": "SHIB / ETH",
       "directoryPath": "shib-eth",
       "feed": "0x639b7cD102A1c5BaB71c54f88D41E894215c54E2",
@@ -828,6 +1046,13 @@
         "tokenList": [
           "0x5033833c9fe8B9d3E09EEd2f73d2aaF7E3872fd1"
         ]
+      },
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE",
+        "canonical": "0x5033833c9fe8B9d3E09EEd2f73d2aaF7E3872fd1",
+        "detail": "the gateway router's token for the Ethereum original",
+        "outcome": "the bridge names 0x5033833c9fe8B9d3E09EEd2f73d2aaF7E3872fd1, but only tokenList names it"
       }
     },
     {
@@ -842,6 +1067,13 @@
         "tokenList": [
           "0x5033833c9fe8B9d3E09EEd2f73d2aaF7E3872fd1"
         ]
+      },
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE",
+        "canonical": "0x5033833c9fe8B9d3E09EEd2f73d2aaF7E3872fd1",
+        "detail": "the gateway router's token for the Ethereum original",
+        "outcome": "the bridge names 0x5033833c9fe8B9d3E09EEd2f73d2aaF7E3872fd1, but only tokenList names it"
       }
     },
     {
@@ -856,6 +1088,13 @@
         "tokenList": [
           "0xcBA56Cd8216FCBBF3fA6DF6137F3147cBcA37D60"
         ]
+      },
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0xC011a73ee8576Fb46F5E1c5751cA3B9Fe0af2a6F",
+        "canonical": "0xcBA56Cd8216FCBBF3fA6DF6137F3147cBcA37D60",
+        "detail": "the gateway router's token for the Ethereum original",
+        "outcome": "the bridge names 0xcBA56Cd8216FCBBF3fA6DF6137F3147cBcA37D60, but only tokenList names it"
       }
     },
     {
@@ -904,6 +1143,13 @@
         "tokenList": [
           "0x7E2a1eDeE171C5B19E6c54D73752396C0A572594"
         ]
+      },
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0x18084fbA666a33d37592fA2633fD49a74DD93a88",
+        "canonical": "0x7E2a1eDeE171C5B19E6c54D73752396C0A572594",
+        "detail": "the gateway router's token for the Ethereum original",
+        "outcome": "the bridge names 0x7E2a1eDeE171C5B19E6c54D73752396C0A572594, but coingecko and coinmarketcap name another token: 0x6c84a8f1c29108F47a79964b5Fe888D4f4D0dE40"
       }
     },
     {
@@ -918,6 +1164,13 @@
         "tokenList": [
           "0x7550dE0A4b9Fb8CAbA8c32E72Ee356AFdd217A33"
         ]
+      },
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0x8d0D000Ee44948FC98c9B98A4FA4921476f08B0d",
+        "canonical": "0x7550dE0A4b9Fb8CAbA8c32E72Ee356AFdd217A33",
+        "detail": "the gateway router's token for the Ethereum original",
+        "outcome": "the bridge names 0x7550dE0A4b9Fb8CAbA8c32E72Ee356AFdd217A33, but only tokenList names it"
       }
     },
     {
@@ -934,6 +1187,13 @@
           "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
         ],
         "tokenList": []
+      },
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "canonical": "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8",
+        "detail": "the gateway router's token for the Ethereum original",
+        "outcome": "the bridge names 0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8, but coingecko and coinmarketcap name another token: 0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
       }
     },
     {
@@ -967,6 +1227,13 @@
           "0x82248D53De2B7608cAF53978A8E8C238DC42403a"
         ],
         "tokenList": []
+      },
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0xe343167631d89B6Ffc58B88d6b7fB0228795491D",
+        "canonical": null,
+        "detail": "the bridge's address for the Ethereum token, 0xa8Ce132d85f5eB199E997415D3cf15ca79222Da6, holds no token",
+        "outcome": "the bridge names no token for the Ethereum original"
       }
     },
     {
@@ -981,22 +1248,13 @@
           "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9"
         ],
         "tokenList": []
-      }
-    },
-    {
-      "pair": "weETH / ETH",
-      "directoryPath": "weeth-eth",
-      "feed": "0xE141425bc1594b8039De6390db1cDaf4397EA22b",
-      "quote": "ETH",
-      "reason": "no address from tokenList",
-      "candidates": {
-        "coingecko": [
-          "0x35751007a407ca6FEFfE80b3cB397736D2cf4dbe"
-        ],
-        "coinmarketcap": [
-          "0x35751007a407ca6FEFfE80b3cB397736D2cf4dbe"
-        ],
-        "tokenList": []
+      },
+      "bridgeProof": {
+        "method": "arbitrum-gateway-router",
+        "l1Token": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        "canonical": null,
+        "detail": "the bridge maps the Ethereum token to nothing",
+        "outcome": "the bridge names no token for the Ethereum original"
       }
     },
     {
@@ -1874,6 +2132,11 @@
       "pair": "BTC / USD",
       "directoryPath": "btc-usd-svr",
       "reason": "an SVR variant; the standard proxy is used"
+    },
+    {
+      "pair": "btc-usd-soak",
+      "directoryPath": "btc-usd-soak",
+      "reason": "not a reference price feed (no type)"
     },
     {
       "pair": "BTC.B/USD-Streams-DexPrice-mainnet-production",
@@ -5326,9 +5589,39 @@
       "reason": "a Equities reference rate, not a token"
     },
     {
+      "pair": "Updated-AMC/USD-Streams-RegularHoursEquityPrice-2-mainnet-production",
+      "directoryPath": "updated-amc-usd-streams-regularhoursequityprice-2-mainnet-production",
+      "reason": "a Equities reference rate, not a token"
+    },
+    {
+      "pair": "Updated-BIL/USD-Streams-RegularHoursEquityPrice-2-mainnet-production",
+      "directoryPath": "updated-bil-usd-streams-regularhoursequityprice-2-mainnet-production",
+      "reason": "a Equities reference rate, not a token"
+    },
+    {
       "pair": "Updated-CRWV/USD-Streams-OvernightHoursEquityPrice-mainnet-production",
       "directoryPath": "updated-crwv-usd-streams-overnighthoursequityprice-mainnet-production",
       "reason": "a Equities reference rate, not a token"
+    },
+    {
+      "pair": "Updated-DEJAAA-NAV-SmartData-NetAssetValue-mainnet-production",
+      "directoryPath": "updated-dejaaa-nav-smartdata-netassetvalue-mainnet-production",
+      "reason": "not a reference price feed (NAVLink / Reference)"
+    },
+    {
+      "pair": "Updated-deJAAA/USD-Streams-ExchangeRate-mainnet-production",
+      "directoryPath": "updated-dejaaa-usd-streams-exchangerate-mainnet-production",
+      "reason": "not a reference price feed (SmartData / Reference)"
+    },
+    {
+      "pair": "Updated-deJTRSY-NAV-SmartData-NetAssetValue-mainnet-production",
+      "directoryPath": "updated-dejtrsy-nav-smartdata-netassetvalue-mainnet-production",
+      "reason": "not a reference price feed (NAVLink / Reference)"
+    },
+    {
+      "pair": "Updated-deJTRSY/USD-Streams-ExchangeRate-mainnet-production",
+      "directoryPath": "updated-dejtrsy-usd-streams-exchangerate-mainnet-production",
+      "reason": "not a reference price feed (SmartData / Reference)"
     },
     {
       "pair": "Updated-DELL/USD-Streams-RegularHoursEquityPrice-mainnet-production",
@@ -5336,14 +5629,34 @@
       "reason": "a Equities reference rate, not a token"
     },
     {
+      "pair": "Updated-NGAS/USD-Streams-PerpsPrice-mainnet-production",
+      "directoryPath": "updated-ngas-usd-streams-perpsprice-mainnet-production",
+      "reason": "a Futures reference rate, not a token"
+    },
+    {
       "pair": "Updated-SGOV/USD-Streams-RegularHoursEquityPrice-mainnet-production",
       "directoryPath": "updated-sgov-usd-streams-regularhoursequityprice-mainnet-production",
       "reason": "a Equities reference rate, not a token"
     },
     {
+      "pair": "Updated-SUSDINFRA/USDINFRA-Streams-ExchangeRate-mainnet-production",
+      "directoryPath": "updated-susdinfra-usdinfra-streams-exchangerate-mainnet-production",
+      "reason": "not a reference price feed (Price / Exchange rate)"
+    },
+    {
+      "pair": "Updated-USD/BRL-Streams-ForexPrice-mainnet-production",
+      "directoryPath": "updated-usd-brl-streams-forexprice-mainnet-production",
+      "reason": "a Forex reference rate, not a token"
+    },
+    {
       "pair": "Updated-USDE/USD-Streams-DexPrice-mainnet-staging",
       "directoryPath": "updated-usde-usd-streams-dexprice-mainnet-staging",
       "reason": "hidden in the directory"
+    },
+    {
+      "pair": "Updated-USFR/USD-Streams-RegularHoursEquityPrice-2-mainnet-production",
+      "directoryPath": "updated-usfr-usd-streams-regularhoursequityprice-2-mainnet-production",
+      "reason": "a Equities reference rate, not a token"
     },
     {
       "pair": "US100/USD-Streams-RegularHoursEquityPrice-mainnet-production",
