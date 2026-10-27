@@ -2490,7 +2490,7 @@
         "OfferCreatorFullTariffSet": "已记录报价的费用选择",
         "OfferKeeperEnabled": "Keeper 权限已更新",
         "OfferSaleProceedsCredited": "出售所得已计入金库",
-        "OfferSaleProceedsSplit": "出售所得已分配",
+        "CollateralSaleProceedsSplit": "出售所得已分配",
         "ParallelSaleLockReleased": "抵押品出售挂单已解除",
         "PartialCollateralWithdrawn": "已部分提取抵押品",
         "PostParallelSaleListing": "已发布抵押品出售挂单",

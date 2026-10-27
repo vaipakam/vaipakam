@@ -50,7 +50,7 @@ const MAX_ITEM_TYPE = 5;
 /** Seaport `OrderType` runs 0..4. */
 const MAX_ORDER_TYPE = 4;
 /** A prepay listing carries one offer item and a few consideration legs
- *  (lender, treasury, borrower remainder, any collection fees). The cap
+ *  (the one proceeds leg to the Diamond, then any collection fees). The cap
  *  bounds what a body can make Seaport hash; it is far above real use. */
 const MAX_ITEMS = 32;
 

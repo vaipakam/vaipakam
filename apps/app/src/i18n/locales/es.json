@@ -2490,7 +2490,7 @@
         "OfferCreatorFullTariffSet": "Opción de comisión registrada para la oferta",
         "OfferKeeperEnabled": "Permiso del keeper actualizado",
         "OfferSaleProceedsCredited": "Ingresos de la venta abonados en la bóveda",
-        "OfferSaleProceedsSplit": "Ingresos de la venta repartidos",
+        "CollateralSaleProceedsSplit": "Ingresos de la venta repartidos",
         "ParallelSaleLockReleased": "Anuncio de venta de la garantía liberado",
         "PartialCollateralWithdrawn": "Garantía retirada parcialmente",
         "PostParallelSaleListing": "Anuncio de venta de la garantía publicado",

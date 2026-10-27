@@ -67,10 +67,19 @@ contract MockVaipakamDiamond is IVaipakamPrepayContext, IVaipakamPrepayCallbacks
         return ctx;
     }
 
-    function executorFinalizePrepaySale(uint256 loanId) external override {
+    /// @dev #2876 — the proceeds figure the zone hands over, and (when
+    ///      `forwardProceedsTo` is set) the onward payment the real Diamond
+    ///      makes as it splits them, so a test can show one fill's split is
+    ///      never read as another fill's arrival.
+    uint256 public finalizeProceeds;
+    function executorFinalizePrepaySale(uint256 loanId, uint256 proceeds) external override {
         finalizeCalled = true;
         finalizeLoanId = loanId;
+        finalizeProceeds = proceeds;
         finalizeCaller = msg.sender;
+        if (forwardProceedsTo != address(0)) {
+            IERC20(ctx.principalAsset).transfer(forwardProceedsTo, proceeds);
+        }
     }
 
     // T-086 Round-8 (#358) — offer-keyed callback stubs. Test harness
@@ -180,7 +189,6 @@ contract CollateralListingExecutorTest is Test {
     address internal conduit;
     address internal lenderHolder;
     address internal borrowerHolder;
-    address internal treasury;
     address internal principalAsset;
     address internal collateralAsset;
     address internal buyer;
@@ -195,8 +203,7 @@ contract CollateralListingExecutorTest is Test {
         conduit = makeAddr("conduit");
         lenderHolder = makeAddr("lenderHolder");
         borrowerHolder = makeAddr("borrowerHolder");
-        treasury = makeAddr("treasury");
-        // #2440 — a real token: the zone reads each protocol leg recipient's
+        // #2440 — a real token: the zone reads the proceeds recipient's
         // balance in both hooks.
         principalAsset = address(new ERC20Mock("Principal", "PRN", 18));
         buyer = makeAddr("buyer");
@@ -270,9 +277,7 @@ contract CollateralListingExecutorTest is Test {
         c.lenderLeg = 100e18;
         c.treasuryLeg = 1e18;
         c.graceEnd = block.timestamp + 30 days;
-        c.lenderNftOwner = lenderHolder;
         c.borrowerNftOwner = borrowerHolder;
-        c.treasury = treasury;
         // #306 fix — executor's _checkOrderPreconditions verifies
         // `params.offerer == pctx.borrowerVault`. Test's
         // `_validZoneParams` sets `p.offerer` to this same address.
@@ -296,28 +301,16 @@ contract CollateralListingExecutorTest is Test {
             amount: 1
         });
 
-        // Three consideration legs in [lender, treasury, borrower] order.
-        p.consideration = new ReceivedItem[](3);
+        // #2876 — one proceeds leg, paid to the Diamond, which splits it
+        // (lender, treasury, borrower-position vault) at the fill. No fee
+        // legs in the default order.
+        p.consideration = new ReceivedItem[](1);
         p.consideration[0] = ReceivedItem({
             itemType: ItemType.ERC20,
             token: principalAsset,
             identifier: 0,
-            amount: 110e18, // ≥ 100e18 lenderLeg
-            recipient: payable(lenderHolder)
-        });
-        p.consideration[1] = ReceivedItem({
-            itemType: ItemType.ERC20,
-            token: principalAsset,
-            identifier: 0,
-            amount: 1e18, // ≥ 1e18 treasuryLeg
-            recipient: payable(treasury)
-        });
-        p.consideration[2] = ReceivedItem({
-            itemType: ItemType.ERC20,
-            token: principalAsset,
-            identifier: 0,
-            amount: 5e18,
-            recipient: payable(borrowerHolder)
+            amount: 110e18, // ≥ 101e18 floor (lenderLeg + treasuryLeg)
+            recipient: payable(address(diamond))
         });
 
         p.startTime = block.timestamp;
@@ -328,16 +321,9 @@ contract CollateralListingExecutorTest is Test {
         p.orderHashes[0] = p.orderHash;
     }
 
-    /// @dev T-086 #316 — `askPrice` MUST be ≥ lenderLeg + treasuryLeg
-    ///      for the test fixture's pctx (set in `_setDefaultContext`:
-    ///      lenderLeg=100e18, treasuryLeg=1e18). Otherwise the
-    ///      cancel-time reconstruction in {clearOrder} would emit a
-    ///      `SeaportCancelSkipped` for "floor-drift" reasons instead
-    ///      of hitting the hash-match / hash-mismatch decision the
-    ///      tests assert on. The real facet's
-    ///      `_requireAskCoversFloor` enforces this invariant at
-    ///      post-time; here we just pick a value comfortably above
-    ///      the floor.
+    /// @dev An ask comfortably above the fixture's floor (lenderLeg 100e18
+    ///      + treasuryLeg 1e18), as the real facet's post-time check
+    ///      requires. With no fee legs the proceeds leg is the whole ask.
     uint256 internal constant TEST_ASK_PRICE = 200e18;
 
     function _recordValidOrder() internal {
@@ -350,7 +336,7 @@ contract CollateralListingExecutorTest is Test {
             uint256(0),
             uint256(block.timestamp),
             TEST_ASK_PRICE
-        , TEST_ASK_PRICE, 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs(), uint256(0), uint256(0));
+        , TEST_ASK_PRICE, 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
     }
 
     // ─── Admin: conduit allow-list ──────────────────────────────────────
@@ -386,7 +372,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, TEST_LOAN_ID, conduit,
             bytes32(0), uint256(0), uint256(block.timestamp), uint256(0)
-        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs(), uint256(0), uint256(0));
+        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
     }
 
     function test_recordOrder_rejectsUnapprovedConduit() public {
@@ -398,7 +384,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, TEST_LOAN_ID, rogue,
             bytes32(0), uint256(0), uint256(block.timestamp), uint256(0)
-        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs(), uint256(0), uint256(0));
+        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
     }
 
     function test_recordOrder_alreadyRecorded() public {
@@ -412,7 +398,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, TEST_LOAN_ID, conduit,
             bytes32(0), uint256(0), uint256(block.timestamp), uint256(0)
-        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs(), uint256(0), uint256(0));
+        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
     }
 
     function test_recordOrder_uint96Overflow() public {
@@ -424,7 +410,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, tooBig, conduit,
             bytes32(0), uint256(0), uint256(block.timestamp), uint256(0)
-        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs(), uint256(0), uint256(0));
+        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
     }
 
     /// @dev T-086 #316 — bounds check on the new `startTime` narrowing
@@ -442,7 +428,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, TEST_LOAN_ID, conduit,
             bytes32(0), uint256(0), tooBig, uint256(0)
-        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs(), uint256(0), uint256(0));
+        , uint256(0), 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
     }
 
     /// @dev T-086 #316 — bounds check on the new `askPrice` narrowing
@@ -460,7 +446,7 @@ contract CollateralListingExecutorTest is Test {
         executor.recordOrder(
             TEST_ORDER_HASH, TEST_LOAN_ID, conduit,
             bytes32(0), uint256(0), uint256(block.timestamp), tooBig
-        , tooBig, 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs(), uint256(0), uint256(0));
+        , tooBig, 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
     }
 
     function test_recordOrder_happyPath() public {
@@ -778,23 +764,23 @@ contract CollateralListingExecutorTest is Test {
         assertTrue(diamond.markConsumedCalled());
     }
 
-    /// @notice #825-r4 (P1) — fill-time re-screen of the live LENDER recipient
-    ///         (`consideration[0]` is paid directly to `pctx.lenderNftOwner`).
-    ///         Clean at post time, flagged before fill → fill aborts.
-    function test_authorizeOrder_revertsWhenLenderRecipientSanctioned() public {
+    /// @notice #2876 — a collateral sale is neutral between the sides: the
+    ///         lender-position holder is not a sale recipient (the Diamond books
+    ///         its share to a claim row screened at the claim), so a lender holder
+    ///         flagged before the fill neither blocks authorization nor the fill.
+    ///         The context carries no lender holder at all for the executor to
+    ///         screen; flagging the lender on the mock proves no other read does.
+    function test_fill_succeedsWhenLenderHolderSanctioned() public {
         _setDefaultContext();
         _recordValidOrder();
         diamond.setSanctioned(lenderHolder, true);
 
         ZoneParameters memory p = _validZoneParams();
         vm.prank(seaport);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                CollateralListingExecutor.SanctionedListingRecipient.selector,
-                lenderHolder
-            )
-        );
-        executor.authorizeOrder(p);
+        assertEq(executor.authorizeOrder(p), ISeaportZone.authorizeOrder.selector);
+        _fillOne(p, _amountsOf(p));
+        assertTrue(diamond.finalizeCalled(), "the borrower's sale settles");
+        assertEq(diamond.finalizeLoanId(), TEST_LOAN_ID);
     }
 
     /// @notice #825-r3 (P1) — fill-time re-screen of a recorded FEE-LEG
@@ -816,9 +802,7 @@ contract CollateralListingExecutorTest is Test {
             TEST_ASK_PRICE,
             0,
             PREPAY_MODE_FIXED_PRICE,
-            legs,
-            uint256(0),
-            uint256(0)
+            legs
         );
         diamond.setSanctioned(flaggedFee, true);
 
@@ -947,9 +931,7 @@ contract CollateralListingExecutorTest is Test {
         c.collateralTokenId = TEST_COLLATERAL_TOKEN_ID;
         c.collateralQuantity = 1;
         c.graceEnd = block.timestamp + 30 days;
-        c.lenderNftOwner = lenderHolder;
         c.borrowerNftOwner = borrowerHolder;
-        c.treasury = treasury;
         c.borrowerVault = makeAddr("mockBorrowerVault");
         diamond.setContext(c);
 
@@ -959,74 +941,95 @@ contract CollateralListingExecutorTest is Test {
         executor.validateOrder(p);
     }
 
-    function test_validateOrder_lenderShortPaid() public {
+    /// @dev #2876 — the proceeds leg must cover the live floor: what a
+    ///      repayment at this block would owe the lender and the treasury.
+    function test_validateOrder_proceedsShortPaid() public {
         _recordValidOrder();
         ZoneParameters memory p = _validZoneParams();
-        p.consideration[0].amount = 50e18; // < 100e18 lenderLeg
+        p.consideration[0].amount = 101e18 - 1; // floor = 100e18 + 1e18
 
         vm.prank(seaport);
         vm.expectRevert(
             abi.encodeWithSelector(
-                CollateralListingExecutor.LenderShortPaid.selector, TEST_ORDER_HASH
+                CollateralListingExecutor.ProceedsShortPaid.selector,
+                TEST_ORDER_HASH, uint256(101e18 - 1), uint256(101e18)
             )
         );
         executor.validateOrder(p);
     }
 
-    function test_validateOrder_treasuryShortPaid() public {
+    /// @dev #2876 — exactly the floor is enough: the borrower then gets
+    ///      nothing, and nothing is owed to anyone beyond the leg.
+    function test_validateOrder_proceedsAtFloor_accepted() public {
         _recordValidOrder();
         ZoneParameters memory p = _validZoneParams();
-        p.consideration[1].amount = 0; // < 1e18 treasuryLeg
+        p.consideration[0].amount = 101e18;
+        _fillOne(p, _amountsOf(p));
+        assertTrue(diamond.finalizeCalled());
+        assertEq(diamond.finalizeProceeds(), 101e18);
+    }
+
+    /// @dev #2876 — the proceeds leg pays the Diamond, never a holder: a leg
+    ///      paid to the lender holder (the pre-#2876 shape) is refused.
+    function test_validateOrder_proceedsToLenderHolder_refused() public {
+        _recordValidOrder();
+        ZoneParameters memory p = _validZoneParams();
+        p.consideration[0].recipient = payable(lenderHolder);
 
         vm.prank(seaport);
         vm.expectRevert(
             abi.encodeWithSelector(
-                CollateralListingExecutor.TreasuryShortPaid.selector, TEST_ORDER_HASH
+                CollateralListingExecutor.WrongProceedsRecipient.selector, TEST_ORDER_HASH
             )
         );
         executor.validateOrder(p);
     }
 
-    function test_validateOrder_wrongLenderRecipient() public {
+    function test_validateOrder_proceedsToBuyer_refused() public {
         _recordValidOrder();
         ZoneParameters memory p = _validZoneParams();
-        p.consideration[0].recipient = payable(buyer); // not lenderHolder
+        p.consideration[0].recipient = payable(buyer);
 
         vm.prank(seaport);
         vm.expectRevert(
             abi.encodeWithSelector(
-                CollateralListingExecutor.WrongLenderRecipient.selector, TEST_ORDER_HASH
+                CollateralListingExecutor.WrongProceedsRecipient.selector, TEST_ORDER_HASH
             )
         );
         executor.validateOrder(p);
     }
 
-    function test_validateOrder_wrongTreasuryRecipient() public {
+    /// @dev #2876 — a fee leg rides after the proceeds leg; a zero one is
+    ///      refused, as on the offer-keyed branch.
+    function test_validateOrder_zeroFeeLeg_refused() public {
         _recordValidOrder();
-        ZoneParameters memory p = _validZoneParams();
-        p.consideration[1].recipient = payable(buyer); // not the diamond treasury
+        ZoneParameters memory p = _withFeeLeg(_validZoneParams(), makeAddr("market"), 0);
 
         vm.prank(seaport);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                CollateralListingExecutor.WrongTreasuryRecipient.selector, TEST_ORDER_HASH
-            )
+            abi.encodeWithSelector(CollateralListingExecutor.FeeLegZeroAmount.selector, uint256(1))
         );
         executor.validateOrder(p);
     }
 
-    function test_validateOrder_wrongBorrowerRecipient() public {
-        _recordValidOrder();
-        ZoneParameters memory p = _validZoneParams();
-        p.consideration[2].recipient = payable(buyer); // not borrowerHolder
-
-        vm.prank(seaport);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                CollateralListingExecutor.WrongBorrowerRecipient.selector, TEST_ORDER_HASH
-            )
-        );
-        executor.validateOrder(p);
+    function _withFeeLeg(ZoneParameters memory p, address recipient, uint256 amount)
+        internal
+        view
+        returns (ZoneParameters memory)
+    {
+        ReceivedItem[] memory c = new ReceivedItem[](p.consideration.length + 1);
+        for (uint256 i = 0; i < p.consideration.length; i++) {
+            c[i] = p.consideration[i];
+        }
+        c[p.consideration.length] = ReceivedItem({
+            itemType: ItemType.ERC20,
+            token: principalAsset,
+            identifier: 0,
+            amount: amount,
+            recipient: payable(recipient)
+        });
+        p.consideration = c;
+        return p;
     }
 
     // ─── Happy paths ────────────────────────────────────────────────────
@@ -1052,6 +1055,7 @@ contract CollateralListingExecutorTest is Test {
 
         assertTrue(diamond.finalizeCalled());
         assertEq(diamond.finalizeLoanId(), TEST_LOAN_ID);
+        assertEq(diamond.finalizeProceeds(), 110e18);
         assertEq(diamond.finalizeCaller(), address(executor));
 
         // orderContext entry MUST be cleared so a Seaport-validated
@@ -1095,14 +1099,14 @@ contract CollateralListingExecutorTest is Test {
             uint256(0),
             uint256(block.timestamp),
             TEST_ASK_PRICE
-        , TEST_ASK_PRICE, 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs(), uint256(0), uint256(0));
+        , TEST_ASK_PRICE, 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs());
     }
 
-    function test_fill_loanKeyed_lenderLegShort_refused() public {
+    function test_fill_loanKeyed_proceedsLegShort_refused() public {
         _recordValidOrder();
         ZoneParameters memory p = _validZoneParams();
         uint256[] memory d = _amountsOf(p);
-        d[0] = 109e18; // the lender leg pays 110e18; 1e18 is lost on the way
+        d[0] = 109e18; // the proceeds leg pays 110e18; 1e18 is lost on the way
 
         _etchFillHarness();
         ZoneParameters[] memory orders = new ZoneParameters[](1);
@@ -1120,45 +1124,27 @@ contract CollateralListingExecutorTest is Test {
     }
 
     function test_fill_loanKeyed_onlyTheBookedLegIsMeasured() public {
-        // The treasury leg is a fee its recipient bears the charge on, and the
-        // borrower leg is the seller's own remainder: neither books anyone as
-        // paid, so a short arrival there does not stop the sale.
+        // A fee leg goes to a third party (a marketplace or creator) that
+        // bears its own transfer charge; it books no one as paid, so a short
+        // arrival there does not stop the sale.
         _recordValidOrder();
-        ZoneParameters memory p = _validZoneParams();
+        ZoneParameters memory p = _withFeeLeg(_validZoneParams(), makeAddr("market"), 2e18);
         uint256[] memory d = _amountsOf(p);
-        d[1] = 1e18 - 1;
-        d[2] = 4e18;
+        d[1] = 2e18 - 1;
         _fillOne(p, d);
         assertTrue(diamond.finalizeCalled());
+        assertEq(diamond.finalizeProceeds(), 110e18);
     }
 
-    function test_fill_lenderBuysOwnCollateral_selfPaymentNotMeasured() public {
-        // A lender filling the listing of their own loan pays the lender leg to
-        // themselves, while their balance falls by the other legs: a rise
-        // cannot be read, and the leg books no one else as paid.
+    function test_fill_lenderBuysOwnCollateral_legIsMeasured() public {
+        // #2876 — a lender buying their own loan's collateral pays the
+        // Diamond like any buyer, so the leg is measured: before #2876 they
+        // paid the lender leg to themselves and the leg had to be exempt.
         _recordValidOrder();
         ZoneParameters memory p = _validZoneParams();
         p.fulfiller = lenderHolder;
         uint256[] memory d = _amountsOf(p);
         d[0] = 0;
-        _fillOne(p, d);
-        assertTrue(diamond.finalizeCalled());
-    }
-
-    function test_fill_lenderFulfillsCombinedCall_legIsMeasured() public {
-        // Codex #2622 r3 — in a call that combines orders (a match, or a batch
-        // of available orders) the fulfiller need not be the payer: a lender
-        // who matches their own listing against a third party's bid is the
-        // fulfiller while the bidder pays. Seaport passes one hash per order
-        // there, and the leg is measured, so a short arrival is refused.
-        _recordValidOrder();
-        ZoneParameters memory p = _validZoneParams();
-        p.fulfiller = lenderHolder;
-        p.orderHashes = new bytes32[](2);
-        p.orderHashes[0] = p.orderHash;
-        p.orderHashes[1] = keccak256("third-party-bid");
-        uint256[] memory d = _amountsOf(p);
-        d[0] = 109e18;
 
         _etchFillHarness();
         ZoneParameters[] memory orders = new ZoneParameters[](1);
@@ -1168,13 +1154,13 @@ contract CollateralListingExecutorTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 CollateralListingExecutor.ListingLegDeliveryShort.selector,
-                TEST_ORDER_HASH, uint256(0), uint256(110e18), uint256(109e18)
+                TEST_ORDER_HASH, uint256(0), uint256(110e18), uint256(0)
             )
         );
         SeaportFillHarness(seaport).fill(executor, orders, dd);
         assertFalse(diamond.finalizeCalled());
 
-        // The same combined call with the leg delivered in full settles.
+        // Paid in full, the lender's own purchase settles.
         _fillOne(p, _amountsOf(p));
         assertTrue(diamond.finalizeCalled());
     }
@@ -1184,7 +1170,7 @@ contract CollateralListingExecutorTest is Test {
         // between the two hooks does.
         _recordValidOrder();
         ZoneParameters memory p = _validZoneParams();
-        ERC20Mock(principalAsset).mint(lenderHolder, 1_000e18);
+        ERC20Mock(principalAsset).mint(address(diamond), 1_000e18);
         uint256[] memory d = _amountsOf(p);
         d[0] = 0;
 
@@ -1218,10 +1204,11 @@ contract CollateralListingExecutorTest is Test {
     }
 
     function test_fill_twoLoanKeyedOrders_sameRecipients_eachNeedsItsOwnArrival() public {
-        // Both orders pay the same lender, treasury and borrower (the mock
-        // context answers every loan id alike). Seaport authorizes both, then
-        // transfers, then validates both: the second must find its own legs
-        // above what the first claimed.
+        // Both orders pay their proceeds to the Diamond. Seaport authorizes
+        // both, then transfers, then validates both: the second must find its
+        // own leg above what the first claimed, and the first one's split
+        // (the Diamond paying its proceeds onward) is not read against it.
+        diamond.setForwardProceedsTo(makeAddr("splitSink"));
         bytes32 hashB = keccak256("test-order-b");
         _recordValidOrder();
         _recordOrderAs(hashB, TEST_LOAN_ID + 1);
@@ -1234,7 +1221,7 @@ contract CollateralListingExecutorTest is Test {
         orders[1] = pb;
         uint256[][] memory dd = new uint256[][](2);
         dd[0] = _amountsOf(pa);
-        dd[1] = new uint256[](3); // the second order's legs never arrive
+        dd[1] = new uint256[](1); // the second order's leg never arrives
         _etchFillHarness();
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -1250,6 +1237,7 @@ contract CollateralListingExecutorTest is Test {
         (uint96 a, , , , , , , , ) = executor.orderContext(TEST_ORDER_HASH);
         (uint96 b, , , , , , , , ) = executor.orderContext(hashB);
         assertEq(uint256(a) + uint256(b), 0);
+        assertEq(IERC20(principalAsset).balanceOf(makeAddr("splitSink")), 2 * uint256(110e18));
     }
 
     // ── Offer-keyed branch: the Diamond is the proceeds recipient ──

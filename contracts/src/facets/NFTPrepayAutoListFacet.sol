@@ -32,7 +32,7 @@ import {ConsolidationFacet} from "./ConsolidationFacet.sol";
  *         and the auto-list orchestration adds ~400 LOC. The B-cond
  *         predicate math lives in {LibAutoList}; the rotation +
  *         post primitives reuse {LibPrepayOrder}, {LibPrepayListingWiring},
- *         and the executor's typed `orderFeeLegs` / `orderProtocolLegs`
+ *         and the executor's typed `orderFeeLegs` / `orderContextRead`
  *         getters.
  *
  *         Design doc: §18 of `docs/DesignsAndPlans/NFTCollateralSaleAndAuction.md`.
@@ -279,8 +279,6 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
             address(executor),
             executor.seaport(),
             askPrice,
-            pctx.lenderLeg,
-            pctx.treasuryLeg,
             salt,
             conduitKey,
             emptyFeeLegs
@@ -303,9 +301,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
             askPrice,                    // endAskPrice = askPrice
             0,                           // auctionEndTime = 0 sentinel
             PREPAY_MODE_FIXED_PRICE,
-            emptyFeeLegs,
-            pctx.lenderLeg,
-            pctx.treasuryLeg
+            emptyFeeLegs
         );
         LibPrepayListingWiring.wire(s, loan, orderHash, conduit, address(executor));
 
@@ -354,13 +350,13 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
         // ── Snapshot the executor's `_orderFeeLegs` BEFORE `clearOrder`
         //    wipes it (round-3.6 + round-3.8). `recordedFeeLegs` is needed by
         //    BOTH the B-cond gate AND `_performRotation`, so it's snapshotted
-        //    here. The `_orderProtocolLegs` + `OrderContext` reads (only the
-        //    B-cond gate consumes them) are deferred into `_pickBCondReason`
-        //    (#656c) so they don't sit live in this frame across the
-        //    snapshot→gate→rotation span — that frame relief is what lets the
-        //    Case-A consolidate hook in the entry fit the viaIR stack budget.
-        //    All three reads still run before `_performRotation`'s
-        //    `clearOrder`, so the snapshot ordering is preserved.
+        //    here. The `OrderContext` read (only the B-cond gate consumes it)
+        //    is deferred into `_pickBCondReason` (#656c) so it doesn't sit
+        //    live in this frame across the snapshot→gate→rotation span — that
+        //    frame relief is what lets the Case-A consolidate hook in the
+        //    entry fit the viaIR stack budget. Both reads still run before
+        //    `_performRotation`'s `clearOrder`, so the snapshot ordering is
+        //    preserved.
         IListingExecutorRecorder exec = IListingExecutorRecorder(pinnedExecutor);
         FeeLeg[] memory recordedFeeLegs = exec.orderFeeLegs(existingOrderHash);
 
@@ -399,11 +395,10 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
     ///      order documented in §18.5; gates check independently and
     ///      short-circuit on first hit.
     ///
-    ///      #656c — the `_orderProtocolLegs` (recorded lender/treasury) +
-    ///      `OrderContext` reads live HERE rather than in `_caseBRotate`:
-    ///      only the gate consumes them, so confining them to this frame
-    ///      keeps `_caseBRotate`'s per-function viaIR stack peak below the
-    ///      ceiling. Both reads still happen before the caller's
+    ///      #656c — the `OrderContext` read lives HERE rather than in
+    ///      `_caseBRotate`: only the gate consumes it, so confining it to
+    ///      this frame keeps `_caseBRotate`'s per-function viaIR stack peak
+    ///      below the ceiling. The read still happens before the caller's
     ///      `_performRotation` → `clearOrder`, so the pre-clear snapshot
     ///      semantics are unchanged.
     function _pickBCondReason(
@@ -416,8 +411,6 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
         uint256 loanEnd,
         uint256 dutchGraceMarginSec
     ) private view returns (bool) {
-        (uint128 recordedLender, uint128 recordedTreasury) =
-            exec.orderProtocolLegs(existingOrderHash);
         (
             uint8 ctxMode,
             uint192 ctxAskPrice,
@@ -434,7 +427,9 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
         )) {
             return true;
         }
-        if (LibAutoList.b_cond_2_signedLegsShort(pctx, recordedLender, recordedTreasury)) {
+        if (_proceedsShort(
+            pctx, ctxAskPrice, ctxEndAskPrice, ctxStartTime, ctxAuctionEndTime, recordedFeeLegs
+        )) {
             return true;
         }
         if (LibAutoList.b_cond_3a_dutchNeverReachesFee(
@@ -459,9 +454,41 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
         return false;
     }
 
+    /// @dev B-cond-2 (#2876): the recorded order's proceeds leg (the ask net
+    ///      of its fee legs) at this block against the live floor. A
+    ///      fixed-price order records `endAskPrice == askPrice` and no
+    ///      auction end, so its leg reads as the constant ask net of fees.
+    function _proceedsShort(
+        IVaipakamPrepayContext.PrepayContext memory pctx,
+        uint192 askPrice,
+        uint128 endAskPrice,
+        uint64 startTime,
+        uint64 auctionEndTime,
+        FeeLeg[] memory recordedFeeLegs
+    ) private view returns (bool) {
+        uint256 feeStart;
+        uint256 feeEnd;
+        for (uint256 i = 0; i < recordedFeeLegs.length; ) {
+            feeStart += uint256(recordedFeeLegs[i].startAmount);
+            feeEnd += uint256(recordedFeeLegs[i].endAmount);
+            unchecked { ++i; }
+        }
+        // The posting facets keep each ask above its fee legs; a record that
+        // somehow is not cannot fill at all, so it reads as short.
+        if (uint256(askPrice) < feeStart || uint256(endAskPrice) < feeEnd) return true;
+        return LibAutoList.b_cond_2_proceedsShort(
+            pctx.lenderLeg + pctx.treasuryLeg,
+            uint256(askPrice) - feeStart,
+            uint256(endAskPrice) - feeEnd,
+            uint256(startTime),
+            uint256(auctionEndTime),
+            block.timestamp
+        );
+    }
+
     /// @dev Steps 2-9 from §18.5: snapshot already taken; unwire →
-    ///      clearOrder (which wipes `_orderFeeLegs` +
-    ///      `_orderProtocolLegs` on the executor) → normalize fee
+    ///      clearOrder (which wipes `_orderFeeLegs` on the
+    ///      executor) → normalize fee
     ///      legs Dutch-to-fixed → buildAndHash → record + wire fresh.
     ///      Step 2 (the snapshot) happened in the caller because the
     ///      snapshot inputs flow into both the B-cond gate AND this
@@ -492,9 +519,8 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
         LibPrepayListingWiring.unwire(s, loan, oldOrderHash);
 
         // Step 4 — clear the executor's pinned binding (also wipes
-        // _orderFeeLegs + _orderProtocolLegs for `oldOrderHash`;
-        // we already snapshotted both, AND the OrderContext-conduit
-        // pair above).
+        // _orderFeeLegs for `oldOrderHash`; we already snapshotted
+        // them, AND the OrderContext-conduit pair above).
         executor.clearOrder(oldOrderHash);
 
         // Step 5 — normalize the preserved feeLegs from Dutch decay
@@ -530,8 +556,6 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
             address(executor),
             executor.seaport(),
             rotatedAsk,
-            pctx.lenderLeg,
-            pctx.treasuryLeg,
             salt,
             conduitKey,
             recordedFeeLegs
@@ -554,9 +578,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
             rotatedAsk,                  // endAskPrice = askPrice
             0,                           // auctionEndTime = 0 sentinel
             PREPAY_MODE_FIXED_PRICE,
-            recordedFeeLegs,
-            pctx.lenderLeg,
-            pctx.treasuryLeg
+            recordedFeeLegs
         );
 
         // Step 9 — wire the new orderHash to the vault.

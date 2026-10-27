@@ -23,8 +23,9 @@ import {
  *              arithmetic shape.
  *           2. {b_cond_1_fixedPriceAboveFloor} — fires for fixed-price
  *              above floor; Dutch carved out (round-3.9 P2 #3).
- *           3. {b_cond_2_signedLegsShort} — strict-shortfall, both
- *              modes, with the borrower-slack pin (round-3.8 + 3.9).
+ *           3. {b_cond_2_proceedsShort} — strict-shortfall, both
+ *              modes, on the order's proceeds leg at this block (#2876),
+ *              with Seaport's round-up Dutch interpolation.
  *           4. {b_cond_3a_dutchNeverReachesFee} — Dutch endAskPrice
  *              above fee-aware floor (round-3.5 + 3.6).
  *           5. {b_cond_3b_dutchReachesFloorTooLate} — ceiling-division
@@ -51,9 +52,7 @@ contract LibAutoListTest is Test {
         pctx.treasuryLeg = treasury;
         // Constant so the helper is `pure` and callers can be too.
         pctx.graceEnd = 1_000_000;
-        pctx.lenderNftOwner = ANY_ADDR;
         pctx.borrowerNftOwner = ANY_ADDR;
-        pctx.treasury = ANY_ADDR;
         pctx.borrowerVault = ANY_ADDR;
     }
 
@@ -137,42 +136,45 @@ contract LibAutoListTest is Test {
         assertFalse(fires, "B-cond-1 carved out for Dutch; rotation owned by B-cond-2/3a/3b/5");
     }
 
-    // ─── 3. B-cond-2 strict-shortfall (round-3.9) ───────────────────────
+    // ─── 3. B-cond-2 strict-shortfall (round-3.9, #2876) ─────────────────
 
-    /// @dev ROUND-3.9 PIN — exact match does NOT fire.
-    function test_bCond2_doesNotFireOnFreshExactSignedLegs() public pure {
-        IVaipakamPrepayContext.PrepayContext memory pctx = _emptyPctx(1000, 50);
-        bool fires = LibAutoList.b_cond_2_signedLegsShort(pctx, 1000, 50);
-        assertFalse(fires, "live == signed: no shortfall");
+    /// @dev ROUND-3.9 PIN — a proceeds leg of exactly the floor does NOT fire.
+    function test_bCond2_doesNotFireAtExactFloor() public pure {
+        assertFalse(LibAutoList.b_cond_2_proceedsShort(1050, 1050, 1050, 100, 0, 500));
     }
 
-    /// @dev ROUND-3.9 PIN — strict `>` predicate, 1-wei shortfall fires.
-    function test_bCond2_firesOnLenderShortBy1() public pure {
-        IVaipakamPrepayContext.PrepayContext memory pctx = _emptyPctx(1001, 50);
-        bool fires = LibAutoList.b_cond_2_signedLegsShort(pctx, 1000, 50);
-        assertTrue(fires, "live.lender 1 wei past signed fires (executor rejects fill)");
+    /// @dev ROUND-3.9 PIN — strict `<`: a 1-wei shortfall fires.
+    function test_bCond2_firesOnShortBy1() public pure {
+        assertTrue(LibAutoList.b_cond_2_proceedsShort(1051, 1050, 1050, 100, 0, 500));
     }
 
-    function test_bCond2_firesOnTreasuryShortBy1() public pure {
-        IVaipakamPrepayContext.PrepayContext memory pctx = _emptyPctx(1000, 51);
-        bool fires = LibAutoList.b_cond_2_signedLegsShort(pctx, 1000, 50);
-        assertTrue(fires, "treasury-leg shortfall fires independently");
+    /// @dev #2876 — a fixed-price leg above the floor does not fire whatever
+    ///      the clock reads (a fixed-price order records `auctionEndTime` 0).
+    function test_bCond2_fixedPriceAboveFloor_doesNotFire() public pure {
+        assertFalse(LibAutoList.b_cond_2_proceedsShort(1000, 1200, 1200, 100, 0, 10_000));
     }
 
-    /// @dev ROUND-3.8 + 3.9 PIN (Codex round-8 P2 #2; round-9 P2 #2 fixed-
-    ///      price symmetric) — BORROWER-SLACK case. The borrower posted
-    ///      `endAskPrice = post_floor + 10` with the +10 landing in
-    ///      `consideration[2]` (borrower leg) — signed lender + treasury
-    ///      stay at the bare post-time minimum. After a 1-wei accrual
-    ///      the order is unfillable but the round-3.7 `endAskPrice -
-    ///      endFeeSum` derivation would have no-oped. The signed-legs
-    ///      predicate correctly fires.
-    function test_bCond2_firesWhenBorrowerSlackHidesShortLeg() public pure {
-        // Signed amounts at bare post-time floor: 1000 + 50.
-        // Live legs grew by 1 wei → 1001 + 50.
-        IVaipakamPrepayContext.PrepayContext memory pctx = _emptyPctx(1001, 50);
-        bool fires = LibAutoList.b_cond_2_signedLegsShort(pctx, 1000, 50);
-        assertTrue(fires, "borrower-slack does not insulate the signed legs from shortfall");
+    /// @dev #2876 — a Dutch leg is read where it has decayed to at `nowTs`,
+    ///      not at its start: healthy at the start, short half-way down.
+    function test_bCond2_dutchReadsTheDecayedLeg() public pure {
+        // Start 2000, end 1000, window [100, 1100]. At 600 the leg is 1500.
+        assertFalse(LibAutoList.b_cond_2_proceedsShort(1500, 2000, 1000, 100, 1100, 600));
+        assertTrue(LibAutoList.b_cond_2_proceedsShort(1501, 2000, 1000, 100, 1100, 600));
+        // Before the window opens the leg is the start amount; after it
+        // closes, the end amount.
+        assertFalse(LibAutoList.b_cond_2_proceedsShort(2000, 2000, 1000, 100, 1100, 50));
+        assertTrue(LibAutoList.b_cond_2_proceedsShort(1001, 2000, 1000, 100, 1100, 1100));
+    }
+
+    /// @dev #2876 — Seaport rounds a consideration amount UP between the
+    ///      endpoints, so the predicate must too: at one second in, a leg
+    ///      decaying 3 over 1000 seconds reads 3 - 0.003 → 3 (rounded up),
+    ///      and a floor of 3 is covered.
+    function test_bCond2_dutchRoundsUpAsSeaportDoes() public pure {
+        assertEq(LibAutoList.proceedsAt(3, 0, 0, 1000, 1), 3);
+        assertFalse(LibAutoList.b_cond_2_proceedsShort(3, 3, 0, 0, 1000, 1));
+        // At 334 s: 3 * 666 / 1000 = 1.998 → 2.
+        assertEq(LibAutoList.proceedsAt(3, 0, 0, 1000, 334), 2);
     }
 
     // ─── 4. B-cond-3a Dutch never reaches fee-aware floor ───────────────

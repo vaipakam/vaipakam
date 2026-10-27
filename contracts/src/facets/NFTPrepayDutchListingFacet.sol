@@ -156,15 +156,16 @@ contract NFTPrepayDutchListingFacet is
 
     /// @notice Open a Dutch-decay Seaport prepay-listing for a live
     ///         loan's collateral NFT.
-    /// @dev    Round-5 Block B (Issue #309). The borrower-leg of the
-    ///         Seaport consideration decays linearly from
-    ///         `startAskPrice - projectedLender - projectedTreasury
-    ///         - sum(feeLegs.startAmount)` at `block.timestamp` down
-    ///         to `endAskPrice - projectedLender - projectedTreasury
-    ///         - sum(feeLegs.endAmount)` at `auctionEndTime`. Lender
-    ///         + treasury legs stay FIXED at the projected-max
-    ///         values at `auctionEndTime` under sign-time governance
-    ///         config (design doc §15.2). The Seaport
+    /// @dev    Round-5 Block B (Issue #309). The order's proceeds leg
+    ///         (paid to the Diamond, #2876) decays linearly from
+    ///         `startAskPrice - sum(feeLegs.startAmount)` at
+    ///         `block.timestamp` down to `endAskPrice -
+    ///         sum(feeLegs.endAmount)` at `auctionEndTime`. Both ends
+    ///         must cover the floor projected to `auctionEndTime` (the
+    ///         highest it can reach inside the auction), so every tick
+    ///         is fillable. At the fill the Diamond pays the lender and
+    ///         the treasury what a repayment at THAT block would owe, and
+    ///         the borrower position the rest. The Seaport
     ///         `OrderComponents.endTime` is `auctionEndTime` (not
     ///         `gracePeriodEnd`) so the order becomes Seaport-unfillable
     ///         past the auction close.
@@ -465,8 +466,6 @@ contract NFTPrepayDutchListingFacet is
             CollateralListingExecutor(address(executor)).seaport(),
             p.startAskPrice,
             p.endAskPrice,
-            pctx.lenderLeg,
-            pctx.treasuryLeg,
             p.auctionEndTime,
             p.salt,
             p.conduitKey,
@@ -492,15 +491,7 @@ contract NFTPrepayDutchListingFacet is
             p.endAskPrice,
             p.auctionEndTime,
             PREPAY_MODE_DUTCH,
-            feeLegs,
-            // T-086 Round-7 (Issue #355) — signed-leg snapshot. Dutch
-            // orders sign consideration[0/1].amount as the projected
-            // lender/treasury legs at auctionEndTime, which is exactly
-            // the pctx pulled at `getPrepayContext(loanId,
-            // auctionEndTime)` above; LibPrepayOrder.buildAndHashDutch
-            // forwards these as the signed amounts.
-            pctx.lenderLeg,
-            pctx.treasuryLeg
+            feeLegs
         );
 
         // Round-6 Block D #346: route through shared library so v1
