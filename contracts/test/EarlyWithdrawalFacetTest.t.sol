@@ -3500,9 +3500,10 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      Asserted end to end on a real sale rather than per view, because
     ///      the failure is one record leaking into several places at once.
     function test_1503item26_vehicleAbsentFromEveryGlobalLoanSurface() public {
-        (, uint256 allBefore) = MetricsFacet(address(diamond)).getAllLoansPaginated(0, 50);
-        (, uint256 repaidBefore) = MetricsFacet(address(diamond))
-            .getLoansByStatusPaginated(LibVaipakam.LoanStatus.Repaid, 0, 50);
+        (, , uint256 allBefore) = MetricsFacet(address(diamond)).getAllLoansPaginated(0, 50);
+        (uint256[] memory repaidBeforeIds, ) = MetricsFacet(address(diamond))
+            .getLoansByStatusPaginated(LibVaipakam.LoanStatus.Repaid, 0, type(uint256).max);
+        uint256 repaidBefore = repaidBeforeIds.length;
         uint256 interestBefore =
             MetricsFacet(address(diamond)).getTotalInterestEarnedNumeraire();
 
@@ -3513,17 +3514,19 @@ contract EarlyWithdrawalFacetTest is Test {
         // must keep counting the ids vehicles consume (Codex #1825 r2). The
         // count-of-loans claim belongs to `totalLoansEverCreated`, asserted in
         // the initiation test above.
-        (uint256[] memory allIds, uint256 allAfter) =
+        (uint256[] memory allIds, , uint256 allAfter) =
             MetricsFacet(address(diamond)).getAllLoansPaginated(0, 50);
         assertEq(allAfter, allBefore, "the all-loans total must not count the vehicle");
         for (uint256 i; i < allIds.length; i++) {
             assertTrue(allIds[i] != tempLoanId, "vehicle listed in getAllLoansPaginated");
         }
 
-        (uint256[] memory repaidIds, uint256 repaidAfter) = MetricsFacet(address(diamond))
-            .getLoansByStatusPaginated(LibVaipakam.LoanStatus.Repaid, 0, 50);
+        // #2930 — the view reads a window of ids; an unbounded window reads
+        // the whole range, so its length is the Repaid count.
+        (uint256[] memory repaidIds, ) = MetricsFacet(address(diamond))
+            .getLoansByStatusPaginated(LibVaipakam.LoanStatus.Repaid, 0, type(uint256).max);
         assertEq(
-            repaidAfter,
+            repaidIds.length,
             repaidBefore,
             "the completed vehicle must not swell the Repaid page"
         );
@@ -3540,15 +3543,15 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
-    /// @dev Codex #1825 r2 — paging over a SPARSE visible sequence. Excluding
-    ///      vehicles from the rows and from `total` leaves `offset` counting
-    ///      visible records while the loop treated it as a raw id, and the two
-    ///      diverge the moment a vehicle sits below the offset: a page then
-    ///      re-serves rows the previous page already returned, and keeps
-    ///      serving them past the end.
+    /// @dev Codex #1825 r2 — paging over a SPARSE visible sequence: a vehicle
+    ///      id sitting between visible loans must never be served, and paging
+    ///      must neither repeat a row nor skip the loan above the vehicle.
+    ///      #2930 — the view now takes a cursor in the id range, so a page is
+    ///      the visible loans among the ids it read (the vehicle's window
+    ///      comes back empty) and the end is the cursor making no progress.
     ///
-    ///      Walked one row at a time on purpose — the defect only appears when
-    ///      the offset crosses the vehicle, which a single wide page hides.
+    ///      Walked one id at a time on purpose — a single wide page hides any
+    ///      seam at the vehicle.
     function test_1503item26_paginationSkipsVisibleRecordsNotRawIds() public {
         // A vehicle id lands BETWEEN visible loans: the setUp loan exists, the
         // sale forges the vehicle, and a fresh loan is created after it.
@@ -3556,29 +3559,38 @@ contract EarlyWithdrawalFacetTest is Test {
         uint256 laterLoanId = _openAnotherLoan("paginationBorrower");
         assertGt(laterLoanId, vehicleId, "fixture: a visible loan sits above the vehicle");
 
-        (, uint256 total) = MetricsFacet(address(diamond)).getAllLoansPaginated(0, 1);
+        (, , uint256 total) = MetricsFacet(address(diamond)).getAllLoansPaginated(0, 1);
 
         uint256[] memory seen = new uint256[](total);
-        for (uint256 page; page < total; page++) {
-            (uint256[] memory ids, ) =
-                MetricsFacet(address(diamond)).getAllLoansPaginated(page, 1);
-            assertEq(ids.length, 1, "every page below the total must yield a row");
-            assertTrue(ids[0] != vehicleId, "a page must never serve the vehicle");
-            for (uint256 k; k < page; k++) {
-                assertTrue(seen[k] != ids[0], "pages must not repeat a row");
+        uint256 nSeen;
+        uint256 cursor;
+        for (;;) {
+            (uint256[] memory ids, uint256 next) =
+                _allLoansPage(cursor, 1);
+            assertLe(ids.length, 1, "a one-id window yields at most one row");
+            if (ids.length == 1) {
+                assertTrue(ids[0] != vehicleId, "a page must never serve the vehicle");
+                for (uint256 k; k < nSeen; k++) {
+                    assertTrue(seen[k] != ids[0], "pages must not repeat a row");
+                }
+                seen[nSeen++] = ids[0];
             }
-            seen[page] = ids[0];
+            if (next == cursor) break;
+            assertEq(next, cursor + 1, "each call reads exactly its window");
+            cursor = next;
         }
-        // The visible loan above the vehicle must be reachable by paging — the
-        // id-as-offset walk skipped straight past it.
+        assertEq(nSeen, total, "paging reaches every visible loan");
         bool sawLater;
-        for (uint256 k; k < total; k++) if (seen[k] == laterLoanId) sawLater = true;
+        for (uint256 k; k < nSeen; k++) if (seen[k] == laterLoanId) sawLater = true;
         assertTrue(sawLater, "a loan above the vehicle must be reachable by paging");
+    }
 
-        // ...and a page at `offset == total` is empty rather than re-serving.
-        (uint256[] memory pastEnd, ) =
-            MetricsFacet(address(diamond)).getAllLoansPaginated(total, 1);
-        assertEq(pastEnd.length, 0, "a page past the end must be empty");
+    function _allLoansPage(uint256 cursor, uint256 maxScan)
+        internal
+        view
+        returns (uint256[] memory ids, uint256 next)
+    {
+        (ids, next, ) = MetricsFacet(address(diamond)).getAllLoansPaginated(cursor, maxScan);
     }
 
     /// @dev Codex #1825 r3 — ids are sequential and the high-water mark is
@@ -3609,23 +3621,21 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
-    /// @dev Codex #1825 r3 — skipping visible records walks the prefix, which
-    ///      only becomes necessary once a vehicle makes the ids sparse. With
-    ///      none, visible rank and id agree exactly, so the original direct
-    ///      seek is still correct and a deployment that has never completed a
-    ///      listed sale keeps the cheaper path. Pinned because "still correct"
-    ///      is the part a fast path can quietly get wrong.
+    /// @dev With no vehicle the ids are dense, so a one-id window from each
+    ///      cursor serves each loan in order and the window past the last id
+    ///      is empty with no progress (#2930).
     function test_1503item26_densePagingIsUnchangedWithoutVehicles() public {
         uint256 second = _openAnotherLoan("denseBorrower");
-        (, uint256 total) = MetricsFacet(address(diamond)).getAllLoansPaginated(0, 1);
+        (, , uint256 total) = MetricsFacet(address(diamond)).getAllLoansPaginated(0, 1);
         assertEq(total, 2, "fixture: two visible loans, no vehicle");
 
-        (uint256[] memory p0, ) = MetricsFacet(address(diamond)).getAllLoansPaginated(0, 1);
-        (uint256[] memory p1, ) = MetricsFacet(address(diamond)).getAllLoansPaginated(1, 1);
-        (uint256[] memory p2, ) = MetricsFacet(address(diamond)).getAllLoansPaginated(2, 1);
+        (uint256[] memory p0, uint256 c0) = _allLoansPage(0, 1);
+        (uint256[] memory p1, uint256 c1) = _allLoansPage(c0, 1);
+        (uint256[] memory p2, uint256 c2) = _allLoansPage(c1, 1);
         assertEq(p0[0], activeLoanId, "first page is the first loan");
         assertEq(p1[0], second, "second page is the second loan");
         assertEq(p2.length, 0, "a page past the end is empty");
+        assertEq(c2, c1, "and makes no progress");
     }
 
     /// @dev A second real loan, so the visible id sequence continues ABOVE the

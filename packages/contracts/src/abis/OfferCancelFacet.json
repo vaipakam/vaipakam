@@ -22,12 +22,12 @@
         "internalType": "address"
       },
       {
-        "name": "offset",
+        "name": "cursor",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "limit",
+        "name": "maxScan",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -39,7 +39,7 @@
         "internalType": "uint256[]"
       },
       {
-        "name": "total",
+        "name": "nextCursor",
         "type": "uint256",
         "internalType": "uint256"
       }

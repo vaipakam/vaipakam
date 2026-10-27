@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibMetricsTypes} from "../libraries/LibMetricsTypes.sol";
+import {LibScanPage} from "../libraries/LibScanPage.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 // #1306 follow-up — previewInteractionRewards moved to the read-only lens.
@@ -37,15 +38,15 @@ import {InteractionRewardsLensFacet} from "./InteractionRewardsLensFacet.sol";
  *      via {LimitTooLarge} so a misbehaving caller can't OOG-itself
  *      across thousands of items.
  *
- *      Iteration: every paginated lister walks `s.activeLoanIdsList`
- *      / `s.activeOfferIdsList` (or `[1, nextLoanId)` for filled-offer
- *      / claimable history) once and accumulates the page in a fixed-
- *      size memory buffer. O(activeCount) per call — fine while the
- *      protocol is in the thousands; revisit when loanIds cross 1e5.
+ *      Iteration: every paginated lister walks the user's own loan or
+ *      offer index, and (#2930) reads at most `maxScan` rows of it per
+ *      call from a caller-held cursor ({LibScanPage}), so a call's cost
+ *      is bounded by the rows it reads, not by the user's history. The
+ *      snapshot counts still walk the whole index (O(user's history)).
  */
 contract MetricsDashboardFacet {
-    /// @notice Pagination cap (D2). Callers requesting `limit > 100`
-    ///         revert.
+    /// @notice Pagination cap (D2). Callers asking a paginated lister to
+    ///         read more than 100 rows (`maxScan > 100`) revert.
     uint256 public constant MAX_PAGE_LIMIT = 100;
 
     /// @notice Hard-cap exceeded.
@@ -179,34 +180,40 @@ contract MetricsDashboardFacet {
      * @notice Per-side paginated view of active loans for a user,
      *         each with current LTV + Health-Factor pre-computed.
      * @param  user         The user to query.
+     * @dev    #2930 — bounded by rows READ ({LibScanPage}): reads at most
+     *         `maxScan` rows of the user's loan index from `cursor`. The
+     *         cursor is a position in that index, not a count of matches; a
+     *         page may be empty with the scan unfinished, and the end is
+     *         `nextCursor` reaching the index's length.
      * @param  borrowerSide `true` → loans where user is borrower;
      *                      `false` → loans where user is lender.
-     * @param  offset       Skip this many matching loans before
-     *                      starting the page.
-     * @param  limit        Max page size (≤ {MAX_PAGE_LIMIT}).
-     * @return loans        Up to `limit` matching {LoanWithRisk}
-     *                      records.
+     * @param  cursor       Position in the user's loan index to start from.
+     * @param  maxScan      Most index rows this call reads
+     *                      (≤ {MAX_PAGE_LIMIT}).
+     * @return loans        The matching {LoanWithRisk} records among the
+     *                      rows read.
+     * @return nextCursor   Position to resume from; the index's length once
+     *                      the scan has reached the end.
      */
     function getUserDashboardLoans(
         address user,
         bool borrowerSide,
-        uint32 offset,
-        uint32 limit
-    ) external view returns (LoanWithRisk[] memory loans) {
-        if (limit > MAX_PAGE_LIMIT) revert LimitTooLarge(limit, MAX_PAGE_LIMIT);
+        uint256 cursor,
+        uint32 maxScan
+    ) external view returns (LoanWithRisk[] memory loans, uint256 nextCursor) {
+        if (maxScan > MAX_PAGE_LIMIT) revert LimitTooLarge(maxScan, MAX_PAGE_LIMIT);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // Walk the user's lifetime loan index — O(user's loan count)
         // — instead of the protocol-wide `activeLoanIdsList`. At
         // scale (10k+ active loans, user has <10) this is the
         // 1000× win the existing per-key index was built for.
         uint256[] storage userLoans = s.userLoanIds[user];
-        uint256 total = userLoans.length;
+        (uint256 i, uint256 end) = LibScanPage.window(userLoans.length, cursor, maxScan);
 
-        LoanWithRisk[] memory buf = new LoanWithRisk[](limit);
-        uint256 skipped;
+        LoanWithRisk[] memory buf = new LoanWithRisk[](end - i);
         uint256 written;
 
-        for (uint256 i = 0; i < total && written < limit; i++) {
+        for (; i < end; ++i) {
             LibVaipakam.Loan storage l = s.loans[userLoans[i]];
             // Filter to ACTIVE-status loans on the requested side.
             // The per-user index includes lifetime loans (every
@@ -220,10 +227,6 @@ contract MetricsDashboardFacet {
             if (!LibMetricsHooks._isActive(l.status)) continue;
             bool sideMatch = borrowerSide ? (l.borrower == user) : (l.lender == user);
             if (!sideMatch) continue;
-            if (skipped < offset) {
-                skipped += 1;
-                continue;
-            }
             buf[written].loan = LibMetricsTypes.toLoanSummary(l);
             // Best-effort risk read; reverts cleanly to 0 for illiquid
             // (no oracle feed). Mirrors AddCollateralFacet pattern.
@@ -247,6 +250,7 @@ contract MetricsDashboardFacet {
         for (uint256 j = 0; j < written; j++) {
             loans[j] = buf[j];
         }
+        nextCursor = end;
     }
 
     /**
@@ -268,32 +272,37 @@ contract MetricsDashboardFacet {
      *         exit path, currently unreachable), the row is emitted
      *         with `borrowerSide = true` (borrower side wins —
      *         matches the role the user is liable for).
-     * @param  user    The user to query.
-     * @param  offset  Skip this many matching loans.
-     * @param  limit   Max page size (≤ {MAX_PAGE_LIMIT}).
-     * @return rows    Page of matching {LoanWithRiskAndSide}
-     *                 records, each carrying the loan struct, live
-     *                 LTV / HF, and the side tag.
+     *
+     *         #2930 — bounded by rows READ, with the cursor rule of
+     *         {getUserDashboardLoans}.
+     * @param  user       The user to query.
+     * @param  cursor     Position in the user's loan index to start from.
+     * @param  maxScan    Most index rows this call reads
+     *                    (≤ {MAX_PAGE_LIMIT}).
+     * @return rows       The matching {LoanWithRiskAndSide} records among
+     *                    the rows read, each carrying the loan struct, live
+     *                    LTV / HF, and the side tag.
+     * @return nextCursor Position to resume from; the index's length once
+     *                    the scan has reached the end.
      */
     function getUserDashboardLoansBothSides(
         address user,
-        uint32 offset,
-        uint32 limit
-    ) external view returns (LoanWithRiskAndSide[] memory rows) {
-        if (limit > MAX_PAGE_LIMIT) revert LimitTooLarge(limit, MAX_PAGE_LIMIT);
+        uint256 cursor,
+        uint32 maxScan
+    ) external view returns (LoanWithRiskAndSide[] memory rows, uint256 nextCursor) {
+        if (maxScan > MAX_PAGE_LIMIT) revert LimitTooLarge(maxScan, MAX_PAGE_LIMIT);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // Walk the user's lifetime loan index — same optimization
         // as {getUserDashboardLoans}. The user's `userLoanIds`
         // includes every loan they're a party to regardless of
         // side, so one walk covers both lender + borrower.
         uint256[] storage userLoans = s.userLoanIds[user];
-        uint256 total = userLoans.length;
+        (uint256 i, uint256 end) = LibScanPage.window(userLoans.length, cursor, maxScan);
 
-        LoanWithRiskAndSide[] memory buf = new LoanWithRiskAndSide[](limit);
-        uint256 skipped;
+        LoanWithRiskAndSide[] memory buf = new LoanWithRiskAndSide[](end - i);
         uint256 written;
 
-        for (uint256 i = 0; i < total && written < limit; i++) {
+        for (; i < end; ++i) {
             LibVaipakam.Loan storage l = s.loans[userLoans[i]];
             // Filter to ACTIVE only — `userLoanIds` covers lifetime.
             // #940 — the active dashboard set is Active OR FallbackPending (a
@@ -305,10 +314,6 @@ contract MetricsDashboardFacet {
             bool isBorrower = l.borrower == user;
             bool isLender = l.lender == user;
             if (!isBorrower && !isLender) continue;
-            if (skipped < offset) {
-                skipped += 1;
-                continue;
-            }
             buf[written].loan = LibMetricsTypes.toLoanSummary(l);
             buf[written].borrowerSide = isBorrower;
             // Best-effort risk read; silent-degrade-to-0 mirrors
@@ -332,27 +337,34 @@ contract MetricsDashboardFacet {
         for (uint256 j = 0; j < written; j++) {
             rows[j] = buf[j];
         }
+        nextCursor = end;
     }
 
     /**
      * @notice Paginated user-created offers — open (un-accepted) or
      *         filled (accepted) split by `filledOnly` flag (D4).
      * @param  user       The offer creator to query.
+     * @dev    #2930 — bounded by rows READ, with the cursor rule of
+     *         {getUserDashboardLoans} over the user's offer index.
      * @param  filledOnly `true` → only accepted offers; `false` →
      *                    only currently open offers.
-     * @param  offset     Skip this many matching offers.
-     * @param  limit      Max page size (≤ {MAX_PAGE_LIMIT}).
-     * @return offers     Page of matching {LibMetricsTypes.OfferSummary}
-     *                    records (lean flat projection — see
+     * @param  cursor     Position in the user's offer index to start from.
+     * @param  maxScan    Most index rows this call reads
+     *                    (≤ {MAX_PAGE_LIMIT}).
+     * @return offers     The matching {LibMetricsTypes.OfferSummary}
+     *                    records among the rows read (lean flat
+     *                    projection — see
      *                    {MetricsFacet.getUserAllOffersWithDetails}).
+     * @return nextCursor Position to resume from; the index's length once
+     *                    the scan has reached the end.
      */
     function getUserDashboardOffers(
         address user,
         bool filledOnly,
-        uint32 offset,
-        uint32 limit
-    ) external view returns (LibMetricsTypes.OfferSummary[] memory offers) {
-        if (limit > MAX_PAGE_LIMIT) revert LimitTooLarge(limit, MAX_PAGE_LIMIT);
+        uint256 cursor,
+        uint32 maxScan
+    ) external view returns (LibMetricsTypes.OfferSummary[] memory offers, uint256 nextCursor) {
+        if (maxScan > MAX_PAGE_LIMIT) revert LimitTooLarge(maxScan, MAX_PAGE_LIMIT);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // Walk the user's lifetime offer index. The `accepted`
         // boolean partitions the same set into open vs filled —
@@ -360,11 +372,10 @@ contract MetricsDashboardFacet {
         // touching the protocol-wide active list or the lifetime
         // offer space. O(user's offer count).
         uint256[] storage userOffers = s.userOfferIds[user];
-        uint256 total = userOffers.length;
-        LibMetricsTypes.OfferSummary[] memory buf = new LibMetricsTypes.OfferSummary[](limit);
+        (uint256 i, uint256 end) = LibScanPage.window(userOffers.length, cursor, maxScan);
+        LibMetricsTypes.OfferSummary[] memory buf = new LibMetricsTypes.OfferSummary[](end - i);
         uint256 written;
-        uint256 skipped;
-        for (uint256 i = 0; i < total && written < limit; i++) {
+        for (; i < end; ++i) {
             uint256 offerId = userOffers[i];
             LibVaipakam.Offer storage o = s.offers[offerId];
             // Codex round-3 P2 #5 — exclude offers that landed in the
@@ -377,15 +388,12 @@ contract MetricsDashboardFacet {
             // "Sold via OpenSea" history row.
             if (s.offerConsumedBySale[offerId]) continue;
             if (o.accepted != filledOnly) continue;
-            if (skipped < offset) {
-                skipped += 1;
-                continue;
-            }
             buf[written] = LibMetricsTypes.toOfferSummary(o);
             written += 1;
         }
         offers = new LibMetricsTypes.OfferSummary[](written);
         for (uint256 j = 0; j < written; j++) offers[j] = buf[j];
+        nextCursor = end;
     }
 
     /**
@@ -393,37 +401,45 @@ contract MetricsDashboardFacet {
      *         side per D3). Includes lender post-resolution proceeds,
      *         borrower collateral refunds and NFT rental returns.
      * @param  user         The user to query.
+     * @dev    #2930 — bounded by rows READ, with the cursor rule of
+     *         {getUserDashboardLoans}.
      * @param  borrowerSide `true` → borrower-side claims;
      *                      `false` → lender-side claims.
-     * @param  offset       Skip this many matching claims.
-     * @param  limit        Max page size (≤ {MAX_PAGE_LIMIT}).
+     * @param  cursor       Position in the user's loan index to start from.
+     * @param  maxScan      Most index rows this call reads
+     *                      (≤ {MAX_PAGE_LIMIT}).
      * @return loanIds      Loan IDs the claims attach to.
      * @return claims       Aligned page of {LibVaipakam.ClaimInfo}.
+     * @return nextCursor   Position to resume from; the index's length once
+     *                      the scan has reached the end.
      */
     function getUserDashboardClaimables(
         address user,
         bool borrowerSide,
-        uint32 offset,
-        uint32 limit
+        uint256 cursor,
+        uint32 maxScan
     )
         external
         view
-        returns (uint256[] memory loanIds, LibVaipakam.ClaimInfo[] memory claims)
+        returns (
+            uint256[] memory loanIds,
+            LibVaipakam.ClaimInfo[] memory claims,
+            uint256 nextCursor
+        )
     {
-        if (limit > MAX_PAGE_LIMIT) revert LimitTooLarge(limit, MAX_PAGE_LIMIT);
+        if (maxScan > MAX_PAGE_LIMIT) revert LimitTooLarge(maxScan, MAX_PAGE_LIMIT);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // Walk the user's lifetime loan index. O(user's loan count)
         // instead of O(every loan ever); same optimization
         // pattern as the loans + offers paths above.
         uint256[] storage userLoans = s.userLoanIds[user];
-        uint256 total = userLoans.length;
+        (uint256 i, uint256 end) = LibScanPage.window(userLoans.length, cursor, maxScan);
 
-        uint256[] memory idBuf = new uint256[](limit);
-        LibVaipakam.ClaimInfo[] memory claimBuf = new LibVaipakam.ClaimInfo[](limit);
+        uint256[] memory idBuf = new uint256[](end - i);
+        LibVaipakam.ClaimInfo[] memory claimBuf = new LibVaipakam.ClaimInfo[](end - i);
         uint256 written;
-        uint256 skipped;
 
-        for (uint256 i = 0; i < total && written < limit; i++) {
+        for (; i < end; ++i) {
             uint256 lid = userLoans[i];
             LibVaipakam.Loan storage l = s.loans[lid];
             bool sideMatch = borrowerSide ? (l.borrower == user) : (l.lender == user);
@@ -451,21 +467,17 @@ contract MetricsDashboardFacet {
                 }
             }
             if (!pending) continue;
-            if (skipped < offset) {
-                skipped += 1;
-                continue;
-            }
             idBuf[written] = lid;
             claimBuf[written] = emitCi;
             written += 1;
         }
 
-        loanIds = new uint256[](written);
+        loanIds = LibScanPage.trim(idBuf, written);
         claims = new LibVaipakam.ClaimInfo[](written);
         for (uint256 j = 0; j < written; j++) {
-            loanIds[j] = idBuf[j];
             claims[j] = claimBuf[j];
         }
+        nextCursor = end;
     }
 
     // ─── #1025 bulk wallet-dashboard batch-by-id views ───────────────────────

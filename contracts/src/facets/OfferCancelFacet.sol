@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibScanPage} from "../libraries/LibScanPage.sol";
 // #195 — `LibAuth.requireOfferCreator` is replaced by an inline access
 // gate that admits the creator OR any caller against an expired offer;
 // see `cancelOffer` for the full rule.
@@ -641,57 +642,49 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         emit OfferCanceled(saleOfferId, s.offers[saleOfferId].creator);
     }
 
-    /**
-     * @notice Returns open offer IDs whose creator country is trade-compatible
-     *         with `user`'s country. Paginated.
-     * @dev Consults {ProfileFacet.getUserCountry} for both sides and
-     *      {LibVaipakam.canTradeBetween} — the trade-pair allowance table is
-     *      governance-configured via {ProfileFacet.setTradeAllowance}. Walks
-     *      the `activeOfferIdsList` maintained by LibMetricsHooks (bounded by
-     *      `activeOffersCount`), not the lifetime sequence, so cancelled and
-     *      accepted offers are never inspected. Pagination lets callers bound
-     *      the per-call work even on very large order books.
-     * @param user The user whose country drives the filter.
-     * @param offset Number of compatible open offers to skip.
-     * @param limit  Maximum number of IDs to return.
-     * @return offerIds Array of compatible, unaccepted offer IDs (length ≤ limit).
-     * @return total   Number of currently open offers scanned (`activeOffersCount`).
-     */
+    /// @notice Open offer IDs whose creator's country is trade-compatible
+    ///         with `user`'s, one bounded scan of the active-offer list at a
+    ///         time.
+    /// @dev    Consults {ProfileFacet.getUserCountry} for both sides and
+    ///         {LibVaipakam.canTradeBetween}. Walks `activeOfferIdsList`
+    ///         (maintained by LibMetricsHooks), so cancelled and accepted
+    ///         offers are never inspected.
+    ///
+    ///         #2930 — bounded by rows READ ({LibScanPage}): reads at most
+    ///         `maxScan` rows from `cursor`. The cursor is a position in the
+    ///         active list, not a count of matches; a page may be empty with
+    ///         the scan unfinished, and the end is `nextCursor` reaching the
+    ///         list's length. (It used to take an offset counted in matches,
+    ///         so a filter few offers passed read the whole book per call.)
+    /// @param  user       The user whose country drives the filter.
+    /// @param  cursor     Position in the active-offer list to start from.
+    /// @param  maxScan    Most list rows this call reads.
+    /// @return offerIds   The compatible offer IDs among the rows read.
+    /// @return nextCursor Position to resume from; the list's length once
+    ///                    the scan has reached the end.
     function getCompatibleOffers(
         address user,
-        uint256 offset,
-        uint256 limit
-    ) external view returns (uint256[] memory offerIds, uint256 total) {
+        uint256 cursor,
+        uint256 maxScan
+    ) external view returns (uint256[] memory offerIds, uint256 nextCursor) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256[] storage src = s.activeOfferIdsList;
-        total = src.length;
-        if (limit == 0) return (new uint256[](0), total);
-
-        string memory userCountry = ProfileFacet(address(this)).getUserCountry(user);
-        uint256[] memory buffer = new uint256[](limit);
-        uint256 skipped;
+        (uint256 i, uint256 end) = LibScanPage.window(src.length, cursor, maxScan);
+        uint256[] memory buffer = new uint256[](end - i);
         uint256 filled;
-        for (uint256 i = 0; i < total && filled < limit; ) {
-            uint256 id = src[i];
-            LibVaipakam.Offer storage offer = s.offers[id];
-            string memory creatorCountry = ProfileFacet(address(this))
-                .getUserCountry(offer.creator);
-            if (LibVaipakam.canTradeBetween(userCountry, creatorCountry)) {
-                if (skipped < offset) {
-                    unchecked { ++skipped; }
-                } else {
-                    buffer[filled] = id;
-                    unchecked { ++filled; }
+        if (i < end) {
+            string memory userCountry = ProfileFacet(address(this)).getUserCountry(user);
+            for (; i < end; ++i) {
+                uint256 id = src[i];
+                string memory creatorCountry = ProfileFacet(address(this))
+                    .getUserCountry(s.offers[id].creator);
+                if (LibVaipakam.canTradeBetween(userCountry, creatorCountry)) {
+                    buffer[filled++] = id;
                 }
             }
-            unchecked { ++i; }
         }
-
-        offerIds = new uint256[](filled);
-        for (uint256 j; j < filled; ) {
-            offerIds[j] = buffer[j];
-            unchecked { ++j; }
-        }
+        offerIds = LibScanPage.trim(buffer, filled);
+        nextCursor = end;
     }
 
     /**

@@ -7,6 +7,7 @@ import {LibMetricsTypes} from "../libraries/LibMetricsTypes.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibScanPage} from "../libraries/LibScanPage.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {LibNumeraireValueRead} from "../libraries/LibNumeraireValueRead.sol";
@@ -423,16 +424,11 @@ contract MetricsFacet {
             return (new uint256[](0), startIdx);
         }
         uint256[] storage src = LibVaipakam.storageSlot().activeLoanIdsList;
-        uint256 len = src.length;
-        if (startIdx >= len) {
-            return (new uint256[](0), len);
-        }
-        // Compared before adding, so an oversized `maxScan` reads as "to
-        // the end" rather than overflowing.
-        uint256 end = maxScan > len - startIdx ? len : startIdx + maxScan;
-        uint256[] memory buf = new uint256[](end - startIdx);
+        // #2930 — the shared paging rule (the one #2751 set here).
+        (uint256 i, uint256 end) = LibScanPage.window(src.length, startIdx, maxScan);
+        uint256[] memory buf = new uint256[](end - i);
         uint256 filled;
-        for (uint256 i = startIdx; i < end; ++i) {
+        for (; i < end; ++i) {
             uint256 id = src[i];
             try RiskFacet(address(this)).calculateLTV(id) returns (uint256 ltv) {
                 if (ltv >= uint256(minLtvBps) && ltv <= uint256(maxLtvBps)) {
@@ -443,8 +439,7 @@ contract MetricsFacet {
                 // doesn't match against these — skip silently.
             }
         }
-        loanIds = new uint256[](filled);
-        for (uint256 k = 0; k < filled; ++k) loanIds[k] = buf[k];
+        loanIds = LibScanPage.trim(buf, filled);
         nextIdx = end;
     }
 
@@ -585,29 +580,36 @@ contract MetricsFacet {
         offerIds = _slice(src, offset, limit);
     }
 
-    /// @notice Paginated list of open offer IDs filtered by lending asset.
-    /// @dev Walks `activeOfferIdsList` — bounded by `activeOffersCount`.
-    function getActiveOffersByAsset(address asset, uint256 offset, uint256 limit)
+    /// @notice Open offer IDs filtered by lending asset, one bounded scan
+    ///         of the active-offer list at a time.
+    /// @dev    #2930 — bounded by rows READ ({LibScanPage}): reads at most
+    ///         `maxScan` rows of `activeOfferIdsList` from `cursor`. A page
+    ///         may be empty with the scan unfinished; the end is
+    ///         `nextCursor == activeOffersCount`, never an empty page. For a
+    ///         lending AND collateral filter, {getActiveOffersByAssetPair}
+    ///         reads a per-pair index instead and pages in O(limit).
+    /// @param  asset      The lending asset to match.
+    /// @param  cursor     Position in the active-offer list to start from.
+    /// @param  maxScan    Most list rows this call reads.
+    /// @return offerIds   The matching offer IDs among the rows read.
+    /// @return nextCursor Position to resume from; the list's length once
+    ///                    the scan has reached the end.
+    function getActiveOffersByAsset(address asset, uint256 cursor, uint256 maxScan)
         external
         view
-        returns (uint256[] memory offerIds)
+        returns (uint256[] memory offerIds, uint256 nextCursor)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256[] storage src = s.activeOfferIdsList;
-        uint256 len = src.length;
-        uint256[] memory buf = new uint256[](limit);
-        uint256 skipped;
+        (uint256 i, uint256 end) = LibScanPage.window(src.length, cursor, maxScan);
+        uint256[] memory buf = new uint256[](end - i);
         uint256 filled;
-        for (uint256 i = 0; i < len && filled < limit; i++) {
+        for (; i < end; ++i) {
             uint256 id = src[i];
-            LibVaipakam.Offer storage o = s.offers[id];
-            if (o.lendingAsset != asset) continue;
-            if (skipped < offset) { skipped += 1; continue; }
-            buf[filled] = id;
-            filled += 1;
+            if (s.offers[id].lendingAsset == asset) buf[filled++] = id;
         }
-        offerIds = new uint256[](filled);
-        for (uint256 k = 0; k < filled; k++) offerIds[k] = buf[k];
+        offerIds = LibScanPage.trim(buf, filled);
+        nextCursor = end;
     }
 
     /// @notice Paginated list of open offer IDs filtered by BOTH the
@@ -1199,33 +1201,40 @@ contract MetricsFacet {
         }
     }
 
-    /**
-     * @notice Paginated slice of the user's loans filtered by `status`.
-     * @dev O(userLoanIds[user].length) — still cheap vs. the protocol-wide
-     *      scans above. `offset`/`limit` refer to positions within the
-     *      filtered result, not the raw index.
-     */
+    /// @notice The user's loans in `status`, one bounded scan of the user's
+    ///         loan index at a time.
+    /// @dev    #2930 — bounded by rows READ ({LibScanPage}): reads at most
+    ///         `maxScan` rows of `userLoanIds[user]` from `cursor` and
+    ///         returns those in `status`. The cursor is a position in the
+    ///         index, not a count of matches; a page may be empty with the
+    ///         scan unfinished, and the end is `nextCursor` reaching the
+    ///         index's length. (It used to take an offset counted in matches
+    ///         and report a match total, which made every call read the
+    ///         whole index.)
+    /// @param  user       The participant whose index is walked.
+    /// @param  status     The loan status to match.
+    /// @param  cursor     Position in the user's loan index to start from.
+    /// @param  maxScan    Most index rows this call reads.
+    /// @return loanIds    The matching loan IDs among the rows read.
+    /// @return nextCursor Position to resume from; the index's length once
+    ///                    the scan has reached the end.
     function getUserLoansByStatusPaginated(
         address user,
         LibVaipakam.LoanStatus status,
-        uint256 offset,
-        uint256 limit
-    ) external view returns (uint256[] memory loanIds, uint256 matched) {
+        uint256 cursor,
+        uint256 maxScan
+    ) external view returns (uint256[] memory loanIds, uint256 nextCursor) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256[] storage src = s.userLoanIds[user];
-        uint256 len = src.length;
-        uint256[] memory buf = new uint256[](limit);
-        uint256 skipped;
+        (uint256 i, uint256 end) = LibScanPage.window(src.length, cursor, maxScan);
+        uint256[] memory buf = new uint256[](end - i);
         uint256 filled;
-        for (uint256 i = 0; i < len; i++) {
+        for (; i < end; ++i) {
             uint256 id = src[i];
-            if (s.loans[id].status != status) continue;
-            matched += 1;
-            if (skipped < offset) { skipped += 1; continue; }
-            if (filled < limit) { buf[filled] = id; filled += 1; }
+            if (s.loans[id].status == status) buf[filled++] = id;
         }
-        loanIds = new uint256[](filled);
-        for (uint256 k = 0; k < filled; k++) loanIds[k] = buf[k];
+        loanIds = LibScanPage.trim(buf, filled);
+        nextCursor = end;
     }
 
     /// @dev Offer lifecycle state used by {getUserOffersByStatePaginated}.
@@ -1246,31 +1255,34 @@ contract MetricsFacet {
     ///       moves. `_offerStateOf` below is a thin delegate kept so this facet's
     ///       internal call sites read unchanged.
 
-    /**
-     * @notice Paginated slice of the user's offers filtered by lifecycle state.
-     */
+    /// @notice The user's offers in lifecycle `state`, one bounded scan of
+    ///         the user's offer index at a time.
+    /// @dev    #2930 — bounded by rows READ ({LibScanPage}), with the same
+    ///         cursor rule as {getUserLoansByStatusPaginated}.
+    /// @param  user       The offer creator whose index is walked.
+    /// @param  state      The lifecycle state to match.
+    /// @param  cursor     Position in the user's offer index to start from.
+    /// @param  maxScan    Most index rows this call reads.
+    /// @return offerIds   The matching offer IDs among the rows read.
+    /// @return nextCursor Position to resume from; the index's length once
+    ///                    the scan has reached the end.
     function getUserOffersByStatePaginated(
         address user,
         LibMetricsTypes.OfferState state,
-        uint256 offset,
-        uint256 limit
-    ) external view returns (uint256[] memory offerIds, uint256 matched) {
+        uint256 cursor,
+        uint256 maxScan
+    ) external view returns (uint256[] memory offerIds, uint256 nextCursor) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256[] storage src = s.userOfferIds[user];
-        uint256 len = src.length;
-        uint256[] memory buf = new uint256[](limit);
-        uint256 skipped;
+        (uint256 i, uint256 end) = LibScanPage.window(src.length, cursor, maxScan);
+        uint256[] memory buf = new uint256[](end - i);
         uint256 filled;
-        for (uint256 i = 0; i < len; i++) {
+        for (; i < end; ++i) {
             uint256 id = src[i];
-            LibMetricsTypes.OfferState actual = _offerStateOf(s, id);
-            if (actual != state) continue;
-            matched += 1;
-            if (skipped < offset) { skipped += 1; continue; }
-            if (filled < limit) { buf[filled] = id; filled += 1; }
+            if (_offerStateOf(s, id) == state) buf[filled++] = id;
         }
-        offerIds = new uint256[](filled);
-        for (uint256 k = 0; k < filled; k++) offerIds[k] = buf[k];
+        offerIds = LibScanPage.trim(buf, filled);
+        nextCursor = end;
     }
 
     // ─── 8b. NFT-Holder Enumeration (secondary-market-safe) ────────────────
@@ -1499,129 +1511,139 @@ contract MetricsFacet {
         }
     }
 
-    /**
-     * @notice Paginated slice of every loan ever created, regardless of status.
-     * @dev Sequential ID scan bounded by `limit`. Loans with `id == 0`
-     *      (shouldn't happen post-initiation) are skipped.
-     */
-    function getAllLoansPaginated(uint256 offset, uint256 limit)
+    /// @notice Every loan ever created, regardless of status, one bounded
+    ///         scan of the loan id range at a time.
+    /// @dev    #2930 / #1832 — bounded by ids READ ({LibScanPage}). The
+    ///         cursor is a position in the id range (`id - 1`), so a call
+    ///         reads ids `cursor + 1 .. cursor + maxScan` and no deep page
+    ///         re-walks the prefix. Sale-vehicle records (#1503 item 26) are
+    ///         skipped and excluded from `total`, so a page may hold fewer
+    ///         ids than it read, or none; the end is `nextCursor` reaching
+    ///         `nextLoanId`, never an empty page. (It used to take an offset
+    ///         counted in visible records, which walked the prefix once any
+    ///         vehicle existed.)
+    /// @param  cursor     Position in the id range to start from (0 = id 1).
+    /// @param  maxScan    Most ids this call reads.
+    /// @return loanIds    The visible loan IDs among the ids read.
+    /// @return nextCursor Position to resume from; `nextLoanId` once the
+    ///                    scan has reached the end.
+    /// @return total      Visible loans ever created (vehicles excluded).
+    function getAllLoansPaginated(uint256 cursor, uint256 maxScan)
         external
         view
-        returns (uint256[] memory loanIds, uint256 total)
+        returns (uint256[] memory loanIds, uint256 nextCursor, uint256 total)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        total = s.nextLoanId; // highest valid id (1-indexed; sequence starts at 1)
-        uint256[] memory buf = new uint256[](limit);
+        total = s.nextLoanId - s.internalVehicleLoanCount;
+        (uint256 p, uint256 end) = LibScanPage.window(s.nextLoanId, cursor, maxScan);
+        uint256[] memory buf = new uint256[](end - p);
         uint256 filled;
-        // #1503 item 26 — the reported total excludes sale vehicles, so the
-        // rows must too, or a page returns an id the caller cannot reconcile
-        // against `total` (and can resolve through `getLoanDetails` to a
-        // record the product says does not exist).
-        total -= s.internalVehicleLoanCount;
-        // `offset` counts VISIBLE records, not raw ids (Codex #1825 r2). Once
-        // a vehicle sits below the requested offset the two stop agreeing, and
-        // treating the offset as an id then re-serves rows already returned by
-        // the previous page and keeps serving them past the end — with visible
-        // ids 1 and 3 around a vehicle at 2, `(1,1)` and `(2,1)` both answered
-        // `[3]` even though `offset == total`. Skipping visible records is
-        // also what the by-status twin below already does.
-        //
-        // COST (Codex #1825 r3): skipping visible records means walking the
-        // prefix, so a deep page is O(offset) rather than O(limit) and a full
-        // enumeration is quadratic in the history. That only becomes true once
-        // a vehicle EXISTS to make ids sparse — with none, visible rank and id
-        // agree exactly and the original direct-seek is still correct, so a
-        // deployment that has never completed a listed sale keeps the old
-        // cost. Beyond that the id-range family (this view, the by-status
-        // twin, and the two lifetime scans) needs a rank or cursor index
-        // rather than a per-view patch; tracked in #1832. The O(results)
-        // reverse-index views remain the answer for deep enumeration.
-        uint256 skipped;
-        uint256 firstId = s.internalVehicleLoanCount == 0 ? offset + 1 : 1;
-        if (firstId != 1) skipped = offset; // dense: the seek already skipped them
-        for (uint256 id = firstId; id <= s.nextLoanId && filled < limit; id++) {
+        for (; p < end; ++p) {
+            uint256 id = p + 1;
             if (s.loans[id].id == 0) continue;
             if (LibMetricsHooks.isInternalVehicle(s, id)) continue;
-            if (skipped < offset) { skipped += 1; continue; }
-            buf[filled] = id; filled += 1;
+            buf[filled++] = id;
         }
-        loanIds = new uint256[](filled);
-        for (uint256 k = 0; k < filled; k++) loanIds[k] = buf[k];
+        loanIds = LibScanPage.trim(buf, filled);
+        nextCursor = end;
     }
 
-    /// @notice Paginated slice of every offer ever created (including cancelled).
-    function getAllOffersPaginated(uint256 offset, uint256 limit)
+    /// @notice Every offer ever created (cancelled and consumed-by-sale
+    ///         included), one bounded scan of the offer id range at a time.
+    /// @dev    #2930 — bounded by ids READ ({LibScanPage}), with the same
+    ///         id-range cursor as {getAllLoansPaginated}. Live, cancelled and
+    ///         consumed-by-sale offers are all returned, so an indexer can
+    ///         rebuild full history from this one view (T-086 Round-8 #358
+    ///         §19.7e); an id whose row is gone for any other reason is
+    ///         skipped.
+    /// @param  cursor     Position in the id range to start from (0 = id 1).
+    /// @param  maxScan    Most ids this call reads.
+    /// @return offerIds   The offer IDs among the ids read.
+    /// @return nextCursor Position to resume from; `nextOfferId` once the
+    ///                    scan has reached the end.
+    /// @return total      `nextOfferId`, the highest offer id issued.
+    function getAllOffersPaginated(uint256 cursor, uint256 maxScan)
         external
         view
-        returns (uint256[] memory offerIds, uint256 total)
+        returns (uint256[] memory offerIds, uint256 nextCursor, uint256 total)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         total = s.nextOfferId;
-        uint256[] memory buf = new uint256[](limit);
+        (uint256 p, uint256 end) = LibScanPage.window(total, cursor, maxScan);
+        uint256[] memory buf = new uint256[](end - p);
         uint256 filled;
-        uint256 start = offset + 1;
-        for (uint256 id = start; id <= total && filled < limit; id++) {
-            // Include both live offers (offers[id].id != 0) and cancelled
-            // offers (offers[id].id == 0 && offerCancelled[id] == true) so
-            // indexers can reconstruct full history via a single view.
-            // T-086 Round-8 (#358) §19.7e — consumed-by-sale offers
-            // (Scenario A terminal) also belong in the indexer's full-
-            // history view, mirror of the cancelled branch.
+        for (; p < end; ++p) {
+            uint256 id = p + 1;
             if (
                 s.offers[id].id == 0
                 && !s.offerCancelled[id]
                 && !s.offerConsumedBySale[id]
             ) continue;
-            buf[filled] = id; filled += 1;
+            buf[filled++] = id;
         }
-        offerIds = new uint256[](filled);
-        for (uint256 k = 0; k < filled; k++) offerIds[k] = buf[k];
+        offerIds = LibScanPage.trim(buf, filled);
+        nextCursor = end;
     }
 
-    /// @notice Paginated slice of loans in a given status.
+    /// @notice Loans in `status`, one bounded scan of the loan id range at
+    ///         a time.
+    /// @dev    #2930 / #1832 — bounded by ids READ ({LibScanPage}), with the
+    ///         id-range cursor of {getAllLoansPaginated}. Sale-vehicle
+    ///         records are skipped (#1503 item 26). A page may be empty with
+    ///         the scan unfinished; the end is `nextCursor` reaching
+    ///         `nextLoanId`. (It used to take an offset counted in matches
+    ///         and report a match total, which read every loan ever created
+    ///         on every call.)
+    /// @param  status     The loan status to match.
+    /// @param  cursor     Position in the id range to start from (0 = id 1).
+    /// @param  maxScan    Most ids this call reads.
+    /// @return loanIds    The matching loan IDs among the ids read.
+    /// @return nextCursor Position to resume from; `nextLoanId` once the
+    ///                    scan has reached the end.
     function getLoansByStatusPaginated(
         LibVaipakam.LoanStatus status,
-        uint256 offset,
-        uint256 limit
-    ) external view returns (uint256[] memory loanIds, uint256 matched) {
+        uint256 cursor,
+        uint256 maxScan
+    ) external view returns (uint256[] memory loanIds, uint256 nextCursor) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 end = s.nextLoanId;
-        uint256[] memory buf = new uint256[](limit);
-        uint256 skipped;
+        (uint256 p, uint256 end) = LibScanPage.window(s.nextLoanId, cursor, maxScan);
+        uint256[] memory buf = new uint256[](end - p);
         uint256 filled;
-        for (uint256 id = 1; id <= end; id++) {
+        for (; p < end; ++p) {
+            uint256 id = p + 1;
             if (s.loans[id].status != status) continue;
-            // #1503 item 26 — a completed sale vehicle is a Repaid record; it
-            // must not appear in a status page any more than in the full list.
             if (LibMetricsHooks.isInternalVehicle(s, id)) continue;
-            matched += 1;
-            if (skipped < offset) { skipped += 1; continue; }
-            if (filled < limit) { buf[filled] = id; filled += 1; }
+            buf[filled++] = id;
         }
-        loanIds = new uint256[](filled);
-        for (uint256 k = 0; k < filled; k++) loanIds[k] = buf[k];
+        loanIds = LibScanPage.trim(buf, filled);
+        nextCursor = end;
     }
 
-    /// @notice Paginated slice of offers in a given lifecycle state.
+    /// @notice Offers in lifecycle `state`, one bounded scan of the offer id
+    ///         range at a time.
+    /// @dev    #2930 — bounded by ids READ ({LibScanPage}), with the
+    ///         id-range cursor of {getAllOffersPaginated}.
+    /// @param  state      The lifecycle state to match.
+    /// @param  cursor     Position in the id range to start from (0 = id 1).
+    /// @param  maxScan    Most ids this call reads.
+    /// @return offerIds   The matching offer IDs among the ids read.
+    /// @return nextCursor Position to resume from; `nextOfferId` once the
+    ///                    scan has reached the end.
     function getOffersByStatePaginated(
         LibMetricsTypes.OfferState state,
-        uint256 offset,
-        uint256 limit
-    ) external view returns (uint256[] memory offerIds, uint256 matched) {
+        uint256 cursor,
+        uint256 maxScan
+    ) external view returns (uint256[] memory offerIds, uint256 nextCursor) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 end = s.nextOfferId;
-        uint256[] memory buf = new uint256[](limit);
-        uint256 skipped;
+        (uint256 p, uint256 end) = LibScanPage.window(s.nextOfferId, cursor, maxScan);
+        uint256[] memory buf = new uint256[](end - p);
         uint256 filled;
-        for (uint256 id = 1; id <= end; id++) {
-            LibMetricsTypes.OfferState actual = _offerStateOf(s, id);
-            if (actual != state) continue;
-            matched += 1;
-            if (skipped < offset) { skipped += 1; continue; }
-            if (filled < limit) { buf[filled] = id; filled += 1; }
+        for (; p < end; ++p) {
+            uint256 id = p + 1;
+            if (_offerStateOf(s, id) == state) buf[filled++] = id;
         }
-        offerIds = new uint256[](filled);
-        for (uint256 k = 0; k < filled; k++) offerIds[k] = buf[k];
+        offerIds = LibScanPage.trim(buf, filled);
+        nextCursor = end;
     }
 
     /// @notice #955 (#921 item 4) — the canonical lifecycle {OfferState} of a

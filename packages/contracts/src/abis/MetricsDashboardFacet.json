@@ -344,12 +344,12 @@
         "internalType": "bool"
       },
       {
-        "name": "offset",
-        "type": "uint32",
-        "internalType": "uint32"
+        "name": "cursor",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
-        "name": "limit",
+        "name": "maxScan",
         "type": "uint32",
         "internalType": "uint32"
       }
@@ -396,6 +396,11 @@
             "internalType": "bool"
           }
         ]
+      },
+      {
+        "name": "nextCursor",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -415,12 +420,12 @@
         "internalType": "bool"
       },
       {
-        "name": "offset",
-        "type": "uint32",
-        "internalType": "uint32"
+        "name": "cursor",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
-        "name": "limit",
+        "name": "maxScan",
         "type": "uint32",
         "internalType": "uint32"
       }
@@ -544,6 +549,11 @@
             "internalType": "uint256"
           }
         ]
+      },
+      {
+        "name": "nextCursor",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -558,12 +568,12 @@
         "internalType": "address"
       },
       {
-        "name": "offset",
-        "type": "uint32",
-        "internalType": "uint32"
+        "name": "cursor",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
-        "name": "limit",
+        "name": "maxScan",
         "type": "uint32",
         "internalType": "uint32"
       }
@@ -692,6 +702,11 @@
             "internalType": "bool"
           }
         ]
+      },
+      {
+        "name": "nextCursor",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -711,12 +726,12 @@
         "internalType": "bool"
       },
       {
-        "name": "offset",
-        "type": "uint32",
-        "internalType": "uint32"
+        "name": "cursor",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
-        "name": "limit",
+        "name": "maxScan",
         "type": "uint32",
         "internalType": "uint32"
       }
@@ -823,6 +838,11 @@
             "internalType": "uint256"
           }
         ]
+      },
+      {
+        "name": "nextCursor",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
