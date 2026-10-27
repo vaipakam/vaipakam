@@ -14,7 +14,9 @@ PRs landing the same day never append-conflict.
    stable assembly order.)
 2. Write the thread in plain English — what changed and why, for a
    developer/operator reader. **No code snippets.** Match the tone of the
-   committed `ReleaseNotes-<date>.md` files.
+   committed `ReleaseNotes-<date>.md` files. **No date or time either**:
+   when the change landed is git's record, not the author's, and assembly
+   writes it under the section for you (see "Assembling a day's notes").
 3. Commit it as part of the PR.
 4. **Once GitHub has assigned the PR number, put it in the heading.** The
    template ships `(PR #<n>)` as a placeholder, and assembly refuses a
@@ -100,6 +102,28 @@ result, add an intro paragraph, and commit:
 git add -A docs/ReleaseNotes/
 git commit -m "docs: release notes <date>"
 ```
+
+**Where the dates come from.** A fragment belongs to the UTC day of the
+commit that added it, which on `main` (every PR squash-merges as one
+commit) is the day its PR merged. The fragment never carries a date of its
+own, so there is nothing to keep in step with git. Each folded section
+ends with one line naming that commit's time and sha, for example
+`_Committed 2026-10-27 13:45 UTC (0c72d6251)._`, read from the same query
+that chose the day, so the two cannot disagree. A section the run could
+not date says so and why (`_Commit time not recorded: …_`): a fragment
+that was not committed yet, or a run with `--allow-mixed-dates` or outside
+git. Sections folded before this line existed carry none.
+
+To see a backlog before folding it:
+
+```bash
+bash docs/ReleaseNotes/assemble.sh --list
+```
+
+It prints every pending fragment with its commit time and the day it will
+be filed under, then one command per day, oldest first. It is read-only:
+it takes no lock and changes nothing, so it is a snapshot of the moment it
+ran.
 
 **If a run is interrupted, run it again** — with two cases below that
 need a manual step first. The
