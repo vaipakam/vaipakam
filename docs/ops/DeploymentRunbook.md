@@ -516,11 +516,23 @@ surface stays inert.
    releases a closed era while the chain is `Detached`) goes back to
    the base it detached from. The steps:
    1. Detach it first with `setBaseChainId(0)`. The chain records that
-      base, and `getRewardChainRetirement()` shows it as
-      `returnChainId`. Check it is the base you expect.
-   2. Finalize each retired era once its days are closed
-      (`RewardEraFacet.finalizeCustodyEra(era)`), so the value reaches
-      `PendingSurplus`. Read the row with `rewardCustodyRow(PendingSurplus)`.
+      base chain and the Base Diamond it last served
+      (`setBaseRewardDeployment`'s last non-zero value), and
+      `getRewardChainRetirement()` shows them as `returnChainId` and
+      `returnDeployment`. Check both are the Base you expect. A mirror
+      whose Base deployment was never set cannot be retired.
+   2. Close out each retired era so its value reaches `PendingSurplus`.
+      **Nothing does this on a detached chain by itself**: the keeper's
+      day-close pass skips chains that are neither canonical nor a mirror,
+      so these are manual (all permissionless) calls, in this order:
+      `RewardReporterFacet.advanceInterestFrontiers(through)` up to the
+      era's last day, then for each day of the era
+      `RewardClosureFacet.startDayClosure(day)` and, where it does not
+      close at once, `proveDayClosurePage(...)` pages, then
+      `RewardEraFacet.finalizeCustodyEra(era)`. An era whose day still has
+      a reward entry its owner could claim does not finalize, by design, so
+      that value stays on the chain. Read the row with
+      `rewardCustodyRow(PendingSurplus)`.
    3. Call `RewardReporterFacet.retireRewardChain()` (ADMIN, one-way).
       After this, both role setters refuse every write
       (`RewardChainIsRetired`), so this step cannot be undone. Do not run
@@ -528,10 +540,11 @@ surface stays inert.
    4. Anyone, the operator included, sends the row home with
       `RepatriationFacet.sendRetiredSurplusReturn(amount, refund)`. Pay
       the fee from `VpfiReturnSender.quoteRetiredSurplusReturn(base,
-      amount)`. Send it in parts if the lane's rate limit is lower than
+      returnDeployment, amount)`. Send it in parts if the lane's rate limit is lower than
       the row. Base needs a `VpfiReturnReceiver` at wire generation 4 or
       later; an older receiver refuses the message and CCIP keeps it
-      re-executable.
+      re-executable. A Base Diamond other than `returnDeployment` (one
+      that replaced it) refuses the message the same way.
    5. On Base, check `getChainRetiredSurplusReturned(<mirror chain id>)`
       against the mirror's sent total (the third value of
       `getRewardChainRetirement()`). Then take the mirror off Base's

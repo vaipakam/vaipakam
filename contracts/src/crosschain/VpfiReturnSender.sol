@@ -317,9 +317,10 @@ contract VpfiReturnSender is
 
     /// @notice #917 — send a RETIRED mirror's pending surplus to Base: the
     ///         VPFI the Diamond just released into this escrow from its
-    ///         pending-surplus row. The payload carries only the amount: Base
+    ///         pending-surplus row. The payload carries the Base Diamond the
+    ///         mirror detached from (`issuingBase`) and the amount: Base
     ///         credits what arrives under the authenticated source chain and
-    ///         settles no record, so there is no identity to bind.
+    ///         settles no record.
     /// @dev    Called by {RepatriationFacet.sendRetiredSurplusReturn} in the
     ///         same transaction that debits the row and releases the tokens
     ///         here; any failure reverts the whole return (row intact,
@@ -327,6 +328,7 @@ contract VpfiReturnSender is
     ///         post-send figure, for the event only.
     function sendRetiredSurplusReturn(
         uint256 dstChainId,
+        address issuingBase,
         uint256 amount,
         uint256 remainingAfter,
         address payable refundAddress
@@ -344,7 +346,7 @@ contract VpfiReturnSender is
         if (held < amount) revert InsufficientEscrow(amount, held);
 
         (bytes memory payload, ICrossChainMessenger.TokenAmount[] memory tokens) =
-            _retiredSurplusMessage(token, amount);
+            _retiredSurplusMessage(token, issuingBase, amount);
         IERC20(token).forceApprove(messenger, amount);
         messageId = _send(dstChainId, payload, tokens, refundAddress);
         emit RetiredSurplusReturnSent(messageId, dstChainId, amount, remainingAfter);
@@ -407,10 +409,11 @@ contract VpfiReturnSender is
     /// @notice Fee quote for {sendRetiredSurplusReturn} with these arguments.
     function quoteRetiredSurplusReturn(
         uint256 dstChainId,
+        address issuingBase,
         uint256 amount
     ) external view returns (uint256 fee) {
         (bytes memory payload, ICrossChainMessenger.TokenAmount[] memory tokens) =
-            _retiredSurplusMessage(vpfiToken, amount);
+            _retiredSurplusMessage(vpfiToken, issuingBase, amount);
         return ICrossChainMessenger(messenger).quoteMessageFee(
             dstChainId, payload, tokens, destGasLimit
         );
@@ -462,12 +465,12 @@ contract VpfiReturnSender is
 
     /// @dev #917 — the retired-surplus return message, built once for the send
     ///      and its quote so the two can never price different payloads.
-    function _retiredSurplusMessage(address token, uint256 amount)
+    function _retiredSurplusMessage(address token, address issuingBase, uint256 amount)
         internal
         pure
         returns (bytes memory payload, ICrossChainMessenger.TokenAmount[] memory tokens)
     {
-        payload = abi.encode(ReturnWire.RETURN_WIRE_TAG_RETIRED_SURPLUS_R1, amount);
+        payload = abi.encode(ReturnWire.RETURN_WIRE_TAG_RETIRED_SURPLUS_R1, issuingBase, amount);
         tokens = new ICrossChainMessenger.TokenAmount[](1);
         tokens[0] = ICrossChainMessenger.TokenAmount({token: token, amount: amount});
     }

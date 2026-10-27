@@ -8163,9 +8163,19 @@ library LibVaipakam {
         ///      funded this mirror, never an admin argument. Mirror-only.
         ///      Appended — append-only.
         uint32 rewardDetachedFromBaseChainId;
+        /// @dev #917 — the Base reward DEPLOYMENT (Diamond) the mirror
+        ///      detached from: `rewardEraLastNonzero` at the same
+        ///      Mirror → Detached change, written and cleared together with
+        ///      `rewardDetachedFromBaseChainId` so the pair always names one
+        ///      funding source. A later `setBaseRewardDeployment` while
+        ///      Detached cannot move it. It rides the retired-surplus wire as
+        ///      `issuingBase`, so a Base Diamond that replaced it refuses the
+        ///      return instead of crediting it. Mirror-only. Appended —
+        ///      append-only.
+        address rewardDetachedFromBaseDeployment;
         /// @dev #917 — the one-way RETIRED flag. Set once by
         ///      `RewardReporterFacet.retireRewardChain`, only on a Detached
-        ///      chain with a recorded `rewardDetachedFromBaseChainId`; never
+        ///      chain with a recorded detach origin (chain and deployment); never
         ///      cleared, and while set both reward-role setters refuse every
         ///      write. Opens `RepatriationFacet.sendRetiredSurplusReturn`.
         ///      Mirror-only. Appended — append-only.

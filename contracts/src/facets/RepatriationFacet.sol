@@ -64,6 +64,7 @@ interface IVpfiReturnSender {
 
     function sendRetiredSurplusReturn(
         uint256 dstChainId,
+        address issuingBase,
         uint256 amount,
         uint256 remainingAfter,
         address payable refundAddress
@@ -949,7 +950,9 @@ contract RepatriationFacet is
      *         caller pays only the CCIP fee (quote via
      *         {VpfiReturnSender.quoteRetiredSurplusReturn}) and can neither
      *         redirect it (the destination is the recorded detach origin)
-     *         nor inflate it (`amount` is bounded by the row). CHUNKED like
+     *         nor inflate it (`amount` is bounded by the row). The message
+     *         names the Base Diamond the mirror detached from, so only that
+     *         Diamond credits it. CHUNKED like
      *         the stranded return (#1660 r2): the mirror cannot read Base's
      *         inbound lane ceiling, so a partial send leaves the rest
      *         retryable. Mirror-outbound capacity is checked before any
@@ -987,7 +990,7 @@ contract RepatriationFacet is
         );
         messageId = IVpfiReturnSender(sender).sendRetiredSurplusReturn{
             value: msg.value
-        }(uint256(dst), amount, remainingAfter, refundAddress);
+        }(uint256(dst), s.rewardDetachedFromBaseDeployment, amount, remainingAfter, refundAddress);
         emit RetiredSurplusReturnDispatched(dst, amount, remainingAfter, messageId);
     }
 
@@ -1010,6 +1013,7 @@ contract RepatriationFacet is
      */
     function onRetiredSurplusReturnReceived(
         uint32 sourceChainId,
+        address issuingBase,
         address token,
         uint256 declaredAmount,
         uint256 actualReceived
@@ -1018,6 +1022,12 @@ contract RepatriationFacet is
         address receiver = s.repatriationReceiver;
         if (receiver == address(0) || msg.sender != receiver) {
             revert OnlyRepatriationReceiver(msg.sender);
+        }
+        // The same era rule the other return kinds apply: a return meant for
+        // a Base Diamond this one replaced fails closed and re-executable,
+        // never credited here.
+        if (issuingBase != address(this)) {
+            revert RepatriationWrongEra(issuingBase);
         }
         if (
             token != s.vpfiToken ||

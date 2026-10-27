@@ -114,9 +114,9 @@ contract RewardReporterFacet is
 
     /// @notice #917 — this chain was RETIRED from the reward mesh, one-way.
     ///         Its pending reward surplus may now be sent back to
-    ///         `returnChainId`, the base chain it detached from.
+    ///         `returnDeployment` on `returnChainId`, the Base it detached from.
     /// @custom:event-category state-change/treasury-mutation
-    event RewardChainRetired(uint32 indexed returnChainId);
+    event RewardChainRetired(uint32 indexed returnChainId, address indexed returnDeployment);
 
     // ─── Day-close emission (public, permissionless) ────────────────────────
 
@@ -908,10 +908,11 @@ contract RewardReporterFacet is
         if (wasMirror && old != 0 && chainId != 0 && chainId != old) {
             revert IVaipakamErrors.RewardBaseChainRebindRequiresDetach(old, chainId);
         }
-        // The role freeze: refuse an EFFECTIVE role change while holder
-        // allocations exist or custody is activated (see
-        // {_requireRoleChangeAllowed}). Computed on the would-be role BEFORE
-        // the write, so a refused call leaves nothing half-written.
+        // The role freeze: refuse an EFFECTIVE role change while staged
+        // records encumber the delivered allowance, and refuse every write on
+        // a retired chain (see {_requireRoleChangeAllowed}). Computed on the
+        // would-be role BEFORE the write, so a refused call leaves nothing
+        // half-written.
         _requireRoleChangeAllowed(
             s,
             s.isCanonicalRewardChain
@@ -1001,10 +1002,11 @@ contract RewardReporterFacet is
     ///      terminal release.
     ///
     ///      #917 — the same effective-change point records where a mirror
-    ///      detached FROM (`previousBase`, the base chain id before the
-    ///      write) on Mirror → Detached, and clears that record on every
-    ///      other effective change, so it always names the chain that last
-    ///      funded the mirror while the mirror stays detached.
+    ///      detached FROM on Mirror → Detached — the base chain id before the
+    ///      write (`previousBase`) and the Base deployment it last served
+    ///      (`rewardEraLastNonzero`) — and clears both on every other
+    ///      effective change, so the pair always names the source that last
+    ///      funded the mirror while it stays detached.
     function _retireDeliveredResidualOnRoleChange(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardRole before,
@@ -1012,10 +1014,10 @@ contract RewardReporterFacet is
     ) private {
         LibVaipakam.RewardRole current = LibVaipakam.rewardRole(s);
         if (before == current) return;
-        s.rewardDetachedFromBaseChainId =
-            before == LibVaipakam.RewardRole.Mirror && current == LibVaipakam.RewardRole.Detached
-                ? previousBase
-                : 0;
+        bool detachedFromMirror =
+            before == LibVaipakam.RewardRole.Mirror && current == LibVaipakam.RewardRole.Detached;
+        s.rewardDetachedFromBaseChainId = detachedFromMirror ? previousBase : 0;
+        s.rewardDetachedFromBaseDeployment = detachedFromMirror ? s.rewardEraLastNonzero : address(0);
         if (before == LibVaipakam.RewardRole.Unconfigured) {
             LibRewardCustody.levelDeliveredResidual(s);
             return;
@@ -1215,8 +1217,8 @@ contract RewardReporterFacet is
 
     /// @notice #917 — RETIRE this chain from the reward mesh, one-way.
     /// @dev    Only on a mirror that has DETACHED (`setBaseChainId(0)`), with
-    ///         the base it detached from recorded: that base is where the
-    ///         leftover goes, so it is never an argument here. Plain Detached
+    ///         the base it detached from recorded (chain and Diamond): that
+    ///         base is where the leftover goes, so it is never an argument here. Plain Detached
     ///         never opens an exit, because every rebind to a new base passes
     ///         through Detached; retiring is the deliberate statement that
     ///         this mirror will not re-attach.
@@ -1233,11 +1235,15 @@ contract RewardReporterFacet is
         if (s.rewardChainRetired) revert RewardChainIsRetired();
         LibVaipakam.RewardRole role = LibVaipakam.rewardRole(s);
         uint32 returnChainId = s.rewardDetachedFromBaseChainId;
-        if (role != LibVaipakam.RewardRole.Detached || returnChainId == 0) {
-            revert RewardChainNotRetirable(uint8(role), returnChainId);
+        address returnDeployment = s.rewardDetachedFromBaseDeployment;
+        if (
+            role != LibVaipakam.RewardRole.Detached || returnChainId == 0
+                || returnDeployment == address(0)
+        ) {
+            revert RewardChainNotRetirable(uint8(role), returnChainId, returnDeployment);
         }
         s.rewardChainRetired = true;
-        emit RewardChainRetired(returnChainId);
+        emit RewardChainRetired(returnChainId, returnDeployment);
     }
 
     /// @notice #917 — this chain's retirement record.
@@ -1245,14 +1251,21 @@ contract RewardReporterFacet is
     /// @return returnChainId       The base chain this chain detached from
     ///                             (zero unless it detached as a mirror) —
     ///                             the surplus return's destination once retired.
+    /// @return returnDeployment    The Base Diamond it detached from, which the
+    ///                             return names so only that Diamond credits it.
     /// @return returnedCumulative  VPFI sent back to Base so far.
     function getRewardChainRetirement()
         external
         view
-        returns (bool retired, uint32 returnChainId, uint256 returnedCumulative)
+        returns (bool retired, uint32 returnChainId, address returnDeployment, uint256 returnedCumulative)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        return (s.rewardChainRetired, s.rewardDetachedFromBaseChainId, s.retiredSurplusReturnedCumulative);
+        return (
+            s.rewardChainRetired,
+            s.rewardDetachedFromBaseChainId,
+            s.rewardDetachedFromBaseDeployment,
+            s.retiredSurplusReturnedCumulative
+        );
     }
 
     /// @notice #1566 closure 3 — this Diamond's resolved reward-mesh role.

@@ -1437,6 +1437,9 @@ contract RepatriationTransportTest is SetupTest {
 
     // ── #917: a retired mirror returns its pending surplus to Base ──────────
 
+    /// The Base Diamond a retiring mirror detached from (stand-in address).
+    address internal constant BASE_DEPLOYMENT = address(0xBA5E);
+
     function _custodyRow(LibVaipakam.RewardCustodyRow r) internal view returns (uint256) {
         return RewardCustodyFacet(address(diamond)).rewardCustodyRow(r);
     }
@@ -1446,6 +1449,7 @@ contract RepatriationTransportTest is SetupTest {
     /// into the pending-surplus row. Retired only when `retire`.
     function _detachedWithSurplus(uint256 surplus, bool retire) internal {
         _armMirror();
+        _rep().setBaseRewardDeployment(BASE_DEPLOYMENT);
         _ensureRewardClockLaunched();
         vm.warp(block.timestamp + 3 days);
         RewardRemittanceFacet(address(diamond)).setRewardRemittanceReceiver(address(this));
@@ -1462,15 +1466,23 @@ contract RepatriationTransportTest is SetupTest {
     /// clears the record, so it always names the chain that last funded it.
     function test_Detach_RecordsTheBaseItLeft() public {
         _armMirror();
-        (bool retired, uint32 returnChainId, ) = _rep().getRewardChainRetirement();
+        _rep().setBaseRewardDeployment(BASE_DEPLOYMENT);
+        (bool retired, uint32 returnChainId, address returnDeployment, ) = _rep().getRewardChainRetirement();
         assertFalse(retired);
         assertEq(returnChainId, 0, "a live mirror has no return destination");
+        assertEq(returnDeployment, address(0));
         _rep().setBaseChainId(0);
-        (, returnChainId, ) = _rep().getRewardChainRetirement();
+        (, returnChainId, returnDeployment, ) = _rep().getRewardChainRetirement();
         assertEq(returnChainId, CHAIN_BASE, "detached from Base");
+        assertEq(returnDeployment, BASE_DEPLOYMENT, "and from that Base Diamond");
+        // Rebinding the Base deployment while Detached does not move the record.
+        _rep().setBaseRewardDeployment(address(0xBEEF));
+        (, , returnDeployment, ) = _rep().getRewardChainRetirement();
+        assertEq(returnDeployment, BASE_DEPLOYMENT, "the detach origin is pinned");
         _rep().setBaseChainId(CHAIN_BASE);
-        (, returnChainId, ) = _rep().getRewardChainRetirement();
+        (, returnChainId, returnDeployment, ) = _rep().getRewardChainRetirement();
         assertEq(returnChainId, 0, "re-attached: the record is cleared");
+        assertEq(returnDeployment, address(0));
     }
 
     /// Retiring needs a detached former mirror; the canonical chain, a live
@@ -1480,7 +1492,8 @@ contract RepatriationTransportTest is SetupTest {
             abi.encodeWithSelector(
                 IVaipakamErrors.RewardChainNotRetirable.selector,
                 uint8(LibVaipakam.RewardRole.Canonical),
-                uint32(0)
+                uint32(0),
+                address(0)
             )
         );
         _rep().retireRewardChain();
@@ -1490,7 +1503,21 @@ contract RepatriationTransportTest is SetupTest {
             abi.encodeWithSelector(
                 IVaipakamErrors.RewardChainNotRetirable.selector,
                 uint8(LibVaipakam.RewardRole.Mirror),
-                uint32(0)
+                uint32(0),
+                address(0)
+            )
+        );
+        _rep().retireRewardChain();
+
+        // A mirror whose Base deployment was never configured has no Diamond
+        // to name on the wire, so it is not retirable either.
+        _rep().setBaseChainId(0);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RewardChainNotRetirable.selector,
+                uint8(LibVaipakam.RewardRole.Detached),
+                CHAIN_BASE,
+                address(0)
             )
         );
         _rep().retireRewardChain();
@@ -1506,7 +1533,8 @@ contract RepatriationTransportTest is SetupTest {
             abi.encodeWithSelector(
                 IVaipakamErrors.RewardChainNotRetirable.selector,
                 uint8(LibVaipakam.RewardRole.Detached),
-                uint32(0)
+                uint32(0),
+                address(0)
             )
         );
         _rep().retireRewardChain();
@@ -1520,11 +1548,14 @@ contract RepatriationTransportTest is SetupTest {
     /// idempotent one, and a second retirement is refused.
     function test_Retire_FreezesTheRole() public {
         _armMirror();
+        _rep().setBaseRewardDeployment(BASE_DEPLOYMENT);
         _rep().setBaseChainId(0);
         _rep().retireRewardChain();
-        (bool retired, uint32 returnChainId, uint256 returned) = _rep().getRewardChainRetirement();
+        (bool retired, uint32 returnChainId, address returnDeployment, uint256 returned) =
+            _rep().getRewardChainRetirement();
         assertTrue(retired);
         assertEq(returnChainId, CHAIN_BASE);
+        assertEq(returnDeployment, BASE_DEPLOYMENT);
         assertEq(returned, 0);
         assertEq(_rep().getRewardRole(), uint8(LibVaipakam.RewardRole.Detached), "still resolved as Detached");
 
@@ -1565,17 +1596,21 @@ contract RepatriationTransportTest is SetupTest {
         assertEq(vpfi.balanceOf(address(returnSender)), 0, "nothing stranded in escrow");
         assertEq(vpfi.balanceOf(address(ccip)), 3 ether, "pulled by CCIP");
         assertEq(ccip.lastDst(), uint256(CHAIN_BASE), "to the base it detached from");
-        assertEq(ccip.lastPayload(), abi.encode(ReturnWire.RETURN_WIRE_TAG_RETIRED_SURPLUS_R1, uint256(3 ether)));
+        assertEq(
+            ccip.lastPayload(),
+            abi.encode(ReturnWire.RETURN_WIRE_TAG_RETIRED_SURPLUS_R1, BASE_DEPLOYMENT, uint256(3 ether)),
+            "names the Base Diamond it detached from"
+        );
         assertEq(ccip.lastTokenAmount(), 3 ether);
         assertEq(
-            returnSender.quoteRetiredSurplusReturn(uint256(CHAIN_BASE), 3 ether), 0.1 ether, "the quote prices the same message"
+            returnSender.quoteRetiredSurplusReturn(uint256(CHAIN_BASE), BASE_DEPLOYMENT, 3 ether), 0.1 ether, "the quote prices the same message"
         );
-        (, , uint256 returned) = _rep().getRewardChainRetirement();
+        (, , , uint256 returned) = _rep().getRewardChainRetirement();
         assertEq(returned, 3 ether);
 
         _repat().sendRetiredSurplusReturn{value: 0.1 ether}(4 ether, payable(address(this)));
         assertEq(_custodyRow(LibVaipakam.RewardCustodyRow.PendingSurplus), 0, "the terminal chunk empties the row");
-        (, , returned) = _rep().getRewardChainRetirement();
+        (, , , returned) = _rep().getRewardChainRetirement();
         assertEq(returned, 7 ether);
     }
 
@@ -1621,7 +1656,7 @@ contract RepatriationTransportTest is SetupTest {
             returnReceiver,
             uint256(CHAIN_ARB),
             address(0),
-            abi.encode(ReturnWire.RETURN_WIRE_TAG_RETIRED_SURPLUS_R1, uint256(6 ether)),
+            abi.encode(ReturnWire.RETURN_WIRE_TAG_RETIRED_SURPLUS_R1, address(diamond), uint256(6 ether)),
             _oneToken(6 ether)
         );
         assertEq(cfg.getRecycleBucket(), bucketBefore + 6 ether, "credited to the bucket");
@@ -1639,7 +1674,8 @@ contract RepatriationTransportTest is SetupTest {
     function test_RetiredSurplus_MalformedDeliveriesRefused() public {
         _armBase();
         vpfi.mint(address(returnReceiver), 6 ether);
-        bytes memory ok = abi.encode(ReturnWire.RETURN_WIRE_TAG_RETIRED_SURPLUS_R1, uint256(6 ether));
+        bytes memory ok =
+            abi.encode(ReturnWire.RETURN_WIRE_TAG_RETIRED_SURPLUS_R1, address(diamond), uint256(6 ether));
 
         vm.expectRevert(abi.encodeWithSelector(VpfiReturnReceiver.WrongTokenCount.selector, 0));
         relay.relay(returnReceiver, uint256(CHAIN_ARB), address(0), ok, _noTokens());
@@ -1647,12 +1683,23 @@ contract RepatriationTransportTest is SetupTest {
         vm.expectRevert(abi.encodeWithSelector(VpfiReturnReceiver.AmountMismatch.selector, 6 ether, 5 ether));
         relay.relay(returnReceiver, uint256(CHAIN_ARB), address(0), ok, _oneToken(5 ether));
 
-        vm.expectRevert(abi.encodeWithSelector(VpfiReturnReceiver.PayloadSizeMismatch.selector, 96, 64));
+        vm.expectRevert(abi.encodeWithSelector(VpfiReturnReceiver.PayloadSizeMismatch.selector, 64, 96));
         relay.relay(
             returnReceiver,
             uint256(CHAIN_ARB),
             address(0),
-            abi.encode(ReturnWire.RETURN_WIRE_TAG_RETIRED_SURPLUS_R1, uint256(6 ether), uint256(0)),
+            abi.encode(ReturnWire.RETURN_WIRE_TAG_RETIRED_SURPLUS_R1, uint256(6 ether)),
+            _oneToken(6 ether)
+        );
+
+        // A return naming another Base Diamond (one this Diamond replaced)
+        // fails closed and re-executable, never credited here.
+        vm.expectRevert(abi.encodeWithSelector(RepatriationFacet.RepatriationWrongEra.selector, address(0xDEAD)));
+        relay.relay(
+            returnReceiver,
+            uint256(CHAIN_ARB),
+            address(0),
+            abi.encode(ReturnWire.RETURN_WIRE_TAG_RETIRED_SURPLUS_R1, address(0xDEAD), uint256(6 ether)),
             _oneToken(6 ether)
         );
 
@@ -1665,6 +1712,6 @@ contract RepatriationTransportTest is SetupTest {
         relay.relay(returnReceiver, uint256(CHAIN_ARB), address(0), ok, wrong);
 
         vm.expectRevert(abi.encodeWithSelector(RepatriationFacet.OnlyRepatriationReceiver.selector, address(this)));
-        _repat().onRetiredSurplusReturnReceived(CHAIN_ARB, address(vpfi), 1 ether, 1 ether);
+        _repat().onRetiredSurplusReturnReceived(CHAIN_ARB, address(diamond), address(vpfi), 1 ether, 1 ether);
     }
 }

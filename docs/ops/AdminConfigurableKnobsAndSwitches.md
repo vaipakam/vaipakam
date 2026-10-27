@@ -636,8 +636,8 @@ reward reporter, all setter-accepts-and-emits with no numeric range:
   `getRewardRole()` — the two raw fields cannot tell these cases apart.)
   **Retirement (#917) is a one-way switch on top of `Detached`.**
   `RewardReporterFacet.retireRewardChain()` (ADMIN) works only on a
-  chain that detached as a MIRROR, so it has a recorded base to return
-  to. It freezes both role setters for good, and opens the permissionless
+  chain that detached as a MIRROR with its Base deployment set, so it
+  has a recorded base chain and Diamond to return to. It freezes both role setters for good, and opens the permissionless
   `RepatriationFacet.sendRetiredSurplusReturn`, which sends the
   `PendingSurplus` row to that base. Read the state with
   `getRewardChainRetirement()`. The steps are in the Deployment

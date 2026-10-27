@@ -63,6 +63,7 @@ interface IStrandedReturnIngress {
 interface IRetiredSurplusReturnIngress {
     function onRetiredSurplusReturnReceived(
         uint32 sourceChainId,
+        address issuingBase,
         address token,
         uint256 declaredAmount,
         uint256 actualReceived
@@ -369,23 +370,26 @@ contract VpfiReturnReceiver is
 
     /// @dev #917 — RETIRED-SURPLUS return: one token, declared must match the
     ///      transport amount, forwarded with the same measured idiom. Base
-    ///      credits exactly what landed; the Diamond checks the token.
+    ///      credits exactly what landed; the Diamond checks the token and
+    ///      that `issuingBase` is itself.
     function _handleRetiredSurplusReturn(
         uint32 sourceChainId,
         bytes calldata payload,
         ICrossChainMessenger.TokenAmount[] calldata tokens
     ) internal {
-        if (payload.length != 2 * 32) {
-            revert PayloadSizeMismatch(payload.length, 2 * 32);
+        if (payload.length != 3 * 32) {
+            revert PayloadSizeMismatch(payload.length, 3 * 32);
         }
         if (tokens.length != 1) revert WrongTokenCount(tokens.length);
-        (, uint256 declaredAmount) = abi.decode(payload, (uint256, uint256));
+        (, address issuingBase, uint256 declaredAmount) =
+            abi.decode(payload, (uint256, address, uint256));
 
         (address deliveredToken, uint256 actualReceived) =
             _forwardToDiamond(tokens[0], declaredAmount);
 
         IRetiredSurplusReturnIngress(diamond).onRetiredSurplusReturnReceived(
             sourceChainId,
+            issuingBase,
             deliveredToken,
             declaredAmount,
             actualReceived
