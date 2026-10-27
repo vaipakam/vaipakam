@@ -846,6 +846,19 @@
   },
   {
     "type": "function",
+    "name": "getRemitDayFreshReserved",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRemitDayLedger",
     "inputs": [
       {
@@ -919,6 +932,11 @@
             "name": "locked",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "freshUncovered",
+            "type": "uint128",
+            "internalType": "uint128"
           }
         ]
       }
