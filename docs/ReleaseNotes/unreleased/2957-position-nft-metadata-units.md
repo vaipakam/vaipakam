@@ -1,4 +1,4 @@
-## Thread — Position NFT metadata states each figure in its own asset (PR #TBD)
+## Thread — Position NFT metadata states each figure in its own asset (PR #2977)
 
 A position NFT's metadata now states every figure in the asset it is
 actually in. The claimable amount used to be scaled by a guess from the
