@@ -108,12 +108,19 @@ contract RewardRemittanceFacet is
         // backing by the stranded amount — the net gate makes every recycled
         // remit wait until the B2-d5 recovery ceremony heals that hole, and is
         // a structural no-op on the healthy path (finalize reserves
-        // commitments ⊆ fundable = bucket − outstanding). #918: the margin
-        // `bucket − outstanding` moves only by retired residuals, and the
-        // residual retires on the day's first live part, so the verdict for a
-        // day does not depend on the part size.
+        // commitments ⊆ fundable = bucket − outstanding). #918: the gate is
+        // tested on the day's remaining owed (`owedRecycled`,
+        // `gateRecycledFull`), not on the part, so a part passes exactly when
+        // the rest of its day sent in one would.
         uint256 bucketLeft;
         uint256 outRecycledLeft;
+        // #918 — the gate figures ({LibRemitDayLedger.DayPlan}): the acted
+        // days' remaining owed fresh and what sending all of it would retire
+        // of the armed fresh commitments. The fresh-headroom gate tests these,
+        // never the part alone, so a part passes exactly when the rest of its
+        // day sent in one would.
+        uint256 gateFresh;
+        uint256 gateArmedFresh;
         // #918 — the FUNDED day's whole slice, per component, for the d7 wire
         // (every part of a day carries it). The send funds at most one day
         // ({LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP}); a plan funding more is
@@ -299,6 +306,8 @@ contract RewardRemittanceFacet is
     /// @notice `partCap` is zero or above the whole interaction pool.
     error InvalidRemittanceCap();
     /// @notice The batch would push remitted + Base-paid over the 69M pool cap.
+    ///         `requested` is the acted days' remaining owed fresh (#918), not
+    ///         only this part.
     error RewardPoolCapExceeded(uint256 requested, uint256 remaining);
     /// @notice `msg.value` is below the quoted CCIP fee.
     error InsufficientRemittanceFee(uint256 provided, uint256 required);
@@ -451,9 +460,11 @@ contract RewardRemittanceFacet is
         // finalize-time commitment already reserved it against `fundable`)
         // and never consumes the fresh cap: at fresh exhaustion recycled
         // remittances keep flowing, the promised steady state.
-        uint256 remaining = _headroom(s, st.armedFresh);
-        if (st.fresh > remaining) {
-            revert RewardPoolCapExceeded(st.fresh, remaining);
+        // #918 — tested on the acted days' remaining owed fresh, not on this
+        // part: a day is not started on a margin its whole does not fit.
+        uint256 remaining = _headroom(s, st.gateArmedFresh);
+        if (st.gateFresh > remaining) {
+            revert RewardPoolCapExceeded(st.gateFresh, remaining);
         }
 
         // Effects (CEI) — before the external send. `rewardBudgetRemittedGlobal`
@@ -772,7 +783,7 @@ contract RewardRemittanceFacet is
         // The net recycled-backing gate, applied identically for every caller
         // because it is applied HERE (Codex #1426 r2/r6): a part applies only
         // when the post-part invariant `bucket' >= outstanding'` still holds.
-        if (st.bucketLeft + p.recycledFull < st.outRecycledLeft + p.recycled) {
+        if (st.bucketLeft + p.gateRecycledFull < st.outRecycledLeft + p.owedRecycled) {
             plan.status[i] = LibRemitDayLedger.RemitDayStatus.Unbacked;
             return;
         }
@@ -801,6 +812,8 @@ contract RewardRemittanceFacet is
         }
         st.armedFresh += p.armedFresh;
         st.recycledFull += p.recycledFull;
+        st.gateFresh += p.owedFresh;
+        st.gateArmedFresh += p.gateArmedFresh;
     }
 
     // ─── Admin ────────────────────────────────────────────────────────────
@@ -1570,7 +1583,9 @@ contract RewardRemittanceFacet is
      *         It is a faithful DRY-RUN of the send's intrinsic guards: it
      *         reverts `InvalidRemittanceCap` on a cap the send refuses,
      *         `RewardDayNotFinalized` on an unfinalized day and
-     *         `RewardPoolCapExceeded` when the part would breach the 69M pool,
+     *         `RewardPoolCapExceeded` when the acted days' remaining owed fresh
+     *         would breach the 69M pool (#918: tested on the rest of the day,
+     *         not on the part),
      *         exactly like {remitRewardBudget}. Returns (0, 0) when nothing is
      *         remittable, or the messenger/VPFI is unset.
      * @return fee   CCIP native fee for the send (0 if nothing to remit).
@@ -1594,9 +1609,9 @@ contract RewardRemittanceFacet is
         if (plan.anyUnfinalized) revert RewardDayNotFinalized(plan.firstUnfinalized);
         total = plan.st.totalAll;
         if (total == 0) return (0, 0);
-        uint256 remaining = _headroom(s, plan.st.armedFresh);
-        if (plan.st.fresh > remaining) {
-            revert RewardPoolCapExceeded(plan.st.fresh, remaining);
+        uint256 remaining = _headroom(s, plan.st.gateArmedFresh);
+        if (plan.st.gateFresh > remaining) {
+            revert RewardPoolCapExceeded(plan.st.gateFresh, remaining);
         }
         LibRewardCustody.requireRemittableFanout(plan.dl.fundedCount);
 

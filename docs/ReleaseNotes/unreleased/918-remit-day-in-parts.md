@@ -1,4 +1,4 @@
-## Thread — A day's reward budget may be sent to a mirror in parts (PR #TBD)
+## Rewards — A day's reward budget may be sent to a mirror in parts (PR #TBD)
 
 Until now a day's reward budget left Base for a mirror in one transfer, so a
 day whose slice was larger than the cross-chain lane could carry could never be
@@ -8,9 +8,11 @@ in several parts. It fixes the day's whole slice, fresh and recycled, when the
 first part goes, records every later part against that same whole, and marks the
 day remitted only once the parts add up to it. Each part reserves and records
 exactly its own value; the amount a day's commitments clamp away is retired
-once, with the first part, so every part passes or fails the same checks the
-whole day would. Releasing an undeliverable part restores exactly that part and
-leaves the day owing it again. The quotes and planning views now take the same
+once, with the first part. Every part is checked against what the day still
+owes, not against the part alone, so a part goes only when the rest of the day
+sent at once would, and no day is started on room it does not fit. Releasing
+an undeliverable part restores exactly that part and leaves the day owing it
+again. The quotes and planning views now take the same
 part size the send uses, so the quote always matches the send, and a new status
 reports a day whose part leaves it still owing. The manual-budget path refuses a
 day that has already been partly sent.

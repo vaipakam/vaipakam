@@ -32,19 +32,24 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *         commitment report is write-once), and the lock makes that a stated
  *         fact rather than an assumption about other writers.
  *
+ *         THE GATES ADMIT A PART ON THE DAY'S REMAINING OWED, never on the
+ *         part alone: the fresh-headroom gate and the net recycled-backing
+ *         gate each test what sending the day's whole remaining owed now would
+ *         need ({DayPlan}'s gate figures), while the part moves only what the
+ *         cap allows. So a part is admitted exactly when a whole-in-one send
+ *         of the rest would be, on an armed day and an unarmed one alike, so
+ *         no day starts on a margin its whole does not fit. (Other sends can
+ *         still use the margin between parts; the next part is then refused
+ *         until it returns.) Testing the part alone would admit an unarmed day's
+ *         early parts against a margin its whole exceeds, and stall it half
+ *         sent once the margin ran out.
+ *
  *         THE CLAMP RESIDUAL — what an armed day committed and will never send
  *         (`armedWhole* − whole*`) — is retired by the FIRST live part (the
- *         part that finds `residualRemitId == 0`), not by the last. That is
- *         what makes every gate's verdict independent of the part size: the
- *         net recycled-backing gate and the fresh-headroom gate both reduce,
- *         for one part, to `margin ≥ −(residual this part retires)`, where
- *         `margin` moves only by retired residuals. Retiring at the first part
- *         makes the first part's test the whole-in-one test and every later
- *         part's test the same inequality again; retiring at the last part
- *         would hold every earlier part to the stricter `margin ≥ 0` and let a
- *         day a whole-in-one send would admit stall half-sent. A release of the
- *         part that retired it clears `residualRemitId`, and the next part
- *         re-retires it — exactly once per live set of parts.
+ *         part that finds `residualRemitId == 0`), not by the last, so the
+ *         margin a later part is tested against already carries it. A release
+ *         of the part that retired it clears `residualRemitId`, and the next
+ *         part re-retires it — exactly once per live set of parts.
  *
  *         A whole-in-one send is the case where the part cap is at least the
  *         day's remaining owed: one part that both retires and completes.
@@ -108,6 +113,14 @@ library LibRemitDayLedger {
         uint256 wholeRecycled;
         uint256 armedWholeFresh;
         uint256 armedWholeRecycled;
+        // #918 — the GATE figures: what the day still owes before this part,
+        // and what sending all of it now would retire. Every gate admits a
+        // part on these, so a part passes exactly when sending the day's
+        // whole remaining owed in one send would (see {_part}).
+        uint256 owedFresh;
+        uint256 owedRecycled;
+        uint256 gateArmedFresh;
+        uint256 gateRecycledFull;
     }
 
     /// @notice #918 — one part of a day's slice was sent to `dstChainId`.
@@ -276,6 +289,8 @@ library LibRemitDayLedger {
         p.recycled = amount - p.fresh;
         p.completes = p.fresh == owedFresh && p.recycled == owedRecycled;
         p.retires = retires;
+        p.owedFresh = owedFresh;
+        p.owedRecycled = owedRecycled;
         if (p.armed) {
             // Armed figures carry the commitment regime: a part retires its
             // own amounts, and the retiring part the clamp residual as well.
@@ -286,6 +301,8 @@ library LibRemitDayLedger {
             p.armedFresh = p.fresh + freshResidual;
             p.recycledFull = p.recycled + recycledResidual;
             p.residual = recycledResidual;
+            p.gateArmedFresh = owedFresh + freshResidual;
+            p.gateRecycledFull = owedRecycled + recycledResidual;
         }
         p.act = true;
         p.status = p.completes ? RemitDayStatus.Closeable : RemitDayStatus.Partial;

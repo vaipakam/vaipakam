@@ -433,6 +433,34 @@ contract RewardRemittanceFacetTest is SetupTest {
         assertEq(rlens.getRewardBudgetRemittedGlobal(), expected, "counted once");
     }
 
+    /// @dev #918 — the pool-cap gate is tested on the day's REMAINING OWED,
+    ///      not on the part: an unarmed day whose whole exceeds what is left
+    ///      of the pool is refused at its first part, exactly as a
+    ///      whole-in-one send is, instead of sending early parts and stalling
+    ///      half sent. Mutation: gate on the part (`st.fresh`) and the first
+    ///      half-size part is admitted here.
+    function test_Remit_APartIsGatedOnTheDaysRemainingOwed() public {
+        _finalizeDay1();
+        (uint256 total, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        TestMutatorFacet(address(diamond)).setInteractionPoolPaidOut(CAP - total + 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(RewardRemittanceFacet.RewardPoolCapExceeded.selector, total, total - 1)
+        );
+        remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), total / 2);
+        vm.expectRevert(
+            abi.encodeWithSelector(RewardRemittanceFacet.RewardPoolCapExceeded.selector, total, total - 1)
+        );
+        remit.quoteRemittanceFee(CHAIN_ARB, _days(1), total / 2);
+
+        // With the whole day's room, a part goes, and the next part is tested
+        // on what the day still owes against what is then left.
+        TestMutatorFacet(address(diamond)).setInteractionPoolPaidOut(CAP - total);
+        remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), total / 2);
+        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), 0, "a part does not mark the day");
+        remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), total);
+        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), total, "the rest completes the day");
+    }
+
     function test_Remit_RevertsOnZeroCap() public {
         _finalizeDay1();
         vm.expectRevert(RewardRemittanceFacet.InvalidRemittanceCap.selector);

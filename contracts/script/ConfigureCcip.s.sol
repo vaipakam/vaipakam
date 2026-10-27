@@ -192,13 +192,15 @@ contract ConfigureCcip is Script {
 
     /// @notice #918 — the lane pre-flight: the per-lane rate-limit capacity
     ///         this run would set must hold the largest fresh reward day slice
-    ///         ({LibInteractionRewards.maxFreshDaySlice}), so a day's reward
-    ///         remittance fits one send. Public and pure so a test pins it
+    ///         ({LibInteractionRewards.maxFreshDaySlice}), so a full lane
+    ///         carries any day's FRESH component in one send. A day's recycled
+    ///         component is not bounded by the schedule, so a day with a large
+    ///         one can still go in parts. Public and pure so a test pins it
     ///         without a broadcast.
     function requireLaneFitsFreshDaySlice(uint256 capacity) public pure {
         require(
             capacity >= LibInteractionRewards.maxFreshDaySlice(),
-            "ConfigureCcip: CCIP_RATE_CAPACITY is below the largest fresh reward day slice (LibInteractionRewards.maxFreshDaySlice, both halves of day 1) - raise it so a day's remittance fits one send (#918)"
+            "ConfigureCcip: CCIP_RATE_CAPACITY is below the largest fresh reward day slice (LibInteractionRewards.maxFreshDaySlice, both halves of day 1) - raise it so a full lane carries a day's fresh slice in one send (#918)"
         );
     }
 
