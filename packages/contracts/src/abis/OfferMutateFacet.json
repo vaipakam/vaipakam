@@ -2912,6 +2912,11 @@
   },
   {
     "type": "error",
+    "name": "RentalCollateralNotAllowed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ReportAfterFinalization",
     "inputs": []
   },

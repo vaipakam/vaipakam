@@ -97,6 +97,31 @@
   },
   {
     "type": "event",
+    "name": "ParallelSaleReleaseConsolidationDeferred",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint96",
+        "indexed": true,
+        "internalType": "uint96"
+      },
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "reason",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "PostParallelSaleListing",
     "inputs": [
       {
