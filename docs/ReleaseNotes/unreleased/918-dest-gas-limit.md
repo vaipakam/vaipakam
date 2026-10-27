@@ -1,4 +1,4 @@
-## Thread — Reward remittance destination gas raised to 1,100,000 (PR #<n>)
+## Thread — Reward remittance destination gas raised to 1,100,000 (PR #2974)
 
 A reward remittance now asks the mirror to run its receiver with 1,100,000 gas, up from 1,050,000. The figure is derived from the mirror's rooted ingress, the call every remittance makes on arrival, with the receiver's own reserve and a quarter's margin added. After #918 that call measures 750,163 gas, so under the margin rule the old limit was 12,704 gas short. The call itself still fitted under the old limit; what it lacked was the margin, which absorbs the transport's own receive overhead and the gas lost at each forwarding hop.
 
