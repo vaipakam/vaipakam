@@ -1,4 +1,4 @@
-## Rewards — the recovery-attribution watermark is retired (PR #TBD)
+## Rewards — the recovery-attribution watermark is retired (PR #2931)
 
 The recovery position on the canonical reward chain was guarded by a
 watermark. It was a one-shot arming step that froze every recovery receipt
