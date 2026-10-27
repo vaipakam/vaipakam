@@ -656,19 +656,21 @@ accidentally tick it on an ineligible offer.
   protocol-fee and creator-fee legs directly to their
   configured recipients first, and the executor passes only
   the **net proceeds** (sale price minus marketplace /
-  creator fees) into the diamond's waterfall. The waterfall
-  then routes that net amount: the lender receives their
-  settlement entitlement (which `LibEntitlement.settlementInterest`
-  computes as the full coupon when the loan was created with
-  `useFullTermInterest = true`, or the pro-rata interest
-  accrued to the settlement timestamp otherwise — the gate is
-  the loan policy, not whether the sale happens before or
-  after scheduled maturity), the treasury cut goes to
-  treasury, and the remainder is deposited DIRECTLY into
-  the current borrower-position NFT holder's vault (via
-  `LibUserVault.getOrCreate` + a vault deposit). No Claim
-  Center claim is created — check your vault balance after
-  the sale lands.
+  creator fees) into the diamond's waterfall. The sale is a
+  repayment funded by the collateral, so the diamond settles
+  that net amount exactly as a repayment at the moment of the
+  fill would: the loan becomes repaid; the lender's due (the
+  full coupon when the loan was created with
+  `useFullTermInterest = true`, the interest accrued so far
+  otherwise, plus any lender yield-fee discount) is placed in
+  the lender's vault and paid to the current lender-position
+  holder through the ordinary lender claim; the treasury
+  receives its cut net of that discount; and the rest is sent
+  to the current borrower-position holder's wallet. If the rest
+  cannot be paid to that wallet, it is held instead and paid
+  through the ordinary borrower claim in the Claim Center. The
+  lender is never paid inside the sale itself, so nothing about
+  the lender's wallet can stop it.
 
 **What you can't combine it with.** Two distinct conflict
 classes, surfaced at different protocol stages:
@@ -1192,9 +1194,11 @@ Permissionless actions available to anyone regardless of role:
   where the lender locked in the whole interest leg at offer
   time, pro-rata accrued interest otherwise) plus the treasury
   cut plus a safety buffer. When a buyer fills, the sale
-  waterfall pays the lender at their entitlement, the treasury
-  fee, and the remainder lands in your vault — atomically, in
-  one Seaport transaction, no extra step from you. Cancellable
+  closes the loan as a repayment in the same Seaport
+  transaction: the lender's due waits in the lender's vault for
+  the lender's claim, the treasury takes its fee, and the rest
+  is sent to your wallet (or held for your borrower claim if
+  it can't be paid to your wallet). No extra step from you. Cancellable
   any time before the grace window closes. The listing surfaces
   on OpenSea's marketplace UI automatically; you don't sign
   anything off-chain.
@@ -1208,9 +1212,11 @@ Permissionless actions available to anyone regardless of role:
 > listing** — a buyer's `Seaport.fulfillOrder` may have landed
 > in the same block, EVM-ordered before your repay. Both txes
 > are competing terminal flows; only one can win. If the buyer's
-> tx wins, your loan is **already settled**: the lender + treasury
-> got paid from the sale proceeds, and your remainder (sale price
-> minus those two legs) is sitting in your vault ready to claim.
+> tx wins, your loan is **already closed as repaid**: the lender's
+> due and the treasury's share came out of the sale proceeds, and
+> your remainder (sale price minus those two legs) was sent to your
+> wallet, or is held for you in the Claim Center if it could not
+> be paid to your wallet.
 > Your repay's revert just means there was nothing left to repay
 > — no funds left your wallet. The Vaipakam dapp detects this
 > case and surfaces a tailored message linking straight to the
@@ -1287,7 +1293,7 @@ counter-order's listing-side leg (whether or not you had a
 prior v1 prepay listing live; the atomic path supports
 `existingHash == 0`), and the diamond's settlement waterfall
 all land atomically in one block. The transaction either fully succeeds (loan
-settled, NFT transferred, sale proceeds split) or fully
+closed as repaid, NFT transferred, sale proceeds split) or fully
 reverts (nothing moves), and there is **no window between
 listing rotation and settlement** in which a third-party
 buyer could step in at the matched price.
@@ -1781,7 +1787,10 @@ Atomic settlement after the new lender has accepted:
 1. Funds the new loan from the accepting lender.
 2. Repays the old loan in full (principal + interest, less the
    treasury cut).
-3. Burns the old position NFTs.
+3. Marks the old loan repaid. Its position NFTs are not burned:
+   both stay with their holders, marked Loan Repaid. The old
+   lender claims the repayment with theirs, and the old borrower
+   NFT stays as a receipt.
 4. Mints new position NFTs.
 
 Reverts if HF on the new terms would be below 1.5.

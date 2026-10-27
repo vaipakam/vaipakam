@@ -701,19 +701,21 @@ en una oferta no elegible.
   directamente a sus destinatarios configurados primero, y el
   executor pasa solo los **ingresos netos** (precio de venta
   menos tarifas de mercado / creador) a la cascada del
-  diamond. La cascada entonces enruta ese monto neto: el
-  prestamista recibe su entitlement de liquidación (que
-  `LibEntitlement.settlementInterest` calcula como el cupón
-  completo cuando el préstamo se creó con `useFullTermInterest
-  = true`, o el interés pro-rata acumulado al timestamp de
-  liquidación de otra manera — el barrera es la política del
-  préstamo, no si la venta sucede antes o después de la madurez
-  programada), el recorte de tesorería va a tesorería, y el
-  resto se deposita DIRECTAMENTE en el vault del actual holder
-  del NFT de posición del prestatario (vía
-  `LibUserVault.getOrCreate` + un depósito al vault). No se
-  crea reclamo en el Claim Center — revisa tu balance del vault
-  después de que aterrice la venta.
+  diamond. La venta es un repago financiado con el colateral, así que el
+  diamond liquida ese monto neto exactamente como lo haría un repago
+  en el momento de la ejecución: el préstamo pasa a repagado; lo que
+  se le debe al prestamista (el cupón completo cuando el préstamo se
+  creó con `useFullTermInterest = true`, si no el interés acumulado
+  hasta ese momento, más cualquier descuento de la tarifa de
+  rendimiento del prestamista) se deposita en el vault del
+  prestamista y se paga al titular actual de la posición del
+  prestamista mediante el reclamo de prestamista ordinario; la
+  tesorería recibe su corte neto de ese descuento; y el resto se
+  envía a la wallet del titular actual de la posición del
+  prestatario. Si el resto no puede pagarse a esa wallet, se retiene y
+  se paga mediante el reclamo de prestatario ordinario en el Claim
+  Center. Al prestamista nunca se le paga dentro de la venta misma,
+  así que nada de la wallet del prestamista puede detenerla.
 
 **Lo que no puedes combinarlo con.** Dos clases de conflicto
 distintas, superficializadas en diferentes etapas del protocolo:
@@ -1228,7 +1230,7 @@ postor, el leg lado-listing de la contra-orden (haya o no tenido
 un prepay listing v1 previo vivo; el camino atómico soporta
 `existingHash == 0`), y la cascada de liquidación del diamond
 aterrizan atómicamente en un bloque. La transacción ya sea tiene
-éxito completamente (préstamo liquidado, NFT transferido,
+éxito completamente (préstamo cerrado como repagado, NFT transferido,
 ingresos de venta divididos) o revierte completamente (nada se
 mueve), y NO HAY ventana entre la rotación del listing y la
 liquidación en la que un comprador tercero pudiera entrar al
@@ -1645,7 +1647,10 @@ aceptado:
 1. Financia el nuevo préstamo desde el prestamista que acepta.
 2. Repaga el préstamo viejo en su totalidad (principal +
    intereses, menos el corte de tesorería).
-3. Quema los NFTs de posición viejos.
+3. Marca el préstamo viejo como repagado. Sus NFTs de posición no
+   se queman: ambos quedan con sus titulares, marcados Loan Repaid.
+   El prestamista viejo reclama el repago con el suyo, y el NFT del
+   prestatario viejo queda como recibo.
 4. Mintea los NFTs de posición nuevos.
 
 Revierte si HF bajo los nuevos términos quedaría por debajo de

@@ -663,18 +663,19 @@ contract का `_validatePostParallelSale` reject करेगा, इसलि
   protocol-fee और creator-fee legs को पहले उनके configured
   recipients पर सीधे route करता है, और executor केवल
   **net proceeds** (sale price minus marketplace / creator
-  fees) को diamond के waterfall में pass करता है। Waterfall फिर
-  उस net amount को route करता है: lender अपना settlement
-  entitlement पाता है (जो `LibEntitlement.settlementInterest`
-  full coupon के रूप में calculate करता है जब loan
-  `useFullTermInterest = true` के साथ create हुआ था, या settlement
-  timestamp पर accrued pro-rata interest अन्यथा — gate loan
-  policy है, यह नहीं कि sale scheduled maturity से पहले या बाद
-  में होती है), treasury cut treasury को जाता है, और remainder
-  current borrower-position NFT holder के vault में सीधे deposit
-  होता है (`LibUserVault.getOrCreate` + vault deposit के
-  माध्यम से)। कोई Claim Center claim create नहीं होता — sale
-  land होने के बाद अपना vault balance check करें।
+  fees) को diamond के waterfall में pass करता है। Sale collateral से funded एक repayment है, इसलिए diamond उस net
+  amount को ठीक वैसे settle करता है जैसे fill के पल में एक repayment
+  करता: loan repaid हो जाता है; lender का due (loan
+  `useFullTermInterest = true` के साथ create हुआ हो तो full coupon,
+  अन्यथा अब तक accrued interest, plus कोई भी lender yield-fee
+  discount) lender के vault में रखा जाता है और ordinary lender claim
+  के ज़रिए current lender-position holder को दिया जाता है; treasury को
+  उस discount के बाद अपना cut मिलता है; और बाकी current
+  borrower-position holder के wallet में भेजा जाता है। यदि बाकी
+  उस wallet को नहीं दिया जा सकता, तो उसे hold किया जाता है और Claim Center में
+  ordinary borrower claim के ज़रिए दिया जाता है। Lender को sale के
+  अंदर कभी payment नहीं होता, इसलिए lender के wallet की कोई बात sale
+  को रोक नहीं सकती।
 
 **आप इसे किसके साथ combine नहीं कर सकते।** दो distinct conflict
 classes, अलग-अलग protocol stages पर surface होती हैं:
@@ -1164,7 +1165,7 @@ Seaport `matchAdvancedOrders` call में bundle करती है —
 prior v1 prepay listing live रखा हो या न रखा हो; atomic path
 `existingHash == 0` को support करता है), और diamond के
 settlement waterfall सभी एक block में atomically land होते हैं।
-Transaction या तो पूरी तरह succeed होती है (loan settled, NFT
+Transaction या तो पूरी तरह succeed होती है (loan repaid के रूप में बंद, NFT
 transferred, sale proceeds split) या पूरी तरह revert होती है
 (कुछ नहीं हिलता), और listing rotation और settlement के बीच
 **कोई window नहीं** है जिसमें कोई third-party buyer matched
@@ -1573,7 +1574,10 @@ lender उसे accept कर सकता है। आप acceptance से �
 1. Accepting lender से नया loan fund करता है।
 2. पुराने loan को पूरा चुकाता है (principal + interest, treasury
    cut घटाकर)।
-3. पुराने position NFTs को burn करता है।
+3. पुराने loan को repaid mark करता है। उसके position NFTs burn नहीं
+   होते: दोनों अपने holders के पास Loan Repaid status के साथ रहते हैं।
+   पुराना lender अपने NFT से repayment claim करता है, और पुराना
+   borrower NFT receipt के रूप में रहता है।
 4. नए position NFTs mint करता है।
 
 यदि नई terms पर HF 1.5 से नीचे होगा तो transaction revert करता है।

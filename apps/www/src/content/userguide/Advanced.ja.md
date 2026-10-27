@@ -645,18 +645,18 @@ fill モードを自動的に `Aon` にピン留めします — parallel-sale
   creator-fee レッグを最初に設定された受信者に直接ルーティング
   し、executor は **net proceeds**(販売価格から マーケットプレイス /
   creator fees を引いたもの)のみを diamond のウォーターフォール
-  に渡します。ウォーターフォールはその net 額をルーティング
-  します: レンダーは決済 entitlement を受け取り
-  (`LibEntitlement.settlementInterest` がローンが
-  `useFullTermInterest = true` で作成された場合はフルクーポン
-  として計算し、それ以外の場合は決済タイムスタンプで発生した
-  pro-rata 利息として計算 — ゲートはローンポリシーであり、
-  販売がスケジュールされた満期の前か後かではない)、トレジャリー
-  カットはトレジャリーに行き、残りは現在のボロワーポジション
-  NFT 保持者のボルトに直接デポジットされます
-  (`LibUserVault.getOrCreate` + ボルトデポジット経由)。
-  Claim Center クレームは作成されません — 販売が land した後に
-  ボルト残高を確認してください。
+  に渡します。販売は担保で賄われる返済なので、diamond はその net 額を、fill の
+  時点での返済とまったく同じように決済します: ローンは返済済みになり;
+  レンダーの受取分(ローンが `useFullTermInterest = true` で作成
+  された場合はフルクーポン、それ以外はその時点までの発生利息、
+  それにレンダーの yield-fee 割引があればその分)はレンダーのボルトに
+  置かれ、通常のレンダー claim を通じて現在のレンダーポジション
+  保有者に支払われ;トレジャリーはその割引を差し引いたカットを
+  受け取り;残りは現在のボロワーポジション保有者のウォレットに
+  送られます。残りをそのウォレットに支払えない場合、残りは保留され、
+  Claim Center の通常のボロワー claim を通じて支払われます。レンダー
+  は販売の中で支払われることはないため、レンダーのウォレットに関する
+  何ものも販売を止められません。
 
 **組み合わせられないもの。** 2 つの異なる競合クラス、異なる
 プロトコル段階で表面化されます:
@@ -1128,7 +1128,7 @@ atomic-match フローの一般的な説明を提供します。確認後、ア�
 かかわらず;atomic パスは `existingHash == 0` をサポート)、
 diamond の決済ウォーターフォールがすべて 1 つのブロックで
 atomic に land します。トランザクションは完全に成功する(ローン
-決済、NFT 転送、販売収益分割)か完全に revert する(何も動かない)
+を返済済みとしてクローズ、NFT 転送、販売収益分割)か完全に revert する(何も動かない)
 かのいずれかであり、リスティング rotation と決済の間にサード
 パーティ購入者が matched price で介入できる **ウィンドウは
 ありません**。
@@ -1524,7 +1524,9 @@ offer は public Offer Book に表示され、どの lender でも accept
 
 1. accepting lender から新しい loan を fund。
 2. 古い loan を full repay (principal + interest、treasury cut 後)。
-3. 古い position NFTs を burn。
+3. 古い loan を repaid としてマーク。position NFTs は burn されず、
+   両方とも Loan Repaid 状態で保有者の手元に残ります。古い lender は
+   自分の NFT で返済を claim し、古い borrower NFT は受領証として残ります。
 4. 新しい position NFTs を mint。
 
 新しい terms で HF が 1.5 を下回る場合は revert します。

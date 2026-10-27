@@ -528,14 +528,15 @@ GTT 报价，此到期是报价的原始 GTT 到期时间；出借人接受不�
   强制费用集合上，Seaport 首先将 OpenSea protocol-fee 和
   creator-fee 腿直接路由到其配置的接收者，并且 executor 仅将
   **净收益**（销售价格减去 市场 / creator fees）传递
-  给 diamond 的瀑布。然后瀑布路由该净额：出借人收到其结算
-  entitlement（`LibEntitlement.settlementInterest` 在贷款以
-  `useFullTermInterest = true` 创建时计算为完整票面，否则
-  计算为在结算时间戳累积的 pro-rata 利息 — 门控是贷款政策，
-  而不是销售是否发生在预定到期之前或之后），国库削减进入
-  国库，剩余部分直接存入当前借款人仓位 NFT 持有者的 vault
-  （通过 `LibUserVault.getOrCreate` + vault 存款）。不创建
-  Claim Center 索赔 — 销售登陆后请检查您的 vault 余额。
+  给 diamond 的瀑布。销售是由抵押品出资的还款，因此 diamond 结算该净额的方式与成交
+  那一刻的还款完全相同：贷款变为已还款；出借人应得部分（贷款以
+  `useFullTermInterest = true` 创建时为完整票面，否则为截至当时
+  累积的利息，再加上出借人的任何 yield-fee 折扣）放入出借人的
+  vault，并通过普通的出借人索赔支付给当前出借人仓位持有者；国库
+  收取扣除该折扣后的削减；其余部分发送到当前借款人仓位持有者的
+  钱包。如果其余部分无法支付到该钱包，将被保留，并通过 Claim Center
+  中的普通借款人索赔支付。出借人从不在销售本身中获得付款，因此
+  出借人钱包的任何情况都无法阻止销售。
 
 **您无法将其与之组合的内容。** 两个不同的冲突类，在不同的协议
 阶段表面化：
@@ -949,7 +950,7 @@ diamond 端反订单捆绑到单个 Seaport `matchAdvancedOrders` 调用中
 — 出价人 的满足、反订单的列表端 leg（无论您之前是否有 v1
 prepay listing 上线；atomic 路径支持 `existingHash == 0`）以及
 diamond 的结算瀑布都原子地在一个块中登陆。交易要么完全成功
-（贷款结算、NFT 转移、销售收益分割），要么完全 revert（没有
+（贷款以已还款关闭、NFT 转移、销售收益分割），要么完全 revert（没有
 任何移动），并且在列表轮换和结算之间 **没有窗口** 让第三方
 买家以匹配价格介入。
 
@@ -1311,7 +1312,9 @@ Book 中，任何 lender 都可以 accept。acceptance 之前可以 cancel。
 
 1. 由 accepting lender fund 新 loan。
 2. 全额 repay 旧 loan (principal + interest，减去 treasury cut)。
-3. Burn 旧 position NFT。
+3. 将旧 loan 标记为已还款。其 position NFT 不会被 burn：两枚都留在
+   持有者手中，状态为 Loan Repaid。旧 lender 用自己的 NFT claim
+   还款，旧 borrower NFT 作为收据保留。
 4. Mint 新 position NFT。
 
 如果新 terms 下 HF 低于 1.5，则 revert。

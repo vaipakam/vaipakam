@@ -598,17 +598,17 @@ partial / IOC fill 모드는 단일 오퍼의 담보에 대해 여러 대출을
   fee-enforced 컬렉션에서 Seaport는 OpenSea protocol-fee와
   creator-fee leg을 먼저 구성된 수신자에게 직접 라우팅하고,
   executor는 **net proceeds** (판매 가격에서 마켓플레이스 /
-  creator fee를 뺀 것)만 diamond의 워터폴로 전달합니다. 워터폴은
-  그 다음 그 net 금액을 라우팅합니다: 렌더는 결제 entitlement를
-  받습니다 (`LibEntitlement.settlementInterest`가 대출이
-  `useFullTermInterest = true`로 생성된 경우 전체 쿠폰으로
-  계산, 그렇지 않으면 결제 타임스탬프에 누적된 pro-rata 이자
-  로 계산 — 게이트는 대출 정책이며, 판매가 예정된 만기 전후인지
-  여부가 아님), 트레저리 컷은 트레저리로 가며, 나머지는 현재
-  대출자 포지션 NFT 보유자의 볼트에 직접 입금됩니다
-  (`LibUserVault.getOrCreate` + 볼트 입금 통해). Claim Center
-  클레임은 생성되지 않습니다 — 판매가 land한 후 볼트 잔액을
-  확인하십시오.
+  creator fee를 뺀 것)만 diamond의 워터폴로 전달합니다. 판매는 담보로 자금을 조달한 상환이므로, diamond는 그 net 금액을
+  fill 시점의 상환과 정확히 같은 방식으로 결제합니다: 대출은 상환
+  완료가 되고; 렌더의 몫(대출이 `useFullTermInterest = true`로
+  생성된 경우 전체 쿠폰, 그렇지 않으면 그때까지 누적된 이자, 여기에
+  렌더의 yield-fee 할인이 있으면 그만큼)은 렌더의 볼트에 놓여 일반
+  렌더 클레임을 통해 현재 렌더 포지션 보유자에게 지급되며;
+  트레저리는 그 할인을 뺀 컷을 받고; 나머지는 현재 대출자 포지션
+  보유자의 지갑으로 전송됩니다. 나머지를 그 지갑으로 지급할 수 없으면 나머지는
+  보류되어 Claim Center의 일반 대출자 클레임을 통해 지급됩니다.
+  렌더는 판매 자체 안에서 지급받지 않으므로, 렌더의 지갑에 관한
+  어떤 것도 판매를 막을 수 없습니다.
 
 **결합할 수 없는 것.** 두 가지 구별된 충돌 클래스가 다른
 프로토콜 단계에서 표면화됩니다:
@@ -1052,7 +1052,7 @@ atomic-match 플로우의 일반적인 설명을 제공합니다. 확인 후,
 카운터 주문의 listing 측 leg (이전 v1 prepay 리스팅이 라이브
 였는지 여부에 관계없이; atomic 경로는 `existingHash == 0`을
 지원), diamond의 결제 워터폴이 모두 한 블록에 atomic으로
-land합니다. 트랜잭션은 완전히 성공하거나 (대출 결제, NFT 전송,
+land합니다. 트랜잭션은 완전히 성공하거나 (대출 상환 완료로 종료, NFT 전송,
 판매 수익 분할) 완전히 revert (아무것도 움직이지 않음)하며,
 리스팅 회전과 결제 사이에 제3자 구매자가 matched price에
 개입할 수 있는 **창이 없습니다**.
@@ -1424,7 +1424,9 @@ cancel할 수 있습니다.
 
 1. accepting lender에게서 새 loan을 fund.
 2. 옛 loan을 full repay(principal + interest, treasury cut 후).
-3. 옛 position NFTs burn.
+3. 옛 loan을 repaid로 표시. position NFTs는 burn되지 않고, 둘 다
+   Loan Repaid 상태로 보유자에게 남습니다. 옛 lender는 자신의 NFT로
+   상환금을 claim하고, 옛 borrower NFT는 영수증으로 남습니다.
 4. 새 position NFTs mint.
 
 새 terms에서 HF가 1.5 미만이면 revert합니다.

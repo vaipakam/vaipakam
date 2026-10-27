@@ -699,18 +699,20 @@ pouvez pas accidentellement le cocher sur une offre non éligible.
   directement vers leurs destinataires configurés en premier, et
   l'executor passe uniquement les **recettes nettes** (prix de
   vente moins frais place de marché / créateur) dans la cascade du
-  diamond. La cascade route ensuite ce montant net : le prêteur
-  reçoit son entitlement de règlement (que
-  `LibEntitlement.settlementInterest` calcule comme le coupon
-  complet quand le prêt a été créé avec `useFullTermInterest =
-  true`, ou les intérêts pro-rata accumulés au timestamp de
-  règlement sinon — le verrou est la politique du prêt, pas si la
-  vente se passe avant ou après la maturité programmée), le
-  prélèvement trésorerie va à la trésorerie, et le reste est
-  déposé DIRECTEMENT dans le vault du détenteur actuel du NFT de
-  position emprunteur (via `LibUserVault.getOrCreate` + un dépôt
-  vault). Aucun claim Claim Center n'est créé — vérifiez votre
-  solde vault après que la vente ait atterri.
+  diamond. La vente est un remboursement financé par le collatéral, donc le
+  diamond règle ce montant net exactement comme le ferait un
+  remboursement au moment du remplissage : le prêt devient
+  remboursé ; le dû du prêteur (le coupon complet quand le prêt a
+  été créé avec `useFullTermInterest = true`, sinon les intérêts
+  accumulés jusque-là, plus toute remise sur les frais de rendement
+  du prêteur) est placé dans le vault du prêteur et payé au
+  détenteur actuel de la position prêteur via le claim prêteur
+  ordinaire ; la trésorerie reçoit son prélèvement net de cette
+  remise ; et le reste est envoyé au wallet du détenteur actuel de
+  la position emprunteur. Si le reste ne peut pas être payé à ce
+  wallet, il est retenu et payé via le claim emprunteur ordinaire dans le Claim
+  Center. Le prêteur n'est jamais payé dans la vente elle-même, donc
+  rien du wallet du prêteur ne peut l'arrêter.
 
 **Avec quoi vous ne pouvez pas le combiner.** Deux classes de
 conflit distinctes, surfacées à différentes étapes du protocole :
@@ -1231,7 +1233,7 @@ le leg côté-listing de la contre-ordre (que vous ayez eu ou non
 un prepay listing v1 antérieur en ligne ; le chemin atomic
 supporte `existingHash == 0`), et la cascade de règlement du
 diamond atterrissent atomiquement en un bloc. La transaction
-réussit complètement (prêt réglé, NFT transféré, recettes de
+réussit complètement (prêt clos comme remboursé, NFT transféré, recettes de
 vente divisées) ou revert complètement (rien ne bouge), et il
 n'y a **pas de fenêtre** entre la rotation de listing et le
 règlement dans laquelle un acheteur tiers pourrait intervenir au
@@ -1650,7 +1652,10 @@ Règlement atomique après que le nouveau prêteur a accepté :
 1. Finance le nouveau prêt depuis le prêteur acceptant.
 2. Rembourse l'ancien prêt en totalité (principal + intérêts,
    moins la coupe de trésorerie).
-3. Brûle les anciens NFT de position.
+3. Marque l'ancien prêt comme remboursé. Ses NFT de position ne
+   sont pas brûlés : les deux restent chez leurs détenteurs, marqués
+   Loan Repaid. L'ancien prêteur réclame le remboursement avec le
+   sien, et l'ancien NFT emprunteur reste comme reçu.
 4. Mint les nouveaux NFT de position.
 
 Revert si HF sous les nouvelles conditions serait inférieur à 1,5.

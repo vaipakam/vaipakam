@@ -667,18 +667,20 @@ hidden, எனவே ineligible offer-இல் தற்செயலாக tick
   recipients-க்கு directly route செய்கிறது, மற்றும் executor
   diamond-இன் waterfall-க்கு **net proceeds** (sale price minus
   marketplace / creator fees)-ஐ மட்டுமே pass செய்கிறது.
-  Waterfall பின்னர் அந்த net amount-ஐ route செய்கிறது: lender
-  அவர்களின் settlement entitlement-ஐ பெறுகிறார் (இது
-  `LibEntitlement.settlementInterest` loan `useFullTermInterest =
-  true`-உடன் உருவாக்கப்பட்டபோது full coupon-ஆக கணக்கிடுகிறது,
-  அல்லது settlement timestamp-இல் accrued pro-rata interest-ஆக
-  இல்லாதபோது — gate loan policy, sale scheduled maturity-க்கு
-  முன் அல்லது பின் நடக்கிறதா என்பது அல்ல), treasury cut
-  treasury-க்கு செல்கிறது, மற்றும் remainder current borrower-
-  position NFT holder-இன் vault-இல் DIRECTLY deposit ஆகிறது
-  (`LibUserVault.getOrCreate` + vault deposit மூலம்). Claim
-  Center claim உருவாக்கப்படவில்லை — sale land ஆன பிறகு உங்கள்
-  vault balance-ஐ check செய்யவும்.
+  Sale என்பது collateral மூலம் funded ஆன ஒரு repayment, எனவே diamond
+  அந்த net amount-ஐ fill நேரத்தில் ஒரு repayment செய்வது போலவே
+  settle செய்கிறது: loan repaid ஆகிறது; lender-இன் due (loan
+  `useFullTermInterest = true`-உடன் உருவாக்கப்பட்டிருந்தால் full
+  coupon, இல்லையெனில் இதுவரை accrued interest, கூடவே lender-இன்
+  yield-fee discount இருந்தால் அது) lender-இன் vault-இல் வைக்கப்பட்டு,
+  ordinary lender claim மூலம் current lender-position holder-க்கு
+  கொடுக்கப்படுகிறது; treasury அந்த discount கழித்த தன் cut-ஐ
+  பெறுகிறது; மீதி current borrower-position holder-இன் wallet-க்கு
+  அனுப்பப்படுகிறது. மீதியை அந்த wallet-க்கு கொடுக்க முடியாவிட்டால், அது hold
+  செய்யப்பட்டு Claim Center-இல் ordinary borrower claim மூலம்
+  கொடுக்கப்படுகிறது. Lender-க்கு sale-க்குள் ஒருபோதும் payment
+  நடப்பதில்லை, எனவே lender-இன் wallet பற்றிய எதுவும் sale-ஐ
+  நிறுத்த முடியாது.
 
 **இதை எதனுடன் combine செய்ய முடியாது.** வெவ்வேறு protocol
 stages-இல் surface செய்யப்படும் இரண்டு distinct conflict
@@ -1175,7 +1177,7 @@ prior v1 prepay listing live இருந்திருந்தாலும்
 atomic path `existingHash == 0`-இல் support செய்கிறது), மற்றும்
 diamond-இன் settlement waterfall எல்லாம் ஒரு block-இல் atomic-ஆக
 land ஆகின்றன. Transaction either முழுமையாக success ஆகிறது
-(loan settled, NFT transferred, sale proceeds split) அல்லது
+(loan repaid-ஆக மூடப்படுகிறது, NFT transferred, sale proceeds split) அல்லது
 முழுமையாக revert ஆகிறது (எதுவும் நகராது), மற்றும் listing
 rotation மற்றும் settlement-க்கு இடையில் ஒரு third-party buyer
 matched price-இல் step in செய்யக்கூடிய **window இல்லை**.
@@ -1572,7 +1574,10 @@ accept செய்யலாம். Acceptance-க்கு முன் cancel 
 1. Accepting lender-இல் இருந்து புதிய loan-இல் fund செய்கிறது.
 2. பழைய loan-இல் முழுமையாக repay செய்கிறது (principal + interest, treasury
    cut கழித்து).
-3. பழைய position NFTs-ஐ burn செய்கிறது.
+3. பழைய loan-ஐ repaid என mark செய்கிறது. அதன் position NFTs burn
+   ஆவதில்லை: இரண்டும் Loan Repaid நிலையுடன் அவற்றின் holders-இடமே
+   இருக்கின்றன. பழைய lender தன் NFT மூலம் repayment-ஐ claim
+   செய்கிறார், பழைய borrower NFT ஒரு receipt-ஆக இருக்கிறது.
 4. புதிய position NFTs-ஐ mint செய்கிறது.
 
 புதிய terms-இல் HF 1.5-க்குக் கீழே இருந்தால் revert ஆகிறது.
