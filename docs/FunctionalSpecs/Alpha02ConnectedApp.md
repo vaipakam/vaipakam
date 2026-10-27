@@ -6,7 +6,8 @@ marketing site's links resolve here since #1959 ported the last two
 destinations and flipped the cutover switch; the `/recover` guide links
 alone stay on the legacy host, held by same-origin recovery state rather
 than by any missing route). It is the app-specific functional
-spec distilled from the release notes through 2026-08-12. It is intentionally
+spec consolidated against the release notes from 2026-08-13 through
+2026-10-22, inclusive, while retaining later recorded intent decisions. It is intentionally
 written without implementation snippets. (The app was called `alpha02` and
 served `alpha02.vaipakam.com` until #1854 renamed it; this file keeps the old
 name only in its filename.)
@@ -34,6 +35,9 @@ reveal denser market and management tools without leaving the same product.
 - The app is mobile-first, with bottom navigation on small screens and a
   persistent navigation layout on larger screens.
 - Unknown routes show a recovery page instead of a blank screen.
+- On phones, the More sheet closes as navigation occurs, including browser
+  back and forward navigation and links outside the sheet. It must not cover
+  the destination page with a menu belonging to the previous page.
 - A page display failure is contained to a recovery card. Navigation remains
   usable, and the user is told that funds and on-chain positions are not changed
   by a display failure.
@@ -273,6 +277,20 @@ including people who never will.
 
 The app uses chain reads and indexed reads for different jobs.
 
+- A displayed answer belongs to the network, deployment, wallet, position,
+  asset pair, and request that produced it. Changing any relevant identity
+  clears the answer immediately, including the first visible frame. A late
+  response cannot restore another identity's answer.
+- This applies to asset breakdowns, keeper grants, collateral minima, rental
+  sale banners, liquidation quotes, loan totals, offer children, claim lists,
+  asset details, admin eligibility, acceptance preflight, and pending changes.
+  Loading or unknown is shown until the new context has its own answer.
+- Recovery's sanctions-oracle readiness belongs to the active network and
+  deployment. A network change or retry returns to checking and holds signing;
+  a successful check on the previous network never authorizes recovery here.
+- Copy controls and add-token requests display only the latest attempt's
+  outcome. Navigation, an identity change, or a newer attempt prevents an
+  older response from reporting success for the current action.
 - Chain reads are authoritative for the connected wallet's current positions,
   claimability, offer and loan detail pages, ownership, and submit-time safety.
 - Indexed reads are the fast market and history layer for shared books, activity
@@ -1459,6 +1477,13 @@ and a user who typed it would be refused.
 Consent is collected against the terms actually shown. If a material term,
 warning, selected offer, selected listing, or disclosed risk changes after
 consent, consent is cleared and the user is told to review again.
+
+Selecting another offer also resets its Full-tariff choice. Offset funding
+figures and a listing's lifecycle, network, or ownership changes invalidate
+their acknowledgements in the same update as the displayed change. If an
+offset acknowledgement had been ticked, the card explains that its figures
+changed and asks for a fresh review; the notice clears on acknowledgement or
+completion. An untouched card does not announce a lost acknowledgement.
 
 Clearing it afterwards is not sufficient on its own: at the moment signing is
 offered, the consent on file must be consent given against the disclosures
@@ -2883,6 +2908,14 @@ is the borrower's own money.
   address.
 - Health details are attached only with explicit consent.
 - Full wallet addresses are not included in health details.
+- Before a public support report leaves the app, the user can inspect all
+  text that will be sent, including the longer error and trace omitted from
+  the compact drawer summary. Opening a pre-filled external issue already
+  sends its link contents to that service, so review and consent happen first.
+- Redaction covers percent-encoded addresses and recognizable forty-digit
+  address values without their usual prefix, as well as ordinary addresses.
+  It is not a promise to recognize every possible encoding; the full report
+  preview remains available so the user can check what will leave the device.
 - If ticket submission fails, the app offers an email fallback and must not
   claim a ticket number it did not receive.
 - Support is reachable from every page without covering page content: it is a
@@ -2930,7 +2963,7 @@ is the borrower's own money.
   *(Not yet true of the whole app, but now bounded. Every key EXISTS in
   every advertised language, and a second check asks the question key
   presence cannot: does the key hold anything other than the English
-  string? Several hundred `(key, locale)` pairs still do — Hindi carries
+  string? Several hundred message identity and language pairs still do — Hindi carries
   the bulk of them, and `apps/app/src/i18n/english-valued-baseline.json`
   is the current count, deliberately not restated here — and every one is
   recorded, dated, and enforced in both
@@ -4639,8 +4672,8 @@ Its intended behaviour, as the test oracle for this surface:
   directly from the chain), the app build, and the last error
   recorded on the device this session. Health checks run only while
   the panel is open. From the panel the user can report a problem: a
-  pre-filled public issue carrying exactly the details the panel
-  showed — page, network, connection statuses, build, and the last
+  pre-filled public issue carrying the reviewed support details — page,
+  network, connection statuses, build, and the last
   recorded error — plus a copy-to-clipboard fallback for users
   without an account on the issue tracker. Reports are redacted by
   construction: the full wallet address never appears, error text is
