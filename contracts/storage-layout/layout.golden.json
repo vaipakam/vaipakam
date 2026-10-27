@@ -1608,6 +1608,8 @@
     "L|vaipakam|641|0|uint256|feeLedgerTotal",
     "L|vaipakam|642|0|uint256|minIntentFillNumeraire",
     "L|vaipakam|644|0|uint32|cfgTierPushSpacingSec",
+    "L|vaipakam|644|4|uint16|rateModelRelativeDeviationBps",
+    "L|vaipakam|644|6|uint16|rateModelMinDeviationBps",
     "L|vaipakam|647|0|uint256|remitDayFreshReserved",
     "L|vaipakam|64|0|uint256|interactionCapVpfiPerEth",
     "L|vaipakam|65|0|bool|isCanonicalRewardChain",
