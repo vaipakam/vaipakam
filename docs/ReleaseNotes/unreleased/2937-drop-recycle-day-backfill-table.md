@@ -1,4 +1,4 @@
-## Thread — Drop the retired recycle-day backfill table (PR #TBD)
+## Recycling analytics — Drop the retired recycle-day backfill table (PR #2948)
 
 The second and last step of retiring the pre-cutover recycling day backfill. A new shared-database migration drops the `recycle_day_backfill` table, and the schema gate now requires it. The first step had already removed every reader of the table: the indexer's recycling series, the nightly off-chain backup and the restore import. Nothing has ever written it. The column the same earlier migration added to the per-chain reported-recycling record is still in use and is not touched.
 
