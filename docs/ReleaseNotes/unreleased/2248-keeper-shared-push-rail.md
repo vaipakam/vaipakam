@@ -1,4 +1,4 @@
-## Keeper — risky-loan and pre-grace warnings send through the shared Push sender (PR #<n>)
+## Keeper — risky-loan and pre-grace warnings send through the shared Push sender (PR #2676)
 
 The keeper sends two kinds of Push alert: the warning when a loan's health
 gets risky, and the warning before an auto-refinance loan reaches its grace

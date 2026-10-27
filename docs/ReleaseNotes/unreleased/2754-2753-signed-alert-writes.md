@@ -1,4 +1,4 @@
-## Alerts — every settings change signed, every signed request used once (PR #<n>)
+## Alerts — every settings change signed, every signed request used once (PR #2859)
 
 Saving alert settings used to need no proof of ownership. The alert service took the wallet named in the request at its word for everything except switching the due-date reminder off, so any caller that skipped the browser could rewrite another wallet's risk thresholds or switch on its Push alerts. Now every save carries the wallet's signature over a plain message that names what the save changes: the three risk levels, the payment-reminder choice and a Push opt-in, each given its new value or marked unchanged. The service rebuilds that message from the request it received, so a signature covers that save and nothing else. Signing is free and is not a transaction. The old message that covered only the reminder switch is retired; the app now signs on every save, which means one wallet prompt per save.
 

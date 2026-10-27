@@ -1,4 +1,4 @@
-## Thread — Treasury reserve routing and flash-loan profit measured per run (PR #<n>)
+## Thread — Treasury reserve routing and flash-loan profit measured per run (PR #2679)
 
 The productive treasury reserve now refuses any venue it has no route for.
 Before, routing a deployment or a withdrawal was an open chain of cases with

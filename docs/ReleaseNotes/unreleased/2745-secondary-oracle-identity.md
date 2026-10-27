@@ -1,4 +1,4 @@
-## Thread — Secondary oracles ask about an asset under its registered feed name (PR #<n>)
+## Thread — Secondary oracles ask about an asset under its registered feed name (PR #2929)
 
 Tellor, API3 and DIA cross-check each Chainlink price. They used to be asked
 about an asset under its own `symbol()`, read live from the token. A token

@@ -1,4 +1,4 @@
-## Governance gates — notification billing screens the payer (PR #<n>)
+## Governance gates — notification billing screens the payer (PR #2774)
 
 Charging a wallet for paid notifications now checks the payer against the sanctions oracle explicitly, before any fee leaves the vault. Before this change the check happened only indirectly, inside the vault withdrawal, and it let the charge through while the oracle could not be read. The rule is now stated where the fee is charged:
 - With no oracle configured, there is no screen.

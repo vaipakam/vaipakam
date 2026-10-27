@@ -1,4 +1,4 @@
-## Diagnostics — a legal hold now outlasts the retention prune (PR #<n>)
+## Diagnostics — a legal hold now outlasts the retention prune (PR #2861)
 
 Server-side diagnostics records under a legal hold were deleted anyway once they passed the 90-day retention age. Only the user's signed erasure honoured holds; the scheduled prune checked nothing but the record's age. A hold that a scheduled job can delete is not a hold. Both delete paths now go through one condition, a record is deletable only if no hold names its wallet, written into the delete itself, so the hold is read in the same statement that deletes and a hold placed a moment earlier is still honoured. The erasure path's separate hold lookup is gone for the same reason; its uniform response is unchanged.
 

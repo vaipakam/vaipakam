@@ -1,4 +1,4 @@
-## Thread — A buy offer used by a direct sale leaves the offer book (PR #<n>)
+## Thread — A buy offer used by a direct sale leaves the offer book (PR #2648)
 
 When a lender sold their position straight into a standing buy offer, the
 contract marked that offer accepted and retired its position record, but the

@@ -1,4 +1,4 @@
-## Thread — Terminal reward closes can no longer be skipped (PR #<n>)
+## Thread — Terminal reward closes can no longer be skipped (PR #2924)
 
 Every way a loan ends closes its interaction-reward entries, and that close
 decides whether the borrower keeps the reward or forfeits it. Five facets ran

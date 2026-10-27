@@ -1,4 +1,4 @@
-## Keeper — settled remittance alerts close again (PR #<n>)
+## Keeper — settled remittance alerts close again (PR #2678)
 
 The keeper's late-acknowledgement pass could not find its own "undelivered remittance" ops alerts on the live database, so it never closed one whose remittance had since settled. Those alerts stayed open and kept repeating on their schedule. The pass looked them up with a SQL text pattern that includes the Diamond address. That made the pattern about 76 bytes long, and Cloudflare D1 refuses any such pattern over 50 bytes. The keeper machine's log showed the refusal on nearly every tick since at least 00:43 UTC on 2026-10-23. The pass itself kept running and new alerts still went out.
 

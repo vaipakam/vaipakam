@@ -1,4 +1,4 @@
-## Governance — a new Diamond stays paused until a launch step proves it is ready (PR #<n>)
+## Governance — a new Diamond stays paused until a launch step proves it is ready (PR #2686)
 
 The deploy used to unpause the Diamond at the end of its contracts phase.
 That opened offers and accepts to the public before the later phases had

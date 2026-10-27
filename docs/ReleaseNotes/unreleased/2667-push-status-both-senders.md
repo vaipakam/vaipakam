@@ -1,4 +1,4 @@
-## Push readiness covers both senders (PR #<n>)
+## Push readiness covers both senders (PR #2682)
 
 The app asks the agent whether Push can be sent before it offers the Push opt-in. Until now the agent could answer only for its own rail, the one that sends payment reminders. The risky-loan warnings come from the keeper, which signs with its own copy of the key on the keeper machine. So the Alerts card had to say its check covered payment reminders only, and suggest keeping another channel on for the warnings.
 

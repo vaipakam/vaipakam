@@ -1,4 +1,4 @@
-## Thread — an NFT rental repaid in grace no longer reverts (PR #<n>)
+## Thread — an NFT rental repaid in grace no longer reverts (PR #2656)
 
 An NFT rental repaid after its maturity but inside the grace period could
 revert with an insufficient-prepayment error, leaving default as the only way

@@ -1,4 +1,4 @@
-## Thread — Health warnings start fresh for a withdrawn loan's number (PR #<n>)
+## Thread — Health warnings start fresh for a withdrawn loan's number (PR #2655)
 
 When the indexer finds that a loan it published never existed on chain (say,
 its opening was undone by a chain reorganisation), it withdraws the record and

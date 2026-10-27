@@ -1,4 +1,4 @@
-## Thread — Day-close CCIP fee ceiling (PR #<n>)
+## Thread — Day-close CCIP fee ceiling (PR #2631)
 
 The keeper's reward day-close pass pays a CCIP fee on three kinds of send: a mirror's daily report to Base, and Base's broadcast of each finalized day, to every mirror or to one. Until now it paid whatever the reward messenger quoted, and the messenger's fee settings are governance-controlled. A fee set wrong, or by a compromised owner, would have been paid from the keeper's unattended key up to eight times per chain per run. No protocol funds were at risk, only the keeper's gas wallet, but the spend had no bound.
 

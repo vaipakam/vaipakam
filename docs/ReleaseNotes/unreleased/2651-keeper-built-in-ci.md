@@ -1,4 +1,4 @@
-## Keeper — the keeper machine no longer builds; CI builds and attests each bundle (PR #<n>)
+## Keeper — the keeper machine no longer builds; CI builds and attests each bundle (PR #2722)
 
 The always-on keeper machine used to build every change to the keeper
 itself. On that small machine (about 1 GB of memory, two shared CPUs on a

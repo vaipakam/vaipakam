@@ -1,4 +1,4 @@
-## Thread — concurrent ERC-1155 rentals no longer overwrite each other (PR #<n>)
+## Thread — concurrent ERC-1155 rentals no longer overwrite each other (PR #2657)
 
 A lender's vault can hold several units of one ERC-1155 token and rent parts
 of it to different borrowers at the same time. The vault recorded each

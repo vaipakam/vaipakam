@@ -1,4 +1,4 @@
-## Governance — vault template lock, deploy admin guard, reachable vault-version bar (PR #<n>)
+## Governance — vault template lock, deploy admin guard, reachable vault-version bar (PR #2720)
 
 The shared vault implementation now locks its own initializer when it is
 deployed. Only the per-user vault proxies are ever initialized, so nobody can

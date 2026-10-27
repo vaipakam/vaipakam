@@ -1,4 +1,4 @@
-## Thread — the full regression is green again (PR #<n>)
+## Thread — the full regression is green again (PR #2785)
 
 The first full pre-deploy regression run since several reward changes landed found two failures that the per-PR lane cannot see.
 

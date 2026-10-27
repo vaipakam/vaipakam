@@ -1,4 +1,4 @@
-## Thread — a lost internal match on the close-out card now ends in a sale (PR #<n>)
+## Thread — a lost internal match on the close-out card now ends in a sale (PR #2671)
 
 When an overdue loan can be settled against an opposing position, the
 lender's close-out card sends that settlement. The opposing position is

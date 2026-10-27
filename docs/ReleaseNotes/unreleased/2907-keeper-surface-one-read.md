@@ -1,4 +1,4 @@
-## Thread — Keeper reads a Diamond's forced-sale surface in one request (PR #<n>)
+## Thread — Keeper reads a Diamond's forced-sale surface in one request (PR #2912)
 
 The keeper now finds out which forced-sale calls a Diamond routes (added in #2908) with one loupe read per attempt. Before, it made ten: five at the start and five again at the final gate. The grace-default pass runs under a hard budget of 40 requests per visit, and on BNB Testnet the extra reads used it up, so the two past-grace test loans there were skipped on every visit with "subrequest-budget-spent".
 

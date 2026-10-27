@@ -1,4 +1,4 @@
-## Keeper machine — builds no longer starve the keeper (PR #<n>)
+## Keeper machine — builds no longer starve the keeper (PR #2691)
 
 The keeper's late-acknowledgement pass missed its read deadline on about one tick in twenty. Most misses fell on all three chains in the same tick, and the next tick always caught up. The machine's own logs gave the cause: 60 of the 63 failing ticks in one day ran while the machine was building a new keeper release. The machine is small (about 1 GB of memory), and it rebuilt the keeper after every merge to the main branch, about 32 times a day, whether or not the merge touched the keeper. During a build, ticks started several seconds late and 37% of them missed the deadline. Outside a build the miss rate was 0.2%. No RPC provider was at fault.
 

@@ -1,4 +1,4 @@
-## Thread — Keeper sends the forced-sale form each Diamond routes (PR #<n>)
+## Thread — Keeper sends the forced-sale form each Diamond routes (PR #2908)
 
 The live testnet Diamonds were deployed before the sell-to-need change (#2796). They route only the older default and liquidation calls, which sell the whole collateral and return the surplus to the borrower, and they have no sale plan. After the keeper moved to the newer sized calls (#2834), every grace default and health-factor liquidation it tried on those chains failed with "function does not exist". The past-grace test loans on Base Sepolia, Arbitrum Sepolia and BNB Testnet then sat undefaulted. Collateral stayed where it was; nothing moved.
 

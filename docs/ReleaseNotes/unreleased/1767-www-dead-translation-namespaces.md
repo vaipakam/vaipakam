@@ -1,4 +1,4 @@
-## Thread — the marketing site ships only the translations it renders (PR #<n>)
+## Thread — the marketing site ships only the translations it renders (PR #2904)
 
 The marketing site's translation bundles carried 54 sections of text that belong to the connected app and that the site never shows. That was about 1,060 of its roughly 1,500 strings. English is loaded up front, so every visitor downloaded them on first paint: the English bundle drops from about 138 KB to 49 KB, and each translated language's bundle shrinks by a similar share. Nothing a visitor sees changes.
 
