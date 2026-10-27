@@ -1,4 +1,4 @@
-# Keeper matcher: each pair considered once, a dust refusal no longer ends the fill search, and dust rolls are left to their owners (#2760, PR #2807)
+## Keeper matcher: each pair considered once, a dust refusal no longer ends the fill search, and dust rolls are left to their owners (#2760, PR #2807)
 
 The keeper's offer matcher now reads each live offer once per run. The order book is read page by page and can change while it is read, so an offer could appear twice; it is now dropped the second time. That lets the matcher visit each lender and borrower pair at most once without keeping a list of every pair it tried, which grew with the size of the book.
 

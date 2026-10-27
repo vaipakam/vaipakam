@@ -1,4 +1,4 @@
-# Keeper: auto-extend only near maturity, and never shortens the grace deadline (#2738, keeper half)
+## Keeper: auto-extend only near maturity, and never shortens the grace deadline (#2738, keeper half) (PR #2895)
 
 The keeper's auto-extend pass used to re-term any loan whose borrower and lender had both switched auto-extend on, as early as a day after it started. Each extension settles the interest so far, restarts the loan's clock and moves its rate to the lender's floor, so a loan could be re-termed long before anyone needed it extended.
 

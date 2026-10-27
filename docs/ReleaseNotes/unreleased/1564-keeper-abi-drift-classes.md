@@ -1,4 +1,4 @@
-## Pre-deploy gate tells keeper-bot call drift from error-list drift (PR #TBD)
+## Pre-deploy gate tells keeper-bot call drift from error-list drift (PR #2940)
 
 The pre-deploy gate's ABI step compares the public keeper bot's committed ABIs with the compiled contracts. It used to compare each file as a whole. Every facet carries the whole shared custom-error list, so adding or removing a single error marked most of the bot's ABIs stale, even though none of the bot's calls had changed. The warning was on after nearly every contract change, so nobody read it, and it would have hidden the drift that does break the bot.
 

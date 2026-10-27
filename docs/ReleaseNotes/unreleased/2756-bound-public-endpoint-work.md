@@ -1,4 +1,4 @@
-## Thread — public endpoints do bounded work before expensive work (PR #TBD)
+## Thread — public endpoints do bounded work before expensive work (PR #2877)
 
 Every request body the agent and the indexer accept is now read only up to a size stated for its route, through one shared reader. A body declared or streamed past that size is refused as too large before the service holds the rest of it, and a body that is not valid JSON is refused under one shared name on every route. Until now each handler buffered whatever arrived before looking at it, so a single large post cost the Worker its memory and CPU whatever the route would later decide.
 

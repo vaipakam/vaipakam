@@ -1,4 +1,4 @@
-# Keeper: a partial liquidation refused for not covering interest is resized, not dropped (#2731, #2886)
+## Keeper: a partial liquidation refused for not covering interest is resized, not dropped (#2731, #2886) (PR #2889)
 
 A partial liquidation now has to pay at least the interest the loan has
 accrued since its interest clock last started. A slice that falls short is

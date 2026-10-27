@@ -1,4 +1,4 @@
-## Thread — Live handover check and bot-role rotation (PR #TBD)
+## Thread — Live handover check and bot-role rotation (PR #2660)
 
 The governance handover is now proven against the deployed chain. A new
 read-only phase, `handover-gate`, in both the mainnet and testnet deploy

@@ -1,4 +1,4 @@
-# Lender intents: priced assets and a minimum fill value (#2760, PR #2815)
+## Lender intents: priced assets and a minimum fill value (#2760, PR #2815)
 
 A standing lender intent could be registered on any pair of tokens with a smallest fill of one unit. Funding it with that one unit put it in the discovery feed the keeper reads every run, so junk-token intents could be added at almost no cost.
 

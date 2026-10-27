@@ -1,4 +1,4 @@
-# #2734 — the keeper's flash-loan liquidations sell through the Diamond's own swap adapters
+## #2734 — the keeper's flash-loan liquidations sell through the Diamond's own swap adapters (PR #2896)
 
 The flash-loan liquidator now sells the collateral it seizes only through a
 swap adapter the Diamond has registered and not disabled (the contract half of

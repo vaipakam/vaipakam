@@ -1,4 +1,4 @@
-## Thread — CI workflow hardening (PR #TBD)
+## Thread — CI workflow hardening (PR #2878)
 
 Five CI workflow fixes from the 2026-10-24 security scan. The release workflow passes the dispatched tag to its shell as an environment value instead of pasting it into the script text. The Claude workflow now starts only for a comment, review or issue by the repository's owner, members or collaborators; the action's own write-access check stays in place behind it. The OpenID Connect grant stays, because the action exchanges that token for its GitHub App token. The main CI workflow no longer grants code-scanning write access to every job: only the two jobs that upload scan results (CodeQL and Slither) hold it, in their own permission blocks.
 

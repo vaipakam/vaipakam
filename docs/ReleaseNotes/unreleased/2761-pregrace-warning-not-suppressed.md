@@ -1,4 +1,4 @@
-# Pre-grace warning: no offer in the book silences it any more (#2761)
+## Pre-grace warning: no offer in the book silences it any more (#2761) (PR #2884)
 
 The keeper warns a borrower who has auto-refinance turned on when their loan
 is within a day of its due date and has not been refinanced. It used to skip

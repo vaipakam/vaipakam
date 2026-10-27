@@ -1,4 +1,4 @@
-# Keeper: split liquidations pick legs that each clear their own floor (#2724)
+## Keeper: split liquidations pick legs that each clear their own floor (#2724) (PR #2881)
 
 Since #2871 the protocol holds every leg of a split liquidation to its own
 share of the sale's floor, not only the two legs together: a leg that would

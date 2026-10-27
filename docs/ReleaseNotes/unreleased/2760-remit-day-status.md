@@ -1,4 +1,4 @@
-# Reward remittance: each day says why it does or does not close (#2760, PR #2826)
+## Reward remittance: each day says why it does or does not close (#2760, PR #2826)
 
 The keeper's reward-remittance pass warned, every run, about each finalized day that was neither remitted nor closed. It could not tell a day still owed but gated (waiting on its commitment report, or short of recycled backing) from a day that owed the mirror nothing, so on a quiet mirror the warning repeated for every zero-budget day in the scan window, and the operator had to check each one by hand.
 

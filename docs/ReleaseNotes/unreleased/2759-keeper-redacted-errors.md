@@ -1,4 +1,4 @@
-# Keeper: caught errors become text only through the shared redacting formatter (#2759)
+## Keeper: caught errors become text only through the shared redacting formatter (#2759) (PR #2888)
 
 The keeper used to turn caught errors into log lines, alert text and stored
 reasons with the raw error text. viem puts the full RPC URL, API key

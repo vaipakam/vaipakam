@@ -1,4 +1,4 @@
-## Thread — Deploy and ops script correctness (PR #TBD)
+## Thread — Deploy and ops script correctness (PR #2870)
 
 The deploy scripts' check that each Cloudflare Worker can read a chain's RPC secret could never fail. When the secret was missing its count came out as two lines of "0", so the refusal never matched, and it looked in the Worker's own secrets while every Worker reads its RPC URLs from the account's Secrets Store. The check now lives once, in a shared helper all three deploy scripts use: it reads where the Worker's own config binds the secret, looks in that store, and refuses with its own message when a listing cannot be read. Because every Worker binds every RPC it reads from the store, a chain its config does not bind is a chain it does not serve: the indexer and the agent refuse that, while the keeper, whose chain set is whatever its config binds, reports it and moves on. A chain with no known RPC binding now refuses instead of skipping the check. (Closes #1492.)
 
