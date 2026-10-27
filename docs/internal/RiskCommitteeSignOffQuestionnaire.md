@@ -120,7 +120,7 @@ least one full bake cycle. Capture:
 - `KeeperTierSet(asset, oldTier, newTier)` events emitted ([F-3](https://github.com/vaipakam/vaipakam/issues/9) added `oldTier` so the audit trail is event-only, no storage replay).
 - Liquidation triggers fired (atomic + discount + internal-match).
 - Indexer event-coverage check green ([`apps/indexer/scripts/check-event-coverage.mjs`](../../apps/indexer/scripts/check-event-coverage.mjs)).
-- Agent watch-feed-heartbeat / watch-health-factor / watch-l2-sequencer Tenderly alerts wired.
+- Feed-heartbeat, pre-liquidation health-factor and L2-sequencer monitors wired. These have no home since the Tenderly actions were retired (#2869); each is tracked in #2968.
 
 **Committee question to confirm**: is one bake cycle on Base
 Sepolia sufficient, or do you want N parallel testnet rehearsals

@@ -97,6 +97,31 @@ if [ ! -f "$TEMPLATE" ]; then
   exit 1
 fi
 
+# ── Every Diamond preset must name an event or error the Diamond has (#2869) ──
+# The presets name their signal by signature, and a signature that drifts from
+# the contract matches nothing: Tenderly accepts the alert and it never fires.
+# Three presets had drifted that way unnoticed. The check lives in
+# packages/contracts/scripts/tenderly-presets.mjs, which PARSES the template as
+# YAML (a line-by-line read recognised nothing after a re-indent and passed,
+# #2979 r1) and compares each Diamond preset with the committed combined
+# Diamond ABI in canonical form (struct parameters as component tuples). It
+# refuses a template with no presets, a preset missing a field, and any
+# signature the ABI lacks; a preset on another contract comes back as
+# unchecked and is printed by name after the run. It needs the workspace's
+# node_modules (`pnpm install`); without them it fails, and so does this run.
+DIAMOND_ABI="$REPO_ROOT/packages/contracts/src/diamondAbi.json"
+PRESET_CHECK="$REPO_ROOT/packages/contracts/scripts/tenderly-presets.mjs"
+if [ ! -f "$DIAMOND_ABI" ]; then
+  echo "Error: $DIAMOND_ABI not found; cannot check the presets' signatures." >&2
+  exit 1
+fi
+if ! PRESET_UNCHECKED="$(node "$PRESET_CHECK" "$TEMPLATE" "$DIAMOND_ABI")"; then
+  echo "Error: $TEMPLATE has presets that would never fire (listed above)." >&2
+  echo "Fix each signature against packages/contracts/src/diamondAbi.json." >&2
+  echo "Nothing was published — the previous manifests are untouched." >&2
+  exit 1
+fi
+
 mkdir -p "$OUT_DIR"
 
 # Tenderly's CLI uses its own per-chain canonical names; map our
@@ -290,6 +315,11 @@ echo "Emitted $EMITTED file(s) into $OUT_DIR/"
 if [ ${#SKIPPED[@]} -gt 0 ]; then
   echo "Skipped:"
   for s in "${SKIPPED[@]}"; do echo "  - $s"; done
+fi
+
+if [ -n "$PRESET_UNCHECKED" ]; then
+  echo "Signatures NOT checked (no committed ABI for the contract):"
+  sed 's/^UNCHECKED /  - /' <<<"$PRESET_UNCHECKED"
 fi
 
 echo

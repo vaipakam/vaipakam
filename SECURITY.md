@@ -281,7 +281,7 @@ The protocol enforces one terminal-state invariant for loans, checked both on-ch
                                              └─▶ Liquidated
 ```
 
-The Tenderly alert stack ([`ops/tenderly/`](ops/tenderly/)) polls `invalidTransitions` and pages P0 on any increment. A non-zero value means either a contract bug or an indexer/contract drift — both require immediate investigation.
+Nothing pages on that counter today: no alert in [`ops/tenderly/`](ops/tenderly/) or elsewhere polls `invalidTransitions` (the gap is tracked in [#2968](https://github.com/vaipakam/vaipakam/issues/2968)), so it has to be read from the subgraph. A non-zero value means either a contract bug or an indexer/contract drift — both require immediate investigation.
 
 ---
 
