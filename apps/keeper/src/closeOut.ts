@@ -48,21 +48,10 @@
  * between the first read and the gate's (sale to none, or none to sale)
  * means the route moved, and the attempt is skipped. A plan read that
  * reverts (a distrusted price) skips, as the default itself would revert.
- *
- * THE SURFACE. A Diamond deployed before #2796 — the live testnets, until
- * the all-waves fresh deploy — has no plan and routes only the
- * `triggerDefault(loanId, adapterCalls)` form, which sells the whole
- * collateral and returns the surplus to the borrower. On such a Diamond the
- * attempt quotes the whole collateral, skips the plan checks, and sends that
- * form; the preview still decides. The surface is one loupe read at the
- * start (`readForcedSaleSurface`); it is not read again at the gate, because
- * the gate's preview simulates the exact form that is sent, and a Diamond
- * cut in between (or routing part of each surface) makes that form revert
- * there, so nothing is sent. The whole-collateral branch is deleted with the
- * rest of that surface (#2907).
  */
 
 import {
+  encodeFunctionData,
   type Abi,
   type Address,
   type PublicClient,
@@ -70,6 +59,7 @@ import {
   zeroAddress,
 } from 'viem';
 import {
+  DefaultedFacetABI,
   DiamondLoupeFacetABI,
   LoanFacetABI,
   RiskFacetABI,
@@ -78,15 +68,12 @@ import { isRevert } from '@vaipakam/lib/contractRevert';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
 import {
   FORCED_SALE_KIND,
-  encodeTriggerDefault,
   forcedSaleQuoteAccepted,
   forcedSaleQuoteAmount,
   previewCloseOutDetail,
   readForcedSalePlan,
-  readForcedSaleSurface,
   type CloseOutPreview,
   type CloseOutPreviewDetail,
-  type ForcedSaleSurface,
 } from '@vaipakam/lib/routeBuilder';
 import {
   BOUNDED_LISTING_SELECTOR,
@@ -99,6 +86,7 @@ import { HF_LIQUIDATION_THRESHOLD } from './hfLine';
 import type { ServerOrchestrationResult } from './serverQuotes';
 import { keeperTxPending, sendInSubmissionSlot } from './keeperSend';
 
+const DEFAULTED_ABI: Abi = DefaultedFacetABI as Abi;
 const LOUPE_ABI: Abi = DiamondLoupeFacetABI as Abi;
 const LOAN_ABI: Abi = LoanFacetABI as Abi;
 const RISK_ABI: Abi = RiskFacetABI as Abi;
@@ -180,19 +168,6 @@ export async function attemptCloseOut(
   const pending = await keeperTxPending(client, keeper);
   if (pending !== null) return { kind: 'skipped', reason: pending };
 
-  // Which `triggerDefault` this Diamond routes: the sized one every fresh
-  // deploy carries, or the whole-collateral one of a Diamond deployed before
-  // #2796, which the live testnets run until the all-waves fresh deploy.
-  // One request: the attempt runs under the pass's request budget. A wrong
-  // reading (a Diamond part-way between the two) is caught by the gate's
-  // preview of the exact form; an unread one is sent nothing.
-  let surface: ForcedSaleSurface;
-  try {
-    surface = await readForcedSaleSurface({ client, diamond });
-  } catch (err) {
-    return { kind: 'skipped', reason: surfaceSkipReason(err) };
-  }
-
   const loan = await readLoan(client, diamond, loanId);
 
   // The owner rule, first on an early read so a loan that is plainly the
@@ -216,18 +191,9 @@ export async function attemptCloseOut(
   let routeNote = '';
   let sellAmount = 0n;
   // Only a grace attempt on an ERC-20 pair can sell, so only it reads the
-  // plan; whether it then sells is the plan's answer. A whole-collateral
-  // Diamond has no plan: its `triggerDefault` sells all the collateral, so
-  // the route is quoted for all of it and the gate's preview judges it.
-  const sells = role === 'grace' && swappable;
-  const readsPlan = sells && surface === 'sized';
+  // plan; whether it then sells is the plan's answer.
+  const readsPlan = role === 'grace' && swappable;
   let planSells = false;
-  if (sells && surface === 'whole') {
-    sellAmount = loan.collateralAmount;
-    const route = await deps.buildRoute(loan, sellAmount);
-    calls = route.calls;
-    if (route.failed.length > 0) routeNote = ` (failed: ${route.failed.join(',')})`;
-  }
   if (readsPlan) {
     // The contract sizes the sale; the quote is built for an amount inside
     // the range it accepts. A plan that sells nothing is a default by
@@ -262,7 +228,7 @@ export async function attemptCloseOut(
     hfStanding(client, diamond, loanId, gateBlock),
     saleVerdict(client, diamond, loanId, loan.lenderTokenId, keeper, gateBlock),
     readLoan(client, diamond, loanId, gateBlock),
-    previewCloseOutDetail({ client, diamond, account: keeper, loanId, sellAmount, calls, blockNumber: gateBlock, surface }),
+    previewCloseOutDetail({ client, diamond, account: keeper, loanId, sellAmount, calls, blockNumber: gateBlock }),
     readsPlan
       ? readForcedSalePlan({ client, diamond, loanId, kind: FORCED_SALE_KIND.TimeBasedDefault, blockNumber: gateBlock })
       : Promise.resolve(null),
@@ -308,17 +274,11 @@ export async function attemptCloseOut(
     deps.chainId,
     deps.notAfterMs,
     diamond,
-    encodeTriggerDefault(surface, loanId, sellAmount, calls),
+    encodeFunctionData({ abi: DEFAULTED_ABI, functionName: 'triggerDefault', args: [loanId, sellAmount, calls] }),
   );
   return sent.kind === 'submitted'
     ? { kind: 'submitted', tx: sent.tx, preview, calls: calls.length, sellAmount }
     : { kind: 'unconfirmed', tx: sent.tx, preview, calls: calls.length, sellAmount, reason: sent.reason };
-}
-
-/** Why a forced-sale attempt sends nothing when the Diamond's surface could
- *  not be read. */
-export function surfaceSkipReason(err: unknown): string {
-  return `surface-unread:${describeFailure(err)}`;
 }
 
 /** Null when the loan is this role's to close; otherwise the reason not to. */

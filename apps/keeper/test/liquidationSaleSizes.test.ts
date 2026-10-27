@@ -4,7 +4,7 @@
  * against the full sale per unit sold, since the two kinds are sized apart.
  */
 import { describe, expect, it } from 'vitest';
-import { liquidationSaleSizes, pickSplitLegs, splitLegFloor, wholeCollateralSaleSizes } from '../src/keeper';
+import { liquidationSaleSizes, pickSplitLegs, splitLegFloor } from '../src/keeper';
 import type { ServerOrchestrationResult } from '../src/serverQuotes';
 
 const plan = (sell: bigint, maxSell: bigint) => ({
@@ -109,15 +109,5 @@ describe('pickSplitLegs — every leg clears its own share of the floor (#2724)'
     // Legs 505 and 506 at rate 2.0: shares 1010 and 1012.
     const half = quotes(['zeroex', 1011n], ['oneinch', 1011n]);
     expect(pickSplitLegs(half, quotes(['zeroex', 1900n]), 100, { split: 1011n, full: 1000n, legs: [505n, 506n], splitPlan: floor2 })).toBeNull();
-  });
-});
-
-describe('wholeCollateralSaleSizes (a Diamond deployed before #2796)', () => {
-  it('sells the whole collateral and sizes no split', () => {
-    expect(wholeCollateralSaleSizes(5000n)).toEqual({ fullAmount: 5000n, splitTotal: null, halfAmount: 0n, otherHalf: 0n });
-  });
-
-  it('no collateral is no attempt', () => {
-    expect(wholeCollateralSaleSizes(0n)).toBeNull();
   });
 });
