@@ -20,12 +20,6 @@ to a replacement renter returns and checks no collateral. Range matching runs
 no loan-to-value check on a rental, as a direct acceptance never did. Adding
 collateral to a rental is refused, by name.
 
-The quote-time rate guidance moved from the offer-create facet to the offer
-preview facet, where the other read-only offer previews live. Its behaviour
-and its function signature are unchanged. The offer-create facet had reached
-the contract size limit, and the guidance is a read that belongs with the
-previews.
-
 This is a fresh-deploy-only shape change. Closes #2949. Two older display and
 preview gaps found during the audit are tracked separately: #2956 (range
 matching refuses a consented illiquid token pair when depth-tiered limits are

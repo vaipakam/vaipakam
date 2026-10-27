@@ -875,6 +875,20 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   anchor to the live market rate and stay within a market-relative band, so an
   automated offer never posts far off the prevailing market (which would either
   fill instantly at a loss or sit unmatched).
+- **The market-relative band** (#2748) has three governance-set limits, and
+  each side of the band is the tighter of the first two, never narrower than
+  the third: a **cap in percentage points** of APR (default 5 points), a
+  **share of the market rate** (default 50% of it), and a **floor in
+  percentage points** (default 1 point). The band never goes below 0%. With
+  the defaults, a 1% market allows 0% to 2%, a 4% market 2% to 6%, a 12%
+  market 7% to 17%, and a 0% market 0% to 1%. The share keeps a low market
+  rate from being doubled or erased by a fixed points allowance; the cap
+  keeps a high market rate from getting a band so wide it stops
+  constraining; the floor keeps a usable band when the market rate is near
+  zero. Each limit has a bounded range, governance can always reset any of
+  them to its default, and a floor wider than the cap is refused. The band
+  never exceeds the cap in any state: if a stored floor (or the floor's
+  default) would sit above the cap in force, the floor in effect is the cap.
 - With **no model registered (the default), nothing changes** — every offer
   carries exactly the rate its creator set. A model never re-prices a matched or
   live loan: the rate is fixed at loan initiation for the life of the position.

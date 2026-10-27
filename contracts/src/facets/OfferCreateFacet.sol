@@ -1587,8 +1587,9 @@ contract OfferCreateFacet is
         // transformed by any rate model. Vaipakam's market rate is set by the
         // human-driven P2P order book (price discovery), not a protocol curve —
         // overwriting a creator's rate here would erase that differentiation.
-        // The pluggable rate model is exposed as a QUOTE
-        // (`OfferPreviewFacet.quoteOfferRateBps`) for (a) dApp rate *guidance* a human may take or ignore, and
+        // The pluggable {IRateModel} is exposed as a QUOTE
+        // (`RateModelFacet.quoteOfferRateBps`) for (a) dApp rate *guidance* a
+        // human may take or ignore, and
         // (b) automated/delegated pricing (#393 auto-lend / auto-roll /
         // keeper-posted intents, #394 risk premiums) where the user opted into
         // having their liquidity priced for them. Those callers pass the quote

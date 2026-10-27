@@ -101,6 +101,7 @@ import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
+import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
@@ -434,6 +435,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #2769 - the paid-notification fee: the billing role's charge and the
         // wallet's own consent to it, moved off LoanFacet and ProfileFacet.
         NotificationFeeFacet notificationFeeFacet = NotificationFeeFacet(ArtifactDeploy.deploy(type(NotificationFeeFacet).name));
+        // #2748 - the quote-time rate model: registration, the band and the
+        // quote, moved off AdminFacet and OfferCreateFacet.
+        RateModelFacet rateModelFacet = RateModelFacet(ArtifactDeploy.deploy(type(RateModelFacet).name));
         // #2795 - the forced-sale host: size a forced sale to the debt, sell it,
         // split the proceeds lender first. Self-called by RepayPeriodicFacet.
         ForcedSaleFacet forcedSaleFacet = ForcedSaleFacet(ArtifactDeploy.deploy(type(ForcedSaleFacet).name));
@@ -474,7 +478,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](99);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](100);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -568,6 +572,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[96] = _buildCut(address(numeraireValueFacet), _getNumeraireValueSelectors());
         cuts[97] = _buildCut(address(notificationFeeFacet), _getNotificationFeeSelectors());
         cuts[98] = _buildCut(address(forcedSaleFacet), _getForcedSaleSelectors());
+        cuts[99] = _buildCut(address(rateModelFacet), _getRateModelSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1209,6 +1214,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("treasuryFeeFacet", address(treasuryFeeFacet));
         Deployments.writeFacet("numeraireValueFacet", address(numeraireValueFacet));
         Deployments.writeFacet("notificationFeeFacet", address(notificationFeeFacet));
+        Deployments.writeFacet("rateModelFacet", address(rateModelFacet));
         Deployments.writeFacet("forcedSaleFacet", address(forcedSaleFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
@@ -1374,7 +1380,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](55);
+        s = new bytes4[](50);
         s[0] = AdminFacet.setTreasury.selector;
         s[1] = AdminFacet.getTreasury.selector;
         s[2] = AdminFacet.setZeroExProxy.selector;
@@ -1428,23 +1434,17 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #395 — graduated partial-liquidation sizing (Approach A).
         s[40] = AdminFacet.setPartialLiquidationSizing.selector;
         s[41] = AdminFacet.getPartialLiquidationSizing.selector;
-        // #400 -- pluggable quote-time rate model.
-        s[42] = AdminFacet.setRateModel.selector;
-        s[43] = AdminFacet.getRateModel.selector;
-        s[44] = AdminFacet.disableRateModel.selector;
-        s[45] = AdminFacet.setRateModelMaxDeviationBps.selector;
-        s[46] = AdminFacet.getRateModelMaxDeviationBps.selector;
-        s[47] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
-        s[48] = AdminFacet.unpauseIfPauseEpoch.selector;
+        s[42] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
+        s[43] = AdminFacet.unpauseIfPauseEpoch.selector;
         // #945 — the gated first unpause (the launch).
-        s[49] = AdminFacet.launch.selector;
+        s[44] = AdminFacet.launch.selector;
         // #668 / #935 — the pause-interval log the loan clock reads.
-        s[50] = AdminFacet.pausedSecondsAt.selector;
-        s[51] = AdminFacet.getPauseIntervals.selector;
+        s[45] = AdminFacet.pausedSecondsAt.selector;
+        s[46] = AdminFacet.getPauseIntervals.selector;
         // #2744 — the cooldown between auto-pause windows.
-        s[52] = AdminFacet.autoPauseCooldownSeconds.selector;
-        s[53] = AdminFacet.autoPauseAvailableAt.selector;
-        s[54] = AdminFacet.setAutoPauseCooldownSeconds.selector;
+        s[47] = AdminFacet.autoPauseCooldownSeconds.selector;
+        s[48] = AdminFacet.autoPauseAvailableAt.selector;
+        s[49] = AdminFacet.setAutoPauseCooldownSeconds.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
@@ -1714,7 +1714,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // witness). `address(this)`-only gated inside the facet body.
         s[4] = OfferCreateFacet.createSignedOfferVault.selector;
         s[5] = OfferCreateFacet.createSignedOfferWallet.selector;
-        // The #400 rate-model quote moved to `OfferPreviewFacet` (#2949).
     }
 
     /// @dev T-086 Round-8 (#358) — borrow-OR-sell parallel-sale facet
@@ -1783,12 +1782,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev #980 — `OfferPreviewFacet.previewAccept`, split out of
     ///      OfferAcceptFacet for EIP-170 headroom. Single view selector.
     function _getOfferPreviewSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](1);
         s[0] = OfferPreviewFacet.previewAccept.selector;
-        // #400 — quote-time rate-model resolver (read-only guidance / the
-        // entry automated pricing flows call; manual offers are untouched).
-        // Moved here from `OfferCreateFacet` in #2949.
-        s[1] = OfferPreviewFacet.quoteOfferRateBps.selector;
     }
 
     /// @dev OfferMatchFacet — Range Orders Phase 1 bot-driven offer
@@ -3382,6 +3377,20 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      cuts.
     function _getNotificationFeeSelectors() internal pure returns (bytes4[] memory s) {
         s = FacetSelectors.notificationFee();
+    }
+
+    /// @dev #2748 - the quote-time rate model (#400): register, fast-disable,
+    ///      the band and its getters, and the quote.
+    function _getRateModelSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](8);
+        s[0] = RateModelFacet.setRateModel.selector;
+        s[1] = RateModelFacet.disableRateModel.selector;
+        s[2] = RateModelFacet.getRateModel.selector;
+        s[3] = RateModelFacet.setRateModelBand.selector;
+        s[4] = RateModelFacet.getRateModelMaxDeviationBps.selector;
+        s[5] = RateModelFacet.getRateModelRelativeDeviationBps.selector;
+        s[6] = RateModelFacet.getRateModelMinDeviationBps.selector;
+        s[7] = RateModelFacet.quoteOfferRateBps.selector;
     }
 
     /// @dev #2795 - the forced-sale host. Returns the ONE list in

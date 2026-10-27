@@ -6475,7 +6475,15 @@ const copySource = {
        address does not read as live rate guidance. */
     rateModelHint:
       'A contract registered to suggest rates when offers are quoted. Nothing calls it yet, so even when one is set it changes no rate today. Not set means none is registered.',
-    rateModelMaxDeviation: 'Rate-model max deviation',
+    /* #2748 — the band a registered model's quote is clamped to. Two of the
+       three knobs are percentage POINTS of APR and one is a share OF the
+       market rate; the labels say which, because the console renders all
+       three as a percent. */
+    rateBandPointsCap: 'Rate band: cap (percentage points)',
+    rateBandHint:
+      'How far a registered rate model may move a quote from the market rate. Each side of the band is the smaller of this cap and the share of the market rate below, but never less than the floor. With the defaults, a 4% market allows 2% to 6%.',
+    rateBandMarketShare: 'Rate band: share of the market rate',
+    rateBandPointsFloor: 'Rate band: floor (percentage points)',
     oraclesHeading: 'Price oracles',
     secondaryOracleMaxDeviation: 'Secondary-oracle max deviation',
     secondaryOracleMaxStaleness: 'Secondary-oracle max staleness',

@@ -28,6 +28,7 @@ import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
+import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
@@ -80,6 +81,9 @@ contract ReplaceStaleFacets is DeployDiamond {
     /// @notice #1820 - the target Diamond predates the tier record seam; see
     ///         {_requireTierRecordSeam}.
     error PredatesTierRecordSeam(address diamond);
+    /// @notice #2748 - the target Diamond predates the rate-model host; see
+    ///         {_requireRateModelFacet}.
+    error PredatesRateModelFacet(address diamond);
 
     function run() external override {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -120,6 +124,9 @@ contract ReplaceStaleFacets is DeployDiamond {
         // #1820 - and one from before the tier record seam; see
         // {_requireTierRecordSeam}.
         _requireTierRecordSeam(diamond);
+        // #2748 - and one from before the rate-model host; see
+        // {_requireRateModelFacet}.
+        _requireRateModelFacet(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -493,6 +500,22 @@ contract ReplaceStaleFacets is DeployDiamond {
             IDiamondLoupe(diamond).facetAddress(VPFIDiscountAccumulatorFacet.syncTierRecord.selector)
                 == address(0)
         ) revert PredatesTierRecordSeam(diamond);
+    }
+
+    /// @dev #2748 - refuse a Diamond that predates `RateModelFacet`. That
+    ///      facet took `quoteOfferRateBps` off OfferCreateFacet, which this
+    ///      script cuts. On an older Diamond the quote stays routed to the old
+    ///      OfferCreateFacet, which this cut no longer names, so it would keep
+    ///      the old, wider clamp while the new band setter is missing. That is
+    ///      a split Diamond, and this script does not carry RateModelFacet.
+    ///      Crossing it is a fresh deploy or `RefreshAllFacetsInPlace`. The
+    ///      marker is the routing of the three-limit
+    ///      `RateModelFacet.setRateModelBand`, which no older Diamond routes.
+    ///      Called before the broadcast starts.
+    function _requireRateModelFacet(address diamond) internal view {
+        if (IDiamondLoupe(diamond).facetAddress(RateModelFacet.setRateModelBand.selector) == address(0)) {
+            revert PredatesRateModelFacet(diamond);
+        }
     }
 
     /// @dev RL-1 (Codex #1302 P2) — split `selectors` into the subset the

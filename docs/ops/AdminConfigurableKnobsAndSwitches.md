@@ -235,7 +235,7 @@ It does **not** change how any loan is priced — only the admission gate.
 
 ### Quote-time interest-rate model (#400)
 
-(`AdminFacet.setRateModel(address)` / `getRateModel()`.) The active
+(`RateModelFacet.setRateModel(address)` / `getRateModel()`.) The active
 `IRateModel` — a pluggable, view-only quote function used for **rate
 guidance + automated/delegated pricing**, NOT to override human-typed offer
 rates. **Default `address(0)` = the IDENTITY model: the user-supplied rate
@@ -254,18 +254,49 @@ risk premiums, #394) that price the offers they post on a user's behalf.
   rejects `address(0)` (`UseDisableRateModel`) — disabling always goes through
   the fast path. A non-zero model must be a contract (`RateModelNotContract`
   on an EOA).
-- **On-chain deviation cap (anti-rate-setting guarantee).**
-  `setRateModelMaxDeviationBps(uint16)` / `getRateModelMaxDeviationBps()` —
-  default `500` (5%), range `[50, 2500]` (0.5%–25%), **plus `0` as an
-  explicit reset** — the setter range-checks only nonzero values, and a
-  stored `0` resolves to the 500-bps library default. That is the
-  supported rollback: to undo a retune, write `0` rather than trying to
-  re-type the default. The resolver **clamps**
-  the model's output to `±maxDeviation` of the caller's reference (market)
-  rate, so a registered model — even buggy or adversarial — can only nudge the
-  rate around the market anchor, never drive an automated offer far off-market
-  (instant-loss-fill if too low, idle capital if too high). This is enforced in
-  the resolver (`OfferPreviewFacet.quoteOfferRateBps`).
+- **On-chain rate band (anti-rate-setting guarantee, #2748).**
+  `setRateModelBand(uint16 maxPointsBps, uint16 relativeBps, uint16 minPointsBps)`
+  (ADMIN_ROLE, one call, one `RateModelBandSet` event) with the getters
+  `getRateModelMaxDeviationBps()`, `getRateModelRelativeDeviationBps()` and
+  `getRateModelMinDeviationBps()`, each returning the EFFECTIVE value. The
+  resolver **clamps** the model's output to `reference ± halfWidth` (the low
+  edge floored at 0), where
+
+  `halfWidth = max(floor, min(cap, reference × share / 10,000))`
+
+  — the tighter of a points cap and a share of the market rate, never
+  narrower than a points floor. Two of the three knobs are **percentage
+  points of APR** and one is a **share of the reference rate**; they are not
+  interchangeable:
+
+  | Knob | Unit | Default | Range |
+  | --- | --- | --- | --- |
+  | `maxPointsBps` (cap) | APR basis points (± points) | `500` (± 5 points) | `[50, 2500]` (± 0.5 to ± 25 points) |
+  | `relativeBps` (share) | basis points OF the reference | `5000` (± 50% of the reference) | `[500, 10000]` (± 5% to ± 100%) |
+  | `minPointsBps` (floor) | APR basis points (± points) | `100` (± 1 point) | `[10, 500]` (± 0.1 to ± 5 points) |
+
+  Worked examples at the defaults: a 1% market allows 0%–2% (the floor
+  binds), a 4% market 2%–6% (the share binds), a 12% market 7%–17% (the cap
+  binds), and a 0% market 0%–1% (the floor binds). Why both a cap and a
+  share: a points-only band is loose on a low rate (± 5 points around 1%
+  lets a quote double or vanish) and a share-only band collapses to nothing
+  near 0% and widens without limit on a high rate. The floor keeps a usable
+  band when the market rate is near zero.
+
+  Each argument accepts **`0` as an explicit reset** to that knob's library
+  default — the setter range-checks only nonzero values. That is the
+  supported rollback: to undo a retune, write `0` rather than re-typing a
+  default. The setter also refuses a band whose effective floor exceeds its
+  effective cap (`InvalidRateModelDeviation`), and the resolver bounds the
+  effective floor by the effective cap in any case, so a cap kept from the
+  retired single-knob setter (as low as 50) is never widened by the floor's
+  100 default after an in-place refresh. `getRateModelMinDeviationBps()`
+  reports that bounded floor. A registered model — even a
+  buggy or adversarial one — can therefore only nudge the rate around the
+  market anchor, never drive an automated offer far off-market
+  (instant-loss-fill if too low, idle capital if too high). This is enforced
+  in the resolver (`RateModelFacet.quoteOfferRateBps`), which also caps
+  the result at `MAX_INTEREST_BPS`.
 
   **The resolver is a DORMANT opt-in quote, not a substrate every offer
   passes through — read this before registering a model.** A rate a human
@@ -276,7 +307,7 @@ risk premiums, #394) that price the offers they post on a user's behalf.
   result in as the offer rate *themselves*. Today there is no such
   caller: outside its own definition, `quoteOfferRateBps` is invoked
   only by `RateModelTest`. So registering a model and tightening the
-  deviation cap currently constrains nothing in production — the clamp
+  rate band currently constrains nothing in production — the clamp
   binds whoever calls the quote, and nobody does yet.
 - **E2-safe.** A model only ever sets the value written into a *new* offer; a
   matched / live loan's rate is snapshotted immutably at init and never

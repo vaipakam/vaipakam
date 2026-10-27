@@ -47,6 +47,7 @@ import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {OwnershipFacet} from "../src/facets/OwnershipFacet.sol";
@@ -596,7 +597,6 @@ contract HelperTest {
         // signed off-chain offer (vault-backed + wallet-backed Permit2).
         selectors[4] = OfferCreateFacet.createSignedOfferVault.selector;
         selectors[5] = OfferCreateFacet.createSignedOfferWallet.selector;
-        // The #400 rate-model quote moved to `OfferPreviewFacet` (#2949).
         return selectors;
     }
 
@@ -669,10 +669,8 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](1);
         selectors[0] = OfferPreviewFacet.previewAccept.selector;
-        // #2949 — the #400 rate-model quote moved here from OfferCreateFacet.
-        selectors[1] = OfferPreviewFacet.quoteOfferRateBps.selector;
         return selectors;
     }
 
@@ -734,7 +732,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](55);
+        selectors = new bytes4[](50);
         selectors[0] = AdminFacet.setTreasury.selector;
         selectors[1] = AdminFacet.getTreasury.selector;
         selectors[2] = AdminFacet.setZeroExProxy.selector;
@@ -784,19 +782,14 @@ contract HelperTest {
         selectors[39] = AdminFacet.keepersPaused.selector;
         selectors[40] = AdminFacet.setPartialLiquidationSizing.selector;
         selectors[41] = AdminFacet.getPartialLiquidationSizing.selector;
-        selectors[42] = AdminFacet.setRateModel.selector;
-        selectors[43] = AdminFacet.getRateModel.selector;
-        selectors[44] = AdminFacet.disableRateModel.selector;
-        selectors[45] = AdminFacet.setRateModelMaxDeviationBps.selector;
-        selectors[46] = AdminFacet.getRateModelMaxDeviationBps.selector;
-        selectors[47] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
-        selectors[48] = AdminFacet.unpauseIfPauseEpoch.selector;
-        selectors[49] = AdminFacet.launch.selector;
-        selectors[50] = AdminFacet.pausedSecondsAt.selector;
-        selectors[51] = AdminFacet.getPauseIntervals.selector;
-        selectors[52] = AdminFacet.autoPauseCooldownSeconds.selector;
-        selectors[53] = AdminFacet.autoPauseAvailableAt.selector;
-        selectors[54] = AdminFacet.setAutoPauseCooldownSeconds.selector;
+        selectors[42] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
+        selectors[43] = AdminFacet.unpauseIfPauseEpoch.selector;
+        selectors[44] = AdminFacet.launch.selector;
+        selectors[45] = AdminFacet.pausedSecondsAt.selector;
+        selectors[46] = AdminFacet.getPauseIntervals.selector;
+        selectors[47] = AdminFacet.autoPauseCooldownSeconds.selector;
+        selectors[48] = AdminFacet.autoPauseAvailableAt.selector;
+        selectors[49] = AdminFacet.setAutoPauseCooldownSeconds.selector;
         return selectors;
     }
 
@@ -2690,6 +2683,20 @@ contract HelperTest {
     /// `FacetSelectors.forcedSale()` (the same one `DeployDiamond` cuts).
     function getForcedSaleFacetSelectors() public pure returns (bytes4[] memory selectors) {
         selectors = FacetSelectors.forcedSale();
+    }
+
+    /// #2748 - the rate-model host (model, band, offer-rate clamp). Mirrors
+    /// `DeployDiamond._getRateModelSelectors`.
+    function getRateModelFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](8);
+        selectors[0] = RateModelFacet.setRateModel.selector;
+        selectors[1] = RateModelFacet.disableRateModel.selector;
+        selectors[2] = RateModelFacet.getRateModel.selector;
+        selectors[3] = RateModelFacet.setRateModelBand.selector;
+        selectors[4] = RateModelFacet.getRateModelMaxDeviationBps.selector;
+        selectors[5] = RateModelFacet.getRateModelRelativeDeviationBps.selector;
+        selectors[6] = RateModelFacet.getRateModelMinDeviationBps.selector;
+        selectors[7] = RateModelFacet.quoteOfferRateBps.selector;
     }
 
     /// 3b-ii-B (#1566) — the per-day closure proof. Mirrors `DeployDiamond._getRewardClosureSelectors`.
