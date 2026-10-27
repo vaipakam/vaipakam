@@ -81,14 +81,25 @@ In one transaction:
 
 If any step fails, the whole return reverts. The row is untouched and nothing is lost.
 
-### 4.4 The destination
+### 4.4 The destination: a pair snapshotted at the moment of detaching
 
 The destination is **never** derived from `baseChainId`, which is zero on a Detached mirror. That is why every existing return path is already dead there: `sendStrandedReturn` and `executeRepatriation` both build `dst` from it and revert `RepatriationLaneUnknown(0)` (`RepatriationFacet.sol:810`, `:915`).
 
-- **New storage field `rewardBaseChainIdLastNonzero`** (appended at the tail of `Storage`). `setBaseChainId` writes it whenever it writes a non-zero value. Nothing else writes it, and `setBaseChainId(0)` leaves it untouched. It names the base chain the mirror last served.
-- **The Base Diamond the mirror last served** is already retained as `rewardEraLastNonzero` (`LibVaipakam.sol:6621`). It rides the wire as `issuingBase`, so Base can tell a return meant for itself from one meant for a Diamond it replaced.
+Nor is it read from a live field at the time of the return. `rewardEraLastNonzero` (`LibVaipakam.sol:6621`) can be rewritten while the chain is Detached: the rotation runbook calls `setBaseRewardDeployment(newBase)` *between* the detach and the re-attach, and that call does not open a new era (`RewardReporterFacet.sol:795-798`). A rotation left Detached past the window would then return the old Base's surplus to the old chain while naming the new Diamond, and the old Base would route its own value to OVERAGE.
 
-If either is unset, the return refuses with `DetachedSurplusNoDestination`. **There is no fallback destination and no admin path.** A chain whose lane is gone keeps the value exactly where it is today.
+So the destination is **snapshotted as one immutable pair at the transition into Detached**, on the era record that transition opens:
+
+- **Two fields appended to `CustodyEra`** (a mapping value struct, so it may grow): `detachedFromChainId` and `detachedFromBase`.
+- **One writer.** When the role-change path opens an era for a transition INTO `Detached`, it records the base chain id and the Base Diamond the chain served *immediately before* the change. `setBaseChainId` passes its pre-write `old` value; the Diamond is `rewardEraLastNonzero` as it stood at that moment. A transition into any other role leaves both zero.
+- **Nothing rewrites them.** A later `setBaseRewardDeployment` changes the live field, never the snapshot. A re-attach opens a new era, so the next Detached interval gets its own snapshot.
+
+The snapshot travels with the detach stamp (§4.1): both live on the same era record, so the evidence that the detach lasted and the place the value goes cannot come from two different intervals. On the wire, `detachedFromBase` rides as `issuingBase`, so Base can tell a return meant for itself from one meant for a Diamond it replaced.
+
+**A canonical chain that detaches has no destination.** It was Base, so there is no Base to return to: its snapshot chain id is zero. **A mirror whose snapshot is incomplete** (either half zero) has none either. In both cases the return refuses with `DetachedSurplusNoDestination`. **There is no fallback destination and no admin path.** A chain whose lane is gone keeps the value exactly where it is today.
+
+### 4.4a Installation: fresh deploys only
+
+Every chain reaches this build by fresh deploy (owner decision O1 = A, 2026-10-07). A fresh Diamond starts `Unconfigured`, so no chain is already Detached when the feature arrives, and every later detach goes through the snapshotting writer above. **No migration and no recovery of a destination for a pre-existing Detached chain is designed.** An in-place upgrade of a chain that is already Detached would leave that chain without a snapshot, and its return would refuse by name, which is the honest failure. Supporting that case would need an authenticated way to establish the destination after the fact, and this design does not provide one.
 
 ### 4.5 The Base-side receipt
 
@@ -108,9 +119,10 @@ If either is unset, the return refuses with `DetachedSurplusNoDestination`. **Th
 
 The keeper gains a pass, `detachedSurplusReturn`, modelled on `apps/keeper/src/remitAck.ts` (quote, send with `value: fee`, attempt backoff in the keeper's private database). It is armed by a new secret flag, `REWARD_DETACHED_RETURN_ENABLED`, and ships unset, like every other reward pass. On each configured mirror it:
 
-1. calls `finalizeCustodyEra` for every retired era that has become final. Nothing calls this today; it is permissionless and pause-free;
-2. when the role is Detached and the window has passed, sends `returnDetachedSurplus` for the lesser of the row and the lane's capacity;
-3. raises an ops alert (ops bot) when a Detached chain's row is non-zero past the window but the return refuses, naming the refusal, for example no destination or a lane at capacity.
+1. **proves each retired era's days closed.** Finalization only counts days that have been proven closed (`daysClosed`), and settling an entry does not advance that count: only `LibRewardClosure._tryComplete` does, reached through `RewardClosureFacet.startDayClosure` and `proveDayClosurePage`. Nothing in `apps/`, `ops/` or `contracts/script/` calls either today. So the pass walks every day of each retired, not-yet-terminal era's span: it starts the day's closure and submits its proof pages, resuming from the page it reached last time (a page is bounded, so a day can take several runs). Both entry points are permissionless;
+2. calls `finalizeCustodyEra` for every retired era whose span is now fully closed. Nothing calls this today either; it is permissionless and pause-free;
+3. when the role is Detached and the window has passed, sends `returnDetachedSurplus` for the lesser of the row and the lane's capacity;
+4. raises an ops alert (ops bot) when a Detached chain is past the window and either the return refuses (naming the refusal, for example no destination or a lane at capacity) or a retired era is still not final. The second case is the stall a zero row would otherwise hide: the alert names the era, how many of its days are still unproven, and, where a day cannot close because an entry on it is deferred for want of funding, that this is why.
 
 Anyone else may make the same calls. The keeper only pays the fee.
 
@@ -133,11 +145,11 @@ Anyone else may make the same calls. The keeper only pays the fee.
 
 | Area | Change |
 | --- | --- |
-| Storage | `rewardBaseChainIdLastNonzero`, `detachedSurplusDormancySeconds` (mirror); `detachedSurplusReturnedFrom` (Base). All appended at the tail of `Storage`, with the golden file rewritten. |
-| `RewardReporterFacet` | `setBaseChainId` writes the last-non-zero id. A bounded `setDetachedSurplusDormancy` setter with its getter. |
+| Storage | `CustodyEra.detachedFromChainId` and `CustodyEra.detachedFromBase` appended to the era record; `detachedSurplusDormancySeconds` (mirror) and `detachedSurplusReturnedFrom` (Base) appended at the tail of `Storage`. Golden file rewritten. |
+| `RewardReporterFacet` / `LibRewardCustody` | The role-change path snapshots the destination pair onto the era it opens for a transition into Detached (§4.4). A bounded `setDetachedSurplusDormancy` setter with its getter. |
 | `RepatriationFacet` | `returnDetachedSurplus` (payable), `quoteDetachedSurplusReturn`, `onDetachedSurplusReturnReceived`; new errors and events. |
 | `VpfiReturnSender` / `VpfiReturnReceiver` / `ReturnWire` | The `DETACHED_SURPLUS_C1` kind, its send method and its receive branch. These are UUPS satellites, so they reach a chain through their own upgrade or a fresh deploy. |
 | `LibVpfiRecycle` | Appended `RecycleSource.DetachedSurplusReturn`. |
-| Keeper | The `detachedSurplusReturn` pass, its flag and its alert. |
-| Tests | Unit tests for every refusal, the window boundary (one second either side), a rotation inside the window, re-attach resetting the stamp, a chunked return, a late-fresh top-up after the window, and both Base sinks. An Anvil two-chain scenario: detach, finalize, wait, the keeper returns, Base credits recycle. |
+| Keeper | The `detachedSurplusReturn` pass (day-closure proofs, finalization, return), its flag and its alerts. |
+| Tests | Unit tests for every refusal, the window boundary (one second either side), a rotation inside the window, re-attach resetting the stamp, a `setBaseRewardDeployment` while Detached leaving the snapshot unchanged, a canonical chain detaching (no destination), a chunked return, a late-fresh top-up after the window, and both Base sinks. An Anvil two-chain scenario: detach, the keeper proves the days closed and finalizes, the window passes, the keeper returns, Base credits recycle. |
 | Docs | `TokenomicsTechSpec.md:1110`, the ops knobs list and the DeploymentRunbook detach section, plus a release-note fragment. |
