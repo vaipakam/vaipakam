@@ -4,6 +4,8 @@ pragma solidity ^0.8.29;
 import {Test} from "forge-std/Test.sol";
 import {console} from "forge-std/console.sol";
 import {DiamondFacetNames} from "./DiamondFacetNames.sol";
+import {LaunchGate} from "../../src/governance/LaunchGate.sol";
+import {LaunchCrossChainChecks} from "../../src/governance/LaunchCrossChainChecks.sol";
 
 /**
  * @title FacetSizeLimitTest
@@ -82,6 +84,30 @@ contract FacetSizeLimitTest is Test, DiamondFacetNames {
         // constructor, not via a cut list, so it is absent from
         // `cutFacetNames()` — size-check it explicitly here.
         _assertUnderLimit("DiamondCutFacet");
+    }
+
+    /// @dev EIP-3860 maximum initcode size, in bytes.
+    uint256 internal constant EIP3860_INITCODE_LIMIT = 49_152;
+
+    /// @notice #2975 — the LaunchGate and the companion it creates are
+    ///         deployed by every chain's `contracts` phase, and no facet list
+    ///         names them, so they are size-checked here. The gate went over
+    ///         EIP-170 unnoticed for exactly that reason. Its creation code
+    ///         carries the companion's, so its initcode is checked against
+    ///         EIP-3860 as well.
+    function test_LaunchGateUnderSizeLimits() public view {
+        _assertUnderLimit("LaunchGate");
+        _assertUnderLimit("LaunchCrossChainChecks");
+        assertLe(
+            type(LaunchGate).creationCode.length,
+            EIP3860_INITCODE_LIMIT,
+            "LaunchGate initcode exceeds the EIP-3860 49,152-byte limit"
+        );
+        assertLe(
+            type(LaunchCrossChainChecks).creationCode.length,
+            EIP3860_INITCODE_LIMIT,
+            "LaunchCrossChainChecks initcode exceeds the EIP-3860 limit"
+        );
     }
 
     /// @notice #1780 — report every facet within {HEADROOM_WARN_BYTES} of the

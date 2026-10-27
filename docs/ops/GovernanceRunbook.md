@@ -590,12 +590,17 @@ even for the gap between the deploy and the handover.
 1. Finish the deploy phases, then `handover` and `handover-gate`. The
    `contracts` phase has already deployed the LaunchGate, a stateless
    contract at a deterministic address that the launch operation calls.
+   The gate creates its companion, `LaunchCrossChainChecks`, in the same
+   deployment; the companion reads the VPFI pool and CCIP lane checks
+   (the gate alone would exceed the contract size limit, #2975). Its
+   address is `crossChainChecks()` on the gate, and the gate's address
+   commits to the companion's code too.
    `handover-gate` also prints the Diamond's **role epoch**, a count of
    every change to its role table, and the Timelock's **executed-call
    count**, both read in the state where it proved every role's holders;
    the wrapper records the two together (`handover-gate.proof`) for the
    launch phase and the verify report.
-2. Run `deploy-mainnet.sh <slug> --phase launch`. It reads the eight launch
+2. Run `deploy-mainnet.sh <slug> --phase launch`. It reads the ten launch
    requirements off the chain and refuses unless every one is met, the
    Timelock holds `UNPAUSER_ROLE` and owns the Diamond, the admin key holds
    no Diamond role at all, and the role epoch and the Timelock's call count

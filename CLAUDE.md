@@ -2082,8 +2082,10 @@ Two practical consequences:
 
   Two limits on what a green suite proves. It stops at the FIRST violation, so
   its message understates the damage — it named one facet when #2268 had put
-  two over. And it iterates `cutFacetNames()` plus `DiamondCutFacet` only
-  (`FacetSizeLimitTest.t.sol:75-84`), so a **non-facet deployable**
+  two over. And it iterates `cutFacetNames()` plus `DiamondCutFacet`, and
+  the one non-facet it names is `LaunchGate` with the companion it creates
+  (`test_LaunchGateUnderSizeLimits`, added after the gate went over
+  unnoticed, #2975). Any other **non-facet deployable**
   (`VaipakamVaultImplementation`, the `crosschain/` contracts) is not
   size-checked by it at all. For a change touching one of those — measure it
   yourself, with these two steps, **in this order**:
