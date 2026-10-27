@@ -3573,7 +3573,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](42);
+        s = new bytes4[](43);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -3636,6 +3636,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[39] = RewardRemittanceLensFacet.getRemitDayLedger.selector;
         s[40] = RewardRemittanceLensFacet.getDayDeliveryParts.selector;
         s[41] = RewardRemittanceLensFacet.getRemitLaneBucket.selector;
+        s[42] = RewardRemittanceLensFacet.getRemitDayFreshReserved.selector;
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {

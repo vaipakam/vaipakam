@@ -495,10 +495,9 @@ contract RewardClaimFacet is
         // #776 — reserve VPFI already remitted to mirrors: it funds mirror-side
         // claims and must not be re-lent to Base claimants (Base-only counter;
         // 0 on mirrors). Keeps the global 69M cap coherent across chains.
-        uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
-        uint256 remaining = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
-            ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
-            : 0;
+        // #918 — read through the one hard-headroom definition, which also
+        // holds what a partly sent remit day still owes its mirror.
+        uint256 remaining = LibInteractionRewards.poolRemaining();
 
         // #1460 — BACKING separation enforced HERE, at the claim, not only at
         // the credit chokepoint. `recycleBucket` and the fresh reward budget

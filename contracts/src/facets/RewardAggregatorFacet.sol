@@ -1264,12 +1264,13 @@ contract RewardAggregatorFacet is
             ? 0
             : LibInteractionRewards.halfPoolForDay(dayId) * 2;
 
-        uint256 reserved = s.interactionPoolPaidOut
-            + s.rewardBudgetRemittedGlobal
-            + s.outstandingCommitFresh;
-        uint256 freshAvailable = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
-            ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
-            : 0;
+        // The pool's hard headroom (paid, remitted, and what partly sent remit
+        // days hold, #918) net of the armed commitments outstanding.
+        uint256 freshAvailable = LibInteractionRewards.poolRemaining();
+        {
+            uint256 committed = s.outstandingCommitFresh;
+            freshAvailable = freshAvailable > committed ? freshAvailable - committed : 0;
+        }
         uint256 scheduleFloor = schedule < freshAvailable
             ? schedule
             : freshAvailable;

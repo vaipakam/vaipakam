@@ -38,11 +38,28 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *         need ({DayPlan}'s gate figures), while the part moves only what the
  *         cap allows. So a part is admitted exactly when a whole-in-one send
  *         of the rest would be, on an armed day and an unarmed one alike, so
- *         no day starts on a margin its whole does not fit. (Other sends can
- *         still use the margin between parts; the next part is then refused
- *         until it returns.) Testing the part alone would admit an unarmed day's
- *         early parts against a margin its whole exceeds, and stall it half
- *         sent once the margin ran out.
+ *         no day starts on a margin its whole does not fit; the pool hold
+ *         below keeps that margin for the day until its last part. Testing
+ *         the part alone would admit an unarmed day's early parts against a
+ *         margin its whole exceeds, and stall it half sent once the margin
+ *         ran out.
+ *
+ *         THE POOL HOLD (Codex #2959 r1). Passing the gate is not enough on
+ *         its own: between two parts, another mirror's send or a Base claim
+ *         could take the margin the rest of the day needs, and the mirror,
+ *         waiting for the whole, would never open the day. An ARMED day
+ *         already has a hold: its finalize-time commitment
+ *         (`outstandingCommitFresh`) stands for its unsent fresh in the pool's
+ *         day sizing and in every send's headroom until a part retires it,
+ *         exactly as before #918. An UNARMED day has no
+ *         commitment, so its first part RESERVES the day's whole fresh in
+ *         `remitDayFreshReserved`, which the one pool-headroom definition
+ *         ({LibInteractionRewards.poolRemaining}) counts as used. Each part
+ *         then moves its own fresh from the hold into
+ *         `rewardBudgetRemittedGlobal`, so a day sent in parts holds the pool
+ *         exactly as a send of its whole in one would. A released part's
+ *         fresh is uncovered again (its first charge stays spent) and the
+ *         next part re-reserves it against the headroom.
  *
  *         THE CLAMP RESIDUAL — what an armed day committed and will never send
  *         (`armedWhole* − whole*`) — is retired by the FIRST live part (the
@@ -121,6 +138,14 @@ library LibRemitDayLedger {
         uint256 owedRecycled;
         uint256 gateArmedFresh;
         uint256 gateRecycledFull;
+        // #918 (Codex #2959 r1) — the POOL HOLD. `gateFresh` is the fresh this
+        // send must find NEW room for in the 69M pool: the day's whole owed on
+        // an armed day (its commitment is retired by the gate's armed figure),
+        // the unreserved owed on an unarmed one. `cover` is what an unarmed
+        // day reserves now (`remitDayFreshReserved`), so the rest of the day
+        // is held for it between parts.
+        uint256 gateFresh;
+        uint256 cover;
     }
 
     /// @notice #918 — one part of a day's slice was sent to `dstChainId`.
@@ -207,7 +232,10 @@ library LibRemitDayLedger {
             p.wholeRecycled = l.wholeRecycled;
             p.armedWholeFresh = l.armedWholeFresh;
             p.armedWholeRecycled = l.armedWholeRecycled;
-            _part(p, l.sentFresh, l.sentRecycled, l.residualRemitId == 0, partCap);
+            _part(
+                p, l.sentFresh, l.sentRecycled, l.freshUncovered,
+                l.residualRemitId == 0, partCap
+            );
             return p;
         }
         LibVaipakam.ChainDayCommitments storage c =
@@ -266,18 +294,22 @@ library LibRemitDayLedger {
             p.wholeFresh = sliceFresh;
             p.wholeRecycled = sliceRecycled;
         }
-        _part(p, 0, 0, true, partCap);
+        // Unlocked: nothing of the day is reserved yet, so all of it is
+        // uncovered (read only on an unarmed day).
+        _part(p, 0, 0, p.wholeFresh, true, partCap);
     }
 
     /// @dev The part of `p`'s whole one send moves, given what the day's live
     ///      parts have already sent. Fresh first: the fresh component is what
     ///      the mirror's delivery gate waits on, so it is sent ahead of the
     ///      recycled one. `retires` is whether this part retires the day's
-    ///      clamp residual (no live part has).
+    ///      clamp residual (no live part has). `uncovered` is the day's owed
+    ///      fresh not yet reserved against the pool (unarmed days only).
     function _part(
         DayPlan memory p,
         uint256 sentFresh,
         uint256 sentRecycled,
+        uint256 uncovered,
         bool retires,
         uint256 partCap
     ) private pure {
@@ -303,6 +335,13 @@ library LibRemitDayLedger {
             p.residual = recycledResidual;
             p.gateArmedFresh = owedFresh + freshResidual;
             p.gateRecycledFull = owedRecycled + recycledResidual;
+            p.gateFresh = owedFresh;
+        } else {
+            // No commitment holds an unarmed day's unsent fresh, so the day
+            // holds it itself: the part reserves everything uncovered, and
+            // only that needs new room. The rest is already reserved.
+            p.gateFresh = uncovered;
+            p.cover = uncovered;
         }
         p.act = true;
         p.status = p.completes ? RemitDayStatus.Closeable : RemitDayStatus.Partial;
@@ -368,6 +407,16 @@ library LibRemitDayLedger {
             ++l.partsSent;
             ++l.partsLive;
         }
+        if (!p.armed) {
+            // The POOL HOLD (Codex #2959 r1): reserve what was uncovered, then
+            // move this part's fresh out of the hold — the caller charges it to
+            // `rewardBudgetRemittedGlobal`. The hold already carries the rest
+            // of the day (owed − uncovered), so it covers this part and the
+            // subtraction cannot underflow. Afterwards the day holds exactly
+            // what it still owes.
+            s.remitDayFreshReserved = s.remitDayFreshReserved + p.cover - p.fresh;
+            l.freshUncovered = 0;
+        }
         if (p.retires) {
             l.residualRemitId = remitId;
             if (p.residual > 0) {
@@ -419,8 +468,11 @@ library LibRemitDayLedger {
      *         whenever the day is no longer whole — whichever part set them.
      * @dev    The lock stays: the next send plans exactly the released amount
      *         against the same whole (and re-retires the residual only if it
-     *         was this part's), and the mirror's whole is untouched. The
-     *         caller restores the part's commitment retirement
+     *         was this part's), and the mirror's whole is untouched. On an
+     *         unarmed day the released fresh becomes UNCOVERED: its first
+     *         charge stays spent (`rewardBudgetRemittedGlobal` is append-only),
+     *         so the next part must find room for it again, as a re-send of a
+     *         released whole-day reservation always has. The caller restores the part's commitment retirement
      *         (`restoreArmedFresh` / `restoreReleasedRemit`) from the
      *         reservation, which records exactly what this part retired.
      * @param fresh / recycled This reservation's part of THIS day (zero for a
@@ -439,6 +491,8 @@ library LibRemitDayLedger {
         uint256 sentRecycled = uint256(l.sentRecycled) - recycled;
         l.sentFresh = uint128(sentFresh);
         l.sentRecycled = uint128(sentRecycled);
+        // Bounded by the whole (a part never sends more than the day owes).
+        if (!l.armed) l.freshUncovered = uint128(uint256(l.freshUncovered) + fresh);
         unchecked {
             --l.partsLive;
         }

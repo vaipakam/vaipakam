@@ -8142,6 +8142,19 @@ library LibVaipakam {
         ///      word `LibRewardCustody.dayDeliveryLanded` reads. Mirror-only.
         ///      Appended — append-only.
         mapping(uint256 => DayDeliveryParts) dayDeliveryParts;
+        /// @dev #918 (Codex #2959 r1) — fresh VPFI the LOCKED pre-commitment
+        ///      (unarmed) remit days still owe their mirrors and have already
+        ///      claimed against the 69M pool: the sum, over those days, of
+        ///      their owed fresh less `RemitDayLedger.freshUncovered`. A day's
+        ///      first part reserves its whole here, every part moves its own
+        ///      fresh from here into `rewardBudgetRemittedGlobal`, so a day
+        ///      sent in parts holds the pool exactly as a send of its whole in
+        ///      one would. An ARMED day needs none: its finalize-time
+        ///      commitment (`outstandingCommitFresh`) already holds its unsent
+        ///      fresh. Read only through `LibInteractionRewards.poolRemaining`,
+        ///      the one definition of the pool's hard headroom; written only by
+        ///      `LibRemitDayLedger.applyPart`. Base-only. Appended — append-only.
+        uint256 remitDayFreshReserved;
     }
 
     /// @notice #918 — one (destination, day)'s remit ledger on Base. See
@@ -8159,6 +8172,11 @@ library LibVaipakam {
     ///      sent and `partsLive` those not released. The day is WHOLE when
     ///      both sums equal the whole and the residual is retired
     ///      (`residualRemitId != 0`); only then do the day-close markers stand.
+    ///      POOL HOLD (unarmed days only, Codex #2959 r1): `freshUncovered` is
+    ///      the owed fresh the day has NOT reserved against the 69M pool — what
+    ///      a released part gave back. The next part re-reserves it, tested
+    ///      against the pool's headroom; everything else the day owes is held
+    ///      in `Storage.remitDayFreshReserved`. Always zero on an armed day.
     struct RemitDayLedger {
         uint128 wholeFresh;
         uint128 wholeRecycled;
@@ -8171,6 +8189,7 @@ library LibVaipakam {
         uint32 partsLive;
         bool armed;
         bool locked;
+        uint128 freshUncovered;
     }
 
     /// @notice #918 — one day's delivery record on a mirror. See
