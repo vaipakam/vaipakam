@@ -9,7 +9,6 @@ import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibFallbackCustody} from "../libraries/LibFallbackCustody.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
-import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibOwedAtInternalMatch} from "../libraries/LibOwedAtInternalMatch.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
@@ -904,16 +903,6 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // #2427 — the step closed the loan from `Active`: stamp what
                 // internal matching cleared from it (no-op when incomplete).
                 LibOwedAtInternalMatch.onClose(LibVaipakam.storageSlot(), loan);
-                // #585 (Codex round-3 P1) — an internal match is a
-                // LIQUIDATION-class terminal for the borrower (their
-                // distressed loan was force-cleared), so forfeit the
-                // borrower's VPFI Loan-Initiation-Fee custody to treasury
-                // here — exactly as DefaultedFacet / RiskFacet do at their
-                // liquidation terminals. Without this the Diamond-held
-                // `borrowerLifRebate[loanId].vpfiHeld` would be stranded once
-                // the loan settles (claimAsBorrower rejects a Settled loan).
-                // Idempotent / no-op when the borrower paid no VPFI LIF.
-                LibVPFIDiscount.forfeitBorrowerLif(loan);
                 // #1067 — DURABLE liquidation reward forfeit: an internal match
                 // is a liquidation-class terminal, so close the reward entries
                 // here (borrower forfeits durably, lender keeps). Stamping it now
@@ -1095,10 +1084,6 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // so the custody discriminator never reads this unscaled
                 // snapshot against the debited row.
                 LibFallbackCustody.returnToPledge(loan.id);
-                // #585 (Codex round-3 P1) — liquidation-class terminal:
-                // forfeit the borrower VPFI LIF custody to treasury (see the
-                // Active full-match branch). No-op when none was paid.
-                LibVPFIDiscount.forfeitBorrowerLif(loan);
                 // #1067 — DURABLE liquidation reward forfeit: an internal match
                 // is a liquidation-class terminal, so close the reward entries
                 // here (borrower forfeits durably, lender keeps). Stamping it now
@@ -1203,7 +1188,6 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 s.lenderClaims[loan.id].amount = 0;
                 loan.principal = 0; // fallback shortfall written off — loan terminal.
                 s.fallbackSnapshot[loan.id].active = false;
-                LibVPFIDiscount.forfeitBorrowerLif(loan);
                 // #1067 — DURABLE liquidation reward forfeit: an internal match
                 // is a liquidation-class terminal, so close the reward entries
                 // here (borrower forfeits durably, lender keeps). Stamping it now

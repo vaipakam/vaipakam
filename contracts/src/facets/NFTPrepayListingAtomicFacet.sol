@@ -680,8 +680,6 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
             executor,
             CollateralListingExecutor(executor).seaport(),
             effectiveAsk,
-            pctx.lenderLeg,
-            pctx.treasuryLeg,
             salt,
             conduitKey,
             emptyFeeLegs // memory-typed sibling for Block D
@@ -692,9 +690,9 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
 
         // STEP 4 — Pin + restamp diamond slots. `askPrice = endAskPrice
         // = effectiveAsk` per §17.11 step 4 (Codex round-10 P3 — the
-        // counter-order's 3 protocol legs sum to effectiveAsk, NOT
-        // gross offer_value, so the cancel-time reconstruction
-        // matches the actual orderHash).
+        // counter-order's proceeds leg is effectiveAsk, NOT gross
+        // offer_value, so the cancel-time reconstruction matches the
+        // actual orderHash).
         s.prepayListingOrderHash[loanId] = vaipakamOrderHash;
         s.prepayListingExecutor[loanId] = executor;
         IListingExecutorRecorder(executor).recordOrder(
@@ -708,15 +706,7 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
             effectiveAsk,        // endAskPrice = askPrice (fixed)
             0,                   // auctionEndTime sentinel
             PREPAY_MODE_ATOMIC_MATCH,
-            emptyFeeLegs, // empty — Vaipakam side has no fee legs (memory→calldata at external call boundary)
-            // T-086 Round-7 (Issue #355) — signed-leg snapshot. The
-            // Vaipakam counter-order's three consideration legs sum to
-            // `effectiveAsk` with leg[0] = pctx.lenderLeg, leg[1] =
-            // pctx.treasuryLeg, leg[2] = borrower-residual; the
-            // signed-lender / signed-treasury amounts mirror that
-            // construction.
-            pctx.lenderLeg,
-            pctx.treasuryLeg
+            emptyFeeLegs // empty — Vaipakam side has no fee legs (memory→calldata at external call boundary)
         );
 
         // STEP 5 — Wire the vault.
@@ -760,8 +750,7 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         // Pre-Seaport §17.9 balance assertion deleted in #348
         // follow-up: the consumed-vs-offerValue check was
         // algebraically tautological — `consumed = bidderFeeTotal +
-        // lenderLeg + treasuryLeg + (effectiveAsk - lenderLeg -
-        // treasuryLeg) = bidderFeeTotal + effectiveAsk`, and
+        // effectiveAsk` (the counter-order's one proceeds leg), and
         // `effectiveAsk = offerValue - bidderFeeTotal` by upstream
         // construction, so `consumed == offerValue` was true by
         // identity. The AskBelowFloor + FeeLegsExceedAvailable
@@ -858,11 +847,15 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         });
     }
 
-    /// @dev Build the Vaipakam-side AdvancedOrder. The OrderParameters
-    ///      shape matches what `LibPrepayOrder._components` would build
-    ///      for a fixed-price listing at ask = effectiveAsk. The
-    ///      signature is empty (ERC-1271 path via the vault); extraData
-    ///      is empty (FULL_RESTRICTED zone callback, not SIP-7).
+    /// @dev Build the Vaipakam-side AdvancedOrder from the SAME canonical
+    ///      fixed-price components {_buildAndRecord} hashed and recorded
+    ///      (`LibPrepayOrder.fixedPriceComponentsMem`, ask = effectiveAsk,
+    ///      no fee legs), so the order Seaport matches and the order the
+    ///      executor validates cannot differ in shape (#2876: one proceeds
+    ///      leg to the Diamond). The signature is empty (ERC-1271 path via
+    ///      the vault); extraData is empty (FULL_RESTRICTED zone callback,
+    ///      not SIP-7). The counter is not part of `OrderParameters`
+    ///      (Seaport reads its own at match time), so 0 is passed.
     function _buildVaipakamAdvancedOrder(
         IVaipakamPrepayContext.PrepayContext memory pctx,
         uint256 effectiveAsk,
@@ -870,67 +863,53 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         bytes32 conduitKey,
         address executor
     ) private view returns (AdvancedOrder memory) {
-        // Offer item — the collateral NFT.
-        OfferItem[] memory offer = new OfferItem[](1);
-        offer[0] = OfferItem({
-            itemType: pctx.collateralAssetType == LibVaipakam.AssetType.ERC721
-                ? ItemType.ERC721
-                : ItemType.ERC1155,
-            token: pctx.collateralAsset,
-            identifierOrCriteria: pctx.collateralTokenId,
-            startAmount: pctx.collateralAssetType == LibVaipakam.AssetType.ERC721
-                ? 1
-                : pctx.collateralQuantity,
-            endAmount: pctx.collateralAssetType == LibVaipakam.AssetType.ERC721
-                ? 1
-                : pctx.collateralQuantity
-        });
-
-        // Consideration — 3 protocol legs (lender + treasury +
-        // borrower remainder) in loan.principalAsset.
-        uint256 borrowerRem = effectiveAsk - pctx.lenderLeg - pctx.treasuryLeg;
-        ConsiderationItem[] memory consideration = new ConsiderationItem[](3);
-        consideration[0] = ConsiderationItem({
-            itemType: ItemType.ERC20,
-            token: pctx.principalAsset,
-            identifierOrCriteria: 0,
-            startAmount: pctx.lenderLeg,
-            endAmount: pctx.lenderLeg,
-            recipient: payable(pctx.lenderNftOwner)
-        });
-        consideration[1] = ConsiderationItem({
-            itemType: ItemType.ERC20,
-            token: pctx.principalAsset,
-            identifierOrCriteria: 0,
-            startAmount: pctx.treasuryLeg,
-            endAmount: pctx.treasuryLeg,
-            recipient: payable(pctx.treasury)
-        });
-        consideration[2] = ConsiderationItem({
-            itemType: ItemType.ERC20,
-            token: pctx.principalAsset,
-            identifierOrCriteria: 0,
-            startAmount: borrowerRem,
-            endAmount: borrowerRem,
-            recipient: payable(pctx.borrowerNftOwner)
-        });
-
-        OrderParameters memory params = OrderParameters({
-            offerer: pctx.borrowerVault,
-            zone: executor,
-            offer: offer,
-            consideration: consideration,
-            orderType: OrderType.FULL_RESTRICTED,
-            startTime: block.timestamp,
-            endTime: pctx.graceEnd,
-            zoneHash: bytes32(0),
-            salt: salt,
-            conduitKey: conduitKey,
-            totalOriginalConsiderationItems: 3
-        });
-
+        OrderComponents memory c = LibPrepayOrder.fixedPriceComponentsMem(
+            pctx,
+            pctx.borrowerVault,
+            executor,
+            effectiveAsk,
+            salt,
+            conduitKey,
+            0,
+            new FeeLeg[](0)
+        );
+        OfferItem[] memory offer = new OfferItem[](c.offer.length);
+        for (uint256 i = 0; i < c.offer.length; ) {
+            offer[i] = OfferItem({
+                itemType: ItemType(uint8(c.offer[i].itemType)),
+                token: c.offer[i].token,
+                identifierOrCriteria: c.offer[i].identifierOrCriteria,
+                startAmount: c.offer[i].startAmount,
+                endAmount: c.offer[i].endAmount
+            });
+            unchecked { ++i; }
+        }
+        ConsiderationItem[] memory consideration = new ConsiderationItem[](c.consideration.length);
+        for (uint256 i = 0; i < c.consideration.length; ) {
+            consideration[i] = ConsiderationItem({
+                itemType: ItemType(uint8(c.consideration[i].itemType)),
+                token: c.consideration[i].token,
+                identifierOrCriteria: c.consideration[i].identifierOrCriteria,
+                startAmount: c.consideration[i].startAmount,
+                endAmount: c.consideration[i].endAmount,
+                recipient: c.consideration[i].recipient
+            });
+            unchecked { ++i; }
+        }
         return AdvancedOrder({
-            parameters: params,
+            parameters: OrderParameters({
+                offerer: c.offerer,
+                zone: c.zone,
+                offer: offer,
+                consideration: consideration,
+                orderType: OrderType(uint8(c.orderType)),
+                startTime: c.startTime,
+                endTime: c.endTime,
+                zoneHash: c.zoneHash,
+                salt: c.salt,
+                conduitKey: c.conduitKey,
+                totalOriginalConsiderationItems: consideration.length
+            }),
             numerator: 1,
             denominator: 1,
             signature: "",        // ERC-1271 path; no off-chain sig
@@ -941,20 +920,20 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
     /// @dev Build the Fulfillment[] array per §17.9:
     ///        (A) bidder.offer[0] → bidder.consideration[i] for
     ///            i ∈ [1, considerationLen)
-    ///        (B) bidder.offer[0] → vaipakam.consideration[j] for
-    ///            j ∈ [0, 3)
+    ///        (B) bidder.offer[0] → vaipakam.consideration[0], the one
+    ///            proceeds leg to the Diamond (#2876)
     ///        (C) vaipakam.offer[0] → bidder.consideration[0]
-    ///      Total = n_bidderFees + 3 + 1 = considerationLen + 3.
+    ///      Total = n_bidderFees + 1 + 1 = considerationLen + 1.
     function _buildFulfillments(uint256 bidderConsiderationLen)
         private
         pure
         returns (Fulfillment[] memory fulfillments)
     {
         // (A) bidder-fee legs: considerationLen - 1 fulfillments
-        // (B) 3 protocol legs
+        // (B) 1 proceeds leg
         // (C) 1 NFT pairing
         uint256 nBidderFees = bidderConsiderationLen - 1;
-        uint256 total = nBidderFees + 3 + 1;
+        uint256 total = nBidderFees + 1 + 1;
         fulfillments = new Fulfillment[](total);
 
         // (A)
@@ -967,15 +946,14 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
             unchecked { ++i; }
         }
         // (B)
-        for (uint256 j = 0; j < 3; ) {
+        {
             FulfillmentComponent[] memory off = new FulfillmentComponent[](1);
             off[0] = FulfillmentComponent({orderIndex: 0, itemIndex: 0});
             FulfillmentComponent[] memory con = new FulfillmentComponent[](1);
-            con[0] = FulfillmentComponent({orderIndex: 1, itemIndex: j});
-            fulfillments[nBidderFees + j] = Fulfillment({
+            con[0] = FulfillmentComponent({orderIndex: 1, itemIndex: 0});
+            fulfillments[nBidderFees] = Fulfillment({
                 offerComponents: off, considerationComponents: con
             });
-            unchecked { ++j; }
         }
         // (C)
         {
@@ -983,7 +961,7 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
             off[0] = FulfillmentComponent({orderIndex: 1, itemIndex: 0});
             FulfillmentComponent[] memory con = new FulfillmentComponent[](1);
             con[0] = FulfillmentComponent({orderIndex: 0, itemIndex: 0});
-            fulfillments[nBidderFees + 3] = Fulfillment({
+            fulfillments[nBidderFees + 1] = Fulfillment({
                 offerComponents: off, considerationComponents: con
             });
         }

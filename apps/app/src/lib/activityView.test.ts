@@ -479,10 +479,10 @@ describe('#2383 — the row’s value, from the indexer’s normalized fields on
       expect(rowValue(row).legs).toHaveLength(1);
     });
 
-    it('says an unitemised rebate exists rather than dropping it', () => {
+    it('says a second lane it could not state exists rather than dropping it', () => {
       const [row] = tx([
         { kind: 'BorrowerFundsClaimed', loanId: 5, asset: WETH, assetType: 0, amount: '9' },
-        { kind: 'BorrowerLifRebateClaimed', loanId: 5 },
+        { kind: 'BorrowerSurplusClaimed', loanId: 5 },
       ]);
       const v = rowValue(row);
       expect(v.legs).toHaveLength(1);

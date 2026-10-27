@@ -167,7 +167,8 @@ function getDeployBlock(chainId: number): number | undefined {
  *  events — `LoanRepaid` (4 args typed vs 7 emitted), `LoanDefaulted`
  *  (2 vs 3), `PartialRepaid` (3 vs 4), `OfferAccepted` (3 vs 6),
  *  `OfferMatched` (8 vs 10), `LenderFundsClaimed` / `BorrowerFundsClaimed`
- *  (4 vs 5), `BorrowerLifRebateClaimed` (3 vs 4). A wrong arg count
+ *  (4 vs 5), and the since-retired borrower LIF-rebate claim event
+ *  (3 vs 4). A wrong arg count
  *  changes the keccak event signature → different topic0 → the indexer
  *  never matches the log → loans silently stay `active` forever. Same
  *  drift class the CLAUDE.md "Watcher offer-decode" incident warns
@@ -795,8 +796,6 @@ export async function sweepUnpublishedListings(
         ? {
             startAskPrice: BigInt(row.ask_price),
             endAskPrice: BigInt(row.end_ask_price),
-            projectedLenderLeg: 0n,
-            projectedTreasuryLeg: 0n,
             auctionEndTime: BigInt(row.auction_end_time),
           }
         : undefined;
@@ -6754,26 +6753,25 @@ export async function processLoanLogs(
       const loanId = Number(a.loanId as bigint);
       await _deletePrepayListing(env, chainId, loanId);
     } else if (log.eventName === 'PrepayCollateralSaleSettled') {
-      // Successful Seaport fill: loan went Active → Settled
-      // ATOMICALLY in `PrepayListingFacet.executorFinalizePrepaySale`
-      // — there is no separate claim step nor a follow-up
-      // `LoanSettled` event the indexer can wait for. So we flip
-      // directly to `settled` here (NOT `repaid`); otherwise the
-      // claimables query (`status IN ('repaid','defaulted','liquidated')`)
-      // would treat the loan as forever-claimable. Codex P1
-      // round-1 on PR #304.
+      // Successful collateral-sale fill. Since #2876 the sale closes the
+      // loan as a REPAYMENT funded by the proceeds (Active → Repaid in
+      // `PrepayListingFacet._settleSale`): the lender's due waits in the
+      // stored lender's vault for `claimAsLender`, and the borrower's
+      // remainder is paid to the holder's wallet or held for their claim.
+      // So the row flips to `repaid` (claimable) here, and the claim's
+      // `LoanSettled` settles it later through `settleLoanRow`, as after
+      // any repayment. (Before #2876 the sale went straight to Settled with
+      // no claim step, which is why this handler used to write `settled`.)
       const loanId = Number(a.loanId as bigint);
-      // A CLOSE, not a listing end — the loan goes Active→Settled in this
-      // same call — so the shared close-out cleanup applies.
+      // A CLOSE, not a listing end, so the shared close-out cleanup applies.
       await _clearClosedLoanSideTables(env, chainId, loanId);
       // #2476 r16 — the event block's chain time, VERIFIED (0060), or unknown
-      // when it is not in hand — never the scan's clock. This close emits no
-      // LoanSettled, so the ledger heal can never date it later; a time
-      // written here is the only one it will get.
+      // when it is not in hand — never the scan's clock. This is the time
+      // the loan closed; the later settlement is dated by its own event.
       const blockAt = blockTimestamps.get(log.blockNumber) ?? null;
       const r = await env.DB.prepare(
         `UPDATE loans
-           SET status = 'settled', terminal_block = ?, terminal_at = ?, terminal_at_verified = ?,
+           SET status = 'repaid', terminal_block = ?, terminal_at = ?, terminal_at_verified = ?,
                terminal_by_repair = 0, updated_at = ?
          WHERE chain_id = ? AND loan_id = ? AND status = 'active'`,
       )
@@ -7294,12 +7292,9 @@ async function _maybePublishToOpenSea(
   // T-086 Round-5 Block B (#309) — Dutch params. Undefined for
   // fixed-price posts (the publish helper falls back to the
   // Round-4 fixed-price shape verbatim). Defined when the event's
-  // `mode == PREPAY_MODE_DUTCH (1)`; the publish helper reads
-  // pctx at `auctionEndTime` to get the projected protocol legs
-  // that match the on-chain signed hash. `projectedLenderLeg` and
-  // `projectedTreasuryLeg` are derived inside the helper from
-  // that pctx read — the caller only supplies the three event-
-  // derived values.
+  // `mode == PREPAY_MODE_DUTCH (1)`. Since #2876 the order hashes
+  // no protocol leg, so these three event-derived values are all
+  // the Dutch shape needs.
   dutch?: { startAskPrice: bigint; endAskPrice: bigint; auctionEndTime: bigint },
 ): Promise<{ published: boolean; unsupportedChain: boolean }> {
   try {
@@ -7320,11 +7315,6 @@ async function _maybePublishToOpenSea(
           ? {
               startAskPrice: dutch.startAskPrice,
               endAskPrice: dutch.endAskPrice,
-              // The helper re-derives these from its pctx read at
-              // `auctionEndTime`; we pass 0n stubs here and the
-              // helper overwrites them.
-              projectedLenderLeg: 0n,
-              projectedTreasuryLeg: 0n,
               auctionEndTime: dutch.auctionEndTime,
             }
           : undefined,

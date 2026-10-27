@@ -32,15 +32,18 @@ import {LibSettlement} from "./LibSettlement.sol";
  *
  *         | helper       | maps to                                          |
  *         |--------------|--------------------------------------------------|
- *         | {saleLegs}   | `consideration[0]` (lender), `consideration[1]` (treasury) |
+ *         | {saleLegs}   | what the lender and the treasury are paid        |
  *         | {liveFloor}  | their sum: the least the sale must deliver       |
  *
- *         The borrower's residual (`consideration[2]`) is whatever the sale
- *         raises above {liveFloor}; the executor computes it from the order.
+ *         A listing pays its whole proceeds to the Diamond (#2876), which
+ *         splits them at the fill: the borrower position's holder receives
+ *         whatever the sale raised above {liveFloor}.
  *
  *         Not applied here: the lender's VPFI yield-fee discount, which
- *         repayment resolves at settlement by shifting value from the
- *         treasury leg to the lender leg. It never changes {liveFloor}.
+ *         the sale settlement resolves when it pays out (#2876), exactly as
+ *         repayment does, by shifting value from the treasury leg to the
+ *         lender leg. It never changes {liveFloor}. {salePlan} carries the
+ *         interest and late fee that resolution is quoted against.
  *
  * @dev    View library; no state writes, no events.
  */
@@ -58,13 +61,25 @@ library LibCollateralSettlement {
         view
         returns (uint256 lenderLeg, uint256 treasuryLeg)
     {
+        LibSettlement.ERC20Settlement memory plan = salePlan(loanId, asOfTimestamp);
+        return (plan.lenderDue, plan.treasuryShare);
+    }
+
+    /// @notice The whole repayment plan a sale closing `loanId` at
+    ///         `asOfTimestamp` settles with: {saleLegs} plus the interest
+    ///         and late fee the treasury share was cut from, which the
+    ///         lender's yield-fee discount is quoted against.
+    function salePlan(uint256 loanId, uint256 asOfTimestamp)
+        internal
+        view
+        returns (LibSettlement.ERC20Settlement memory plan)
+    {
         LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
-        LibSettlement.ERC20Settlement memory plan = LibSettlement.computeRepayment(
+        plan = LibSettlement.computeRepayment(
             loan,
             LibVaipakam.calculateLateFeeAt(loanId, asOfTimestamp),
             asOfTimestamp
         );
-        return (plan.lenderDue, plan.treasuryShare);
     }
 
     /// @notice The least a sale closing `loanId` at `asOfTimestamp` must

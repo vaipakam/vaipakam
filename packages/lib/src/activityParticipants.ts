@@ -80,7 +80,6 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   // `recipient` receives the seized collateral, at the liquidator's choice.
   ['LiquidationDiscounted', ['liquidator', 'recipient']],
   ['NotificationFeeBilled', ['payer']],
-  ['VPFIDiscountApplied', ['borrower']],
   ['VPFIYieldFeeDiscountApplied', ['lender']],
   // A rental's lender and its renter (`user`).
   ['VaultRentalUpdated', ['lender', 'user']],
@@ -90,7 +89,7 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['OfferCreatedDetails', ['creator']],
   ['OfferCanceledDetails', ['creator']],
   ['OfferSaleProceedsCredited', ['borrower']],
-  ['OfferSaleProceedsSplit', ['lender', 'borrower']],
+  ['CollateralSaleProceedsSplit', ['lender', 'borrower']],
   ['PostParallelSaleListing', ['borrower']],
   ['ParallelSaleLockReleased', ['borrower']],
   ['PrepaySaleListingSynced', ['caller']],

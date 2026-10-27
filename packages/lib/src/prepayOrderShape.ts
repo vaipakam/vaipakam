@@ -73,23 +73,12 @@ export interface PrepayOrderInput {
   /** Principal asset (ERC20) the consideration legs are denominated
    *  in. T-086 enforces ERC20-principal at the availability gate. */
   principalAsset: string;
-  /** Live lender leg from `getPrepayContext.lenderLeg` AT
-   *  `asOfTimestamp == post tx block.timestamp`. */
-  lenderLeg: bigint;
-  /** Live treasury leg from `getPrepayContext.treasuryLeg` at the
-   *  post tx block.timestamp. */
-  treasuryLeg: bigint;
-  /** Borrower's ask price. The remainder leg is
-   *  `askPrice - lenderLeg - treasuryLeg`. */
+  /** Borrower's ask price: what the buyer pays in total. */
   askPrice: bigint;
-  /** Current lender-NFT holder (`getPrepayContext.lenderNftOwner`).
-   *  Recipient of the lender leg. */
-  lenderNftOwner: string;
-  /** Current borrower-NFT holder (`getPrepayContext.borrowerNftOwner`).
-   *  Recipient of the borrower remainder leg. */
-  borrowerNftOwner: string;
-  /** Treasury address (`s.treasury`). Recipient of the treasury leg. */
-  treasury: string;
+  /** The Diamond — recipient of the ONE proceeds leg (#2876). The order
+   *  names no position holder and no treasury: the Diamond splits the
+   *  proceeds between them at the fill. */
+  diamond: string;
   /** Post tx's block.timestamp (= the diamond's `block.timestamp`
    *  when `postPrepayListing` ran). For an update, this is the
    *  update tx's block.timestamp. */
@@ -105,15 +94,15 @@ export interface PrepayOrderInput {
   /** Vault's Seaport counter at post time (= `seaport.getCounter(vault)`). */
   counter: bigint;
   /** T-086 Round-5 Block A (#313) — marketplace-required fee legs
-   *  appended after the borrower remainder. Empty array (or
-   *  omitted) yields the Round-4 3-leg shape. For fixed-price posts
+   *  appended after the proceeds leg. Empty array (or omitted) yields
+   *  the one-leg shape. For fixed-price posts
    *  `startAmount == endAmount` on every leg (the executor's
    *  `_assertOrderContent` doesn't check that equality but the
    *  facet does, so a divergent leg would never have been recorded
    *  on-chain).
    *
-   *  The borrower remainder derivation here is
-   *    `borrowerLeg = askPrice − lenderLeg − treasuryLeg − sum(feeLegs.amount)`
+   *  The proceeds leg is
+   *    `proceeds = askPrice − sum(feeLegs.amount)`
    *  matching `LibPrepayOrder._componentsAt*` exactly. */
   feeLegs?: ReadonlyArray<{
     recipient: string;
@@ -121,29 +110,18 @@ export interface PrepayOrderInput {
     endAmount: bigint;
   }>;
   /** T-086 Round-5 Block B (#309) — Dutch decay parameters. When
-   *  `undefined`, the builder emits the Round-4 + Block A fixed-
-   *  price shape (no decay, Seaport `endTime == graceEnd`). When
-   *  set, the borrower remainder leg decays linearly from
-   *  `(startAskPrice − projectedLenderLeg − projectedTreasuryLeg −
-   *  sum(feeLegs.startAmount))` at `startTime` down to
-   *  `(endAskPrice − projectedLenderLeg − projectedTreasuryLeg −
-   *  sum(feeLegs.endAmount))` at `auctionEndTime`. Lender +
-   *  treasury legs are pinned at the **projected** values at
-   *  `auctionEndTime` under sign-time governance config (the
-   *  facet reads them from `getPrepayContext(loanId,
-   *  auctionEndTime)`). Seaport's native amount interpolation
-   *  handles the per-block decay. The Seaport
-   *  `OrderComponents.endTime` is `auctionEndTime` (not
-   *  `graceEnd`) — past that tick Seaport rejects the order as
-   *  expired and the protocol-side cleanup path handles the
-   *  still-locked NFT.
+   *  `undefined`, the builder emits the fixed-price shape (no decay,
+   *  Seaport `endTime == graceEnd`). When set, the proceeds leg decays
+   *  linearly from `startAskPrice − sum(feeLegs.startAmount)` at
+   *  `startTime` down to `endAskPrice − sum(feeLegs.endAmount)` at
+   *  `auctionEndTime`, by Seaport's native amount interpolation. The
+   *  Seaport `OrderComponents.endTime` is `auctionEndTime` (not
+   *  `graceEnd`).
    *
    *  Mirror of {LibPrepayOrder.buildAndHashDutch} on-chain. */
   dutch?: {
     startAskPrice: bigint;
     endAskPrice: bigint;
-    projectedLenderLeg: bigint;
-    projectedTreasuryLeg: bigint;
     auctionEndTime: bigint;
   };
 }
@@ -218,29 +196,20 @@ export function buildPrepayOrderComponents(
     );
   }
 
-  // Consideration — N legs, in this exact order (matches
-  // `LibPrepayOrder._componentsAtMemory` on-chain):
-  //   [0]      lender ERC20         → lenderNftOwner
-  //   [1]      treasury ERC20       → treasury
-  //   [2]      borrower-remainder   → borrowerNftOwner
-  //   [3..N-1] borrower-supplied fee legs (Round-5 Block A #313)
+  // Consideration — in this exact order (matches
+  // `LibPrepayOrder._componentsAtMemory` on-chain, #2876):
+  //   [0]      ONE proceeds leg (ERC20) → the Diamond
+  //   [1..N-1] borrower-supplied fee legs (Round-5 Block A #313)
   //
-  // Mode resolution (Round-5 Block B #309):
-  //   - `input.dutch` undefined → fixed-price. `startAskPrice` ==
-  //     `endAskPrice` == `input.askPrice`; lender / treasury legs
-  //     use `input.lenderLeg` / `input.treasuryLeg`; Seaport
-  //     `endTime` = `input.graceEnd`.
-  //   - `input.dutch` defined → Dutch. The two ask values come
-  //     from the dutch tuple; lender / treasury legs are the
-  //     projected-max values stamped at sign-time; Seaport
-  //     `endTime` = `input.dutch.auctionEndTime`.
-  // The amount arithmetic is identical between the two modes —
-  // only the four input quantities (start/end ask, projected
-  // protocol legs) and the Seaport `endTime` differ.
+  // The buyer pays exactly the ask: the fee legs go to their
+  // recipients and the rest is the proceeds leg, which the Diamond
+  // splits between the lender holder, the treasury and the borrower
+  // holder at the fill. For a Dutch listing the two ask values come
+  // from the dutch tuple and Seaport `endTime` is its
+  // `auctionEndTime`; otherwise start == end == `askPrice` and
+  // `endTime` is `graceEnd`.
   const startAskPrice = input.dutch?.startAskPrice ?? input.askPrice;
   const endAskPrice = input.dutch?.endAskPrice ?? input.askPrice;
-  const lenderLeg = input.dutch?.projectedLenderLeg ?? input.lenderLeg;
-  const treasuryLeg = input.dutch?.projectedTreasuryLeg ?? input.treasuryLeg;
   const seaportEndTime = input.dutch?.auctionEndTime ?? input.graceEnd;
 
   const feeLegs = input.feeLegs ?? [];
@@ -250,24 +219,20 @@ export function buildPrepayOrderComponents(
     feeSumStart += f.startAmount;
     feeSumEnd += f.endAmount;
   }
-  const borrowerLegStart =
-    startAskPrice - lenderLeg - treasuryLeg - feeSumStart;
-  const borrowerLegEnd =
-    endAskPrice - lenderLeg - treasuryLeg - feeSumEnd;
-  if (borrowerLegStart < 0n || borrowerLegEnd < 0n) {
-    // Mirrors the on-chain `_requireAskCoversFloorWithFees` (fixed-
-    // price) and `_assertDutchSolvency` (Dutch) revert paths; if the
-    // JS reconstruction underflowed here the on-chain tx would have
-    // already reverted.
+  const proceedsStart = startAskPrice - feeSumStart;
+  const proceedsEnd = endAskPrice - feeSumEnd;
+  if (proceedsStart < 0n || proceedsEnd < 0n) {
+    // The facet refuses an ask below its floor plus the fee legs, so
+    // the on-chain post would already have reverted.
     throw new Error(
-      'prepayOrderShape: ask below lender+treasury+feeLegs; the diamond would have reverted',
+      'prepayOrderShape: ask below the fee legs; the diamond would have reverted',
     );
   }
-  if (borrowerLegStart < borrowerLegEnd) {
-    // Dutch derived-monotonicity guard (Codex P2 line 577 / 740).
-    // For fixed-price callers this is unreachable (start == end).
+  if (proceedsStart < proceedsEnd) {
+    // Dutch derived-monotonicity guard. For fixed-price callers this
+    // is unreachable (start == end).
     throw new Error(
-      'prepayOrderShape: borrower leg decays inverted (Dutch monotonicity violated); the diamond would have reverted',
+      'prepayOrderShape: proceeds leg decays inverted (Dutch monotonicity violated); the diamond would have reverted',
     );
   }
   const consideration: SeaportConsiderationItem[] = [
@@ -275,25 +240,9 @@ export function buildPrepayOrderComponents(
       itemType: SEAPORT_ITEM_TYPE_ERC20,
       token: input.principalAsset,
       identifierOrCriteria: '0',
-      startAmount: lenderLeg.toString(),
-      endAmount: lenderLeg.toString(),
-      recipient: input.lenderNftOwner,
-    },
-    {
-      itemType: SEAPORT_ITEM_TYPE_ERC20,
-      token: input.principalAsset,
-      identifierOrCriteria: '0',
-      startAmount: treasuryLeg.toString(),
-      endAmount: treasuryLeg.toString(),
-      recipient: input.treasury,
-    },
-    {
-      itemType: SEAPORT_ITEM_TYPE_ERC20,
-      token: input.principalAsset,
-      identifierOrCriteria: '0',
-      startAmount: borrowerLegStart.toString(),
-      endAmount: borrowerLegEnd.toString(),
-      recipient: input.borrowerNftOwner,
+      startAmount: proceedsStart.toString(),
+      endAmount: proceedsEnd.toString(),
+      recipient: input.diamond,
     },
     ...feeLegs.map((f): SeaportConsiderationItem => ({
       itemType: SEAPORT_ITEM_TYPE_ERC20,

@@ -463,8 +463,6 @@ library LibSwapToRepayIntentSettlement {
             LibEncumbrance.releaseCollateralLien(loanId);
         }
 
-        LibVPFIDiscount.settleBorrowerLifProper(loan);
-
         LibInteractionRewards.closeLoan(
             loanId,
             true,  /* borrowerClean */

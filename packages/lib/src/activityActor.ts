@@ -116,7 +116,6 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<string, ActorRead
   ['InternalMatchExecuted', arg('matcher')],
   ['LenderFundsClaimed', arg('claimant')],
   ['BorrowerFundsClaimed', arg('claimant')],
-  ['BorrowerLifRebateClaimed', arg('claimant')],
   // T-034 PR2 — settler / advancer is the meaningful actor.
   ['PeriodicInterestSettled', arg('settler')],
   ['PeriodicInterestAutoLiquidated', arg('settler')],

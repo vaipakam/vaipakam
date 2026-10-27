@@ -95,7 +95,7 @@ canonical, BurnMintPool on mirrors).
 
 **Claim (borrower / lender)** — terminal step on a loan after
 settlement / default. `ClaimFacet.claimAsBorrower` returns
-collateral + LIF rebate to the borrower; `claimAsLender` settles
+collateral to the borrower (there is no LIF rebate — #1980); `claimAsLender` settles
 proceeds + interest to the lender.
 
 **CODEOWNERS** — `.github/CODEOWNERS`. Path-based review routing
@@ -169,9 +169,11 @@ liquidation path), not as a price-of-zero. See
 **Fast-build** — the `contracts-fast` CI job; runs `forge build` +
 deploy-sanity suite. Required check. 1-2 min warm, 8-12 min cold.
 
-**Forfeit (LIF)** — at default or HF-liquidation: borrower's
-custody-held VPFI LIF is forwarded to treasury in full, no rebate.
-See `LibVPFIDiscount.forfeitBorrowerLif`.
+**Forfeit (LIF)** — *retired (#1980).* Under the removed peg-custody
+path, a default or HF-liquidation forwarded the borrower's
+custody-held VPFI LIF to treasury. No borrower VPFI is held for a
+loan any more, so a default or liquidation forfeits nothing
+VPFI-related on the borrower side.
 
 **Functional Spec** — `docs/FunctionalSpecs/<domain>.md`. The
 **code-independent** specification of intended platform behaviour
@@ -259,12 +261,13 @@ ERC-20 principal, charged once when the offer is accepted (rev-8
 freeze, #1352; it was 0.1%). Since #1352 it is charged in the
 **lending asset**, and the borrower's VPFI hold-tier discount is
 applied directly to it at acceptance — no VPFI enters custody and
-there is no settlement rebate. The custody-and-rebate flow described
-below is the **retired** peg-custody path, which only loans opened
-before #1352 still settle through: the VPFI was held in Diamond
-custody until terminal, then split into a tier-based rebate (proper
-close) or forfeited to treasury (default / liquidation). See
-`CLAUDE.md` § "VPFI Fee Discounts" and ADR-0003.
+there is no settlement rebate. Where the per-party Full tariff is
+enabled, a party's tariff is charged in VPFI and credited to the
+recycle bucket at acceptance. The older peg-custody path (the full
+LIF paid up front in VPFI, held in Diamond custody until terminal,
+then split into a rebate or forfeited) was removed in #1980; no loan
+ever settled through it. See `CLAUDE.md` § "VPFI Fee Discounts"
+and ADR-0003.
 
 **Liquid asset** — meets the on-chain liquidity threshold (depth +
 oracle). Eligible for LTV/HF-based loans and DEX-swap liquidation.
@@ -461,4 +464,6 @@ vault-based staking, and locally-claimable interaction rewards.
 
 **VPFI tier (1/2/3/4)** — discrete fee-discount tier derived from
 the user's VPFI vault balance × `time-weighted accumulator`.
-Higher tier = larger LIF rebate at proper-close terminal.
+Higher tier = larger discount: a lower lending-asset LIF at
+acceptance for a borrower, a lower yield fee at settlement for a
+lender.

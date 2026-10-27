@@ -62,14 +62,14 @@ Default 0.2% of principal (also the rev-8 freeze, #1352; it was
 0.1%), charged once when the offer is accepted. Range: 0% –
 `MAX_FEE_BPS` (50%), the same cap as the treasury fee.
 
-**It is charged in the LENDING ASSET, not in VPFI.** #1352 retired
-the peg-custody borrower path: a new loan puts no VPFI into
-borrower-LIF **rebate** custody and earns no settlement rebate. That
-is the invariant for every new loan — `vpfiHeld == 0`. It is NOT the
+**It is charged in the LENDING ASSET, not in VPFI.** #1352 moved the
+fee into the lending asset, and #1980 removed the old peg-custody
+borrower path from the code: no loan puts any VPFI into borrower-LIF
+custody, and no loan earns a settlement rebate. That is NOT the
 broader claim that no VPFI moves at origination: a loan whose party
 opts into the **Full tariff** does hand that party's non-refundable
 `C*` into the Diamond, credited to the recycle bucket. Different
-custody, different counter, no rebate. Instead the borrower's
+custody, different counter, no rebate. The borrower's
 time-weighted VPFI hold tier is applied as a **direct reduction of
 the lending-asset fee at acceptance** (the "HoldOnly" path), pinned
 at origination so a post-hoc top-up cannot game it. Two conditions
@@ -80,11 +80,11 @@ The discount **cannot take the fee to zero.** It is clamped at 50%
 (`MAX_FEE_DISCOUNT_BPS`), so half the gross fee is the effective
 floor no matter how much VPFI is held or which tariff is opted into.
 
-Loans opened on the retired peg-custody path are still settling
-through the old lifecycle — their custody VPFI splits into a
-borrower rebate and a treasury share at proper close, and is
-forfeited whole on default. Do not read that lifecycle as evidence
-the VPFI charge is still live for new originations.
+There is no older lifecycle still running. The platform is pre-live
+and every chain is deployed fresh, so no loan was ever opened on the
+peg-custody path; the up-front VPFI charge, the rebate at proper
+close and the forfeit on default are gone from the code (#1980).
+No knob turns them back on.
 
 ### LIF matcher kickback
 
@@ -96,8 +96,8 @@ route) takes 1% of the loan-initiation fee. Range: 0% –
 **The kickback is denominated in whatever the fee itself was
 charged in** — since #1352 that is the lending asset for new loans,
 paid synchronously at match out of the lender's vault, with the
-remainder going to treasury. Only grandfathered peg-custody loans
-pay it in VPFI, deferred to terminal settlement.
+remainder going to treasury. No loan pays it in VPFI, and none of
+it is deferred to terminal settlement.
 
 One reconciliation trap worth knowing before an operator matches an
 event against a transfer: the `OfferMatched` event reports the

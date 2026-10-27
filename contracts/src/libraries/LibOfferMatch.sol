@@ -198,11 +198,11 @@ library LibOfferMatch {
     }
 
     /// @notice The 1% match-fee BPS slice of any totalFee. Pure.
-    /// @dev    Used by both the lender-asset path (immediate at
-    ///         `_acceptOffer`) and the VPFI path (deferred to
-    ///         settlement via `LibVPFIDiscount.settleBorrowerLifProper`
-    ///         / `forfeitBorrowerLif`). Single source of truth so the
-    ///         99/1 split semantics never drift between call sites.
+    /// @dev    The LIF is charged in the lending asset at `_acceptOffer`
+    ///         and split there; this is the single source of truth for
+    ///         the 99/1 split so its semantics never drift between call
+    ///         sites. (The VPFI path that deferred the split to settlement
+    ///         was removed in #1980.)
     function matcherShareOf(uint256 totalFee) internal view returns (uint256) {
         // Reads governance-tunable BPS from storage so the kickback
         // can be dialed without a contract upgrade. Falls back to

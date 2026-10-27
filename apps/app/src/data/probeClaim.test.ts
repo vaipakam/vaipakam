@@ -55,7 +55,6 @@ describe('probeClaim — the borrower surplus lane', () => {
       client({
         ownerOf: ME,
         getClaimable: emptyClaimable,
-        getBorrowerLifRebate: [0n, 0n],
         getBorrowerSurplusClaim: [USDC, 5_000_000n, false],
         getLoanCollateralLien: noLien,
       }),
@@ -76,7 +75,6 @@ describe('probeClaim — the borrower surplus lane', () => {
       client({
         ownerOf: ME,
         getClaimable: [WETH, 0n, true, 0n, 0n, 0n, 0n, false],
-        getBorrowerLifRebate: [0n, 0n],
         getBorrowerSurplusClaim: [USDC, 5_000_000n, false],
         getLoanCollateralLien: noLien,
       }),
@@ -95,7 +93,6 @@ describe('probeClaim — the borrower surplus lane', () => {
       client({
         ownerOf: ME,
         getClaimable: [WETH, 3n, true, 0n, 0n, 0n, 0n, false],
-        getBorrowerLifRebate: [0n, 0n],
         getBorrowerSurplusClaim: [USDC, 5_000_000n, true],
         getLoanCollateralLien: noLien,
       }),
@@ -111,7 +108,6 @@ describe('probeClaim — the borrower surplus lane', () => {
       client({
         ownerOf: ME,
         getClaimable: emptyClaimable,
-        getBorrowerLifRebate: [0n, 0n],
         getBorrowerSurplusClaim: [USDC, 5_000_000n, true],
         getLoanCollateralLien: noLien,
       }),
@@ -127,7 +123,6 @@ describe('probeClaim — the borrower surplus lane', () => {
       client({
         ownerOf: ME,
         getClaimable: emptyClaimable,
-        getBorrowerLifRebate: [0n, 0n],
         getBorrowerSurplusClaim: () => {
           throw revert();
         },
@@ -145,7 +140,6 @@ describe('probeClaim — the borrower surplus lane', () => {
       client({
         ownerOf: ME,
         getClaimable: emptyClaimable,
-        getBorrowerLifRebate: [0n, 0n],
         getBorrowerSurplusClaim: () => {
           throw new Error('fetch failed');
         },
@@ -173,7 +167,6 @@ describe('probeClaim — the extra liened-collateral lane (#2373 r3)', () => {
     ownerOf: ME,
     // The claim row carries a loan-asset surplus…
     getClaimable: [USDC, 7_000_000n, false, 0n, 0n, 0n, 0n, false],
-    getBorrowerLifRebate: [0n, 0n],
     getBorrowerSurplusClaim: [ZERO, 0n, false],
   };
 

@@ -2,11 +2,15 @@
 /**
  * #1566 — GRANDFATHERED-CUSTODY CENSUS (read-only).
  *
- * Slices 0–3 of `Vpfi1566CanonicalDeliveredBoundDesign.md` exist only to move
- * four GRANDFATHERED custody classes out of commingled Diamond custody. The
- * path that creates `vpfiHeld` was retired by #1352, and the FunctionalSpecs
- * state that a platform deployed fresh has no such loans — so how much of that
- * migration is real work is an EMPIRICAL question with a cheap answer.
+ * Slices 0–3 of `Vpfi1566CanonicalDeliveredBoundDesign.md` exist to move
+ * GRANDFATHERED custody classes out of commingled Diamond custody. The design
+ * names four; this census reads the two that still exist on-chain — class 2
+ * (fallback snapshot custody) and class 3 (live VPFI intent commits). Classes
+ * 1 and 4 (the borrower Loan Initiation Fee's `vpfiHeld` custody and its rebate
+ * rows) have no producer since #1352 and were removed from the contracts with
+ * the path itself in #1980, so there is no row and no getter left to read. How
+ * much of the remaining migration is real work is an EMPIRICAL question with a
+ * cheap answer.
  *
  * The owner ratified (2026-09-07) that this census runs BEFORE any migration
  * machinery is written. Its output decides scope:
@@ -35,15 +39,13 @@
  * its own Diamond, VPFI token and deploy block. The global verdict needs all
  * of them; a `--chain` run is partial and writes its own file.
  *
- * EVERY ROW IS FILTERED TO THE DEPLOYMENT'S VPFI. The four classes are VPFI
+ * EVERY ROW IS FILTERED TO THE DEPLOYMENT'S VPFI. The classes are VPFI
  * custody specifically (the shared VPFI balance is the design's premise), so a
  * fallback snapshot or intent commit in another collateral is out of scope —
  * recorded as excluded, never silently dropped. No VPFI token in the artifact
  * ⇒ the deployment cannot be scoped ⇒ indeterminate.
  *
  * WHAT IT READS, AND WHY THAT WAY:
- *   - classes 1 & 4 (`vpfiHeld` custody, rebate rows) — `getBorrowerLifRebate`
- *     (VPFI by construction — these ARE VPFI amounts)
  *   - class 2 (fallback snapshot custody)             — `getFallbackSnapshot`,
  *     scoped by the loan's `collateralAsset` from `getLoanDetails`
  *   - class 3 (live VPFI intent commits)              — `getIntentCommit`, the
@@ -523,8 +525,7 @@ function deployedChains() {
  * Codex #2070 r5 P1 — a `--fresh` archives OFF-chain artifacts; it cannot wipe
  * ON-chain storage. The redeploy guard permits orphaning prior state on
  * purpose (ReleaseNotes-2026-05-11 §"pre-archive orphan-state guard"), so an
- * archived Diamond can still hold a rebate row, a fallback snapshot, or a live
- * intent. A census that reads one address per chain certifies those away
+ * archived Diamond can still hold a fallback snapshot or a live intent. A census that reads one address per chain certifies those away
  * without ever looking at them. The unit of this census is therefore a
  * DEPLOYMENT, not a chain.
  */
@@ -1430,7 +1431,7 @@ async function censusDeployment(dep) {
   const rpc = rpcFor(slug);
   if (!diamond) throw new Error(`${who}: addresses.json carries no diamond address`);
   if (!rpc) throw new Error(`${who}: no RPC — pass --rpc or set CENSUS_RPC_${slug.toUpperCase().replace(/-/g, '_')}`);
-  const claim = pick(loadAbi('ClaimFacet'), ['getBorrowerLifRebate', 'getFallbackSnapshot']);
+  const claim = pick(loadAbi('ClaimFacet'), ['getFallbackSnapshot']);
   const loanView = pick(loadAbi('LoanFacet'), ['getLoanDetails']);
   const vpfiView = pick(loadAbi('VPFITokenFacet'), ['getVPFIToken']);
   const metrics = pick(loadAbi('MetricsFacet'), ['getProtocolStats', 'getAllLoansPaginated']);
@@ -1562,7 +1563,6 @@ async function censusDeployment(dep) {
   if (!loupeRouted) {
     const custodyProbes = [
       ['getProtocolStats', []],
-      ['getBorrowerLifRebate', [1n]],
       ['getFallbackSnapshot', [1n]],
       ['getIntentCommit', [1n]],
     ];
@@ -1685,7 +1685,7 @@ async function censusDeployment(dep) {
       blockTag: censusBlock.tag,
       rpcHost: rpcHostOf(rpc),
       scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode: false, codeAbsentUnexplained: true, custodySurfaceUnrouted: false, notADiamond: false, loupeRouted: false, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null, producersMayBeLive: true },
-      classes: Object.fromEntries(['vpfiHeldCustody', 'rebateRows', 'fallbackSnapshotCustody', 'liveIntentCommits'].map((k) => [k, {
+      classes: Object.fromEntries(['fallbackSnapshotCustody', 'liveIntentCommits'].map((k) => [k, {
         status: 'indeterminate',
         indeterminateReason: codeAbsentReason,
         count: 0, total: '0', rows: [],
@@ -1730,7 +1730,7 @@ async function censusDeployment(dep) {
       blockTag: censusBlock.tag,
       rpcHost: rpcHostOf(rpc),
       scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode: false, custodySurfaceUnrouted, notADiamond, loupeRouted, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null, producersMayBeLive: !notADiamond && !custodySurfaceUnrouted },
-      classes: { vpfiHeldCustody: cls(), rebateRows: cls(), fallbackSnapshotCustody: cls({ nonVpfiRowsExcluded: [] }), liveIntentCommits: cls({ nonVpfiRowsExcluded: [] }) },
+      classes: { fallbackSnapshotCustody: cls({ nonVpfiRowsExcluded: [] }), liveIntentCommits: cls({ nonVpfiRowsExcluded: [] }) },
     };
   }
 
@@ -1773,9 +1773,9 @@ async function censusDeployment(dep) {
     );
   }
 
-  // (4) NO LOAN EVER CREATED ⇒ every class is empty. All four classes are
-  //     per-loan rows (`borrowerLifRebate[loanId]`, `fallbackSnapshot[loanId]`,
-  //     `intentCommits[loanId]`), and loan ids exist only by creation — so a
+  // (4) NO LOAN EVER CREATED ⇒ every class is empty. Both classes are
+  //     per-loan rows (`fallbackSnapshot[loanId]`, `intentCommits[loanId]`),
+  //     and loan ids exist only by creation — so a
   //     Diamond whose loan counter is zero cannot hold a row in any of them.
   //     This bound needs no VPFI token and no asset scoping, which is exactly
   //     what settles a `--fresh` snapshot whose artifact names no token and
@@ -1785,7 +1785,6 @@ async function censusDeployment(dep) {
   const noLoansEver = totalLoansEverCreated === 0n && loanIds.length === 0;
   const provenByEnumerable = noLoansEver ? 'no-loans-ever-created' : null;
 
-  // ── Classes 1 & 4 — vpfiHeld custody and rebate rows ──────────────────
   // ── Class 2 — fallback snapshot custody ───────────────────────────────
   // Is the intent surface even ROUTED on this Diamond? Ask the loupe directly
   // rather than inferring it from a `FunctionDoesNotExist` revert.
@@ -1860,8 +1859,6 @@ async function censusDeployment(dep) {
     };
   }
 
-  const vpfiHeldRows = [];
-  const rebateRows = [];
   const fallbackRows = [];
   // Rows whose asset is NOT this deployment's VPFI. Recorded, never silently
   // dropped: they are outside #1566's scope, but a reader must be able to see
@@ -1874,10 +1871,6 @@ async function censusDeployment(dep) {
   const unknownAssetIntentRows = [];
   const intentRows = [];
   for (const id of loanIds) {
-    const [rebateAmount, vpfiHeld] = await read('getBorrowerLifRebate', [id]);
-    if (vpfiHeld > 0n) vpfiHeldRows.push({ loanId: id.toString(), vpfiHeld: vpfiHeld.toString() });
-    if (rebateAmount > 0n) rebateRows.push({ loanId: id.toString(), rebateAmount: rebateAmount.toString() });
-
     const snap = await read('getFallbackSnapshot', [id]);
     const [lenderCollateral, treasuryCollateral, borrowerCollateral, lenderPrincipalDue, treasuryPrincipalDue, active] =
       snap;
@@ -2006,12 +1999,12 @@ async function censusDeployment(dep) {
     // BACKING, not a proof: what the Diamond holds, against what its rows claim.
     // Rows total > backing is exactly the shortfall slice 0 must reconcile.
     diamondVpfiBacking: diamondVpfiBalance === null ? null : diamondVpfiBalance.toString(),
-    vpfiRowsTotal: (BigInt(sum(vpfiHeldRows, 'vpfiHeld')) + BigInt(sum(rebateRows, 'rebateAmount')) + BigInt(sum(fallbackRows, 'collateralTotal')) + BigInt(sum(intentRows, 'custodialCollateral'))).toString(),
+    vpfiRowsTotal: (BigInt(sum(fallbackRows, 'collateralTotal')) + BigInt(sum(intentRows, 'custodialCollateral'))).toString(),
     backingShortfall:
       diamondVpfiBalance === null
         ? null
         : (() => {
-            const rows = BigInt(sum(vpfiHeldRows, 'vpfiHeld')) + BigInt(sum(rebateRows, 'rebateAmount')) + BigInt(sum(fallbackRows, 'collateralTotal')) + BigInt(sum(intentRows, 'custodialCollateral'));
+            const rows = BigInt(sum(fallbackRows, 'collateralTotal')) + BigInt(sum(intentRows, 'custodialCollateral'));
             return (rows > diamondVpfiBalance ? rows - diamondVpfiBalance : 0n).toString();
           })(),
     atBlock: atBlock.toString(),
@@ -2042,25 +2035,6 @@ async function censusDeployment(dep) {
       producersMayBeLive: true,
     },
     classes: {
-      // Classes 1 & 4 are VPFI by construction (`vpfiHeld` / `rebateAmount`
-      // ARE VPFI amounts), so they need no asset filter — but they are still
-      // VPFI custody, so a missing token address leaves them unscoped too.
-      vpfiHeldCustody: {
-        status: vpfiToken || provenByEnumerable ? 'proven' : 'indeterminate',
-        provenBy: provenByEnumerable ?? undefined,
-        indeterminateReason: vpfiToken || provenByEnumerable ? undefined : 'VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped',
-        count: vpfiHeldRows.length,
-        total: sum(vpfiHeldRows, 'vpfiHeld'),
-        rows: vpfiHeldRows,
-      },
-      rebateRows: {
-        status: vpfiToken || provenByEnumerable ? 'proven' : 'indeterminate',
-        provenBy: provenByEnumerable ?? undefined,
-        indeterminateReason: vpfiToken || provenByEnumerable ? undefined : 'VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped',
-        count: rebateRows.length,
-        total: sum(rebateRows, 'rebateAmount'),
-        rows: rebateRows,
-      },
       fallbackSnapshotCustody: {
         status: provenByEnumerable || (vpfiToken && vpfiScopeAuthoritative) ? 'proven' : 'indeterminate',
         provenBy: provenByEnumerable ?? undefined,
@@ -2497,7 +2471,6 @@ async function main() {
     process.stdout.write(
       `${r.chainSlug} [${r.deployment}] (chainId ${r.chainId}, block ${r.atBlock}, backing ${r.diamondVpfiBacking ?? '?'} VPFI wei${r.backingShortfall && r.backingShortfall !== '0' ? `, SHORTFALL ${r.backingShortfall}` : ''}): ` +
         `loans=${r.scanned.loanIdsEnumerated} ` +
-        `vpfiHeld=${c.vpfiHeldCustody.count} rebate=${c.rebateRows.count} ` +
         `fallback=${c.fallbackSnapshotCustody.count} liveIntents=${c.liveIntentCommits.count}\n`,
     );
   }

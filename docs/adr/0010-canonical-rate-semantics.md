@@ -222,6 +222,12 @@ for the per-match LIF prepay pro-ration on the borrower side (the
 existing `borrowerLifRebate[loanId].vpfiHeld` slot is per-loan; one
 borrower offer minting N loans needs N slots).
 
+> **Note (#1980, 2026-10-27).** Point (iii) no longer applies: the
+> per-loan borrower-LIF VPFI hold it refers to was removed with the
+> peg-custody path, and the borrower LIF is charged in the lending asset
+> at each loan's acceptance, so there is no per-loan VPFI slot to
+> pro-rate.
+
 ## Consequences
 
 ### Positive

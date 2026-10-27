@@ -454,19 +454,14 @@ contract OfferParallelSaleFacetTest is SetupTest {
         OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
     }
 
-    function test_syncPrepaySaleOffer_scenarioB_flaggedLenderHolder_registersAndCancels()
-        public
-    {
-        MockSanctionsList m = new MockSanctionsList();
-        address cleanFee = makeAddr("cleanOfferFee");
-        _postOfferListingWithFee(m, cleanFee);
-
-        // Accept the offer into a loan (Scenario B): pin offerId→loanId and mint
-        // the live lender / borrower position NFTs the settlement pays.
+    /// @dev Accept the posted offer into a loan (Scenario B): pin offerId→loanId
+    ///      and mint the live lender / borrower position NFTs. Returns the lender
+    ///      holder.
+    function _acceptIntoScenarioB() internal returns (address lenderHolder) {
         uint256 loanId = 9_100;
         uint256 lenderTokenId = 501;
         uint256 borrowerTokenId = 502;
-        address lenderHolder = makeAddr("saleLoanLender");
+        lenderHolder = makeAddr("saleLoanLender");
         LibVaipakam.Loan memory loan;
         loan.status = LibVaipakam.LoanStatus.Active;
         loan.lenderTokenId = lenderTokenId;
@@ -475,15 +470,23 @@ contract OfferParallelSaleFacetTest is SetupTest {
         TestMutatorFacet(address(diamond)).mintNFTRaw(lenderHolder, lenderTokenId);
         TestMutatorFacet(address(diamond)).mintNFTRaw(borrowerHolder, borrowerTokenId);
         TestMutatorFacet(address(diamond)).setOfferIdToLoanId(OFFER_ID, loanId);
+    }
 
-        m.setFlagged(lenderHolder, true); // the live lender-position holder
+    function test_syncPrepaySaleOffer_scenarioB_flaggedBorrowerHolder_registersAndCancels()
+        public
+    {
+        MockSanctionsList m = new MockSanctionsList();
+        _postOfferListingWithFee(m, makeAddr("cleanOfferFee"));
+        _acceptIntoScenarioB();
+
+        m.setFlagged(borrowerHolder, true); // the live borrower-position holder
 
         vm.prank(nonCreator);
         OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
 
         assertTrue(
-            ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(lenderHolder),
-            "flagged Scenario-B lender holder MUST be registered"
+            ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(borrowerHolder),
+            "flagged Scenario-B borrower holder MUST be registered"
         );
         vm.prank(nonCreator);
         vm.expectRevert(
@@ -491,6 +494,28 @@ contract OfferParallelSaleFacetTest is SetupTest {
                 OfferParallelSaleFacet.ParallelSaleListingNotFound.selector, uint96(OFFER_ID)
             )
         );
+        OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
+    }
+
+    /// @dev #2876 — the sale is neutral between the sides: a flagged
+    ///      lender-position holder is not a sale recipient (its share goes to a
+    ///      claim row screened at the claim), so it never cancels the listing.
+    function test_syncPrepaySaleOffer_scenarioB_flaggedLenderHolder_leavesListingLive()
+        public
+    {
+        MockSanctionsList m = new MockSanctionsList();
+        _postOfferListingWithFee(m, makeAddr("cleanOfferFee"));
+        address lenderHolder = _acceptIntoScenarioB();
+
+        m.setFlagged(lenderHolder, true);
+
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit OfferParallelSaleFacet.PrepaySaleOfferSynced(uint96(OFFER_ID), nonCreator, false);
+        vm.prank(nonCreator);
+        OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
+
+        // The listing is still there: a second sync finds it.
+        vm.prank(nonCreator);
         OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
     }
 

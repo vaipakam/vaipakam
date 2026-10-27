@@ -620,13 +620,6 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
         // {VaultFactoryFacet.vaultWithdrawERC20} guard. See the
         // explanatory comment at the new call site.
 
-        // Phase 5 / §5.2b — proper-close settlement for the borrower LIF
-        // VPFI path. Splits any Diamond-held VPFI between the borrower's
-        // claimable rebate (scaled by time-weighted avg discount BPS) and
-        // the treasury share. No-op on loans that took the lending-asset
-        // fee path at init (vpfiHeld == 0).
-        LibVPFIDiscount.settleBorrowerLifProper(loan);
-
         // Fallback cure (#1566 slice 2): the fallback custody never left
         // `loan.borrower`'s vault. `FallbackCustodyFacet.enterFallback`
         // deposited it there under the collateral lien, and every

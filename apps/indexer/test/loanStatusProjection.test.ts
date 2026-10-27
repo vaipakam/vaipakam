@@ -882,7 +882,7 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
   });
 });
 
-describe('PrepayCollateralSaleSettled — a close the ledger heal can never date (#2476 r16)', () => {
+describe('PrepayCollateralSaleSettled — the sale closes the loan as a repayment (#2876), dated by its block (#2476 r16)', () => {
   const prepayLog = (loanId: number, block: number) => ({
     eventName: 'PrepayCollateralSaleSettled',
     args: { loanId: BigInt(loanId) },
@@ -907,6 +907,11 @@ describe('PrepayCollateralSaleSettled — a close the ledger heal can never date
     );
     expect(verified(h, 60)).toEqual({ t: 500, v: 1 });
     expect(verified(h, 61)).toEqual({ t: null, v: 0 });
+    // Claimable until the lender's claim settles it, as after a repayment.
+    const status = (id: number) =>
+      (h.db.prepare('SELECT status FROM loans WHERE chain_id = ? AND loan_id = ?').get(CHAIN, id) as { status: string }).status;
+    expect(status(60)).toBe('repaid');
+    expect(status(61)).toBe('repaid');
   });
 });
 

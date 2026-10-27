@@ -1836,6 +1836,13 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().prepayListingExecutor[loanId] = executor;
     }
 
+    /// @notice #2876 — pin the offer-keyed (parallel-sale) executor for an
+    ///         offer, so a test can drive `recordOfferSaleProceeds` on an
+    ///         accepted offer's loan without the full Seaport post path.
+    function setOfferPrepayListingExecutorRaw(uint96 offerId, address executor) external {
+        LibVaipakam.storageSlot().offerPrepayListingExecutor[offerId] = executor;
+    }
+
     /// @notice Direct-set the per-loan auto-list opt-out flag so tests
     ///         can assert the auto-list path's `AutoListBorrowerOptedOut`
     ///         gate without exercising the full cancel-during-grace
@@ -2085,18 +2092,6 @@ contract TestMutatorFacet {
                 amount
             )
         );
-    }
-
-    /// @notice #1352 test — seed the Diamond's borrower-LIF custody
-    ///         (`borrowerLifRebate[loanId].vpfiHeld`) directly. New HoldOnly
-    ///         loans never take custody, so this is the only way to exercise
-    ///         the still-live grandfathered `settleBorrowerLifProper` /
-    ///         `forfeitBorrowerLif` settlement helpers on an open loan that
-    ///         already carried custody (a pre-#1352 origination).
-    function setBorrowerLifVpfiHeldRaw(uint256 loanId, uint256 amount)
-        external
-    {
-        LibVaipakam.storageSlot().borrowerLifRebate[loanId].vpfiHeld = amount;
     }
 
     // ─── #1434 P2-w3 test-only — compensation-quote / pricing-ladder ─────────

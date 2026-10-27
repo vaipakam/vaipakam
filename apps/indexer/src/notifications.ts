@@ -100,6 +100,10 @@ export const EVENT_NOTIF_MAP: Readonly<Record<string, NotifMapping>> = {
   // directly or those repayments produce no inbox row (Codex #1292 r1).
   SwapToRepayExecuted: { kind: 'loan_repaid', recipients: 'both' },
   SwapToRepayPartialExecuted: { kind: 'partial_repay', recipients: 'lender' },
+  // #2876 — a collateral sale closes the loan as a repayment funded by the
+  // proceeds (Active -> Repaid) and emits only this event: the lender has a
+  // claim to make, and the borrower was paid or has a held remainder.
+  PrepayCollateralSaleSettled: { kind: 'loan_repaid', recipients: 'both' },
   // Backstop absorption terminalizes the loan to Defaulted via
   // `terminalizeFromAny` and emits ONLY `BackstopAbsorbedLoan` — no
   // `LoanDefaulted` companion (ClaimFacet.sol) — so the affected
@@ -235,11 +239,10 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
   PrepayListingUpdated: 'own action — the borrower repriced their own listing',
   PrepayListingCanceled: 'own action — the borrower cancelled their own listing',
   PrepayListingMatched: 'auto-list rotation breadcrumb — no user-state change',
-  PrepayCollateralSaleSettled: 'proceeds land in the vault; terminal loan row arrives via LoanRepaid/Settled',
   PrepaySaleListingSynced: 'permissionless sanctions-sync breadcrumb — no user meaning',
   PrepaySaleOfferSynced: 'offer-keyed sanctions-sync breadcrumb — no user meaning',
   OfferSaleProceedsCredited: 'vault-credit breadcrumb — surfaced on the balance pane, not the inbox',
-  OfferSaleProceedsSplit: 'per-recipient split breakdown — terminal loan row covers the user',
+  CollateralSaleProceedsSplit: 'per-recipient split breakdown — terminal loan row covers the user',
   PostParallelSaleListing: 'UI-facing OpenSea listing breadcrumb — no loan-state notification',
   ParallelSaleLockReleased: 'non-destructive unwind — offer stays open, no user meaning',
   SwapToRepayIntentCommitted: 'own action — the borrower committed a swap intent',

@@ -315,6 +315,14 @@ library FacetSelectors {
         return bytes4(keccak256("freezeOrPayActiveLenderResident(uint256,address,uint256)"));
     }
 
+    /// @notice #1980 — the RETIRED `ClaimFacet.getBorrowerLifRebate(uint256)`
+    ///         selector (the borrower LIF VPFI-custody rebate view), for the
+    ///         Remove leg of a curated refresh against a Diamond that still
+    ///         routes it.
+    function retiredBorrowerLifRebateSelector() internal pure returns (bytes4) {
+        return bytes4(keccak256("getBorrowerLifRebate(uint256)"));
+    }
+
     /// @notice #2459 r4 — the RETIRED six-argument `previewIntent` selector, for
     ///         the Remove leg of a curated refresh against a Diamond that still
     ///         routes it. The preview gained the route's outer initiator, so its

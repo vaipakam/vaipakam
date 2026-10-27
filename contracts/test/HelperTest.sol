@@ -112,7 +112,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](258); // #2910 PR 2 -setRemitReservationFinalizedRaw -setReleasedRemitHistoryRaw -setRemitReservationReleasedRaw (was 261); #2910 -setRecoveryAttributionRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](258); // #2876 +setOfferPrepayListingExecutorRaw (was 257); #1980 -setBorrowerLifVpfiHeldRaw (was 258); #2910 PR 2 -setRemitReservationFinalizedRaw -setReleasedRemitHistoryRaw -setRemitReservationReleasedRaw (was 261); #2910 -setRecoveryAttributionRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -360,6 +360,7 @@ contract HelperTest {
         // T-086 Round-7 (#355) — auto-list state mutators.
         selectors[n++] = TestMutatorFacet.setPrepayListingOrderHash.selector;
         selectors[n++] = TestMutatorFacet.setPrepayListingExecutor.selector;
+        selectors[n++] = TestMutatorFacet.setOfferPrepayListingExecutorRaw.selector;
         selectors[n++] = TestMutatorFacet.setPrepayListingAutoListOptedOut.selector;
         // (getPrepayListingAutoListOptedOut removed — production reads
         // it via NFTPrepayListingFacet.getPrepayListingAutoListOptedOut
@@ -438,7 +439,6 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setRecycleBucketAbsorbedRaw.selector;
         selectors[n++] = TestMutatorFacet.setRecycledCreditedByDayRaw.selector;
         selectors[n++] = TestMutatorFacet.setGovernorCommitArmedFromDayRaw.selector;
-        selectors[n++] = TestMutatorFacet.setBorrowerLifVpfiHeldRaw.selector;
         // #1353 (M2 PR-5c) — direct fee-entitlement stamp + armed day-pool stamp
         // for loan-side cap tests.
         selectors[n++] = TestMutatorFacet.setFeeEntitlementRaw.selector;
@@ -1453,20 +1453,19 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](12);
+        selectors = new bytes4[](11);
         selectors[0] = ClaimFacet.claimAsLender.selector;
         selectors[1] = ClaimFacet.claimAsBorrower.selector;
         selectors[2] = ClaimFacet.getClaimableAmount.selector;
         selectors[3] = ClaimFacet.getClaimable.selector;
-        selectors[4] = ClaimFacet.getBorrowerLifRebate.selector;
-        selectors[5] = ClaimFacet.claimAsLenderWithRetry.selector;
-        selectors[6] = ClaimFacet.getFallbackSnapshot.selector;
+        selectors[4] = ClaimFacet.claimAsLenderWithRetry.selector;
+        selectors[5] = ClaimFacet.getFallbackSnapshot.selector;
         // #399 backstop v0 Role B — liquidator-of-last-resort.
-        selectors[7] = ClaimFacet.setLenderBackstopOptIn.selector;
-        selectors[8] = ClaimFacet.claimAsLenderViaBackstop.selector;
-        selectors[9] = ClaimFacet.getBorrowerSurplusClaim.selector;
-        selectors[10] = ClaimFacet.getOwedAtDefault.selector; // #2374
-        selectors[11] = ClaimFacet.getOwedAtInternalMatch.selector; // #2427
+        selectors[6] = ClaimFacet.setLenderBackstopOptIn.selector;
+        selectors[7] = ClaimFacet.claimAsLenderViaBackstop.selector;
+        selectors[8] = ClaimFacet.getBorrowerSurplusClaim.selector;
+        selectors[9] = ClaimFacet.getOwedAtDefault.selector; // #2374
+        selectors[10] = ClaimFacet.getOwedAtInternalMatch.selector; // #2427
         return selectors;
     }
 
@@ -1832,32 +1831,29 @@ contract HelperTest {
         // #687-A: fixed-rate SALE surface removed — mirror of production's
         // pruned _getVpfiDiscountSelectors (kept discount surface + the renamed
         // getVPFIDiscountConfig / setVPFIDiscountRate price config).
-        selectors = new bytes4[](19);
+        selectors = new bytes4[](16);
         selectors[0] = VPFIDiscountFacet.depositVPFIToVault.selector;
-        selectors[1] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
-        selectors[2] = VPFIDiscountFacet.getVPFIDiscountConfig.selector;
-        selectors[3] = VPFIDiscountFacet.setVPFIDiscountRate.selector;
-        selectors[4] = VPFIDiscountFacet.setVPFIDiscountETHPriceAsset.selector;
-        selectors[5] = VPFIDiscountFacet.emitDiscountApplied.selector;
-        selectors[6] = VPFIDiscountFacet.setVPFIDiscountConsent.selector;
-        selectors[7] = VPFIDiscountFacet.getVPFIDiscountConsent.selector;
-        selectors[8] = VPFIDiscountFacet.emitYieldFeeDiscountApplied.selector;
-        selectors[9] = VPFIDiscountFacet.quoteVPFIDiscountFor.selector;
-        selectors[10] = VPFIDiscountFacet.getVPFIDiscountTier.selector;
-        selectors[11] = VPFIDiscountFacet.withdrawVPFIFromVault.selector;
-        selectors[12] = VPFIDiscountFacet.getUserVpfiDiscountState.selector;
+        selectors[1] = VPFIDiscountFacet.getVPFIDiscountConfig.selector;
+        selectors[2] = VPFIDiscountFacet.setVPFIDiscountRate.selector;
+        selectors[3] = VPFIDiscountFacet.setVPFIDiscountETHPriceAsset.selector;
+        selectors[4] = VPFIDiscountFacet.setVPFIDiscountConsent.selector;
+        selectors[5] = VPFIDiscountFacet.getVPFIDiscountConsent.selector;
+        selectors[6] = VPFIDiscountFacet.emitYieldFeeDiscountApplied.selector;
+        selectors[7] = VPFIDiscountFacet.getVPFIDiscountTier.selector;
+        selectors[8] = VPFIDiscountFacet.withdrawVPFIFromVault.selector;
+        selectors[9] = VPFIDiscountFacet.getUserVpfiDiscountState.selector;
         // Phase 8b.1 Permit2 addition.
-        selectors[13] = VPFIDiscountFacet.depositVPFIToVaultWithPermit.selector;
+        selectors[10] = VPFIDiscountFacet.depositVPFIToVaultWithPermit.selector;
         // T-087 Sub 1.D — post-gate EFFECTIVE_TIER + EFFECTIVE_BPS getter.
-        selectors[14] = VPFIDiscountFacet.getEffectiveDiscount.selector;
+        selectors[11] = VPFIDiscountFacet.getEffectiveDiscount.selector;
         // T-087 Sub 4 — balance-mutation-free tier rollup.
-        selectors[15] = VPFIDiscountFacet.pokeMyTier.selector;
+        selectors[12] = VPFIDiscountFacet.pokeMyTier.selector;
         // T-087 Sub 4 round-2 P2 — public tracked-balance getter.
-        selectors[16] = VPFIDiscountFacet.getTrackedVPFIBalance.selector;
+        selectors[13] = VPFIDiscountFacet.getTrackedVPFIBalance.selector;
         // T-087 Sub 4 round-3 P2 #1 — tracked-tier getter.
-        selectors[17] = VPFIDiscountFacet.getTrackedVPFIDiscountTier.selector;
+        selectors[14] = VPFIDiscountFacet.getTrackedVPFIDiscountTier.selector;
         // #1383 — secondary-settlement lender yield-fee resolve host.
-        selectors[18] = VPFIDiscountFacet.resolveLenderYieldFeeFor.selector;
+        selectors[15] = VPFIDiscountFacet.resolveLenderYieldFeeFor.selector;
         return selectors;
     }
 

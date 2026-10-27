@@ -75,7 +75,7 @@ contract MetricsDashboardFacet {
     ///         IPFS-hosted frontend doesn't depend on the indexer
     ///         layer.
     /// @param vaultVpfiBalance         User's vault VPFI (stake +
-    ///        rebate held + fees-not-yet-spent). Drives the discount
+    ///        fees-not-yet-spent). Drives the discount
     ///        tier indicator.
     /// @param vpfiTier                  Discount tier (0–4) derived
     ///        from `vaultVpfiBalance` against the configured tier
@@ -391,8 +391,7 @@ contract MetricsDashboardFacet {
     /**
      * @notice Paginated claimables for a user (lender or borrower
      *         side per D3). Includes lender post-resolution proceeds,
-     *         borrower collateral refunds, NFT rental returns, and
-     *         Phase-5 borrower LIF rebates.
+     *         borrower collateral refunds and NFT rental returns.
      * @param  user         The user to query.
      * @param  borrowerSide `true` → borrower-side claims;
      *                      `false` → lender-side claims.

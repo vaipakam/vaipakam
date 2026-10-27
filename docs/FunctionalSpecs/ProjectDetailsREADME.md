@@ -778,7 +778,7 @@ An offer may be created two ways, both reaching the same on-chain offer state:
 - **For ERC-20 Tokens:**
   - Specify the desired ERC-20 asset and amount, maximum acceptable interest rate, offered collateral (type and amount), and loan duration.
   - The frontend must clearly disclose that when an ERC-20 loan is actually initiated, a `Loan Initiation Fee` equal to `0.1%` of the lending-asset amount will be charged to treasury before the lending asset is delivered to the borrower. In other words, if the matched lending amount is `1000 USDC`, the borrower receives `999 USDC` and `1 USDC` is routed to treasury at initiation.
-  - If the borrower uses the VPFI fee path, the borrower receives `100%` of the requested lending asset and pays the full `0.1%` fee equivalent in VPFI up front. That VPFI is held by the protocol until settlement and may produce an effective-tier borrower rebate on proper close, as defined in `docs/FunctionalSpecs/TokenomicsTechSpec.md`.
+  - If the borrower has consented to fee discounts and holds an effective VPFI tier, that tier discount reduces the lending-asset fee directly at acceptance. The fee is never paid in VPFI, nothing is held for the loan, and there is no later rebate, as defined in `docs/FunctionalSpecs/TokenomicsTechSpec.md` §6b.
   - Lock the collateral in the Vaipakam smart contract upon offer submission.
   - For ERC-20 collateral, that escrowed collateral is **locked against withdrawal for as long as the offer is live** — the borrower-side counterpart of the lender principal lock (§3 Lenders / ERC-20). The borrower cannot pull the pledged collateral (or the unfilled remainder of a range offer) back out of their vault while the offer stays open, including via a side door such as unstaking VPFI that is simultaneously pledged as collateral. This closes the pre-acceptance drain that would otherwise let a borrower post an offer, withdraw the pledged collateral, and have a lender accept into a loan that is under-collateralized from birth. At acceptance the lock is **handed off** to the loan's own collateral protection (the collateral never moves — it transitions from "committed to an open offer" to "backing a live loan"); on cancel, on a downward collateral-size edit, and on the unused-collateral refund at acceptance, the relevant portion is released before the funds move, so an offer can always return its own collateral. NFT collateral is held in custody (the token itself, no fungible drain door) and is out of scope. This is the §2207 collateral-protection invariant extended into the pre-loan offer window.
 - **For Rentable NFTs (ERC-721/1155):**
@@ -962,7 +962,7 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
   - `BorrowerClosed.png`
     - The dynamically generated `tokenURI()` will point to the appropriate IPFS image URL based on who created the offer (Lender of Borrower) and its current status.
 - **Status-Keyed Image Scheme:** The four-slot image model should be treated as the fallback baseline. The live metadata system should support status-specific image URLs keyed by position status and side, with per-side defaults and a collection-level fallback. This lets marketplaces distinguish active, repaid, defaulted, liquidated, closed, and fallback-pending positions rather than collapsing every terminal state into one generic closed image.
-- **Marketplace Metadata Polish:** `tokenURI()` should expose realized live-state values for loan positions rather than stale offer minima, including principal, rate, collateral, locked collateral, claimable lanes, borrower VPFI rebate state, and creation time. Numeric amounts should be decimal-formatted with token symbols when metadata reads are available, interest rates should use marketplace-friendly percentage display semantics, and metadata may include `background_color` plus an `external_url` that deep-links to the Vaipakam app for the relevant loan or token.
+- **Marketplace Metadata Polish:** `tokenURI()` should expose realized live-state values for loan positions rather than stale offer minima, including principal, rate, collateral, locked collateral, claimable lanes, and creation time. Numeric amounts should be decimal-formatted with token symbols when metadata reads are available, interest rates should use marketplace-friendly percentage display semantics, and metadata may include `background_color` plus an `external_url` that deep-links to the Vaipakam app for the relevant loan or token.
 - **Metadata Updates:** The NFT metadata (specifically the status and potentially the image URL pointer) is updated by authorized smart contract roles (e.g., `VaipakamOfferManagement.sol`) when an offer or loan state changes (e.g., accepted, cancelled).
 - **Standardized Metadata for Third-Party NFT Platforms:** The metadata for Vaipakam NFTs should follow a stable, standards-aligned JSON structure so that third-party NFT websites, wallets, marketplaces, and portfolio viewers can read and display meaningful information about the position without requiring Vaipakam-specific custom parsing as the only path.
   - The metadata should remain compatible with common NFT metadata expectations used by ERC-721 and ERC-1155 indexers and hosting platforms.
@@ -1195,7 +1195,49 @@ sale proceeds, without weakening the lender's default rights.
   auction's end) prices interest and the late fee at that moment. A
   borrow-or-sell listing posted before any lender accepts hedges the most
   this amount can reach before the grace boundary: the worst-case interest
-  over the term and grace, plus the late fee at the boundary.
+  over the term and grace, plus the late fee at the boundary. Those
+  projections size a listing's floor only. The payout is always what a
+  repayment at the moment of the fill would owe, and whatever the buyer
+  paid above that belongs to the current borrower-position holder.
+- The lender's yield-fee discount applies to a sale exactly as it would to
+  a repayment at the same moment: the part of the treasury's share that
+  the current lender-position holder's discount covers is paid to that
+  holder instead of the treasury. The discount moves value between the
+  lender and the treasury only; it never changes what the borrower side
+  receives.
+- Every collateral sale pays the platform, in one payment, the whole
+  sale price net of the marketplace fee legs, and the platform settles the
+  loan in the same transaction by one rule, whichever listing type sold the
+  collateral (a loan's own listing, or a borrow-or-sell listing carried
+  into a loan). The sale is a repayment funded by the collateral, so it
+  closes the loan exactly as a repayment does: the loan becomes repaid,
+  the lender's due (plus any lender discount) is placed in the lender's
+  Vault and owed to the current lender-position holder through the
+  ordinary lender claim, the treasury receives its share net of any lender
+  discount, and the current borrower-position holder receives the rest in
+  their wallet. When that holder is flagged, or their wallet refuses the
+  payment, the rest is held for them instead and paid by the ordinary
+  borrower claim. The loan settles when the lender claims and the borrower
+  side has nothing left, as after any repayment. A sale that pays less than
+  the lender's due plus the treasury's share at the moment of the fill does
+  not fill. The marketplace order names no position holder, so a position
+  that changes hands after the listing is posted is still paid correctly,
+  and the platform reports the settlement in one event that names every
+  amount as its recipient received it and says whether the borrower's
+  remainder was paid or held (owner decision 2026-10-26, #2876).
+- A collateral sale is neutral between the two sides (owner direction
+  2026-10-27): nothing about one side's position holder may stop the other
+  side's payout. A lender-position holder who is flagged, or whose wallet
+  would refuse the token, does not stop the borrower's sale or cancel a
+  standing listing for it, because the lender is never paid inside the
+  sale itself; the lender's share waits in
+  the lender's Vault, and the lender claim's own screen decides when it may
+  leave. A borrower-side wallet that refuses the remainder does not stop
+  the sale either; the remainder is held. The one refusal is the borrower's
+  own: a sale is the borrower's dealing in their collateral, so a
+  borrower-position holder who is flagged by the time of the fill cannot
+  sell. That refusal stops only the flagged side's own action: the loan
+  stays open with every repayment and default right the lender had.
 - Settlement recipients must follow the current Vaipakam position NFT
   owners at fill time, not only the original lender and borrower
   wallets. This preserves secondary-transfer semantics for both
@@ -1227,9 +1269,8 @@ sale proceeds, without weakening the lender's default rights.
     vault; a held amount that is fully reserved — through whichever
     reservation records it — must not block the holder (#2364).
 - A successful marketplace fill is a proper loan close, not a default.
-  It must settle the lender, treasury, borrower residual, position NFT
-  lock, and borrower VPFI rebate / forfeiture state consistently with
-  other proper-close paths.
+  It must settle the lender, treasury, borrower residual, and position NFT
+  lock consistently with other proper-close paths.
 - If the listing remains unfilled through the loan's grace boundary,
   the ordinary default or liquidation path resumes. The listing must
   not keep a defaultable loan stuck or require a separate borrower action
@@ -1260,10 +1301,12 @@ sale proceeds, without weakening the lender's default rights.
   listing, and the paying bidder of a marketplace match that someone else
   assembles, when the NFT goes to an unflagged account.
 - **Fail-closed backstop for collateral-sale recipients.** The prepay /
-  parallel collateral sale settles inside the marketplace fill and pays the
-  live position holders (the current lender- and borrower-position owners)
-  plus the recorded fee recipients directly, an instant before the loan flips
-  to settled. The sign-time and fill-time recipient screens are *fail-open*
+  parallel collateral sale settles inside the marketplace fill: the
+  marketplace pays the recorded fee recipients directly, and the platform
+  settles the live position holders (the current lender- and
+  borrower-position owners) out of the proceeds, in the same transaction
+  and after the loan has flipped to repaid (so nothing a payout reaches can
+  repay or sell the loan again). The sign-time and fill-time recipient screens are *fail-open*
   oracle reads, so a recipient flagged during a sanctions-oracle outage could
   otherwise be paid; and because the fill is atomic, a screen that merely
   *reverts* on a flagged recipient would roll its own registry write back with
@@ -1524,7 +1567,7 @@ considers it finished.
   lender-self-repay guard used by ordinary repayment.
 - Full-close settlement mirrors ordinary repayment: lender entitlement
   is deposited to the lender vault, treasury receives its fee share,
-  borrower LIF rebate / reward close handling runs, any prepay listing
+  reward close handling runs, any prepay listing
   is cleared, and unused pledged collateral becomes borrower-claimable.
   Favorable-quote surplus principal should transfer directly to the
   current borrower-position NFT holder's wallet.
@@ -1834,7 +1877,7 @@ Watcher and notification support:
   - **A plan exists exactly when a sale will run.** A time-based default that will not sell, because its prices are missing and it enters the fallback without a sale, because its collateral moves to the lender in kind, or because the default is refused, publishes an empty plan, and reading that plan needs no price. Its caller names no amount. The default and its plan follow one routing rule, so a caller is never asked to price a sale the default will not run, and is never left without a quote for a default that needs none. A price the platform distrusts still stops both the plan and the default.
   - **When even all the collateral cannot cover the need** at that floor, the sale offers all of it, the lender is paid first from what it raises, the handling charge is whatever remains after the lender (often nothing), and the settlement says the sale could not cover the need.
   - **Partial liquidation** keeps the keeper's choice of how much to sell, but its charges follow the same base: what the sale raised repays the loan first, and the incentive and handling charge are shares of the amount repaid, never of the proceeds taken alongside it.
-  - **A held borrower share is never stranded by how the loan ends.** A periodic sale's extra held for the borrower stays theirs through any later close-out, including one that leaves the borrower nothing of the collateral. The borrower's claim pays each of its parts on its own — remaining collateral, held proceeds, a pending fee rebate — and refuses only when every part is already paid or empty; the lender's claim does not settle the loan while any part of the borrower's is still unpaid.
+  - **A held borrower share is never stranded by how the loan ends.** A periodic sale's extra held for the borrower stays theirs through any later close-out, including one that leaves the borrower nothing of the collateral. The borrower's claim pays each of its parts on its own — remaining collateral and held proceeds — and refuses only when every part is already paid or empty; the lender's claim does not settle the loan while any part of the borrower's is still unpaid.
   - **Unchanged by this rule:** the in-kind fallback still takes the whole collateral when no route can sell, and its retry sells under its own rules; the discounted liquidation and the internal match, where a buyer pays the debt; and the voluntary swap-to-repay routes, which already sell to need under their own slippage ceiling.
 - **Forced Sales Sell Exactly What They Offer (lender first, owner decision 2026-10-20):** On a liquidation or default the lender is to be made whole as fully as the market allows, and the borrower's share comes only after that. A forced sale therefore never completes as a partial sale: either the whole offered collateral is sold and the proceeds run through the priority order above, or no route sold it and the path's existing failure handling applies — for a liquidation or default, the Fallback Claim Model below, which also pays the lender first. This holds on every forced-sale path — Health-Factor liquidation (full, partial and split route), time-based default, periodic-interest auto-liquidation, and the lender's retry of a fallback sale. Treasury asset conversion follows the same exact-sale rule.
   - A route that sells only part of the collateral offered to it is **refused and undone**: its partial sale is reversed, nothing it delivered is kept, and the next route in the caller's list is tried in the same transaction, exactly as for a route that failed outright. A partial sale must never leave unsold collateral that could reach the borrower while the lender is still owed. Falling through rather than stopping the whole transaction matters because a stale quote at the head of the list must not stop the routes behind it: if one refused route could halt the liquidation, anyone able to change the collateral amount between quote and sale (a borrower adding a token's worth of collateral, for example) could make every quote stale and stall the lender's recovery indefinitely.
@@ -2693,9 +2736,9 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
 
 - **Borrower Loan Initiation Fee Discount:**
 
-  > **SUPERSEDED for new loans — this describes the retired up-front-then-rebate path.** For **every** new loan, no VPFI enters the up-front-fee-and-rebate custody and **there is no rebate to claim later**. How the fee itself is charged depends on the mode: under **HoldOnly** the tier discount is applied **directly to the lending-asset fee at acceptance** and no VPFI moves out of the borrower's vault at all; where the **per-party Full tariff** is enabled, the party's tariff *is* charged in VPFI into protocol custody, but it is credited to the recycled ledger rather than held against the loan for a rebate. So "no VPFI movement" is a HoldOnly statement; "no rebate custody" is the statement that holds for all new loans. Everything below — the up-front full-fee deduction, the custody-for-the-life-of-the-loan holding, the rebate at proper close, and the forfeit-on-default treatment of that held VPFI — applies **only to loans already open on the retired custody path** at the point it was retired, which still settle through their original lifecycle. A platform deployed fresh has no such loans and this block describes nothing that can occur on it. The tier *schedule* below still governs the discount percentages; only the mechanism by which the discount is delivered changed.
+  > **The up-front-then-rebate path is removed (#1980).** An earlier design had the borrower pay the full fee up front in VPFI, held that VPFI in protocol custody for the life of the loan, and paid a rebate on a proper close or forfeited it on default. No loan could reach it after #1352, the platform is pre-live, and every chain is deployed fresh, so no loan was ever left on it. It is gone from the platform. The rules below are the only borrower model.
 
-  Borrowers who maintain a sufficient canonical vaulted VPFI balance for tier eligibility and sufficient protocol-tracked VPFI on the settlement chain to pay the full up-front fee are eligible for the tiered borrower-side `Loan Initiation Fee` discount schedule defined by the tokenomics spec.
+  Borrowers who maintain a sufficient canonical vaulted VPFI balance for tier eligibility are eligible for the tiered borrower-side `Loan Initiation Fee` discount schedule defined by the tokenomics spec.
   - Vault-held VPFI also counts toward the balance-based fee-discount model.
   - The active tier schedule is:
     | Tier | Vaulted VPFI Balance | Discount | Borrower Effective Initiation Fee |
@@ -2707,11 +2750,10 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
 
   - The borrower must explicitly opt in through that same single platform-level user setting consenting to the use of vaulted VPFI for protocol fee discounts.
   - Offer-level or loan-level consent is not required for the borrower discount once the platform-level setting has been enabled.
-  - Only when that platform-level consent is active, the lending asset is liquid, the effective tier is available from Base or the active mirror cache, and sufficient spendable protocol-tracked VPFI is available on the settlement chain should the system deduct the full `0.1%` fee equivalent in VPFI from the borrower's local vault.
-  - The deducted VPFI is held in protocol custody for the life of the loan rather than sent immediately to Treasury.
-  - On proper close through normal repayment, borrower preclose, or refinance, the borrower earns an effective-tier rebate based on the current Base tier or active mirror cache at settlement. The rebate is paid in VPFI alongside the ordinary borrower claim.
-  - On default or HF-based liquidation, the rebate is forfeited: for a matched loan the matcher's configured share is paid to the matcher first and the net becomes Treasury's share, and for an unmatched loan the full held VPFI becomes Treasury's share.
-  - The borrower-side acquisition and rebate flow is defined in `docs/FunctionalSpecs/TokenomicsTechSpec.md`.
+  - The `Loan Initiation Fee` is always charged in the **lending asset** at acceptance. When the platform-level consent is active, the lending asset is liquid, and an effective tier is available from Base or the active mirror cache, the borrower's tier discount reduces that fee directly at acceptance (HoldOnly). No VPFI moves for the fee itself.
+  - Where the per-party Full tariff is enabled and the borrower opts in, the borrower also pays a Full tariff in VPFI from their own vault. It is credited to the recycled ledger at acceptance, it is non-refundable, and it adds an extra own-side discount to the same lending-asset fee.
+  - There is no VPFI held for the loan, no rebate at any close, and nothing VPFI-related forfeited on default or HF-based liquidation. The borrower claim pays no VPFI rebate.
+  - The borrower-side fee flow is defined in `docs/FunctionalSpecs/TokenomicsTechSpec.md` §6b.
 
 - **VPFI Vault Utility Flow:** For the borrower-side and lender-side discount paths:
   - public VPFI pages should be no-wallet marketing / education surfaces for VPFI utility, explaining the protocol token, tiered fee discounts, and how to deposit externally acquired VPFI into the connected app
@@ -2864,7 +2906,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **Copyable Address UX:** Redacted addresses on loan parties, offer creator rows, keeper lists, timeline participant rows, and analytics asset-distribution rows should expose a copy affordance for the full address without crowding explorer-link surfaces.
 - **Your Loans Table:** The dashboard should keep the user's loan history scannable with Role and Status filters, a per-page selector, sortable columns, and a default most-recent-first sort by loan ID. LTV and Health Factor sorting should use batched reads over the filtered result set and keep illiquid or unavailable values from appearing as misleading best results.
 - **Claimable-Loan CTA:** Terminal-state loans with unclaimed funds should show a visible `Claim` action that opens Loan Details, where the claim action bar can present the exact lender / borrower payout.
-- **Loan Details Timeline:** Each Loan Details page should include a chronological event timeline sourced from the frontend log index, with per-event breakdowns for initiation, repayment, settlement, fallback collateral splits, swap retries, collateral additions, VPFI rebates, and final claims.
+- **Loan Details Timeline:** Each Loan Details page should include a chronological event timeline sourced from the frontend log index, with per-event breakdowns for initiation, repayment, settlement, fallback collateral splits, swap retries, collateral additions, and final claims.
 - **Notification Settings:** Manage preferences for SMS/Email alerts.
 - **Analytics:** Basic analytics on lending/borrowing performance.
 - **Data Refresh:** The dashboard will update periodically (e.g., every minute or on user action) to reflect on-chain changes.
@@ -2917,7 +2959,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
   - `VaipakamNFT.sol`: The ERC-721 contract responsible for minting and managing Vaipakam NFTs.
   - `VaipakamGovernance.sol` (Phase 2): Manages proposals and voting.
   - `VaipakamTreasury.sol`: Collects and manages platform fees.
-  - VPFI tokenomics facets (Phase 1): Manage VPFI vault deposit / withdraw utility, fee-discount accounting, borrower LIF rebate custody, treasury routing, and interaction-reward claims.
+  - VPFI tokenomics facets (Phase 1): Manage VPFI vault deposit / withdraw utility, fee-discount accounting, treasury routing, and interaction-reward claims.
   - `ConfigFacet`: Exposes mutable governance configuration and compile-time protocol constants that the frontend uses for live copy, tier tables, thresholds, and tooltips.
   - `OracleAdminFacet`: Exposes oracle-admin setters and getters, including Pyth cross-check, secondary-oracle, PAD, and direct-feed override configuration used by protocol-console tooling.
   - `RewardReporterFacet`: Exposes cross-chain reward reporting and grace-window configuration used by tokenomics accounting and protocol-console tooling.
@@ -3506,7 +3548,7 @@ A web-based tool, integrated as a dedicated page within the Vaipakam frontend, t
 - **NFT Details Display:**
   - Input: Contract Address and Token ID of a Vaipakam NFT.
   - Output: Displays all associated on-chain metadata (e.g., offer ID, loan ID, involved assets, collateral details, interest rate/rental fee, duration, current status - "Offer Created," "Loan Active," "Repaid," "Defaulted," etc.).
-  - Live metadata traits such as loan state, locked-in-vault amount, claimable-now amount, borrower VPFI rebate pending, and created-at timestamp should be surfaced when present and hidden gracefully for older metadata shapes.
+  - Live metadata traits such as loan state, locked-in-vault amount, claimable-now amount, and created-at timestamp should be surfaced when present and hidden gracefully for older metadata shapes.
 - **Authenticity Validation:** Verifies if the NFT was indeed minted by the official VaipakamNFT contract.
 - **Status Verification:** Shows the current, real-time status of the underlying offer or loan as recorded on the blockchain.
 

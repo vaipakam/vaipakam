@@ -149,11 +149,8 @@ contract OfferPreviewFacet {
         }
 
         // LIF estimate. ERC-20 path only — NFT rental offers don't
-        // charge LIF (the `tryApplyBorrowerLif` chain is guarded behind
-        // `offer.assetType == ERC20` in `_acceptOffer`). Mirrors the FULL
-        // precondition `tryApplyBorrowerLif` checks (consent + liquid +
-        // canQuote + vault holds >= the full LIF-equivalent VPFI); see the
-        // Codex round-1 P1 (#196) note in git history for the vault-balance gap.
+        // charge LIF (the charge is guarded behind `offer.assetType ==
+        // ERC20` in `_acceptOffer`).
         //
         // #951 (Codex #959 round-5) — a lender-sale-vehicle accept is a
         // secondary-market position transfer and `_acceptOffer` skips the LIF

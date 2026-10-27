@@ -1105,16 +1105,12 @@ contract InteractionRewardsLensFacet {
      *
      *         **Scoped to #1460, and NOT a general solvency figure.** It nets
      *         ONE custody class. {LibVpfiRecycle}'s separation invariant names
-     *         THREE — `userLifCustody + unclaimedRewardBudget + recycleBucket`
-     *         — and nets only the last. On the FIRST, this comment used to
-     *         say the Diamond "really does hold" borrower LIF taken at
-     *         `acceptOffer`. #1498 corrected that: #1352 retired the
-     *         peg-custody origination path, so no loan opened under current
-     *         rules contributes any `vpfiHeld`, and the term is zero unless
-     *         this Diamond was upgraded from a pre-#1352 deployment holding
-     *         custody against still-open loans. The canonical statement of
-     *         all three classes lives on {LibVpfiRecycle.backingPosition} and
-     *         is deliberately not restated here.
+     *         TWO — `unclaimedRewardBudget + recycleBucket` — and nets only
+     *         the second. (Borrower LIF custody, once a third class, was
+     *         removed with the peg-custody path in #1980.) The canonical
+     *         statement of the classes lives on
+     *         {LibVpfiRecycle.backingPosition} and is deliberately not
+     *         restated here.
      *         Its relationship to #1460's third condition needs stating
      *         carefully. The completion plan §M7 step 0 defines that
      *         condition as `balanceOf − recycleBucket`, and this value is

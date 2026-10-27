@@ -39,7 +39,8 @@ import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
  *            is external -- and payroll). A handler that starts exercising one must add it to V1.
  *         V1 -- `balanceOf(T, diamond) == ledger(T) + legacyFallback(T) + legacyIntent(T)`, where
  *            ledger is zero for USDC and WETH and, for VPFI, the recycle bucket + the stranded-
- *            recovery reservation + every loan's grandfathered LIF custody (`vpfiHeld + rebate`);
+ *            recovery reservation (borrower LIF custody, once a third VPFI term, was removed with
+ *            the peg-custody path in #1980);
  *            legacyFallback is every tracked fallback loan's
  *            `getFallbackCustody(id).legacyDiamondHeld` in T (S2b: fallback custody is
  *            vault-held, so this is zero on a fresh deploy, and a non-zero value is a pre-slice
@@ -51,8 +52,8 @@ import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
  *            gone with S2b -- the custody never enters the Diamond, and the borrower slice
  *            absorbs the floor remainder so the snapshot total equals the row.
  *         V2 -- #2141's end state: no user custody rests in the Diamond at all
- *            (`legacyFallback + legacyIntent + LIF custody == 0`), enforced per class through
- *            {V2_ENFORCED}. S2b enforced the fallback and LIF classes, S3b the intent class (see
+ *            (`legacyFallback + legacyIntent == 0`), enforced per class through
+ *            {V2_ENFORCED}. S2b enforced the fallback class, S3b the intent class (see
  *            {test_V2_EveryClassIsVaultHeld_AndALegacyIntentRowTurnsItRed}, the proof V2 can
  *            fail).
  *         V3 -- every fallback custody row agrees with its snapshot and its lien: for a
@@ -75,11 +76,11 @@ contract DiamondCustodyAttributionInvariant is CustodyInvariantBase {
     /// @dev V2's classes, as bits of {V2_ENFORCED}.
     uint256 internal constant V2_CLASS_FALLBACK = 1;
     uint256 internal constant V2_CLASS_INTENT = 2;
-    uint256 internal constant V2_CLASS_LIF = 4;
     /// @dev The ONE switch for V2, one bit per class. S2b (#1566 slice 2) enforced the fallback
-    ///      class, now vault-held, and the LIF class (grandfathered-only, zero on a fresh deploy);
-    ///      S3b (slice 3) enforces the intent class, whose lot is now pulled only inside its fill.
-    uint256 internal constant V2_ENFORCED = V2_CLASS_FALLBACK | V2_CLASS_INTENT | V2_CLASS_LIF;
+    ///      class, now vault-held; S3b (slice 3) enforces the intent class, whose lot is now
+    ///      pulled only inside its fill. (A third class, borrower LIF custody, was removed with
+    ///      the peg-custody path in #1980.)
+    uint256 internal constant V2_ENFORCED = V2_CLASS_FALLBACK | V2_CLASS_INTENT;
     /// @dev K5 (see the contract notice): no partial-leg dust since S2b, so V1 has no tolerance.
     uint256 internal constant V1_K5_DUST_PER_PARTIAL_LEG = 0;
 
@@ -358,11 +359,11 @@ contract DiamondCustodyAttributionInvariant is CustodyInvariantBase {
         }
     }
 
-    /// @dev The protocol-owned VPFI ledgers plus the grandfathered LIF custody; nothing for USDC/WETH.
+    /// @dev The protocol-owned VPFI ledgers; nothing for USDC/WETH.
     function _ledger(address t) internal view returns (uint256) {
         if (t != vpfi) return 0;
         return ConfigFacet(address(diamond)).getRecycleBucket()
-            + RewardRemittanceLensFacet(address(diamond)).getStrandedRecoveryReserved() + _lifCustody();
+            + RewardRemittanceLensFacet(address(diamond)).getStrandedRecoveryReserved();
     }
 
     /// @dev The legacy fallback term: every tracked fallback loan's Diamond-held custody in `t`, as the
@@ -412,15 +413,6 @@ contract DiamondCustodyAttributionInvariant is CustodyInvariantBase {
         }
     }
 
-    /// @dev Class 3: the Diamond-held borrower LIF VPFI and its rebates, over every loan.
-    function _lifCustody() internal view returns (uint256 sum) {
-        uint256[] memory ids = handler.loanIds();
-        for (uint256 i; i < ids.length; ++i) {
-            (uint256 rebate, uint256 held) = ClaimFacet(address(diamond)).getBorrowerLifRebate(ids[i]);
-            sum += rebate + held;
-        }
-    }
-
     /// @dev V2's left-hand side over the classes in `classes`.
     function _v2Residue(uint256 classes) internal view returns (uint256 residue) {
         address[3] memory tokens = _custodyTokens();
@@ -428,7 +420,6 @@ contract DiamondCustodyAttributionInvariant is CustodyInvariantBase {
             if ((classes & V2_CLASS_FALLBACK) != 0) residue += _legacyFallback(tokens[j]);
             if ((classes & V2_CLASS_INTENT) != 0) residue += _legacyIntent(tokens[j]);
         }
-        if ((classes & V2_CLASS_LIF) != 0) residue += _lifCustody();
     }
 
     function _why() internal view returns (string memory) {

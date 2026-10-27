@@ -117,7 +117,7 @@ top up 拉高，最小值不会。
 discount 在 settlement 时适用于 lender yield fee，也适用于 borrower
 Loan Initiation Fee——就后者而言，它是**对您以 lending asset 支付的费用的直接减免**，在 loan 被 accept 时生效。不会从您的 vault 中扣除 VPFI 来支付该费用，之后也没有任何 rebate 可以 claim。
 
-> **如果您在等待 Loan Initiation Fee 的 rebate，请读这一段。** 早期模型会预先以 VPFI 收取全额费用，在 loan 存续期间托管，并在您 claim 时退回其中一部分。**该路径已停用。** 在其生效期间开立的 loan 仍按那种方式结算，下文关于 rebate 的段落描述的正是这些 loan。今天开立的 loan 没有为其 initiation fee 托管任何 VPFI，也没有待领的 rebate——等待它等于等待一笔不可能到账的钱。
+> **如果您在等待 Loan Initiation Fee 的 rebate，请读这一段。** 早期模型会预先以 VPFI 收取全额费用，在 loan 存续期间托管，并在您 claim 时退回其中一部分。**该路径已被移除。** 从未有任何 loan 在这条路径上开立，因此没有任何 loan 为其 initiation fee 托管 VPFI，也没有待领的 rebate——等待它等于等待一笔不可能到账的钱。
 
 > **Network gas 与协议费用是分开的。** 上面的 discount 适用于 Vaipakam 的 **protocol fees**（yield fee `{liveValue:treasuryFeeBps}`%、Loan Initiation Fee `{liveValue:loanInitiationFeeBps}`%）。每次 on-chain action 都需要的 **blockchain 网络 gas 费**（在 Base / Sepolia / Arbitrum 等链上 create offer / accept / repay / claim / withdraw 等操作时支付给 validators）不是协议费用。Vaipakam 从不收取，由网络收取。它无法按 tier 处理或 rebate，并且取决于 submission 时该链的拥堵情况，与 loan 大小或您的 VPFI tier 无关。
 
@@ -379,8 +379,7 @@ cross-chain-facing contracts 中，受 timelock 控制，也不能移动 assets�
   slippage 影响的价格出售您的 collateral。swap 是 permissionless
   的 — 您的 HF 跌破 1.0 的瞬间，任何人都可以 trigger。
 - **Illiquid-collateral defaults** — Default 会把您的全部 collateral
-  转给 lender，也没有任何 leftover claim：若该 loan 仍在已停用的 VPFI
-  费用路径上，为其发起费托管的 VPFI 会被没收转入 treasury，而不会退还。
+  转给 lender，没有任何 leftover claim。
 
 <a id="create-offer.advanced-options"></a>
 
@@ -602,13 +601,11 @@ claim。lender position NFT 会在同一 transaction 中 burn。
 borrower claim 根据 loan 如何 settle 来返回：
 
 - **Full repayment / preclose / refinance** — 您的 collateral
-  basket 回来；若该 loan 仍在已停用的 VPFI 费用路径上，Loan
-  Initiation Fee 的 VPFI rebate 也会一并结算（可能为零）。
+  basket 回来。不会附带任何 Loan Initiation Fee rebate：您的折扣已在
+  accept 时直接从费用中扣除。
 - **结清该 loan 的 prepay sale** — collateral 归买家，不会退还给您。
   您拿到的是售价减去 lender 应得、treasury 抽成以及 listing 上带的
-  卖方费用之后的金额，支付给持有 borrower position NFT 的人。若该 loan
-  在已停用路径上，请不要指望这里的 rebate：结算时会计算，但之后目前
-  无法领取。
+  卖方费用之后的金额，支付给持有 borrower position NFT 的人。
 - **swap-to-repay** — 为偿还债务而卖出您的 collateral，上限由您设定。
   上限设得宽松时，消耗的可能多于债务严格所需；未被消耗的会回到您手中。
   loan 自身 asset 的盈余通常会直接付给 borrower NFT 持有人，而不是作为
@@ -626,10 +623,7 @@ borrower claim 根据 loan 如何 settle 来返回：
   claim，而不是从结束方式去推断的原因。折扣式拿走反而是确定的，只是方向相反：它既不卖出也不撮合，留给您的始终是 collateral。至于部分 liquidation，它根本不是
   close-out —— loan 仍然开着，也不会产生 claim。请查看 claim，而不要
   假设是哪一种。非流动资产的 default 会拿走整个 basket，什么也不剩
-  ——在这条路径上这是规则，不是结果。rebate 会不会回来，取决于 loan 如何结束：若该 loan 仍在
-  已停用的 VPFI 费用路径上，为其发起费托管的 VPFI 在 default 或
-  liquidation 时会**被没收并转入 treasury**。正常关闭则会结算 rebate——金额取决于
-  结算时刻您的折扣，若那时没有持仓则为零，全额被没收。
+  ——在这条路径上这是规则，不是结果。
 
 borrower position NFT 是在您 claim 时 burn，而不是在 loan 结清时——因此
 liquidation 留下的 surplus 之后仍可领取。但 NFT 还在，本身并不证明有
@@ -846,8 +840,7 @@ route 成您的 principal asset。Recovery 是 slippage 之后的净额。
 一旦 HF 跌破 1.0，任何人都可以触发 HF-based liquidation；swap 会
 以受 slippage 影响的价格出售您的 collateral 来偿还 lender。在
 illiquid collateral 上，default 会把您的全部 collateral 转给 lender，
-且没有任何东西留给您 claim：已停用费用路径下托管的 VPFI 会被没收转入
-treasury。
+且没有任何东西留给您 claim。
 
 <a id="loan-details.parties"></a>
 
@@ -892,10 +885,9 @@ locked" 等)。
 #### 如果您是 borrower
 
 - **Repay** — full 或 partial。Partial 会减少 outstanding 并提高 HF；
-  full 会触发 terminal settlement，包括 VPFI Loan
-  Initiation Fee rebate。
+  full 会触发 terminal settlement。
 - **Preclose direct** — 现在从您的 wallet 支付 outstanding amount，
-  release collateral，并 settle rebate。
+  并 release collateral。
 - **Preclose offset** — 通过 protocol 的 swap router 出售部分
   collateral，用 proceeds repay，并返还剩余。两步：initiate，然后
   complete。
@@ -904,8 +896,7 @@ locked" 等)。
   您的 vault。
 - **Claim as borrower** — 仅在 terminal state 可用。full repayment 时返还
   collateral；default / liquidation 时也可能还有 surplus，因为系统只取走偿还债务
-  和了结它所需的那部分 collateral——参见上文的 Claim Center 一节。已停用
-  费用路径下托管的 VPFI 只在 default 或 liquidation 时被没收；正常关闭会结算按时间加权的 rebate（可能为零）。会 burn borrower position NFT。
+  和了结它所需的那部分 collateral——参见上文的 Claim Center 一节。会 burn borrower position NFT。
 
 ---
 
@@ -1295,9 +1286,6 @@ Refinance 会用新的 principal atomically pay off 您现有的 loan，并
 Collateral 始终留在您的 vault 中 — 没有 unsecured window。与任何
 其他 loan 一样，新 loan 必须在 initiation 时通过 HF ≥ 1.5 gate。
 
-旧 loan 未使用的 Loan Initiation Fee rebate 会作为 swap 的一部分
-正确 settle。
-
 <a id="refinance.position-summary"></a>
 
 ### 您的当前 Position
@@ -1325,7 +1313,6 @@ Book 中，任何 lender 都可以 accept。acceptance 之前可以 cancel。
 2. 全额 repay 旧 loan (principal + interest，减去 treasury cut)。
 3. Burn 旧 position NFT。
 4. Mint 新 position NFT。
-5. Settle 旧 loan 未使用的 Loan Initiation Fee rebate。
 
 如果新 terms 下 HF 低于 1.5，则 revert。
 
@@ -1342,14 +1329,12 @@ Book 中，任何 lender 都可以 accept。acceptance 之前可以 cancel。
 borrower-driven early termination。两条 paths：
 
 - **Direct** — 从您的 wallet 支付 outstanding amount (principal +
-  accrued interest)，release collateral，并 settle unused Loan
-  Initiation Fee rebate。
+  accrued interest)，并 release collateral。
 - **Offset** — initiate offset，通过 protocol 的 4-DEX swap failover
   为 principal asset 出售一部分 collateral；complete offset，用
-  proceeds repay，剩余 collateral 返回给您。同样会进行 rebate
-  settlement。
+  proceeds repay，剩余 collateral 返回给您。
 
-没有 flat early-close penalty。time-weighted VPFI math 会处理公平性。
+没有 flat early-close penalty。
 
 <a id="preclose.position-summary"></a>
 
