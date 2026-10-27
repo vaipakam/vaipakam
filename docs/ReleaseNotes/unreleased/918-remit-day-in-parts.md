@@ -1,4 +1,4 @@
-## Rewards — A day's reward budget may be sent to a mirror in parts (PR #TBD)
+## Rewards — A day's reward budget may be sent to a mirror in parts (PR #2959)
 
 Until now a day's reward budget left Base for a mirror in one transfer, so a
 day whose slice was larger than the cross-chain lane could carry could never be
