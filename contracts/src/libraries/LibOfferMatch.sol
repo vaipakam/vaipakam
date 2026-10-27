@@ -71,7 +71,15 @@ library LibOfferMatch {
         // ordinal ABI-stable.
         Paused,                   // diamond globally paused (whenNotPaused)
         Sanctioned,               // `matcher` flagged by the sanctions oracle → SanctionedAddress(matcher)
-        MatcherDisabled           // partialFillEnabled OFF → FunctionDisabled(3)
+        MatcherDisabled,          // partialFillEnabled OFF → FunctionDisabled(3)
+        // #2727 — the two offers differ on a lifecycle term the loan carries
+        // (full-term vs pro-rata interest, partial repay, prepay listing, the
+        // periodic-interest cadence) or, for an NFT loan, on the rental-fee
+        // asset. A match binds BOTH parties to the loan's terms, so it admits
+        // only a pair that offered the same ones. `matchOffers` reverts
+        // `LifecycleTermsMismatch`. Appended last to keep every prior ordinal
+        // ABI-stable.
+        LifecycleTermsMismatch
     }
 
     /// @notice Structured return from `previewMatch`. Bots check
@@ -479,6 +487,18 @@ library LibOfferMatch {
             r.errorCode = MatchError.DurationMismatch;
             return r;
         }
+        // #2727 — the loan takes its lifecycle terms from the borrower offer
+        // (`LoanFacet` copies them from the offer `acceptOfferInternal` runs),
+        // so a lender is bound to them too. Admit only a pair that offered the
+        // same terms: nobody joins a loan whose interest model, repayment
+        // options, collateral-sale consent or settlement cadence differs from
+        // what they signed. (`allowsParallelSale` is not compared: it governs
+        // the borrower offer while it is open, never the loan, and only a
+        // borrower offer can carry it.)
+        if (!_lifecycleTermsAgree(L, B)) {
+            r.errorCode = MatchError.LifecycleTermsMismatch;
+            return r;
+        }
 
         // Lender's remaining capacity = amountMax - amountFilled.
         uint256 lenderRemaining = L.amountMax - L.amountFilled;
@@ -719,6 +739,24 @@ library LibOfferMatch {
         r.lenderRemainingPostMatch = lenderRemaining - r.matchAmount;
         r.errorCode = MatchError.Ok;
         return r;
+    }
+
+    /// @dev #2727 — whether the two offers agree on every term the loan
+    ///      carries beyond amount, rate, duration and collateral: the interest
+    ///      model, partial repay, prepay-listing consent, the periodic-interest
+    ///      cadence, and (for an NFT loan, where it is the rental fee asset)
+    ///      the prepay asset. An ERC-20 loan never reads `prepayAsset`, and
+    ///      offers carry differing placeholders there, so it is compared only
+    ///      when the lending asset is an NFT.
+    function _lifecycleTermsAgree(
+        LibVaipakam.Offer memory L,
+        LibVaipakam.Offer storage B
+    ) private view returns (bool) {
+        return L.useFullTermInterest == B.useFullTermInterest
+            && L.allowsPartialRepay == B.allowsPartialRepay
+            && L.allowsPrepayListing == B.allowsPrepayListing
+            && L.periodicInterestCadence == B.periodicInterestCadence
+            && (B.assetType == LibVaipakam.AssetType.ERC20 || L.prepayAsset == B.prepayAsset);
     }
 
     /// @notice #625 WI-2b — non-mutating preview of a `matchIntent` fill. Runs
@@ -963,5 +1001,9 @@ library LibOfferMatch {
         o.collateralAmountMax = reqColl;
         o.durationDays = durationDays; // == counterparty term (≤ maxDuration)
         o.fillMode = LibVaipakam.FillMode.Partial;
+        // #2727 — the lifecycle terms a lender intent stands for, the same
+        // ones `matchIntent`'s slice carries: full-term interest, no partial
+        // repay, no prepay listing, no periodic cadence (the zero defaults).
+        o.useFullTermInterest = true;
     }
 }
