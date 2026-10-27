@@ -1,4 +1,4 @@
-## Thread — a match admits only offers that chose the same loan terms (PR #TBD)
+## Thread — a match admits only offers that chose the same loan terms (PR #2933)
 
 A permissionless match pairs a lender offer with a borrower offer and opens
 one loan binding both of them. Until now the match compared assets, duration,
