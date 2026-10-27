@@ -1,4 +1,4 @@
-## Thread — The launch gate fits the contract size limit again (PR #TBD)
+## Thread — The launch gate fits the contract size limit again (PR #2978)
 
 The launch gate, the contract a production Diamond's first unpause runs
 through to re-check every launch requirement, had grown past the 24,576-byte
