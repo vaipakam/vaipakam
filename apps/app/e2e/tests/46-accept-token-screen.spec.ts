@@ -21,9 +21,9 @@
  *  Asserted, against ONE signed order:
  *  1. BLOCK: the card names the finding, and the Fill button stays disabled
  *     with consent ticked.
- *  2. OUTAGE: a check that cannot run holds the button and offers "Check
- *     again"; once the check answers clean, consent given while it was held
- *     is void, and a fresh tick enables Fill.
+ *  2. OUTAGE: a check that cannot run holds the button and, once it has
+ *     failed, offers "Check again"; once the check answers clean, consent
+ *     given while it was held is void, and a fresh tick enables Fill.
  *  3. CHANGED WARNING: consent given against warning A, then the screen
  *     reports warning B. Fill refuses before any wallet prompt (no
  *     AcceptTerms request, no transaction), the card now shows B and the
@@ -120,6 +120,8 @@ async function openFillCard(
   answer: () => GoPlusAnswer,
 ): Promise<{ taker: WalletSession; card: Locator; consent: Locator; fill: Locator }> {
   const taker = await launchWallet('borrower', { advanced: true });
+  // Earlier steps' pages stay open; the taker under test is the one in front.
+  await taker.page.bringToFront();
   await mockGoPlus(taker.page, answer);
   await openMarketViaCustomPair(taker.page, tenor, MUSDC, screened!.base);
   await connectWallet(taker.page);
@@ -167,11 +169,17 @@ test('a signed fill runs the token screen: a block or an outage holds it, a chan
     await expect(card).toContainText(copy.tokenSecurity.gateUnknown(LEG), {
       timeout: 30_000,
     });
+    // The same copy shows while the first check is still in flight; "Check
+    // again" appears only once the check has FAILED (its own retry spent).
+    // Wait for it before the service recovers, or the in-flight retry
+    // would read the clean answer and the outage would never be shown.
+    const checkAgain = card.getByRole('button', { name: copy.tokenSecurity.retry });
+    await expect(checkAgain).toBeVisible({ timeout: 30_000 });
     await consent.check();
     await expect(fill).toBeDisabled();
 
     answer = { row: goPlusRow() };
-    await card.getByRole('button', { name: copy.tokenSecurity.retry }).click();
+    await checkAgain.click();
     await expect(card).not.toContainText(copy.tokenSecurity.gateUnknown(LEG), {
       timeout: 30_000,
     });
