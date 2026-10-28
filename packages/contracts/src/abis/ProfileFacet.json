@@ -384,6 +384,25 @@
   },
   {
     "type": "function",
+    "name": "sanctionsStatus",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.SanctionsRead"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "setKeeperAccess",
     "inputs": [
       {

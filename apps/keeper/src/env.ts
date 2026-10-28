@@ -196,11 +196,31 @@ interface BaseEnv {
    *  over every provable day not yet proven closed. A plain var. */
   REWARD_CLOSE_OUT_WINDOW_DAYS?: string;
 
+  // Grace auto-list pass (#2984). `secret_text` like the flags above.
+  /** 'true' arms the grace auto-list pass (in addition to KEEPER_ENABLED):
+   *  `autoListAtFloorOnGrace` for NFT-collateral loans in their grace window.
+   *  Permissionless; it pays only gas and moves no value to the keeper. */
+  PREPAY_AUTO_LIST_ENABLED?: string;
+
   // Protocol upkeep pass (#2984). `secret_text` like the flags above.
   /** 'true' arms the protocol upkeep pass (in addition to KEEPER_ENABLED):
    *  the buyback-intent expiry and the tier LTV cache refresh. Both
    *  permissionless; neither pays a fee or moves value to the keeper. */
   PROTOCOL_UPKEEP_ENABLED?: string;
+  /** 'true' adds the #2984 prepay-sale sanctions sync to the armed protocol
+   *  upkeep pass: `syncPrepaySaleListing` / `syncPrepaySaleOffer` for a live
+   *  listing with a party the oracle flags, which commits the flag to the
+   *  fail-closed registry and cancels the listing. Permissionless; no fee,
+   *  nothing to the keeper. Read only while PROTOCOL_UPKEEP_ENABLED arms the
+   *  pass. */
+  PREPAY_SALE_SANCTIONS_SYNC_ENABLED?: string;
+  /** #2984 — 'true' adds the tier-push retry to the protocol upkeep pass
+   *  (step 4): deliverTierPush for a user whose committed tier push a
+   *  broadcast lane is still owed, when the protocol broadcast budget can
+   *  pay the lane now. Permissionless; the keeper attaches no value, and the
+   *  lane's CCIP fee is the protocol budget's under the facet's own rule.
+   *  Read only while PROTOCOL_UPKEEP_ENABLED arms the pass. */
+  TIER_PUSH_RETRY_ENABLED?: string;
   /** Seconds after which a cached tier LTV is refreshed even when its value
    *  would not change (default 7 days; the contract uses a cached tier only
    *  while it is under 14 days old). A plain var. */
@@ -394,6 +414,9 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_CLOSE_OUT_ENABLED',
   'REWARD_CLOSE_OUT_WINDOW_DAYS',
   'PROTOCOL_UPKEEP_ENABLED',
+  'PREPAY_SALE_SANCTIONS_SYNC_ENABLED',
+  'TIER_PUSH_RETRY_ENABLED',
+  'PREPAY_AUTO_LIST_ENABLED',
   'TIER_LTV_REFRESH_AFTER_SEC',
   'REWARD_ZEROED_DAY_ENABLED',
   'REWARD_ZEROED_DAY_WINDOW_DAYS',
@@ -575,6 +598,9 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_CLOSE_OUT_ENABLED: raw.REWARD_CLOSE_OUT_ENABLED,
     REWARD_CLOSE_OUT_WINDOW_DAYS: raw.REWARD_CLOSE_OUT_WINDOW_DAYS,
     PROTOCOL_UPKEEP_ENABLED: raw.PROTOCOL_UPKEEP_ENABLED,
+    PREPAY_SALE_SANCTIONS_SYNC_ENABLED: raw.PREPAY_SALE_SANCTIONS_SYNC_ENABLED,
+    TIER_PUSH_RETRY_ENABLED: raw.TIER_PUSH_RETRY_ENABLED,
+    PREPAY_AUTO_LIST_ENABLED: raw.PREPAY_AUTO_LIST_ENABLED,
     TIER_LTV_REFRESH_AFTER_SEC: raw.TIER_LTV_REFRESH_AFTER_SEC,
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,
     REWARD_ZEROED_DAY_WINDOW_DAYS: raw.REWARD_ZEROED_DAY_WINDOW_DAYS,

@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { Abi, Address, PublicClient } from 'viem';
-import { PassReader } from '../src/passReader';
+import { boundedCall, PassReader } from '../src/passReader';
 import { PastRunDeadline } from '../src/batchRead';
 import { SEND_RESERVE_MS } from '../src/runWindow';
 
@@ -58,5 +58,32 @@ describe('PassReader', () => {
     const out = await r.many([{ functionName: 'x', args: [] }], 'xs');
     expect(out).toEqual([undefined]);
     expect(Date.now() - t0).toBeLessThan(1_000);
+  });
+});
+
+describe('boundedCall', () => {
+  it('returns the work before the cutoff', async () => {
+    expect(await boundedCall(Date.now() + 5_000, 'x', () => later(1, 3))).toBe(3);
+  });
+
+  it('refuses work not yet started once the cutoff has passed, without starting it', async () => {
+    let started = false;
+    await expect(
+      boundedCall(Date.now() - 1, 'x', async () => {
+        started = true;
+        return 1;
+      }),
+    ).rejects.toBeInstanceOf(PastRunDeadline);
+    expect(started).toBe(false);
+  });
+
+  it('abandons work still in flight at the cutoff', async () => {
+    const t0 = Date.now();
+    await expect(boundedCall(Date.now() + 50, 'x', () => later(2_000, 1))).rejects.toBeInstanceOf(PastRunDeadline);
+    expect(Date.now() - t0).toBeLessThan(1_000);
+  });
+
+  it('passes the work\'s own failure through', async () => {
+    await expect(boundedCall(Date.now() + 5_000, 'x', () => Promise.reject(new Error('rpc down')))).rejects.toThrow('rpc down');
   });
 });

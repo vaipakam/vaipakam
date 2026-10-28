@@ -1231,7 +1231,7 @@ artifacts and stay in their respective env / config:
   `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`,
   `REWARD_DELIVERY_PROOF_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`,
   `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
-  `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`, `RPC_*`,
+  `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`, `RPC_*`,
   `TG_BOT_TOKEN`,
   `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID` (operator alerts — see "Two
   Telegram bots" below), `PUSH_CHANNEL_PK`, `ZEROEX_API_KEY`,
@@ -1249,7 +1249,10 @@ artifacts and stay in their respective env / config:
   `REWARD_CLOSE_OUT_ENABLED`, `rewardZeroedDay` (#2984) on
   `REWARD_ZEROED_DAY_ENABLED`, `rewardReturnTransport` (#2984) on
   `REWARD_RETURN_TRANSPORT_ENABLED`, `protocolUpkeep` (#2984) on
-  `PROTOCOL_UPKEEP_ENABLED`, `graceDefault` (#2483) on
+  `PROTOCOL_UPKEEP_ENABLED` (its prepay-sale sanctions sync step also on
+  `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, its tier-push retry step on
+  `TIER_PUSH_RETRY_ENABLED`), `prepayAutoList` (#2984) on
+  `PREPAY_AUTO_LIST_ENABLED`, `graceDefault` (#2483) on
   `GRACE_DEFAULT_ENABLED` and `periodicSettle` on
   `PERIODIC_SETTLE_ENABLED`, all added after it. `rewardDayClose` makes the
   daily `closeDay` / `finalizeDay` / `broadcastGlobal` calls and pays their
@@ -1810,6 +1813,15 @@ functional specs. Two tiers:
   third-party API, real build env): a committed driver under
   `apps/app/e2e/live/`, run post-deploy per the live-review DoD and
   as a batch via `e2e/live/run-live-batch.mjs` before testnet releases.
+
+A matrix row is a SUMMARY (#2143, owner decision 2026-10-28): each cell
+holds a sentence or two, at most 600 characters, and the reasoning, round
+history and refusals go in the row's section of
+[`apps/app/e2e/COVERAGE-NOTES.md`](apps/app/e2e/COVERAGE-NOTES.md), linked
+from the cell. The rule exists because the per-PR discipline only ever
+appends, and cells had grown past 60,000 characters; the app's typecheck
+enforces it (`scripts/check-coverage-matrix.ts`), so extend a row's notes
+section rather than its cell.
 
 The non-blocking `app-coverage-drift` workflow warns on merges that
 change `apps/app/src/` without touching the e2e surface. Never park

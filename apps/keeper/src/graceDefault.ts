@@ -219,8 +219,7 @@ async function processChain(env: Env, chain: ChainConfig, visit: number, deadlin
   };
 
   // This window's visit count, so each visit to it takes the next batch.
-  const round = Math.floor(visit / window.count);
-  const { picked, deferred } = pickBatch(candidates, round, MAX_ATTEMPTS_PER_RUN);
+  const { picked, deferred } = pickBatch(candidates, window.round, MAX_ATTEMPTS_PER_RUN);
   if (deferred.length > 0) {
     // Named, not just counted: an operator asking why one loan is still
     // Active must be able to tell "waiting its turn" from "never seen".

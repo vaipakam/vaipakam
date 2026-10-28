@@ -766,7 +766,7 @@ describe('findDefaultable', () => {
     await expect(findDefaultable(client, DIAMOND, 84532)).resolves.toEqual({
       defaultable: [5n],
       unread: [6n],
-      window: { index: 0, count: 1, total: 3 },
+      window: { index: 0, count: 1, total: 3, round: 0 },
     });
     expect(seen).toEqual([555n, 555n, 555n]);
   });
@@ -793,7 +793,7 @@ describe('findDefaultable', () => {
     } as unknown as PublicClient;
 
     const third = await findDefaultable(client, DIAMOND, 84532, 2);
-    expect(third.window).toEqual({ index: 2, count: 3, total: Number(total) });
+    expect(third.window).toEqual({ index: 2, count: 3, total: Number(total), round: 0 });
     // The last window holds only the 50 ids past 2 × SCAN_WINDOW.
     expect(pages).toEqual([[BigInt(SCAN_WINDOW * 2), 50n]]);
     expect(aggregates).toBe(1);

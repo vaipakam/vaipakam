@@ -212,13 +212,15 @@ export async function settledChunkedRead<K>(
   label: string,
   cutoff: number,
   run: number,
+  /** Read every chunk at this block rather than the head (see {@link batchedRead}). */
+  blockNumber?: bigint,
 ): Promise<Map<K, BatchResult>> {
   const out = new Map<K, BatchResult>();
   const order = walkFrom(keys, run);
   for (let i = 0; i < order.length; i += chunk) {
     const part = order.slice(i, i + chunk);
     // eslint-disable-next-line no-await-in-loop
-    const res = await settledRead(client, part.map(call), `${label} ${i}/${order.length}`, cutoff);
+    const res = await settledRead(client, part.map(call), `${label} ${i}/${order.length}`, cutoff, blockNumber);
     part.forEach((k, j) => out.set(k, res[j]));
   }
   return out;
@@ -258,7 +260,13 @@ export async function settleBy<T>(work: Promise<T>, deadline: number, onCut: () 
 }
 
 /** A read refused because the pass's run deadline has passed (#2497 re-cut). */
-export class PastRunDeadline extends Error {}
+export class PastRunDeadline extends Error {
+  /** What `callErrors.shortErr` reports: the message, which names the read
+   *  and the cutoff it missed, so an unread line says why. */
+  get shortMessage(): string {
+    return this.message;
+  }
+}
 
 /** The client READ methods a pass uses, each refused past the deadline. */
 const DEADLINE_GUARDED = new Set(['readContract', 'multicall', 'simulateContract', 'call', 'getLogs', 'getCode', 'getBytecode', 'getStorageAt']);
