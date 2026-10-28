@@ -1321,8 +1321,12 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         return LibVaipakam.storageSlot().cfgKeeperRewardEnabled;
     }
 
-    /// @notice Admin: TWAP staleness threshold (Phase 1 use). 0 falls
-    ///         back to the default 1800 seconds (30 min).
+    /// @notice Admin: TWAP staleness threshold for the planned Phase-1
+    ///         TWAP conversion. 0 falls back to the default 1800 seconds
+    ///         (30 min). That conversion is not built: the value is stored
+    ///         and no keeper reward reads it today, so setting it changes
+    ///         no payout (every reward converts at the fixed rate in
+    ///         {LibKeeperReward}).
     function setKeeperRewardTwapMaxAgeSec(uint32 secs)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
