@@ -1,4 +1,4 @@
-## Thread — Repay all and Close all early on loans from one offer (PR #<n>)
+## Thread — Repay all and Close all early on loans from one offer (PR #3060)
 
 When one of a borrower's offers filled into two or more loans that are
 still open, the Positions page now shows a card for that offer with
