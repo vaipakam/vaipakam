@@ -1,4 +1,4 @@
-## Thread — the docs path gate checks that every cited path exists (PR #<n>)
+## Thread — the docs path gate checks that every cited path exists (PR #3023)
 
 The blocking docs path gate on the operator runbooks used to catch one thing: a citation of a directory that had been removed or renamed. It now also catches a runbook that links to, or shows as code, a repository path the tracked tree does not have, such as a wrong spec path, a script that was deleted, or a file name with a typo.
 
