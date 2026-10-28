@@ -110,7 +110,9 @@ const NOTICE_INTERVAL_SEC = 10 * 365 * 86_400;
 /** Outcomes after which a notice is not owed again. `suppressed` means its key
  *  was delivered before; `unconfigured` means the deployment has no ops bot,
  *  and `sendOpsAlert` has written the notice to the journal instead, which is
- *  the only place it can go there. */
+ *  the only place it can go there. With no bot there is no delivery record
+ *  either, so the journal repeats the notice on each run until the day drops
+ *  below the floor. */
 const NOTICE_DELIVERED: ReadonlySet<OpsAlertOutcome> = new Set(['sent', 'suppressed', 'unconfigured']);
 const READ_CHUNK = 100;
 

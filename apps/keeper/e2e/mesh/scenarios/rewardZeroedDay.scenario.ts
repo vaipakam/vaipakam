@@ -27,8 +27,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { openLoan, repayInFull } from '@vaipakam/anvil-harness/lending';
 import { runRewardDayClose } from '../../../src/rewardDayClose';
 import { PASS_CADENCE_SEC, runRewardZeroedDay } from '../../../src/rewardZeroedDay';
+import type { Env } from '../../../src/env';
 import { keeperEnvFor, tickNow, type KeeperHarness } from '../../harness/keeperEnv';
-import { collectOpsAlerts, type OpsAlertLog } from '../../harness/opsAlerts';
+import { opsBotSink, type OpsBotSink } from '../../harness/opsAlerts';
 import { openMeshScenario, type MeshChain, type MeshScenario } from '../mesh';
 import { FIFTEEN_MIN_MS, transactionsSince } from '../rewardCycle';
 import { BASE_ID, MIRROR_ID } from '../fixture';
@@ -42,12 +43,16 @@ const DAYS = [1] as const;
 
 let m: MeshScenario;
 let k: KeeperHarness;
-let alerts: OpsAlertLog;
+/** The operators' chat. A configured bot, as in production: the keeper
+ *  records each notice it delivered, so a later run does not post it again. */
+let sink: OpsBotSink;
+let env: Env;
 
 beforeAll(async () => {
   m = await openMeshScenario();
   k = await keeperEnvFor([m.base, m.mirror], ['REWARD_DAY_CLOSE_ENABLED', 'REWARD_ZEROED_DAY_ENABLED']);
-  alerts = collectOpsAlerts();
+  sink = opsBotSink();
+  env = { ...k.env, ...sink.env } as Env;
 });
 
 afterAll(async () => {
@@ -62,14 +67,14 @@ async function warpTo(target: number): Promise<void> {
 
 async function dayClose(): Promise<void> {
   await m.syncClock();
-  await runRewardDayClose(k.env, tickNow(FIFTEEN_MIN_MS));
+  await runRewardDayClose(env, tickNow(FIFTEEN_MIN_MS));
 }
 
 /** One zeroed-day run, with what the mirror mined during it. */
 async function zeroedDay(): Promise<{ from: string; to: string | null }[]> {
   await m.syncClock();
   const from = await m.mirror.blockNumber();
-  await runRewardZeroedDay(k.env, tickNow(ZEROED_MS));
+  await runRewardZeroedDay(env, tickNow(ZEROED_MS));
   return transactionsSince(m.mirror, from);
 }
 
@@ -118,7 +123,7 @@ describe('the zeroed-day pass on a Base/mirror pair', () => {
       const stamp = await m.mirror.read<readonly unknown[]>('getDayPoolStamp', [BigInt(day)]); // eslint-disable-line no-await-in-loop
       expect(stamp[0], `day ${day}'s pool stamp installed`).toBe(true);
     }
-    alerts.clear();
+    sink.clear();
   });
 
   it('quotes the zeroed day toward Base, and Base stores the quote', async () => {
@@ -137,12 +142,12 @@ describe('the zeroed-day pass on a Base/mirror pair', () => {
     expect(landed).toHaveLength(3);
     const stored = (await m.base.diamondEvents('CompQuoteStored', from + 1n)).filter((e) => Number(e.args.sourceChainId) === MIRROR_ID);
     expect(stored.map((e) => Number(e.args.dayId)).sort()).toEqual([...DAYS]);
-    expect(alerts.texts).toEqual([]);
+    expect(sink.posts).toEqual([]);
   });
 
   it('sends nothing while the quoted day waits inside its lapse window', async () => {
     expect(await zeroedDay()).toEqual([]);
-    expect(alerts.texts).toEqual([]);
+    expect(sink.posts).toEqual([]);
   });
 
   it('lapses the day past its frozen expiry, records an exact loss and posts one notice', async () => {
@@ -165,13 +170,13 @@ describe('the zeroed-day pass on a Base/mirror pair', () => {
       const a = await accum(day); // eslint-disable-line no-await-in-loop
       expect([loss.lender18, loss.borrower18], 'the loss is the quote it never received').toEqual([a[2], a[3]]);
     }
-    expect(alerts.texts).toHaveLength(1);
-    for (const day of DAYS) expect(alerts.texts.some((t) => t.includes(`Zeroed reward day ${day} on chain ${MIRROR_ID}`))).toBe(true);
-    alerts.clear();
+    expect(sink.posts).toHaveLength(1);
+    for (const day of DAYS) expect(sink.posts.some((t) => t.includes(`Zeroed reward day ${day} on chain ${MIRROR_ID}`))).toBe(true);
+    sink.clear();
   });
 
   it('sends nothing more', async () => {
     expect(await zeroedDay()).toEqual([]);
-    expect(alerts.texts).toEqual([]);
+    expect(sink.posts).toEqual([]);
   });
 });
