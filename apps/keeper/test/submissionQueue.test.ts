@@ -14,6 +14,7 @@ import {
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { sendInSubmissionSlot } from '../src/keeperSend';
+import { gasLimitFromEstimate } from '@vaipakam/lib/gasLimit';
 import {
   FLOOR_TTL_MS,
   isDefinitiveRejection,
@@ -59,6 +60,8 @@ interface Node {
   holdEstimate?: Promise<void>;
   /** Answer the fee reads viem makes when a send names no fees. */
   serveFees?: boolean;
+  /** The gas limit each accepted broadcast was signed with. */
+  gas?: bigint[];
 }
 
 function nodeWallet(node: Node): WalletClient {
@@ -102,6 +105,7 @@ function nodeWallet(node: Node): WalletClient {
               throw new Error('nonce too low');
             }
             node.accepted.push(tx.nonce);
+            node.gas?.push(tx.gas!);
             if (node.loseAnswer) {
               node.loseAnswer = false;
               throw new Error('request timed out');
@@ -404,5 +408,33 @@ describe('every send carries its run deadline (#2572)', () => {
       expect(failures).toEqual(['[site] broadcast failed: nonce too low']);
       expect(log).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('every send carries the one gas-limit rule (#2997)', () => {
+  // The mock node estimates every call at 21,000 gas.
+  const MARGINED = gasLimitFromEstimate(21_000n);
+
+  it('signs a queued send that names no limit at the estimate plus the margin', async () => {
+    const node: Node = { accepted: [], rejected: [], gas: [] };
+    const wallet = queuedWallet(nodeWallet(node), CHAIN_ID, FAR);
+    await wallet.sendTransaction({ account, chain: null, to: TO, maxFeePerGas: 2n, maxPriorityFeePerGas: 1n } as never);
+    expect(MARGINED).toBe(27_300n);
+    expect(node.gas).toEqual([MARGINED]);
+  });
+
+  it('keeps a limit the caller named', async () => {
+    const node: Node = { accepted: [], rejected: [], gas: [] };
+    const wallet = queuedWallet(nodeWallet(node), CHAIN_ID, FAR);
+    await wallet.sendTransaction({ account, chain: null, to: TO, ...FEES } as never);
+    expect(node.gas).toEqual([21_000n]);
+  });
+
+  it('applies it on the raw-slot path and on a send whose nonce the caller chose', async () => {
+    const node: Node = { accepted: [], rejected: [], gas: [], serveFees: true };
+    await sendInSubmissionSlot(nodeWallet(node), CHAIN_ID, FAR, TO, '0x');
+    const wallet = queuedWallet(nodeWallet(node), CHAIN_ID, FAR);
+    await wallet.sendTransaction({ account, chain: null, to: TO, nonce: 1, maxFeePerGas: 2n, maxPriorityFeePerGas: 1n } as never);
+    expect(node.gas).toEqual([MARGINED, MARGINED]);
   });
 });

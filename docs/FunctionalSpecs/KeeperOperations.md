@@ -78,6 +78,13 @@ evidence that the migration has completed.
   order. Work on another network is independent. A rejected unsent action
   cannot reserve a transaction number indefinitely; a broadcast whose result
   is unknown must not be replaced as if it had never reached the network.
+- Every transaction the keeper sends carries a gas limit above the node's
+  estimate by the repository's one fixed margin, unless the call names its
+  own limit. A node estimates against the latest block with no margin, and
+  the transaction mines in a later block, so a call whose cost moves with
+  time would otherwise run out of gas at the bare estimate. Unused gas is
+  not charged; the keeper's account must still hold the fee for the higher
+  limit for a send to be accepted.
 - Every pass has a finite deadline. Ordinarily it is the scheduled minute
   plus the pass's cadence, less a thirty-second margin. A send whose queue
   slot or preparation reaches that deadline is deferred without broadcast.
