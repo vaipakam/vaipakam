@@ -196,6 +196,12 @@ interface BaseEnv {
    *  over every provable day not yet proven closed. A plain var. */
   REWARD_CLOSE_OUT_WINDOW_DAYS?: string;
 
+  // Grace auto-list pass (#2984). `secret_text` like the flags above.
+  /** 'true' arms the grace auto-list pass (in addition to KEEPER_ENABLED):
+   *  `autoListAtFloorOnGrace` for NFT-collateral loans in their grace window.
+   *  Permissionless; it pays only gas and moves no value to the keeper. */
+  PREPAY_AUTO_LIST_ENABLED?: string;
+
   // Protocol upkeep pass (#2984). `secret_text` like the flags above.
   /** 'true' arms the protocol upkeep pass (in addition to KEEPER_ENABLED):
    *  the buyback-intent expiry and the tier LTV cache refresh. Both
@@ -394,6 +400,7 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_CLOSE_OUT_ENABLED',
   'REWARD_CLOSE_OUT_WINDOW_DAYS',
   'PROTOCOL_UPKEEP_ENABLED',
+  'PREPAY_AUTO_LIST_ENABLED',
   'TIER_LTV_REFRESH_AFTER_SEC',
   'REWARD_ZEROED_DAY_ENABLED',
   'REWARD_ZEROED_DAY_WINDOW_DAYS',
@@ -575,6 +582,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_CLOSE_OUT_ENABLED: raw.REWARD_CLOSE_OUT_ENABLED,
     REWARD_CLOSE_OUT_WINDOW_DAYS: raw.REWARD_CLOSE_OUT_WINDOW_DAYS,
     PROTOCOL_UPKEEP_ENABLED: raw.PROTOCOL_UPKEEP_ENABLED,
+    PREPAY_AUTO_LIST_ENABLED: raw.PREPAY_AUTO_LIST_ENABLED,
     TIER_LTV_REFRESH_AFTER_SEC: raw.TIER_LTV_REFRESH_AFTER_SEC,
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,
     REWARD_ZEROED_DAY_WINDOW_DAYS: raw.REWARD_ZEROED_DAY_WINDOW_DAYS,

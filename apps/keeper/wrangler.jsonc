@@ -375,6 +375,11 @@
   //     refresh. Both permissionless; it pays no fee and moves nothing to the
   //     keeper. Ships unset. Needs no on-chain role. Arming it is an owner
   //     decision.
+  //   - PREPAY_AUTO_LIST_ENABLED — 'true' arms the #2984 grace auto-list
+  //     pass: autoListAtFloorOnGrace for NFT-collateral loans in grace, every
+  //     minute. Permissionless; it pays only gas and moves nothing to the
+  //     keeper. Ships unset. Needs no on-chain role. Arming it is an owner
+  //     decision.
   //
   // (b) GENUINE PLAIN VARS. `keep_vars: true` preserves the ones this config
   //     does NOT declare — it suppresses the delete of bindings absent from

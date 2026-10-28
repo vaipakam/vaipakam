@@ -224,8 +224,7 @@ async function processChain(env: Env, chain: ChainConfig, visit: number, deadlin
       }),
   };
 
-  const round = Math.floor(visit / window.count);
-  const { picked, deferred } = pickBatch(due, round, MAX_ATTEMPTS_PER_RUN);
+  const { picked, deferred } = pickBatch(due, window.round, MAX_ATTEMPTS_PER_RUN);
   if (deferred.length > 0) {
     console.log(`[keeper] periodicSettle ${where} deferred-by-cap loans=${deferred.join(',')}`);
   }

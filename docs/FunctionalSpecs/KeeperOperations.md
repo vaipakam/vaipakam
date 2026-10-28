@@ -479,6 +479,33 @@ evidence that the migration has completed.
   chain only when its connection answers for that chain, and a value it
   could not read stops the affected step and is stated in the run's report.
 
+## Listing NFT collateral during grace
+
+- While a loan backed by an NFT is in its grace window, anyone other than the
+  borrower-position holder may put the collateral up for sale at the protocol
+  floor: the asking price that pays the lender and the treasury what they are
+  owed plus the configured buffer. Without a keeper nobody makes that call,
+  the grace window passes unsold, and the lender takes the NFT in kind at
+  default even when a buyer at the floor existed. The keeper makes it.
+- It checks every minute, on every chain it serves, because the shortest
+  grace window is one hour and every minute of it without a floor listing is
+  a minute a buyer cannot take the NFT.
+- It works only loans whose terms allow a prepay listing, whose collateral is
+  an NFT and whose principal is a token, and whose borrower has not opted out
+  of auto-listing. Whether a loan is in grace comes from the loan's own
+  deadlines, pause credit included, against the chain's clock. With no
+  listing up it posts one at the floor; a listing above the floor, or built on
+  amounts that have since grown, is moved down to it. A listing already at or
+  below the floor on current amounts is left alone.
+- The price is always the protocol's floor at the moment the call lands; the
+  keeper never chooses one. Each listing is reported with its asking price,
+  and each loan the protocol declines is reported with the protocol's own
+  reason and tried again later.
+- Nothing is listed on a chain where prepay listings are switched off or no
+  buffer is configured, and the report says so. The keeper pays only gas and
+  moves no value to itself. It does not withdraw a listing once grace ends;
+  the default that follows is a separate duty.
+
 ## Activation and operator visibility
 
 The master keeper switch and each duty's own arming choice are separate.

@@ -88,6 +88,7 @@ function makeEnv(): Env {
     REWARD_ZEROED_DAY_ENABLED: 'true',
     REWARD_RETURN_TRANSPORT_ENABLED: 'true',
     PROTOCOL_UPKEEP_ENABLED: 'true',
+    PREPAY_AUTO_LIST_ENABLED: 'true',
     KEEPER_PRIVATE_KEY:
       '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
     TG_BOT_TOKEN: 'test:token',
