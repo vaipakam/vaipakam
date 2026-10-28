@@ -77,7 +77,8 @@ import { attemptErrorReason } from './keeperSend';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
-import { batchedRead } from './batchRead';
+import { PastRunDeadline, settledChunkedRead } from './batchRead';
+import { readCutoffMs } from './runWindow';
 import { createSubrequestBudget } from './subrequestBudget';
 import { orchestrateServerQuotes } from './serverQuotes';
 import type { PassTick } from './passSchedule';
@@ -93,7 +94,7 @@ export {
   type GraceLoan,
 } from './closeOut';
 import { pickBatch } from './rotate';
-import { readActiveWindow, type ScanWindow } from './activeLoanWindow';
+import { readActiveWindow, scanCutoffs, type ScanCutoffs, type ScanWindow } from './activeLoanWindow';
 
 const DEFAULTED_ABI: Abi = DefaultedFacetABI as Abi;
 
@@ -179,11 +180,21 @@ async function processChain(env: Env, chain: ChainConfig, visit: number, deadlin
   const keeper = ctx.wallet.account?.address;
   if (!keeper) return;
   const spent = () => `requests=${budget.spent()}/${budget.limit}`;
+  // Each read stage stops early enough to leave the stages after it their
+  // time (runWindow.ts, rule 3): the attempt's reads by the read cutoff,
+  // which reserves the send's time; the eligibility reads a stage reserve
+  // before that; the active-list window a stage reserve before those.
+  const readCutoff = readCutoffMs(ctx.notAfterMs);
+  const cutoffs = scanCutoffs(readCutoff);
 
   let scan: Awaited<ReturnType<typeof findDefaultable>>;
   try {
-    scan = await findDefaultable(client, ctx.diamond, chain.id, visit);
+    scan = await findDefaultable(client, ctx.diamond, chain.id, visit, cutoffs);
   } catch (err) {
+    if (err instanceof PastRunDeadline) {
+      console.log(`[keeper] graceDefault chain=${chain.id} scan stopped: the active-loan window was not read by its stage cutoff ${spent()}`);
+      return;
+    }
     if (!budget.exhausted()) throw err;
     console.log(`[keeper] graceDefault chain=${chain.id} scan stopped: ${BUDGET_SPENT} ${spent()}`);
     return;
@@ -206,6 +217,7 @@ async function processChain(env: Env, chain: ChainConfig, visit: number, deadlin
     diamond: ctx.diamond,
     chainId: chain.id,
     notAfterMs: ctx.notAfterMs,
+    readCutoff,
     buildRoute: (loan, sellAmount) =>
       orchestrateServerQuotes(env, client, {
         chainId: chain.id,
@@ -231,10 +243,10 @@ async function processChain(env: Env, chain: ChainConfig, visit: number, deadlin
   let submitted = 0;
   let unconfirmed = 0;
   for (const loanId of picked) {
-    // #2572 — past the run's deadline every send is refused at its turn; the
-    // remaining loans keep their place for the next run.
-    if (Date.now() >= ctx.notAfterMs) {
-      console.log(`[keeper] graceDefault ${where} run deadline reached; left for the next run loans=${picked.slice(picked.indexOf(loanId)).join(',')}`);
+    // #2572 — past the read cutoff an attempt can read nothing, so it is not
+    // started; the remaining loans keep their place for the next run.
+    if (Date.now() >= readCutoff) {
+      console.log(`[keeper] graceDefault ${where} read cutoff reached; left for the next run loans=${picked.slice(picked.indexOf(loanId)).join(',')}`);
       break;
     }
     let outcome: GraceDefaultOutcome;
@@ -278,40 +290,39 @@ export const BUDGET_SPENT = `subrequest-budget-spent (cap ${SUBREQUEST_BUDGET}; 
 
 /** Active loans past grace within one SCAN_WINDOW of the active list,
  *  everything read at one pinned block. `visit` picks the window, so
- *  successive visits walk the list and wrap. */
+ *  successive visits walk the list and wrap. The window is read by
+ *  `cutoffs.window` or not at all (`PastRunDeadline`); the eligibility reads
+ *  stop at `cutoffs.reads`, keeping the chunks they finished, and a loan
+ *  whose chunk was not read is reported unread. */
 export async function findDefaultable(
   client: PublicClient,
   diamond: Address,
   chainId: number,
-  visit = 0,
+  visit: number,
+  cutoffs: ScanCutoffs,
 ): Promise<{ defaultable: bigint[]; unread: bigint[]; window: ScanWindow }> {
-  const { ids, blockNumber, window } = await readActiveWindow(client, diamond, visit);
-  const results: Awaited<ReturnType<typeof batchedRead>> = [];
-  for (let i = 0; i < ids.length; i += READ_CHUNK) {
-    // eslint-disable-next-line no-await-in-loop
-    const part = await batchedRead(
-      client,
-      ids.slice(i, i + READ_CHUNK).map((id) => ({
-        address: diamond,
-        abi: DEFAULTED_ABI,
-        functionName: 'isLoanDefaultable',
-        args: [id],
-      })),
-      `graceDefault chain=${chainId} isLoanDefaultable`,
-      blockNumber,
-      // No serial retry: it would cost one subrequest per id, up to
-      // SCAN_WINDOW of them, and break the scan's bound. A failed chunk is
-      // reported as eligibility-unread and is read again on a later visit.
-      'unread',
-    );
-    results.push(...part);
-  }
+  const { ids, blockNumber, window } = await readActiveWindow(client, diamond, visit, cutoffs.window);
+  // No serial retry: it would cost one subrequest per id, up to SCAN_WINDOW
+  // of them, and break the scan's bound. A chunk not read is reported as
+  // eligibility-unread and is read again on a later visit, which starts at a
+  // different chunk (the window's own visit count).
+  const results = await settledChunkedRead(
+    client,
+    ids,
+    READ_CHUNK,
+    (id) => ({ address: diamond, abi: DEFAULTED_ABI, functionName: 'isLoanDefaultable', args: [id] }),
+    `graceDefault chain=${chainId} isLoanDefaultable`,
+    cutoffs.reads,
+    window.round,
+    blockNumber,
+  );
   const defaultable: bigint[] = [];
   const unread: bigint[] = [];
-  results.forEach((r, i) => {
-    if (r.status !== 'success') unread.push(ids[i]);
-    else if (r.result === true) defaultable.push(ids[i]);
-  });
+  for (const id of ids) {
+    const r = results.get(id);
+    if (r?.status !== 'success') unread.push(id);
+    else if (r.result === true) defaultable.push(id);
+  }
   return { defaultable, unread, window };
 }
 

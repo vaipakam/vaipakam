@@ -182,7 +182,7 @@ export async function syncSaleListings(chainId: number, diamond: Address, sender
 
   // 1. Loan listings.
   try {
-    const scan = await boundedCall(scanCutoff, 'the active-loan window', () => readActiveWindow(scanClient, diamond, deps.visit));
+    const scan = await readActiveWindow(deps.readClient, diamond, deps.visit, scanCutoff);
     out.window = scan.window;
     const res = await settledChunkedRead(
       deps.readClient,

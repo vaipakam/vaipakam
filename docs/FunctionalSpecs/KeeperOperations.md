@@ -106,6 +106,11 @@ evidence that the migration has completed.
   the value counts as unread and is read again next run. A pass that reads in
   stages gives each earlier stage an earlier cutoff, so a slow stage cannot
   use the time of the stages after it.
+  This covers the reads an action makes just before it sends, its route
+  quotes included: a default, liquidation or periodic settlement whose
+  checks are not finished by the read cutoff sends nothing that run and is
+  tried again on a later one. A scan that runs out of time keeps the loans it
+  did read and reports the rest as unread.
   The chain's finalized block, which decides whether a stored floor may
   move, is read under the same rule: when it does not come back in time the
   floor stays where it is until a later run.

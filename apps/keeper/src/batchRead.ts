@@ -226,6 +226,9 @@ export async function settledChunkedRead<K>(
   return out;
 }
 
+/** The longest delay `setTimeout` honours (2^31 - 1 ms). */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
 /**
  * `work`, or what `onCut` gives (or throws) if `work` is still in flight at
  * `deadline` — the one primitive behind every "abandon it at the cutoff" in
@@ -235,12 +238,13 @@ export async function settledChunkedRead<K>(
  * either way (an ops alert's de-duplication record or clear, #2565 r1):
  * abandoning a broadcast would lose the record that it was sent.
  *
- * A deadline that is not finite never cuts: `setTimeout` treats a delay past
- * its 32-bit range as 1 ms, so an `Infinity` ("no deadline") would otherwise
- * abandon the work at once.
+ * A deadline past a timer's range never cuts: `setTimeout` treats a delay
+ * past its 32-bit range (about 24.8 days) as 1 ms, so an `Infinity` ("no
+ * deadline"), or any deadline that far off, would otherwise abandon the work
+ * at once. No run lasts that long, so such a deadline is no deadline.
  */
 export async function settleBy<T>(work: Promise<T>, deadline: number, onCut: () => T): Promise<T> {
-  if (!Number.isFinite(deadline)) return work;
+  if (!Number.isFinite(deadline) || deadline - Date.now() > MAX_TIMER_MS) return work;
   let timer: ReturnType<typeof setTimeout> | undefined;
   work.catch(() => undefined);
   const cut = new Promise<T>((resolve, reject) => {
