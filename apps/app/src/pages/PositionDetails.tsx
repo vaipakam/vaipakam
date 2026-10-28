@@ -112,6 +112,7 @@ import { EarlyExitFlow } from '../components/EarlyExitFlow';
 import { loanSaleListingEnabled, LoanSaleFlow } from '../components/LoanSaleFlow';
 import { LoanSalePendingCard } from '../components/LoanSalePendingCard';
 import { LoanKeeperCard } from '../components/LoanKeeperCard';
+import { PeriodicInterestCard } from '../components/PeriodicInterestCard';
 import { LOCK_EARLY_WITHDRAWAL_SALE, useLoanSalePending } from '../data/loanSalePending';
 import {
   readRefinanceMarker,
@@ -1405,6 +1406,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const saleHoldResolving =
     row.status === 'active' && saleHold.resolving === true;
   const principal = principalMeta.data;
+  // The loan's interest schedule as the page already knows it, from the
+  // first of its reads that answered (the lender chooser below reads the
+  // same three). `undefined` = not known yet.
+  const pageCadence =
+    loanLive.data?.live.periodicInterestCadence ??
+    liveStatus.data?.periodicInterestCadence ??
+    (bannerTerms.isError ? undefined : bannerTermsData?.live.periodicInterestCadence);
   const collateral = collateralMeta.data;
   const interest = fullTermInterest(
     BigInt(row.principal),
@@ -3486,6 +3494,23 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           </div>
         </dl>
       </section>
+
+      {/* #2524 — the current interest period of a loan on a schedule:
+          deadline, grace, what is owed, and what can happen once the
+          grace is over. Mounted while the page's cadence is unknown too
+          (the card reads its own and shows nothing for a loan with no
+          schedule), never once a read has said "no schedule". */}
+      {row.status === 'active' && !closedThisSession && !isRental ? (
+        <PeriodicInterestCard
+          loanId={row.loanId}
+          role={role === 'borrower' || role === 'lender' ? role : 'viewer'}
+          principal={principal}
+          enabled={pageCadence !== 0}
+          scheduled={pageCadence !== undefined && pageCadence !== 0}
+          busy={busy}
+          setBusy={setBusy}
+        />
+      ) : null}
 
       {/* #1033 — one-line alerts nudge: deadlines happen while the
           site is closed, and the borrower on an active loan is the

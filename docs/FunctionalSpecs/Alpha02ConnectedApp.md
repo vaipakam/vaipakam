@@ -4125,6 +4125,60 @@ Its intended behaviour, as the test oracle for this surface:
   expired stays treated as expired even when the page's fuller check of
   it cannot finish. Loans on a periodic interest schedule carry a visible
   warning that an overdue period blocks completion until settled.
+- An active loan on a periodic interest schedule shows its current
+  period on the loan page, in both interface modes and to anyone viewing
+  it (#2524): the schedule, the period's deadline and the end of its grace,
+  the interest the period expects, what has been paid toward it, and what
+  is still owed. Every figure and date is the platform's own settlement
+  preview, read together with the chain time it was evaluated at, so the
+  page never describes a period as payable when the chain already lets it
+  be settled, and it states the block it read. The expected interest is
+  described as worked out at the loan's current amount and rate, because
+  it falls when part of the loan is repaid during the period. Before the
+  grace ends the page says, in each party's terms, that interest paid
+  during the period counts toward it and that anyone may settle a period
+  still short when its grace ends by selling enough of the borrower's
+  collateral to cover it, the lender being paid up to what is owed. Once
+  the grace is over it says what can happen next, and offers an action
+  only where this page can complete it: a fully paid period may be
+  recorded from the page, which moves no funds and starts the next period,
+  and is re-checked at the moment of signing; a period with something
+  still owed is settled by a collateral sale whose swap route must be
+  quoted when it runs, so the page says anyone, a keeper service included,
+  may settle it and that it cannot run that sale itself, and the borrower
+  is told that paying what is owed first closes the period without a sale.
+  Where the deployment has periodic settlement switched off, the page says
+  so and that no period can be settled, nor collateral sold for one, while
+  that lasts; the existing loan keeps its schedule, so the disclosure
+  replaces any action rather than the period disappearing. A paused
+  protocol is stated the same way, and a setting the page could not read
+  is stated as unread rather than assumed. A loan with no schedule shows
+  nothing, and a schedule the page could not read is said to be unread.
+- The offer form lets the poster choose when the loan's interest is paid
+  (#2524): once, when the loan is repaid, or every month, quarter, six
+  months or year. Which of those an offer may carry is the platform's own
+  rule for the terms being entered, read from the platform as the terms
+  change rather than re-derived by the app, so the form offers only
+  schedules the platform will accept and says, for each one it will not,
+  why: periodic payment switched off on this deployment, an asset the
+  platform cannot price, a loan over a year that must pay at least yearly,
+  a smallest loan below the value finer schedules need (that value and the
+  offer's own being stated, in the platform's reference currency), or a
+  period not shorter than the loan. Where nothing but payment at repayment
+  is open for the whole offer (the switch is off, or an asset cannot be
+  priced), the form says so in one line instead of offering a choice that
+  is not one. Where the platform's answer cannot be had (still reading,
+  the read failed, or the deployment's contracts predate it), the form
+  says which, and only payment at repayment may be chosen, which is what
+  offers carried before the choice existed. A schedule chosen and then
+  closed by a later change to the terms is not silently replaced: the form
+  says it is no longer allowed and will not continue until another is
+  chosen. In the simpler interface mode the choice appears only when one
+  is needed, so a new user is asked only when payment at repayment is not
+  open. The review's consent text states the chosen schedule, payment at
+  repayment included, together with the consequence of a period left
+  unpaid past its grace, since that is a term of the loan the poster is
+  agreeing to.
 - The borrower of an active ERC-20 loan sees, in BOTH interface
   modes, one chooser surface that names every early-repayment path
   the protocol offers — full repayment, partial repayment (marked

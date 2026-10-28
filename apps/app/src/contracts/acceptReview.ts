@@ -254,7 +254,7 @@ export function reviewedTermsFromOrder(o: SignedOrderWire): ReviewedAcceptTerms 
 
 /** `LibVaipakam.PeriodicInterestCadence` as review text. An ordinal this app
  *  does not know reads as unknown, never as a known schedule. */
-function cadenceText(cadence: number): string {
+export function cadenceText(cadence: number): string {
   const t = copy.acceptTerms;
   switch (cadence) {
     case 0:

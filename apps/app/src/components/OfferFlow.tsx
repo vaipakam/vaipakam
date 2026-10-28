@@ -69,6 +69,12 @@ import {
   validateOfferForm,
   type OfferFormState,
 } from '../lib/offerSchema';
+import {
+  cadenceAllowed,
+  useCadenceAdmission,
+  type CadenceTerms,
+} from '../data/cadenceAdmission';
+import { CadencePicker } from './CadencePicker';
 import { AssetType } from '../lib/types';
 import {
   loanEndTimeOf,
@@ -110,6 +116,7 @@ import { ConsentLabel } from './ConsentLabel';
 import { LifecycleTermsList } from './LifecycleTermsList';
 import { TokenScreenBanner } from './TokenScreenBanner';
 import {
+  cadenceText,
   lifecycleFromOffer,
   type LifecycleTerms,
   type ReviewedAcceptTerms,
@@ -981,6 +988,36 @@ export function OfferFlow({ side }: { side: Side }) {
     !selfCollateral &&
     rateValid;
 
+  // #2524 — the interest schedule. Which cadences are open is the
+  // protocol's own rule, read from the figures `createOffer` will send (the
+  // payload's `amount` is a lender offer's smallest fill, which is what the
+  // threshold values), so nothing here restates it.
+  const cadenceTerms = useMemo<CadenceTerms | null>(() => {
+    if (mode !== 'post') return null;
+    const lending = lendingMeta.data;
+    const collateral = collateralMeta.data;
+    if (!lending || !collateral || !detailsComplete) return null;
+    if (!isAddressLike(form.collateralAsset) || selfCollateral) return null;
+    try {
+      const p = toCreateOfferPayload(form, {
+        lending: lending.decimals,
+        collateral: collateral.decimals,
+      });
+      return {
+        lendingAsset: p.lendingAsset as Address,
+        amount: p.amount,
+        assetType: p.assetType,
+        collateralAsset: p.collateralAsset as Address,
+        collateralAssetType: p.collateralAssetType,
+        durationDays: p.durationDays,
+      };
+    } catch {
+      return null;
+    }
+  }, [mode, lendingMeta.data, collateralMeta.data, detailsComplete, selfCollateral, form]);
+  const cadenceRead = useCadenceAdmission(cadenceTerms);
+  const cadenceOk = cadenceAllowed(cadenceRead.admission, form.periodicInterestCadence);
+
   // ---- Review receipt ----------------------------------------------------
   // One side of the deal being unpriced (illiquid) changes the default
   // outcome to a direct in-kind transfer — the receipt must say so.
@@ -1311,7 +1348,11 @@ export function OfferFlow({ side }: { side: Side }) {
       const graceStr = grace.label;
       // The interest MODE changes what an early repayment costs — the
       // consent text must state it explicitly (ProjectDetailsREADME).
-      const modeNote = interestModeNote(form.useFullTermInterest, side);
+      // #2524 — the schedule the offer carries is a term of the loan, so
+      // the consent text states it, at its default too.
+      const modeNote = `${interestModeNote(form.useFullTermInterest, side)} ${copy.offerFlow.cadence.receipt(
+        cadenceText(form.periodicInterestCadence),
+      )}`;
       const postIlliquidSuffix = reviewIsIlliquid
         ? ` ${copy.match.illiquidWarning}`
         : '';
@@ -2653,6 +2694,14 @@ export function OfferFlow({ side }: { side: Side }) {
             ) : null}
           </div>
 
+          <CadencePicker
+            admission={cadenceRead.admission}
+            value={form.periodicInterestCadence}
+            onChange={(c) => set({ periodicInterestCadence: c })}
+            onRetry={cadenceRead.retry}
+            isAdvanced={isAdvanced}
+          />
+
           {isAdvanced ? (
             <fieldset
               style={{ border: 'none', margin: '0 0 16px', padding: 0 }}
@@ -2707,7 +2756,7 @@ export function OfferFlow({ side }: { side: Side }) {
               type="button"
               className="btn btn-primary"
               style={{ flex: 1 }}
-              disabled={!postDetailsComplete}
+              disabled={!postDetailsComplete || !cadenceOk}
               onClick={() => setStep('review')}
             >
               {copy.offerFlow.continueToReview}
