@@ -227,6 +227,12 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // that action's own event: low, so the action represents the row (#2708 r1).
   UserVaultCreated: { label: 'Vault created', category: 'other', priority: 8 },
   TermsAccepted: { label: 'Terms of use accepted', category: 'other', priority: 40 },
+  // #2707 — the wallet's own risk-access choices (RiskAccessFacet names the
+  // opting-in account `vault`).
+  VaultRiskTierSet: { label: 'Risk level changed', category: 'other', priority: 40 },
+  IlliquidPairConsentSet: { label: 'Consent for an illiquid asset pairing updated', category: 'other', priority: 40 },
+  MidTierPairAckSet: { label: 'Mid-tier asset pairing confirmed', category: 'other', priority: 40 },
+  RiskStrictModeSet: { label: 'Strict mode setting updated', category: 'other', priority: 40 },
   TokenDisowned: { label: 'Unsolicited tokens disowned', category: 'other', priority: 40 },
   StuckERC20Recovered: { label: 'Stuck tokens recovered', category: 'other', priority: 60 },
   AutoLendConsentChanged: { label: 'Auto-lend setting updated', category: 'other', priority: 40 },

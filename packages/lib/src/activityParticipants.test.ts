@@ -84,6 +84,24 @@ describe('activityParticipants — the rule', () => {
     ]);
   });
 
+  it("names the opting-in wallet on a risk-access choice (#2707)", () => {
+    // RiskAccessFacet names the account `vault`; it is the wallet itself.
+    for (const kind of [
+      'IlliquidPairConsentSet',
+      'MidTierPairAckSet',
+      'RiskStrictModeSet',
+      'VaultRiskTierSet',
+    ]) {
+      expect(activityParticipants(kind, { vault: A })).toEqual([A.toLowerCase()]);
+    }
+    // An admin exempting an account is not that account's activity.
+    expect(activityParticipants('ProtocolManagedVaultSet', { vault: A })).toEqual([]);
+    // A vault CONTRACT is never a party: the lot pull's borrower is.
+    expect(
+      activityParticipants('SwapToRepayIntentLotPulled', { borrower: A, vault: B }),
+    ).not.toContain(B);
+  });
+
   it('never reads an Object.prototype member as an entry', () => {
     for (const name of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']) {
       expect(activityParticipants(name, { user: A })).toEqual([]);

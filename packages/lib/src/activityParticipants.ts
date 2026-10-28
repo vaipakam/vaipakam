@@ -120,6 +120,16 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['VPFIDiscountConsentChanged', ['user']],
   ['NotificationFeeConsentSet', ['user']],
   ['TermsAccepted', ['user']],
+  // #2707 — risk-access choices. RiskAccessFacet keys this state by the
+  // ACCOUNT that opted in and names it `vault` (its own vocabulary: the
+  // setter is `msg.sender`, the relayed setter the EIP-712 signer), so the
+  // input is the wallet itself, not a vault contract. Not to be confused
+  // with the `vault` of a vault-contract event, which is classified per
+  // kind below.
+  ['IlliquidPairConsentSet', ['vault']],
+  ['MidTierPairAckSet', ['vault']],
+  ['RiskStrictModeSet', ['vault']],
+  ['VaultRiskTierSet', ['vault']],
   // ── Vault and position NFTs.
   ['UserVaultCreated', ['user']],
   ['TokenDisowned', ['user']],
@@ -168,9 +178,10 @@ const NOT_A_PARTY: ReadonlyMap<string, string> = new Map<string, string>([
   ['executor', "the protocol's sale executor"],
   ['conduit', 'a marketplace conduit contract'],
   ['proxy', "a vault's proxy contract"],
-  // A vault-keyed setting (a risk-access consent) would need its vault's
-  // owner to reach a page; the rule reads wallets only (#2707).
-  ['vault', 'a vault contract, never a wallet'],
+  // NOT `vault`: the name means a vault contract in some events and, in the
+  // risk-access events, the opting-in account itself (#2707). It is
+  // classified per kind instead: a party there, LOCAL_NOT_A_PARTY or EXEMPT
+  // elsewhere.
   ['treasury', 'the treasury'],
 ]);
 
@@ -196,6 +207,7 @@ const LOCAL_NOT_A_PARTY: ReadonlyMap<string, Readonly<Record<string, string>>> =
   ['LoanKeeperEnabled', { keeper: 'the keeper being permitted on the loan' }],
   ['OfferKeeperEnabled', { keeper: 'the keeper being permitted on the offer' }],
   ['SwapToRepayIntentForceCancelled', { source: 'the Diamond itself' }],
+  ['SwapToRepayIntentLotPulled', { vault: "the borrower's vault contract; the borrower is the row's actor" }],
   [
     'VaultVpfiDebited',
     { recipient: "where the VPFI went (a wallet, the treasury or a fill's taker); the row is the vault owner's" },
@@ -254,6 +266,8 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
       'Paused',
       'PeerProtocolAddressesSet',
       'PredominantDenominatorUpdated',
+      // An admin exempting an account from the risk-access gate.
+      'ProtocolManagedVaultSet',
       'PythOracleSet',
       'RateModelSet',
       'RepatriationEndpointsSet',
@@ -298,6 +312,8 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
       'BackstopRewardsClaimed',
       'BackstopSeeded',
       'BackstopVaultImplementationSet',
+      // The protocol's backstop vault contract being provisioned.
+      'BackstopVaultProvisioned',
       'BackstopWithdrawnToTreasury',
       'BroadcastBudgetToppedUp',
       'BroadcastBudgetWithdrawn',

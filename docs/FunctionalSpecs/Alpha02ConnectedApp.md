@@ -1397,9 +1397,10 @@ The app uses chain reads and indexed reads for different jobs.
   the reader's language. Sanctions screening records are not feed rows (a
   flagged wallet is told by the in-app banner); the funds consequences that are
   the wallet's own (proceeds or rewards held, set aside or forfeited) are rows,
-  in the in-app flagged wording only, with no list or provider named. A setting
-  recorded against the wallet's vault rather than the wallet (the risk-access
-  consents) is not yet shown; that gap is tracked (#2707). (#2703)
+  in the in-app flagged wording only, with no list or provider named. The
+  wallet's own risk-access choices (its risk level, strict mode, and its
+  consents and acknowledgements for asset pairings) are rows on its page: the
+  protocol records each against the account that chose it. (#2703, #2707)
 - An Activity row states the asset and amount its transaction moved or offered
   when the activity record carries them as normalized fields — exact, or as a
   range for an offer that commits one. It never reconstructs an amount the
