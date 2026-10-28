@@ -3456,7 +3456,8 @@
       "skippedRetry": "La transaction s’est exécutée, mais cette mise en vente a été ignorée. Elle peut maintenant être faite depuis la page du prêt.",
       "reviewAgain": "Examinez de nouveau l’annonce pour voir les montants actuels.",
       "changedSinceReview": "Ce qu’implique cette annonce a changé après votre examen. Mettez-le en vente depuis sa propre page, qui affiche les conditions actuelles.",
-      "ownPageShape": "Seuls les prêts dont le principal et la garantie sont des tokens peuvent être mis en vente."
+      "ownPageShape": "Seuls les prêts dont le principal et la garantie sont des tokens peuvent être mis en vente.",
+      "unavailableNetwork": "Les prêts {{ids}} viennent de la même offre. Leur mise en vente n’est pas encore disponible sur ce réseau : les outils de mise en vente ne sont pas publiés sur ce déploiement."
     }
   },
   "contractError": {

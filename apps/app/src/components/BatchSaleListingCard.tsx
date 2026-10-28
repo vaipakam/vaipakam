@@ -74,9 +74,14 @@ function reviewFingerprint(stage: Stage): string {
 
 export function BatchSaleListingCard({
   group,
+  listingLive,
   onHeldChange,
 }: {
   group: OfferGroup<PositionLoan>;
+  /** The listing route is live on this network (`loanSaleListingEnabled`).
+   *  Where it is not, the card says so instead of offering a listing every
+   *  one of whose calls would be refused. */
+  listingLive: boolean;
   /** Told when the card starts a batch (true) and when its results are
    *  dismissed (false), so the page keeps it mounted in between. */
   onHeldChange?: (group: OfferGroup<PositionLoan>, held: boolean) => void;
@@ -121,7 +126,7 @@ export function BatchSaleListingCard({
   }
 
   async function plan() {
-    if (!ctx || rateBps === null || !rateValid) return;
+    if (!ctx || !listingLive || rateBps === null || !rateValid) return;
     const blocked = disabledBySwitch ? copy.killSwitch.disabled : termsBlocked();
     if (blocked) {
       setError(blocked);
@@ -245,7 +250,7 @@ export function BatchSaleListingCard({
         <h2 style={{ margin: 0 }}>{copy.batchSale.title(group.offerId)}</h2>
       </div>
       <p className="muted" style={{ marginTop: 0 }}>
-        {copy.batchSale.lede(ids)}
+        {listingLive ? copy.batchSale.lede(ids) : copy.batchSale.unavailableNetwork(ids)}
       </p>
 
       {disabledBySwitch ? (
@@ -254,7 +259,7 @@ export function BatchSaleListingCard({
         </div>
       ) : null}
 
-      {stage.kind === 'idle' ? (
+      {stage.kind === 'idle' && listingLive ? (
         <>
           <div className="cluster">
             <label className="field" style={{ flex: 1 }}>

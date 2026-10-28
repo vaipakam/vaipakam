@@ -3456,7 +3456,8 @@
       "skippedRetry": "La transacción se ejecutó, pero esta publicación se omitió. Ahora puede publicarse desde la página del propio préstamo.",
       "reviewAgain": "Vuelve a revisar la publicación para ver las cifras actuales.",
       "changedSinceReview": "Lo que implica esta publicación cambió después de tu revisión. Publícalo desde su propia página, que muestra las condiciones actuales.",
-      "ownPageShape": "Solo pueden ponerse a la venta los préstamos con principal en tokens y garantía en tokens."
+      "ownPageShape": "Solo pueden ponerse a la venta los préstamos con principal en tokens y garantía en tokens.",
+      "unavailableNetwork": "Los préstamos {{ids}} vienen de la misma oferta. Ponerlos a la venta aún no está disponible en esta red: las herramientas de publicación no están desplegadas en esta implementación."
     }
   },
   "contractError": {

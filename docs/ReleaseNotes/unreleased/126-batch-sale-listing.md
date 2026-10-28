@@ -2,8 +2,9 @@
 
 When one of a lender's offers filled into two or more loans whose lender
 positions the wallet still holds, the Positions page now shows a card for
-that offer, in Advanced mode and on the networks where a position can be
-listed, with "List all for sale". The lender picks one rate and one
+that offer, in Advanced mode, with "List all for sale". On a network
+where listing is not available yet, the card says so instead of
+disappearing. The lender picks one rate and one
 listing window, reviews every loan, and signs one transaction for up to
 30 listings instead of one per loan. Listing draws nothing from the
 wallet and asks for no approval.

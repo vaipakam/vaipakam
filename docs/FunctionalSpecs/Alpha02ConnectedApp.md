@@ -1899,9 +1899,11 @@ Thin-market honesty rules apply.
 
 - When one of the lender's offers filled into two or more loans whose lender
   positions the connected wallet still holds, the positions page offers, in
-  Advanced mode and on the networks where listing a position is available, to
-  list them all for sale together, at one rate and for one listing window.
-  Only the wallet's own lender positions are grouped. Rentals are not grouped.
+  Advanced mode, to list them all for sale together, at one rate and for one
+  listing window. Only the wallet's own lender positions are grouped. Rentals
+  are not grouped. On a network where listing a position is not available,
+  the group still shows and says that listing is not available on this
+  network, rather than leaving the lender to guess why there is no option.
 - Each loan passes the same live checks its own page's listing form runs before
   it is listed, and the two must never disagree. A loan the platform would
   refuse to list (already listed, an offset open on it, matured or too close to

@@ -3456,7 +3456,8 @@
       "skippedRetry": "Die Transaktion lief, aber dieses Inserat wurde übersprungen. Es kann jetzt auf der Seite des Kredits erstellt werden.",
       "reviewAgain": "Prüfe das Inserat erneut, um die aktuellen Beträge zu sehen.",
       "changedSinceReview": "Was dieses Inserat umfasst, hat sich nach deiner Prüfung geändert. Inseriere ihn auf seiner eigenen Seite, die die aktuellen Bedingungen zeigt.",
-      "ownPageShape": "Nur Kredite mit Token als Kreditbetrag und Token als Sicherheit können zum Verkauf angeboten werden."
+      "ownPageShape": "Nur Kredite mit Token als Kreditbetrag und Token als Sicherheit können zum Verkauf angeboten werden.",
+      "unavailableNetwork": "Die Kredite {{ids}} stammen aus demselben Angebot. Sie zum Verkauf anzubieten ist in diesem Netzwerk noch nicht verfügbar: Die Verkaufswerkzeuge sind in dieser Bereitstellung nicht veröffentlicht."
     }
   },
   "contractError": {

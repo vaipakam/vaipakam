@@ -229,9 +229,12 @@ liquidated, and only the send's logs can say.
 Each listed loan's offer id is written to the loan page's listing
 marker, so its page can offer cancel straight away.
 
-The card shows only in Advanced mode and only on the networks where the
-listing route is live (`loanSaleListingEnabled`), the same as the loan
-page's form. A group is the wallet's lender rows, which are the
+The card shows only in Advanced mode, the same as the loan page's form.
+On a network where the listing route is not live
+(`loanSaleListingEnabled`) the card still shows for an eligible group and
+says listing is not available on this network, as the loan page's
+chooser does, rather than vanishing as if the positions were not
+eligible. A group is the wallet's lender rows, which are the
 positions it holds. The batch respects the post-offer kill switch and
 the Terms gate, and the consent (recorded on each listing) is one tick
 covering every loan in the review, cleared whenever the review changes.

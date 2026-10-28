@@ -213,13 +213,16 @@ export function Positions() {
   // render, since the live groups are not known then.
   //
   // #126 slice 2 — listing a position for sale is an Advanced-mode tool on
-  // the loan page, and only on the networks where the listing route is
-  // live; the lender's batch follows both.
+  // the loan page; the lender's batch follows that. On a network where the
+  // listing route is not live the card still shows, and says so (the loan
+  // page's chooser does the same), rather than vanishing as if the
+  // positions were not eligible.
   const listsReadable = loans.data != null && offers.data != null;
   const groupRows = listsReadable
     ? loans.data!.rows.filter((l) => !claimKeys.has(`${l.loanId}-${l.role}`))
     : [];
-  const saleBatchOffered = isAdvanced && loanSaleListingEnabled(readChain.chainId);
+  const saleBatchOffered = isAdvanced;
+  const saleListingLive = loanSaleListingEnabled(readChain.chainId);
   const batchGroups = isConnected
     ? withHeldGroups(
         [
@@ -261,6 +264,7 @@ export function Positions() {
           <BatchSaleListingCard
             key={`${listKey}|${groupKey(g)}`}
             group={g}
+            listingLive={saleListingLive}
             onHeldChange={holdBatch}
           />
         ),

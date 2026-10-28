@@ -1624,6 +1624,11 @@ const copySource = {
       'Loans {{ids}} came from the same offer. You can list all of them for sale at once, at one rate and for one listing window, in one transaction. Each loan is checked on its own first, and a loan that can’t be listed is skipped while the others go through.',
       ['ids'],
     ),
+    // Codex #3066 r2 — the network gate is disclosed, never a silent absence.
+    unavailableNetwork: tmpl(
+      'Loans {{ids}} came from the same offer. Listing them for sale isn’t available on this network yet: the listing tools aren’t published to this deployment.',
+      ['ids'],
+    ),
     windowNote:
       'Each listing expires on its own: at the end of the window, or at that loan’s due date, whichever comes first. Once a listing ends without a sale, that loan can’t be listed again for a day. If a borrower repays part of a loan while its listing is live, buyers’ attempts on that listing are refused; cancel it and list again.',
     listAll: 'Review listing all',
