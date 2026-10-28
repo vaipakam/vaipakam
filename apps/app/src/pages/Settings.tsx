@@ -4,7 +4,7 @@
  * Mode switching never navigates (Journey H1): the user returns to
  * whatever page they were on with advanced controls revealed.
  */
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import {
   BookOpen,
   CircleHelp,
@@ -27,10 +27,18 @@ import { AlertsCard } from '../components/AlertsCard';
 import { LanguagePicker } from '../components/LanguagePicker';
 import { LANGUAGE_PICKER_ENABLED } from '../i18n/localeConfig';
 import { copy } from '../content/copy';
+import { useScrollToFragment, fragmentId } from '../lib/useScrollToFragment';
 
 export function Settings() {
   const { preference, setPreference } = useTheme();
   const { mode, setMode, isAdvanced } = useMode();
+  // #2076 — a link that names a card by anchor reaches it in either mode.
+  // The keeper and approvals cards are Advanced-only in normal use, but
+  // `/settings#approvals` (where the retired `/allowances` lands) holds
+  // the one-click revoke for a standing spending authorisation: a
+  // bookmark to it must not arrive at a page that hides the button.
+  const anchored = fragmentId(useLocation().hash);
+  useScrollToFragment();
 
   // Theme labels resolve through the copy proxy in render scope — a
   // module-level read would bake in English and miss locale switches
@@ -120,10 +128,20 @@ export function Settings() {
         </p>
       </section>
 
-      <AlertsCard />
+      <div id="alerts">
+        <AlertsCard />
+      </div>
 
-      {isAdvanced ? <KeeperSettingsCard /> : null}
-      {isAdvanced ? <ApprovalsCard /> : null}
+      {isAdvanced || anchored === 'keepers' ? (
+        <div id="keepers">
+          <KeeperSettingsCard />
+        </div>
+      ) : null}
+      {isAdvanced || anchored === 'approvals' ? (
+        <div id="approvals">
+          <ApprovalsCard />
+        </div>
+      ) : null}
 
       <section className="card">
         <div className="card-title">

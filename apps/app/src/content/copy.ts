@@ -5824,6 +5824,19 @@ const copySource = {
       'Unknown: the collateral token’s details could not be read, so no figure is shown.',
   },
 
+  // #2076 — the retired app's routes that need words, not just a redirect.
+  legacyRoutes: {
+    offerLookup: tmpl('Looking up offer #{{id}} on {{chain}}…', ['id', 'chain']),
+    offerMissingTitle: tmpl('Offer #{{id}} wasn’t found on {{chain}}', ['id', 'chain']),
+    offerMissingBody:
+      'This link is from an earlier version of the app. The offer may have been taken, cancelled or expired. It may also be on another network: offer numbers repeat across networks, and the old link did not say which one it meant. Or the offer index and the network may not be answering right now.',
+    toOfferBook: 'Open the Offer Book',
+    autoLendTitle: 'Automatic lending isn’t in this app yet',
+    autoLendBody:
+      'This link is from an earlier version of the app. Setting up a standing lending intent is not available here yet, and intents set up in the earlier app cannot be viewed or changed here yet. You can post a lending offer instead.',
+    toLend: 'Lend',
+  },
+
   notFound: {
     title: 'This page doesn’t exist',
     body: 'The link may be old or mistyped. Nothing is lost — your positions are safe.',

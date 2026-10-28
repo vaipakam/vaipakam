@@ -2604,6 +2604,15 @@
       "liquidationPriceUnknown": "Desconocido: no se pudo leer el precio de la garantía en este momento, así que no se muestra ninguna cifra.",
       "liquidationPriceTokenUnknown": "Desconocido: no se pudieron leer los datos del token de la garantía, así que no se muestra ninguna cifra."
     },
+    "legacyRoutes": {
+      "offerLookup": "Buscando la oferta #{{id}} en {{chain}}…",
+      "offerMissingTitle": "La oferta #{{id}} no se encontró en {{chain}}",
+      "offerMissingBody": "Este enlace es de una versión anterior de la app. Puede que la oferta se haya aceptado, cancelado o vencido. También puede estar en otra red: los números de oferta se repiten entre redes y el enlace antiguo no decía cuál era. O puede que el índice de ofertas y la red no estén respondiendo ahora mismo.",
+      "toOfferBook": "Abrir el libro de ofertas",
+      "autoLendTitle": "El préstamo automático aún no está en esta app",
+      "autoLendBody": "Este enlace es de una versión anterior de la app. Aquí todavía no se puede configurar una intención de préstamo permanente, y las intenciones configuradas en la app anterior aún no se pueden ver ni cambiar aquí. Puedes publicar una oferta de préstamo en su lugar.",
+      "toLend": "Prestar"
+    },
     "notFound": {
       "title": "Esta página no existe",
       "body": "El enlace puede ser antiguo o estar mal escrito. Nada se perdió — tus posiciones están seguras.",

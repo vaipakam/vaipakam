@@ -2246,9 +2246,12 @@ path-preserving redirect only lands people somewhere useful where the
 destination host has a route for that path; where it does not, the
 visitor reaches the catch-all not-found page, which is a worse outcome
 than a dead host only in that it looks like the app is broken rather
-than gone. The retired connected app served several paths that have no
-counterpart or alias today — see the enumeration in #2076 — so treat "bookmarks keep working" as a claim to verify per host,
-not a property of redirecting. Per-origin browser storage is lost on an
+than gone. For the retired connected app this has been checked: its
+router was enumerated in #2076 and every path it served is routed,
+aliased or mapped in `apps/app` (`src/lib/legacyRoutes.ts`), with
+`/buy-vpfi` left not-found on purpose (#687-A). For any other host,
+treat "bookmarks keep working" as a claim to verify per host, not a
+property of redirecting. Per-origin browser storage is lost on an
 origin change regardless,
 so a redirect at least lands people on a working app instead of a dead
 host. `alpha02.vaipakam.com` qualifies today — it was the live

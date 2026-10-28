@@ -204,7 +204,8 @@ export function EarlyRepayOptionsCard({
   const anyAdvancedRow = rows.some((r) => !r.basic);
 
   return (
-    <section className="card">
+    // The retired app's `/loans/:id/preclose` lands here (#2076).
+    <section className="card" id="early-repay-options">
       <div className="card-title">
         <ListChecks aria-hidden />
         <h3 style={{ margin: 0 }}>{copy.earlyRepay.title}</h3>

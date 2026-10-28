@@ -2604,6 +2604,15 @@
       "liquidationPriceUnknown": "Unbekannt: Der Preis der Sicherheit konnte gerade nicht gelesen werden, daher wird keine Zahl angezeigt.",
       "liquidationPriceTokenUnknown": "Unbekannt: Die Angaben zum Token der Sicherheit konnten nicht gelesen werden, daher wird keine Zahl angezeigt."
     },
+    "legacyRoutes": {
+      "offerLookup": "Angebot #{{id}} wird auf {{chain}} gesucht…",
+      "offerMissingTitle": "Angebot #{{id}} wurde auf {{chain}} nicht gefunden",
+      "offerMissingBody": "Dieser Link stammt aus einer früheren Version der App. Das Angebot wurde vielleicht angenommen, storniert oder ist abgelaufen. Es kann auch in einem anderen Netzwerk liegen: Angebotsnummern wiederholen sich zwischen Netzwerken, und der alte Link sagte nicht, welches gemeint war. Oder der Angebotsindex und das Netzwerk antworten gerade nicht.",
+      "toOfferBook": "Angebotsbuch öffnen",
+      "autoLendTitle": "Automatisches Verleihen gibt es in dieser App noch nicht",
+      "autoLendBody": "Dieser Link stammt aus einer früheren Version der App. Eine dauerhafte Verleihabsicht lässt sich hier noch nicht einrichten, und in der früheren App eingerichtete Absichten lassen sich hier noch nicht ansehen oder ändern. Du kannst stattdessen ein Verleihangebot einstellen.",
+      "toLend": "Verleihen"
+    },
     "notFound": {
       "title": "Diese Seite existiert nicht",
       "body": "Der Link ist möglicherweise alt oder falsch eingegeben. Nichts ist verloren — Ihre Positionen sind sicher.",

@@ -1,0 +1,9 @@
+## Thread — every retired app link has a destination (PR #<n>)
+
+The connected app now answers every address the retired app served, not only the ones reviewers happened to name. The retired router was enumerated and each path is routed, aliased or mapped. An old offer page reads the offer and opens the flow that takes it. Because the old address never said which network the offer was on, a miss names the network it looked on and the other reasons it can miss. The old loan action pages land on that loan, scrolled to the card offering the same action: the lender's exit chooser, the borrower's early-repay chooser, or the refinance card. The scroll waits for the card, which appears only after the loan's data arrives.
+
+The old allowances, alerts and keepers pages land on their card in Settings. A link that names a card shows it even in Basic mode, because the approvals card holds the one-click way to withdraw a spending permission and a bookmark to it must reach the button. The old create page goes to the form its side names, back to the loan for a refinance or offset link, or to Home. The old automatic-lending page says the feature is not in this app yet and that intents set up there cannot be viewed here, instead of showing page-not-found. The removed VPFI purchase page stays not-found on purpose.
+
+The settings addresses are exempt from the Terms gate like Settings itself; the addresses leading to new exposure stay held. The five new single-segment addresses are excluded from search indexing in the response headers, like every other alias. The deployment runbook's caveat about unmapped paths is now resolved for this host. Closes #2076.
+
+> Caveat: an old offer address is resolved only on the network the app is reading; a visitor whose offer was on another network must switch networks and open it from the Offer Book.

@@ -27,6 +27,7 @@ import {
   formatUnits,
 } from 'viem';
 import { copy } from '../content/copy';
+import { useScrollToFragment } from '../lib/useScrollToFragment';
 import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { freshData } from '../lib/freshData';
 import { useLoan } from '../data/hooks';
@@ -194,6 +195,12 @@ export function PositionDetails() {
   // (claimed, closedThisSession, doneMessage, typed inputs) describe
   // ONE loan — leaking them onto the next would hide the repay button
   // on a different, still-open loan.
+  //
+  // #2076 — the retired loan sub-pages land here at a card's anchor
+  // (`#lender-exit-options`, `#early-repay-options`, `#refinance-card`).
+  // Those cards mount only after the loan's reads settle, so the browser's
+  // own fragment scroll has nothing to find; this waits for the card.
+  useScrollToFragment();
   return <PositionDetailsInner key={loanIdParam ?? 'none'} loanIdParam={loanIdParam} />;
 }
 

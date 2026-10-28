@@ -123,6 +123,15 @@ const EXIT_PREFIXES = [
   // canonical route shows the page. `/admin/docs` inherits this by the
   // segment rule below; it needs no separate line.
   '/admin',
+  // #2076 — the retired settings pages, which redirect into `/settings`
+  // (exempt above). `/allowances` is the sharp one: it lands on the
+  // approvals card, the one-click revoke of a standing spending
+  // authorisation, so holding it would hide an exit behind the gate.
+  // `/loans/:id/<subpage>` needs no line: `/loans` covers it by the
+  // segment rule.
+  '/alerts',
+  '/allowances',
+  '/keepers',
 ] as const;
 
 /**
