@@ -5,6 +5,14 @@ Each TARGETS row is (label, src-relative file, exact anchor, mutant text,
 killing suite, killing test). The harness applies ONE mutant at a time,
 runs its killing test, and restores the source; a KILLED verdict means the
 test fails for the intended reason (each mutant IS the reverted fix).
+KILLED requires a `[FAIL...]` line from forge: a mutant that breaks the
+build exits nonzero without running any test and is reported NO-RUN, never
+as a kill. Every anchor must occur exactly once or the run ABORTs before
+touching anything; the exit code is nonzero on any GAP or NO-RUN.
+
+Run from the repo root:
+    FOUNDRY_PROFILE=default nice -n -10 ionice -c 2 -n 0 \
+      python3 contracts/script/mutation/p1b_mutants.py
 
 Rebuilt into the repo after the 2026-08-19 power outage wiped the
 session-scratchpad original (the lesson: tooling never lives only in a
@@ -36,8 +44,7 @@ it the whole claim or sweep reverts where the rule is that the day defers.
         (spanning legacy leg; armed chunk)     -> assertion each
     r8  `armedFrom < e.endDay`: EQUIVALENT, see EQUIVALENT below.
 
-  Already covered by an existing tuple (its anchor may be stale on main;
-  re-anchoring the r10+ rows is outside #1827):
+  Already covered by an existing tuple (re-anchored below):
     r6  all-or-nothing within a day   ("expiry keeps ALL-OR-NOTHING ...")
     r8  claim-skip at the removal point ("expiry claim-skip ...", equivalent)
     r9  removal-point sequencing      ("a REMOVED entry terminates ...")
@@ -53,7 +60,7 @@ it the whole claim or sweep reverts where the rule is that the day defers.
         guard: retired with the paid-side seed (#2944, 7d6d093cc)
     r3  mirror-only scoping of the paid-side writers: superseded by the
         closure-2 chokepoint `chargeDeliveredFresh`, the one writer of the
-        paid side for every role
+        paid side for every role (#2151, 280ca7d50)
     r4  the unarmed-day guards: refuted in r4 (equivalent), `_isArmedDay`
         arm removed in r8 (9d235ca26f)
 
@@ -69,8 +76,44 @@ it the whole claim or sweep reverts where the rule is that the day defers.
         `RewardEntryExpired` event, none decode its totals
     r8  the unstamped-armed-day defer: r8 recorded it unreachable (finalize
         writes the mode stamp and the row together)
+
+ROUNDS 10+ RE-ANCHORED (#1827). Seventeen of the tuples restored after the
+outage no longer matched main, so the harness aborted and covered nothing.
+Each was given the same treatment as r1-r9:
+
+  Re-anchored to the current form of the same fix, killer re-verified:
+    claim-skip at the removal point (still EQUIVALENT: survives its test)
+    removed entry terminates / all-or-nothing within a day: one gate now,
+        `freshShortfall != 0 && !e.expiryBegun` (the `freshRecoverable`
+        operand was retired in #2276, f3579b823)
+    backing dip defers a removed entry: since #2276 backing rides in the
+        delivered allowance, so the fix is now the sweep facet's
+        `backingCap < allowance` clamp
+    both role-change residual retirements (helper now takes before/after)
+    the countdown terminal at the removal point (now also skips forfeits)
+    the dry run's lifetime cap, legacy-leg reservation and forfeit-leg
+        reservation: one budget in `_staticPool` since #2459 (cc94a0a3d)
+    the forfeit reservation's legacy-only component
+    the wholly-legacy forfeit's headroom clamp
+    the spanning forfeit legacy leg's defer: since #2276 the backing bound
+        is the delivered allowance, so the fix is its `deliveredAllowance`
+        defer
+
+  Retired:
+    the PREVIEW's two reservation rows: since #2459 (cc94a0a3d) the preview
+        prices its armed part through the same `_staticPool` as the armed
+        need, so they were the NEED rows' mutants a second time
+    "the forfeit charges the bound by DELIVERED, never by owed": the facet's
+        own mirror-guarded paid-side write was removed by #2151 (280ca7d50);
+        the chokepoint now charges what moves
+
+  Gap, removed from TARGETS:
+    "the dry run DEPLETES the fresh budget between days": since #2459 the
+        static read prices each side's FIRST pending day only, so the
+        depletion now acts between the two sides, and the whole
+        GovernorDualAccumulatorTest suite passes with it deleted
 """
-import os, shutil, subprocess, sys
+import os, shutil, signal, subprocess, sys
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')
 SRC = os.path.join(ROOT, 'src')
@@ -149,14 +192,14 @@ TARGETS = [
         'test/GovernorDualAccumulatorTest.t.sol',
         'testP1bZeroCreditChunkDoesNotRemove',
     ),
-    # --- Rounds 10+ ---
+    # --- Rounds 10+ (re-anchored against main, #1827) ---
     (
-        "expiry claim-skip at the removal point (defence-in-depth pair)",
-        "libraries/LibInteractionRewards.sol",
-        "        if (e.expiryBegun) return (toUser, toTreasury);",
-        "        if (false) return (toUser, toTreasury);",
-        "test/GovernorDualAccumulatorTest.t.sol",
-        "testP1bFirstCreditedChunkIsTheRemovalPoint",
+        'expiry claim-skip at the removal point (defence-in-depth pair)',
+        'libraries/LibInteractionRewards.sol',
+        '        if (e.expiryBegun) return (toUser, toTreasury, 0, stepped);',
+        '        if (false) return (toUser, toTreasury, 0, stepped);',
+        'test/GovernorDualAccumulatorTest.t.sol',
+        'testP1bFirstCreditedChunkIsTheRemovalPoint',
     ),
     (
         "a CAPPED-ONLY terminal chunk still retires its commitment",
@@ -167,28 +210,28 @@ TARGETS = [
         "testP1bRemovedEntryTerminatesUnderAShortfall",
     ),
     (
-        "a REMOVED entry terminates under a shortfall (never strands its tail)",
-        "libraries/LibInteractionRewards.sol",
-        "        if (\n            charge.freshShortfall != 0\n                && (!e.expiryBegun || freshRecoverable)\n        ) {",
-        "        if (charge.freshShortfall != 0) {",
-        "test/GovernorDualAccumulatorTest.t.sol",
-        "testP1bRemovedEntryTerminatesUnderAShortfall",
+        'a REMOVED entry terminates under a shortfall (never strands its tail)',
+        'libraries/LibInteractionRewards.sol',
+        '        if (charge.freshShortfall != 0 && !e.expiryBegun) {',
+        '        if (charge.freshShortfall != 0) {',
+        'test/GovernorDualAccumulatorTest.t.sol',
+        'testP1bRemovedEntryTerminatesUnderAShortfall',
     ),
     (
-        "expiry keeps ALL-OR-NOTHING within a day (69M shortfall defers)",
-        "libraries/LibInteractionRewards.sol",
-        "        if (\n            charge.freshShortfall != 0\n                && (!e.expiryBegun || freshRecoverable)\n        ) {",
-        "        if (false) {",
-        "test/GovernorDualAccumulatorTest.t.sol",
-        "testExpiryIsAllOrNothingAtNearExhaustion",
+        'expiry keeps ALL-OR-NOTHING within a day (69M shortfall defers)',
+        'libraries/LibInteractionRewards.sol',
+        '        if (charge.freshShortfall != 0 && !e.expiryBegun) {',
+        '        if (false) {',
+        'test/GovernorDualAccumulatorTest.t.sol',
+        'testExpiryIsAllOrNothingAtNearExhaustion',
     ),
     (
-        "a BACKING dip defers a removed entry (only the 69M cap is terminal)",
-        "libraries/LibInteractionRewards.sol",
-        "        if (\n            charge.freshShortfall != 0\n                && (!e.expiryBegun || freshRecoverable)\n        ) {",
-        "        if (charge.freshShortfall != 0 && !e.expiryBegun) {",
-        "test/GovernorDualAccumulatorTest.t.sol",
-        "testP1bRemovedEntryDefersOnABackingDip",
+        'a BACKING dip defers a removed entry (only the 69M cap is terminal)',
+        'facets/RewardHorizonSweepFacet.sol',
+        '        if (backingCap < allowance) allowance = backingCap;\n        // 3b-ii-A — the epoch-paid legs the sweep draws, absorbed net below.',
+        '        // 3b-ii-A — the epoch-paid legs the sweep draws, absorbed net below.',
+        'test/GovernorDualAccumulatorTest.t.sol',
+        'testP1bRemovedEntryDefersOnABackingDip',
     ),
     (
         "removal begins on the first chunk that CREDITS, not merely advances",
@@ -199,20 +242,20 @@ TARGETS = [
         "testP1bZeroCreditChunkDoesNotRemove",
     ),
     (
-        "setBaseChainId retires the delivered residual on a role change",
-        "facets/RewardReporterFacet.sol",
-        "        // this by construction.\n        _retireDeliveredResidualOnRoleChange(s, wasMirror);",
-        "        // this by construction.",
-        "test/GovernorDualAccumulatorTest.t.sol",
-        "testP1bBaseChainDetachRetiresTheDeliveredResidual",
+        'setBaseChainId retires the delivered residual on a role change',
+        'facets/RewardReporterFacet.sol',
+        '        // this by construction.\n        _retireDeliveredResidualOnRoleChange(s, before, old);',
+        '        // this by construction.',
+        'test/GovernorDualAccumulatorTest.t.sol',
+        'testP1bBaseChainDetachRetiresTheDeliveredResidual',
     ),
     (
-        "a ROLE transition retires the delivered residual",
-        "facets/RewardReporterFacet.sol",
-        "        // one-fix-two-sites defect r2 already catalogued.\n        _retireDeliveredResidualOnRoleChange(s, wasMirror);",
-        "        // one-fix-two-sites defect r2 already catalogued.",
-        "test/GovernorDualAccumulatorTest.t.sol",
-        "testP1bRoleTransitionRetiresTheDeliveredResidual",
+        'a ROLE transition retires the delivered residual',
+        'facets/RewardReporterFacet.sol',
+        '        // one-fix-two-sites defect r2 already catalogued.\n        _retireDeliveredResidualOnRoleChange(s, before, s.baseChainId);',
+        '        // one-fix-two-sites defect r2 already catalogued.',
+        'test/GovernorDualAccumulatorTest.t.sol',
+        'testP1bRoleTransitionRetiresTheDeliveredResidual',
     ),
     (
         "the executable AGGREGATE excludes removed entries",
@@ -231,92 +274,60 @@ TARGETS = [
         "testP1bRemovedEntryLeavesThePendingAggregates",
     ),
     (
-        "the countdown is terminal at the REMOVAL POINT, not only at processed",
-        "libraries/LibInteractionRewards.sol",
-        "        if (e.processed || e.expiryBegun) return (firstClaimableAt, 0);",
-        "        if (e.processed) return (firstClaimableAt, 0);",
-        "test/GovernorDualAccumulatorTest.t.sol",
-        "testP1bRemovedEntryLeavesThePendingAggregates",
+        'the countdown is terminal at the REMOVAL POINT, not only at processed',
+        'libraries/LibInteractionRewards.sol',
+        '        if (e.processed || e.expiryBegun || _isForfeited(s, e)) return (firstClaimableAt, 0);',
+        '        if (e.processed || _isForfeited(s, e)) return (firstClaimableAt, 0);',
+        'test/GovernorDualAccumulatorTest.t.sol',
+        'testP1bRemovedEntryLeavesThePendingAggregates',
     ),
     (
-        "the dry run models the LIFETIME cap next to the delivered bound",
-        "libraries/LibInteractionRewards.sol",
-        "        PoolBudget memory pool = PoolBudget({\n            fresh: freshBudget,",
-        "        PoolBudget memory pool = PoolBudget({\n            fresh: type(uint256).max,",
-        "test/GovernorDualAccumulatorTest.t.sol",
-        "testP1bNeedAndPreviewModelTheLifetimeCap",
+        'the dry run models the LIFETIME cap next to the delivered bound',
+        'libraries/LibInteractionRewards.sol',
+        '            fresh: _userWalkFreshBudget(s, user, need.userLegs + need.treasuryLegs),',
+        '            fresh: type(uint256).max,',
+        'test/GovernorDualAccumulatorTest.t.sol',
+        'testP1bNeedAndPreviewModelTheLifetimeCap',
     ),
     (
-        "the dry run DEPLETES the fresh budget between days",
-        "libraries/LibInteractionRewards.sol",
-        "            uint256 fb = pool.fresh;\n            pool.fresh = fb > spent ? fb - spent : 0;",
-        "            // depletion removed by mutant",
-        "test/GovernorDualAccumulatorTest.t.sol",
-        "testP1bDryRunDepletesTheFreshBudgetBetweenDays",
-    ),
-    (
-        "the PREVIEW reserves the preceding legs before the walk",
-        "libraries/LibInteractionRewards.sol",
-        "            _userWalkFreshBudget(s, user, userTotal + treasuryLegs)",
-        "            poolRemaining()",
-        "test/GovernorDualAccumulatorTest.t.sol",
-        "testP1bDryRunReservesTheLegacyLegFirst",
-    ),
-    (
-        "the armed NEED reserves the preceding legs before the walk",
-        "libraries/LibInteractionRewards.sol",
-        "            _userWalkFreshBudget(s, user, uL + tL)",
-        "            poolRemaining()",
-        "test/GovernorDualAccumulatorTest.t.sol",
-        "testP1bDryRunReservesTheLegacyLegFirst",
-    ),
-    (
-        "the PREVIEW's reservation includes the forfeit (treasury) legs",
-        "libraries/LibInteractionRewards.sol",
-        "            _userWalkFreshBudget(s, user, userTotal + treasuryLegs)\n        );\n        userTotal += dryTotal;",
-        "            _userWalkFreshBudget(s, user, userTotal)\n        );\n        userTotal += dryTotal;",
-        "test/GovernorDualAccumulatorTest.t.sol",
-        "testP1bDryRunReservesTheForfeitLegToo",
+        'the armed NEED reserves the preceding legs before the walk',
+        'libraries/LibInteractionRewards.sol',
+        '            fresh: _userWalkFreshBudget(s, user, need.userLegs + need.treasuryLegs),',
+        '            fresh: poolRemaining(),',
+        'test/GovernorDualAccumulatorTest.t.sol',
+        'testP1bDryRunReservesTheLegacyLegFirst',
     ),
     (
         "the armed NEED's reservation includes the forfeit (treasury) legs",
-        "libraries/LibInteractionRewards.sol",
-        "            _userWalkFreshBudget(s, user, uL + tL)",
-        "            _userWalkFreshBudget(s, user, uL)",
-        "test/GovernorDualAccumulatorTest.t.sol",
-        "testP1bDryRunReservesTheForfeitLegToo",
+        'libraries/LibInteractionRewards.sol',
+        '            fresh: _userWalkFreshBudget(s, user, need.userLegs + need.treasuryLegs),',
+        '            fresh: _userWalkFreshBudget(s, user, need.userLegs),',
+        'test/GovernorDualAccumulatorTest.t.sol',
+        'testP1bDryRunReservesTheForfeitLegToo',
     ),
     (
-        "the forfeit reservation is the LEGACY component only",
-        "libraries/LibInteractionRewards.sol",
-        "                treasuryLegs +=\n                    tSplit.total - tSplit.recycled - tSplit.armedFresh;",
-        "                treasuryLegs += tSplit.total - tSplit.recycled;",
-        "test/GovernorDualAccumulatorTest.t.sol",
-        "testP1bForfeitReservationIsLegacyOnly",
+        'the forfeit reservation is the LEGACY component only',
+        'libraries/LibInteractionRewards.sol',
+        '                uint256 tFresh =\n                    tSplit.total - tSplit.recycled - tSplit.armedFresh;',
+        '                uint256 tFresh =\n                    tSplit.total - tSplit.recycled;',
+        'test/GovernorDualAccumulatorTest.t.sol',
+        'testP1bForfeitReservationIsLegacyOnly',
     ),
     (
-        "the forfeit charges the bound by DELIVERED, never by owed",
-        "facets/InteractionRewardsFacet.sol",
-        "        if (armedDelivered != 0 && LibVaipakam.isMirrorRewardChain(s)) {\n            s.rewardBudgetArmedFreshPaid += armedDelivered;",
-        "        if (armedDelivered != 0 && LibVaipakam.isMirrorRewardChain(s)) {\n            s.rewardBudgetArmedFreshPaid += armedOwed;",
-        "test/GovernorDualAccumulatorTest.t.sol",
-        "testP1bSweepSucceedsWhenPostCapChargeFits",
-    ),
-    (
-        "a wholly-legacy forfeit clamps to the remaining pool headroom",
-        "libraries/LibInteractionRewards.sol",
-        "            uint256 wholeFresh = t.total - t.recycled;\n            if (wholeFresh > freshHeadroom) wholeFresh = freshHeadroom;",
-        "            uint256 wholeFresh = t.total - t.recycled;",
-        "test/GovernorDualAccumulatorTest.t.sol",
-        "testP1bWhollyLegacyForfeitClampsToTheHeadroom",
+        'a wholly-legacy forfeit clamps to the remaining pool headroom',
+        'libraries/LibInteractionRewards.sol',
+        '            if (live > freshHeadroom) live = freshHeadroom;\n            tp.treasuryFresh += ef;',
+        '            tp.treasuryFresh += ef;',
+        'test/GovernorDualAccumulatorTest.t.sol',
+        'testP1bWhollyLegacyForfeitClampsToTheHeadroom',
     ),
     (
         "a spanning forfeit's legacy leg defers on a backing-bound shortfall",
-        "libraries/LibInteractionRewards.sol",
-        "                if (freshRecoverable) return (0, 0, 0, 0);\n                legacyFresh = freshHeadroom;",
-        "                legacyFresh = freshHeadroom;",
-        "test/GovernorDualAccumulatorTest.t.sol",
-        "testP1bSpanningForfeitLegacyLegDefersOnABackingDip",
+        'libraries/LibInteractionRewards.sol',
+        '            if (legacyFresh > deliveredAllowance) return (0, 0, 0, 0);\n            s.rewardEntryClaimNextDay[id] = SafeCast.toUint64(armedFrom);',
+        '            s.rewardEntryClaimNextDay[id] = SafeCast.toUint64(armedFrom);',
+        'test/GovernorDualAccumulatorTest.t.sol',
+        'testP1bSpanningForfeitLegacyLegDefersOnABackingDip',
     ),
     (
         "an UNPRICED wholly-legacy preflight defers the forfeit settle",
@@ -346,14 +357,36 @@ EQUIVALENT = {
 
 
 def run(suite, test):
+    """Run one killer; return (verdict, evidence).
+
+    A nonzero exit counts as KILLED only when forge actually ran the test
+    and it failed at runtime (a `[FAIL...]` line). A mutant that breaks the
+    build makes forge exit nonzero with no test run at all, and counting
+    that as a kill would score a mutant no test ever saw (#1827).
+    """
     p = subprocess.run(
         ["forge", "test", "--match-path", suite, "--match-test", test],
         cwd=ROOT, capture_output=True, text=True,
     )
-    return p.returncode
+    out = p.stdout + p.stderr
+    fails = [l for l in out.splitlines() if l.startswith("[FAIL")]
+    if p.returncode == 0:
+        return "SURVIVED", ""
+    if fails:
+        return "KILLED", fails[0][:160]
+    return "NO-RUN", "forge exited %d without a failing test" % p.returncode
+
+
+def _terminate(signum, _frame):
+    # A SIGTERM/SIGHUP (a timed-out wrapper, a closed terminal) would end the
+    # process between the mutant write and the restore, leaving a reverted fix
+    # in src/. Raising here unwinds through main()'s `finally`, which restores.
+    raise SystemExit(128 + signum)
 
 
 def main():
+    signal.signal(signal.SIGTERM, _terminate)
+    signal.signal(signal.SIGHUP, _terminate)
     stale = []
     for label, rel, find, repl, suite, test in TARGETS:
         body = open(os.path.join(SRC, rel)).read()
@@ -374,26 +407,32 @@ def main():
             src = open(path).read()
             open(path, "w").write(src.replace(find, repl))
             os.utime(path, None)
-            rc = run(suite, test)
-            results.append(("KILLED" if rc != 0 else "SURVIVED", label, test))
+            verdict, why = run(suite, test)
+            results.append((verdict, label, test, why))
+            print("[%d/%d] %s  %s" % (len(results), len(TARGETS), verdict, label),
+                  flush=True)
         finally:
             shutil.move(backup, path)
             os.utime(path, None)
 
     print("\n=== P1-b MUTATION RESULTS ===")
-    killed = equiv = gaps = 0
-    for verdict, label, test in results:
+    killed = equiv = gaps = norun = 0
+    for verdict, label, test, why in results:
         shown = verdict
         if verdict == "SURVIVED" and label in EQUIVALENT:
             shown = "EQUIVALENT (expected)"; equiv += 1
         elif verdict == "SURVIVED":
             shown = "SURVIVED <<< GAP"; gaps += 1
+        elif verdict == "NO-RUN":
+            shown = "NO-RUN <<< NOT A KILL"; norun += 1
         else:
             killed += 1
         print("%-22s %s\n%25s%s" % (shown, label, "", test))
-    print("\n%d/%d killed, %d known-equivalent, %d GAPS" % (
-        killed, len(TARGETS), equiv, gaps))
-    return 0
+        if why:
+            print("%25s%s" % ("", why))
+    print("\n%d/%d killed, %d known-equivalent, %d GAPS, %d NO-RUN" % (
+        killed, len(TARGETS), equiv, gaps, norun))
+    return 1 if (gaps or norun) else 0
 
 
 if __name__ == "__main__":
