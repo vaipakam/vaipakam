@@ -16,12 +16,20 @@
  *      end-of-term sentence misstates when they get paid, which is the
  *      exact fact the row exists to convey. Unknown renders a checking
  *      line rather than defaulting to either shape.
- *   2. Past maturity OUTRANKS every narrower reason on both sale rows.
- *      A fully-elapsed term is refused at creation, so "no matching
- *      offers right now" past due would send a lender hunting for a fix
- *      that cannot help.
+ *   2. Whether a sale route is OPEN is the contract's answer, never
+ *      this module's (#1841). Each sale row reads the route's refusals
+ *      from `SaleExitVerdictFacet.saleExitVerdict` and states one of
+ *      them (`statedRefusal`): the one the entry would revert with,
+ *      unless the loan is past due, which the spec puts first. This module
+ *      used to rebuild that answer from the page's own reads (status,
+ *      maturity, the listing lock, the listing window, the collateral
+ *      kind) and every rebuilt rule drifted from the entry it copied.
+ *      What stays here is only what the contract does not know: the
+ *      wait row, this app's own gates on its tools, and the wording.
  */
 import { copy } from '../content/copy';
+import { formatDateTime } from '../lib/format';
+import type { SaleExitVerdict, SaleRefusal } from './saleExitVerdict';
 
 /** Whether a standing lending offer matches this position.
  *
@@ -49,32 +57,6 @@ export type InstantSellCandidates = 'checking' | 'some' | 'none' | 'unknown';
  * instead of copying it, and a second copy of the facet's admission
  * rules is the exact defect class this card was built to remove.
  * Tracked in #1849. */
-
-/** Whether this position already carries a live sale listing.
- *
- *  A union for the same reason as `InstantSellCandidates`: the listing
- *  lock is authoritative for BOTH sale paths — `_createLoanSaleOfferImpl`
- *  refuses `SaleOfferAlreadyExists` and the direct sale is refused too —
- *  so an unanswered read must not collapse to "clear". A boolean did
- *  exactly that while the read was loading or had errored, showing both
- *  exits as available on a position whose lock had never been checked
- *  (Codex r1 P2).
- *
- *  `'unknown'` is the fourth state and exists because the fix for that
- *  finding nearly reintroduced it by the opposite door. The lock read
- *  is gated on a valid lender position token; with no such token the
- *  query NEVER runs, so its data stays undefined permanently. Mapping
- *  that to `'checking'` would have pinned both sale rows shut forever
- *  behind a spinner — a permanent dead end dressed as a transient one,
- *  which is the exact failure the card exists to prevent.
- *
- *  So: `'checking'` means a read that CAN answer has not answered yet;
- *  `'unknown'` means no read is possible at all. The latter makes no
- *  claim and leaves the rows to the tools, which is also harmless here
- *  — a position with no lender token cannot be listed or sold in the
- *  first place, so the tool refuses for its own, better-stated
- *  reason. */
-export type SaleLockState = 'checking' | 'listed' | 'clear' | 'unknown';
 
 /** Whether the sale TOOLS themselves can render.
  *
@@ -115,28 +97,17 @@ export type SaleToolsState =
    *  a misstatement they could be misled by. */
   | 'failed';
 
-/** Whether the loan has passed its due date.
- *
- *  A union rather than a boolean because there is a third answer, and
- *  it was previously spelled `false` (Codex r6 P2). The maturity check
- *  is chain-anchored from whichever live read has answered; in Basic
- *  mode the strategy read is disabled, so if the always-on terms read
- *  ERRORS there is no authoritative source left — and a boolean turned
- *  that into "not past due", presenting both sale rows as available on
- *  a position whose due date had never been established.
- *
- *  `'unknown'` fails CLOSED here, unlike `SaleLockState`'s `'unknown'`
- *  which leaves the rows alone. The difference is whether a read that
- *  COULD answer exists: the lock's unknown means no query can run at
- *  all and never will, so waiting on it would be a permanent dead end;
- *  maturity's unknown means a live query that is enabled for exactly
- *  this case has not answered yet, so it clears on the next refetch. */
-export type MaturityState = 'past' | 'current' | 'unknown';
-
 /** Whether the pending card below will offer a cancel, and if not, why.
  *
- *  Three-valued rather than a boolean (Codex r8 P2), because the two
- *  ways it can be absent want different sentences. A missing offer
+ *  `'unread'` comes first and is the one case where no card below
+ *  renders at all: the contract says a listing stands, but this device's
+ *  own listing read has not answered (in flight, failed, or not yet
+ *  showing it), so neither its terms nor where it was made are known
+ *  (Codex #3024 r1). Naming "another device" there would be a
+ *  fabricated cause, and pointing at the card would point at nothing.
+ *
+ *  The other three answer from a read that HAS answered (Codex r8 P2):
+ *  the two ways a cancel can be absent want different sentences. A missing offer
  *  record means the listing was made elsewhere and this device cannot
  *  act on it — "cancel it where you listed it" is the right advice. An
  *  unverified holder means the card's isolated `ownerOf` read failed,
@@ -144,7 +115,7 @@ export type MaturityState = 'past' | 'current' | 'unknown';
  *  on the next attempt — telling that lender to go to another device
  *  would be a fabricated cause, and my own r7 fix introduced exactly
  *  that by folding the holder failure into the elsewhere wording. */
-export type SaleCancelState = 'yes' | 'no-elsewhere' | 'no-unverified';
+export type SaleCancelState = 'yes' | 'no-elsewhere' | 'no-unverified' | 'unread';
 
 export type LenderExitJumpTarget = 'early-exit-card' | 'loan-sale-card';
 
@@ -187,8 +158,7 @@ export interface LenderExitInput {
   /** Whether the cadence read FAILED, as opposed to being in flight
    *  (Codex r7 P2). Both arrive as `undefined` cadence, and rendering
    *  the checking line for a persistent failure promises an answer
-   *  that is not coming — the same transient-dressing-a-dead-end shape
-   *  as the sale lock's fourth state, on the wait row instead. */
+   *  that is not coming. */
   cadenceReadFailed: boolean;
   /** Whether the loan permits partial repayment. Affects the WAIT row's
    *  timing claim, not any sale row: `repayPartial` pays the lender
@@ -205,47 +175,34 @@ export interface LenderExitInput {
    *  with the position: the buyer inherits the yield-fee bump for the
    *  remaining term without paying any `C*`, and the seller, who paid
    *  it in VPFI at origination, keeps only the part already settled
-   *  (Codex r12 P2).
-   *
-   *  Free to know: the sale rows already wait on the fee-entitlement
-   *  read, so this adds no query. */
+   *  (Codex r12 P2). */
   lenderFeeModeFull: boolean;
+  /** The contract's verdict on both sale routes for the connected
+   *  wallet (#1841). See `SaleExitVerdict`. */
+  verdict: SaleExitVerdict;
+  /** Has the verdict read stopped? A refetch in flight can change a
+   *  known answer, so the readiness attribute waits for it. */
+  verdictSettled: boolean;
   /** Whether the pending card below will actually render a cancel.
    *
-   *  It gates on `state.offerId && state.isHolder` — TWO conditions,
-   *  and the holder half fails independently: the pending hook's
-   *  isolated `ownerOf` call returns `isHolder: false` on a read
-   *  failure by design, while a locally remembered offer id stays
-   *  verified and non-null. Keying the row on the offer id alone
-   *  therefore promised a cancel that a partial read failure had
-   *  already removed (Codex r5 P2 for the id, r7 P2 for the holder).
-   *  Mirror BOTH, or this drifts from the card again. */
+   *  Wording only: when the verdict says a listing already stands, the
+   *  row names the cancel as the way out, and must not name one this
+   *  device cannot perform. It gates on `state.offerId &&
+   *  state.isHolder` — two conditions, and the holder half fails
+   *  independently (Codex r5 P2, r7 P2). */
   saleCancel: SaleCancelState;
-  /** The live read says the loan is FallbackPending (Codex r8 P2).
+  /** A listing may STILL BE STANDING, so its costs are pending
+   *  consequences rather than hypothetical prices (Codex r20 P2).
    *
-   *  The card stays mounted for this status — it is not terminal, and a
-   *  lender still has options worth reading — but both sale entry
-   *  points require exactly `Active`
-   *  (`EarlyWithdrawalDirectFacet:167`, `EarlyWithdrawalFacet:270`), so
-   *  the rows must not be offered. Affirmative only: an unread status
-   *  is not a fallback-pending one. */
-  fallbackPending: boolean;
-  /** Chain-anchored only — never a device clock. See `MaturityState`
-   *  for why this is not a boolean. */
-  maturity: MaturityState;
-  /** Less than `MIN_SALE_LISTING_SECONDS` remains before maturity.
-   *
-   *  LISTING-ONLY, and that asymmetry is the point: `_boundListingExpiry`
-   *  clamps the window at maturity and then refuses anything shorter
-   *  than the minimum, so in the final hour no listing can be created —
-   *  while the instant sale has no window at all and stays available.
-   *  `LoanSaleFlow` only reports this at submit time, after the lender
-   *  has switched modes and filled the form (Codex r18 P2).
-   *
-   *  Costs no read: the app already exports the same
-   *  `MIN_SALE_LISTING_SECONDS` the tool uses, so this SHARES the
-   *  constant rather than copying it. */
-  listingWindowTooShort: boolean;
+   *  Read from the listing card's own query rather than from the
+   *  verdict, on purpose: this must fail OPEN — a previously confirmed
+   *  listing does not stop being live because the next poll errored,
+   *  and a buyer can still complete it — while the verdict fails
+   *  CLOSED. One read cannot answer both. Costs only; no row's
+   *  availability depends on it. */
+  listingMayStand: boolean;
+  /** This deployment does not publish the listing tool (an app setting,
+   *  not a contract refusal). LISTING row only. */
   listingSupportedOnChain: boolean;
   /** Operator kill switch (`VITE_DISABLED_FLOWS`). Scoped to the
    *  LISTING row: `LoanSaleFlow` refuses and shows the incident
@@ -253,137 +210,144 @@ export interface LenderExitInput {
    *  gating both rows would invent a blocker on the instant exit
    *  (Codex r3 P2). */
   listingFlowDisabled: boolean;
-  collateralIsNft: boolean;
-  saleLock: SaleLockState;
-  /** A listing may STILL BE STANDING, independently of whether the
-   *  lock read is trustworthy enough to gate the rows on.
-   *
-   *  Two questions were riding on `saleLock` and they came apart in
-   *  opposite directions (Codex r20 P2 ×2):
-   *
-   *   - "may I offer this row" — must fail CLOSED, so an initial read
-   *     failure blocks rather than waving the rows through.
-   *   - "might a buyer still complete a sale" — must fail OPEN for the
-   *     COST lines, because a previously-confirmed listing does not
-   *     stop being live just because the next poll errored, and the
-   *     held-balance transfer and reward forfeiture stay pending.
-   *
-   *  Mapping an errored poll over a cached `listed` to `'checking'`
-   *  satisfied the first and broke the second: the rows went
-   *  unavailable AND both cost lines vanished, while
-   *  `LoanSalePendingCard` stayed mounted and a buyer could still
-   *  accept. One flag cannot answer both. */
-  listingMayStand: boolean;
-  /** See `SaleToolsState` — applies to BOTH sale rows. */
+  /** See `SaleToolsState` — applies to BOTH sale rows. The page derives
+   *  it with `saleToolsAvailability` (`saleToolsMount.ts`) from the same
+   *  answer the tool block renders from (Codex #3024 r5). */
   saleTools: SaleToolsState;
-  heldVpfiUnresolved: boolean;
-  /** The borrower has a linked exit (preclose offset) pending.
-   *
-   *  Refuses BOTH sale routes, not just the listing (Codex r15 P2):
-   *  `EarlyWithdrawalDirectFacet:253` rejects `OffsetActiveOnLoan` on
-   *  the direct sale exactly as `EarlyWithdrawalFacet` does for a
-   *  listing. Consulting it on one row only was a shadow copy that had
-   *  missed one of the two entry points — and the row it left
-   *  available is the one that jumps straight to a wallet prompt.
-   *
-   *  Still always `false` from the page (see the call site): the live
-   *  link needs a chain read, tracked with #1841. Wiring it correctly
-   *  now means the read lands as a one-line change on both rows rather
-   *  than as a rediscovery of this asymmetry. */
-  borrowerOffsetPending: boolean;
-  instantSellCandidates: InstantSellCandidates;
-  /** Has ANY live status read answered yet?
-   *
-   *  Only `chooserReadiness` consults this; no row's wording or
-   *  availability depends on it, so the rendered card is unchanged.
-   *  It exists because `fallbackPending` cannot carry its own third
-   *  state: the page derives it with `.some(...)` over the live-status
-   *  candidates, so `true` is self-evidencing while `false` is
-   *  ambiguous between "not fallback" and "nothing has answered". */
-  statusSettled: boolean;
-  /** Have ALL the enabled MATURITY reads answered yet?
-   *
-   *  A separate fact from `statusSettled`, because `maturity` is
-   *  reconciled from a different set of queries than the status is
-   *  (Codex #1858 r3). Only `chooserReadiness` consults it; no row's
-   *  wording or availability depends on it.
-   *
-   *  It exists because `maturity: 'past'` is not self-evidencing
-   *  either. The page reconciles two term reads and answers `'unknown'`
-   *  when they DISAGREE — an in-grace keeper extension re-stamps the
-   *  due date forward — so a `'past'` derived from the one source that
-   *  has landed can become `'unknown'` when the second arrives with a
-   *  longer term. Without this, readiness publishes `ready` on a
-   *  conclusion that later retracts, with no chain transition behind
-   *  the change.
-   *
-   *  Same disabled-source rule as `statusSettled`: a query that will
-   *  never fetch counts as answered, so Basic mode — where the
-   *  advanced-only term read is disabled — is unaffected. */
-  maturitySettled: boolean;
-  /** Did an enabled MATURITY read stop without contributing an answer?
-   *
-   *  Distinct from `!maturitySettled` (Codex #1858 r4). Settled means
-   *  nothing is in flight; this means a source that WAS going to
-   *  contribute did not, and — because an errored query keeps its
-   *  refetch interval — still might. A verdict resting on the sources
-   *  that did land can therefore be overturned by a recovery, which is
-   *  a retraction with no chain transition behind it.
-   *
-   *  It maps to `'failed'` rather than `'pending'`: the rows have
-   *  settled, so nobody is left waiting, but the answer must not be
-   *  read as a clean negative. */
-  maturityReadFailed: boolean;
-  /** The same question for the STATUS reads, whose failure mode is its
-   *  own: a recovered status source can report FallbackPending, which
-   *  shuts both sale routes after a positive answer was published. */
-  statusReadFailed: boolean;
-  /** Did the sale-lock read FAIL, as opposed to being in flight?
-   *
-   *  `saleLock` cannot carry this itself (Codex #1858 r6). The page
-   *  maps every lock-read error to `'checking'`, deliberately: the rows
-   *  must fail closed, and the query is live and retrying, so for a
-   *  READER the wait genuinely ends. Readiness asks a different
-   *  question, and on a lock RPC that stays down `'checking'` means
-   *  `pending` forever — the timeout this attribute exists to remove,
-   *  on a page that will never resolve.
-   *
-   *  So the failure travels separately and maps `'checking'` to
-   *  `'failed'` rather than `'pending'`. Conclusive negatives still
-   *  short-circuit above it: a confirmed listing does not care that the
-   *  lock read later broke. */
-  saleLockReadFailed: boolean;
-  /** Has the sale-lock read STOPPED, or is a refetch in flight?
-   *
-   *  The same rule as `maturitySettled`, on the third source (Codex
-   *  #1858 r10): a conclusive answer requires the source that produced
-   *  it to have stopped. TanStack retains `sale.state` through a
-   *  background poll, so a cached CLEAR could publish `ready`/`yes`
-   *  while the outstanding read was about to report a listing, and a
-   *  cached LISTED could publish `ready`/`no` just before one reported
-   *  a cancellation. Both are settled answers retracting on the
-   *  ordinary 30-second cycle. */
-  saleLockSettled: boolean;
-  /** Has the fee-entitlement read that gates BOTH sale tools stopped?
-   *
-   *  The fourth prerequisite, and the one the settlement wiring had
-   *  missed (Codex #1858 r11). `saleTools` is derived from retained
-   *  data and `isError`, both of which survive a background refetch —
-   *  so a cached `'ready'` published a settled `ready`/`yes` and a
-   *  failed refetch then turned it to `'failed'`, flipping the answer
-   *  with no chain transition. Same shape as the sale lock, on the
-   *  read that gates both rows rather than one. */
+  /** Has every read `saleTools` is derived from stopped (the fee
+   *  entitlement, the principal's token, the status and term reads
+   *  behind the tools' own mount gate, and the listing read)? `saleTools` is derived from
+   *  retained data and `isError`, both of which survive a background
+   *  refetch, so a settled answer waits for all of them (Codex #1858
+   *  r11, #3024 r3, r4). */
   saleToolsSettled: boolean;
-  /** Has the source that reported FallbackPending stopped?
-   *
-   *  Narrower than `statusSettled` on purpose (Codex #1858 r10). The
-   *  fallback arm is conclusive and therefore skips the general status
-   *  gate — correctly, since waiting on unrelated sources would
-   *  reintroduce the timeout that arm exists to remove. But it must
-   *  still wait on ITS OWN source: a cached FallbackPending whose poll
-   *  is about to return Active after a cure would otherwise publish a
-   *  confident `ready`/`no` and then flip. */
-  fallbackSourceSettled: boolean;
+  instantSellCandidates: InstantSellCandidates;
+}
+
+/** The sentence for one refusal of one route.
+ *
+ *  Keyed on the custom error the ENTRY raises, which is what the verdict
+ *  returns, so there is no second schema to keep in step with the
+ *  contract. An error this build does not name still produces a refusal
+ *  sentence carrying the error's name: the route is closed either way,
+ *  and saying "open" because the words are missing would be the one
+ *  wrong answer. */
+function refusalText(
+  r: SaleRefusal,
+  route: 'direct' | 'listing',
+  input: LenderExitInput,
+  directOpen: boolean,
+): string {
+  const o = copy.lenderExit.options;
+  const f = o.refusal;
+  const base = (() => {
+    switch (r.error) {
+      case 'EnforcedPause':
+        return f.paused;
+      case 'SanctionedAddress':
+        return f.screened;
+      case 'LoanNotActive':
+        return f.loanNotActive;
+      case 'NotNFTOwner':
+      case 'KeeperAccessRequired':
+        return f.notHolder;
+      case 'InvalidSaleOffer':
+        return f.rental;
+      case 'SaleOfferCollateralMustBeERC20':
+        return o.listUnavailableNft;
+      case 'SaleOfferAlreadyExists':
+        // The cancel is the way out, so the sentence names it only when
+        // this device can perform it.
+        return route === 'listing'
+          ? {
+              yes: o.listAlreadyListed,
+              'no-elsewhere': o.listAlreadyListedNoCancel,
+              'no-unverified': o.listAlreadyListedCancelUnverified,
+              unread: o.listAlreadyListedUnread,
+            }[input.saleCancel]
+          : {
+              yes: o.sellNowAlreadyListed,
+              'no-elsewhere': o.sellNowAlreadyListedNoCancel,
+              'no-unverified': o.sellNowAlreadyListedCancelUnverified,
+              unread: o.sellNowAlreadyListedUnread,
+            }[input.saleCancel];
+      case 'OffsetActiveOnLoan':
+        return o.listUnavailableOffsetPending;
+      case 'SaleLoanPastMaturity':
+        return copy.lenderExit.pastDue;
+      case 'SaleListingWindowInvalid':
+        // "Selling into a standing offer still works" only when the
+        // direct route is in fact open (Codex r22 P2): both rows read
+        // the one verdict, so they cannot contradict each other.
+        return directOpen ? o.listUnavailableTooClose : o.listUnavailableTooCloseOnly;
+      case 'SaleRelistCooldownActive':
+        return f.relistCooldown;
+      case 'SalePositionNotConsolidatable':
+        return f.heldVpfi;
+      case 'OfferDurationExceedsCap':
+        return f.durationCap(String(r.args[1] ?? ''));
+      case 'AssetPaused':
+        return f.assetPaused;
+      case 'VaultUpgradeRequired':
+        return f.vaultUpgrade;
+      case 'SaleLegUnpriceable':
+        return f.admissionUnpriceable;
+      case 'SaleAdmissionCodeUnknown':
+        return f.admissionUnknown;
+      case 'SalePositionBelowSolvencyFloor':
+      case 'SaleLtvAboveAdmissionCap':
+      case 'SaleInheritsWeakerRiskTerms':
+      case 'SaleInheritsWorseFeeTerms':
+        return f.admissionBlocked;
+      default:
+        return f.unrecognised(r.error ?? f.unnamedError);
+    }
+  })();
+  // The contract's own "earliest" — by time alone or by a step anyone may
+  // take. It is a lower bound (a teardown may run later than it could),
+  // which is what the sentence says; no time is invented when the
+  // contract names none.
+  return r.reopensAt === null
+    ? base
+    : `${base} ${f.reopensEarliest(formatDateTime(r.reopensAt))}`;
+}
+
+/** Which of a route's refusals the row states.
+ *
+ *  The contract decides THAT a route is closed (any refusal closes it)
+ *  and lists every reason in the order the entry meets them. Which one
+ *  the row SAYS is presentation, and the spec ranks one reason above the
+ *  entry's order: once the loan has reached its due date, every exit
+ *  says so rather than naming a narrower obstacle, because no new sale
+ *  can be created past it whatever else clears (ProjectDetailsREADME,
+ *  the lender-options paragraph). The entry meets an existing listing
+ *  before maturity, so the first refusal alone would tell a past-due
+ *  lender to cancel a listing that could not be replaced. Otherwise the
+ *  first refusal — the one the entry would revert with. */
+function statedRefusal(refusals: SaleRefusal[]): SaleRefusal {
+  return refusals.find((r) => r.error === 'SaleLoanPastMaturity') ?? refusals[0];
+}
+
+/** The sentence for a verdict that has not produced refusals to read. */
+function verdictPendingText(v: SaleExitVerdict): string | undefined {
+  const f = copy.lenderExit.options.refusal;
+  switch (v.kind) {
+    case 'checking':
+      return f.verdictChecking;
+    case 'failed':
+      return f.verdictFailed;
+    case 'unserved':
+      return f.verdictUnserved;
+    default:
+      return undefined;
+  }
+}
+
+/** The tools' own state, shared by both sale rows. */
+function toolsText(input: LenderExitInput): string | undefined {
+  const o = copy.lenderExit.options;
+  if (input.saleTools === 'ready') return undefined;
+  return input.saleTools === 'failed' ? o.saleToolsFailed : o.saleToolsChecking;
 }
 
 export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
@@ -404,67 +368,46 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
           ? o.waitDescAtClosePartial
           : o.waitDescAtClose;
 
-  // Invariant 2 — structural refusal first. The unknown arm fails
-  // CLOSED (Codex r6 P2): an unestablished due date is not evidence of
-  // a live one, and both contracts refuse an exit past maturity, so
-  // presenting the rows as takeable would be a claim made from a read
-  // that did not answer.
-  // Ranked above the listing lock: a fallback-pending loan refuses both
-  // sales outright, so "cancel the listing first" would be advice that
-  // does not lead anywhere (Codex r8 P2).
-  const pastDueOr = (reason: string | undefined) => {
-    switch (conclusiveBlock(input)) {
-      case 'past-due':
-        return copy.lenderExit.pastDue;
-      case 'maturity-unknown':
-        return copy.lenderExit.options.maturityUnknown;
-      case 'fallback':
-        return o.saleFallbackPending;
-      default:
-        return reason;
-    }
-  };
+  const v = input.verdict;
 
-  /** The sell-now row's verdict, hoisted so the LISTING row can read
-   *  it (Codex r22 P2). The final-hour message reassures the lender
-   *  that "selling into a standing offer still works" — true only when
-   *  that row is in fact takeable, and the shared prerequisites can
-   *  shut both at once. Two rows describing each other must read one
-   *  value, not two copies of a guess. */
-  const sellNowUnavailable = pastDueOr(
-        input.saleLock === 'checking'
-          ? o.saleLockChecking
-          : input.saleLock === 'listed'
-            ? // The direct sale is refused while a listing stands, and
-              // the page suppresses the instant-exit card entirely —
-              // so without this the jump scrolled to no element. The
-              // cancellable split is the same one the listing row
-              // makes: this row NAMES the cancel as the fix, so it
-              // must not name one this device cannot perform.
-              input.saleCancel === 'yes'
-              ? o.sellNowAlreadyListed
-              : input.saleCancel === 'no-elsewhere'
-                ? o.sellNowAlreadyListedNoCancel
-                : o.sellNowAlreadyListedCancelUnverified
-          : // Ranked BELOW the listing lock to match the page's own
-            // order: the stand-in card replaces the tools only on the
-            // branch a live listing has already taken over.
-            input.saleTools !== 'ready'
-            ? input.saleTools === 'failed'
-                ? o.saleToolsFailed
-                : o.saleToolsChecking
-          : input.borrowerOffsetPending
-            ? o.listUnavailableOffsetPending
-          : input.instantSellCandidates === 'checking'
-          ? copy.lenderExit.checking
-          : input.instantSellCandidates === 'none'
-            ? o.sellNowNoOffers
-            : // 'some' and 'unknown' both leave the row available: one
-              // because we looked and found candidates, the other
-              // because we have not looked and must not pretend to
-              // have. The difference is visible in the tool, not here.
-              undefined,
-      );
+  // Precedence on each row: the contract's refusal (see `statedRefusal`),
+  // then this app's own gates on its tools. The
+  // contract's reason leads because it is about the position and holds
+  // whatever this app does; the app's gates only say the tool here
+  // cannot be used for it.
+  const sellNowUnavailable =
+    verdictPendingText(v) ??
+    (v.kind === 'known' && v.direct.length > 0
+      ? // The direct route's own refusals never use `directOpen`.
+        refusalText(statedRefusal(v.direct), 'direct', input, false)
+      : undefined) ??
+    toolsText(input) ??
+    (input.instantSellCandidates === 'checking'
+      ? copy.lenderExit.checking
+      : input.instantSellCandidates === 'none'
+        ? o.sellNowNoOffers
+        : // 'some' and 'unknown' both leave the row available: one
+          // because we looked and found candidates, the other because
+          // we have not looked and must not pretend to have. The
+          // difference is visible in the tool, not here.
+          undefined);
+  // "Selling into a standing offer still works" is a claim about the
+  // ROW, not the contract's route alone: the row can be closed by this
+  // app's own gates with the contract clear, and the two rows would then
+  // contradict each other (Codex #3024 r1).
+  const directOpen = sellNowUnavailable === undefined;
+
+  const listUnavailable =
+    verdictPendingText(v) ??
+    (v.kind === 'known' && v.listing.length > 0
+      ? refusalText(statedRefusal(v.listing), 'listing', input, directOpen)
+      : undefined) ??
+    (!input.listingSupportedOnChain
+      ? o.listUnavailableNetwork
+      : input.listingFlowDisabled
+        ? o.listUnavailableFlowDisabled
+        : undefined) ??
+    toolsText(input);
 
   return [
     {
@@ -472,16 +415,12 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
       title: o.wait,
       desc: waitDesc,
       // The SAME `listingMayStand` input the two sale rows use for
-      // `costStillApplies` (Codex r24 P2). It was applied to the rows
-      // that name the cost and not to the row that denies there is one,
-      // so the card said "a buyer can still complete this and here is
-      // what it takes from you" and "costs nothing — this is the
-      // default" about one live listing, on the same screen.
+      // `costStillApplies` (Codex r24 P2): the card must not say "a
+      // buyer can still complete this" and "waiting costs nothing" about
+      // one live listing on the same screen.
       //
       // Not marked `unavailable`: waiting is not refused, it is simply
-      // no longer what inaction selects. Saying so is the honest shape;
-      // greying the row out would suggest the lender has no way back to
-      // it when cancelling is exactly that way.
+      // no longer what inaction selects.
       cost: input.listingMayStand ? o.waitCostListed : o.waitCost,
     },
     {
@@ -490,9 +429,8 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
       desc: o.sellNowDesc,
       cost: o.sellNowCost,
       costExtra: input.lenderFeeModeFull ? o.costFullTariff : undefined,
-      // Same reasoning as the listing row: while a listing stands, the
-      // buyer completing it incurs these same losses, and this row's
-      // cost line carries the identical disclosure.
+      // While a listing stands, the buyer completing it incurs these
+      // same losses, and this row's cost line carries the disclosure.
       costStillApplies: input.listingMayStand,
       unavailable: sellNowUnavailable,
       target: 'early-exit-card',
@@ -506,51 +444,7 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
       note: o.listStructural,
       // A live listing is a sale in flight, not a declined option.
       costStillApplies: input.listingMayStand,
-      // Most structural reason wins, so a lender hears the thing they
-      // cannot change before the thing they can. "Already listed" leads
-      // because it is the one state with nothing to fix and something
-      // to look at instead.
-      unavailable: pastDueOr(
-        input.saleLock === 'checking'
-          ? o.saleLockChecking
-          : input.saleLock === 'listed'
-            ? input.saleCancel === 'yes'
-              ? o.listAlreadyListed
-              : input.saleCancel === 'no-elsewhere'
-                ? o.listAlreadyListedNoCancel
-                : o.listAlreadyListedCancelUnverified
-          : // Ranked ABOVE the network and collateral reasons: this one
-            // is about THIS loan right now, and a lender who is told
-            // "not on this network" would go looking for another
-            // network when the real answer is "not in the last hour".
-            input.listingWindowTooShort
-            ? // The variant WITHOUT the "selling still works" tail when
-              // the instant sale is not in fact available (Codex r22
-              // P2). Computed from the sell-now row's own verdict, so
-              // the two rows cannot contradict each other.
-              sellNowUnavailable === undefined
-              ? o.listUnavailableTooClose
-              : o.listUnavailableTooCloseOnly
-            : !input.listingSupportedOnChain
-              ? o.listUnavailableNetwork
-              : input.collateralIsNft
-                ? o.listUnavailableNft
-                : // Operator/protocol-level facts about whether the
-                // surface exists at all rank ABOVE position-specific
-                // refusals: "the tool is switched off" before "your
-                // position carries a balance to clear".
-                input.listingFlowDisabled
-              ? o.listUnavailableFlowDisabled
-              : input.saleTools !== 'ready'
-                ? input.saleTools === 'failed'
-                    ? o.saleToolsFailed
-                    : o.saleToolsChecking
-              : input.heldVpfiUnresolved
-                ? o.listUnavailableHeldVpfi
-                : input.borrowerOffsetPending
-                  ? o.listUnavailableOffsetPending
-                  : undefined,
-      ),
+      unavailable: listUnavailable,
       target: 'loan-sale-card',
     },
   ];
@@ -571,192 +465,33 @@ export function hasJumpableRow(rows: LenderExitRow[]): boolean {
  *  "switch to Advanced" control is ambiguous. It is missing both while
  *  a prerequisite read is in flight AND when no row is genuinely
  *  jumpable, and those are the two cases a live review most needs to
- *  tell apart (#1855). Without a positive readiness signal a driver can
- *  only wait out a deadline and then guess — which is what
- *  `live-position-observe.mjs` does today, at 45 seconds per page, and
- *  it still cannot distinguish a stale render from a regression.
+ *  tell apart (#1855).
  *
- *  Deliberately scoped to the inputs that decide JUMPABILITY, not to
- *  everything the card reads:
- *
- *   - `periodicInterestCadence` is excluded. It changes the WAIT row's
- *     wording and nothing else, so waiting on it would block readiness
- *     on an answer that cannot move a jump — and on a loan whose
- *     cadence read never lands, readiness would never arrive.
- *   - `'unknown'` is NOT uniformly pending, and that asymmetry is the
- *     whole subtlety here. `maturity: 'unknown'` means a query enabled
- *     for exactly that case has not answered, so it clears — pending.
- *     `saleLock: 'unknown'` and `instantSellCandidates: 'unknown'` mean
- *     no query will EVER run, so they are settled answers; treating
- *     them as pending would hang forever on a Basic-mode page.
- *
- *  `'failed'` is reported distinctly rather than folded into `'ready'`.
- *  The rows have settled, so a reader is not left waiting — but a
+ *  `'failed'` is reported distinctly rather than folded into `'ready'`:
+ *  the rows have settled, so a reader is not left waiting, but a
  *  consumer asserting "the switch should be here" must not treat a
  *  failed prerequisite as a clean negative answer.
+ *
+ *  The cadence read is excluded: it changes the WAIT row's wording and
+ *  nothing else, so waiting on it would block readiness on an answer
+ *  that cannot move a jump.
  */
 export type ChooserReadiness = 'ready' | 'pending' | 'failed';
 
-
-/** The HEAD of the sale rows' unavailability precedence — the blocks
- *  that decide both rows outright, before any narrower reason is read.
- *
- *  Extracted so `pastDueOr` and `chooserReadiness` cannot drift
- *  (Codex #1858 r1). They had the same precedence written twice, in
- *  different orders, and diverged immediately: the rows short-circuit
- *  on past maturity while readiness went on waiting for a sale-lock
- *  read whose answer could no longer matter. Two statements of one rule
- *  is the shadow-model defect this whole PR chain keeps finding, and it
- *  reappeared inside the fix for it. */
-type ConclusiveBlock = 'past-due' | 'maturity-unknown' | 'fallback';
-
-function conclusiveBlock(input: LenderExitInput): ConclusiveBlock | undefined {
-  if (input.maturity === 'past') return 'past-due';
-  if (input.maturity === 'unknown') return 'maturity-unknown';
-  if (input.fallbackPending) return 'fallback';
-  return undefined;
-}
-
-/** Is jumpability ALREADY decided as no, whatever else is outstanding?
- *
- *  Deliberately NOT `conclusiveBlock` (Codex #1858 r2). That function
- *  orders the blocks by which COPY to show, and round 1's fix shared it
- *  with readiness on the reasoning that one rule should not be written
- *  twice. The rule was written twice — but they are two different rules,
- *  and sharing the copy one imported its ordering into a question it
- *  does not answer.
- *
- *  The orders genuinely differ. For copy, an unestablished due date
- *  outranks a fallback status, because "we could not confirm the due
- *  date" is the more informative sentence. For JUMPABILITY it does not
- *  matter at all: a fallback-settling loan refuses both sale routes
- *  whatever maturity later turns out to be, so the answer is no and
- *  waiting on the terms read preserves the timeout on exactly the
- *  fallback population.
- *
- *  So this asks only the question readiness needs — is the answer
- *  already no — and takes no view on which reason a reader should see.
- *
- *  THE TWO ARMS ARE NOT EQUALLY CONCLUSIVE (Codex #1858 r3), and
- *  rounds 1 and 2 both treated them as if they were.
- *
- *  `fallbackPending: true` is self-evidencing: a status read positively
- *  reported FallbackPending, and no later read can un-report it in a
- *  way that reopens a sale route. It stays conclusive while every other
- *  query is still in flight — which is the point, since waiting would
- *  preserve the timeout on exactly the population this arm exists for.
- *
- *  `maturity: 'past'` is a RECONCILIATION of two term reads, and the
- *  page answers `'unknown'` when they disagree. So a `'past'` computed
- *  from the only source that has landed is provisional: an in-grace
- *  keeper extension moves the due date forward, and the second read
- *  arriving with the longer term turns `'past'` into `'unknown'` and
- *  readiness from `ready` back to `pending`. A value published as
- *  settled must not retract without a chain transition behind it, so
- *  this arm waits for the sources that produce it. */
-function conclusivelyUnjumpable(input: LenderExitInput): boolean {
-  // AN OR OVER INDEPENDENT ARMS, not a precedence chain (Codex #1858
-  // r11). Written as early returns, an arm whose own source was
-  // refetching answered `false` for the whole predicate and masked the
-  // arms after it — so a fallback loan with a refetching status source
-  // reported `pending` even when a SETTLED confirmed listing, or a
-  // settled past-maturity, already proved both rows shut. Each of
-  // these is independently sufficient; none is a tie-breaker for the
-  // others, and a chain of early returns silently made them one.
-  //
-  // Each arm still waits on its OWN source and only its own (r10): a
-  // positive observation is conclusive because nothing can retract it,
-  // which stops being true while the read that produced it is in
-  // flight. Waiting narrowly is what keeps these arms from
-  // reintroducing the general timeout they exist to remove.
-  //
-  // A CONFIRMED LISTING shuts both rows with no reference to maturity
-  // or status (r5) — the row builder marks the listing row
-  // `alreadyListed` and the direct-sale row refused-while-listed for
-  // every value of the reads this predicate would otherwise wait on.
-  // `'checking'` is NOT that: an unanswered lock read is the ambiguous
-  // case and stays pending below.
-  return (
-    (input.fallbackPending && input.fallbackSourceSettled) ||
-    (input.saleLock === 'listed' && input.saleLockSettled) ||
-    (input.maturity === 'past' && input.maturitySettled && !input.maturityReadFailed)
-  );
-}
-
 export function chooserReadiness(input: LenderExitInput): ChooserReadiness {
-  // A CONCLUSIVE NEGATIVE IS AN ANSWER (Codex #1858 r1). Past maturity
-  // and a fallback-settling loan shut BOTH sale rows outright, so the
-  // question is already decided and no later read can change it.
-  // Reporting `pending` there kept such a page undecided behind a slow
-  // or failing secondary read, preserving the very timeout this
-  // predicate exists to remove.
-  //
-  // Asked INDEPENDENTLY of the copy precedence (Codex #1858 r2): a
-  // fallback loan with an unestablished due date is conclusively
-  // unjumpable, while `conclusiveBlock` would name the maturity arm and
-  // send it back to `pending`.
-  if (conclusivelyUnjumpable(input)) return 'ready';
-  // A conclusive arm that FELL THROUGH because its own source is still
-  // fetching is a wait, not a fall-through to the general path. Stated
-  // explicitly rather than left to `statusSettled` to catch: that
-  // would be true today, since the fallback source is one of the
-  // status sources, and it is a cross-field invariant the type does
-  // not enforce — exactly the implicit reasoning round 3 removed from
-  // this function.
-  if (input.fallbackPending && !input.fallbackSourceSettled) return 'pending';
-  // The maturity verdict is not usable until the reads behind it have
-  // finished, and `!maturitySettled` covers the in-flight case: one
-  // source has produced a verdict and the other has not answered yet,
-  // which is provisional in either direction — a `'current'` can become
-  // `'unknown'` on disagreement just as a `'past'` can.
-  //
-  // Written out rather than left to fall through to `statusSettled`
-  // below. It WOULD fall through — the maturity sources are a subset of
-  // the status sources — but that is a correctness argument living in
-  // two files, and this predicate exists because the last one of those
-  // was wrong (Codex #1858 r3).
-  if (!input.maturitySettled) return 'pending';
-  // A SOURCE THAT STOPPED WITHOUT ANSWERING IS NOT A SETTLED ANSWER
-  // (Codex #1858 r4), and this is ordered ahead of `'unknown'` for a
-  // reason: an errored query keeps polling, so its recovery can move
-  // the verdict after `ready` was published. It is `'failed'` rather
-  // than `'pending'` because the rows themselves HAVE settled — a
-  // reader is not left waiting — while a consumer asserting "the
-  // switch should be here" must not read it as a clean negative. Round
-  // 3 fixed the in-flight case and left this one, which is the same
-  // retraction reached by a different route.
-  if (input.maturityReadFailed) return 'failed';
-  // Settled, nothing failed, and the two healthy sources still
-  // disagree. That clears on the next poll of either, so it is pending
-  // rather than failed.
-  if (input.maturity === 'unknown') return 'pending';
-  // The status read must have SETTLED before a non-fallback answer can
-  // be trusted (Codex #1858 r1). `fallbackPending` is derived by the
-  // page from `liveStatusCandidates.some(...)`, so `false` means either
-  // "not fallback" or "no status read has answered yet" — and if an
-  // outstanding query then reports FallbackPending, the head above
-  // turns both jumps off and a `ready` answer would have flipped from
-  // yes to no after being published as settled. Only `true` is
-  // self-evidencing; `false` needs this second fact to be meaningful.
-  if (!input.statusSettled) return 'pending';
-  // Same rule on the status set, stated here rather than left implied
-  // by the maturity gate above. The failure mode is its own: an errored
-  // status source can recover reporting FallbackPending, which shuts
-  // both sale routes — so a `ready`/`yes` published while it was down
-  // flips to `no` with nothing having happened on chain.
-  if (input.statusReadFailed) return 'failed';
+  // A refetch in flight can change a known verdict, so nothing is
+  // published as settled until the read has stopped.
+  if (!input.verdictSettled) return 'pending';
+  const v = input.verdict;
+  if (v.kind === 'checking') return 'pending';
+  if (v.kind === 'failed') return 'failed';
+  // A deployment without the verdict, or a verdict that refuses both
+  // routes, decides jumpability as no whatever the tools' reads say.
+  if (v.kind === 'unserved') return 'ready';
+  if (v.direct.length > 0 && v.listing.length > 0) return 'ready';
   if (!input.saleToolsSettled) return 'pending';
   if (input.saleTools === 'failed') return 'failed';
   if (input.saleTools === 'checking') return 'pending';
-  // A lock that CANNOT answer is settled-but-untrustworthy, not a wait
-  // (Codex #1858 r6). The page collapses a failed lock read into
-  // `'checking'` so the rows fail closed; readiness must not inherit
-  // that collapse, or a broken lock RPC leaves the card pending for as
-  // long as the page is open.
-  if (!input.saleLockSettled) return 'pending';
-  if (input.saleLock === 'checking') {
-    return input.saleLockReadFailed ? 'failed' : 'pending';
-  }
   if (input.instantSellCandidates === 'checking') return 'pending';
   return 'ready';
 }

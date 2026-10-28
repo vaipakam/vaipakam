@@ -29,7 +29,7 @@ it('the tip rail carries exactly the declared roots', () => {
 
 // Beyond what the stretch relies on: these gates also move with no own
 // action while the rail is down, and with an own write in another tab.
-describe.each(['maxWithdrawable', 'periodicInterest'])('%s, beyond the tip rail', (root) => {
+describe.each(['maxWithdrawable', 'periodicInterest', 'saleExitVerdict'])('%s, beyond the tip rail', (root) => {
   it('rides the block-driven fallback blanket', () => {
     expect(LIVE_KEYS.has(root)).toBe(true);
   });
