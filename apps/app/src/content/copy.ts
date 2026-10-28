@@ -6086,7 +6086,7 @@ const copySource = {
   analytics: {
     title: 'Protocol analytics',
     lede: tmpl(
-      'Live counts from the public indexer for chain {{chain}}. No wallet needed — these are the same keyless endpoints anyone can query.',
+      'Live figures for chain {{chain}}: counts from the public indexer, and token and fee figures read straight from the platform contract. No wallet needed — anyone can query the same sources.',
       ['chain'],
     ),
     refresh: 'Refresh',
@@ -6167,7 +6167,7 @@ const copySource = {
       'Total counts the offers currently on record. Cancelled offers are dropped from the index after about a month, so this is not a lifetime count — it can go down as old cancellations age out.',
     transparencyHeading: 'Transparency',
     transparencyBody:
-      'Every figure above is read from the public indexer API, which is keyless and open-CORS. You do not have to trust this page — query the same endpoints yourself and compare.',
+      'The loan, offer and recycling figures above are read from the public indexer API, which is keyless and open-CORS. You do not have to trust this page — query the same endpoints yourself and compare. The token and fee figures below are read from the contract itself.',
     cursorBlock: 'Indexer cursor block',
     lastIngest: 'Last ingest',
     chain: 'Chain',
@@ -6177,6 +6177,60 @@ const copySource = {
     ageSeconds: tmpl('{{n}}s ago', ['n']),
     ageMinutes: tmpl('{{n}} min ago', ['n']),
     ageHours: tmpl('{{n}} h ago', ['n']),
+  },
+  /* #2437 — the VPFI token and treasury-fee figures on /analytics, read
+     from the platform contract's own view functions at one stated block.
+
+     COPY GATE (RL-6, VPFITokenomicsRedesignResearch.md §A.4): supply and
+     fee-flow transparency only. Never a price, a return, scarcity or a
+     purchase; nothing implies anyone decides an amount. Every caveat that
+     can make a figure lower than the truth is stated beside it. */
+  chainFigures: {
+    heading: 'Read from the contract',
+    intro:
+      'These figures do not come from the indexer. They are read straight from the platform contract on this chain, all at the one block named here, through public view functions anyone can call.',
+    loading: 'Reading the contract…',
+    unreachable:
+      'The contract could not be read just now, so none of these figures are shown. That is a fact about the connection, not about the figures.',
+    readAt: 'Read at block',
+    readAge: 'Age of this reading',
+    views: 'View functions read',
+    tokenHeading: 'VPFI token',
+    tokenAddress: 'Token contract',
+    totalSupply: 'Total supply on this chain',
+    cap: 'Supply cap',
+    headroom: 'Can still be minted under the cap',
+    minter: 'Address allowed to mint',
+    noMinter: 'none set',
+    canonicalNote:
+      'VPFI is issued on this chain. New VPFI can be minted only by the address above, and never past the cap.',
+    mirrorNote:
+      'VPFI is not issued on this chain. It arrives here by bridge from the chain where it is issued, so the supply shown is the amount on this chain only. The cap and the address allowed to mint belong to that chain, and this page shows them when it is read for that chain.',
+    unbound: 'No VPFI token is set up on this chain.',
+    tokenUnread: 'The token figures could not be read from the contract.',
+    feesHeading: 'Fees collected',
+    feesTotal: 'Since fee records began',
+    fees24h: 'Last 24 hours',
+    fees7d: 'Last 7 days',
+    feesUnread: 'The fee figures could not be read from the contract.',
+    feesUnit: tmpl(
+      'Each fee is valued in {{unit}} at the moment it was collected, and is not valued again later.',
+      ['unit'],
+    ),
+    feesUnitUnknown:
+      'Each fee is valued in the platform\'s reference currency at the moment it was collected. That currency could not be read, so no unit is shown.',
+    feesLowerBound:
+      'A fee in an asset the platform could not value at that moment is recorded as zero, so these figures can be lower than what was actually collected. The 24-hour and 7-day figures add up at most the latest 10,000 fee records, so on a very busy chain they can be lower too. If the reference currency has ever been changed, fees from before the change are counted in the old one.',
+    treasury: 'Treasury',
+    treasuryExternal:
+      'Fees are sent to this address as they are collected. It is an ordinary address you can check on the explorer, so this page shows no balance for it.',
+    treasuryDiamond: 'The platform contract keeps its own fees.',
+    held: 'Fees held by the contract, at current value',
+    heldNote:
+      'Counts only assets that appear in loans open right now, each at its current value, and includes amounts the contract has placed elsewhere on the treasury\'s behalf. An asset no longer in an open loan, or one with no current value, is not counted, so this can be lower than what is held.',
+    treasuryUnset: 'No treasury address is set on this chain.',
+    treasuryUnread: 'The treasury address could not be read from the contract.',
+    belowPrecision: tmpl('less than {{n}}', ['n']),
   },
   /* M5 (#1218 / #1349) — the public recycling account on /analytics.
      Ported from the retired dashboard's `recycling.*` keys, with two
