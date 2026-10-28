@@ -29,16 +29,14 @@ import {
   returnTransportOnce,
   type ChainDeps,
   type LaneBucket,
-  type LedgerRow,
   type RepatState,
-  type LedgerPos,
   AUTH_FLOOR_ITEM,
   LEDGER_PAGE,
   MAX_AUTHS_PER_RUN,
   STRANDED_FLOOR_ITEM,
-  type ReturnLedger,
   type SendRecords,
 } from '../src/rewardReturnTransport';
+import type { EventLedger, LedgerPos, LedgerRow } from '../src/eventLedger';
 import type { SendFeeCeiling } from '../src/stepSender';
 import { memoryScanCursors } from '../src/scanCursors';
 import type { KeeperContext } from '../src/keeper';
@@ -365,7 +363,7 @@ class FakeChain {
   }
 }
 
-class FakeLedger implements ReturnLedger {
+class FakeLedger implements EventLedger {
   rows = new Map<number, LedgerRow[]>();
   down = false;
   pages = 0;
