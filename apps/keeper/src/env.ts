@@ -194,8 +194,9 @@ interface BaseEnv {
    *  a mirror's compensation quote for each deliberately zeroed day, and the
    *  two lapse terminals. Permissionless; the quote pays its CCIP fee. */
   REWARD_ZEROED_DAY_ENABLED?: string;
-  /** How many days back the zeroed-day pass looks (default 60). A plain var. */
-  REWARD_ZEROED_DAY_LOOKBACK_DAYS?: string;
+  /** How many days the zeroed-day pass reads a run (default 60), rotating
+   *  over every elapsed day not yet settled. A plain var. */
+  REWARD_ZEROED_DAY_WINDOW_DAYS?: string;
   /** The zeroed-day pass's CCIP fee ceiling per send, in the
    *  `REWARD_DAY_CLOSE_MAX_FEE_WEI` format (`src/feeCeiling.ts`). A plain var. */
   REWARD_ZEROED_DAY_MAX_FEE_WEI?: string;
@@ -362,7 +363,7 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_CLOSE_OUT_ENABLED',
   'REWARD_CLOSE_OUT_WINDOW_DAYS',
   'REWARD_ZEROED_DAY_ENABLED',
-  'REWARD_ZEROED_DAY_LOOKBACK_DAYS',
+  'REWARD_ZEROED_DAY_WINDOW_DAYS',
   'REWARD_ZEROED_DAY_MAX_FEE_WEI',
   'LIQ_CONFIDENCE_MIN_CHECKS',
   'LIQ_CONFIDENCE_MIN_WINDOW_DAYS',
@@ -537,7 +538,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_CLOSE_OUT_ENABLED: raw.REWARD_CLOSE_OUT_ENABLED,
     REWARD_CLOSE_OUT_WINDOW_DAYS: raw.REWARD_CLOSE_OUT_WINDOW_DAYS,
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,
-    REWARD_ZEROED_DAY_LOOKBACK_DAYS: raw.REWARD_ZEROED_DAY_LOOKBACK_DAYS,
+    REWARD_ZEROED_DAY_WINDOW_DAYS: raw.REWARD_ZEROED_DAY_WINDOW_DAYS,
     REWARD_ZEROED_DAY_MAX_FEE_WEI: raw.REWARD_ZEROED_DAY_MAX_FEE_WEI,
     LIQ_CONFIDENCE_MIN_CHECKS: raw.LIQ_CONFIDENCE_MIN_CHECKS,
     LIQ_CONFIDENCE_MIN_WINDOW_DAYS: raw.LIQ_CONFIDENCE_MIN_WINDOW_DAYS,

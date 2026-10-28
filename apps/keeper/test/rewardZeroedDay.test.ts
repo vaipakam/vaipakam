@@ -18,11 +18,12 @@ import {
   describeReport,
   zeroedDayOnce,
   zeroedDayStep,
+  DAY_FLOOR_ITEM,
   type ZeroedDayState,
 } from '../src/rewardZeroedDay';
 import { SIDE_BORROWER, SIDE_LENDER, type ScannedEntry } from '../src/rewardEntries';
 import type { SendFeeCeiling } from '../src/stepSender';
-import { memoryScanCursors } from '../src/scanCursors';
+import { memoryScanCursors, type ScanCursors } from '../src/scanCursors';
 import type { KeeperContext } from '../src/keeper';
 
 const CHAIN = 421614;
@@ -141,6 +142,8 @@ class FakeMirror {
   now = NOW;
   entries: Entry[] = [];
   days = new Map<number, Day>();
+  /** Days up to this one, not zeroed, have their clock installed. */
+  clockedThrough = -1;
   fee = FEE;
   sent: { fn: string; args: readonly unknown[]; value: bigint }[] = [];
 
@@ -215,7 +218,7 @@ class FakeMirror {
       case 'getCompQuoteAccum':
         return [d!.cursor[0], d!.cursor[1], d!.accum[0], d!.accum[1], d!.cons[0], d!.cons[1], d!.sentAt];
       case 'getDayLapseClock':
-        return [d!.finalizedAt, d!.version, WINDOW, 6n * 3600n];
+        return d ? [d.finalizedAt, d.version, WINDOW, 6n * 3600n] : [Number(a[0]) <= this.clockedThrough ? NOW - 86_400n : 0n, 0, 0n, 0n];
       case 'getDayCompensation':
         return { lenderPool18: d!.pools[0], borrowerPool18: d!.pools[1], armedFreshCounted: 0n, creditedAmount: 0n, compensated: d!.compensated, provisional: d!.provisional, provisionalEra: ZERO, remitId: 0n, provisionalHeld: 0n, provisionalHeldInCustody: false };
       case 'getDayResolvedZero':
@@ -359,15 +362,15 @@ describe('a run', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  const run = (o: { keeper?: Address | null; cap?: SendFeeCeiling } = {}) =>
+  const run = (o: { keeper?: Address | null; cap?: SendFeeCeiling; windowDays?: number; cursors?: ScanCursors } = {}) =>
     zeroedDayOnce(CHAIN, DIAMOND, {
       client: m.client(),
       readClient: m.client(),
       context: () => m.ctx(),
       keeper: o.keeper === undefined ? KEEPER : o.keeper,
       sendDeadline: Number.POSITIVE_INFINITY,
-      lookbackDays: 60,
-      cursors: memoryScanCursors(),
+      windowDays: o.windowDays ?? 60,
+      cursors: o.cursors ?? memoryScanCursors(),
       feeCeiling: o.cap ?? CAP,
       alert: async (key, text) => void alerts.push({ key, text }),
     });
@@ -472,6 +475,24 @@ describe('a run', () => {
     m.sent = [];
     await run();
     expect(m.sent).toEqual([]);
+  });
+
+  it('reaches a zeroed day far older than one window, rotating above a floor of settled days', async () => {
+    m.today = 100;
+    m.clockedThrough = 99;
+    m.zero(5, { finalizedAt: NOW - WINDOW - 1n });
+    m.addEntry(SIDE_LENDER, 1, 7, 10n);
+    const cursors = memoryScanCursors();
+    const runs = async (n: number, until: () => boolean) => {
+      for (let i = 0; i < n && !until(); i++) await run({ windowDays: 10, cursors });
+    };
+    await run({ windowDays: 10, cursors });
+    expect(m.days.get(5)!.lapsed, 'the first window reaches it').toBe(true);
+    expect(cursors.rows.get(DAY_FLOOR_ITEM), 'the floor stops at the zeroed day not yet at a terminal').toBe('5');
+    await runs(12, () => !m.days.get(5)!.loss.partialFigure);
+    expect(m.days.get(5)!.loss, 'refined once the rotation is back at it').toMatchObject({ partialFigure: false });
+    await runs(30, () => cursors.rows.get(DAY_FLOOR_ITEM) === '100');
+    expect(cursors.rows.get(DAY_FLOOR_ITEM), 'then the floor passes every settled day').toBe('100');
   });
 
   it('short-lapses a compensated day funded below its quote once its deadline passed', async () => {

@@ -9,8 +9,10 @@
 // is never quoted (Base has no figure to compensate against) and never lapses
 // (its users' claims for later days defer behind it).
 //
-// Per mirror, per run (every 15 minutes), for each day of the lookback the
-// mirror records as deliberately zeroed (`getDayDeliberatelyZeroed`):
+// Per mirror, per run (every 15 minutes), for each day of its window that the
+// mirror records as deliberately zeroed (`getDayDeliberatelyZeroed`). The
+// window is `REWARD_ZEROED_DAY_WINDOW_DAYS` elapsed days a run, rotating above
+// a stored floor of settled days, so no zeroed day is left out for good:
 //
 //   QUOTE — while the day is neither compensated nor past its frozen expiry,
 //     and not yet quoted: scan the chain's reward entries for the ones
@@ -56,7 +58,7 @@ import { shortErr } from '../callErrors';
 import { feeCeiling } from '../feeCeiling';
 import { sendOpsAlert } from '../opsAlert';
 import { conservationGap, coveringEntries, decodeEntryFloor, encodeEntryFloor, scanEntries, SIDE_BORROWER, SIDE_LENDER, type EntryRow, type ScannedEntry, type Side } from '../rewardEntries';
-import { d1ScanCursors, type ScanCursors } from '../scanCursors';
+import { advanceFloor, d1ScanCursors, decodeIndex, rotatingWindow, type ScanCursors } from '../scanCursors';
 import { StepSender, type SendFeeCeiling } from '../stepSender';
 import { pagesAfter } from '../rewardCloseOut/plan';
 import { accumulationWedge, zeroedDayStep, type ZeroedDayState } from './plan';
@@ -77,13 +79,19 @@ export const PASS_CADENCE_SEC = 15 * 60;
 /** Sends per chain per run: quote pages, dispatches and lapses together. */
 export const MAX_SENDS_PER_RUN = 12;
 export const RECEIPT_TIMEOUT_MS = 30_000;
-export const DEFAULT_LOOKBACK_DAYS = 60;
+/** Days a run reads, unless `REWARD_ZEROED_DAY_WINDOW_DAYS` says otherwise.
+ *  They rotate over every elapsed day above a stored floor of settled days
+ *  (`scanCursors.rotatingWindow`), so this bounds a run's reads and never
+ *  which days are ever visited. */
+export const DEFAULT_WINDOW_DAYS = 60;
 /** Entry ids per `accumulateCompQuoteBatch`. */
 export const PAGE_IDS = 100;
 /** Entry pages one run may read, from the scan's stored floor. */
 export const MAX_ENTRY_PAGES = 20;
 /** The scan-cursor item this pass keeps (`scanCursors.ts`). */
 export const ENTRY_FLOOR_ITEM = 'entry-floor';
+export const DAY_FLOOR_ITEM = 'day-floor';
+export const DAY_NEXT_ITEM = 'day-next';
 export const MAX_FEE_VAR = 'REWARD_ZEROED_DAY_MAX_FEE_WEI';
 /** An operator alert about a wedged accumulation re-sends after this. */
 const WEDGE_ALERT_INTERVAL_SEC = 6 * 3600;
@@ -103,7 +111,7 @@ export interface ZeroedDayDeps {
   context: () => KeeperContext | null;
   keeper: Address | null;
   sendDeadline: number;
-  lookbackDays: number;
+  windowDays: number;
   feeCeiling: SendFeeCeiling;
   /** Where its entry scan got to on this chain, across runs. */
   cursors: ScanCursors;
@@ -135,7 +143,7 @@ export interface ZeroedDayReport {
 export async function runRewardZeroedDay(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'rewardZeroedDay', 'REWARD_ZEROED_DAY_ENABLED')) return;
   const sendDeadline = tick.deadlineMs;
-  const lookbackDays = readPositive(env, 'REWARD_ZEROED_DAY_LOOKBACK_DAYS', DEFAULT_LOOKBACK_DAYS);
+  const windowDays = readPositive(env, 'REWARD_ZEROED_DAY_WINDOW_DAYS', DEFAULT_WINDOW_DAYS);
   const resolved = env.KEEPER_PRIVATE_KEY ? resolveKeeperAccount(env.KEEPER_PRIVATE_KEY) : null;
   const keeper = resolved && 'account' in resolved ? resolved.account.address : null;
   const chains = getChainConfigs(env).filter((c) => c.diamond);
@@ -150,7 +158,7 @@ export async function runRewardZeroedDay(env: Env, tick: PassTick): Promise<void
           context: () => buildKeeperContext(env, chain, client, { notAfterMs: sendDeadline }),
           keeper,
           sendDeadline,
-          lookbackDays,
+          windowDays,
           feeCeiling: feeCeiling(env.REWARD_ZEROED_DAY_MAX_FEE_WEI, chain.id, MAX_FEE_VAR),
           cursors: d1ScanCursors(env.KEEPER_DB, chain.id, chain.diamond as string, 'rewardZeroedDay'),
           alert: (key, text, interval) => sendOpsAlert(env, key, text, interval, undefined, chain.id),
@@ -225,14 +233,34 @@ export async function zeroedDayOnce(chainId: number, diamond: Address, deps: Zer
   try {
     const gate = await readGate(r, chainId);
     if (typeof gate === 'string') return { ...report, skipped: gate };
+    // The elapsed days not yet settled are read `windowDays` a run, rotating
+    // above a stored floor every day below which is settled for good: its
+    // clock installed and either not zeroed or at a terminal. A window fixed
+    // on the newest days would leave an older zeroed day unquoted and
+    // unlapsed for good (Codex #2993 r2, the same rule as the close-out pass).
+    const stored = await deps.cursors.get([DAY_FLOOR_ITEM, DAY_NEXT_ITEM]);
+    const floor = Math.min(decodeIndex(stored.get(DAY_FLOOR_ITEM)) ?? 0, gate.today);
+    const win = rotatingWindow(floor, gate.today - 1, deps.windowDays, decodeIndex(stored.get(DAY_NEXT_ITEM)));
     const days: number[] = [];
-    for (let d = Math.max(0, gate.today - deps.lookbackDays); d < gate.today; d++) days.push(d);
+    if (win !== null) for (let d = win.from; d <= win.to; d++) days.push(d);
     const flags = await r.days(days, 'getDayDeliberatelyZeroed', 'zeroed');
+    const clocks = await r.days(days, 'getDayLapseClock', 'clock');
+    const settled = new Set<number>();
     days.forEach((d, i) => {
-      if (flags[i] === undefined) sender.noteUnread(`day:${d}`, 'whether the day is deliberately zeroed');
+      const clock = clocks[i] as readonly [bigint, ...unknown[]] | undefined;
+      if (flags[i] === undefined || clock === undefined) sender.noteUnread(`day:${d}`, 'whether the day is deliberately zeroed');
       else if (flags[i] === true) report.zeroed.push(d);
+      // A day's zeroed marker is written with its clock, once, so a day with a
+      // clock and no marker never becomes one.
+      else if (BigInt(clock[0]) !== 0n) settled.add(d);
     });
-    if (report.zeroed.length > 0) await workDays(r, sender, report, gate.messenger, deps);
+    const readFloor = advanceFloor(floor, days, (d) => settled.has(d));
+    if (report.zeroed.length > 0) {
+      for (const d of await workDays(r, sender, report, gate.messenger, deps, readFloor)) settled.add(d);
+    }
+    const newFloor = advanceFloor(floor, days, (d) => settled.has(d));
+    if (newFloor !== floor) await deps.cursors.put(DAY_FLOOR_ITEM, String(newFloor));
+    if (win !== null && String(win.next) !== stored.get(DAY_NEXT_ITEM)) await deps.cursors.put(DAY_NEXT_ITEM, String(win.next));
   } catch (err) {
     if (!(err instanceof PastRunDeadline)) throw err;
     sender.noteUnread('run', 'the run deadline passed during its reads');
@@ -346,7 +374,10 @@ async function readStates(r: Reader, sender: StepSender, days: readonly number[]
   return out;
 }
 
-async function workDays(r: Reader, sender: StepSender, report: ZeroedDayReport, messenger: Address, deps: ZeroedDayDeps): Promise<void> {
+/** Works every zeroed day of the run; returns the ones at a terminal. The
+ *  entry scan is anchored at `scanFrom`, the oldest day the pass may still
+ *  work, so its stored floor stays valid whichever window a run reads. */
+async function workDays(r: Reader, sender: StepSender, report: ZeroedDayReport, messenger: Address, deps: ZeroedDayDeps, scanFrom: number): Promise<number[]> {
   const states = await readStates(r, sender, report.zeroed);
   const now = (await deps.client.getBlock({ blockTag: 'latest' })).timestamp;
   // One entry scan for every day that needs a walk this run.
@@ -356,12 +387,12 @@ async function workDays(r: Reader, sender: StepSender, report: ZeroedDayReport, 
   let completeThrough = Number.POSITIVE_INFINITY;
   if (walkDays.length > 0) {
     // From the stored floor: entries below it ended before the oldest day
-    // walked, so a run reads the entries live across those days, not the
-    // chain's whole history (`rewardEntries.ts`, Codex #2993 r1).
+    // the pass may still work, so a run reads the entries live across those
+    // days, not the chain's whole history (`rewardEntries.ts`, Codex #2993 r1).
     const stored = (await deps.cursors.get([ENTRY_FLOOR_ITEM])).get(ENTRY_FLOOR_ITEM);
     const scan = await scanEntries(
       (from, n) => r.one<readonly EntryRow[]>('getRewardEntriesRange', [from, n]),
-      walkDays[0],
+      scanFrom,
       walkDays[walkDays.length - 1],
       MAX_ENTRY_PAGES,
       decodeEntryFloor(stored),
@@ -375,8 +406,9 @@ async function workDays(r: Reader, sender: StepSender, report: ZeroedDayReport, 
       sender.noteUnread('quote', `the reward-entry scan reads at most ${MAX_ENTRY_PAGES} pages a run from its stored floor and reached only the entries starting by day ${completeThrough}, so days ${beyond.join(',')} are not accumulated this run (a quote on a partial scan cannot complete)`);
     }
   }
+  const terminal = plans.filter((p) => p.step.kind === 'done').map((p) => p.s.day);
   for (const { s, step } of plans) {
-    if (sender.stopped) return;
+    if (sender.stopped) return terminal;
     const d = s.day;
     switch (step.kind) {
       case 'done':
@@ -424,6 +456,7 @@ async function workDays(r: Reader, sender: StepSender, report: ZeroedDayReport, 
       }
     }
   }
+  return terminal;
 }
 
 /** Page every covering id past each side's cursor into the quote; true once

@@ -261,8 +261,10 @@ evidence that the migration has completed.
   is retired as a recorded loss. Each step of that process is permissionless.
   The keeper has a backstop for each one, so a zeroed day never waits for
   someone to decide to make the call. The zeroed-day duty runs on mirror
-  chains only, checks every fifteen minutes, and looks back sixty days by
-  default.
+  chains only and checks every fifteen minutes. It reads sixty elapsed days
+  a run by default, resuming where the previous run stopped and wrapping
+  round above a floor of days already settled, so a zeroed day of any age
+  is reached.
 - **Quoting.** Once the day's own interest close has run and its pool stamp
   is installed, the keeper builds the day's compensation quote. It submits
   the covering reward entries page by page, in ascending order, and then
