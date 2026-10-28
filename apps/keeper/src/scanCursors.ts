@@ -15,6 +15,7 @@
 // reading), and one that cannot be written is said in the log and costs the
 // next run the same.
 
+import type { PublicClient } from 'viem';
 import { shortErr } from './callErrors';
 import { getWorkItems, putWork } from './db';
 import type { KeeperD1 } from './env';
@@ -80,7 +81,8 @@ export function memoryScanCursors(): ScanCursors & { rows: Map<string, string> }
  * the newest items does.
  *
  * `lo` is the pass's stored floor of items finished for good (a proven-closed
- * day, a finalized era), so the range shrinks as work completes. Null when the
+ * day, a finalized era), so the range shrinks as work completes; a pass moves
+ * it with {@link finalFloor}, never from a head reading alone. Null when the
  * range is empty.
  */
 export function rotatingWindow(lo: number, hi: number, size: number, cursor: number | null): { from: number; to: number; next: number } | null {
@@ -105,4 +107,54 @@ export function advanceFloor(floor: number, items: readonly number[], done: (ite
     f = i + 1;
   }
   return f;
+}
+
+/** A chain's finalized block, as the floor rule reads it. */
+export interface FinalBlock {
+  number: bigint;
+  timestamp: bigint;
+}
+
+/** The chain's finalized block, read at most once per returned reader; null
+ *  when it cannot be read (an RPC without the tag, a run past its deadline),
+ *  which only holds every floor where it is until a run that can read it. */
+export function finalizedBlockOnce(client: Pick<PublicClient, 'getBlock'>): () => Promise<FinalBlock | null> {
+  let read: Promise<FinalBlock | null> | undefined;
+  return () =>
+    (read ??= client
+      .getBlock({ blockTag: 'finalized' })
+      .then((b) => (b.number === null ? null : { number: b.number, timestamp: b.timestamp }))
+      .catch(() => null));
+}
+
+/**
+ * How far a stored floor of finished items may move (Codex #2993 r4): past
+ * the leading `items` that `doneAtHead` holds AND that `doneAtFinal` reads as
+ * finished at the chain's finalized block. Nothing below a floor is read
+ * again, so an item it passes must stay finished for good, and a transaction
+ * seen landed at the head can still be reorged out: the item it finished
+ * would then sit below the floor unfinished, and no later run would look at
+ * it. Finality is where that stops being possible, so a floor moves only on
+ * what finality shows. An item finished at the head and not yet at finality
+ * keeps its place in the rotation and lifts the floor a run or two later; a
+ * finalized read that cannot be made leaves the floor where it is.
+ *
+ * `doneAtFinal` is asked only about the items the head reading would pass,
+ * so the extra reads are bounded by the run's own window.
+ */
+export async function finalFloor(
+  floor: number,
+  items: readonly number[],
+  doneAtHead: (item: number) => boolean,
+  finalized: () => Promise<FinalBlock | null>,
+  doneAtFinal: (items: readonly number[], block: FinalBlock) => Promise<ReadonlySet<number>>,
+): Promise<number> {
+  const head = advanceFloor(floor, items, doneAtHead);
+  if (head === floor) return floor;
+  const block = await finalized();
+  if (block === null) return floor;
+  const passed: number[] = [];
+  for (let i = floor; i < head; i++) passed.push(i);
+  const done = await doneAtFinal(passed, block);
+  return advanceFloor(floor, passed, (i) => done.has(i));
 }

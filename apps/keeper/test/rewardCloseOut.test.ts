@@ -434,7 +434,7 @@ class FakeDiamond {
 
   getBlock = async ({ blockTag }: { blockTag: string }) => {
     if (blockTag !== 'finalized' || this.final === 'none') throw new Error('finalized block not available');
-    return { number: this.finalNumber };
+    return { number: this.finalNumber, timestamp: 1_000n };
   };
 
   getTransactionCount = async () => 7;
