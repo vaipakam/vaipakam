@@ -2604,6 +2604,15 @@
       "liquidationPriceUnknown": "Inconnu : le prix de la garantie n’a pas pu être lu pour l’instant, aucun chiffre n’est donc affiché.",
       "liquidationPriceTokenUnknown": "Inconnu : les informations du jeton de garantie n’ont pas pu être lues, aucun chiffre n’est donc affiché."
     },
+    "legacyRoutes": {
+      "offerLookup": "Recherche de l’offre n°{{id}} sur {{chain}}…",
+      "offerMissingTitle": "L’offre n°{{id}} est introuvable sur {{chain}}",
+      "offerMissingBody": "Ce lien provient d’une version antérieure de l’app. L’offre a peut-être été acceptée, annulée ou a expiré. Elle peut aussi se trouver sur un autre réseau : les numéros d’offre se répètent d’un réseau à l’autre, et l’ancien lien ne précisait pas lequel. Ou l’index des offres et le réseau ne répondent pas pour le moment.",
+      "toOfferBook": "Ouvrir le carnet d’offres",
+      "autoLendTitle": "Le prêt automatique n’est pas encore dans cette app",
+      "autoLendBody": "Ce lien provient d’une version antérieure de l’app. Une intention de prêt permanente ne peut pas encore être créée ici, et les intentions créées dans l’ancienne app ne peuvent pas encore y être consultées ni modifiées. Vous pouvez publier une offre de prêt à la place.",
+      "toLend": "Prêter"
+    },
     "notFound": {
       "title": "Cette page n'existe pas",
       "body": "Le lien est peut-être ancien ou mal saisi. Rien n'est perdu — vos positions sont en sécurité.",

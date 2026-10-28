@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { isExitRoute } from './tosExitRoutes';
+import { LEGACY_LOAN_SUBPAGE_ANCHORS, LEGACY_SETTINGS_ANCHORS } from '../lib/legacyRoutes';
 
 describe('isExitRoute', () => {
   it('exempts every route carrying an exit action', () => {
@@ -177,5 +178,25 @@ describe('isExitRoute', () => {
     // INSIDE the gate, so it needs its own entry.
     expect(isExitRoute('/admin')).toBe(true);
     expect(isExitRoute('/admin/docs')).toBe(true);
+  });
+
+  it('exempts every retired settings page that redirects into /settings (#2076)', () => {
+    // Read from the mapping itself, so a settings alias added there
+    // without its exemption fails here rather than holding a bookmark
+    // to the revoke button behind the gate.
+    for (const path of Object.keys(LEGACY_SETTINGS_ANCHORS)) {
+      expect(isExitRoute(`/${path}`), path).toBe(true);
+    }
+    // The loan sub-pages land on the position, exempt through `/loans`.
+    for (const sub of Object.keys(LEGACY_LOAN_SUBPAGE_ANCHORS)) {
+      expect(isExitRoute(`/loans/7/${sub}`), sub).toBe(true);
+    }
+  });
+
+  it('keeps the retired routes that lead to NEW exposure behind the gate (#2076)', () => {
+    // Each lands on a create or accept flow, which the gate holds.
+    for (const path of ['/offers/7', '/create-offer', '/auto-lend']) {
+      expect(isExitRoute(path), path).toBe(false);
+    }
   });
 });

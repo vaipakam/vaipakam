@@ -353,6 +353,22 @@
   X-Robots-Tag: noindex
 /admin/*
   X-Robots-Tag: noindex
+# #2076 — the rest of the retired router. Each is a single-segment
+# alias the locale rule below cannot reach, served as the indexable 200
+# shell to a crawler that never runs the redirect. No `/*` partners: a
+# deeper path under any of them is a first segment followed by more path,
+# which `/:locale/*` already noindexes. `/offers/:id` and
+# `/loans/:id/<subpage>` are covered by `/offers/*` and `/loans/*` above.
+/create-offer
+  X-Robots-Tag: noindex
+/auto-lend
+  X-Robots-Tag: noindex
+/alerts
+  X-Robots-Tag: noindex
+/allowances
+  X-Robots-Tag: noindex
+/keepers
+  X-Robots-Tag: noindex
 
 # ── Locale-prefixed aliases from the retired deployment ──────────────
 #

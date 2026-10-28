@@ -53,6 +53,7 @@ import {
   shortAddress,
 } from '../lib/format';
 import type { IndexedOffer } from '../data/indexer';
+import { isRentalListing as isRental, offerAcceptPath } from '../data/offerLinks';
 
 type SideFilter = 'all' | 'lending' | 'borrowing' | 'rentals';
 type SortKey =
@@ -61,10 +62,6 @@ type SortKey =
   | 'rate-high'
   | 'duration-short'
   | 'duration-long';
-
-function isRental(offer: IndexedOffer): boolean {
-  return offer.assetType !== AssetType.ERC20 && offer.offerType === 0;
-}
 
 /** Comparable APR for sorting; rentals have no APR → null (sinks). */
 function rateOf(offer: IndexedOffer): number | null {
@@ -143,15 +140,7 @@ function OfferRow({
       : BigInt(offer.amountFilled || '0') !== 0n
         ? copy.offers.notTakeablePartial
         : copy.offers.notTakeableNft;
-  // Offer ids are PER-CHAIN — a link without the chain can resolve to
-  // a different offer with the same id on another network. The deep-
-  // link consumers refuse to select when this doesn't match the
-  // active read chain.
-  const acceptHref = isRentalListing
-    ? `/rent?offer=${offer.offerId}&chain=${offer.chainId}`
-    : isLending
-      ? `/borrow?offer=${offer.offerId}&chain=${offer.chainId}`
-      : `/lend?offer=${offer.offerId}&chain=${offer.chainId}`;
+  const acceptHref = offerAcceptPath(offer);
 
   const title = isRentalListing
     ? `${copy.offers.rentalListing} · ${shortAddress(offer.lendingAsset)} #${offer.tokenId}${

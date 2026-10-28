@@ -3130,6 +3130,28 @@ is the borrower's own money.
   per-user address becoming indexable merely because it was reached by
   an older spelling, and a public page being listed twice under two
   addresses.
+- **Every address the retired deployment served has an answer that does
+  what the address was for.** Keeping old bookmarks working is a claim
+  about every address the old app had, so the set is enumerated from that
+  app rather than patched as visitors report misses. An address whose page
+  became part of another page lands at that part and brings it into view,
+  even when it appears only after the page's data arrives — an old loan
+  action page lands on that loan at the card that lists the same action,
+  says whether it can be taken now and why not, and offers it. That card
+  must be one shown in whichever mode the visitor uses: an action whose own
+  form appears only in the fuller mode, or only while the loan can take it,
+  is reached through the list that names it, never through an anchor that
+  may not exist. An
+  address for a settings page lands on that setting, and is shown even in
+  the simpler mode that normally hides it, because the visitor asked for it
+  by name (one of them holds the way to withdraw a spending permission). An
+  old offer address opens that offer where it is taken; since the old
+  address never said which network the offer was on, and offer numbers
+  repeat across networks, a miss says it looked on the current network and
+  names the other reasons it can miss, rather than calling the offer gone.
+  A feature this app does not have yet is said to be missing, together with
+  what that leaves unseen, rather than answered with a page-not-found. A
+  surface that was removed on purpose stays not-found.
 - **Every address the app asks to have indexed is a single top-level
   page.** That is a deliberate property rather than an accident of the
   current route set: it is what allows the compatibility exclusion above

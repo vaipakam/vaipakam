@@ -2604,6 +2604,15 @@
       "liquidationPriceUnknown": "未知：暂时无法读取抵押品价格，因此不显示数值。",
       "liquidationPriceTokenUnknown": "未知：无法读取抵押品代币的信息，因此不显示数值。"
     },
+    "legacyRoutes": {
+      "offerLookup": "正在 {{chain}} 上查找报价 #{{id}}…",
+      "offerMissingTitle": "在 {{chain}} 上未找到报价 #{{id}}",
+      "offerMissingBody": "此链接来自旧版应用。该报价可能已被接受、取消或过期。它也可能在另一个网络上：报价编号在各网络之间会重复，而旧链接没有说明是哪个网络。也可能是报价索引和网络现在没有响应。",
+      "toOfferBook": "打开报价簿",
+      "autoLendTitle": "本应用暂不支持自动出借",
+      "autoLendBody": "此链接来自旧版应用。这里暂时无法设置长期出借意向，在旧版应用中设置的意向也暂时无法在这里查看或更改。你可以改为发布一个出借报价。",
+      "toLend": "出借"
+    },
     "notFound": {
       "title": "此页面不存在",
       "body": "链接可能过旧或拼写错误。没有任何内容丢失 — 您的持仓是安全的。",

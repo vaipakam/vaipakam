@@ -10,6 +10,11 @@ import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-do
 import { SUPPORTED_LOCALES } from '@vaipakam/i18n/glossary';
 import i18n from './i18n';
 import { AppShell } from './components/AppShell';
+import {
+  LEGACY_SETTINGS_ANCHORS,
+  legacyCreateOfferTarget,
+  legacyLoanTarget,
+} from './lib/legacyRoutes';
 // The landing route (Home) stays in the boot chunk so the first paint
 // after mount is instant; everything else is a lazy chunk (UX-005) —
 // advanced surfaces (desk/charts, offers, activity, vpfi, verifier) and
@@ -118,6 +123,12 @@ const ProtocolConsole = lazy(() =>
 );
 const NotFound = lazy(() =>
   import('./pages/NotFound').then((m) => ({ default: m.NotFound })),
+);
+const LegacyOfferRedirect = lazy(() =>
+  import('./pages/LegacyRoutes').then((m) => ({ default: m.LegacyOfferRedirect })),
+);
+const RetiredAutoLend = lazy(() =>
+  import('./pages/LegacyRoutes').then((m) => ({ default: m.RetiredAutoLend })),
 );
 
 /** `/vpfi-vault` → `/vpfi`, carrying the fragment across.
@@ -289,6 +300,21 @@ export function App() {
         />
         <Route path="/vault-assets" element={<Navigate to="/vault" replace />} />
         <Route path="/history" element={<Navigate to="/activity" replace />} />
+        {/* #2076 — the rest of the retired router, enumerated rather than
+            fixed one reported path at a time. The mappings and the
+            reasons are in `lib/legacyRoutes.ts`; `/buy-vpfi` is left to
+            NotFound on purpose (#687-A removed the purchase surface). */}
+        <Route path="/loans/:loanId/:subpage" element={<LegacyLoanSubpageRedirect />} />
+        <Route path="/offers/:offerId" element={<LegacyOfferRedirect />} />
+        <Route path="/create-offer" element={<LegacyCreateOfferRedirect />} />
+        <Route path="/auto-lend" element={<RetiredAutoLend />} />
+        {Object.entries(LEGACY_SETTINGS_ANCHORS).map(([path, anchor]) => (
+          <Route
+            key={path}
+            path={`/${path}`}
+            element={<Navigate to={`/settings#${anchor}`} replace />}
+          />
+        ))}
 
         {/* Locale-prefixed bookmarks from the retired deployment. Must
             sit immediately before the catch-all: a first segment that
@@ -305,4 +331,18 @@ export function App() {
 function AliasLoanRedirect() {
   const { loanId } = useParams();
   return <Navigate to={`/positions/${loanId}`} replace />;
+}
+
+/** `/loans/:loanId/<subpage>` → the position, at the card that replaced the
+ *  sub-page (#2076). */
+function LegacyLoanSubpageRedirect() {
+  const { loanId = '', subpage } = useParams();
+  return <Navigate to={legacyLoanTarget(loanId, subpage)} replace />;
+}
+
+/** `/create-offer?…` → the lend or borrow form, the position it came from,
+ *  or Home (#2076; see `legacyCreateOfferTarget`). */
+function LegacyCreateOfferRedirect() {
+  const { search } = useLocation();
+  return <Navigate to={legacyCreateOfferTarget(search)} replace />;
 }
