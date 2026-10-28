@@ -176,8 +176,9 @@ show.
 2. **Lender: list all for sale.** One bound listing
    (`createLoanSaleOfferBound`) per loan with the same rate and window
    (each carries its own mandatory expiry). See below.
-3. **Borrower: refinance all.** One replacement borrower offer per loan
-   with the same terms.
+3. **Borrower: refinance all.** One refinance request per loan with the
+   same rate ceiling and duration, each after its guardrail write when
+   needed. See below.
 
 Partial repayment across a group needs a rule for splitting one amount
 over several loans; that is a product question, so it is not in these
@@ -239,6 +240,73 @@ positions it holds. The batch respects the post-offer kill switch and
 the Terms gate, and the consent (recorded on each listing) is one tick
 covering every loan in the review, cleared whenever the review changes.
 
+## Slice 3: refinance all
+
+The borrower's loans from one offer, each given a refinance request at
+one rate ceiling and one duration. It follows the slice-1 and slice-2
+rules, with four differences that come from the request itself.
+
+**One per-loan request plan.** The refinance form on the loan page
+(`RefinanceFlow`) ran its pre-sign checks inline: the sanctions screen,
+the borrower position still held, both assets unpaused, the loan Active,
+the original borrower (carry-over binds to the borrower stored at loan
+start), not strictly past the grace window, the fee config the review
+quoted, and the guardrails the request needs. Those move into
+`apps/app/src/data/refinancePlan.ts`, which the form and the batch both
+call, together with the figures the review states: today's payoff, the
+spare balance an acceptance needs (the payoff's interest plus the new
+loan's initiation fee), and the approval bound at the request's last
+fillable moment (#1236). The page's search for a request already on
+record (open, or expired and never cancelled) moves there too, as
+`refinancePostRefusal`, so the form's late gate and the batch apply one
+rule. The statements the form makes that depend on the loan (past due,
+keep periodic payments current, scheduled interest ends with this loan,
+when the request ends) come from one function, `refinanceStatements`,
+which the form renders where it always did and the batch lists per
+loan, so a statement added to one surface reaches the other. The batch
+review also states the rate ceiling and duration, since its inputs are
+gone once the review opens.
+
+**The guardrail write travels with its request.** Where a loan's
+auto-refinance caps do not already cover the request, the plan carries a
+`setAutoRefinanceCaps` call, and the batch sends it as the item right
+before that loan's `createOffer` in the same multicall. Creating a
+refinance request validates the caps and refuses insufficient ones, so a
+caps write that fails can never leave a request posted on looser
+guardrails. A pair is never split across transactions, so one send holds
+at most 15 loans. A caps write that succeeds next to a request that
+fails stays in place; it only limits what a request on that loan can
+complete at, and the review says so.
+
+**One approval for the sum, disclosed as shared.** Each request is
+filled by pulling its payoff from the borrower's wallet against a
+standing approval, the same approval for every request on that token.
+The batch checks the wallet against the sum of the spare amounts and
+approves the sum of the bounds once. The review says that the approval
+is shared with any other open refinance request on the token, so one
+acceptance can leave another short, which each loan's pending card
+already reports. The approval is set back only when it is established
+that no request was posted; a pending or unreadable outcome keeps it,
+since a request a lender may accept needs it. The late re-check refuses
+a loan whose bound or spare amount grew, so the checked balance and the
+approved sum only ever cover. The spare amount needs its own test: in
+the grace window it grows with each day's late fee while the bound stays
+fixed at the grace end.
+
+**Posted is read from the transaction's own logs.** Each request emits
+`OfferCreatedDetails` carrying the loan it refinances, and a reverted
+item's logs roll back with it, so the logs say which loans got a request
+from this wallet. A loan without one is read at the transaction's block,
+and after a pending send every loan is pending without a status read,
+for the same reason as the listing: a request leaves the loan's status
+as it was. Each posted request's offer id goes into the loan page's
+refinance marker.
+
+"Refinance all" sits on the borrower's offer card next to "Repay all"
+and "Close all early", in Advanced mode like the loan page's form, so a
+group runs one batch at a time. The loan page's form keeps its own three
+wallet steps; only its checks moved.
+
 ## Tests
 
 Unit: the plan builder's refusals one case each, the pad on the live
@@ -246,6 +314,13 @@ term, a failed read becoming that loan's refusal; grouping exclusions and
 per-token totals; the shared multicall encoding and chunking. Slice 2:
 the listing plan's refusals, the reviewed figures kept on the late
 re-check, a changed statement leaving a loan out, and the read-back
-(listed only from the logs, pending never read as not listed). CI-Anvil (a
+(listed only from the logs, pending never read as not listed). Slice 3:
+the request plan's refusals and figures, the guardrail write planned only
+when the caps fall short and always right before its request, the late
+re-check leaving out a loan whose bound or spare amount grew or whose
+statements changed, the 15-loan send size, per-token totals, and the read-back
+(posted only from this wallet's logs, pending for every loan behind a
+pending send, the approval set back only when nothing was posted).
+CI-Anvil (a
 borrower with two loans from one offer closes both with "Repay all") is
 listed as a gap in `apps/app/e2e/COVERAGE.md` and follows in its own PR.

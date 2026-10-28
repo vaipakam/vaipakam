@@ -226,6 +226,9 @@ export async function settledChunkedRead<K>(
   return out;
 }
 
+/** The longest delay `setTimeout` honours (2^31 - 1 ms). */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
 /**
  * `work`, or what `onCut` gives (or throws) if `work` is still in flight at
  * `deadline` — the one primitive behind every "abandon it at the cutoff" in
@@ -235,12 +238,13 @@ export async function settledChunkedRead<K>(
  * either way (an ops alert's de-duplication record or clear, #2565 r1):
  * abandoning a broadcast would lose the record that it was sent.
  *
- * A deadline that is not finite never cuts: `setTimeout` treats a delay past
- * its 32-bit range as 1 ms, so an `Infinity` ("no deadline") would otherwise
- * abandon the work at once.
+ * A deadline past a timer's range never cuts: `setTimeout` treats a delay
+ * past its 32-bit range (about 24.8 days) as 1 ms, so an `Infinity` ("no
+ * deadline"), or any deadline that far off, would otherwise abandon the work
+ * at once. No run lasts that long, so such a deadline is no deadline.
  */
 export async function settleBy<T>(work: Promise<T>, deadline: number, onCut: () => T): Promise<T> {
-  if (!Number.isFinite(deadline)) return work;
+  if (!Number.isFinite(deadline) || deadline - Date.now() > MAX_TIMER_MS) return work;
   let timer: ReturnType<typeof setTimeout> | undefined;
   work.catch(() => undefined);
   const cut = new Promise<T>((resolve, reject) => {
@@ -291,4 +295,35 @@ export function deadlineClient<T extends object>(client: T, deadline: number): T
       };
     },
   });
+}
+
+/**
+ * `client` for a phase that only READS (an attempt's judge, #3069): EVERY
+ * method refused once `cutoff` has passed, not only the reads
+ * {@link deadlineClient} names, so a phase abandoned at its cutoff cannot
+ * start one more request of any kind (the clock, a nonce count, a
+ * simulation) when a late answer lets it go on. Never use it for a client
+ * that sends or waits for a receipt.
+ */
+export function readPhaseClient<T extends object>(client: T, cutoff: number): T {
+  return new Proxy(client, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value !== 'function') return value;
+      return (...args: unknown[]) => {
+        if (Date.now() >= cutoff) throw new PastRunDeadline(`${String(prop)}: past the read cutoff — read next run`);
+        return value.apply(target, args);
+      };
+    },
+  });
+}
+
+/** `fetchFn`, refusing every request that would start at or after `cutoff`:
+ *  the route quotes of a read-only phase (#3069), bounded the way
+ *  {@link readPhaseClient} bounds its RPC reads. */
+export function deadlineFetch(fetchFn: typeof fetch, cutoff: number): typeof fetch {
+  return ((input: RequestInfo | URL, init?: RequestInit) =>
+    Date.now() >= cutoff
+      ? Promise.reject(new PastRunDeadline('a quote request: past the read cutoff — read next run'))
+      : fetchFn(input, init)) as typeof fetch;
 }

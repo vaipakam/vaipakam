@@ -90,12 +90,14 @@ import type { AdapterCall } from '@vaipakam/lib/swapRoutes';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
-import { batchedRead } from './batchRead';
+import { deadlineFetch, PastRunDeadline, readPhaseClient, settledChunkedRead } from './batchRead';
+import { boundedCall } from './passReader';
+import { readCutoffMs } from './runWindow';
 import { createSubrequestBudget } from './subrequestBudget';
 import { orchestrateServerQuotes, type ServerOrchestrationResult } from './serverQuotes';
 import type { PassTick } from './passSchedule';
-import { readActiveWindow, type ScanWindow } from './activeLoanWindow';
-import { hfStanding, LEFT_TO_LIQUIDATOR, readLoan, surfaceSkipReason, type GraceLoan } from './closeOut';
+import { readActiveWindow, scanCutoffs, type ScanCutoffs, type ScanWindow } from './activeLoanWindow';
+import { hfStanding, LEFT_TO_LIQUIDATOR, readLoan, readsBy, surfaceSkipReason, type GraceLoan, type Skipped } from './closeOut';
 import { attemptErrorReason, keeperTxPending, sendInSubmissionSlot } from './keeperSend';
 import { pickBatch } from './rotate';
 
@@ -151,8 +153,12 @@ export interface PeriodicSettleDeps {
   chainId: number;
   /** The run deadline (#2572), enforced at the send's turn. */
   notAfterMs: number;
-  /** Builds the try-list for a sale of `sell` of the collateral. */
-  buildRoute: (loan: GraceLoan, sell: bigint) => Promise<ServerOrchestrationResult>;
+  /** When the attempt's reads stop (`runWindow.ts` rule 3): the run deadline
+   *  less the send reserve (`readCutoffMs`). */
+  readCutoff: number;
+  /** Builds the try-list for a sale of `sell` of the collateral, making no
+   *  request (RPC or quote) at or after `cutoff`, the attempt's read cutoff. */
+  buildRoute: (loan: GraceLoan, sell: bigint, cutoff: number) => Promise<ServerOrchestrationResult>;
 }
 
 export async function runPeriodicSettle(env: Env, tick: PassTick): Promise<void> {
@@ -183,11 +189,19 @@ async function processChain(env: Env, chain: ChainConfig, visit: number, deadlin
   const keeper = ctx.wallet.account?.address;
   if (!keeper) return;
   const spent = () => `requests=${budget.spent()}/${budget.limit}`;
+  // The grace-default pass's stages (graceDefault.ts): the attempt's reads by
+  // the read cutoff, the previews a stage reserve before, the window and the
+  // master switch a stage reserve before those.
+  const readCutoff = readCutoffMs(ctx.notAfterMs);
 
   let scan: Awaited<ReturnType<typeof findSettleable>>;
   try {
-    scan = await findSettleable(client, ctx.diamond, chain.id, visit);
+    scan = await findSettleable(client, ctx.diamond, chain.id, visit, scanCutoffs(readCutoff));
   } catch (err) {
+    if (err instanceof PastRunDeadline) {
+      console.log(`[keeper] periodicSettle chain=${chain.id} scan stopped: the active-loan window or the periodic-interest switch was not read by its stage cutoff ${spent()}`);
+      return;
+    }
     if (!budget.exhausted()) throw err;
     console.log(`[keeper] periodicSettle chain=${chain.id} scan stopped: ${BUDGET_SPENT} ${spent()}`);
     return;
@@ -212,15 +226,17 @@ async function processChain(env: Env, chain: ChainConfig, visit: number, deadlin
     diamond: ctx.diamond,
     chainId: chain.id,
     notAfterMs: ctx.notAfterMs,
-    buildRoute: (loan, sell) =>
-      orchestrateServerQuotes(env, client, {
+    readCutoff,
+    // The route's reads and quotes are the attempt's: none starts past its cutoff.
+    buildRoute: (loan, sell, cutoff) =>
+      orchestrateServerQuotes(env, readPhaseClient(client, cutoff), {
         chainId: chain.id,
         diamond: ctx.diamond,
         sellToken: loan.collateralAsset,
         buyToken: loan.principalAsset,
         sellAmount: sell,
         txOrigin: keeper,
-        fetchFn: budget.fetch,
+        fetchFn: deadlineFetch(budget.fetch, cutoff),
       }),
   };
 
@@ -232,9 +248,9 @@ async function processChain(env: Env, chain: ChainConfig, visit: number, deadlin
   let submitted = 0;
   let unconfirmed = 0;
   for (const loanId of picked) {
-    if (Date.now() >= ctx.notAfterMs) {
+    if (Date.now() >= readCutoff) {
       console.log(
-        `[keeper] periodicSettle ${where} run deadline reached; left for the next run loans=${picked.slice(picked.indexOf(loanId)).join(',')}`,
+        `[keeper] periodicSettle ${where} read cutoff reached; left for the next run loans=${picked.slice(picked.indexOf(loanId)).join(',')}`,
       );
       break;
     }
@@ -272,65 +288,97 @@ async function processChain(env: Env, chain: ChainConfig, visit: number, deadlin
  * The window's loans whose period may be settled now, everything read at
  * one pinned block: on a cadence, and `canSettleNow` (Active, the period's
  * grace over). `disabled` when the master switch is off, since no period
- * can be settled then whatever the previews say.
+ * can be settled then whatever the previews say. The window and the switch
+ * are read by `cutoffs.window` or not at all (`PastRunDeadline`); the
+ * previews stop at `cutoffs.reads`, keeping the chunks they finished, and a
+ * loan whose chunk was not read is reported unread.
  */
 export async function findSettleable(
   client: PublicClient,
   diamond: Address,
   chainId: number,
-  visit = 0,
+  visit: number,
+  cutoffs: ScanCutoffs,
 ): Promise<
   | { kind: 'disabled' }
   | { kind: 'scanned'; due: bigint[]; unread: bigint[]; window: ScanWindow }
 > {
-  const { ids, blockNumber, window } = await readActiveWindow(client, diamond, visit);
-  const enabled = (await client.readContract({
-    address: diamond,
-    abi: NUMERAIRE_CONFIG_ABI,
-    functionName: 'getPeriodicInterestEnabled',
-    blockNumber,
-  })) as boolean;
-  if (!enabled) return { kind: 'disabled' };
-  const results: Awaited<ReturnType<typeof batchedRead>> = [];
-  for (let i = 0; i < ids.length; i += READ_CHUNK) {
-    // eslint-disable-next-line no-await-in-loop
-    const part = await batchedRead(
-      client,
-      ids.slice(i, i + READ_CHUNK).map((id) => ({
-        address: diamond,
-        abi: PERIODIC_ABI,
-        functionName: 'previewPeriodicSettle',
-        args: [id],
-      })),
-      `periodicSettle chain=${chainId} previewPeriodicSettle`,
+  const { ids, blockNumber, window } = await readActiveWindow(client, diamond, visit, cutoffs.window);
+  const enabled = (await boundedCall(cutoffs.window, 'the periodic-interest switch', () =>
+    client.readContract({
+      address: diamond,
+      abi: NUMERAIRE_CONFIG_ABI,
+      functionName: 'getPeriodicInterestEnabled',
       blockNumber,
-      // No serial retry, for the scan's bound (graceDefault.ts): a failed
-      // chunk is reported unread and read again on a later visit.
-      'unread',
-    );
-    results.push(...part);
-  }
+    }),
+  )) as boolean;
+  if (!enabled) return { kind: 'disabled' };
+  // No serial retry, for the scan's bound (graceDefault.ts): a chunk not read
+  // is reported unread and read again on a later visit, which starts at a
+  // different chunk (the window's own visit count).
+  const results = await settledChunkedRead(
+    client,
+    ids,
+    READ_CHUNK,
+    (id) => ({ address: diamond, abi: PERIODIC_ABI, functionName: 'previewPeriodicSettle', args: [id] }),
+    `periodicSettle chain=${chainId} previewPeriodicSettle`,
+    cutoffs.reads,
+    window.round,
+    blockNumber,
+  );
   const due: bigint[] = [];
   const unread: bigint[] = [];
-  results.forEach((r, i) => {
-    if (r.status !== 'success') {
-      unread.push(ids[i]);
-      return;
+  for (const id of ids) {
+    const r = results.get(id);
+    if (r?.status !== 'success') {
+      unread.push(id);
+      continue;
     }
     // (cadence, periodEndAt, graceEndsAt, expected, paidByBorrower, shortfall, canSettleNow)
     const row = r.result as readonly [number, bigint, bigint, bigint, bigint, bigint, boolean];
-    if (Number(row[0]) !== 0 && row[6] === true) due.push(ids[i]);
-  });
+    if (Number(row[0]) !== 0 && row[6] === true) due.push(id);
+  }
   return { kind: 'scanned', due, unread, window };
 }
 
 /** One loan: owner rule, plan, route, final gate (owner rule, plan,
- *  simulation), submit. Never sends when a step cannot establish its answer. */
+ *  simulation), submit. Never sends when a step cannot establish its answer,
+ *  and reads nothing past the run's read cutoff. */
 export async function attemptPeriodicSettle(
   deps: PeriodicSettleDeps,
   loanId: bigint,
 ): Promise<PeriodicSettleOutcome> {
-  const { client, wallet, diamond } = deps;
+  const judged = await readsBy(deps.readCutoff, deps.client, (reads) => judgePeriodicSettle(deps, reads, loanId));
+  if (judged.kind === 'skipped') return judged;
+  const { path, sell, calls } = judged;
+  const sent = await sendInSubmissionSlot(
+    deps.wallet,
+    deps.chainId,
+    deps.notAfterMs,
+    deps.diamond,
+    encodeFunctionData({ abi: PERIODIC_ABI, functionName: 'settlePeriodicInterest', args: [loanId, sell, calls] }),
+  );
+  return sent.kind === 'submitted'
+    ? { kind: 'submitted', tx: sent.tx, path, sell, calls: calls.length }
+    : { kind: 'unconfirmed', tx: sent.tx, path, sell, calls: calls.length, reason: sent.reason };
+}
+
+/** A settlement the reads judged sendable, and what it was judged on. */
+interface JudgedSettle {
+  kind: 'send';
+  path: 'stamp' | 'sale';
+  sell: bigint;
+  calls: readonly AdapterCall[];
+}
+
+/** The attempt's read phase: owner rule, plan, route, final gate. Every read
+ *  goes through `client`, the cutoff-bound one `readsBy` gives. */
+async function judgePeriodicSettle(
+  deps: PeriodicSettleDeps,
+  client: PublicClient,
+  loanId: bigint,
+): Promise<JudgedSettle | Skipped> {
+  const { wallet, diamond } = deps;
   const keeper = wallet.account?.address;
   if (!keeper) return { kind: 'skipped', reason: 'no-keeper-account' };
 
@@ -369,7 +417,7 @@ export async function attemptPeriodicSettle(
       // exists only between two ERC-20s.
       return { kind: 'skipped', reason: 'not-swappable (shortfall needs an ERC-20 to ERC-20 sale)' };
     }
-    const route = await deps.buildRoute(loan, sell);
+    const route = await deps.buildRoute(loan, sell, deps.readCutoff);
     calls = route.calls;
     if (route.failed.length > 0) routeNote = ` (failed: ${route.failed.join(',')})`;
     if (calls.length === 0) {
@@ -411,17 +459,7 @@ export async function attemptPeriodicSettle(
     const why = name ?? (isRevert(err) ? 'reverted' : describeFailure(err));
     return { kind: 'skipped', reason: `gate:simulation ${why} path=${path} calls=${calls.length}${routeNote}` };
   }
-
-  const sent = await sendInSubmissionSlot(
-    wallet,
-    deps.chainId,
-    deps.notAfterMs,
-    diamond,
-    encodeFunctionData({ abi: PERIODIC_ABI, functionName: 'settlePeriodicInterest', args: [loanId, sell, calls] }),
-  );
-  return sent.kind === 'submitted'
-    ? { kind: 'submitted', tx: sent.tx, path, sell, calls: calls.length }
-    : { kind: 'unconfirmed', tx: sent.tx, path, sell, calls: calls.length, reason: sent.reason };
+  return { kind: 'send', path, sell, calls };
 }
 
 /** Null when the loan is this pass's to settle; otherwise whose it is. */

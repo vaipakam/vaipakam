@@ -1695,6 +1695,90 @@ const copySource = {
     ownPageShape:
       'Only loans with token principal and token collateral can be listed for sale.',
   },
+  // #126 slice 3 — "Refinance all" on a borrower's loans from one offer.
+  // Each request is the loan page's own request (same checks, same payoff
+  // approval bound, same hard expiry), posted together after one approval
+  // for the sum; the shared approval is disclosed before the consent.
+  batchRefinance: {
+    action: 'Refinance all',
+    lede: 'Post a refinance request for each of these loans, at one rate ceiling and one duration. Each request is the one its loan’s own page would post: the moment a lender accepts one, that loan is paid off and closed in the same transaction, and its collateral moves to the new loan. Each loan is checked on its own first, and a loan that can’t take a request is left out and named.',
+    review: 'Review the requests',
+    checking: 'Checking each loan and working out its payoff…',
+    phase: {
+      approving: 'Approve the total in your wallet…',
+      checking: 'Checking each loan again…',
+      submitting: 'Confirm the transaction in your wallet…',
+    },
+    reviewTitle: 'Post these refinance requests',
+    terms: tmpl(
+      'Each request asks for a new loan of {{days}} days at a yearly rate of at most {{rate}}.',
+      ['days', 'rate'],
+    ),
+    loanPayoff: tmpl(
+      'Loan #{{id}}: ~{{payoff}} to pay it off today, settled automatically when a lender accepts its request. The new loan’s money, less its initiation fee, goes straight to this loan’s lender; only the rest comes from your wallet.',
+      ['id', 'payoff'],
+    ),
+    loanGrowth: tmpl(
+      'If a lender accepts after this loan’s due date, the payoff grows (the late fee plus interest that keeps building up) by up to ~{{amount}} more before the request ends.',
+      ['amount'],
+    ),
+    loanTopUp: tmpl(
+      'From your wallet when a lender accepts: about {{amount}}. That is the payoff’s interest and the new loan’s initiation fee; the new loan’s money pays the rest directly.',
+      ['amount'],
+    ),
+    leftOut: tmpl('Loan #{{id}} is left out: {{reason}}', ['id', 'reason']),
+    noneReady:
+      'None of these loans can take a refinance request together right now. Open each loan to see its options.',
+    totals: tmpl(
+      'Together: about {{topUp}} spare in your wallet if every request is accepted. Your wallet holds enough for that now, or nothing is sent.',
+      ['topUp'],
+    ),
+    approval: tmpl(
+      'You’ll approve {{amount}}: the sum of each request’s largest possible share from your wallet. Each share is pulled from this one approval when its request is accepted, and so is the share of any other refinance request you have open on the same token. A lender taking one request can therefore leave too little for another; each loan’s page says when its request’s approval runs short.',
+      ['amount'],
+    ),
+    consentLabel:
+      'I understand the payoff and wallet-balance terms below and agree to them for every loan listed above.',
+    confirm: 'Confirm — post these requests',
+    cancel: 'Cancel',
+    dismiss: 'Done',
+    receiveEach:
+      'For each request a lender accepts, a new loan at your terms the moment it is accepted: that loan’s collateral moves to the new loan without ever unlocking, and the old loan closes in the same transaction.',
+    youMayOwe:
+      'Each loan’s payoff shown above, settled when a lender accepts its request: the new loan’s money, less its initiation fee, pays most of it directly, and the rest comes from your wallet through the approval below. Your wallet must hold that loan’s spare amount at that moment.',
+    endsEach:
+      'Each request ends when a lender accepts it, when you cancel it from its loan’s page, or when it expires; each loan’s line above says when. One transaction posts up to 15 requests. A request that fails is skipped, and the results say why; the guardrails written for it can stay set at your rate and end date, and they only limit what a request on that loan can complete at.',
+    posted: tmpl(
+      'Loan #{{id}}: request posted as offer #{{offerId}}. Its page shows the request and lets you cancel it.',
+      ['id', 'offerId'],
+    ),
+    notPosted: tmpl('Loan #{{id}}: no request posted. {{reason}}', ['id', 'reason']),
+    changedOtherwise: tmpl(
+      'Loan #{{id}}: no request posted. The loan is no longer active, so open it to see where it stands.',
+      ['id'],
+    ),
+    unknown: tmpl(
+      'Loan #{{id}}: we couldn’t read whether its request was posted. Open the loan to check.',
+      ['id'],
+    ),
+    pending: tmpl(
+      'Loan #{{id}}: the transaction was sent but hasn’t confirmed yet. It may still post this request, so check the loan in a few minutes.',
+      ['id'],
+    ),
+    notSentPending:
+      'Not sent, because an earlier transaction in this batch hasn’t confirmed yet. Post its request from its own page once that settles.',
+    skippedRetry:
+      'The transaction ran, but this request was skipped. It can be posted now from the loan’s own page.',
+    changedSinceReview:
+      'What this request involves changed after your review. Post it from its own page, which shows the current terms.',
+    ownPageRental: 'A rental can’t take a refinance request; only token loans can.',
+    ownPageOpenRequest:
+      'A refinance request is already open on this loan. Its own page shows it and lets you cancel it.',
+    approvalLeft: tmpl(
+      'Your token approval for the protocol now stands at {{amount}}. Your open refinance requests draw their payoffs from it, so lowering it can leave a request unable to complete.',
+      ['amount'],
+    ),
+  },
   preclose: {
     title: 'Close this loan early',
     blurb:
@@ -1929,6 +2013,10 @@ const copySource = {
   },
 
   refinance: {
+    // #126 slice 3 — a loan in its fallback period is not settled, and no
+    // request can be posted on it.
+    inFallback:
+      'This loan is in its fallback period, so it can’t take a refinance request. Its own page explains its options.',
     /** Shown when the request transaction was sent but its outcome could
      *  not be observed. The spending approval is deliberately LEFT IN
      *  PLACE here — if the request did land, a lender accepting it needs
@@ -5828,6 +5916,7 @@ const copySource = {
       BackstopAbsorbedLoan: 'Loan absorbed by backstop',
       LoanExtended: 'Loan extended',
       LoanRefinanced: 'Loan refinanced',
+      RefinancePayoffSettled: 'Loan refinanced',
       LoanPreclosedDirect: 'Loan closed early',
       LenderFundsClaimed: 'Funds claimed',
       BorrowerFundsClaimed: 'Collateral claimed',

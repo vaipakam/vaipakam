@@ -18,6 +18,7 @@ import type { Log, PublicClient } from 'viem';
 import { AssetType } from '../lib/types';
 import { captureTxError } from '../lib/errors';
 import { TxNotSettledError } from '../contracts/ownReceipt';
+import { readAllowanceNotBefore } from '../contracts/erc20';
 import type { CloseOutPlan, CloseOutPull } from './closeOutPlan';
 
 /** The fields grouping reads from a Positions row. */
@@ -168,4 +169,24 @@ export async function settleFailedSend(
   } catch {
     return { pending: true };
   }
+}
+
+/**
+ * The allowance left standing after a batch, per token, read live from a
+ * node that has reached `notBefore`, the last block the batch wrote in.
+ * Null when any token could not be read from that far: a figure from
+ * before the batch's own writes would be stated as current.
+ */
+export async function readApprovalsLeft(
+  ctx: { publicClient: PublicClient; diamond: `0x${string}`; holder: `0x${string}` },
+  tokens: readonly `0x${string}`[],
+  notBefore: bigint,
+): Promise<bigint[] | null> {
+  const left = await Promise.all(
+    tokens.map((token) =>
+      readAllowanceNotBefore(ctx.publicClient, token, ctx.holder, ctx.diamond, notBefore),
+    ),
+  );
+  const read = left.filter((v): v is bigint => v !== null);
+  return read.length === left.length ? read : null;
 }

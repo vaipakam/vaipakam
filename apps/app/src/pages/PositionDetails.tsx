@@ -79,6 +79,7 @@ import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { type ReceiptData } from '../components/ReviewReceipt';
 import { ConfirmReceipt } from '../components/ConfirmReceipt';
 import { RefinanceFlow } from '../components/RefinanceFlow';
+import { refinancePostRefusal } from '../data/refinancePlan';
 import { RefinancePendingCard } from '../components/RefinancePendingCard';
 import { EarlyRepayOptionsCard } from '../components/EarlyRepayOptionsCard';
 import { earlyRepayChooserRenders } from '../data/earlyRepayChooser';
@@ -137,7 +138,6 @@ import {
 } from '../data/closeOutPlan';
 import {
   liveRefinanceVerdict,
-  postRefinanceVerdict,
   refinanceInterlock,
   repayRefinanceDecision,
   type RefinanceCheck,
@@ -936,23 +936,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       }
       // #2424 r7 — posting uses its own verdict: an uncancelled expired
       // request blocks a new one too, because the protocol refuses the post
-      // until it is cancelled.
-      const verdict = postRefinanceVerdict(
-        await discoverRefinanceRequest({
-          client: publicClient,
-          diamond: walletChain.diamondAddress,
-          loanId: BigInt(loanId),
-          sinceOfferId: BigInt(loan.data.offerId),
-          holder: address,
-        }),
+      // until it is cancelled. One rule, shared with the batch (#126).
+      return refinancePostRefusal(
+        { publicClient, diamond: walletChain.diamondAddress, holder: address },
+        loan.data,
       );
-      if (verdict === 'open') return copy.refinance.alreadyOpen;
-      if (verdict === 'expired') return copy.refinance.expiredBlocksNew;
-      if (verdict === 'capped') return copy.refinance.cappedBlocks;
-      if (verdict === 'unchecked') return copy.refinance.uncheckedBlocks;
-      return null;
     },
-    [assertSaleSettlementSafe, loanIsRental, publicClient, walletChain, loan.data, address, loanId],
+    [assertSaleSettlementSafe, loanIsRental, publicClient, walletChain, loan.data, address],
   );
 
   // Live-offset state (preclose Option 3) — chain-authoritative

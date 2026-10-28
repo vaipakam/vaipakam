@@ -4,7 +4,7 @@
  * reads as unread, never one serial request per entry.
  */
 import { describe, expect, it } from 'vitest';
-import { PastRunDeadline, boundedRead, deadlineClient, settledChunkedRead, settledRead } from '../src/batchRead';
+import { PastRunDeadline, boundedRead, deadlineClient, deadlineFetch, readPhaseClient, settledChunkedRead, settledRead } from '../src/batchRead';
 
 function client(behaviour: 'reject' | 'ok') {
   const calls = { multicall: 0, readContract: 0 };
@@ -108,6 +108,34 @@ describe('deadlineClient — every read of a deadline-bound pass, one guard (#24
     expect(() => closed.getCode()).toThrow(PastRunDeadline);
     expect(() => closed.getStorageAt()).toThrow(PastRunDeadline);
     expect(reads).toBe(0);
+  });
+});
+
+describe('readPhaseClient and deadlineFetch — a read-only phase starts nothing past its cutoff (#3070 r1)', () => {
+  it('refuses every method of the client, not only the named reads', async () => {
+    let calls = 0;
+    const base = {
+      getBlockNumber: async () => { calls += 1; return 5n; },
+      getTransactionCount: async () => { calls += 1; return 1; },
+      simulateCalls: async () => { calls += 1; return {}; },
+      chain: 'kept',
+    };
+    const open = readPhaseClient(base, Date.now() + 60_000);
+    expect(await open.getBlockNumber()).toBe(5n);
+    const closed = readPhaseClient(base, Date.now() - 1);
+    expect(() => closed.getBlockNumber()).toThrow(PastRunDeadline);
+    expect(() => closed.getTransactionCount()).toThrow(PastRunDeadline);
+    expect(() => closed.simulateCalls()).toThrow(PastRunDeadline);
+    expect(calls, 'nothing issued past the cutoff').toBe(1);
+    expect(closed.chain, 'a value is untouched').toBe('kept');
+  });
+
+  it('refuses a quote request past the cutoff without calling the network', async () => {
+    let fetched = 0;
+    const inner = (async () => { fetched += 1; return new Response('{}'); }) as typeof fetch;
+    await deadlineFetch(inner, Date.now() + 60_000)('https://quote.example');
+    await expect(deadlineFetch(inner, Date.now() - 1)('https://quote.example')).rejects.toBeInstanceOf(PastRunDeadline);
+    expect(fetched).toBe(1);
   });
 });
 

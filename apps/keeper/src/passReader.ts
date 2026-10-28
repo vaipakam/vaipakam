@@ -5,7 +5,7 @@
 // less the send reserve, so a slow read phase can never use the window its
 // sends need. A read not yet made is refused at the cutoff
 // (`deadlineClient`), and one already in flight is abandoned there
-// (`settleBy` for a single read, `settledRead` for a batch). Either way the
+// (`settleBy` for a single read, `settledChunkedRead` for a batch). Either way the
 // caller sees `PastRunDeadline` or an unread value, which it already reads as
 // "next run".
 //
@@ -14,7 +14,7 @@
 // bounded by the send deadline itself; this is the copy they share.
 
 import type { Abi, Address, PublicClient } from 'viem';
-import { deadlineClient, PastRunDeadline, settleBy, settledRead, type BatchResult } from './batchRead';
+import { deadlineClient, PastRunDeadline, settleBy, settledChunkedRead } from './batchRead';
 import { readCutoffMs } from './runWindow';
 import { finalizedBlockOnce, type FinalBlock } from './scanCursors';
 
@@ -51,15 +51,21 @@ export interface PassReadClients {
   client: PublicClient;
   /** For the batched reads, which carry the cutoff themselves. */
   readClient: PublicClient;
+  /** Which run this is (`runIndex`): where a read of more than one chunk
+   *  starts, so a cutoff that ends it partway leaves a different tail unread
+   *  each run. A pass without one starts at the first chunk every run. */
+  visit?: number;
 }
 
 export class PassReader {
-  /** The chain's finalized block, read once a run (`scanCursors.finalFloor`). */
+  /** The chain's finalized block, read once a run (`scanCursors.finalFloor`),
+   *  by the cutoff. */
   readonly finalized: () => Promise<FinalBlock | null>;
   /** When this run's reads stop: the send deadline less the send reserve. */
   readonly cutoff: number;
   private readonly bounded: PublicClient;
   private readonly readClient: PublicClient;
+  private readonly visit: number;
 
   constructor(
     clients: PassReadClients,
@@ -70,8 +76,9 @@ export class PassReader {
     private readonly pass: string,
   ) {
     this.readClient = clients.readClient;
-    this.finalized = finalizedBlockOnce(clients.client);
+    this.visit = clients.visit ?? 0;
     this.cutoff = readCutoffMs(sendDeadline);
+    this.finalized = finalizedBy(this.cutoff, finalizedBlockOnce(clients.client));
     this.bounded = deadlineClient(clients.client, this.cutoff);
   }
 
@@ -80,23 +87,33 @@ export class PassReader {
     return (await boundedCall(this.cutoff, functionName, () => this.bounded.readContract({ address, abi, functionName, args }))) as T;
   }
 
+  /** Any other call on the pass's client (the clock, the chain id, a
+   *  simulation), by the cutoff. */
+  call<T>(what: string, work: (client: PublicClient) => Promise<T>): Promise<T> {
+    return boundedCall(this.cutoff, what, () => work(this.bounded));
+  }
+
   /** Many reads; `undefined` where a read did not come back. At the head, or
    *  at `blockNumber` when one is given. */
   async many(calls: readonly { functionName: string; args: readonly unknown[] }[], label: string, blockNumber?: bigint): Promise<unknown[]> {
-    const out: unknown[] = [];
-    for (let i = 0; i < calls.length; i += PASS_READ_CHUNK) {
-      const part = calls.slice(i, i + PASS_READ_CHUNK);
-      // eslint-disable-next-line no-await-in-loop
-      const res: BatchResult[] = await settledRead(
-        this.readClient,
-        part.map((c) => ({ address: this.diamond, abi: this.abi, functionName: c.functionName, args: c.args })),
-        `${this.pass} ${label}`,
-        this.cutoff,
-        blockNumber,
-      );
-      for (const x of res) out.push(x.status === 'success' ? x.result : undefined);
-    }
-    return out;
+    if (calls.length === 0) return [];
+    // Chunked from a point that moves with the run (`settledChunkedRead`),
+    // each answer kept at its call's own position.
+    const at = calls.map((_, i) => i);
+    const res = await settledChunkedRead(
+      this.readClient,
+      at,
+      PASS_READ_CHUNK,
+      (i) => ({ address: this.diamond, abi: this.abi, functionName: calls[i].functionName, args: calls[i].args }),
+      `${this.pass} ${label}`,
+      this.cutoff,
+      this.visit,
+      blockNumber,
+    );
+    return at.map((i) => {
+      const x = res.get(i);
+      return x?.status === 'success' ? x.result : undefined;
+    });
   }
 
   /** `many` of one function over day ids. */

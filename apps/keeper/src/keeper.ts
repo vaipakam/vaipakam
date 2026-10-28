@@ -45,6 +45,7 @@ import {
   RiskSplitLiquidationFacetABI,
 } from '@vaipakam/contracts/abis';
 import { attemptCloseOut, surfaceSkipReason } from './closeOut';
+import { readCutoffMs } from './runWindow';
 import { parseLiquidationLoan } from './liquidationLoan';
 import { tryMatchLiquidation } from './matchLiquidation';
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
@@ -390,6 +391,7 @@ export async function tryInKindCloseOut(
       diamond: ctx.diamond,
       chainId: chain.id,
       notAfterMs: ctx.notAfterMs,
+      readCutoff: readCutoffMs(ctx.notAfterMs),
       // The in-kind role sends an empty list and never builds a route.
       buildRoute: () => Promise.reject(new Error('in-kind close-out builds no route')),
     },

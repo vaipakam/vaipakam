@@ -929,7 +929,8 @@
       "repayRecheck": "Nous venons de vérifier à nouveau : une demande de refinancement est peut-être ouverte sur ce prêt, donc rien n’a encore été envoyé. Le récapitulatif indique maintenant ce que le remboursement lui ferait — confirmez à nouveau pour rembourser.",
       "ownScanCapped": "Ce portefeuille a publié plus d’offres depuis l’offre de ce prêt que nous ne pouvons en vérifier ici. S’il a publié une demande de refinancement pour ce prêt lorsqu’il détenait la position d’emprunteur, cette page ne peut pas l’afficher. Si elle est encore ouverte, vous pouvez l’annuler sous « Vos offres ouvertes » sur le Bureau des taux (une demande expirée n’y figure pas) ; dans tous les cas, retirez l’approbation de jeton sur laquelle elle reposait sous « Approbations permanentes de tokens » dans les Paramètres (mode avancé) si rien d’autre n’en a besoin.",
       "ownScanFailed": "Nous n’avons pas pu vérifier les offres de ce portefeuille pour l’instant. S’il a publié une demande de refinancement pour ce prêt lorsqu’il détenait la position d’emprunteur, cette page ne peut pas encore l’afficher — réessayez dans un instant. Si elle est encore ouverte, vous pouvez l’annuler sous « Vos offres ouvertes » sur le Bureau des taux (une demande expirée n’y figure pas) ; dans tous les cas, retirez l’approbation de jeton sur laquelle elle reposait sous « Approbations permanentes de tokens » dans les Paramètres (mode avancé) si rien d’autre n’en a besoin.",
-      "repayWarnPending": "Une demande de refinancement est encore active pour ce prêt. Le remboursement règle le prêt, après quoi la demande ne pourra jamais se terminer — annulez-la ensuite depuis sa carte (cela supprime aussi son approbation permanente de payoff) ; d'ici là elle reste simplement en place jusqu'à expiration."
+      "repayWarnPending": "Une demande de refinancement est encore active pour ce prêt. Le remboursement règle le prêt, après quoi la demande ne pourra jamais se terminer — annulez-la ensuite depuis sa carte (cela supprime aussi son approbation permanente de payoff) ; d'ici là elle reste simplement en place jusqu'à expiration.",
+      "inFallback": "Ce prêt est dans sa période de repli, il ne peut donc pas recevoir de demande de refinancement. Sa propre page explique ses options."
     },
     "approvals": {
       "title": "Approbations permanentes de tokens",
@@ -2521,6 +2522,7 @@
         "BackstopAbsorbedLoan": "Prêt absorbé par le backstop",
         "LoanExtended": "Prêt prolongé",
         "LoanRefinanced": "Prêt refinancé",
+        "RefinancePayoffSettled": "Prêt refinancé",
         "LoanPreclosedDirect": "Prêt clôturé en avance",
         "LenderFundsClaimed": "Fonds réclamés",
         "BorrowerFundsClaimed": "Garantie réclamée",
@@ -3453,6 +3455,44 @@
       "changedSinceReview": "Ce qu’implique cette annonce a changé après votre examen. Mettez-le en vente depuis sa propre page, qui affiche les conditions actuelles.",
       "ownPageShape": "Seuls les prêts dont le principal et la garantie sont des tokens peuvent être mis en vente.",
       "unavailableNetwork": "Les prêts {{ids}} viennent de la même offre. Leur mise en vente n’est pas encore disponible sur ce réseau : les outils de mise en vente ne sont pas publiés sur ce déploiement."
+    },
+    "batchRefinance": {
+      "action": "Tout refinancer",
+      "lede": "Publiez une demande de refinancement pour chacun de ces prêts, avec un même taux maximal et une même durée. Chaque demande est celle que publierait la page du prêt : dès qu’un prêteur en accepte une, ce prêt est remboursé et clôturé dans la même transaction, et sa garantie passe au nouveau prêt. Chaque prêt est d’abord vérifié séparément, et un prêt qui ne peut pas recevoir de demande est écarté et nommé.",
+      "review": "Vérifier les demandes",
+      "checking": "Vérification de chaque prêt et calcul de son remboursement…",
+      "phase": {
+        "approving": "Approuvez le total dans votre portefeuille…",
+        "checking": "Nouvelle vérification de chaque prêt…",
+        "submitting": "Confirmez la transaction dans votre portefeuille…"
+      },
+      "reviewTitle": "Publier ces demandes de refinancement",
+      "loanPayoff": "Prêt n°{{id}} : ~{{payoff}} pour le rembourser aujourd’hui, réglés automatiquement quand un prêteur accepte sa demande. L’argent du nouveau prêt, moins ses frais de mise en place, va directement au prêteur de ce prêt ; seul le reste vient de votre portefeuille.",
+      "loanGrowth": "Si un prêteur accepte après l’échéance de ce prêt, le remboursement augmente (les pénalités de retard plus les intérêts qui continuent de courir) jusqu’à ~{{amount}} de plus avant la fin de la demande.",
+      "loanTopUp": "Depuis votre portefeuille quand un prêteur accepte : environ {{amount}}. Ce sont les intérêts du remboursement et les frais de mise en place du nouveau prêt ; l’argent du nouveau prêt paie le reste directement.",
+      "leftOut": "Le prêt n°{{id}} est écarté : {{reason}}",
+      "noneReady": "Aucun de ces prêts ne peut recevoir de demande de refinancement ensemble pour le moment. Ouvrez chaque prêt pour voir ses options.",
+      "totals": "Au total : environ {{topUp}} disponibles dans votre portefeuille si toutes les demandes sont acceptées. Votre portefeuille en dispose maintenant, sinon rien n’est envoyé.",
+      "approval": "Vous approuverez {{amount}} : la somme de la plus grande part possible de chaque demande à la charge de votre portefeuille. Chaque part est prélevée sur cette seule approbation quand sa demande est acceptée, tout comme celle de toute autre demande de refinancement que vous avez ouverte sur le même token. Un prêteur qui accepte une demande peut donc en laisser trop peu pour une autre ; la page de chaque prêt indique quand l’approbation de sa demande devient insuffisante.",
+      "consentLabel": "Je comprends les conditions de remboursement et de solde du portefeuille ci-dessous et je les accepte pour chaque prêt listé ci-dessus.",
+      "confirm": "Confirmer — publier ces demandes",
+      "cancel": "Annuler",
+      "dismiss": "Terminé",
+      "receiveEach": "Pour chaque demande acceptée par un prêteur, un nouveau prêt à vos conditions dès l’acceptation : la garantie de ce prêt passe au nouveau sans jamais être débloquée, et l’ancien prêt est clôturé dans la même transaction.",
+      "youMayOwe": "Le remboursement de chaque prêt indiqué ci-dessus, réglé quand un prêteur accepte sa demande : l’argent du nouveau prêt, moins ses frais de mise en place, en paie la plus grande partie directement, et le reste vient de votre portefeuille via l’approbation ci-dessous. Votre portefeuille doit alors détenir le montant disponible de ce prêt.",
+      "endsEach": "Chaque demande prend fin quand un prêteur l’accepte, quand vous l’annulez depuis la page de son prêt, ou quand elle expire ; la ligne de chaque prêt ci-dessus indique quand. Une transaction publie jusqu’à 15 demandes. Une demande qui échoue est ignorée et les résultats disent pourquoi ; les garde-fous écrits pour elle peuvent rester fixés à votre taux et à votre date de fin, et ils ne font que limiter les conditions auxquelles une demande sur ce prêt peut aboutir.",
+      "posted": "Prêt n°{{id}} : demande publiée comme offre n°{{offerId}}. Sa page affiche la demande et vous permet de l’annuler.",
+      "notPosted": "Prêt n°{{id}} : aucune demande publiée. {{reason}}",
+      "changedOtherwise": "Prêt n°{{id}} : aucune demande publiée. Le prêt n’est plus actif, ouvrez-le pour voir où il en est.",
+      "unknown": "Prêt n°{{id}} : nous n’avons pas pu lire si sa demande a été publiée. Ouvrez le prêt pour vérifier.",
+      "pending": "Prêt n°{{id}} : la transaction a été envoyée mais n’est pas encore confirmée. Elle peut encore publier cette demande, vérifiez le prêt dans quelques minutes.",
+      "notSentPending": "Non envoyé, car une transaction précédente de ce lot n’est pas encore confirmée. Publiez sa demande depuis sa propre page une fois celle-ci réglée.",
+      "skippedRetry": "La transaction a été exécutée, mais cette demande a été ignorée. Elle peut maintenant être publiée depuis la page du prêt.",
+      "changedSinceReview": "Ce qu’implique cette demande a changé après votre vérification. Publiez-la depuis sa propre page, qui affiche les conditions actuelles.",
+      "ownPageRental": "Une location ne peut pas recevoir de demande de refinancement ; seuls les prêts en tokens le peuvent.",
+      "ownPageOpenRequest": "Une demande de refinancement est déjà ouverte sur ce prêt. Sa propre page l’affiche et vous permet de l’annuler.",
+      "approvalLeft": "Votre approbation de tokens pour le protocole s’élève désormais à {{amount}}. Vos demandes de refinancement ouvertes y prélèvent leurs remboursements, donc la réduire peut empêcher une demande d’aboutir.",
+      "terms": "Chaque demande porte sur un nouveau prêt de {{days}} jours à un taux annuel d’au plus {{rate}}."
     }
   },
   "contractError": {

@@ -8,7 +8,7 @@ Each refinance now publishes one settlement statement naming its three legs: wha
 
 The standalone refinance step and the keeper permission bit for it are retired. Granting that bit is now refused as an undefined action, and the app no longer offers it in the keeper settings. The auto-refinance switch still governs only the matcher; a lender accepting a request directly is never blocked by it.
 
-In the app, the standing approval a refinance request asks for is now sized to the wallet's share of the payoff instead of the whole payoff, and the copy says that the new loan's money pays the current lender directly. The approval is an upper bound: it uses the live initiation-fee rate with no discount, so a fee discount only lowers what is actually taken.
+In the app, the standing approval a refinance request asks for is now sized to the wallet's share of the payoff instead of the whole payoff, and the copy says that the new loan's money pays the current lender directly. The approval is an upper bound: it uses the live initiation-fee rate with no discount, so a fee discount only lowers what is actually taken. The "Refinance all" batch on Positions sizes its one approval the same way, as the sum of each request's wallet share, and the Activity page lists the settlement statement on the old loan's timeline.
 
 This ships by fresh deploy only. The curated refresh scripts refuse a Diamond that still routes the retired refinance step, because the accept and the payoff now hand off within one transaction and must be on the same code. Design: `docs/DesignsAndPlans/Refinance3042NettedAtomicDesign.md`. Closes #3042.
 

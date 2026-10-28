@@ -76,6 +76,14 @@ export function readRefinanceMarker(chainId: number, loanId: number): string | n
   return marker.read(chainId, loanId);
 }
 
+/** Record a refinance request posted somewhere other than the loan's own
+ *  page (the "Refinance all" batch on Positions, #126), so that page names
+ *  it before the next discovery poll. Verified live there before it is
+ *  trusted, like any marker. */
+export function rememberRefinanceOffer(chainId: number, loanId: number, offerId: string): void {
+  marker.write(chainId, loanId, offerId);
+}
+
 export interface RefinancePendingState {
   /** #2406 r1 — who posted the request: the only wallet that can cancel
    *  it, so the pending card (and its funding actions) key to it, not to
