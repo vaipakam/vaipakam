@@ -2587,6 +2587,13 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().ingressPackets[packetHash].arrivedAt = arrivedAt;
     }
 
+    /// @notice #2961 test-only — mark a packet DISPOSED (its value left), the
+    ///         state no production path gives a batched budget packet today,
+    ///         so the part-counting writer's disposed rule can be exercised.
+    function setPacketDisposedRaw(bytes32 packetHash, uint256 disposed) external {
+        LibVaipakam.storageSlot().ingressPackets[packetHash].disposed = disposed;
+    }
+
     // ───────── 3b-ii-A2 (#2305) — raw reads for the staging cells ─────────
 
     function poolRemainingRaw() external view returns (uint256) {

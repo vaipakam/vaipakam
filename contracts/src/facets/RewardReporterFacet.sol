@@ -396,6 +396,28 @@ contract RewardReporterFacet is
     ///         mark Base booked at finalization (same figure, both ledgers).
     ///         Not a debit: the debit happens later, at claim/remit, and
     ///         doing both would charge the slice twice.
+    /// @dev Whether `b`'s four halves are the ones Base sent for its day. A
+    ///      day skipped for a delivery conflict (#2961) has had its funding
+    ///      record zeroed, so what Base sent is read from the figures the skip
+    ///      kept; otherwise it is the funding record itself (Codex #2990 r2).
+    function _halvesMatchBroadcast(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.ChainDayFunding storage prior,
+        RewardBroadcastV2 memory b
+    ) private view returns (bool) {
+        LibVaipakam.DayDeliveryParts storage dp = s.dayDeliveryParts[b.dayId];
+        if (dp.skippedAt != 0) {
+            return dp.skippedFreshLenderHalf == b.freshLenderHalf
+                && dp.skippedFreshBorrowerHalf == b.freshBorrowerHalf
+                && dp.skippedLenderHalfEquiv == b.recycledLenderHalfEquiv
+                && dp.skippedBorrowerHalfEquiv == b.recycledBorrowerHalfEquiv;
+        }
+        return prior.freshLenderHalf == b.freshLenderHalf
+            && prior.freshBorrowerHalf == b.freshBorrowerHalf
+            && prior.lenderHalfEquiv == b.recycledLenderHalfEquiv
+            && prior.borrowerHalfEquiv == b.recycledBorrowerHalfEquiv;
+    }
+
     function _applyBroadcastV2Core(
         LibVaipakam.Storage storage s,
         RewardBroadcastV2 memory b
@@ -410,10 +432,7 @@ contract RewardReporterFacet is
                     || s.knownGlobalBorrowerInterestNumeraire18[b.dayId]
                         != b.globalBorrowerNumeraire18
                     || !_capFamilyMatches(s, b)
-                    || prior.freshLenderHalf != b.freshLenderHalf
-                    || prior.freshBorrowerHalf != b.freshBorrowerHalf
-                    || prior.lenderHalfEquiv != b.recycledLenderHalfEquiv
-                    || prior.borrowerHalfEquiv != b.recycledBorrowerHalfEquiv
+                    || !_halvesMatchBroadcast(s, prior, b)
                     || prior.recycleConsume != b.recycleConsume
                     || prior.keeperAllocate != b.keeperAllocate
             ) {

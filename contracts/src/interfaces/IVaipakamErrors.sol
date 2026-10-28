@@ -1865,4 +1865,22 @@ interface IVaipakamErrors {
     error KeeperAllocateNeedsAttributionCap(uint32 chainId);
     /// @notice `chainId`'s attribution cap cannot return to zero while its keeper allocation (`bps`) is armed.
     error AttributionCapUnderLiveKeeperBps(uint32 chainId, uint16 bps);
+
+    // ─── #2961 — skipping a day whose delivery parts disagreed ───
+    /// @notice Day `dayId`'s delivery parts did not disagree on its whole: there is nothing to skip.
+    error DayDeliveryNotConflicted(uint256 dayId);
+    /// @notice Day `dayId` opened (its parts reached the whole) before any conflict: it pays normally.
+    error DayDeliveryAlreadyOpen(uint256 dayId);
+    /// @notice Day `dayId` was already skipped.
+    error DayDeliveryAlreadySkipped(uint256 dayId);
+    /// @notice Day `dayId` may be skipped only from `readyAt` (one day after its first conflicting part).
+    error DayDeliverySkipTooEarly(uint256 dayId, uint256 readyAt);
+    /// @notice Day `dayId`'s broadcast has not stamped its funding record here yet; a skip before it would be
+    ///         undone by the stamp.
+    error DayDeliverySkipAwaitsBroadcast(uint256 dayId);
+    /// @notice Side `side` (0 lender, 1 borrower) of day `dayId` is not held by the delivery gate but carries a
+    ///         recycled half, so its claims may already have paid from the day; the skip would misstate them.
+    error DayDeliverySkipSideNotHeld(uint256 dayId, uint8 side);
+    /// @notice Day `dayId` has not been skipped, so its landed value is not free to recycle.
+    error DayDeliveryNotSkipped(uint256 dayId);
 }

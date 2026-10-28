@@ -3267,7 +3267,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](20);
+        s = new bytes4[](22);
         s[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         s[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
         s[3] = RewardEpochFacet.getTransportBatch.selector;
@@ -3292,6 +3292,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #1944 consequence 1 — the delivery proofs for packets holding no batch.
         s[7] = RewardEpochFacet.proveDeliveryDayChunk.selector;
         s[13] = RewardEpochFacet.getTransportDayLateFrom.selector; // #2489 (Codex r2): the late chain, for verified late hints
+        // #2961 — skipping a day whose delivery parts disagreed, and recycling its landed value.
+        s[20] = RewardEpochFacet.skipConflictedDay.selector;
+        s[21] = RewardEpochFacet.recycleSkippedDayValue.selector;
     }
 
     /// @dev 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads:
