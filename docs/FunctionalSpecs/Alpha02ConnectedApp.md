@@ -105,6 +105,31 @@ including people who never will.
   being read and offers a way to open it on a public explorer, so a
   reader can go to the primary source rather than accept the page's
   reading of it.
+- The analytics view also states the VPFI token as the chain itself
+  reports it: the token's address, its supply on the chain being read,
+  and — on the chain where VPFI is issued — the supply cap, how much can
+  still be minted under it, and the one address allowed to mint. On a
+  chain VPFI reaches by bridge it shows that chain's supply only and says
+  the cap and the minter belong to the issuing chain, rather than showing
+  them as zero. A chain with no VPFI token set up says so.
+- It states the fees the protocol has recorded — since recording began,
+  over the last day and over the last week — each valued in the
+  reference currency at the moment it was collected, and names that
+  currency. Every reason these figures can be lower than what was really
+  collected is stated beside them: a fee in an asset that could not be
+  valued at the time counts as zero, the day and week figures add up only
+  a bounded number of recent records, and a change of reference currency
+  leaves earlier fees in the old one.
+- It names where fees go. Where the treasury is an ordinary address, the
+  view names and links it and shows no balance for it. Where the protocol
+  contract keeps its own fees, the view shows what it holds, at current
+  value, and says what that figure leaves out.
+- The token and fee figures are read from the protocol contract's own
+  public view functions, which the view names, all at one block; the view
+  states that block and how old the reading is. A figure that could not
+  be read says so and is never shown as zero, and a failed read of one
+  figure does not hide the others. These figures carry supply and fee
+  flows only — never a price, a return or a scarcity claim.
 - Any total the analytics view reports is the sum of the categories it
   shows beside it. Every state counted toward a total is either named or
   gathered into a stated remainder, so a reader can add up the parts and

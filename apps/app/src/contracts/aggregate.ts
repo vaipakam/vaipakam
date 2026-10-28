@@ -31,6 +31,7 @@ export function multicall3Of(publicClient: Pick<PublicClient, 'chain'>): Address
 export function readAggregate(
   publicClient: Pick<PublicClient, 'chain' | 'readContract'>,
   reads: readonly AggregateRead[],
+  blockNumber?: bigint,
 ): Promise<AggregateSlot[]> {
-  return aggregateReads(publicClient, multicall3Of(publicClient), reads);
+  return aggregateReads(publicClient, multicall3Of(publicClient), reads, blockNumber);
 }

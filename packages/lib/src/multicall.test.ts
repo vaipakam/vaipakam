@@ -242,6 +242,19 @@ describe('aggregateReads', () => {
     );
   });
 
+  it('pins the read to a block when one is given, and to none otherwise', async () => {
+    const { client, readContract } = stubClient([
+      [{ success: true, returnData: uint256Result(1n) }],
+      [{ success: true, returnData: uint256Result(2n) }],
+    ]);
+    await aggregateReads(client, MC3, [read(ADDR_A)], 1234n);
+    await aggregateReads(client, MC3, [read(ADDR_A)]);
+    const pinned = readContract.mock.calls[0][0] as { blockNumber?: bigint };
+    const latest = readContract.mock.calls[1][0] as { blockNumber?: bigint };
+    expect(pinned.blockNumber).toBe(1234n);
+    expect('blockNumber' in latest).toBe(false);
+  });
+
   it('sends nothing for no reads', async () => {
     const { client, readContract } = stubClient([]);
     expect(await aggregateReads(client, MC3, [])).toEqual([]);
