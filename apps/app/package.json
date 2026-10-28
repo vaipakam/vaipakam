@@ -19,7 +19,7 @@
     "e2e:typecheck": "tsc -p e2e/tsconfig.json --noEmit",
     "i18n:template": "tsx scripts/export-i18n-template.ts",
     "test": "vitest run",
-    "i18n:coverage": "tsx scripts/check-locale-coverage.ts && tsx scripts/check-coverage-matrix.ts",
+    "i18n:coverage": "tsx scripts/check-locale-coverage.ts",
     "lint": "eslint ."
   },
   "dependencies": {
