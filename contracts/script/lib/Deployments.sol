@@ -285,11 +285,15 @@ library Deployments {
         return !knownTestnet;
     }
 
-    /// Legacy env-var prefix for the active chain — used as the
-    /// per-key fallback when `addresses.json` is missing or the key
-    /// hasn't been written yet. E.g. on Base Sepolia returns
-    /// `BASE_SEPOLIA_` so `_legacyEnvAddress("DIAMOND_ADDRESS")`
-    /// resolves to `vm.envAddress("BASE_SEPOLIA_DIAMOND_ADDRESS")`.
+    /// The active chain's env-var prefix — the ONE chain-to-prefix map
+    /// (#1721). It equals the deploy wrappers' `CCIP_SLUG` plus `_`, and
+    /// every per-chain env read goes through it: the artifact fallback
+    /// here (on Base Sepolia `_legacyEnvAddress("DIAMOND_ADDRESS")`
+    /// resolves to `vm.envAddress("BASE_SEPOLIA_DIAMOND_ADDRESS")`) and
+    /// the per-chain settings `ConfigureOracle`, `ConfigureVPFIBuy` and
+    /// `DeployUniV3Adapter` read. Ethereum mainnet is `ETHEREUM_`. Polygon
+    /// zkEVM is not mapped: zk-rollup chains are out of scope, and
+    /// `deploy-mainnet.sh` refuses it.
     function envPrefix() internal view returns (string memory) {
         uint256 cid = block.chainid;
         if (cid == 1)         return "ETHEREUM_";
@@ -299,7 +303,6 @@ library Deployments {
         if (cid == 421614)    return "ARB_SEPOLIA_";
         if (cid == 11155420)  return "OP_SEPOLIA_";
         if (cid == 80002)     return "POLYGON_AMOY_";
-        if (cid == 1101)      return "POLYGON_ZKEVM_";
         if (cid == 56)        return "BNB_";
         if (cid == 97)        return "BNB_TESTNET_";
         if (cid == 42161)     return "ARBITRUM_";

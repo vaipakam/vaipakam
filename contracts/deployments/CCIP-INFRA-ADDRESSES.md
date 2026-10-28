@@ -55,15 +55,11 @@ CCIP_REGISTRY_MODULE_OWNER_CUSTOM_ARB_SEPOLIA=0xaD417c0611dBD225471D31F056b8B6be
 
 ### BNB Chain Testnet — chainId `97` — slug `BNB_TESTNET` (mirror, native-gas mode)
 
-> ⚠️ **Contracts-only — NOT yet a full-ceremony deploy target.** The CCIP env
-> block below is provided so the `--phase contracts` diamond deploy can land on
-> BNB testnet, but the standard next step (`--phase configure` →
-> `DiamondConfigSpell` → `ConfigureOracle`) will **revert** on chainId 97:
-> `ConfigureOracle._prefix()` has no `BNB_TESTNET_` case yet, so there are no
-> oracle/risk params wired for BNB. Do **not** treat BNB testnet as part of the
-> Phase-1 deploy trio until `ConfigureOracle` (and the per-chain oracle env) add
-> BNB support — otherwise a BNB contracts deploy strands half-configured. Tracked
-> as a follow-up (#853 Codex P2).
+> BNB testnet is a configured testnet mirror. The `--phase configure` step
+> (`DiamondConfigSpell` → `ConfigureOracle`) reads its oracle and risk settings
+> under the `BNB_TESTNET_` prefix from `Deployments.envPrefix()`, the one
+> chain-to-prefix map every configure script reads (#1721). An earlier note
+> here said `ConfigureOracle` had no BNB testnet case; that is no longer true.
 
 CCIP chain selector: `13264668187771770619`
 

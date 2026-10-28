@@ -36,7 +36,10 @@ deployed**. Per chain:
 | VPFI CCIP `TokenPool` | ✓ — Lock/Release | | ✓ — Burn/Mint |
 | `VpfiPoolRateGovernor` (the pool `rateLimitAdmin`) | ✓ | | |
 | `VaipakamRewardMessenger` | ✓ | | |
-| `RewardRemittanceReceiver` / buyback / return receivers as applicable | ✓ | topology-dependent | topology-dependent |
+| `BuybackRemittanceReceiver` (buyback remittance inbound) | | ✓ | |
+| `VpfiReturnReceiver` (vpfi-return inbound) | | ✓ | |
+| `RewardRemittanceReceiver` (reward-budget inbound) | | | ✓ |
+| `VpfiReturnSender` (vpfi-return sender and escrow) | | | ✓ |
 | `VPFIMirrorToken` | | | ✓ |
 
 Canonical vs mirror is decided by `block.chainid` — `8453` / `84532` are
@@ -110,9 +113,21 @@ Pass 2 — wire, every chain:          ConfigureCcip.s.sol
 Pass-2 order across chains is free — every step reads only pass-1
 artifacts. (#1568 C2: the repatriation lane-capacity bounds resolve
 registry → active pool → lane membership → limiter bucket LIVE at
-issuance/execution; the only repatriation wiring in pass 2 is
-`setRepatriationTokenAdminRegistry`, so nothing per-lane has to be
-derived, recorded, or ordered, and a CCT pool rotation auto-tracks.)
+issuance/execution, so nothing per-lane has to be derived, recorded, or
+ordered, and a CCT pool rotation auto-tracks.)
+
+Pass 2 makes **two** repatriation calls on the Diamond, and both are
+required (#1668). Until both land, the `RepatriationFacet` is dark: every
+entry point reverts.
+
+| Call | Base (canonical) | Mirror |
+|---|---|---|
+| `setRepatriationTokenAdminRegistry(registry)` | the chain's CCIP `TokenAdminRegistry` | the chain's CCIP `TokenAdminRegistry` |
+| `setRepatriationEndpoints(sender, receiver)` | `(0x0, vpfiReturnReceiver)` | `(vpfiReturnSender, 0x0)` |
+
+The endpoint addresses are the artifact's `vpfiReturnReceiver` (Base)
+and `vpfiReturnSender` (mirror). The setter refuses a nonzero endpoint
+with no code.
 
 The orchestration scripts encode this:
 
@@ -188,12 +203,18 @@ admin multisig → governance timelock.
      bash contracts/script/deploy-mainnet.sh <chain-slug> --phase ccip-wire
    ```
 3. **Verify** every chain (`--phase verify`). On every chain
-   additionally confirm the Diamond's repatriation registry is wired —
-   `cast call $DIAMOND 'getRepatriationTokenAdminRegistry()(address)'`
-   must return that chain's CCIP TokenAdminRegistry, not zero (the
-   live lane-capacity bounds resolve the active pool through it;
-   unset = repatriation stays dark) — the automated verify phase does
-   not read this (same known limit as the per-lane limiter configs).
+   additionally confirm both repatriation calls from §3 landed — the
+   automated verify phase reads neither (same known limit as the
+   per-lane limiter configs):
+   - `cast call $DIAMOND 'getRepatriationTokenAdminRegistry()(address)'`
+     must return that chain's CCIP TokenAdminRegistry, not zero (the
+     live lane-capacity bounds resolve the active pool through it;
+     unset = repatriation stays dark).
+   - `cast call $DIAMOND 'getRepatriationPosition()(uint256,address,address,uint256)'`
+     must show the endpoint for the chain's role: on Base the third
+     value (`receiver`) is the artifact's `vpfiReturnReceiver` and the
+     second is zero; on a mirror the second value (`sender`) is the
+     artifact's `vpfiReturnSender` and the third is zero.
 4. **Hand over** ownership to governance — see §7.
 
 On mainnet the admin is a **multisig**, which cannot broadcast a Foundry
@@ -201,6 +222,9 @@ script with a private key. `ConfigureCcip.s.sol` is admin-broadcast, so
 on mainnet its calls are executed as a **multisig batch** with the same
 arguments — `--phase ccip-wire` is the canonical reference for *which*
 calls and *in what order*; the operator reproduces them through the Safe.
+That batch must include BOTH Diamond repatriation calls from §3
+(`setRepatriationTokenAdminRegistry` and `setRepatriationEndpoints`);
+a batch carrying only the first leaves repatriation dark on that chain.
 
 ---
 
@@ -238,7 +262,9 @@ must be true before any real value is routed**:
 Every cross-chain contract is `Ownable2Step`:
 
 - The **proxies** (`CcipMessenger`, `VpfiPoolRateGovernor`,
-  `VaipakamRewardMessenger`, `VPFIMirrorToken`) are initialized with the
+  `VaipakamRewardMessenger`, `VPFIMirrorToken`, and the four satellites
+  in §1: `BuybackRemittanceReceiver`, `VpfiReturnReceiver`,
+  `RewardRemittanceReceiver`, `VpfiReturnSender`) are initialized with the
   admin multisig as owner. (#687-A: `VpfiBuyAdapter` / `VpfiBuyReceiver`
   were listed here; §"Canonical vs mirror" above already records that
   they are not deployed in the CCIP stack.)
@@ -513,6 +539,9 @@ takes a governance write, so keep the rule.
       every mirror chain id.
 - [ ] VPFI registered in each chain's `TokenAdminRegistry` with the pool
       set.
+- [ ] Diamond repatriation wired (§3): the registry is the chain's CCIP
+      `TokenAdminRegistry`, and `getRepatriationPosition()` shows the
+      receiver (Base) or the sender (mirror) for the chain's role.
 - [ ] Mainnet: every cross-chain contract owner + the CCT admin =
       governance timelock (gate #3).
 
