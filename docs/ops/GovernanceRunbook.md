@@ -2148,7 +2148,7 @@ to mirror never holds the days it funded itself, and a broadcast for one of
 them fails `DayFundedLocally(dayId)` (a re-executable message that should
 stay failed; Base never meant to fund that day there).
 A mirror holds any day that owes it fresh funding until a budget delivery
-PROVEN to list that day has landed there, whichever of the broadcast and the
+naming that day has landed there (every part of it, #918), whichever of the broadcast and the
 delivery arrives first. While a day is held, the chain's reward cursor stops before
 it and every claim, sweep, staging, domain-preparation and preview path defers,
 moving no value; a claim with nothing else to pay reverts
@@ -2156,29 +2156,27 @@ moving no value; a claim with nothing else to pay reverts
 nothing for never waits: an excluded destination, a side with zero local interest
 that day, an armed side whose reported liability is zero, a recycled-only side.
 
-- **The keeper's `deliveryProof` pass must run on every mirror.** With no
-  arming step, the gate binds from a mirror's first day, so the keeper's
-  `deliveryProof` pass (`REWARD_DELIVERY_PROOF_ENABLED`) is part of standing a
-  mirror up, not an option: every few minutes it indexes each epoch delivery's
-  days and proves the list of each delivery that holds no epoch. Without it,
-  every funded day on that mirror waits on a human to prove its delivery. That
-  pass is the keeper's `deliveryProof`. It discovers every budget delivery
-  from the indexer's event ledger, takes the three routes, and applies the
-  bitmap reconstruction rule below. It runs only
-  with `REWARD_DELIVERY_PROOF_ENABLED` set. Its operator alerts (#2516) go to
-  the ops chat per mirror: a delivery still not whole two scans after the pass
-  found it (more than 7.5 minutes after it was queued), and a proof or index
-  call refused for anything but "already done". The allowance starts when the
-  pass finds the delivery, not when it arrives (#2775): the pass finds a
-  delivery only once the indexer's settled ledger holds it, and that lag is the
-  chain's own (Arbitrum's `safe` head trails by minutes, BNB's barely). A
-  delivery the indexer has not yet recorded raises nothing here.
-  "Verified" on a mirror means: deliveries that arrived there were indexed or
-  proven by the scan after the one that found them (the journal's
-  `deliveryProof` lines, and the delivery's chunks reading as landed on chain),
-  and neither alert is open. Arm the pass on a new mirror before its first
-  broadcast, and read `gateBinds` back from `getDayDeliveryState` (true on a
+- **There is no proof step since #2828.** A budget delivery names its one
+  funded day inline (the d8 wire), and the mirror lands that day in the same
+  transaction the delivery executes in: it stamps the day on the packet,
+  counts the part toward the day's delivery record and, on an activated
+  custody, admits the epoch and indexes it under the day. Nothing is left for
+  anyone to index or prove afterwards, so a day waits only on its own parts
+  arriving. The keeper's `deliveryProof` pass (`REWARD_DELIVERY_PROOF_ENABLED`)
+  has nothing to do on a mirror that runs this build, and calls entry points
+  this build removed; leave it unset there until the keeper change that
+  retires it ships. "Verified" on a mirror now means: every delivery Base
+  sent for the day executed there (CCIP shows it executed, and
+  `getDayDeliveryParts(dayId)` counts its part), and `getDayDeliveryState`
+  reads `landed`. Read `gateBinds` back from `getDayDeliveryState` (true on a
   mirror, false on Base and on an unconfigured or detached chain).
+- **A delivery that fails at the mirror stays a failed CCIP message.** The
+  ingress refuses, by name, a split that is not whole, a packet it already
+  recorded, and an epoch whose place in its day's order would need a walk of
+  more than 128 older epochs to find (`TransportIndexWalkExceeded(batchId,
+  dayId)`). That last refusal needs many epochs landing for one day out of
+  arrival order, which only same-second ties produce in practice. Re-execute
+  the message manually once the cause is cleared; nothing is lost.
 - **Refresh the #1944 facet set in ONE cut, on every chain.**
   `RewardSweepWalkFacet`, `RewardStagingFacet`, `RewardClaimWalkFacet`,
   `RewardEpochViewFacet`, `RewardForfeitWalkFacet`, `RewardClaimFacet`,
@@ -2209,29 +2207,17 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   revision: the change bumps the custody era, Base stamps later remittances with
   the era the mirror reports, and a delivery still in flight for the retired era
   opens its epoch in that era and lands its days through the epoch route.
-- **Proving — permissionless, on the mirror.**
-  `RewardEpochFacet.materializeTransportBatchChunk` for a delivery that carries a
-  transport epoch (unchanged: indexing the day's chunk IS the landing);
-  `RewardEpochFacet.proveDeliveryDayChunk(packetHash, chunkIndex, dayIds, proof)`
-  for a rooted (d7) delivery that holds no epoch (one received before custody
-  activation). Every budget delivery is rooted: the mirror receiver refuses any
-  older wire shape (`UnknownRemitWireShape`), so there is no flat-list route.
-  Refusals by name: `IngressPacketUnknown`, `DeliveryProofRouteIsBatch` (use the
-  epoch route), `DeliveryProofNotBudget`, `DeliveryPacketDisposed`, and
-  `TransportChunkAlreadyIndexed` for a chunk already proven. Each proven
-  (packet, day) pair emits `DayDeliveryProved(dayId, packetHash, remitId,
-  route)`, and a repeat proof writes nothing. A proof moves no value. **Since
-  #918 a day may arrive in several parts**, one packet each: every one-day
-  packet that lands (indexed or proven) adds its declared fresh and recycled
-  part to the day's landed sums (`getDayDeliveryParts(dayId)` — the whole each
-  part declared, the sums so far, the part count, the first packet, and
-  `wholeConflict` if two parts declared different wholes). The day is landed
-  only when both sums reach the whole, so prove or index EVERY part, not just
-  the first; a day whose parts disagree on the whole before it opened does not
-  open and needs investigation on Base (`getRemitDayLedger(dst, dayId)`).
-  Nothing on either chain repairs it: Base re-sends the same locked whole and
-  the conflict flag is permanent. It holds every LATER day on that side of the
-  mirror too, because the cursor cannot pass it.
+- **Days in parts (#918).** A day may arrive in several parts, one packet
+  each. Every packet adds its declared fresh and recycled part to the day's
+  landed sums at the moment it executes (`getDayDeliveryParts(dayId)` — the
+  whole each part declared, the sums so far, the part count, the first packet,
+  and `wholeConflict` if two parts declared different wholes); a replayed
+  packet counts nothing. The day is landed only when both sums reach the
+  whole, so a day waits until EVERY part has executed. A day whose parts
+  disagree on the whole before it opened does not open and needs investigation
+  on Base (`getRemitDayLedger(dst, dayId)`). Nothing on either chain repairs
+  it: Base re-sends the same locked whole and the conflict flag is permanent.
+  It holds every LATER day on that side of the mirror too, because the cursor cannot pass it.
   **Skip it (#2961).** One day after the first conflicting part
   (`conflictAt` in `getDayDeliveryParts`), anyone may call
   `RewardEpochFacet.skipConflictedDay(dayId)`, and the keeper does. The day
@@ -2251,25 +2237,16 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   That last case stays held: its other side may already have paid from the
   day. Treat it as an incident, find the fault on Base, and consider retiring
   the mirror (#917).
-- **Keeper reconstruction rule — the funded list is NOT the reservation's day
-  list, and it is read from the IMMUTABLE bitmap.** `getRemitReservation(remitId)`
-  returns `dayIds` — every day the remit ACTED on (sent a part of, or closed), a
-  superset — and `fundedDayBits`,
-  a bitmap over that array written at the send and never rewritten: bit `i`
-  (word `i >> 8`, bit `i & 255`) set means `dayIds[i]` was FUNDED on the wire.
-  Rebuild the wire's list as `dayIds` filtered by that bitmap, in order, and
-  verify it against `dayListRoot` with the wire's own chunking
-  (`RemitWire.d6Chunks` / `d6Root`) before submitting any chunk proof. Do NOT
-  filter by `getRewardBudgetRemitted(dstChainId, d)`: that map is live state —
-  `releaseRemitReservation` deletes the released remit's markers and a
-  replacement remit rewrites the same slots — so for a released-and-resent
-  packet it reconstructs an empty or replacement-funded list that fails the root
-  (Codex #2489 r12). A reservation dispatched before the bitmap existed has an
-  empty `fundedDayBits` with a non-empty `dayIds`; for it the authenticated
-  fallback is the wire payload itself — decode the `RemitWire` body of the CCIP
-  message the dispatch transaction sent (its id is in `RewardBudgetRemitted`,
-  the payload is on chain in that transaction's message), never the live map.
-  `RewardBudgetRemitted` carries only the funded-day COUNT, never the list.
+- **The funded day of a remittance is read from the IMMUTABLE bitmap.**
+  `getRemitReservation(remitId)` returns `dayIds`, every day the remit ACTED on
+  (sent a part of, or closed), and `fundedDayBits`, a bitmap over that array
+  written at the send and never rewritten: bit `i` (word `i >> 8`, bit
+  `i & 255`) set means `dayIds[i]` was the day the wire FUNDED. Since #2821 at
+  most one bit is set, and since #2828 that day is the `dayId` the d8 payload
+  carries. Do NOT read it from `getRewardBudgetRemitted(dstChainId, d)`: that
+  map is live state, which `releaseRemitReservation` deletes and a replacement
+  remit rewrites (Codex #2489 r12). `RewardBudgetRemitted` carries only the
+  funded-day count.
 - **Readbacks.** `RewardRemittanceLensFacet.getDayDeliveryState(dayId)` returns
   `(gateArmed, stamped, freshStamped, landed, firstPart, epochCount, reported,
   reportSent, awaitsLender, awaitsBorrower)` (`firstPart` is the first packet
@@ -2278,9 +2255,10 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   an `awaits*` flag on an armed day with `reportSent == false` = waiting on the
   commitment report; an `awaits*` flag otherwise = waiting on delivery (on a
   day sent in parts, on its remaining parts — compare `getDayDeliveryParts`'
-  landed sums with the whole); `landed` = every part delivered. `getPacketDeliveryProof(packetHash)` shows a delivery's list
-  commitments, chunk progress and its batch / classification /
-  disposal state. **Landed is not drawable**: an epoch still needs to be whole and
+  landed sums with the whole); `landed` = every part delivered.
+  `getIngressPacket(packetHash)` shows the day a delivery named (`dayId`,
+  `dayNamed`) and its batch / classification / disposal state. **Landed is not
+  drawable**: an epoch still needs to be whole and
   attested before value moves from it; the delivered bound governs that.
 - **Repair rule — there is no admin release on the mirror, by design.** A day
   whose delivery can never execute is repaired on BASE:
@@ -2290,7 +2268,7 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   `RemitAckAfterRelease` surfaces the double landing — reconcile it as that
   event's notes describe.
 - **Liveness.** With `fromDay = 1`, every included pre-`D*` day also waits for its
-  remit and its proof, and armed days additionally wait for the chain's
+  remit to execute, and armed days additionally wait for the chain's
   commitment report (Base itself waits for that report before remitting an armed
   day). A stalled keeper produces named deferrals, not loss.
 - **Not behind the gate: pricing from the stamp.** A mirror on the refreshed
@@ -2301,11 +2279,10 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   exhausted days against funding they never received.
 
 On a mirror the propagation cycle is therefore: finalize the day, remit
-it to every destination, have the keeper (or anyone) PROVE each delivery's day list
-on each mirror (`materializeTransportBatchChunk` for an epoch delivery,
-`proveDeliveryDayChunk` otherwise), confirm
+it to every destination (each delivery lands its day on execution, #2828), confirm
 `getDayDeliveryState(d).landed` on each mirror, and broadcast in any order — a
-mirror holds the day until both the stamp and a proven delivery have landed. The
+mirror holds the day until both the stamp and every part of its delivery have
+landed. The
 ordering paragraphs that follow are the PRE-GATE procedure: they govern only a
 mirror whose facets predate the gate, which no fresh deploy is (every chain that
 runs this build is deployed fresh), and each is marked where the gate supersedes
@@ -2320,7 +2297,7 @@ wait for each mirror to CONFIRM receipt**, and only then call the payable
 fee.
 
 *(Superseded on every mirror carrying the gate, #1944 consequence 1: there the
-mirror itself holds the day until its proven delivery lands, so an early broadcast
+mirror itself holds the day until its delivery lands, so an early broadcast
 opens nothing. This paragraph governs only a mirror whose facets predate the gate.)*
 
 **Your ordering is not enforced.** Anyone willing to pay the CCIP fee can
@@ -2433,7 +2410,7 @@ collateral is safe.
 
 **The day delivery gate (#1944 consequence 1) IS that property** for every day
 Base stamped on a mirror, from the mirror's first day: such a day cannot be priced
-there for a side Base priced fresh funding for until a delivery proven to list it
+there for a side Base priced fresh funding for until a delivery naming it
 has landed. It has no stated residual left. Three stood here until #1944 closed
 them: a day applied only by the kind-2 broadcast, which no longer exists; a late
 Base-side inclusion backfill, which was removed (finalization is now the only
@@ -2463,7 +2440,7 @@ is a claim outage and a spent day rather than a loss, but the window is real and
 cannot be closed here: report completion and the pause are two transactions and
 nothing makes them atomic. A day-scoped protocol gate is what would (#1944) — and
 on a gate-ARMED mirror it does: an early broadcast holds the day there until its
-proven delivery lands, so the cost is a wait, not a spent day.
+delivery lands, so the cost is a wait, not a spent day.
 
 **Where that property IS enforced, the messenger pause is a usable gate.**
 `VaipakamRewardMessenger` is `GuardianPausable` — `pause()` is guardian-or-owner
@@ -2673,7 +2650,7 @@ nobody. Confirm the zero-total close in the emitted event rather than assuming
 it.
 
 *(On every mirror carrying the gate, #1944 consequence 1, the remit-first order IS
-enforced by the mirror — a day broadcast first is held until its proven delivery
+enforced by the mirror — a day broadcast first is held until its delivery
 lands — and it becomes a liveness preference. The paragraph below governs only a
 mirror whose facets predate the gate.)*
 

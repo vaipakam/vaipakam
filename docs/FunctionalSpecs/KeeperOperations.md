@@ -139,6 +139,13 @@ evidence that the migration has completed.
 
 ## Reward delivery proofs and acknowledgements
 
+- From #2828 a mirror lands each budget delivery's one day in the
+  transaction the delivery arrives in, so no indexing or proof is left for
+  the keeper to send. On a deployment running that change the delivery-proof
+  part of this pass has no work: it must not send the withdrawn calls, and it
+  stays disarmed until it is retired. The acknowledgement rules further down
+  are unaffected. The delivery-proof rules immediately below describe the
+  pass on deployments from before that change.
 - Each mirror's delivered budgets are discovered from fully indexed history
   and retained as open work. Flat day lists are indexed or proven as their
   delivery requires; rooted lists are rebuilt from the canonical reservation
