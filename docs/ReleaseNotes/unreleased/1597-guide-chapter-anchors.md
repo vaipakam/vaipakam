@@ -1,4 +1,4 @@
-## Thread — Every user-guide chapter has a stable anchor (PR #<n>)
+## Thread — Every user-guide chapter has a stable anchor (PR #3043)
 
 Each chapter of the Basic and Advanced user guides, in all ten languages, now
 carries its own anchor, named after the English title (for example
