@@ -1,4 +1,4 @@
-## Thread — A wallet's risk-access choices appear on its Activity page (PR #<n>)
+## Thread — A wallet's risk-access choices appear on its Activity page (PR #3035)
 
 The Activity page shows a wallet the events it took part in, by a shared participants rule. Four events record a wallet's own risk-access choices: its risk level, strict mode, and its consents and acknowledgements for asset pairings. None of them ever reached the wallet's page.
 
