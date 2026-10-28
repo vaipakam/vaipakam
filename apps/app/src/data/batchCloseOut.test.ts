@@ -56,6 +56,9 @@ describe('pullTotals', () => {
     functionName: 'repayLoan',
     pull: { token, due, approve },
     liveStatus: 0,
+    pastDue: false,
+    fullTermInterest: true,
+    notes: [],
   });
 
   it('sums due and approval per token, case-insensitively, and skips refusals', () => {

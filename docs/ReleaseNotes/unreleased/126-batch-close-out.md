@@ -26,6 +26,11 @@ right before its transaction is sent, including that the wallet still
 holds its position. The approval is set back only when it is established
 that nothing closed, and the approval left standing is always read from
 the chain and stated. The card stays with its results until dismissed.
+A transaction that is sent but not yet confirmed is reported as such,
+never as a failure. The review is the usual six-row review and repeats,
+under each loan, what its own page says before an early close: the
+interest rule, the late fee when past due, and a paid tariff that is not
+refunded.
 
 Advances #126 (slice 1 of 3; the lender's "List all for sale" and the
 borrower's "Refinance all" follow). Design:

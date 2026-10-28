@@ -36,6 +36,7 @@ import {
   type CloseOutCtx,
   type CloseOutPlan,
 } from '../data/closeOutPlan';
+import { ConfirmReceipt } from './ConfirmReceipt';
 import { pullTotals, type BatchOutcome, type OfferGroup } from '../data/batchCloseOut';
 import { chunkForMulticall, encodeBestEffort } from '../data/multicall';
 
@@ -139,7 +140,16 @@ export function BatchCloseOutCard({
       }
       const functionName = action === 'repay' ? 'repayLoan' : 'precloseDirect';
       const outcomes: BatchOutcome[] = [];
-      for (const planned of chunkForMulticall(readyIds)) {
+      const chunks = chunkForMulticall(readyIds);
+      for (const [index, planned] of chunks.entries()) {
+        // A transaction still unconfirmed may yet spend the approval, so
+        // nothing more is sent behind it; the rest wait for their pages.
+        if (outcomes.some((o) => o.kind === 'pending')) {
+          for (const id of chunks.slice(index).flat()) {
+            leftOut.push({ loanId: id, kind: 'left-out', reason: copy.batchClose.notSentPending });
+          }
+          break;
+        }
         // LATE re-check, immediately before EACH send: the loan is planned
         // again in full — the same checks as the review, not a subset —
         // because the wallet may have waited on the approval, or on the
@@ -157,14 +167,17 @@ export function BatchCloseOutCard({
         const ids = late.filter((p) => p.kind === 'ready').map((p) => p.loanId);
         if (ids.length === 0) continue;
         setStage({ kind: 'sending', action, step: 'submitting' });
-        let mined: { block: bigint } | { failure: string };
+        let submitted: `0x${string}` | null = null;
+        let mined: Mined;
         try {
-          const { receipt } = await write('multicall', [
-            encodeBestEffort(ids.map((id) => ({ functionName, args: [BigInt(id)] }))),
-          ]);
+          const { receipt } = await write(
+            'multicall',
+            [encodeBestEffort(ids.map((id) => ({ functionName, args: [BigInt(id)] })))],
+            { onSubmitted: (hash) => (submitted = hash) },
+          );
           mined = { block: receipt.blockNumber };
         } catch (err) {
-          mined = { failure: captureTxError(err) };
+          mined = await settleFailedSend(ctx, submitted, captureTxError(err));
         }
         outcomes.push(...(await readBack(ctx, ids, functionName, mined)));
       }
@@ -290,45 +303,64 @@ function BatchReview({
 }) {
   const ready = plans.filter((p) => p.kind === 'ready');
   const totals = pullTotals(plans);
+  const repay = action === 'repay';
   return (
     <>
       <h3 style={{ marginBottom: 8 }}>
-        {action === 'repay' ? copy.batchClose.reviewRepay : copy.batchClose.reviewPreclose}
+        {repay ? copy.batchClose.reviewRepay : copy.batchClose.reviewPreclose}
       </h3>
       <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 12px' }}>
         {plans.map((p) => (
-          <li key={p.loanId}>
+          <li key={p.loanId} style={{ marginBottom: 6 }}>
             {p.kind === 'ready'
               ? copy.batchClose.dueNow(String(p.loanId), p.pull ? amount(p.pull.due) : '0')
               : copy.batchClose.leftOut(String(p.loanId), p.reason)}
+            {/* What the loan page says before this action is signed. */}
+            {p.kind === 'ready' && p.notes.length > 0 ? (
+              <ul className="muted" style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+                {p.notes.map((n) => (
+                  <li key={n}>{n}</li>
+                ))}
+              </ul>
+            ) : null}
           </li>
         ))}
       </ul>
       {ready.length === 0 ? (
-        <p className="muted">{copy.batchClose.noneReady}</p>
-      ) : (
         <>
-          {totals.map((t) => (
-            <p key={t.token} style={{ margin: '0 0 8px' }}>
-              {copy.batchClose.totalDue(amount(t.due))}{' '}
-              {copy.batchClose.approval(amount(t.approve))}
-            </p>
-          ))}
-          <p className="muted" style={{ marginTop: 0 }}>
-            {copy.batchClose.howItRuns}
-          </p>
-        </>
-      )}
-      <div className="stack" style={{ flexDirection: 'row', gap: 8 }}>
-        {ready.length > 0 ? (
-          <button type="button" className="btn btn-primary" onClick={onConfirm}>
-            {copy.batchClose.confirm}
+          <p className="muted">{copy.batchClose.noneReady}</p>
+          <button type="button" className="btn" onClick={onCancel}>
+            {copy.batchClose.cancel}
           </button>
-        ) : null}
-        <button type="button" className="btn" onClick={onCancel}>
-          {copy.batchClose.cancel}
-        </button>
-      </div>
+        </>
+      ) : (
+        // The same six-row review every other write shows, worded for
+        // several loans.
+        <ConfirmReceipt
+          busy={false}
+          confirmLabel={copy.batchClose.confirm}
+          onBack={onCancel}
+          onConfirm={onConfirm}
+          data={{
+            youReceive: copy.batchClose.receiveEach,
+            youLock: copy.positions.details.receipt.nothingNew,
+            youMayOwe: [
+              ...totals.map(
+                (t) =>
+                  `${copy.batchClose.totalDue(amount(t.due))} ${copy.batchClose.approval(amount(t.approve))}`,
+              ),
+              copy.batchClose.howItRuns,
+            ].join(' '),
+            youCanLose: repay
+              ? copy.positions.details.receipt.loseNothingBeyondOwed
+              : copy.positions.details.receipt.loseNothingBeyondPay,
+            fees: repay
+              ? copy.positions.details.receipt.feesRepay
+              : copy.positions.details.receipt.feesPreclose,
+            whenThisEnds: copy.batchClose.endsEach,
+          }}
+        />
+      )}
     </>
   );
 }
@@ -346,6 +378,8 @@ function outcomeText(action: CloseOutAction, o: BatchOutcome): string {
       return copy.batchClose.leftOut(id, o.reason);
     case 'unknown':
       return copy.batchClose.unknown(id);
+    case 'pending':
+      return copy.batchClose.pending(id);
   }
 }
 
@@ -373,6 +407,32 @@ async function approvalLeftNote(
   }
 }
 
+type Mined = { block: bigint } | { failure: string } | { pending: true };
+
+/**
+ * What a send that did not come back with a receipt actually did. Never
+ * signed: a failure. Signed: the write can throw while its transaction
+ * is still on its way (a receipt wait that timed out), so the submitted
+ * hash is looked up. Mined and successful: read back at its block, as if
+ * the write had returned. Mined and reverted: a failure. Not found (still
+ * pending, or replaced under another hash): pending, never a failure —
+ * reading its loans as open and unwinding the approval would misreport a
+ * batch that may still close them.
+ */
+async function settleFailedSend(
+  ctx: CloseOutCtx,
+  submitted: `0x${string}` | null,
+  failure: string,
+): Promise<Mined> {
+  if (!submitted) return { failure };
+  try {
+    const receipt = await ctx.publicClient.getTransactionReceipt({ hash: submitted });
+    return receipt.status === 'success' ? { block: receipt.blockNumber } : { failure };
+  } catch {
+    return { pending: true };
+  }
+}
+
 /**
  * Read each loan back after its transaction. Closed means its live status
  * is Repaid, the status both calls leave; a loan that left Active any
@@ -381,14 +441,15 @@ async function approvalLeftNote(
  * reporting the loan still open. A loan still open is asked, at that same
  * block, why its call would fail — the multicall skips a failing call
  * without saying why, and a reason read afterwards is a fact about the
- * loan as it stands. After a failed send the read is at the latest block:
- * a transaction can fail to report and still have mined.
+ * loan as it stands. After a failed or pending send the read is at the
+ * latest block: a loan its transaction already closed reads closed, and
+ * one still Active reads pending (never open) while that send is pending.
  */
 async function readBack(
   ctx: CloseOutCtx,
   ids: number[],
   functionName: 'repayLoan' | 'precloseDirect',
-  mined: { block: bigint } | { failure: string },
+  mined: Mined,
 ): Promise<BatchOutcome[]> {
   const block = 'block' in mined ? mined.block : undefined;
   return Promise.all(
@@ -398,6 +459,7 @@ async function readBack(
         const status = Number(live.status);
         if (status === LoanStatus.Repaid) return { loanId, kind: 'closed' };
         if (status !== LOAN_STATUS_ACTIVE) return { loanId, kind: 'changed' };
+        if ('pending' in mined) return { loanId, kind: 'pending' };
         if ('failure' in mined) return { loanId, kind: 'open', reason: mined.failure };
         try {
           await ctx.publicClient.simulateContract({

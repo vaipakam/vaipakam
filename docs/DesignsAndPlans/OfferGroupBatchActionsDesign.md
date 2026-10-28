@@ -87,8 +87,16 @@ own page:
 - a rental.
 
 A loan whose checks could not be read is left out with that reason too.
-The review screen lists every loan: the amount due now, or why it is left
-out.
+
+What the loan page states without stopping is stated in the batch review
+instead, under each loan: for an early close, the loan's interest rule,
+the late fee when past due, and a paid Full tariff that is not refunded.
+The plan carries those as the loan's notes, built by one function from
+the plan's own facts and the loan's fee entitlement record (the same read
+the loan page uses, `readFeeEntitlement`). An unreadable record leaves the
+loan out, as the page holds its early close until the record is known.
+The review is the six-row receipt every write shows, worded for several
+loans.
 
 ## Sending
 
@@ -125,8 +133,14 @@ of "still open":
   its page if the simulation passes;
 - **unknown** when the read fails.
 
-If the transaction itself failed to send or report, loans are read at the
-latest block, because a transaction can mine without reporting.
+If the write throws, what the transaction did is settled before any loan
+is called open. Never signed: a failure. Signed: its hash is looked up.
+Mined and successful, it is read back at its block like any other; mined
+and reverted, a failure; not found (still pending after the receipt wait
+gave up, or replaced under another hash), every loan it carried that
+still reads Active is **pending**, never open. A pending transaction may
+yet spend the approval, so no further chunk is sent behind it (those loans
+are named as not sent) and the approval is not unwound.
 
 **Approvals.** The approval is set back, through the same unwind as the
 single-loan flow, only when it is established that no loan closed: an

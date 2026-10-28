@@ -1861,7 +1861,13 @@ Thin-market honesty rules apply.
   every loan left out and why, the total, and the approval the batch will
   ask for, stated as covering a small allowance for the amount rising
   before the transaction runs. The pad is never taken: each loan pays
-  only what it owes when it runs.
+  only what it owes when it runs. The review is the same six-row review
+  every other write shows, and under each loan it repeats what that
+  loan's own page states before the same action: for an early close, the
+  loan's interest rule (whole term or built up so far), the late fee when
+  it is past due, and that a paid Full tariff is not refunded. A loan
+  whose tariff record cannot be read is left out, as its own page holds
+  its early close until that record is known.
 - The batch is one token approval and then one transaction for up to 30
   loans. Each loan's close runs as the borrower, with its own checks, and
   a loan that fails when the transaction runs is skipped while the others
@@ -1870,6 +1876,10 @@ Thin-market honesty rules apply.
   never assumed from it: repaid (or closed early), still open with the
   reason, changed another way (for example defaulted meanwhile, which is
   never reported as this batch's close), left out, or could not be read.
+  A transaction that was sent but has not confirmed when the app stops
+  waiting is reported as not confirmed yet, never as failed; nothing more
+  is sent behind it, and the loans it would have carried are named as
+  not sent.
 - Immediately before each transaction is sent, every loan in it is
   checked again in full, as at review, since the wallet may have waited on
   the approval or an earlier transaction meanwhile. A loan that no longer

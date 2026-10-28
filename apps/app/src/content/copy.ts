@@ -1580,6 +1580,16 @@ const copySource = {
     confirm: 'Confirm',
     cancel: 'Cancel',
     dismiss: 'Done',
+    receiveEach:
+      'Each closed loan’s collateral back — claimable from that loan right after it settles.',
+    endsEach:
+      'Each loan settles when the transaction runs. A loan that is skipped stays open, and the results say why.',
+    pending: tmpl(
+      'Loan #{{id}}: the transaction was sent but hasn’t confirmed yet. It may still go through, so check the loan in a few minutes.',
+      ['id'],
+    ),
+    notSentPending:
+      'Not sent, because an earlier transaction in this batch hasn’t confirmed yet. Close it from its own page once that settles.',
     repaid: tmpl('Loan #{{id}}: repaid.', ['id']),
     closed: tmpl('Loan #{{id}}: closed early.', ['id']),
     stillOpen: tmpl('Loan #{{id}}: still open. {{reason}}', ['id', 'reason']),

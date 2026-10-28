@@ -20,6 +20,7 @@ const reads = vi.hoisted(() => ({
   lock: 0,
   sanctioned: false,
   nftHeld: true,
+  tariff: 0n as bigint | 'unreadable',
 }));
 
 vi.mock('../contracts/loanLive', () => ({
@@ -40,6 +41,12 @@ vi.mock('./sanctions', () => ({
   }),
 }));
 vi.mock('./saleListingHold', () => ({ probeSaleHoldLive: vi.fn(async () => reads.sale) }));
+vi.mock('./tariff', () => ({
+  readFeeEntitlement: vi.fn(async () => {
+    if (reads.tariff === 'unreadable') throw new Error('rpc down');
+    return { borrowerTariffPaid: reads.tariff, lenderTariffPaid: 0n };
+  }),
+}));
 vi.mock('./refinanceDiscovery', () => ({
   discoverRefinanceRequest: vi.fn(async () => reads.refinance),
 }));
@@ -77,6 +84,7 @@ beforeEach(() => {
     status: LoanStatus.Active,
     endTime: 130n * DAY,
     startTime: 70n * DAY,
+    useFullTermInterest: true,
     durationDays: 60n,
     principal: 1_000_000n,
     interestRateBps: 1_000n,
@@ -88,6 +96,7 @@ beforeEach(() => {
   reads.lock = 0;
   reads.sanctioned = false;
   reads.nftHeld = true;
+  reads.tariff = 0n;
 });
 
 // 2 days of 10% on 1,000,000 plus 1.5% of it.
@@ -102,6 +111,9 @@ describe('planRepay', () => {
       functionName: 'repayLoan',
       pull: { token: LOAN.lendingAsset, due: 1_010_000n, approve: 1_010_000n + PAD },
       liveStatus: LoanStatus.Active,
+      pastDue: false,
+      fullTermInterest: true,
+      notes: [],
     });
   });
 
@@ -190,5 +202,25 @@ describe('planCloseOutForBatch', () => {
     reads.sanctioned = true;
     const plan = await planCloseOutForBatch(ctx, LOAN, 'preclose');
     expect(plan.kind).toBe('refused');
+  });
+
+  it('states an early close\'s interest mode, its late fee and a paid tariff', async () => {
+    expect(await planCloseOutForBatch(ctx, LOAN, 'preclose')).toMatchObject({
+      kind: 'ready',
+      notes: [copy.preclose.fullTermNote],
+    });
+    reads.now = 131n * DAY; // past due, inside grace
+    reads.tariff = 5n;
+    expect(await planCloseOutForBatch(ctx, LOAN, 'preclose')).toMatchObject({
+      kind: 'ready',
+      notes: [copy.preclose.fullTermNote, copy.preclose.graceFeeReceiptNote, copy.tariff.precloseNoRefundWarn],
+    });
+    expect(await planCloseOutForBatch(ctx, LOAN, 'repay')).toMatchObject({ kind: 'ready', notes: [] });
+  });
+
+  it('leaves out an early close whose tariff record cannot be read', async () => {
+    reads.tariff = 'unreadable';
+    expect(await planCloseOutForBatch(ctx, LOAN, 'preclose')).toMatchObject({ kind: 'refused' });
+    expect(await planCloseOutForBatch(ctx, LOAN, 'repay')).toMatchObject({ kind: 'ready' });
   });
 });

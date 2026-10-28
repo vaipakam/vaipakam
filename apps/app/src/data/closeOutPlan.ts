@@ -41,6 +41,7 @@ import { probeSaleHoldLive } from './saleListingHold';
 import { discoverRefinanceRequest } from './refinanceDiscovery';
 import { liveRefinanceVerdict } from './refinanceInterlock';
 import { LOCK_PRECLOSE_OFFSET } from './offsetPending';
+import { readFeeEntitlement } from './tariff';
 
 export type CloseOutAction = 'repay' | 'preclose';
 
@@ -83,6 +84,15 @@ export type CloseOutPlan =
       pull: CloseOutPull | null;
       /** The live status the plan was judged on. */
       liveStatus: number;
+      /** Past the live due date (inside grace): the figure carries the
+       *  late fee. */
+      pastDue: boolean;
+      /** The loan charges the whole term's interest on an early close. */
+      fullTermInterest: boolean;
+      /** What the loan page states before this action is signed, for a
+       *  surface that shows no loan page (the batch). Empty from the
+       *  single-action planners; filled by `planCloseOutForBatch`. */
+      notes: string[];
     }
   | { kind: 'refused'; loanId: number; action: CloseOutAction; reason: string };
 
@@ -271,6 +281,9 @@ export async function planRepay(
     functionName: 'repayLoan',
     pull,
     liveStatus: live.status,
+    pastDue: chainNow > loanEndTimeOf(live, chainNow),
+    fullTermInterest: live.useFullTermInterest,
+    notes: [],
   };
 }
 
@@ -326,6 +339,9 @@ export async function planPreclose(
       approve: calcDue + dayBoundaryPad(live.principal, live.interestRateBps),
     },
     liveStatus: live.status,
+    pastDue: latestBlock.timestamp > loanEndTimeOf(live, latestBlock.timestamp),
+    fullTermInterest: live.useFullTermInterest,
+    notes: [],
   };
 }
 
@@ -352,11 +368,41 @@ export async function planCloseOutForBatch(
       (await offsetLockRefusal(ctx, loan));
     if (blocked) return refused(loan, action, blocked);
     const plan = action === 'repay' ? await planRepay(ctx, loan) : await planPreclose(ctx, loan);
-    if (plan.kind === 'ready' && plan.liveStatus !== LOAN_STATUS_ACTIVE) {
+    if (plan.kind === 'refused') return plan;
+    if (plan.liveStatus !== LOAN_STATUS_ACTIVE) {
       return refused(loan, action, copy.batchClose.ownPageFallback);
     }
-    return plan;
+    // A paid Full tariff is not refunded on an early close; the page holds
+    // its close-early card until this is known, so an unreadable record
+    // throws here and leaves the loan out.
+    const tariffPaid =
+      action === 'preclose'
+        ? await readFeeEntitlement(ctx.publicClient, ctx.diamond, loan.loanId).then(
+            (fe) => fe.borrowerTariffPaid > 0n || fe.lenderTariffPaid > 0n,
+          )
+        : false;
+    return { ...plan, notes: closeOutNotes(plan, tariffPaid) };
   } catch (err) {
     return refused(loan, action, captureTxError(err));
   }
+}
+
+/**
+ * The statements the loan page makes before this action is signed, as
+ * one list per loan for the batch review. Repay states its interest rule
+ * in the receipt the batch shows too; an early close states the loan's
+ * own interest mode, the late fee when past due, and a paid tariff that
+ * is not refunded.
+ */
+export function closeOutNotes(
+  plan: Extract<CloseOutPlan, { kind: 'ready' }>,
+  tariffPaid: boolean,
+): string[] {
+  if (plan.action !== 'preclose') return [];
+  const notes: string[] = [
+    plan.fullTermInterest ? copy.preclose.fullTermNote : copy.preclose.proRataNote,
+  ];
+  if (plan.pastDue) notes.push(copy.preclose.graceFeeReceiptNote);
+  if (tariffPaid) notes.push(copy.tariff.precloseNoRefundWarn);
+  return notes;
 }

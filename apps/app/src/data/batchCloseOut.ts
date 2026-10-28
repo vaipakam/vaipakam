@@ -94,6 +94,8 @@ export function pullTotals(plans: readonly CloseOutPlan[]): CloseOutPull[] {
 export type BatchOutcome =
   | { loanId: number; kind: 'closed' }
   | { loanId: number; kind: 'changed' }
+  /** Sent, and neither confirmed nor refused yet: it may still close. */
+  | { loanId: number; kind: 'pending' }
   | { loanId: number; kind: 'open'; reason: string }
   | { loanId: number; kind: 'left-out'; reason: string }
   | { loanId: number; kind: 'unknown' };
