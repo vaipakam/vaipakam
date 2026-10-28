@@ -550,6 +550,7 @@ then deploy.
       | `REWARD_SANCTIONS_KEEPER_ENABLED` | sanctions-hold observer skips — a held reward claimant goes unobserved, so its hold (and the custody-activation block it carries) can run past its window | observing held claimants, the owner settlement and resolving their held staging records (#2450) |
       | `REWARD_DAY_CLOSE_ENABLED` | day-close pass skips — no reward day is reported, finalized or broadcast unless someone makes those calls by hand, so the remit pass has no finalized day to fund and mirror users cannot claim | closing each elapsed reward day on every chain, finalizing it on Base and broadcasting it to the mirrors (#2612) |
       | `REWARD_CLOSE_OUT_ENABLED` | close-out pass skips — no elapsed day is proven closed, no transport remainder is parked, no retired custody era is finalized and no pending surplus is drained unless someone makes those permissionless calls by hand | proving elapsed reward days closed, finalizing retired custody eras, draining pending surplus on an active chain, parking finished transport remainders for the administrator's release and pruning exhausted transport cursors (#2984) |
+      | `REWARD_ZEROED_DAY_ENABLED` | zeroed-day pass skips — a mirror day its reward reporter deliberately zeroed is not quoted for compensation, so Base never funds it, and it never lapses, so its users neither recover the day nor see it retired | quoting each deliberately zeroed mirror day to Base for compensation, and lapsing a day whose compensation never came or came short once its window closes (#2984) |
       | `REWARD_HORIZON_HEARTBEAT_ENABLED` | horizon heartbeat skips — no reward's claim-horizon clock is observed, so an armed horizon expires nothing and files no final notice (the safe direction: nothing is reaped) | touching every live reward entry about every 12 hours so its executable-time clock advances (#2517) |
 
       The keeper's ops alert channel, `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID`, is
@@ -1941,7 +1942,7 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`,
    `REWARD_SANCTIONS_KEEPER_ENABLED`,
    `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
-   `REWARD_CLOSE_OUT_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
+   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
    file (`sudo -e /etc/vaipakam/keeper.env`), never by assuming what it held.
    Never paste a value from that file anywhere.
 
