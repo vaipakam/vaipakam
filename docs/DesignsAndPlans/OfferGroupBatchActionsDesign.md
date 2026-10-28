@@ -1,20 +1,19 @@
 # Batch actions on offer-grouped loans (#126)
 
-**Status:** slice 1 in review. Issue: #126.
+**Status:** slice 1 in review (sender decided: Diamond multicall). Issue: #126.
 
 ## Decision
 
 No batch facet (owner decision 2026-10-28, recorded on #126). Each loan
 keeps its own checks and can fail on its own.
 
-**How the calls are sent is still with the owner.** The decision on #126
-names an EIP-5792 wallet batch where the wallet supports one, and one
-transaction per loan otherwise. While building slice 1 a closer fit
-turned up: the Diamond already has `MulticallFacet.multicall`, which Claim
-all (#1268) uses. It meets the same requirements without the wallet's
-help, so slice 1 is built on it and the choice was put back to the owner
-on 2026-10-28. If the owner keeps EIP-5792, only the sender changes; the
-plan builder, the grouping, the review and the read-back below stay.
+**The calls go through the Diamond's own multicall** (owner decision
+2026-10-28). The decision on #126 first named an EIP-5792 wallet batch
+where the wallet supports one, and one transaction per loan otherwise.
+While building slice 1 a closer fit turned up: the Diamond already has
+`MulticallFacet.multicall`, which Claim all (#1268) uses, and it meets the
+same requirements without the wallet's help. The choice was put back to
+the owner, who chose the multicall. The later slices use it too.
 
 Why the multicall fits better here:
 
