@@ -12,6 +12,8 @@
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -178,6 +180,8 @@ program을 알아차리기 어렵습니다.
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -270,6 +274,8 @@ immutable입니다 — refinance는 기존 loan을 변경하지 않고 새 loan�
 만듭니다.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -641,6 +647,8 @@ partial / IOC fill 모드는 단일 오퍼의 담보에 대해 여러 대출을
   후속 작업으로 큐에 있습니다.
 
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -718,6 +726,8 @@ Borrower position NFT는 claim할 때 burn되며 loan이 정리될 때가 아닙
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -732,6 +742,8 @@ multi-event transaction(예: accept + initiate가 같은 block 내에서 발생)
 liquidations, NFT mints / burns, VPFI vault deposits / withdrawals를 표시합니다.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -809,6 +821,8 @@ Base입니다. 다른 체인에서 빌리거나 빌려주면 그 체인은 tier�
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -843,6 +857,8 @@ wallet으로 VPFI를 다시 withdraw합니다. withdraw된 VPFI는 즉시 discou
 accumulator에서 빠집니다(모든 open loan에서 post-balance re-stamp).
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -1083,6 +1099,8 @@ land합니다. 트랜잭션은 완전히 성공하거나 (대출 상환 완료�
 
 ---
 
+<a id="chapter.how-liquidation-actually-works"></a>
+
 ## 청산(Liquidation)의 실제 작동 방식
 
 오퍼 시점에 동의한 Risk Disclosures는 최악의 결과를 두 문장으로 요약하고 있습니다. 이 섹션에서는 그 이면의 메커니즘을 설명합니다. 이는 왜 현물(in-kind) 폴백이 존재하는지, 그리고 대출이 실제로 네 가지 갈래 중 어떤 경로를 따르는지 이해하는 데 도움이 됩니다.
@@ -1187,6 +1205,8 @@ land합니다. 트랜잭션은 완전히 성공하거나 (대출 상환 완료�
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -1205,6 +1225,8 @@ allowance를 우회합니다. 따라서 여기 list가 clean해도 향후 deposi
 막지 않습니다.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -1243,6 +1265,8 @@ channel creation까지 stub 상태입니다.
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -1264,6 +1288,8 @@ position NFT는 bearer instrument입니다 — secondary market에서 매수하�
 verify하세요.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -1303,6 +1329,8 @@ frontend가 아직 reflect하지 않은 on-chain permissions는 명확한
 적용됩니다 — waiting period는 없습니다.
 
 ---
+
+<a id="chapter.public-analytics-dashboard"></a>
 
 ## Public Analytics Dashboard
 
@@ -1364,6 +1392,8 @@ drift에 alert합니다.
 
 ---
 
+<a id="chapter.refinance"></a>
+
 ## Refinance
 
 이 페이지는 borrower 전용입니다 — refinance는 borrower가 자신의 loan에서
@@ -1412,6 +1442,8 @@ cancel할 수 있습니다.
 새 terms에서 HF가 1.5 미만이면 revert합니다.
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -1464,6 +1496,8 @@ Uniswap V3 → Balancer V2).
 
 ---
 
+<a id="chapter.early-withdrawal-lender"></a>
+
 ## Early Withdrawal (Lender)
 
 이 페이지는 lender 전용입니다 — early withdrawal은 lender가 자신의 loan에서
@@ -1501,6 +1535,8 @@ permission을 가진 keeper에게 delegate할 수도 있습니다. initiate step
 user-only로 남습니다.
 
 ---
+
+<a id="chapter.stuck-token-recovery"></a>
 
 ## 묶인 토큰(Stuck-Token) 복구
 
@@ -1563,6 +1599,8 @@ user-only로 남습니다.
 볼트의 특정 토큰 잔액이 내 것이 아니라는 온체인 기록을 남기고 싶다면 프로토콜은 `disown(token)` 함수를 제공합니다. 이 함수는 이벤트(`TokenDisowned`)를 발생시키고 다른 것은 변경하지 않습니다 — 토큰은 이전처럼 볼트에 남습니다. CEX나 규제 기관이 "이 자금을 받았습니까?"라고 물을 때 온체인 이벤트를 제시하여 대응하는 데 유용합니다.
 
 소유권 포기 함수는 현재 직접 컨트랙트 호출을 통해서만 노출되며, Vaipakam 프런트엔드에서는 버튼으로 표시되지 않습니다. 블록 탐색기의 "Write Contract" UI나 컨트랙트 상호작용 도구를 사용하여 호출하십시오.
+
+<a id="chapter.how-vpfi-discounts-work"></a>
 
 ## VPFI 할인의 작동 방식
 

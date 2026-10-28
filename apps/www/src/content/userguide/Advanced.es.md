@@ -14,6 +14,8 @@ junto al título de una tarjeta.
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -206,6 +208,8 @@ reclamaciones.
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Libro de ofertas
 
 <a id="offer-book.filters"></a>
@@ -314,6 +318,8 @@ vida del préstamo —el refinance crea un préstamo nuevo en lugar de
 modificar el existente.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Crear oferta
 
@@ -753,6 +759,8 @@ distintas, superficializadas en diferentes etapas del protocolo:
   seguimiento de UX separado.
 
 
+<a id="chapter.claim-center"></a>
+
 ## Centro de reclamaciones
 
 <a id="claim-center.claims"></a>
@@ -846,6 +854,8 @@ Lee la reclamación, no el NFT.
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Actividad
 
 <a id="activity.feed"></a>
@@ -863,6 +873,8 @@ reclamaciones, liquidaciones, mints y burns de NFT, y depósitos /
 retiros de VPFI en vault.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -948,6 +960,8 @@ la entrega está en el
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Recompensas
 
 <a id="rewards.overview"></a>
@@ -985,6 +999,8 @@ retirado sale del acumulador de descuento inmediatamente (refijación
 posterior al saldo en cada préstamo abierto).
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Detalles del préstamo
 
@@ -1266,6 +1282,8 @@ precio matched.
 
 ---
 
+<a id="chapter.how-liquidation-actually-works"></a>
+
 ## Cómo funciona realmente la liquidación
 
 Las Divulgaciones de Riesgo que aceptaste al momento de la oferta resumen el resultado en el peor de los casos en dos frases. Esta sección explica la mecánica subyacente, útil si quieres entender POR QUÉ existe el respaldo en especie (in-kind fallback), o cuál de las cuatro ramas tomaría realmente tu préstamo.
@@ -1370,6 +1388,8 @@ Si no existe una contraparte opuesta, el protocolo cae en el camino del agregado
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -1390,6 +1410,8 @@ activo en el protocolo usando una sola firma en su lugar, así que
 una lista limpia aquí no impide depósitos futuros.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alertas
 
@@ -1433,6 +1455,8 @@ pendiente de la creación del canal.
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## Verificador de NFTs
 
 <a id="nft-verifier.lookup"></a>
@@ -1458,6 +1482,8 @@ El NFT de posición es el instrumento al portador —verifica antes
 de comprar en un mercado secundario.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Configuración de keepers
 
@@ -1507,6 +1533,8 @@ obtienen un revert claro de "permiso inválido". La revocación es
 instantánea en todos los préstamos —no hay periodo de espera.
 
 ---
+
+<a id="chapter.public-analytics-dashboard"></a>
 
 ## Dashboard de analítica pública
 
@@ -1576,6 +1604,8 @@ es el listón.
 
 ---
 
+<a id="chapter.refinance"></a>
+
 ## Refinanciar
 
 Esta página es sólo para prestatarios —el refinance lo inicia el
@@ -1634,6 +1664,8 @@ Revierte si HF bajo los nuevos términos quedaría por debajo de
 
 ---
 
+<a id="chapter.preclose"></a>
+
 ## Cierre anticipado
 
 Esta página es sólo para prestatarios —el preclose lo inicia el
@@ -1691,6 +1723,8 @@ usado para liquidaciones (0x → 1inch → Uniswap V3 → Balancer V2).
 
 ---
 
+<a id="chapter.early-withdrawal-lender"></a>
+
 ## Retiro anticipado (prestamista)
 
 Esta página es sólo para prestamistas —el retiro anticipado lo
@@ -1731,6 +1765,8 @@ que tenga el permiso de "completar venta de préstamo"; el paso
 de iniciar en sí permanece sólo de usuario.
 
 ---
+
+<a id="chapter.stuck-token-recovery"></a>
 
 ## Recuperación de tokens atascados
 
@@ -1793,6 +1829,8 @@ Dos resultados:
 Si deseas un registro público on-chain que afirme que cierto saldo de tokens en tu vault NO es tuyo, el protocolo proporciona una función `disown(token)`. Emite un evento (`TokenDisowned`) y no cambia nada más — los tokens se quedan en el vault como antes. Útil en disputas de cumplimiento si un CEX o regulador pregunta "¿recibió estos fondos?": puedes señalar el evento on-chain.
 
 La función disown está expuesta solo a través de llamada directa al contrato por ahora; el frontend de Vaipakam no la muestra como un botón. Usa una interfaz "Write Contract" de un explorador de bloques o una herramienta de interacción con contratos para llamarla.
+
+<a id="chapter.how-vpfi-discounts-work"></a>
 
 ## Cómo funcionan los descuentos VPFI
 

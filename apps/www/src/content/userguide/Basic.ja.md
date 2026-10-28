@@ -13,6 +13,8 @@
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -117,6 +119,8 @@ switch はいつでも off にできます。vault から VPFI を引き出す
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -170,6 +174,8 @@ asset が borrower に渡り、lender は lender-of-record になり、
 この rate は loan の作成時に固定されるため、後から protocol fee が変更されても、すでに開いている loan は開始時の rate のままです。
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -321,6 +327,8 @@ desk が巻き戻すことはできません。sign する前に、ここをよ�
 
 ---
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -376,6 +384,8 @@ claim はあなたの borrower position NFT を consume します。逆は成り
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -390,6 +400,8 @@ live に読み取られます。落ちる可能性のある central server は
 group されるので、同じ click で行った操作はまとまって見えます。
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -435,6 +447,8 @@ discount math は低い tier で計算されます。
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -458,6 +472,8 @@ claim できます。interaction-pool の share は 1 日に 1 回 settle
 は次の daily window が閉じた少し後に live になります。
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -579,6 +595,8 @@ role-specific tabs で各 side の options を確認できます。今は
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -596,6 +614,8 @@ clean な approvals list を保つのは、Uniswap や 1inch と同じく
 良い hygiene です。
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -632,6 +652,8 @@ Push Protocol (wallet への direct notification)、または両方を
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -650,6 +672,8 @@ position NFT _こそ_ が loan から claim する権利です。fake、また�
 ます。
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -677,6 +701,8 @@ checks を編集してください。keeper を完全に外したい場合は、
 list から remove します。
 
 ---
+
+<a id="chapter.public-analytics-dashboard"></a>
 
 ## Public Analytics Dashboard
 
@@ -726,6 +752,8 @@ verify したいなら、ここから始めます。
 
 ---
 
+<a id="chapter.refinance"></a>
+
 ## Refinance
 
 このページは borrower 専用です — refinance は borrower が自分の
@@ -769,6 +797,8 @@ loan を返済し、新しい loan を open し、その間ずっと collateral
 window なしです。
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -818,6 +848,8 @@ exit するついでに collateral の一部を売りたいなら **Offset** を
 preclose で half-close はできません。
 
 ---
+
+<a id="chapter.early-withdrawal-lender"></a>
 
 ## Early Withdrawal (Lender)
 

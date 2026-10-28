@@ -14,6 +14,8 @@
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -185,6 +187,8 @@ rewards program に気づけません。
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -286,6 +290,8 @@ APR は offer 作成時に set され、loan の lifetime を通じて immutable
 します。
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -692,6 +698,8 @@ fill モードを自動的に `Aon` にピン留めします — parallel-sale
   入っています。
 
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -768,6 +776,8 @@ liquidation が何も残さなかった場合、受け取るものはなく、cl
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -784,6 +794,8 @@ liquidations、NFT mints / burns、VPFI vault deposits / withdrawals
 を表示します。
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -864,6 +876,8 @@ VPFI は canonical チェーンである Base 上の vault に保有し、tier �
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -900,6 +914,8 @@ interface です — vault から wallet に VPFI を戻します。withdraw
 loan で post-balance re-stamp)。
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -1163,6 +1179,8 @@ atomic に land します。トランザクションは完全に成功する(ロ
 
 ---
 
+<a id="chapter.how-liquidation-actually-works"></a>
+
 ## 清算の仕組み
 
 オファー時に同意したリスク開示は、最悪の結果を2つの文で表現しています。このセクションでは、その背後にあるメカニズムについて説明します。これは、なぜ現物（in-kind）フォールバックが存在するのか、あるいはローンが実際に4つの分岐のうちどれを辿るのかを理解するのに役立ちます。
@@ -1267,6 +1285,8 @@ atomic に land します。トランザクションは完全に成功する(ロ
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -1286,6 +1306,8 @@ bypass し、代わりに single signature を使います。そのため、こ�
 の list が clean でも将来の deposits は妨げられません。
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -1328,6 +1350,8 @@ Push channel publishing は現時点では channel creation まで stubbed
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -1353,6 +1377,8 @@ position NFT は bearer instrument です — secondary market で購入
 する前に verify してください。
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -1397,6 +1423,8 @@ frontend がまだ reflect していない on-chain permissions は、明確な
 loans で即時です — waiting period はありません。
 
 ---
+
+<a id="chapter.public-analytics-dashboard"></a>
 
 ## Public Analytics Dashboard
 
@@ -1461,6 +1489,8 @@ function name から誰でも re-derive できます — それが基準です�
 
 ---
 
+<a id="chapter.refinance"></a>
+
 ## Refinance
 
 このページは borrower 専用です — refinance は borrower が自分の
@@ -1512,6 +1542,8 @@ offer は public Offer Book に表示され、どの lender でも accept
 新しい terms で HF が 1.5 を下回る場合は revert します。
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -1568,6 +1600,8 @@ Balancer V2)。
 
 ---
 
+<a id="chapter.early-withdrawal-lender"></a>
+
 ## Early Withdrawal (Lender)
 
 このページは lender 専用です — early withdrawal は lender が自分の
@@ -1608,6 +1642,8 @@ keeper に delegate することもできます。ただし initiate step
 自体は user-only のままです。
 
 ---
+
+<a id="chapter.stuck-token-recovery"></a>
 
 ## スタックしたトークンのリカバリ
 
@@ -1670,6 +1706,8 @@ keeper に delegate することもできます。ただし initiate step
 Vault 内にある特定のトークン残高が自分のものではないという公的なオンチェーン記録を残したい場合、プロトコルは `disown(token)` 関数を提供しています。これはイベント（`TokenDisowned`）を発行しますが、それ以外は何も変更しません。トークンは以前と同様に Vault に留まります。これは、CEX や規制当局から「この資金を受け取ったか」と問われた際のコンプライアンス上の証明として、オンチェーンイベントを提示するのに役立ちます。
 
 放棄（disown）関数は、現在のところコントラクトの直接呼び出しによってのみ利用可能です。Vaipakam のフロントエンドにはボタンとしては表示されません。ブロックエクスプローラーの "Write Contract" UI や、コントラクト操作ツールを使用して呼び出してください。
+
+<a id="chapter.how-vpfi-discounts-work"></a>
 
 ## VPFI 割引の仕組み
 

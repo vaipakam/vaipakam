@@ -13,6 +13,8 @@
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -119,6 +121,8 @@ discount कितना बड़ा होगा यह इस पर नि�
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -175,6 +179,8 @@ acceptance के समय protocol borrower की तरफ़ एक सु�
 बदलाव पहले से खुले loan को उसी rate पर छोड़ देता है जिस पर वह शुरू हुआ था।
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -329,6 +335,8 @@ role-specific toggles। पहली offer में इन्हें छो�
 
 ---
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -389,6 +397,8 @@ claim आपके borrower position NFT को consume
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -403,6 +413,8 @@ repayments, claims और liquidations। यह सब सीधे chain स�
 हिसाब से grouped रहते हैं ताकि एक ही click में हुए काम साथ दिखें।
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -448,6 +460,8 @@ discount math lower tier के आधार पर चलने लगती �
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -471,6 +485,8 @@ Rewards VPFI में मिलते हैं, सीधे उसी chain �
 अगले daily window बंद होने के थोड़ी देर बाद live होगा।
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -593,6 +609,8 @@ available नहीं हैं वे greyed out रहेंगे, और to
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -610,6 +628,8 @@ approvals (जो सच में live हैं) ऊपर दिखती ह
 पर भी यही समझदारी है।
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -646,6 +666,8 @@ pings वास्तव में कहाँ पहुँचें। आप 
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -664,6 +686,8 @@ position NFT _ही_ loan से claim करने का अधिकार �
 खराब trade से बचा सकता है।
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -691,6 +715,8 @@ permission है, वह आपकी ओर से early withdrawal शुर�
 से निकाल दें।
 
 ---
+
+<a id="chapter.public-analytics-dashboard"></a>
 
 ## Public Analytics Dashboard
 
@@ -740,6 +766,8 @@ contract address से आया — सब दिखाता है। को
 
 ---
 
+<a id="chapter.refinance"></a>
+
 ## Refinance
 
 यह पेज सिर्फ़ borrower के लिए है — refinance borrower अपने loan
@@ -785,6 +813,8 @@ collateral locked रखता है। एक transaction, दो state change
 exposure window नहीं।
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -834,6 +864,8 @@ fresh quote पर फिर कोशिश कर सकते हैं।
 loan आधा-बंद नहीं रहता।
 
 ---
+
+<a id="chapter.early-withdrawal-lender"></a>
 
 ## Early Withdrawal (Lender)
 

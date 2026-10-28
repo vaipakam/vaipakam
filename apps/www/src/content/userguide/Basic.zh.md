@@ -11,6 +11,8 @@
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -97,6 +99,8 @@ loan 开始时以 loan 自身的 asset 收取——不会为此花费任何 VPFI
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -146,6 +150,8 @@ protocol treasury。
 该 rate 在 loan 创建时即已固定，因此之后 protocol fee 的调整不会改变一笔已经开启的 loan。
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -280,6 +286,8 @@ fee discount，以及一些 role-specific toggles。第一次创建 offer 时，
 
 ---
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -328,6 +336,8 @@ NFT 当作承诺。
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -341,6 +351,8 @@ liquidation。所有内容都直接从 chain 实时读取；没有可能离线�
 的相关动作会显示在一起。
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -381,6 +393,8 @@ loans，从这一刻起，discount 计算会切换到较低的 tier。
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -404,6 +418,8 @@ settlement 之后又赚到一些，它要等到下一个 daily window 关闭后
 不久才会 live。
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -508,6 +524,8 @@ default 会把您的全部 collateral 转给 lender，您没有后续 claim。
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -524,6 +542,8 @@ approval，并允许您一键关闭其中任何一个。Non-zero approvals (实�
 上也是一样。
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -557,6 +577,8 @@ DM)、Push Protocol (直接向您的 wallet 发送 notification)，或两者
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -573,6 +595,8 @@ position NFT _就是_ 从 loan 中 claim 的权利。识别假 NFT — 或已经
 settle 的 position — 可以帮您避开糟糕的交易。
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -596,6 +620,8 @@ master switch，一次性 disable 所有 keepers。
 edit ticks；如果想完全移除某个 keeper，就把它从列表中删除。
 
 ---
+
+<a id="chapter.public-analytics-dashboard"></a>
 
 ## Public Analytics Dashboard
 
@@ -643,6 +669,8 @@ metric 来自哪个 contract address。如果有人想 verify 某个数字，这
 
 ---
 
+<a id="chapter.refinance"></a>
+
 ## Refinance
 
 此页面仅限 borrower — refinance 由 borrower 在自己的 loan 上发起。
@@ -683,6 +711,8 @@ rate 和 duration。在它 list 期间，旧 loan 会照常运行 — interest
 变化，没有 exposure window。
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -726,6 +756,8 @@ loan 继续运行，Offset 就是可用的出口。
 关闭 loan；preclose 不能只关闭一半。
 
 ---
+
+<a id="chapter.early-withdrawal-lender"></a>
 
 ## Early Withdrawal (Lender)
 

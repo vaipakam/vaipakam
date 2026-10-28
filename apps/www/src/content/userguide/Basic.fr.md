@@ -14,6 +14,8 @@ titre d'une carte.
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Tableau de bord
 
 <a id="dashboard.your-vault"></a>
@@ -123,6 +125,8 @@ d'historique à montrer.
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Carnet d'offres
 
 <a id="offer-book.filters"></a>
@@ -180,6 +184,8 @@ frais du protocole laisse un prêt déjà ouvert au taux avec lequel il a
 commencé.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Créer une offre
 
@@ -338,6 +344,8 @@ risque pour une première offre.
 
 ---
 
+<a id="chapter.claim-center"></a>
+
 ## Centre de réclamations
 
 <a id="claim-center.claims"></a>
@@ -403,6 +411,8 @@ prendre le NFT pour une promesse.
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activité
 
 <a id="activity.feed"></a>
@@ -418,6 +428,8 @@ plus récents en premier, regroupés par transaction pour que les
 choses faites en un même clic restent ensemble.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -466,6 +478,8 @@ instant.
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Récompenses
 
 <a id="rewards.overview"></a>
@@ -491,6 +505,8 @@ ne devient effective que peu après la fermeture de la prochaine
 fenêtre journalière.
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Détails du prêt
 
@@ -618,6 +634,8 @@ info-bulle expliquant pourquoi.
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -636,6 +654,8 @@ Une liste d'approbations propre est une habitude d'hygiène — comme
 sur Uniswap ou 1inch.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alertes
 
@@ -674,6 +694,8 @@ dans ton wallet), ou les deux. Les deux canaux partagent la même
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## Vérificateur de NFT
 
 <a id="nft-verifier.lookup"></a>
@@ -692,6 +714,8 @@ un faux — ou une position déjà réglée — t'évite la mauvaise
 transaction.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Paramètres des keepers
 
@@ -720,6 +744,8 @@ d'avis, modifie les coches ; si tu veux qu'un keeper disparaisse
 totalement, retire-le de la liste.
 
 ---
+
+<a id="chapter.public-analytics-dashboard"></a>
 
 ## Tableau de bord d'analytique publique
 
@@ -773,6 +799,8 @@ là qu'il commence.
 
 ---
 
+<a id="chapter.refinance"></a>
+
 ## Refinancer
 
 Cette page est réservée aux emprunteurs — le refinancement est
@@ -819,6 +847,8 @@ et garde ton collatéral verrouillé tout du long. Une transaction,
 deux états changés, aucune fenêtre d'exposition.
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Clôture anticipée
 
@@ -872,6 +902,8 @@ collatéral en sortie. L'une ou l'autre voie clôt le prêt en
 totalité ; tu ne peux pas faire une demi-clôture en preclose.
 
 ---
+
+<a id="chapter.early-withdrawal-lender"></a>
 
 ## Retrait anticipé (prêteur)
 

@@ -12,6 +12,8 @@ section corresponds to an `(i)` info icon next to a card title.
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -113,6 +115,8 @@ done anything wrong — there's just no history to show.
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -168,6 +172,8 @@ That rate is fixed when the loan is created, so a later change to the
 protocol fee leaves an already-open loan on the rate it started with.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -313,6 +319,8 @@ offer.
 
 ---
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -377,6 +385,8 @@ taking the NFT as a promise.
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -391,6 +401,8 @@ offline. Newest first, grouped by transaction so things you did in
 the same click stay together.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -434,6 +446,8 @@ switches to the lower tier from this moment forward.
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -457,6 +471,8 @@ some since the last settlement, it only goes live shortly after the
 next daily window closes.
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -576,6 +592,8 @@ will be greyed out, with a small tooltip explaining why.
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -593,6 +611,8 @@ A clean approvals list is a hygienic habit — same as on Uniswap or
 1inch.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -628,6 +648,8 @@ don't tune them separately.
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -646,6 +668,8 @@ a fake — or a position that already settled — saves you the bad
 trade.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -672,6 +696,8 @@ one you started. If you change your mind, edit the ticks; if you
 want a keeper gone entirely, remove them from the list.
 
 ---
+
+<a id="chapter.public-analytics-dashboard"></a>
 
 ## Public Analytics Dashboard
 
@@ -721,6 +747,8 @@ from. If anyone wants to verify a number, this is where to start.
 
 ---
 
+<a id="chapter.refinance"></a>
+
 ## Refinance
 
 This page is borrower-only — refinance is initiated by the
@@ -765,6 +793,8 @@ the whole time. One transaction, two-state change, no exposure
 window.
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -814,6 +844,8 @@ the way out. Either path closes the loan in full; you can't
 half-close with preclose.
 
 ---
+
+<a id="chapter.early-withdrawal-lender"></a>
 
 ## Early Withdrawal (Lender)
 

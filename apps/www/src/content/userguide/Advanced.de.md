@@ -14,6 +14,8 @@ Karten-Titel.
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -211,6 +213,8 @@ neue Nutzer unsichtbar, bis sie zufällig ins Claim Center gehen.
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -319,6 +323,8 @@ unveränderlich — Refinance erstellt einen neuen Loan, statt den
 bestehenden zu verändern.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Offer erstellen
 
@@ -759,6 +765,8 @@ oberflächlich gemacht:
   Warteschlange.
 
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -850,6 +858,8 @@ nicht den NFT.
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -866,6 +876,8 @@ zuerst. Zeigt Offers, Loans, Rückzahlungen, Claims, Liquidationen,
 NFT-Mints/-Burns und VPFI-Vault-Einzahlungen / -Abhebungen.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -955,6 +967,8 @@ Zustellung steht im
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -993,6 +1007,8 @@ Abgehobenes VPFI verlässt den Rabatt-Akkumulator sofort
 (Post-Saldo-Re-Stamp auf jedem offenen Loan).
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -1277,6 +1293,8 @@ ein Dritt-Käufer beim matched price eingreifen könnte.
 
 ---
 
+<a id="chapter.how-liquidation-actually-works"></a>
+
 ## Wie Liquidationen tatsächlich funktionieren
 
 Die Risiko-Hinweise, denen du bei der Angebotserstellung zugestimmt hast, fassen das Worst-Case-Szenario in zwei Sätzen zusammen. Dieser Abschnitt erklärt die zugrunde liegenden Mechanismen — nützlich, wenn du verstehen willst, WARUM der In-Kind-Fallback existiert oder welchen der vier Wege dein Loan tatsächlich nehmen würde.
@@ -1375,6 +1393,8 @@ Wenn keine Gegenpartei existiert, fällt das Protokoll auf den oben beschriebene
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -1396,6 +1416,8 @@ verwenden, sodass eine saubere Liste hier zukünftige Deposits
 nicht ausschließt.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -1439,6 +1461,8 @@ bis der Channel erstellt ist.
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT-Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -1463,6 +1487,8 @@ Der Position-NFT ist das Inhaber-Instrument — verifiziere ihn,
 bevor du auf einem Sekundärmarkt kaufst.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper-Einstellungen
 
@@ -1512,6 +1538,8 @@ Der Widerruf ist auf allen Loans sofort wirksam — es gibt keine
 Wartezeit.
 
 ---
+
+<a id="chapter.public-analytics-dashboard"></a>
 
 ## Public Analytics Dashboard
 
@@ -1579,6 +1607,8 @@ Maßstab.
 
 ---
 
+<a id="chapter.refinance"></a>
+
 ## Refinance
 
 Diese Seite ist nur für Borrower — Refinance wird vom Borrower auf
@@ -1634,6 +1664,8 @@ Atomares Settlement, nachdem der neue Lender akzeptiert hat:
 Revertet, wenn HF unter den neuen Konditionen unter 1,5 läge.
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -1694,6 +1726,8 @@ Balancer V2).
 
 ---
 
+<a id="chapter.early-withdrawal-lender"></a>
+
 ## Early Withdrawal (Lender)
 
 Diese Seite ist nur für Lender — Early Withdrawal wird vom Lender
@@ -1735,6 +1769,8 @@ delegierbar, der die "Loan-Verkauf abschließen"-Permission hält;
 der Initiate-Schritt selbst bleibt user-only.
 
 ---
+
+<a id="chapter.stuck-token-recovery"></a>
 
 ## Wiederherstellung hängengebliebener Token
 
@@ -1794,6 +1830,8 @@ Zwei Ergebnisse sind möglich:
 Wenn du einen öffentlichen On-Chain-Nachweis möchtest, dass ein bestimmter Token-Saldo in deinem Vault NICHT dir gehört, bietet das Protokoll eine `disown(token)`-Funktion an. Sie emittiert ein Event (`TokenDisowned`) und ändert sonst nichts — die Token bleiben wie zuvor im Vault. Dies ist nützlich bei Compliance-Streitigkeiten, falls eine CEX oder eine Regulierungsbehörde fragt: "Haben Sie diese Mittel erhalten?". Du kannst dann auf das On-Chain-Event verweisen.
 
 Die Disown-Funktion ist derzeit nur über direkten Vertragsaufruf zugänglich; das Vaipakam-Frontend bietet dafür keinen Button an. Nutze die "Write Contract"-Oberfläche eines Block-Explorers oder ein Tool zur Interaktion mit Smart Contracts, um sie aufzurufen.
+
+<a id="chapter.how-vpfi-discounts-work"></a>
 
 ## Wie VPFI-Rabatte funktionieren
 

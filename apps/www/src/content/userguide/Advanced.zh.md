@@ -11,6 +11,8 @@
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -149,6 +151,8 @@ empty-state hint 是刻意保留的 — 如果在 zero 时隐藏 card，新 user
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -231,6 +235,8 @@ creation 时设定，并在 loan 的整个生命周期内 immutable — refinanc
 会创建一笔新 loan，而不是修改现有 loan。
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -565,6 +571,8 @@ GTT 报价，此到期是报价的原始 GTT 到期时间；出借人接受不�
   单独的 UX 跟进排队。
 
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -633,6 +641,8 @@ surplus：如果 liquidation 什么也没剩下，就没有可领取的东西，
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -647,6 +657,8 @@ multi-event transactions (例如同一 block 中确认的 accept + initiate)
 liquidations、NFT mints 和 burns，以及 VPFI vault deposits / withdrawals。
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -722,6 +734,8 @@ CCIP 发送这份副本。
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -755,6 +769,8 @@ VPFI 从 vault withdraw 回 wallet。Withdrawn VPFI 会立即退出
 discount accumulator (在每笔 open loan 上 post-balance re-stamp)。
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -977,6 +993,8 @@ diamond 的结算瀑布都原子地在一个块中登陆。交易要么完全成
 
 ---
 
+<a id="chapter.how-liquidation-actually-works"></a>
+
 ## 清算实际运作机制
 
 您在报价时同意的风险披露用两句话概括了最坏情况。本节解释了底层机制——如果您想了解为什么要存在实物退路（in-kind fallback），或者您的贷款实际上会走四个分支中的哪一个，这将非常有用。
@@ -1081,6 +1099,8 @@ diamond 的结算瀑布都原子地在一个块中登陆。交易要么完全成
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -1098,6 +1118,8 @@ allowances，所以典型的 revocation list 很短。
 per-asset allowance，所以这里的 clean list 不会阻止未来 deposits。
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -1136,6 +1158,8 @@ direction 出现 band crossing 时，通过配置的 channels fire 一次。
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -1157,6 +1181,8 @@ position NFT 是 bearer instrument — 在 secondary market 购买前请先
 verify。
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -1198,6 +1224,8 @@ frontend 尚未 reflect 的 on-chain permissions 会得到清晰的
 — 无等待期。
 
 ---
+
+<a id="chapter.public-analytics-dashboard"></a>
 
 ## Public Analytics Dashboard
 
@@ -1259,6 +1287,8 @@ Cross-chain invariant：所有 mirror chains 上的 mirror supplies 之和
 
 ---
 
+<a id="chapter.refinance"></a>
+
 ## Refinance
 
 此页面仅限 borrower — refinance 由 borrower 在自己的 loan 上发起。
@@ -1305,6 +1335,8 @@ Book 中，任何 lender 都可以 accept。acceptance 之前可以 cancel。
 如果新 terms 下 HF 低于 1.5，则 revert。
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -1356,6 +1388,8 @@ Direct path 会消耗 wallet 中的 principal asset liquidity。Offset path
 
 ---
 
+<a id="chapter.early-withdrawal-lender"></a>
+
 ## Early Withdrawal (Lender)
 
 此页面仅限 lender — early withdrawal 由 lender 在自己的 loan 上发起。
@@ -1391,6 +1425,8 @@ complete sale；sale fill 前您可以 cancel。可选地 delegate 给持有
 user-only。
 
 ---
+
+<a id="chapter.stuck-token-recovery"></a>
 
 ## 被困代币找回
 
@@ -1453,6 +1489,8 @@ user-only。
 如果您希望在链上保留一份公开记录，声明您 vault 中的某些代币余额**不**属于您，协议提供了 `disown(token)` 函数。它会发出一个事件 (`TokenDisowned`)，除此之外不改变任何内容——代币仍像以前一样留在 vault 中。在合规纠纷中，如果 CEX 或监管机构询问“您是否收到了这些资金？”，这很有用：您可以指向该链上事件。
 
 目前 `disown` 函数仅通过直接合约调用公开；Vaipakam 前端尚未提供对应按钮。请使用区块链浏览器的“Write Contract”界面或合约交互工具进行调用。
+
+<a id="chapter.how-vpfi-discounts-work"></a>
 
 ## VPFI 折扣如何运作
 

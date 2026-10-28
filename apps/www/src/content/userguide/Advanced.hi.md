@@ -14,6 +14,8 @@
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -193,6 +195,8 @@ Claim Center तक न पहुँचें।
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -295,6 +299,8 @@ position NFTs mint करती है। initiation पर वही HF ≥ 1.5
 को बदलता नहीं, बल्कि नया loan बनाता है।
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -711,6 +717,8 @@ classes, अलग-अलग protocol stages पर surface होती है�
   UX follow-up के रूप में queue में है।
 
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -795,6 +803,8 @@ surplus का सबूत नहीं है: अगर liquidation ने �
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -810,6 +820,8 @@ events पहले। offers, loans, repayments, claims, liquidations,
 NFT mints / burns, और VPFI vault deposits / withdrawals दिखाता है।
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -894,6 +906,8 @@ chain के साथ Base पर भी चालू होना चाहि
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -931,6 +945,8 @@ VPFI section के "vault से VPFI निकालें" जैसा ह�
 loan पर post-balance re-stamp)।
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -1204,6 +1220,8 @@ price पर step in कर सके।
 
 ---
 
+<a id="chapter.how-liquidation-actually-works"></a>
+
 ## लिक्विडेशन (Liquidation) वास्तव में कैसे काम करता है
 
 ऑफ़र के समय आपने जिन Risk Disclosures को स्वीकार किया था, वे दो वाक्यों में सबसे खराब स्थिति को स्पष्ट करते हैं। यह अनुभाग इसके पीछे की मैकेनिक्स को समझाता है — यह तब उपयोगी है जब आप यह समझना चाहते हैं कि इन-काइंड (in-kind) फ़ॉलबैक क्यों मौजूद है, या आपका लोन वास्तव में चार शाखाओं में से कौन सा रास्ता लेगा।
@@ -1308,6 +1326,8 @@ price पर step in कर सके।
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -1329,6 +1349,8 @@ allowances नहीं माँगता, इसलिए typical revocation l
 रोकती।
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -1372,6 +1394,8 @@ Push channel publishing अभी channel creation तक stubbed है।
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -1398,6 +1422,8 @@ position NFT bearer instrument है — secondary market पर ख़री�
 से पहले verify करें।
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -1446,6 +1472,8 @@ Revocation सभी loans पर तुरंत लागू है — को
 नहीं।
 
 ---
+
+<a id="chapter.public-analytics-dashboard"></a>
 
 ## Public Analytics Dashboard
 
@@ -1511,6 +1539,8 @@ address + function name से re-derive कर सकता है — यह�
 
 ---
 
+<a id="chapter.refinance"></a>
+
 ## Refinance
 
 यह page सिर्फ़ borrower के लिए है — refinance borrower अपने
@@ -1565,6 +1595,8 @@ lender उसे accept कर सकता है। आप acceptance से �
 यदि नई terms पर HF 1.5 से नीचे होगा तो transaction revert करता है।
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -1621,6 +1653,8 @@ collateral position से भी बाहर निकलना चाहे�
 
 ---
 
+<a id="chapter.early-withdrawal-lender"></a>
+
 ## Early Withdrawal (Lender)
 
 यह page सिर्फ़ lender के लिए है — early withdrawal lender अपने
@@ -1661,6 +1695,8 @@ Position NFT को आपकी asking price पर protocol के ज़र�
 permission हो; initiate step खुद user-only ही रहता है।
 
 ---
+
+<a id="chapter.stuck-token-recovery"></a>
 
 ## फंसे हुए टोकन (Stuck-Token) की रिकवरी
 
@@ -1723,6 +1759,8 @@ permission हो; initiate step खुद user-only ही रहता है�
 यदि आप एक सार्वजनिक ऑन-चेन रिकॉर्ड चाहते हैं जो यह पुष्टि करे कि आपके वॉल्ट में कुछ टोकन बैलेंस आपका नहीं है, तो प्रोटोकॉल `disown(token)` फ़ंक्शन प्रदान करता है। यह एक इवेंट (`TokenDisowned`) उत्सर्जित करता है और कुछ भी नहीं बदलता — टोकन पहले की तरह वॉल्ट में ही रहते हैं। यह अनुपालन विवादों (compliance disputes) में उपयोगी है यदि कोई CEX या रेगुलेटर पूछता है "क्या आपको ये फंड मिले?": आप ऑन-चेन इवेंट की ओर इशारा कर सकते हैं।
 
 डिसओन (disown) फ़ंक्शन अभी के लिए केवल सीधे कॉन्ट्रैक्ट कॉल के माध्यम से उपलब्ध है; Vaipakam फ्रंटएंड इसे बटन के रूप में नहीं दिखाता है। इसे कॉल करने के लिए ब्लॉक-एक्सप्लोरर "Write Contract" UI या कॉन्ट्रैक्ट-इंटरैक्शन टूल का उपयोग करें।
+
+<a id="chapter.how-vpfi-discounts-work"></a>
 
 ## VPFI Discount कैसे काम करते हैं
 

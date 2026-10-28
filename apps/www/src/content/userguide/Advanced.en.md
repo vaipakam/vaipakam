@@ -12,6 +12,8 @@ Each section corresponds to an `(i)` info icon next to a card title.
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -194,6 +196,8 @@ to fresh users until they wandered into the Claim Center.
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -293,6 +297,8 @@ lifetime — refinance creates a fresh loan rather than mutating
 the existing one.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -706,6 +712,8 @@ classes, surfaced at different protocol stages:
 
 ---
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -797,6 +805,8 @@ Read the claim, not the NFT.
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -813,6 +823,8 @@ repayments, claims, liquidations, NFT mints and burns, and
 VPFI vault deposits / withdrawals.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -895,6 +907,8 @@ below. The delivery design is in the
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -930,6 +944,8 @@ VPFI exits the discount accumulator immediately (post-balance
 re-stamp on every open loan).
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -1324,6 +1340,8 @@ buyer could step in at the matched price.
 
 ---
 
+<a id="chapter.how-liquidation-actually-works"></a>
+
 ## How Liquidation Actually Works
 
 The Risk Disclosures you agreed to at offer time capture the
@@ -1521,6 +1539,8 @@ strictly-better-when-available optimization, never a blocker.
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -1541,6 +1561,8 @@ the protocol by using a single signature instead, so a clean
 list here does not preclude future deposits.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -1582,6 +1604,8 @@ publishing is currently stubbed pending channel creation.
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -1607,6 +1631,8 @@ The position NFT is the bearer instrument — verify before
 buying on a secondary market.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -1653,6 +1679,8 @@ reflect get a clear "invalid permission" revert. Revocation is
 instantaneous on all loans — there is no waiting period.
 
 ---
+
+<a id="chapter.public-analytics-dashboard"></a>
 
 ## Public Analytics Dashboard
 
@@ -1718,6 +1746,8 @@ bar.
 
 ---
 
+<a id="chapter.refinance"></a>
+
 ## Refinance
 
 This page is borrower-only — refinance is initiated by the
@@ -1770,6 +1800,8 @@ Atomic settlement after the new lender has accepted:
 Reverts if HF on the new terms would be below 1.5.
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -1827,6 +1859,8 @@ is bounded by the same 4-DEX failover used for liquidations
 
 ---
 
+<a id="chapter.early-withdrawal-lender"></a>
+
 ## Early Withdrawal (Lender)
 
 This page is lender-only — early withdrawal is initiated by
@@ -1867,6 +1901,8 @@ holding the "complete loan sale" permission; the initiate
 step itself stays user-only.
 
 ---
+
+<a id="chapter.stuck-token-recovery"></a>
 
 ## Stuck-Token Recovery
 
@@ -1981,6 +2017,8 @@ The disown function is exposed only via direct contract call
 for now; the Vaipakam frontend does not surface it as a
 button. Use a block-explorer "Write Contract" UI or a
 contract-interaction tool to call it.
+
+<a id="chapter.how-vpfi-discounts-work"></a>
 
 ## How VPFI Discounts Work
 
