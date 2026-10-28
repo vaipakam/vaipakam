@@ -1,4 +1,4 @@
-## Thread — Time-based default: lender KYC check, its value and a view (PR #<n>)
+## Thread — Time-based default: lender KYC check, its value and a view (PR #3059)
 
 The time-based default keeps its check of the lender's KYC tier. KYC is off on the retail deploy, so the check never blocks a retail default, but the code keeps it for a fork that turns KYC on. That is the owner's decision. The spec now states it: the default checks the loan's lender, never the caller who triggers it.
 
