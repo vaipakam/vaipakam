@@ -201,7 +201,7 @@ then deploy.
    for the record only while they hold rows.
 
    > **#1440** — `vaipakam-lz-alerts-db` is NOT recreated. It belonged to
-   > `ops/lz-watcher`, a monitor for the LayerZero transport the T-068 CCIP
+   > the lz-watcher Worker, a monitor for the LayerZero transport the T-068 CCIP
    > migration retired; the Worker, its binding **and its source tree** are
    > all gone. (Creating the database itself would cost no cron slot —
    > slots are consumed by deploying a Worker with a scheduled trigger,
@@ -1310,7 +1310,7 @@ If you are restoring an archive that HAS the section and you genuinely need
 that data — alert de-duplication state and per-chain block cursors for a
 transport that no longer exists, so almost certainly not — restore it to a
 database you create by hand for the purpose. Do **not** recreate
-`ops/lz-watcher` to hold it: deploying that package would resurrect a
+the lz-watcher package to hold it: deploying it would resurrect a
 retired Worker, and THAT is what would take one of the account's five
 cron-trigger slots. Creating the database costs no slot — slots are consumed
 by deploying a Worker with a scheduled trigger, never by a D1 database — so
