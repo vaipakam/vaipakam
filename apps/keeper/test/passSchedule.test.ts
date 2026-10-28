@@ -121,6 +121,7 @@ describe('the stagger reduces real dispatched work', () => {
         'liquidator', // protocol safety
         'liquidityConfidence', // demotes with no window
         'matcher', // user-visible latency
+        'prepayAutoList', // a one-hour grace window, every minute of it unlisted is lost
         'remitAck', // first-receipt discovery is unbounded by the re-send backoff
         'watcher', // protocol safety
       ].sort(),
