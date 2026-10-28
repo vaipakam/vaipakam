@@ -7,8 +7,8 @@
  *   - whole RUNS against a fake Base and a fake mirror that apply the
  *     contracts' own admission rules: each message sent once with the quoted
  *     fee, a late one alerted rather than re-sent, every VPFI-moving send
- *     posted as a notice, and nothing sent above the fee ceiling or past a
- *     pause.
+ *     the chain recorded posted as a notice, and nothing sent above the fee
+ *     ceiling or past a pause.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ContractFunctionRevertedError, encodeErrorResult, type Address, type PublicClient } from 'viem';
@@ -36,9 +36,9 @@ import {
   LEDGER_PAGE,
   MAX_AUTHS_PER_RUN,
   STRANDED_FLOOR_ITEM,
+  NOTICE_FLOOR_ITEM,
+  NOTICE_PER_RUN,
   type ReturnLedger,
-  type NoticeOutbox,
-  type PendingNotice,
   type SendRecords,
 } from '../src/rewardReturnTransport';
 import type { OpsAlertOutcome } from '../src/opsAlert';
@@ -194,6 +194,8 @@ class FakeChain {
   readonly outbound = new Map<number, LaneBucket>();
   readonly inbound = new Map<number, LaneBucket>();
   sent: { fn: string; args: readonly unknown[]; value: bigint }[] = [];
+  /** The VPFI-moving events its sends emitted, not yet indexed. */
+  events: { kind: string; args: Record<string, unknown>; tx: string }[] = [];
   txs = 0;
   /** How the next receipts read: seen, reverted, or not seen in time. */
   receipt: 'success' | 'reverted' | 'timeout' = 'success';
@@ -284,7 +286,9 @@ class FakeChain {
     if (b !== undefined && b.limited) b.tokens -= amount;
   }
 
-  private admit(functionName: string, a: readonly any[], value: bigint): () => void {
+  /** Checks a call as the contract would; the closure applies it and returns
+   *  the event a VPFI-moving send emits. */
+  private admit(functionName: string, a: readonly any[], value: bigint): () => { kind: string; args: Record<string, unknown> } | void {
     if (this.paused) throw revert('EnforcedPause');
     if (value !== this.fee) throw new Error(`paid ${value}, quoted ${this.fee}`);
     switch (functionName) {
@@ -303,6 +307,7 @@ class FakeChain {
         return () => {
           x.state = INSTR_EXECUTED;
           this.drawOutbound(x.amount);
+          return { kind: 'RepatriationExecuted', args: { issuingBase: String(a[0]).toLowerCase(), authId: String(a[1]), amount: String(x.amount), messageId: '0xm1' } };
         };
       }
       case 'sendRepatriationCancelAck': {
@@ -318,6 +323,7 @@ class FakeChain {
         return () => {
           x.amount -= amount;
           this.drawOutbound(amount);
+          return { kind: 'StrandedReturnDispatched', args: { remitter: String(a[0]).toLowerCase(), remitId: String(a[1]), dayId: String(x.dayId), amount: String(amount), remainingAfter: String(x.amount), messageId: '0xm2' } };
         };
       }
       case 'sendRetiredSurplusReturn': {
@@ -327,6 +333,7 @@ class FakeChain {
           this.pendingSurplus -= amount;
           const b = this.outbound.get(this.retirement[1]);
           if (b !== undefined && b.limited) b.tokens -= amount;
+          return { kind: 'RetiredSurplusReturnDispatched', args: { dstChainId: String(this.retirement[1]), amount: String(amount), remainingAfter: String(this.pendingSurplus), messageId: '0xm3' } };
         };
       }
       default:
@@ -358,10 +365,12 @@ class FakeChain {
       wallet: {
         account: { address: KEEPER },
         writeContract: async ({ functionName, args, value }: { functionName: string; args: readonly unknown[]; value: bigint }) => {
-          this.admit(functionName, args, value)();
+          const ev = this.admit(functionName, args, value)();
           this.sent.push({ fn: functionName, args, value });
           this.txs += 1;
-          return `0x${this.chainId.toString(16).padStart(8, '0')}${this.txs.toString(16).padStart(56, '0')}`;
+          const tx = `0x${this.chainId.toString(16).padStart(8, '0')}${this.txs.toString(16).padStart(56, '0')}`;
+          if (ev) this.events.push({ ...ev, tx });
+          return tx;
         },
       },
     } as unknown as KeeperContext;
@@ -373,9 +382,10 @@ class FakeLedger implements ReturnLedger {
   down = false;
   pages = 0;
 
-  add(chainId: number, kind: string, args: Record<string, unknown>, blockAt: number, block?: number): void {
+  add(chainId: number, kind: string, args: Record<string, unknown>, blockAt: number, block?: number, tx?: string): void {
     const list = this.rows.get(chainId) ?? [];
-    list.push({ kind, args, blockAt, block: block ?? list.length + 1, log: 0 });
+    const b = block ?? list.length + 1;
+    list.push({ kind, args, blockAt, block: b, log: 0, tx: tx ?? `0x${b.toString(16)}` });
     this.rows.set(chainId, list);
   }
 
@@ -414,24 +424,6 @@ class FakeRecords implements SendRecords {
   }
 }
 
-class FakeNotices implements NoticeOutbox {
-  readonly rows = new Map<string, PendingNotice>();
-  private k = (chainId: number, diamond: Address, item: string) => `${chainId}:${diamond.toLowerCase()}:${item}`;
-
-  async pending(chainId: number, diamond: Address, limit: number) {
-    const prefix = this.k(chainId, diamond, '');
-    return [...this.rows].filter(([k]) => k.startsWith(prefix)).map(([, v]) => v).slice(0, limit);
-  }
-
-  async put(chainId: number, diamond: Address, n: PendingNotice) {
-    this.rows.set(this.k(chainId, diamond, n.item), n);
-  }
-
-  async finish(chainId: number, diamond: Address, item: string) {
-    this.rows.delete(this.k(chainId, diamond, item));
-  }
-}
-
 // ─── Runs ───────────────────────────────────────────────────────────────────
 
 describe('a run', () => {
@@ -439,7 +431,6 @@ describe('a run', () => {
   let mirror: FakeChain;
   let ledger: FakeLedger;
   let records: FakeRecords;
-  let notices: FakeNotices;
   let alertOutcome: OpsAlertOutcome;
   let cursors: Map<string, ReturnType<typeof memoryScanCursors>>;
   let alerts: { key: string; text: string }[];
@@ -452,7 +443,6 @@ describe('a run', () => {
     base.inbound.set(MIRROR_ID, bucket());
     ledger = new FakeLedger();
     records = new FakeRecords();
-    notices = new FakeNotices();
     alertOutcome = 'sent';
     cursors = new Map();
     alerts = [];
@@ -479,7 +469,6 @@ describe('a run', () => {
       chains: (o.chains ?? [base, mirror]).map((c) => deps(c, o.cap ?? CAP)),
       ledger,
       records,
-      notices,
       cursors: (chainId, diamond) => {
         const k = `${chainId}:${diamond}`;
         if (!cursors.has(k)) cursors.set(k, memoryScanCursors());
@@ -491,6 +480,12 @@ describe('a run', () => {
       now: () => now,
     });
   const fns = (c: FakeChain) => c.sent.map((s) => s.fn);
+  /** The indexer records what a chain's sends emitted. */
+  const indexed = (c: FakeChain) => {
+    for (const e of c.events) ledger.add(c.chainId, e.kind, e.args, now, undefined, e.tx);
+    c.events = [];
+  };
+  const sentNotices = () => alerts.filter((a) => a.key.startsWith('return-transport-sent:'));
   const authorize = (authId: bigint, amount: bigint) => {
     base.auths.set(authId, { status: AUTH_PENDING, dst: MIRROR_ID, amount });
     ledger.add(BASE_ID, 'RepatriationAuthorized', { authId: String(authId), dstChainId: String(MIRROR_ID), amount: String(amount) }, NOW - 600);
@@ -501,7 +496,7 @@ describe('a run', () => {
     expect([fns(base), fns(mirror)]).toEqual([[], []]);
     expect(r.map((x) => x.skipped)).toEqual([undefined, undefined]);
     expect(describeReport(r[0])).toBe(
-      `[keeper] rewardReturnTransport chain=${BASE_ID} role=0 instructions-sent=none executed=none acks-sent=none stranded-returned=none retired-surplus-returned=none`,
+      `[keeper] rewardReturnTransport chain=${BASE_ID} role=0 instructions-sent=none executed=none acks-sent=none stranded-returned=none retired-surplus-returned=none sends-announced=none`,
     );
   });
 
@@ -556,38 +551,78 @@ describe('a run', () => {
     expect(alerts[0].text).toMatch(/re-executed by hand/);
   });
 
-  it('keeps a send notice whose post failed and posts it on a later run, after the source record is consumed (Codex #3002)', async () => {
+  it('announces a send from the chain\'s own event once indexed, and again on later runs until delivered (Codex #3002)', async () => {
     authorize(2n, 400n * E18);
     ledger.add(BASE_ID, 'RepatriationInstructionDispatched', { authId: '2' }, NOW - 600);
     mirror.instr.set(`${BASE}:2`, { state: INSTR_PENDING, amount: 400n * E18 });
-    alertOutcome = 'failed';
-    const r = await run();
+    await run();
     expect(fns(mirror)).toEqual(['executeRepatriation']);
-    expect(notices.rows.size, 'queued, not dropped').toBe(1);
-    expect([...r[1].unread.values()].join(' ')).toMatch(/send notice did not go out \(failed\); it stays queued/);
-    // The next run sends nothing for the executed authorization, yet still
-    // owes the notice of the send it made, and posts it under the same key.
+    expect(sentNotices(), 'nothing is announced before the indexer records it').toEqual([]);
+    indexed(mirror);
     mirror.sent = [];
+    alertOutcome = 'failed';
+    let r = await run();
+    expect(mirror.sent).toEqual([]);
+    expect(sentNotices()).toHaveLength(1);
+    expect([...r[1].unread.values()].join(' ')).toMatch(/send notice did not go out \(failed\); it and the sends after it are announced on a later run/);
+    expect(cursors.get(`${MIRROR_ID}:${MIRROR}`)!.rows.get(NOTICE_FLOOR_ITEM), 'the floor holds below an undelivered notice').toBeUndefined();
     alerts = [];
     alertOutcome = 'sent';
-    await run();
-    expect(mirror.sent).toEqual([]);
-    expect(alerts).toHaveLength(1);
-    expect(alerts[0].key).toMatch(new RegExp(`^return-transport-sent:${MIRROR_ID}:0x`));
-    expect(alerts[0].text).toMatch(/executed repatriation 2, sending 400000000000000000000 VPFI/);
-    expect(notices.rows.size, 'cleared once delivered').toBe(0);
+    r = await run();
+    const posted = sentNotices();
+    expect(posted).toHaveLength(1);
+    expect(posted[0].key).toMatch(new RegExp(`^return-transport-sent:${MIRROR_ID}:0x[0-9a-f]+:0$`));
+    expect(posted[0].text).toMatch(new RegExp(`repatriation 2 executed, sending 400000000000000000000 VPFI \\(wei\\) home to the Base Diamond ${BASE} \\(tx 0x[0-9a-f]+, CCIP message 0xm1\\)`));
+    expect(r[1].announced).toHaveLength(1);
     alerts = [];
     await run();
-    expect(alerts).toEqual([]);
+    expect(sentNotices(), 'announced once').toEqual([]);
   });
 
-  it('posts a queued notice even on a chain whose gate refuses this run', async () => {
-    await notices.put(MIRROR_ID, MIRROR, { item: '0xab', key: `return-transport-sent:${MIRROR_ID}:0xab`, text: 'earlier send' });
+  it('announces a send whose receipt was not seen, once the indexer records it (Codex #3002)', async () => {
+    mirror.stranded.set(`${REMITTER}:9`, { amount: 300n * E18, dayId: 4n });
+    ledger.add(MIRROR_ID, 'CompensationQuarantined', { remitter: REMITTER, remitId: '9' }, NOW - 600);
+    mirror.receipt = 'timeout';
+    const r = await run();
+    expect(fns(mirror)).toEqual(['sendStrandedReturn']);
+    expect(r[1].stranded, 'not counted as landed').toEqual([]);
+    expect(sentNotices()).toEqual([]);
+    indexed(mirror);
+    mirror.receipt = 'success';
+    mirror.sent = [];
+    await run();
+    expect(mirror.sent, 'the record reads empty: nothing is sent again').toEqual([]);
+    expect(sentNotices().map((a) => a.text)).toEqual([
+      expect.stringMatching(new RegExp(`returned 300000000000000000000 VPFI \\(wei\\) quarantined for remit 9 \\(day 4\\) to the Base Diamond ${REMITTER}; 0 stays recorded`)),
+    ]);
+  });
+
+  it('announces a send another caller made, and one on a chain whose gate refuses this run', async () => {
+    ledger.add(MIRROR_ID, 'RetiredSurplusReturnDispatched', { dstChainId: String(BASE_ID), amount: '5', remainingAfter: '0', messageId: '0xm' }, NOW - 60, 3, '0xab');
     mirror.chainNamed = 1;
     const r = await run();
     expect(r[1].skipped).toBeDefined();
-    expect(alerts.map((a) => a.text)).toEqual(['earlier send']);
-    expect(notices.rows.size).toBe(0);
+    expect(sentNotices()).toEqual([
+      { key: `return-transport-sent:${MIRROR_ID}:0xab:0`, text: `ℹ️ Return transport on chain ${MIRROR_ID}: returned 5 VPFI (wei) of this retired chain's pending surplus to chain ${BASE_ID}; 0 stays pending (tx 0xab, CCIP message 0xm).` },
+    ]);
+    expect(describeReport(r[1])).toMatch(/sends-announced=0xab/);
+  });
+
+  it(`announces at most ${NOTICE_PER_RUN} sends a run, oldest first, and the rest on the next`, async () => {
+    for (let i = 0; i < NOTICE_PER_RUN + 3; i++) ledger.add(MIRROR_ID, 'StrandedReturnDispatched', { remitter: REMITTER, remitId: String(i), amount: '1' }, NOW - 60, i + 1, `0x${(i + 1).toString(16)}`);
+    let r = await run();
+    expect(r[1].announced).toHaveLength(NOTICE_PER_RUN);
+    expect(r[1].announced[0]).toBe('0x1');
+    r = await run();
+    expect(r[1].announced).toEqual(['0x15', '0x16', '0x17']);
+    r = await run();
+    expect(r[1].announced).toEqual([]);
+  });
+
+  it('names an unreadable ledger for the notices, and still works the chain', async () => {
+    ledger.down = true;
+    const r = await run();
+    expect(r[1].unread.get('notices')).toMatch(/announced on a later run/);
   });
 
   it('executes a recorded instruction on the mirror, posting the amount it sent home', async () => {
@@ -598,15 +633,13 @@ describe('a run', () => {
     expect(base.sent).toEqual([]);
     expect(mirror.sent).toEqual([{ fn: 'executeRepatriation', args: [BASE, 2n, KEEPER], value: FEE }]);
     expect(r[1].executed).toEqual(['2']);
-    expect(alerts).toHaveLength(1);
-    expect(alerts[0].key).toMatch(new RegExp(`^return-transport-sent:${MIRROR_ID}:0x`));
-    expect(alerts[0].text).toMatch(/executed repatriation 2, sending 400000000000000000000 VPFI \(wei\) home to chain 84532/);
     // Executed, Base not yet settled: a wait, and no second execute.
+    indexed(mirror);
     mirror.sent = [];
     const again = await run();
     expect(mirror.sent).toEqual([]);
     expect(again[0].waiting[0]).toMatch(/its return is in flight to Base/);
-    expect(notices.rows.size, 'a delivered notice leaves the queue').toBe(0);
+    expect(sentNotices().map((a) => a.text)).toEqual([expect.stringMatching(/repatriation 2 executed, sending 400000000000000000000 VPFI \(wei\) home/)]);
   });
 
   it('holds an execute the outbound lane cannot carry: above capacity stalls, short of tokens waits', async () => {
@@ -720,9 +753,10 @@ describe('a run', () => {
     let r = await run();
     expect(mirror.sent).toEqual([{ fn: 'sendStrandedReturn', args: [REMITTER, 9n, 5_000n * E18, KEEPER], value: FEE }]);
     expect(r[1].stranded).toEqual([`${REMITTER}:9=${5_000n * E18}`]);
-    expect(alerts[0].text).toMatch(/returned 5000000000000000000000 of the 7000000000000000000000 VPFI \(wei\) quarantined for remit 9 \(day 4\)/);
+    indexed(mirror);
     mirror.sent = [];
     r = await run();
+    expect(sentNotices()[0].text).toMatch(/returned 5000000000000000000000 VPFI \(wei\) quarantined for remit 9 \(day 4\) to the Base Diamond 0x0+b1; 2000000000000000000000 stays recorded/);
     expect(mirror.sent.map((s) => s.args[2])).toEqual([2_000n * E18]);
     mirror.sent = [];
     r = await run();
@@ -834,10 +868,11 @@ describe('a run', () => {
     const r = await run();
     expect(mirror.sent).toEqual([{ fn: 'sendRetiredSurplusReturn', args: [800n * E18, KEEPER], value: FEE }]);
     expect(r[1].retired).toEqual([String(800n * E18)]);
-    expect(alerts[0].text).toMatch(/returned 800000000000000000000 of this retired chain's 800000000000000000000 VPFI \(wei\) pending surplus to chain 84532/);
+    indexed(mirror);
     mirror.sent = [];
     await run();
     expect(mirror.sent).toEqual([]);
+    expect(sentNotices()[0].text).toMatch(/returned 800000000000000000000 VPFI \(wei\) of this retired chain's pending surplus to chain 84532; 0 stays pending/);
   });
 
   it('pays no fee above its ceiling: nothing is sent or recorded', async () => {

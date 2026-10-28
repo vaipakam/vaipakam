@@ -350,9 +350,12 @@ evidence that the migration has completed.
   that would leave something behind waits for the lanes to refill; the last
   part is always sent.
 - Every send that moves VPFI is announced to operators with its amount and
-  transaction. An announcement that does not go out is kept and posted again
-  on later runs until it is delivered, even though the send has already
-  consumed the record it came from. Base's own authorization count names every authorization, so
+  transaction, whoever made it. The announcement comes from the chain's own
+  record of the send, as the indexer recorded it, not from what the keeper
+  saw when it sent: a send whose confirmation the keeper never saw is still
+  announced, once it is recorded. An announcement that does not go out is
+  posted again on later runs until it is delivered, and those after it wait
+  behind it. Base's own authorization count names every authorization, so
   the keeper reads them from the chain a bounded number a run, resuming where
   it stopped above a floor of settled ones. Quarantined compensation, which
   no view lists, comes from the indexer's record of on-chain events, read a

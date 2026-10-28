@@ -33,7 +33,9 @@
 // `requestRepatriationCancel` are the administrator's), or choose an amount the
 // chain did not record. Every chunk is bounded by the lanes at both ends
 // (`returnChunk`). Every send that moves VPFI is posted to the ops channel with
-// its amount and transaction, and a message that has not landed within
+// its amount and transaction, whoever made it: the notices are read from the
+// chain's own dispatch events in the indexer's ledger (`announceSends`), not
+// from what this keeper saw when it sent. A message that has not landed within
 // `LANDING_ALERT_SEC` is alerted.
 //
 // Base's authorizations come from its own nonce: ids are issued in sequence,
@@ -64,7 +66,7 @@ import { buildKeeperContext, passIsArmed, resolveKeeperAccount, type KeeperConte
 import type { PassTick } from '../passSchedule';
 import { deadlineClient, PastRunDeadline, settledRead, type BatchResult } from '../batchRead';
 import { shortErr } from '../callErrors';
-import { deploymentFloor, finishWork, getWorkItems, listOpenWork, putWork, touchOpenWork } from '../db';
+import { deploymentFloor, finishWork, getWorkItems, putWork } from '../db';
 import { feeCeiling } from '../feeCeiling';
 import { sendOpsAlert, type OpsAlertOutcome } from '../opsAlert';
 import { d1ScanCursors, decodeIndex, finalFloor, finalizedBlockOnce, rotatingWindow, type FinalBlock, type ScanCursors } from '../scanCursors';
@@ -96,15 +98,16 @@ export const RECEIPT_TIMEOUT_MS = 30_000;
 /** A message not landed this long after it left is alerted. */
 export const LANDING_ALERT_SEC = 24 * 3600;
 const STALL_ALERT_INTERVAL_SEC = 6 * 3600;
-/** A send notice is a one-off: its key (the transaction) never repeats. */
+/** A send notice is a one-off: its key (the event) never repeats. */
 const NOTICE_INTERVAL_SEC = 10 * 365 * 86_400;
 /** Outcomes after which a send notice is no longer owed. `suppressed` means
  *  its key was delivered before; `unconfigured` means the deployment has no
  *  ops bot and `sendOpsAlert` wrote the notice to the journal, the only place
- *  it can go there. Anything else keeps it queued for the next run. */
+ *  it can go there. Anything else holds the notice floor below it, so it is
+ *  posted again on the next run. */
 const NOTICE_DELIVERED: ReadonlySet<OpsAlertOutcome> = new Set(['sent', 'suppressed', 'unconfigured']);
-/** Queued send notices one run re-posts per chain, oldest first. */
-export const NOTICE_RETRY_PER_RUN = 20;
+/** Send notices one run posts per chain, oldest first. */
+export const NOTICE_PER_RUN = 20;
 /** Authorizations one run reads on Base, rotating over every id not yet
  *  settled (`scanCursors.rotatingWindow`). */
 export const MAX_AUTHS_PER_RUN = 50;
@@ -115,6 +118,8 @@ export const AUTH_FLOOR_ITEM = 'auth-floor';
 export const AUTH_NEXT_ITEM = 'auth-next';
 export const STRANDED_FLOOR_ITEM = 'stranded-floor';
 export const STRANDED_NEXT_ITEM = 'stranded-next';
+/** Every send event at or before this ledger position has been announced. */
+export const NOTICE_FLOOR_ITEM = 'notice-floor';
 export const DEFAULT_MIN_PART = 1000n * 10n ** 18n;
 export const MAX_FEE_VAR = 'REWARD_RETURN_TRANSPORT_MAX_FEE_WEI';
 const READ_CHUNK = 100;
@@ -125,6 +130,10 @@ const ROLE_MIRROR = 1;
  *  (`remitter`, `remitId`): an arrival quarantined on landing, and a
  *  provisional compensation demoted by its day's broadcast. */
 export const STRANDED_EVENTS = ['CompensationQuarantined', 'CompensationDemoted'] as const;
+/** The events of the sends that move VPFI off a chain toward Base, whoever
+ *  sent them: an executed repatriation, a stranded return, a retired chain's
+ *  surplus return. Each carries its amount and CCIP message id. */
+export const SEND_EVENTS = ['RepatriationExecuted', 'StrandedReturnDispatched', 'RetiredSurplusReturnDispatched'] as const;
 
 /** Refusals that mean another caller got there first. */
 export const RACES = new Set([
@@ -148,6 +157,8 @@ export interface LedgerRow {
   blockAt: number;
   block: number;
   log: number;
+  /** Its transaction hash. */
+  tx: string;
 }
 
 /** A position in a chain's ledger: a row's block and log index. */
@@ -165,24 +176,6 @@ export interface ReturnLedger {
   /** At most `limit` rows of `kinds` on `chainId` after `after` (from the
    *  start when null), oldest first; `more` when rows remain past them. */
   page(chainId: number, kinds: readonly string[], after: LedgerPos | null, limit: number): Promise<{ rows: LedgerRow[]; more: boolean } | null>;
-}
-
-/** A send notice not yet delivered: what it posts, under which key. */
-export interface PendingNotice {
-  /** The send's transaction hash. */
-  item: string;
-  key: string;
-  text: string;
-}
-
-/** Send notices queued until delivered (Codex #3002): a notice is queued
- *  before it is posted and leaves only once the post is delivered, so a
- *  failed post is retried on later runs, whatever the source record now
- *  shows. */
-export interface NoticeOutbox {
-  pending(chainId: number, diamond: Address, limit: number): Promise<PendingNotice[]>;
-  put(chainId: number, diamond: Address, notice: PendingNotice): Promise<void>;
-  finish(chainId: number, diamond: Address, item: string): Promise<void>;
 }
 
 /** This keeper's own record of the re-sendable messages it sent. */
@@ -207,7 +200,6 @@ export interface ReturnTransportDeps {
   chains: readonly ChainDeps[];
   ledger: ReturnLedger;
   records: SendRecords;
-  notices: NoticeOutbox;
   /** Where each chain's bounded reads got to, across runs. */
   cursors: (chainId: number, diamond: Address) => ScanCursors;
   keeper: Address | null;
@@ -225,6 +217,8 @@ export interface ReturnTransportReport {
   acked: string[];
   stranded: string[];
   retired: string[];
+  /** The send transactions announced to the ops channel this run. */
+  announced: string[];
   waiting: string[];
   stalled: string[];
   refused: Map<string, string>;
@@ -260,7 +254,6 @@ export async function runRewardReturnTransport(env: Env, tick: PassTick): Promis
       chains,
       ledger: d1Ledger(env.DB),
       records: d1Records(env.KEEPER_DB),
-      notices: d1Notices(env.KEEPER_DB),
       cursors: (chainId, diamond) => d1ScanCursors(env.KEEPER_DB, chainId, diamond, 'rewardReturnTransport'),
       keeper,
       sendDeadline,
@@ -280,7 +273,7 @@ export function parseMinPart(raw: string | undefined): bigint {
 }
 
 export function describeReport(r: ReturnTransportReport): string {
-  if (r.skipped) return `[keeper] rewardReturnTransport chain=${r.chainId}: not worked this run: ${r.skipped}`;
+  if (r.skipped) return `[keeper] rewardReturnTransport chain=${r.chainId}: not worked this run: ${r.skipped}; sends-announced=${r.announced.join(',') || 'none'}`;
   const list = (xs: readonly string[]) => xs.join(',') || 'none';
   const parts = [
     `[keeper] rewardReturnTransport chain=${r.chainId} role=${r.role}`,
@@ -289,6 +282,7 @@ export function describeReport(r: ReturnTransportReport): string {
     `acks-sent=${list(r.acked)}`,
     `stranded-returned=${list(r.stranded)}`,
     `retired-surplus-returned=${list(r.retired)}`,
+    `sends-announced=${list(r.announced)}`,
     ...(r.waiting.length > 0 ? [`waiting=${r.waiting.join('; ')}`] : []),
     ...(r.stalled.length > 0 ? [`stalled=${r.stalled.join('; ')}`] : []),
     ...(r.refused.size > 0 ? [`refused=${[...r.refused].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
@@ -305,7 +299,6 @@ interface ChainState {
   r: Reader;
   sender: StepSender;
   report: ReturnTransportReport;
-  notices: NoticeOutbox;
   role: number;
   baseChainId: number;
   messenger: Address;
@@ -345,6 +338,7 @@ export async function returnTransportOnce(deps: ReturnTransportDeps): Promise<Re
       acked: [],
       stranded: [],
       retired: [],
+      announced: [],
       waiting: [],
       stalled: [],
       refused: sender.refused,
@@ -352,10 +346,10 @@ export async function returnTransportOnce(deps: ReturnTransportDeps): Promise<Re
       stopped: null,
     };
     reports.push(report);
-    // Notices of earlier sends that did not go out, before anything else: they
+    // The sends the chain recorded are announced before anything else: they
     // are owed whatever the chain's state now shows, gate included.
     // eslint-disable-next-line no-await-in-loop
-    await retryNotices(c, sender, deps.notices);
+    await announceSends(c, sender, report, deps);
     const r = new Reader(c, deps.sendDeadline);
     try {
       // eslint-disable-next-line no-await-in-loop
@@ -365,7 +359,7 @@ export async function returnTransportOnce(deps: ReturnTransportDeps): Promise<Re
         continue;
       }
       report.role = gate.role;
-      states.set(c.chainId, { deps: c, r, sender, report, notices: deps.notices, ...gate });
+      states.set(c.chainId, { deps: c, r, sender, report, ...gate });
     } catch (err) {
       if (!(err instanceof PastRunDeadline)) throw err;
       report.skipped = 'the run deadline passed during its reads';
@@ -441,7 +435,7 @@ class Reader {
   }
 }
 
-type Gate = Omit<ChainState, 'deps' | 'r' | 'sender' | 'report' | 'notices'>;
+type Gate = Omit<ChainState, 'deps' | 'r' | 'sender' | 'report'>;
 
 /** The Diamond must name itself this chain; its role, transport endpoints and
  *  retirement record decide which steps apply. */
@@ -494,52 +488,55 @@ async function stall(s: ChainState, key: string, text: string): Promise<void> {
   await s.deps.alert(`return-transport-stalled:${s.deps.chainId}:${key}`, `⚠️ Return transport on chain ${s.deps.chainId}: ${text}.`, STALL_ALERT_INTERVAL_SEC);
 }
 
-/** A send that moved VPFI, announced with its amount and transaction. The
- *  notice is queued before it is posted and leaves the queue only once
- *  delivered, so a post that fails is retried on later runs (Codex #3002):
- *  the next run cannot rebuild it from the source record, which the send
- *  has already consumed. */
-async function notice(s: ChainState, what: string): Promise<void> {
-  const tx = s.sender.receipt?.transactionHash ?? 'unknown';
-  const n: PendingNotice = {
-    item: tx,
-    key: `return-transport-sent:${s.deps.chainId}:${tx}`,
-    text: `ℹ️ Return transport on chain ${s.deps.chainId}: ${what} (tx ${tx}).`,
-  };
-  try {
-    await s.notices.put(s.deps.chainId, s.deps.diamond, n);
-  } catch (err) {
-    s.sender.noteUnread(`notice:${tx}`, `its send notice could not be queued (${shortErr(err)}), so it is posted once and not retried if that fails`);
-  }
-  await deliverNotice(s.deps, s.sender, s.notices, n);
-}
-
-/** Posts a queued notice; clears it once delivered, else says it is owed. */
-async function deliverNotice(c: ChainDeps, sender: StepSender, notices: NoticeOutbox, n: PendingNotice): Promise<void> {
-  const out = (await c.alert(n.key, n.text, NOTICE_INTERVAL_SEC)) as OpsAlertOutcome;
-  if (!NOTICE_DELIVERED.has(out)) {
-    sender.noteUnread(`notice:${n.item}`, `its send notice did not go out (${out}); it stays queued for the next run`);
-    return;
-  }
-  try {
-    await notices.finish(c.chainId, c.diamond, n.item);
-  } catch (err) {
-    // Delivered: a later retry is de-duplicated by its key.
-    sender.noteUnread(`notice:${n.item}`, `its delivered send notice could not be cleared from the queue (${shortErr(err)})`);
+/** What a send event says moved, in the ops channel's words. */
+function sendText(row: LedgerRow): string {
+  const v = (k: string) => String(row.args[k] ?? '?');
+  switch (row.kind) {
+    case 'RepatriationExecuted':
+      return `repatriation ${v('authId')} executed, sending ${v('amount')} VPFI (wei) home to the Base Diamond ${v('issuingBase')}`;
+    case 'StrandedReturnDispatched':
+      return `returned ${v('amount')} VPFI (wei) quarantined for remit ${v('remitId')} (day ${v('dayId')}) to the Base Diamond ${v('remitter')}; ${v('remainingAfter')} stays recorded`;
+    default:
+      return `returned ${v('amount')} VPFI (wei) of this retired chain's pending surplus to chain ${v('dstChainId')}; ${v('remainingAfter')} stays pending`;
   }
 }
 
-/** Re-posts this chain's queued notices, oldest first, a bounded number. */
-async function retryNotices(c: ChainDeps, sender: StepSender, notices: NoticeOutbox): Promise<void> {
-  let queued: PendingNotice[];
+/**
+ * Announces every send that moved VPFI off this chain (`SEND_EVENTS`), with
+ * its amount and transaction, read from the chain's own events in the ledger
+ * above a stored floor (Codex #3002). Nothing here depends on this keeper
+ * having seen its send's receipt: a send whose receipt timed out, or one
+ * another caller made, is announced once the indexer has recorded it. The
+ * floor moves only past notices delivered (`NOTICE_DELIVERED`), so one whose
+ * post fails is posted again on the next run, and the ones after it wait
+ * behind it; a repeat after a delivery is de-duplicated by its key.
+ */
+async function announceSends(c: ChainDeps, sender: StepSender, report: ReturnTransportReport, deps: ReturnTransportDeps): Promise<void> {
   try {
-    queued = await notices.pending(c.chainId, c.diamond, NOTICE_RETRY_PER_RUN);
+    const cursors = deps.cursors(c.chainId, c.diamond);
+    const stored = await cursors.get([NOTICE_FLOOR_ITEM]);
+    const page = await deps.ledger.page(c.chainId, SEND_EVENTS, decodePos(stored.get(NOTICE_FLOOR_ITEM)), NOTICE_PER_RUN);
+    if (page === null) {
+      sender.noteUnread('notices', 'the event ledger, so the sends it records are announced on a later run');
+      return;
+    }
+    let done: LedgerRow | undefined;
+    for (const row of page.rows) {
+      const key = `return-transport-sent:${c.chainId}:${row.tx}:${row.log}`;
+      const text = `ℹ️ Return transport on chain ${c.chainId}: ${sendText(row)} (tx ${row.tx}, CCIP message ${String(row.args.messageId ?? '?')}).`;
+      // eslint-disable-next-line no-await-in-loop
+      const out = (await c.alert(key, text, NOTICE_INTERVAL_SEC)) as OpsAlertOutcome;
+      if (!NOTICE_DELIVERED.has(out)) {
+        sender.noteUnread(`notice:${row.tx}`, `its send notice did not go out (${out}); it and the sends after it are announced on a later run`);
+        break;
+      }
+      report.announced.push(row.tx);
+      done = row;
+    }
+    if (done !== undefined) await cursors.put(NOTICE_FLOOR_ITEM, encodePos(done));
   } catch (err) {
-    sender.noteUnread('notices', `the queue of undelivered send notices (${shortErr(err)})`);
-    return;
+    sender.noteUnread('notices', `the notice floor (${shortErr(err)}), so the sends it records are announced on a later run`);
   }
-  // eslint-disable-next-line no-await-in-loop
-  for (const n of queued) await deliverNotice(c, sender, notices, n);
 }
 
 /**
@@ -775,7 +772,6 @@ async function oneAuthorization(
       const res = await mirror.sender.call('execute', `authorization ${authId}`, 'executeRepatriation', [base.deps.diamond, authId, deps.keeper], fee);
       if (res === 'landed') {
         mirror.report.executed.push(String(authId));
-        await notice(mirror, `executed repatriation ${authId}, sending ${amount} VPFI (wei) home to chain ${mirror.baseChainId}`);
       } else if (res.includes(FUNDABLE_WAIT)) {
         mirror.report.waiting.push(`${label}: the mirror's un-reserved surplus is below its amount until claim commitments retire`);
       }
@@ -896,11 +892,7 @@ async function strandedReturns(mirror: ChainState, states: ReadonlyMap<number, C
     if (fee === undefined) continue;
     // eslint-disable-next-line no-await-in-loop
     const res = await mirror.sender.call('stranded', subject, 'sendStrandedReturn', [remitter, remitId, plan.amount, deps.keeper], fee);
-    if (res === 'landed') {
-      mirror.report.stranded.push(`${remitter}:${remitId}=${plan.amount}`);
-      // eslint-disable-next-line no-await-in-loop
-      await notice(mirror, `returned ${plan.amount} of the ${rec.amount} VPFI (wei) quarantined for remit ${remitId} (day ${rec.dayId}) to chain ${mirror.baseChainId}${plan.note ? `; ${plan.note}` : ''}`);
-    }
+    if (res === 'landed') mirror.report.stranded.push(`${remitter}:${remitId}=${plan.amount}${plan.note ? ` (${plan.note})` : ''}`);
   }
   await liftFloor();
 }
@@ -934,10 +926,7 @@ async function retiredSurplus(s: ChainState, states: ReadonlyMap<number, ChainSt
   const fee = await s.r.tryOne<bigint>(s.sender, 'retired surplus', 'the return sender\'s fee', 'quoteRetiredSurplusReturn', [BigInt(returnChainId), returnDeployment, plan.amount], s.returnSender, RETURN_SENDER_ABI);
   if (fee === undefined) return;
   const res = await s.sender.call('retired', 'pending surplus', 'sendRetiredSurplusReturn', [plan.amount, deps.keeper], fee);
-  if (res === 'landed') {
-    s.report.retired.push(String(plan.amount));
-    await notice(s, `returned ${plan.amount} of this retired chain's ${pending} VPFI (wei) pending surplus to chain ${returnChainId}${plan.note ? `; ${plan.note}` : ''}`);
-  }
+  if (res === 'landed') s.report.retired.push(`${plan.amount}${plan.note ? ` (${plan.note})` : ''}`);
 }
 
 const encodePos = (p: LedgerPos) => `${p.block}:${p.log}`;
@@ -951,7 +940,7 @@ const posAfter = (a: LedgerPos, b: LedgerPos) => a.block > b.block || (a.block =
 
 /** The shared indexer's event ledger (`activity_events`). */
 export function d1Ledger(db: D1Database): ReturnLedger {
-  type Row = { kind: string; args_json: string; block_at: number; block_number: number; log_index: number };
+  type Row = { kind: string; args_json: string; block_at: number; block_number: number; log_index: number; tx_hash: string };
   const decode = (all: readonly Row[]): LedgerRow[] =>
     all.map((r) => {
       let args: Record<string, unknown> = {};
@@ -961,7 +950,7 @@ export function d1Ledger(db: D1Database): ReturnLedger {
         // An unreadable row nominates nothing, and still holds its place, so
         // a page past it does not stop at it.
       }
-      return { kind: r.kind, args, blockAt: Number(r.block_at), block: Number(r.block_number), log: Number(r.log_index) };
+      return { kind: r.kind, args, blockAt: Number(r.block_at), block: Number(r.block_number), log: Number(r.log_index), tx: String(r.tx_hash) };
     });
   return {
     async matching(chainId, kinds, arg, values) {
@@ -971,7 +960,7 @@ export function d1Ledger(db: D1Database): ReturnLedger {
         const v = values.map((_, i) => `?${i + 3 + kinds.length}`).join(', ');
         const rows = await db
           .prepare(
-            `SELECT kind, args_json, block_at, block_number, log_index FROM activity_events
+            `SELECT kind, args_json, block_at, block_number, log_index, tx_hash FROM activity_events
               WHERE chain_id = ?1 AND block_number >= ?2 AND kind IN (${k})
                 AND CAST(json_extract(args_json, '$.${arg.replace(/[^A-Za-z0-9_]/g, '')}') AS TEXT) IN (${v})
               ORDER BY block_number ASC, log_index ASC`,
@@ -988,7 +977,7 @@ export function d1Ledger(db: D1Database): ReturnLedger {
         const k = kinds.map((_, i) => `?${i + 5}`).join(', ');
         const rows = await db
           .prepare(
-            `SELECT kind, args_json, block_at, block_number, log_index FROM activity_events
+            `SELECT kind, args_json, block_at, block_number, log_index, tx_hash FROM activity_events
               WHERE chain_id = ?1 AND block_number >= ?2 AND kind IN (${k})
                 AND (block_number > ?3 OR (block_number = ?3 AND log_index > ?4))
               ORDER BY block_number ASC, log_index ASC
@@ -1002,21 +991,6 @@ export function d1Ledger(db: D1Database): ReturnLedger {
         return null;
       }
     },
-  };
-}
-
-/** Undelivered send notices, in the keeper's private open-work table. */
-export function d1Notices(db: KeeperD1): NoticeOutbox {
-  return {
-    async pending(chainId, diamond, limit) {
-      const rows = await listOpenWork<{ key: string; text: string }>(db, chainId, diamond, 'return_notice', limit);
-      // Read is checked: the next run takes the next ones, so a backlog
-      // longer than one run's share is worked through, not re-tried in place.
-      await touchOpenWork(db, chainId, diamond, 'return_notice', rows.map((r) => r.item));
-      return rows.map((r) => ({ item: r.item, key: String(r.payload.key), text: String(r.payload.text) }));
-    },
-    put: (chainId, diamond, n) => putWork(db, chainId, diamond, 'return_notice', { item: n.item, block: 0, payload: { key: n.key, text: n.text } }),
-    finish: (chainId, diamond, item) => finishWork(db, chainId, diamond, 'return_notice', [item]),
   };
 }
 
