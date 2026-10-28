@@ -49,6 +49,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { applyRetiredDeployment, readRetiredDeploymentsFile, retiredDeploymentsFromManifest } from './lib/retiredDeploymentSeed.mjs';
+import { deployStamp, deployStampArgs } from '@vaipakam/lib/deployStamp';
 
 /** apps/indexer — where wrangler.jsonc lives and every wrangler call runs. */
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -198,8 +199,11 @@ function main() {
   // deploy of the merged tree seeds what the repository records.
   if (gate.mode === 'apply') seedRetiredDeployments();
 
-  console.log('[deploy] publishing');
-  const d = sh('wrangler', ['deploy', '--keep-vars'], { stdio: 'inherit' });
+  // The commit this build came from, recorded on the deployment so the
+  // deploy-lag check reads it back instead of inferring it (#2242).
+  const stamp = deployStamp({ cwd: ROOT });
+  console.log(`[deploy] publishing — ${'reason' in stamp ? `commit NOT recorded: ${stamp.reason}` : stamp.message}`);
+  const d = sh('wrangler', ['deploy', '--keep-vars', ...deployStampArgs(stamp)], { stdio: 'inherit' });
   if (d.status !== 0) process.exit(d.status ?? 1);
 }
 

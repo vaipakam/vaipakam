@@ -321,10 +321,12 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
    ```
 
 5. **Deploy** — every operator-specific value lives in the secret
-   store, so `wrangler deploy` takes no flags:
+   store, so the deploy takes no flags. `npm run deploy` runs `wrangler
+   deploy` with the commit it was built from recorded on the version, which
+   the deploy-lag check reads back (#2242):
 
    ```bash
-   wrangler deploy
+   npm run deploy
    ```
 
 6. **Verify** — kick a manual run via the Cloudflare dashboard's

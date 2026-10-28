@@ -1,0 +1,110 @@
+name: Worker deploy lag
+
+# WHY THIS EXISTS (#2242). Merged code that never reaches its Worker is
+# silent: the connected app served a build from before #2190 for days while
+# #2190 sat on `main`, and the live review the definition of done asks for
+# never happened because the deploy never happened. This check compares every
+# Worker's live Cloudflare deployment with `main` and FAILS when a merged
+# change to a Worker's code has waited longer than the grace period — or when
+# a Worker's deployments cannot be read, so "unknown" is never reported as
+# "current". What counts as a Worker's code, and how a deployment is matched
+# to a commit (exactly from the stamp every deploy now records, or INFERRED
+# from the deploy time, and said so), is in .github/scripts/check-deploy-lag.mjs
+# (`--selftest`).
+#
+# It needs read-only access to the account's Worker deployments: the
+# repository secret CLOUDFLARE_DEPLOY_READ_TOKEN (Account · Workers Scripts ·
+# Read, nothing else) and the repository variable CLOUDFLARE_ACCOUNT_ID.
+#
+# HOW THE OPERATOR HEARS OF IT: the shared alert path (alert-issue.yml) — an
+# issue titled "Workers behind main", assigned, notified once per changed
+# condition and closed on the first run with nothing overdue.
+
+on:
+  schedule:
+    - cron: '41 * * * *' # hourly; the grace period is hours, not minutes
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/scripts/check-deploy-lag.mjs'
+      - '.github/workflows/deploy-lag.yml'
+      - '.github/workflows/alert-issue.yml'
+      - 'packages/lib/src/deployStamp.mjs'
+
+permissions:
+  contents: read # the alert job adds issues: write for itself
+
+concurrency:
+  group: deploy-lag-${{ github.event_name == 'pull_request' && 'selftest' || 'probe' }}
+  cancel-in-progress: false
+
+jobs:
+  selftest:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: node .github/scripts/check-deploy-lag.mjs --selftest
+
+  probe:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    # Two API calls of at most 20 s per Worker, and git over the full history.
+    timeout-minutes: 8
+    outputs:
+      verdict: ${{ steps.check.outcome }}
+      problems: ${{ steps.check.outputs.problems }}
+      keys: ${{ steps.check.outputs.keys }}
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_DEPLOY_READ_TOKEN: ${{ secrets.CLOUDFLARE_DEPLOY_READ_TOKEN }}
+      DEPLOY_LAG_REF: HEAD
+      # How long a merged change may wait for its deploy before it pages.
+      # Workers Builds deploys within minutes; the app is deployed by hand.
+      DEPLOY_LAG_GRACE_SECONDS: '21600'
+      # Workers whose lag is a DECISION, as `worker=reason;…`. A held Worker is
+      # still judged and reported in the run summary, with its reason; it only
+      # stops failing the run. Add or remove one in a reviewed commit.
+      DEPLOY_LAG_HELD: >-
+        vaipakam-mesh-watcher=undeployed by design: code-complete, no cron
+        slot (docs/ops/CloudflareCronSlots.md)
+    steps:
+      # The whole history: a deployment is placed on main by its commit, or
+      # by the last commit before its deploy time.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - id: check
+        run: node .github/scripts/check-deploy-lag.mjs
+
+  alert:
+    needs: probe
+    if: always() && github.event_name != 'pull_request'
+    permissions:
+      issues: write
+    uses: ./.github/workflows/alert-issue.yml
+    with:
+      probe-result: ${{ needs.probe.result }}
+      verdict: ${{ needs.probe.outputs.verdict }}
+      problems: ${{ needs.probe.outputs.problems }}
+      keys: ${{ needs.probe.outputs.keys }}
+      assignee: vaipakam
+      unhealthy-title: Workers behind main
+      unhealthy-intro: 'The scheduled deploy-lag check found Workers not running what main says they should:'
+      unhealthy-headline: Workers are behind main
+      healthy-comment: Every Worker is running main again
+      broken-title: Worker deploy-lag check not running
+      broken-body: The scheduled deploy-lag check failed before it could judge the Workers, so whether they are current is UNKNOWN, not known to be behind. The run log says what broke.
+      broken-headline: The Worker deploy-lag check failed before it could judge (state unknown)
+      footer: This issue closes itself when nothing is overdue. See .github/workflows/deploy-lag.yml (#2242).
+      marker: deploy-lag-keys
+    secrets:
+      TG_OPS_BOT_TOKEN: ${{ secrets.TG_OPS_BOT_TOKEN }}
+      TG_OPS_CHAT_ID: ${{ secrets.TG_OPS_CHAT_ID }}

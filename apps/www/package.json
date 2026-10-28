@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit && eslint . -c eslint.hooks.config.js && node scripts/check-guide-anchor-parity.mjs && node scripts/check-locale-namespaces.mjs && tsx scripts/check-guide-toc-coverage.ts && tsx --tsconfig tsconfig.app.json scripts/check-live-value-render.tsx && node scripts/check-admin-knobs-mirror.mjs && tsx --tsconfig tsconfig.app.json scripts/check-knob-defaults-vs-contracts.ts && node scripts/check-content-links.mjs && tsx --tsconfig tsconfig.app.json scripts/check-terms-canonical-hash.ts && tsx scripts/check-csp-policy.mjs",
     "prerender": "node scripts/prerender.mjs",
-    "deploy": "npm run build && npm run prerender && wrangler deploy",
+    "deploy": "npm run build && npm run prerender && node ../../packages/lib/bin/wrangler-deploy.mjs",
     "sitemap": "node scripts/generate-sitemap.mjs",
     "check:anchors": "node scripts/check-guide-anchor-parity.mjs",
     "check:locale-namespaces": "node scripts/check-locale-namespaces.mjs",
