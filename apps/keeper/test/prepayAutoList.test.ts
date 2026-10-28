@@ -14,6 +14,8 @@ import {
   type Hex,
   type PublicClient,
 } from 'viem';
+import { SCAN_WINDOW } from '../src/activeLoanWindow';
+import { SEND_RESERVE_MS, STAGE_RESERVE_MS } from '../src/runWindow';
 import { ABI, MAX_ATTEMPTS_PER_RUN, autoListOnce, describeReport, listingEvent, notApplicable } from '../src/prepayAutoList';
 import type { KeeperContext } from '../src/keeper';
 
@@ -216,12 +218,12 @@ describe('a run', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  const run = (opts: { keeper?: Address; visit?: number } = {}) =>
+  const run = (opts: { keeper?: Address; visit?: number; sendDeadline?: number } = {}) =>
     autoListOnce(CHAIN, DIAMOND, {
       client: d.client(),
       readClient: d.client(),
       context: () => d.ctx(opts.keeper),
-      sendDeadline: Number.POSITIVE_INFINITY,
+      sendDeadline: opts.sendDeadline ?? Number.POSITIVE_INFINITY,
       visit: opts.visit ?? 0,
     });
 
@@ -304,6 +306,38 @@ describe('a run', () => {
     expect(first.deferred).toBe(3);
     await run({ visit: 1 });
     expect(new Set(d.sent).size, 'every loan listed across the two runs').toBe(n);
+  });
+
+  it('rotates a window\'s candidates by visits to that window, so a multi-window book reaches every one', async () => {
+    // Two windows. Window 0 holds 2 × MAX_ATTEMPTS_PER_RUN loans in grace;
+    // window 1 holds only loans before maturity. Window 0 is visited on
+    // visits 0 and 2. Rotating by the global visit would take the same batch
+    // on both (offset 0 and 2 × width ≡ 0), and the second half never.
+    const n = MAX_ATTEMPTS_PER_RUN * 2;
+    for (let i = 1; i <= SCAN_WINDOW * 2; i += 1) {
+      d.loans.set(BigInt(i), i <= n ? inGraceLoan() : inGraceLoan({ maturity: NOW + 60n }));
+    }
+    const first = await run({ visit: 0 });
+    expect(first.window).toEqual({ index: 0, count: 2, total: SCAN_WINDOW * 2, round: 0 });
+    expect(d.sent).toHaveLength(MAX_ATTEMPTS_PER_RUN);
+    const other = await run({ visit: 1 });
+    expect(other.window?.index).toBe(1);
+    expect(other.inGrace).toBe(0);
+    const again = await run({ visit: 2 });
+    expect(again.window).toEqual({ index: 0, count: 2, total: SCAN_WINDOW * 2, round: 1 });
+    expect(new Set(d.sent).size, 'every in-grace loan of window 0 across its two visits').toBe(n);
+  });
+
+  it('stops its reads early enough to leave the sends their reserve', async () => {
+    d.loans.set(1n, inGraceLoan());
+    // Inside the send reserve plus the two stage reserves: the scan must not
+    // start, so no read eats the time the send needs.
+    const r = await run({ sendDeadline: Date.now() + SEND_RESERVE_MS + 2 * STAGE_RESERVE_MS - 1_000 });
+    expect(d.sent).toEqual([]);
+    expect(r.unread.get('run')).toContain('run deadline');
+    // With the reserves clear, the same loan is listed.
+    await run({ sendDeadline: Date.now() + SEND_RESERVE_MS + 2 * STAGE_RESERVE_MS + 60_000 });
+    expect(d.sent).toEqual([1n]);
   });
 
   it('says why nothing can be listed when listings are off or no buffer is set', async () => {

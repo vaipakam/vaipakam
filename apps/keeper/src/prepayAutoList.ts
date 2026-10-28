@@ -64,6 +64,7 @@ import { deadlineClient, PastRunDeadline, settledRead, type BatchResult } from '
 import { shortErr } from './callErrors';
 import { readActiveWindow, type ScanWindow } from './activeLoanWindow';
 import { pickBatch } from './rotate';
+import { priorStageCutoffMs, readCutoffMs } from './runWindow';
 import { StepSender } from './stepSender';
 
 export const ABI = [
@@ -230,7 +231,20 @@ export async function autoListOnce(chainId: number, diamond: Address, deps: Auto
   };
   const read = <T>(functionName: string, args: readonly unknown[] = []) =>
     deps.client.readContract({ address: diamond, abi: ABI, functionName, args }) as Promise<T>;
-  const many = async (functionName: string, ids: readonly bigint[], label: string, blockNumber: bigint): Promise<unknown[]> => {
+  // Each read stage stops early enough to leave the stages after it their
+  // time (runWindow.ts, rule 3): the per-loan reads by the read cutoff, which
+  // reserves the sends' time; the deadline reads a stage reserve before that;
+  // the window scan a stage reserve before those.
+  const readCutoff = readCutoffMs(deps.sendDeadline);
+  const deadlinesCutoff = priorStageCutoffMs(readCutoff);
+  const scanCutoff = priorStageCutoffMs(deadlinesCutoff);
+  const many = async (
+    functionName: string,
+    ids: readonly bigint[],
+    label: string,
+    blockNumber: bigint,
+    cutoff: number,
+  ): Promise<unknown[]> => {
     const out: unknown[] = [];
     for (let i = 0; i < ids.length; i += READ_CHUNK) {
       // eslint-disable-next-line no-await-in-loop
@@ -238,7 +252,7 @@ export async function autoListOnce(chainId: number, diamond: Address, deps: Auto
         deps.readClient,
         ids.slice(i, i + READ_CHUNK).map((id) => ({ address: diamond, abi: ABI, functionName, args: [id] })),
         `prepayAutoList ${label}`,
-        deps.sendDeadline,
+        cutoff,
         blockNumber,
       );
       for (const x of res) out.push(x.status === 'success' ? x.result : undefined);
@@ -270,11 +284,11 @@ export async function autoListOnce(chainId: number, diamond: Address, deps: Auto
     if (bufferBps === 0n) return { ...report, skipped: 'the prepay-listing buffer is not configured on this chain, so the contract has no floor to list at' };
 
     // 2–3. One window, and which of it is in grace at that block.
-    const scan = await readActiveWindow(deps.client, diamond, deps.visit);
+    const scan = await readActiveWindow(deadlineClient(deps.readClient, scanCutoff), diamond, deps.visit);
     report.window = scan.window;
     if (scan.ids.length === 0) return report;
     const now = (await deps.client.getBlock({ blockNumber: scan.blockNumber })).timestamp;
-    const deadlines = await many('getLoanDeadlines', scan.ids, 'deadlines', scan.blockNumber);
+    const deadlines = await many('getLoanDeadlines', scan.ids, 'deadlines', scan.blockNumber, deadlinesCutoff);
     const inGrace: bigint[] = [];
     let deadlinesUnread = 0;
     scan.ids.forEach((id, i) => {
@@ -292,8 +306,8 @@ export async function autoListOnce(chainId: number, diamond: Address, deps: Auto
 
     // 4. Which of them the call can apply to, at the same block.
     const [details, optedOut] = await Promise.all([
-      many('getLoanDetails', inGrace, 'details', scan.blockNumber),
-      many('getPrepayListingAutoListOptedOut', inGrace, 'opt-outs', scan.blockNumber),
+      many('getLoanDetails', inGrace, 'details', scan.blockNumber, readCutoff),
+      many('getPrepayListingAutoListOptedOut', inGrace, 'opt-outs', scan.blockNumber, readCutoff),
     ]);
     const applicable: bigint[] = [];
     inGrace.forEach((id, i) => {
@@ -309,7 +323,9 @@ export async function autoListOnce(chainId: number, diamond: Address, deps: Auto
     });
 
     // 5. The contract decides.
-    const { picked, deferred } = pickBatch(applicable, deps.visit, MAX_ATTEMPTS_PER_RUN);
+    // Rotated by this window's own visit count (ScanWindow.round), so each
+    // visit to it takes the next batch however many windows the book has.
+    const { picked, deferred } = pickBatch(applicable, scan.window.round, MAX_ATTEMPTS_PER_RUN);
     report.deferred = deferred.length;
     for (const id of picked) {
       if (sender.stopped) break;
