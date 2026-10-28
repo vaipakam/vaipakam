@@ -1,4 +1,4 @@
-## Thread — stable ABI stamp, build-generated Tenderly ABIs, tested D1 shape rule, Discussions forms (PR #<n>)
+## Thread — stable ABI stamp, build-generated Tenderly ABIs, tested D1 shape rule, Discussions forms (PR #2995)
 
 The frontend ABI export no longer writes the contracts commit and the
 export time into the package's provenance file. Those two lines changed on
