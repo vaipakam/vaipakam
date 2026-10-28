@@ -1,4 +1,4 @@
-## Thread — keeper backstop for deliberately zeroed reward days (PR #<n>)
+## Thread — keeper backstop for deliberately zeroed reward days (PR #3000)
 
 When a mirror chain deliberately zeroes a reward day, its users are owed compensation from Base, and a day that is never compensated is retired as a recorded loss once its window closes. Each step of that process is permissionless, but nothing called the steps on a schedule. A zeroed day could therefore sit unquoted and unfunded, or never be retired, until someone made the calls by hand. The keeper now has a zeroed-day duty on every mirror it serves. It runs every fifteen minutes and reads sixty elapsed days a run by default, resuming where the previous run stopped above a floor of days already settled, so a zeroed day of any age is reached. It ships switched off, behind its own arming flag.
 
