@@ -1710,6 +1710,10 @@ const copySource = {
       submitting: 'Confirm the transaction in your wallet…',
     },
     reviewTitle: 'Post these refinance requests',
+    terms: tmpl(
+      'Each request asks for a new loan of {{days}} days at a yearly rate of at most {{rate}}.',
+      ['days', 'rate'],
+    ),
     loanPayoff: tmpl(
       'Loan #{{id}}: ~{{payoff}} to pay it off today, pulled automatically when a lender accepts its request.',
       ['id', 'payoff'],

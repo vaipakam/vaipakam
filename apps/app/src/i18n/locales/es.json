@@ -3495,7 +3495,8 @@
       "changedSinceReview": "Lo que implica esta solicitud cambió después de tu revisión. Publícala desde su propia página, que muestra las condiciones actuales.",
       "ownPageRental": "Un alquiler no puede recibir una solicitud de refinanciación; solo los préstamos en tokens pueden.",
       "ownPageOpenRequest": "Ya hay una solicitud de refinanciación abierta para este préstamo. Su propia página la muestra y te permite cancelarla.",
-      "approvalLeft": "Tu aprobación de tokens para el protocolo es ahora de {{amount}}. Tus solicitudes de refinanciación abiertas cobran sus liquidaciones de ella, así que reducirla puede dejar una solicitud sin poder completarse."
+      "approvalLeft": "Tu aprobación de tokens para el protocolo es ahora de {{amount}}. Tus solicitudes de refinanciación abiertas cobran sus liquidaciones de ella, así que reducirla puede dejar una solicitud sin poder completarse.",
+      "terms": "Cada solicitud pide un préstamo nuevo de {{days}} días a una tasa anual de como máximo {{rate}}."
     }
   },
   "contractError": {

@@ -57,14 +57,17 @@ import {
   type LoanLive,
 } from '../contracts/loanLive';
 import { useProtocolFees } from '../data/fees';
-import { REQUEST_WINDOW_DAYS, checkRefinanceRequest } from '../data/refinancePlan';
+import {
+  REQUEST_WINDOW_DAYS,
+  checkRefinanceRequest,
+  refinanceStatements,
+} from '../data/refinancePlan';
 import { useAutoRefinancePosture } from '../data/protocol';
 import { AutoMatchPostureBanner } from './AutoMatchPostureBanner';
 import type { IndexedLoan } from '../data/indexer';
 import { MAX_INTEREST_BPS, percentToBps } from '../lib/offerSchema';
 import {
   formatBpsAsPercent,
-  formatDate,
   formatTokenAmountExact,
 } from '../lib/format';
 import { ConfirmReceipt } from './ConfirmReceipt';
@@ -221,6 +224,14 @@ export function RefinanceFlow({
   // appears once the bucket lands; submit re-reads it live).
   const pastDue = chainNow > loanEndTimeOf(live, chainNow);
   const pastGrace = chainNow > loanEndTimeOf(live, chainNow) + graceSec;
+  // The loan-dependent statements, from the one source the batch review
+  // reads too.
+  const statements = refinanceStatements({
+    pastDue,
+    periodic: live.periodicInterestCadence !== 0,
+    expiryGraceClamped,
+    graceEnd: graceEndTs,
+  });
 
   async function submit() {
     // Page-supplied settlement gate (Codex #1511 r5 P1) — a LIVE
@@ -533,17 +544,17 @@ export function RefinanceFlow({
       </div>
 
       <div>
-        {pastDue ? (
+        {statements.pastDue ? (
           // #1236 — in the grace window the request stays postable,
           // but the payoff figures below now carry the growing late
           // fee. Say so before the review opens.
           <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
-            <span className="banner-body">{copy.refinance.graceNote}</span>
+            <span className="banner-body">{statements.pastDue}</span>
           </div>
         ) : null}
-        {live.periodicInterestCadence !== 0 ? (
+        {statements.keepPeriodsCurrent ? (
           <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
-            <span className="banner-body">{copy.refinance.periodicWarning}</span>
+            <span className="banner-body">{statements.keepPeriodsCurrent}</span>
           </div>
         ) : null}
         <div className="cluster">
@@ -638,16 +649,12 @@ export function RefinanceFlow({
                 }${copy.refinance.walletNote(topUpStr)}`,
                 youCanLose: `${copy.refinance.noGuarantee} ${copy.refinance.shortIsSafe}`,
                 fees: `${copy.fees.borrowerLIF(formatBpsAsPercent(fees.loanInitiationFeeBps))} ${copy.refinance.feesTreasuryNote(formatBpsAsPercent(fees.treasuryFeeBps))}`,
-                whenThisEnds: `${copy.refinance.whenEndsComposed(
-                  expiryGraceClamped
-                    ? copy.refinance.expiresAtGraceEnd(formatDate(Number(graceEndTs)))
-                    : copy.refinance.expiresAfterDays(Number(REQUEST_WINDOW_DAYS)),
-                )} ${copy.refinance.guardrailNote}`,
+                whenThisEnds: `${statements.whenEnds} ${copy.refinance.guardrailNote}`,
               }}
             >
-              {live.periodicInterestCadence !== 0 ? (
+              {statements.cadenceChange ? (
                 <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
-                  <span className="banner-body">{copy.refinance.cadenceChangeNote}</span>
+                  <span className="banner-body">{statements.cadenceChange}</span>
                 </div>
               ) : null}
               <p className="muted" style={{ marginBottom: 12 }}>

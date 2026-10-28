@@ -843,6 +843,7 @@
         "submitting": "Confirm the transaction in your wallet…"
       },
       "reviewTitle": "Post these refinance requests",
+      "terms": "Each request asks for a new loan of {{days}} days at a yearly rate of at most {{rate}}.",
       "loanPayoff": "Loan #{{id}}: ~{{payoff}} to pay it off today, pulled automatically when a lender accepts its request.",
       "loanGrowth": "If a lender accepts after this loan’s due date, the payoff grows (the late fee plus interest that keeps building up) by up to ~{{amount}} more before the request ends.",
       "loanTopUp": "Spare in your wallet when a lender accepts: about {{amount}}. That is the payoff’s interest and the new loan’s initiation fee; the new principal arrives in the same transaction.",

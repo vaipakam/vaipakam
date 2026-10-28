@@ -398,6 +398,7 @@ export function BatchRefinancePanel({
 
       {stage.kind === 'review' ? (
         <RefinanceReview
+          terms={stage.terms}
           plans={stage.plans}
           fees={stage.fees}
           amount={amount}
@@ -434,6 +435,7 @@ export function BatchRefinancePanel({
 }
 
 function RefinanceReview({
+  terms,
   plans,
   fees,
   amount,
@@ -444,6 +446,7 @@ function RefinanceReview({
   onConfirm,
   onCancel,
 }: {
+  terms: RefinanceTerms;
   plans: RefinanceBatchPlan[];
   fees: ReviewedFees;
   amount: (raw: bigint) => string;
@@ -459,6 +462,14 @@ function RefinanceReview({
   return (
     <>
       <h3 style={{ marginBottom: 8 }}>{copy.batchRefinance.reviewTitle}</h3>
+      {/* The inputs are gone once the review opens, so the terms being
+          signed for are stated here. */}
+      <p style={{ marginBottom: 8 }}>
+        {copy.batchRefinance.terms(
+          String(terms.durationDays),
+          formatBpsAsPercent(terms.rateBps),
+        )}
+      </p>
       <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 12px' }}>
         {plans.map((p) => (
           <li key={p.loanId} style={{ marginBottom: 6 }}>

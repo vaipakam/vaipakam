@@ -311,22 +311,54 @@ export async function refinancePostRefusal(
   return null;
 }
 
-/** The statements the loan page makes before a request that depend on
- *  the loan, as one list per loan for the batch review: the late fee in
- *  the payoff past the due date, the end of scheduled interest on a
- *  periodic loan, and when the request ends. */
-export function refinanceNotes(plan: RefinanceRequestReady): string[] {
-  const notes: string[] = [];
-  if (plan.pastDue) notes.push(copy.refinance.graceNote);
-  if (plan.liveLoan.periodicInterestCadence !== 0) notes.push(copy.refinance.cadenceChangeNote);
-  notes.push(
-    copy.refinance.whenEndsComposed(
-      plan.expiryGraceClamped
-        ? copy.refinance.expiresAtGraceEnd(formatDate(Number(plan.graceEnd)))
+/**
+ * The statements a refinance request makes that depend on the loan. ONE
+ * source for the loan page's form and the batch review, so a statement
+ * the form makes cannot go missing from the batch.
+ */
+export interface RefinanceStatements {
+  /** Past the due date: the payoff carries the growing late fee. */
+  pastDue: string | null;
+  /** Periodic interest on THIS loan: while the request is open, an
+   *  overdue period makes a lender's acceptance fail until it is settled. */
+  keepPeriodsCurrent: string | null;
+  /** Periodic interest: scheduled interest ends with this loan, and the
+   *  replacement runs on its own terms. */
+  cadenceChange: string | null;
+  /** When the request ends. */
+  whenEnds: string;
+}
+
+export function refinanceStatements(loan: {
+  pastDue: boolean;
+  periodic: boolean;
+  expiryGraceClamped: boolean;
+  graceEnd: bigint;
+}): RefinanceStatements {
+  return {
+    pastDue: loan.pastDue ? copy.refinance.graceNote : null,
+    keepPeriodsCurrent: loan.periodic ? copy.refinance.periodicWarning : null,
+    cadenceChange: loan.periodic ? copy.refinance.cadenceChangeNote : null,
+    whenEnds: copy.refinance.whenEndsComposed(
+      loan.expiryGraceClamped
+        ? copy.refinance.expiresAtGraceEnd(formatDate(Number(loan.graceEnd)))
         : copy.refinance.expiresAfterDays(Number(REQUEST_WINDOW_DAYS)),
     ),
+  };
+}
+
+/** Every statement for one loan, in the order the loan page makes them,
+ *  as one list for the batch review. */
+export function refinanceNotes(plan: RefinanceRequestReady): string[] {
+  const s = refinanceStatements({
+    pastDue: plan.pastDue,
+    periodic: plan.liveLoan.periodicInterestCadence !== 0,
+    expiryGraceClamped: plan.expiryGraceClamped,
+    graceEnd: plan.graceEnd,
+  });
+  return [s.pastDue, s.keepPeriodsCurrent, s.cadenceChange, s.whenEnds].filter(
+    (n): n is string => n !== null,
   );
-  return notes;
 }
 
 export type RefinanceBatchPlan = (RefinanceRequestReady & { notes: string[] }) | RefinanceRefusal;

@@ -70,6 +70,7 @@ import {
   planRefinanceForBatch,
   refinanceCalls,
   refinancePostRefusal,
+  refinanceStatements,
   type RefinanceBatchPlan,
   type RefinanceCtx,
   type RefinanceLoan,
@@ -237,11 +238,12 @@ describe('planRefinanceForBatch', () => {
     ]);
   });
 
-  it('states past due and the end of scheduled interest', async () => {
+  it('states past due, keeping periods current and the end of scheduled interest', async () => {
     reads.live = { ...reads.live, endTime: reads.now - DAY, periodicInterestCadence: 1 };
     const plan = (await planRefinanceForBatch(ctx, LOAN, TERMS, FEES)) as Ready;
-    expect(plan.notes.slice(0, 2)).toEqual([
+    expect(plan.notes.slice(0, 3)).toEqual([
       copy.refinance.graceNote,
+      copy.refinance.periodicWarning,
       copy.refinance.cadenceChangeNote,
     ]);
   });
@@ -299,6 +301,26 @@ describe('planRefinanceForBatch', () => {
     expect(await planRefinanceForBatch(ctx, LOAN, TERMS, FEES, reviewed)).toMatchObject({
       kind: 'refused',
       reason: copy.batchRefinance.changedSinceReview,
+    });
+  });
+});
+
+describe('refinanceStatements', () => {
+  it('is the one list of loan-dependent statements the form and the batch both make', () => {
+    expect(
+      refinanceStatements({ pastDue: false, periodic: false, expiryGraceClamped: false, graceEnd: 0n }),
+    ).toEqual({
+      pastDue: null,
+      keepPeriodsCurrent: null,
+      cadenceChange: null,
+      whenEnds: copy.refinance.whenEndsComposed(copy.refinance.expiresAfterDays(30)),
+    });
+    expect(
+      refinanceStatements({ pastDue: true, periodic: true, expiryGraceClamped: false, graceEnd: 0n }),
+    ).toMatchObject({
+      pastDue: copy.refinance.graceNote,
+      keepPeriodsCurrent: copy.refinance.periodicWarning,
+      cadenceChange: copy.refinance.cadenceChangeNote,
     });
   });
 });

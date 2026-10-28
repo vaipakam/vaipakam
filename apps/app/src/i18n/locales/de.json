@@ -3495,7 +3495,8 @@
       "changedSinceReview": "Was diese Anfrage umfasst, hat sich nach Ihrer Prüfung geändert. Stellen Sie sie auf ihrer eigenen Seite, die die aktuellen Bedingungen zeigt.",
       "ownPageRental": "Eine Vermietung kann keine Refinanzierungsanfrage erhalten; das können nur Token-Kredite.",
       "ownPageOpenRequest": "Für diesen Kredit ist bereits eine Refinanzierungsanfrage offen. Seine eigene Seite zeigt sie und lässt Sie sie stornieren.",
-      "approvalLeft": "Ihre Token-Freigabe für das Protokoll beträgt jetzt {{amount}}. Ihre offenen Refinanzierungsanfragen ziehen ihre Ablösesummen daraus, daher kann eine Senkung eine Anfrage am Abschluss hindern."
+      "approvalLeft": "Ihre Token-Freigabe für das Protokoll beträgt jetzt {{amount}}. Ihre offenen Refinanzierungsanfragen ziehen ihre Ablösesummen daraus, daher kann eine Senkung eine Anfrage am Abschluss hindern.",
+      "terms": "Jede Anfrage verlangt einen neuen Kredit über {{days}} Tage zu einem Jahreszins von höchstens {{rate}}."
     }
   },
   "contractError": {

@@ -259,7 +259,13 @@ loan's initiation fee), and the approval bound at the request's last
 fillable moment (#1236). The page's search for a request already on
 record (open, or expired and never cancelled) moves there too, as
 `refinancePostRefusal`, so the form's late gate and the batch apply one
-rule.
+rule. The statements the form makes that depend on the loan (past due,
+keep periodic payments current, scheduled interest ends with this loan,
+when the request ends) come from one function, `refinanceStatements`,
+which the form renders where it always did and the batch lists per
+loan, so a statement added to one surface reaches the other. The batch
+review also states the rate ceiling and duration, since its inputs are
+gone once the review opens.
 
 **The guardrail write travels with its request.** Where a loan's
 auto-refinance caps do not already cover the request, the plan carries a

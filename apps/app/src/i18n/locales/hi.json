@@ -3495,7 +3495,8 @@
       "changedSinceReview": "आपकी समीक्षा के बाद इस request में शामिल चीज़ें बदल गईं। इसे इसके अपने page से डालें, जो मौजूदा शर्तें दिखाता है।",
       "ownPageRental": "Rental पर refinance request नहीं डाली जा सकती; सिर्फ़ token loans पर।",
       "ownPageOpenRequest": "इस loan पर पहले से एक refinance request खुली है। इसका अपना page उसे दिखाता है और आपको उसे cancel करने देता है।",
-      "approvalLeft": "प्रोटोकॉल के लिए आपकी token approval अब {{amount}} है। आपकी खुली refinance requests अपना payoff इसी से लेती हैं, इसलिए इसे घटाने से कोई request पूरी न हो पाए, ऐसा हो सकता है।"
+      "approvalLeft": "प्रोटोकॉल के लिए आपकी token approval अब {{amount}} है। आपकी खुली refinance requests अपना payoff इसी से लेती हैं, इसलिए इसे घटाने से कोई request पूरी न हो पाए, ऐसा हो सकता है।",
+      "terms": "हर अनुरोध {{days}} दिनों के नए ऋण के लिए है, जिसकी वार्षिक दर अधिकतम {{rate}} है।"
     }
   },
   "contractError": {

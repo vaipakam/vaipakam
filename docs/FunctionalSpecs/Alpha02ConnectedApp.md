@@ -1981,9 +1981,13 @@ Thin-market honesty rules apply.
   what the wallet must hold spare when a lender accepts (the payoff's interest
   and the new loan's initiation fee, since the new principal arrives in the
   same transaction); and what that loan's own page states before a request
-  (the late fee when it is past due, the end of scheduled interest payments
-  when the loan pays on a schedule, and when the request expires). The review
-  also states the spare amount for all the loans together, which the wallet
+  (the late fee when it is past due; when the loan pays on a schedule, that
+  an overdue payment period makes an acceptance fail until it is settled, so
+  payments must stay current while the request is open, and that scheduled
+  interest ends with this loan; and when the request expires). The loan page
+  and the batch draw these statements from one source, so neither can make
+  one the other omits. The review states the rate ceiling and duration every
+  request asks for, since the inputs are no longer on screen. It also states the spare amount for all the loans together, which the wallet
   must hold now or nothing is sent, and the single approval it will grant: the
   sum of every request's largest possible payoff. It says that this one
   approval also serves any other refinance request the borrower has open on

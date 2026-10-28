@@ -3495,7 +3495,8 @@
       "changedSinceReview": "Ce qu’implique cette demande a changé après votre vérification. Publiez-la depuis sa propre page, qui affiche les conditions actuelles.",
       "ownPageRental": "Une location ne peut pas recevoir de demande de refinancement ; seuls les prêts en tokens le peuvent.",
       "ownPageOpenRequest": "Une demande de refinancement est déjà ouverte sur ce prêt. Sa propre page l’affiche et vous permet de l’annuler.",
-      "approvalLeft": "Votre approbation de tokens pour le protocole s’élève désormais à {{amount}}. Vos demandes de refinancement ouvertes y prélèvent leurs remboursements, donc la réduire peut empêcher une demande d’aboutir."
+      "approvalLeft": "Votre approbation de tokens pour le protocole s’élève désormais à {{amount}}. Vos demandes de refinancement ouvertes y prélèvent leurs remboursements, donc la réduire peut empêcher une demande d’aboutir.",
+      "terms": "Chaque demande porte sur un nouveau prêt de {{days}} jours à un taux annuel d’au plus {{rate}}."
     }
   },
   "contractError": {
