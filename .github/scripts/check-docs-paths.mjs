@@ -210,10 +210,16 @@ const underGitlink = (p) => GITLINKS.some((g) => p === g || p.startsWith(`${g}/`
 const HAS_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 const NOT_A_NAME = /[\s*?{}[\]<>$~|\\"'`]/;
 
-/** Percent-escapes in a link resolve on GitHub; a malformed one stays as written. */
+/**
+ * Percent-escapes in a link resolve on GitHub; a malformed one stays as written.
+ * `tok` is already the path alone (query and fragment were split off before
+ * decoding), so every escape is decoded, the reserved ones included: an
+ * escaped `#`, `?` or `+` is part of the file name, and `decodeURI` would
+ * leave it encoded and look for `a%23b.md` instead of `a#b.md`.
+ */
 const decoded = (tok) => {
   try {
-    return decodeURI(tok);
+    return decodeURIComponent(tok);
   } catch {
     return tok;
   }

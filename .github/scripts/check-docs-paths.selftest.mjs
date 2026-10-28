@@ -35,6 +35,8 @@ const TREE = {
   '.gitignore': '*.log\n!keep.log\n',
   'apps/keeper/wrangler.jsonc': '{}',
   'docs/ops/a b.md': '',
+  'docs/ops/a#b.md': '',
+  'docs/ops/a+b.md': '',
   'docs/ops/exists.md': '',
 };
 
@@ -49,6 +51,8 @@ const CASES = [
   // #1467 r7–r10: extraction shapes that were false alarms under the patterns.
   { name: 'an angle-bracket destination with a space', md: '[x](<a b.md>)', finds: [] },
   { name: 'a percent-escaped destination', md: '[x](a%20b.md)', finds: [] },
+  // #3023 r2: an escaped reserved character is part of the file name.
+  { name: 'percent-escaped reserved characters in a destination', md: '[x](a%23b.md) [y](a%2Bb.md) [z](a%3Fb.md)', finds: ['a%3Fb.md'] },
   { name: 'a titled destination', md: '[x](exists.md "the title")', finds: [] },
   { name: 'a destination on the line after its opener', md: '[x](\nexists.md)', finds: [] },
   { name: 'a live reference definition', md: '[x][r]\n\n[r]: exists.md "t"', finds: [] },
