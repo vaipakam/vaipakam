@@ -1,4 +1,4 @@
-## Thread — Forced close-out card names the lender-KYC refusal (PR #<n>)
+## Thread — Forced close-out card names the lender-KYC refusal (PR #3063)
 
 The lender's close-out card now asks the protocol whether a time-based default would pass its lender-KYC check, using the view the contract side added for exactly this question. Before, the card left that check out on the reasoning that KYC is off on the retail deploy, so on a deployment that turns KYC on it could show a ready close-out the chain would refuse, with only a failed simulation to say so.
 
