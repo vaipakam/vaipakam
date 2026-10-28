@@ -129,8 +129,30 @@ it with `claimAsSeller`. It never goes to the seller's wallet, because the
 payout is part of someone else's transaction (the borrower's repayment, a
 keeper's settlement), and a past lender's wallet must never be able to refuse
 it. A share for a flagged seller simply waits in their vault: the withdrawal is
-screened fail-closed. Each seller bears the fee the slice actually paid, in the
-slice's own net-to-gross proportion.
+screened fail-closed. Each seller's share is netted at the loan's own yield
+fee (`effectiveTreasuryFeeBps`, the rate the terminal split nets a claim at),
+never more than the slice still has. The holder's discount is the holder's:
+`LibVPFIDiscount.resolveLenderYieldFeeFor` resolves it on the holder's part of
+the interest only (`LibInterestLedger.sellersPart` names the sellers' part), so
+the holder never pays a seller's fee in VPFI and a seller's fee is never
+discounted by someone else's tier. The first draft netted sellers at the
+slice's own net-to-gross proportion, which, when the holder paid the fee in
+VPFI, handed the sellers their gross with the holder paying for it (Codex
+#3068 r1).
+
+Every site that pays interest into the held balance rather than to the holder
+reaches the same step first: the obligation handover pays sellers from the
+exiting borrower's interest and records the holder's part as held interest
+(below), and the offset completion pays sellers from the payoff's interest
+before the rest lands in the held balance, which the terminal split does not
+rank.
+
+Every seller credit observes the seller's sanctions status through the
+registry-aware read (`SellerClaimFacet._setAsideForSeller`, the one step every
+seller credit takes), so a flag seen then is recorded as confirmed and
+`claimAsSeller`'s fail-closed screen still holds during a later oracle outage.
+A frozen lender share records the same confirmation through its frozen-claimant
+marker; a seller share has no marker, which is why the step exists.
 
 **At a terminal**, the lender claim row is written as today. The split happens
 once, when the claim is first resolved by either party, in a new host
@@ -160,10 +182,45 @@ same way (`settleSellerClaimsFrom`).
 ## Held balances
 
 `heldForLender` keeps its current meaning and still moves to the buyer at a
-sale. Because a frozen share was never delivered in the ledger, the seller's
-claim includes it. The buyer receives the held tokens and later pays the
-same amount back to the seller out of the interest the seller claim takes
-first. The buyer ends level, and the seller is paid what they earned.
+sale, with one exception. A frozen share, and the interest an obligation
+handover credits there, was paid by the borrower but never delivered to the
+holder, so the ledger records its interest part separately
+(`parkedInterestGross` / `parkedInterestNet`, with `parkedInterestReservedNet`
+naming the frozen parks' part, the only part under the active-held
+reservation). At a sale that part is paid to
+the seller straight out of the held balance, into the seller's vault and
+reserved for `claimAsSeller`, and the seller's earned figure falls by its
+gross before the claim is recorded. The rest of the held balance (any
+principal parked with it, the rate-shortfall deposit) moves to the buyer as
+before.
+
+An earlier draft let the held tokens go to the buyer and had the buyer pay
+the seller back out of later interest. Codex review of #3068 found the gap:
+the borrower's final settlement already credits the parked payment, so a loan
+repaid soon after the sale had no later interest to pay the claim from, and
+the buyer kept the tokens. Paying the seller from the tokens that exist
+removes the loop.
+
+Fail-closed. A seller who is still frozen is paid into their own vault,
+locked, and `claimAsSeller` screens them fail-closed before anything moves.
+When the loan's recorded frozen claimant is a different address and the
+position-move gate still blocks it (flagged, or unverifiable after a confirmed
+flag), the sale is refused with `SanctionedAddress(claimant)`: parked funds
+wait on the recorded address whoever holds the position, so paying them to the
+seller would release them past that rule. One predicate,
+`LibInterestLedger.parkedSaleBlocker`, is read by the settlement and by the
+sale verdict, so the verdict names the refusal. An earlier revision of this
+fix left the parked funds in the held balance instead, which moved them to the
+buyer while the seller's claim still counted them: the same gap again.
+
+## After the terminal
+
+Interest accrues on the ledger only while the loan is Active. A loan that is
+not Active keeps its checkpoint, so a fallback cured back to Active still
+prices the whole stretch, as the borrower is charged for it. Past a terminal,
+`getInterestLedger` reads zero earned and zero owed: what the lender side is
+owed is its claim row. Open seller claims stay listed until the terminal
+split closes them.
 
 ## The sale, after the change
 

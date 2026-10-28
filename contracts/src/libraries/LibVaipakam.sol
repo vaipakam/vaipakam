@@ -3060,6 +3060,20 @@ library LibVaipakam {
         ///      write-off (`LibInterestLedger.writeOffPrincipal`): a recovery
         ///      ranks the holder's principal first at this figure.
         uint256 principalOwed;
+        /// @dev The part of `holderEarnedGross` the borrower already PAID into
+        ///      `heldForLender` rather than to the holder: a share parked because
+        ///      the holder was sanctions-frozen, or the interest an obligation
+        ///      handover credits to the held balance. Gross, and as held (net of
+        ///      the fee). A sale pays it to the seller out of the held balance
+        ///      (`SellerClaimFacet.settleParkedInterestAtSale`), so the buyer
+        ///      never receives interest the seller earned and was already paid.
+        uint256 parkedInterestGross;
+        uint256 parkedInterestNet;
+        /// @dev The part of `parkedInterestNet` held under the active-held
+        ///      reservation (`heldForLenderEncumbered`): the frozen parks. The
+        ///      rest (handover credits) carries no such reservation, so a sale
+        ///      releases only this part of it.
+        uint256 parkedInterestReservedNet;
     }
 
     /// @notice #1209 — one open seller claim: gross interest a lender who

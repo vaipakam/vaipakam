@@ -871,6 +871,25 @@ contract PrecloseFacet is
         address payAsset = _paymentAsset(loan);
         // #1281-011 — the one payer -> treasury pull (refuses a short arrival).
         LibFacet.transferFromPayerToTreasury(msg.sender, payAsset, treasuryFee);
+        // #1209 / #1808 — the open seller claims are paid first out of the
+        // interest, straight from the payer into each seller's vault, and the
+        // holder's part of it is recorded as held for the lender side, so a
+        // later sale pays it to that seller ({LibInterestLedger.holderParked}).
+        // The shortfall is the holder's top-up, never a seller's interest.
+        if (isErc20) {
+            (uint256 sellersGross, uint256 sellersNet) = LibInterestLedger.paySellersFirst(
+                s, loan, msg.sender, payAsset, accruedInterest, accruedInterest - treasuryFee
+            );
+            lenderShare -= sellersNet;
+            LibInterestLedger.holderParked(
+                s,
+                loan,
+                accruedInterest - sellersGross,
+                accruedInterest - treasuryFee - sellersNet,
+                lenderShare,
+                false
+            );
+        }
         if (lenderShare > 0) {
             // T-037 — direct borrower → lender's vault via the cross-payer
             // chokepoint. Counter ticks up under the lender even though the
@@ -1682,6 +1701,17 @@ contract PrecloseFacet is
         // #1281-011 — the one payer -> treasury pull (refuses a short arrival);
         // the payer is Alice, on her standing allowance.
         LibFacet.transferFromPayerToTreasury(loan.borrower, payAssetOffset, treasuryFee);
+        // #1209 / #1808 — the payoff lands in the held balance, not in the
+        // lender claim row the terminal split ranks, so the open seller claims
+        // are paid first here, out of the interest, from Alice into each
+        // seller's vault. Whatever the interest cannot cover closes unpaid at
+        // the terminal split, as on any other close.
+        if (loan.assetType == LibVaipakam.AssetType.ERC20) {
+            (, uint256 sellersNet) = LibInterestLedger.paySellersFirst(
+                s, loan, loan.borrower, payAssetOffset, interestBase, interestBase - treasuryFee
+            );
+            lenderTotal -= sellersNet;
+        }
         // Repay original principal + interest/shortfall into the CURRENT old
         // lender's vault via the cross-payer chokepoint (keeps the Diamond out
         // of the funds path AND ticks protocolTrackedVaultBalance under the

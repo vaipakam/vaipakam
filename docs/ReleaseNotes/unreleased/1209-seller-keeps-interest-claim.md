@@ -10,13 +10,29 @@ treasury takes nothing at the sale.
 
 The seller is paid when the borrower pays. Every later interest payment to the
 lender side, of any kind, pays the open seller claims first, oldest first, and
-then the current holder. The yield fee is taken once, when interest is paid,
-whoever receives it. A seller's share lands in their own vault, set aside for
-them, and they withdraw it when they choose; a share for a sanctions-flagged
-seller waits there until they are clear. When a loan ends in a short recovery,
-the holder's principal is paid first, then the seller claims oldest first. A
-recovery the platform cannot value pays the holder only. Whatever a claim is
-not paid is stated in its closing event.
+then the current holder. That includes the interest paid when a borrower hands
+the loan to a new borrower and the payoff of an offset close. The yield fee is
+taken once, when interest is paid, whoever receives it, and a seller's share
+pays the loan's own fee: the current holder's VPFI fee discount applies only
+to the interest the holder is paid. A seller's share lands in their own vault,
+set aside for them, and they withdraw it when they choose; a share for a
+sanctions-flagged seller waits there until they are clear, and a seller seen
+flagged when a share is credited stays frozen even through an outage of the
+sanctions source. When a loan ends in a short recovery, the holder's principal
+is paid first, then the seller claims oldest first. A recovery the platform
+cannot value pays the holder only. Whatever a claim is not paid is stated in
+its closing event.
+
+Interest the borrower paid while the seller's share was frozen for sanctions
+was set aside for the lender and never reached the seller. At the sale that
+interest is paid to the seller, into their own vault, and the rest of the
+set-aside money moves to the buyer as before. A seller who is still flagged
+is paid into their own vault, locked until they are clear. If the party the
+loan records as frozen is an earlier holder who is still flagged, the sale is
+refused and the sale verdict names that party. Interest
+accrues on the ledger only while a loan is active, so a closed loan reports
+nothing earned and no principal owed there; the lender side's claim on the
+closed loan is what it is owed.
 
 Underneath, each loan now keeps an exact interest ledger: every stretch of time
 is priced at the principal and rate in force over it, and interest counts as

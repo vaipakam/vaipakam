@@ -512,8 +512,9 @@ library LibCloseoutFreeze {
         s.heldForLender[loanId] += amount;
         // #1808 — a parked share is NOT reported to the interest ledger as paid
         // (`LibInterestLedger.holderPaid` runs on the clean branches only), so
-        // the holder's earned figure keeps it; on a sale it becomes part of the
-        // seller's claim while the held balance moves to the buyer.
+        // the holder's earned figure keeps it. The callers record its interest
+        // part (`LibInterestLedger.holderParked`), and a sale pays that part to
+        // the seller out of the held balance before the rest moves on.
         LibSanctionedLock.recordFrozenClaimant(s, loanId, true, frozenHolder);
         // #998 S10 Class B — reserve through the DEDICATED active-held ledger, NOT
         // the single-terminal `encumberLenderProceeds` ledger. That ledger records
@@ -600,6 +601,9 @@ library LibCloseoutFreeze {
         if (holderAmount == 0) return sellersNet;
         uint256 parked = LibSanctionedLock.depositLocked(s, loan.lender, loanId, asset, holderAmount);
         _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, parked);
+        LibInterestLedger.holderParked(
+            s, loan, interestGross - sellersGross, interestNet - sellersNet, parked, true
+        );
         delivered = sellersNet + parked;
     }
 
@@ -638,6 +642,9 @@ library LibCloseoutFreeze {
         if (holderAmount == 0) return;
         LibSanctionedLock.depositLockedFrom(s, payer, loan.lender, loanId, asset, holderAmount);
         _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, holderAmount);
+        LibInterestLedger.holderParked(
+            s, loan, interestGross - sellersGross, interestNet - sellersNet, holderAmount, true
+        );
     }
 
     /// @notice Class B — pay-or-freeze an Active-loan lender share funded from a

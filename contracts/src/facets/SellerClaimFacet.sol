@@ -145,7 +145,7 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
                     LibSanctionedLock.depositLockedFrom(s, payer, sh.seller, loanId, asset, sh.net);
                     credited = sh.net;
                 }
-                LibEncumbrance.encumberSellerInterest(loanId, sh.seller, asset, credited);
+                _setAsideForSeller(s, loanId, sh.seller, asset, credited);
             }
             emit SellerInterestPaid(loanId, sh.seller, asset, sh.gross, sh.net, credited);
         }
@@ -176,6 +176,58 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
     ) external onlyDiamondInternal returns (uint256 paid) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         paid = _splitAndPay(s, loanId, s.loans[loanId], fromUser, asset, recovery, false);
+    }
+
+    /// @notice Pays the seller, at a sale, the interest the borrower already
+    ///         paid on their position into `heldForLender` rather than to them:
+    ///         a share parked because the holder was sanctions-frozen, or an
+    ///         obligation handover's credit. Reached only through
+    ///         {LibInterestLedger.recordSale}, after the sale route moved the
+    ///         held balance into `heldAt`'s vault (the buyer's).
+    /// @dev    The held balance falls by what leaves, and so does the active-held
+    ///         reservation by the frozen parks' part of it; the rest moves on
+    ///         with the position as before. The seller's earned figure falls by
+    ///         its gross, so the claim the sale then records carries only
+    ///         interest the loan still owes.
+    ///
+    ///         Fail-closed: a frozen seller's share lands locked in their own
+    ///         vault and `claimAsSeller` screens them before it moves. When the
+    ///         loan's recorded frozen claimant is another address that is still
+    ///         blocked, the sale is refused ({LibInterestLedger.parkedSaleBlocker}),
+    ///         because parked funds wait on that recorded address.
+    function settleParkedInterestAtSale(uint256 loanId, address seller, address heldAt)
+        external
+        onlyDiamondInternal
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.InterestLedger storage l = s.interestLedger[loanId];
+        address blocker = LibInterestLedger.parkedSaleBlocker(s, loanId, seller);
+        if (blocker != address(0)) revert LibVaipakam.SanctionedAddress(blocker);
+        uint256 net = l.parkedInterestNet;
+        uint256 gross = l.parkedInterestGross;
+        uint256 reservedNet = l.parkedInterestReservedNet;
+        // Paid now, or (past what the held balance still carries) left in the
+        // seller's claim below; either way a later sale must not see it.
+        l.parkedInterestNet = 0;
+        l.parkedInterestGross = 0;
+        l.parkedInterestReservedNet = 0;
+        uint256 held = s.heldForLender[loanId];
+        if (held == 0) return;
+        if (net > held) {
+            gross = (gross * held) / net;
+            net = held;
+        }
+        // Only the frozen parks sit under the active-held reservation, so only
+        // their part of what leaves releases it; the rest of the reservation
+        // stays on the frozen funds that move on to the buyer.
+        if (reservedNet > net) reservedNet = net;
+        LibEncumbrance.releaseActiveHeldPart(loanId, heldAt, reservedNet);
+        s.heldForLender[loanId] = held - net;
+        address asset = s.loans[loanId].principalAsset;
+        uint256 credited = LibSanctionedLock.depositLockedFromVault(s, heldAt, seller, loanId, asset, net);
+        _setAsideForSeller(s, loanId, seller, asset, credited);
+        LibInterestLedger.holderPaid(s, s.loans[loanId], gross);
+        emit SellerInterestPaid(loanId, seller, asset, gross, net, credited);
     }
 
     // ─── Seller entry ──────────────────────────────────────────────────────
@@ -209,6 +261,12 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
     /// @notice A loan's interest ledger: what the current holder has earned and
     ///         not been paid as of now, the principal the lender side is owed,
     ///         the last checkpoint, and the open seller claims, oldest first.
+    /// @dev    Only an Active or FallbackPending loan reports the holder's
+    ///         earned interest and the principal owed. Past its terminal the
+    ///         loan owes the lender side its claim row (`getClaimable`), so
+    ///         both read 0 here; open seller claims are listed until the
+    ///         terminal split closes them. Interest accrues only while the loan
+    ///         is Active.
     function getInterestLedger(uint256 loanId)
         external
         view
@@ -221,8 +279,13 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        holderEarned = LibInterestLedger.holderEarnedNow(s, loan);
-        principalOwed = LibInterestLedger.principalOwed(s, loan);
+        if (
+            loan.status == LibVaipakam.LoanStatus.Active ||
+            loan.status == LibVaipakam.LoanStatus.FallbackPending
+        ) {
+            holderEarned = LibInterestLedger.holderEarnedNow(s, loan);
+            principalOwed = LibInterestLedger.principalOwed(s, loan);
+        }
         touchedAt = s.interestLedger[loanId].touchedAt;
         sellerClaims = s.sellerInterestClaims[loanId];
     }
@@ -289,6 +352,23 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
         }
     }
 
+    /// @dev Sets `credited` aside for `seller` in their vault, for
+    ///      {claimAsSeller}, and observes their sanctions status: a flag seen
+    ///      now is recorded as confirmed, so the fail-closed screen at the
+    ///      withdrawal still holds during a later oracle outage. Every seller
+    ///      credit (inline, at a sale, at a terminal) goes through here; a seller
+    ///      share has no frozen-claimant marker of its own to carry that record.
+    function _setAsideForSeller(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        address seller,
+        address asset,
+        uint256 credited
+    ) private {
+        LibEncumbrance.encumberSellerInterest(loanId, seller, asset, credited);
+        LibSanctionedLock.mustFreezeParty(s, seller);
+    }
+
     /// @dev Pays one closing seller claim its part `pay` of the recovery from
     ///      `fromUser`'s vault into the seller's own, reserved for
     ///      {claimAsSeller}, and records how the claim closed. Its own frame.
@@ -306,7 +386,7 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
             uint256 credited = LibSanctionedLock.depositLockedFromVault(
                 s, fromUser, claim.seller, loanId, asset, pay
             );
-            LibEncumbrance.encumberSellerInterest(loanId, claim.seller, asset, credited);
+            _setAsideForSeller(s, loanId, claim.seller, asset, credited);
         }
         uint256 netOwed =
             (claim.grossOwed * (LibVaipakam.BASIS_POINTS - feeBps)) / LibVaipakam.BASIS_POINTS;

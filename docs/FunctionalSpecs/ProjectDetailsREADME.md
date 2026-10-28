@@ -2443,9 +2443,18 @@ which Liam forfeited his accrued interest to the treasury at the sale.
   carries exactly the borrower risk he carried while he held the position, and
   no more.
 - **The yield fee is taken once, when interest is paid.** A seller claim is
-  recorded gross and paid net of the loan's yield fee, the same fee the holder
-  would have paid on the same interest. The treasury takes nothing at the sale
-  itself.
+  recorded gross and paid net of the loan's own yield fee. The treasury takes
+  nothing at the sale itself.
+- **A holder's fee discount is the holder's alone.** A fee discount the current
+  holder has earned (their VPFI tier) applies only to the interest the holder
+  is paid. It never lowers the fee on a seller's share, and the holder never
+  pays, in VPFI or otherwise, the fee on interest that goes to a seller.
+- **Every payment of interest to the lender side pays sellers first.** That
+  includes interest the borrower pays when handing the loan to a new borrower,
+  and the payoff of a borrower's offset close, even though those land in the
+  lender side's held balance rather than in the holder's wallet. The holder's
+  part of such interest that is still held when the position next sells is
+  paid to that seller at the sale, like interest held for a frozen holder.
 - **What Liam earned is measured exactly.** The platform keeps a running record
   per loan of the interest the current holder has earned and not been paid.
   Each stretch of time is priced at the principal and rate in force over that
@@ -2468,7 +2477,8 @@ which Liam forfeited his accrued interest to the treasury at the sale.
   choose. It is never pushed to a seller's wallet, because the payment is part
   of someone else's transaction and a past lender must never be able to block
   it. A share for a sanctions-flagged seller simply waits there until they are
-  clear.
+  clear. A seller seen flagged when a share is credited to them is recorded as
+  confirmed, so an outage of the sanctions source cannot release it later.
 - **The number of open seller claims on one loan is bounded.** A loan carries
   at most four open seller claims. A sale that would open a fifth is refused
   until older claims are paid, and the answer to whether the sale route is open
@@ -2481,12 +2491,24 @@ which Liam forfeited his accrued interest to the treasury at the sale.
 - **These rules bind both sale routes identically.** A rule that applied to the
   direct sale and not to the listed sale's completion would let the same
   position be sold on different economics depending on which door it left by.
-- **Held balances move to the buyer, and the claim keeps both sides level.**
-  Money already set aside for the lender (for example, interest held for a
-  sanctions-flagged holder) still moves to Noah with the position. Because that
-  money never reached Liam, his claim still includes it, and Noah pays it back
-  to Liam out of the interest the claim takes first. Liam is paid what he
-  earned; Noah ends level.
+- **Interest set aside for the seller is paid to the seller at the sale.**
+  Interest the borrower paid while Liam's share was frozen (for example while
+  he was sanctions-flagged) was set aside for the lender and never reached him.
+  At the sale that interest goes to Liam, into his own vault and set aside for
+  him, and his earned figure falls by it before his claim is recorded. The rest
+  of the money set aside for the lender moves to Noah with the position. So the
+  seller is paid from money that already exists, never from interest the loan
+  may not go on to earn.
+- **Set-aside interest stays tied to the frozen party.** If Liam himself is
+  still frozen when his position sells, the interest lands locked in his own
+  vault and he can withdraw it only once he is shown to be clear. If the party
+  recorded as frozen is someone else (an earlier holder) and is still flagged,
+  or cannot be shown to be clear after a confirmed flag, the sale is refused,
+  and the answer to whether the sale route is open names that party, because
+  the set-aside money waits on them whoever holds the position.
+- **Interest accrues only while the loan is active.** Once a loan has ended,
+  the record reports nothing earned and no principal owed by the ledger; what
+  the lender side is owed is its claim on the closed loan.
 - **Anyone can see the record.** The platform reports, per loan, what the
   current holder has earned and not been paid, the principal the lender side is
   owed, and each open seller claim with what it is owed.
@@ -2645,7 +2667,7 @@ The **ceiling** is on money already set aside for the lender, which transfers to
 
 Neither bound is redundant. A park enlarges the transferring balance, which only the ceiling sees. A repayment that reduces the loan's balance parks nothing but changes the principal the seller is paid, which only the floor sees.
 
-The **direct sale** — the one-transaction route that spends a standing buy offer rather than resting a listing — carries the same optional bound, because the two sale routes must let a seller bind their economics identically or the same position could be sold on different terms depending on which route it left by. Here there is no listing window; the drift the bound guards is the interval between the seller reading a quote and their own transaction mining, in which a settlement can move the live state the sale recomputes from. The bound submission carries the same figures the listed route binds — the seller's reviewed minimum net receipt and a ceiling on the held-for-lender balance that migrates to the buyer — plus a required deadline, and the sale is refused when execution would be worse for the seller: a net below the floor, a migrating held balance above the ceiling (parked interest that grows between quote and fill is forfeited whole to the buyer, so the ceiling is the seller's protection against it), or a fill past the deadline. It passes when execution is at least as good, each refusal naming its condition. The bound is checked against the very figures the settlement uses, so it cannot diverge from what the seller actually receives. The original unbound direct sale is unchanged and remains available.
+The **direct sale** — the one-transaction route that spends a standing buy offer rather than resting a listing — carries the same optional bound, because the two sale routes must let a seller bind their economics identically or the same position could be sold on different terms depending on which route it left by. Here there is no listing window; the drift the bound guards is the interval between the seller reading a quote and their own transaction mining, in which a settlement can move the live state the sale recomputes from. The bound submission carries the same figures the listed route binds — the seller's reviewed minimum net receipt and a ceiling on the held-for-lender balance that migrates to the buyer — plus a required deadline, and the sale is refused when execution would be worse for the seller: a net below the floor, a migrating held balance above the ceiling (the held balance can grow between quote and fill, so the ceiling is the seller's protection against it; it counts the whole held balance, including any interest set aside for the seller that the sale then pays to the seller rather than moving it to the buyer), or a fill past the deadline. It passes when execution is at least as good, each refusal naming its condition. The bound is checked against the very figures the settlement uses, so it cannot diverge from what the seller actually receives. The original unbound direct sale is unchanged and remains available.
 
 The deadline is required on the bound route rather than optional, and it caps a third cost the other two bounds cannot: the sale forfeits the seller's pending usage reward measured at the day it settles, a loss that grows the longer the transaction is delayed. A finite deadline bounds that forfeiture to the window the seller chose, mirroring the mandatory finite expiry the listed route carries. The two routes must cap the same three costs — settlement, transferred held balance, and reward forfeiture — or the same position could be sold on materially different terms by choosing a route; a seller who wants none of the three capped uses the unbound sale, where the unbounded reward loss is disclosed rather than consented to.
 

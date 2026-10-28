@@ -416,6 +416,20 @@ library LibEncumbrance {
         notifyTierExclusion(loanId, true);
     }
 
+    /// @notice #1209 — release `amount` of the active-held reservation, held
+    ///         under `lender`'s aggregate, when that much of the held balance
+    ///         leaves for a seller at a sale. Never more than is reserved.
+    function releaseActiveHeldPart(uint256 loanId, address lender, uint256 amount) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 reserved = s.heldForLenderEncumbered[loanId];
+        if (amount > reserved) amount = reserved;
+        if (amount == 0) return;
+        _decrementAggregate(lender, s.heldForLenderEncumberedAsset[loanId], 0, amount);
+        s.heldForLenderEncumbered[loanId] = reserved - amount;
+        if (reserved == amount) s.heldForLenderEncumberedAsset[loanId] = address(0);
+        notifyTierExclusion(loanId, true);
+    }
+
     /// @notice #2440 — keep an ACTIVE loan's lender-side reservations within
     ///         what is now held for the lender. A move of `heldForLender` whose
     ///         token delivered less than it sent (consolidation into the

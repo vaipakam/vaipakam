@@ -549,11 +549,12 @@ library FacetSelectors {
         s[2] = SaleExitVerdictFacet.requireSaleAdmission.selector;
     }
 
-    /// @notice Full external selector surface of {SellerClaimFacet} (6).
+    /// @notice Full external selector surface of {SellerClaimFacet} (7).
     ///
     /// @dev    #1209 / #1808. The seller-claim host: the seller-first payout
     ///         and the terminal split every interest path and ClaimFacet
-    ///         self-call, the seller's own claim, and the ledger views. No
+    ///         self-call, the sale-time settlement of parked interest, the
+    ///         seller's own claim, and the ledger views. No
     ///         curated script cuts it: they all refuse a Diamond that predates
     ///         it (`PredatesInterestLedger`), so it reaches a chain by fresh
     ///         deploy or the all-facets refresh.
@@ -563,13 +564,14 @@ library FacetSelectors {
     ///         (`getSellerClaimFacetSelectors`) return it, and
     ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
     function sellerClaim() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](7);
         s[0] = SellerClaimFacet.paySellersFirst.selector;
         s[1] = SellerClaimFacet.resolveSellerClaims.selector;
         s[2] = SellerClaimFacet.settleSellerClaimsFrom.selector;
         s[3] = SellerClaimFacet.claimAsSeller.selector;
         s[4] = SellerClaimFacet.getInterestLedger.selector;
         s[5] = SellerClaimFacet.getSellerInterestHeld.selector;
+        s[6] = SellerClaimFacet.settleParkedInterestAtSale.selector;
     }
 
     /// @notice Full external selector surface of {NumeraireValueFacet} (3).

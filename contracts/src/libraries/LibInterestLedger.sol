@@ -88,6 +88,9 @@ library LibInterestLedger {
         LibVaipakam.Storage storage s,
         LibVaipakam.Loan storage loan
     ) internal view returns (uint256) {
+        // Interest accrues to the lender side only while the loan is Active.
+        // Past its terminal, what the lender side is owed is its claim row.
+        if (loan.status != LibVaipakam.LoanStatus.Active) return 0;
         uint256 from = _touchedAt(s.interestLedger[loan.id], loan);
         if (block.timestamp <= from) return 0;
         return (loan.principal * loan.interestRateBps * (block.timestamp - from))
@@ -126,6 +129,41 @@ library LibInterestLedger {
         return n < MAX_SELLER_CLAIMS || claims[n - 1].seller == seller;
     }
 
+    /// @notice The gross interest the open seller claims on `loanId` are owed,
+    ///         at most `cap`: the part of an interest slice of `cap` that goes
+    ///         to past sellers before the holder. The yield-fee discount reads
+    ///         it, so a holder's discount never prices a seller's interest.
+    function sellersPart(LibVaipakam.Storage storage s, uint256 loanId, uint256 cap)
+        internal
+        view
+        returns (uint256 owed)
+    {
+        LibVaipakam.SellerInterestClaim[] storage claims = s.sellerInterestClaims[loanId];
+        for (uint256 i; i < claims.length && owed < cap; ++i) owed += claims[i].grossOwed;
+        if (owed > cap) owed = cap;
+    }
+
+    /// @notice Who, if anyone, stops a sale by `seller` from paying out the
+    ///         interest parked for a frozen holder: the loan's recorded frozen
+    ///         lender-side claimant when that is a different address and the
+    ///         position-move gate still blocks it (flagged, or unverifiable
+    ///         after a confirmed flag). Parked funds wait on that recorded
+    ///         address whoever holds the position, so the sale is refused
+    ///         rather than paying them to another wallet. A frozen `seller`
+    ///         is not a blocker: the share lands locked in their own vault and
+    ///         `claimAsSeller` screens them fail-closed. The sale and the sale
+    ///         verdict both read this.
+    function parkedSaleBlocker(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        address seller
+    ) internal view returns (address) {
+        if (s.interestLedger[loanId].parkedInterestNet == 0) return address(0);
+        address frozen = s.sanctionsLockedLenderClaimant[loanId];
+        if (frozen == address(0) || frozen == seller) return address(0);
+        return LibVaipakam.positionMovePartyBlocked(frozen) ? frozen : address(0);
+    }
+
     // ─── Checkpoint and the single writer ──────────────────────────────────
 
     /// @notice Opens the ledger of a loan being originated, at its start time,
@@ -151,7 +189,10 @@ library LibInterestLedger {
             l.touchedAt = loan.startTime;
             l.principalOwed = loan.principal;
         }
-        if (block.timestamp > l.touchedAt) {
+        // Only an Active loan accrues. A loan that is not Active keeps its
+        // checkpoint, so a fallback cured back to Active still prices the
+        // whole stretch since it, as the borrower is charged for it.
+        if (loan.status == LibVaipakam.LoanStatus.Active && block.timestamp > l.touchedAt) {
             l.holderEarnedGross += (loan.principal * loan.interestRateBps * (block.timestamp - l.touchedAt))
                 / (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
             l.touchedAt = uint64(block.timestamp);
@@ -207,11 +248,22 @@ library LibInterestLedger {
     function recordSale(
         LibVaipakam.Storage storage s,
         LibVaipakam.Loan storage loan,
-        address seller
+        address seller,
+        address heldAt
     ) internal {
         if (loan.assetType != LibVaipakam.AssetType.ERC20) return;
         touch(s, loan);
         LibVaipakam.InterestLedger storage l = s.interestLedger[loan.id];
+        // Interest the borrower already paid but that was parked for a frozen
+        // holder is in the held balance, not owed by the loan: the seller is
+        // paid it now, out of that balance, instead of carrying it as a claim
+        // the buyer's held tokens would otherwise leave unbacked.
+        if (l.parkedInterestNet != 0) {
+            LibFacet.crossFacetCall(
+                abi.encodeCall(SellerClaimFacet.settleParkedInterestAtSale, (loan.id, seller, heldAt)),
+                bytes4(0)
+            );
+        }
         uint256 earned = l.holderEarnedGross;
         if (earned == 0) return;
         l.holderEarnedGross = 0;
@@ -281,11 +333,44 @@ library LibInterestLedger {
         l.holderEarnedGross = l.holderEarnedGross > holderGross ? l.holderEarnedGross - holderGross : 0;
     }
 
+    /// @notice Records that the current holder's part of an interest slice was
+    ///         paid into `heldForLender` rather than to the holder: parked
+    ///         because the holder is sanctions-frozen, or credited there by an
+    ///         obligation handover. The earned figure keeps it; a sale settles
+    ///         it to the seller from the held balance.
+    /// @param holderGross The holder's gross part of the slice.
+    /// @param holderNet   The holder's net part of the slice.
+    /// @param parked      What the held balance received for the holder's part
+    ///                    (principal included, so it may exceed `holderNet`).
+    /// @param reserved    Whether the held credit sits under the active-held
+    ///                    reservation (a frozen park) or not (a handover).
+    function holderParked(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.Loan storage loan,
+        uint256 holderGross,
+        uint256 holderNet,
+        uint256 parked,
+        bool reserved
+    ) internal {
+        if (holderNet == 0 || parked == 0 || loan.assetType != LibVaipakam.AssetType.ERC20) return;
+        LibVaipakam.InterestLedger storage l = s.interestLedger[loan.id];
+        // A short arrival (a token that charges on transfer) parks less; the
+        // interest counts first, at the slice's own net-to-gross proportion.
+        uint256 net = holderNet < parked ? holderNet : parked;
+        l.parkedInterestNet += net;
+        l.parkedInterestGross += (holderGross * net) / holderNet;
+        if (reserved) l.parkedInterestReservedNet += net;
+    }
+
     /// @notice Takes an interest slice off the open seller claims, oldest
     ///         first, each up to what it is owed, and returns each seller's
-    ///         share. Each net is the slice's own net-to-gross proportion of
-    ///         the gross taken, so a seller bears exactly the fee this slice
-    ///         paid. Fully paid claims leave the list.
+    ///         share. Each net is the gross taken less the loan's own yield fee
+    ///         (`effectiveTreasuryFeeBps`, the rate the terminal split nets a
+    ///         claim at), never more than the slice still has: the holder's
+    ///         yield-fee discount is the holder's, so it neither lowers nor
+    ///         raises a seller's fee ({LibVPFIDiscount.resolveLenderYieldFeeFor}
+    ///         prices it on the holder's part only). Fully paid claims leave the
+    ///         list.
     /// @dev    Bookkeeping only; {SellerClaimFacet} moves the funds. `shares`
     ///         has one entry per claim that was open; an entry the slice did
     ///         not reach is left empty (zero seller and amounts).
@@ -299,12 +384,16 @@ library LibInterestLedger {
         uint256 n = claims.length;
         shares = new SellerShare[](n);
         uint256 remaining = interestGross;
+        uint256 netLeft = interestNet;
+        uint256 keepBps = LibVaipakam.BASIS_POINTS - LibVaipakam.effectiveTreasuryFeeBps(s.loans[loanId]);
         uint256 paidOff;
         for (uint256 i; i < n && remaining > 0; ++i) {
             uint256 owed = claims[i].grossOwed;
             uint256 take = owed < remaining ? owed : remaining;
             remaining -= take;
-            uint256 net = (take * interestNet) / interestGross;
+            uint256 net = (take * keepBps) / LibVaipakam.BASIS_POINTS;
+            if (net > netLeft) net = netLeft;
+            netLeft -= net;
             shares[i] = SellerShare({seller: claims[i].seller, gross: take, net: net});
             sellersGross += take;
             sellersNet += net;

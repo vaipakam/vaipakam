@@ -33,7 +33,9 @@ library LibLoan {
     ) internal returns (uint256 newTokenId) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        LibInterestLedger.recordSale(s, loan, seller);
+        // Both sale routes have moved the held balance into the buyer's vault
+        // by now, so a parked share the seller is paid comes from there.
+        LibInterestLedger.recordSale(s, loan, seller, newLender);
         // #998 S10 Class B NOTE — the dedicated active-held reservation is NOT
         // migrated here: the sale callers withdraw `priorHeld` from the OLD
         // lender's vault BEFORE calling this helper, so the reservation must be

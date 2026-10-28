@@ -234,6 +234,17 @@ contract SaleExitVerdictFacet {
             );
             if (_full(r)) return _trim(r);
         }
+        // #1209 — interest parked for a frozen holder is paid to the seller at
+        // the sale; it waits on the recorded frozen claimant, so a different
+        // claimant who is still blocked refuses the sale (one rule, shared
+        // with the settlement).
+        if (loan.assetType == LibVaipakam.AssetType.ERC20) {
+            address blocker = LibInterestLedger.parkedSaleBlocker(s, loanId, holder);
+            if (blocker != address(0)) {
+                _add(r, abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, blocker), 0);
+                if (_full(r)) return _trim(r);
+            }
+        }
         // The listing vehicle escrows no collateral, so it needs ERC-20 collateral.
         if (listing && loan.collateralAssetType != LibVaipakam.AssetType.ERC20) {
             _add(
