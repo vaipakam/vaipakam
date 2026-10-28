@@ -22,6 +22,9 @@ import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
+import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -468,16 +471,25 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(lender);
         _f().setAutoExtendLenderCaps(loanId, true, 0, 1000, farExpiry);
 
-        // Pre-fund the borrower's vault with principal asset so the extension's
-        // per-term interest settlement (`_routeInterest` → vault withdraw) clears.
-        address borrowerVault =
-            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
-        ERC20Mock(mockERC20).mint(borrowerVault, 10 ether);
-        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
-            borrower, mockERC20, 10 ether
-        );
+        // #2814 — the borrower reserves principal asset for the loan's
+        // extensions through the one deployed route, so the extension's
+        // per-term interest settlement (`_routeInterest` → vault withdraw)
+        // clears.
+        _fundReserve(loanId, borrower, EXTEND_RESERVE);
 
         _warpToExtendWindow(loanId);
+    }
+
+    uint256 internal constant EXTEND_RESERVE = 10 ether;
+
+    /// @dev #2814 — `who` deposits `amount` of the principal asset from their
+    ///      wallet into the extension reserve for `loanId`.
+    function _fundReserve(uint256 loanId, address who, uint256 amount) internal {
+        ERC20Mock(mockERC20).mint(who, amount);
+        vm.startPrank(who);
+        ERC20(mockERC20).approve(address(diamond), amount);
+        _f().fundExtendReserve(loanId, amount);
+        vm.stopPrank();
     }
 
     /// @dev Warp to the moment the loan's extension window opens (#2738).
@@ -1667,5 +1679,149 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             100 ether,
             "freeBalance = raw - sum(liens)"
         );
+    }
+
+    // ─── #2814 — the extension reserve ───────────────────────────────
+
+    /// @notice #2814 — the extension's charge comes out of the holder's reserve
+    ///         first, equals what the funding view said it would be, and the
+    ///         draw is stated in the event.
+    function test_2814_extension_drawsTheReserveFirst_atTheViewsCharge() public {
+        uint256 loanId = _setupExtendableLoan();
+        (address asset, uint256 reserved, uint256 otherFree, uint256 chargeNow, ) =
+            _f().getExtendFunding(loanId, borrower);
+        assertEq(asset, mockERC20, "the principal asset");
+        assertEq(reserved, EXTEND_RESERVE, "the deposit is reserved");
+        assertEq(otherFree, 0, "the reserve is not free balance");
+        assertGt(chargeNow, 0, "interest is owed");
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit AutoLifecycleFacet.ExtendChargeDrawn(
+            loanId, borrower, mockERC20, chargeNow, 0, EXTEND_RESERVE - chargeNow
+        );
+        vm.prank(borrower);
+        _f().extendLoanInPlace(loanId, 500, 30);
+        (, uint256 left, , , ) = _f().getExtendFunding(loanId, borrower);
+        assertEq(left, EXTEND_RESERVE - chargeNow, "the charge left the reserve");
+    }
+
+    /// @notice #2814 — a reserve short of the charge, with nothing else free,
+    ///         refuses the extension rather than paying out of other balance.
+    function test_2814_extension_refusedWhenTheReserveFallsShort() public {
+        uint256 loanId = _buildActiveLoan();
+        uint64 farExpiry = uint64(block.timestamp + 400 days);
+        vm.prank(borrower);
+        _f().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
+        vm.prank(lender);
+        _f().setAutoExtendLenderCaps(loanId, true, 0, 1000, farExpiry);
+        _fundReserve(loanId, borrower, 1);
+        _warpToExtendWindow(loanId);
+        vm.prank(borrower);
+        vm.expectRevert();
+        _f().extendLoanInPlace(loanId, 500, 30);
+        (, uint256 reserved, , , ) = _f().getExtendFunding(loanId, borrower);
+        assertEq(reserved, 1, "a refused extension takes nothing");
+    }
+
+    /// @notice #2814 — the charge at the end of the window is the most an
+    ///         extension of this term can cost, and an extension at that
+    ///         moment charges exactly it.
+    function test_2814_chargeAtGraceEnd_isWhatAnExtensionThenCharges() public {
+        uint256 loanId = _setupExtendableLoan();
+        (, , , uint256 chargeNow, uint256 chargeAtEnd) = _f().getExtendFunding(loanId, borrower);
+        assertGt(chargeAtEnd, chargeNow, "later costs more (interest and late fee)");
+        (, uint64 closesAt) = _f().getAutoExtendWindow(loanId);
+        vm.warp(closesAt);
+        (, , , uint256 chargeThen, ) = _f().getExtendFunding(loanId, borrower);
+        assertEq(chargeThen, chargeAtEnd, "the view's ceiling is the charge at the grace end");
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit AutoLifecycleFacet.ExtendChargeDrawn(
+            loanId, borrower, mockERC20, chargeAtEnd, 0, EXTEND_RESERVE - chargeAtEnd
+        );
+        vm.prank(borrower);
+        _f().extendLoanInPlace(loanId, 500, 30);
+    }
+
+    /// @notice #2814 — unused reserve goes back to the depositor's wallet, and
+    ///         no more than is reserved.
+    function test_2814_withdraw_returnsUnusedReserveToTheWallet() public {
+        uint256 loanId = _buildActiveLoan();
+        _fundReserve(loanId, borrower, 3 ether);
+        uint256 walletBefore = ERC20(mockERC20).balanceOf(borrower);
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibEncumbrance.ExtendReserveInsufficient.selector, loanId, borrower, 4 ether, 3 ether
+            )
+        );
+        _f().withdrawExtendReserve(loanId, 4 ether);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit AutoLifecycleFacet.ExtendReserveWithdrawn(loanId, borrower, mockERC20, 3 ether, 0);
+        vm.prank(borrower);
+        _f().withdrawExtendReserve(loanId, 3 ether);
+        assertEq(ERC20(mockERC20).balanceOf(borrower), walletBefore + 3 ether, "back in the wallet");
+        (, uint256 reserved, , , ) = _f().getExtendFunding(loanId, borrower);
+        assertEq(reserved, 0, "nothing left reserved");
+    }
+
+    /// @notice #2814 — a repayment leaves the reserve alone, and the depositor
+    ///         withdraws it after the loan has closed.
+    function test_2814_reserve_survivesRepayment_andIsWithdrawnAfter() public {
+        uint256 loanId = _buildActiveLoan();
+        _fundReserve(loanId, borrower, 2 ether);
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+        ERC20Mock(mockERC20).mint(borrower, LOAN_PRINCIPAL);
+        vm.startPrank(borrower);
+        ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        vm.stopPrank();
+        (, uint256 reserved, , uint256 chargeNow, ) = _f().getExtendFunding(loanId, borrower);
+        assertEq(reserved, 2 ether, "the repayment took none of it");
+        assertEq(chargeNow, 0, "a closed loan cannot be extended");
+        uint256 walletBefore = ERC20(mockERC20).balanceOf(borrower);
+        vm.prank(borrower);
+        _f().withdrawExtendReserve(loanId, 2 ether);
+        assertEq(ERC20(mockERC20).balanceOf(borrower), walletBefore + 2 ether, "withdrawn after the close");
+    }
+
+    /// @notice #2814 — only the current borrower-position holder funds, only a
+    ///         non-zero amount, and only while extension is switched on.
+    function test_2814_fund_refusals() public {
+        uint256 loanId = _buildActiveLoan();
+        ERC20Mock(mockERC20).mint(lender, 1 ether);
+        vm.startPrank(lender);
+        ERC20(mockERC20).approve(address(diamond), 1 ether);
+        vm.expectRevert(AutoLifecycleFacet.NotBorrowerNftOwner.selector);
+        _f().fundExtendReserve(loanId, 1 ether);
+        vm.stopPrank();
+        vm.prank(borrower);
+        vm.expectRevert(AutoLifecycleFacet.ExtendReserveZeroAmount.selector);
+        _f().fundExtendReserve(loanId, 0);
+        _admin().setAutoExtendEnabled(false);
+        vm.prank(borrower);
+        vm.expectRevert(AutoLifecycleFacet.AutoExtendDisabled.selector);
+        _f().fundExtendReserve(loanId, 1 ether);
+    }
+
+    /// @notice #2814 — an extension draws only the CURRENT holder's reserve: a
+    ///         reserve left by a holder who transferred the position pays
+    ///         nothing, and stays theirs to withdraw.
+    function test_2814_reserve_staysWithTheDepositorAfterATransfer() public {
+        uint256 loanId = _buildActiveLoan();
+        _fundReserve(loanId, borrower, 2 ether);
+        address newHolder = makeAddr("newBorrowerHolder");
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        vm.prank(borrower);
+        VaipakamNFTFacet(address(diamond)).transferFrom(borrower, newHolder, l.borrowerTokenId);
+        (, uint256 forNew, , , ) = _f().getExtendFunding(loanId, newHolder);
+        assertEq(forNew, 0, "the new holder has no reserve");
+        vm.prank(newHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibEncumbrance.ExtendReserveInsufficient.selector, loanId, newHolder, 1, 0
+            )
+        );
+        _f().withdrawExtendReserve(loanId, 1);
+        vm.prank(borrower);
+        _f().withdrawExtendReserve(loanId, 2 ether);
     }
 }
