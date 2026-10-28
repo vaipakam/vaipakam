@@ -1,4 +1,4 @@
-## Thread — A read-only RPC proxy keeps provider keys out of the app bundle (PR #<n>)
+## Thread — A read-only RPC proxy keeps provider keys out of the app bundle (PR #3019)
 
 The connected app reads chain state from the visitor's browser, and a build that wanted a keyed provider endpoint used to put its URL in a `VITE_*` variable. Vite compiles the whole build environment into the bundle, so that key was public to anyone who opened the page, whether or not the app ever used it. A new Worker, the read-only RPC proxy, holds each chain's provider URL as a secret instead. A build that names the proxy's origin ships that origin and no key.
 
