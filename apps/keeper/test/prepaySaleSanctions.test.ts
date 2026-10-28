@@ -285,6 +285,30 @@ describe('the prepay-sale sanctions sync', () => {
     expect(String(sender.unread.get('sales'))).toMatch(/cutoff/);
   });
 
+  it('stops the offer listings at their stage cutoff and still screens the loan listings already read', async () => {
+    d.active = [1n];
+    d.loanListings.set(1n, { hash: hash(1), parties: [addr(1)] });
+    d.flagged.add(addr(1));
+    ledger.page = () => new Promise<never>(() => {});
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      // The scan's cutoff falls 200 ms from now, the listing stage's one stage
+      // reserve later; the sends get the send reserve after the screens.
+      const t0 = Date.now();
+      const done = run(t0 + SEND_RESERVE_MS + 2 * STAGE_RESERVE_MS + 200);
+      await vi.advanceTimersByTimeAsync(STAGE_RESERVE_MS + 300);
+      const { report, sender } = await done;
+      expect(Date.now() - t0).toBeLessThan(STAGE_RESERVE_MS + SEND_RESERVE_MS);
+      expect(fns()).toEqual(['syncPrepaySaleListing(1)']);
+      expect(report.cancelled).toEqual(['loan 1']);
+      expect(report.offerListings).toBe(0);
+      expect(String(sender.unread.get('sales:offers'))).toMatch(/cutoff/);
+      expect(cursors.rows.get(OFFER_FLOOR_ITEM)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reports a sync the contract left live when its own read confirms no flag', async () => {
     d.active = [1n];
     d.loanListings.set(1n, { hash: hash(1), parties: [addr(1)] });

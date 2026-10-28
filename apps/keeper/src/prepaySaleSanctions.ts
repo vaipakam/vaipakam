@@ -211,7 +211,17 @@ export async function syncSaleListings(chainId: number, diamond: Address, sender
   out.loanListings = listings.length;
 
   // 2. Offer listings, nominated by the ledger.
-  await readOfferListings(chainId, diamond, sender, deps, listingCutoff, listings, partiesOf);
+  // The whole stage stops at its cutoff, its ledger and cursor waits included:
+  // offers it could not read are unread this run, and the loan listings
+  // already read are still screened.
+  try {
+    const offers = await boundedCall(listingCutoff, 'the offer listings', () => readOfferListings(chainId, diamond, sender, deps, listingCutoff, partiesOf));
+    listings.push(...offers.listings);
+    // Unfinished by the cutoff, the floor stays where it is.
+    await boundedCall(listingCutoff, 'the offer floor', offers.liftFloor).catch(() => undefined);
+  } catch (err) {
+    sender.noteUnread('sales:offers', `the offer listings (${whyUnread(err)})`);
+  }
   out.offerListings = listings.length - out.loanListings;
 
   // 3. Which parties read as flagged now.
@@ -259,17 +269,18 @@ export async function syncSaleListings(chainId: number, diamond: Address, sender
   return out;
 }
 
-/** Step 2: the offer listings the ledger nominates, live at the head, pushed
- *  onto `listings`; and the floor moved past the rows no longer live. */
+/** Step 2: the offer listings the ledger nominates, live at the head; and how
+ *  to move the floor past the rows no longer live, which the caller bounds on
+ *  its own so a slow floor read cannot lose the listings already read. */
 async function readOfferListings(
   chainId: number,
   diamond: Address,
   sender: StepSender,
   deps: SalesSyncDeps,
   cutoff: number,
-  listings: Listing[],
   partiesOf: (raw: unknown) => { hash: string; parties: Address[] } | null,
-): Promise<void> {
+): Promise<{ listings: Listing[]; liftFloor: () => Promise<void> }> {
+  const listings: Listing[] = [];
   const { cursors } = deps;
   const stored = await cursors.get([OFFER_FLOOR_ITEM, OFFER_NEXT_ITEM]);
   const floor = decodePos(stored.get(OFFER_FLOOR_ITEM));
@@ -278,7 +289,7 @@ async function readOfferListings(
   const page = await deps.ledger.page(chainId, [LISTING_EVENT], start, OFFER_PAGE);
   if (page === null) {
     sender.noteUnread('sales:offers', 'the event ledger of parallel-sale listings');
-    return;
+    return { listings, liftFloor: async () => {} };
   }
   const last = page.rows[page.rows.length - 1];
   // Past the last page the next run starts at the floor again.
@@ -327,7 +338,7 @@ async function readOfferListings(
   // live one: cancelled, filled, released, or replaced by a later post (whose
   // own row is above it). On a page read from the floor, the floor moves past
   // the leading finished rows, at the head AND at the finalized block.
-  if (start !== floor) return;
+  if (start !== floor) return { listings, liftFloor: async () => {} };
   const done = (i: number, hashes: ReadonlyMap<bigint, string>) => {
     const r = rows[i];
     if (r === null) return true;
@@ -337,19 +348,22 @@ async function readOfferListings(
   const positions = page.rows.map((_, i) => i);
   // The finalized block by this stage's cutoff too; unread, the floor stays.
   const finalized = () => boundedCall(cutoff, 'the finalized block', deps.finalized).catch(() => null);
-  const n = await finalFloor(0, positions, (i) => done(i, liveHash), finalized, async (passed, block) => {
-    const live = passed.filter((i) => rows[i] === null || rowFinalized(page.rows[i], block));
-    const named = [...new Set(live.flatMap((i) => (rows[i] === null ? [] : [rows[i]!.offerId])))];
-    const at = await readAt(named, block.number);
-    const hashes = new Map<bigint, string>();
-    for (const id of named) {
-      const x = at.get(id);
-      const p = x?.status === 'success' ? partiesOf(x.result) : null;
-      if (p !== null) hashes.set(id, p.hash);
-    }
-    return new Set(live.filter((i) => done(i, hashes)));
-  });
-  if (n > 0) await cursors.put(OFFER_FLOOR_ITEM, encodePos(page.rows[n - 1]));
+  const liftFloor = async () => {
+    const n = await finalFloor(0, positions, (i) => done(i, liveHash), finalized, async (passed, block) => {
+      const live = passed.filter((i) => rows[i] === null || rowFinalized(page.rows[i], block));
+      const named = [...new Set(live.flatMap((i) => (rows[i] === null ? [] : [rows[i]!.offerId])))];
+      const at = await readAt(named, block.number);
+      const hashes = new Map<bigint, string>();
+      for (const id of named) {
+        const x = at.get(id);
+        const p = x?.status === 'success' ? partiesOf(x.result) : null;
+        if (p !== null) hashes.set(id, p.hash);
+      }
+      return new Set(live.filter((i) => done(i, hashes)));
+    });
+    if (n > 0) await cursors.put(OFFER_FLOOR_ITEM, encodePos(page.rows[n - 1]));
+  };
+  return { listings, liftFloor };
 }
 
 /** Whether a landed sync found a flag, from its own event; null when the
