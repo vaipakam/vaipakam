@@ -62,6 +62,11 @@ class FakeDiamond {
   fee = new Map<bigint, bigint>();
   sendFee: Map<bigint, bigint> | null = null;
   sent: { fn: string; args: readonly unknown[] }[] = [];
+  /** The budget read never answers. */
+  hangBudget = false;
+  /** Another caller delivers every lane between the keeper's read and its
+   *  send. */
+  deliveredFirst = false;
   lastLogs: ReturnType<typeof logOf>[] = [];
   reads: string[] = [];
 
@@ -87,6 +92,7 @@ class FakeDiamond {
     }
     switch (functionName) {
       case 'getProtocolBroadcastBudget':
+        if (this.hangBudget) return new Promise(() => {});
         return this.budget;
       case 'getRewardReporterConfig':
         return [this.messenger, CHAIN, CHAIN, true, 0n];
@@ -115,6 +121,7 @@ class FakeDiamond {
       const u = this.users.get(user);
       this.lastLogs = [];
       if (u === undefined) return;
+      if (this.deliveredFirst) for (const l of u.lanes.values()) l.owed = false;
       for (const [dst, l] of u.lanes) {
         if (!l.owed) continue;
         if (NOW < l.eligibleAt) {
@@ -202,7 +209,7 @@ describe('the tier-push retry', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  const run = (sendDeadline = Number.POSITIVE_INFINITY) => {
+  const run = (sendDeadline = Number.POSITIVE_INFINITY, visit = 0) => {
     const sender = new StepSender(
       {
         pass: 'protocolUpkeep',
@@ -219,7 +226,7 @@ describe('the tier-push retry', () => {
     return retryTierPushes(CHAIN, DIAMOND, sender, {
       readClient: d.client(),
       sendDeadline,
-      visit: 0,
+      visit,
       cursors,
       ledger,
       finalized: finalizedBlockOnce(d.client()),
@@ -276,6 +283,64 @@ describe('the tier-push retry', () => {
     const { report } = await run();
     expect(fns()).toEqual([`deliverTierPush(${U1})`]);
     expect(report.waiting).toEqual([`${U2}: 10 (fee 300 over the 100 the budget has left)`]);
+  });
+
+  it('stops waiting on a gate read in flight at its stage cutoff', async () => {
+    d.hangBudget = true;
+    d.users.set(U1, push(3n, [[10, { ...owedNow }]]));
+    ledger.add(U1, 10, 3n);
+    const started = Date.now();
+    // The gate's cutoff is 300 ms away; the budget read never answers.
+    const { report, sender } = await run(started + SEND_RESERVE_MS + 2 * STAGE_RESERVE_MS + 300);
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(d.sent).toEqual([]);
+    expect(report.off).toMatch(/budget, messenger or clock could not be read/);
+    expect(String(sender.unread.get('tier-push'))).toMatch(/cutoff/);
+  });
+
+  it('holds back no later user for a delivery that spent nothing', async () => {
+    d.budget = 500n;
+    d.users.set(U1, push(3n, [[42, { ...owedNow }]])); // quoted 400; its send defers
+    d.users.set(U2, push(1n, [[10, { ...owedNow }]])); // quoted 300
+    d.sendFee = new Map([[42n, 99_999n], [10n, 300n]]);
+    ledger.add(U1, 42, 3n);
+    ledger.add(U2, 10, 1n);
+    const { report } = await run();
+    expect(fns()).toEqual([`deliverTierPush(${U1})`, `deliverTierPush(${U2})`]);
+    expect(report.deliveredNone).toEqual([U1]);
+    expect(report.delivered).toEqual([`${U2}: lanes 10`]);
+  });
+
+  it('starts each run at a different user', async () => {
+    d.budget = 500n;
+    d.users.set(U1, push(3n, [[42, { ...owedNow }]])); // 400
+    d.users.set(U2, push(1n, [[10, { ...owedNow }]])); // 300
+    ledger.add(U1, 42, 3n);
+    ledger.add(U2, 10, 1n);
+    const { report } = await run(Number.POSITIVE_INFINITY, 1);
+    expect(fns()).toEqual([`deliverTierPush(${U2})`]);
+    expect(report.waiting).toEqual([`${U1}: 42 (fee 400 over the 200 the budget has left)`]);
+  });
+
+  it('reports a delivery that found every lane already delivered, not as left owed', async () => {
+    d.deliveredFirst = true;
+    d.users.set(U1, push(3n, [[10, { ...owedNow }]]));
+    ledger.add(U1, 10, 3n);
+    const { report } = await run();
+    expect(fns()).toEqual([`deliverTierPush(${U1})`]);
+    expect(report.deliveredNone).toEqual([]);
+    expect(report.nothingOwed).toEqual([U1]);
+    expect(describeTierPush(report).join(' ')).toContain('already delivered');
+  });
+
+  it('reports a status that lists no lane as unknown, never as owed nothing', async () => {
+    d.users.set(U1, push(3n, []));
+    ledger.add(U1, 10, 3n);
+    const { report, sender } = await run();
+    expect(d.sent).toEqual([]);
+    expect(report.lanesUnknown).toEqual([U1]);
+    expect(describeTierPush(report).join(' ')).toContain('tier-push-lanes-unknown=');
+    expect(String(sender.unread.get('tier-push'))).toMatch(/broadcast lanes/);
   });
 
   it('says so when a delivery lands and the contract delivers no lane', async () => {

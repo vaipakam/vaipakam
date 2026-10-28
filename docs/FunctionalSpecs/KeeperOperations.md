@@ -529,14 +529,22 @@ evidence that the migration has completed.
 - The keeper attaches no value of its own. So it calls the delivery only
   for a user with a lane the protocol budget may pay now and whose quoted
   fee the budget still covers, counting what earlier deliveries in the
-  same run would spend. A user whose owed lanes all wait on spacing, or on
-  a budget that cannot cover them, is reported as waiting, with why, and
-  costs no transaction.
+  same run actually spent: a delivery that sends no lane holds back no
+  later user. Users are tried from a point that moves each run, so one
+  whose delivery keeps failing cannot always go first. A user whose owed
+  lanes all wait on spacing, or on a budget that cannot cover them, is
+  reported as waiting, with why, and costs no transaction.
+- A user whose status lists no lane at all is reported as not known: the
+  protocol gives that answer both where no lane is configured and where
+  the destination list could not be read, so it is never counted as owed
+  nothing.
 - The delivery spends the protocol broadcast budget: each lane delivered
   pays its cross-chain fee from it, under the protocol's own rule (a push
   that lowers a lane's tier at once, any other at most once per spacing
   window per lane). The report names each lane delivered and each lane
-  left owed with its reason, from the transaction's own records. A record
+  left owed with its reason, from the transaction's own records, and a
+  delivery that found every lane already delivered by someone else as
+  exactly that, never as lanes left owed. A record
   of a deferral is passed for good only once the finalized chain shows that
   push delivered, superseded, or no longer owed.
 
