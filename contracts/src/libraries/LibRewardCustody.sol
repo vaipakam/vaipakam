@@ -1747,7 +1747,7 @@ library LibRewardCustody {
     function stampPacketDay(LibVaipakam.Storage storage s, bytes32 h, uint256 dayId) internal {
         LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
         if (p.arrivedAt == 0) revert IVaipakamErrors.IngressPacketUnknown(h);
-        if (p.dayNamed) revert IVaipakamErrors.IngressPacketDayStamped(h);
+        if (p.dayNamed) revert IVaipakamErrors.IngressPacketDayAlreadyStamped(h);
         p.dayId = dayId;
         p.dayNamed = true;
         emit IngressPacketDayStamped(h, dayId);

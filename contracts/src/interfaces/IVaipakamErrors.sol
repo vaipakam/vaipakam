@@ -525,7 +525,7 @@ interface IVaipakamErrors {
     /// @notice #2828 — the packet's day is already stamped: it is recorded
     ///         once, with the record, by the ingress itself, so a packet names
     ///         one day for good.
-    error IngressPacketDayStamped(bytes32 packetHash);
+    error IngressPacketDayAlreadyStamped(bytes32 packetHash);
     /// @notice #2828 — the packet names no day: an epoch is admitted, and a
     ///         part counted toward a day, only for a packet whose ingress
     ///         stamped its day.
