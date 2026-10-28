@@ -362,6 +362,11 @@
   //     (it pays the quote's CCIP fee) and the two lapse terminals. All
   //     permissionless. Ships unset. Needs no on-chain role. Arming it is an
   //     owner decision.
+  //   - REWARD_DELIVERY_CONFLICT_ENABLED — 'true' arms the #2961 reward
+  //     delivery-conflict pass: on a mirror, the skip of each day whose
+  //     delivered parts disagree on its whole, and the recycling of what
+  //     landed for it. Permissionless; it pays no fee. Ships unset. Needs no
+  //     on-chain role. Arming it is an owner decision.
   //   - REWARD_RETURN_TRANSPORT_ENABLED — 'true' arms the #2984 reward
   //     return-transport pass: repatriation instructions, executions and
   //     cancellation ACKs, stranded-compensation returns and a retired

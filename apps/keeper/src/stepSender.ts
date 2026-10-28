@@ -17,7 +17,7 @@
 
 import type { Abi, Hex, PublicClient, TransactionReceipt } from 'viem';
 import { PastRunDeadline } from './batchRead';
-import { classify, shortErr } from './callErrors';
+import { classify, revertArgs, shortErr } from './callErrors';
 import { keeperTxPending } from './keeperSend';
 import type { KeeperContext } from './keeper';
 import { isDefinitiveRejection, reportSendError } from './submissionQueue';
@@ -82,6 +82,10 @@ export class StepSender {
   maybeSent = 0;
   /** The receipt of the last call, when it landed (null otherwise). */
   receipt: TransactionReceipt | null = null;
+  /** The contract's refusal of the last call's simulation, by its decoded
+   *  name and arguments (null otherwise), for a step whose next move depends
+   *  on what the refusal carries, such as when a wait ends. */
+  refusal: { name: string; args: readonly unknown[] } | null = null;
   /** `step:subject` → why, for calls refused this run (by the contract, or
    *  declined by the step before sending). */
   readonly refused = new Map<string, string>();
@@ -138,6 +142,7 @@ export class StepSender {
     worth?: (simulated: unknown) => boolean,
   ): Promise<CallResult> {
     this.receipt = null;
+    this.refusal = null;
     if (this.stopped) return 'skipped';
     const { abi, pass, describe } = this.config;
     const key = `${step}:${subject}`;
@@ -191,6 +196,7 @@ export class StepSender {
         return this.stop('rpc-unavailable', `the RPC did not answer the simulation of ${functionName} for ${describe(subject)}, so it sent nothing more`);
       }
       const reason = c.refused;
+      this.refusal = { name: reason, args: revertArgs(err) };
       if (reason === this.config.pausedRefusal) return this.stop(reason);
       if (this.config.races.has(reason)) return 'skipped';
       if (!this.config.unrecorded?.has(reason)) this.refused.set(key, reason);

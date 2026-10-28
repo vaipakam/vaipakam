@@ -244,6 +244,23 @@ evidence that the migration has completed.
   delivery arrives in (#2828), so no indexing or proof is left for anyone to
   send afterwards, and the keeper has no delivery-proof pass. A day waits
   only on its own parts arriving.
+- A mirror day whose delivered parts disagree on the day's whole never
+  opens, and nothing can repair it. Operators are alerted as soon as the
+  conflict is recorded, told when the day may be skipped or what the skip
+  still waits on, which the keeper reads from the contract itself. Once the
+  contract allows it, the keeper skips the day (closing it unpaid on that
+  mirror, so later days move again) and then moves whatever landed for it
+  into that mirror's recycling pool, until nothing is left. What was given up
+  and what moved is reported from the chain's own records, never from the
+  keeper's estimate. A day that opened before its parts disagreed stays paid
+  and is reported as a source fault. A day that cannot be skipped because a
+  side whose claims may already have paid carries recycled funding is an
+  incident for a person: the keeper reports it and never retries the skip.
+  Such a day, and a source fault, leaves the keeper's work only once its
+  report has been delivered, so a failed post is posted again. A part that
+  lands on such a day later brings it back for another look. This is its own
+  pass behind its own switch, shipped off; it pays no fee, and every read
+  stops at its stage cutoff so its sends keep their time.
 - Each canonical remittance records the destination messenger it was bound
   to. Quoting and sending require a known route before any value moves.
   Replacing a receiver behind the same messenger and replacing the messenger

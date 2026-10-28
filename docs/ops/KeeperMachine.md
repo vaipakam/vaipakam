@@ -401,6 +401,7 @@ journalctl -u vaipakam-keeper -f
    `REWARD_DAY_CLOSE_ENABLED` (`rewardDayClose`, every 15 minutes from :10),
    `REWARD_CLOSE_OUT_ENABLED` (`rewardCloseOut`, every 15 minutes from :00),
    `REWARD_ZEROED_DAY_ENABLED` (`rewardZeroedDay`, every 15 minutes from :09),
+   `REWARD_DELIVERY_CONFLICT_ENABLED` (`rewardDeliveryConflict`, every 15 minutes from :01),
    `REWARD_RETURN_TRANSPORT_ENABLED` (`rewardReturnTransport`, hourly at :29),
    `PROTOCOL_UPKEEP_ENABLED` (`protocolUpkeep`, hourly at :59; its
    prepay-sale sanctions sync step also needs

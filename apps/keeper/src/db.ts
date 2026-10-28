@@ -784,10 +784,67 @@ function firstReleases(rows: readonly ReleaseEventRow[]): { remitId: number; blo
   return [...seen].map(([remitId, block]) => ({ remitId, block }));
 }
 
+/** A part counted toward a mirror day whose delivered parts CONFLICT on the
+ *  day's whole (#2961), as the delivery-conflict pass discovers it. */
+export interface ConflictedDayRow {
+  dayId: string;
+  block: number;
+}
+
+/**
+ * #2961 — one discovery page of the parts counted toward CONFLICTED days on
+ * `chainId`: every `DayDeliveryPartLanded` in `[from, through]` whose day has a
+ * `DayDeliveryWholeConflict` on record at or below `through`. A day is found
+ * when its conflict is recorded (the conflicting part emits both events, in
+ * one call), and found again whenever a later part lands on it: such a part
+ * may add value the skipped day's recycling still has to move. A part that
+ * landed before its day conflicted is found too, when both are in one page;
+ * queuing a day twice is a no-op. Days come back as decimal strings, as the
+ * indexer stores a uint256.
+ */
+export async function discoverConflictedDayParts(
+  db: D1Database,
+  chainId: number,
+  from: number,
+  through: number,
+  limit: number,
+): Promise<{ rows: ConflictedDayRow[]; next: number }> {
+  const page = await pageByBlock(
+    async (f, t, l) =>
+      (
+        await db
+          .prepare(
+            `SELECT CAST(json_extract(args_json, '$.dayId') AS TEXT) AS day_id, block_number
+               FROM activity_events
+              WHERE chain_id = ?1 AND block_number >= ?2 AND block_number <= ?3
+                AND kind = 'DayDeliveryPartLanded'
+                AND CAST(json_extract(args_json, '$.dayId') AS TEXT) IN (
+                  SELECT CAST(json_extract(args_json, '$.dayId') AS TEXT)
+                    FROM activity_events
+                   WHERE chain_id = ?1 AND kind = 'DayDeliveryWholeConflict' AND block_number <= ?5)
+              ORDER BY block_number ASC, log_index ASC
+              LIMIT ?4`,
+          )
+          .bind(chainId, f, t, l ?? -1, through)
+          .all<{ day_id: string | null; block_number: number }>()
+      ).results ?? [],
+    from,
+    through,
+    limit,
+  );
+  return {
+    rows: page.rows.filter((r) => typeof r.day_id === 'string' && /^\d+$/.test(r.day_id)).map((r) => ({ dayId: r.day_id as string, block: Number(r.block_number) })),
+    next: page.next,
+  };
+}
+
 // ─── #2497 r8 — the OPEN-WORK queue (keeper-private, migration 0003) ─
 
 /** The passes that keep an open-work queue, by the `kind` each records under.
- *  The reward day-close pass (#2612) keys its rows by reward day rather than
+ *  `late_ack` is the remit-ack pass's (a remit whose acknowledgement is late).
+ *  `delivery_conflict` (#2961) is a mirror day whose delivered parts disagree
+ *  on its whole, keyed by the day, worked by the delivery-conflict pass until
+ *  the day is skipped and its landed value recycled. The reward day-close pass (#2612) keys its rows by reward day rather than
  *  ledger block: `day_owed` (a day not yet worked through), `day_broadcast` (a
  *  finalized day's sends, by destination) and `day_zeroed` (its zeroed-chain
  *  notice) are open-work rows whose `item` and `block` are the day;
@@ -801,7 +858,7 @@ function firstReleases(rows: readonly ReleaseEventRow[]): { remitId: number; blo
  *  return-transport pass (#2984) records each re-sendable message it sent
  *  under `return_send` (`item` names the message, `block` is 0), so it is not
  *  sent again before the indexer has recorded it. */
-export type WorkKind = 'delivery_proof' | 'late_ack' | 'day_broadcast' | 'day_zeroed' | 'day_close' | 'day_owed' | 'day_clock' | 'day_dispatch' | 'day_open' | 'scan_cursor' | 'return_send';
+export type WorkKind = 'delivery_conflict' | 'late_ack' | 'day_broadcast' | 'day_zeroed' | 'day_close' | 'day_owed' | 'day_clock' | 'day_dispatch' | 'day_open' | 'scan_cursor' | 'return_send';
 
 /** The last block the shared indexer has completely recorded on `chainId`
  *  (its `diamond` cursor, advanced only after a whole window is written), or
