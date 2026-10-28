@@ -1862,6 +1862,8 @@ behandelt diesen Halte-Rabatt. Ein separater bezahlter Gebührenmodus,
 „Full“, bleibt ausgeschaltet, solange ein Deployment ihn nicht
 einschaltet.
 
+<a id="vpfi-discounts.turning-on"></a>
+
 ### Den Rabatt einschalten
 
 Der Rabatt ist Opt-in. Der Schalter liegt auf der VPFI-Seite, und es
@@ -1885,6 +1887,8 @@ VPFI zählt, wenn das Protokoll es in deinem Vault erfasst: was du über
 die VPFI-Seite einzahlst, und VPFI-Rewards, die das Protokoll in deinen
 Vault liefert. Token, die direkt an die Adresse deines Vaults geschickt
 werden, verfolgt das Protokoll nicht, und sie erhöhen dein Tier nicht.
+
+<a id="vpfi-discounts.tier-calculation"></a>
 
 ### Wie dein Tier berechnet wird
 
@@ -1920,6 +1924,8 @@ Was das praktisch heißt:
   senkt dein Tier sofort.
 - Ein Absinken, das mehr als 30 Tage zurückliegt, begrenzt dich nicht
   mehr.
+
+<a id="vpfi-discounts.other-chains"></a>
 
 ### Dein Tier auf anderen Chains
 
@@ -1979,6 +1985,8 @@ erreicht oder der Durchschnitt hat aufgeholt —, bemerkt Base das erst
 bei der nächsten Aktualisierung deines Tier-Eintrags. Der Aufruf zum
 Auffrischen des Tiers macht diese Aktualisierung, wann immer du willst;
 die App macht ihn für dich nur, wenn du den Rabatt ausschaltest.
+
+<a id="vpfi-discounts.operators"></a>
 
 ### Für Betreiber
 

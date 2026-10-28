@@ -1868,6 +1868,8 @@ Aucune n'est configurée au lancement. Ce chapitre traite de cette
 remise de détention. Un mode de frais payant distinct, « Full », reste
 désactivé tant qu'un déploiement ne l'active pas.
 
+<a id="vpfi-discounts.turning-on"></a>
+
 ### Activer la remise
 
 La remise est facultative (opt-in). L'interrupteur se trouve sur la
@@ -1893,6 +1895,8 @@ ceux que tu déposes via la page VPFI, et les récompenses VPFI que le
 protocole verse dans ton vault. Les jetons envoyés directement à
 l'adresse de ton vault ne sont pas suivis par le protocole et
 n'augmentent pas ton tier.
+
+<a id="vpfi-discounts.tier-calculation"></a>
 
 ### Comment ton tier est calculé
 
@@ -1929,6 +1933,8 @@ Ce que cela signifie en pratique :
 - Un retrait qui te fait passer sous le seuil d'un tier fait baisser
   ton tier immédiatement.
 - Une baisse vieille de plus de 30 jours ne te plafonne plus.
+
+<a id="vpfi-discounts.other-chains"></a>
 
 ### Ton tier sur les autres chaînes
 
@@ -1987,6 +1993,8 @@ Base ne s'en aperçoit avant la prochaine mise à jour de ton
 enregistrement de tier. L'appel de rafraîchissement du tier fait cette
 mise à jour quand tu le veux ; l'application ne le fait pour toi que
 lorsque tu désactives la remise.
+
+<a id="vpfi-discounts.operators"></a>
 
 ### Pour les opérateurs
 

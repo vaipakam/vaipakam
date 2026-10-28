@@ -1513,6 +1513,8 @@ governance 可以修改它。
 折扣可以改为从您的 vault 中以 VPFI 结算；上线时没有配置。本章讨论的是
 这种持有折扣。另一种付费费用模式"Full"保持关闭，除非某个部署将其开启。
 
+<a id="vpfi-discounts.turning-on"></a>
+
 ### 开启折扣
 
 折扣需要主动开启（opt-in）。开关位于 VPFI 页面，每条链各有一个，因为
@@ -1526,6 +1528,8 @@ governance 可以修改它。
 当您在 Base 上关闭折扣时，应用会紧接着发送一次 tier 更新，让所有其他链也停止使用折扣：Base 会向它们发送您的 tier 为零。如果第二步失败，页面会说明，其他链会保留您最后的 tier，直到有新的 tier 发出。在其他任何链上关闭折扣，只会改变那一条链。
 
 当协议把 VPFI 记录在您的 vault 中时，它才计入：包括您通过 VPFI 页面存入的 VPFI，以及协议发放到您 vault 中的 VPFI rewards。直接发送到您 vault 地址的代币不受协议跟踪，不会提高您的 tier。
+
+<a id="vpfi-discounts.tier-calculation"></a>
 
 ### 您的 tier 如何计算
 
@@ -1549,6 +1553,8 @@ governance 可以修改它。
   平均值，而您触及过的最低点仍会限制您。
 - 一次让您低于某个 tier 门槛的取出，会立即降低您的 tier。
 - 30 天以前的下跌不再限制您。
+
+<a id="vpfi-discounts.other-chains"></a>
 
 ### 您在其他链上的 tier
 
@@ -1575,6 +1581,8 @@ tier 由 Base 计算。所有其他链都使用 Base 通过 Chainlink CCIP 发�
 只有当副本中的内容会发生变化时，副本才会重新发送：您的 tier、其折扣、有效期限，或 tier 表的版本。因此在 tier 表变更后，即使您的 tier 不变（只要不为零），您在 Base 上的 tier 记录的下一次更新都会向每条链发送一份新副本。如果这些都没有变化，副本已过期的链在有变化之前不会给予折扣。
 
 如果您的 tier 只是因为时间推移而上升（持有期已满或平均值已追上），Base 要到您的 tier 记录下一次更新时才会察觉。tier 刷新调用可以随时进行这次更新；应用只会在您关闭折扣时替您调用。
+
+<a id="vpfi-discounts.operators"></a>
 
 ### 面向运营者
 

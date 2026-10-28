@@ -1790,6 +1790,8 @@ configure नहीं है। यह chapter इसी holding discount क�
 अलग paid fee mode, "Full", तब तक बंद रहता है जब तक कोई deployment उसे
 चालू न करे।
 
+<a id="vpfi-discounts.turning-on"></a>
+
 ### Discount चालू करना
 
 Discount opt-in है। Switch VPFI page पर है, और हर chain का अपना एक switch
@@ -1811,6 +1813,8 @@ VPFI तब गिना जाता है जब protocol उसे आपक
 VPFI page के ज़रिए deposit करते हैं, और वे VPFI rewards जो protocol आपके
 vault में पहुँचाता है। आपके vault के address पर सीधे भेजे गए tokens
 protocol track नहीं करता, और वे आपका tier नहीं बढ़ाते।
+
+<a id="vpfi-discounts.tier-calculation"></a>
 
 ### आपका tier कैसे तय होता है
 
@@ -1842,6 +1846,8 @@ protocol track नहीं करता, और वे आपका tier नह
 - जो withdrawal आपको किसी tier की सीमा से नीचे ले जाए, वह आपका tier
   तुरंत घटा देता है।
 - 30 दिन से पुरानी गिरावट अब आपको सीमित नहीं करती।
+
+<a id="vpfi-discounts.other-chains"></a>
 
 ### दूसरी chains पर आपका tier
 
@@ -1891,6 +1897,8 @@ chain को नई copy भेजता है, भले ही आपका t
 औसत बराबर आ गया — तो Base को आपके tier record के अगले update तक इसका पता
 नहीं चलता। Tier-refresh call से आप जब चाहें यह update कर सकते हैं; app
 इसे आपकी ओर से सिर्फ़ तब करता है जब आप discount बंद करते हैं।
+
+<a id="vpfi-discounts.operators"></a>
 
 ### Operators के लिए
 

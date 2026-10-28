@@ -1861,6 +1861,8 @@ vault. No hay ninguna configurada en el lanzamiento. Este capítulo
 trata de ese descuento por tenencia. Un modo de comisión de pago
 distinto, «Full», sigue desactivado salvo que un despliegue lo active.
 
+<a id="vpfi-discounts.turning-on"></a>
+
 ### Activar el descuento
 
 El descuento es opcional (opt-in). El interruptor está en la página de
@@ -1885,6 +1887,8 @@ El VPFI cuenta cuando el protocolo lo registra en tu vault: lo que
 depositas desde la página de VPFI y las recompensas VPFI que el
 protocolo entrega en tu vault. Los tokens enviados directamente a la
 dirección de tu vault no los sigue el protocolo y no suben tu tier.
+
+<a id="vpfi-discounts.tier-calculation"></a>
 
 ### Cómo se calcula tu tier
 
@@ -1917,6 +1921,8 @@ Qué significa esto en la práctica:
 - Un retiro que te deja por debajo del umbral de un tier baja tu tier
   al instante.
 - Una bajada de hace más de 30 días ya no te limita.
+
+<a id="vpfi-discounts.other-chains"></a>
 
 ### Tu tier en otras cadenas
 
@@ -1972,6 +1978,8 @@ de tenencia o el promedio ha alcanzado tu saldo—, nada en Base lo nota
 hasta la próxima actualización de tu registro de tier. La llamada para
 refrescar el tier hace esa actualización cuando tú quieras; la
 aplicación solo la hace por ti cuando desactivas el descuento.
+
+<a id="vpfi-discounts.operators"></a>
 
 ### Para operadores
 

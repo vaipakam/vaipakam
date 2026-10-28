@@ -2048,6 +2048,8 @@ none is configured at launch. This chapter covers that holding
 discount. A separate paid fee mode, "Full", stays switched off
 unless a deployment turns it on.
 
+<a id="vpfi-discounts.turning-on"></a>
+
 ### Turning the discount on
 
 The discount is opt-in. The switch is on the VPFI page, and it is
@@ -2069,6 +2071,8 @@ VPFI counts when the protocol records it in your vault: what you deposit
 through the VPFI page, and VPFI rewards the protocol delivers into your
 vault. Tokens sent straight to your vault address are not tracked by the
 protocol and do not raise your tier.
+
+<a id="vpfi-discounts.tier-calculation"></a>
 
 ### How your tier is worked out
 
@@ -2101,6 +2105,8 @@ What this means in practice:
 - A withdrawal that takes you below a tier's floor lowers your tier
   straight away.
 - A dip more than 30 days ago no longer caps you.
+
+<a id="vpfi-discounts.other-chains"></a>
 
 ### Your tier on other chains
 
@@ -2153,6 +2159,8 @@ ended, or the average has caught up — nothing on Base notices until the
 next update to your tier record. The tier-refresh call makes that update
 whenever you choose; the app makes it for you only when you switch the
 discount off.
+
+<a id="vpfi-discounts.operators"></a>
 
 ### For operators
 
