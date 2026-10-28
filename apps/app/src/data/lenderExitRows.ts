@@ -210,7 +210,9 @@ export interface LenderExitInput {
    *  gating both rows would invent a blocker on the instant exit
    *  (Codex r3 P2). */
   listingFlowDisabled: boolean;
-  /** See `SaleToolsState` — applies to BOTH sale rows. */
+  /** See `SaleToolsState` — applies to BOTH sale rows. The page derives
+   *  it with `saleToolsAvailability` (`saleToolsMount.ts`) from the same
+   *  answer the tool block renders from (Codex #3024 r5). */
   saleTools: SaleToolsState;
   /** Has every read `saleTools` is derived from stopped (the fee
    *  entitlement, the principal's token, the status and term reads

@@ -114,6 +114,11 @@ import { LoanKeeperCard } from '../components/LoanKeeperCard';
 import { LOCK_EARLY_WITHDRAWAL_SALE, useLoanSalePending } from '../data/loanSalePending';
 import { useSaleExitVerdict } from '../data/saleExitVerdict';
 import {
+  saleToolsAvailability,
+  saleToolsMount,
+  type SaleToolsMountInput,
+} from '../data/saleToolsMount';
+import {
   readRefinanceMarker,
   refinanceDiscoveryKey,
   useRefinancePending,
@@ -1914,6 +1919,38 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // FallbackPending would otherwise fail closed forever.
     !liveStatusCandidates.some((st) => st !== undefined && isTerminalStatus(st)) &&
     !freshStatusCandidates.some((st) => st === LoanStatus.FallbackPending);
+
+  /** The Advanced sale tools' render gates, in one place (#1841, Codex
+   *  #3024 r5). The tool block renders from `saleToolsMountState` and the
+   *  exit chooser's `saleTools` reads `saleToolsAvailability` over the
+   *  same input, so the rows and the tools they jump to cannot answer
+   *  differently. See `data/saleToolsMount.ts`. */
+  const saleToolsGateInput: SaleToolsMountInput = {
+    shown:
+      isLenderHolder &&
+      !soldThisSession &&
+      !isRental &&
+      !(sanctions.ready && sanctions.flagged),
+    saleAttemptable,
+    principal: { ready: Boolean(principal), failed: principalMeta.isError },
+    sanctionsReady: sanctions.ready,
+    loanLive: {
+      ready: Boolean(loanLive.data) && !loanLive.isError,
+      failed: loanLive.isError,
+    },
+    salePending,
+    // The chain-anchored clock, the same one every other deadline on this
+    // page reads (`loanLiveNowSec`); unknown until `loanLive` answers.
+    matured:
+      loanLive.data && !loanLive.isError && loanLiveNowSec !== undefined
+        ? loanLiveNowSec >= loanEndTimeOf(loanLive.data.live, loanLiveNowSec)
+        : undefined,
+    feeEnt: {
+      ready: !feeEnt.isError && feeEnt.data !== undefined,
+      failed: feeEnt.isError,
+    },
+  };
+  const saleToolsMountState = saleToolsMount(saleToolsGateInput);
 
   // `isError` disqualifies the snapshot here too (Codex r26 P2). This
   // consumer predates the health-check rule and was missed when the
@@ -4528,101 +4565,20 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // rest becomes knowable on the switch, where the tool block
           // states them itself.
           saleTools={
-            // The tool block's own render gates first (Codex #3024 r2,
-            // r4). The verdict replaced the chooser's status and listing
-            // rules, but the Advanced tools below still mount behind
-            // `saleAttemptable` and render nothing while `salePending`
-            // holds, so a verdict that has already seen a cure, or a
-            // cancelled listing, while another read still holds the old
-            // answer would open rows whose jump targets are not on the
-            // page. Both gates clear on the next poll of their own read,
-            // so this is a wait, not a failure. (When the listing really
-            // stands, the verdict refuses both routes first and this arm
-            // is never reached.)
-            !saleAttemptable || salePending
-              ? 'checking'
-              : // `isError` FIRST, before the `data === undefined` test
-                // (Codex r16 P2). TanStack keeps the last success through a
-                // failed refetch, so an errored-but-cached entitlement has
-                // `data` defined — and round 14 made `lenderFeeModeFull`
-                // reject exactly that record. Leaving this gate trusting it
-                // meant one consumer distrusting the cache while its
-                // sibling accepted it, on the same query: the rows opened
-                // WITHOUT the Full-plan disclosure, which is the thing this
-                // prerequisite exists to wait for. My own r14 fix created
-                // that asymmetry by fixing one side of it.
-              feeEnt.isError || feeEnt.data === undefined
-              ? feeEnt.isError
-                ? 'failed'
-                : 'checking'
-              : !principal
-                ? // Codex r8 P2 — `principalMeta` exhausting its retry
-                  // leaves `principal` undefined forever, and the
-                  // Advanced block is gated on it too, so neither
-                  // anchor ever mounts. Reporting that as "still
-                  // reading the fee terms" was wrong twice over: wrong
-                  // cause, and a wait that never ends.
-                  // r9 P2 fixed the half I left: the wait was gone,
-                  // the false cause was not — it still blamed a read
-                  // that had SUCCEEDED.
-                  principalMeta.isError
-                  ? 'failed'
-                  : 'checking'
-                : !sanctions.ready
-                  ? 'checking'
-                : // Codex r10 P2 — a THIRD prerequisite, landing in the
-                  // fee-terms sentence exactly as the token read had in
-                  // r8. That is what settled the question: the failure
-                  // states collapsed rather than growing a third name
-                  // to keep straight. See `SaleToolsState`.
-                  // `isError` disqualifies the cached snapshot, it does
-                  // not merely rank below it (Codex r20 P2). TanStack
-                  // retains `loanLive.data` through a failed refetch,
-                  // so this said "ready" on a snapshot that may predate
-                  // a partial repayment or an obligation transfer made
-                  // elsewhere — and `LoanSaleFlow` would then render and
-                  // confirm against obsolete principal and terms while
-                  // its submit path silently re-read the changed values.
-                  // A receipt the lender approved for different numbers
-                  // than the ones that execute.
-                  //
-                  // Same rule the fee-entitlement and sale-lock gates
-                  // already use; this was the third consumer of that
-                  // rule and the one I kept missing.
-                  isAdvanced && (!loanLive.data || loanLive.isError)
-                  ? loanLive.isError
-                    ? 'failed'
-                    : 'checking'
-                  : // A FOURTH prerequisite, and the only one that is
-                    // not a query state (Codex r19 P2). `readLoanLive`
-                    // deliberately returns data with
-                    // `live.lenderForfeitFrom === undefined` when the
-                    // optional seller-window call fails, so `loanLive`
-                    // looks healthy while neither tool can price a
-                    // sale: `EarlyExitFlow` resolves its candidates to
-                    // unavailable and `LoanSaleFlow` disables both
-                    // actions. Without this the chooser advertised two
-                    // exits that cannot be started, and its jumps
-                    // landed on cards offering nothing.
-                    //
-                    // `failed`, not `checking`: the window call has
-                    // already failed and nothing is retrying it, so a
-                    // waiting line would promise an answer that is not
-                    // coming — the trap this card met three times.
-                    //
-                    // ONE hoisted verdict over all three `readLoanLive`
-                    // callers (Codex r25 P2) — see `sellerWindowReadable`
-                    // beside the status resolution. This site grew a
-                    // clause per review round, one source at a time,
-                    // which is the defect the card exists to prevent
-                    // happening inside the card.
-                    //
-                    // `undefined` means no healthy source has answered
-                    // yet, which the earlier arms already cover, so only
-                    // an explicit `false` is a failure here.
-                    sellerWindowReadable === false
-                    ? 'failed'
-                    : 'ready'
+            // The block's own answer (Codex #3024 r2, r4, r5): the rows
+            // open only when the tools they jump to are on the page.
+            // `saleToolsAvailability` reads the same `saleToolsMount` the
+            // block below renders from, so a render gate cannot be added
+            // to one and missed by the other — the status gate, the
+            // listing gate and maturity were each missed once while they
+            // were restated here by hand. The mode asymmetry, the
+            // principal-metadata failure (r8) and the seller window (r19)
+            // are stated there.
+            saleToolsAvailability({
+              ...saleToolsGateInput,
+              isAdvanced,
+              sellerWindowReadable,
+            })
           }
           listingSupportedOnChain={loanSaleListingEnabled(readChain.chainId)}
           // Wait-row timing only: a partial repay pays the lender that
@@ -4729,39 +4685,33 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           message goes to the PAGE banner (the role flips to viewer
           as soon as the ownership read refreshes, unmounting this
           block). */}
-      {isAdvanced &&
-      // `isLenderHolder`, not `role` — same reason as the chooser
-      // above, and they MUST use the same test or a dual-position
-      // holder sees rows with no tools behind them.
-      isLenderHolder &&
-      // NOT the raw indexed row — see `saleAttemptable`. The chooser's
-      // rows and this block must agree, or a row is offered with
-      // nothing behind it.
-      saleAttemptable &&
-      !soldThisSession &&
-      !isRental &&
-      principal &&
-      !(sanctions.ready && sanctions.flagged) ? (
+      {isAdvanced && saleToolsMountState.kind !== 'absent' ? (
+        // Rendered from `saleToolsMount`, the one derivation the chooser's
+        // rows also read (see `saleToolsGateInput`). `isLenderHolder`, not
+        // `role`, and `saleAttemptable`, not the raw indexed row, for the
+        // same reasons as the chooser: they must use the same tests or a
+        // row is offered with nothing behind it.
         // Errored cached terms are NOT a basis for the full form —
         // same rule as the readiness verdict above (Codex r20 P2).
-        !loanLive.data || loanLive.isError || !sanctions.ready ? (
+        saleToolsMountState.kind === 'reading' ? (
           <section className="card">
             <h3>{copy.earlyExit.title}</h3>
             <p className="muted">
-              {loanLive.isError
+              {saleToolsMountState.failed
                 ? copy.earlyExit.checkFailed
                 : copy.earlyExit.checking}
             </p>
           </section>
-        ) : salePending ? (
+        ) : saleToolsMountState.kind === 'listing' ? (
           // A live sale listing owns the lender's exit story — the
           // pending card below explains and offers cancel/restore.
           null
-        ) : (loanLiveNowSec ?? loanLive.data.chainNow) <
-          loanEndTimeOf(
-            loanLive.data.live,
-            loanLiveNowSec ?? loanLive.data.chainNow,
-          ) ? (
+        ) : saleToolsMountState.kind === 'matured' || !loanLive.data || !principal ? (
+          // Past the loan's end no sale tool renders. (`loanLive.data` and
+          // `principal` are non-null past `reading`/`absent`; the test
+          // only narrows them for the forms below.)
+          null
+        ) : (
           // `isError` too, not just absence (Codex r19 P2). TanStack
           // retains the last success through a failed refetch, so this
           // branch let both FORMS mount on a cached entitlement the
@@ -4771,7 +4721,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // start" while its destinations stay actionable is the same
           // rows-versus-tools split as r12 and r13, on a third
           // prerequisite.
-          feeEnt.isError || feeEnt.data === undefined ? (
+          saleToolsMountState.kind === 'disclosure' || !feeEnt.data ? (
             // Codex #1412 r4 (P3) — the travels-with-the-NFT note is
             // part of the sale disclosure set for a Full-stamped
             // position, so the sale CTAs hold until the fee-
@@ -4865,7 +4815,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           </section>
           </>
           )
-        ) : null
+        )
       ) : null}
 
       {/* The live sale listing's standing surface — chain-authoritative

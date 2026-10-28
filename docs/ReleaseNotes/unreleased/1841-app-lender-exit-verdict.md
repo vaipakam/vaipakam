@@ -22,8 +22,11 @@ narrower reason, as the spec asks, because nothing else can reopen a sale then.
 What the card still decides for itself is only what the contract does not know:
 the wait row, whether this deployment publishes the listing tool or has it
 switched off, and whether the tools on this page have finished loading and can
-be shown (a row stays closed while another status read still holds the loan in
-its fallback state, since the tools behind the row are not on the page then). The
+be shown. A row stays closed while any condition the tools themselves render
+behind still holds: another status read still showing the loan in its fallback
+state, the listing read still showing a cancelled listing, or the loan reaching
+its end by chain time. The rows and the tools read one shared answer for this,
+so they cannot disagree about whether the tools are on the page. The
 canonical spec now states that availability is the protocol's answer, not the
 app's.
 
@@ -32,5 +35,5 @@ reaches the testnets only with the all-waves fresh deploy, so until then those
 networks show the "contracts can't yet say" line, and the live drive is owed
 after that deploy.
 
-> Caveat: the verdict is re-read every 30 seconds, so right at the due date the card can trail the Advanced sale tools (which use anchored chain time) by up to one poll. The tools' own checks still refuse.
+> Caveat: the verdict is re-read every 30 seconds, so right at the due date the Advanced rows can say the sale details are still loading for up to one poll before the verdict's refusal arrives. They never offer a sale the tools have already withdrawn, and the tools' own checks still refuse.
 > Caveat: a clear verdict does not cover the buy offer a direct sale would spend, the listing's own inputs, or a keeper's capacity charge; the tools check those.
