@@ -108,3 +108,38 @@ describe('finalizedBy', () => {
     expect(Date.now() - t0).toBeLessThan(1_000);
   });
 });
+
+describe('PassReader.many across chunks', () => {
+  // A client whose aggregate answers each call with its own argument, and
+  // that records the first argument each aggregate carried.
+  const echo = () => {
+    const firsts: bigint[] = [];
+    const c = {
+      multicall: async ({ contracts }: { contracts: { args: readonly unknown[] }[] }) => {
+        firsts.push(contracts[0].args[0] as bigint);
+        return contracts.map((x) => ({ status: 'success', result: x.args[0] }));
+      },
+    } as unknown as PublicClient;
+    return { c, firsts };
+  };
+  const calls = Array.from({ length: 150 }, (_, i) => ({ functionName: 'x', args: [BigInt(i)] }));
+
+  it('keeps each answer at its call, whichever chunk a run starts on', async () => {
+    for (const visit of [0, 1, 7]) {
+      const { c } = echo();
+      const r = new PassReader({ client: c, readClient: c, visit }, Date.now() + SEND_RESERVE_MS + 5_000, DIAMOND, ABI, 'test');
+      expect(await r.many(calls, 'xs')).toEqual(calls.map((x) => x.args[0]));
+    }
+  });
+
+  it('starts a read of more than one chunk at a point that moves with the run', async () => {
+    const starts = await Promise.all(
+      [0, 1].map(async (visit) => {
+        const { c, firsts } = echo();
+        await new PassReader({ client: c, readClient: c, visit }, Date.now() + SEND_RESERVE_MS + 5_000, DIAMOND, ABI, 'test').many(calls, 'xs');
+        return firsts[0];
+      }),
+    );
+    expect(starts[0]).not.toBe(starts[1]);
+  });
+});
