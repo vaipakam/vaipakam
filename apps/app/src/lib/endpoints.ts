@@ -69,9 +69,29 @@ export function agentOrigin(env: BuildEnv): string | null {
 
 // ── Chain RPC ────────────────────────────────────────────────────────────
 
+/**
+ * The read-only RPC proxy's origin (#1724), or `null` when this build reads
+ * chains directly.
+ *
+ * A provider URL set in a `VITE_*` variable ships in the bundle, key and
+ * all: Vite compiles the whole `import.meta.env` object in wherever it is
+ * passed, so a configured key is readable by anyone who opens the page,
+ * whether or not a request ever uses it. The proxy (`apps/rpc-proxy`) holds
+ * the keys as Worker secrets instead, so a build that sets this carries the
+ * proxy's origin and no key. {@link rpcConfigProblems} refuses a build that
+ * sets both.
+ */
+export function rpcProxyOrigin(env: BuildEnv): string | null {
+  const url = configured(env, 'VITE_RPC_PROXY_ORIGIN');
+  return url === null ? null : withoutTrailingSlash(url);
+}
+
 interface ChainRpc {
   rpcUrlEnvKey: string;
   rpcUrlDefault: string;
+  /** Whether the chain carries real value. A build serving one must read
+   *  through the proxy (pinned against `chain/chains.ts` by a test). */
+  mainnet: boolean;
   /** Optional WebSocket RPC key; defaults to the RPC key with `_RPC_URL`
    *  swapped for `_WSS_URL`. A socket is opt-in per deploy: no default. */
   wsUrlEnvKey?: string;
@@ -80,19 +100,21 @@ interface ChainRpc {
 /** Per-chain RPC configuration. The display metadata lives in
  *  `chain/chains.ts`; this table is only where the app connects. */
 const CHAIN_RPC: Readonly<Record<number, ChainRpc>> = {
-  1: { rpcUrlEnvKey: 'VITE_ETHEREUM_RPC_URL', rpcUrlDefault: 'https://ethereum-rpc.publicnode.com' },
-  8453: { rpcUrlEnvKey: 'VITE_BASE_RPC_URL', rpcUrlDefault: 'https://mainnet.base.org' },
-  42161: { rpcUrlEnvKey: 'VITE_ARBITRUM_RPC_URL', rpcUrlDefault: 'https://arb1.arbitrum.io/rpc' },
-  10: { rpcUrlEnvKey: 'VITE_OPTIMISM_RPC_URL', rpcUrlDefault: 'https://mainnet.optimism.io' },
-  56: { rpcUrlEnvKey: 'VITE_BNB_RPC_URL', rpcUrlDefault: 'https://bsc-dataseed.bnbchain.org' },
-  84532: { rpcUrlEnvKey: 'VITE_BASE_SEPOLIA_RPC_URL', rpcUrlDefault: 'https://sepolia.base.org' },
+  1: { rpcUrlEnvKey: 'VITE_ETHEREUM_RPC_URL', rpcUrlDefault: 'https://ethereum-rpc.publicnode.com', mainnet: true },
+  8453: { rpcUrlEnvKey: 'VITE_BASE_RPC_URL', rpcUrlDefault: 'https://mainnet.base.org', mainnet: true },
+  42161: { rpcUrlEnvKey: 'VITE_ARBITRUM_RPC_URL', rpcUrlDefault: 'https://arb1.arbitrum.io/rpc', mainnet: true },
+  10: { rpcUrlEnvKey: 'VITE_OPTIMISM_RPC_URL', rpcUrlDefault: 'https://mainnet.optimism.io', mainnet: true },
+  56: { rpcUrlEnvKey: 'VITE_BNB_RPC_URL', rpcUrlDefault: 'https://bsc-dataseed.bnbchain.org', mainnet: true },
+  84532: { rpcUrlEnvKey: 'VITE_BASE_SEPOLIA_RPC_URL', rpcUrlDefault: 'https://sepolia.base.org', mainnet: false },
   421614: {
     rpcUrlEnvKey: 'VITE_ARBITRUM_SEPOLIA_RPC_URL',
     rpcUrlDefault: 'https://sepolia-rollup.arbitrum.io/rpc',
+    mainnet: false,
   },
   97: {
     rpcUrlEnvKey: 'VITE_BNB_TESTNET_RPC_URL',
     rpcUrlDefault: 'https://data-seed-prebsc-1-s1.bnbchain.org:8545',
+    mainnet: false,
   },
 };
 
@@ -105,31 +127,101 @@ function chainRpc(chainId: number): ChainRpc {
   return rpc;
 }
 
-/** A chain's HTTP RPC URL: the configured one, else the public default. */
-export function rpcUrlFor(chainId: number, env: BuildEnv): string {
+function wsUrlEnvKey(rpc: ChainRpc): string {
+  return rpc.wsUrlEnvKey ?? rpc.rpcUrlEnvKey.replace('_RPC_URL', '_WSS_URL');
+}
+
+/** Whether `chainId` carries real value. */
+export function isMainnetChain(chainId: number): boolean {
+  return chainRpc(chainId).mainnet;
+}
+
+/** One HTTP endpoint a chain's reads go to. `viaProxy` marks the proxy's
+ *  route, whose batch size the transport must keep within the proxy's cap. */
+export interface RpcEndpoint {
+  url: string;
+  viaProxy: boolean;
+}
+
+/**
+ * A chain's HTTP RPC endpoints, in the order the app tries them.
+ *
+ *   - Through the proxy: the proxy's route for the chain, then the chain's
+ *     keyless public default, so a proxy that is down, over budget or not
+ *     configured for the chain degrades the app to today's public reads
+ *     instead of to no reads.
+ *   - Direct: the configured URL, else the public default.
+ */
+export function rpcEndpointsFor(chainId: number, env: BuildEnv): readonly RpcEndpoint[] {
   const rpc = chainRpc(chainId);
-  return configured(env, rpc.rpcUrlEnvKey) ?? rpc.rpcUrlDefault;
+  const proxy = rpcProxyOrigin(env);
+  if (proxy !== null) {
+    return [
+      { url: `${proxy}/rpc/${chainId}`, viaProxy: true },
+      { url: rpc.rpcUrlDefault, viaProxy: false },
+    ];
+  }
+  return [{ url: configured(env, rpc.rpcUrlEnvKey) ?? rpc.rpcUrlDefault, viaProxy: false }];
 }
 
 /** A chain's WebSocket RPC URL, or `undefined` when none is configured
- *  (the live layer then polls over HTTP). */
+ *  (the live layer then polls over HTTP). Always `undefined` through the
+ *  proxy, which forwards no socket: a socket URL carries a key too. */
 export function wsUrlFor(chainId: number, env: BuildEnv): string | undefined {
-  const rpc = chainRpc(chainId);
-  const key = rpc.wsUrlEnvKey ?? rpc.rpcUrlEnvKey.replace('_RPC_URL', '_WSS_URL');
-  return configured(env, key) ?? undefined;
+  if (rpcProxyOrigin(env) !== null) return undefined;
+  return configured(env, wsUrlEnvKey(chainRpc(chainId))) ?? undefined;
 }
 
-/** The ENS-read-only mainnet client's primary RPC: chain 1's, so ENS rides
- *  the same env-overridable plumbing as every other read. */
-export function ensMainnetRpcUrl(env: BuildEnv): string {
-  return rpcUrlFor(1, env);
-}
-
-/** The second public endpoint behind the ENS primary, so a throttled
- *  primary degrades to it instead of to a dropped name. dRPC's public
+/** The second public endpoint behind the ENS primary. dRPC's public
  *  gateway: maintained and CORS-open (cloudflare-eth.com is a deprecated
  *  legacy hostname, Codex #1084 r1). */
 export const ENS_FALLBACK_RPC_URL = 'https://eth.drpc.org';
+
+/** The ENS-read-only mainnet client's endpoints: chain 1's, so ENS rides the
+ *  same plumbing as every other read, then a second public endpoint so a
+ *  throttled one degrades to it instead of to a dropped name. */
+export function ensMainnetRpcEndpoints(env: BuildEnv): readonly RpcEndpoint[] {
+  const chain1 = rpcEndpointsFor(1, env);
+  return chain1.some((e) => e.url === ENS_FALLBACK_RPC_URL)
+    ? chain1
+    : [...chain1, { url: ENS_FALLBACK_RPC_URL, viaProxy: false }];
+}
+
+/**
+ * Why this build's RPC configuration must not ship, or `[]` when it may.
+ * The production build refuses on any entry (`vite.config.ts`).
+ *
+ *   - Through the proxy, a per-chain RPC or socket URL is refused: it would
+ *     ship in the bundle unused, and it is exactly the key the proxy exists
+ *     to keep out of it.
+ *   - A build serving a mainnet chain must read through the proxy (owner
+ *     decision on #1724: the proxy before mainnet, on Workers Paid).
+ */
+export function rpcConfigProblems(env: BuildEnv, deployedChainIds: readonly number[]): string[] {
+  const problems: string[] = [];
+  if (rpcProxyOrigin(env) !== null) {
+    for (const rpc of Object.values(CHAIN_RPC)) {
+      for (const key of [rpc.rpcUrlEnvKey, wsUrlEnvKey(rpc)]) {
+        if (configured(env, key) !== null) {
+          problems.push(
+            `${key} is set while VITE_RPC_PROXY_ORIGIN routes reads through the proxy; ` +
+              'a provider URL in the build environment ships in the bundle whether or not it is used. Unset it.',
+          );
+        }
+      }
+    }
+  } else {
+    for (const chainId of deployedChainIds) {
+      if (CHAIN_RPC[chainId]?.mainnet) {
+        problems.push(
+          `chain ${chainId} is a mainnet and VITE_RPC_PROXY_ORIGIN is not set; ` +
+            'a mainnet build reads through the RPC proxy so no provider key ships in the bundle (#1724).',
+        );
+      }
+    }
+  }
+  return problems;
+}
 
 // ── Third-party APIs the app calls itself ────────────────────────────────
 
@@ -178,8 +270,9 @@ export function walletConnectProjectId(env: BuildEnv): string | null {
  * its origin.
  *
  * In order: Vaipakam's own Workers that this build configures, the RPC
- * (and socket, when configured) of every deployed chain, the ENS-read
- * mainnet client and its fallback, the third-party APIs the app calls,
+ * endpoints (the proxy and its public fallback, or the direct URL) and
+ * socket, when configured, of every deployed chain, the ENS-read mainnet
+ * client's endpoints, the third-party APIs the app calls,
  * then the wallet SDKs' own hosts.
  */
 export function connectSources(env: BuildEnv, deployedChainIds: readonly number[]): string[] {
@@ -188,14 +281,14 @@ export function connectSources(env: BuildEnv, deployedChainIds: readonly number[
     if (origin !== null) out.push(origin);
   }
   for (const chainId of deployedChainIds) {
-    out.push(rpcUrlFor(chainId, env));
+    out.push(...rpcEndpointsFor(chainId, env).map((e) => e.url));
     const ws = wsUrlFor(chainId, env);
     if (ws !== undefined) out.push(ws);
   }
   // The ENS-read client exists only while chain 1 has no Diamond; a
   // deployed chain 1 reads through its own transport above.
   if (!deployedChainIds.includes(1)) {
-    out.push(ensMainnetRpcUrl(env), ENS_FALLBACK_RPC_URL);
+    out.push(...ensMainnetRpcEndpoints(env).map((e) => e.url));
   }
   out.push(GOPLUS_ORIGIN, COINGECKO_API_BASE);
   if (walletConnectProjectId(env) !== null) {

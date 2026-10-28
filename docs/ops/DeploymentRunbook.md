@@ -1026,6 +1026,15 @@ each item is checked:
       mainnet).
 - [ ] Frontend visibly hydrates analytics + offer book correctly on
       every chain after the rehearsal.
+- [ ] The Cloudflare account is on **Workers Paid**, the read-only RPC
+      proxy (`apps/rpc-proxy`, #1724) is deployed with its eight
+      dedicated `RPC_PROXY_*` secrets and a bound hostname, and the app
+      is built with `VITE_RPC_PROXY_ORIGIN` and no per-chain RPC or WSS
+      URL. The app's build refuses a mainnet deployment without the
+      proxy, so this cannot be skipped silently; the plan comes first
+      because an open app tab sends hundreds of requests an hour, which
+      Workers Free's daily allowance would not carry at launch. Steps in
+      [`apps/rpc-proxy/README.md`](../../apps/rpc-proxy/README.md).
 
 ---
 
@@ -2082,6 +2091,7 @@ pointed at.
 | `vaipakam.com` | `vaipakam-www` | `apps/www` | Marketing + docs, wallet-free. Apex, not `www`. |
 | `agent.vaipakam.com` | `vaipakam-agent` | `apps/agent` | Origin-gated API. A bare `GET /` answering **403 `Forbidden` is correct, not an outage** — `apps/agent/src/index.ts:258` rejects any request whose `Origin` is not in `FRONTEND_ORIGIN`, and a curl sends none. **To actually health-check it, send an allowed Origin**: `curl -H 'origin: https://vaipakam.com' https://agent.vaipakam.com/nope` should return **404**, the Worker's own fallback. 403 with an allowed Origin means that origin is missing from `FRONTEND_ORIGIN`; 403 *without* one proves nothing. (#1971 — filed on the belief this was an outage, closed as designed behaviour.) |
 | `indexer.vaipakam.com` | `vaipakam-indexer` | `apps/indexer` | |
+| — (not deployed) | `vaipakam-rpc-proxy` | `apps/rpc-proxy` | The read-only RPC proxy (#1724). **Off by default**: connected to no Workers Build, and no app build points at it until `VITE_RPC_PROXY_ORIGIN` is set. Deployed at mainnet on Workers Paid (see the readiness checklist); suggested hostname `rpc.vaipakam.com`. Like the agent, a request without an allowed `Origin` answers 403, which is correct. |
 | — (no hostname) | `vaipakam-keeper` | `apps/keeper` | Deliberately unbound, and runs **no keeper passes**: since #2504 the keeper runs on the always-on machine ([`KeeperMachine.md`](KeeperMachine.md)), and from #2569 this Worker's `scheduled` handler declines every invocation. It stays deployed only as the private database's migration applier. Its metrics say nothing about keeper health; read `journalctl -u vaipakam-keeper` on the machine. |
 | — (no hostname) | `vaipakam-offchain-data-archive` / `-warm` | `ops/` | Scheduled ops Workers. |
 | `defi.vaipakam.com` | `vaipakam-defi` | *(source deleted #1854)* | Retire per the cutover note below. |

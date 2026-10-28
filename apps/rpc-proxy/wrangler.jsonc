@@ -1,0 +1,111 @@
+{
+  // Vaipakam read-only RPC proxy (#1724).
+  //
+  // The connected app's per-chain RPC URLs used to ship in the browser
+  // bundle, key and all. This Worker holds each chain's provider URL as a
+  // secret and forwards only the reads the app makes, so the bundle carries
+  // this Worker's origin instead of a key. What it forwards is stated once
+  // in packages/lib/src/rpcProxyPolicy.ts; the README says what it does and
+  // does not protect.
+  //
+  // OFF BY DEFAULT. Nothing deploys this Worker on merge: it is connected to
+  // no Workers Build, and the app keeps using its own RPC configuration
+  // until a build sets VITE_RPC_PROXY_ORIGIN. Deploying it is an operator
+  // step (README, "Turning it on").
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vaipakam-rpc-proxy",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-23",
+
+  // Dashboard-managed vars survive a deploy: see the same block in
+  // apps/agent/wrangler.jsonc for why every Worker in this tree declares it.
+  "keep_vars": true,
+
+  // Per-caller budget, keyed by client IP through @vaipakam/lib/rateLimit
+  // (the one limiter rule every Worker shares). One slot per HTTP request,
+  // and a request carries at most RPC_PROXY_MAX_BATCH calls. Sized for an
+  // app tab (a list page's first paint is a few batched requests, then a
+  // block poll every few seconds), several tabs, and a few people behind
+  // one address. Cloudflare counts it per location, so it bounds what one
+  // address spends, not what a crowd of addresses spends: the provider
+  // plan's own cap is the outer bound (README).
+  // namespace_id values are unique per account; 3001 is this Worker's.
+  "unsafe": {
+    "bindings": [
+      {
+        "name": "RPC_CALLER_RATELIMIT",
+        "type": "ratelimit",
+        "namespace_id": "3001",
+        "simple": { "limit": 300, "period": 60 },
+      },
+    ],
+  },
+
+  // The upstream provider URLs, one per chain, from the account Secrets
+  // Store. DEDICATED entries: never the keeper's or indexer's RPC_* ones,
+  // so browser traffic cannot spend the quota the keeper needs to act on a
+  // loan in time. A chain whose secret is absent or empty is reported as
+  // not configured; nothing falls back to another chain's key.
+  "secrets_store_secrets": [
+    {
+      // Ethereum (1); also backs the app's ENS name reads
+      "binding": "RPC_PROXY_ETH",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "RPC_PROXY_ETH",
+    },
+    {
+      // Base (8453)
+      "binding": "RPC_PROXY_BASE",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "RPC_PROXY_BASE",
+    },
+    {
+      // Arbitrum One (42161)
+      "binding": "RPC_PROXY_ARB",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "RPC_PROXY_ARB",
+    },
+    {
+      // OP Mainnet (10)
+      "binding": "RPC_PROXY_OP",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "RPC_PROXY_OP",
+    },
+    {
+      // BNB Chain (56)
+      "binding": "RPC_PROXY_BNB",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "RPC_PROXY_BNB",
+    },
+    {
+      // Base Sepolia (84532)
+      "binding": "RPC_PROXY_BASE_SEPOLIA",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "RPC_PROXY_BASE_SEPOLIA",
+    },
+    {
+      // Arbitrum Sepolia (421614)
+      "binding": "RPC_PROXY_ARB_SEPOLIA",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "RPC_PROXY_ARB_SEPOLIA",
+    },
+    {
+      // BNB Testnet (97)
+      "binding": "RPC_PROXY_BNB_TESTNET",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "RPC_PROXY_BNB_TESTNET",
+    },
+  ],
+
+  "vars": {
+    // Exact origins whose pages may call this proxy (CSV). The connected
+    // app's production and workers.dev hosts. An Origin check only stops
+    // other sites' pages; a script can send any Origin, which is what the
+    // rate limit above is for.
+    "FRONTEND_ORIGIN": "https://app.vaipakam.com,https://vaipakam-app.dawn-fire-139e.workers.dev",
+  },
+
+  "observability": {
+    "enabled": true,
+  },
+}

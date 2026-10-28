@@ -27,7 +27,8 @@ import {
 } from 'wagmi/chains';
 import { getDefaultConfig } from 'connectkit';
 import { SUPPORTED_CHAINS } from './chains';
-import { ENS_FALLBACK_RPC_URL, ensMainnetRpcUrl } from '../lib/endpoints';
+import { RPC_PROXY_MAX_BATCH } from '@vaipakam/lib/rpcProxyPolicy';
+import { ensMainnetRpcEndpoints, type RpcEndpoint } from '../lib/endpoints';
 import { connectionGeneration } from '../lib/dataRights';
 import { probeTransport } from '../lib/readProbe';
 
@@ -94,9 +95,28 @@ for (const c of SUPPORTED_CHAINS) {
 // returns it untouched unless a live-review driver installed its report
 // before load. Wrapped OUTSIDE the fallback, so a request is reported once,
 // with the outcome the app's code saw after viem's retries and fallbacks.
+//
+// #1724 — a build that reads through the read-only RPC proxy lists two HTTP
+// endpoints per chain (`lib/endpoints.ts` `rpcEndpointsFor`): the proxy's
+// route, then the chain's keyless public default. They go in a `fallback`
+// too, so a proxy that is down, over budget or refusing a call drops the
+// read to the public endpoint rather than failing it. The proxy's batches
+// are capped at `RPC_PROXY_MAX_BATCH` calls, so its transport batches no
+// larger, and it does not retry: a refusal from the proxy (over budget, chain
+// not configured) will not change in the next second, and the public
+// endpoint behind it is the retry. A direct endpoint keeps viem's defaults.
+function httpTransports(endpoints: readonly RpcEndpoint[]): Transport {
+  const list = endpoints.map((e) =>
+    e.viaProxy
+      ? http(e.url, { batch: { batchSize: RPC_PROXY_MAX_BATCH }, retryCount: 0 })
+      : http(e.url, { batch: true }),
+  );
+  return list.length === 1 ? list[0] : fallback(list);
+}
+
 const transports: Record<number, Transport> = {};
 for (const c of SUPPORTED_CHAINS) {
-  const httpTransport = http(c.rpcUrl, { batch: true });
+  const httpTransport = httpTransports(c.rpcEndpoints);
   transports[c.chainId] = probeTransport(
     c.wsUrl ? fallback([webSocket(c.wsUrl), httpTransport]) : httpTransport,
     c.chainId,
@@ -116,19 +136,16 @@ for (const c of SUPPORTED_CHAINS) {
 // endpoint that 429s under the burst a list page's first paint fires
 // (one reverse lookup per distinct counterparty address). Resolve via
 // the same env-overridable plumbing as every other chain
-// (VITE_ETHEREUM_RPC_URL, else the chains.ts default), with a second
-// public endpoint behind it so a throttled primary degrades to the
-// fallback instead of to a dropped name (`ENS_FALLBACK_RPC_URL`, whose
-// choice is recorded in lib/endpoints.ts).
+// (the proxy's chain-1 route, else VITE_ETHEREUM_RPC_URL, else the public
+// default), with a second public endpoint behind it so a throttled primary
+// degrades to the fallback instead of to a dropped name
+// (`ENS_FALLBACK_RPC_URL`, whose choice is recorded in lib/endpoints.ts).
 const chainsWithEns = chains.some((c) => c.id === mainnet.id)
   ? chains
   : [...chains, mainnet];
 if (!transports[mainnet.id]) {
   transports[mainnet.id] = probeTransport(
-    fallback([
-      http(ensMainnetRpcUrl(import.meta.env), { batch: true }),
-      http(ENS_FALLBACK_RPC_URL, { batch: true }),
-    ]),
+    httpTransports(ensMainnetRpcEndpoints(import.meta.env)),
     mainnet.id,
   );
 }

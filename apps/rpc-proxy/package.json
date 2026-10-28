@@ -1,0 +1,24 @@
+{
+  "name": "@vaipakam/rpc-proxy",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Read-only JSON-RPC proxy for the connected app (#1724). Holds each chain's provider URL as a Worker secret so no API key ships in the browser bundle, and forwards only the reads the app makes (method allowlist, bounded eth_getLogs, origin check, per-IP rate limit). Holds no signing key and forwards no transaction. Off by default: nothing deploys it until an operator creates its secrets and deploys it.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:dry": "wrangler deploy --dry-run",
+    "build": "pnpm run typecheck",
+    "typecheck": "tsc -p . --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@vaipakam/lib": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.0.0",
+    "typescript": "^6.0.0",
+    "vitest": "^4.1.4",
+    "wrangler": "^4.0.0"
+  }
+}

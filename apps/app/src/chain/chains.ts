@@ -11,7 +11,7 @@
  * app adds fields when a page needs them, not before.
  */
 import { getDeployment } from '@vaipakam/contracts/deployments';
-import { rpcUrlFor, wsUrlFor } from '../lib/endpoints';
+import { isMainnetChain, rpcEndpointsFor, wsUrlFor, type RpcEndpoint } from '../lib/endpoints';
 
 /** Display metadata. Where a chain is READ from (its RPC and optional
  *  WebSocket URL) is resolved by `lib/endpoints.ts`, which the build also
@@ -21,7 +21,6 @@ interface ChainMeta {
   chainId: number;
   name: string;
   blockExplorer: string;
-  testnet: boolean;
   nativeGasSymbol: string;
 }
 
@@ -33,56 +32,48 @@ const CHAIN_META: readonly ChainMeta[] = [
     chainId: 1,
     name: 'Ethereum',
     blockExplorer: 'https://etherscan.io',
-    testnet: false,
     nativeGasSymbol: 'ETH',
   },
   {
     chainId: 8453,
     name: 'Base',
     blockExplorer: 'https://basescan.org',
-    testnet: false,
     nativeGasSymbol: 'ETH',
   },
   {
     chainId: 42161,
     name: 'Arbitrum',
     blockExplorer: 'https://arbiscan.io',
-    testnet: false,
     nativeGasSymbol: 'ETH',
   },
   {
     chainId: 10,
     name: 'Optimism',
     blockExplorer: 'https://optimistic.etherscan.io',
-    testnet: false,
     nativeGasSymbol: 'ETH',
   },
   {
     chainId: 56,
     name: 'BNB Chain',
     blockExplorer: 'https://bscscan.com',
-    testnet: false,
     nativeGasSymbol: 'BNB',
   },
   {
     chainId: 84532,
     name: 'Base Sepolia',
     blockExplorer: 'https://sepolia.basescan.org',
-    testnet: true,
     nativeGasSymbol: 'ETH',
   },
   {
     chainId: 421614,
     name: 'Arbitrum Sepolia',
     blockExplorer: 'https://sepolia.arbiscan.io',
-    testnet: true,
     nativeGasSymbol: 'ETH',
   },
   {
     chainId: 97,
     name: 'BNB Testnet',
     blockExplorer: 'https://testnet.bscscan.com',
-    testnet: true,
     nativeGasSymbol: 'BNB',
   },
 ];
@@ -90,7 +81,10 @@ const CHAIN_META: readonly ChainMeta[] = [
 export interface SupportedChain {
   chainId: number;
   name: string;
-  rpcUrl: string;
+  /** HTTP RPC endpoints in the order the transport tries them
+   *  (`rpcEndpointsFor`: the read-only proxy then the public default, or
+   *  the direct URL). */
+  rpcEndpoints: readonly RpcEndpoint[];
   /** WebSocket RPC URL when configured (opt-in); undefined otherwise. */
   wsUrl?: string;
   blockExplorer: string;
@@ -112,10 +106,13 @@ export const SUPPORTED_CHAINS: readonly SupportedChain[] = CHAIN_META.flatMap(
         // A WebSocket URL, when configured, is preferred by the wagmi
         // transport (`eth_subscribe` newHeads drive live invalidation);
         // absent, the app polls over HTTP. Opt-in per deploy, no default.
-        rpcUrl: rpcUrlFor(meta.chainId, import.meta.env),
+        rpcEndpoints: rpcEndpointsFor(meta.chainId, import.meta.env),
         wsUrl: wsUrlFor(meta.chainId, import.meta.env),
         blockExplorer: meta.blockExplorer,
-        testnet: meta.testnet,
+        // Whether a chain carries real value is stated once, beside its
+        // RPC configuration, because the build's mainnet guard reads it
+        // there (#1724).
+        testnet: !isMainnetChain(meta.chainId),
         nativeGasSymbol: meta.nativeGasSymbol,
         diamondAddress: deployment.diamond as `0x${string}`,
         deployBlock: deployment.deployBlock ?? 0,

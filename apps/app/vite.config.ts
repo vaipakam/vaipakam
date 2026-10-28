@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { cspScriptHashesPlugin } from '@vaipakam/lib/cspScriptHashes';
 import { REPORT_ONLY_HEADER, cspConnectSourcesPlugin } from '@vaipakam/lib/cspConnectSources';
-import { connectSources } from './src/lib/endpoints.ts';
+import { connectSources, rpcConfigProblems } from './src/lib/endpoints.ts';
 
 // Stamp the commit + build time into the bundle (shown on the Help page)
 // so a tester can always tell which build they're looking at.
@@ -56,6 +56,32 @@ function checkIndexerOrigin(mode: string, command: string): void {
     throw new Error(`[deploy-env guard] ${msg}`);
   }
   console.warn(`\n[deploy-env guard] WARNING: ${msg}\n`);
+}
+
+// #1724 — the build refuses an RPC configuration that would ship a provider
+// key, or serve a mainnet without the read-only proxy. The rules are
+// `rpcConfigProblems` in src/lib/endpoints.ts, the same module that decides
+// where the bundle sends its reads. Every production build, not only the
+// operator's deploy: a key compiled into a preview bundle is as public as
+// one in production. Skipped for the e2e build, which reads a local Anvil.
+function checkRpcConfig(mode: string, command: string): void {
+  if (command !== 'build' || process.env.APP_E2E) return;
+  const env = loadEnv(mode, process.cwd(), 'VITE_');
+  const problems = rpcConfigProblems(env, deployedChainIds());
+  if (problems.length > 0) {
+    throw new Error(`[rpc-config guard]\n  - ${problems.join('\n  - ')}`);
+  }
+}
+
+/** Every chain the committed deployments bundle carries a Diamond for. */
+function deployedChainIds(): number[] {
+  const require = createRequire(import.meta.url);
+  const bundle = JSON.parse(
+    fs.readFileSync(require.resolve('@vaipakam/contracts/deployments.json'), 'utf8'),
+  ) as Record<string, { diamond?: string }>;
+  return Object.entries(bundle)
+    .filter(([, d]) => typeof d?.diamond === 'string' && d.diamond !== '')
+    .map(([id]) => Number(id));
 }
 
 // E2E ONLY (#2334): serve the deployments bundle the e2e global setup wrote
@@ -150,13 +176,7 @@ function cspScriptHashes(): Plugin {
 // `_headers` at all.
 function cspConnectSources(mode: string): Plugin {
   const env = loadEnv(mode, process.cwd(), 'VITE_');
-  const require = createRequire(import.meta.url);
-  const bundle = JSON.parse(
-    fs.readFileSync(require.resolve('@vaipakam/contracts/deployments.json'), 'utf8'),
-  ) as Record<string, { diamond?: string }>;
-  const deployed = Object.entries(bundle)
-    .filter(([, d]) => typeof d?.diamond === 'string' && d.diamond !== '')
-    .map(([id]) => Number(id));
+  const deployed = deployedChainIds();
   return cspConnectSourcesPlugin({
     header: REPORT_ONLY_HEADER,
     sources: () => connectSources(env, deployed),
@@ -204,6 +224,7 @@ function serviceWorker(): Plugin {
 
 export default defineConfig(({ mode, command }) => {
   checkIndexerOrigin(mode, command);
+  checkRpcConfig(mode, command);
   return {
   plugins: process.env.APP_E2E
     ? [e2eDeploymentsBundle(), react(), cspScriptHashes()]

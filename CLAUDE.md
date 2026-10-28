@@ -1164,7 +1164,11 @@ alongside the contracts change.
 **What still lives operator-side** — items that are NOT deployment
 artifacts and stay in their respective env / config:
 
-- Frontend `.env.local`: per-chain RPC URLs (with API key),
+- Frontend `.env.local`: `VITE_RPC_PROXY_ORIGIN` (the read-only RPC
+  proxy, `apps/rpc-proxy`, #1724), or, on a testnet build without it,
+  per-chain RPC URLs. A `VITE_*` value ships in the bundle, so a
+  provider key there is public: a proxied build refuses per-chain URLs
+  and a mainnet build refuses to build without the proxy. Then the
   WalletConnect project ID, default chain ID, log-chunk tuning,
   feature flags, push channel address, plus `VITE_INDEXER_ORIGIN`
   - `VITE_AGENT_ORIGIN` (the two Worker URLs the connected app
