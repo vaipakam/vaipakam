@@ -1836,14 +1836,17 @@ ajuste:
   nunca pidas prestado ni prestes allí. Mientras esté desactivado,
   Base envía a todas las demás cadenas un tier cero para ti.
 
-Cuando desactivas el descuento, la aplicación envía a continuación una
-actualización de tier para que las demás cadenas también dejen de
-aplicarlo. Si ese segundo paso falla, la página lo indica, y las demás
-cadenas conservan tu último tier hasta que algo envíe uno nuevo.
+Cuando desactivas el descuento en Base, la aplicación envía a
+continuación una actualización de tier para que todas las demás cadenas
+también dejen de aplicarlo: Base les envía entonces un tier cero para
+ti. Si ese segundo paso falla, la página lo indica, y las demás cadenas
+conservan tu último tier hasta que algo envíe uno nuevo. Desactivarlo en
+cualquier otra cadena solo cambia esa cadena.
 
-Solo cuenta el VPFI que depositas desde la página de VPFI. Los tokens
-enviados directamente a la dirección de tu vault no los sigue el
-protocolo y no suben tu tier.
+El VPFI cuenta cuando el protocolo lo registra en tu vault: lo que
+depositas desde la página de VPFI y las recompensas VPFI que el
+protocolo entrega en tu vault. Los tokens enviados directamente a la
+dirección de tu vault no los sigue el protocolo y no suben tu tier.
 
 ### Cómo se calcula tu tier
 
@@ -1908,9 +1911,13 @@ Una copia deja de contar, y esa cadena no da descuento, cuando:
 - se hizo con una tabla de tiers anterior a la que esa cadena conoce
   ahora.
 
-Una copia solo se renueva cuando tu tier ha cambiado de verdad. Si tu
-tier no ha cambiado y la copia de una cadena ha caducado, nada de lo
-que hagas la reenvía hasta que tu tier vuelva a cambiar.
+Una copia solo se reenvía cuando algo en ella cambiaría: tu tier, su
+descuento, cuánto tiempo sigue siendo válida o la versión de la tabla de
+tiers. Así, tras un cambio en la tabla de tiers, tu próximo depósito,
+retiro o refresco de tier en Base envía a cada cadena una copia nueva,
+aunque tu tier sea el mismo, salvo que sea cero. Si nada de esto ha
+cambiado, una cadena cuya copia ha caducado no aplica ningún descuento
+hasta que algo cambie.
 
 Si tu tier sube solo porque ha pasado el tiempo —ha terminado el
 periodo de tenencia o el promedio ha alcanzado tu saldo— sin depósito

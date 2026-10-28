@@ -2021,14 +2021,16 @@ one switch per chain, because each chain keeps its own setting:
   borrow or lend there. While it is off, Base sends every other
   chain a tier of zero for you.
 
-When you switch the discount off, the app follows with a tier
-update so that other chains stop applying it too. If that second
-step fails, the page says so, and the other chains keep your last
-tier until something sends a new one.
+When you switch the discount off on Base, the app follows with a tier
+update so that every other chain stops applying it too: Base then sends
+them a tier of zero for you. If that second step fails, the page says
+so, and the other chains keep your last tier until something sends a new
+one. Switching it off on any other chain changes only that chain.
 
-Only VPFI you deposit through the VPFI page counts. Tokens sent
-straight to your vault address are not tracked by the protocol and
-do not raise your tier.
+VPFI counts when the protocol records it in your vault: what you deposit
+through the VPFI page, and VPFI rewards the protocol delivers into your
+vault. Tokens sent straight to your vault address are not tracked by the
+protocol and do not raise your tier.
 
 ### How your tier is worked out
 
@@ -2091,9 +2093,12 @@ A copy stops counting, and that chain gives no discount, when:
 - it was made under an older tier table than the one that chain
   now knows.
 
-A copy is refreshed only when your tier has actually changed. If
-your tier has stayed the same and a chain's copy has aged out,
-nothing you do resends it until your tier changes again.
+A copy is resent only when something in it would change: your tier, its
+discount, how long it stays valid, or the version of the tier table. So
+after a tier-table change, your next deposit, withdrawal or tier refresh
+on Base sends every chain a fresh copy, even if your tier is the same,
+unless it is zero. If none of these has changed, a chain whose copy has
+aged out gives no discount until one does.
 
 If your tier rises only because time has passed — the holding
 period has ended, or the average has caught up — with no deposit or

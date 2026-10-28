@@ -1843,15 +1843,18 @@ propre réglage :
   empruntes ni n'y prêtes jamais. Tant qu'il est désactivé, Base envoie
   à toutes les autres chaînes un tier zéro pour toi.
 
-Quand tu désactives la remise, l'application enchaîne avec une mise à
-jour de tier pour que les autres chaînes cessent aussi de l'appliquer.
-Si cette deuxième étape échoue, la page le dit, et les autres chaînes
-gardent ton dernier tier jusqu'à ce qu'une nouvelle mise à jour soit
-envoyée.
+Quand tu désactives la remise sur Base, l'application enchaîne avec une
+mise à jour de tier pour que toutes les autres chaînes cessent aussi de
+l'appliquer : Base leur envoie alors un tier zéro pour toi. Si cette
+deuxième étape échoue, la page le dit, et les autres chaînes gardent ton
+dernier tier jusqu'à ce qu'une nouvelle mise à jour soit envoyée. La
+désactiver sur une autre chaîne ne change que cette chaîne.
 
-Seuls les VPFI déposés via la page VPFI comptent. Les jetons envoyés
-directement à l'adresse de ton vault ne sont pas suivis par le
-protocole et n'augmentent pas ton tier.
+Les VPFI comptent quand le protocole les enregistre dans ton vault :
+ceux que tu déposes via la page VPFI, et les récompenses VPFI que le
+protocole verse dans ton vault. Les jetons envoyés directement à
+l'adresse de ton vault ne sont pas suivis par le protocole et
+n'augmentent pas ton tier.
 
 ### Comment ton tier est calculé
 
@@ -1922,9 +1925,13 @@ quand :
 - elle a été faite avec une table des tiers plus ancienne que celle que
   la chaîne connaît désormais.
 
-Une copie n'est rafraîchie que si ton tier a réellement changé. Si ton
-tier est resté le même et que la copie d'une chaîne a expiré, rien de
-ce que tu fais ne la renvoie tant que ton tier ne change pas à nouveau.
+Une copie n'est renvoyée que si quelque chose en elle changerait : ton
+tier, sa remise, sa durée de validité ou la version de la table des
+tiers. Après un changement de la table des tiers, ton prochain dépôt,
+retrait ou rafraîchissement de tier sur Base envoie donc une copie neuve
+à chaque chaîne, même si ton tier reste le même, sauf s'il vaut zéro. Si
+rien de tout cela n'a changé, une chaîne dont la copie a expiré
+n'applique aucune remise jusqu'à ce que quelque chose change.
 
 Si ton tier monte uniquement parce que le temps a passé — la période
 de détention est terminée, ou la moyenne a rattrapé ton solde — sans

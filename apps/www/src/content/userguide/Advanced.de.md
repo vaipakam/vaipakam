@@ -1836,14 +1836,17 @@ gibt einen pro Chain, weil jede Chain ihre eigene Einstellung hat:
   nie leihst oder verleihst. Solange er aus ist, schickt Base allen
   anderen Chains für dich Tier null.
 
-Wenn du den Rabatt ausschaltest, schickt die App direkt danach ein
-Tier-Update, damit auch die anderen Chains ihn nicht mehr anwenden.
-Schlägt dieser zweite Schritt fehl, sagt die Seite das, und die anderen
-Chains behalten dein letztes Tier, bis etwas ein neues schickt.
+Wenn du den Rabatt auf Base ausschaltest, schickt die App direkt danach
+ein Tier-Update, damit auch alle anderen Chains ihn nicht mehr anwenden:
+Base schickt ihnen dann für dich Tier null. Schlägt dieser zweite
+Schritt fehl, sagt die Seite das, und die anderen Chains behalten dein
+letztes Tier, bis etwas ein neues schickt. Schaltest du ihn auf einer
+anderen Chain aus, ändert sich nur diese Chain.
 
-Nur VPFI, das du über die VPFI-Seite einzahlst, zählt. Token, die direkt
-an die Adresse deines Vaults geschickt werden, verfolgt das Protokoll
-nicht, und sie erhöhen dein Tier nicht.
+VPFI zählt, wenn das Protokoll es in deinem Vault erfasst: was du über
+die VPFI-Seite einzahlst, und VPFI-Rewards, die das Protokoll in deinen
+Vault liefert. Token, die direkt an die Adresse deines Vaults geschickt
+werden, verfolgt das Protokoll nicht, und sie erhöhen dein Tier nicht.
 
 ### Wie dein Tier berechnet wird
 
@@ -1913,10 +1916,13 @@ wenn:
 - sie mit einer älteren Tier-Tabelle erstellt wurde als der, die die
   Chain inzwischen kennt.
 
-Eine Kopie wird nur erneuert, wenn sich dein Tier tatsächlich geändert
-hat. Ist dein Tier gleich geblieben und die Kopie einer Chain
-veraltet, schickt nichts, was du tust, sie erneut, bis sich dein Tier
-wieder ändert.
+Eine Kopie wird nur erneut geschickt, wenn sich etwas darin ändern
+würde: dein Tier, sein Rabatt, wie lange sie gültig bleibt oder die
+Version der Tier-Tabelle. Nach einer Änderung der Tier-Tabelle schickt
+deine nächste Einzahlung, Auszahlung oder Tier-Auffrischung auf Base
+also jeder Chain eine frische Kopie, auch wenn dein Tier gleich bleibt,
+außer es ist null. Hat sich nichts davon geändert, gibt eine Chain mit
+veralteter Kopie keinen Rabatt, bis sich etwas ändert.
 
 Steigt dein Tier nur, weil Zeit vergangen ist — die Haltedauer ist
 erreicht oder der Durchschnitt hat aufgeholt —, ohne Einzahlung oder
