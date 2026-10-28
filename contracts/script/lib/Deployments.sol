@@ -664,8 +664,57 @@ library Deployments {
     /// (e.g. `"metricsFacet"`, `"diamondCutFacet"`). Frontend reads
     /// `.diamond` for the proxy address and may optionally surface
     /// per-facet addresses for explorer links.
+    ///
+    /// @dev #2263 — this is the ONLY door into `.facets`. The generic writers
+    ///      refuse every key inside that namespace ({requireOutsideFacetsNamespace}),
+    ///      so every `.facets.*` entry is one this function wrote, under a
+    ///      single-segment key: `facetKey` must be non-empty and carry no `.`,
+    ///      `[` or `]`, which would nest the write below `.facets.<x>` or index
+    ///      into it instead of naming a facet.
     function writeFacet(string memory facetKey, address a) internal {
+        requireFacetKey(facetKey);
         _writeAddr(string.concat(".facets.", facetKey), a);
+    }
+
+    /// @notice A generic writer was handed a key inside `.facets`, the
+    ///         namespace {writeFacet} alone writes (#2263). Write the facet
+    ///         through `Deployments.writeFacet(facetKey, impl)` instead.
+    error FacetsNamespaceReserved(string jsonKey);
+
+    /// @notice {writeFacet} was handed a key that is not a single path
+    ///         segment: empty, or carrying `.`, `[` or `]` (#2263).
+    error FacetKeyMalformed(string facetKey);
+
+    /// @notice TRUE when `jsonKey` addresses `.facets` itself or anything
+    ///         below it, in either key spelling forge accepts (`.facets…` or
+    ///         `$.facets…`). `.facetCount` and other keys that merely start
+    ///         with the same letters are outside the namespace.
+    function isFacetsNamespaceKey(string memory jsonKey) internal pure returns (bool) {
+        bytes memory k = bytes(jsonKey);
+        uint256 i = (k.length != 0 && k[0] == "$") ? 1 : 0;
+        bytes memory ns = bytes(".facets");
+        if (k.length < i + ns.length) return false;
+        for (uint256 j; j < ns.length; ++j) {
+            if (k[i + j] != ns[j]) return false;
+        }
+        uint256 next = i + ns.length;
+        return next == k.length || k[next] == "." || k[next] == "[";
+    }
+
+    /// @notice Refuse a generic write into `.facets` (#2263). Called by
+    ///         {writeAddress}, {writeUint}, {writeBool} and {writeString}
+    ///         before anything is written.
+    function requireOutsideFacetsNamespace(string memory jsonKey) internal pure {
+        if (isFacetsNamespaceKey(jsonKey)) revert FacetsNamespaceReserved(jsonKey);
+    }
+
+    /// @notice Refuse a {writeFacet} key that is not one path segment.
+    function requireFacetKey(string memory facetKey) internal pure {
+        bytes memory k = bytes(facetKey);
+        if (k.length == 0) revert FacetKeyMalformed(facetKey);
+        for (uint256 i; i < k.length; ++i) {
+            if (k[i] == "." || k[i] == "[" || k[i] == "]") revert FacetKeyMalformed(facetKey);
+        }
     }
 
     /// @notice Require that every address in `expected` was recorded under some
@@ -977,14 +1026,17 @@ library Deployments {
     // ── Scalar/uint writes ─────────────────────────────────────────────────
 
     function writeUint(string memory jsonKey, uint256 value) internal {
+        requireOutsideFacetsNamespace(jsonKey);
         _writeUint(jsonKey, value);
     }
 
     function writeBool(string memory jsonKey, bool value) internal {
+        requireOutsideFacetsNamespace(jsonKey);
         _writeBool(jsonKey, value);
     }
 
     function writeString(string memory jsonKey, string memory value) internal {
+        requireOutsideFacetsNamespace(jsonKey);
         _writeString(jsonKey, value);
     }
 
@@ -1059,8 +1111,10 @@ library Deployments {
     function writeRewardGraceSeconds(uint64 secs) internal { _writeUint(".rewardGraceSeconds", uint256(secs)); }
     function writeInteractionLaunchTimestamp(uint256 ts) internal { _writeUint(".interactionLaunchTimestamp", ts); }
 
-    /// Generic typed write — keys not in the curated list above.
+    /// Generic typed write — keys not in the curated list above. A key inside
+    /// `.facets` is refused: facet addresses go through {writeFacet} (#2263).
     function writeAddress(string memory jsonKey, address a) internal {
+        requireOutsideFacetsNamespace(jsonKey);
         _writeAddr(jsonKey, a);
     }
 
