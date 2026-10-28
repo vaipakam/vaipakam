@@ -32,7 +32,7 @@ import {
 } from '../src/rewardHorizonHeartbeat';
 import type { HorizonEntryRow } from '../src/db';
 import type { Env } from '../src/env';
-import type { KeeperContext } from '../src/keeper';
+import { subStepArmed, type KeeperContext } from '../src/keeper';
 import { PastRunDeadline } from '../src/batchRead';
 import { createKeeperD1, createSharedD1 } from './helpers/schemas';
 import type { SqliteD1 } from './helpers/sqliteD1';
@@ -125,6 +125,7 @@ describe('the pure rules', () => {
       unread: [3, 4],
       retire: [],
       forfeit: [],
+      forfeited: [],
     });
     expect(planHeartbeat(rows, reads, 0, 10_000).idle).toEqual([2]);
   });
@@ -185,6 +186,14 @@ class FakeChain {
   sweepChunks = new Map<bigint, bigint[]>();
   /** Step 5: loans whose forfeit sweep reverts. */
   sweepFailing = new Set<bigint>();
+  /** Step 5: calls a loan's sweep spends preparing (returning zero, with an
+   *  event) before its chunks move value. */
+  sweepPrepares = new Map<bigint, number>();
+  /** Step 5: loans whose sweep simulates clean but reverts on chain. */
+  sweepRevertsOnChain = new Set<bigint>();
+  /** Logs the next receipt carries. */
+  private nextLogs = 0;
+  private nextReverts = false;
   /** Step 5 calls sent, in order. */
   settleSent: { fn: string; arg: unknown }[] = [];
 
@@ -225,6 +234,7 @@ class FakeChain {
     if (functionName === 'sweepForfeitedInteractionRewards') {
       const loan = args[0] as bigint;
       if (this.sweepFailing.has(loan)) throw revert('InteractionPoolReservedShortfall');
+      if ((this.sweepPrepares.get(loan) ?? 0) > 0) return { result: 0n };
       return { result: this.sweepChunks.get(loan)?.[0] ?? 0n };
     }
     const ids = (args[0] as bigint[]).map(Number);
@@ -234,7 +244,13 @@ class FakeChain {
     return { result: 0n };
   };
 
-  waitForTransactionReceipt = async () => ({ status: this.receiptReverts ? 'reverted' : 'success' });
+  waitForTransactionReceipt = async () => {
+    const logs = Array.from({ length: this.nextLogs }, () => ({}));
+    const reverted = this.receiptReverts || this.nextReverts;
+    this.nextLogs = 0;
+    this.nextReverts = false;
+    return { status: reverted ? 'reverted' : 'success', logs };
+  };
 
   client(): PublicClient {
     return this as unknown as PublicClient;
@@ -260,9 +276,21 @@ class FakeChain {
           } else if (functionName === 'sweepForfeitedInteractionRewards') {
             const loan = args[0] as bigint;
             this.settleSent.push({ fn: functionName, arg: loan });
+            if (this.sweepRevertsOnChain.has(loan)) {
+              this.nextReverts = true;
+              return `0x${'1'.repeat(64)}`;
+            }
+            const prep = this.sweepPrepares.get(loan) ?? 0;
+            if (prep > 0) {
+              this.sweepPrepares.set(loan, prep - 1);
+              this.nextLogs = 1;
+              return `0x${'1'.repeat(64)}`;
+            }
             const chunks = this.sweepChunks.get(loan) ?? [];
+            if (chunks.length > 0) this.nextLogs = 1;
             chunks.shift();
-            if (chunks.length === 0) for (const [id, e] of this.entries) if (e.loanId === loan && e.forfeited) this.entries.set(id, { ...e, processed: true });
+            // A loan with no chunks set is deferred: nothing it can settle yet.
+            if (this.sweepChunks.has(loan) && chunks.length === 0) for (const [id, e] of this.entries) if (e.loanId === loan && e.forfeited) this.entries.set(id, { ...e, processed: true });
           } else this.sent.push((args[0] as bigint[]).map(Number));
           return `0x${'1'.repeat(64)}`;
         },
@@ -389,6 +417,65 @@ describe('a run', () => {
       expect(chain.sent, 'the forfeited entry is never touched').toEqual([[1]]);
       expect(queued()).toEqual([1, 2]);
       expect(logged.join('\n')).not.toMatch(/retire=/);
+      expect(logged.join('\n'), 'the run says the step is off').toMatch(/close-out=off \(REWARD_ENTRY_SETTLE_ENABLED not armed\)/);
+    });
+
+    it('says whether the close-out flag armed its step, naming the form of a value it refuses (Codex #3006)', () => {
+      const line = (raw: string | undefined) => {
+        logged = [];
+        const on = subStepArmed({ REWARD_ENTRY_SETTLE_ENABLED: raw } as unknown as Env, 'rewardHorizonHeartbeat', 'step 5 (entry close-out)', 'REWARD_ENTRY_SETTLE_ENABLED');
+        return { on, line: logged.join('\n') };
+      };
+      expect(line('true')).toEqual({ on: true, line: '[keeper] rewardHorizonHeartbeat step 5 (entry close-out): armed (REWARD_ENTRY_SETTLE_ENABLED)' });
+      expect(line(undefined).on).toBe(false);
+      expect(line(undefined).line).toMatch(/step 5 \(entry close-out\): off: REWARD_ENTRY_SETTLE_ENABLED .*unset/);
+      const typo = line('ture');
+      expect(typo.on).toBe(false);
+      expect(typo.line).not.toContain('ture');
+    });
+
+    it('sweeps a loan whose first chunk only prepares (zero swept, an event), until it settles (Codex #3006)', async () => {
+      chain.entries.set(1, entry({ forfeited: true, loanId: 9n }));
+      chain.sweepPrepares.set(9n, 1);
+      chain.sweepChunks.set(9n, [4n * 10n ** 18n]);
+      await run(true);
+      expect(chain.settleSent.map((x) => x.fn)).toEqual(['sweepForfeitedInteractionRewards', 'sweepForfeitedInteractionRewards']);
+      expect(chain.entries.get(1)!.processed).toBe(true);
+      expect(logged.join('\n')).toMatch(/forfeit=1 swept=4 VPFI in 2 call\(s\)/);
+    });
+
+    it('sweeps a deferred loan once a heartbeat, not more, while it moves nothing', async () => {
+      chain.entries.set(1, entry({ forfeited: true, loanId: 9n }));
+      await run(true);
+      expect(chain.settleSent).toEqual([{ fn: 'sweepForfeitedInteractionRewards', arg: 9n }]);
+      await run(true);
+      expect(chain.settleSent, 'not due again within the heartbeat').toHaveLength(1);
+      later(DUE_AFTER_SEC);
+      await run(true);
+      expect(chain.settleSent).toHaveLength(2);
+      expect(queued()).toEqual([1]);
+    });
+
+    it('keeps a close-out alert open when the send that simulated clean reverts on chain (Codex #3006)', async () => {
+      chain.entries.set(1, entry({ forfeited: true, loanId: 9n }));
+      chain.sweepRevertsOnChain.add(9n);
+      openAlert(`horizon-settle:${CHAIN}:1`);
+      await run(true);
+      expect(alerts(/closing out reward entry 1: sweeping its loan 9's forfeited reward .*reverted on chain/)).toHaveLength(1);
+      expect(openKeys()).toContain(`horizon-settle:${CHAIN}:1`);
+    });
+
+    it('clears the horizon diagnostics of an entry once it is forfeited, whatever the flag (Codex #3006)', async () => {
+      chain.entries.set(1, entry());
+      await run();
+      keeper.db.prepare('UPDATE keeper_horizon_entry SET paused_runs = 3, touched_at = 5, expires_at = 9').run();
+      openAlert(`horizon-revert:${CHAIN}:1`);
+      chain.entries.set(1, entry({ forfeited: true, loanId: 9n }));
+      later(DUE_AFTER_SEC);
+      await run();
+      expect(keeper.db.prepare('SELECT paused_runs, touched_at, expires_at FROM keeper_horizon_entry').get()).toEqual({ paused_runs: 0, touched_at: 0, expires_at: 0 });
+      expect(openKeys()).not.toContain(`horizon-revert:${CHAIN}:1`);
+      expect(queued(), 'it stays for its close-out').toEqual([1]);
     });
 
     it('retires a capped entry a day a call until it is processed, and the next heartbeat lets it go', async () => {

@@ -64,12 +64,19 @@
 //      commitments retire; repeated while the call still moves something,
 //      since a capped entry retires a day at a time), and a FORFEITED entry's
 //      loan is swept (`sweepForfeitedInteractionRewards`: the forfeited reward
-//      goes to the recycle bucket; repeated while it still sweeps). A
-//      forfeited entry stays queued until it is processed whatever the flag
-//      says (idle while it is off), so arming it later reaches every one
-//      already discovered. Either call left
-//      with nothing to do costs one simulation, never a transaction. A
-//      refusal is alerted per entry or loan, like a touch's.
+//      goes to the recycle bucket). A sweep's return is NOT a progress
+//      signal: it reads zero for a chunk that only prepares a staging domain,
+//      retires an armed commitment or advances the entry's cursor, and no view
+//      exposes that cursor (Codex #3006). So a loan with an unprocessed
+//      forfeited entry is swept once a heartbeat whatever its simulation
+//      returns, and again within the run while the landed call moved value or
+//      emitted an event and an entry is still unprocessed. A forfeited entry
+//      stays queued until it is processed whatever the flag says (idle while
+//      it is off), so arming it later reaches every one already discovered;
+//      its horizon diagnostics are cleared, since a forfeited entry has no
+//      horizon clock. A retirement with nothing to do costs one simulation,
+//      never a transaction. A refusal is alerted per entry or loan, like a
+//      touch's. Whether step 5 is armed is logged every run.
 //
 // Every call here is permissionless and moves value only into the protocol's
 // recycle bucket (an expired or forfeited reward), never to the keeper.
@@ -82,7 +89,7 @@ import { AdminFacetABI, ConfigFacetABI, InteractionRewardsFacetABI, InteractionR
 import { summarizeFailure } from '@vaipakam/lib/errorDescription';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
-import { armingFlagOn, buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
+import { buildKeeperContext, passIsArmed, subStepArmed, type KeeperContext } from './keeper';
 import { reportSendError } from './submissionQueue';
 import type { PassTick } from './passSchedule';
 import { boundedRead, deadlineClient, PastRunDeadline } from './batchRead';
@@ -99,6 +106,7 @@ import {
   markHorizonTried,
   putHorizonCursor,
   recordHorizonTouches,
+  retireHorizonClock,
   type HorizonEntryRow,
   type PausedHorizonEntry,
 } from './db';
@@ -265,6 +273,9 @@ export interface HeartbeatPlan {
   /** Close-out (step 5): forfeited entries not yet processed, with their loan.
    *  Neither touched nor idle. Empty with the close-out off. */
   forfeit: { entryId: number; loanId: bigint }[];
+  /** Every forfeited, unprocessed entry read, whatever the flag: it has left
+   *  the horizon's clock, so its horizon diagnostics are cleared. */
+  forfeited: number[];
 }
 
 export function planHeartbeat(
@@ -274,7 +285,7 @@ export function planHeartbeat(
   nowSec: number,
   settleRemainders = false,
 ): HeartbeatPlan {
-  const plan: HeartbeatPlan = { settled: [], idle: [], touch: [], unread: [], retire: [], forfeit: [] };
+  const plan: HeartbeatPlan = { settled: [], idle: [], touch: [], unread: [], retire: [], forfeit: [], forfeited: [] };
   for (const row of rows) {
     const r = reads.get(row.entryId);
     if (!r) {
@@ -286,6 +297,7 @@ export function planHeartbeat(
       continue;
     }
     if (r.entry.forfeited) {
+      plan.forfeited.push(row.entryId);
       if (settleRemainders) plan.forfeit.push({ entryId: row.entryId, loanId: r.entry.loanId });
       else plan.idle.push(row.entryId);
       continue;
@@ -326,7 +338,7 @@ async function heartbeatChain(env: Env, chain: ChainConfig, sendDeadline: number
     context: () => buildKeeperContext(env, chain, client, { notAfterMs: sendDeadline }),
     sendDeadline,
     runDeadline,
-    settleRemainders: armingFlagOn(env, 'REWARD_ENTRY_SETTLE_ENABLED'),
+    settleRemainders: subStepArmed(env, 'rewardHorizonHeartbeat', 'step 5 (entry close-out)', 'REWARD_ENTRY_SETTLE_ENABLED'),
   });
 }
 
@@ -368,6 +380,10 @@ export async function heartbeatOnce(env: Env, chainId: number, diamond: Address,
   await markHorizonTried(env.KEEPER_DB, chainId, diamond, rows.map((r) => r.entryId), nowSec);
   await finishHorizonEntries(env.KEEPER_DB, chainId, diamond, plan.settled);
   await checkHorizonEntries(env.KEEPER_DB, chainId, diamond, plan.idle, nowSec);
+  // A forfeited entry never expires, so a pause count or a touch-revert alert
+  // it carried from before it was forfeited would be repeated for good
+  // (Codex #3006): its horizon clock is cleared, and its close-out stays.
+  await retireHorizonClock(env.KEEPER_DB, chainId, diamond, plan.forfeited);
 
   const wantsSends = plan.touch.length + plan.retire.length + plan.forfeit.length > 0;
   const ctx = wantsSends && !pausedAtStart ? deps.context() : null;
@@ -402,7 +418,7 @@ export async function heartbeatOnce(env: Env, chainId: number, diamond: Address,
         ? ` retire=${plan.retire.length} retired=${settle.retired} in ${settle.retireCalls} call(s) (commitments released ${vpfi(settle.retireReleased)})` +
           ` forfeit=${plan.forfeit.length} swept=${vpfi(settle.swept)} in ${settle.sweepCalls} call(s), as each call's simulation reported just before it was sent` +
           (settle.refused && !outcome.refused ? ` settle-refused=${settle.refused}` : '')
-        : '') +
+        : ' close-out=off (REWARD_ENTRY_SETTLE_ENABLED not armed)') +
       (pausedAtStart ? ' (protocol paused: nothing sent)' : '') +
       (horizonDays === 0 ? ' (horizon dark: only entries whose removal has begun are touched)' : ''),
   );
@@ -410,7 +426,7 @@ export async function heartbeatOnce(env: Env, chainId: number, diamond: Address,
   await raiseHeartbeatAlerts(env, chainId, diamond, {
     horizonDays,
     reverted: outcome.reverted,
-    clearedIds: new Set([...outcome.landed, ...plan.settled]),
+    clearedIds: new Set([...outcome.landed, ...plan.settled, ...plan.forfeited]),
     settleReverted: settle.reverted,
     settleCleared: new Set([...settle.cleared, ...plan.settled]),
     protocolPaused,
@@ -582,7 +598,8 @@ async function simulate(ctx: KeeperContext, ids: readonly number[]): Promise<str
 
 /** A send's outcome: landed, reverted on chain (with why), or `stop` — not
  *  sent, or sent with no receipt in time; either way this run sends no more. */
-type SendResult = { kind: 'landed' } | { kind: 'reverted'; reason: string } | { kind: 'stop' };
+/** A landed send carries how many logs its receipt holds. */
+type SendResult = { kind: 'landed'; logs: number } | { kind: 'reverted'; reason: string } | { kind: 'stop' };
 
 async function send(ctx: KeeperContext, ids: readonly number[]): Promise<SendResult> {
   return sendCall(ctx, `entries=${ids.join(',')}`, 'sweepExpiredInteractionRewards', [ids.map((id) => BigInt(id))]);
@@ -614,7 +631,7 @@ async function sendCall(ctx: KeeperContext, subject: string, functionName: strin
       console.error(`${label} reverted on chain: tx=${hash}`);
       return { kind: 'reverted', reason: `reverted on chain (tx ${hash})` };
     }
-    return { kind: 'landed' };
+    return { kind: 'landed', logs: receipt.logs?.length ?? 0 };
   } catch (err) {
     console.error(`${label} receipt not seen in time: ${summarizeFailure(err)}`);
     return { kind: 'stop' };
@@ -674,6 +691,10 @@ async function settleEntries(ctx: KeeperContext, plan: Pick<HeartbeatPlan, 'reti
     args: readonly unknown[],
     moved: (result: unknown) => bigint,
     onLanded: (result: unknown) => void,
+    /** Send even when the simulation moves nothing: the call's return is not
+     *  its progress signal. It then counts as moved when it moved value or
+     *  its receipt carries an event. */
+    sendOnZero = false,
   ): Promise<'moved' | 'nothing' | 'would-revert' | 'reverted' | 'stop'> => {
     if (Date.now() >= ctx.notAfterMs) return 'stop';
     const sim = await simulateCall(ctx, functionName, args);
@@ -687,14 +708,20 @@ async function settleEntries(ctx: KeeperContext, plan: Pick<HeartbeatPlan, 'reti
       if (pin) for (const id of ids) out.reverted.set(id, `${what} would revert (${sim})`);
       return 'would-revert';
     }
-    for (const id of ids) out.cleared.add(id);
-    if (moved(sim.result) === 0n) return 'nothing';
+    const value = moved(sim.result);
+    if (value === 0n && !sendOnZero) {
+      for (const id of ids) out.cleared.add(id);
+      return 'nothing';
+    }
     if (writes <= 0) return 'stop';
     writes -= 1;
     const sent = await sendCall(ctx, `entries=${ids.join(',')}`, functionName, args);
     if (sent.kind === 'landed') {
+      // A clean run disproves an earlier refusal only once it LANDED: a send
+      // that reverts on chain keeps its alert open (Codex #3006).
+      for (const id of ids) out.cleared.add(id);
       onLanded(sim.result);
-      return 'moved';
+      return value > 0n || sent.logs > 0 ? 'moved' : 'nothing';
     }
     if (sent.kind === 'reverted') for (const id of ids) out.reverted.set(id, `${what} ${sent.reason}`);
     return sent.kind === 'reverted' ? 'reverted' : 'stop';
@@ -732,10 +759,11 @@ async function settleEntries(ctx: KeeperContext, plan: Pick<HeartbeatPlan, 'reti
   for (const f of plan.forfeit) byLoan.set(f.loanId, [...(byLoan.get(f.loanId) ?? []), f.entryId]);
   for (const [loanId, entryIds] of byLoan) {
     let r: Awaited<ReturnType<typeof step>>;
+    let open: readonly number[] = entryIds;
     do {
       // eslint-disable-next-line no-await-in-loop
       r = await step(
-        entryIds,
+        open,
         true,
         `sweeping its loan ${loanId}'s forfeited reward (\`sweepForfeitedInteractionRewards\`)`,
         'sweepForfeitedInteractionRewards',
@@ -745,11 +773,31 @@ async function settleEntries(ctx: KeeperContext, plan: Pick<HeartbeatPlan, 'reti
           out.swept += x as bigint;
           out.sweepCalls += 1;
         },
+        true,
       );
-    } while (r === 'moved');
+      // eslint-disable-next-line no-await-in-loop
+      if (r === 'moved') open = await stillUnprocessed(ctx, open);
+    } while (r === 'moved' && open.length > 0);
     // Stopped mid-loan, the loan stays due and the next run takes it again.
     if (r === 'stop') return out;
     out.reachedForfeits.push(...entryIds);
+  }
+  return out;
+}
+
+/** The entries of `ids` the chain does not yet show processed; an entry that
+ *  cannot be read counts as open (the next call's simulation decides). */
+async function stillUnprocessed(ctx: KeeperContext, ids: readonly number[]): Promise<number[]> {
+  const out: number[] = [];
+  for (const id of ids) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const [e] = (await ctx.client.readContract({ address: ctx.diamond, abi: ABI, functionName: 'getRewardEntriesRange', args: [BigInt(id), 1n] })) as readonly RewardEntryView[];
+      if (!e?.processed) out.push(id);
+    } catch (err) {
+      if (err instanceof PastRunDeadline) throw err;
+      out.push(id);
+    }
   }
   return out;
 }
