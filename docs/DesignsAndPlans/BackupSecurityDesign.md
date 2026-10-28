@@ -382,11 +382,16 @@ for it.
 
 ### 7.3 The restore drill
 
-Once a quarter, and after any change to the recipients, the operator downloads
-the newest daily archive, runs `decrypt-archive.mjs` with each private key in
-turn (primary and escrow), and records the outcome on the tracking issue. It is
-the only proof that the archives decrypt (§3.4), so the runbook schedules it
-rather than leaving it to an incident.
+Once a quarter, the operator downloads the newest archive of **every tier that
+holds one** (daily, monthly and yearly), runs `decrypt-archive.mjs` on each
+with every private key that archive was written to (primary and escrow), and
+records the outcome per tier and per key on the tracking issue. Each tier is
+encrypted on its own (§5.3), so a daily that decrypts says nothing about a
+monthly or a yearly. The drill also runs on each tier's **first archive after
+the format switch and after every rotation**, as soon as that archive exists,
+so a defect in a new set of keys or in one tier's write is found before that
+tier's history depends on it. It is the only proof that the archives decrypt
+(§3.4), so the runbook schedules it rather than leaving it to an incident.
 
 ## 8. The build, in three slices
 
