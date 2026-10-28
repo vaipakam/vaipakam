@@ -123,6 +123,10 @@ export const THREE_VERDICT_DRIVERS = new Set([
   // session cannot be set up — preconditions; every review check is PASS or
   // FAIL. Also MANUAL-ONLY — see MANUAL_ONLY_DRIVERS below.
   'live-refinance-lender-review.mjs',
+  // Read-only, keyless: exits 2 only when the site cannot be reached or the
+  // committed `_headers` policy cannot be read — preconditions; every
+  // served response is judged PASS or FAIL (#2089).
+  'live-robots-headers.mjs',
   'live-rpc-audit.mjs',
   // Exits 2 when the chain is not in the state its EXPECT mode needs (the
   // operator's flag/clear write on the test list not done, or the Diamond

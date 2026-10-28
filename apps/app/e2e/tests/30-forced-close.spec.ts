@@ -57,8 +57,17 @@ import {
   newestOfferIdFor,
   newestLoanIdFor,
 } from '../lib/flows';
-import { anvilRpc, increaseTime, setBalance } from '../lib/anvil';
+import { toFunctionSelector } from 'viem';
+import { anvilRpc, increaseTime, mine, setBalance } from '../lib/anvil';
+import { ethCallMatching, failRpcCalls } from '../lib/rpcFault';
 import { pub, DIAMOND, DIAMOND_ABI_VIEM, MOCKS, WETH } from '../lib/chain';
+
+/** The read the page uses to ask whether this deployment has bounded sale
+ *  listings — the capability half of its sale-hold check (#2089). */
+const FACET_ADDRESS_SELECTOR = toFunctionSelector('function facetAddress(bytes4)');
+const BOUNDED_LISTING_SELECTOR = toFunctionSelector(
+  'function createLoanSaleOffer(uint256,uint256,bool,uint64)',
+);
 
 /** How far past maturity to step, and how many steps to allow.
  *
@@ -230,6 +239,43 @@ test('the close-out card tracks the grace boundary for the lender', async ({
       .locator(`a[href="/positions/${loanId}"]`)
       .getByTestId('loan-row-grace-unread'),
   ).toHaveCount(0);
+
+  // ---- While the sale-hold check cannot be answered (#2089) ----
+  //
+  // The card must stay ON SCREEN, declaring `unknown` with no block and no
+  // button, rather than unmounting: a lender whose RPC fails the one read
+  // that says whether a sale is linked would otherwise lose the whole
+  // close-out surface, which reads as "nothing to do here". Only that read
+  // is failed — the deployment-capability probe for bounded sale listings,
+  // `facetAddress(createLoanSaleOffer(uint256,uint256,bool,uint64))` — so
+  // every other fact behind the card still answers.
+  const saleHoldFault = await failRpcCalls(
+    afterWarp.page,
+    ethCallMatching(FACET_ADDRESS_SELECTOR, [BOUNDED_LISTING_SELECTOR.slice(2)]),
+  );
+  await afterWarp.page.goto(`/positions/${loanId}`, {
+    waitUntil: 'domcontentloaded',
+  });
+  const cardHeld = afterWarp.page.getByTestId('forced-close-card');
+  await expect(cardHeld).toBeVisible({ timeout: 30_000 });
+  await expect(cardHeld).toHaveAttribute('data-forced-close-state', 'unknown', {
+    timeout: 30_000,
+  });
+  // The read was made and failed more than once — the app retried it and
+  // still holds — so `unknown` here is the unanswered check, not the
+  // first moments of a page whose reads have not landed yet.
+  await expect
+    .poll(() => saleHoldFault.failed(), {
+      message: 'the sale-hold capability read was never made, or never retried',
+      timeout: 60_000,
+    })
+    .toBeGreaterThanOrEqual(2);
+  await expect(cardHeld).toBeVisible();
+  await expect(cardHeld).toHaveAttribute('data-forced-close-state', 'unknown');
+  await expect(cardHeld).not.toHaveAttribute('data-forced-close-block', /.+/);
+  await expect(afterWarp.page.getByTestId('forced-close-submit')).toHaveCount(0);
+  await saleHoldFault.remove();
+
   await afterWarp.page.goto(`/positions/${loanId}`, {
     waitUntil: 'domcontentloaded',
   });
@@ -331,7 +377,35 @@ test('the close-out card tracks the grace boundary for the lender', async ({
   await submit.click();
   const confirm = cardAfter.getByTestId('confirm-receipt-confirm');
   await expect(confirm).toBeEnabled({ timeout: 30_000 });
-  await confirm.click();
+
+  // ---- When this browser refuses to store the submission record (#2089) ----
+  //
+  // The card keeps a device-local record of a sent close-out so a reload
+  // still holds the button; a private window or a full quota refuses it,
+  // and the card must SAY so while the transaction is pending, because a
+  // reload would then offer the button again. Only that record's key is
+  // refused, so nothing else about this submit changes. Automine is off
+  // until the note is seen, which keeps the transaction pending and the
+  // card holding — the only window in which the note exists.
+  await afterWarp.page.evaluate((prefix) => {
+    const set = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key: string, value: string) {
+      if (String(key).startsWith(prefix)) {
+        throw new DOMException('refused by the e2e storage fault (#2089)', 'QuotaExceededError');
+      }
+      return set.call(this, key, value);
+    };
+  }, 'app.forcedCloseSubmit');
+  await anvilRpc('evm_setAutomine', [false]);
+  try {
+    await confirm.click();
+    await expect(cardAfter.getByTestId('forced-close-not-stored')).toBeVisible({
+      timeout: 60_000,
+    });
+  } finally {
+    await anvilRpc('evm_setAutomine', [true]);
+    await mine(1);
+  }
   // The chain is the judge, not the copy. Defaulted (2) when the mock's
   // sale meets the protocol's minimum; anything else — FallbackPending
   // (4) above all — means the route was sent but the sale did not take,
