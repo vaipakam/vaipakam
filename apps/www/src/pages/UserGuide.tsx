@@ -371,6 +371,7 @@ export default function UserGuide({ variant }: UserGuideProps) {
     descriptionKey: variant === 'basic'
       ? 'pageMeta.userGuideBasic.description'
       : 'pageMeta.userGuideAdvanced.description',
+    bodyFiles: GUIDE_FILES,
   });
   const mode: 'Basic' | 'Advanced' = variant === 'advanced' ? 'Advanced' : 'Basic';
   const lang = useActiveLocale();

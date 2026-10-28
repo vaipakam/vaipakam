@@ -22,6 +22,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readViteEnv } from './viteEnv.mjs';
+import BODY_SOURCES from '../src/content/bodySources.json' with { type: 'json' };
+
+const CONTENT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'content');
 
 export const LOCALES = [
   'en',
@@ -88,4 +91,28 @@ export function localizedPath(route, locale) {
   if (locale === 'en') return route;
   if (route === '/') return `/${locale}`;
   return `/${locale}${route}`;
+}
+
+/**
+ * The locales whose copy of `route` is INDEXED (#1314, owner decision
+ * 2026-10-28) — the build-time reader of `src/content/bodySources.json`,
+ * the same declaration `src/lib/indexedLocales.ts` reads at runtime:
+ *
+ *   - a pattern: a locale is indexed when its body file exists;
+ *   - `null`: the body is English by design, so English alone;
+ *   - no entry: the body is the catalogue, so every translated locale.
+ *
+ * Every locale still gets a prerendered copy, for visitors; a copy that
+ * is not indexed canonicalises to English and is left out of hreflang and
+ * the sitemap. The prerender pass checks each snapshot's canonical and
+ * hreflang against this answer, so the two readers cannot disagree on a
+ * deployed page.
+ */
+export function indexedLocales(route) {
+  if (!Object.hasOwn(BODY_SOURCES, route)) return LOCALES;
+  const pattern = BODY_SOURCES[route];
+  if (pattern === null) return ['en'];
+  return LOCALES.filter((locale) =>
+    existsSync(resolve(CONTENT_DIR, pattern.replace('{locale}', locale))),
+  );
 }

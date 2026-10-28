@@ -52,11 +52,38 @@ import { resolve, dirname, join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { policyScriptSources, uncoveredScripts } from '@vaipakam/lib/cspScriptHashes';
-import { LOCALES, ROUTES, EN_ONLY_ROUTES, localizedPath } from './seo-routes.mjs';
+import { LOCALES, ROUTES, EN_ONLY_ROUTES, indexedLocales, localizedPath } from './seo-routes.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DIST = resolve(__dirname, '..', 'dist');
 const CONCURRENCY = 4;
+
+/** The apex every page declares (`CANONICAL_ORIGIN` in usePageMeta.ts). */
+const CANONICAL_ORIGIN = 'https://vaipakam.com';
+
+/**
+ * What a snapshot's head must say about indexing (#1314): the page reads
+ * `src/content/bodySources.json` against its own bundled body files, the
+ * sitemap reads it against the filesystem, and this compares the two on
+ * every page the deploy ships. An indexed copy canonicalises to itself and
+ * names every indexed copy (plus `x-default`) when there is more than one;
+ * a copy whose body fell back to English canonicalises to English and
+ * names none.
+ */
+function expectedIndexing(route, locale) {
+  const indexed = indexedLocales(route);
+  const self = indexed.includes(locale);
+  return {
+    canonical: `${CANONICAL_ORIGIN}${self ? localizedPath(route, locale) : route}`,
+    alternates:
+      self && indexed.length > 1
+        ? [
+            ...indexed.map((l) => `${l} ${CANONICAL_ORIGIN}${localizedPath(route, l)}`),
+            `x-default ${CANONICAL_ORIGIN}${route}`,
+          ].sort()
+        : [],
+  };
+}
 
 if (!existsSync(join(DIST, 'index.html'))) {
   console.error('[prerender] dist/index.html not found — run the build first.');
@@ -177,6 +204,24 @@ async function snapshot(context, route, locale) {
       { timeout: 15_000 },
     );
     await page.waitForTimeout(100);
+
+    const head = await page.evaluate(() => ({
+      canonical: document.querySelector('link[rel="canonical"]')?.href ?? null,
+      alternates: [...document.querySelectorAll('link[rel="alternate"][hreflang]')]
+        .map((l) => `${l.hreflang} ${l.href}`)
+        .sort(),
+    }));
+    const want = expectedIndexing(route, locale);
+    if (
+      head.canonical !== want.canonical ||
+      JSON.stringify(head.alternates) !== JSON.stringify(want.alternates)
+    ) {
+      throw new Error(
+        `indexing disagrees with seo-routes.mjs: canonical ${head.canonical} ` +
+          `(want ${want.canonical}), hreflang [${head.alternates.join(', ')}] ` +
+          `(want [${want.alternates.join(', ')}])`,
+      );
+    }
 
     let html = await page.evaluate(() => {
       // Un-pin the prerender machine's theme; the inline bootstrap

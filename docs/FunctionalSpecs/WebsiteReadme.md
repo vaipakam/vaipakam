@@ -275,7 +275,9 @@ Public-navigation requirements:
 SEO and discoverability requirements:
 
 - the marketing build should generate `robots.txt` and `sitemap.xml`
-- the sitemap should include every public marketing route in every supported locale and should declare the matching `hreflang` alternates
+- every public marketing route should keep a copy in every supported locale, for visitors
+- the sitemap and the `hreflang` alternates should advertise only the copies whose page body is actually in that language; a copy whose body falls back to English (a legal text, the whitepaper, a guide not yet translated) should canonicalise to the English page and be left out of both, and should join the index by itself once its translated body exists (owner decision 2026-10-28, #1314)
+- a page indexed in English alone declares no `hreflang` alternates, and a page marked `noindex` declares none either
 - every public marketing route should set a unique localized title, meta description, canonical URL, and locale alternate metadata on page mount
 - canonical and `hreflang` URLs should be rooted at `https://vaipakam.com`, even if a visitor briefly arrives through `www` or a legacy hostname before redirect / routing settles
 - social-preview and prerendering work may be staged separately; JavaScript-rendered metadata plus sitemap discovery is the baseline requirement unless search-console measurements show a remaining indexing gap

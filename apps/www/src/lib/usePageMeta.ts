@@ -12,15 +12,25 @@ import { useLocation } from 'react-router-dom';
  *   3. `<link rel="canonical">`     — disambiguates URL variants for
  *                                     crawlers (trailing slash, query
  *                                     strings, etc.). Self-referential
- *                                     per locale: `/es/whitepaper`
- *                                     canonicals to itself, NOT to
- *                                     `/whitepaper`. Locale association
- *                                     is handled by `<HreflangAlternates>`.
+ *                                     for a copy whose body is in its
+ *                                     own language (`/es/help/basic`
+ *                                     canonicals to itself); a copy
+ *                                     whose body fell back to English
+ *                                     canonicals to the English page
+ *                                     (#1314, `indexedLocales`).
+ *   4. `<link rel="alternate" hreflang>` — one per INDEXED copy plus
+ *                                     an `x-default`, so the page group
+ *                                     names only copies whose body is
+ *                                     translated. Torn down on unmount.
+ *
+ * Canonical, robots and hreflang are one decision — whether and where
+ * this copy is indexed — so they are made here together, from the same
+ * inputs, rather than by a separate always-mounted component that
+ * could not see what the page renders.
  *
  * Why direct DOM manipulation rather than React Helmet: zero deps,
  * SSR-safe-by-default (the `useEffect` doesn't run during SSR), and
- * the existing `<HreflangAlternates>` component already uses this
- * exact pattern — keeping the SEO machinery one-shape.
+ * the same shape as `useJsonLd` — keeping the SEO machinery one-shape.
  *
  * Canonical origin is HARDCODED to the apex (`https://vaipakam.com`),
  * not `window.location.origin`. The `vaipakam-www` Worker also
@@ -45,6 +55,12 @@ import { useLocation } from 'react-router-dom';
  * incrementally."
  */
 import { useTranslation } from 'react-i18next';
+import {
+  localeOfPath,
+  stripLocalePrefix,
+  withLocalePrefix,
+} from '../components/LocaleResolver';
+import { indexedLocales } from './indexedLocales';
 
 /** The canonical hostname every page on this site declares. Apex,
  *  not www; see file header comment for the duplicate-content
@@ -64,14 +80,13 @@ interface UsePageMetaInput {
   titleKey: string;
   /** i18n key for the page description. Same resolution. */
   descriptionKey: string;
-  /** Override the canonical PATH (default: the current pathname).
-   *  For English-only pages reachable under locale prefixes (see
-   *  EN_ONLY_ROUTES in scripts/seo-routes.mjs): `/es/protocol-
-   *  console/docs` self-canonicalizing would let English duplicates
-   *  be indexed per locale — pinning the canonical to the unprefixed
-   *  path consolidates every variant onto the one advertised URL
-   *  (Codex #1309 r5). */
-  canonicalPath?: string;
+  /** The page's own `import.meta.glob` of its body directory, for a
+   *  page whose body is a per-locale file (`src/content/
+   *  bodySources.json` names which). It is what tells this hook which
+   *  language copies exist, so a copy whose file is missing is not
+   *  indexed and canonicalises to English (#1314). Pages whose body is
+   *  their catalogue strings, or English by design, pass nothing. */
+  bodyFiles?: Readonly<Record<string, unknown>>;
   /** Emit `<meta name="robots" content="noindex">` for the page
    *  mount (#1998 / #2010 r1): version-pinned Terms archives
    *  duplicate `/terms`'s content, and absence from the sitemap
@@ -109,7 +124,7 @@ const OG_TAGS = (
 export function usePageMeta({
   titleKey,
   descriptionKey,
-  canonicalPath,
+  bodyFiles,
   robots,
 }: UsePageMetaInput) {
   const { t, i18n } = useTranslation();
@@ -148,8 +163,17 @@ export function usePageMeta({
     // because none of the marketing routes have canonical query
     // parameters; if a future route does, it can override via a
     // route-specific `usePageMeta` extension.
-    const path =
-      (canonicalPath ?? location.pathname).replace(/\/+$/, '') || '/';
+    // The copy's locale is the URL's, not the UI's: the prerender and
+    // crawlers address copies by URL, and the index decision must be the
+    // same however the visitor's language was detected.
+    const route = stripLocalePrefix(location.pathname).replace(/\/+$/, '') || '/';
+    const indexed = indexedLocales(route, bodyFiles);
+    const thisCopyIndexed = (indexed as readonly string[]).includes(
+      localeOfPath(location.pathname),
+    );
+    const path = thisCopyIndexed
+      ? location.pathname.replace(/\/+$/, '') || '/'
+      : route;
     const canonicalHref = `${CANONICAL_ORIGIN}${path}`;
 
     let canonicalTag = document.querySelector(
@@ -200,6 +224,31 @@ export function usePageMeta({
       robotsTag = null;
     }
 
+    // hreflang — only on an indexed copy of a page that HAS more than
+    // one indexed copy. A noindexed page advertises no alternates (that
+    // would advertise pages it tells crawlers not to index, #2010 r6);
+    // a copy that canonicalises elsewhere leaves the group to the page
+    // it names; and a page indexed in English alone has no group.
+    document.head
+      .querySelectorAll('link[rel="alternate"][data-page-meta="1"]')
+      .forEach((el) => el.remove());
+    const alternates: HTMLLinkElement[] = [];
+    if (!robots && thisCopyIndexed && indexed.length > 1) {
+      const add = (hreflang: string, href: string) => {
+        const link = document.createElement('link');
+        link.rel = 'alternate';
+        link.hreflang = hreflang;
+        link.href = href;
+        link.dataset.pageMeta = '1';
+        document.head.appendChild(link);
+        alternates.push(link);
+      };
+      for (const locale of indexed) {
+        add(locale, `${CANONICAL_ORIGIN}${withLocalePrefix(route, locale)}`);
+      }
+      add('x-default', `${CANONICAL_ORIGIN}${route}`);
+    }
+
     return () => {
       // Tear down ONLY the canonical on unmount — leaving the title
       // and description in place avoids a flash of empty/old values
@@ -216,6 +265,7 @@ export function usePageMeta({
       if (robotsTag && robotsTag.parentNode) {
         robotsTag.parentNode.removeChild(robotsTag);
       }
+      for (const link of alternates) link.remove();
     };
-  }, [t, titleKey, descriptionKey, canonicalPath, robots, location.pathname, i18n.language]);
+  }, [t, titleKey, descriptionKey, bodyFiles, robots, location.pathname, i18n.language]);
 }

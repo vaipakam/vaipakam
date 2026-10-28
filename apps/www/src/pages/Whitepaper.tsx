@@ -51,6 +51,7 @@ export default function Whitepaper() {
   usePageMeta({
     titleKey: 'pageMeta.whitepaper.title',
     descriptionKey: 'pageMeta.whitepaper.description',
+    bodyFiles: WHITEPAPER_FILES,
   });
   useArticleJsonLd({
     titleKey: 'pageMeta.whitepaper.title',

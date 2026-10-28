@@ -87,10 +87,10 @@ function AdminKnobsDocsInner() {
     titleKey: 'pageMeta.adminKnobs.title',
     descriptionKey: 'pageMeta.adminKnobs.description',
     // English-only content reachable under locale prefixes (HelpTabs
-    // links it per locale): every variant canonicalizes to the one
-    // advertised unprefixed URL instead of self-canonicalizing an
-    // English duplicate per locale (EN_ONLY_ROUTES policy).
-    canonicalPath: '/protocol-console/docs',
+    // links it per locale): with only the `.en.md` body present, every
+    // variant canonicalizes to the unprefixed URL instead of
+    // self-canonicalizing an English duplicate per locale (#1314).
+    bodyFiles: ADMIN_DOC_FILES,
   });
   const text = useMemo(() => resolveAdminDoc(), []);
   const toc = useMemo(() => extractMarkdownToc(text), [text]);

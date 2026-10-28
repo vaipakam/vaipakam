@@ -62,6 +62,7 @@ export default function Overview() {
   usePageMeta({
     titleKey: 'pageMeta.overview.title',
     descriptionKey: 'pageMeta.overview.description',
+    bodyFiles: OVERVIEW_FILES,
   });
   const location = useLocation();
   const lang = useActiveLocale();
