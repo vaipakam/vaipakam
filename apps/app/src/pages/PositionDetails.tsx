@@ -30,7 +30,11 @@ import { copy } from '../content/copy';
 import { useScrollToFragment } from '../lib/useScrollToFragment';
 import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { freshData } from '../lib/freshData';
-import { useLoan } from '../data/hooks';
+import { useActiveOffers, useLoan } from '../data/hooks';
+import {
+  instantSellCandidatesOf,
+  instantSellVerdict,
+} from '../data/instantSellCandidates';
 import { FEE_MODE_FULL, FEE_MODE_HOLD_ONLY, useFeeEntitlement } from '../data/tariff';
 import { VPFI_DECIMALS } from '../data/vpfi';
 import { useLoanRisk, healthView, liquidationPriceText } from '../data/risk';
@@ -1320,6 +1324,45 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     enabled: isLenderHolder && effectivelyActive,
   });
 
+  // #1849 — the instant-sale candidates, derived ONCE for both the exit
+  // chooser and the sale tool (`EarlyExitFlow`), from the same live read,
+  // so the chooser can no longer offer a jump to a tool that already knows
+  // the market is empty. The walk shares the one `activeOffers` cache
+  // entry, so the tool mounting below adds no second walk.
+  //
+  // The walk runs exactly while the sale tool is on the page: `true` only
+  // when `saleToolsMount` answers `tools` in Advanced (set during render
+  // below, where that answer is computed; hooks cannot follow the page's
+  // early returns). So a settled, matured or rental position, a Basic
+  // visit, or a tool still waiting on a read runs no full active-offers
+  // walk and no ghost scan with nothing to show them (Codex #3046 r1), and
+  // the gate is the tool's own, never a restatement of it.
+  const [instantSellWalkWanted, setInstantSellWalkWanted] = useState(false);
+  const instantSellOffers = useActiveOffers({
+    enabled: instantSellWalkWanted,
+  });
+  const instantSellCandidates = useMemo(
+    () =>
+      loanLive.data && !loanLive.isError && loan.data
+        ? instantSellCandidatesOf({
+            offers: instantSellOffers.data,
+            offersFailed: instantSellOffers.isError,
+            address,
+            row: loan.data,
+            live: loanLive.data.live,
+            chainNow: loanLive.data.chainNow,
+          })
+        : undefined,
+    [
+      loanLive.data,
+      loanLive.isError,
+      loan.data,
+      instantSellOffers.data,
+      instantSellOffers.isError,
+      address,
+    ],
+  );
+
   if (loan.isLoading) {
     return <EmptyState icon={LoaderCircle} title={copy.positions.details.loadingLoan} />;
   }
@@ -1959,6 +2002,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     },
   };
   const saleToolsMountState = saleToolsMount(saleToolsGateInput);
+  // The instant-sale walk follows the tool (see `instantSellWalkWanted`).
+  // Adjusted during render, so the commit that mounts the tool already
+  // has its walk enabled.
+  const instantSellWalkWantedNow = isAdvanced && saleToolsMountState.kind === 'tools';
+  if (instantSellWalkWantedNow !== instantSellWalkWanted) {
+    setInstantSellWalkWanted(instantSellWalkWantedNow);
+  }
 
   // `isError` disqualifies the snapshot here too (Codex r26 P2). This
   // consumer predates the health-check rule and was missed when the
@@ -4694,11 +4744,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             !feeEnt.isError &&
             feeEnt.data.lenderMode === FEE_MODE_FULL
           }
-          // 'unknown' on purpose — the candidate list comes from
-          // `useActiveOffers`, a full page walk this page does not
-          // otherwise make. Hoisting it would put that walk on every
-          // lender who merely opens a position.
-          instantSellCandidates="unknown"
+          // #1849 — while the sale tool is on the page, the chooser reads
+          // the SAME list it renders (derived once, above). Otherwise no
+          // walk runs, so `'unknown'`: it makes no claim, and the row's
+          // own tool gate already explains why it is closed.
+          instantSellCandidates={
+            instantSellWalkWantedNow
+              ? instantSellVerdict(instantSellCandidates)
+              : 'unknown'
+          }
         />
       ) : null}
 
@@ -4778,7 +4832,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           <EarlyExitFlow
             row={row}
             live={loanLive.data.live}
-            chainNow={loanLive.data.chainNow}
+            candidates={instantSellCandidates}
             principalMeta={principal}
             confirmOpen={confirmingSurface === 'early-exit'}
             onOpenConfirm={() => setConfirmingSurface('early-exit')}

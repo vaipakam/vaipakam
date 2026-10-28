@@ -277,6 +277,16 @@ describe('app-side gates, after the contract’s answer', () => {
     );
     expect(rowFor({ instantSellCandidates: 'unknown' }, 'sell-now').unavailable).toBeUndefined();
   });
+
+  it('offers the listing as the way out of an empty market only while the listing row is open (#1849)', () => {
+    expect(
+      rowFor({ instantSellCandidates: 'none', listingFlowDisabled: true }, 'sell-now').unavailable,
+    ).toBe(o.sellNowNoOffersNoListing);
+    const listingRefused = known([], [refusal('SaleOfferAlreadyExists')]);
+    expect(
+      rowFor({ instantSellCandidates: 'none', verdict: listingRefused }, 'sell-now').unavailable,
+    ).toBe(o.sellNowNoOffersNoListing);
+  });
 });
 
 describe('costs while a listing may stand', () => {

@@ -3264,6 +3264,10 @@ const copySource = {
         'This position is on the Full fee plan, paid for in VPFI when the loan opened. The plan travels with the position, so the part of it covering the rest of the term goes to the buyer and is not refunded.',
       sellNowNoOffers:
         'No lending offer on the book matches this position right now — check back later, or list it below instead.',
+      // The same, when the listing row is refused too: the sentence
+      // must not offer a listing as the way out.
+      sellNowNoOffersNoListing:
+        'No lending offer on the book matches this position right now — check back later.',
 
       list: 'List your position for sale',
       listDesc:

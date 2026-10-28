@@ -38,25 +38,21 @@ import type { SaleExitVerdict, SaleRefusal } from './saleExitVerdict';
  *  different promises to the reader. Collapsing them would render
  *  "checking…" forever in the case where nothing is being checked. */
 export type InstantSellCandidates = 'checking' | 'some' | 'none' | 'unknown';
-/* `'unknown'` is what the page passes in BOTH modes today, and the
- * reason differs by mode — which matters, because only one of the two
- * is a deliberate trade.
+/* Where each value comes from (#1849).
  *
- * In Basic the candidate list is genuinely not fetched: it is a full
- * active-offers page walk, and running it for every lender who merely
- * opens a position is a poor trade for a row that has a tool behind it.
+ * In Advanced the page derives the candidate list ONCE
+ * (`instantSellCandidatesOf`) and hands the same list to the sale tool
+ * and to this card, so the two cannot disagree: `'checking'` while the
+ * offer read is in flight, `'some'` / `'none'` once it answers, and
+ * `'unknown'` when no list can be stated (the offer read failed or the
+ * seller's window is unreadable). The derivation is not copied here; a
+ * second copy of the facet's admission rules is the defect class this
+ * card was built to remove.
  *
- * In Advanced the list IS fetched — `EarlyExitFlow` mounts, walks the
- * offers and derives the compatible set — and the chooser still says
- * `'unknown'`, so with zero matches the row stays jumpable while the
- * tool below already knows it is empty (Codex r12 P2). That is
- * information discarded rather than not gathered. It costs a wasted
- * scroll to a surface that explains itself, not a dead end — the
- * anchor exists and says `earlyExit.none` — which is why it is tracked
- * rather than patched: the honest fix shares the tool's derivation
- * instead of copying it, and a second copy of the facet's admission
- * rules is the exact defect class this card was built to remove.
- * Tracked in #1849. */
+ * In Basic the list is not fetched and the page passes `'unknown'`: it
+ * is a full active-offers page walk, and running it for every lender
+ * who merely opens a position is a poor trade for a row that has a
+ * tool behind it. */
 
 /** Whether the sale TOOLS themselves can render.
  *
@@ -224,6 +220,10 @@ export interface LenderExitInput {
   instantSellCandidates: InstantSellCandidates;
 }
 
+/** Marks the sell-now row's empty-market answer until the listing row is
+ *  decided (see `lenderExitRows`). */
+const NO_OFFERS: unique symbol = Symbol('no-offers');
+
 /** The sentence for one refusal of one route.
  *
  *  Keyed on the custom error the ENTRY raises, which is what the verdict
@@ -375,7 +375,10 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
   // contract's reason leads because it is about the position and holds
   // whatever this app does; the app's gates only say the tool here
   // cannot be used for it.
-  const sellNowUnavailable =
+  // The empty-market sentence points the lender at the listing row, so
+  // which wording it takes waits until that row is decided below (#1849):
+  // a refused listing must not be offered as the way out.
+  const sellNowDecided =
     verdictPendingText(v) ??
     (v.kind === 'known' && v.direct.length > 0
       ? // The direct route's own refusals never use `directOpen`.
@@ -385,7 +388,7 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
     (input.instantSellCandidates === 'checking'
       ? copy.lenderExit.checking
       : input.instantSellCandidates === 'none'
-        ? o.sellNowNoOffers
+        ? NO_OFFERS
         : // 'some' and 'unknown' both leave the row available: one
           // because we looked and found candidates, the other because
           // we have not looked and must not pretend to have. The
@@ -395,7 +398,7 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
   // ROW, not the contract's route alone: the row can be closed by this
   // app's own gates with the contract clear, and the two rows would then
   // contradict each other (Codex #3024 r1).
-  const directOpen = sellNowUnavailable === undefined;
+  const directOpen = sellNowDecided === undefined;
 
   const listUnavailable =
     verdictPendingText(v) ??
@@ -408,6 +411,13 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
         ? o.listUnavailableFlowDisabled
         : undefined) ??
     toolsText(input);
+
+  const sellNowUnavailable =
+    sellNowDecided === NO_OFFERS
+      ? listUnavailable === undefined
+        ? o.sellNowNoOffers
+        : o.sellNowNoOffersNoListing
+      : sellNowDecided;
 
   return [
     {

@@ -13,7 +13,9 @@
  * (rate, maturity) are untouched — only the lender side migrates.
  *
  * Candidate discovery: ordinary open Lender offers from the indexer,
- * filtered client-side to the facet's admission rules (single-value,
+ * filtered client-side to the facet's admission rules by
+ * `instantSellCandidatesOf` (#1849), which the PAGE runs once and hands
+ * to both this tool and the exit chooser (single-value,
  * unfilled, asset-quadruple continuity, duration within the loan's
  * remaining term, collateral demand within the pledged collateral,
  * amount covering the principal, cost ≤ principal). CRITICAL: a
@@ -45,9 +47,7 @@ import {
   type LoanLive,
 } from '../contracts/loanLive';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
-import { useActiveOffers } from '../data/hooks';
-import type { IndexedLoan } from '../data/indexer';
-import { AssetType } from '../lib/types';
+import type { IndexedLoan, IndexedOffer } from '../data/indexer';
 import {
   formatBpsAsPercent,
   formatDurationDays,
@@ -63,7 +63,7 @@ import type { TokenMeta } from '../contracts/erc20';
 export function EarlyExitFlow({
   row,
   live,
-  chainNow,
+  candidates,
   principalMeta,
   confirmOpen,
   onOpenConfirm,
@@ -74,8 +74,13 @@ export function EarlyExitFlow({
 }: {
   row: IndexedLoan;
   live: LoanLive;
-  /** Chain time from the parent's live query. */
-  chainNow: bigint;
+  /** #1849 — the compatible buy offers, derived ONCE by the page with
+   *  `instantSellCandidatesOf` from the same live read as `live`, and
+   *  handed to both this tool and the exit chooser so the two cannot
+   *  disagree. undefined = the offer read is in flight; null = no list
+   *  can be stated (offer read failed, or the seller window is
+   *  unreadable); `[]` = the market has none. */
+  candidates: IndexedOffer[] | null | undefined;
   principalMeta: TokenMeta;
   /** Page-wide single-confirm-surface slot (see PositionDetails). */
   confirmOpen: boolean;
@@ -96,88 +101,22 @@ export function EarlyExitFlow({
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
   const queryClient = useQueryClient();
-  const offers = useActiveOffers();
 
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
-  // #1923 — the loan's live remaining exposure to its EFFECTIVE maturity
-  // (the pause credit included, #668 / #935), in seconds. A direct sale is refused at/after maturity, and an offer's
-  // authored duration must COVER this (it is a ceiling on the buyer's lock,
-  // not the loan's term) — mirrors the facet's SaleLoanPastMaturity +
-  // SaleExposureExceedsAuthoredDuration guards, seconds-precise.
-  const remainingExposureSecs = loanEndTimeOf(live, chainNow) - chainNow;
-
   // Every seller figure prices at the SNAPSHOT's block. Since #1801 r9 that is
   // not something this component arranges — `sellerEconomics` reads
   // `live.readAtTimestamp` itself and takes no clock argument, so a caller
-  // cannot pair the loan with a different one. `chainNow` remains the right
-  // clock for offer expiry, which is a wall-clock question rather than a
-  // pricing one.
+  // cannot pair the loan with a different one. Offer expiry and the
+  // remaining term are judged on the chain clock where the candidate list
+  // is derived (`instantSellCandidatesOf`), not here.
   // ...and when the window could not be read at all, there is no seller quote
   // to show. `sellerEconomics` throws rather than substituting a number, so the
   // surface has to say so instead of rendering a wrong one — an unavailable
   // quote is recoverable, a silently understated one funds a sale the contract
   // then rejects.
   const quoteUnavailable = live.lenderForfeitFrom === undefined;
-
-  // The facet's admission rules, applied client-side so a doomed
-  // candidate never reaches a wallet prompt. Every excluded shape
-  // reverts InvalidSaleOffer on-chain.
-  const candidates = useMemo(() => {
-    // No window, no quote — every candidate below needs one, and a doomed
-    // list is worse than an empty one because it looks priced.
-    //
-    // `null`, NOT `[]` (Codex #1801 r11 P2). This component already renders
-    // three distinct states, and `[]` is "the market is empty" — so a transient
-    // failure to read the seller's window told the lender there are no
-    // compatible offers when there may be plenty. The unavailable branch
-    // (`candidates === null`) is the one that describes what actually happened,
-    // and it already exists for the offer read failing; a quote failure is the
-    // same class of answer.
-    if (live.lenderForfeitFrom === undefined) return null;
-    if (!offers.data || !address) return offers.data === null ? null : [];
-    const me = address.toLowerCase();
-    return offers.data
-      .filter((o) => {
-        if (o.offerType !== 0 || o.assetType !== AssetType.ERC20) return false;
-        // Single-value, unfilled (amountMax 0 collapses to amount).
-        const amount = BigInt(o.amount);
-        const effMax = BigInt(o.amountMax) === 0n ? amount : BigInt(o.amountMax);
-        if (effMax !== amount || BigInt(o.amountFilled) !== 0n) return false;
-        // Asset-quadruple continuity with the loan.
-        if (
-          o.lendingAsset.toLowerCase() !== row.lendingAsset.toLowerCase() ||
-          o.collateralAsset.toLowerCase() !== row.collateralAsset.toLowerCase() ||
-          o.collateralAssetType !== live.collateralAssetType ||
-          o.prepayAsset.toLowerCase() !== live.prepayAsset.toLowerCase()
-        ) {
-          return false;
-        }
-        // #1923 — coverage + exact size. The loan must not be past maturity
-        // (nothing is sellable then), the offer's authored duration must COVER
-        // the remaining exposure (a shorter one over-exposes the buyer and is
-        // refused), and the amount must equal the principal EXACTLY (the offer
-        // is consumed whole — an over-funded one is refused, not refunded).
-        if (remainingExposureSecs <= 0n) return false;
-        if (BigInt(o.durationDays) * 86_400n < remainingExposureSecs) return false;
-        if (BigInt(o.collateralAmount) > live.collateralAmount) return false;
-        if (amount !== live.principal) return false;
-        // Expired offers are refused at accept — don't list them.
-        if (o.expiresAt && BigInt(o.expiresAt) <= chainNow) return false;
-        // Buying out your own position is a no-op with fees.
-        if (o.creator.toLowerCase() === me) return false;
-        // RateShortfallTooHigh guard.
-        const econ = sellerEconomics(live, BigInt(o.interestRateBps));
-        return econ.cost <= live.principal;
-      })
-      .sort(
-        // Best payout first = lowest buy-offer rate first (the
-        // accrued part is identical across candidates; only the
-        // shortfall varies, monotonically with the rate).
-        (a, b) => a.interestRateBps - b.interestRateBps,
-      );
-  }, [offers.data, address, row, live, remainingExposureSecs, chainNow]);
 
   const selected =
     candidates?.find((o) => o.offerId === selectedId) ?? null;
@@ -389,7 +328,7 @@ export function EarlyExitFlow({
       <h3>{copy.earlyExit.title}</h3>
       <p className="muted">{copy.earlyExit.blurb}</p>
 
-      {offers.isPending ? (
+      {candidates === undefined ? (
         // Loading and genuinely-empty must never look the same.
         <p className="muted">{copy.earlyExit.loadingOffers}</p>
       ) : candidates === null ? (
