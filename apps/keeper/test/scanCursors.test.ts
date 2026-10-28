@@ -57,5 +57,7 @@ describe('finalFloor', () => {
     expect(calls).toBe(1);
     const failing = finalizedBlockOnce({ getBlock: (async () => { throw new Error('no finalized tag'); }) as never });
     expect(await failing()).toBeNull();
+    const numberless = finalizedBlockOnce({ getBlock: (async () => ({ timestamp: 90n })) as never });
+    expect(await numberless(), 'a block without a number is no finalized block').toBeNull();
   });
 });

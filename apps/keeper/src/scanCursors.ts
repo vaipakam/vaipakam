@@ -123,7 +123,7 @@ export function finalizedBlockOnce(client: Pick<PublicClient, 'getBlock'>): () =
   return () =>
     (read ??= client
       .getBlock({ blockTag: 'finalized' })
-      .then((b) => (b.number === null ? null : { number: b.number, timestamp: b.timestamp }))
+      .then((b) => (typeof b.number === 'bigint' ? { number: b.number, timestamp: b.timestamp } : null))
       .catch(() => null));
 }
 
