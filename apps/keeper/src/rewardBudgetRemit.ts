@@ -35,7 +35,7 @@ import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { reportSendError } from './submissionQueue';
 import { readCutoffMs, runIndex } from './runWindow';
 import { rotate } from './rotate';
-import { owedButBlocked, readRemitDayStatuses } from './remitDayStatus';
+import { isUnroutedRead, owedButBlocked, readRemitDayStatuses } from './remitDayStatus';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 
 const REMIT_ABI = RewardRemittanceFacetABI as Abi;
@@ -62,6 +62,22 @@ const DEFAULT_LOOKBACK_DAYS = 45;
  * waiting for an operator to raise the lane.
  */
 const DEFAULT_LANE_CAP = 50_000n * 10n ** 18n;
+/**
+ * #2960 — the smallest part worth a send (`REWARD_REMIT_MIN_PART`, wei).
+ *
+ * Every part costs a CCIP fee, a reservation and a mirror transport epoch, and
+ * a day's claims move into staging once it has taken more than 64 parts. A
+ * nearly empty lane bucket would otherwise be drained in dust parts that move
+ * almost nothing. So a part that would leave its day still owing waits, below
+ * this size, for the bucket to refill; a part that COMPLETES its day is never
+ * held back by it, however small.
+ *
+ * The default is 1,000 VPFI: at the default lane refill (about 5.8 VPFI a
+ * second) an emptied bucket holds that much again within one five-minute
+ * tick. The floor never exceeds the largest part the lane could ever carry
+ * ({@link resolvePartCap}'s `maxPart`), since waiting could not help there.
+ */
+const DEFAULT_MIN_PART = 1_000n * 10n ** 18n;
 /**
  * Codex #1426 r1 — bounded backscan behind the normal lookback for ARMED
  * days: a day gated by a missing commitment report can outlive the 45-day
@@ -138,6 +154,10 @@ export const REMIT_FUNDED_DAYS_PER_SEND = TRANSPORT_DAY_FANOUT_CAP;
  * @param maxFundedDays Funded days one send may carry; defaults to
  *                   {@link REMIT_FUNDED_DAYS_PER_SEND} (#2821), and never
  *                   exceeds {@link TRANSPORT_DAY_FANOUT_CAP}.
+ * @param minPart    #2960 — the smallest part that may leave its day still
+ *                   owing ({@link DEFAULT_MIN_PART}). A smaller partial part
+ *                   waits, and is counted as deferred; a completing part is
+ *                   exempt.
  */
 export function planRemitBatch(
   window: readonly bigint[],
@@ -146,6 +166,7 @@ export function planRemitBatch(
   partCap: bigint,
   partial: readonly boolean[] = [],
   maxFundedDays: number = REMIT_FUNDED_DAYS_PER_SEND,
+  minPart: bigint = 0n,
 ): { batch: bigint[]; total: bigint; deferred: number } {
   // The destination's fan-out cap is the ceiling whatever the caller asks for.
   const fundedBound = Math.min(Math.max(1, Math.floor(maxFundedDays)), TRANSPORT_DAY_FANOUT_CAP);
@@ -198,10 +219,12 @@ export function planRemitBatch(
       deferred += 1;
       continue;
     }
-    if (fundedInBatch >= fundedBound || total + slice > partCap) {
+    if (fundedInBatch >= fundedBound || total + slice > partCap || (partial[i] && slice < minPart)) {
       // A cap is reached — the funded-days bound (one per send, #2821, never
-      // above the destination's day fan-out), or the part cap. Either way
-      // this day and EVERY later actionable one wait for a later tick.
+      // above the destination's day fan-out), or the part cap — or the part
+      // is below the minimum and would leave its day owing (#2960). Either
+      // way this day and EVERY later actionable one wait for a later tick:
+      // one funded day per send, and an earlier day goes first.
       // Counting only this one would under-report (r20).
       //
       // Reached only on a FUNDED day, so `deferred` is always at least one
@@ -236,30 +259,73 @@ export type RemitLaneBucket = {
 };
 
 /**
- * #918 — the part cap for this tick: the operator's ceiling, lowered to the
- * lane bucket's live tokens when the lane is rate-limited, so a part never
- * asks the pool for more than it can release in this block.
+ * #2960 — the MIRROR's end of the lane: its pool's inbound bucket from Base,
+ * as `RewardRemittanceLensFacet.getRemitInboundLaneBucket` reports it there,
+ * or why it could not be read.
+ */
+export type MirrorInbound =
+  | { kind: 'read'; bucket: RemitLaneBucket }
+  | { kind: 'unread'; reason: string };
+
+/**
+ * #918 / #2960 — the part cap for this tick, from both ends of the lane.
  *
- * Pure and exported so the rule is tested where it lives. `bucket` undefined
- * means the read failed; the ceiling is used and the reason is returned, so
- * the pass states what it could not read instead of implying a sized part. A
- * `partCap` of zero means the bucket is empty: nothing is sent this tick.
+ * - The operator's ceiling (`REWARD_REMIT_LANE_CAP`).
+ * - BASE's outbound bucket, by its live TOKENS: the send draws it in the same
+ *   transaction, so a part above them reverts on Base.
+ * - The MIRROR's inbound bucket, by its CAPACITY. A part above the capacity
+ *   can never execute there: CCIP rejects a single over-capacity request
+ *   rather than queueing it (CcipCutoverRunbook, "Changing lane rate limits
+ *   after deployment"), and it waits for a manual re-execution that a lowered
+ *   lane would refuse too. The live tokens are NOT the bound, because the
+ *   bucket is drawn at execution, later: parts already in flight have not
+ *   drawn it yet when this tick reads it, so the tokens read now do not
+ *   describe the bucket the part meets, while the capacity bounds every
+ *   bucket it could meet. A part at or below the capacity that finds the
+ *   bucket short waits for the refill (inferred from the same runbook line,
+ *   which calls only over-capacity requests rejected).
+ *
+ * Pure and exported so the rule is tested where it lives. An end that could
+ * not be read sizes nothing and is NAMED in `note`, so the pass states what it
+ * did not know instead of implying a part sized by both ends. A `partCap` of
+ * zero means Base's bucket is empty: nothing is sent this tick.
+ *
+ * `maxPart` is the largest part the lane could carry with both buckets full:
+ * the ceiling lowered to each limited end's capacity. The minimum part size
+ * never exceeds it ({@link DEFAULT_MIN_PART}).
  */
 export function resolvePartCap(
   laneCap: bigint,
   bucket: RemitLaneBucket | undefined,
-): { partCap: bigint; note?: string } {
+  inbound?: MirrorInbound,
+): { partCap: bigint; maxPart: bigint; note?: string } {
+  const notes: string[] = [];
+  let partCap = laneCap;
+  let maxPart = laneCap;
+  const lower = (cur: bigint, by: bigint) => (by < cur ? by : cur);
   if (bucket === undefined) {
-    return { partCap: laneCap, note: 'lane bucket unreadable; parts sized by REWARD_REMIT_LANE_CAP alone' };
+    notes.push('Base lane bucket unreadable; parts not sized by Base\'s end');
+  } else if (!bucket.readable) {
+    notes.push(
+      'lane not resolvable from Base (registry, messenger, pool or lane unset); parts not sized by Base\'s end',
+    );
+  } else if (bucket.limited) {
+    partCap = lower(partCap, bucket.tokens);
+    maxPart = lower(maxPart, bucket.capacity);
   }
-  if (!bucket.readable) {
-    return {
-      partCap: laneCap,
-      note: 'lane not resolvable from Base (registry, messenger, pool or lane unset); parts sized by REWARD_REMIT_LANE_CAP alone',
-    };
+  if (inbound === undefined) {
+    notes.push('mirror inbound bucket not read; parts not sized by the mirror\'s end');
+  } else if (inbound.kind === 'unread') {
+    notes.push(`mirror inbound bucket unread (${inbound.reason}); parts not sized by the mirror's end`);
+  } else if (!inbound.bucket.readable) {
+    notes.push(
+      'lane not resolvable on the mirror (registry, messenger, pool or lane unset); parts not sized by the mirror\'s end',
+    );
+  } else if (inbound.bucket.limited) {
+    partCap = lower(partCap, inbound.bucket.capacity);
+    maxPart = lower(maxPart, inbound.bucket.capacity);
   }
-  if (!bucket.limited) return { partCap: laneCap };
-  return { partCap: bucket.tokens < laneCap ? bucket.tokens : laneCap };
+  return notes.length > 0 ? { partCap, maxPart, note: notes.join('; ') } : { partCap, maxPart };
 }
 
 function readNumber(env: Env, key: PlainVarKey, fallback: number): number {
@@ -340,6 +406,11 @@ async function remitFromCanonical(env: Env, chain: ChainConfig, deadlineMs: numb
 
   const lookback = readNumber(env, 'REWARD_REMIT_LOOKBACK_DAYS', DEFAULT_LOOKBACK_DAYS);
   const laneCap = readBigint(env, 'REWARD_REMIT_LANE_CAP', DEFAULT_LANE_CAP);
+  const minPart = readBigint(env, 'REWARD_REMIT_MIN_PART', DEFAULT_MIN_PART);
+  // #2960 — each mirror's own RPC, for its end of the lane. Funding a mirror
+  // never needs it (the send is Base-side), so a mirror without one is still
+  // funded, with its end named as unread.
+  const mirrorChains = new Map(getChainConfigs(env).map((c) => [c.id, c] as const));
 
   // Armed-day window extension (Codex #1426 r1): armed days carry the
   // commitment gate + close-only semantics, so their un-closed tail must
@@ -366,7 +437,15 @@ async function remitFromCanonical(env: Env, chain: ChainConfig, deadlineMs: numb
       break;
     }
     try {
-      if (await remitToMirror(publicClient, ctx, diamond, mirrorId, currentDay, lookback, laneCap, armedFromDay, readCutoff)) {
+      const mirrorChain = mirrorChains.get(mirrorId);
+      const mirror = mirrorChain
+        ? {
+            client: createPublicClient({ transport: http(mirrorChain.rpc) }) as PublicClient,
+            diamond: mirrorChain.diamond as Address,
+          }
+        : undefined;
+      const sizing: RemitSizing = { baseChainId: localChainId, mirror, minPart };
+      if (await remitToMirror(publicClient, ctx, diamond, mirrorId, currentDay, lookback, laneCap, armedFromDay, readCutoff, sizing)) {
         covered += 1;
       }
     } catch (err) {
@@ -389,6 +468,92 @@ async function remitFromCanonical(env: Env, chain: ChainConfig, deadlineMs: numb
   );
 }
 
+/**
+ * #2960 — what the pass knows beyond Base for sizing a mirror's parts: the
+ * mirror's own RPC (for its end of the lane) and the minimum part size. Every
+ * field is optional; a missing one is NAMED in the tick's log, never assumed.
+ */
+export type RemitSizing = {
+  /** Base's own chain id: the remote chain the mirror's inbound lane names. */
+  baseChainId?: number;
+  /** The mirror's client and Diamond; absent when no RPC is configured. */
+  mirror?: { client: PublicClient; diamond: Address };
+  /** The smallest part that may leave its day owing (default 0 = no floor). */
+  minPart?: bigint;
+};
+
+/**
+ * #2960 — read the mirror's end of the lane: its inbound bucket from Base.
+ * Every failure is an `unread` with its reason; a Diamond that routes no such
+ * view (one deployed before #2960) is named as such.
+ */
+export async function readMirrorInbound(sizing: RemitSizing): Promise<MirrorInbound> {
+  if (!sizing.mirror) return { kind: 'unread', reason: 'no RPC configured for the mirror' };
+  if (sizing.baseChainId === undefined) return { kind: 'unread', reason: 'Base chain id unknown' };
+  try {
+    const raw = (await sizing.mirror.client.readContract({
+      address: sizing.mirror.diamond,
+      abi: REMIT_LENS_ABI,
+      functionName: 'getRemitInboundLaneBucket',
+      args: [sizing.baseChainId],
+    })) as readonly [boolean, boolean, bigint, bigint];
+    return { kind: 'read', bucket: { readable: raw[0], limited: raw[1], tokens: raw[2], capacity: raw[3] } };
+  } catch (err) {
+    return {
+      kind: 'unread',
+      reason: isUnroutedRead(err)
+        ? 'the mirror Diamond routes no getRemitInboundLaneBucket'
+        : `read failed: ${redactedError(err, { stack: false })}`,
+    };
+  }
+}
+
+/**
+ * #2960 — the days Base has sent this mirror in part and still owes, from
+ * `getRemitOpenDays`, so a partly sent day is continued however old it is.
+ * `undefined` when the list could not be read, with the reason logged.
+ */
+async function readOpenDays(
+  publicClient: PublicClient,
+  diamond: Address,
+  mirrorId: number,
+  planBlock: bigint,
+): Promise<bigint[] | undefined> {
+  try {
+    const raw = (await publicClient.readContract({
+      address: diamond,
+      abi: REMIT_LENS_ABI,
+      functionName: 'getRemitOpenDays',
+      args: [mirrorId],
+      blockNumber: planBlock,
+    })) as readonly bigint[];
+    return [...raw];
+  } catch (err) {
+    console.warn(
+      `[keeper] rewardBudgetRemit mirror=${mirrorId} open-day list unread (${
+        isUnroutedRead(err)
+          ? 'this Diamond routes no getRemitOpenDays'
+          : redactedError(err, { stack: false })
+      }); a partly sent day older than the lookback is not continued this tick`,
+    );
+    return undefined;
+  }
+}
+
+/**
+ * #2960 — the plan window: every day in the lookback (and the armed backscan),
+ * plus each partly sent day before it, oldest first. The mirror holds every
+ * later day behind a partly sent one, so such a day is never left to age out
+ * of the scan. Pure and exported for the tests.
+ */
+export function withOpenDays(window: readonly bigint[], openDays: readonly bigint[]): bigint[] {
+  const from = window.length > 0 ? window[0] : undefined;
+  const older = [...new Set(openDays)]
+    .filter((d) => from === undefined || d < from)
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  return [...older, ...window];
+}
+
 /** @internal Exported for the planning tests; the pass is the only caller. */
 export async function remitToMirror(
   publicClient: PublicClient,
@@ -400,6 +565,7 @@ export async function remitToMirror(
   laneCap: bigint,
   armedFromDay: bigint,
   readCutoff: number = Number.POSITIVE_INFINITY,
+  sizing: RemitSizing = {},
 ): Promise<boolean> {
   // Returns TRUE only when this destination is SETTLED for this tick —
   // either remitted successfully, or genuinely nothing owed. FALSE on every
@@ -425,9 +591,8 @@ export async function remitToMirror(
     }
     if (armedFloor < from) from = armedFloor;
   }
-  const window: bigint[] = [];
-  for (let d = from; d < currentDay; d++) window.push(d);
-  if (window.length === 0) return true; // nothing owed
+  const scan: bigint[] = [];
+  for (let d = from; d < currentDay; d++) scan.push(d);
 
   // Codex #1426 r1 — plan through the batch planner view, not the plain
   // amount quote: a gate-passing armed day whose clamp lands at ZERO moves
@@ -445,6 +610,18 @@ export async function remitToMirror(
   // costs nothing but a day that became closeable after this block, which
   // the next tick picks up.
   const planBlock = await publicClient.getBlockNumber({ cacheTime: 0 });
+
+  // #2960 — a partly sent day older than the scan is still owed its rest, and
+  // the mirror holds every later day behind it.
+  const openDays = await readOpenDays(publicClient, diamond, mirrorId, planBlock);
+  const window = withOpenDays(scan, openDays ?? []);
+  if (window.length === 0) return true; // nothing owed
+  const continued = window.length - scan.length;
+  if (continued > 0) {
+    console.log(
+      `[keeper] rewardBudgetRemit mirror=${mirrorId} continuing ${continued} partly sent day(s) older than the scan: ${window.slice(0, continued).join(',')}`,
+    );
+  }
 
   // #918 — size this tick's part. The chain plans every day under the SAME
   // cap the send carries, so the plan, the fee quote and the send agree for
@@ -467,8 +644,12 @@ export async function remitToMirror(
       `[keeper] rewardBudgetRemit mirror=${mirrorId} lane bucket read failed: ${redactedError(err, { stack: false })}`,
     );
   }
-  const { partCap, note } = resolvePartCap(laneCap, bucket);
+  // #2960 — the mirror's end, read at its own head (another chain's block).
+  const inbound = await readMirrorInbound(sizing);
+  const { partCap, maxPart, note } = resolvePartCap(laneCap, bucket, inbound);
   if (note) console.warn(`[keeper] rewardBudgetRemit mirror=${mirrorId} ${note}`);
+  const requestedMin = sizing.minPart ?? 0n;
+  const minPart = requestedMin < maxPart ? requestedMin : maxPart;
   if (partCap === 0n) {
     // Not settled: the bucket is empty, so no part can cross this block. It
     // refills at the lane's rate; the next tick sizes again.
@@ -522,13 +703,21 @@ export async function remitToMirror(
     await reportUnclosedDays(publicClient, diamond, mirrorId, planWindow, perDay, actionable, planBlock);
   }
 
-  const { batch, total, deferred } = planRemitBatch(planWindow, perDay, actionable, partCap, partial);
+  const { batch, total, deferred } = planRemitBatch(
+    planWindow,
+    perDay,
+    actionable,
+    partCap,
+    partial,
+    REMIT_FUNDED_DAYS_PER_SEND,
+    minPart,
+  );
 
   if (batch.length === 0) {
     if (deferred === 0 && blockedOwed === 0) return true; // genuinely nothing owed
     if (deferred === 0) return false; // owed days named above, none closeable yet
     console.warn(
-      `[keeper] rewardBudgetRemit Base->${mirrorId} nothing sendable under partCap=${partCap} this tick — ${deferred} actionable day(s) still owed`,
+      `[keeper] rewardBudgetRemit Base->${mirrorId} nothing sendable under partCap=${partCap} minPart=${minPart} this tick — ${deferred} actionable day(s) still owed`,
     );
     return false;
   }

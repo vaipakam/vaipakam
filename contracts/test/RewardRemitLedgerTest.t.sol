@@ -4033,6 +4033,41 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), 3e18);
     }
 
+    function _openDays() internal view returns (uint256[] memory) {
+        return RewardRemittanceLensFacet(address(diamond)).getRemitOpenDays(CHAIN_ARB);
+    }
+
+    /// @notice #2960 — Base lists the days it has sent a destination in part
+    ///         and still owes: a part that leaves its day owing lists it, the
+    ///         completing part takes it off, and a release that reopens a
+    ///         whole day lists it again until the re-send. A day sent whole
+    ///         in one part is never listed. Mutation: list on lock instead of
+    ///         on "not whole" and the completed day stays listed.
+    function test_2960_TheOpenDayList_FollowsTheLedger() public {
+        _finalizeDay(1);
+        _armDayForArb(1, 100e18, 0);
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 2e18, 1e18);
+        mutator.setOutstandingCommitRaw(1_000e18, 0);
+        assertEq(_openDays().length, 0, "nothing sent, nothing open");
+
+        _sendPart(1, 1e18);
+        uint256[] memory open = _openDays();
+        assertEq(open.length, 1, "a part that leaves the day owing lists it");
+        assertEq(open[0], 1);
+        _sendPart(1, 1e18);
+        assertEq(_openDays().length, 1, "listed once, however many parts");
+        _sendPart(1, 1e18);
+        assertEq(_openDays().length, 0, "the completing part takes it off");
+
+        vm.warp(block.timestamp + 7 days);
+        comp.releaseRemitReservation(2);
+        open = _openDays();
+        assertEq(open.length, 1, "a release that reopens the day lists it again");
+        assertEq(open[0], 1);
+        _sendPart(1, 5e18);
+        assertEq(_openDays().length, 0, "the re-send takes it off");
+    }
+
     /// @notice #918 (Codex #2959 r1) — an UNARMED day holds the rest of its
     ///         fresh in the pool between parts, and a released part's fresh
     ///         stops being held: the re-send must find room for it again, as a

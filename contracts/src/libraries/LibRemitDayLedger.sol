@@ -6,6 +6,7 @@ import {LibInteractionRewards} from "./LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 /**
  * @title  LibRemitDayLedger — #918 a remit day sent in PARTS (Base side)
@@ -90,6 +91,8 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *         every quote and the release read one rule.
  */
 library LibRemitDayLedger {
+    using EnumerableSet for EnumerableSet.UintSet;
+
     /// @notice Why a day of a remittance plan does or does not move this batch,
     ///         one value per input day (#2760, #918). Read with
     ///         `RewardRemittanceFacet.quoteRemitDayStatuses`.
@@ -542,6 +545,11 @@ library LibRemitDayLedger {
             s.dayClosedByRemitId[dstChainId][dayId] = remitId;
             uint256 slice = uint256(l.wholeFresh) + l.wholeRecycled;
             if (slice > 0) s.rewardBudgetRemitted[dstChainId][dayId] = slice;
+            s.remitOpenDays[dstChainId].remove(dayId);
+        } else {
+            // #2960 — a part that leaves the day owing: the day stays on the
+            // destination's open list until its last part (or the walk).
+            s.remitOpenDays[dstChainId].add(dayId);
         }
         emit RemitDayPartSent(
             dstChainId,
@@ -634,6 +642,10 @@ library LibRemitDayLedger {
         if (!_isWhole(l, sentFresh, sentRecycled)) {
             delete s.rewardBudgetRemitted[dstChainId][dayId];
             delete s.dayClosedByRemitId[dstChainId][dayId];
+            // #2960 — the release reopens the day, so it owes a part again,
+            // unless it is abandoned: an abandoned day is never sent again
+            // (the walk takes it off the list, or will).
+            if (!isAbandoned(s, dstChainId, dayId)) s.remitOpenDays[dstChainId].add(dayId);
         }
         emit RemitDayPartReleased(
             dstChainId, dayId, remitId, fresh, recycled, sentFresh, sentRecycled
@@ -785,6 +797,8 @@ library LibRemitDayLedger {
         uint256 commitFresh;
         uint256 commitRecycled;
         if (locked) {
+            // #2960 — never sent again, so no longer owed a part.
+            s.remitOpenDays[dstChainId].remove(dayId);
             uint256 owedFresh = uint256(l.wholeFresh) - l.sentFresh;
             heldFresh = owedFresh - l.freshUncovered;
             if (heldFresh != 0) {

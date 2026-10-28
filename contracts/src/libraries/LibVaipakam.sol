@@ -8243,6 +8243,16 @@ library LibVaipakam {
         ///      `LibRemitDayLedger.walkAbandoned`. Base-only. Appended —
         ///      append-only.
         mapping(uint32 => uint256) remitReleaseCursor;
+        /// @dev #2960 — per destination, the days whose ledger is LOCKED (a
+        ///      part went) and not WHOLE: a day sent in part whose rest is
+        ///      still owed. The mirror holds every later day behind such a day,
+        ///      so the sender must continue it however old it is, and this is
+        ///      the record that says which days those are without a scan of
+        ///      every day ever sent. A day joins when a part leaves it owing or
+        ///      a release reopens it, and leaves when it becomes whole or the
+        ///      abandoned-day walk releases it. Written only by
+        ///      `LibRemitDayLedger`. Base-only. Appended — append-only.
+        mapping(uint32 => EnumerableSet.UintSet) remitOpenDays;
     }
 
     /// @notice #918 — one (destination, day)'s remit ledger on Base. See
