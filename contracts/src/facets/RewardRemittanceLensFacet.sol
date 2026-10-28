@@ -395,10 +395,10 @@ contract RewardRemittanceLensFacet {
     /**
      * @notice #1944 consequence 1 — whether day `dayId` is priced to owe
      *         FRESH reward value on this chain for `side` (0 lender,
-     *         1 borrower, 2 either) while no delivery proven to list it has
-     *         landed here. True means every pricing path on this mirror
-     *         holds the day — the cursors halt before it and every
-     *         settlement defers by name — until the proof lands.
+     *         1 borrower, 2 either) while the deliveries Base sends for it
+     *         have not all landed here. True means every pricing path on
+     *         this mirror holds the day — the cursors halt before it and
+     *         every settlement defers by name — until they land.
      * @dev    THE self-staticcall target of
      *         {LibRewardCustody.callDayAwaitsFreshDelivery}. The rule is
      *         inlined HERE, once, instead of into the five walk facets that
@@ -439,10 +439,11 @@ contract RewardRemittanceLensFacet {
      * @return freshStamped  That stamp prices a non-zero FRESH half for
      *                       either side.
      * @return landed        The day's whole slice has landed here: the parts
-     *                       counted toward it (indexed or proven) sum, per
+     *                       counted toward it at their landing sum, per
      *                       component, to the whole Base declared (#918).
-     * @return firstPart     The first packet counted toward the day, by
-     *                       either route (zero before any part has landed).
+     * @return firstPart     The first packet counted toward the day, on
+     *                       either accounting path (zero before any part has
+     *                       landed).
      *                       The full per-day record is {getDayDeliveryParts}.
      * @return epochCount    Transport epochs indexed under the day.
      * @return reported      This chain's day report has been sent to Base.
@@ -493,47 +494,6 @@ contract RewardRemittanceLensFacet {
         returns (LibVaipakam.DayDeliveryParts memory)
     {
         return LibVaipakam.storageSlot().dayDeliveryParts[dayId];
-    }
-
-    /**
-     * @notice #1944 consequence 1 — which proof route a landed packet takes,
-     *         and whether it is refused: `batched` → the batch materializers;
-     *         else `dayListRoot != 0` → {RewardEpochFacet.proveDeliveryDayChunk};
-     *         else nothing to prove (a compensation, which funds no listed
-     *         day). `disposed != 0` is refused. (No packet is quarantined since the custody-era
-     *         revision, so the flag that read it is gone.)
-     * @dev    A narrow read of existing packet fields rather than the whole
-     *         {getIngressPacket} record: the keeper's proof step needs only
-     *         these, and a fixed tuple keeps its decode stable when the
-     *         append-only packet struct's tail widens. Nothing new is stored.
-     * @return dayListRoot         The rooted (d6) commitment (0 = none).
-     * @return chunkCount          The rooted list's chunk count.
-     * @return chunksIndexed       Bit `i` set = chunk `i` proven.
-     * @return batched             The packet holds a transport batch.
-     * @return classificationFinal Its classification is final.
-     * @return disposed            Value disposed of by a non-classification exit.
-     */
-    function getPacketDeliveryProof(bytes32 packetHash)
-        external
-        view
-        returns (
-            bytes32 dayListRoot,
-            uint32 chunkCount,
-            uint256 chunksIndexed,
-            bool batched,
-            bool classificationFinal,
-            uint256 disposed
-        )
-    {
-        LibVaipakam.IngressPacket storage p = LibVaipakam.storageSlot().ingressPackets[packetHash];
-        return (
-            p.dayListRoot,
-            p.chunkCount,
-            p.chunksIndexed,
-            p.batchId != bytes32(0),
-            p.classificationFinal,
-            p.disposed
-        );
     }
 
     /**

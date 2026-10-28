@@ -1454,7 +1454,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///
     ///         `public` so a test can read it without broadcasting anything.
     function retiredIngressSignatures() public pure returns (string[] memory sigs) {
-        sigs = new string[](7);
+        sigs = new string[](8);
         // #1222 B2-d5 — `recycledShare` (6 → 7 args).
         sigs[0] = "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address)";
         // #1434 P1-a — `freshShare` (7 → 8).
@@ -1474,6 +1474,11 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // funded day's whole) replaces it, and the receiver (generation 8)
         // refuses the d6 wire.
         sigs[6] = "onRewardBudgetReceivedD6(address,uint256,bytes32,uint256,uint256,uint256,uint256,address,uint256,uint256,bytes32,uint64)";
+        // #2828 — the d7 rooted ingress (16 args). The d8 ingress
+        // `onRewardBudgetReceivedD8` (14 args: the funded day inline in place
+        // of the root and its extent) replaces it, and the receiver
+        // (generation 9) refuses the d7 wire.
+        sigs[7] = "onRewardBudgetReceivedD7(address,uint256,bytes32,uint256,uint256,uint256,uint256,address,uint256,uint256,bytes32,uint64,uint256,uint256,uint256,uint256)";
     }
 
     /// @dev Codex #2232 r3 — the LIVE receiver the refreshed ingress will

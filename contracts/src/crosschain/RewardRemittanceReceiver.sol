@@ -41,25 +41,30 @@ import {
 ///      compensation wire ONLY, refuses d6 by name like every older shape, and
 ///      forwards each delivery's DECLARED part and the day's whole to the
 ///      Diamond's `onRewardBudgetReceivedD7`.
-uint256 constant REMIT_RECEIVER_WIRE_GENERATION = 8;
+///
+///      9 — #2828: the receiver accepts the d8 budget wire (the one funded day
+///      carried inline, in place of d7's rooted, chunked day list) and the P2
+///      compensation wire ONLY, refuses d7 by name like every older shape, and
+///      forwards the day to the Diamond's `onRewardBudgetReceivedD8`, which
+///      indexes it at arrival.
+uint256 constant REMIT_RECEIVER_WIRE_GENERATION = 9;
 
 interface IRewardBudgetIngress {
-    /// @notice #918 — a d7 (rooted) delivery: the day list arrives as an
-    ///         authenticated commitment plus its extent, the split is typed on
-    ///         the wire, the era the packet was dispatched in rides along, and
-    ///         so do this part's DECLARED figures and the funded day's whole
-    ///         slice, which the mirror's delivery gate sums parts against.
+    /// @notice #2828 — a d8 delivery: the ONE day it funds arrives inline,
+    ///         the split is typed on the wire, the era the packet was
+    ///         dispatched in rides along, and so do this part's DECLARED
+    ///         figures and the day's whole slice, which the mirror's delivery
+    ///         gate sums parts against.
     /// @param amount / recycledShare / freshShare What actually landed, split
     ///        (the recycled share scaled to a short delivery).
+    /// @param dayId The day this delivery funds.
     /// @param declaredTotal / declaredRecycled This part as Base sent it,
     ///        before any scaling.
     /// @param dayWholeFresh / dayWholeRecycled The funded day's whole slice.
-    function onRewardBudgetReceivedD7(
+    function onRewardBudgetReceivedD8(
         address token,
         uint256 amount,
-        bytes32 dayListRoot,
-        uint256 elementCount,
-        uint256 chunkCount,
+        uint256 dayId,
         uint256 sourceChainId,
         uint256 remitId,
         address remitter,
@@ -76,7 +81,7 @@ interface IRewardBudgetIngress {
 
 /// @notice #1434 P2-w2 — the mirror Diamond's COMPENSATION ingress
 ///         (`RewardRemittanceFacet.onCompensationBudgetReceived`): the
-///         classifying counterpart of the d7 budget ingress for the
+///         classifying counterpart of the d8 budget ingress for the
 ///         P2 manual-compensation wire (one zeroed day, per-side amounts,
 ///         the day's frozen expiry inputs riding along — §1.3/§2.2).
 interface ICompensationBudgetIngress {
@@ -104,7 +109,7 @@ interface ICompensationBudgetIngress {
  * {RewardRemittanceFacet.remitRewardBudget} sends from Base, forwards the
  * delivered VPFI into the local Vaipakam Diamond (which is what
  * `claimInteractionRewards` pays from), and calls the Diamond's
- * `onRewardBudgetReceivedD7` ingress to record the delivery.
+ * `onRewardBudgetReceivedD8` ingress to record the delivery.
  *
  * The mirror image of {BuybackRemittanceReceiver} (mirror→Base): same trust +
  * fee-on-transfer handling, differing only in direction and the payload shape.
@@ -167,8 +172,8 @@ contract RewardRemittanceReceiver is
     error AmountMismatch(uint256 declared, uint256 delivered);
     error ZeroAmount();
     /// @notice The payload leads with a word that names no shape this
-    ///         receiver accepts: only the d7 budget wire
-    ///         ({RemitWire.REMIT_WIRE_TAG_D7}) and the P2 compensation wire
+    ///         receiver accepts: only the d8 budget wire
+    ///         ({RemitWire.REMIT_WIRE_TAG_D8}) and the P2 compensation wire
     ///         ({RemitWire.REMIT_WIRE_TAG_P2}) are. CCIP records the delivery
     ///         as a failed, re-executable message, so the tokens stay with
     ///         the transport rather than landing uncredited.
@@ -236,17 +241,18 @@ contract RewardRemittanceReceiver is
         if (msg.sender != messenger) revert NotMessenger(msg.sender);
         if (tokens.length != 1) revert WrongTokenCount(tokens.length);
 
-        // The payload's LEADING WORD names its shape ({RemitWire}): the d7
+        // The payload's LEADING WORD names its shape ({RemitWire}): the d8
         // budget wire or the P2 compensation wire, each with its own decode
         // and its own Diamond ingress, handled in a separate frame. Both share
         // ONE token-delivery implementation ({_deliverTokens}), so the
         // delivered-vs-declared and fee-on-transfer rules can never diverge
         // between them. Any other word is refused by name: the older budget
-        // shapes carried a flat day list (and the untagged two no split), and
+        // shapes carried a flat day list (the untagged two no split), or
+        // (d6, d7) a rooted day list this mirror no longer indexes, and
         // nothing on this mirror can account for one any more.
         uint256 head = abi.decode(payload[:32], (uint256));
-        if (head == RemitWire.REMIT_WIRE_TAG_D7) {
-            _handleRooted(sourceChainId, payload, tokens, transportMessageId);
+        if (head == RemitWire.REMIT_WIRE_TAG_D8) {
+            _handleBudget(sourceChainId, payload, tokens, transportMessageId);
         } else if (head == RemitWire.REMIT_WIRE_TAG_P2) {
             _handleCompensation(sourceChainId, payload, tokens, transportMessageId);
         } else {
@@ -254,50 +260,47 @@ contract RewardRemittanceReceiver is
         }
     }
 
-    /// @notice #1566 transport epochs 3d-1 / #918 — a d7 (rooted) delivery was
-    ///         forwarded into the Diamond: the delivered amount and the
-    ///         commitment it arrived under, for reconciliation against the
-    ///         sender's dispatch record.
-    event RewardBudgetRootForwarded(
+    /// @notice #2828 — a d8 budget delivery was forwarded into the Diamond:
+    ///         the delivered amount and the day it funds, for reconciliation
+    ///         against the sender's dispatch record.
+    /// @custom:event-category informational/reward-transport
+    event RewardBudgetDayForwarded(
         uint256 indexed sourceChainId,
         address indexed token,
         uint256 amount,
-        bytes32 dayListRoot,
-        uint256 elementCount,
+        uint256 dayId,
         uint256 remitId
     );
 
-    /// @dev The d7 frame. The split travels as the recycled component and the
+    /// @dev The d8 frame. The split travels as the recycled component and the
     ///      total; the fresh component is what is left of what ACTUALLY landed
     ///      after the recycled share is scaled to it, so the two always sum to
-    ///      the delivered amount — the Diamond's rooted ingress requires a
+    ///      the delivered amount — the Diamond's budget ingress requires a
     ///      WHOLE split, because the whole delivery becomes one epoch typed by
     ///      those two caps and a wei under no cap would be value no day could
     ///      draw. The DECLARED part (`total`, `recycledShare` as sent) and the
     ///      day's whole travel on unscaled (#918): the mirror's delivery gate
     ///      counts what Base sent, and a short delivery is surfaced by the
     ///      acknowledgement's received figure, not by holding the day. The
-    ///      header decodes into one memory struct ({RemitWire.D7}), which keeps
-    ///      this frame's stack at one pointer.
-    function _handleRooted(
+    ///      payload decodes into one memory struct ({RemitWire.D8}), which
+    ///      keeps this frame's stack at one pointer.
+    function _handleBudget(
         uint256 sourceChainId,
         bytes calldata payload,
         ICrossChainMessenger.TokenAmount[] calldata tokens,
         bytes32 transportMessageId
     ) private {
-        (, RemitWire.D7 memory w) = abi.decode(payload, (uint256, RemitWire.D7));
+        (, RemitWire.D8 memory w) = abi.decode(payload, (uint256, RemitWire.D8));
         (address deliveredToken, uint256 actualReceived) = _deliverTokens(tokens, w.total);
         uint256 recycledShare = w.recycledShare;
         if (actualReceived != w.total && recycledShare != 0) {
             recycledShare = Math.mulDiv(recycledShare, actualReceived, w.total);
         }
         uint256 freshShare = actualReceived > recycledShare ? actualReceived - recycledShare : 0;
-        IRewardBudgetIngress(diamond).onRewardBudgetReceivedD7(
+        IRewardBudgetIngress(diamond).onRewardBudgetReceivedD8(
             deliveredToken,
             actualReceived,
-            w.dayListRoot,
-            w.elementCount,
-            w.chunkCount,
+            w.dayId,
             sourceChainId,
             w.remitId,
             w.remitter,
@@ -310,7 +313,7 @@ contract RewardRemittanceReceiver is
             w.dayWholeFresh,
             w.dayWholeRecycled
         );
-        emit RewardBudgetRootForwarded(sourceChainId, deliveredToken, actualReceived, w.dayListRoot, w.elementCount, w.remitId);
+        emit RewardBudgetDayForwarded(sourceChainId, deliveredToken, actualReceived, w.dayId, w.remitId);
     }
 
     /// @notice #1434 P2-w2 — a P2 manual-compensation delivery was
@@ -324,7 +327,7 @@ contract RewardRemittanceReceiver is
 
     /// @dev #1434 P2-w2 — decode + forward the P2 compensation shape (own
     ///      frame for stack headroom). Same delivered-vs-declared and
-    ///      fee-on-transfer rules as the d7 path ({_deliverTokens} is
+    ///      fee-on-transfer rules as the d8 path ({_deliverTokens} is
     ///      shared), with BOTH per-side shares scaled to what actually
     ///      landed, each flooring — the dust stays unattributed, the
     ///      direction that defers. The expiry inputs
