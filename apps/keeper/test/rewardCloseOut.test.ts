@@ -40,6 +40,7 @@ import {
   RELEASE_FLOOR_ITEM,
   type ScannedEntry,
 } from '../src/rewardCloseOut';
+import { PastRunDeadline } from '../src/batchRead';
 import { encodePos, type EventLedger, type LedgerPos, type LedgerRow } from '../src/eventLedger';
 import { decodeEntryFloor, encodeEntryFloor, ENTRY_PAGE, scanEntries, type EntryRow } from '../src/rewardEntries';
 import { advanceFloor, memoryScanCursors, rotatingWindow } from '../src/scanCursors';
@@ -195,8 +196,9 @@ class FakeDiamond {
    *  finalized (the walk stops at the first that is not). */
   releases = new Map<number, { bound: number; cursor: number }>();
   globalFinalized = new Set<number>();
-  /** Fresh-queue reads that succeed before every later one fails; null, all succeed. */
-  queueReadsLeft: number | null = null;
+  /** Per function, the head reads that succeed before every later one throws
+   *  `error` (a failed read, or the run deadline passing). */
+  failAfter = new Map<string, { left: number; error: () => Error }>();
   /** The reconciliation queues; a walk writes `perWalk` of what is pending. */
   queues: Record<'fresh' | 'recycled', { pending: bigint; frontier: bigint; perWalk: bigint; addedAfterWalk?: bigint }> = {
     fresh: { pending: 0n, frontier: 0n, perWalk: 50n },
@@ -247,6 +249,8 @@ class FakeDiamond {
 
   readContract = async ({ functionName, args = [], blockNumber }: { functionName: string; args?: readonly unknown[]; blockNumber?: bigint }): Promise<unknown> => {
     const a = args as readonly any[];
+    const fail = blockNumber === undefined ? this.failAfter.get(functionName) : undefined;
+    if (fail !== undefined && fail.left-- <= 0) throw fail.error();
     if (blockNumber !== undefined) {
       if (blockNumber !== this.finalNumber) throw new Error(`read at unexpected block ${blockNumber}`);
       const f = this.final;
@@ -331,7 +335,6 @@ class FakeDiamond {
       }
       case 'getFreshQueueState': {
         if (a[0] !== 0n) throw revert('CustodyEraUnknown', [a[0]]);
-        if (this.queueReadsLeft !== null && this.queueReadsLeft-- <= 0) throw new Error('queue read failed');
         const q = this.queues.fresh;
         return [q.frontier, 0n, 0n, 0n, q.pending, 0n, 0n, 0n, 0n, 0n];
       }
@@ -908,8 +911,8 @@ describe('a run', () => {
       const r = await run();
       expect(r.daysClosed).toEqual([3]);
       expect(r.parked).toEqual([
-        { batchId: batchId(1), amount: 9n },
-        { batchId: batchId(2), amount: 8n },
+        { batchId: batchId(1), pages: 1, state: 'parked', amount: 9n },
+        { batchId: batchId(2), pages: 1, state: 'parked', amount: 8n },
       ]);
       expect(fns()).toEqual(['startDayClosure', 'parkTransportBatchRemainder', 'parkTransportBatchRemainder']);
       expect(describeReport(r)).toMatch(/release is the administrator's acknowledgment/);
@@ -917,6 +920,19 @@ describe('a run', () => {
       d.sent = [];
       expect((await run()).parked).toEqual([]);
       expect(d.sent).toEqual([]);
+    });
+
+    it('reports a landed park page whose outcome it could not read, instead of failing the run (Codex #3010)', async () => {
+      closeAllButDay(-1);
+      d.addBatch(batchId(1), { days: [1, 2], balance: 9n });
+      // The admission read succeeds; the read after the landed page fails.
+      d.failAfter.set('getTransportRemainder', { left: 1, error: () => new Error('remainder read failed') });
+      const r = await run();
+      expect(fns()).toEqual(['parkTransportBatchRemainder']);
+      expect(r.parked).toEqual([{ batchId: batchId(1), pages: 1, state: 'unread', amount: null }]);
+      expect(describeReport(r)).toContain(`parked=${batchId(1).slice(0, 10)}(1 page(s), outcome unread)`);
+      expect(describeReport(r)).not.toMatch(/administrator's acknowledgment/);
+      expect(r.unread.has(`park:${batchId(1).slice(0, 10)}`)).toBe(true);
     });
 
     it('parks on a closed day below the closure floor and outside any one window, by rotating over every provable day', async () => {
@@ -992,8 +1008,8 @@ describe('a run', () => {
       expect(fns()).toEqual(['continueRemitDestinationRelease', 'continueRemitDestinationRelease', 'continueRemitDestinationRelease']);
       expect(d.sent[0].args).toEqual([DST, BigInt(RELEASE_DAYS)]);
       expect(d.releases.get(DST)).toEqual({ bound: 300, cursor: 300 });
-      expect(r.released).toEqual([{ chain: DST, from: 0, to: 300, bound: 300 }]);
-      expect(describeReport(r)).toContain(`released=chain ${DST} days 0..299 (done)`);
+      expect(r.released).toEqual([{ chain: DST, from: 0, walks: 3, to: 300, bound: 300 }]);
+      expect(describeReport(r)).toContain(`released=chain ${DST} days 0..299 in 3 walk(s) (done)`);
       expect(cursors.rows.get(RELEASE_FLOOR_ITEM), 'every row below the floor is released').toBe(encodePos(ledger.rows[0]));
       // Nothing is left: the next run sends nothing and reads from the floor.
       d.sent = [];
@@ -1013,7 +1029,33 @@ describe('a run', () => {
       expect(cursors.rows.has(RELEASE_FLOOR_ITEM)).toBe(false);
       // Once the days finalize, the walk goes out.
       finalizeThrough(40);
-      expect((await run()).released).toEqual([{ chain: DST, from: 12, to: 40, bound: 40 }]);
+      expect((await run()).released).toEqual([{ chain: DST, from: 12, walks: 1, to: 40, bound: 40 }]);
+    });
+
+    it('keeps the walks that landed, and says where they left the release is unread, when the read after one fails (Codex #3010)', async () => {
+      ledger.add(DST);
+      d.releases.set(DST, { bound: 256, cursor: 0 });
+      finalizeThrough(256);
+      // The gate's read, the step's first read and the read after the first
+      // walk succeed; the read after the second fails.
+      d.failAfter.set('getRemitDestinationRelease', { left: 2, error: () => new Error('release read failed') });
+      const r = await run();
+      expect(fns()).toEqual(['continueRemitDestinationRelease', 'continueRemitDestinationRelease']);
+      expect(d.releases.get(DST)).toEqual({ bound: 256, cursor: 256 });
+      expect(r.released).toEqual([{ chain: DST, from: 0, walks: 2, to: null, bound: null }]);
+      expect(describeReport(r)).toContain(`released=chain ${DST} 2 walk(s) from day 0, where they left it unread`);
+      expect(r.unread.get(`release:chain ${DST}`)).toMatch(/after a walk/);
+      expect(cursors.rows.has(RELEASE_FLOOR_ITEM), 'an unread outcome is not done').toBe(false);
+    });
+
+    it('keeps a landed walk when the read after it is the first to fail', async () => {
+      ledger.add(DST);
+      d.releases.set(DST, { bound: 256, cursor: 0 });
+      finalizeThrough(256);
+      d.failAfter.set('getRemitDestinationRelease', { left: 1, error: () => new Error('release read failed') });
+      const r = await run();
+      expect(fns()).toEqual(['continueRemitDestinationRelease']);
+      expect(r.released).toEqual([{ chain: DST, from: 0, walks: 1, to: null, bound: null }]);
     });
 
     it('moves its floor only on what the finalized block shows', async () => {
@@ -1026,7 +1068,7 @@ describe('a run', () => {
       // drops the walk leaves it to be walked again.
       d.final = { closed: new Set(), eras: d.eras, releases: new Map([[DST, { bound: 10, cursor: 0 }]]) };
       const r = await run();
-      expect(r.released).toEqual([{ chain: DST, from: 0, to: 10, bound: 10 }]);
+      expect(r.released).toEqual([{ chain: DST, from: 0, walks: 1, to: 10, bound: 10 }]);
       expect(cursors.rows.has(RELEASE_FLOOR_ITEM)).toBe(false);
       d.final = { closed: new Set(), eras: d.eras, releases: new Map([[DST, { bound: 10, cursor: 10 }]]) };
       await run();
@@ -1103,12 +1145,22 @@ describe('a run', () => {
 
     it('reports the pending figure after a landed walk as unread when its read fails, not the one before it', async () => {
       d.queues.fresh.pending = 120n;
-      d.queueReadsLeft = 1;
+      d.failAfter.set('getFreshQueueState', { left: 1, error: () => new Error('queue read failed') });
       const r = await run();
       expect(fns()).toEqual(['advanceReconciliationQueue']);
       expect(r.queues).toEqual([{ side: 'fresh', walks: 1, before: 120n, after: null }]);
       expect(r.unread.has('queue:fresh')).toBe(true);
       expect(describeReport(r)).toContain('queue-fresh=1 walk(s), pending 120 before, unread after (net of other callers)');
+    });
+
+    it('keeps the landed walks of a queue when the run deadline passes as it is re-read (Codex #3010)', async () => {
+      d.queues.fresh.pending = 120n;
+      // The first read succeeds; the read after the first walk is past the deadline.
+      d.failAfter.set('getFreshQueueState', { left: 1, error: () => new PastRunDeadline('past the deadline') });
+      const r = await run();
+      expect(fns()).toEqual(['advanceReconciliationQueue']);
+      expect(r.queues).toEqual([{ side: 'fresh', walks: 1, before: 120n, after: null }]);
+      expect(r.unread.get('run')).toMatch(/deadline/);
     });
 
     it('stops on a walk that moves nothing, and works while the protocol is paused', async () => {
