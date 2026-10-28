@@ -189,6 +189,17 @@ interface BaseEnv {
    *  over every provable day not yet proven closed. A plain var. */
   REWARD_CLOSE_OUT_WINDOW_DAYS?: string;
 
+  // Reward zeroed-day pass (#2984). `secret_text` like the flags above.
+  /** 'true' arms the reward zeroed-day pass (in addition to KEEPER_ENABLED):
+   *  a mirror's compensation quote for each deliberately zeroed day, and the
+   *  two lapse terminals. Permissionless; the quote pays its CCIP fee. */
+  REWARD_ZEROED_DAY_ENABLED?: string;
+  /** How many days back the zeroed-day pass looks (default 60). A plain var. */
+  REWARD_ZEROED_DAY_LOOKBACK_DAYS?: string;
+  /** The zeroed-day pass's CCIP fee ceiling per send, in the
+   *  `REWARD_DAY_CLOSE_MAX_FEE_WEI` format (`src/feeCeiling.ts`). A plain var. */
+  REWARD_ZEROED_DAY_MAX_FEE_WEI?: string;
+
   // Depth-tiered-LTV liquidity-confidence relay knobs
   // (`liquidityConfidence.ts`, §4.4 step 5). Both default
   // conservatively when unset; demotion is always immediate.
@@ -350,6 +361,9 @@ export const PLAIN_VAR_KEYS = [
   'PERIODIC_SETTLE_ENABLED',
   'REWARD_CLOSE_OUT_ENABLED',
   'REWARD_CLOSE_OUT_WINDOW_DAYS',
+  'REWARD_ZEROED_DAY_ENABLED',
+  'REWARD_ZEROED_DAY_LOOKBACK_DAYS',
+  'REWARD_ZEROED_DAY_MAX_FEE_WEI',
   'LIQ_CONFIDENCE_MIN_CHECKS',
   'LIQ_CONFIDENCE_MIN_WINDOW_DAYS',
   'LIQ_TIER3_MIN_TVL_USD',
@@ -522,6 +536,9 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     PERIODIC_SETTLE_ENABLED: raw.PERIODIC_SETTLE_ENABLED,
     REWARD_CLOSE_OUT_ENABLED: raw.REWARD_CLOSE_OUT_ENABLED,
     REWARD_CLOSE_OUT_WINDOW_DAYS: raw.REWARD_CLOSE_OUT_WINDOW_DAYS,
+    REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,
+    REWARD_ZEROED_DAY_LOOKBACK_DAYS: raw.REWARD_ZEROED_DAY_LOOKBACK_DAYS,
+    REWARD_ZEROED_DAY_MAX_FEE_WEI: raw.REWARD_ZEROED_DAY_MAX_FEE_WEI,
     LIQ_CONFIDENCE_MIN_CHECKS: raw.LIQ_CONFIDENCE_MIN_CHECKS,
     LIQ_CONFIDENCE_MIN_WINDOW_DAYS: raw.LIQ_CONFIDENCE_MIN_WINDOW_DAYS,
     LIQ_TIER3_MIN_TVL_USD: raw.LIQ_TIER3_MIN_TVL_USD,

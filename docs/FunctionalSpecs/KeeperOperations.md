@@ -254,6 +254,47 @@ evidence that the migration has completed.
   another chain stops the affected step and is stated in the run's report,
   never treated as nothing to do.
 
+## Recovering deliberately zeroed reward days
+
+- A mirror chain may report a reward day as deliberately zeroed. That day's
+  users are owed compensation from Base, and if none comes in time, the day
+  is retired as a recorded loss. Each step of that process is permissionless.
+  The keeper has a backstop for each one, so a zeroed day never waits for
+  someone to decide to make the call. The zeroed-day duty runs on mirror
+  chains only, checks every fifteen minutes, and looks back sixty days by
+  default.
+- **Quoting.** Once the day's own interest close has run and its pool stamp
+  is installed, the keeper builds the day's compensation quote. It submits
+  the covering reward entries page by page, in ascending order, and then
+  dispatches the finished quote toward Base, paying the lane fee. Before it
+  dispatches, the accumulated conservation must equal the day's recorded
+  totals on both sides. A day whose quote comes to nothing on both sides is
+  resolved as zero and needs nothing more. The fee for each send is held to
+  this duty's own ceiling. A send whose quoted fee is above that ceiling is
+  refused and stated, and it is tried again on a later run.
+- **Lapsing.** A day that is never compensated is lapsed once its frozen
+  lapse window has passed. This happens even if no quote was ever sent, and
+  the loss is then recorded as a partial figure. The keeper then keeps
+  accumulating the day's quote to completion, so the recorded loss becomes
+  exact. After a lapse, no quote is dispatched.
+- **Short lapsing.** A day that was compensated below its quote on either
+  side is short-lapsed once its deadline has passed.
+- **Waiting.** A provisional compensation credit waits for its broadcast,
+  and a day with no lapse clock waits for one. In both cases the run's
+  report says what the day is waiting for, and the keeper does not send
+  into a call it knows the chain would refuse.
+- **Wedged sides.** Accumulation is permissionless, so a third party could
+  move a side's cursor past covering entries that were never submitted.
+  When the keeper finds a side whose conserved figure no longer matches the
+  covering entries up to its cursor, it raises an operator alert. Only the
+  administrator's reset can free that side, and the keeper never attempts
+  it.
+- Each lapse or short lapse is announced to operators with the loss it
+  recorded. A paused protocol, a missing signing key, an unread value, a
+  chain without a live reward role, or a Diamond that names another chain
+  stops the affected step, and the run's report says so. None of these
+  conditions is ever treated as nothing to do.
+
 ## Claim-horizon and sanctions observation
 
 - The reward heartbeat discovers all unsettled reward entries and touches
@@ -283,9 +324,9 @@ evidence that the migration has completed.
 
 The master keeper switch and each duty's own arming choice are separate.
 Delivery proofs, late acknowledgements, sanctions observation, reward-day
-automation, reward-day close-out, and the reward heartbeat must each
+automation, reward-day close-out, zeroed-day recovery, and the reward heartbeat must each
 disclose whether they are armed on the selected deployment. Reward-day
-automation, close-out and the heartbeat ship disabled and require
+automation, close-out, zeroed-day recovery and the heartbeat ship disabled and require
 deliberate activation. Deploying their software does not prove they run, that rewards have launched, or that custody or the
 expiry horizon has been activated. The mirror's day-delivery protection is
 required by its reward role, as stated in the current tokenomics spec; it is

@@ -38,7 +38,8 @@ export type PassFlag =
   | 'REWARD_DELIVERY_PROOF_ENABLED'
   | 'REWARD_REMIT_ENABLED'
   | 'PERIODIC_SETTLE_ENABLED'
-  | 'REWARD_CLOSE_OUT_ENABLED';
+  | 'REWARD_CLOSE_OUT_ENABLED'
+  | 'REWARD_ZEROED_DAY_ENABLED';
 
 export interface KeeperHarness {
   env: Env;
