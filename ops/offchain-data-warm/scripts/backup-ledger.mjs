@@ -115,8 +115,8 @@ async function readManifests(archiveAuth, uploads, io) {
  * @returns {Promise<{live: Array<{keys: string[], text: string}>, quieted: number,
  *   notes: string[], summary: string, written: object[], deferred: object[]}>}
  */
-export async function runWatcher({ env = process.env, dryRun = false, now = Date.now(), fetchImpl = fetch, log = () => {} } = {}) {
-  const io = { fetchImpl };
+export async function runWatcher({ env = process.env, dryRun = false, now = Date.now(), fetchImpl = fetch, sleep, log = () => {} } = {}) {
+  const io = { fetchImpl, ...(sleep ? { sleep } : {}) };
   const archiveBucket = env.ARCHIVE_BUCKET || 'vaipakam-offchain-data-warm';
   const ledgerBucket = env.LEDGER_BUCKET || 'vaipakam-offchain-backup-ledger';
   const lifecycle = JSON.parse(readFileSync(resolve(HERE, '../bucket-lifecycle.json'), 'utf8'));

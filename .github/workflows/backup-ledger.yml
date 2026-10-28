@@ -45,6 +45,7 @@ on:
       - 'ops/offchain-data-warm/scripts/lib/**'
       - 'ops/offchain-data-warm/src/tiers.ts'
       - 'ops/offchain-data-warm/src/limits.ts'
+      - 'ops/offchain-data-warm/src/b2.ts'
 
 permissions:
   contents: read # the alert job adds issues: write for itself

@@ -349,6 +349,10 @@ function fakeB2({ pageSize = 2 } = {}) {
 
   const b2 = {
     downloads: [],
+    // Faults to inject, each used once: {match(path), status, store}. With
+    // `store`, the request takes effect and the answer is still the error, as
+    // B2 can do.
+    faults: [],
     bucket(name, { lock = false } = {}) {
       buckets.set(name, { id: `bkt-${name}`, name, lock, versions: [], bytes: new Map() });
       return b2;
@@ -376,6 +380,16 @@ function fakeB2({ pageSize = 2 } = {}) {
       return buckets.get(bucketName).versions;
     },
     async fetch(url, init = {}) {
+      const u = new URL(url);
+      const i = b2.faults.findIndex((f) => f.match(u.pathname));
+      if (i >= 0) {
+        const [f] = b2.faults.splice(i, 1);
+        if (f.store) await b2.handle(url, init);
+        return json({ code: 'internal_error', message: 'incident' }, f.status);
+      }
+      return b2.handle(url, init);
+    },
+    async handle(url, init = {}) {
       const u = new URL(url);
       if (u.pathname.endsWith('/b2_authorize_account')) {
         const [id] = Buffer.from(init.headers.Authorization.slice(6), 'base64').toString().split(':');
@@ -431,6 +445,7 @@ function fakeB2({ pageSize = 2 } = {}) {
           fileId,
           uploadTimestamp: NOW,
           contentLength: Buffer.byteLength(init.body),
+          contentSha1: createHash('sha1').update(init.body).digest('hex'),
           fileInfo,
           fileRetention: { mode: init.headers['X-Bz-File-Retention-Mode'], retainUntilTimestamp: Number(init.headers['X-Bz-File-Retention-Retain-Until-Timestamp']) },
         });
@@ -480,7 +495,8 @@ function nightly(b2, tier, period, nonce, body, at, { manifest = true, declared 
   return fileId;
 }
 
-const run = (b2, over = {}) => runWatcher({ env: { ...ENV, ...over.env }, now: over.now ?? NOW, fetchImpl: b2.fetch, dryRun: over.dryRun ?? false });
+const noSleep = async () => {};
+const run = (b2, over = {}) => runWatcher({ env: { ...ENV, ...over.env }, now: over.now ?? NOW, fetchImpl: b2.fetch, sleep: noSleep, dryRun: over.dryRun ?? false });
 
 test('a run records every archive once, locked in compliance mode, and a second run writes nothing', async () => {
   const b2 = world();
@@ -718,4 +734,70 @@ test('every file-info value is fixed in size, so the largest entry fits B2\'s 2,
   const bytes = Buffer.byteLength(name) + Object.entries(info).reduce((n, [k, v]) => n + Buffer.byteLength(k) + Buffer.byteLength(v), 0);
   assert.ok(bytes < 1024, String(bytes));
   assert.deepEqual(entryFileInfo({ ...r, manifest: { versions: [] } }).manifests, '-');
+});
+
+test('a transient B2 failure is retried; an upload that landed despite its error is not uploaded twice', async () => {
+  const isUpload = (p) => p.startsWith('/upload/');
+  // A 500 that stored nothing: retried on a fresh upload URL.
+  const b2 = world();
+  nightly(b2, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
+  b2.faults.push({ match: isUpload, status: 500 });
+  assert.deepEqual((await run(b2)).live, []);
+  assert.equal(b2.versions('vaipakam-offchain-backup-ledger').length, 2);
+  // A 500 that DID store: the retry finds this exact upload and stops, so the
+  // name keeps one version and nothing reads as tampering.
+  const b3 = world();
+  nightly(b3, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
+  b3.faults.push({ match: isUpload, status: 500, store: true });
+  assert.deepEqual((await run(b3)).live, []);
+  assert.equal(b3.versions('vaipakam-offchain-backup-ledger').length, 2);
+  assert.deepEqual((await run(b3)).live, []);
+  // Reads are retried too: a listing and a download each fail once.
+  const b4 = world();
+  nightly(b4, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
+  b4.faults.push({ match: (p) => p.endsWith('/b2_list_file_versions'), status: 503 });
+  b4.faults.push({ match: (p) => p.endsWith('/b2_download_file_by_id'), status: 500 });
+  assert.deepEqual((await run(b4)).live, []);
+  assert.equal(b4.faults.length, 0);
+});
+
+test('a refusal is not retried, and a failure that outlasts every attempt stops the run', async () => {
+  const b2 = world();
+  nightly(b2, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
+  b2.faults.push({ match: (p) => p.startsWith('/upload/'), status: 400 });
+  b2.faults.push({ match: (p) => p.startsWith('/upload/'), status: 500 });
+  await assert.rejects(run(b2), /upload of .* failed: 400/);
+  assert.equal(b2.faults.length, 1, 'a 400 was retried');
+  const b3 = world();
+  nightly(b3, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
+  for (let i = 0; i < 3; i++) b3.faults.push({ match: (p) => p.startsWith('/upload/'), status: 503 });
+  await assert.rejects(run(b3), /failed after 3 attempts/);
+  assert.equal(b3.versions('vaipakam-offchain-backup-ledger').length, 0);
+});
+
+test('the nightly\'s PUT retries a transient B2 failure and gives up on a refusal', async () => {
+  const { putObject, PUT_ATTEMPTS } = await import('../src/b2.ts');
+  const cfg = { endpoint: 's3.us-west-004.backblazeb2.com', bucket: 'b', region: 'us-west-004', accessKeyId: 'k', secretAccessKey: 's' };
+  const answers = (statuses) => {
+    const seen = [];
+    return {
+      seen,
+      fetchImpl: async (url, init) => {
+        seen.push(init.headers['x-amz-date'] ?? init.headers['X-Amz-Date']);
+        const status = statuses.shift() ?? 200;
+        if (status === 'network') throw new TypeError('fetch failed');
+        return new Response(status === 200 ? '' : 'oops', { status });
+      },
+    };
+  };
+  const sleep = async () => {};
+  const body = new TextEncoder().encode('{}');
+  const ok = answers([500, 'network', 200]);
+  assert.equal((await putObject(cfg, 'manifests/x.json', body, 'application/json', { fetchImpl: ok.fetchImpl, sleep })).status, 200);
+  assert.equal(ok.seen.length, 3);
+  const refused = answers([403, 200]);
+  await assert.rejects(putObject(cfg, 'k', body, 'application/json', { fetchImpl: refused.fetchImpl, sleep }), /failed: 403/);
+  assert.equal(refused.seen.length, 1);
+  const down = answers(Array(PUT_ATTEMPTS).fill(503));
+  await assert.rejects(putObject(cfg, 'k', body, 'application/json', { fetchImpl: down.fetchImpl, sleep }), new RegExp(`after ${PUT_ATTEMPTS} attempts`));
 });
