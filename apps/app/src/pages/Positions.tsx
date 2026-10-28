@@ -26,6 +26,8 @@ import { captureTxError } from '../lib/errors';
 import { WindowedRowList } from '../lib/visibleWindow';
 import { assertRowActionStillValid } from '../contracts/preflights';
 import type { IndexedOffer } from '../data/indexer';
+import { BatchCloseOutCard } from '../components/BatchCloseOutCard';
+import { borrowerOfferGroups } from '../data/batchCloseOut';
 
 function OfferRow({ offer }: { offer: IndexedOffer }) {
   const isRental = offer.assetType !== AssetType.ERC20;
@@ -302,6 +304,11 @@ export function Positions() {
                 return (
                   <>
                     {group(copy.positions.groupAttention, attention, true, false)}
+                    {/* #126 — the borrower's loans from one offer can be
+                        repaid or closed early together. */}
+                    {borrowerOfferGroups(live).map((g) => (
+                      <BatchCloseOutCard key={`${listKey}|offer-${g.offerId}`} group={g} />
+                    ))}
                     {group(copy.positions.groupActive, live, false, true)}
                     {group(copy.positions.groupEnded, ended, false, true)}
                   </>

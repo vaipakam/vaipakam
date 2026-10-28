@@ -1549,6 +1549,63 @@ const copySource = {
       'VPFI can’t be used as the rental payment asset — pick another token.',
   },
 
+  // #126 — repay, or close early, every loan that came from one offer.
+  batchClose: {
+    title: tmpl('Loans from offer #{{offerId}}', ['offerId']),
+    lede: tmpl(
+      'Loans {{ids}} came from the same offer. You can repay them, or close them early, together: one approval for the total, then one transaction. Each loan is checked on its own first, and a loan that can’t close is skipped while the others go through.',
+      ['ids'],
+    ),
+    repayAll: 'Repay all',
+    closeAllEarly: 'Close all early',
+    checking: 'Checking each loan…',
+    phase: {
+      approving: 'Approve the total in your wallet…',
+      checking: 'Checking each loan again…',
+      submitting: 'Confirm the transaction in your wallet…',
+    },
+    reviewRepay: 'Repay these loans',
+    reviewPreclose: 'Close these loans early',
+    dueNow: tmpl('Loan #{{id}}: {{amount}} due now', ['id', 'amount']),
+    leftOut: tmpl('Loan #{{id}} is left out: {{reason}}', ['id', 'reason']),
+    totalDue: tmpl('Total due now: {{amount}}.', ['amount']),
+    approval: tmpl(
+      'You’ll approve {{amount}}. That adds about two days of interest and one late-fee step, in case a day passes before the transaction runs. Each loan takes only what it owes when it runs, so the extra is never spent.',
+      ['amount'],
+    ),
+    howItRuns:
+      'After the approval, one transaction closes up to 30 loans. The amounts can rise slightly before it runs.',
+    noneReady:
+      'None of these loans can be closed together right now. Open each loan to see its options.',
+    confirm: 'Confirm',
+    cancel: 'Cancel',
+    dismiss: 'Done',
+    repaid: tmpl('Loan #{{id}}: repaid.', ['id']),
+    closed: tmpl('Loan #{{id}}: closed early.', ['id']),
+    stillOpen: tmpl('Loan #{{id}}: still open. {{reason}}', ['id', 'reason']),
+    unknown: tmpl(
+      'Loan #{{id}}: we couldn’t read whether it closed. Open the loan to check.',
+      ['id'],
+    ),
+    changedOtherwise: tmpl(
+      'Loan #{{id}}: not closed by this batch. Its status changed another way, so open the loan to see where it stands.',
+      ['id'],
+    ),
+    skippedRetry:
+      'The transaction ran, but this loan was skipped. It can be closed now from its own page.',
+    approvalReturned: 'No loan closed, so your token approval was set back to what it was before.',
+    approvalLeft: tmpl(
+      'Your token approval for the protocol now stands at {{amount}}. You can lower it under Standing token approvals in Settings.',
+      ['amount'],
+    ),
+    approvalLeftUnread:
+      'We couldn’t read your token approval after the batch. You can check it under Standing token approvals in Settings.',
+    ownPageRental: 'Rentals are closed from their own page.',
+    ownPageRefinance:
+      'A refinance request is open on this loan. Close it from its own page, which shows what closing does to the request.',
+    ownPageFallback:
+      'This loan is in its fallback period. Repay it from its own page, which explains what that involves.',
+  },
   preclose: {
     title: 'Close this loan early',
     blurb:

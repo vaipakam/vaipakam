@@ -1,0 +1,157 @@
+# Batch actions on offer-grouped loans (#126)
+
+**Status:** slice 1 in review. Issue: #126.
+
+## Decision
+
+No batch facet (owner decision 2026-10-28, recorded on #126). Each loan
+keeps its own checks and can fail on its own.
+
+**How the calls are sent is still with the owner.** The decision on #126
+names an EIP-5792 wallet batch where the wallet supports one, and one
+transaction per loan otherwise. While building slice 1 a closer fit
+turned up: the Diamond already has `MulticallFacet.multicall`, which Claim
+all (#1268) uses. It meets the same requirements without the wallet's
+help, so slice 1 is built on it and the choice was put back to the owner
+on 2026-10-28. If the owner keeps EIP-5792, only the sender changes; the
+plan builder, the grouping, the review and the read-back below stay.
+
+Why the multicall fits better here:
+
+- **Every wallet, one prompt.** It is an ordinary Diamond call, so any
+  EOA gets one transaction for up to 30 loans. EIP-5792 support is
+  uneven, and where it is missing the fallback is one prompt per loan.
+- **No atomicity surprise.** Each item runs with `allowFailure` set, so a
+  loan whose call reverts at execution rolls back only its own frame and
+  the others still close. An EIP-5792 batch is often atomic (a smart
+  account usually runs it that way), so one late revert would undo every
+  loan, including the approval in it.
+- **Same identity, same checks.** Each item is a delegatecall into the
+  Diamond itself, so it runs as the borrower, through the same facet code
+  and the same per-call checks (position NFT holder, grace, sanctions,
+  pause) as a direct call. It grants nothing a direct call does not. The
+  facet rejects nesting and caps a batch at 30 calls.
+- **No new wallet prompts.** EIP-5792 in MetaMask can ask to upgrade the
+  account (EIP-7702) before the first batch, which is a larger decision
+  than closing loans.
+- **Already gated.** The app's Terms gate already classifies a multicall
+  by the calls inside it, so a batch of exits is an exit.
+
+This leaves the lean in `VaultUpgradeBundlingDesign.md` ("why not batch
+at the wallet layer") where it was: that bundle had to be atomic; this one
+must not be.
+
+## What a group is
+
+Loans group by the offer they came from (the loan's `offerId`). One offer
+can fill into several loans, possibly with different counterparties, so a
+group is the connected wallet's own borrower positions only, still
+active, ERC-20 principal, and only where two or more remain. A borrower
+in loan #3 never acts on loan #1 because both came from one offer; the
+contract enforces that per call anyway, and the app does not offer it.
+Rentals are not grouped.
+
+## The one rule that makes a batch safe: one per-loan plan
+
+The loan page (PositionDetails) runs a long list of live checks before it
+lets a borrower repay or close early. A batch that restated them would be
+a second copy of the rule, and the copies would drift: the page collected
+one review round per missing re-check (sale acceptance, refinance request,
+offset lock, grace on the live term, position NFT still held).
+
+So slice 1 moves them into **one per-loan plan builder**,
+`apps/app/src/data/closeOutPlan.ts`. Given a loan and an action it reads
+the chain and returns either the call and the token pull it needs (what
+the contract takes now, and the padded figure to balance-check and
+approve), or the reason the loan cannot take the action now. The page's
+two handlers and the batch both call it.
+
+Two page behaviours change, both toward the chain:
+
+- The day-boundary pad is computed from the **live** principal and rate,
+  not the indexed row's. A partial repayment or a refinance moves both.
+- Early close now reads the **offset lock** live before signing. It used
+  to rely on the page's own cached offset card.
+
+## A batch carries only loans with nothing to disclose
+
+Where the loan page would stop to show the borrower something before
+they confirm, the batch leaves the loan out and says to close it from its
+own page:
+
+- an accepted sale waiting to complete (closing would strand the buyer);
+- an open refinance request, or a search for one that could not answer;
+- an open offset offer;
+- a loan in its fallback period (repaying it is a cure, with its own
+  explanation);
+- a rental.
+
+A loan whose checks could not be read is left out with that reason too.
+The review screen lists every loan: the amount due now, or why it is left
+out.
+
+## Sending
+
+1. Plan every loan. Show the review: per-loan amounts, loans left out, the
+   total, and the approval the batch asks for, stated as including a pad
+   for the amount rising before the transaction runs.
+2. Check the wallet holds the padded total, then approve it once per
+   token (one lending asset per offer, so one approval in practice),
+   through the same `ensureAllowance` / `trackApproval` machinery the
+   single-loan flow uses.
+3. Re-check every loan after the approval (a sale acceptance, refinance
+   request or offset can land while the wallet waits). A loan that now
+   refuses is moved to "left out".
+4. Send `multicall` through `useDiamondWrite`, the one chokepoint for
+   Diamond writes (Terms gate, receipt check), one transaction per 30
+   loans.
+
+## Outcomes are read back, never assumed
+
+The multicall's receipt says the transaction mined; it does not say which
+items ran. After each transaction every loan is read back **at the block
+it mined in**, so a node that has not caught up answers "unknown" instead
+of "still open":
+
+- **closed** only when the loan reads `Repaid`, the status both calls
+  leave;
+- **changed** when it left Active some other way (a default or
+  liquidation landed first). It is never reported as this batch's close;
+- **still open**, with the reason the call would fail now, simulated at
+  the same block, or a note that it was skipped and can be closed from
+  its page if the simulation passes;
+- **unknown** when the read fails.
+
+If the transaction itself failed to send or report, loans are read at the
+latest block, because a transaction can mine without reporting.
+
+**Approvals.** If no loan closed, the approval is set back to what it was
+before, through the same unwind as the single-loan flow, and the result
+says whether that worked. If some loans closed, the allowance that
+remains (the unused pad, and the share of any loan that stayed open) is
+read live and stated, with where to lower it. The single-loan flow leaves
+its pad as allowance too; the batch says so because its remainder can be
+larger.
+
+## Slices
+
+1. **Plan builder + borrower close-outs** (this slice). The plan builder,
+   the shared multicall encoding (Claim all now uses it too), and on the
+   Positions page a card per group with "Repay all" and, in Advanced mode
+   like the loan page's own early close, "Close all early".
+2. **Lender: list all for sale.** One `createLoanSaleOffer` per loan with
+   the same terms (each carries its own mandatory expiry).
+3. **Borrower: refinance all.** One replacement borrower offer per loan
+   with the same terms.
+
+Partial repayment across a group needs a rule for splitting one amount
+over several loans; that is a product question, so it is not in these
+slices. Liquidation stays a keeper concern, as the issue says.
+
+## Tests
+
+Unit: the plan builder's refusals one case each, the pad on the live
+term, a failed read becoming that loan's refusal; grouping exclusions and
+per-token totals; the shared multicall encoding and chunking. CI-Anvil (a
+borrower with two loans from one offer closes both with "Repay all") is
+listed as a gap in `apps/app/e2e/COVERAGE.md` and follows in its own PR.
