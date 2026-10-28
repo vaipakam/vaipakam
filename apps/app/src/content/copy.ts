@@ -5121,6 +5121,10 @@ const copySource = {
       // recorded request and no early-close offset is open on that loan.
       refinanceUntakeable:
         'This refinance request can’t be taken right now — either it isn’t the request the protocol has on record for its loan (an older one, or one the borrower replaced), or the borrower has an early-close offset open on the loan. Nothing was sent.',
+      // #3025 — loan creation re-runs the cadence rule, and the switch, the
+      // threshold or a leg's liquidity moved since the offer was posted.
+      cadenceNotAdmitted:
+        'This offer’s interest-payment schedule isn’t allowed on these terms any more: the periodic-interest settings, the size threshold or an asset’s market status changed after it was posted. Its creator needs to cancel it and post it again. Nothing was sent.',
       // A refusal we have no words for — the app can be older than the
       // deployment it is talking to, and this vocabulary grows by
       // appending. Says only what is certainly true.
