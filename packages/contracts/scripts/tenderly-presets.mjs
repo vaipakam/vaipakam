@@ -15,18 +15,21 @@
  * that is not a mapping, is refused rather than skipped.
  *
  * Every preset must carry an `id` (unique), a `contract`, and exactly one of
- * `event` or `error`. A preset on the Diamond (`contract` is the literal
- * `${DIAMOND_ADDRESS}` placeholder the export substitutes) must name a
- * signature the committed combined Diamond ABI carries, in canonical form:
- * struct parameters are written as their component tuples, with any array
- * suffix kept, e.g. `DiamondCut((address,uint8,bytes4[])[],address,bytes)`.
+ * `event` or `error`. A preset's `contract` is one of the placeholders the
+ * export substitutes, and each placeholder names a contract whose ABI is
+ * committed: `${DIAMOND_ADDRESS}` the combined Diamond ABI, and
+ * `${TIMELOCK_ADDRESS}` the governance timelock's ABI (#2650; that preset
+ * used to be unchecked, because no timelock ABI was committed). The preset
+ * must name a signature that ABI carries, in canonical form: struct
+ * parameters are written as their component tuples, with any array suffix
+ * kept, e.g. `DiamondCut((address,uint8,bytes4[])[],address,bytes)`.
  *
- * What this proves, and what it does not: the signature EXISTS on the
- * Diamond. It cannot prove that a code path emits it. A preset on any other
- * contract has no committed ABI to check against; it is returned as
- * unchecked, and the export prints it by name instead of passing it silently.
+ * What this proves, and what it does not: the signature EXISTS on that
+ * contract. It cannot prove that a code path emits it. A preset on a
+ * contract with no committed ABI is returned as unchecked, and the export
+ * prints it by name instead of passing it silently.
  *
- * Usage: node tenderly-presets.mjs <alerts.yaml> <diamondAbi.json>
+ * Usage: node tenderly-presets.mjs <alerts.yaml> <diamondAbi.json> <timelockAbi.json>
  *   exit 0: prints one `UNCHECKED <id> (<contract>: <kind> <signature>)` line
  *           per preset it could not check
  *   exit 1: prints each refusal to stderr
@@ -37,6 +40,8 @@ import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
 
 export const DIAMOND_PLACEHOLDER = '${DIAMOND_ADDRESS}';
+export const TIMELOCK_PLACEHOLDER = '${TIMELOCK_ADDRESS}';
+const ABI_LABEL = { [DIAMOND_PLACEHOLDER]: 'the Diamond ABI', [TIMELOCK_PLACEHOLDER]: 'the timelock ABI' };
 
 /**
  * The canonical type of one ABI parameter: a tuple is written as its
@@ -50,7 +55,7 @@ export function canonicalType(param) {
 }
 
 /** `event Name(types)` / `error Name(types)` for every event and error. */
-export function diamondSignatures(abi) {
+export function abiSignatures(abi) {
   const sigs = new Set();
   for (const item of abi) {
     if (item.type !== 'event' && item.type !== 'error') continue;
@@ -62,10 +67,13 @@ export function diamondSignatures(abi) {
 const nonEmptyString = (v) => typeof v === 'string' && v.trim() !== '';
 
 /**
- * Check the template text against the Diamond ABI.
+ * Check the template text against the committed ABIs.
+ * @param {string} templateText
+ * @param {Record<string, unknown[]>} abis  each contract placeholder mapped to
+ *   that contract's ABI, e.g. `{ [DIAMOND_PLACEHOLDER]: diamondAbi }`
  * @returns {{ bad: string[], unchecked: string[], count: number }}
  */
-export function checkPresets(templateText, diamondAbi) {
+export function checkPresets(templateText, abis) {
   let doc;
   try {
     doc = yaml.load(templateText);
@@ -77,7 +85,7 @@ export function checkPresets(templateText, diamondAbi) {
     return { bad: ['the template has no `alerts` list, or it is empty'], unchecked: [], count: 0 };
   }
 
-  const sigs = diamondSignatures(diamondAbi);
+  const sigsFor = new Map(Object.entries(abis).map(([placeholder, abi]) => [placeholder, abiSignatures(abi)]));
   const bad = [];
   const unchecked = [];
   const seen = new Set();
@@ -100,8 +108,10 @@ export function checkPresets(templateText, diamondAbi) {
     const sig = preset[kind];
     if (!nonEmptyString(preset.contract)) {
       bad.push(`${id} names no contract`);
-    } else if (preset.contract === DIAMOND_PLACEHOLDER) {
-      if (!sigs.has(`${kind} ${sig}`)) bad.push(`${id} (${kind} ${sig} is not in the Diamond ABI)`);
+    } else if (sigsFor.has(preset.contract)) {
+      if (!sigsFor.get(preset.contract).has(`${kind} ${sig}`)) {
+        bad.push(`${id} (${kind} ${sig} is not in ${ABI_LABEL[preset.contract] ?? `the ABI of ${preset.contract}`})`);
+      }
     } else {
       unchecked.push(`${id} (${preset.contract}: ${kind} ${sig})`);
     }
@@ -110,15 +120,16 @@ export function checkPresets(templateText, diamondAbi) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const [templatePath, abiPath] = process.argv.slice(2);
-  if (!templatePath || !abiPath) {
-    console.error('usage: tenderly-presets.mjs <alerts.yaml> <diamondAbi.json>');
+  const [templatePath, diamondAbiPath, timelockAbiPath] = process.argv.slice(2);
+  if (!templatePath || !diamondAbiPath || !timelockAbiPath) {
+    console.error('usage: tenderly-presets.mjs <alerts.yaml> <diamondAbi.json> <timelockAbi.json>');
     process.exit(2);
   }
-  const { bad, unchecked } = checkPresets(
-    readFileSync(templatePath, 'utf8'),
-    JSON.parse(readFileSync(abiPath, 'utf8')),
-  );
+  const readAbi = (p) => JSON.parse(readFileSync(p, 'utf8'));
+  const { bad, unchecked } = checkPresets(readFileSync(templatePath, 'utf8'), {
+    [DIAMOND_PLACEHOLDER]: readAbi(diamondAbiPath),
+    [TIMELOCK_PLACEHOLDER]: readAbi(timelockAbiPath),
+  });
   if (bad.length > 0) {
     for (const b of bad) console.error(`  - ${b}`);
     process.exit(1);

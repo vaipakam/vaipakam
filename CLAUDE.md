@@ -873,8 +873,9 @@ bash contracts/script/exportFrontendAbis.sh   # runs its own --skip test build
 ```
 
 The script regenerates every JSON via `forge inspect <Facet> abi
---json`, writes `_source.json` with the contracts commit hash,
-and prints the typecheck command. Run that next:
+--json`, writes `_source.json` with the facet list it exported (no
+commit or timestamp since #2343: git records the commit that changed the
+bundle), and prints the typecheck command. Run that next:
 
 ```bash
 cd frontend && node_modules/.bin/tsc -b --noEmit
@@ -917,8 +918,7 @@ manifest fails CI instead of silently missing from the Diamond ABI. The
 export applies the same check itself: it builds the union from its STAGED
 facets before publishing anything, so a manifest omission stops the export
 with nothing written, and the facets, union and `_source.json` land
-together. The provenance stamp treats the union as output, like the facet
-JSONs. Do not
+together. Do not
 hand-edit `diamondAbi.json`; run
 `node packages/contracts/scripts/build-diamond-abi.mjs`.
 
@@ -1056,7 +1056,11 @@ wrapper refuses arguments (dry runs: `pnpm run deploy:dry`, which never
 touches the database). **Migrations land while the old Workers are still
 serving, so each one must be compatible with the deployed code** — additive
 (expand/contract); a dropped/renamed column or a tightened constraint needs a
-coordinated two-step release. Workers Builds also auto-deploys on merge with a
+coordinated two-step release. `apps/indexer/scripts/check-migration-additivity.mjs`
+(in the indexer's `typecheck`, #2412) enforces this over both migration
+directories, reading the SQL through a lexer: a `DROP TABLE`, `DROP COLUMN`,
+`RENAME` or a `NOT NULL` column without a default fails unless the file is
+listed in its `CONTRACT_STEPS` as the second step of such a release. Workers Builds also auto-deploys on merge with a
 dashboard command the repo cannot pin, so every scheduled runner of the shared
 database carries one schema gate (`@vaipakam/lib/d1SchemaGate`, #2410): the
 indexer's cron and chain passes, the agent's cron and the keeper machine's

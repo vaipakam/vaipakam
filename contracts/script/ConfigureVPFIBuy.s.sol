@@ -37,27 +37,11 @@ import {Deployments} from "./lib/Deployments.sol";
  *            ARB_SEPOLIA_VPFI_DISCOUNT_ETH_PRICE_ASSET.
  */
 contract ConfigureVPFIBuy is Script {
-    /// @dev Chain-prefix for the per-chain ETH reference asset env var. Mirrors
-    ///      ConfigureOracle._prefix() so the same .env shape works everywhere.
+    /// @dev Chain-prefix for the per-chain ETH reference asset env var:
+    ///      `Deployments.envPrefix()`, the one map `ConfigureOracle` reads too
+    ///      (#1721), so the same .env shape works everywhere.
     function _prefix() internal view returns (string memory) {
-        uint256 chainId = block.chainid;
-        if (chainId == 84532) return "BASE_SEPOLIA_";
-        if (chainId == 8453) return "BASE_";
-        if (chainId == 11155111) return "SEPOLIA_";
-        if (chainId == 1) return "MAINNET_";
-        if (chainId == 421614) return "ARB_SEPOLIA_";
-        if (chainId == 11155420) return "OP_SEPOLIA_";
-        if (chainId == 80002) return "POLYGON_AMOY_";
-        if (chainId == 42161) return "ARBITRUM_";
-        if (chainId == 10) return "OPTIMISM_";
-        if (chainId == 56) return "BNB_";
-        if (chainId == 137) return "POLYGON_";
-        revert(
-            string.concat(
-                "ConfigureVPFIBuy: unsupported chainId ",
-                vm.toString(chainId)
-            )
-        );
+        return Deployments.envPrefix();
     }
 
     function _ethPriceAsset() internal view returns (address) {

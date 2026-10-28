@@ -120,6 +120,7 @@
     "TestnetSanctionsOracleStandIn",
     "VaipakamFeedRegistry",
     "CcipMessenger",
-    "VaipakamRewardMessenger"
+    "VaipakamRewardMessenger",
+    "VaipakamTimelock"
   ]
 }

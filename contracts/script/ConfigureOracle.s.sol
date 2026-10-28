@@ -65,18 +65,13 @@ interface IUniswapV3FactoryView {
  *          forge script script/ConfigureOracle.s.sol --rpc-url base_sepolia --broadcast
  */
 contract ConfigureOracle is Script {
+    /// @dev The chain's env-var prefix. Read from `Deployments.envPrefix()`,
+    ///      the one chain-to-prefix map every deploy and configure script
+    ///      shares (#1721), so this script, `ConfigureVPFIBuy`,
+    ///      `DeployUniV3Adapter` and the deploy wrappers' `CCIP_SLUG` cannot
+    ///      disagree on a chain. Reverts on a chain the map does not know.
     function _prefix() internal view returns (string memory) {
-        uint256 chainId = block.chainid;
-        if (chainId == 84532) return "BASE_SEPOLIA_";
-        if (chainId == 8453) return "BASE_";
-        if (chainId == 11155111) return "SEPOLIA_";
-        if (chainId == 1) return "MAINNET_";
-        if (chainId == 421614) return "ARB_SEPOLIA_";
-        if (chainId == 11155420) return "OP_SEPOLIA_";
-        if (chainId == 80002) return "POLYGON_AMOY_";
-        if (chainId == 97) return "BNB_TESTNET_";
-        if (chainId == 56) return "BNB_";
-        revert(string.concat("ConfigureOracle: unsupported chainId ", vm.toString(chainId)));
+        return Deployments.envPrefix();
     }
 
     /// @dev Warn when no ENABLED registered adapter is the UniV3 one on a no-0x chain,

@@ -1,0 +1,33 @@
+# Form for the Q&A discussion category (#131). GitHub matches this file to
+# the category by its slug, `q-a`; renaming the category needs this file
+# renamed with it.
+title: "[Q&A] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ask how something works or how to use it. For a defect, open a bug
+        report under Issues instead. For a security problem, do not post
+        here: follow the private disclosure route in SECURITY.md.
+  - type: input
+    id: surface
+    attributes:
+      label: Where
+      description: The app page, contract, script or doc your question is about.
+      placeholder: e.g. app.vaipakam.com Offer Book, RepayFacet, docs/ops/DeploymentRunbook.md
+    validations:
+      required: false
+  - type: input
+    id: network
+    attributes:
+      label: Network
+      description: The chain you were on, if the question is about a transaction or a position.
+    validations:
+      required: false
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What you are trying to do, what you expected, and what you saw. Never paste a private key or seed phrase.
+    validations:
+      required: true

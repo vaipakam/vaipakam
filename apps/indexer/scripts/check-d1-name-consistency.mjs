@@ -67,6 +67,7 @@ import {
   discoverD1Configs,
 } from './lib/d1-workers.mjs';
 import { PREDECESSOR, SUCCESSOR } from './lib/cutover-databases.mjs';
+import { resolveSharedShape } from './lib/d1-shared-shape.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = join(__dirname, '..', '..', '..');
@@ -220,80 +221,23 @@ const problems = [...assertClassified(REPO)];
 // The writers are all-or-none. A mixed state is the barrier half-applied,
 // which is worse than either shape, because the Workers still bound keep
 // writing while the procedure believes everything has stopped.
-const bound = [];
-const unbound = [];
-for (const { file, binding } of SHARED_CONSUMERS) {
-  const entry = d1Entries(file).find((e) => e.binding === binding);
-  if (entry?.database_name && entry?.database_id) bound.push({ file, binding, entry });
-  else unbound.push({ file, binding, entry });
-}
-
-// THE BARRIER IS AN EMPTY `d1_databases`, NOT A MISSING `DB` ENTRY, and
-// the two are not the same test (#2267 r22). Keying on the named entry
-// let a writer keep a complete attachment under any other binding name —
-// rename `DB` to `DB_OLD` on all three and the check reported the barrier
-// held while every writer could still reach the database. What the
-// barrier claims is that no invocation can obtain a handle, and a handle
-// under a different name is still a handle.
-const heldWriters = [...WRITERS].filter((f) => d1Entries(f).length === 0);
-const heldForCutover = heldWriters.length === WRITERS.size;
-
-// A writer with a d1 array that has no `DB` in it is neither bound nor
-// held: it is attached to something under another name, which the
-// barrier does not permit and the normal shape does not describe.
-for (const file of WRITERS) {
-  const entries = d1Entries(file);
-  if (entries.length === 0) continue;
-  if (entries.some((e) => e.binding === 'DB')) continue;
-  problems.push(
-    `${file}: has ${entries.length} d1 binding(s) — ` +
-      `${entries.map((e) => `"${e.binding}"`).join(', ')} — but none named ` +
-      `"DB".\n    That is neither shape: not the normal one, which binds ` +
-      `the shared database as "DB", and not the cutover barrier, which is ` +
-      `an EMPTY d1_databases. A handle under another name is still a ` +
-      `handle, and this Worker can still reach a database.`,
-  );
-}
-
-for (const { file, binding, entry } of unbound) {
-  if (heldForCutover && WRITERS.has(file)) continue;
-  problems.push(
-    entry === undefined
-      ? `${file}: no d1 binding named "${binding}"` +
-        (WRITERS.has(file)
-          ? `.\n    ${heldWriters.length} of ${WRITERS.size} writers declare ` +
-            `no d1_databases at all, so this is not the cutover barrier — ` +
-            `that shape needs ALL of them empty. A writer left attached ` +
-            `while the others are held keeps writing through a window the ` +
-            `procedure believes is closed.`
-          : '')
-      : `${file} (binding ${binding}) declares an incomplete d1 binding: ` +
-        `name ${entry.database_name ?? '(missing)'}, id ` +
-        `${entry.database_id ?? '(missing)'}. Half a binding names no database.`,
-  );
-}
-
-if (bound.length === 0) {
-  console.error(
-    `[check-d1-name-consistency] no consumer binds the shared database — ` +
-      `not even ${SHARED_CONSUMERS.map((c) => c.file).find((f) => !WRITERS.has(f))}, ` +
-      `which is not part of the cutover barrier. There is nothing to check ` +
-      `against.`,
-  );
+// The rule itself is `resolveSharedShape` (lib/d1-shared-shape.mjs), a pure
+// function so its barrier and half-applied branches are tested (#2272): the
+// barrier runs in production once, during a maintenance window, and the
+// half-applied shape ideally never.
+const shape = resolveSharedShape({
+  consumers: SHARED_CONSUMERS,
+  writers: WRITERS,
+  entriesOf: d1Entries,
+});
+problems.push(...shape.problems);
+if (shape.fatal) {
+  console.error(`[check-d1-name-consistency] ${shape.fatal}`);
   process.exit(1);
 }
-
-// The shared database is whatever the bound consumers agree on. Two
-// distinct pairs IS the half-applied cutover, reported below per consumer
-// against the majority so the message names which file to move.
-const pairs = new Map();
-for (const c of bound) {
-  const k = `${c.entry.database_name}\u0000${c.entry.database_id}`;
-  pairs.set(k, [...(pairs.get(k) ?? []), c]);
-}
-const [agreed] = [...pairs.values()].sort((a, b) => b.length - a.length);
-const SHARED_NAME = agreed[0].entry.database_name;
-const SHARED_ID = agreed[0].entry.database_id;
+const { bound, heldForCutover } = shape;
+const SHARED_NAME = shape.shared.name;
+const SHARED_ID = shape.shared.id;
 
 if (heldForCutover) {
   console.log(
@@ -302,24 +246,6 @@ if (heldForCutover) {
       `cannot reach ${SHARED_NAME} at all. That is a deliberate, ` +
       `temporary state (docs/ops/D1CutoverArchiveToWarm.md); if you did ` +
       `not mean to be in it, the bindings are missing.`,
-  );
-}
-
-for (const { file, binding, entry } of bound) {
-  const nameOk = entry.database_name === SHARED_NAME;
-  const idOk = entry.database_id === SHARED_ID;
-  if (nameOk && idOk) continue;
-  problems.push(
-    `${file} (binding ${binding}) disagrees with the other consumers:\n` +
-      `    name: ${entry.database_name} ${nameOk ? '(ok)' : `!= ${SHARED_NAME}`}\n` +
-      `    id:   ${entry.database_id} ${idOk ? '(ok)' : `!= ${SHARED_ID}`}\n` +
-      `    ${
-        nameOk !== idOk
-          ? 'One field matches and the other does not — this is a ' +
-            'half-applied cutover, the shape that silently splits ' +
-            'migrations from reads.'
-          : 'This Worker binds a different database entirely.'
-      }`,
   );
 }
 

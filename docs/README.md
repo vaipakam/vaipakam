@@ -53,6 +53,14 @@ Three orthogonal axes, each with its own update cadence:
 2. **FunctionalSpecs** — every behaviour-changing PR also updates the relevant `docs/FunctionalSpecs/<domain>.md` in the same diff. **Specs are sourced from documents, never transcribed from code** (ADR-0007). See [`ProjectProcedures.md` §6.3](procedures/ProjectProcedures.md).
 3. **ADRs** — appended when a load-bearing architectural decision is ratified. Never edit a past ADR; supersede via a new one. See [`adr/README.md`](adr/README.md).
 
+**Paths in older design docs.** Design docs, release notes and findings
+written before the Stage 3 source-tree split cite paths that no longer
+exist, chiefly `frontend/…` (the app is now `apps/app`) and
+`ops/hf-watcher` (now `apps/{keeper,indexer,agent}`). They are dated
+records and are not rewritten to the current tree (#1462). Operator
+runbooks under `docs/ops/`, the user guides and the FunctionalSpecs are kept
+on current paths.
+
 A CI drift-check (`.github/workflows/release-notes-drift.yml`) warns on merges that change `contracts/src/` or `apps/` but touch neither release-notes nor FunctionalSpecs. Non-blocking — the drift surfaces in the Actions tab.
 
 ## For auditors

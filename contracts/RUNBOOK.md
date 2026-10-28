@@ -5,9 +5,12 @@ that MUST happen between "smart contracts pass all tests on fork" and "real
 users can route real value through the protocol." Every step below is a hard
 prerequisite. Skipping one is a security regression, full stop.
 
-**Scope.** Applies to mainnet deploys on Ethereum, Base, Arbitrum, Optimism,
-Polygon zkEVM, and BNB Chain (Phase 1 chain scope — Polygon PoS and Solana
-are out of Phase 1; see
+**Scope.** Applies to mainnet deploys on Ethereum, Base, Polygon (PoS),
+Arbitrum and Optimism — the Phase 1 chain set in
+[`ProjectDetailsREADME.md`](../docs/FunctionalSpecs/ProjectDetailsREADME.md)
+§1. BNB Chain is testnet-tier only. zk-rollup chains (Polygon zkEVM
+included, which `deploy-mainnet.sh` refuses) and Solana are out of
+scope (#1721; see
 [`contracts/README.md`](README.md#cross-chain-security-mandatory-pre-mainnet-hardening)).
 
 ---
@@ -55,8 +58,7 @@ ETHEREUM_RPC_URL=…
 BASE_RPC_URL=…
 ARBITRUM_RPC_URL=…
 OPTIMISM_RPC_URL=…
-POLYGON_ZKEVM_RPC_URL=…
-BNB_RPC_URL=…
+POLYGON_RPC_URL=…
 
 # Deployer + admin signing keys — both are EOAs during a fresh
 # rehearsal; on mainnet the admin equivalent is a multisig batch (see
@@ -330,16 +332,13 @@ Per chain, via timelock-originated txs:
   protocol runs on or `LibVPFIDiscount._feeAssetWeiToVpfi` returns
   `(false, 0)` and no discount resolves.
 
-  **Chain support is narrower than this runbook's scope, and the mismatch
-  is a real gate problem.** `ConfigureVPFIBuy._prefix()` recognises
-  1 / 8453 / 42161 / 10 / 56 / 137 and the testnets — i.e. Polygon **PoS**,
-  which §Scope places OUT of Phase 1 — and does **not** recognise Polygon
-  **zkEVM** (1101 / 1442), which §Scope places IN it. On zkEVM the script
-  reverts `unsupported chainId`, so this step cannot be completed on a
-  declared Phase-1 target. Do not treat that as a tickable box: either the
-  script gains the zkEVM prefixes or the chain scope is corrected first.
-  Tracked as **#1721**; run this step on the chains the script supports
-  and resolve zkEVM before launch.
+  The per-chain keys use the chain's env prefix from
+  `Deployments.envPrefix()`, the one map every deploy and configure
+  script shares (`ETHEREUM_`, `BASE_`, `POLYGON_`, `ARBITRUM_`,
+  `OPTIMISM_`, and the testnet prefixes), e.g.
+  `POLYGON_VPFI_DISCOUNT_ETH_PRICE_ASSET`. Before #1721 this script and
+  `ConfigureOracle` each kept their own map, and the oracle's had no
+  Arbitrum, Optimism or Polygon mainnet entry.
 
 Every `ConfigFacet` / `AdminFacet` setter emits an event. Capture all event
 receipts in `deployments/<network>/initial-config.json` for audit trail.

@@ -250,20 +250,12 @@ mainnet without preflight discipline:
   RPC secrets before the first deploy targeting that chain** (see
   next section).
 
-### Prerequisites: one-time watcher RPC-secret setup
+### Prerequisites: one-time Worker RPC-secret setup
 
-> **STALE — the pre-split `hf-watcher` Worker no longer exists.** It was removed by the
-> Stage 3 split; its role is now `apps/{keeper,indexer,agent}`, and their
-> per-chain `RPC_*` values live in the **account-level Secrets Store**, not
-> in per-Worker `wrangler secret put`. The database is `vaipakam-warm`,
-> not `vaipakam-alerts-db`.
->
-> A normal contract deployment following the commands below stops on
-> directories that do not exist, or verifies the wrong database. Use the
-> Secrets Store form (see `SecretsStoreMigration.md` §9) against the live
-> Workers instead. Bringing this whole section up to date is tracked
-> separately — it predates #1440 and is not that removal's doing, but it is
-> live imperative text and should not be followed as written (#1450 r4).
+The pre-split `hf-watcher` Worker is gone (Stage 3 split). Its role is
+now `apps/{keeper,indexer,agent}`, their per-chain `RPC_*` values live in
+the account-level Secrets Store, and the shared database is
+`vaipakam-warm`. This section describes that topology (#1455).
 
 
 Per `CLAUDE.md`, RPC URLs carry operator-curated paid-tier API keys
@@ -1050,7 +1042,10 @@ four code edits**:
 2. **`contracts/script/lib/Deployments.sol#envPrefix()`** — add
    `if (cid == X) return "<PREFIX>_";`. This is the binding that turns
    `block.chainid == 97` into `vm.envAddress("BNB_TESTNET_DIAMOND_ADDRESS")`
-   when the artifact file is missing.
+   when the artifact file is missing. It is also the prefix
+   `ConfigureOracle`, `ConfigureVPFIBuy` and `DeployUniV3Adapter` read the
+   chain's settings under (#1721), so it must equal the wrappers'
+   `CCIP_SLUG` plus `_`.
 3. **`contracts/script/lib/Deployments.sol#ccipSelectorForChainId()`** —
    add the chain's CCIP chain-selector row (from Chainlink's published
    Supported Networks directory), the CCIP analogue of what used to be
@@ -1330,8 +1325,8 @@ therefore a hard gate only for keeper-gated intents + all auto-roll; for
 plain permissionless lending it's optional. (Pre-live today, so nothing
 to populate yet.)
 
-Both the frontend and the hf-watcher Worker consume these via a
-single consolidated `deployments.json` keyed by `chainId`:
+The apps and all three Workers (`apps/{keeper,indexer,agent}`) consume
+these via a single consolidated `deployments.json` keyed by `chainId`:
 
 - `packages/contracts/src/deployments.json` — read by
   [`packages/contracts/src/deployments.ts`](../../packages/contracts/src/deployments.ts)
@@ -1393,26 +1388,33 @@ with cryptic "no such column" errors in the logs. See the
 T-041-specific notes on the bootstrap-time backfill behavior.
 
 **T-046 — chain redeploy / mainnet cutover purge.** When you
-redeploy the diamond on a chain (testnet iteration) or graduate
-from testnet to mainnet, the Worker's cached offer / loan /
-activity rows reference the OLD diamond's offer IDs / loan IDs.
-Cache and chain disagree until you clear the cache.
+redeploy the diamond on a chain (testnet iteration), the Worker's
+cached offer / loan / activity rows reference the OLD diamond's offer
+IDs / loan IDs. **There is no purge step to run: the indexer owns
+this (#1491).** A fresh Diamond is a new indexer *epoch*
+(`apps/indexer/src/deploymentEpoch.ts`). `indexer_deployment` records
+the Diamond each chain's rows were indexed from, and the first pass
+that sees a different, newer Diamond in the bundle resets that chain's
+rows in one batch. That covers every table with a `chain_id` column,
+except the user-owned ones `apps/indexer/src/diamondEpochKeep.json`
+names. The cursor is reset with them, so the scan reseeds from the
+new deploy block. A `--fresh` redeploy writes the retired Diamond to
+`contracts/deployments/archive-manifest.json`, and the indexer's
+deploy seeds it from there. That covers the case a pass alone cannot
+judge: an indexer with no prior record for the chain adopts whatever
+Diamond it first sees and resets nothing, and the seed is what tells
+it the old rows belong to a retired Diamond. The keeper's private database follows the
+same Diamond: its `keeper_deployment` record clears that chain's
+private rows once the indexer has adopted the new Diamond.
+`/health/ingest` states the adopted Diamond per chain, which is how to
+confirm the reset happened.
 
-> **The `db:purge-chain` / `db:purge-all` scripts were retired with
-> the pre-split watcher and have no Stage 3 replacement yet.** No
-> package in `apps/` carries them, so the historical commands are not
-> reproduced here — an instruction that fails on contact is worse
-> than a stated gap. Until the tracked replacement lands (**#1491**),
-> a redeploy purge is a manual, previewed `DELETE` against the shared
-> `vaipakam-warm` database, run from its owning Worker
-> (`cd apps/indexer && npx wrangler d1 execute vaipakam-warm
-> --remote --command "..."`), scoped to the affected `chain_id` and
-> preserving `user_locales` (wallet-scoped, not chain-scoped).
-> Preview every `DELETE` with the matching `SELECT COUNT(*)` first.
-**When NOT to purge:** routine Worker code-only redeploys (no
-diamond / contract changes) should NOT trigger a purge — the
-cache is still correct against the existing on-chain state.
-Purge only when the on-chain state model itself has changed.
+The retired `db:purge-chain` / `db:purge-all` scripts are not
+replaced, deliberately: per-chain rows reset by themselves, and a
+mainnet chain has its own `chain_id`, so testnet rows never mix with
+mainnet ones. Do not run a manual `DELETE` against the shared
+database for a redeploy. It would race the indexer's own reset, and
+it bypasses the user-owned keep list.
 
 What stays operator-side after this consolidation:
 

@@ -184,6 +184,8 @@ import CcipMessengerABI from './CcipMessenger.json';
 // day-close pass quotes a mirror's report fee and reads Base's broadcast
 // destinations from it.
 import VaipakamRewardMessengerABI from './VaipakamRewardMessenger.json';
+// #2650 — the governance timelock (standalone; NOT a diamond facet).
+import VaipakamTimelockABI from './VaipakamTimelock.json';
 
 export {
   OfferCreateFacetABI,
@@ -302,6 +304,7 @@ export {
   VaipakamFeedRegistryABI,
   CcipMessengerABI,
   VaipakamRewardMessengerABI,
+  VaipakamTimelockABI,
 };
 
 import type { Abi } from 'viem';

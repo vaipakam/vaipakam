@@ -113,7 +113,7 @@ This rule deliberately fails open on coverage gaps but fails closed on contradic
 
 ## Sequencer fallback — L2 liveness contract
 
-On every L2 deployment (Base, Arbitrum, Optimism, Polygon zkEVM …) the Chainlink L2 Sequencer Uptime Feed is registered at deploy time via `OracleAdminFacet.setSequencerUptimeFeed`. The protocol treats this feed as authoritative for whether the underlying rollup can fairly process transactions.
+On every rollup deployment (Base, Arbitrum, Optimism) the Chainlink L2 Sequencer Uptime Feed is registered at deploy time via `OracleAdminFacet.setSequencerUptimeFeed`. The protocol treats this feed as authoritative for whether the underlying rollup can fairly process transactions.
 
 ### Circuit-breaker semantics
 

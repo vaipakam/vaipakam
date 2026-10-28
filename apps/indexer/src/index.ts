@@ -4,21 +4,28 @@
  *
  * Two entry points:
  *
- *   `scheduled()` — cron tick. Runs:
- *     - `runChainIndexer(env)`        — pulls the latest events for
- *                                       Offer / Loan / VPFI / NFT
- *                                       lifecycle into D1 round-robin
- *                                       per chain.
- *     - `pruneOldCancelledOffers(env)` — drops rows past the
- *                                       `CANCELLED_OFFER_RETENTION_DAYS`
- *                                       window (cheap DELETE gated by
- *                                       the partial index over
- *                                       cancelled rows).
+ *   `scheduled()` — cron tick. It first declines, by name, until every
+ *   shared D1 migration in this build is applied (#2410), then runs:
+ *     - ingest: `runChainIndexer(env)` pulls the latest Offer / Loan /
+ *       VPFI / NFT lifecycle events into D1, or, with Durable Object
+ *       ingest on, each chain's ingest DO is pinged to do it;
+ *     - `captureBackingSnapshot` — the retained-reserve backing snapshot
+ *       for ONE chain per tick, round-robin (#1525);
+ *     - `pruneOldCancelledOffers` / `pruneOldWebhookDeliveries` — the
+ *       cancelled-offer and webhook-delivery retention prunes;
+ *     - `sweepUnpublishedListings` — retries OpenSea publication of
+ *       borrower-authorised listings that did not publish at request
+ *       time, so marketplace publication is NOT request-only (#1725).
  *
- *   `fetch()` — public read-API (T-041). All routes are open-CORS;
- *     the connected app reads them indexer-first and falls back to
- *     direct chain reads on stale / failure. No FRONTEND_ORIGIN gate
- *     — the data is public on-chain anyway.
+ *   `fetch()` — the read-API (T-041) plus a few routes that are not
+ *     reads. The public GET surface below is open-CORS: the connected
+ *     app reads it indexer-first and falls back to direct chain reads
+ *     on stale / failure, with no FRONTEND_ORIGIN gate, since the data
+ *     is public on-chain anyway. The open-CORS claim covers that GET
+ *     surface ONLY: the same handler also carries an HMAC-verified
+ *     webhook, write-accepting POSTs and a WebSocket upgrade, each with
+ *     its own posture (see "Not read-only" below and the routes
+ *     themselves).
  *
  *       GET  /offers/stats        GET  /loans/active
  *       GET  /offers/active       GET  /loans/recent
