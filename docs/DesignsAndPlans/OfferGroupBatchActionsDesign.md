@@ -162,7 +162,10 @@ figure is reported as unread, never a stale one from before those writes.
 offer with fewer than two open loans, which drops the group from the
 page's list. The page holds a card from the moment its batch starts until
 its results are dismissed, rendering the group as it was when the batch
-began.
+began. The cards also render outside the page's loading and
+unavailable states, so a failed read of the positions lists does not
+unmount one either; while the lists cannot be read, only the held cards
+show.
 
 ## Slices
 

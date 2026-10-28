@@ -193,6 +193,24 @@ export function Positions() {
     (claimables.data ?? []).map((c): [string, ClaimableLoan] => [`${c.loanId}-${c.role}`, c]),
   );
   const claimKeys = new Set(claimByKey.keys());
+  // #126 — the batch cards, rendered in ONE slot outside the lists'
+  // availability branches below. A card mid-batch or showing its results
+  // must keep its state through a list-read outage: in a branch, the
+  // outage would unmount it, and it would come back at idle with the
+  // outcomes (and the approval figure) of transactions that may have run
+  // gone. While the lists are not both readable only the held cards
+  // render, since the live groups are not known then.
+  const listsReadable = loans.data != null && offers.data != null;
+  const batchGroups = isConnected
+    ? withHeldGroups(
+        borrowerOfferGroups(
+          listsReadable
+            ? loans.data!.rows.filter((l) => !claimKeys.has(`${l.loanId}-${l.role}`))
+            : [],
+        ),
+        heldGroups,
+      )
+    : [];
   // Current positions come from the CHAIN (authoritative, fresh this
   // block) with the indexer as the redundancy leg. Either source
   // failing means the list is served single-sourced — say so, never
@@ -209,6 +227,17 @@ export function Positions() {
     <div>
       <h1 className="page-title">{copy.positions.title}</h1>
       <p className="page-lede">{copy.positions.lede}</p>
+
+      {/* #126 — the borrower's loans from one offer can be repaid or
+          closed early together. Outside the branches below on purpose
+          (see `batchGroups`). */}
+      {batchGroups.map((g) => (
+        <BatchCloseOutCard
+          key={`${listKey}|offer-${g.offerId}`}
+          group={g}
+          onHeldChange={holdBatch}
+        />
+      ))}
 
       {!isConnected ? (
         <EmptyState
@@ -323,15 +352,6 @@ export function Positions() {
                 return (
                   <>
                     {group(copy.positions.groupAttention, attention, true, false)}
-                    {/* #126 — the borrower's loans from one offer can be
-                        repaid or closed early together. */}
-                    {withHeldGroups(borrowerOfferGroups(live), heldGroups).map((g) => (
-                      <BatchCloseOutCard
-                        key={`${listKey}|offer-${g.offerId}`}
-                        group={g}
-                        onHeldChange={holdBatch}
-                      />
-                    ))}
                     {group(copy.positions.groupActive, live, false, true)}
                     {group(copy.positions.groupEnded, ended, false, true)}
                   </>
