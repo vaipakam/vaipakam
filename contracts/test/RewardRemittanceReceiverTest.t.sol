@@ -38,7 +38,7 @@ contract MockCcipRelay {
     }
 }
 
-/// @dev Stand-in for the mirror Diamond's rooted budget ingress — records the
+/// @dev Stand-in for the mirror Diamond's d8 budget ingress — records the
 ///      last credit so the test can assert the forward + call.
 contract MockRewardBudgetIngress is IRewardBudgetIngress {
     address public immutable vpfi;
@@ -60,24 +60,20 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
     /// @dev #1566 closure 2 cutover PR 1 — the transport id the receiver
     ///      passed through, the Diamond's ingress stamp.
     bytes32 public lastTransportMessageId;
-    // 3d-1 — the rooted ingress.
-    bytes32 public lastRoot;
-    uint256 public lastElementCount;
-    uint256 public lastChunkCount;
+    // #2828 — the d8 ingress: the one funded day.
+    uint256 public lastDayId;
     uint64 public lastIntendedEra;
-    uint256 public rootedCalls;
+    uint256 public budgetCalls;
     // #918 — the day's part (as Base sent it, unscaled) and its whole.
     uint256 public lastDeclaredTotal;
     uint256 public lastDeclaredRecycled;
     uint256 public lastWholeFresh;
     uint256 public lastWholeRecycled;
 
-    function onRewardBudgetReceivedD7(
+    function onRewardBudgetReceivedD8(
         address token,
         uint256 amount,
-        bytes32 dayListRoot,
-        uint256 elementCount,
-        uint256 chunkCount,
+        uint256 dayId,
         uint256 sourceChainId,
         uint256 remitId,
         address remitter,
@@ -92,9 +88,7 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
     ) external override {
         require(token == vpfi, "ingress: token");
         lastAmount = amount;
-        lastRoot = dayListRoot;
-        lastElementCount = elementCount;
-        lastChunkCount = chunkCount;
+        lastDayId = dayId;
         lastSourceChainId = sourceChainId;
         lastRemitId = remitId;
         lastRemitter = remitter;
@@ -106,7 +100,7 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
         lastDeclaredRecycled = declaredRecycled;
         lastWholeFresh = dayWholeFresh;
         lastWholeRecycled = dayWholeRecycled;
-        rootedCalls++;
+        budgetCalls++;
     }
 }
 
@@ -169,33 +163,29 @@ contract RewardRemittanceReceiverTest is Test {
             receiver,
             SRC_BASE,
             address(0xBA5E), // sourceSender — receiver ignores it (peer check is on the messenger)
-            _d6Payload(declaredTotal),
+            _d8Payload(declaredTotal),
             _tokens(address(vpfi), declaredTotal)
         );
     }
 
-    /// @dev A d7 (rooted) budget payload declaring `total`, wholly fresh,
-    ///      as its day's one part.
-    function _d6Payload(uint256 total) internal pure returns (bytes memory) {
-        return _d7(bytes32(uint256(1)), 2, 1, total, 0, address(0xD1A), 0, 0);
+    /// @dev A d8 budget payload declaring `total`, wholly fresh, as day 2's
+    ///      one part.
+    function _d8Payload(uint256 total) internal pure returns (bytes memory) {
+        return _d8(2, total, 0, address(0xD1A), 0, 0);
     }
 
-    /// @dev A d7 payload carrying its day's whole as its one part.
-    function _d7(
-        bytes32 root,
-        uint256 elementCount,
-        uint256 chunkCount,
+    /// @dev A d8 payload carrying its day's whole as its one part.
+    function _d8(
+        uint256 dayId,
         uint256 total,
         uint256 remitId,
         address remitter,
         uint256 recycled,
         uint64 era
     ) internal pure returns (bytes memory) {
-        return RemitWire.encodeD7(
-            RemitWire.D7({
-                dayListRoot: root,
-                elementCount: elementCount,
-                chunkCount: chunkCount,
+        return RemitWire.encodeD8(
+            RemitWire.D8({
+                dayId: dayId,
                 total: total,
                 remitId: remitId,
                 remitter: remitter,
@@ -213,10 +203,10 @@ contract RewardRemittanceReceiverTest is Test {
         _deliver(1_000e18, 1_000e18);
         assertEq(vpfi.balanceOf(address(diamond)), 1_000e18, "diamond funded");
         assertEq(vpfi.balanceOf(address(receiver)), 0, "receiver drained");
-        assertEq(diamond.rootedCalls(), 1, "ingress called once");
+        assertEq(diamond.budgetCalls(), 1, "ingress called once");
         assertEq(diamond.lastAmount(), 1_000e18, "credited amount");
         assertEq(diamond.lastSourceChainId(), SRC_BASE, "source chain");
-        assertEq(diamond.lastElementCount(), 2, "day count");
+        assertEq(diamond.lastDayId(), 2, "the day surfaces");
     }
 
     /// @dev #1566 closure 2 cutover PR 1 — the transport's message id crosses both
@@ -225,37 +215,34 @@ contract RewardRemittanceReceiverTest is Test {
         vpfi.mint(address(receiver), 1e18);
         bytes32 id = keccak256("ccip-message-1");
         messenger.relayWithId(
-            receiver, SRC_BASE, address(0xBA5E), _d6Payload(1e18), _tokens(address(vpfi), 1e18), id
+            receiver, SRC_BASE, address(0xBA5E), _d8Payload(1e18), _tokens(address(vpfi), 1e18), id
         );
         assertEq(diamond.lastTransportMessageId(), id, "the id reached the Diamond ingress");
-        assertEq(diamond.rootedCalls(), 1);
+        assertEq(diamond.budgetCalls(), 1);
     }
 
-    /// @dev #1566 transport epochs 3d-1 — the d6 (ROOTED) shape takes its own
-    ///      frame and its own Diamond ingress: the commitment, the extent, the
-    ///      typed split and the era all surface, and the fresh component is
-    ///      what is left of the delivery after the recycled share.
-    function test_Deliver_D6PayloadReachesTheRootedIngress() public {
+    /// @dev #2828 — the d8 shape reaches its Diamond ingress: the one funded
+    ///      day, the typed split and the era all surface, and the fresh
+    ///      component is what is left of the delivery after the recycled share.
+    function test_Deliver_D8PayloadReachesTheIngress() public {
         vpfi.mint(address(receiver), 500e18);
         messenger.relayWithId(
             receiver,
             SRC_BASE,
             address(0xBA5E),
-            _d7(bytes32(uint256(0xBEEF)), 33, 3, 500e18, 78, address(0xD1A), 120e18, 4),
+            _d8(733, 500e18, 78, address(0xD1A), 120e18, 4),
             _tokens(address(vpfi), 500e18),
-            keccak256("d6-msg")
+            keccak256("d8-msg")
         );
-        assertEq(diamond.rootedCalls(), 1, "the rooted ingress, once");
+        assertEq(diamond.budgetCalls(), 1, "the d8 ingress, once");
         assertEq(diamond.lastAmount(), 500e18);
-        assertEq(diamond.lastRoot(), bytes32(uint256(0xBEEF)), "the root surfaces");
-        assertEq(diamond.lastElementCount(), 33, "and the extent");
-        assertEq(diamond.lastChunkCount(), 3);
+        assertEq(diamond.lastDayId(), 733, "the day surfaces");
         assertEq(diamond.lastRemitId(), 78);
         assertEq(diamond.lastRemitter(), address(0xD1A));
         assertEq(diamond.lastRecycledShare(), 120e18, "the recycled share as sent");
         assertEq(diamond.lastFreshShare(), 380e18, "fresh is the remainder of what landed");
         assertEq(diamond.lastIntendedEra(), 4, "the era surfaces");
-        assertEq(diamond.lastTransportMessageId(), keccak256("d6-msg"));
+        assertEq(diamond.lastTransportMessageId(), keccak256("d8-msg"));
         assertEq(diamond.lastDeclaredTotal(), 500e18, "#918: the part as sent");
         assertEq(diamond.lastDeclaredRecycled(), 120e18);
         assertEq(diamond.lastWholeFresh(), 380e18, "and the day's whole");
@@ -265,15 +252,15 @@ contract RewardRemittanceReceiverTest is Test {
 
     /// @dev A short delivery scales the recycled share and gives the fresh
     ///      share the rest, so the two always account for the whole delivery —
-    ///      the rooted ingress holds the whole delivery as one epoch typed by
+    ///      the ingress holds the whole delivery as one epoch typed by
     ///      exactly those two caps.
-    function test_Deliver_D6ShortDelivery_KeepsTheSplitWhole() public {
+    function test_Deliver_D8ShortDelivery_KeepsTheSplitWhole() public {
         vpfi.mint(address(receiver), 300e18); // declared 500, only 300 to forward
         messenger.relay(
             receiver,
             SRC_BASE,
             address(0xBA5E),
-            _d7(bytes32(uint256(1)), 2, 1, 500e18, 79, address(0xD1A), 120e18, 0),
+            _d8(2, 500e18, 79, address(0xD1A), 120e18, 0),
             _tokens(address(vpfi), 500e18)
         );
         assertEq(diamond.lastAmount(), 300e18, "what landed");
@@ -284,31 +271,36 @@ contract RewardRemittanceReceiverTest is Test {
         assertEq(diamond.lastDeclaredRecycled(), 120e18, "it is what Base sent for the day");
     }
 
-    /// @dev Every budget shape older than d6 is refused by name, before any
+    /// @dev Every budget shape older than d8 is refused by name, before any
     ///      token moves: the untagged legacy 2-tuple (head word 0x40), the
-    ///      untagged d2 4-tuple (0x80) and the tagged d5 payload. All three
-    ///      carried a flat day list, and the two untagged ones no split; the
-    ///      Diamond ingress that took them is gone. CCIP records the refusal as
-    ///      a failed message rather than delivering it.
-    function test_Deliver_RefusesEveryPreD7BudgetShape() public {
+    ///      untagged d2 4-tuple (0x80), the tagged d5 payload, d6 (#918) and d7
+    ///      (#2828). The flat-list shapes carried no inline day, the untagged
+    ///      ones no split, and d6/d7 a rooted list the mirror had to index
+    ///      afterwards; the Diamond ingresses that took them are gone. CCIP
+    ///      records the refusal as a failed message rather than delivering it.
+    function test_Deliver_RefusesEveryPreD8BudgetShape() public {
         uint256 d5Tag = uint256(keccak256("vaipakam.remit.wire.d5"));
-        // #918 retired d6 outright: the literal tag, since the codec no longer
-        // names it.
+        // The retired tags are literal, since the codec no longer names them.
         uint256 d6Tag = uint256(keccak256("vaipakam.remit.wire.d6"));
-        bytes[] memory shapes = new bytes[](4);
+        uint256 d7Tag = uint256(keccak256("vaipakam.remit.wire.d7"));
+        bytes[] memory shapes = new bytes[](5);
         shapes[0] = abi.encode(_days(1, 2), uint256(1e18));
         shapes[1] = abi.encode(_days(1, 2), uint256(1e18), uint256(77), address(0xD1A));
         shapes[2] = abi.encode(d5Tag, _days(1, 2), uint256(1e18), uint256(77), address(0xD1A), uint256(1e17));
         shapes[3] = abi.encode(
             d6Tag, bytes32(uint256(1)), uint256(2), uint256(1), uint256(1e18), uint256(77), address(0xD1A), uint256(0), uint256(0)
         );
-        uint256[4] memory heads = [uint256(0x40), uint256(0x80), d5Tag, d6Tag];
+        shapes[4] = abi.encode(
+            d7Tag, bytes32(uint256(1)), uint256(1), uint256(1), uint256(1e18), uint256(77), address(0xD1A),
+            uint256(0), uint256(0), uint256(1e18), uint256(0)
+        );
+        uint256[5] memory heads = [uint256(0x40), uint256(0x80), d5Tag, d6Tag, d7Tag];
         vpfi.mint(address(receiver), 1e18);
         for (uint256 i; i < shapes.length; ++i) {
             vm.expectRevert(abi.encodeWithSelector(RewardRemittanceReceiver.UnknownRemitWireShape.selector, heads[i]));
             messenger.relay(receiver, SRC_BASE, address(0xBA5E), shapes[i], _tokens(address(vpfi), 1e18));
         }
-        assertEq(diamond.rootedCalls(), 0, "nothing reached the Diamond");
+        assertEq(diamond.budgetCalls(), 0, "nothing reached the Diamond");
         assertEq(vpfi.balanceOf(address(receiver)), 1e18, "and no token moved");
     }
 
@@ -325,7 +317,7 @@ contract RewardRemittanceReceiverTest is Test {
         receiver.onCrossChainMessage(
             SRC_BASE,
             address(0xBA5E),
-            _d6Payload(1e18),
+            _d8Payload(1e18),
             _tokens(address(vpfi), 1e18)
         , bytes32(0));
     }
@@ -339,7 +331,7 @@ contract RewardRemittanceReceiverTest is Test {
                 uint256(0)
             )
         );
-        messenger.relay(receiver, SRC_BASE, address(0xBA5E), _d6Payload(1e18), none);
+        messenger.relay(receiver, SRC_BASE, address(0xBA5E), _d8Payload(1e18), none);
     }
 
     function test_Deliver_RevertsOnTokenMismatch() public {
@@ -356,7 +348,7 @@ contract RewardRemittanceReceiverTest is Test {
             receiver,
             SRC_BASE,
             address(0xBA5E),
-            _d6Payload(1e18),
+            _d8Payload(1e18),
             _tokens(address(other), 1e18)
         );
     }
@@ -375,7 +367,7 @@ contract RewardRemittanceReceiverTest is Test {
             receiver,
             SRC_BASE,
             address(0xBA5E),
-            _d6Payload(1_000e18),
+            _d8Payload(1_000e18),
             _tokens(address(vpfi), 900e18)
         );
     }
@@ -386,7 +378,7 @@ contract RewardRemittanceReceiverTest is Test {
             receiver,
             SRC_BASE,
             address(0xBA5E),
-            _d6Payload(0),
+            _d8Payload(0),
             _tokens(address(vpfi), 0)
         );
     }
@@ -402,7 +394,7 @@ contract RewardRemittanceReceiverTest is Test {
             receiver,
             SRC_BASE,
             address(0xBA5E),
-            _d6Payload(1e18),
+            _d8Payload(1e18),
             _tokens(address(vpfi), 1e18)
         );
     }
@@ -416,6 +408,6 @@ contract RewardRemittanceReceiverTest is Test {
         receiver.unpause();
         receiver.unpause(); // owner (this)
         _deliver(5e18, 5e18);
-        assertEq(diamond.rootedCalls(), 1, "resumes after unpause");
+        assertEq(diamond.budgetCalls(), 1, "resumes after unpause");
     }
 }

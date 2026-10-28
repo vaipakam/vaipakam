@@ -116,7 +116,7 @@ interface IRepatriationInstructionIngress {
 ///      Generation 6 (#1566 PR C revision) = generation 5 plus the B4 day
 ///      REPORT, mirror → Base, carrying the reporting chain's custody era.
 ///      Generation 7 = generation 6 WITHOUT the kind-12 split attestation.
-///      Every budget remittance now rides the rooted (d6) wire, which carries
+///      Every budget remittance now rides the d8 wire (#2828), which carries
 ///      its own split, so no mirror packet is ever untyped and no attestation
 ///      has anything to type. Kind 12 is RETIRED: an inbound one reverts
 ///      `UnknownMessageType`, and the number is never to be reused for a new

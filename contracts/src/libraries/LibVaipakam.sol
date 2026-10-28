@@ -5455,7 +5455,7 @@ library LibVaipakam {
         // ─── #776 receive side (mirror chains) ────────────────────────────
         // The mirror-side `RewardRemittanceReceiver` authorized to call the
         // Diamond's budget and compensation ingresses
-        // (`onRewardBudgetReceivedD7`, `onCompensationBudgetReceived`). `address(0)` = ingress
+        // (`onRewardBudgetReceivedD8`, `onCompensationBudgetReceived`). `address(0)` = ingress
         // disabled (Base, or an unconfigured mirror).
         address rewardRemittanceReceiver;
         // Cumulative VPFI reward budget received from Base on this mirror.
@@ -7596,12 +7596,9 @@ library LibVaipakam {
         ///      obligation behind backing that exists.
         ///
         ///      A batch's POSITION in a day's index is not an order (Codex
-        ///      #2232 r3). Materialization is permissionless and asynchronous,
-        ///      so position records which caller got there first; an earlier
-        ///      revision of this comment called the index arrival-ordered,
-        ///      which position could never have delivered and which a
-        ///      RETROSPECTIVE admission — a rollout packet admitted long after
-        ///      it landed — makes plainly untrue. The order is the delivery's
+        ///      #2232 r3). Since #2828 the ingress itself links each epoch into
+        ///      its day as it lands, so position follows landing, but the rule
+        ///      is still not to read position as the order. The order is the delivery's
         ///      own `ingressPackets[batchId].arrivedAt`: written once by the
         ///      ingress that received it, immutable, and returned with every
         ///      entry so a reader never infers it from the array. Design §5c
@@ -7799,14 +7796,6 @@ library LibVaipakam {
         mapping(bytes32 => ClosureWalk) closureWalks;
         /// @dev 3b-ii-B — the last walk nonce each starter used.
         mapping(address => uint64) closureWalkNonce;
-        /// @dev 3b-ii-B — how many of a batch's listed days the park has checked
-        ///      closed so far (the park is paged like the index was).
-        mapping(bytes32 => uint32) transportParkCursor;
-        /// @dev 3c-1 — the days a batch listed, kept as its membership is indexed
-        ///      (beside the inverse index), so the two allocation gates read each
-        ///      listed day's arrival and closure LIVE. Empty for a batch indexed
-        ///      before this field existed: such a batch is withheld as contested.
-        mapping(bytes32 => uint256[]) transportBatchDays;
         /// @dev Slice 4 PR C-1 (#1566) — the custody era registry. Era 0 is
         ///      the pre-registry era every existing figure keys
         ///      (`LibRewardCustody.RECONCILIATION_QUEUE_ERA`); a role change on an
@@ -7903,7 +7892,7 @@ library LibVaipakam {
         uint256 rewardBudgetFreshReCredited;
         /// @notice #1566 PR C revision — the HIGHEST custody era each source
         ///         chain has reported (B4 day report), keyed by chain id. The
-        ///         canonical chain stamps every rooted remittance to that chain
+        ///         canonical chain stamps every budget remittance to that chain
         ///         with it. Eras only grow on a chain; reports may arrive out of
         ///         order, so the record only rises.
         mapping(uint32 => uint64) chainCustodyEraReported;
@@ -8170,8 +8159,8 @@ library LibVaipakam {
         /// @dev #918 — the mirror's per-day DELIVERY record: the whole slice
         ///      Base said it is sending for the day, and the sum of the parts
         ///      that have landed here, per component. Written only by
-        ///      `LibRewardCustody._noteDayDeliveryPart`, when a single-day
-        ///      packet's chunk is indexed or proven; `landedAt` is the one
+        ///      `LibRewardCustody._noteDayDeliveryPart`, at the ingress of the
+        ///      budget packet that names the day (#2828); `landedAt` is the one
         ///      word `LibRewardCustody.dayDeliveryLanded` reads. Mirror-only.
         ///      Appended — append-only.
         mapping(uint256 => DayDeliveryParts) dayDeliveryParts;
@@ -8705,28 +8694,29 @@ library LibVaipakam {
         uint256 classifiedRecycled;
         uint256 disposed;
         uint256 freshAuthenticated;
-        /// @dev #1566 transport epochs PR 3a, appended.
+        /// @dev #2828 — the ONE day the packet funds, and whether it names one.
         ///
-        ///      `dayListHash` — a flat commitment to a payload's day list
-        ///      (keccak of the ABI-encoded list), written by the mirror ingress
-        ///      in the SAME transaction as the record. Only a P2 COMPENSATION
-        ///      carries one now (its single day); it is provenance, read by
-        ///      nothing that moves value. Every budget packet is rooted
-        ///      (`dayListRoot` below) and leaves this zero.
-        ///
-        ///      `dayCount` — how many days the packet's commitment names.
+        ///      `dayId` / `dayNamed` — written ONCE by the mirror ingress in the
+        ///      SAME transaction as the record ({LibRewardCustody.stampPacketDay}).
+        ///      Every packet a mirror ingress records names exactly one day: a
+        ///      budget delivery carries its funded day inline on the d8 wire,
+        ///      and a P2 compensation names its zeroed day. `dayNamed` is the
+        ///      presence fact, because day 0 is a real day. A budget packet's
+        ///      day is what its epoch is drawn by and what its part counts
+        ///      toward ({LibRewardCustody.dayDeliveryLanded}); a compensation's
+        ///      is provenance, read by nothing that moves value.
         ///
         ///      `freshAttested` / `recycledAttested` / `attested` — the split
-        ///      the packet's own d6 wire carried, written ONCE at ingress and
-        ///      IMMUTABLE ({LibRewardCustody.attestPacketFromWire}) — on an
-        ///      ACTIVATED deployment only. A d6 packet that lands before custody
-        ///      activation is typed through `freshShare` / `recycledShare` and
-        ///      leaves these unset. The
+        ///      the packet's own budget wire carried, written ONCE at ingress
+        ///      and IMMUTABLE ({LibRewardCustody.attestPacketFromWire}) — on an
+        ///      ACTIVATED deployment only. A budget packet that lands before
+        ///      custody activation is typed through `freshShare` /
+        ///      `recycledShare` and leaves these unset. The
         ///      evidence bounding a classification is DERIVED from them at use
         ///      time ({LibRewardCustody.authenticatedFresh}), never snapshotted
         ///      into `freshAuthenticated` (Codex #2217 r3).
-        bytes32 dayListHash;
-        uint256 dayCount;
+        uint256 dayId;
+        bool dayNamed;
         uint256 freshAttested;
         uint256 recycledAttested;
         bool attested;
@@ -8734,14 +8724,14 @@ library LibVaipakam {
         ///      delivery opened, appended. Zero means the packet holds no
         ///      batch balance.
         ///
-        ///      Only the d6 ingress opens a batch, and only over a BUDGET packet
-        ///      landing on a deployment whose reward custody is ACTIVATED; no
-        ///      later entry can open one. Zero is therefore the permanent
-        ///      answer for a COMPENSATION packet (which never takes an epoch)
-        ///      and for a budget packet that arrived before activation, whose
-        ///      value sits Diamond-side and is attributed by the activation
-        ///      envelope (Codex #2232 r1) — its days land through
-        ///      `RewardEpochFacet.proveDeliveryDayChunk` instead.
+        ///      Only the budget ingress opens a batch, and only over a BUDGET
+        ///      packet landing on a deployment whose reward custody is
+        ///      ACTIVATED; no later entry can open one. Zero is therefore the
+        ///      permanent answer for a COMPENSATION packet (which never takes
+        ///      an epoch) and for a budget packet that arrived before
+        ///      activation, whose value sits Diamond-side and is attributed by
+        ///      the activation envelope (Codex #2232 r1). Either way the
+        ///      packet's part counts toward its day at ingress (#2828).
         ///
         ///      The link lives on the PACKET because 3a fixed the evidence
         ///      seam's signature at `(IngressPacket storage)` — no hash, no
@@ -8764,25 +8754,13 @@ library LibVaipakam {
         ///      the attested caps it is drawn under, and never retyped
         ///      (Codex #2276 r26 P1) — an unattested epoch is not drawn.
         uint256 drawn;
-        /// @dev 3d-1 (#1566 transport epochs, the d6 wire), appended — the
-        ///      authenticated day-list COMMITMENT a d6 delivery carries in place
-        ///      of a flat hash: a Merkle root over fixed-size indexed chunks of
-        ///      the list, with the extent the wire committed to (`dayCount`
-        ///      elements in `chunkCount` chunks). Every budget packet carries
-        ///      one; a compensation carries none, and `dayListHash` is zero for
-        ///      every rooted packet: a packet is committed one way or the other,
-        ///      never both. On the epoch path such a
-        ///      packet keeps `freshShare == recycledShare == 0` — those two
-        ///      record what the INGRESS credited to the shared ledgers, which for
-        ///      a delivery held whole as its own epoch is nothing; the wire's
-        ///      split lives in `freshAttested` / `recycledAttested`.
-        bytes32 dayListRoot;
-        uint32 chunkCount;
-        /// @dev Which indexed chunks have landed — bit `i` set once chunk `i`
-        ///      is proven and written; the batch's `indexedDays` reaches
-        ///      `dayCount` exactly when every bit below `chunkCount` is set.
-        uint256 chunksIndexed;
-        /// @dev The era the packet was dispatched in, as the wire stated it.
+        /// @dev On the epoch path a budget packet keeps
+        ///      `freshShare == recycledShare == 0` — those two record what the
+        ///      INGRESS credited to the shared ledgers, which for a delivery
+        ///      held whole as its own epoch is nothing; the wire's split lives
+        ///      in `freshAttested` / `recycledAttested`.
+        ///
+        ///      The era the packet was dispatched in, as the wire stated it.
         ///      STORED, not yet validated: PR C's receive ingresses read it
         ///      against the live era; no wire before d6 carried one.
         uint64 intendedEra;
@@ -8801,7 +8779,7 @@ library LibVaipakam {
         bool eraCounted;
         bool classificationFinal;
         bool eraQuarantined;
-        /// @dev #918, appended — the d7 wire's DECLARED part of its funded day,
+        /// @dev #918, appended — the budget wire's DECLARED part of its funded day,
         ///      per component, as Base sent it: `declaredFresh` + `declaredRecycled`
         ///      is the wire's `total`, before the receiver scales the recycled
         ///      share to a short delivery. Declared, not received, so a part
@@ -8820,39 +8798,30 @@ library LibVaipakam {
     }
 
     /// @notice #1566 transport epochs PR 3b — the TRANSPORT EPOCH of one
-    ///         old-wire delivery: an UNTYPED balance, spendable only by the
-    ///         obligations whose day the delivery listed.
-    /// @dev    The unit is the PACKET and not the day, because the old wire
-    ///         is batched and carries no per-day split (§5c): a legacy
-    ///         remittance is one aggregate over many days, so crediting it to
-    ///         every listed day would duplicate the backing and splitting it
-    ///         would assert a fact the packet never carried. The listed
-    ///         `dayIds` are therefore a MEMBERSHIP FILTER over one balance.
+    ///         budget delivery: an UNTYPED balance, spendable only by the
+    ///         obligations of the ONE day the delivery funds.
+    /// @dev    The unit is the PACKET, so the delivery is held whole as its own
+    ///         epoch rather than credited to a shared ledger: its value is
+    ///         drawn first by its own day's obligations, under the attested
+    ///         caps, and only what they leave reaches the shared sources.
     ///
     ///         `balance` is bounded by the packet's `actualReceived`, never
     ///         its declared total — a short delivery must shrink the funding,
     ///         not the obligations.
     ///
-    ///         ADMISSION IS ALWAYS COMPACT (Codex #2232 r2): it writes this
-    ///         row and nothing per-day, whatever the list's length. The
-    ///         receiver's callback runs inside
-    ///         `LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT`, a FIXED
-    ///         figure derived from this compact admission — and per-day
-    ///         pushes, two new storage slots each, grow with a list's length
-    ///         without bound (32 of them alone were over the 300,000 the
-    ///         budget stood at then). An admission that
-    ///         indexed short lists synchronously would therefore have failed
-    ///         to deliver exactly the in-flight old-wire messages this path
-    ///         exists to preserve. `indexedDays` climbs afterwards, one
-    ///         permissionless page at a time, proved against the delivery's
-    ///         own day-list commitment.
-    ///
-    ///         Retirement still distinguishes a within-cap list from an
-    ///         over-cap one (§5c: the first retires atomically, the second
-    ///         through the resumable RETIRING path), and 3b-ii reads that from
-    ///         `dayCount` against the cap. It is deliberately NOT a stored
-    ///         flag: a flag beside the count is a second statement of one fact
-    ///         and can disagree with it.
+    ///         #2828 — the epoch is COMPLETE AT ADMISSION. The d8 wire carries
+    ///         the delivery's one day inline, and the ingress links the epoch
+    ///         into that day's index in the same call, so there is no
+    ///         membership left to build afterwards and no state in which an
+    ///         admitted epoch is waiting to be indexed. Before #2828 the d6/d7
+    ///         wire carried a rooted, chunked day list sized for many days, and
+    ///         admission stayed compact while the index was proven in
+    ///         afterwards, page by page ("ADMISSION IS ALWAYS COMPACT", Codex
+    ///         #2232 r2): per-day writes grew with a list's length without
+    ///         bound, which a fixed destination gas budget could not carry.
+    ///         One funded day per send (#2821) bounds them at one day's, which
+    ///         the budget is derived to carry
+    ///         (`LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT`).
     ///
     ///         `consumedFresh` / `consumedRecycled` are the transport LEG
     ///         COUNTERS: what this packet's own draws have already spent of
@@ -8874,13 +8843,9 @@ library LibVaipakam {
         ///      conservation anchor every draw, restore and disposition is
         ///      checked against.
         uint256 admitted;
-        uint32 dayCount;
-        /// @dev How many listed days carry an index entry. Zero at admission for
-        ///      every batch, climbing one permissionless page at a time until it
-        ///      equals `dayCount`. A batch whose index is not yet whole cannot
-        ///      have its remainder parked — what its obligations may still reach
-        ///      is not known until the membership exists.
-        uint32 indexedDays;
+        /// @dev #2828 — the one day this epoch funds, linked into that day's
+        ///      index at admission. Copied from the packet's `dayId`.
+        uint256 dayId;
         /// @dev Whether the batch's remainder has been parked WITH its
         ///      acknowledgment, which is the sole route by which what remains
         ///      of an old-wire packet becomes classifiable (§5c). Read by
@@ -9067,7 +9032,7 @@ library LibVaipakam {
     ///         membership must be able to reach it: the restore is
     ///         MEMBERSHIP-BOUND, putting value back into the epoch it came
     ///         from rather than into a general pool. The membership is the
-    ///         batch's own, under its packet's day-list root.
+    ///         batch's one day (`dayId`, #2828).
     ///
     ///         `acknowledged` is what releases the batch. Parking alone does
     ///         not: classification is gated behind the parked remainder AND
@@ -9076,12 +9041,8 @@ library LibVaipakam {
     struct TransportRemainder {
         bytes32 batchId;
         uint256 amount;
-        /// @dev RETIRED — never written. It carried the packet's flat day-list
-        ///      commitment; every batch is now rooted, and its membership is the
-        ///      batch's own indexed list. The slot stays so the struct's layout
-        ///      is unchanged (the storage-layout guard, #1274).
-        bytes32 dayListHash;
-        uint32 dayCount;
+        /// @dev #2828 — the batch's one day, copied at parking.
+        uint256 dayId;
         bool acknowledged;
         /// @dev #1566 transport epochs PR 3b (Codex #2232 r3) — CUMULATIVE
         ///      value that has left this remainder through classification.
@@ -9487,13 +9448,6 @@ library LibVaipakam {
         ///      unchanged and an in-place refresh across this change stays
         ///      possible (the storage-layout guard, #1274).
         bool splitOnWire;
-        /// @dev 3d-2 (#1566 transport epochs, the d6 wire), appended — the
-        ///      day-list ROOT this reservation's payload committed to. The
-        ///      receive side indexes the delivery's membership by proofs against
-        ///      exactly this word, so the canonical record of what was sent
-        ///      carries the same commitment the mirror holds. Zero for every
-        ///      reservation dispatched before the rooted wire.
-        bytes32 dayListRoot;
         /// @dev #1461, appended — the recycled share THIS reservation's release
         ///      recorded as stranded in transit (its actual reversal into
         ///      `recycleReleasedRemitStrandedCumulative`) and not yet resolved.
@@ -9513,14 +9467,14 @@ library LibVaipakam {
         /// @dev #2489 (Codex r2), appended — WHICH of `dayIds` this reservation
         ///      funded: bit `i` (word `i >> 8`, bit `i & 255`) is set when
         ///      `dayIds[i]` carried a non-zero slice, i.e. was listed on the wire.
-        ///      Written once at dispatch and never cleared, so the funded list —
-        ///      the list the d6 root commits to — stays recoverable from the
+        ///      Written once at dispatch and never cleared, so the funded day —
+        ///      the day the wire carried — stays recoverable from the
         ///      reservation alone. The live per-day mark (`rewardBudgetRemitted`)
         ///      is not that record: a release deletes it for the days this
         ///      reservation closed, and a later remit of the same days rewrites
-        ///      it, so a list rebuilt from it after either no longer matches the
-        ///      root and the delivery could never be indexed or proven. Empty for
-        ///      a reservation dispatched before it existed, or with no closed day.
+        ///      it. Base's release reads this to attribute the reservation's
+        ///      part to its funded day (`LibRemitDayLedger.fundedDayIndex`).
+        ///      Empty for a reservation with no acted day.
         uint256[] fundedDayBits;
         /// @dev RETIRED (#2910). Was whether `strandedRecycled` had been
         ///      written, so the #2489 history rule could stamp a reservation

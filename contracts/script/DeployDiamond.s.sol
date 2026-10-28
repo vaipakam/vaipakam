@@ -3263,48 +3263,45 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s = new bytes4[](3);
         s[0] = RewardIngressFacet.onCompensationBudgetReceived.selector;
         s[1] = RewardIngressFacet.onCompensationDayBroadcastArrived.selector;
-        // 3d-1 / #918 — the rooted (d7) ingress.
-        s[2] = RewardIngressFacet.onRewardBudgetReceivedD7.selector;
+        // #2828 — the d8 ingress: the one funded day carried inline.
+        s[2] = RewardIngressFacet.onRewardBudgetReceivedD8.selector;
     }
 
     /// #1566 transport epochs PR 3b — the transport epochs' post-ingress
-    /// lifecycle: paged indexing, the parked remainder and its acknowledgment,
-    /// and the ledger's reads. PR 3b-ii-A adds the DRAWS: the per-day coverage
-    /// read, the Diamond-internal draw and the two custody moves the settle
-    /// paths reach through it, and the permissionless cursor prune.
+    /// lifecycle: the parked remainder and its acknowledgment, and the
+    /// ledger's reads. PR 3b-ii-A adds the DRAWS: the per-day coverage read,
+    /// the Diamond-internal draw and the two custody moves the settle paths
+    /// reach through it, and the permissionless cursor prune. #2828 retired
+    /// the chunk index, the batchless delivery proof, the late-chain hint
+    /// read and the batch day-list read: the d8 wire names the day, and the
+    /// ingress indexes the epoch at arrival.
     function _getRewardEpochSelectors()
         internal
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](22);
-        s[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
-        s[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
-        s[3] = RewardEpochFacet.getTransportBatch.selector;
-        s[4] = RewardEpochFacet.getTransportBatchLegs.selector;
-        s[5] = RewardEpochFacet.getTransportRemainder.selector;
-        s[6] = RewardEpochFacet.getTransportDayBatches.selector;
-        s[8] = RewardEpochFacet.getTransportCoverageForDay.selector;
-        s[9] = RewardEpochFacet.epochDrawForDay.selector;
-        s[10] = RewardEpochFacet.epochPruneTransportDayCursor.selector;
-        s[11] = RewardEpochFacet.getTransportAllocationForDay.selector;
-        s[12] = RewardEpochFacet.epochSettleLegs.selector; // A2-ii: one leg settle, by source (was epochSettleClaimLegs)
-        s[14] = RewardEpochFacet.getTransportDayBatchesFrom.selector;
-        s[15] = RewardEpochFacet.getTransportDayIndex.selector;
-        s[16] = RewardEpochFacet.getTransportDayScanIds.selector;
+        s = new bytes4[](18);
+        s[0] = RewardEpochFacet.parkTransportBatchRemainder.selector;
+        s[1] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
+        s[2] = RewardEpochFacet.getTransportBatch.selector;
+        s[3] = RewardEpochFacet.getTransportBatchLegs.selector;
+        s[4] = RewardEpochFacet.getTransportRemainder.selector;
+        s[5] = RewardEpochFacet.getTransportDayBatches.selector;
+        s[6] = RewardEpochFacet.getTransportCoverageForDay.selector;
+        s[7] = RewardEpochFacet.epochDrawForDay.selector;
+        s[8] = RewardEpochFacet.epochPruneTransportDayCursor.selector;
+        s[9] = RewardEpochFacet.getTransportAllocationForDay.selector;
+        s[10] = RewardEpochFacet.epochSettleLegs.selector; // A2-ii: one leg settle, by source (was epochSettleClaimLegs)
+        s[11] = RewardEpochFacet.getTransportDayBatchesFrom.selector;
+        s[12] = RewardEpochFacet.getTransportDayIndex.selector;
+        s[13] = RewardEpochFacet.getTransportDayScanIds.selector;
         // 3b-ii-A2 (#2305) — the staged terms' read.
-        s[17] = RewardEpochFacet.getTransportBatchStaged.selector;
-        // The batch gates and the indexed day list.
-        s[18] = RewardEpochFacet.getTransportBatchGates.selector;
-        s[19] = RewardEpochFacet.getTransportBatchDays.selector;
-        // 3d-1 — the rooted (d6) chunk index.
-        s[0] = RewardEpochFacet.materializeTransportBatchChunk.selector;
-        // #1944 consequence 1 — the delivery proofs for packets holding no batch.
-        s[7] = RewardEpochFacet.proveDeliveryDayChunk.selector;
-        s[13] = RewardEpochFacet.getTransportDayLateFrom.selector; // #2489 (Codex r2): the late chain, for verified late hints
+        s[14] = RewardEpochFacet.getTransportBatchStaged.selector;
+        // The batch gates.
+        s[15] = RewardEpochFacet.getTransportBatchGates.selector;
         // #2961 — skipping a day whose delivery parts disagreed, and recycling its landed value.
-        s[20] = RewardEpochFacet.skipConflictedDay.selector;
-        s[21] = RewardEpochFacet.recycleSkippedDayValue.selector;
+        s[16] = RewardEpochFacet.skipConflictedDay.selector;
+        s[17] = RewardEpochFacet.recycleSkippedDayValue.selector;
     }
 
     /// @dev 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads:
@@ -3678,7 +3675,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](46);
+        s = new bytes4[](45);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -3732,7 +3729,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // target) and its two operator reads.
         s[37] = RewardRemittanceLensFacet.dayAwaitsFreshDelivery.selector;
         s[38] = RewardRemittanceLensFacet.getDayDeliveryState.selector;
-        s[30] = RewardRemittanceLensFacet.getPacketDeliveryProof.selector;
         // #1452 — the acknowledged recycled share per destination.
         s[31] = RewardRemittanceLensFacet.getChainRemittedRecycled.selector;
         s[35] = RewardRemittanceLensFacet.getRemitRoute.selector; // #2561
@@ -3744,7 +3740,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[42] = RewardRemittanceLensFacet.getRemitDayFreshReserved.selector;
         s[43] = RewardRemittanceLensFacet.getRemitDestinationRelease.selector; // #2963
         s[44] = RewardRemittanceLensFacet.getRemitInboundLaneBucket.selector; // #2960
-        s[45] = RewardRemittanceLensFacet.getRemitOpenDays.selector; // #2960
+        // #2828 — the d8 wire retired the delivery-proof read; its slot is reused.
+        s[30] = RewardRemittanceLensFacet.getRemitOpenDays.selector; // #2960
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {

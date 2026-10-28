@@ -9,8 +9,6 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {RewardCustodyHolder} from "../RewardCustodyHolder.sol";
 import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
-import {RemitWire} from "../crosschain/RemitWire.sol";
 
 /**
  * @title LibRewardCustody — the ONE seam between the reward ledgers and the
@@ -120,8 +118,7 @@ library LibRewardCustody {
     /// @custom:event-category state-change/reward-custody
     event CustodyEraHoldReleased(uint64 indexed era, uint256 amount, uint256 stagedFresh);
     /// @notice #1566 PR C revision — packet `packetHash` belongs to era `era`, named by
-    ///         its ingress (a rooted delivery's dispatch era, an older-wire delivery's
-    ///         earliest listed day's era, a compensation's day's era).
+    ///         its ingress (a budget delivery's dispatch era, a compensation's day's era).
     /// @custom:event-category state-change/reward-custody
     event IngressPacketEraStamped(bytes32 indexed packetHash, uint64 indexed era);
 
@@ -143,17 +140,9 @@ library LibRewardCustody {
         uint256 receivedAfter
     );
 
-    /// @notice #1944 consequence 1 — budget packet `packetHash` (remit `remitId`) was PROVEN to list day
-    ///         `dayId` on this mirror, through `route` (2 = one chunk of its rooted list; 1 was the retired
-    ///         flat day-list hash). Provenance only: no value moves and no row changes. Since #918 it is
-    ///         emitted for EVERY proven (packet, day) pair — a day may arrive in several parts — and it no
-    ///         longer means the day has landed: {DayDeliveryPartLanded} says what the proof counted, and the
-    ///         day lands when those sums reach its whole.
-    /// @custom:event-category informational/reward-transport
-    event DayDeliveryProved(uint256 indexed dayId, bytes32 indexed packetHash, uint256 remitId, uint8 route);
-
-    /// @notice #918 — a single-day budget packet's part of day `dayId` was counted toward the day on this
-    ///         mirror (its chunk was indexed or proven): the day's landed sums per component after it, and the
+    /// @notice #918 — a budget packet's part of day `dayId` was counted toward the day on this mirror (at
+    ///         the packet's landing, #2828, which names the day on the wire): the day's landed sums per
+    ///         component after it, and the
     ///         whole they wait for. The day has LANDED once both landed figures reach the whole
     ///         (`landedAt` in {LibVaipakam.DayDeliveryParts}); they may exceed it after an operator release
     ///         whose original and re-send both landed, which is value-true.
@@ -1436,9 +1425,8 @@ library LibRewardCustody {
     // ── Slice 4 PR C-3 — the era a packet belongs to ──
 
     /// @notice Stamp packet `h` with the era it belongs to, when its ingress
-    ///         names one other than the live era (#1566 PR C revision): a rooted
-    ///         delivery's dispatch era, an older-wire delivery's earliest listed
-    ///         day's era, a compensation's day's era. Every exit that credits the
+    ///         names one other than the live era (#1566 PR C revision): a budget
+    ///         delivery's dispatch era, a compensation's day's era. Every exit that credits the
     ///         packet's fresh outside a draw routes by it ({LibRewardCustody}
     ///         era routing, hosted on {RewardEraFacet}).
     function stampPacketEra(LibVaipakam.Storage storage s, bytes32 h, uint64 era) internal {
@@ -1546,38 +1534,24 @@ library LibRewardCustody {
     ///         holder's `Unclassified` row for a packet.
     /// @custom:event-category state-change/reward-custody
     event RewardCustodyUnclassifiedCredited(bytes32 indexed packetHash, uint8 kind, uint256 amount);
-    /// @notice #1566 transport epochs PR 3a — a compensation packet's
-    ///         day-list commitment (the flat hash of its one day, and the
-    ///         count) was recorded at ingress, with the record.
+    /// @notice #2828 — the ONE day a packet names (a budget delivery's funded
+    ///         day, a compensation's zeroed day) was recorded at ingress, with
+    ///         the record.
     /// @custom:event-category state-change/reward-custody
-    event IngressPacketDayListRecorded(bytes32 indexed packetHash, bytes32 dayListHash, uint256 dayCount);
-    /// @notice #1566 transport epochs — a rooted (d6) budget delivery opened
-    ///         its transport epoch. Its membership is NOT yet indexed: admission
-    ///         is compact, and `TransportBatchChunkIndexed` reports the index
-    ///         being built afterwards, chunk by chunk.
+    event IngressPacketDayStamped(bytes32 indexed packetHash, uint256 indexed dayId);
+    /// @notice #1566 transport epochs — a budget delivery opened its transport
+    ///         epoch, already linked into its one day's index (#2828).
     /// @custom:event-category state-change/reward-custody
     event TransportBatchAdmitted(
         bytes32 indexed batchId,
         bytes32 indexed packetHash,
         uint256 amount,
-        uint256 dayCount
+        uint256 indexed dayId
     );
     /// @notice #1566 transport epochs PR 3b — what a batch's obligations left
     ///         was parked under the batch's key, still bound by its membership.
     /// @custom:event-category state-change/reward-custody
     event TransportRemainderParked(bytes32 indexed batchId, uint256 amount);
-    /// @notice A park page checked `checkedDays` of the batch's `dayCount` listed days proven closed (3b-ii-B).
-    /// @custom:event-category state-change/reward-transport
-    event TransportParkPageChecked(bytes32 indexed batchId, uint32 checkedDays, uint32 dayCount);
-    /// @notice 3d-1 — a d6 delivery committed to its day list by a Merkle root over `chunkCount` indexed
-    ///         chunks of `dayCount` days, stamped with the era it was dispatched in.
-    /// @custom:event-category state-change/reward-custody
-    event IngressPacketDayListRooted(
-        bytes32 indexed packetHash, bytes32 dayListRoot, uint256 dayCount, uint256 chunkCount, uint64 intendedEra
-    );
-    /// @notice 3d-1 — one proven chunk of a rooted batch's membership was indexed.
-    /// @custom:event-category state-change/reward-custody
-    event TransportBatchChunkIndexed(bytes32 indexed batchId, uint256 chunkIndex, uint32 indexedDays, uint32 dayCount);
     /// @notice #1566 transport epochs PR 3b — a batch's parked remainder was
     ///         acknowledged, which is what makes its packet classifiable.
     /// @custom:event-category state-change/reward-custody
@@ -1626,7 +1600,7 @@ library LibRewardCustody {
     ///         `batchId` (A2-ii): ordinary staging of the batch resumes once the
     ///         record no longer holds it.
     event TransportBatchPriorityStaged(bytes32 indexed batchId, bytes32 indexed key);
-    /// @notice A rooted (d6) delivery's split was recorded as its packet's
+    /// @notice A budget delivery's split was recorded as its packet's
     ///         attested caps, from the packet's own wire, at ingress.
     /// @custom:event-category state-change/reward-custody
     event IngressPacketSplitAttested(
@@ -1720,7 +1694,7 @@ library LibRewardCustody {
     ///         packet whose legs are unreadable.
     ///
     ///         A packet with NO batch answers zero directly, which is the
-    ///         right answer: only the d6 ingress opens a batch, at the packet's
+    ///         right answer: only the budget ingress opens a batch, at the packet's
     ///         own landing, so a packet without one never acquires one — a
     ///         compensation, and a budget delivery that landed before reward
     ///         custody was activated on this deployment.
@@ -1751,7 +1725,7 @@ library LibRewardCustody {
     ///
     ///         A packet with no batch answers NO, which is what keeps a packet
     ///         outside the ledger behaving exactly as it did. Such a packet
-    ///         never acquires a batch (only the d6 ingress opens one, at the
+    ///         never acquires a batch (only the budget ingress opens one, at the
     ///         packet's own landing): a compensation, and a budget delivery
     ///         that landed before custody activation, whose components were
     ///         typed on the wire and credited to the shared ledgers at ingress,
@@ -1763,62 +1737,28 @@ library LibRewardCustody {
         return LibVaipakam.storageSlot().transportBatches[batchId].released;
     }
 
-    /// @notice #1566 transport epochs PR 3a — the flat day-list commitment of
-    ///         a just-recorded COMPENSATION packet (its one day): the hash and
-    ///         the count, written ONCE by the compensation ingress in the same
-    ///         transaction as the record. Provenance only — no index, proof or
-    ///         admission reads its value (the root stamp reads it only to
-    ///         refuse a packet already committed by a list); a budget packet is committed by its root
-    ///         ({stampPacketDayListRoot}) instead.
-    function stampPacketDayList(LibVaipakam.Storage storage s, bytes32 h, uint256[] memory dayIds) internal {
+    /// @notice #2828 — stamp the ONE day a just-recorded packet names: a
+    ///         budget delivery's funded day (carried inline on the d8 wire) or a
+    ///         compensation's zeroed day. Written ONCE, by the ingress, in the
+    ///         same transaction as the record.
+    /// @dev    `dayNamed` is the presence fact (day 0 is a real day), and a
+    ///         second stamp is refused by name, so a packet names one day for
+    ///         good.
+    function stampPacketDay(LibVaipakam.Storage storage s, bytes32 h, uint256 dayId) internal {
         LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
         if (p.arrivedAt == 0) revert IVaipakamErrors.IngressPacketUnknown(h);
-        if (p.dayListHash != bytes32(0)) revert IVaipakamErrors.IngressPacketDayListStamped(h);
-        bytes32 commitment = keccak256(abi.encode(dayIds));
-        p.dayListHash = commitment;
-        p.dayCount = dayIds.length;
-        emit IngressPacketDayListRecorded(h, commitment, dayIds.length);
+        if (p.dayNamed) revert IVaipakamErrors.IngressPacketDayAlreadyStamped(h);
+        p.dayId = dayId;
+        p.dayNamed = true;
+        emit IngressPacketDayStamped(h, dayId);
     }
 
-    /// @notice 3d-1 — stamp a d6 packet's ROOTED commitment: the day-list root,
-    ///         the extent it committed to and the era it was dispatched in.
-    /// @dev    The extent is validated here, once, so every later chunk call
-    ///         can trust it: a chunk count that is not the fixed-size chunking
-    ///         of the element count would let a chunk be proven at a length the
-    ///         sender never committed; more chunks than the index can mark would
-    ///         leave the membership unable to complete. A packet is committed by
-    ///         a hash OR a root, never both (`IngressPacketDayListStamped`).
-    function stampPacketDayListRoot(
-        LibVaipakam.Storage storage s,
-        bytes32 h,
-        bytes32 root,
-        uint256 elementCount,
-        uint256 chunkCount,
-        uint64 intendedEra
-    ) internal {
-        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
-        if (p.arrivedAt == 0) revert IVaipakamErrors.IngressPacketUnknown(h);
-        if (p.dayListHash != bytes32(0) || p.dayListRoot != bytes32(0)) {
-            revert IVaipakamErrors.IngressPacketDayListStamped(h);
-        }
-        if (
-            root == bytes32(0) || elementCount == 0 || chunkCount > RemitWire.D6_MAX_CHUNKS
-                || chunkCount != RemitWire.d6ChunkCount(elementCount)
-        ) {
-            revert IVaipakamErrors.TransportRootExtentInvalid(h, elementCount, chunkCount);
-        }
-        p.dayListRoot = root;
-        p.dayCount = elementCount;
-        p.chunkCount = SafeCast.toUint32(chunkCount);
-        p.intendedEra = intendedEra;
-        emit IngressPacketDayListRooted(h, root, elementCount, chunkCount, intendedEra);
-    }
-
-    /// @notice #918 — stamp a d7 packet's DECLARED part of its funded day and
-    ///         the day's WHOLE slice, per component.
-    /// @dev    Written once, at ingress, and read when the packet's chunk is
-    ///         indexed or proven ({_noteDayDeliveryPart}), which is when the
-    ///         mirror learns the day. Declared figures, not received ones: a
+    /// @notice #918 — stamp a budget packet's DECLARED part of its funded day
+    ///         and the day's WHOLE slice, per component, and the era the packet
+    ///         was dispatched in.
+    /// @dev    Written once, at ingress, and read by {noteDayDeliveryPart} in
+    ///         the same call (#2828: the day arrives inline, so the mirror
+    ///         knows it at arrival). Declared figures, not received ones: a
     ///         part "lands" when Base's send arrives, the meaning the #1944
     ///         gate has always had, and a short delivery is the
     ///         acknowledgement's to surface. A declared recycled share above
@@ -1830,7 +1770,8 @@ library LibRewardCustody {
         uint256 declaredTotal,
         uint256 declaredRecycled,
         uint256 wholeFresh,
-        uint256 wholeRecycled
+        uint256 wholeRecycled,
+        uint64 intendedEra
     ) internal {
         if (declaredRecycled > declaredTotal) {
             revert IVaipakamErrors.RecycledShareExceedsDelivery(declaredRecycled, declaredTotal);
@@ -1840,51 +1781,39 @@ library LibRewardCustody {
         p.declaredRecycled = SafeCast.toUint128(declaredRecycled);
         p.dayWholeFresh = SafeCast.toUint128(wholeFresh);
         p.dayWholeRecycled = SafeCast.toUint128(wholeRecycled);
+        p.intendedEra = intendedEra;
     }
 
     // ─── The transport epochs (#1566 PR 3b) ──────────────────────────────────
 
     /// @notice How many FUNDED days one remittance may carry: ONE (#2821).
     /// @dev    A remittance lands on the mirror as one transport epoch whose
-    ///         balance funds every day it lists, so a draw for one listed day
-    ///         is contested by the others. The mirror could only settle that
-    ///         by withholding the epoch while more than one listed day is
-    ///         open, and a mirror day closes only when every reward entry
-    ///         covering it has claimed past it: an entry spanning two listed
-    ///         days needs the epoch to pay the first day, and the first day
-    ///         paid to free the epoch, so it is never paid. Any loan open
-    ///         across a multi-day remittance carries such an entry. One funded
-    ///         day per send leaves no epoch to contest, so the rule is applied
-    ///         where the epoch is made rather than resolved where it is spent,
-    ///         and the mirror withholds a wider epoch for good
-    ///         ({GATE_MULTI_DAY}). A backlog drains one funded day per send. A day that only CLOSES (moves no
-    ///         VPFI) is outside the bound: the send trims the destination list
-    ///         to the funded days, so a close-only day never reaches it.
+    ///         balance funds the day it carries. Before #2821 one epoch could
+    ///         fund several days, and a draw for one of them was contested by
+    ///         the others: the mirror could only settle that by withholding the
+    ///         epoch while more than one of its days was open, and a mirror day
+    ///         closes only when every reward entry covering it has claimed past
+    ///         it, so an entry spanning two such days was never paid. One funded
+    ///         day per send leaves no epoch to contest, and the rule is applied
+    ///         where the epoch is made rather than resolved where it is spent.
+    ///         A backlog drains one funded day per send. A day that only CLOSES
+    ///         (moves no VPFI) is outside the bound: the send trims the
+    ///         destination list to the funded days, so a close-only day never
+    ///         reaches it.
     ///
-    ///         #918 — two more readers depend on the cap being ONE. A
-    ///         reservation records its part as one (fresh, recycled) pair, and
-    ///         Base's release attributes that pair to the reservation's single
-    ///         funded day (`LibRemitDayLedger.fundedDayIndex`, which refuses a
-    ///         reservation naming more); and the d7 wire carries ONE day's
-    ///         whole. Raising the cap means giving the reservation and the wire
-    ///         a per-day split first.
+    ///         Three readers depend on the cap being ONE. A reservation records
+    ///         its part as one (fresh, recycled) pair, and Base's release
+    ///         attributes that pair to the reservation's single funded day
+    ///         (`LibRemitDayLedger.fundedDayIndex`, which refuses a reservation
+    ///         naming more) (#918); and the d8 wire carries that one day inline
+    ///         with its whole (#2828), so a wider send has no shape to travel
+    ///         in. Raising the cap means a new wire shape and a per-day split
+    ///         in the reservation first.
     ///
     ///         It is enforced at DISPATCH ({requireRemittableFanout}, on the
-    ///         send and on its fee quote) and NOT at ingress. A transport
-    ///         payload is immutable once sent, so a receive-side refusal would
-    ///         retry the same message forever; the receiver ADMITS any
-    ///         transport-authentic packet, and a wider one, which only a source
-    ///         breaking this rule could send, is withheld for good.
+    ///         send and on its fee quote). The mirror needs no check of its
+    ///         own: the wire cannot name a second day.
     uint256 internal constant TRANSPORT_DAY_FANOUT_CAP = 1;
-
-    /// @notice How many member days one materialization call indexes.
-    /// @dev    #1566 transport epochs PR 3b — a per-call storage bound, so ANY
-    ///         admitted batch is indexed by repeating a call that is known to
-    ///         fit rather than by a caller guessing a page size. A one-day
-    ///         batch takes exactly one such call; it does not skip the step,
-    ///         because admission writes no membership for any batch. The same
-    ///         page sizes the park's walk of a batch's listed days.
-    uint256 internal constant TRANSPORT_INDEX_PAGE = 32;
 
     /// @notice #1566 transport epochs PR 3b-ii-A — how many of a day's indexed
     ///         epochs one coverage read, and the draw that follows it, scans.
@@ -1899,18 +1828,22 @@ library LibRewardCustody {
     ///         draws nothing on such a day, so there is nothing to stage or
     ///         unwind; 3b-ii-B's staging is what makes a wider day progress.
     uint256 internal constant TRANSPORT_DRAW_SCAN_CAP = 64;
-    /// @dev How far back from a day's newest epoch an UNHINTED indexing call
-    ///      may walk to find a late epoch's place (Codex #2276 r7 P2). Every
-    ///      step is one read; past the cap the call refuses and the caller
-    ///      names the predecessor instead, which inserts in constant work.
+    /// @dev How far back from a day's newest epoch the linker may walk to find
+    ///      a new epoch's place (Codex #2276 r7 P2; #2828). Since #2828 an
+    ///      epoch is linked in the transaction that admits it, so its arrival
+    ///      is the newest the day can hold and the walk crosses only the
+    ///      epochs of the same day that landed in the SAME SECOND with a
+    ///      larger batch id. Past the cap the ingress refuses by name; the
+    ///      transport records the message as failed, and its re-execution
+    ///      lands in a later second, where the walk is empty. Every step is one
+    ///      read.
     uint256 internal constant TRANSPORT_INDEX_WALK_CAP = 128;
     /// @dev The `transportDayPrev` link of a node the day's cursor has PASSED
     ///      (Codex #2276 r12 P1). Nothing is ever placed before the cursor,
     ///      so the back-links of the passed prefix are never followed; the
     ///      value instead answers, in one read, whether a node is behind the
-    ///      window — which is what lets a hint into the epochs after the
-    ///      cursor be verified in constant work. Non-zero, so a passed node
-    ///      still reads as listed. Never a batch id.
+    ///      window — which is where the linker's back-walk stops. Non-zero,
+    ///      so a passed node still reads as listed. Never a batch id.
     bytes32 internal constant TRANSPORT_PASSED = bytes32(uint256(1));
     /// @dev How many epochs one TRANSACTION may draw from, over every day it
     ///      settles (Codex #2276 r14 P1, r15 P2). Each day's window is
@@ -1935,48 +1868,44 @@ library LibRewardCustody {
     ///      settle facets carry no room for a counter of their own.
     bytes32 internal constant TRANSPORT_WRITES_TSLOT = keccak256("vaipakam.transport.draw-writes.transient");
 
-    /// @notice 3d-1 — open the transport epoch of a ROOTED (d6) delivery,
-    ///         holding the WHOLE delivery: both components, typed by the caps
-    ///         the wire attested, drawn by the days the root commits to.
-    /// @dev    The only caller of {_openTransportBatch}, and the d6 budget
-    ///         ingress is its only caller, so every epoch is one of these. The
-    ///         membership count is the stamped extent; the index arrives chunk
-    ///         by chunk.
-    function admitRootedTransportBatch(
+    /// @notice #2828 — open the transport epoch of a d8 delivery and index it
+    ///         under its day, at the delivery's own landing.
+    /// @dev    The epoch holds the WHOLE delivery: both components, typed by
+    ///         the caps the wire attested, drawn by the one day the wire named
+    ///         and the ingress stamped ({stampPacketDay}). The d8 budget
+    ///         ingress is the only caller, so every epoch is one of these, and
+    ///         every epoch is complete at admission — there is no later index
+    ///         step to wait for and nothing a caller supplies.
+    function admitTransportBatch(
         LibVaipakam.Storage storage s,
         bytes32 h,
         uint256 amount
     ) internal returns (bytes32 batchId) {
         LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
         if (p.arrivedAt == 0) revert IVaipakamErrors.IngressPacketUnknown(h);
-        if (p.dayListRoot == bytes32(0)) revert IVaipakamErrors.TransportBatchNotRooted(h);
-        batchId = _openTransportBatch(s, p, h, p.dayCount, amount);
+        if (!p.dayNamed) revert IVaipakamErrors.IngressPacketDayUnnamed(h);
+        batchId = _openTransportBatch(s, p, h, amount);
+        _indexBatchDay(s, p.dayId, batchId, p.arrivedAt);
     }
 
     /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — the ONE writer
     ///         of a transport batch's row.
-    /// @dev    One writer, so there is one place for the anchor, the
-    ///         membership count and the packet's back-reference to agree.
+    /// @dev    One writer, so there is one place for the anchor, the day and
+    ///         the packet's back-reference to agree.
     function _openTransportBatch(
         LibVaipakam.Storage storage s,
         LibVaipakam.IngressPacket storage p,
         bytes32 h,
-        uint256 count,
         uint256 untyped
     ) private returns (bytes32 batchId) {
         batchId = h;
         LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
         b.balance = untyped;
         b.admitted = untyped;
-        // Cast by name rather than silently: the fan-out is bounded at
-        // dispatch and by the destination's gas limit long before a list could
-        // reach 2^32 days, so this can only fire on something that is already
-        // wrong, and a truncated `dayCount` would then quietly declare an
-        // oversize batch fully indexed.
-        b.dayCount = SafeCast.toUint32(count);
+        b.dayId = p.dayId;
         p.batchId = batchId;
         ++s.transportBatchesAdmitted; // the legacy slice's global short-circuit (A2-ii (c))
-        emit TransportBatchAdmitted(batchId, h, untyped, count);
+        emit TransportBatchAdmitted(batchId, h, untyped, p.dayId);
     }
 
     /// @notice #1566 transport epochs PR 3b (Codex #2232 r15) — whether a
@@ -1990,7 +1919,7 @@ library LibRewardCustody {
     ///         `released` is false for every batch in this cut, and the
     ///         REMAINDER's own `batchId` answers "is something parked", which
     ///         is a different question that reads the same when the answer is
-    ///         no.
+    ///         no. (`dayId` does not qualify either: day 0 is a real day.)
     ///
     ///         The question was once answered by hand at its call sites, and
     ///         that was the defect: r15 found the batch question not
@@ -2000,99 +1929,17 @@ library LibRewardCustody {
         return b.admitted != 0;
     }
 
-    /// @dev The ONE writer of a batch's per-day membership — the inverse index,
-    ///      the kept list the park reads and the day's arrival-ordered
-    ///      link — called for every day of every proven chunk (3d-1).
+    /// @dev The ONE writer of a batch's day membership — the inverse index the
+    ///      draw's per-day short-circuit reads and the day's arrival-ordered
+    ///      link — called once per batch, at its admission (#2828).
     function _indexBatchDay(
         LibVaipakam.Storage storage s,
         uint256 d,
         bytes32 batchId,
-        uint64 arrived,
-        LinkHint memory h
+        uint64 arrived
     ) private {
         s.transportBatchesByDay[d].push(batchId);
-        s.transportBatchDays[batchId].push(d);
-        _linkIntoDay(s, d, batchId, arrived, h);
-    }
-
-    /// @notice 3d-1 — index ONE proven chunk of a rooted (d6) batch's membership.
-    /// @dev    Permissionless, in any chunk order: the authority is the root the
-    ///         delivery's own ingress stamped. The chunk is checked three ways
-    ///         before a word is written — its index is inside the committed
-    ///         extent and not yet marked, its length is the one the extent
-    ///         commits to for that index (so a short or padded chunk cannot be
-    ///         proven), and its indexed leaf verifies against the root under the
-    ///         supplied proof. Each chunk's days then go through the same
-    ///         per-day writer ({_indexBatchDay}). `indexedDays` reaches
-    ///         `dayCount` exactly when every chunk has landed, and that figure is
-    ///         what every allocation and the park already gate on — so a rooted
-    ///         epoch is spendable only when its membership is whole, by the
-    ///         existing rule rather than a new one.
-    ///
-    ///         The kept list ({LibVaipakam.Storage.transportBatchDays}) is in
-    ///         INDEXING order, which need not be list order when chunks land out
-    ///         of turn; its readers treat it as the membership SET, and none
-    ///         depends on its order.
-    function materializeTransportBatchChunk(
-        LibVaipakam.Storage storage s,
-        bytes32 batchId,
-        uint256 chunkIndex,
-        uint256[] calldata dayIds,
-        bytes32[] calldata proof,
-        bytes32[] memory hints,
-        bytes32[] memory lateHints
-    ) internal returns (uint32 indexedDays) {
-        LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
-        if (!transportBatchExists(b)) revert IVaipakamErrors.TransportBatchUnknown(batchId);
-        LibVaipakam.IngressPacket storage p = s.ingressPackets[batchId];
-        uint256 expected = _verifyRootedChunk(p, batchId, chunkIndex, dayIds, proof);
-        uint64 arrived = p.arrivedAt;
-        LinkHint memory h;
-        h.hinted = hints.length != 0;
-        h.lateHinted = lateHints.length != 0;
-        for (uint256 i; i < expected; ++i) {
-            if (h.hinted) h.prev = hints[i];
-            if (h.lateHinted) h.latePrev = lateHints[i];
-            _indexBatchDay(s, dayIds[i], batchId, arrived, h);
-        }
-        p.chunksIndexed |= 1 << chunkIndex;
-        indexedDays = b.indexedDays + uint32(expected);
-        b.indexedDays = indexedDays;
-        emit TransportBatchChunkIndexed(batchId, chunkIndex, indexedDays, b.dayCount);
-        // #918 — the day is known now: count this packet's part toward it.
-        // Only a single-day packet funds a day (a wider epoch is withheld for
-        // good, `GATE_MULTI_DAY`), so only it is counted.
-        if (p.dayCount == 1) _noteDayDeliveryPart(s, dayIds[0], batchId, p);
-    }
-
-    /// @dev THE rooted-chunk membership rule (#1944 c1 factored it out of
-    ///      {materializeTransportBatchChunk}; the delivery proof is its second
-    ///      caller): the packet is rooted, the index is inside the committed
-    ///      extent and not yet marked, the chunk is exactly the committed length
-    ///      for its index (a short or padded chunk cannot be proven), and its
-    ///      indexed leaf verifies against the root. One body, so a chunk the
-    ///      delivery gate accepts is a chunk the epoch index would accept. The
-    ///      caller sets the chunk's bit after writing its days.
-    /// @return expected The committed length of chunk `chunkIndex`.
-    function _verifyRootedChunk(
-        LibVaipakam.IngressPacket storage p,
-        bytes32 h,
-        uint256 chunkIndex,
-        uint256[] calldata dayIds,
-        bytes32[] calldata proof
-    ) private view returns (uint256 expected) {
-        if (p.dayListRoot == bytes32(0)) revert IVaipakamErrors.TransportBatchNotRooted(h);
-        uint256 chunks = p.chunkCount;
-        if (chunkIndex >= chunks) revert IVaipakamErrors.TransportChunkOutOfExtent(h, chunkIndex, chunks);
-        if ((p.chunksIndexed & (1 << chunkIndex)) != 0) revert IVaipakamErrors.TransportChunkAlreadyIndexed(h, chunkIndex);
-        expected = RemitWire.d6ChunkLength(p.dayCount, chunkIndex);
-        if (dayIds.length != expected) {
-            revert IVaipakamErrors.TransportChunkLengthMismatch(h, chunkIndex, expected, dayIds.length);
-        }
-        bytes32 leaf = RemitWire.d6Leaf(chunkIndex, dayIds);
-        if (!MerkleProof.verifyCalldata(proof, p.dayListRoot, leaf)) {
-            revert IVaipakamErrors.TransportChunkProofInvalid(h, chunkIndex, leaf);
-        }
+        _linkIntoDay(s, d, batchId, arrived);
     }
 
     /// @dev Where a day's scan starts: the first node AFTER its cursor in the
@@ -2149,80 +1996,44 @@ library LibRewardCustody {
         return aAt < bAt || (aAt == bAt && a < b);
     }
 
-    /// @dev The materializer's optional predecessors for one link: in the
-    ///      day's list and, should the link land late, in the day's late
-    ///      chain (Codex #2308 r4: a late chain deeper than the bounded walk
-    ///      needs its own verified hint, or a valid hinted materialization
-    ///      could never complete and the batch's protected funds never
-    ///      become usable). Each is verified in constant work; the late one
-    ///      is read only for a link that lands anywhere but the list's tail.
-    struct LinkHint {
-        bytes32 prev;
-        bool hinted;
-        bytes32 latePrev;
-        bool lateHinted;
-    }
-
     /// @dev Link `id` into day `d`'s ordered list at its place by (arrival,
-    ///      batch id) — after `h.prev` when `h.hinted` (verified, constant
-    ///      work), else after the newest node older than it, found by a
+    ///      batch id): after the newest node older than it, found by a
     ///      bounded walk back from the tail; and, when the place is not the
-    ///      tail, into the day's late chain the same way after `h.latePrev`.
-    ///      Idempotent: a batch already in the list is left where it is.
+    ///      tail, into the day's late chain the same way.
+    ///
+    ///      Called only at admission (#2828), when `arrived` is this
+    ///      transaction's timestamp and so no older than any node listed. The
+    ///      walk therefore passes only same-second nodes with a larger batch
+    ///      id, and stops at the first older one; a late link — a place before
+    ///      the tail — arises only from such a tie. {TRANSPORT_INDEX_WALK_CAP}
+    ///      bounds both walks.
+    ///
+    ///      Nothing is ever placed before the cursor (Codex #2276 r11, r12 P1):
+    ///      the cursor only advances, and the walk stops at the first node the
+    ///      cursor has passed, so an epoch whose key would sort among the
+    ///      passed ones takes its place after the cursor instead — older than
+    ///      every live epoch there, so the window still holds the oldest
+    ///      first. The bounded walk is the only placement rule: there is no
+    ///      caller-supplied position to verify.
     function _linkIntoDay(
         LibVaipakam.Storage storage s,
         uint256 d,
         bytes32 id,
-        uint64 arrived,
-        LinkHint memory h
+        uint64 arrived
     ) private {
         bytes32 head = s.transportDayHead[d];
-        if (head == id || s.transportDayPrev[d][id] != bytes32(0)) return; // already listed
         if (head == bytes32(0)) {
             s.transportDayHead[d] = id;
             s.transportDayTail[d] = id;
             return;
         }
-        // Nothing is ever placed before the cursor (Codex #2276 r11, r12 P1
-        // — the root of rounds 7, 8, 10 and 11 on this cursor): the cursor
-        // only advances, so its position is an exact stored figure. An epoch
-        // whose arrival would place it among the epochs the cursor has
-        // passed takes its place BY KEY among the epochs after the cursor —
-        // older than every live epoch there, so the window still holds the
-        // oldest first, and ordered among such late epochs by the same key,
-        // so which of them a window holds is the ledger's choice and not the
-        // materializer's. The cursor marks every node it passes, so a hint is
-        // refused in one read when it points behind the window.
-        bytes32 prev;
-        bytes32 cur = s.transportDayCursorNode[d];
-        if (h.hinted) {
-            prev = h.prev;
-            if (prev == bytes32(0)) {
-                // The head's place is behind the window once anything is passed.
-                if (cur != bytes32(0)) revert IVaipakamErrors.TransportIndexHintInvalid(id, d, h.prev);
-            } else {
-                bool inList = prev == head || s.transportDayPrev[d][prev] != bytes32(0);
-                if (!inList) revert IVaipakamErrors.TransportIndexHintInvalid(id, d, h.prev);
-                if (prev == cur) {
-                    // The cursor may precede an epoch older than itself.
-                } else if (_passed(s, d, prev) || !_keyBefore(s, s.ingressPackets[prev].arrivedAt, prev, id)) {
-                    revert IVaipakamErrors.TransportIndexHintInvalid(id, d, h.prev);
-                }
-            }
-            bytes32 succ = prev == bytes32(0) ? head : s.transportDayNext[d][prev];
-            if (succ != bytes32(0) && !_keyBefore(s, arrived, id, succ)) {
-                revert IVaipakamErrors.TransportIndexHintInvalid(id, d, h.prev);
-            }
-        } else {
-            // Back from the newest, stopping at the first node not after this
-            // one — or at the cursor, which is the first passed node met.
-            bytes32 node = s.transportDayTail[d];
-            uint256 steps;
-            while (node != bytes32(0) && !_passed(s, d, node) && _keyBefore(s, arrived, id, node)) {
-                if (++steps > TRANSPORT_INDEX_WALK_CAP) revert IVaipakamErrors.TransportIndexWalkExceeded(id, d);
-                node = s.transportDayPrev[d][node];
-            }
-            prev = node;
+        // Back from the newest, stopping at the first node not after this
+        // one — or at the cursor, which is the first passed node met.
+        bytes32 prev = s.transportDayTail[d];
+        uint256 steps;
+        while (prev != bytes32(0) && !_passed(s, d, prev) && _keyBefore(s, arrived, id, prev)) {
+            if (++steps > TRANSPORT_INDEX_WALK_CAP) revert IVaipakamErrors.TransportIndexWalkExceeded(id, d);
+            prev = s.transportDayPrev[d][prev];
         }
         bytes32 nxt = prev == bytes32(0) ? head : s.transportDayNext[d][prev];
         s.transportDayPrev[d][id] = prev;
@@ -2234,49 +2045,30 @@ library LibRewardCustody {
         // A LATE link (3b-ii-A2, #2305): anywhere but the tail means the
         // epoch sorted ahead of members already listed, so a staging record
         // whose continuation stands past this place would never scan it.
-        // The day keeps every such link in arrival order; a record's resume
+        // The day keeps every such link in key order; a record's resume
         // walks the ones it has not seen before it continues.
-        if (nxt != bytes32(0)) _linkLate(s, d, id, arrived, h);
+        if (nxt != bytes32(0)) _linkLate(s, d, id, arrived);
     }
 
     /// @dev The late chain is kept in the LIST's own order — oldest arrival,
     ///      batch id on a tie — so a record's two scans, the chain past what
     ///      it has seen and the list past its continuation, are one order
-    ///      read in two places (Codex #2308 r2: link order would let an
-    ///      indexer decide which links a record's page takes). PRIORITY —
-    ///      fewest listed days first — is the plan's, applied within a page
-    ///      exactly as the draw applies it within a window (Codex #2276 r1,
-    ///      r5, r12); neither the list nor the chain is kept in it, and an
-    ///      earlier revision of this note claimed the chain was (Codex #2308
-    ///      r4). Placed after a verified late predecessor when the
-    ///      materializer names one, else by the same bounded back-walk the
-    ///      list uses. A link that lands anywhere but the chain's tail bumps
-    ///      the day's late generation, and a record whose last walk predates
-    ///      it restarts from the chain's head.
-    function _linkLate(LibVaipakam.Storage storage s, uint256 d, bytes32 id, uint64 arrived, LinkHint memory h) private {
-        bytes32 behind;
-        if (h.lateHinted) {
-            // Verified as the list's hint is: in the chain, older than this
-            // link, and with nothing between them — or the chain's head.
-            behind = h.latePrev;
-            if (behind != bytes32(0)) {
-                bool inChain = behind == s.transportDayLateHead[d] || s.transportDayLatePrev[d][behind] != bytes32(0);
-                if (!inChain || !_keyBefore(s, s.ingressPackets[behind].arrivedAt, behind, id)) {
-                    revert IVaipakamErrors.TransportIndexHintInvalid(id, d, behind);
-                }
-            }
-        } else {
-            behind = s.transportDayLateTail[d];
-            uint256 steps;
-            while (behind != bytes32(0) && _keyBefore(s, arrived, id, behind)) {
-                if (++steps > TRANSPORT_INDEX_WALK_CAP) revert IVaipakamErrors.TransportIndexWalkExceeded(id, d);
-                behind = s.transportDayLatePrev[d][behind];
-            }
+    ///      read in two places (Codex #2308 r2). PRIORITY is the plan's,
+    ///      applied within a page exactly as the draw applies it within a
+    ///      window (Codex #2276 r1, r5, r12); neither the list nor the chain
+    ///      is kept in it (Codex #2308 r4). Placed by the same bounded
+    ///      back-walk the list uses, which at admission crosses only
+    ///      same-second ties. A link that lands anywhere but the chain's tail
+    ///      bumps the day's late generation, and a record whose last walk
+    ///      predates it restarts from the chain's head.
+    function _linkLate(LibVaipakam.Storage storage s, uint256 d, bytes32 id, uint64 arrived) private {
+        bytes32 behind = s.transportDayLateTail[d];
+        uint256 steps;
+        while (behind != bytes32(0) && _keyBefore(s, arrived, id, behind)) {
+            if (++steps > TRANSPORT_INDEX_WALK_CAP) revert IVaipakamErrors.TransportIndexWalkExceeded(id, d);
+            behind = s.transportDayLatePrev[d][behind];
         }
         bytes32 ahead = behind == bytes32(0) ? s.transportDayLateHead[d] : s.transportDayLateNext[d][behind];
-        if (h.lateHinted && ahead != bytes32(0) && !_keyBefore(s, arrived, id, ahead)) {
-            revert IVaipakamErrors.TransportIndexHintInvalid(id, d, h.latePrev);
-        }
         s.transportDayLatePrev[d][id] = behind;
         s.transportDayLateNext[d][id] = ahead;
         if (behind == bytes32(0)) s.transportDayLateHead[d] = id;
@@ -2289,42 +2081,50 @@ library LibRewardCustody {
         unchecked { ++s.transportDayLateCount[d]; }
     }
 
+    /// @notice #1566 transport epochs 3b-ii-B; #2828 — the RELEASE GATE: park
+    ///         what this batch's obligations left once its ONE day is proven
+    ///         closed.
+    /// @dev    Permissionless: what makes the release valid is STATE, not the
+    ///         caller. The batch's day must be closed — every obligation
+    ///         covering it terminated ({LibRewardClosure}) — or the call
+    ///         refuses naming it, and applies nothing. One check and one call:
+    ///         since #2828 a batch funds exactly one day, recorded on the batch
+    ///         at ingress, so there is no list to re-supply and nothing to page
+    ///         through. The park itself is {parkTransportRemainder}.
+    function parkClosedTransportRemainder(
+        LibVaipakam.Storage storage s,
+        bytes32 batchId
+    ) internal returns (uint256 amount) {
+        LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
+        if (!transportBatchExists(b)) revert IVaipakamErrors.TransportBatchUnknown(batchId);
+        uint256 d = b.dayId;
+        if (!s.dayObligationsClosed[d]) revert IVaipakamErrors.TransportDayNotClosed(batchId, d);
+        amount = parkTransportRemainder(s, batchId);
+    }
+
     /// @notice #1566 transport epochs PR 3b — PARK what this batch's
-    ///         obligations left, under the batch's own key, with the
-    ///         membership that still binds it.
-    /// @dev    Parking is the first half of the release (§5c). It does not
-    ///         make the packet classifiable on its own: an operator could
-    ///         otherwise make a packet classifiable merely by draining its
-    ///         batch, so the ACKNOWLEDGMENT is what releases it.
+    ///         obligations left, under the batch's own key.
+    /// @dev    The release's first half (§5c), WITHOUT the closed-day gate,
+    ///         which {parkClosedTransportRemainder} applies. A batch with a
+    ///         standing staging reference is refused (3b-ii-A2, #2305): its
+    ///         staged components are a standing record's, and parking would
+    ///         strand both.
     ///
-    ///         The remainder stays MEMBERSHIP-BOUND — it carries the same flat
-    ///         commitment 3a stamped on the packet — so a late obligation
-    ///         whose day is in this list can still restore against it succ
-    ///         the index itself has been retired, rather than finding the
-    ///         value in a general pool it has no claim on.
+    ///         Parking does not make the packet classifiable on its own: an
+    ///         operator could otherwise make a packet classifiable merely by
+    ///         draining its batch, so the ACKNOWLEDGMENT
+    ///         ({acknowledgeTransportRemainder}) is what releases it.
     ///
-    ///         An incompletely indexed batch is refused: until its whole
-    ///         membership exists, what its obligations may still reach is not
-    ///         known, and a remainder parked now would name a filter the
-    ///         batch had not finished acquiring.
-    ///
-    ///         There is NO "the obligations are finished" test here, and in
-    ///         3b-i there is nothing for one to test: no draw exists, so no
-    ///         obligation can hold a claim on a batch. §5c's rule that a batch
-    ///         with outstanding STAGING REFERENCES cannot be retired belongs
-    ///         with the staging that creates them, in 3b-ii, and lands on this
-    ///         function when it does.
+    ///         The remainder stays MEMBERSHIP-BOUND — it carries the batch's
+    ///         day — so a late obligation on that day can still restore
+    ///         against it, rather than finding the value in a general pool it
+    ///         has no claim on.
     function parkTransportRemainder(
         LibVaipakam.Storage storage s,
         bytes32 batchId
     ) internal returns (uint256 amount) {
         LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
         if (!transportBatchExists(b)) revert IVaipakamErrors.TransportBatchUnknown(batchId);
-        if (b.indexedDays < b.dayCount) {
-            revert IVaipakamErrors.TransportBatchNotFullyIndexed(batchId, b.indexedDays, b.dayCount);
-        }
-        // A referenced batch cannot be parked (3b-ii-A2, #2305): its staged
-        // components are a standing record's, and parking would strand both.
         uint256 refs = s.transportBatchReferences[batchId];
         if (refs != 0) revert IVaipakamErrors.TransportBatchReferenced(batchId, refs);
         LibVaipakam.TransportRemainder storage rem = s.transportRemainders[batchId];
@@ -2332,7 +2132,7 @@ library LibRewardCustody {
         amount = b.balance;
         rem.batchId = batchId;
         rem.amount = amount;
-        rem.dayCount = b.dayCount;
+        rem.dayId = b.dayId;
         b.balance = 0;
         emit TransportRemainderParked(batchId, amount);
     }
@@ -2341,51 +2141,10 @@ library LibRewardCustody {
     ///         RELEASES a batch, so what remains of its packet becomes
     ///         classifiable.
     /// @dev    The second half of the release, and the whole of the gate:
-    ///         succ this, {packetBatchReleased} answers yes for the batch's
+    ///         after this, {packetBatchReleased} answers yes for the batch's
     ///         packet and {authenticatedFresh} derives the classification's
     ///         bound from the packet's immutable attested caps NET of what the
     ///         batch's own transport legs already spent.
-    /// @notice 3b-ii-B — the RELEASE GATE: one page of the park. The caller re-supplies
-    ///         the batch's whole day list, checked against the 3a commitment exactly
-    ///         as the index was; from the batch's park cursor, up to
-    ///         `TRANSPORT_INDEX_PAGE` listed days must each be proven closed (every
-    ///         obligation covering them terminated — {LibRewardClosure}), or the page
-    ///         refuses naming the first open day and applies nothing. When the cursor
-    ///         reaches the list's end the remainder parks through
-    ///         {parkTransportRemainder}, which still refuses a batch with a standing
-    ///         staging reference or one not fully indexed. Permissionless: what makes
-    ///         the release valid is STATE, not the caller.
-    function parkTransportRemainderPage(
-        LibVaipakam.Storage storage s,
-        bytes32 batchId
-    ) internal returns (uint32 checkedDays, bool parked, uint256 amount) {
-        LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
-        if (!transportBatchExists(b)) revert IVaipakamErrors.TransportBatchUnknown(batchId);
-        if (b.indexedDays < b.dayCount) {
-            revert IVaipakamErrors.TransportBatchNotFullyIndexed(batchId, b.indexedDays, b.dayCount);
-        }
-        // Every batch is ROOTED (d6), and its list is the one its proven chunks
-        // wrote (`transportBatchDays`, whole once fully indexed, which the
-        // guard above holds), so it is read from storage and no caller supplies
-        // one.
-        uint256[] storage listed = s.transportBatchDays[batchId];
-        uint256 count = listed.length;
-        uint256 done = s.transportParkCursor[batchId];
-        uint256 end = done + TRANSPORT_INDEX_PAGE;
-        if (end > count) end = count;
-        for (uint256 i = done; i < end; ) {
-            uint256 d = listed[i];
-            if (!s.dayObligationsClosed[d]) revert IVaipakamErrors.TransportDayNotClosed(batchId, d);
-            unchecked { ++i; }
-        }
-        checkedDays = uint32(end);
-        s.transportParkCursor[batchId] = checkedDays;
-        emit TransportParkPageChecked(batchId, checkedDays, b.dayCount);
-        if (end < count) return (checkedDays, false, 0);
-        amount = parkTransportRemainder(s, batchId);
-        parked = true;
-    }
-
     function acknowledgeTransportRemainder(
         LibVaipakam.Storage storage s,
         bytes32 batchId
@@ -2430,7 +2189,7 @@ library LibRewardCustody {
     ///         A packet with NO batch passes untouched and is debited nothing:
     ///         the rule is about value held in a transport epoch, and "no
     ///         batch" here is final, not "no batch YET" (Codex #2232 r4). Only
-    ///         the d6 ingress opens a batch, at the packet's own landing, so a
+    ///         the budget ingress opens a batch, at the packet's own landing, so a
     ///         packet that has none can never be given one later and holds no
     ///         epoch value for this gate to protect.
     function takeFromReleasedRemainder(
@@ -2492,8 +2251,8 @@ library LibRewardCustody {
         bytes32 lastNode;
         bytes32 lastLate;
         /// @dev 3b-ii-A2 (#2305) — set by {planTransportDrawForRecord} only:
-        ///      the live, fully indexed epochs it passed over UNTYPED, for the
-        ///      record to remember and re-check.
+        ///      the live epochs it passed over UNTYPED, for the record to
+        ///      remember and re-check.
         bytes32[] skipped;
         /// @dev A2-ii — set by {planTransportDrawForRecord} only: the epochs it
         ///      passed that are CONTESTED for this record — whole and typed,
@@ -2522,29 +2281,19 @@ library LibRewardCustody {
         ///      exact feasibility test for two legs sharing balances.
         uint256 freshCapacity;
         uint256 recycledCapacity;
-        /// @dev What the window held that the plan WITHHELD, by named reason
-        ///      (Codex #2276 r26 P1, both):
-        ///
-        ///      - `withheldMultiDay` — epochs listing more than one day
-        ///        ({GATE_MULTI_DAY}). The canonical chain never sends one
-        ///        (#2821); the figure exists so one that arrives anyway is
-        ///        visible rather than silently uncounted. Nothing is spent
-        ///        from it.
-        ///      - `withheldUnattested` — epochs whose packet's split is not yet
-        ///        attested. A leg is typed once, by the caps it is drawn under;
-        ///        drawing before the caps are known typed legs that a later
-        ///        attestation had to retype AFTER settlement had already acted
-        ///        on them (the bucket, the recycled commitment, live fresh),
-        ///        leaving the epoch and the custody ledgers disagreeing. The
-        ///        epoch becomes drawable when its attestation lands.
-        ///
-        ///      The two figures OVERLAP (Codex #2276 r27 P2): each is the balance
-        ///      withheld for that reason, so an unattested multi-day epoch counts in
-        ///      both and neither figure ever hides a pending cause.
+        /// @dev What the window held that the plan WITHHELD (Codex #2276 r26
+        ///      P1): epochs whose packet's split is not yet attested. A leg is
+        ///      typed once, by the caps it is drawn under; drawing before the
+        ///      caps are known typed legs that a later attestation had to retype
+        ///      AFTER settlement had already acted on them (the bucket, the
+        ///      recycled commitment, live fresh), leaving the epoch and the
+        ///      custody ledgers disagreeing. The epoch becomes drawable when its
+        ///      attestation lands. (A second reason, an epoch listing more than
+        ///      one day, was retired with the multi-day wire, #2828: the d8
+        ///      wire names one day, so no such epoch can exist.)
         ///
         ///      A withheld epoch still occupies its window slot: the scan stays
         ///      bounded, and the day's cursor passes only exhausted epochs.
-        uint256 withheldMultiDay;
         uint256 withheldUnattested;
         /// @dev The window ended before the index did: unseen epochs may hold
         ///      coverage this plan could not see.
@@ -2592,22 +2341,17 @@ library LibRewardCustody {
     ///         computation and cannot disagree.
     ///
     ///         ORDER (Codex #2276 r1, r5): the day's index is kept in ARRIVAL
-    ///         order by construction ({materializeTransportBatchChunk}), so the
+    ///         order by construction ({_linkIntoDay}, at admission), so the
     ///         window — a prefix of the index from the cursor — always holds
-    ///         the day's OLDEST live epochs, whoever indexed them and in
-    ///         whatever order (r5 P1: a caller-ordered prefix would let a
-    ///         materializer decide what a bounded window sees). Within the
-    ///         window every planned epoch lists this one day (a multi-day epoch is
-    ///         withheld — see `withheldMultiDay`), so they are spent OLDEST
-    ///         ARRIVAL FIRST, the batch id breaking ties. The window is at most
-    ///         `TRANSPORT_DRAW_SCAN_CAP` entries, so the sort is bounded, and
-    ///         everything beyond it is newer than everything in it.
+    ///         the day's OLDEST live epochs. Every epoch funds exactly one day
+    ///         (#2828), so they are spent OLDEST ARRIVAL FIRST, the batch id
+    ///         breaking ties. The window is at most `TRANSPORT_DRAW_SCAN_CAP`
+    ///         entries, so the sort is bounded, and everything beyond it is
+    ///         newer than everything in it.
     ///
-    ///         SKIPPED, and not counted as coverage: exhausted batches, and
-    ///         batches whose membership is not yet whole (`indexedDays !=
-    ///         dayCount`, Codex #2276 r1) — a paged batch would otherwise
-    ///         expose its whole balance to its first page's days before its
-    ///         later days were indexed, and those days could find it drained.
+    ///         SKIPPED, and not counted as coverage: exhausted batches. (A
+    ///         batch whose membership was not yet whole was skipped too, until
+    ///         #2828 made every batch whole at admission.)
     ///
     ///         ROOMS (Codex #2276 r4 P1): an ATTESTED packet's two component
     ///         caps each cover classification plus the transport leg of that
@@ -2615,8 +2359,8 @@ library LibRewardCustody {
     ///         its packet's cap still leaves — the cap net of what is
     ///         classified and what its own draws already took — and
     ///         {splitTransportTakes} never assigns a leg past it. An
-    ///         epoch whose packet is unattested, or that lists more than one
-    ///         day, is WITHHELD and counted by reason (see `withheldMultiDay`).
+    ///         epoch whose packet is unattested is WITHHELD and counted (see
+    ///         `withheldUnattested`).
     ///
     ///         Storage is the ONLY input (A2-iii): the preview that once
     ///         mirrored planned draws through an overlay is gone — a preview
@@ -2642,14 +2386,9 @@ library LibRewardCustody {
         while (node != bytes32(0) && seen < TRANSPORT_DRAW_SCAN_CAP) {
             LibVaipakam.TransportBatch storage b = s.transportBatches[node];
             uint256 bal = b.balance;
-            if (bal != 0 && b.indexedDays == b.dayCount) {
-                uint8 gates = batchGates(s, node, b);
-                if ((gates & (GATE_UNATTESTED | GATE_MULTI_DAY)) != 0) {
-                    // Each reason counted on its own (Codex #2276 r27 P2): a
-                    // reader asking whether an attestation is pending must not
-                    // be told no because the epoch also lists several days.
-                    if ((gates & GATE_UNATTESTED) != 0) plan.withheldUnattested += bal;
-                    if ((gates & GATE_MULTI_DAY) != 0) plan.withheldMultiDay += bal;
+            if (bal != 0) {
+                if ((batchGates(s, node) & GATE_UNATTESTED) != 0) {
+                    plan.withheldUnattested += bal;
                 } else {
                     (uint256 fr, uint256 rr) = _capRooms(s, node, b, bal);
                     // Arrival order.
@@ -3028,43 +2767,26 @@ library LibRewardCustody {
     }
 
     /// @dev Staging takes exactly what a draw may take: an ATTESTED packet's
-    ///      batch whose index is whole and that lists ONE day. An unattested
-    ///      batch is neither drawn nor staged (Codex #2276 r26 — a leg is typed
-    ///      once, by the caps it is drawn under); a batch whose later pages
-    ///      are unindexed would expose its balance to its first page's days
-    ///      before those days were indexed (Codex #2276 r1). Either state is
+    ///      batch. An unattested batch is neither drawn nor staged (Codex #2276
+    ///      r26 — a leg is typed once, by the caps it is drawn under); it is
     ///      PENDING to a record — remembered and re-checked, never passed
-    ///      (Codex #2308 r4). A batch listing more than one day is WITHHELD
-    ///      for good ({GATE_MULTI_DAY}): it is never staged, and never pending
-    ///      either ({_pendingCandidate}), since nothing makes it stageable.
+    ///      (Codex #2308 r4). Every batch is whole and funds one day from its
+    ///      admission (#2828), so no other state withholds it.
     function stageable(LibVaipakam.Storage storage s, bytes32 batchId) internal view returns (bool) {
-        return batchGates(s, batchId, s.transportBatches[batchId]) == 0;
+        return batchGates(s, batchId) == 0;
     }
 
     // ── The allocation gates ──
     /// @dev The packet's split is not attested: a leg would be typed by caps not yet known.
     uint8 internal constant GATE_UNATTESTED = 1;
-    /// @dev The batch's membership is not fully indexed.
-    uint8 internal constant GATE_UNINDEXED = 2;
-    /// @dev The batch lists more than one day (#2821). Its balance funds every
-    ///      listed day at once, so a draw for one of them is contested by the
-    ///      others, and a reward entry spanning two of them could never be
-    ///      paid from it. The canonical chain never sends one
-    ///      ({TRANSPORT_DAY_FANOUT_CAP}); one that arrives anyway is admitted,
-    ///      counted as withheld, and never drawn, staged or pending.
-    uint8 internal constant GATE_MULTI_DAY = 4;
+    // Bits 2 (`GATE_UNINDEXED`) and 4 (`GATE_MULTI_DAY`) are retired with the
+    // chunked multi-day wire (#2828): every batch is indexed at admission and
+    // funds the one day its wire names. They are not reused.
 
     /// @notice The gates a batch is admitted to a day's draw through, as flags (0 =
-    ///         drawable). O(1): no gate reads the batch's listed days.
-    function batchGates(LibVaipakam.Storage storage s, bytes32 batchId, LibVaipakam.TransportBatch storage b)
-        internal
-        view
-        returns (uint8 flags)
-    {
+    ///         drawable). O(1).
+    function batchGates(LibVaipakam.Storage storage s, bytes32 batchId) internal view returns (uint8 flags) {
         if (!s.ingressPackets[batchId].attested) flags |= GATE_UNATTESTED;
-        uint256 n = b.dayCount;
-        if (b.indexedDays != n) flags |= GATE_UNINDEXED;
-        if (n > TRANSPORT_DAY_FANOUT_CAP) flags |= GATE_MULTI_DAY;
     }
 
     /// @notice Whether the record under nonce key `nk` may stage from `batchId`
@@ -3402,18 +3124,12 @@ library LibRewardCustody {
     }
 
     /// @dev A live epoch the record cannot stage from YET — its packet awaits
-    ///      its split, or its membership its last page. Remembered by the
-    ///      record and re-checked, never planned: a candidate a scan passed
-    ///      without disposing of would be lost to the record, since neither
-    ///      an attestation nor a completing page changes the list's length or
-    ///      its late generation (Codex #2308 r2, r4). A MULTI-DAY epoch is not
-    ///      pending (Codex #2276 r26): it is withheld for good
-    ///      ({GATE_MULTI_DAY}), so the scan passes it as it passes an exhausted
-    ///      one, and a day holding many of them never fills the record's page
-    ///      of pending re-checks.
+    ///      its split. Remembered by the record and re-checked, never planned:
+    ///      a candidate a scan passed without disposing of would be lost to the
+    ///      record, since an attestation changes neither the list's length nor
+    ///      its late generation (Codex #2308 r2, r4).
     function _pendingCandidate(LibVaipakam.Storage storage s, bytes32 node) private view returns (bool) {
-        LibVaipakam.TransportBatch storage b = s.transportBatches[node];
-        return b.balance != 0 && b.dayCount == 1 && !stageable(s, node);
+        return s.transportBatches[node].balance != 0 && !stageable(s, node);
     }
 
     /// @dev A batch the record under `nk` could stage but for its priority
@@ -3810,12 +3526,12 @@ library LibRewardCustody {
     )
         internal
         view
-        returns (uint256 available, bool capHit, uint256 withheldMultiDay, uint256 withheldUnattested)
+        returns (uint256 available, bool capHit, uint256 withheldUnattested)
     {
-        if (s.transportBatchesByDay[dayId].length == 0) return (0, false, 0, 0);
+        if (s.transportBatchesByDay[dayId].length == 0) return (0, false, 0);
         TransportDrawPlan memory plan =
             planTransportDraw(s, dayId);
-        return (plan.available, plan.capHit, plan.withheldMultiDay, plan.withheldUnattested);
+        return (plan.available, plan.capHit, plan.withheldUnattested);
     }
 
     /// @notice The ONE batch at `dayId`'s cursor — the first node after the
@@ -3841,7 +3557,7 @@ library LibRewardCustody {
         if (node == bytes32(0)) return (0, 0);
         LibVaipakam.TransportBatch storage b = s.transportBatches[node];
         uint256 bal = b.balance;
-        if (bal == 0 || batchGates(s, node, b) != 0) return (0, 0);
+        if (bal == 0 || batchGates(s, node) != 0) return (0, 0);
         (fr, rr) = _capRooms(s, node, b, bal);
         if (fr + rr > bal) rr = bal > fr ? bal - fr : 0;
     }
@@ -4181,22 +3897,19 @@ library LibRewardCustody {
     // fresh funding arrived. The gate is ONE predicate, read at TWO rungs (the
     // day-halves derivation and the window clamp, both in
     // LibInteractionRewards) — never a per-call-site guard. Nothing here moves
-    // value: the index and proof entries count each landed part toward its day
-    // (#918), and the predicate only HOLDS a fold before the day, which every
+    // value: the budget ingress counts each landed part toward its day (#918,
+    // #2828), and the predicate only HOLDS a fold before the day, which every
     // consumer already turns into a named deferral.
-
-    /// @dev {DayDeliveryProved}'s `route`: one proven chunk of a rooted (d6/d7) list.
-    uint8 internal constant DELIVERY_ROUTE_ROOTED_CHUNK = 2;
 
     /// @notice #1944 c1 / #918 — whether day `d`'s delivery has LANDED here:
     ///         the parts that have landed sum, per component, to the whole
     ///         slice Base said it is sending for the day.
     /// @dev    THE one reader of "landed", and ONE word: `landedAt` is written
-    ///         once, by {_noteDayDeliveryPart}, the moment both sums first reach
-    ///         the whole, and never cleared, so the predicate is monotone. Both
-    ///         populations reach it — a batched packet when its chunk is
-    ///         indexed (the epoch index), a batchless one when its chunk is
-    ///         proven — because each counts its part through the same writer.
+    ///         once, by {noteDayDeliveryPart}, the moment both sums first reach
+    ///         the whole, and never cleared, so the predicate is monotone. Every
+    ///         budget packet reaches it at its own landing, whether its value
+    ///         opened an epoch or took the pre-activation typed-ledger path,
+    ///         because the d8 wire names the day (#2828).
     ///         Per component, not in total: after an operator release where
     ///         both the original and the re-send land, a total-only sum could
     ///         open the day while a fresh part is still missing. Landed is not
@@ -4209,29 +3922,26 @@ library LibRewardCustody {
         return s.dayDeliveryParts[d].landedAt != 0;
     }
 
-    /// @dev #918 — THE one writer of {LibVaipakam.Storage.dayDeliveryParts}:
-    ///      count single-day packet `h`'s DECLARED part toward day `d`, and
-    ///      mark the day landed once both sums reach its whole. Called once
-    ///      per packet — the chunk bit that the index and the proof share
-    ///      refuses a second call, and the ingress stamp refuses a replayed
-    ///      packet — so a part is counted once, and the sums are commutative,
-    ///      so parts may land in any order. The whole comes from the FIRST part
-    ///      and stays; a part declaring another sets `wholeConflict`.
+    /// @dev #918, #2828 — THE one writer of
+    ///      {LibVaipakam.Storage.dayDeliveryParts}: count budget packet `h`'s
+    ///      DECLARED part toward the day its wire named, and mark the day landed
+    ///      once both sums reach its whole. The budget ingress calls it once per
+    ///      packet, after {stampPacketDay} and {stampPacketDayPart} — the
+    ///      ingress stamp refuses a replayed packet — so a part is counted once,
+    ///      and the sums are commutative, so parts may land in any order. The
+    ///      whole comes from the FIRST part and stays; a part declaring another
+    ///      sets `wholeConflict`.
     ///      #2961 — a DISPOSED packet's part does not count: its value left,
-    ///      so it funds no day here. The rule lives in this one writer so the
-    ///      epoch index and the proof cannot disagree about it. The proof
-    ///      refuses such a packet earlier and by name
-    ///      ({_requireProvablePacket}); the index has no such gate, and today
-    ///      cannot meet one (only {releaseUnclassifiedForReturn} disposes, and
-    ///      only of compensation packets, which never open an epoch). This
-    ///      line keeps that true if the call graph ever changes.
-    function _noteDayDeliveryPart(
-        LibVaipakam.Storage storage s,
-        uint256 d,
-        bytes32 h,
-        LibVaipakam.IngressPacket storage p
-    ) private {
+    ///      so it funds no day here. At landing no packet is disposed yet
+    ///      (only {releaseUnclassifiedForReturn} disposes, and only of
+    ///      compensation packets); this line keeps the rule in the one writer
+    ///      if the call graph ever changes.
+    function noteDayDeliveryPart(LibVaipakam.Storage storage s, bytes32 h) internal {
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
+        if (p.arrivedAt == 0) revert IVaipakamErrors.IngressPacketUnknown(h);
+        if (!p.dayNamed) revert IVaipakamErrors.IngressPacketDayUnnamed(h);
         if (p.disposed != 0) return;
+        uint256 d = p.dayId;
         LibVaipakam.DayDeliveryParts storage dp = s.dayDeliveryParts[d];
         uint128 wholeFresh = p.dayWholeFresh;
         uint128 wholeRecycled = p.dayWholeRecycled;
@@ -4351,7 +4061,7 @@ library LibRewardCustody {
     ///         is the settle path's own ({drawTransportForDay}), so each
     ///         epoch's balance, legs and packet remainder fall exactly as they
     ///         do for an epoch-funded forfeit. Repeatable: a scan reaches at
-    ///         most one draw window, and a part indexed after the skip adds an
+    ///         most one draw window, and a part landing after the skip adds an
     ///         epoch to the day. Returns zero legs when nothing is left.
     function drawSkippedDayRemainder(LibVaipakam.Storage storage s, uint256 d)
         internal
@@ -4505,48 +4215,6 @@ library LibRewardCustody {
             _selfStatic(abi.encodeWithSignature("dayAwaitsFreshDelivery(uint8,uint256)", side, d)),
             (bool)
         );
-    }
-
-    /// @dev The packet gate both proof entries share: the packet exists, is a
-    ///      BUDGET packet, holds no transport batch (a batched packet's days
-    ///      land through the batch index — one fact, one writer), and was not
-    ///      disposed of (its value left; it funds no day here).
-    function _requireProvablePacket(
-        LibVaipakam.Storage storage s,
-        bytes32 h
-    ) private view returns (LibVaipakam.IngressPacket storage p) {
-        p = s.ingressPackets[h];
-        if (p.arrivedAt == 0) revert IVaipakamErrors.IngressPacketUnknown(h);
-        if (p.kind != PACKET_KIND_BUDGET) revert IVaipakamErrors.DeliveryProofNotBudget(h, p.kind);
-        if (p.batchId != bytes32(0)) revert IVaipakamErrors.DeliveryProofRouteIsBatch(h);
-        if (p.disposed != 0) revert IVaipakamErrors.DeliveryPacketDisposed(h, p.disposed);
-    }
-
-    /// @notice #1944 c1 / #918 — prove ONE chunk of a batchless rooted (d7,
-    ///         pre-activation) packet's day list and count its part toward its
-    ///         day.
-    /// @dev    The same rule the epoch index proves a chunk by
-    ///         ({_verifyRootedChunk}), and the same `chunksIndexed` bit with the
-    ///         same meaning (chunk `i` proven), so a chunk is proven once. No
-    ///         conflict with the epoch index is possible: this packet holds no
-    ///         batch, and only its own landing could have opened one.
-    function proveDeliveryDayChunk(
-        LibVaipakam.Storage storage s,
-        bytes32 h,
-        uint256 chunkIndex,
-        uint256[] calldata dayIds,
-        bytes32[] calldata proof
-    ) internal {
-        LibVaipakam.IngressPacket storage p = _requireProvablePacket(s, h);
-        uint256 expected = _verifyRootedChunk(p, h, chunkIndex, dayIds, proof);
-        for (uint256 i; i < expected; ) {
-            emit DayDeliveryProved(dayIds[i], h, p.remitId, DELIVERY_ROUTE_ROOTED_CHUNK);
-            unchecked { ++i; }
-        }
-        p.chunksIndexed |= 1 << chunkIndex;
-        // The same rule the epoch index applies: only a single-day packet
-        // funds a day, so only it counts toward one.
-        if (p.dayCount == 1) _noteDayDeliveryPart(s, dayIds[0], h, p);
     }
 
     /// @dev {drawTransportForDay} through the epoch facet. With both legs zero
@@ -4730,7 +4398,7 @@ library LibRewardCustody {
         vaulted = abi.decode(ret, (bool));
     }
 
-    /// @notice 3d-1 — attest a packet's split FROM ITS OWN WIRE: a d6 delivery
+    /// @notice 3d-1 — attest a packet's split FROM ITS OWN WIRE: a budget delivery
     ///         carries the split the sender recorded, authenticated by the
     ///         transport, so the caps are known at ingress and no later
     ///         attestation message is needed.
@@ -4913,8 +4581,8 @@ library LibRewardCustody {
     ///         {unclassifiedQuarantine}, whose two call sites both pass a
     ///         COMPENSATION packet's stamp, and no compensation ever holds an
     ///         epoch: the one opener of a batch,
-    ///         {admitRootedTransportBatch}, is called only by the BUDGET
-    ///         ingress (the d7 wire since #918), at the packet's own landing. So the exclusion rests on
+    ///         {admitTransportBatch}, is called only by the BUDGET
+    ///         ingress (the d8 wire since #2828), at the packet's own landing. So the exclusion rests on
     ///         that call graph, not on anything this door checks: give a
     ///         compensation an epoch and this door opens silently.
     function releaseUnclassifiedForReturn(

@@ -26,9 +26,7 @@ import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibRewardCustody} from "../src/libraries/LibRewardCustody.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
-import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
-import {MerkleFixture} from "./mocks/MerkleFixture.sol";
-import {RemitWire} from "../src/crosschain/RemitWire.sol";
+import {LibD8Delivery} from "./helpers/LibD8Delivery.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -164,46 +162,15 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _mut().userClaimFundingNeedRaw(alice);
     }
 
-    function _one(uint256 d) internal pure returns (uint256[] memory a) {
-        a = new uint256[](1);
-        a[0] = d;
-    }
-
-    /// @dev A budget delivery on the rooted (d6) wire, standing in an epoch
-    ///      whose split is NOT attested. The d6 ingress attests every epoch
-    ///      from its own wire at landing; these cells pin what staging does
-    ///      with an epoch it may draw but not stage, and {_attest} later
-    ///      writes the split the way an attestation would.
-    function _land(uint256 amount, uint256[] memory dayIds, uint256 remitId, bytes32 id) internal {
-        (bytes32 h, ) = LibD6Delivery.deliverFresh(
-            address(diamond), address(vpfi), amount, dayIds, CHAIN_BASE, remitId, REMITTER, id
-        );
-        _mut().clearPacketAttestedRaw(h);
-    }
-
-    /// @dev Index every chunk of a delivered epoch, in order (permissionless).
-    function _indexAll(bytes32 h, uint256[] memory dayIds) internal {
-        LibD6Delivery.indexAll(address(diamond), h, dayIds, RemitWire.d6Chunks(dayIds));
-    }
-
-    /// @dev Index chunk `c` of a delivered epoch.
-    function _indexChunk(bytes32 h, uint256[] memory dayIds, uint256 c) internal {
-        LibD6Delivery.indexChunk(address(diamond), h, dayIds, RemitWire.d6Chunks(dayIds), c);
-    }
-
-    /// @dev Index the first chunk of a delivered epoch with both link hints named.
-    function _indexHinted(bytes32 h, uint256[] memory dayIds, bytes32[] memory hints, bytes32[] memory lateHints)
-        internal
-        returns (uint32)
-    {
-        bytes32[] memory leaves = RemitWire.d6Chunks(dayIds);
-        return _epoch().materializeTransportBatchChunk(
-            h,
-            0,
-            MerkleFixture.chunk(dayIds, 0, RemitWire.D6_CHUNK_DAYS),
-            MerkleFixture.proof(leaves, 0),
-            hints,
-            lateHints
+    /// @dev A budget delivery on the d8 wire for day `d`, standing in an
+    ///      epoch whose split is NOT attested. The ingress attests every epoch
+    ///      from its own wire at landing and indexes it into its day; these
+    ///      cells pin what staging does with an epoch it may draw but not
+    ///      stage, and {_attest} later writes the split the way an attestation
+    ///      would.
+    function _land(uint256 amount, uint256 d, uint256 remitId, bytes32 id) internal returns (bytes32 h) {
+        h = LibD8Delivery.deliverUnattested(
+            address(diamond), address(vpfi), amount, d, CHAIN_BASE, remitId, REMITTER, id
         );
     }
 
@@ -217,9 +184,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
     }
 
     function _epochOf(uint256 amount, uint256 remitId, bytes32 id) internal returns (bytes32 h) {
-        _land(amount, _one(1), remitId, id);
-        h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
-        _indexAll(h, _one(1));
+        h = _land(amount, 1, remitId, id);
     }
 
     /// @dev `WIDE` fresh epochs, each `TINY`, all listing day 1, ten seconds
@@ -273,11 +238,11 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
     }
 
     function _balance(bytes32 h) internal view returns (uint256 b) {
-        (, b, , , , ) = _epoch().getTransportBatch(h);
+        (, b, , , ) = _epoch().getTransportBatch(h);
     }
 
     function _admitted(bytes32 h) internal view returns (uint256 a) {
-        (, , a, , , ) = _epoch().getTransportBatch(h);
+        (, , a, , ) = _epoch().getTransportBatch(h);
     }
 
     function _staged(bytes32 h) internal view returns (uint256 f, uint256 r, uint256 refs) {
@@ -1036,44 +1001,6 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
 
     // ───────────────────────── round 4: one scanner, one figure per source ─────────────────────────
 
-    /// @dev A batch whose chunk holding day 1 is indexed before its other chunks.
-    function _pagedEpochOf(uint256 amount, uint256 remitId, bytes32 id) internal returns (bytes32 h) {
-        uint256[] memory dayList = new uint256[](33); // three chunks (16, 16 and one more)
-        for (uint256 i; i < 33; ++i) dayList[i] = i + 1;
-        _land(amount, dayList, remitId, id);
-        h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
-        _indexChunk(h, dayList, 0); // chunk one: days 1..16 — day 1 lists it, the batch is not whole
-    }
-
-    /// @dev A SHARED epoch the record scans is passed, not remembered, and
-    ///      never staged — before or after its membership is whole (Codex #2276
-    ///      r26, carried into staging): staging from it is the contested draw
-    ///      the plan refuses until 3c, and a day holding many of them must not
-    ///      fill the record's page of pending re-checks.
-    function test_ASharedEpoch_WhenTheRecordScans_IsPassedNotRemembered() public {
-        _scene();
-        _wideDay(true);
-        vm.warp(block.timestamp + 10);
-        bytes32 paged = _pagedEpochOf(TINY, 950, keccak256("paged"));
-        _attest(950, TINY, 0); // typed, shared, not yet whole
-        assertEq(_claim(), 0);
-        _staging().prepareStagedDay(_key()); // the window
-        _staging().prepareStagedDay(_key()); // the 65th; the shared epoch is passed
-        assertTrue(_rec().scanComplete);
-        assertEq(_rec().skippedCount, 0, "a shared epoch is withheld, not pending");
-        (, , uint256 refs) = _staged(paged);
-        assertEq(refs, 0, "and not staged from");
-        uint256[] memory dayList = new uint256[](33);
-        for (uint256 i; i < 33; ++i) dayList[i] = i + 1;
-        _indexChunk(paged, dayList, 1);
-        _indexChunk(paged, dayList, 2);
-        _liveFresh(1e18);
-        _staging().reserveStagedDay(_key());
-        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Reserved), "nothing pending stands in the way");
-        (, , refs) = _staged(paged);
-        assertEq(refs, 0, "and, whole, it is still never staged");
-    }
-
     function test_ALoanSideReservation_DefersAnotherHolder_NeverTrims() public {
         // Alice's record reserves 0.4 of the loan side. The side's lifetime cap
         // is then set to 0.5: bob's 0.4 on the same side fits the hard headroom
@@ -1147,67 +1074,13 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertTrue(_mut().entryExecutableNowRaw(bobEntry), "released: executable again");
     }
 
-    /// @dev An epoch listing day 1 linked with both predecessors named.
-    function _epochOfHinted(uint256 remitId, bytes32 id, bytes32 hint, bytes32 lateHint, bool late) internal returns (bytes32 h) {
-        _land(TINY, _one(1), remitId, id);
-        h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
-        bytes32[] memory hints = new bytes32[](1);
-        hints[0] = hint;
-        bytes32[] memory lateHints = new bytes32[](late ? 1 : 0);
-        if (late) lateHints[0] = lateHint;
-        _indexHinted(h, _one(1), hints, lateHints);
-    }
-
-    function test_ADeepLateChain_LinksByTheLateHint() public {
-        // 65 epochs listed; then 130 arrive each OLDER than everything before
-        // it, so each links at the head of the list and of the late chain.
-        // Past 128 late links the unhinted late walk is refused whatever the
-        // list hint says; the late hint places the link in constant work.
-        _scene();
-        _wideDay(true);
-        uint256 t0 = arrivedAt[0];
-        for (uint256 i; i < 129; ++i) {
-            vm.warp(t0 - 10 * (i + 1));
-            _epochOfHinted(1000 + i, keccak256(abi.encode("older", i)), bytes32(0), bytes32(0), true);
-        }
-        // The 130th: the list hint alone is refused — the late chain is deeper
-        // than the bounded walk — and with the late hint it links.
-        vm.warp(t0 - 10 * 130);
-        _land(TINY, _one(1), 1130, keccak256("older-130"));
-        bytes32 h130 = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("older-130")));
-        bytes32[] memory hints = new bytes32[](1);
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportIndexWalkExceeded.selector, h130, uint256(1)));
-        _indexHinted(h130, _one(1), hints, new bytes32[](0));
-        // A wrong late hint — the chain's newest, which sorts after this
-        // link — is refused, never mis-orders.
-        bytes32 newestLate = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256(abi.encode("older", uint256(0)))));
-        bytes32[] memory wrong = new bytes32[](1);
-        wrong[0] = newestLate;
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportIndexHintInvalid.selector, h130, uint256(1), newestLate));
-        _indexHinted(h130, _one(1), hints, wrong);
-        assertEq(_indexHinted(h130, _one(1), hints, new bytes32[](1)), 1, "linked by the late hint");
-        bytes32[] memory ids = _epoch().getTransportDayScanIds(1);
-        assertEq(ids[0], h130, "the oldest stands first in the list");
-
-        // #2489 (Codex r2) — the late chain is READABLE in its order, page by
-        // page, which is what lets a materializer name the late hint itself
-        // rather than depend on the bounded walk this test just saw refused.
-        (bytes32[] memory late, uint64[] memory at, bytes32 next) = _epoch().getTransportDayLateFrom(1, bytes32(0), 3);
-        assertEq(late.length, 3, "a full page");
-        assertEq(late[0], h130, "the chain's head is the oldest late link");
-        assertEq(late[1], _olderEpoch(128), "then the next oldest");
-        assertEq(late[2], _olderEpoch(127));
-        assertLt(at[0], at[1], "oldest arrival first");
-        assertEq(next, _olderEpoch(126), "the next page starts where this one stopped");
-        (bytes32[] memory more, , ) = _epoch().getTransportDayLateFrom(1, next, 1);
-        assertEq(more[0], _olderEpoch(126), "paging resumes AT next");
-        (bytes32[] memory none, , bytes32 n2) = _epoch().getTransportDayLateFrom(1, keccak256("not-a-link"), 5);
-        assertEq(none.length, 0, "a node outside the chain pages nothing");
-        assertEq(n2, bytes32(0));
-    }
-
-    function _olderEpoch(uint256 i) internal pure returns (bytes32) {
-        return keccak256(abi.encode(uint256(CHAIN_BASE), keccak256(abi.encode("older", i))));
+    /// @dev An epoch on day 1 that the ingress links LATE: the caller warps
+    ///      the clock back first, so its arrival sorts ahead of members already
+    ///      listed. On a live chain arrivals never go backwards and a late link
+    ///      comes only from a same-second tie (#2828); the warp is the fixture
+    ///      that places one deterministically, within the walk's bound.
+    function _epochLate(uint256 remitId, bytes32 id) internal returns (bytes32 h) {
+        h = _land(TINY, 1, remitId, id);
     }
 
     // ───────────────────────── round 5 ─────────────────────────
@@ -1269,15 +1142,16 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
     }
 
     function test_AChainRestart_CountsItsOwnWork_InTheDeadline() public {
-        // Seventy older epochs stand in the day's late chain BEFORE the record
-        // opens: its deadline counts none of them (the base is the count at
-        // opening). One more, older than all, lands ahead of the record's
+        // Sixty-two older epochs stand in the day's late chain BEFORE the
+        // record opens: its deadline counts none of them (the base is the count
+        // at opening). One more, older than all, lands ahead of the record's
         // place: the walk restarts from the chain's head and the deadline
-        // grows by the pages that walk needs.
+        // grows by the pages that walk needs. (Sixty-two, so the ingress's
+        // bounded link walk reaches the head: 65 + 62 + 1 members, #2828.)
         _scene();
         _wideDay(true);
         uint256 t0 = arrivedAt[0];
-        for (uint256 i; i < 70; ++i) {
+        for (uint256 i; i < 62; ++i) {
             vm.warp(t0 - 1000 + i);
             _epochOf(TINY, 800 + i, keccak256(abi.encode("older", i)));
             _attest(800 + i, TINY, 0);
@@ -1285,36 +1159,34 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         vm.warp(arrivedAt[64] + 100);
         assertEq(_claim(), 0);
         RewardStagingDomainFacet.StagingRecordView memory r = _rec();
-        assertEq(r.lateWorkBase, 70, "the chain's count at opening");
-        // 135 members past the cursor, no late work: three pages.
-        assertEq(r.deadline, r.openedAt + 3 days + 3 days);
-        _staging().prepareStagedDay(_key());
+        assertEq(r.lateWorkBase, 62, "the chain's count at opening");
+        // 127 members past the cursor, no late work: two pages.
+        assertEq(r.deadline, r.openedAt + 2 days + 3 days);
         _staging().prepareStagedDay(_key());
         _staging().prepareStagedDay(_key());
         assertTrue(_rec().scanComplete);
-        assertEq(_rec().deadline, r.openedAt + 3 days + 3 days, "unchanged by the record's own pages");
+        assertEq(_rec().deadline, r.openedAt + 2 days + 3 days, "unchanged by the record's own pages");
         vm.warp(t0 - 2000);
-        // Older than all 135: beyond the unhinted walk, so both predecessors
-        // are named — the list's head and the chain's head.
-        _epochOfHinted(899, keccak256("older-than-all"), bytes32(0), bytes32(0), true);
+        // Older than all: it links at the list's head and the chain's head.
+        _epochLate(899, keccak256("older-than-all"));
         _attest(899, TINY, 0);
         vm.warp(arrivedAt[64] + 200);
         _staging().prepareStagedDay(_key()); // the restart: the chain from its head
-        assertEq(_rec().lateWorkBase, 70, "the base is the count at opening, still");
-        assertEq(_rec().forcedPages, 2, "the restart's walk of a 71-link chain is two pages of its own");
-        // 136 members and one link since opening: three list pages; the
-        // restart's 71 links: two forced pages of their own (r22) — five.
-        assertEq(_rec().deadline, r.openedAt + 5 days + 3 days, "the deadline grew by the restart's own pages");
+        assertEq(_rec().lateWorkBase, 62, "the base is the count at opening, still");
+        assertEq(_rec().forcedPages, 1, "the restart's walk of a 63-link chain is a page of its own");
+        // 128 members and one link since opening: three list pages; the
+        // restart's 63 links: one forced page of its own (r22) — four.
+        assertEq(_rec().deadline, r.openedAt + 4 days + 3 days, "the deadline grew by the restart's own pages");
         // A SECOND restart — another epoch older than all — restores the
         // walk again, and the deadline grows again (Codex #2308 r10).
         vm.warp(t0 - 3000);
-        _epochOfHinted(898, keccak256("older-than-all-2"), bytes32(0), bytes32(0), true);
+        _epochLate(898, keccak256("older-than-all-2"));
         _attest(898, TINY, 0);
         vm.warp(arrivedAt[64] + 300);
         _staging().prepareStagedDay(_key());
-        assertEq(_rec().forcedPages, 4, "each restart adds the pages of the chain it re-walks");
-        // Three list pages still; 72 links re-walked: two more forced — seven.
-        assertEq(_rec().deadline, r.openedAt + 7 days + 3 days, "the second restart's pages are in the lease too");
+        assertEq(_rec().forcedPages, 2, "each restart adds the pages of the chain it re-walks");
+        // Three list pages still; 64 links re-walked: one more forced — five.
+        assertEq(_rec().deadline, r.openedAt + 5 days + 3 days, "the second restart's pages are in the lease too");
     }
 
     /// @dev Codex #2308 r22 P1 — the lease counts CALLS, not items: a
@@ -1333,7 +1205,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         // ONE older epoch, linked late behind the record's place: a generation
         // move, a chain of one link — far below a page's worth of items.
         vm.warp(arrivedAt[0] - 100);
-        _epochOfHinted(899, keccak256("older-by-one"), bytes32(0), bytes32(0), true);
+        _epochLate(899, keccak256("older-by-one"));
         _attest(899, TINY, 0);
         vm.warp(arrivedAt[WIDE - 1] + 200);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingScanIncomplete.selector, _key()));
@@ -1372,7 +1244,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _mut().closeRewardEntryRaw(bobEntry, 2);
         _mut().userClaimFundingNeedRaw(bob);
         vm.warp(t0 - 2000);
-        _epochOfHinted(899, keccak256("older-than-all"), bytes32(0), bytes32(0), true);
+        _epochLate(899, keccak256("older-than-all"));
         _attest(899, TINY, 0);
         vm.warp(arrivedAt[64] + 200);
         vm.prank(bob);
@@ -1546,9 +1418,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
     // ───────── A2-ii (a): a sweep's wide day is staged like a claim's ─────────
 
     function _epochOnDay(uint256 amount, uint256 d, uint256 remitId, bytes32 id) internal returns (bytes32 h) {
-        _land(amount, _one(d), remitId, id);
-        h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
-        _indexAll(h, _one(d));
+        h = _land(amount, d, remitId, id);
         _attest(remitId, amount, 0);
     }
 
@@ -1957,7 +1827,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         // past the warp, and the restore then warps BACK to the old time.
         uint256 now_ = vm.getBlockTimestamp();
         vm.warp(arrivedAt[0] - 2000 - remitId);
-        h = _epochOfHinted(remitId, id, bytes32(0), bytes32(0), true);
+        h = _epochLate(remitId, id);
         _attest(remitId, TINY, 0);
         vm.warp(now_);
     }

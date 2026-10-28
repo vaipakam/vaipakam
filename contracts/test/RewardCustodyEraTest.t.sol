@@ -25,7 +25,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../src/libraries/LibInteractionRewards.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
-import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
+import {LibD8Delivery} from "./helpers/LibD8Delivery.sol";
 
 /// @title RewardCustodyEraTest — slice 4 PR C-1 (#1566): the custody era
 ///        registry and the carry-forward at a role change.
@@ -380,17 +380,15 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         internal
         returns (bytes32 h)
     {
-        uint256[] memory one = new uint256[](1);
-        one[0] = 1;
         RewardRemittanceFacet(address(diamond)).setRewardRemittanceReceiver(address(this));
         vpfi.mint(address(this), amount);
         vpfi.transfer(address(diamond), amount);
-        (h, ) = LibD6Delivery.deliver(
+        h = LibD8Delivery.deliver(
             address(diamond),
-            LibD6Delivery.Delivery({
+            LibD8Delivery.Delivery({
                 token: address(vpfi),
                 amount: amount,
-                dayIds: one,
+                dayId: 1,
                 sourceChainId: CHAIN_BASE,
                 remitId: remitId,
                 remitter: REMITTER_BF,

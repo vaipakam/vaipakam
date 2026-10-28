@@ -240,33 +240,10 @@ evidence that the migration has completed.
 
 ## Reward delivery proofs and acknowledgements
 
-- Each mirror's current rooted budget deliveries are discovered from fully
-  indexed history and retained as open work. The committed days are rebuilt
-  from the canonical reservation and the days actually funded for that mirror.
-  Both recorded roots must agree before anything is sent. Retired flat-list
-  deliveries are not queued as work.
-- A packet's reservation is read at the source deployment the packet names,
-  rather than whichever source is configured today. Proven chunks are indexed
-  into the delivery's epoch, or proven without an epoch when the delivery
-  arrived before dedicated reward custody was activated. Absence of an epoch
-  is not grounds to discard a current rooted delivery.
-- Calls are simulated first. Sends are ordered and their results checked.
-  A delivery is complete only when a fresh read shows its required indexing
-  or proofs complete, not merely because an admission or proof transaction
-  succeeded. Independently provable chunks can progress despite another
-  chunk's refusal.
-- Per-mirror operations alerts identify deliveries left incomplete by both
-  the scan that discovered them and the following full scan, oldest first.
-  The allowance starts on the keeper's discovery clock, not at chain arrival,
-  so settled-block lag does not consume its working time. Alerts name both
-  arrival and discovery. Partial discovery or reads
-  can raise an alert but cannot clear it; counts are qualified as "at least"
-  when completeness is unknown. Every affected delivery remains in the log
-  even if the chat message cannot hold them all.
-- Contract refusals name the affected delivery, day coverage, and safe
-  reason. Provider timeouts are retried and are not described as contract
-  refusals. Work another caller already completed is not a failure.
-  Network error text must not expose provider credentials.
+- A mirror lands each budget delivery's one day in the transaction the
+  delivery arrives in (#2828), so no indexing or proof is left for anyone to
+  send afterwards, and the keeper has no delivery-proof pass. A day waits
+  only on its own parts arriving.
 - Each canonical remittance records the destination messenger it was bound
   to. Quoting and sending require a known route before any value moves.
   Replacing a receiver behind the same messenger and replacing the messenger
@@ -740,8 +717,7 @@ evidence that the migration has completed.
 
 The master keeper switch and each duty's own arming choice are separate.
 The periodic-interest settler has its own disabled-by-default activation.
-Delivery proofs, late acknowledgements, sanctions observation, reward-day
-automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync and its tier-push retry must each
+Late acknowledgements, sanctions observation, reward-day automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync and its tier-push retry must each
 disclose whether they are armed on the selected deployment. Reward-day
 automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep, its sanctions sync and its tier-push retry ship disabled and require
 deliberate activation. Deploying their software does not prove they run, that rewards have launched, or that custody or the
@@ -750,8 +726,9 @@ required by its reward role, as stated in the current tokenomics spec; it is
 not an optional keeper setting.
 
 Before a claim horizon is enabled, operators must verify timely observations
-on that chain, with the relevant alerts clear. Mirror operation also requires
-timely delivery proofs so funded days do not remain blocked. Reports retain
+on that chain, with the relevant alerts clear. A mirror's funded day lands
+with its delivery (#2828), so mirror operation needs no keeper proof for
+it. Reports retain
 unknowns and partial coverage. An unreadable
 dependency is never turned into an empty queue or a successful run.
 

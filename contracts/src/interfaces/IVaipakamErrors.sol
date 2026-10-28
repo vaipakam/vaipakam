@@ -522,21 +522,22 @@ interface IVaipakamErrors {
     // ─── #1566 transport epochs PR 3a — the day list, the attested split ────
     /// @notice No packet is recorded under this stamp.
     error IngressPacketUnknown(bytes32 packetHash);
-    /// @notice The packet's day-list commitment is already written — it is
-    ///         recorded once, with the record, by the ingress itself.
-    error IngressPacketDayListStamped(bytes32 packetHash);
+    /// @notice #2828 — the packet's day is already stamped: it is recorded
+    ///         once, with the record, by the ingress itself, so a packet names
+    ///         one day for good.
+    error IngressPacketDayAlreadyStamped(bytes32 packetHash);
+    /// @notice #2828 — the packet names no day: an epoch is admitted, and a
+    ///         part counted toward a day, only for a packet whose ingress
+    ///         stamped its day.
+    error IngressPacketDayUnnamed(bytes32 packetHash);
     /// @notice The packet's split is already attested. The first attestation
     ///         is the source's record; a differing second one is a faulty
     ///         source, not a correction.
     error IngressPacketAlreadyAttested(bytes32 packetHash);
     /// @notice No reservation was ever issued under this id.
     error RemitReservationUnknown(uint256 remitId);
-    /// @notice #1566 transport epochs — a chunk materialization's optional
-    ///         `hints` / `lateHints` are not aligned with the chunk's day list
-    ///         (each must be empty or exactly as long). Nothing is written.
-    error TransportDayListMismatch(bytes32 batchId, bytes32 committed, bytes32 supplied);
     /// @notice #1566 transport epochs PR 3b — no batch was admitted under this
-    ///         id. Only a rooted (d6) budget delivery landing on a deployment
+    ///         id. Only a budget delivery landing on a deployment
     ///         whose reward custody is activated opens one, at its own
     ///         landing; a compensation, and a budget delivery that landed
     ///         before activation, never hold one.
@@ -546,10 +547,6 @@ interface IVaipakamErrors {
     ///         what the batch's obligations left, and a second park would
     ///         restate a finished fact.
     error TransportRemainderAlreadyParked(bytes32 batchId);
-    /// @notice #1566 transport epochs PR 3b — the batch's per-day index is not
-    ///         yet whole, so what its obligations may still reach is not yet
-    ///         known and its remainder cannot be parked.
-    error TransportBatchNotFullyIndexed(bytes32 batchId, uint32 indexedDays, uint32 dayCount);
     /// @notice #1566 transport epochs PR 3b — no remainder is parked for this
     ///         batch, so there is nothing to acknowledge.
     error TransportRemainderNotParked(bytes32 batchId);
@@ -583,13 +580,12 @@ interface IVaipakamErrors {
     ///         primitive priced against the same read in the same
     ///         transaction; kept as the assertion that the two agree.
     error TransportDrawExceedsCoverage(uint256 dayId, uint256 requested, uint256 available);
-    /// @dev Indexing this batch into this day without a predecessor hint would
-    ///      walk back past more newer epochs than one call is allowed to; the
-    ///      caller names the predecessor instead (Codex #2276 r7).
+    /// @dev Linking this batch into this day at its admission would walk back
+    ///      past more same-second epochs than one call is allowed to (Codex
+    ///      #2276 r7; #2828). The ingress refuses; the transport records the
+    ///      message as failed, and its re-execution, in a later second, has
+    ///      nothing to walk past.
     error TransportIndexWalkExceeded(bytes32 batchId, uint256 dayId);
-    /// @dev The named predecessor is not in the day's list, or the batch does
-    ///      not belong between it and its successor by (arrival, batch id).
-    error TransportIndexHintInvalid(bytes32 batchId, uint256 dayId, bytes32 hint);
     /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r6) — the unspent
     ///         fresh credit a correction may move with its tokens is bounded
     ///         by the live row net of the outstanding fresh commitments, the
@@ -748,9 +744,9 @@ interface IVaipakamErrors {
     /// @notice #1944 consequence 1 — the caller's next claimable day is
     ///         priced, on this gate-armed mirror, to owe FRESH value that
     ///         Base has not yet been proven to have delivered here. The claim
-    ///         DEFERS, moving no value: it pays once a budget packet proven
-    ///         to list the day has landed (`proveDeliveryDayChunk`, or an
-    ///         indexed transport epoch).
+    ///         DEFERS, moving no value: it pays once every part Base sends
+    ///         for the day has landed here (each budget packet names its day
+    ///         on the wire and is counted at its landing, #2828).
     /// @param dayId The first day the walk parked on for want of delivery.
     error InteractionDayAwaitingDelivery(uint256 dayId);
     /// @notice User attempted to withdraw more VPFI than their vault
@@ -1704,30 +1700,9 @@ interface IVaipakamErrors {
     error ClosureEntryOpen(uint256 dayId, uint256 entryId);
     /// @notice The visited entries' per-day sum exceeds the day's folded side total: the day's records disagree.
     error ClosureConservationExceeded(uint256 dayId, uint8 side, uint256 sum, uint256 total);
-    /// @notice The batch lists a day not yet proven closed: its remainder cannot be parked (3b-ii-B).
+    /// @notice The batch's day is not yet proven closed: its remainder cannot be parked (3b-ii-B).
     error TransportDayNotClosed(bytes32 batchId, uint256 dayId);
-    /// @notice The d6 wire's extent is not one the chain can index: no days, a chunk count that is not the
-    ///         fixed-size chunking of the element count, or more chunks than the index marks (3d-1).
-    error TransportRootExtentInvalid(bytes32 packetHash, uint256 elementCount, uint256 chunkCount);
-    /// @notice The packet carries no day-list root — a compensation (whose flat stamp is provenance
-    ///         only), or a stamp no budget delivery recorded — so it has no chunk to index or prove (3d-1).
-    error TransportBatchNotRooted(bytes32 batchId);
-    /// @notice `chunkIndex` is at or past the committed chunk count (3d-1).
-    error TransportChunkOutOfExtent(bytes32 batchId, uint256 chunkIndex, uint256 chunkCount);
-    /// @notice Chunk `chunkIndex` has already been indexed (3d-1).
-    error TransportChunkAlreadyIndexed(bytes32 batchId, uint256 chunkIndex);
-    /// @notice The supplied chunk is not the committed length for its index (3d-1).
-    error TransportChunkLengthMismatch(bytes32 batchId, uint256 chunkIndex, uint256 expected, uint256 supplied);
-    /// @notice The chunk's leaf does not verify against the packet's day-list root under the supplied proof (3d-1).
-    error TransportChunkProofInvalid(bytes32 batchId, uint256 chunkIndex, bytes32 leaf);
-    /// @notice #1944 c1 — the packet holds a transport batch: its days land through the batch's own index
-    ///         (`materializeTransportBatchChunk`), which is the one fact the delivery gate reads for it.
-    error DeliveryProofRouteIsBatch(bytes32 packetHash);
-    /// @notice #1944 c1 — only a BUDGET packet funds days; any other kind proves no delivery.
-    error DeliveryProofNotBudget(bytes32 packetHash, uint8 kind);
-    /// @notice #1944 c1 — the packet's value was disposed of (returned / released), so it funds no day here.
-    error DeliveryPacketDisposed(bytes32 packetHash, uint256 disposed);
-    /// @notice A d6 delivery needs a split that accounts for the whole delivery: held as its own epoch (3d-1)
+    /// @notice A budget delivery needs a split that accounts for the whole delivery: held as its own epoch (3d-1)
     ///         and, since #2910, on the typed-ledger path before activation too.
     error TransportSplitNotWhole(bytes32 packetHash, uint256 fresh, uint256 recycled, uint256 amount);
     /// @notice The domain under `domainKey` is not in the phase this entry

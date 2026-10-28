@@ -37,21 +37,19 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     /// @notice The credited token is not this Diamond's VPFI token.
     error RewardBudgetTokenMismatch(address expected, address delivered);
 
-    /// @notice 3d-1 / #918 — a d7 (rooted) reward budget landed: what arrived,
-    ///         the commitment and extent it arrived under, the split the wire
-    ///         typed, the era it was dispatched in, and (#918, appended) the
-    ///         part Base declared and the funded day's whole slice. Whether it
-    ///         opened an epoch is {LibRewardCustody.TransportBatchAdmitted}'s
-    ///         fact, as for every other delivery; when the part counts toward
-    ///         its day is {LibRewardCustody.DayDeliveryPartLanded}'s.
+    /// @notice #2828 — a d8 reward budget landed: what arrived, the ONE day it
+    ///         funds, the split the wire typed, the era it was dispatched in,
+    ///         the part Base declared and the funded day's whole slice (#918).
+    ///         Whether it opened an epoch is
+    ///         {LibRewardCustody.TransportBatchAdmitted}'s fact; the part's count
+    ///         toward its day is {LibRewardCustody.DayDeliveryPartLanded}'s, in
+    ///         the same transaction.
     /// @custom:event-category informational/reward-transport
-    event RewardBudgetRootReceived(
+    event RewardBudgetDayReceived(
         uint256 indexed sourceChainId,
         address indexed token,
+        uint256 indexed dayId,
         uint256 amount,
-        bytes32 dayListRoot,
-        uint256 dayCount,
-        uint256 chunkCount,
         uint256 remitId,
         uint256 recycledShare,
         uint256 freshShare,
@@ -62,7 +60,7 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         uint256 dayWholeRecycled
     );
 
-    /// @notice A d7 delivery was stamped for era `intended`, AHEAD of this chain's
+    /// @notice A budget delivery was stamped for era `intended`, AHEAD of this chain's
     ///         live era `live`, and was filed into the live era. A mirror's own
     ///         reports never put the canonical chain ahead of it, so this means
     ///         the Diamond that reported was REPLACED (a new one restarts at era
@@ -72,39 +70,53 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
 
     /**
      * @notice Record a reward budget the {RewardRemittanceReceiver} forwarded
-     *         on the d7 (ROOTED) wire — #1566 transport epochs 3d-1, #918.
-     * @dev    The one accounting path for a rooted delivery on an activated
-     *         custody: the WHOLE delivery becomes its own transport epoch.
-     *         Nothing is credited to the live delivered ledger or the recycle
-     *         bucket at ingress; the wire's split is recorded as the epoch's
-     *         attested caps, the delivery's value sits in the unclassified
-     *         custody row under the packet, and the days the root commits to
-     *         draw it first — under the draw, staging and gate rules every
-     *         other epoch obeys — with only the residual reaching the shared
+     *         on the d8 wire — #1566 transport epochs, #918, #2828.
+     * @dev    The wire names the ONE day the delivery funds (`dayId`), so the
+     *         mirror knows the day at arrival and does everything a day needs
+     *         in this one call: the packet is stamped with its day and its
+     *         part, the part is counted toward the day's delivery gate
+     *         (#1944) on BOTH accounting paths below, and on the epoch path
+     *         the epoch is admitted and linked into the day's index. Nothing a
+     *         later caller supplies is needed before the epoch can be drawn.
+     *
+     *         On an activated custody the WHOLE delivery becomes its own
+     *         transport epoch. Nothing is credited to the live delivered
+     *         ledger or the recycle bucket at ingress; the wire's split is
+     *         recorded as the epoch's attested caps, the delivery's value sits
+     *         in the unclassified custody row under the packet, and the day
+     *         draws it first — under the draw, staging and gate rules every
+     *         epoch obeys — with only the residual reaching the shared
      *         sources. The uncounted figures grow by the whole amount: this
      *         value is in no shared ledger, and the draws step them down as
      *         they type it.
+     *
+     *         The day's index is kept in (arrival, batch id) order. This
+     *         epoch's arrival is this block's timestamp, the newest the day
+     *         can hold, so linking it walks back only past epochs of the same
+     *         day that landed in the same second with a larger id — bounded by
+     *         `LibRewardCustody.TRANSPORT_INDEX_WALK_CAP`. Only a pile-up of
+     *         more same-second deliveries for one day than that cap can make
+     *         the link refuse (`TransportIndexWalkExceeded`); the transport
+     *         then records the message as failed, and its re-execution lands
+     *         in a later second, where there is nothing to walk past.
      *
      *         A wire whose split does not account for the whole delivery is
      *         refused by name, on BOTH paths (#2910): on the epoch path a wei
      *         under no cap would be value no day could draw and no
      *         classification could reach; before activation it would be an
      *         untyped remainder in the uncounted aggregate that nothing could
-     *         classify (the envelope import that once could, for a Diamond
-     *         upgraded in place, is retired with it). The shipped receiver
-     *         always sends a whole split (its fresh share is what arrived less
-     *         the recycled share), so the refusal binds only a wire that
-     *         departs from it.
+     *         classify. The shipped receiver always sends a whole split (its
+     *         fresh share is what arrived less the recycled share), so the
+     *         refusal binds only a wire that departs from it.
      *
      *         Before custody activation the delivery's tokens rest with the
-     *         Diamond and the activation is what assigns them, so a rooted
-     *         delivery then takes the TYPED-LEDGER path — the fresh share
-     *         counted, the recycled one credited to the bucket — and opens no
-     *         epoch (giving it one would leave two records claiming the same
-     *         money, §5c's one-accounting-path rule). Its commitment is still
-     *         stamped, so its days land through
-     *         {RewardEpochFacet.proveDeliveryDayChunk}: a packet's record says
-     *         what it claimed whichever path its value took.
+     *         Diamond and the activation is what assigns them, so a delivery
+     *         then takes the TYPED-LEDGER path — the fresh share counted, the
+     *         recycled one credited to the bucket — and opens no epoch (giving
+     *         it one would leave two records claiming the same money, §5c's
+     *         one-accounting-path rule). Its day and part are still stamped
+     *         and counted: a packet's record says what it claimed whichever
+     *         path its value took.
      *
      *         `intendedEra` is STORED, not validated — PR C's receive rules
      *         read it.
@@ -112,11 +124,9 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
      *         #918 — the delivery may be one PART of its day's slice. The
      *         part as Base DECLARED it (`declaredTotal`, `declaredRecycled`,
      *         before the receiver's short-delivery scaling) and the day's
-     *         WHOLE slice are stamped on the packet here and summed per day
-     *         when its chunk is indexed or proven — the moment the mirror
-     *         learns which day the packet funds — so the #1944 delivery gate
-     *         opens the day only once every part has landed. Nothing is
-     *         written per day here: the day is behind the root.
+     *         WHOLE slice are stamped on the packet and summed into the day
+     *         here, so the delivery gate opens the day only once every part
+     *         has landed.
      *
      *         `transportMessageId` is the transport's message id, as the
      *         adapter delivered it (#1566 closure 2 cutover PR 1): the Diamond
@@ -133,12 +143,10 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
      *         protected at ingress. The receiver's own guardian pause remains
      *         the lever to stop inbound packets at the edge.
      */
-    function onRewardBudgetReceivedD7(
+    function onRewardBudgetReceivedD8(
         address token,
         uint256 amount,
-        bytes32 dayListRoot,
-        uint256 elementCount,
-        uint256 chunkCount,
+        uint256 dayId,
         uint256 sourceChainId,
         uint256 remitId,
         address remitter,
@@ -179,8 +187,10 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             remitter,
             remitId
         );
-        LibRewardCustody.stampPacketDayListRoot(s, h, dayListRoot, elementCount, chunkCount, intendedEra);
-        LibRewardCustody.stampPacketDayPart(s, h, declaredTotal, declaredRecycled, dayWholeFresh, dayWholeRecycled);
+        LibRewardCustody.stampPacketDay(s, h, dayId);
+        LibRewardCustody.stampPacketDayPart(
+            s, h, declaredTotal, declaredRecycled, dayWholeFresh, dayWholeRecycled, intendedEra
+        );
         // The INTENDED ERA — the destination's own, as it last reported it to
         // the canonical chain (#1566 PR C revision) — against the live one.
         // Ahead of us: impossible while this Diamond is the one that reported its
@@ -191,8 +201,8 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // this Diamond has, and says so. The wire's word stays on the packet.
         // Otherwise the delivery belongs to the era it was sent for, a retired
         // one included: it is NOT held inert, its epoch is that era's separately
-        // backed, consumable home, drawn by the obligations of the days it lists
-        // as transport legs, so nothing it carries reaches the live baseline.
+        // backed, consumable home, drawn by the obligations of its day as
+        // transport legs, so nothing it carries reaches the live baseline.
         if (intendedEra > s.custodyEraCurrent) emit CustodyEraAheadFiledLive(h, intendedEra, s.custodyEraCurrent);
         if (freshShare + recycledShare != amount) {
             revert TransportSplitNotWhole(h, freshShare, recycledShare, amount);
@@ -204,7 +214,7 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             LibRewardCustody.attestPacketFromWire(s, h, freshShare, recycledShare);
             s.rewardBudgetFreshUncounted += amount;
             LibRewardCustody.callUnclassifiedIngress(h, amount);
-            LibRewardCustody.admitRootedTransportBatch(s, h, amount);
+            LibRewardCustody.admitTransportBatch(s, h, amount);
         } else {
             if (freshShare != 0) s.rewardBudgetArmedFreshReceived += freshShare;
             LibVpfiRecycle.creditCustodyRelocated(
@@ -213,13 +223,15 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
                 LibVpfiRecycle.RecycleSource.RemittedCustodyRelocation
             );
         }
-        emit RewardBudgetRootReceived(
+        // #918 / #1944 — the part counts toward its day on BOTH paths: the
+        // gate's question is whether Base's send arrived, whichever ledger
+        // took its value.
+        LibRewardCustody.noteDayDeliveryPart(s, h);
+        emit RewardBudgetDayReceived(
             sourceChainId,
             token,
+            dayId,
             amount,
-            dayListRoot,
-            elementCount,
-            chunkCount,
             remitId,
             recycledShare,
             freshShare,
@@ -334,11 +346,11 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
      *         counted + uncounted always reconciles against what Base
      *         sent.
      * @param transportMessageId The transport's message id (#1566 closure 2
-     *         cutover PR 1) — see {onRewardBudgetReceivedD7}; the packet is
+     *         cutover PR 1) — see {onRewardBudgetReceivedD8}; the packet is
      *         recorded under its ingress stamp, and a quarantine lands in
      *         the holder's `Unclassified` row on an activated deployment.
      *         Not `whenNotPaused`, for the migration-mode reason
-     *         {onRewardBudgetReceivedD7} gives.
+     *         {onRewardBudgetReceivedD8} gives.
      */
     function onCompensationBudgetReceived(
         address token,
@@ -382,13 +394,9 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         );
         // #1566 PR C revision — a compensation belongs to the era of its day.
         LibRewardCustody.stampPacketEra(s, h, LibRewardCustody.custodyEraOfDay(s, dayId));
-        {
-            // #1566 transport epochs PR 3a — a compensation names ONE day, and
-            // its packet records that day's flat commitment as provenance.
-            uint256[] memory one = new uint256[](1);
-            one[0] = dayId;
-            LibRewardCustody.stampPacketDayList(s, h, one);
-        }
+        // #2828 — a compensation names ONE day, recorded on its packet as
+        // provenance by the same stamp a budget delivery's day takes.
+        LibRewardCustody.stampPacketDay(s, h, dayId);
         // Receipt exactly as the ordinary ingress records it — written by
         // the packet record above, once per receipt (a second packet for a
         // delivered receipt refuses whole); the ACK path reads that record
