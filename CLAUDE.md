@@ -76,7 +76,7 @@ forge snapshot
 forge coverage
 ```
 
-**Compiler:** Solidity 0.8.29 with `viaIR = true`, optimizer at 200 runs. Fuzz: 1000 runs, invariant: 100 runs.
+**Compiler:** Solidity 0.8.29 with `viaIR = true`, optimizer at 200 runs, EVM target `prague` pinned in every profile (#2973: unpinned, the target followed whichever forge built it). Raise the pin only once every deploy chain runs the newer fork. Fuzz: 1000 runs, invariant: 100 runs.
 
 ## Architecture
 
