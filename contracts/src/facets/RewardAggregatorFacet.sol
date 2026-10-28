@@ -54,8 +54,11 @@ import {RewardRemitDestinationFacet} from "./RewardRemitDestinationFacet.sol";
  *      day: their day figures are dropped while what they say about the chain
  *      still applies, so downstream claim math cannot shift under finalized
  *      consumers. A report from a chain whose reward clock is not Base's is
- *      treated the same way, whenever it lands (#2620). Governance may credit the
- *      missed chain out of the Insurance pool but must not reopen `D`.
+ *      treated the same way, whenever it lands (#2620). Nothing reopens `D`:
+ *      a chain zeroed out of it is made whole, if at all, through the
+ *      zeroed-day compensation path (the admin's evidenced manual budget in
+ *      {RewardCompensationDispatchFacet}), and a zeroed day left
+ *      uncompensated lapses on its bounded clock.
  */
 contract RewardAggregatorFacet is
     DiamondAccessControl,
@@ -65,7 +68,7 @@ contract RewardAggregatorFacet is
 {
     /// @notice Emitted when a mirror's day-`D` report lands on the Base
     ///         aggregator. Useful for monitoring (per-chain coverage)
-    ///         and for replaying missed broadcasts after a LZ outage.
+    ///         and for replaying missed broadcasts after a CCIP lane outage.
     /// @param dayId                 Day being reported.
     /// @param sourceChainId             chainId of the mirror that reported.
     /// @param lenderNumeraire18           Reported lender USD-18 for that chain.
@@ -470,10 +473,12 @@ contract RewardAggregatorFacet is
      * @notice Admin override: force-finalize day `D` even if coverage
      *         is incomplete AND the grace window has not elapsed.
      * @dev ADMIN_ROLE-gated. Exists so a single permanently offline
-     *      chain (LZ outage, endpoint migration, operator downtime)
+     *      chain (CCIP lane outage, lane migration, operator downtime)
      *      cannot brick global finalization forever. Every missing chainId
-     *      contributes zero to the denominator — governance should
-     *      reconcile affected users out of band (e.g. Insurance pool).
+     *      contributes zero to the denominator. Its users are made whole,
+     *      if at all, through the zeroed-day compensation path
+     *      ({RewardCompensationDispatchFacet.remitManualBudget}); an
+     *      uncompensated zeroed day lapses on its bounded clock.
      *
      *      Emits {DayForceFinalized} on top of {DailyGlobalInterestFinalized}
      *      so ops dashboards can distinguish admin overrides from
