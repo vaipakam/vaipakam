@@ -1,6 +1,7 @@
-// apps/keeper/src/rewardDayClose/errors.ts
+// apps/keeper/src/callErrors.ts
 //
-// What a failed call says. The pass's whole rule for errors lives here: a
+// What a failed call says, for every pass that simulates before it sends
+// (the day-close pass and the reward close-out pass): a
 // contract that ANSWERED and refused is a refusal, with its reason; anything
 // else (a transport error, a timeout, an RPC rejection) says nothing about the
 // call, and is never reported as the contract's answer.

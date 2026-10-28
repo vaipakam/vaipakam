@@ -894,7 +894,8 @@ export type PassArmingFlag =
   | 'REWARD_HORIZON_HEARTBEAT_ENABLED'
   | 'REWARD_DAY_CLOSE_ENABLED'
   | 'GRACE_DEFAULT_ENABLED'
-  | 'PERIODIC_SETTLE_ENABLED';
+  | 'PERIODIC_SETTLE_ENABLED'
+  | 'REWARD_CLOSE_OUT_ENABLED';
 
 /**
  * Describe a rejected flag value WITHOUT echoing it.

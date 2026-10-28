@@ -14,7 +14,7 @@ import type { Env } from '../env';
 import { sendOpsNoticeDigest } from '../opsAlert';
 import { ABI, REASON_FINALIZED } from './constants';
 import type { ChainRun } from './deps';
-import { shortErr } from './errors';
+import { shortErr } from '../callErrors';
 import type { Fact } from './fact';
 import { routedOrAbsent } from './reads';
 import type { DayStore, ZeroedRecord } from './store';

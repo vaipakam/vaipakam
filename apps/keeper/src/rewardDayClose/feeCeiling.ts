@@ -18,6 +18,8 @@
 // chain not named. Unset or empty means {@link DEFAULT_MAX_FEE_WEI} on every
 // chain. Wei is a plain decimal integer; `0` pays nothing on that chain.
 
+import type { SendFeeCeiling } from '../stepSender';
+
 /** The ceiling when the variable names neither the chain nor `*`: 0.002 of
  *  the chain's native token. At arming (2026-10-22) the report fee read about
  *  0.00005 ETH on Arbitrum Sepolia and 0.00016 BNB on BNB Testnet, so the
@@ -25,8 +27,9 @@
 export const DEFAULT_MAX_FEE_WEI = 2n * 10n ** 15n;
 export const MAX_FEE_VAR = 'REWARD_DAY_CLOSE_MAX_FEE_WEI';
 
-/** The ceiling for one chain and where it came from, or why it is unknown. */
-export type FeeCeiling = { wei: bigint; from: string } | { unread: string };
+/** The ceiling for one chain and where it came from, or why it is unknown:
+ *  the shape the shared sender enforces. */
+export type FeeCeiling = SendFeeCeiling;
 
 const WEI = /^\d+$/;
 const KEY = /^(\*|\d+)$/;

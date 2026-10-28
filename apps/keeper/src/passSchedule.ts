@@ -46,6 +46,7 @@ import { runRemitAck } from './remitAck';
 import { runGraceDefault } from './graceDefault';
 import { PASS_CADENCE_SEC as PERIODIC_SETTLE_CADENCE_SEC, runPeriodicSettle } from './periodicSettle';
 import { PASS_CADENCE_SEC as DAY_CLOSE_CADENCE_SEC, runRewardDayClose } from './rewardDayClose';
+import { PASS_CADENCE_SEC as CLOSE_OUT_CADENCE_SEC, runRewardCloseOut } from './rewardCloseOut';
 
 /** The UTC hour `dailyOracleSnapshot` acts in, and how long it stays
  *  open — mirroring the window that pass already self-checks against.
@@ -266,6 +267,16 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     offsetMinutes: 10,
     why: 'a reward day closes once a day, then waits on CCIP and a 4 h grace; a quarter-hour keeps each step within minutes of becoming possible (#2612)',
     run: runRewardDayClose,
+  },
+  {
+    name: 'rewardCloseOut',
+    cadenceMinutes: CLOSE_OUT_CADENCE_SEC / 60,
+    // :00/:15/:30/:45 — clear of every staggered pass (the 5-minute ones sit
+    // on :01–:03 modulo 5, the 15-minute ones on :04, :05 and :10 modulo 15,
+    // the hourly ones on :14 and :44).
+    offsetMinutes: 0,
+    why: 'proves finished reward days closed and releases what they held; a day proven closed stays closed, so minutes are not material (#2984)',
+    run: runRewardCloseOut,
   },
 ];
 

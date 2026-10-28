@@ -16,7 +16,7 @@ import { createPublicClient, custom, type PublicClient } from 'viem';
 import { PastRunDeadline } from '../batchRead';
 import { ABI } from './constants';
 import type { DayCloseDeps, PeerReader } from './deps';
-import { shortErr } from './errors';
+import { shortErr } from '../callErrors';
 
 export interface Peers {
   /** The attested reader of chain `id` (null = not served by this keeper). */

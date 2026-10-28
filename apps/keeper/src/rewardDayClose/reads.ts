@@ -11,7 +11,7 @@ import type { Abi, Address, PublicClient } from 'viem';
 import { boundedRead, PastRunDeadline } from '../batchRead';
 import { ABI, B4_QUOTE_ABI, MESSENGER_ABI, NO_SELECTOR, READ_CHUNK, REASON_FINALIZED } from './constants';
 import type { ChainRun, PeerReader } from './deps';
-import { classify, revertName, shortErr } from './errors';
+import { classify, revertName, shortErr } from '../callErrors';
 import { known, unknown, type Fact, type PerDay } from './fact';
 import type { DestinationState } from './plan';
 import type { ReportShape } from './shape';
