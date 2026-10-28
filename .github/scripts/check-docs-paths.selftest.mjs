@@ -37,6 +37,7 @@ const TREE = {
   'docs/ops/a b.md': '',
   'docs/ops/a#b.md': '',
   'docs/ops/a+b.md': '',
+  'docs/ops/guide(v2)': '',
   'docs/ops/exists.md': '',
 };
 
@@ -51,6 +52,8 @@ const CASES = [
   // #1467 r7–r10: extraction shapes that were false alarms under the patterns.
   { name: 'an angle-bracket destination with a space', md: '[x](<a b.md>)', finds: [] },
   { name: 'a percent-escaped destination', md: '[x](a%20b.md)', finds: [] },
+  // #3023 r3: a destination is exact; its trailing punctuation is the name.
+  { name: 'a destination ending in punctuation', md: '[x](guide(v2)) and [y](guide(v3))', finds: ['guide(v3)'] },
   // #3023 r2: an escaped reserved character is part of the file name.
   { name: 'percent-escaped reserved characters in a destination', md: '[x](a%23b.md) [y](a%2Bb.md) [z](a%3Fb.md)', finds: ['a%3Fb.md'] },
   { name: 'a titled destination', md: '[x](exists.md "the title")', finds: [] },

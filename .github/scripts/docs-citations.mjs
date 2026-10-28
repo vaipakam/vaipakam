@@ -132,7 +132,8 @@ function* pathWords(text) {
  * the closed-world rule may read them.
  *
  * @returns {Array<{tok: string, src: string, n: number, line: string, link: boolean, whole: boolean}>} —
- *          `tok` normalised (query, fragment and a trailing `:LINE` removed),
+ *          `tok` normalised (query and fragment removed; for text from code,
+ *          trailing punctuation and a `:LINE` suffix as well),
  *          `src` the site as written, before that normalisation (in a code
  *          span `?` is a glob, not a query, so only `src` still shows it),
  *          `n` 1-based, `link` true for markdown destinations — the one form
@@ -145,10 +146,16 @@ export function citations(file) {
   const out = [];
   const seen = new Set();
   const push = (raw, n, link, whole) => {
+    // A destination is exactly what the parser returned, so the only thing
+    // that is not its path is the query and fragment a renderer drops
+    // (#1467 r1). Trimming trailing punctuation as if it were surrounding
+    // prose would rename a real file: `[x](guide(v2))` names `guide(v2)`
+    // (#3023 r3). Text taken from code keeps the older normalisation:
     // `path:line` is this repo's ordinary citation form, so the suffix is not
-    // part of the name (#1467 r3); query and fragment likewise cannot hide a
-    // stale path behind them (#1467 r1).
-    const tok = raw.replace(/[.,;:)]+$/, '').split('?')[0].split('#')[0].replace(/:(\d+)(-\d+)?$/, '');
+    // part of the name (#1467 r3), and a shell word can carry punctuation.
+    const tok = link
+      ? raw.split('?')[0].split('#')[0]
+      : raw.replace(/[.,;:)]+$/, '').split('?')[0].split('#')[0].replace(/:(\d+)(-\d+)?$/, '');
     if (!tok) return;
     const key = `${tok}\u0000${n}\u0000${link}\u0000${whole}`;
     if (seen.has(key)) return;
