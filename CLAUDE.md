@@ -1790,6 +1790,15 @@ functional specs. Two tiers:
   `apps/app/e2e/live/`, run post-deploy per the live-review DoD and
   as a batch via `e2e/live/run-live-batch.mjs` before testnet releases.
 
+A matrix row is a SUMMARY (#2143, owner decision 2026-10-28): each cell
+holds a sentence or two, at most 600 characters, and the reasoning, round
+history and refusals go in the row's section of
+[`apps/app/e2e/COVERAGE-NOTES.md`](apps/app/e2e/COVERAGE-NOTES.md), linked
+from the cell. The rule exists because the per-PR discipline only ever
+appends, and cells had grown past 60,000 characters; the app's typecheck
+enforces it (`scripts/check-coverage-matrix.ts`), so extend a row's notes
+section rather than its cell.
+
 The non-blocking `app-coverage-drift` workflow warns on merges that
 change `apps/app/src/` without touching the e2e surface. Never park
 live-review tooling in the session scratchpad — commit the drive with
