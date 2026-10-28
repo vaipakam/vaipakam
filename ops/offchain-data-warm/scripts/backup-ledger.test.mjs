@@ -808,7 +808,14 @@ test('a refused upload stops the run; an archive that stays unrecorded for days 
   const r4 = await runWatcher({ env: ENV, now: NOW, fetchImpl, sleep: noSleep });
   assert.equal(r4.unwritten.length, 2); // the October monthly and the daily
   assert.equal(b4.versions('vaipakam-offchain-backup-ledger').length, 0);
-  assert.deepEqual(r4.live, []);
+  // An empty ledger has no clock to age the failure by, so it pages at once,
+  // and keeps paging on later runs while it stays empty.
+  assert.deepEqual(r4.live.flatMap((p) => p.keys), ['ledger-not-started']);
+  const later = await runWatcher({ env: ENV, now: NOW + 3 * DAY, fetchImpl, sleep: noSleep });
+  assert.deepEqual(later.live.flatMap((p) => p.keys).filter((k) => !k.startsWith('missing:')), ['ledger-not-started']);
+  // Once one entry lands, the ledger has its clock and the page clears.
+  const healed = await run(b4);
+  assert.ok(!healed.live.some((p) => p.keys.includes('ledger-not-started')), JSON.stringify(healed.live));
 });
 
 test('the nightly\'s PUT retries a transient B2 failure and gives up on a refusal', async () => {

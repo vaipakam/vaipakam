@@ -428,7 +428,7 @@ const CHECK_TEXT = {
  * nonce in an archive's name is what keeps a leaked write key from replacing
  * it (design §4).
  */
-export function judge({ now, ledger, bucket, lifecycle, baseline, baselineErrors = {}, deferred = [], unwritten = [], renewalFailures = [], manifestRechecks = new Map() }) {
+export function judge({ now, ledger, bucket, lifecycle, baseline, baselineErrors = {}, deferred = [], unwritten = [], ledgerStarted = true, renewalFailures = [], manifestRechecks = new Map() }) {
   const problems = [];
   const notes = [];
   // A problem carries one or more stable keys: the alert re-notifies when the
@@ -566,6 +566,14 @@ export function judge({ now, ledger, bucket, lifecycle, baseline, baselineErrors
   // request has settled. One failure is news for the summary; an archive that
   // has stayed unrecorded past UNRECORDED_PAGE_MS has missed more than one run
   // and pages, so a failure that keeps recurring cannot hide as a note.
+  //
+  // That age is read from the ledger's oldest version. A ledger that still
+  // holds nothing has no such clock, so every run would read the failure as
+  // new: that state pages at once, because until the ledger holds an entry it
+  // protects nothing.
+  if (!ledgerStarted && unwritten.length > 0) {
+    add('ledger-not-started', `Ledger not started: the ledger holds no entry yet and could not record any of ${unwritten.length} archive(s) this run (${unwritten[0].error}). No archive is protected until it can.`);
+  }
   for (const u of unwritten) {
     if (now - (u.recordableSince ?? u.uploaded) > UNRECORDED_PAGE_MS) {
       add(`unrecorded:${u.fileId}`, `Not recorded: the ${u.tier} archive for ${u.period} (${u.fileId}) is still missing from the ledger: ${u.error}.`);

@@ -18,6 +18,9 @@ computed, says in its summary that it was left to the next run, and the next
 day's run, once the first request has long settled, records it if its own
 listing shows it did not land. An archive that stays out of the ledger for
 more than two days after the ledger could first have recorded it pages.
+That age is counted from the ledger's first entry, so a ledger that holds
+nothing yet has no clock: if a run cannot write to an empty ledger, that
+pages at once, because until the ledger holds an entry it protects nothing.
 
 The nightly's key cannot list the bucket, so it cannot make that same check.
 If Backblaze ever stores an upload and still reports an error, the retry

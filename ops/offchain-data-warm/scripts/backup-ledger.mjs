@@ -243,9 +243,13 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
   // 4. Judge from the ledger as it now stands. After a write that is a fresh
   // listing, so the verdict rests on what B2 holds, not on what this run
   // believes it wrote.
+  const ledgerAfter = dryRun ? null : await listAllVersions(ledgerAuth, ledgerBucketId, '', io);
   const listed = dryRun
     ? { recorded: new Map([...ledgerBefore.recorded, ...written.map((r) => [r.fileId, r])]), tampered: ledgerBefore.tampered }
-    : readLedger(await listAllVersions(ledgerAuth, ledgerBucketId, '', io));
+    : readLedger(ledgerAfter);
+  // Whether the ledger holds anything at all. Its oldest version is the clock
+  // an unrecorded archive's age is read from, so an empty ledger has none.
+  const ledgerStarted = dryRun ? ledgerVersions.length > 0 || written.length > 0 : ledgerAfter.length > 0;
   // An entry whose upload failed is still judged, from what this run computed,
   // unless the listing shows the upload landed after all.
   const pending = unwritten.filter((r) => !listed.recorded.has(r.fileId));
@@ -275,6 +279,7 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
     baselineErrors: baselineCheck.byTier,
     deferred,
     unwritten: pending,
+    ledgerStarted,
     renewalFailures,
     manifestRechecks,
   });
