@@ -11,6 +11,7 @@ import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
@@ -570,8 +571,28 @@ contract PeriodicInterestCadenceTest is SetupTest {
         vm.prank(borrower);
         uint256 borrowerOfferId = OfferCreateFacet(address(diamond)).createOffer(b);
         _enableFeature();
+        LibOfferMatch.MatchResult memory r = OfferMatchFacet(address(diamond)).previewMatch(
+            lenderOfferId, borrowerOfferId, address(this), address(this)
+        );
+        assertEq(uint8(r.errorCode), uint8(LibOfferMatch.MatchError.CadenceNotAdmitted));
         vm.expectPartialRevert(IVaipakamErrors.CadenceNotAllowed.selector);
         OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, borrowerOfferId);
+    }
+
+    /// @dev The accept preview reports what loan creation would refuse,
+    ///      before anyone signs, and clears once the switch is back off.
+    function testPreviewAccept_ReportsCadenceRefusal() public {
+        _allowTwoYears();
+        uint256 offerId = _create(_baseLenderParams(1000 ether, 730, NONE_C));
+        OfferAcceptFacet.AcceptPreview memory pv =
+            OfferPreviewFacet(address(diamond)).previewAccept(offerId, borrower);
+        assertEq(uint8(pv.errorCode), uint8(OfferAcceptFacet.AcceptError.None));
+
+        _enableFeature();
+        pv = OfferPreviewFacet(address(diamond)).previewAccept(offerId, borrower);
+        assertEq(uint8(pv.errorCode), uint8(OfferAcceptFacet.AcceptError.CadenceNotAdmitted));
+        vm.expectPartialRevert(IVaipakamErrors.CadenceNotAllowed.selector);
+        OfferPreviewFacet(address(diamond)).requireOriginationCadenceAdmitted(offerId, pv.effectivePrincipal);
     }
 
     /// @dev External hop so `expectRevert` lands on the accept itself rather

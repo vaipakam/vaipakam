@@ -21,6 +21,14 @@ and posts it again. Owner decision 2026-10-28, "Re-check at accept".
 The lender's early-exit sale listing is exempt, as it is at posting: it
 carries the live loan's cadence and opens no new position.
 
+The accept preview and the match preview now report this refusal too, as a
+new "cadence not admitted" reason, so the app and matching bots learn it
+before anyone signs or approves a token. They ask the same check loan
+creation runs, with the same principal, so the preview and the transaction
+cannot disagree. A lender-intent fill needs no new reason: it only ever opens
+a loan of a year or less with no periodic interest, which the rule always
+admits.
+
 > Caveat: liquidity is classified live, so a cadence offer whose collateral
 > turns illiquid after posting is refused at accept for as long as it reads
 > illiquid.

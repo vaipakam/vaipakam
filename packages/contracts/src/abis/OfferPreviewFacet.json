@@ -214,6 +214,24 @@
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "requireOriginationCadenceAdmitted",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "principal",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "view"
+  },
+  {
     "type": "error",
     "name": "CadenceNotAllowed",
     "inputs": [

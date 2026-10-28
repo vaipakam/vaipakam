@@ -22,7 +22,6 @@ import {RiskFacet} from "./RiskFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
-import {LibCadenceAdmission} from "../libraries/LibCadenceAdmission.sol";
 
 
 /**
@@ -518,10 +517,15 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // its liquidity) is refused here with the rule's own error until its
         // creator re-posts it. Every origination from an offer (accept, every
         // match path, intent fills, refinance and offset acceptances) reaches
-        // this point, so this one call covers them all. The lender-sale
+        // this point, so this one call covers them all, and the accept and
+        // match previews ask the same entry for the same answer. The lender-sale
         // vehicle is exempt, as at create: it carries the live loan's cadence
         // and opens no new position.
-        if (!ctx.isLenderSaleVehicle) _requireCadenceAdmitted(s.loans[ctx.loanId]);
+        if (!ctx.isLenderSaleVehicle) {
+            OfferPreviewFacet(address(this)).requireOriginationCadenceAdmitted(
+                ctx.offerId, s.loans[ctx.loanId].principal
+            );
+        }
 
         // Reverse-index the loan for both counterparties. Indexers and
         // frontends rely on these arrays to enumerate a user's loans
@@ -1085,27 +1089,6 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             // matcher stamped by the legacy `_acceptOffer` post-init
             // hook (already in PR3-A).
         }
-    }
-
-    /// @dev #3025 — re-admits the new loan's cadence by the one rule offer
-    ///      creation and mutation apply ({LibCadenceAdmission}, through the
-    ///      same self-call to its single copy on OfferPreviewFacet), on the
-    ///      loan's own terms as just written: the funded principal, the
-    ///      liquidity classes read in this transaction, the live switch and
-    ///      threshold. A refusal reverts the origination unchanged.
-    function _requireCadenceAdmitted(LibVaipakam.Loan storage loan) private view {
-        OfferPreviewFacet(address(this)).requireCadenceAdmitted(
-            LibCadenceAdmission.Terms({
-                lendingAsset: loan.principalAsset,
-                amount: loan.principal,
-                durationDays: uint256(loan.durationDays),
-                cadence: loan.periodicInterestCadence,
-                assetType: loan.assetType,
-                collateralAssetType: loan.collateralAssetType,
-                principalLiquidity: loan.principalLiquidity,
-                collateralLiquidity: loan.collateralLiquidity
-            })
-        );
     }
 
     function _copyAssetFields(
