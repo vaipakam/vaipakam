@@ -1827,14 +1827,11 @@ phase_abi_sync() {
     echo "    (skipping keeper-bot ABI export — sibling repo not at $KEEPER_BOT_DIR_DEFAULT)"
   fi
 
-  # ops/{subgraph,tenderly} exports — best-effort, scoped
-  # to THIS chain. Each is a no-op for chains its target system can't
-  # name.
+  # ops/tenderly export — best-effort, scoped to THIS chain. A no-op
+  # for chains its target system can't name.
   #
-  # The lz-watcher secrets emitter was REMOVED with that Worker (#1440).
-  if [ -d "$REPO_ROOT/ops/subgraph" ]; then
-    bash "$SCRIPT_DIR/exportSubgraphAbis.sh" "$CHAIN_SLUG"
-  fi
+  # The lz-watcher secrets emitter was REMOVED with that Worker (#1440),
+  # and the reference subgraph's ABI export with the subgraph (#2337).
   if [ -d "$REPO_ROOT/ops/tenderly" ]; then
     bash "$SCRIPT_DIR/exportTenderlyAlerts.sh" "$CHAIN_SLUG"
   fi
@@ -1842,7 +1839,7 @@ phase_abi_sync() {
   echo
   echo "Review and commit:"
   echo "  git diff packages/contracts/src/abis/ packages/contracts/src/deployments.json"
-  echo "  git diff ops/subgraph/abis/ ops/subgraph/generated/ ops/tenderly/generated/"
+  echo "  git diff ops/tenderly/generated/"
   if [ -d "$KEEPER_BOT_DIR_DEFAULT" ]; then
     echo "  cd $KEEPER_BOT_DIR_DEFAULT && git diff src/abis/"
   fi

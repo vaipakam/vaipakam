@@ -780,43 +780,43 @@ event VaultRentalUpdated(
     ),
   },
   {
-    id: "integrator-subgraph",
+    id: "integrator-events",
     category: "integrators",
     searchText:
-      "subgraph events loan initiated repaid defaulted liquidated fallback indexer graph thegraph",
+      "events loan status changed initiated repaid partial defaulted fallback indexer index subscribe",
     renderA: () => (
       <>
         <p>
-          <Trans i18nKey="faq.entries.integrator-subgraph.a1" />
+          <Trans i18nKey="faq.entries.integrator-events.a1" />
         </p>
         <ul>
           <li>
             <Trans
-              i18nKey="faq.entries.integrator-subgraph.li1"
+              i18nKey="faq.entries.integrator-events.li1"
               components={{ c: <code /> }}
             />
           </li>
           <li>
             <Trans
-              i18nKey="faq.entries.integrator-subgraph.li2"
+              i18nKey="faq.entries.integrator-events.li2"
               components={{ c: <code /> }}
             />
           </li>
           <li>
             <Trans
-              i18nKey="faq.entries.integrator-subgraph.li3"
+              i18nKey="faq.entries.integrator-events.li3"
               components={{ c: <code /> }}
             />
           </li>
           <li>
             <Trans
-              i18nKey="faq.entries.integrator-subgraph.li4"
+              i18nKey="faq.entries.integrator-events.li4"
               components={{ c: <code /> }}
             />
           </li>
           <li>
             <Trans
-              i18nKey="faq.entries.integrator-subgraph.li5"
+              i18nKey="faq.entries.integrator-events.li5"
               components={{ c: <code /> }}
             />
           </li>

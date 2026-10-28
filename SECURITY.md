@@ -33,7 +33,7 @@ We aim to acknowledge within 24h and provide a remediation ETA within 72h. In-sc
 - the swap adapters under [`contracts/src/adapters/`](contracts/src/adapters/) (Phase 7a `LibSwap` failover)
 - the **Chainlink CCIP** cross-chain surface under [`contracts/src/crosschain/`](contracts/src/crosschain/) (`CcipMessenger`, `VPFIMirrorToken`, `VaipakamRewardMessenger`, `RewardRemittanceReceiver`, `BuybackRemittanceReceiver`, `VpfiReturnSender` / `VpfiReturnReceiver`, `VpfiPoolRateGovernor`, the stock CCIP `LockReleaseTokenPool` / `BurnMintTokenPool` instances)
 - the cross-chain reward mesh (`RewardReporterFacet`, `RewardAggregatorFacet`, `VaipakamRewardMessenger`)
-- the subgraph state-machine guard under [`ops/subgraph/`](ops/subgraph/)
+- the indexer's loan-status check, [`apps/indexer/src/loanLifecycleGuard.ts`](apps/indexer/src/loanLifecycleGuard.ts), and the probe that pages on it
 - the Permit2 integration path (`LibPermit2`)
 
 
@@ -270,18 +270,21 @@ CCIP's security model puts operator-diversity inside the protocol itself (commit
 
 ## State-machine invariants
 
-The protocol enforces one terminal-state invariant for loans, checked both on-chain (by construction — there is no code path that transitions a terminal status) and off-chain by a dedicated subgraph ([`ops/subgraph/`](ops/subgraph/)) that flags any observed violation and increments a global `DriftStats.invalidTransitions` counter.
+A loan's status moves only along one diagram. On-chain, every move goes through one transition check (`LibLifecycle`) that refuses anything else and announces each move it makes as `LoanStatusChanged(loanId, from, to)`. Off-chain, the indexer checks every announced move against the same diagram, independently ([`apps/indexer/src/loanLifecycleGuard.ts`](apps/indexer/src/loanLifecycleGuard.ts), #2337).
 
 ```
-  Unknown ──▶ Active ──┬─▶ Repaid     (terminal)
-                       ├─▶ Defaulted  (terminal)
-                       ├─▶ Liquidated (terminal)
-                       └─▶ FallbackPending ──┬─▶ Repaid
-                                             ├─▶ Defaulted
-                                             └─▶ Liquidated
+(initiation)    → Active
+Active          → Repaid | Defaulted | FallbackPending | InternalMatched
+FallbackPending → Active (cure) | Repaid | Defaulted | InternalMatched
+Repaid          → Settled
+Defaulted       → Settled
+InternalMatched → Settled
+Settled         (final)
 ```
 
-Nothing pages on that counter today: no alert in [`ops/tenderly/`](ops/tenderly/) or elsewhere polls `invalidTransitions` (the gap is tracked in [#2968](https://github.com/vaipakam/vaipakam/issues/2968)), so it has to be read from the subgraph. A non-zero value means either a contract bug or an indexer/contract drift — both require immediate investigation.
+The indexer records three kinds of disagreement: a move the diagram does not list, a move that does not start from the status last announced for that loan, and a second initiation of a loan it is already tracking. A loan first seen part-way through its life (its initiation predates the indexer's records) has its first move checked against the diagram only.
+
+Each recorded disagreement is counted per chain on the indexer's `GET /health/ingest`, and the scheduled probe ([`.github/workflows/ingest-health.yml`](.github/workflows/ingest-health.yml)) opens an alert issue assigned to the operator on any one not yet acknowledged, and posts to the ops chat where that is configured. A disagreement means a contract defect or an indexer that has drifted from the contracts; both require immediate investigation. It stays recorded until an operator acknowledges it in the workflow, in a reviewed commit. This replaced a reference subgraph whose counter nothing paged on (#2968 item 7).
 
 ---
 

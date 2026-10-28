@@ -409,14 +409,14 @@
         "a1": "기초 NFT가 아니라 대여자의 <s>Vaipakam Vault 래퍼</s>를 Diamond 경유로 조회하세요. 동일한 <c>(nftContract, tokenId)</c>에 여러 임차인이 동시에 존재하는 ERC-1155 임대의 경우, <c2>vaultGetNFTQuantity</c2>는 <em>활성 합산</em> 수량을, <c3>vaultGetNFTUserExpires</c3>는 활성 만료 시각의 최솟값을 반환합니다.",
         "a2": "기초 NFT가 ERC-4907을 <s>구현하지 않더라도</s> 래퍼가 권위 있는 임대 상태를 유지하므로, 통합 개발자는 모든 임대 자산에 대해 통일된 인터페이스를 얻을 수 있습니다."
       },
-      "integrator-subgraph": {
+      "integrator-events": {
         "q": "어떤 대출 라이프사이클 이벤트를 인덱싱할 수 있나요?",
-        "a1": "Diamond는 안정적인 라이프사이클 이벤트 집합을 발신하며, 레퍼런스 서브그래프가 이를 인덱싱합니다. 직접 구독하거나 서브그래프에 질의할 수 있습니다.",
-        "li1": "<c>LoanInitiated</c> — 대출 생성, 조건 확정",
-        "li2": "<c>LoanRepaid</c> — 전체 또는 부분 상환 기록",
-        "li3": "<c>LoanDefaulted</c> — 유예 기간 경과, 청구 경로 잠금 해제",
-        "li4": "<c>LoanLiquidated</c> — HF 트리거 DEX 청산 실행",
-        "li5": "<c>LiquidationFallback</c> — DEX 경로 차단; 담보 등가 + 프리미엄 지급"
+        "a1": "대출 상태의 모든 변경은 상태 변경 자체가 발생시키는 하나의 이벤트로 알려집니다. 따라서 이 이벤트 하나만 구독해도 모든 대출을 추적할 수 있습니다. 나머지 이벤트는 개별 단계의 세부 정보를 전달합니다:",
+        "li1": "<c>LoanStatusChanged</c> — 모든 상태 변경. 해당 대출과 이전 상태, 새 상태를 표시합니다",
+        "li2": "<c>LoanInitiated</c> — 대출 생성, 조건 확정",
+        "li3": "<c>LoanRepaid</c> — 대출 전액 상환(부분 상환은 <c>PartialRepaid</c>를 발생시킵니다)",
+        "li4": "<c>LoanDefaulted</c> — 대출이 디폴트로 종료됨",
+        "li5": "<c>LiquidationFallback</c> — 어떤 스왑 경로도 성공하지 못함. 담보는 차입자의 볼트에 남아 대출자의 청구를 위해 잠기며, 차입자는 여전히 대출을 정상화할 수 있습니다"
       }
     }
   },

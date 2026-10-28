@@ -1278,17 +1278,15 @@ else
   echo "    (skipping keeper-bot ABI export — sibling repo not at $KEEPER_BOT_DIR_DEFAULT)"
 fi
 
-# ops/{subgraph,tenderly} exports — best-effort. Each script is a
-# no-op for chains it can't map (Tenderly's per-chain network names,
-# The Graph's network slugs), so testnet rehearsals produce
-# mostly-empty but consistent outputs.
+# ops/tenderly export — best-effort. A no-op for chains it can't map
+# to a network name, so testnet rehearsals produce mostly-empty but
+# consistent outputs.
 #
+# The reference subgraph and its ABI export were REMOVED (#2337): the
+# indexer checks every loan-status move now (loanLifecycleGuard.ts).
 # The lz-watcher secrets emitter was REMOVED with that Worker (#1440):
 # it shelled out to `exportLzWatcherVars.sh`, which no longer exists,
 # and wrote a `wrangler secret put` snippet for a retired Worker.
-if [ -d "$REPO_ROOT/ops/subgraph" ]; then
-  bash "$SCRIPT_DIR/exportSubgraphAbis.sh" "$CHAIN_SLUG"
-fi
 if [ -d "$REPO_ROOT/ops/tenderly" ]; then
   bash "$SCRIPT_DIR/exportTenderlyAlerts.sh" "$CHAIN_SLUG"
 fi

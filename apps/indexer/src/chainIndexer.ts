@@ -61,6 +61,7 @@ import { orphanMoveAffordable, withdrawOrphanLoan } from './loanOrphans';
 // block-pinned read can land on. ONE definition, shared with the repair pass;
 // see the module for why the copy it replaced was a defect (#2190 round 3).
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
+import { recordLoanLifecycle } from './loanLifecycleGuard';
 import {
   quarantineStatements,
   discloseQuarantineReleases,
@@ -2674,6 +2675,12 @@ async function runChainPass(
       client,
       diamond,
     );
+    // #2337 — the independent check on every loan-status announcement in
+    // this block: records any move the status diagram does not allow, for
+    // /health/ingest and the ingest probe. Its own tables only; it never
+    // corrects the `loans` projection above, because healing is exactly what
+    // would hide the drift it reports. See loanLifecycleGuard.ts.
+    await recordLoanLifecycle(env.DB, chainId, logs, blockTimestamps);
     // #1131 Rate Desk phase 3 — signed-offer book lifecycle. Reconciles the
     // off-chain `signed_offers` rows against the on-chain fill/cancel/nonce
     // events. Runs after the offer/loan passes; it touches only its own table.

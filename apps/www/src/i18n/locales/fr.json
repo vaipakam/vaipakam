@@ -409,14 +409,14 @@
         "a1": "Interroger l'<s>enveloppe de vault Vaipakam</s> du prêteur — pas le NFT sous-jacent — via le Diamond. Pour les locations ERC-1155 avec plusieurs locataires concurrents sur le même <c>(nftContract, tokenId)</c>, <c2>vaultGetNFTQuantity</c2> renvoie la quantité <em>agrégée active</em> et <c3>vaultGetNFTUserExpires</c3> renvoie l'expiration active minimale.",
         "a2": "L'enveloppe maintient l'état faisant autorité de la location même lorsque le NFT sous-jacent <s>n'implémente pas</s> ERC-4907, de sorte que les intégrateurs disposent d'une surface uniforme pour tout actif loué."
       },
-      "integrator-subgraph": {
+      "integrator-events": {
         "q": "Quels événements du cycle de vie du prêt puis-je indexer ?",
-        "a1": "Le Diamond émet un ensemble stable d'événements de cycle de vie indexés par le subgraph de référence. Il est possible de s'y abonner directement ou d'interroger le subgraph :",
-        "li1": "<c>LoanInitiated</c> — prêt créé, conditions figées",
-        "li2": "<c>LoanRepaid</c> — remboursement total ou partiel enregistré",
-        "li3": "<c>LoanDefaulted</c> — période de grâce écoulée, voie de réclamation déverrouillée",
-        "li4": "<c>LoanLiquidated</c> — liquidation DEX déclenchée par HF exécutée",
-        "li5": "<c>LiquidationFallback</c> — voie DEX bloquée ; équivalent de garantie + prime versés"
+        "a1": "Chaque changement de statut d'un prêt est annoncé par un seul événement, émis par le changement de statut lui-même : s'abonner à cet événement suffit donc pour suivre chaque prêt. Les autres donnent le détail d'étapes particulières :",
+        "li1": "<c>LoanStatusChanged</c> — chaque changement de statut, avec le prêt, son ancien statut et le nouveau",
+        "li2": "<c>LoanInitiated</c> — prêt créé, conditions fixées",
+        "li3": "<c>LoanRepaid</c> — prêt remboursé en totalité (un remboursement partiel émet <c>PartialRepaid</c>)",
+        "li4": "<c>LoanDefaulted</c> — le prêt s'est terminé en défaut",
+        "li5": "<c>LiquidationFallback</c> — aucune route de swap n'a fonctionné ; la garantie reste dans le coffre de l'emprunteur, bloquée pour la réclamation du prêteur, et l'emprunteur peut encore régulariser le prêt"
       }
     }
   },

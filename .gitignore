@@ -112,21 +112,19 @@ apps/app/public/sitemap.xml
 apps/app/public/robots.txt
 apps/app/public/_headers
 
-# ops/{subgraph,tenderly,lz-watcher} per-chain generated artifacts.
+# ops/{tenderly,lz-watcher} per-chain generated artifacts.
 #
 # These are deploy-time outputs of contracts/script/export*.sh.
-# Each carries a `monorepoCommit` provenance header in its body
-# (subgraph) or as a sibling sidecar (tenderly), so the source of
+# Each carries a `monorepoCommit` provenance sidecar, so the source of
 # truth is the commit hash + the export script — committing the
 # rendered file is redundant and creates a merge conflict on every
 # redeploy (address + startBlock change).
 #
 # What STAYS committed for these surfaces:
-#   - ops/subgraph/subgraph.yaml         the per-chain template
-#   - ops/subgraph/abis/Diamond.json     event-ABI bundle
-#   - ops/subgraph/abis/_source.json     ABI bundle's commit stamp
 #   - ops/tenderly/alerts.yaml           the alert template
-ops/subgraph/generated/
+#
+# (ops/subgraph and its export were removed in #2337; the indexer checks
+# every loan-status move now.)
 ops/tenderly/generated/
 ops/lz-watcher/generated/
 # D1 cutover manifests (#2214). `d1-carry-rows.mjs --mirror --manifest`
