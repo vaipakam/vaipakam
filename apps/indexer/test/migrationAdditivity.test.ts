@@ -36,6 +36,36 @@ describe('migration additivity (#2412)', () => {
     expect(reasons('ALTER TABLE "t" DROP COLUMN "v";')).toEqual(['ALTER TABLE … DROP COLUMN']);
   });
 
+  it('reads a schema-qualified table name before the action (#2988 r1)', () => {
+    for (const name of ['"main"."loans"', 'main.loans', 'main."loans"', '[main].[loans]', 'main . loans']) {
+      expect(reasons(`ALTER TABLE ${name} DROP COLUMN "status";`), name).toEqual([
+        'ALTER TABLE … DROP COLUMN',
+      ]);
+      expect(reasons(`ALTER TABLE ${name} RENAME TO old_loans;`), name).toEqual([
+        'ALTER TABLE … RENAME',
+      ]);
+      expect(reasons(`ALTER TABLE ${name} ADD COLUMN c TEXT NOT NULL;`), name).toEqual([
+        'ADD COLUMN … NOT NULL without a DEFAULT',
+      ]);
+      expect(reasons(`ALTER TABLE ${name} ADD COLUMN c TEXT NOT NULL DEFAULT '';`), name).toEqual([]);
+    }
+  });
+
+  it('treats DEFAULT NULL as no default for a NOT NULL column (#2988 r1)', () => {
+    // SQLite applies these on an EMPTY table, and an INSERT from the code
+    // already serving, which omits the column, then fails the constraint.
+    for (const def of ['DEFAULT NULL', 'DEFAULT (NULL)', 'DEFAULT ((null))']) {
+      expect(reasons(`ALTER TABLE t ADD COLUMN c INTEGER NOT NULL ${def};`), def).toEqual([
+        'ADD COLUMN … NOT NULL without a DEFAULT',
+      ]);
+    }
+    // A nullable column may default to NULL; a real default satisfies NOT NULL.
+    expect(reasons('ALTER TABLE t ADD COLUMN c INTEGER DEFAULT NULL;')).toEqual([]);
+    for (const def of ['DEFAULT 0', 'DEFAULT -1', "DEFAULT 'x'", 'DEFAULT (0)', 'DEFAULT CURRENT_TIMESTAMP']) {
+      expect(reasons(`ALTER TABLE t ADD COLUMN c INTEGER NOT NULL ${def};`), def).toEqual([]);
+    }
+  });
+
   it('does not read comments or string literals as statements', () => {
     expect(
       reasons(`

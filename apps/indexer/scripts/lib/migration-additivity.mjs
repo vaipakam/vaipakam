@@ -15,7 +15,8 @@
  *   - `ALTER TABLE … DROP COLUMN`      — same, for one column.
  *   - `ALTER TABLE … RENAME …`         — renaming a table or a column is a
  *                                         drop of the old name to every reader.
- *   - `ALTER TABLE … ADD COLUMN … NOT NULL` with no `DEFAULT` — an INSERT from
+ *   - `ALTER TABLE … ADD COLUMN … NOT NULL` with no `DEFAULT` (or with
+ *     `DEFAULT NULL`, which is none) — an INSERT from
  *                                         code that predates the column fails.
  *                                         (SQLite refuses this outright on a
  *                                         table with rows; on an empty table it
@@ -116,21 +117,56 @@ export function statements(sql) {
 }
 
 /**
+ * A normalized statement as tokens: words (identifiers, keywords, numbers,
+ * and the `Q` placeholder a quoted identifier became), the empty string
+ * literal `''`, and single punctuation characters.
+ * @param {string} stmt
+ * @returns {string[]}
+ */
+export function tokens(stmt) {
+  return stmt.match(/''|[A-Z0-9_$]+|[^\sA-Z0-9_$]/g) ?? [];
+}
+
+/**
  * Why a statement is destructive, or null when it is additive.
+ *
+ * Read as tokens, not matched as text (#2988 r1): `ALTER TABLE` names its
+ * table as `[schema .] table`, and a regex that takes one word for the name
+ * read `"main"."loans" DROP COLUMN …` as a table called `Q` with the action
+ * `. Q DROP …`, which matched nothing. The name is consumed by its grammar
+ * first, so the action is always the word after it.
  * @param {string} stmt one entry of {@link statements}
  * @returns {string | null}
  */
 export function destructiveReason(stmt) {
-  if (/^DROP TABLE\b/.test(stmt)) return 'DROP TABLE';
-  const alter = /^ALTER TABLE \S+ (.*)$/.exec(stmt);
-  if (!alter) return null;
-  const action = alter[1];
-  if (/^DROP\b/.test(action)) return 'ALTER TABLE … DROP COLUMN';
-  if (/^RENAME\b/.test(action)) return 'ALTER TABLE … RENAME';
-  if (/^ADD\b/.test(action) && /\bNOT NULL\b/.test(action) && !/\bDEFAULT\b/.test(action)) {
+  const t = tokens(stmt);
+  if (t[0] === 'DROP' && t[1] === 'TABLE') return 'DROP TABLE';
+  if (t[0] !== 'ALTER' || t[1] !== 'TABLE') return null;
+  // `ALTER TABLE name` or `ALTER TABLE schema . name`.
+  const action = t.slice(t[3] === '.' ? 5 : 3);
+  if (action[0] === 'DROP') return 'ALTER TABLE … DROP COLUMN';
+  if (action[0] === 'RENAME') return 'ALTER TABLE … RENAME';
+  if (action[0] === 'ADD' && requiredWithoutDefault(action)) {
     return 'ADD COLUMN … NOT NULL without a DEFAULT';
   }
   return null;
+}
+
+/**
+ * A column definition that is `NOT NULL` with no default an INSERT could
+ * fall back on. `DEFAULT NULL` (or `DEFAULT (NULL)`) is no default for a
+ * `NOT NULL` column (#2988 r1): SQLite accepts it on an empty table, and an
+ * INSERT from code that predates the column then fails the constraint.
+ * @param {string[]} def the action's tokens, from `ADD`
+ */
+function requiredWithoutDefault(def) {
+  const notNull = def.some((tok, i) => tok === 'NOT' && def[i + 1] === 'NULL');
+  if (!notNull) return false;
+  const at = def.indexOf('DEFAULT');
+  if (at === -1) return true;
+  let value = at + 1;
+  while (def[value] === '(') value++;
+  return def[value] === undefined || def[value] === 'NULL';
 }
 
 /**
