@@ -200,8 +200,9 @@ export function BatchRefinancePanel({
     const reviewed = new Map(
       plans.filter((p): p is ReadyPlan => p.kind === 'ready').map((p) => [p.loanId, p]),
     );
-    // The late re-check refuses a loan whose bound grew, so these totals
-    // only shrink between here and each send.
+    // The late re-check refuses a loan whose bound or spare amount grew,
+    // so every loan sent needs at most what these totals checked and
+    // approved.
     const totals = refinanceTotals([...reviewed.values()]);
     const approvals = totals.map((t) => ({ token: t.token, tracker: trackApproval() }));
     const unwindClients = {

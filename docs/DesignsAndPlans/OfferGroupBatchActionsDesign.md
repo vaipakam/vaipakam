@@ -288,7 +288,10 @@ acceptance can leave another short, which each loan's pending card
 already reports. The approval is set back only when it is established
 that no request was posted; a pending or unreadable outcome keeps it,
 since a request a lender may accept needs it. The late re-check refuses
-a loan whose bound grew, so the approved sum only ever covers.
+a loan whose bound or spare amount grew, so the checked balance and the
+approved sum only ever cover. The spare amount needs its own test: in
+the grace window it grows with each day's late fee while the bound stays
+fixed at the grace end.
 
 **Posted is read from the transaction's own logs.** Each request emits
 `OfferCreatedDetails` carrying the loan it refinances, and a reverted
@@ -314,8 +317,8 @@ re-check, a changed statement leaving a loan out, and the read-back
 (listed only from the logs, pending never read as not listed). Slice 3:
 the request plan's refusals and figures, the guardrail write planned only
 when the caps fall short and always right before its request, the late
-re-check leaving out a loan whose bound grew or whose statements
-changed, the 15-loan send size, per-token totals, and the read-back
+re-check leaving out a loan whose bound or spare amount grew or whose
+statements changed, the 15-loan send size, per-token totals, and the read-back
 (posted only from this wallet's logs, pending for every loan behind a
 pending send, the approval set back only when nothing was posted).
 CI-Anvil (a

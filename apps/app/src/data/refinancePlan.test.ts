@@ -5,8 +5,8 @@
  * that matter for the batch: a loan the chain would refuse is left out
  * with the reason, a read that fails is THAT loan's refusal, the guardrail
  * write is planned only when the caps do not cover the request, and the
- * late re-check leaves out a loan whose bound grew or whose statements
- * changed.
+ * late re-check leaves out a loan whose bound or spare amount grew or
+ * whose statements changed.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PublicClient } from 'viem';
@@ -289,6 +289,17 @@ describe('planRefinanceForBatch', () => {
       kind: 'ready',
     });
     reads.approval = 1_020_000n;
+    expect(await planRefinanceForBatch(ctx, LOAN, TERMS, FEES, reviewed)).toMatchObject({
+      kind: 'refused',
+      reason: copy.batchRefinance.changedSinceReview,
+    });
+  });
+
+  it('leaves out a loan whose spare amount grew while its bound held', async () => {
+    // In grace the bound is fixed at the grace end while the payoff, and
+    // so the spare amount, grows with each day's late fee.
+    const reviewed = (await planRefinanceForBatch(ctx, LOAN, TERMS, FEES)) as Ready;
+    reads.payoff = reads.payoff + 5_000n;
     expect(await planRefinanceForBatch(ctx, LOAN, TERMS, FEES, reviewed)).toMatchObject({
       kind: 'refused',
       reason: copy.batchRefinance.changedSinceReview,

@@ -23,7 +23,8 @@ refinance request on the same token. Where a loan's guardrails need
 writing, the write goes in the same transaction right before its request,
 so a request is never posted without them. Every loan is checked again in
 full right before its transaction is sent, and one whose largest payoff
-grew is left out.
+or spare amount grew is left out, so no request is posted needing more
+than the balance that was checked.
 
 Which loans got a request is taken from the transaction's own record: a
 request posted (with its offer number, which the loan's page then shows and

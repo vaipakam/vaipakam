@@ -2006,8 +2006,10 @@ Thin-market honesty rules apply.
   loans. Each request runs as the borrower, with its own checks, and a request
   that fails is skipped while the others are posted. Immediately before each
   transaction every loan in it is checked again in full; a loan whose largest
-  possible payoff grew, or whose statements changed, since the review is left
-  out and named.
+  possible payoff grew, whose spare amount grew (in the grace window it grows
+  with each day's late fee), or whose statements changed, since the review is
+  left out and named. So every request sent needs no more than the balance
+  that was checked and the approval that was granted.
 - Which loans got a request is established from the chain, never assumed: a
   loan is reported as having a request, with its offer number, only when that
   transaction itself posted it. Otherwise it is reported as no request with the

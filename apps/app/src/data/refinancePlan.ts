@@ -371,10 +371,15 @@ export type RefinanceBatchPlan = (RefinanceRequestReady & { notes: string[] }) |
  * Every read failure is that loan's refusal, never the batch's.
  *
  * With a `reviewed` plan it is the late re-check before a send: a loan
- * whose approval bound grew past the one reviewed, or whose statements
- * changed (it went past due, its request would now end at the grace
- * end), is left out rather than posted on terms the borrower did not
- * see. A bound that shrank is fine: the pull only gets smaller.
+ * whose approval bound or spare amount grew past the one reviewed, or
+ * whose statements changed (it went past due, its request would now end
+ * at the grace end), is left out rather than posted on terms the
+ * borrower did not see. The reviewed figures are what the balance check
+ * and the approval were sized on, so a loan is sent only while its
+ * figures are at most those: in grace the spare amount grows with each
+ * day's late fee while the bound stays fixed at the grace end, and a
+ * request sent on a grown spare amount could be posted already unfunded.
+ * A figure that shrank is fine: the pull only gets smaller.
  */
 export async function planRefinanceForBatch(
   ctx: RefinanceCtx,
@@ -397,7 +402,9 @@ export async function planRefinanceForBatch(
     const notes = refinanceNotes(plan);
     if (
       reviewed &&
-      (notes.join('\n') !== reviewed.notes.join('\n') || plan.approval > reviewed.approval)
+      (notes.join('\n') !== reviewed.notes.join('\n') ||
+        plan.approval > reviewed.approval ||
+        plan.topUp > reviewed.topUp)
     ) {
       return refusal(loan.loanId, copy.batchRefinance.changedSinceReview);
     }
