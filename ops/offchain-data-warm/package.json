@@ -12,7 +12,9 @@
     "bucket:lifecycle:check": "node scripts/apply-bucket-lifecycle.mjs --check",
     "bucket:lifecycle:print": "node scripts/apply-bucket-lifecycle.mjs --print-live",
     "bucket:lifecycle:apply": "node scripts/apply-bucket-lifecycle.mjs --apply",
-    "archive:baselines": "node scripts/find-archive-baselines.mjs"
+    "archive:baselines": "node scripts/find-archive-baselines.mjs",
+    "backup:ledger": "node scripts/backup-ledger.mjs",
+    "backup:ledger:setup": "node scripts/setup-backup-ledger.mjs"
   },
   "dependencies": {},
   "devDependencies": {
