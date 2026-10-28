@@ -354,17 +354,28 @@ the owner's decision and follows [`KeeperMachine.md`](KeeperMachine.md) §5 step
 sudo systemctl try-restart vaipakam-keeper
 ```
 
-Optional tuning vars: `REWARD_REMIT_LOOKBACK_DAYS` (default 45) and
-`REWARD_REMIT_LANE_CAP` (wei, default `50000e18`). Since #918 the cap is a
-ceiling on each **part**, not a filter: every tick the pass sizes its part to
-the smaller of this cap and the Base lane bucket's live tokens
-(`getRemitLaneBucket`), and a day larger than that is sent over several ticks
-instead of being skipped. A tick that sends a part which leaves its day owing
-logs `partial:` and does not count the mirror as covered. A drained bucket logs
-`lane bucket empty` and sends nothing that tick. **Caveat:** the keeper only
-re-scans the last `REWARD_REMIT_LOOKBACK_DAYS`, so a day still owing parts is
-auto-continued only while it is inside that window; past it, widen the window or
-finish it with the manual §2b procedure.
+Optional tuning vars: `REWARD_REMIT_LOOKBACK_DAYS` (default 45),
+`REWARD_REMIT_LANE_CAP` (wei, default `50000e18`) and `REWARD_REMIT_MIN_PART`
+(wei, default `1000e18`). Since #918 the cap is a ceiling on each **part**, not
+a filter: every tick the pass sizes its part to the smallest of this cap, the
+Base lane bucket's live tokens (`getRemitLaneBucket`) and, since #2960, the
+mirror's inbound lane capacity from Base (`getRemitInboundLaneBucket`, read on
+the mirror's own RPC), and a day larger than that is sent over several ticks
+instead of being skipped. The mirror's end is bounded by its CAPACITY, not its
+live tokens: a part above the capacity could never execute there, while its
+bucket is drawn only at execution, after any part still in flight. An end the
+pass could not read (no mirror RPC configured, a Diamond deployed before #2960)
+is named in a warning and does not size the part. A part that would leave its
+day owing waits, below `REWARD_REMIT_MIN_PART`, for the bucket to refill; a part
+that completes its day is always sent. A tick that sends a part which leaves its
+day owing logs `partial:` and does not count the mirror as covered. A drained
+bucket logs `lane bucket empty` and sends nothing that tick. Since #2960 a day
+still owing parts is continued whatever its age: Base lists every partly sent
+day (`getRemitOpenDays`), the pass prepends the ones older than its scan and logs
+`continuing N partly sent day(s)`. On a Diamond deployed before #2960 the list
+is not routed, the pass warns `open-day list unread` every tick, and a partly
+sent day older than `REWARD_REMIT_LOOKBACK_DAYS` must be continued by widening
+the window or with the manual §2b procedure, as before.
 
 **To disable in an incident** (e.g. a misconfigured lane, or to hand back to
 manual control): set `REWARD_REMIT_ENABLED=false` (leaves the rest of the keeper

@@ -132,6 +132,8 @@ interface BaseEnv {
   REWARD_REMIT_LOOKBACK_DAYS?: string;
   /** per-send VPFI ceiling in wei — perRemittanceCap + batch bound (default 50000e18, matches the on-chain lane default). */
   REWARD_REMIT_LANE_CAP?: string;
+  /** #2960 — smallest part (wei) that may leave its day owing (default 1000e18; a completing part is exempt). */
+  REWARD_REMIT_MIN_PART?: string;
 
   // #1222 M3 B2-d1 — mirror→Base commitment-report pass knobs.
   /** 'true' arms the commitment-report pass (in addition to KEEPER_ENABLED; the keeper EOA needs on-chain KEEPER_ROLE). */
@@ -324,6 +326,7 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_REMIT_ENABLED',
   'REWARD_REMIT_LOOKBACK_DAYS',
   'REWARD_REMIT_LANE_CAP',
+  'REWARD_REMIT_MIN_PART',
   'REWARD_COMMIT_ENABLED',
   'REWARD_DELIVERY_PROOF_ENABLED',
   'REWARD_SANCTIONS_KEEPER_ENABLED',
@@ -493,6 +496,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_REMIT_ENABLED: raw.REWARD_REMIT_ENABLED,
     REWARD_REMIT_LOOKBACK_DAYS: raw.REWARD_REMIT_LOOKBACK_DAYS,
     REWARD_REMIT_LANE_CAP: raw.REWARD_REMIT_LANE_CAP,
+    REWARD_REMIT_MIN_PART: raw.REWARD_REMIT_MIN_PART,
     REWARD_COMMIT_ENABLED: raw.REWARD_COMMIT_ENABLED,
     REWARD_DELIVERY_PROOF_ENABLED: raw.REWARD_DELIVERY_PROOF_ENABLED,
     REWARD_SANCTIONS_KEEPER_ENABLED: raw.REWARD_SANCTIONS_KEEPER_ENABLED,
