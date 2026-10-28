@@ -53,6 +53,7 @@ import {
 } from '../lib/format';
 import { AmountPrecisionHint } from './AmountPrecisionHint';
 import { ConfirmReceipt } from './ConfirmReceipt';
+import { useReviewConsent } from '../hooks/useReviewConsent';
 import type { TokenMeta } from '../contracts/erc20';
 
 /** Headroom reserved between the offset's replacement maturity and the
@@ -160,13 +161,12 @@ export function OffsetFlow({
       ? exactAmountString(live.collateralAmount, collateralMeta.decimals)
       : '',
   );
-  const [consent, setConsent] = useState(false);
-
-  // Any term edit voids a previously ticked acknowledgement — the
-  // page-wide consent rule (consent covers exactly what was reviewed).
+  // A term edit closes the open review and withdraws its consent as the
+  // user's own act, so the "figures moved" notice below stays for changes
+  // the user did not make (#1696).
   function setTerm(setter: (v: string) => void, value: string) {
+    consent.clear();
     setter(value);
-    setConsent(false);
     onCloseConfirm();
   }
 
@@ -202,35 +202,34 @@ export function OffsetFlow({
   const completionBound = offsetCompletionBoundOf(live);
   const completionStr = `${formatTokenAmountExact(completionBound, dec)} ${sym}`;
 
-  // The consent rule covers the FIGURES too — the live-loan prop
-  // refreshes in the background, and a tick given against old numbers
-  // must not survive.
+  // Consent covers exactly what was reviewed (#1696): the terms the user
+  // set and the FIGURES, which the live-loan prop refreshes in the
+  // background. Keyed on the values rather than on their formatted text,
+  // and cleared in the same render they change: a passive effect would
+  // clear only after the commit that already painted the new figures, and a
+  // click in that frame would send `consent: true` for figures the user never
+  // reviewed. The submit-time guard below does NOT catch that, because it
+  // compares the freshly read bound against `completionBound`, which by then
+  // is also the new value.
   //
-  // Done as a render-phase adjustment, NOT an effect, and the difference is
-  // load-bearing rather than stylistic (#1520). A passive effect clears the tick
-  // only AFTER the commit that already painted the new figures, so one painted
-  // frame shows refreshed numbers with the box still ticked. A click in that
-  // frame sends `consent: true` for figures the user never reviewed — and the
-  // submit-time guard below does NOT catch it, because that guard compares the
-  // freshly read bound against `completionBound`, which by then is ALSO the new
-  // value, so it passes. Adjusting during render makes React re-render before
-  // committing, so no frame is ever painted with new figures and a stale tick.
-  const figuresKey = `${principalStr}|${completionStr}`;
-  const [consentFigures, setConsentFigures] = useState(figuresKey);
-  // Clearing SILENTLY reads as a glitch — the box the user just ticked
-  // unticks itself with no stated cause, and the figures refresh on a timer,
-  // so it can happen repeatedly while they read. `EarlyExitFlow` hit the same
-  // thing on its drifting payout review and settled it the same way ("Closing
-  // silently reads as a glitch, so a visible notice explains it"); this
-  // follows that precedent rather than inventing a second answer. Latched only
-  // when consent was actually ticked, so an untouched card stays quiet, and
-  // cleared the moment the user re-ticks against the current figures.
-  const [figuresMoved, setFiguresMoved] = useState(false);
-  if (consentFigures !== figuresKey) {
-    setConsentFigures(figuresKey);
-    if (consent) setFiguresMoved(true);
-    setConsent(false);
-  }
+  // A clear the user did not cause is explained (`withdrawnByChange`), the
+  // precedent `EarlyExitFlow` set on its drifting payout review: a box that
+  // unticks itself with no stated cause reads as a glitch, and the figures
+  // refresh on a timer.
+  const consent = useReviewConsent([
+    row.loanId,
+    live.principal,
+    completionBound,
+    rateBps,
+    durationDays,
+    collateralWei,
+    principalMeta.symbol,
+    principalMeta.decimals,
+    collateralMeta?.symbol,
+    collateralMeta?.decimals,
+    address,
+    walletChain?.chainId,
+  ]);
 
   async function submit() {
     // The offset IS a createOffer — same kill switch as the direct
@@ -480,7 +479,7 @@ export function OffsetFlow({
         BigInt(durationDays),
         liveLoan.collateralAsset,
         collateralWei,
-        consent,
+        consent.given,
         liveLoan.prepayAsset,
       ]);
       const created = parseEventLogs({
@@ -491,8 +490,7 @@ export function OffsetFlow({
       const offerId = created[0]?.args.newOfferId;
       if (offerId !== undefined) onPosted(offerId.toString());
       setDone(copy.offset.done);
-      setConsent(false);
-      setFiguresMoved(false);
+      consent.clear();
       onCloseConfirm();
       void queryClient.invalidateQueries({ queryKey: ['offsetPending'] });
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
@@ -619,17 +617,14 @@ export function OffsetFlow({
           <label className="cluster" style={{ marginBottom: 12, alignItems: 'flex-start' }}>
             <input
               type="checkbox"
-              checked={consent}
+              checked={consent.given}
               disabled={busy}
-              onChange={(e) => {
-                setConsent(e.target.checked);
-                if (e.target.checked) setFiguresMoved(false);
-              }}
+              onChange={(e) => consent.set(e.target.checked)}
               style={{ marginTop: 4 }}
             />
             <span>{copy.offset.consentLabel}</span>
           </label>
-          {figuresMoved ? (
+          {consent.withdrawnByChange ? (
             <div className="banner banner-info" role="status" style={{ marginBottom: 12 }}>
               <span className="banner-body">{copy.offset.figuresMoved}</span>
             </div>
@@ -639,7 +634,7 @@ export function OffsetFlow({
             confirmLabel={copy.offset.confirm}
             onBack={onCloseConfirm}
             onConfirm={() => void submit()}
-            disabled={!walletReady || !consent || flowDisabled('post-offer')}
+            disabled={!walletReady || !consent.given || flowDisabled('post-offer')}
             data={{
               youReceive: copy.offset.receiptReceive,
               youLock: copy.offset.receiptLock(principalStr),

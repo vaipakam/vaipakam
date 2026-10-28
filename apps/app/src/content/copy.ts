@@ -1175,6 +1175,9 @@ const copySource = {
     mid: ' and ',
     terms: 'Vaipakam Terms',
     suffix: '.',
+    // #1696 — beneath the box when a change to the review unticked it.
+    withdrawn:
+      'What you are reviewing changed after you ticked this, so the acknowledgement cleared. Check the review again and tick it to confirm against what is shown now.',
   },
 
   // #2725 — the lifecycle terms every accept signature binds, shown on every

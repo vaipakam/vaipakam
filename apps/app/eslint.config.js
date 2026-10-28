@@ -93,9 +93,10 @@ const BLOCKING_HOOKS = {
   // local state on an identity change a `key` cannot express, one seeds a
   // field the user owns immediately after, one persists a read-cursor to
   // localStorage, and one resolves a deep link. Each carries a disable
-  // naming which of those it is. The ninth is `Rent`'s consent clear, whose
-  // suppression is meant to be temporary — #1696 decides whether it becomes
-  // a render-phase clear, and it is the ONLY one that should ever come back.
+  // naming which of those it is. The ninth was `Rent`'s consent clear, and
+  // #1696 retired it: every signing review's consent is now keyed on the
+  // values it covers and withdrawn in render (`hooks/useReviewConsent`), so
+  // a consent clear never needs an effect again.
   // Erroring is what makes that distinction hold: a new violation is now a
   // deliberate, argued exception rather than one more warning in a list.
   'react-hooks/set-state-in-effect': 'error',

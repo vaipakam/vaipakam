@@ -550,7 +550,8 @@
       "risk": "Risikohinweise",
       "mid": " und ",
       "terms": "Vaipakam-Bedingungen",
-      "suffix": "."
+      "suffix": ".",
+      "withdrawn": "Was Sie prüfen, hat sich geändert, nachdem Sie dies angehakt hatten, daher wurde die Bestätigung zurückgesetzt. Prüfen Sie die Übersicht erneut und setzen Sie das Häkchen, um das jetzt Angezeigte zu bestätigen."
     },
     "match": {
       "borrowTitle": "Kreditgeber, die jetzt finanzieren können",

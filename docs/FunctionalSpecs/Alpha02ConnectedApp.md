@@ -1498,6 +1498,18 @@ Consent is collected against the terms actually shown. If a material term,
 warning, selected offer, selected listing, or disclosed risk changes after
 consent, consent is cleared and the user is told to review again.
 
+Every review that collects consent follows this one rule, the same way. The
+consent is tied to the values the review shows, not to how they are printed,
+so two different figures that happen to print alike still count as a change.
+The tick clears in the same update that shows the change, and a review that
+changes and then changes back does not get the consent back: the user ticks
+again against what is on screen. When a change the user did not make clears
+a tick they gave, a line beneath the box says so; clearing it themselves, or
+completing the action, shows no such line. A change that only stops signing
+for the moment, without changing anything that would be signed (a Full
+tariff quote that cannot complete right now), leaves the consent in place,
+and signing stays refused while it holds.
+
 Selecting another offer also resets its Full-tariff choice. Offset funding
 figures and a listing's lifecycle, network, or ownership changes invalidate
 their acknowledgements in the same update as the displayed change. If an

@@ -550,7 +550,8 @@
       "risk": "Avisos de riesgo",
       "mid": " y los ",
       "terms": "Términos de Vaipakam",
-      "suffix": "."
+      "suffix": ".",
+      "withdrawn": "Lo que estás revisando cambió después de que marcaras esta casilla, así que la confirmación se ha borrado. Vuelve a revisarlo y márcala para confirmar lo que se muestra ahora."
     },
     "match": {
       "borrowTitle": "Prestamistas listos para financiarte ahora",
