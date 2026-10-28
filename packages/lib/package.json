@@ -168,6 +168,10 @@
     "./originAllowList": {
       "types": "./src/originAllowList.ts",
       "default": "./src/originAllowList.ts"
+    },
+    "./rpcProxyPolicy": {
+      "types": "./src/rpcProxyPolicy.ts",
+      "default": "./src/rpcProxyPolicy.ts"
     }
   },
   "scripts": {

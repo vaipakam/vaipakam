@@ -1141,6 +1141,9 @@ jobs:
       - name: Typecheck — apps/agent
         run: pnpm --filter @vaipakam/agent typecheck
 
+      - name: Typecheck — apps/rpc-proxy
+        run: pnpm --filter @vaipakam/rpc-proxy typecheck
+
       - name: Typecheck — apps/www
         run: pnpm --filter @vaipakam/www typecheck
 

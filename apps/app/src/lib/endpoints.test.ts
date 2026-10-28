@@ -20,6 +20,8 @@ import {
   policyConnectSources,
 } from '@vaipakam/lib/cspConnectSources';
 import deployments from '@vaipakam/contracts/deployments.json';
+import { RPC_PROXY_CHAINS, RPC_PROXY_MAX_LOG_RANGE_BLOCKS } from '@vaipakam/lib/rpcProxyPolicy';
+import BOOK_CATCH_UP_RULES from '../data/bookCatchUpRules.json';
 import {
   COINBASE_SOURCES,
   COINGECKO_API_BASE,
@@ -29,12 +31,18 @@ import {
   WALLETCONNECT_SOURCES,
   agentOrigin,
   connectSources,
-  ensMainnetRpcUrl,
+  ensMainnetRpcEndpoints,
   indexerOrigin,
   indexerWsOrigin,
-  rpcUrlFor,
+  isMainnetChain,
+  rpcConfigProblems,
+  rpcEndpointsFor,
+  rpcProxyOrigin,
   wsUrlFor,
 } from './endpoints';
+
+/** A chain's first HTTP endpoint: the one a read tries first. */
+const rpcUrlFor = (chainId: number, env: Record<string, string>) => rpcEndpointsFor(chainId, env)[0].url;
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const headersBase = readFileSync(resolve(appDir, 'public', '_headers.base'), 'utf8');
@@ -79,9 +87,61 @@ describe('the resolver', () => {
     expect(() => rpcUrlFor(5, {})).toThrow(/no RPC configuration/);
   });
 
+  it('reads through the proxy, then the public default, once a proxy origin is set (#1724)', () => {
+    const env = { VITE_RPC_PROXY_ORIGIN: 'https://rpc.vaipakam.com/' };
+    expect(rpcProxyOrigin(env)).toBe('https://rpc.vaipakam.com');
+    expect(rpcEndpointsFor(84532, env)).toEqual([
+      { url: 'https://rpc.vaipakam.com/rpc/84532', viaProxy: true },
+      { url: 'https://sepolia.base.org', viaProxy: false },
+    ]);
+    expect(rpcEndpointsFor(84532, {})).toEqual([{ url: 'https://sepolia.base.org', viaProxy: false }]);
+    // The proxy forwards no socket, so the live layer polls.
+    expect(wsUrlFor(84532, { ...env, VITE_BASE_SEPOLIA_WSS_URL: 'wss://k.example/key' })).toBeUndefined();
+    // ENS reads chain 1 through the proxy too, with both public endpoints behind it.
+    expect(ensMainnetRpcEndpoints(env).map((e) => e.url)).toEqual([
+      'https://rpc.vaipakam.com/rpc/1',
+      'https://ethereum-rpc.publicnode.com',
+      ENS_FALLBACK_RPC_URL,
+    ]);
+  });
+
   it('has RPC configuration for every chain the deployments bundle carries', () => {
     expect(deployedChainIds.length).toBeGreaterThan(0);
     for (const id of deployedChainIds) expect(RPC_CHAIN_IDS).toContain(id);
+  });
+});
+
+describe('the RPC build guard (#1724)', () => {
+  const PROXY = { VITE_RPC_PROXY_ORIGIN: 'https://rpc.vaipakam.com' };
+
+  it('passes a direct testnet build and a proxied build with no provider URL', () => {
+    expect(rpcConfigProblems(PROD_ENV, [84532, 421614, 97])).toEqual([]);
+    expect(rpcConfigProblems(PROXY, [84532, 8453])).toEqual([]);
+  });
+
+  it('refuses a provider URL or socket left set beside the proxy, naming each', () => {
+    const problems = rpcConfigProblems(
+      { ...PROXY, VITE_BASE_SEPOLIA_RPC_URL: 'https://k.example/key', VITE_ETHEREUM_WSS_URL: 'wss://k.example/key' },
+      [84532],
+    );
+    expect(problems).toHaveLength(2);
+    expect(problems.join('\n')).toMatch(/VITE_BASE_SEPOLIA_RPC_URL/);
+    expect(problems.join('\n')).toMatch(/VITE_ETHEREUM_WSS_URL/);
+    expect(rpcConfigProblems({ ...PROXY, VITE_BASE_SEPOLIA_RPC_URL: '  ' }, [84532])).toEqual([]);
+  });
+
+  it('refuses a build serving a mainnet without the proxy, keys or not', () => {
+    expect(rpcConfigProblems({}, [84532, 8453])).toEqual([expect.stringMatching(/chain 8453 is a mainnet/)]);
+    expect(rpcConfigProblems({}, [84532])).toEqual([]);
+  });
+
+  it('marks exactly the five Phase-1 mainnets as mainnet', () => {
+    expect(RPC_CHAIN_IDS.filter(isMainnetChain).sort((a, b) => a - b)).toEqual([1, 10, 56, 8453, 42161]);
+  });
+
+  it('agrees with the proxy on which chains it serves and how wide a log scan may be', () => {
+    expect(Object.keys(RPC_PROXY_CHAINS).map(Number).sort()).toEqual([...RPC_CHAIN_IDS].sort());
+    expect(BOOK_CATCH_UP_RULES.chunkBlocks).toBeLessThanOrEqual(RPC_PROXY_MAX_LOG_RANGE_BLOCKS);
   });
 });
 
@@ -97,8 +157,7 @@ describe('the connect-src list', () => {
       'https://agent.vaipakam.com',
       ...deployedChainIds.map((id) => connectSource(rpcUrlFor(id, PROD_ENV))),
       'wss://base-sepolia.example.org',
-      connectSource(ensMainnetRpcUrl(PROD_ENV)),
-      connectSource(ENS_FALLBACK_RPC_URL),
+      ...ensMainnetRpcEndpoints(PROD_ENV).map((e) => connectSource(e.url)),
       GOPLUS_ORIGIN,
       connectSource(COINGECKO_API_BASE),
       ...WALLETCONNECT_SOURCES.map((s) => s.source),
@@ -113,6 +172,14 @@ describe('the connect-src list', () => {
     expect(got).not.toContain('https://agent.vaipakam.com');
     for (const s of WALLETCONNECT_SOURCES) expect(got).not.toContain(s.source);
     for (const s of COINBASE_SOURCES) expect(got).toContain(s.source);
+  });
+
+  it('names the proxy and the public fallbacks, and no provider host, through the proxy', () => {
+    const got = origins({ ...PROD_ENV, VITE_BASE_SEPOLIA_RPC_URL: '', VITE_BASE_SEPOLIA_WSS_URL: '', VITE_RPC_PROXY_ORIGIN: 'https://rpc.vaipakam.com' });
+    expect(got).toContain('https://rpc.vaipakam.com');
+    expect(got).toContain('https://sepolia.base.org');
+    expect(got).not.toContain('https://base-sepolia.example.org');
+    expect(got).not.toContain('wss://base-sepolia.example.org');
   });
 
   it('reads ENS through chain 1 itself once chain 1 is deployed', () => {

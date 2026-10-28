@@ -1,0 +1,14 @@
+## Thread — A read-only RPC proxy keeps provider keys out of the app bundle (PR #<n>)
+
+The connected app reads chain state from the visitor's browser, and a build that wanted a keyed provider endpoint used to put its URL in a `VITE_*` variable. Vite compiles the whole build environment into the bundle, so that key was public to anyone who opened the page, whether or not the app ever used it. A new Worker, the read-only RPC proxy, holds each chain's provider URL as a secret instead. A build that names the proxy's origin ships that origin and no key.
+
+The proxy forwards reads only: contract calls, gas estimates, block, transaction, receipt, balance, code, storage, nonce and fee reads, and event-log queries that name their contracts and cover at most 2,000 blocks. It never forwards a transaction, a signature or a subscription. It serves only the app's origins, takes a per-caller rate-limit slot for every request, answers a disallowed call with its own error while the rest of the batch goes through, and never puts the key in a response or a log, including inside an upstream's error message. Its keys are dedicated to it, so browser traffic cannot spend the quota the keeper needs to act on a loan in time. The first request per chain also confirms that the upstream answers for that chain, so a mis-pointed secret is refused rather than served.
+
+In the app, a build with `VITE_RPC_PROXY_ORIGIN` set reads each chain through the proxy and falls back to the chain's public endpoint when the proxy is down, over budget or refuses a call. Its batches stay within the proxy's cap. It opens no WebSocket, because the proxy forwards none, so new blocks are found by polling. The build now refuses two configurations: a per-chain RPC or WebSocket URL left set beside the proxy (it would ship unused, key and all), and a build serving a mainnet chain without the proxy. A build that sets neither the proxy nor a mainnet chain behaves exactly as before. Whether a chain carries real value is now stated once, beside its RPC configuration, and the chain list reads it from there.
+
+The proxy is off by default. Nothing deploys it on merge and no build points at it yet. It runs on Workers Paid at mainnet (owner decision on #1724), and that is now a line in the mainnet readiness checklist. Until then, a keyed testnet endpoint should be restricted to the app's origins in the provider's dashboard. The proxy's README covers turning it on and what it does and does not protect: the Origin check stops other sites' pages, not scripts, and the rate limit is counted per Cloudflare location.
+
+Closes #1724.
+
+> Caveat: a proxied build has no WebSocket, so on-page updates after a transaction arrive on the next block poll rather than at once.
+> Caveat: the proxy is not deployed; a live drive against it is owed when it first is.
