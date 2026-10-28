@@ -27,7 +27,7 @@ divergence audit below.
 | Doc family | Question it answers | Genre |
 | --- | --- | --- |
 | `docs/FunctionalSpecs/` (this folder) | "What is the platform **meant** to do?" | Specification — the test oracle |
-| `docs/internal/FunctionalSpecsCodeVsDocsAudit.md` | "Where does the **code** diverge from the spec?" | Divergence findings |
+| `docs/procedures/FunctionalSpecsCodeVsDocsAudit.md` | "Where does the **code** diverge from the spec?" | Divergence findings |
 | `docs/ReleaseNotes/` | "What **changed**, in which PR, and why?" | Change history |
 | `docs/DesignsAndPlans/` | "What did we **consider**, and why this choice?" | Design exploration |
 
@@ -76,7 +76,7 @@ them is how the platform finds **buggy code** (build ≠ intent) and
 - Code behaviour is derived **on demand** for the audit — by reading the
   contracts at audit time. It is **not** kept as a second maintained
   corpus (that would just drift; the code is always there to read).
-- The [internal divergence audit](../internal/FunctionalSpecsCodeVsDocsAudit.md) records **only the conflicts** — one entry per
+- The [divergence audit](../procedures/FunctionalSpecsCodeVsDocsAudit.md) records **only the conflicts** — one entry per
   divergence: the behaviour, what the code does, what the spec says, the
   `ReleaseNotes` recency check, a verdict (**code bug** / **stale doc** /
   **ambiguous**), and a proposed fix. Reviewed case-by-case.
@@ -84,7 +84,7 @@ them is how the platform finds **buggy code** (build ≠ intent) and
 The former [_CodeVsDocsAudit.md](_CodeVsDocsAudit.md) is a compatibility
 index, so existing section links still lead to their preserved audit records.
 Implementation guidance and historical test inventories are kept in
-[internal implementation notes](../internal/FunctionalSpecImplementationNotes.md),
+[implementation notes](../procedures/FunctionalSpecImplementationNotes.md),
 separate from functional requirements. Moving evidence does not resolve a
 finding or endorse an observed behavior.
 

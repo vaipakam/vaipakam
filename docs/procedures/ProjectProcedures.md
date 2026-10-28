@@ -92,10 +92,24 @@ anything committed is published, and git history keeps it after a
 deletion. Questionnaires and due-diligence replies sent to vendors on
 Vaipakam's behalf carry business detail (legal entity, jurisdiction,
 volumes, contacts) that has no reason to be public; they live in the
-private project files, not under `docs/internal/`. Identifiers that a
-deploy needs in committed config, such as the secrets-store ID every
-`wrangler.jsonc` binds, are not secrets and stay; what protects them is
-the scope of the API tokens, which never enter the repo.
+private project files. Identifiers that a deploy needs in committed
+config, such as the secrets-store ID every `wrangler.jsonc` binds, are
+not secrets and stay; what protects them is the scope of the API tokens,
+which never enter the repo.
+
+**`docs/internal/` is private as a whole (#2764).** The folder is
+git-ignored and nothing in it is tracked: it holds the owner's working
+notes, dated scouts and audits, questionnaires, screenshots and security
+notes, on the owner's machine and in the private project files. A
+document that contributors, auditors or a fresh-clone agent need goes
+under `docs/` elsewhere — this handbook, the code-vs-docs divergence
+record and the functional-spec implementation notes moved to
+`docs/procedures/` for that reason. Files committed under
+`docs/internal/` before the rule are still in git history; untracking
+them stops publishing them, it does not recall what was already public.
+A `docs/internal/` path cited elsewhere (an older design doc, a code
+comment, a release note) names a private record, not a file in the
+repo.
 
 ---
 
@@ -644,7 +658,7 @@ Discipline rules learned mid-iteration get saved to agent memory under
 the agent doesn't lose them across sessions. That memory is invisible
 to operators, contributors, and auditors who only read this handbook.
 The **iteration kickoff sync** closes the gap by folding agent-memory
-rules into `docs/internal/ProjectProcedures.md` (this file) every
+rules into `docs/procedures/ProjectProcedures.md` (this file) every
 iteration boundary.
 
 **Cadence — iteration begin, not end.** The ritual happens Monday
@@ -1343,14 +1357,15 @@ to a decision. Listed by category.
 
 ### 12.2 Files / paths to NOT touch
 
-- **`docs/internal/RoughNotes.md` is user-owned** and gitignored on
-  purpose — local-only scratch space for ideas / questions /
+- **`docs/internal/RoughNotes.md` is user-owned** and, like the whole
+  `docs/internal/` folder, gitignored on purpose — local-only scratch space for ideas / questions /
   half-formed plans. AI never edits it. The file won't appear in the
   repo on GitHub even though it's referenced in agent context.
 
 - **`docs/internal/PendingTasks-yyyy-mm-dd.md` is retired** (replaced
   by the `@vaipakam-labs` Project as live tracker). The latest file
-  in that series is a frozen historical breadcrumb — read-only.
+  in that series is a frozen historical breadcrumb — read-only, and
+  private since #2764 (it lives with the rest of `docs/internal/`).
 
 - **`docs/ToDo.md`** carries the user-facing ET-### follow-up list.
   Closed items stay ticked for audit history; open ones get promoted
@@ -1696,8 +1711,10 @@ to a decision. Listed by category.
 Local-only / gitignored references (not in the repo on GitHub but
 present on the project owner's working tree):
 
-- `docs/internal/RoughNotes.md` — user's free-form scratch space
-  (gitignored on purpose, untouched by AI by convention)
+- `docs/internal/` — the owner's private folder (#2764): working
+  notes, dated scouts and audits, questionnaires and security notes,
+  including `RoughNotes.md`, the user's free-form scratch space
+  (untouched by AI by convention)
 - `graphify-out/` — graphify pipeline output + the cross-layer
   helper, recreated per machine
 

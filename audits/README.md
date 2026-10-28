@@ -69,7 +69,7 @@ project board under the `audit` label.
 
 Start with:
 
-1. [`docs/internal/ProjectProcedures.md`](../docs/internal/ProjectProcedures.md)
+1. [`docs/procedures/ProjectProcedures.md`](../docs/procedures/ProjectProcedures.md)
    — the operator handbook. Section 12 carries the "conventions worth
    knowing" list.
 2. [`docs/FunctionalSpecs/README.md`](../docs/FunctionalSpecs/README.md)

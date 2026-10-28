@@ -7,7 +7,7 @@ The living documentation for Vaipakam. Different audiences land in different sub
 | You want… | Read |
 |---|---|
 | **The canonical technical whitepaper** | [`apps/www/src/content/whitepaper/Whitepaper.en.md`](../apps/www/src/content/whitepaper/Whitepaper.en.md) (lives in `apps/www`, not here — it's the file the website renders) |
-| **Operator-side conventions** — git procedures, PR workflow, CI gates, branch protection, project-board discipline, release notes + functional specs, milestones, the operator-handbook surface | [`docs/internal/ProjectProcedures.md`](internal/ProjectProcedures.md) |
+| **Operator-side conventions** — git procedures, PR workflow, CI gates, branch protection, project-board discipline, release notes + functional specs, milestones, the operator-handbook surface | [`docs/procedures/ProjectProcedures.md`](procedures/ProjectProcedures.md) |
 | **Architectural decision rationale** — WHY a specific load-bearing choice was made (Diamond, no-KYC retail, CCIP migration, depth-tiered LTV, …) | [`docs/adr/`](adr/) — 9 ADRs + a template |
 | **Domain terminology** | [`docs/GLOSSARY.md`](GLOSSARY.md) |
 | **The code-independent intended-behaviour specification** | [`docs/FunctionalSpecs/`](FunctionalSpecs/) — the test oracle; sourced from documents, never transcribed from contract code (per ADR-0007) |
@@ -36,10 +36,10 @@ docs/
 │   ├── README.md
 │   ├── unreleased/              ← per-PR fragments waiting to be folded
 │   └── ReleaseNotes-YYYY-MM-DD.md
-├── internal/                    ← operator handbook + planning notes
+├── procedures/                  ← operator handbook + spec audit records
 │   ├── ProjectProcedures.md     ← the load-bearing handbook
-│   ├── PinnedIssueDrafts.md     ← Pinned Issue bodies (source for live Issues)
-│   └── …
+│   ├── FunctionalSpecsCodeVsDocsAudit.md   ← code-vs-spec divergence record
+│   └── FunctionalSpecImplementationNotes.md ← implementation notes split off the specs
 └── ops/                         ← incident + operations docs
     ├── IncidentRunbook.md
     └── AdminKeysAndPause.md
@@ -49,8 +49,8 @@ docs/
 
 Three orthogonal axes, each with its own update cadence:
 
-1. **Release notes** — every behaviour-changing PR carries a fragment under `ReleaseNotes/unreleased/`; folded into the dated file at end-of-day via `bash docs/ReleaseNotes/assemble.sh`. See [`ProjectProcedures.md` §6.1](internal/ProjectProcedures.md).
-2. **FunctionalSpecs** — every behaviour-changing PR also updates the relevant `docs/FunctionalSpecs/<domain>.md` in the same diff. **Specs are sourced from documents, never transcribed from code** (ADR-0007). See [`ProjectProcedures.md` §6.3](internal/ProjectProcedures.md).
+1. **Release notes** — every behaviour-changing PR carries a fragment under `ReleaseNotes/unreleased/`; folded into the dated file at end-of-day via `bash docs/ReleaseNotes/assemble.sh`. See [`ProjectProcedures.md` §6.1](procedures/ProjectProcedures.md).
+2. **FunctionalSpecs** — every behaviour-changing PR also updates the relevant `docs/FunctionalSpecs/<domain>.md` in the same diff. **Specs are sourced from documents, never transcribed from code** (ADR-0007). See [`ProjectProcedures.md` §6.3](procedures/ProjectProcedures.md).
 3. **ADRs** — appended when a load-bearing architectural decision is ratified. Never edit a past ADR; supersede via a new one. See [`adr/README.md`](adr/README.md).
 
 A CI drift-check (`.github/workflows/release-notes-drift.yml`) warns on merges that change `contracts/src/` or `apps/` but touch neither release-notes nor FunctionalSpecs. Non-blocking — the drift surfaces in the Actions tab.
@@ -63,7 +63,7 @@ Read in this order:
 2. [`adr/`](adr/) — 9 decision records covering the load-bearing choices.
 3. [`FunctionalSpecs/`](FunctionalSpecs/) — the intent specification (the test oracle).
 4. [`FunctionalSpecs/_CodeVsDocsAudit.md`](FunctionalSpecs/_CodeVsDocsAudit.md) — code-vs-spec divergences open for triage.
-5. [`internal/ProjectProcedures.md`](internal/ProjectProcedures.md) — operator handbook (12 sections + 5 subsections in §6).
+5. [`procedures/ProjectProcedures.md`](procedures/ProjectProcedures.md) — operator handbook (12 sections + 5 subsections in §6).
 6. [`../SECURITY.md`](../SECURITY.md) + [`ops/IncidentRunbook.md`](ops/IncidentRunbook.md) — security posture.
 
 The [`../audits/`](../audits/) directory carries finalized audit deliverables when they exist; pre-engagement findings flow through the `audit_finding` Issue template under [`../.github/ISSUE_TEMPLATE/`](../.github/ISSUE_TEMPLATE/).

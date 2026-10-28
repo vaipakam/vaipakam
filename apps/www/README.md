@@ -51,7 +51,7 @@ No on-chain test surface — by design.
 ## Architecture
 
 - Stage 4 source-tree refactor (labs → www): [`docs/DesignsAndPlans/Stage3WorkerSplitPlan.md`](../../docs/DesignsAndPlans/Stage3WorkerSplitPlan.md).
-- Whitepaper authoring + sync: [`docs/internal/ProjectProcedures.md` §6.5](../../docs/internal/ProjectProcedures.md).
+- Whitepaper authoring + sync: [`docs/procedures/ProjectProcedures.md` §6.5](../../docs/procedures/ProjectProcedures.md).
 - Cloudflare static-assets deploy shape: same as `apps/app`, dependency-trimmed.
 
 ## Configuration
