@@ -1,4 +1,4 @@
-## Thread — Analytics shows the VPFI token and fee figures again (PR #<n>)
+## Thread — Analytics shows the VPFI token and fee figures again (PR #3038)
 
 The public analytics page has a new section, "Read from the contract", which brings back the two parts of the old dashboard that were lost when the previous app was removed: the VPFI token's figures and the protocol's fee figures. Unlike the rest of the page, these do not come from the indexer. They are read straight from the protocol contract's own public view functions, all at one block, and the section names those functions, states the block and says how old the reading is, so a visitor can check every figure against the chain themselves.
 
