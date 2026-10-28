@@ -196,12 +196,6 @@ contract RewardCompensationDispatchFacet is
         if (LibRemitDayLedger.hasLedger(s, dstChainId, dayId)) {
             revert RemitDayPartlySent(dayId, dstChainId);
         }
-        // #2963 — a day of a chain Base took off its expected-source list is
-        // never sent to it again, by this path either: the chain's users lose
-        // it, and nothing of the 69M pool is spent on it.
-        if (LibRemitDayLedger.isAbandoned(s, dstChainId, dayId)) {
-            revert RemitDayAbandoned(dayId, dstChainId);
-        }
         address vpfi = s.vpfiToken;
         if (vpfi == address(0)) revert VPFITokenNotSet();
         address messenger = s.crossChainMessenger;
@@ -837,6 +831,15 @@ contract RewardCompensationDispatchFacet is
         uint256 borrowerAmount18,
         LibRewardCustody.TransportSource source
     ) private returns (bytes32 messageId) {
+        // #2963 — a day of a chain Base took off its expected-source list is
+        // never sent to it again: the chain's users lose it, and nothing of
+        // the 69M pool is spent on it. Refused HERE, at the one sender of the
+        // compensation wire, so the manual dispatch, the supplemental top-up
+        // and their recovery-funded variants all share the rule (the
+        // ordinary wire refuses the day in `LibRemitDayLedger.planDay`).
+        if (LibRemitDayLedger.isAbandoned(s, dstChainId, dayId)) {
+            revert RemitDayAbandoned(dayId, dstChainId);
+        }
         LibVaipakam.DayLapseClock storage c = s.dayLapseClock[dayId];
         // Codex #1634 r1 — ALL FOUR frozen clock words ride the wire, not
         // just the timestamp + version number: w1 chose inline schedule

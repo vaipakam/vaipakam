@@ -419,6 +419,22 @@ contract RewardRemitDestinationRemovalTest is SetupTest {
         comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 2, 2e18, 2e18);
     }
 
+    /// A top-up of a compensation the mirror acknowledged before the removal
+    /// is refused too, though the day's closure and funded record survive
+    /// the removal: every compensation send is refused at the one sender of
+    /// that wire.
+    function test_Supplemental_RefusesAnAbandonedDay() public {
+        _finalizeThrough(4);
+        mutator.setChainDayRemitIneligibleRaw(2, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 2, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 2, 2e18, 1e18);
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 3e18);
+        _warpToDay(4);
+        agg.setExpectedSourceChainIds(_listNoArb());
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RemitDayAbandoned.selector, 2, CHAIN_ARB));
+        comp.remitSupplementalBudget{value: 0.01 ether}(CHAIN_ARB, 2, 1e18, 1e18);
+    }
+
     /// The list-change hook is a Diamond self-call only.
     function test_Hook_IsDiamondInternal() public {
         vm.expectRevert(
