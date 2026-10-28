@@ -59,7 +59,12 @@ import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
  *           `open-b`  Verify `IM_LOAN_A` live (Active, parties, assets).
  *                     tLIQ to `IM_P1_E8`; open B (NEW_LENDER / NEW_BORROWER)
  *                     mirroring A's LIVE principal and collateral; tLIQ to
- *                     `IM_P2_E8`, where both legs sit at the same LTV.
+ *                     p2. Mirrored legs share one LTV at exactly one price,
+ *                     the one where A's collateral is worth A's principal
+ *                     (both legs at 100%, up to accrued interest), and p2
+ *                     defaults to that price, derived from A's live terms
+ *                     (#2458). `IM_P2_E8` overrides it; the legs then sit at
+ *                     different LTVs, and the stage says so and prints both.
  *                     Ends at p2 with matching still OFF.
  *           `match`   Verify `IM_LOAN_A` and `IM_LOAN_B` live. Matching ON,
  *                     `triggerInternalMatchLiquidation(A, B, 0)`, matching
@@ -188,7 +193,6 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
             newBorrowerKey: vm.envUint("NEW_BORROWER_PRIVATE_KEY")
         });
         RepriceTarget memory t = _resolveTarget("liquidToken");
-        address mUsdc = _resolveTarget("liquidToken2").asset;
         string memory stage = vm.envString("IM_STAGE");
         bytes32 s = keccak256(bytes(stage));
         // `restore` keeps every wiring check (code, live registry/factory
@@ -198,13 +202,21 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         if (s == keccak256("restore")) _preflightWiring(t, vm.addr(a.deployerKey));
         else _preflight(t, vm.addr(a.deployerKey));
         console.log("=== Base Sepolia internal-match scenario (#2427), stage:", stage);
-        console.log("Diamond / tLIQ / mUSDC:", t.diamond, t.asset, mUsdc);
+        console.log("Diamond / tLIQ:", t.diamond, t.asset);
         _logMatchConfig(t.diamond);
 
+        // `restore` only puts tLIQ's surfaces back and never touches mUSDC,
+        // so it does not resolve it: a deployment artifact missing the mUSDC
+        // entries must not stop the stage that undoes the price move (#2458).
+        if (s == keccak256("restore")) {
+            _stageRestore(t, a);
+            return;
+        }
+        address mUsdc = _resolveTarget("liquidToken2").asset;
+        console.log("mUSDC:", mUsdc);
         if (s == keccak256("open-a")) _stageOpenA(t, a, mUsdc);
         else if (s == keccak256("open-b")) _stageOpenB(t, a, mUsdc);
         else if (s == keccak256("match")) _stageMatch(t, a, mUsdc);
-        else if (s == keccak256("restore")) _stageRestore(t, a);
         else revert("BaseSepoliaInternalMatch: IM_STAGE must be open-a, open-b, match, restore or disable");
     }
 
@@ -249,12 +261,21 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         _requireMatchingOff(t.diamond);
         _reprice(t, a.deployerKey, vm.envOr("IM_P1_E8", uint256(8_000e8)), loanA, 0);
         // B mirrors A's LIVE terms: principal = A's collateral, collateral =
-        // A's principal, so at p2 = sqrt(p0 * p1) both legs sit at one LTV.
+        // A's principal. The two LTVs then multiply to one at every price, so
+        // they are equal only where both are 100%: the price at which A's
+        // collateral is worth A's principal. That is p2's default, derived
+        // from A's live terms rather than from the configured p0 (#2458).
         uint256 loanB = _openLoan(
             t.diamond, a.newLenderKey, a.newBorrowerKey, mUsdc, la.collateralAmount, t.asset, la.principal, _rate()
         );
         _logLoan("B (predicted id - read LoanInitiated from the receipt)", t.diamond, loanB);
-        _reprice(t, a.deployerKey, vm.envOr("IM_P2_E8", uint256(4_000e8)), loanA, loanB);
+        uint256 equalLtvPrice8 = _equalLtvPrice8(t.diamond, t.asset, la.principal, mUsdc, la.collateralAmount);
+        uint256 p2 = vm.envOr("IM_P2_E8", equalLtvPrice8);
+        console.log("equal-LTV price for these legs (e8):", equalLtvPrice8);
+        if (p2 != equalLtvPrice8) {
+            console.log("IM_P2_E8 overrides it, so the two legs sit at DIFFERENT LTVs (both printed below).");
+        }
+        _reprice(t, a.deployerKey, p2, loanA, loanB);
         _logLoan("A @p2", t.diamond, loanA);
         _logLoan("B @p2", t.diamond, loanB);
         // Enforced, not only logged: a p2 that leaves either leg under its
@@ -510,6 +531,22 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         uint256 lendDec = IERC20Metadata(lendAsset).decimals();
         uint256 collDec = IERC20Metadata(collAsset).decimals();
         return (principal * lendPrice8 * 2 * 10 ** collDec) / (collPrice8 * 10 ** lendDec);
+    }
+
+    /// @dev The tLIQ price (e8) at which A's collateral is worth A's
+    ///      principal, at the Diamond's current mUSDC price: where A and its
+    ///      mirror B sit at one LTV (100%, up to accrued interest).
+    function _equalLtvPrice8(
+        address diamond,
+        address lendAsset,
+        uint256 principal,
+        address collAsset,
+        uint256 collateral
+    ) internal view returns (uint256) {
+        uint256 collPrice8 = _priceE8(diamond, collAsset);
+        uint256 lendDec = IERC20Metadata(lendAsset).decimals();
+        uint256 collDec = IERC20Metadata(collAsset).decimals();
+        return (collateral * collPrice8 * 10 ** lendDec) / (principal * 10 ** collDec);
     }
 
     /// @dev One coherent tLIQ move, then the exposure it leaves on every

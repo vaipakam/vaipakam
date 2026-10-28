@@ -873,8 +873,9 @@ bash contracts/script/exportFrontendAbis.sh   # runs its own --skip test build
 ```
 
 The script regenerates every JSON via `forge inspect <Facet> abi
---json`, writes `_source.json` with the contracts commit hash,
-and prints the typecheck command. Run that next:
+--json`, writes `_source.json` with the facet list it exported (no
+commit or timestamp since #2343: git records the commit that changed the
+bundle), and prints the typecheck command. Run that next:
 
 ```bash
 cd frontend && node_modules/.bin/tsc -b --noEmit
@@ -917,8 +918,7 @@ manifest fails CI instead of silently missing from the Diamond ABI. The
 export applies the same check itself: it builds the union from its STAGED
 facets before publishing anything, so a manifest omission stops the export
 with nothing written, and the facets, union and `_source.json` land
-together. The provenance stamp treats the union as output, like the facet
-JSONs. Do not
+together. Do not
 hand-edit `diamondAbi.json`; run
 `node packages/contracts/scripts/build-diamond-abi.mjs`.
 

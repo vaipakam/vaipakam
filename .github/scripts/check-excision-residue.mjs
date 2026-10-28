@@ -252,9 +252,9 @@ const DEAD_TOKENS = [
   'buyoptionsset',
   'buyresolvedsuccess',
   'buyrefunded',
-  // Retired errors still present in the captured historical ABI
-  // (docs/ops/tenderly-paste/Diamond-full.json), none declared in current
-  // source.
+  // Retired errors that were still present in a hand-captured historical
+  // ABI (docs/ops/tenderly-paste/Diamond-full.json, removed by #2650), none
+  // declared in current source.
   'bridgedbuyfailed',
   'bridgedbuyrescued',
   'buyalreadyresolved',
@@ -275,8 +275,8 @@ const DEAD_TOKENS = [
   { token: 'quotebuy', identifierOnly: true },
   'setbuyoptions',
   // The GETTER, which this inventory had listed only in its setter and event
-  // forms. `docs/ops/tenderly-paste/Diamond-full.json:6779` still defines it
-  // and no current source declares it, so "configure buyOptions before
+  // forms. A hand-captured ABI (`docs/ops/tenderly-paste/Diamond-full.json`,
+  // removed by #2650) still defined it and no current source declares it, so "configure buyOptions before
   // deployment" was live guidance for a dead API that passed cleanly.
   // `identifierOnly` so prose about buying options stays admissible; the
   // interval dedupe below keeps `setBuyOptions` counting once, not twice.

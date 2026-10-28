@@ -718,9 +718,10 @@ git diff ../../packages/contracts/src/abis/    # review the change
 git commit -am 'Sync frontend ABIs with contracts@<commit>'
 ```
 
-The script writes `_source.json` next to the JSONs with the
-contracts commit hash so the frontend bundle and the on-chain
-deploy can be correlated post-hoc.
+The script writes `_source.json` next to the JSONs with the facet
+list it exported. The commit that last changed the bundle is its
+provenance (`git log -1 -- packages/contracts/src/abis`), which is how
+the frontend bundle and the on-chain deploy are correlated post-hoc.
 
 If you added a brand-new facet to the frontend, append it to the
 `FACETS=(...)` array in `contracts/script/exportFrontendAbis.sh`

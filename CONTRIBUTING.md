@@ -116,8 +116,10 @@ Full step-by-step in
 
 ## Where to ask questions
 
-- **General**: open a discussion (or a `question`-labelled Issue if
-  you prefer the Issue surface).
+- **General**: open a [Discussion](https://github.com/vaipakam/vaipakam/discussions)
+  in **Q&A** for how-to questions or **Ideas** for proposals. Issues are
+  for tracked work (bugs and accepted features), so please ask in
+  Discussions rather than opening a question as an Issue.
 - **Architecture**: design rationale lives in
   `docs/DesignsAndPlans/`. The agent handbook
   `docs/procedures/ProjectProcedures.md` summarises load-bearing

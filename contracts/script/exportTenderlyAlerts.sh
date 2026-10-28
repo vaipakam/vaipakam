@@ -106,18 +106,24 @@ fi
 # #2979 r1) and compares each Diamond preset with the committed combined
 # Diamond ABI in canonical form (struct parameters as component tuples). It
 # refuses a template with no presets, a preset missing a field, and any
-# signature the ABI lacks; a preset on another contract comes back as
-# unchecked and is printed by name after the run. It needs the workspace's
-# node_modules (`pnpm install`); without them it fails, and so does this run.
+# signature the ABI lacks. The timelock preset is checked the same way against
+# the governance timelock's exported ABI (#2650); a preset on any other
+# contract comes back as unchecked and is printed by name after the run. It
+# needs the workspace's node_modules (`pnpm install`); without them it fails,
+# and so does this run.
 DIAMOND_ABI="$REPO_ROOT/packages/contracts/src/diamondAbi.json"
+TIMELOCK_ABI="$REPO_ROOT/packages/contracts/src/abis/VaipakamTimelock.json"
 PRESET_CHECK="$REPO_ROOT/packages/contracts/scripts/tenderly-presets.mjs"
-if [ ! -f "$DIAMOND_ABI" ]; then
-  echo "Error: $DIAMOND_ABI not found; cannot check the presets' signatures." >&2
-  exit 1
-fi
-if ! PRESET_UNCHECKED="$(node "$PRESET_CHECK" "$TEMPLATE" "$DIAMOND_ABI")"; then
+for abi in "$DIAMOND_ABI" "$TIMELOCK_ABI"; do
+  if [ ! -f "$abi" ]; then
+    echo "Error: $abi not found; cannot check the presets' signatures." >&2
+    exit 1
+  fi
+done
+if ! PRESET_UNCHECKED="$(node "$PRESET_CHECK" "$TEMPLATE" "$DIAMOND_ABI" "$TIMELOCK_ABI")"; then
   echo "Error: $TEMPLATE has presets that would never fire (listed above)." >&2
-  echo "Fix each signature against packages/contracts/src/diamondAbi.json." >&2
+  echo "Fix each signature against packages/contracts/src/diamondAbi.json" >&2
+  echo "(Diamond presets) or packages/contracts/src/abis/VaipakamTimelock.json." >&2
   echo "Nothing was published — the previous manifests are untouched." >&2
   exit 1
 fi
