@@ -22,10 +22,11 @@ platform-wide rules apply across the lifecycle:
 - Offset preclose settles the outgoing lender only when the replacement
   completes. Posting a pending offset does not prepay principal, so cancellation
   cannot strand a payoff or create a later double payment.
-- Repayment and ordinary preclose follow the loan's selected interest mode,
-  after crediting interest already settled. Refinance protects the old lender
-  with full-term interest regardless of that mode; its review discloses that
-  cost and no rate shortfall.
+- Repayment, ordinary preclose, and refinance follow the original loan's
+  selected interest mode, after crediting interest already settled. The exiting
+  lender receives full-term interest on a full-term loan and accrued interest
+  on a pro-rata loan. Refinance adds no rate-shortfall top-up; its review
+  discloses the mode-dependent payoff.
 - Forced-close paths credit interest that has already been settled, so default,
   liquidation, fallback, and related recovery flows do not charge the same
   interest twice.

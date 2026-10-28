@@ -580,7 +580,12 @@ Coding and quality requirements:
 
 ## Reward compatibility material retired in the October 22–27 consolidation
 
-These paragraphs preserve superseded descriptions, not active requirements.
+These paragraphs preserve the historical containers of superseded wire
+descriptions. Their shared epoch-accounting requirements remain active in
+[the functional spec](../FunctionalSpecs/TokenomicsTechSpec.md), including
+arrival ordering, release authority, parked-balance conservation, classified-out
+totals, and rejection of unknown delivery IDs. Only the retired compatibility
+paths are superseded; this archive does not withdraw the shared requirements.
 The October 23, 26, and 27 release decisions require fresh deployments,
 current rooted deliveries, exact delivery splits, and no compensation
 migration arming. Their historical text remains here so the evidence is
