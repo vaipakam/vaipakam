@@ -302,6 +302,75 @@ evidence that the migration has completed.
   stops the affected step, and the run's report says so. None of these
   conditions is ever treated as nothing to do.
 
+## Returning reward VPFI to Base
+
+- Reward VPFI that a mirror holds for Base, and the messages that let Base
+  release what it reserved, move only when someone makes a permissionless
+  call and pays its cross-chain fee. The keeper has a backstop for each such
+  call, so nothing waits for someone to decide to pay. This duty checks
+  hourly and pays each fee from the keeper's own key, held to the duty's own
+  ceiling.
+- **Repatriation.** Only the administrator issues or cancels a repatriation
+  authorization; the keeper never does either. For each authorization Base
+  holds pending, the keeper sends its instruction to the mirror, executes it
+  on the mirror once the mirror's outbound lane can carry the whole amount,
+  and, for an authorization the administrator cancelled, sends the mirror's
+  cancellation acknowledgement so Base can release the reserved amount.
+- **Each message once.** An instruction or acknowledgement is sent once. One
+  that has not landed within a day is announced to operators instead of
+  being paid for a second time, because a cross-chain message that failed on
+  arrival stays there for manual re-execution. A send whose outcome the
+  keeper did not see counts as sent, since it may still land; only a send
+  that reverted, or that the node refused, is sent again. The keeper stops
+  counting a send as made only once the chain's final state shows the
+  authorization finished, so a finish that a reorg undoes does not lead to a
+  second send. A repatriation the lane can
+  never carry, or one the mirror cannot yet fund, is stated rather than
+  attempted.
+- **One route.** A mirror returns VPFI, and acknowledges cancellations,
+  toward its current Base. When a mirror's current Base is not the Base that
+  issued an authorization, as after the mirror detached and reattached
+  elsewhere, the keeper sends nothing for that authorization and alerts
+  operators. Sending would move the VPFI to the other chain and leave the
+  issuing Base's authorization unsettled.
+- **The right Base Diamond.** Every return names the Base Diamond that is
+  meant to credit it: the Base that issued an authorization, the Base that
+  remitted a quarantined compensation, or the Base a retired mirror detached
+  from. Base credits only a return naming itself. Before sending any return,
+  the keeper checks that it serves that Base chain, that the Diamond it
+  serves there is the one the return names, and that the Base Diamond's
+  return receiver delivers to it. When any of these fails, as after a Base
+  Diamond rotation or a mirror that reattached to another Base, the keeper
+  sends nothing and alerts operators: the VPFI stays on the mirror, where an
+  operator can recover it, instead of travelling to a Base that would refuse
+  it. When the keeper cannot make the check (it does not serve Base, or a read
+  failed), it sends nothing and says so.
+- **Chunked returns.** Compensation a mirror quarantined, and a retired
+  mirror's pending surplus, go home in parts. Each part is bounded by the
+  sending chain's outbound lane and by the receiving chain's inbound
+  capacity where that can be read; where it cannot, the run says the part
+  was sized by the outbound lane alone. A part too small to be worth its fee
+  that would leave something behind waits for the lanes to refill; the last
+  part is always sent.
+- Every send that moves VPFI is announced to operators with its amount and
+  transaction, whoever made it. The announcement comes from the chain's own
+  record of the send, as the indexer recorded it, not from what the keeper
+  saw when it sent: a send whose confirmation the keeper never saw is still
+  announced, once it is recorded. An announcement that does not go out is
+  posted again on later runs until it is delivered, and those after it wait
+  behind it. Base's own authorization count names every authorization, so
+  the keeper reads them from the chain a bounded number a run, resuming where
+  it stopped above a floor of settled ones. Quarantined compensation, which
+  no view lists, comes from the indexer's record of on-chain events, read a
+  page a run in the same way. That covers both events that quarantine
+  value: an arrival quarantined on landing, and a provisional credit demoted
+  by its day's broadcast. No authorization or quarantine is left out for good, however long
+  the history grows. Every decision comes from an on-chain read, and the
+  keeper's own record of what it sent keeps it from repeating a message
+  before the indexer has seen it. A paused protocol, a missing signing key, a
+  fee above the ceiling, an unread value or a Diamond that names another
+  chain stops the affected step and is stated in the run's report.
+
 ## Claim-horizon and sanctions observation
 
 - The reward heartbeat discovers all unsettled reward entries and touches
@@ -331,9 +400,9 @@ evidence that the migration has completed.
 
 The master keeper switch and each duty's own arming choice are separate.
 Delivery proofs, late acknowledgements, sanctions observation, reward-day
-automation, reward-day close-out, zeroed-day recovery, and the reward heartbeat must each
+automation, reward-day close-out, zeroed-day recovery, the return transport, and the reward heartbeat must each
 disclose whether they are armed on the selected deployment. Reward-day
-automation, close-out, zeroed-day recovery and the heartbeat ship disabled and require
+automation, close-out, zeroed-day recovery, the return transport and the heartbeat ship disabled and require
 deliberate activation. Deploying their software does not prove they run, that rewards have launched, or that custody or the
 expiry horizon has been activated. The mirror's day-delivery protection is
 required by its reward role, as stated in the current tokenomics spec; it is

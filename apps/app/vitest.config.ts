@@ -1,11 +1,17 @@
 import { defineConfig } from 'vitest/config';
 
 /**
- * Unit tests for app's pure logic (#1111). Deliberately a `node`
- * environment with NO jsdom/React-Testing-Library harness — the current suite
- * covers framework-free helpers + copy composition, which is all the
- * dynamic-faucet-label regression needs. Component-render tests can add a
- * jsdom project later if a case genuinely requires the DOM.
+ * Unit tests for app's pure logic (#1111). A `node` environment by
+ * default, with no React-Testing-Library harness — most of the suite covers
+ * framework-free helpers + copy composition.
+ *
+ * A test that must drive a React HOOK opts into the DOM per file with a
+ * `// @vitest-environment jsdom` first line and uses the small
+ * `src/test/renderHook.ts` (React's own `act` and a root, no extra
+ * dependency). The first is the forced close-out's submission lifecycle
+ * (#2090), whose effect ordering and query-cache interaction cannot be
+ * asserted any other way. Keep it per file: the rest of the suite gains
+ * nothing from a DOM and pays for one.
  *
  * Playwright e2e specs live under `e2e/` and are NOT picked up here — they
  * are `*.spec.ts` under `e2e/tests/`, which neither glob below matches, so

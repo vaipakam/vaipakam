@@ -101,7 +101,7 @@ export function useSaleExitVerdict(
   const query = useQuery({
     queryKey: ['saleExitVerdict', readChain.chainId, loanId, caller?.toLowerCase()],
     enabled: enabled && Boolean(readClient) && Boolean(caller),
-    refetchInterval: tipAware(30_000, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('saleExitVerdict', 30_000, Boolean(readChain.wsUrl)),
     queryFn: async () => {
       const [direct, listing] = (await readClient!.readContract({
         address: readChain.diamondAddress,

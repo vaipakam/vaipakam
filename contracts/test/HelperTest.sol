@@ -671,8 +671,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](1);
+        selectors = new bytes4[](3);
         selectors[0] = OfferPreviewFacet.previewAccept.selector;
+        selectors[1] = OfferPreviewFacet.requireCadenceAdmitted.selector;
+        selectors[2] = OfferPreviewFacet.previewCadenceAdmission.selector;
         return selectors;
     }
 

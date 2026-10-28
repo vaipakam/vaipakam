@@ -79,6 +79,10 @@ export const RECEIPT_FLOOR_ROOTS: readonly string[] = [
   // The lender exit chooser's sale verdict (#1841): an own listing,
   // cancel or sale changes it, in every tab.
   'saleExitVerdict',
+  // A periodic-interest loan's current period (#2524, Codex #3030 r1): an
+  // own repay moves what is owed and an own record starts the next period,
+  // in every tab.
+  'periodicInterest',
   // Risk-access page (#671/#728 port, Codex #1517 r1): tier / strict
   // writes need the delayed second read — a lagging public RPC can
   // serve the pre-write snapshot to the immediate refetch, and a user

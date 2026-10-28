@@ -122,7 +122,7 @@ export function useOffsetPending(
       Boolean(borrowerTokenId) &&
       /^[1-9]\d*$/.test(borrowerTokenId ?? '') &&
       Boolean(principalAsset),
-    refetchInterval: tipAware(30_000, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('offsetPending', 30_000, Boolean(readChain.wsUrl)),
     queryFn: async (): Promise<OffsetPendingState> => {
       const diamond = readChain.diamondAddress;
       const [lockRaw, live, latestBlock, offer, allowance, balance] =

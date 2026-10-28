@@ -103,12 +103,16 @@ bash .github/scripts/gh-trace-ratelimit-wait.sh --selftest
 bash .github/scripts/board-reconcile-list-step.selftest.sh
 ```
 
-The path checker is two files, both small:
+The path checker is two files, both small, plus the parser they read through:
 
 | File | Role |
 | --- | --- |
 | `docs-citations.mjs` | scope + extraction — which documents, and which fragments look like path citations |
-| `check-docs-paths.mjs` | adjudication — the one rule, and the criterion any future rule must meet |
+| `check-docs-paths.mjs` | adjudication — the two rules, and the criterion any future rule must meet |
+| `packages/lib/src/markdownCitations.mjs` | the CommonMark reading of a document's links, code spans and code blocks (#1486) |
+
+It runs after `pnpm install --frozen-lockfile --filter @vaipakam/lib`, which
+installs the parser.
 
 It exists because of a specific observation: when the same defect shows up in a
 new document each review round, that is a class, and a class cannot be closed by
@@ -119,6 +123,7 @@ refactor left 147 references to the removed `frontend/` across 39 documents
 (#1462).
 
 ```bash
+node .github/scripts/check-docs-paths.selftest.mjs   # the gate's own fixtures
 node .github/scripts/check-docs-paths.mjs
 ```
 
@@ -129,11 +134,13 @@ that document, and a filter listing inputs can never enumerate that.
 
 ## The admission criterion
 
-The extractor is **deliberately loose**. It over-matches, and it will hand the
-adjudicator fragments that are not citations at all. That is the design, not an
-apology — a precise markdown extractor is a real parser or nothing, and eleven
-rounds of review on #1467 demonstrated that patching patterns toward precision
-does not converge.
+Until #1486 the extractor was **deliberately loose**: it found links and code
+spans with regular expressions, over-matched, and handed the adjudicator
+fragments that were not citations at all. A precise markdown extractor is a
+real parser or nothing, and eleven rounds of review on #1467 demonstrated that
+patching patterns toward precision does not converge. Links and code spans now
+come from a parser; the shell words taken out of command text are still loose
+on purpose, because no parser knows which of them are paths.
 
 The correctness burden therefore sits with the rule:
 
@@ -154,7 +161,7 @@ Rules come in two shapes, and they react to a loose extractor in opposite ways:
 | **closed-world positive** | does this fragment contain one of these two known-dead names? | a hit means the text really names the dead directory — defects cause **misses**, never a finding about nothing |
 | **open-world negative** | is this fragment absent from the tracked tree? | every junk fragment is absent — defects become **false alarms about nothing** |
 
-The shipped rule is the first shape. The review record bears the distinction out
+The removed-directory rule is the first shape. The review record bears the distinction out
 exactly: all six extraction defects found on #1467 became false alarms *only*
 through an open-world rule, and five of seven adjudication defects landed on one
 too — including 44 frozen false findings from a single dot-directory bug.
@@ -162,18 +169,28 @@ too — including 44 frozen false findings from a single dot-directory bug.
 A miss is a smaller harm than a false alarm here, because a check that cries
 wolf is one people learn to ignore, and then it protects nothing.
 
-**Three open-world rules were built on this branch and deferred**, each needing
-a precise extractor:
+**Three open-world rules were built on #1467 and deferred**, each needing a
+precise extractor:
 
-- does-it-exist against the tracked tree — **#1486**
+- does-it-exist against the tracked tree — **#1486, shipped**
 - non-canonical `/app/…` URL citations — **#1479**
 - secrets reaching a command's `argv` — **#1472**
 
 Each was deferred separately, on its own judgement call, before anyone noticed
 they fail the same test. That they fall out of one criterion is the evidence the
-criterion is real rather than a rationalisation. When one is picked up, the move
-is to implement a parser **behind** `docs-citations.mjs`, not to tighten the
-patterns in front of it.
+criterion is real rather than a rationalisation.
+
+#1486 shipped the way the criterion said it would: a parser **behind**
+`docs-citations.mjs` (micromark with GFM, in
+`packages/lib/src/markdownCitations.mjs`), not tighter patterns in front of it.
+Links and code spans now come from the parser and are marked `whole`; the shell
+words taken out of command text stay loose on purpose and are not. The
+does-it-exist rule reads only whole sites, so it never meets a guess. It also
+reads a code span as a path claim only when the span starts at a tracked
+top-level entry (`contracts/…`, `docs/…`), and skips one starting `./` or `../`,
+which is relative to a working directory rather than to the document. A path
+the committed `.gitignore` files ignore is exempt, so a runbook can still tell
+the operator to create `contracts/.env`.
 
 ## Why it gates at zero, with no baseline
 

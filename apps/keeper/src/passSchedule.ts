@@ -48,6 +48,7 @@ import { PASS_CADENCE_SEC as PERIODIC_SETTLE_CADENCE_SEC, runPeriodicSettle } fr
 import { PASS_CADENCE_SEC as DAY_CLOSE_CADENCE_SEC, runRewardDayClose } from './rewardDayClose';
 import { PASS_CADENCE_SEC as CLOSE_OUT_CADENCE_SEC, runRewardCloseOut } from './rewardCloseOut';
 import { PASS_CADENCE_SEC as ZEROED_DAY_CADENCE_SEC, runRewardZeroedDay } from './rewardZeroedDay';
+import { PASS_CADENCE_SEC as RETURN_TRANSPORT_CADENCE_SEC, runRewardReturnTransport } from './rewardReturnTransport';
 
 /** The UTC hour `dailyOracleSnapshot` acts in, and how long it stays
  *  open — mirroring the window that pass already self-checks against.
@@ -289,6 +290,16 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     offsetMinutes: 9,
     why: 'quotes a zeroed reward day so Base can compensate it before its lapse, and lapses it once the frozen window passes; a lapse window is days long (#2984)',
     run: runRewardZeroedDay,
+  },
+  {
+    name: 'rewardReturnTransport',
+    cadenceMinutes: RETURN_TRANSPORT_CADENCE_SEC / 60,
+    // :29 — clear of every staggered pass (the 5-minute ones sit on :01–:03
+    // modulo 5, the 15-minute ones on :00, :04, :05, :09 and :10 modulo 15,
+    // the hourly ones on :14 and :44).
+    offsetMinutes: 29,
+    why: 'sends reward VPFI home and the messages that release Base\'s reservations; each waits on CCIP for minutes to hours, and each send pays a CCIP fee (#2984)',
+    run: runRewardReturnTransport,
   },
 ];
 

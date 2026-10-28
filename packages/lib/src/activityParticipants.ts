@@ -315,6 +315,7 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
     [
       'CompensationConfirmed',
       'CompensationCredited',
+      'CompensationDemoted',
       'CompensationQuarantined',
       'DayClockInstalled',
       'ImportedOutstandingCleared',

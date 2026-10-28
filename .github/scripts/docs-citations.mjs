@@ -10,42 +10,43 @@
  * lesson of #1467's review history rather than tidiness for its own sake — see
  * the contract below.
  *
- * ── THE CONTRACT: THIS EXTRACTOR IS DELIBERATELY LOOSE ────────────────────
+ * ── THE CONTRACT: PRECISE SITES, LOOSE WORDS ──────────────────────────────
  *
- * It over-matches. It will hand you fragments that are not well-formed
- * citations: malformed links, shell words, a destination CommonMark would
- * reject. It does not implement CommonMark and does not try to.
+ * Until #1486 this extractor found links and code spans with regular
+ * expressions and over-matched: it handed out malformed links and
+ * destinations CommonMark would reject. Eleven rounds of review on #1467
+ * found six such defects (angle-bracket destinations with spaces, titled
+ * destinations, reference definitions, destinations on the following line, an
+ * unbounded title separator, a zero-width one), and every one became a false
+ * alarm ONLY by way of a consumer that reported anything it could not
+ * resolve. Patching patterns did not converge, because markdown embedded in
+ * prose is an unbounded space: a precise extractor is a real parser or
+ * nothing.
  *
- * **Every consumer must remain truthful under over-extraction**: a consumer's
- * finding must be a real defect of the DOCUMENT TEXT even when the fragment it
- * fired on is not a well-formed citation. A fragment of `docs/ops/` text that
- * contains `frontend/` is stale text whether or not it parses as a link — so a
- * rule keyed on literally containing a removed name stays truthful on junk
- * fragments, while a rule keyed on "absent from the tree" does not (every junk
- * fragment is absent). Review round 12 sharpened this from an earlier, wronger
- * claim that over-extraction could not make the shipped rule fire at all; it
- * can, and when it does, what it found is still real (#1467 r12).
+ * So the SITES now come from one (`packages/lib/src/markdownCitations.mjs`,
+ * micromark with GFM): a destination is what a renderer follows, a code span
+ * is what a renderer shows as code, and a raw-HTML comment is neither. Those
+ * whole fragments carry `whole: true`.
  *
- * Eleven rounds of review established the underlying asymmetry: all six
- * extraction defects found on this branch (angle-bracket destinations with
- * spaces, titled destinations, reference definitions, destinations on the
- * following line, an unbounded title separator, a zero-width one) became false
- * alarms ONLY by way of a consumer that reported anything it could not resolve.
+ * What stays loose on purpose is the WORDS taken out of command text — a code
+ * span or a code-block line split into path-shaped shell words (see
+ * `pathWords`). They carry `whole: false`. A word is a guess about what a
+ * command touches, and `cd contracts && forge test --match-path test/X.t.sol`
+ * shows why: `test/X.t.sol` is relative to a directory no parser can know.
  *
- * Chasing a precise extractor by patching patterns does not converge: markdown
- * embedded in arbitrary prose is an unbounded space, and each round closed one
- * form and revealed another. A precise extractor is a real parser or nothing.
- * So this one stays honest about being loose, and the correctness burden moves
- * to the consumer — where it can actually be discharged.
- *
- * If a future rule genuinely needs precision (see `check-docs-paths.mjs` for
- * the admission criterion, and #1486 / #1479 / #1472 for the three rules that
- * fail it), the right move is to implement a parser BEHIND this interface, not
- * to keep tightening the patterns in front of it.
+ * **Every consumer of a word must remain truthful under over-extraction**: its
+ * finding must be a real defect of the DOCUMENT TEXT even when the word is not
+ * really a path. A word containing `frontend/` is stale text whatever it is,
+ * so the removed-directory rule may read words; a rule keyed on "absent from
+ * the tree" may not, because every junk word is absent. That rule reads whole
+ * fragments only (#1467 r12, #1486).
  */
 
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+// A relative path: these scripts run under plain Node outside the pnpm
+// workspace, and the parser's dependencies resolve from `packages/lib`.
+import { markdownCitations } from '../../packages/lib/src/markdownCitations.mjs';
 
 /**
  * Historical records, excluded as a matter of POLICY rather than mechanics.
@@ -94,27 +95,6 @@ export function scopedDocs(prefixes) {
 }
 
 /**
- * Where a path-shaped fragment can appear.
- *
- * Bounded to code spans and link-ish destinations — NOT every word in the
- * document. Looseness inside these forms is free (see the contract above);
- * looseness about the forms themselves is not, because prose legitimately
- * contains the word "frontend" and a bare-name rule would then fire on
- * ordinary English.
- *
- * The patterns are permissive on purpose: a title separator that may be
- * absent, a destination that may run onto the next line, an angle-bracket form
- * that may contain spaces. Each of those was a review finding when precision
- * mattered; here they simply widen what is offered to the consumer.
- */
-const FORMS = [
-  { name: 'code-span', re: /`([^`\n]+)`/g, words: true },
-  { name: 'angle-destination', re: /\]\(\s*<([^>\n]+)>/g, link: true },
-  { name: 'inline-destination', re: /\]\(\s*([^)\s<>]+)/g, link: true },
-  { name: 'reference-definition', re: /^[ ]{0,3}\[[^\]]+\]:\s*<?([^\s>]+)>?/gm, link: true },
-];
-
-/**
  * A code span or fenced block holding a COMMAND is cited path material too
  * (#1467 r12): `cd frontend && npm run deploy` names the removed directory,
  * and extracting the span only as one whole fragment let it slide past a
@@ -141,88 +121,66 @@ function* pathWords(text) {
   }
 }
 
-/** Strip HTML comments, preserving newlines so line numbers stay true. */
-const uncomment = (text) =>
-  text.replace(/<!--[\s\S]*?-->/g, (m) => m.replace(/[^\n]/g, ' '));
-
 /**
  * Candidate citations in one document.
  *
- * @returns {Array<{tok: string, n: number, line: string, link: boolean}>} —
- *          `tok` normalised (query, fragment and a trailing `:LINE` removed),
+ * The SITES come from a CommonMark parser (`markdownCitations`, #1486), so a
+ * destination or a code span here is exactly what a renderer would show as
+ * one. What is loose is what the gate is offered INSIDE command text: the
+ * shell words of a code span or a code-block line, which are path-shaped
+ * guesses by design (see `pathWords`). Those carry `whole: false`, and only
+ * the closed-world rule may read them.
+ *
+ * @returns {Array<{tok: string, src: string, n: number, line: string, link: boolean, whole: boolean}>} —
+ *          `tok` normalised (query and fragment removed; for a code span a
+ *          `:LINE` suffix too, and for a word from command text also its
+ *          trailing punctuation),
+ *          `src` the site as written, before that normalisation (in a code
+ *          span `?` is a glob, not a query, so only `src` still shows it),
  *          `n` 1-based, `link` true for markdown destinations — the one form
- *          that renders relative to its document (#1467 r13).
+ *          that renders relative to its document (#1467 r13) — and `whole`
+ *          true when `tok` is an entire destination or code span rather than
+ *          a word taken out of one.
  */
 export function citations(file) {
-  const body = uncomment(readFileSync(file, 'utf8'));
-  const lines = body.split('\n');
-
-  const starts = [0];
-  for (let i = 0; i < lines.length; i++) starts.push(starts[i] + lines[i].length + 1);
-  const lineAt = (idx) => {
-    let lo = 0;
-    let hi = lines.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (starts[mid] <= idx) lo = mid;
-      else hi = mid - 1;
-    }
-    return lo;
-  };
-
+  const lines = readFileSync(file, 'utf8').split('\n');
   const out = [];
   const seen = new Set();
-  const push = (raw, i, link = false) => {
-    // `path:line` is this repo's ordinary citation form, so the suffix is not
-    // part of the name (#1467 r3); query and fragment likewise cannot hide a
-    // stale path behind them (#1467 r1).
-    const tok = raw.replace(/[.,;:)]+$/, '').split('?')[0].split('#')[0].replace(/:(\d+)(-\d+)?$/, '');
+  const push = (raw, n, link, whole) => {
+    // Each kind of site is normalised for what it is. Query and fragment are
+    // never part of a path (#1467 r1). A destination and a whole code span are
+    // exactly what the parser returned, so their trailing punctuation is part
+    // of the name: `[x](guide(v2))` and `` `docs/ops/guide(v2)` `` both name
+    // `guide(v2)` (#3023 r3, r4). A code span may also carry the repo's
+    // `path:line` citation form, whose suffix is not part of the name
+    // (#1467 r3). Only a word taken out of command text is trimmed of
+    // trailing punctuation, because the shell split leaves prose around it.
+    const bare = (s) => s.split('?')[0].split('#')[0];
+    const LINE = /:(\d+)(-\d+)?$/;
+    const tok = link
+      ? bare(raw)
+      : whole
+        ? bare(raw).replace(LINE, '')
+        : bare(raw.replace(/[.,;:)]+$/, '')).replace(LINE, '');
     if (!tok) return;
-    const key = `${tok}\u0000${i}\u0000${link}`;
+    const key = `${tok}\u0000${n}\u0000${link}\u0000${whole}`;
     if (seen.has(key)) return;
     seen.add(key);
-    out.push({ tok, n: i + 1, line: lines[i] ?? '', link });
+    out.push({ tok, src: raw, n, line: lines[n - 1] ?? '', link, whole });
   };
 
-  for (const { re, words, link } of FORMS) {
-    for (const m of body.matchAll(re)) {
-      const raw = m[1].trim();
-      const i = lineAt(m.index + Math.max(0, m[0].indexOf(m[1])));
-      push(raw, i, Boolean(link));
-      if (words) for (const w of pathWords(raw)) push(w, i);
+  for (const { kind, value, line } of markdownCitations(lines.join('\n'))) {
+    const raw = value.trim();
+    if (kind === 'destination') {
+      push(raw, line, true, true);
+    } else if (kind === 'code-span') {
+      push(raw, line, false, true);
+      for (const w of pathWords(raw)) push(w, line, false, false);
+    } else {
+      // A stale path in a code block is shown to the operator exactly like one
+      // in a code span (#1467 r12).
+      for (const w of pathWords(value)) push(w, line, false, false);
     }
   }
-
-  // Fenced code blocks, line by line — a stale path in a fence is shown to the
-  // operator exactly like one in a code span (#1467 r12).
-  // The CLOSER must match its OPENER (#1467 r13): same marker character and
-  // at least the opener's length, with no trailing info string — per
-  // CommonMark, a `~~~` line inside a four-backtick fence is literal content,
-  // and toggling on any marker let such a line end the fence early, hiding
-  // every command after it from the gate.
-  let fence = null; // { ch, len } while inside a fence
-  for (let i = 0; i < lines.length; i++) {
-    // At most THREE leading spaces (#1467 r14): CommonMark treats a marker
-    // indented four or more as literal content (an indented chunk inside the
-    // fence), and accepting it here let `    \`\`\`\`` close a four-backtick
-    // fence early, hiding the commands after it.
-    const m = lines[i].match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-    if (m) {
-      const ch = m[1][0];
-      const len = m[1].length;
-      if (!fence) {
-        fence = { ch, len };
-        continue;
-      }
-      if (ch === fence.ch && len >= fence.len && m[2].trim() === '') {
-        fence = null;
-        continue;
-      }
-      // A non-matching marker inside a fence is literal text — fall through
-      // and extract from it like any other fence line.
-    }
-    if (fence) for (const w of pathWords(lines[i])) push(w, i);
-  }
-
   return out;
 }

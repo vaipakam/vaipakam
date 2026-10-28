@@ -298,6 +298,19 @@ runs half of it on old code:
   operator's manual pause, already in force
   (`PerRentalRowsCrossingNeedsManualPause` otherwise).
 
+- **OfferPreviewFacet + OfferCreateFacet + OfferMutateFacet — the cadence
+  admission rule (#3009).** Whether an offer may carry a periodic-interest
+  cadence is decided by one library, `LibCadenceAdmission`, whose one runtime
+  copy is `OfferPreviewFacet.requireCadenceAdmitted`. Creation and the amount
+  re-check on mutation self-call it, and `previewCadenceAdmission` collects
+  its refusals. A creator or mutator refreshed without the host reverts
+  `FunctionDoesNotExist` on every create (or amount change) a sale vehicle
+  does not exempt: a hard revert, never a second rule. A host refreshed
+  without them leaves the old copies in the callers, which can answer the
+  multi-year question differently from the preview. `RefreshAllFacetsInPlace`
+  carries all three; `ReplaceStaleFacets` carries creation and the preview but
+  not OfferMutateFacet, so it cannot refresh this family whole.
+
 - **Every facet that reads a loan deadline (#668 / #935, owner decision
   D2).** A loan's due date and grace end are read only through
   `LibLoanClock`, which adds the paused time since the loan started (from the
@@ -1182,7 +1195,7 @@ artifacts and stay in their respective env / config:
   `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`,
   `REWARD_DELIVERY_PROOF_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`,
   `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
-  `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`, `RPC_*`,
+  `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`, `RPC_*`,
   `TG_BOT_TOKEN`,
   `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID` (operator alerts — see "Two
   Telegram bots" below), `PUSH_CHANNEL_PK`, `ZEROEX_API_KEY`,
@@ -1197,7 +1210,8 @@ artifacts and stay in their respective env / config:
   `REWARD_HORIZON_HEARTBEAT_ENABLED`, `rewardDayClose` (#2612) on
   `REWARD_DAY_CLOSE_ENABLED`, `rewardCloseOut` (#2984) on
   `REWARD_CLOSE_OUT_ENABLED`, `rewardZeroedDay` (#2984) on
-  `REWARD_ZEROED_DAY_ENABLED`, `graceDefault` (#2483) on
+  `REWARD_ZEROED_DAY_ENABLED`, `rewardReturnTransport` (#2984) on
+  `REWARD_RETURN_TRANSPORT_ENABLED`, `graceDefault` (#2483) on
   `GRACE_DEFAULT_ENABLED` and `periodicSettle` on
   `PERIODIC_SETTLE_ENABLED`, all added after it. `rewardDayClose` makes the
   daily `closeDay` / `finalizeDay` / `broadcastGlobal` calls and pays their

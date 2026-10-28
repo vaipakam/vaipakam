@@ -2080,9 +2080,23 @@ const copySource = {
     explorerLink: tmpl(`See token #{{id}} on {{explorer}}`, ['id', 'explorer']),
     explorerNote:
       'An independent view of the same contract, run by the block explorer rather than by Vaipakam. It can lag a few blocks behind this page.',
+    // #2529 — the three-way verdict. "Retired by the protocol" stays
+    // generic on purpose: a position token stops existing for more than
+    // one reason, and without a history lookup the page must not name one.
+    retiredTitle: tmpl(`Token #{{id}} was retired on this network`, ['id']),
+    retiredBody:
+      'This token existed here and has since been retired by the protocol, so it no longer carries any claim or role. Treat any offer to sell or transfer it as worthless.',
+    neverMintedTitle: tmpl(`Token #{{id}} has never been minted on {{chain}}`, ['id', 'chain']),
+    neverMintedBody: tmpl(
+      'No position NFT with this id has been created on {{chain}}. If the position was opened on another network, switch to that network and check again.',
+      ['chain'],
+    ),
     goneTitle: tmpl(`Token #{{id}} does not currently exist on this network`, ['id']),
+    // This network's contracts predate the view that tells the two apart.
     goneBody:
-      'Either its claim was completed and the token was retired, or it was never minted here at all — the network doesn’t record which. Treat any offer to sell or transfer this token id as worthless on this network.',
+      'Either it was retired by the protocol, or it was never minted here at all — this network’s contracts don’t record which. Treat any offer to sell or transfer this token id as worthless on this network.',
+    goneBodyUnchecked:
+      'Either it was retired by the protocol, or it was never minted here at all — we couldn’t check which just now; reloading retries. Treat any offer to sell or transfer this token id as worthless on this network.',
   },
 
   // T-054 stuck-token recovery — deliberately UNLISTED (no nav or
@@ -2659,6 +2673,69 @@ const copySource = {
    *  the fact that doing nothing is the default that costs nothing in
    *  sale forfeitures. Wait renders FIRST and is worded conditionally —
    *  never as a promise of repayment. */
+  // The loan page's interest-schedule card (#2524). Every figure and date
+  // is the contract's own preview of the settlement; the copy adds only
+  // who may act and what acting does. Two rules hold throughout:
+  //
+  //  - A settlement is permissionless, so nothing says only the lender
+  //    (or only a keeper) can run it.
+  //  - "Expected" is worked out at the loan's CURRENT amount and rate, so
+  //    it is never called a fixed bill.
+  periodicInterest: {
+    title: 'Interest payments',
+    checking: 'Reading this loan’s interest schedule…',
+    unread:
+      'This loan’s interest schedule could not be read just now, so its next deadline is not shown here. The page keeps trying.',
+    labels: {
+      schedule: 'Schedule',
+      deadline: 'This period’s deadline',
+      graceEnds: 'Grace ends',
+      expected: 'Interest for the period',
+      paid: 'Paid toward it so far',
+      owed: 'Still owed',
+    },
+    cadenceMonthly: 'Every month',
+    cadenceQuarterly: 'Every quarter',
+    cadenceSemiAnnual: 'Every six months',
+    cadenceAnnual: 'Every year',
+    cadenceUnknown: 'A schedule this app does not recognise',
+    expectedNote:
+      'Worked out at the loan’s current amount and rate, so it goes down if part of the loan is repaid during the period.',
+    phaseOpen: 'This period is open.',
+    phaseGrace: 'This period’s deadline has passed. It can still be paid until the grace ends.',
+    phaseDue: 'This period’s grace is over, so the period can be settled now.',
+    // What happens if the period is still short when grace ends, said
+    // before it does. Per role: the collateral is the borrower's, the
+    // payment is the lender's.
+    payHintBorrower:
+      'Interest you pay on this loan during the period counts toward it. If anything is still owed when the grace ends, anyone may settle the period by selling enough of your collateral to cover it.',
+    payHintLender:
+      'If anything is still owed when the grace ends, anyone may settle the period by selling enough of the borrower’s collateral to cover it. You are paid up to what is owed; whatever a sale cannot cover stays owed on the loan.',
+    payHintViewer:
+      'If anything is still owed when the grace ends, anyone may settle the period by selling enough of the borrower’s collateral to cover it.',
+    // Said instead of the borrower's hint while settling periods is
+    // switched off: payments still count, but no sale can follow.
+    payCountsBorrower: 'Interest you pay on this loan during the period counts toward it.',
+    routeRecord:
+      'This period is fully paid. Recording it starts the next period. It moves no funds, and anyone may record it, so a keeper service may do it first.',
+    recordButton: 'Record this period',
+    recording: 'Recording…',
+    recorded: 'Recorded. The next period has started.',
+    recordGone:
+      'This period no longer needs recording here: it was settled, or it changed, since the page last read it.',
+    routeSaleBorrower:
+      'Something is still owed for this period, so anyone may now settle it by selling enough of your collateral to cover it. Paying what is still owed first closes the period without a sale.',
+    routeSaleLender:
+      'Something is still owed for this period, so anyone may now settle it by selling enough of the borrower’s collateral to cover it, and a keeper service may do it automatically. This page cannot run that sale: it needs a swap route quoted at the moment it runs.',
+    routeSaleViewer:
+      'Something is still owed for this period, so anyone may now settle it by selling enough of the borrower’s collateral to cover it.',
+    routeOff:
+      'Settling periods is switched off on this deployment, so no period can be settled, and no collateral sold for one, while that lasts. What is owed stays owed on the loan.',
+    routePaused: 'The protocol is paused, so this period cannot be settled until it resumes.',
+    routeUnknown:
+      'Whether this period can be settled right now could not be read: the deployment’s settlement switch or its pause did not answer.',
+    readAt: tmpl('As of block {{block}}.', ['block']),
+  },
   // The lender's forced close-out of a loan whose borrower stopped
   // paying. Three rules govern every string here, and each exists
   // because the contract makes the obvious wording false:
@@ -6038,6 +6115,50 @@ const copySource = {
     allowPartialRepay: 'Allow the borrower to repay in parts',
     proRataInterest: 'Charge interest only for time used (pro-rata) instead of the full term',
     rentalWholeDaysNote: 'Rent is counted in whole days: part of a day counts as a full day, and at least one day is always charged.',
+    // #2524 — the interest-schedule picker. Which schedules are open, and
+    // why each closed one is closed, is the protocol's own cadence rule read
+    // through `previewCadenceAdmission`; nothing here restates the rule.
+    cadence: {
+      legend: 'Interest payments',
+      none: 'Once, when the loan is repaid',
+      monthly: 'Every month',
+      quarterly: 'Every quarter',
+      semiAnnual: 'Every six months',
+      annual: 'Every year',
+      periodsNote:
+        'On a schedule, each period’s interest is due at the end of that period. A period left unpaid past its grace can be settled by anyone, selling collateral to cover what is owed.',
+      checking: 'Checking which interest schedules the protocol allows for these terms…',
+      failed:
+        'Couldn’t check which interest schedules the protocol allows for these terms, so only “once, when the loan is repaid” can be chosen for now.',
+      unserved:
+        'This network’s contracts don’t say which interest schedules they allow, so interest is paid once, when the loan is repaid.',
+      switchedOffNote:
+        'Paying interest in periods is switched off on this network, so interest is paid once, when the loan is repaid.',
+      illiquidNote: tmpl(
+        'Interest is paid once, when the loan is repaid. {{reason}}',
+        ['reason'],
+      ),
+      refusal: {
+        switchedOff: 'Switched off on this network.',
+        illiquidBoth: 'Paying in periods needs both assets to be tokens the protocol can price, and neither is.',
+        illiquidLending: 'Paying in periods needs both assets to be tokens the protocol can price, and the lent asset isn’t.',
+        illiquidCollateral: 'Paying in periods needs both assets to be tokens the protocol can price, and the collateral isn’t.',
+        illiquidKind: 'Paying in periods needs both the lent asset and the collateral to be tokens the protocol can price.',
+        yearlyFloor: 'A loan longer than a year must pay interest at least once a year.',
+        belowThreshold: tmpl(
+          'Needs the smallest loan this offer can open to be worth at least {{threshold}}. It is worth about {{value}}.',
+          ['threshold', 'value'],
+        ),
+        interval: tmpl('Needs a loan longer than {{days}} days.', ['days']),
+        other: 'The protocol doesn’t allow this schedule for these terms.',
+        unevaluated: 'The protocol couldn’t check this schedule for these terms, so it isn’t offered.',
+      },
+      selectedRefused: 'The schedule chosen isn’t allowed for these terms. Choose another one to continue.',
+      selectedUnchecked:
+        'The schedule chosen can’t be checked right now. Retry, or choose “once, when the loan is repaid”.',
+      unitUnknown: 'in the protocol’s reference currency',
+      receipt: tmpl('Interest payments: {{schedule}}', ['schedule']),
+    },
     continueToReview: 'Continue to review',
     retry: 'Retry',
     beforeYouSign: 'Before you sign',

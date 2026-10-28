@@ -280,10 +280,17 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     ///         stranded-recovery reservation by the day's V3 broadcast
     ///         (era mismatch, or the day turned out not to be zeroed): its
     ///         held value, never counted, became uncounted and moved untouched
-    ///         to where the return draws it.
+    ///         to where the return draws it. `remitter` and `remitId` name
+    ///         the receipt whose stranded-recovery record it now is
+    ///         (`getStrandedRecovery`), as `CompensationQuarantined` names
+    ///         its own, so the record can be found from the event alone.
     /// @custom:event-category informational/reward-compensation
     event CompensationDemoted(
-        uint256 indexed dayId, uint256 amount, uint8 reason
+        uint256 indexed dayId,
+        address indexed remitter,
+        uint256 remitId,
+        uint256 amount,
+        uint8 reason
     );
 
     /**
@@ -782,6 +789,9 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         s.receivedRemits[
             LibRewardCustody.remitReceiptKey(dc.provisionalEra, dc.remitId)
         ].classification = 1;
+        // Emitted before the day's record goes: it names the receipt the
+        // stranded record is keyed by.
+        emit CompensationDemoted(dayId, dc.provisionalEra, dc.remitId, pools, reason);
         delete s.dayCompensation[dayId];
         // #1656 r1 - the demoted credit's receipt clocks go with it: a
         // later CURRENT-era compensation must get its own full bounded
@@ -789,7 +799,6 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // (three windows past which it could be short-lapsed on arrival).
         delete s.firstCompReceiptAt[dayId];
         delete s.lastQualifyingCompReceiptAt[dayId];
-        emit CompensationDemoted(dayId, pools, reason);
     }
 
 

@@ -327,7 +327,7 @@ Zwei Wege:
 
 Vaipakam läuft als unabhängige Bereitstellung auf jeder
 unterstützten Chain: **Ethereum**, **Base**, **Arbitrum**,
-**Optimism**, **Polygon zkEVM**, **BNB Chain**.
+**Optimism**, **Polygon**.
 
 Ein auf Base eröffneter Kredit wird auf Base abgewickelt. Ein auf
 Arbitrum eröffneter Kredit wird auf Arbitrum abgewickelt. Es gibt

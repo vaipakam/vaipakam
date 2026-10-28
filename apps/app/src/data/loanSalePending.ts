@@ -208,7 +208,7 @@ export function useLoanSalePending(
       /^[1-9]\d*$/.test(lenderTokenId ?? ''),
     // RPC read-diet PR A — pending-card accept gate: tip-nudged per
     // block on WS deploys (§4.1.2), so the interval is only the net.
-    refetchInterval: tipAware(30_000, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('loanSalePending', 30_000, Boolean(readChain.wsUrl)),
     queryFn: async (): Promise<LoanSalePendingState> => {
       const diamond = readChain.diamondAddress;
       const [lock, live, latestBlock, holder] = await Promise.all([
