@@ -186,8 +186,8 @@ class FakeLedger implements EventLedger {
   rows: LedgerRow[] = [];
   fail = false;
 
-  add(orderHash: unknown): void {
-    const n = this.rows.length + 1;
+  add(orderHash: unknown, block?: number): void {
+    const n = block ?? this.rows.length + 1;
     this.rows.push({ kind: 'BuybackIntentCommitted', args: { orderHash, token: TOKEN }, blockAt: n, block: n, log: 0 });
   }
 
@@ -269,6 +269,23 @@ describe('a run', () => {
       const r = await run();
       expect(r.expired).toEqual([hash(1)]);
       expect(cursors.rows.has(BUYBACK_FLOOR_ITEM), 'the expiry is not final yet').toBe(false);
+      d.finalOrders = null;
+      await run();
+      expect(cursors.rows.get(BUYBACK_FLOOR_ITEM)).toBe(encodePos(ledger.rows[0]));
+    });
+
+    it('passes a commit at finality only once the commit itself is finalized and its order ended', async () => {
+      // Committed and filled at the head, above the finalized block: there the
+      // order reads as never made (status 0), which is not an ended order.
+      ledger.add(hash(1), 105);
+      d.orders.set(hash(1), { expiresAt: NOW - 1n, status: 2 });
+      d.finalOrders = new Map();
+      await run();
+      expect(cursors.rows.has(BUYBACK_FLOOR_ITEM), 'the commit is not final yet').toBe(false);
+      // Finalized, but the order still reads as never made: not ended either.
+      ledger.rows[0] = { ...ledger.rows[0], block: 100, blockAt: 100 };
+      await run();
+      expect(cursors.rows.has(BUYBACK_FLOOR_ITEM)).toBe(false);
       d.finalOrders = null;
       await run();
       expect(cursors.rows.get(BUYBACK_FLOOR_ITEM)).toBe(encodePos(ledger.rows[0]));

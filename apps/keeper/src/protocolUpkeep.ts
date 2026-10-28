@@ -43,7 +43,7 @@ import { buildKeeperContext, passIsArmed, resolveKeeperAccount, type KeeperConte
 import type { PassTick } from './passSchedule';
 import { deadlineClient, PastRunDeadline, settledRead, type BatchResult } from './batchRead';
 import { shortErr } from './callErrors';
-import { d1EventLedger, decodePos, encodePos, posAfter, type EventLedger } from './eventLedger';
+import { d1EventLedger, decodePos, encodePos, posAfter, rowFinalized, type EventLedger } from './eventLedger';
 import { d1ScanCursors, finalFloor, finalizedBlockOnce, type FinalBlock, type ScanCursors } from './scanCursors';
 import { StepSender } from './stepSender';
 
@@ -66,6 +66,9 @@ export const BUYBACK_FLOOR_ITEM = 'buyback-floor';
 export const BUYBACK_NEXT_ITEM = 'buyback-next';
 const COMMIT_EVENT = 'BuybackIntentCommitted';
 const STATUS_PENDING = 1;
+/** The order's ended statuses (`LibVaipakam.BUYBACK_ORDER_STATUS_FILLED` /
+ *  `_EXPIRED`); NONE (0) is an order never made, which ends nothing. */
+const STATUS_ENDED: ReadonlySet<number> = new Set([2, 3]);
 /** A cached tier older than this is refreshed even when its value would not
  *  change, unless `TIER_LTV_REFRESH_AFTER_SEC` says otherwise. Half the
  *  contract's 14-day validity, so one failed day never lets it lapse. */
@@ -308,16 +311,20 @@ async function expireBuybacks(r: Reader, sender: StepSender, report: UpkeepRepor
   // On a page read from the floor, the floor moves past the leading rows whose
   // order is no longer pending, at the head AND at the finalized block: an
   // expiry a reorg undoes leaves its row above the floor, to be sent again.
+  // At the finalized block a row counts only when its commit is itself
+  // finalized and the order shows it filled or expired: below the commit the
+  // order reads as never made (status 0), which is not an ended order.
   if (start !== floor) return;
   const positions = page.rows.map((_, i) => i);
   const n = await finalFloor(0, positions, (i) => rows[i] === null || settled.has(rows[i]!), r.finalized, async (passed, block) => {
-    const named = [...new Set(passed.flatMap((i) => (rows[i] === null ? [] : [rows[i]!])))];
+    const live = passed.filter((i) => rows[i] === null || rowFinalized(page.rows[i], block));
+    const named = [...new Set(live.flatMap((i) => (rows[i] === null ? [] : [rows[i]!])))];
     const at = await readOrders(named, 'buyback-final', block.number);
     const done = new Set(named.filter((_, j) => {
       const rec = at[j] as BuybackOrder | undefined;
-      return rec !== undefined && Number(rec.status) !== STATUS_PENDING;
+      return rec !== undefined && STATUS_ENDED.has(Number(rec.status));
     }));
-    return new Set(passed.filter((i) => rows[i] === null || done.has(rows[i]!)));
+    return new Set(live.filter((i) => rows[i] === null || done.has(rows[i]!)));
   });
   if (n > 0) await cursors.put(BUYBACK_FLOOR_ITEM, encodePos(page.rows[n - 1]));
 }

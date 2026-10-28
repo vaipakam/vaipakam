@@ -15,6 +15,6 @@ For the tier cache, the keeper first previews the refresh and reads what it woul
 Neither step pays a fee or moves value to the keeper. The keeper works a chain only when its connection answers for that chain. Refs #2984.
 
 > Caveat: ships disarmed. Arming it on any chain is a separate owner decision.
-> Caveat: the commitments are read two hundred a run. Each run resumes where the previous run stopped, above a floor of intents that are no longer pending. That floor moves only on what the chain's finalized block shows, so a rollback that a reorg undoes is sent again.
+> Caveat: the commitments are read two hundred a run. Each run resumes where the previous run stopped, above a floor of intents that are no longer pending. That floor moves only on what the chain's finalized block shows, and past an intent only once its commit is itself finalized and its order shows it ended, so a rollback that a reorg undoes is sent again.
 > Caveat: the tier cache preview needs an RPC that supports `eth_simulateV1`. Without it the refresh is reported as unread and is not sent.
 > Caveat: the week before an unchanged tier is refreshed is the default of a plain variable, `TIER_LTV_REFRESH_AFTER_SEC`.
