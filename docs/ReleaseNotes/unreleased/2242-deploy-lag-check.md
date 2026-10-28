@@ -1,4 +1,4 @@
-## Thread — A Worker left behind main now opens an issue (PR #<n>)
+## Thread — A Worker left behind main now opens an issue (PR #3007)
 
 Merged code that never reached its Worker used to be silent. The connected app once served a build from before a merged fix for days, and nothing said so: the live review that follows a deploy never happened, because the deploy never happened. Closes #2242.
 
