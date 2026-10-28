@@ -2020,8 +2020,8 @@ discount.
 
 VPFI is staked on Base. The protocol's accumulator lives on
 Base too. Your TIER (the value 0..4) propagates
-automatically to every chain you take loans on — Sepolia,
-Arbitrum, Optimism, BNB, etc. — via Chainlink CCIP.
+automatically to every other chain you take loans on — Ethereum,
+Polygon, Arbitrum and Optimism — via Chainlink CCIP.
 
 But the FEE PATH on each mirror chain still reads the local
 chain's VPFI balance + the local consent flag at settlement
