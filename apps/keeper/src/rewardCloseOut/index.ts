@@ -18,27 +18,36 @@
 //      the return transport's to send back to Base (`sendRetiredSurplusReturn`,
 //      a separate pass), and this pass only says how much waits there.
 //   3. CLOSURE — prove elapsed days closed (`RewardClosureFacet`): for each
-//      day of the window not yet proven, oldest first, the pass scans the
-//      chain's reward-entry sequence (`getRewardEntriesRange`) for the entries
-//      covering it, checks that they sum to exactly the day's folded totals
+//      day of its closure window not yet proven, oldest first, the pass scans
+//      the chain's reward-entry sequence (`getRewardEntriesRange`) for the
+//      entries covering it, checks that they sum to exactly the day's folded totals
 //      and that every one has terminated (`isEntryTerminatedOn`), and only
 //      then opens a walk (`startDayClosure`) and pages the ids in
 //      (`proveDayClosurePage`). A day with an entry still open is left; it is
 //      counted on the run's line, not sent. A day with nothing on either side
 //      closes at the start. The walk under the keeper's latest nonce is
 //      continued rather than replaced when it is this day's.
-//   4. PARK — for each closed day in the window, every transport epoch it
+//   4. PARK — for each closed day in its park window, every transport epoch it
 //      lists whose remainder is not parked, whose membership is whole, which
 //      no staging record references and all of whose listed days are proven
 //      closed, is parked (`RewardEpochFacet.parkTransportBatchRemainder`).
 //      Releasing a parked remainder is the administrator's acknowledgment
 //      (`acknowledgeTransportBatchRemainder`), which this pass never calls;
 //      the run's line names each batch parked.
-//   5. PRUNE — for each day still open, when the epoch after its consumption
-//      cursor is plainly exhausted (nothing left, fully indexed, unreferenced),
-//      advance the cursor (`RewardEpochFacet.epochPruneTransportDayCursor`).
+//   5. PRUNE — for each day of the closure window still open, when the epoch
+//      after its consumption cursor is plainly exhausted (nothing left, fully
+//      indexed, unreferenced), advance the cursor (`RewardEpochFacet.epochPruneTransportDayCursor`).
 //      Exhausted only by its caps is not detected here; the day's next draw
 //      prunes that in passing.
+//
+// A run's reads are bounded and rotate (Codex #2993 r1–r2), so what one run
+// reads is bounded while nothing is left out for good: retired eras 32 a run
+// above a floor of finalized ones; closure days `REWARD_CLOSE_OUT_WINDOW_DAYS`
+// a run above a floor of proven-closed ones; park days as many a run over
+// every provable day; each closed day's epochs 50 a run; the entry scan from a
+// floor below which every entry ended. The floors and cursors are rows of the
+// keeper's private database (`scanCursors.ts`), and only say where to start
+// reading: every decision is still an on-chain read.
 //
 // Every call is simulated on the current state first and waits for its
 // receipt before the next (`stepSender.ts`), so the steps of one walk land in
@@ -64,10 +73,10 @@ import type { PassTick } from '../passSchedule';
 import { deadlineClient, PastRunDeadline, settledRead, type BatchResult } from '../batchRead';
 import { shortErr } from '../callErrors';
 import { decodeEntryFloor, encodeEntryFloor, ENTRY_PAGE, scanEntries, type EntryRow } from '../rewardEntries';
-import { d1ScanCursors, type ScanCursors } from '../scanCursors';
+import { advanceFloor, d1ScanCursors, decodeIndex, rotatingWindow, type ScanCursors } from '../scanCursors';
 import { StepSender } from '../stepSender';
 import {
-  closureWindow,
+  provableThrough,
   conservationGap,
   coveringEntries,
   epochPrunable,
@@ -99,22 +108,30 @@ export const PASS_CADENCE_SEC = 15 * 60;
 /** Sends per chain per run. A walk is a start plus a page per 100 ids a side. */
 export const MAX_SENDS_PER_RUN = 12;
 export const RECEIPT_TIMEOUT_MS = 30_000;
-/** Days back from the newest provable day a run looks at, unless
- *  `REWARD_CLOSE_OUT_LOOKBACK_DAYS` says otherwise. */
-export const DEFAULT_LOOKBACK_DAYS = 60;
+/** Days a run reads for closure, and again for parking, unless
+ *  `REWARD_CLOSE_OUT_WINDOW_DAYS` says otherwise. Each rotates over its whole
+ *  range across runs (`scanCursors.rotatingWindow`), so this bounds a run's
+ *  reads and never which days are ever visited. */
+export const DEFAULT_WINDOW_DAYS = 60;
 /** Entry ids per `proveDayClosurePage`. */
 export const PAGE_IDS = 100;
 /** Entry pages one run may read, from the scan's stored floor. A day whose
  *  entries the pages do not reach is not walked this run, and the line says
  *  so: a walk on a partial scan cannot close. */
 export const MAX_ENTRY_PAGES = 20;
-/** Retired eras looked at per run, newest first. */
+/** Retired eras looked at per run, rotating over every era not yet known
+ *  finalized (`scanCursors.rotatingWindow`). */
 export const MAX_ERAS = 32;
 /** Epochs read per closed day for the park step, from the day's stored
  *  discovery cursor, so a day listing more is covered over several runs. */
 export const MAX_BATCHES_PER_DAY = 50;
 /** The scan-cursor items this pass keeps (`scanCursors.ts`). */
 export const ENTRY_FLOOR_ITEM = 'entry-floor';
+export const ERA_FLOOR_ITEM = 'era-floor';
+export const ERA_NEXT_ITEM = 'era-next';
+export const CLOSURE_FLOOR_ITEM = 'closure-floor';
+export const CLOSURE_NEXT_ITEM = 'closure-next';
+export const PARK_NEXT_ITEM = 'park-next';
 export const parkCursorItem = (day: number) => `park:${day}`;
 /** Park pages one batch may take in a run. */
 export const MAX_PARK_PAGES = 8;
@@ -142,7 +159,7 @@ export interface CloseOutDeps {
   /** The keeper's address, or null when the key is unset or malformed. */
   keeper: Address | null;
   sendDeadline: number;
-  lookbackDays: number;
+  windowDays: number;
   /** Where its bounded reads got to on this chain, across runs. */
   cursors: ScanCursors;
 }
@@ -172,7 +189,7 @@ export interface CloseOutReport {
 export async function runRewardCloseOut(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'rewardCloseOut', 'REWARD_CLOSE_OUT_ENABLED')) return;
   const sendDeadline = tick.deadlineMs;
-  const lookbackDays = readPositive(env, 'REWARD_CLOSE_OUT_LOOKBACK_DAYS', DEFAULT_LOOKBACK_DAYS);
+  const windowDays = readPositive(env, 'REWARD_CLOSE_OUT_WINDOW_DAYS', DEFAULT_WINDOW_DAYS);
   const resolved = env.KEEPER_PRIVATE_KEY ? resolveKeeperAccount(env.KEEPER_PRIVATE_KEY) : null;
   const keeper = resolved && 'account' in resolved ? resolved.account.address : null;
   const chains = getChainConfigs(env).filter((c) => c.diamond);
@@ -188,7 +205,7 @@ export async function runRewardCloseOut(env: Env, tick: PassTick): Promise<void>
           context: () => buildKeeperContext(env, chain, client, { notAfterMs: sendDeadline }),
           keeper,
           sendDeadline,
-          lookbackDays,
+          windowDays,
           cursors: d1ScanCursors(env.KEEPER_DB, chain.id, chain.diamond as string, 'rewardCloseOut'),
         });
         console.log(describeReport(report));
@@ -265,29 +282,10 @@ export async function closeOutOnce(chainId: number, diamond: Address, deps: Clos
   try {
     const gate = await readGate(r, chainId);
     if (typeof gate === 'string') return { ...report, skipped: gate };
-    await finalizeEras(r, sender, report);
+    await finalizeEras(r, sender, report, deps.cursors);
     await drainSurplus(r, sender, report, gate.role);
-    const window = closureWindow(gate.today, gate.lenderFrontier, gate.borrowerFrontier, deps.lookbackDays);
-    if (window !== null && gate.active) {
-      const days: number[] = [];
-      for (let d = window.from; d <= window.upTo; d++) days.push(d);
-      const closed = await r.days(days, 'isDayObligationsClosed', 'closure-state');
-      const known = new Map<number, boolean>();
-      days.forEach((d, i) => {
-        const v = closed[i];
-        if (v === undefined) sender.noteUnread(`closure:${d}`, 'whether the day is proven closed');
-        else known.set(d, v as boolean);
-      });
-      const open = days.filter((d) => known.get(d) === false);
-      if (gate.paused) {
-        if (open.length > 0) sender.noteUnread('closure', 'the protocol is paused, so no closure walk can run');
-      } else if (open.length > 0) {
-        await proveDays(r, sender, report, open, deps.keeper, deps.cursors);
-        for (const d of report.daysClosed) known.set(d, true);
-      }
-      await parkBatches(r, sender, report, days.filter((d) => known.get(d) === true), deps.cursors);
-      await pruneDays(r, sender, report, days.filter((d) => known.get(d) === false));
-    }
+    const upTo = provableThrough(gate.today, gate.lenderFrontier, gate.borrowerFrontier);
+    if (upTo >= 0 && gate.active) await workDays(r, sender, report, gate.paused, upTo, deps);
   } catch (err) {
     if (!(err instanceof PastRunDeadline)) throw err;
     sender.noteUnread('run', 'the run deadline passed during its reads');
@@ -376,7 +374,7 @@ async function readGate(r: Reader, chainId: number): Promise<Gate | string> {
 
 // ─── 1. Eras ────────────────────────────────────────────────────────────────
 
-async function finalizeEras(r: Reader, sender: StepSender, report: CloseOutReport): Promise<void> {
+async function finalizeEras(r: Reader, sender: StepSender, report: CloseOutReport, cursors: ScanCursors): Promise<void> {
   let current: bigint;
   try {
     current = await r.one<bigint>('getCustodyEraCurrent');
@@ -386,11 +384,21 @@ async function finalizeEras(r: Reader, sender: StepSender, report: CloseOutRepor
     return;
   }
   if (current === 0n) return;
-  const lo = current > BigInt(MAX_ERAS) ? current - BigInt(MAX_ERAS) : 0n;
-  const ids: bigint[] = [];
-  for (let e = lo; e <= current; e++) ids.push(e);
-  const recs = await r.many(ids.map((e) => ({ functionName: 'getCustodyEra', args: [e] })), 'eras');
-  for (let i = 0; i + 1 < ids.length; i++) {
+  // The retired eras not yet known finalized are looked at MAX_ERAS a run,
+  // rotating from where the last run stopped, above a stored floor every era
+  // below which is finalized: a fixed window over the newest eras would leave
+  // an older one out for good once enough role changes followed it
+  // (Codex #2993 r2).
+  const stored = await cursors.get([ERA_FLOOR_ITEM, ERA_NEXT_ITEM]);
+  const floor = Math.min(decodeIndex(stored.get(ERA_FLOOR_ITEM)) ?? 0, Number(current));
+  const win = rotatingWindow(floor, Number(current) - 1, MAX_ERAS, decodeIndex(stored.get(ERA_NEXT_ITEM)));
+  if (win === null) return;
+  const ids: number[] = [];
+  for (let e = win.from; e <= win.to; e++) ids.push(e);
+  // Each era's span ends at the next era's boundary, so one record past the window.
+  const recs = await r.many([...ids, win.to + 1].map((e) => ({ functionName: 'getCustodyEra', args: [BigInt(e)] })), 'eras');
+  const terminal = new Set<number>();
+  for (let i = 0; i < ids.length; i++) {
     const era = ids[i];
     const rec = recs[i] as EraRecord | undefined;
     const next = recs[i + 1] as EraRecord | undefined;
@@ -399,15 +407,24 @@ async function finalizeEras(r: Reader, sender: StepSender, report: CloseOutRepor
       continue;
     }
     const ready = eraReadiness(rec, next.boundaryDay);
-    if (ready === null) continue;
+    if (ready === null) {
+      terminal.add(era);
+      continue;
+    }
     if (ready !== 'ready') {
       report.erasWaiting.push(`${era}: ${ready}`);
       continue;
     }
     // eslint-disable-next-line no-await-in-loop
-    const res = await sender.call('finalizeEra', `era ${era}`, 'finalizeCustodyEra', [era]);
-    if (res === 'landed') report.erasFinalized.push(Number(era));
+    const res = await sender.call('finalizeEra', `era ${era}`, 'finalizeCustodyEra', [BigInt(era)]);
+    if (res === 'landed') {
+      report.erasFinalized.push(era);
+      terminal.add(era);
+    }
   }
+  const newFloor = advanceFloor(floor, ids, (e) => terminal.has(e));
+  if (newFloor !== floor) await cursors.put(ERA_FLOOR_ITEM, String(newFloor));
+  if (String(win.next) !== stored.get(ERA_NEXT_ITEM)) await cursors.put(ERA_NEXT_ITEM, String(win.next));
 }
 
 // ─── 2. Pending surplus ─────────────────────────────────────────────────────
@@ -435,6 +452,67 @@ async function drainSurplus(r: Reader, sender: StepSender, report: CloseOutRepor
   if (res === 'landed') report.drained = pending;
 }
 
+// ─── Days read for 3–5 ─────────────────────────────────────────────────────
+
+/**
+ * Days are read `windowDays` a run, rotating, for two jobs (Codex #2993 r2):
+ * closure over the days from a stored floor (every day below it is proven
+ * closed, for good) up to the newest provable day, and parking over every
+ * provable day, since a closed day's epochs may still hold a remainder. A
+ * window fixed on the newest days would leave an older day out for good.
+ */
+async function workDays(r: Reader, sender: StepSender, report: CloseOutReport, paused: boolean, upTo: number, deps: CloseOutDeps): Promise<void> {
+  const { cursors, windowDays } = deps;
+  const stored = await cursors.get([CLOSURE_FLOOR_ITEM, CLOSURE_NEXT_ITEM, PARK_NEXT_ITEM]);
+  const floor = Math.min(decodeIndex(stored.get(CLOSURE_FLOOR_ITEM)) ?? 0, upTo + 1);
+  const known = new Map<number, boolean>();
+  const readClosed = async (ds: readonly number[]) => {
+    const want = ds.filter((d) => d >= floor && !known.has(d));
+    if (want.length === 0) return;
+    const closed = await r.days(want, 'isDayObligationsClosed', 'closure-state');
+    want.forEach((d, i) => {
+      const v = closed[i];
+      if (v === undefined) sender.noteUnread(`closure:${d}`, 'whether the day is proven closed');
+      else known.set(d, v as boolean);
+    });
+  };
+  const isClosed = (d: number) => d < floor || known.get(d) === true;
+
+  const win = rotatingWindow(floor, upTo, windowDays, decodeIndex(stored.get(CLOSURE_NEXT_ITEM)));
+  const days = win === null ? [] : span(win.from, win.to);
+  await readClosed(days);
+  const open = days.filter((d) => known.get(d) === false);
+  // Closed days already read lift the floor before any walk, and the days a
+  // walk closes lift it again after.
+  const readFloor = advanceFloor(floor, days, isClosed);
+  if (paused) {
+    if (open.length > 0) sender.noteUnread('closure', 'the protocol is paused, so no closure walk can run');
+  } else if (open.length > 0) {
+    // The scan is anchored at that floor, the oldest day that may be open, so
+    // its stored entry floor stays valid whichever window a run reads.
+    await proveDays(r, sender, report, open, readFloor, deps.keeper, cursors);
+    for (const d of report.daysClosed) known.set(d, true);
+  }
+  const newFloor = advanceFloor(readFloor, days.filter((d) => d >= readFloor), isClosed);
+  if (newFloor !== floor) await cursors.put(CLOSURE_FLOOR_ITEM, String(newFloor));
+  if (win !== null && String(win.next) !== stored.get(CLOSURE_NEXT_ITEM)) await cursors.put(CLOSURE_NEXT_ITEM, String(win.next));
+
+  const parkWin = rotatingWindow(0, upTo, windowDays, decodeIndex(stored.get(PARK_NEXT_ITEM)));
+  if (parkWin !== null) {
+    const parkDays = span(parkWin.from, parkWin.to);
+    await readClosed(parkDays);
+    await parkBatches(r, sender, report, parkDays.filter(isClosed), cursors);
+    if (String(parkWin.next) !== stored.get(PARK_NEXT_ITEM)) await cursors.put(PARK_NEXT_ITEM, String(parkWin.next));
+  }
+  await pruneDays(r, sender, report, days.filter((d) => known.get(d) === false));
+}
+
+function span(from: number, to: number): number[] {
+  const out: number[] = [];
+  for (let d = from; d <= to; d++) out.push(d);
+  return out;
+}
+
 // ─── 3. Closure ─────────────────────────────────────────────────────────────
 
 interface WalkRecord {
@@ -453,6 +531,7 @@ async function proveDays(
   sender: StepSender,
   report: CloseOutReport,
   allOpen: readonly number[],
+  scanFrom: number,
   keeper: Address | null,
   cursors: ScanCursors,
 ): Promise<void> {
@@ -466,7 +545,7 @@ async function proveDays(
   const stored = (await cursors.get([ENTRY_FLOOR_ITEM])).get(ENTRY_FLOOR_ITEM);
   const scan = await scanEntries(
     (from, n) => r.one<readonly EntryRow[]>('getRewardEntriesRange', [from, n]),
-    allOpen[0],
+    scanFrom,
     allOpen[allOpen.length - 1],
     MAX_ENTRY_PAGES,
     decodeEntryFloor(stored),
@@ -564,7 +643,7 @@ async function walkDay(
   return { closed, nonce };
 }
 
-// ─── 4. Park ────────────────────────────────────────────────────────────────
+// ─── 4. Park ─────────────────────────────────────────────────────────────────
 
 async function parkBatches(r: Reader, sender: StepSender, report: CloseOutReport, closedDays: readonly number[], cursors: ScanCursors): Promise<void> {
   if (closedDays.length === 0 || sender.stopped) return;

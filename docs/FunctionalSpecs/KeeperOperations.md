@@ -214,7 +214,7 @@ evidence that the migration has completed.
 - Every permissionless step that retires a finished reward day, or releases
   value the day no longer needs, has a keeper backstop, so nothing waits on
   someone choosing to make the call. The close-out duty checks every fifteen
-  minutes on every chain it serves and looks back sixty days by default.
+  minutes on every chain it serves.
 - It proves an elapsed day closed only when the day is reached by both
   interest frontiers and every reward entry covering it has ended. Before
   opening a proof it checks, from its own reading of the chain, that the
@@ -238,13 +238,17 @@ evidence that the migration has completed.
   plainly exhausted: nothing left, fully indexed and unreferenced. An epoch
   exhausted only by its caps is not detected by the keeper; the day's next
   draw passes it.
-- How long the chain's history grows never stops the duty. Its work per run
-  is bounded, and it resumes where the previous run stopped: its reading of
-  the reward entries starts past the entries that ended before the oldest
-  day still open, and a day's transport epochs are discovered a page at a
-  time, so every closed day's epochs are eventually examined. Where the
-  bound keeps a day from being reached in one run, the run's report says
-  so.
+- How long the chain's history grows never stops the duty, and no day, era
+  or epoch is ever left out for good. Its work per run is bounded, and each
+  bounded read resumes where the previous run stopped, wrapping round, above
+  a floor of what is finished for good: the days not yet proven closed are
+  read sixty at a time by default, every provable day is read the same way
+  for parking, the retired eras not yet finalized are read thirty-two at a
+  time, a day's transport epochs are read a page at a time, and its reading
+  of the reward entries starts past the entries that ended before the oldest
+  day still open. A day that stays open therefore does not hold back the
+  days after it. Where the bound keeps something from being reached in one
+  run, the run's report says so.
 - None of these steps pays a fee or moves value to the keeper. A paused
   protocol, a missing signing key, an unread value or a Diamond that names
   another chain stops the affected step and is stated in the run's report,

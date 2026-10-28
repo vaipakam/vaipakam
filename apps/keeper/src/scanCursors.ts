@@ -57,3 +57,41 @@ export function memoryScanCursors(): ScanCursors & { rows: Map<string, string> }
     },
   };
 }
+
+/**
+ * The part of the range `lo..hi` (inclusive) one run reads when it may read at
+ * most `size` of it (Codex #2993 r2). All of it when it fits; otherwise `size`
+ * items from `cursor`, or from `lo` when the cursor is missing or outside the
+ * range. `next` is where the following run starts: just past this window, or
+ * `lo` again once the window reached `hi`. So a run's reads stay bounded while
+ * every item of the range is read at least once every ceil(range / size) runs:
+ * a bounded read never leaves an item out for good, which a fixed window over
+ * the newest items does.
+ *
+ * `lo` is the pass's stored floor of items finished for good (a proven-closed
+ * day, a finalized era), so the range shrinks as work completes. Null when the
+ * range is empty.
+ */
+export function rotatingWindow(lo: number, hi: number, size: number, cursor: number | null): { from: number; to: number; next: number } | null {
+  if (hi < lo || size <= 0) return null;
+  if (hi - lo + 1 <= size) return { from: lo, to: hi, next: lo };
+  const from = cursor !== null && cursor >= lo && cursor <= hi ? cursor : lo;
+  const to = Math.min(hi, from + size - 1);
+  return { from, to, next: to >= hi ? lo : to + 1 };
+}
+
+/** A stored non-negative integer cursor, or null when there is none or it is malformed. */
+export function decodeIndex(raw: string | undefined): number | null {
+  return raw !== undefined && /^\d+$/.test(raw) ? Number(raw) : null;
+}
+
+/** How far a floor of finished items may move up: past every leading item of
+ *  `items` (ascending, starting at the floor) that `done` holds. */
+export function advanceFloor(floor: number, items: readonly number[], done: (item: number) => boolean): number {
+  let f = floor;
+  for (const i of items) {
+    if (i !== f || !done(i)) break;
+    f = i + 1;
+  }
+  return f;
+}

@@ -185,9 +185,9 @@ interface BaseEnv {
    *  transport-remainder park and the day-cursor prune. All permissionless;
    *  none pays a fee or moves value to the keeper. */
   REWARD_CLOSE_OUT_ENABLED?: string;
-  /** How many days back from the newest provable day the close-out pass
-   *  looks (default 60). A plain var. */
-  REWARD_CLOSE_OUT_LOOKBACK_DAYS?: string;
+  /** How many days the close-out pass reads a run (default 60), rotating
+   *  over every provable day not yet proven closed. A plain var. */
+  REWARD_CLOSE_OUT_WINDOW_DAYS?: string;
 
   // Depth-tiered-LTV liquidity-confidence relay knobs
   // (`liquidityConfidence.ts`, §4.4 step 5). Both default
@@ -349,7 +349,7 @@ export const PLAIN_VAR_KEYS = [
   'GRACE_DEFAULT_ENABLED',
   'PERIODIC_SETTLE_ENABLED',
   'REWARD_CLOSE_OUT_ENABLED',
-  'REWARD_CLOSE_OUT_LOOKBACK_DAYS',
+  'REWARD_CLOSE_OUT_WINDOW_DAYS',
   'LIQ_CONFIDENCE_MIN_CHECKS',
   'LIQ_CONFIDENCE_MIN_WINDOW_DAYS',
   'LIQ_TIER3_MIN_TVL_USD',
@@ -521,7 +521,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     GRACE_DEFAULT_ENABLED: raw.GRACE_DEFAULT_ENABLED,
     PERIODIC_SETTLE_ENABLED: raw.PERIODIC_SETTLE_ENABLED,
     REWARD_CLOSE_OUT_ENABLED: raw.REWARD_CLOSE_OUT_ENABLED,
-    REWARD_CLOSE_OUT_LOOKBACK_DAYS: raw.REWARD_CLOSE_OUT_LOOKBACK_DAYS,
+    REWARD_CLOSE_OUT_WINDOW_DAYS: raw.REWARD_CLOSE_OUT_WINDOW_DAYS,
     LIQ_CONFIDENCE_MIN_CHECKS: raw.LIQ_CONFIDENCE_MIN_CHECKS,
     LIQ_CONFIDENCE_MIN_WINDOW_DAYS: raw.LIQ_CONFIDENCE_MIN_WINDOW_DAYS,
     LIQ_TIER3_MIN_TVL_USD: raw.LIQ_TIER3_MIN_TVL_USD,

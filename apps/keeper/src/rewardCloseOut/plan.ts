@@ -7,19 +7,12 @@
 
 export { SIDE_BORROWER, SIDE_LENDER, conservationGap, covers, coveringEntries, type ScannedEntry, type Side } from '../rewardEntries';
 
-/** The days a run may try to prove closed: elapsed (before `today`), reached
- *  by both interest frontiers, and no older than the lookback. Null when no
- *  day qualifies. */
-export function closureWindow(
-  today: number,
-  lenderFrontier: number,
-  borrowerFrontier: number,
-  lookbackDays: number,
-): { from: number; upTo: number } | null {
-  const upTo = Math.min(today - 1, lenderFrontier, borrowerFrontier);
-  if (upTo < 0) return null;
-  const from = Math.max(0, upTo - lookbackDays + 1);
-  return { from, upTo };
+/** The newest day a run may try to prove closed: elapsed (before `today`)
+ *  and reached by both interest frontiers. Below 0 when no day qualifies. The
+ *  days a run reads up to it rotate from the pass's stored closure floor
+ *  (`scanCursors.rotatingWindow`). */
+export function provableThrough(today: number, lenderFrontier: number, borrowerFrontier: number): number {
+  return Math.max(-1, Math.min(today - 1, lenderFrontier, borrowerFrontier));
 }
 
 /** The ids past `cursor`, ascending, in pages of at most `pageSize`. */

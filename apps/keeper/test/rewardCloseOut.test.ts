@@ -13,13 +13,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ContractFunctionRevertedError, encodeErrorResult, type Address, type PublicClient } from 'viem';
 import {
   ABI,
-  DEFAULT_LOOKBACK_DAYS,
+  DEFAULT_WINDOW_DAYS,
   MAX_SENDS_PER_RUN,
   PAGE_IDS,
   SIDE_BORROWER,
   SIDE_LENDER,
   closeOutOnce,
-  closureWindow,
+  provableThrough,
+  CLOSURE_FLOOR_ITEM,
+  CLOSURE_NEXT_ITEM,
   conservationGap,
   coveringEntries,
   covers,
@@ -28,13 +30,15 @@ import {
   eraReadiness,
   pagesAfter,
   ENTRY_FLOOR_ITEM,
+  ERA_FLOOR_ITEM,
+  MAX_ERAS,
   MAX_BATCHES_PER_DAY,
   MAX_ENTRY_PAGES,
   parkCursorItem,
   type ScannedEntry,
 } from '../src/rewardCloseOut';
 import { decodeEntryFloor, encodeEntryFloor, ENTRY_PAGE, scanEntries, type EntryRow } from '../src/rewardEntries';
-import { memoryScanCursors } from '../src/scanCursors';
+import { advanceFloor, memoryScanCursors, rotatingWindow } from '../src/scanCursors';
 import type { KeeperContext } from '../src/keeper';
 
 const CHAIN = 421614;
@@ -51,12 +55,23 @@ const e = (id: number, side: number, first: number, endDay: number, perDay: bigi
 const batchId = (n: number) => `0x${n.toString(16).padStart(64, '0')}` as `0x${string}`;
 
 describe('the pure rules', () => {
-  it('closureWindow: elapsed days reached by both frontiers, no older than the lookback', () => {
-    expect(closureWindow(0, 5, 5, 60), 'nothing has elapsed').toBeNull();
-    expect(closureWindow(5, 10, 10, 60)).toEqual({ from: 0, upTo: 4 });
-    expect(closureWindow(5, 10, 3, 60), 'the slower frontier bounds it').toEqual({ from: 0, upTo: 3 });
-    expect(closureWindow(100, 200, 200, 10)).toEqual({ from: 90, upTo: 99 });
-    expect(closureWindow(5, -1, 10, 60), 'a frontier before day 0').toBeNull();
+  it('provableThrough: elapsed days reached by both frontiers', () => {
+    expect(provableThrough(0, 5, 5), 'nothing has elapsed').toBe(-1);
+    expect(provableThrough(5, 10, 10)).toBe(4);
+    expect(provableThrough(5, 10, 3), 'the slower frontier bounds it').toBe(3);
+    expect(provableThrough(5, -1, 10), 'a frontier before day 0').toBe(-1);
+  });
+
+  it('rotatingWindow: bounded per run, every item visited across runs', () => {
+    expect(rotatingWindow(3, 2, 5, null), 'an empty range').toBeNull();
+    expect(rotatingWindow(0, 4, 10, 7), 'a range that fits is read whole').toEqual({ from: 0, to: 4, next: 0 });
+    expect(rotatingWindow(0, 9, 4, null)).toEqual({ from: 0, to: 3, next: 4 });
+    expect(rotatingWindow(0, 9, 4, 4)).toEqual({ from: 4, to: 7, next: 8 });
+    expect(rotatingWindow(0, 9, 4, 8), 'the last window wraps to the floor').toEqual({ from: 8, to: 9, next: 0 });
+    expect(rotatingWindow(5, 20, 4, 2), 'a cursor below the floor restarts at the floor').toEqual({ from: 5, to: 8, next: 9 });
+    expect(advanceFloor(2, [2, 3, 5], () => true), 'only a contiguous run from the floor').toBe(4);
+    expect(advanceFloor(2, [3, 4], () => true), 'a window not starting at the floor').toBe(2);
+    expect(advanceFloor(2, [2, 3], (i) => i !== 2)).toBe(2);
   });
 
   it('covers: from the first day, the end day exclusive', () => {
@@ -472,14 +487,14 @@ describe('a run', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  const run = (opts: { keeper?: Address | null; lookbackDays?: number; context?: () => KeeperContext | null } = {}) =>
+  const run = (opts: { keeper?: Address | null; windowDays?: number; context?: () => KeeperContext | null } = {}) =>
     closeOutOnce(CHAIN, DIAMOND, {
       client: d.client(),
       readClient: d.client(),
       context: opts.context ?? (() => d.ctx()),
       keeper: opts.keeper === undefined ? KEEPER : opts.keeper,
       sendDeadline: Number.POSITIVE_INFINITY,
-      lookbackDays: opts.lookbackDays ?? DEFAULT_LOOKBACK_DAYS,
+      windowDays: opts.windowDays ?? DEFAULT_WINDOW_DAYS,
       cursors,
     });
   const fns = () => d.sent.map((s) => s.fn);
@@ -580,13 +595,30 @@ describe('a run', () => {
       expect(d.nonces.get(KEEPER)).toBe(4n);
     });
 
-    it('works only elapsed days both frontiers reach, inside the lookback', async () => {
+    it('works only elapsed days both frontiers reach, a window a run above its closure floor', async () => {
       d.today = 8;
       d.frontiers = [6, 4];
-      const r = await run({ lookbackDays: 3 });
-      expect(r.daysClosed).toEqual([2, 3, 4]);
-      expect(d.closed.has(1)).toBe(false);
-      expect(d.closed.has(5)).toBe(false);
+      let r = await run({ windowDays: 3 });
+      expect(r.daysClosed).toEqual([0, 1, 2]);
+      expect(cursors.rows.get(CLOSURE_FLOOR_ITEM)).toBe('3');
+      r = await run({ windowDays: 3 });
+      expect(r.daysClosed, 'the next run starts at the floor').toEqual([3, 4]);
+      expect(d.closed.has(5), 'past the slower frontier').toBe(false);
+      expect(cursors.rows.get(CLOSURE_FLOOR_ITEM)).toBe('5');
+    });
+
+    it('rotates past a day that stays open, so a later day is not left out for good', async () => {
+      d.today = 11;
+      d.frontiers = [20, 20];
+      d.addEntry({ side: SIDE_LENDER, startDay: 1, endDay: 2, perDay: 1n, open: true }); // day 1 waits on it
+      let r = await run({ windowDays: 4 });
+      expect(r.daysClosed).toEqual([0, 2, 3]);
+      expect(cursors.rows.get(CLOSURE_FLOOR_ITEM), 'the floor stops at the open day').toBe('1');
+      r = await run({ windowDays: 4 });
+      expect(r.daysClosed, 'the next window, not the same one again').toEqual([4, 5, 6, 7]);
+      r = await run({ windowDays: 4 });
+      expect(r.daysClosed).toEqual([8, 9, 10]);
+      expect(cursors.rows.get(CLOSURE_NEXT_ITEM), 'then back to the floor').toBe('1');
     });
 
     it('a day another caller closed first is a race, not a refusal', async () => {
@@ -653,6 +685,26 @@ describe('a run', () => {
       expect(d.baseline).toBe(50n);
     });
 
+    it(`reaches an era more than ${MAX_ERAS} role changes back, rotating above a floor of finalized ones`, async () => {
+      // Era 0 waits on a day; eras 1..(MAX_ERAS + 1) are ready; then a live era.
+      d.eras = [{ holderRow: 5n, daysClosed: 0n, boundaryDay: 0n, terminal: false, stagedFresh: 0n }];
+      for (let i = 1; i <= MAX_ERAS + 1; i++) d.eras.push({ holderRow: 1n, daysClosed: 1n, boundaryDay: BigInt(i), terminal: false, stagedFresh: 0n });
+      d.eras.push({ holderRow: 0n, daysClosed: 0n, boundaryDay: BigInt(MAX_ERAS + 2), terminal: false, stagedFresh: 0n });
+      const r = await run();
+      expect(r.erasWaiting).toEqual(['0: 0 of its 1 days proven closed']);
+      expect(r.erasFinalized).toEqual(Array.from({ length: MAX_ERAS - 1 }, (_, i) => i + 1).slice(0, MAX_SENDS_PER_RUN));
+      expect(cursors.rows.get(ERA_FLOOR_ITEM), 'the floor stays below the era that waits').toBeUndefined();
+      // Runs continue the rotation until every ready era is finalized.
+      for (let i = 0; i < 10 && d.eras.slice(1, -1).some((x) => !x.terminal); i++) await run();
+      expect(d.eras.slice(1, -1).every((x) => x.terminal), 'every ready era, the oldest included').toBe(true);
+      d.eras[0].daysClosed = 1n;
+      const finalized: number[] = [];
+      for (let i = 0; i < 3 && !d.eras[0].terminal; i++) finalized.push(...(await run()).erasFinalized);
+      expect(finalized, 'the era that waited, once its day closes, when the rotation is back at the floor').toEqual([0]);
+      for (let i = 0; i < 3; i++) await run();
+      expect(cursors.rows.get(ERA_FLOOR_ITEM), 'then the floor passes every finalized era').toBe(String(MAX_ERAS + 2));
+    });
+
     it('drains pending surplus on an active chain', async () => {
       d.pendingSurplus = 70n;
       const r = await run();
@@ -695,6 +747,18 @@ describe('a run', () => {
       d.sent = [];
       expect((await run()).parked).toEqual([]);
       expect(d.sent).toEqual([]);
+    });
+
+    it('parks on a closed day below the closure floor and outside any one window, by rotating over every provable day', async () => {
+      d.today = 30;
+      d.frontiers = [100, 100];
+      for (let x = 0; x < d.today; x++) d.closed.add(x);
+      d.addBatch(batchId(1), { days: [2], balance: 9n });
+      d.addBatch(batchId(2), { days: [25], balance: 4n });
+      const parked: string[] = [];
+      for (let i = 0; i < 3; i++) for (const p of (await run({ windowDays: 10 })).parked) parked.push(p.batchId);
+      expect(parked.sort()).toEqual([batchId(1), batchId(2)].sort());
+      expect(cursors.rows.get(CLOSURE_FLOOR_ITEM), 'every day below the floor is closed').toBe('30');
     });
 
     it(`discovers a day's epochs ${MAX_BATCHES_PER_DAY} a run from where the last run stopped, so one past the first page is parked`, async () => {
