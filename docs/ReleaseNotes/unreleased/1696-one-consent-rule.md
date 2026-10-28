@@ -1,4 +1,4 @@
-## Thread — One consent rule for every signing review (PR #<n>)
+## Thread — One consent rule for every signing review (PR #3041)
 
 Every review in the connected app that asks the user to tick "I understand and agree to the Risk Disclosures and Vaipakam Terms" now follows one rule, held in one shared hook. Before, the offer review, the desk order ticket, the signed-order fill, the rental listing and accept, the refinance, the offset and the loan-sale listing each guarded the tick their own way: some cleared it from an effect a render late, some stamped a counter and refused at submit while the box stayed ticked, and the rental accept kept a temporary lint suppression waiting on this decision. The owner chose to untick, keyed on the data (Closes #1696).
 
