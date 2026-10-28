@@ -621,6 +621,22 @@ describe('a run', () => {
       expect(cursors.rows.get(CLOSURE_NEXT_ITEM), 'then back to the floor').toBe('1');
     });
 
+    it('continues each day\'s own unfinished walk when the window rotates between days', async () => {
+      closeAllButDay(-1);
+      d.closed.delete(1);
+      d.closed.delete(2);
+      // Each day needs a start and 12 pages: more than one run's 12 sends.
+      for (const day of [1, 2]) {
+        for (let i = 0; i < 6 * PAGE_IDS; i++) {
+          d.addEntry({ side: SIDE_LENDER, startDay: day, endDay: day + 1, perDay: 1n });
+          d.addEntry({ side: SIDE_BORROWER, startDay: day, endDay: day + 1, perDay: 1n });
+        }
+      }
+      for (let i = 0; i < 10 && !(d.closed.has(1) && d.closed.has(2)); i++) await run({ windowDays: 1 });
+      expect(d.closed.has(1) && d.closed.has(2), 'both days close').toBe(true);
+      expect(fns().filter((f) => f === 'startDayClosure'), 'one walk each, never reopened').toHaveLength(2);
+    });
+
     it('a day another caller closed first is a race, not a refusal', async () => {
       closeAllButDay(2);
       d.closedByOtherBeforeSend = 2;

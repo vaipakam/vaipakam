@@ -25,8 +25,9 @@
 //      then opens a walk (`startDayClosure`) and pages the ids in
 //      (`proveDayClosurePage`). A day with an entry still open is left; it is
 //      counted on the run's line, not sent. A day with nothing on either side
-//      closes at the start. The walk under the keeper's latest nonce is
-//      continued rather than replaced when it is this day's.
+//      closes at the start. The keeper's unfinished walk for the day is
+//      continued rather than replaced: its nonce is kept per day, since the
+//      keeper's latest nonce names only its newest walk.
 //   4. PARK — for each closed day in its park window, every transport epoch it
 //      lists whose remainder is not parked, whose membership is whole, which
 //      no staging record references and all of whose listed days are proven
@@ -133,6 +134,7 @@ export const CLOSURE_FLOOR_ITEM = 'closure-floor';
 export const CLOSURE_NEXT_ITEM = 'closure-next';
 export const PARK_NEXT_ITEM = 'park-next';
 export const parkCursorItem = (day: number) => `park:${day}`;
+export const walkCursorItem = (day: number) => `walk:${day}`;
 /** Park pages one batch may take in a run. */
 export const MAX_PARK_PAGES = 8;
 /** Reads per aggregate. */
@@ -563,6 +565,10 @@ async function proveDays(
   if (open.length === 0) return;
   const entries = scan.entries;
   const totals = await r.many(open.map((d) => ({ functionName: 'getInteractionDayEntry', args: [BigInt(d), zeroAddress] })), 'day-totals');
+  // Each day's walk nonce is kept per day, so a walk left unfinished is found
+  // and continued however many walks on other days the keeper opened since
+  // (Codex #2993 r3): the keeper's latest nonce names only its newest walk.
+  const walkNonces = await cursors.get(open.map(walkCursorItem));
   let lastNonce: bigint;
   try {
     lastNonce = await r.one<bigint>('getClosureWalkNonce', [keeper]);
@@ -597,28 +603,39 @@ async function proveDays(
       continue;
     }
     // eslint-disable-next-line no-await-in-loop
-    const outcome = await walkDay(r, sender, day, keeper, lastNonce, cover);
-    lastNonce = outcome.nonce;
+    const stored = walkNonces.get(walkCursorItem(day));
+    const candidates = [...new Set([...(stored !== undefined && /^\d+$/.test(stored) ? [BigInt(stored)] : []), lastNonce])];
+    // eslint-disable-next-line no-await-in-loop
+    const outcome = await walkDay(r, sender, day, keeper, candidates, cover);
+    if (outcome.nonce > lastNonce) lastNonce = outcome.nonce;
+    // eslint-disable-next-line no-await-in-loop
+    if (outcome.nonce > 0n && String(outcome.nonce) !== stored) await cursors.put(walkCursorItem(day), String(outcome.nonce));
     if (outcome.closed) report.daysClosed.push(day);
   }
 }
 
-/** Continue the keeper's walk for `day` under its latest nonce, or open one,
- *  and page every remaining id in. */
+/** Continue the keeper's unfinished walk for `day` under the first of
+ *  `nonces` that holds one, or open one, and page every remaining id in. */
 async function walkDay(
   r: Reader,
   sender: StepSender,
   day: number,
   keeper: Address,
-  lastNonce: bigint,
+  nonces: readonly bigint[],
   cover: { lender: readonly ScannedEntry[]; borrower: readonly ScannedEntry[] },
 ): Promise<{ closed: boolean; nonce: bigint }> {
   const subject = `day ${day}`;
-  let nonce = lastNonce;
+  let nonce = 0n;
   let walk: WalkRecord | null = null;
-  if (nonce > 0n) {
-    const w = await r.one<WalkRecord>('getClosureWalk', [BigInt(day), keeper, nonce]);
-    if (w.starter.toLowerCase() === keeper.toLowerCase() && !w.completed) walk = w;
+  for (const n of nonces) {
+    if (n === 0n) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const w = await r.one<WalkRecord>('getClosureWalk', [BigInt(day), keeper, n]);
+    if (w.starter.toLowerCase() === keeper.toLowerCase() && BigInt(w.day) === BigInt(day) && !w.completed) {
+      walk = w;
+      nonce = n;
+      break;
+    }
   }
   if (walk === null) {
     const res = await sender.call('start', subject, 'startDayClosure', [BigInt(day)]);
