@@ -3,10 +3,9 @@
 // #2612 — what the day-close pass calls, and the numbers it works by. One
 // place, so a timing or a refusal name is never restated in two modules.
 
-import { toEventSelector, toFunctionSelector, type Abi } from 'viem';
+import { toEventSelector, type Abi } from 'viem';
 import {
   AdminFacetABI,
-  DiamondLoupeFacetABI,
   InteractionRewardsLensFacetABI,
   RewardAggregatorFacetABI,
   RewardBroadcastFacetABI,
@@ -29,41 +28,6 @@ export const ABI = [
   ...MESSENGER_ABI.filter((x) => x.type === 'error'),
   ...(VaipakamDiamondABI as Abi).filter((x) => x.type === 'error'),
 ] as Abi;
-
-/** The B4 report's fee quote, which the messengers deployed on the live
- *  testnets carry and the source no longer does (#2790 retired it for fresh
- *  deploys), so the compiled ABI cannot supply it. Copied verbatim from the
- *  messenger ABI exported before that change. Those Diamonds' `closeDay` sends
- *  the B4 report, the one older shape Base applies after finalization, so the
- *  keeper must still price it there. Delete this rung, with `diamondSendsB4`,
- *  once no served chain runs a pre-#2790 messenger (the all-waves fresh
- *  deploy, #2866). */
-export const B4_QUOTE_ABI = [
-  {
-    type: 'function',
-    name: 'quoteSendChainReport',
-    stateMutability: 'view',
-    inputs: [
-      { name: 'dayId', type: 'uint256' },
-      { name: 'lenderNumeraire18', type: 'uint256' },
-      { name: 'borrowerNumeraire18', type: 'uint256' },
-      { name: 'recycledCumulative18', type: 'uint256' },
-      { name: 'recycledForDay18', type: 'uint256' },
-      { name: 'commitRetiredCumulative18', type: 'uint256' },
-      { name: 'commitReleasedCumulative18', type: 'uint256' },
-      { name: 'custodyEra', type: 'uint64' },
-    ],
-    outputs: [{ name: 'nativeFee', type: 'uint256' }],
-  },
-  ...MESSENGER_ABI.filter((x) => x.type === 'error'),
-] as const satisfies Abi;
-
-export const LOUPE_ABI = DiamondLoupeFacetABI as Abi;
-/** `closeDay`, and `getInterestFrontiers`: the reporter facet gained the
- *  second in the same change (#2459) that gave its `closeDay` the B4 report
- *  send, so a pre-#2790 Diamond routing both to one facet sends B4. */
-export const CLOSE_DAY_SELECTOR = toFunctionSelector('closeDay(uint256)');
-export const B4_REPORTER_SELECTOR = toFunctionSelector('getInterestFrontiers()');
 
 /** This pass's cadence in seconds (passSchedule). */
 export const PASS_CADENCE_SEC = 15 * 60;
