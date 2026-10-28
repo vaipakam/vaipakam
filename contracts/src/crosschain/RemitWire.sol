@@ -22,8 +22,8 @@ pragma solidity ^0.8.29;
  *         payload that added `recycledShare`, the tagged d6 payload
  *         (`keccak256("vaipakam.remit.wire.d6")`) that replaced the flat list
  *         with a rooted commitment to it, and the tagged d7 payload
- *         (`keccak256("vaipakam.remit.wire.d7")`, #918) that d6 grew the
- *         funded day's whole slice in. The flat-list shapes carried their day
+ *         (`keccak256("vaipakam.remit.wire.d7")`, #918), which was d6 plus the
+ *         funded day's whole slice. The flat-list shapes carried their day
  *         list flat, so each needed its own index, proof and admission route
  *         on the mirror, and the untagged two carried no split at all; d6
  *         carried no whole, so a mirror could not tell one part of a day from

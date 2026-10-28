@@ -84,8 +84,8 @@ library LibRewardRemitDispatch {
     ///         the #918 cell 24,708 gas (3.4%) below forge 1.8.3, the version
     ///         CI pins, and which of the two matches a chain is not
     ///         established, so the derivation takes the higher of the two
-    ///         corrections: 884,708 x 1.0341 = 914,840, so
-    ///         (914,840 + 100,000) x 1.25 = 1,268,550, rounded up to
+    ///         corrections: 884,708 x 1.0341 = 914,877, so
+    ///         (914,877 + 100,000) x 1.25 = 1,268,597, rounded up to
     ///         1,300,000. Re-measure under 1.8.3 before relying on the
     ///         headroom: about 25,000 gas on the corrected figure, about
     ///         55,000 on the raw one. A later part of a day reads 592,792

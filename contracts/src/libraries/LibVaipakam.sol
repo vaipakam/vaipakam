@@ -7596,12 +7596,9 @@ library LibVaipakam {
         ///      obligation behind backing that exists.
         ///
         ///      A batch's POSITION in a day's index is not an order (Codex
-        ///      #2232 r3). Materialization is permissionless and asynchronous,
-        ///      so position records which caller got there first; an earlier
-        ///      revision of this comment called the index arrival-ordered,
-        ///      which position could never have delivered and which a
-        ///      RETROSPECTIVE admission — a rollout packet admitted long after
-        ///      it landed — makes plainly untrue. The order is the delivery's
+        ///      #2232 r3). Since #2828 the ingress itself links each epoch into
+        ///      its day as it lands, so position follows landing, but the rule
+        ///      is still not to read position as the order. The order is the delivery's
         ///      own `ingressPackets[batchId].arrivedAt`: written once by the
         ///      ingress that received it, immutable, and returned with every
         ///      entry so a reader never infers it from the array. Design §5c
@@ -8162,8 +8159,8 @@ library LibVaipakam {
         /// @dev #918 — the mirror's per-day DELIVERY record: the whole slice
         ///      Base said it is sending for the day, and the sum of the parts
         ///      that have landed here, per component. Written only by
-        ///      `LibRewardCustody._noteDayDeliveryPart`, when a single-day
-        ///      packet's chunk is indexed or proven; `landedAt` is the one
+        ///      `LibRewardCustody._noteDayDeliveryPart`, at the ingress of the
+        ///      budget packet that names the day (#2828); `landedAt` is the one
         ///      word `LibRewardCustody.dayDeliveryLanded` reads. Mirror-only.
         ///      Appended — append-only.
         mapping(uint256 => DayDeliveryParts) dayDeliveryParts;
