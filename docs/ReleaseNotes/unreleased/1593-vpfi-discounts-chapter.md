@@ -1,4 +1,4 @@
-## Thread — The VPFI discounts chapter is current and in all ten guide languages (PR #<n>)
+## Thread — The VPFI discounts chapter is current and in all ten guide languages (PR #3037)
 
 The Advanced user guide's "How VPFI Discounts Work" chapter existed only in
 English, and the English itself had fallen behind the protocol. It described
