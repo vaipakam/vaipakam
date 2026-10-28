@@ -671,21 +671,41 @@ describe('a run', () => {
   });
 
   it('ACKs a tombstoned instruction once, then waits on Base\'s release', async () => {
-    authorize(5n, 400n * E18);
-    ledger.add(BASE_ID, 'RepatriationInstructionDispatched', { authId: '5' }, NOW - 600);
-    mirror.instr.set(`${BASE}:5`, { state: INSTR_TOMBSTONED, amount: 400n * E18 });
+    authorize(1n, 400n * E18);
+    ledger.add(BASE_ID, 'RepatriationInstructionDispatched', { authId: '1' }, NOW - 600);
+    mirror.instr.set(`${BASE}:1`, { state: INSTR_TOMBSTONED, amount: 400n * E18 });
     const r = await run();
-    expect(mirror.sent).toEqual([{ fn: 'sendRepatriationCancelAck', args: [BASE, 5n, KEEPER], value: FEE }]);
-    expect(r[1].acked).toEqual(['5']);
+    expect(mirror.sent).toEqual([{ fn: 'sendRepatriationCancelAck', args: [BASE, 1n, KEEPER], value: FEE }]);
+    expect(r[1].acked).toEqual(['1']);
     expect(alerts).toEqual([]);
     mirror.sent = [];
     const again = await run();
     expect(mirror.sent).toEqual([]);
     expect(again[0].waiting[0]).toMatch(/cancellation ACK is in flight/);
-    // Base releases it: both records are cleared.
-    base.auths.get(5n)!.status = 3;
+    // Base releases it: both records are cleared once that is final.
+    base.auths.get(1n)!.status = 3;
     await run();
     expect([...records.rows.keys()]).toEqual([]);
+  });
+
+  it('keeps its ACK record until Base\'s release is final, so a reorg does not pay for a second ACK (Codex #3002)', async () => {
+    authorize(1n, 400n * E18);
+    ledger.add(BASE_ID, 'RepatriationInstructionDispatched', { authId: '1' }, NOW - 600);
+    mirror.instr.set(`${BASE}:1`, { state: INSTR_TOMBSTONED, amount: 400n * E18 });
+    await run();
+    expect(fns(mirror)).toEqual(['sendRepatriationCancelAck']);
+    // Released at the head, still pending at the finalized block.
+    base.auths.get(1n)!.status = 3;
+    base.final = { auths: new Map([[1n, { status: AUTH_PENDING, dst: MIRROR_ID, amount: 400n * E18 }]]), stranded: new Map() };
+    await run();
+    expect(records.rows.has(`${MIRROR_ID}:${MIRROR}:ack:${BASE}:1`), 'kept while the release is not final').toBe(true);
+    // A reorg puts it back to pending; the indexer has not recorded the ACK.
+    base.auths.get(1n)!.status = AUTH_PENDING;
+    base.final = null;
+    mirror.sent = [];
+    const r = await run();
+    expect(mirror.sent, 'no second ACK').toEqual([]);
+    expect(r[0].waiting[0]).toMatch(/cancellation ACK is in flight/);
   });
 
   it(`reaches an authorization past the first ${MAX_AUTHS_PER_RUN}, rotating above a floor of settled ids`, async () => {

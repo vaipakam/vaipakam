@@ -629,8 +629,9 @@ async function repatriations(base: ChainState, states: ReadonlyMap<number, Chain
   const ids = nums.map(BigInt);
   const statuses = await base.r.many(ids.map((id) => ({ functionName: 'getRepatriationAuthorization', args: [id] })), 'authorizations');
   const finished = new Set<number>();
+  /** Each finished id's mirror, which holds its ACK record. */
+  const dstOf = new Map<number, number>();
   const pending: { authId: bigint; dst: number; amount: bigint }[] = [];
-  const settled: string[] = [];
   for (let i = 0; i < ids.length; i++) {
     const authId = ids[i];
     const st = statuses[i] as readonly [number, number, bigint, bigint, bigint] | undefined;
@@ -640,10 +641,7 @@ async function repatriations(base: ChainState, states: ReadonlyMap<number, Chain
     }
     if (authFinished(Number(st[0]))) {
       finished.add(nums[i]);
-      settled.push(RECORD_INSTRUCTION(authId));
-      const m = states.get(Number(st[1]));
-      // eslint-disable-next-line no-await-in-loop
-      if (m !== undefined) await deps.records.finish(m.deps.chainId, m.deps.diamond, [RECORD_ACK(base.deps.diamond, authId)]);
+      dstOf.set(nums[i], Number(st[1]));
       continue;
     }
     if (Number(st[0]) !== AUTH_PENDING) {
@@ -652,7 +650,6 @@ async function repatriations(base: ChainState, states: ReadonlyMap<number, Chain
     }
     pending.push({ authId, dst: Number(st[1]), amount: st[3] });
   }
-  if (settled.length > 0) await deps.records.finish(base.deps.chainId, base.deps.diamond, settled);
   // The floor moves only on what the finalized block shows (Codex #2993 r4):
   // an authorization a reorg puts back to pending stays above it. It must read
   // FINISHED there, not merely not pending: an id issued and finished since
@@ -664,7 +661,22 @@ async function repatriations(base: ChainState, states: ReadonlyMap<number, Chain
       return st !== undefined && authFinished(Number(st[0]));
     }));
   });
-  if (newFloor !== floor) await cursors.put(AUTH_FLOOR_ITEM, String(newFloor));
+  // This keeper's send records are cleared by the same rule (Codex #3002): only
+  // for an id the floor passed, finished at the finalized block. One finished
+  // only at the head may be put back to pending by a reorg, and its record is
+  // what stops a second instruction or ACK being paid for while the indexer
+  // has not recorded the first.
+  if (newFloor !== floor) {
+    const passed: bigint[] = [];
+    for (let id = floor; id < newFloor; id++) passed.push(BigInt(id));
+    await deps.records.finish(base.deps.chainId, base.deps.diamond, passed.map(RECORD_INSTRUCTION));
+    for (const id of passed) {
+      const m = states.get(dstOf.get(Number(id)) ?? -1);
+      // eslint-disable-next-line no-await-in-loop
+      if (m !== undefined) await deps.records.finish(m.deps.chainId, m.deps.diamond, [RECORD_ACK(base.deps.diamond, id)]);
+    }
+    await cursors.put(AUTH_FLOOR_ITEM, String(newFloor));
+  }
   if (String(win.next) !== stored.get(AUTH_NEXT_ITEM)) await cursors.put(AUTH_NEXT_ITEM, String(win.next));
   if (pending.length === 0) return;
   const rows = await deps.ledger.matching(base.deps.chainId, ['RepatriationInstructionDispatched'], 'authId', pending.map((p) => String(p.authId)));

@@ -321,7 +321,10 @@ evidence that the migration has completed.
   being paid for a second time, because a cross-chain message that failed on
   arrival stays there for manual re-execution. A send whose outcome the
   keeper did not see counts as sent, since it may still land; only a send
-  that reverted, or that the node refused, is sent again. A repatriation the lane can
+  that reverted, or that the node refused, is sent again. The keeper stops
+  counting a send as made only once the chain's final state shows the
+  authorization finished, so a finish that a reorg undoes does not lead to a
+  second send. A repatriation the lane can
   never carry, or one the mirror cannot yet fund, is stated rather than
   attempted.
 - **One route.** A mirror returns VPFI, and acknowledges cancellations,
