@@ -1,4 +1,4 @@
-## Thread — every retired app link has a destination (PR #<n>)
+## Thread — every retired app link has a destination (PR #3004)
 
 The connected app now answers every address the retired app served, not only the ones reviewers happened to name. The retired router was enumerated and each path is routed, aliased or mapped. An old offer page reads the offer and opens the flow that takes it. Because the old address never said which network the offer was on, a miss names the network it looked on and the other reasons it can miss. The old loan action pages land on that loan, scrolled to the card offering the same action: the lender's exit chooser, the borrower's early-repay chooser, or the refinance card. The scroll waits for the card, which appears only after the loan's data arrives.
 
