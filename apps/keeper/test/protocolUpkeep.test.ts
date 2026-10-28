@@ -230,7 +230,7 @@ describe('a run', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  const run = (opts: { keeper?: Address | null; refreshAfterSec?: number; salesSync?: boolean } = {}) =>
+  const run = (opts: { keeper?: Address | null; refreshAfterSec?: number; salesSync?: boolean; tierPush?: boolean } = {}) =>
     upkeepOnce(CHAIN, DIAMOND, {
       client: d.client(),
       readClient: d.client(),
@@ -239,6 +239,7 @@ describe('a run', () => {
       sendDeadline: Number.POSITIVE_INFINITY,
       refreshAfterSec: opts.refreshAfterSec ?? DEFAULT_REFRESH_AFTER_SEC,
       salesSync: opts.salesSync,
+      tierPush: opts.tierPush,
       cursors,
       ledger,
     });
@@ -305,10 +306,11 @@ describe('a run', () => {
       d.getChainId = async () => {
         throw new PastRunDeadline('getChainId: past the read cutoff — read next run');
       };
-      const r = await run({ salesSync: true });
+      const r = await run({ salesSync: true, tierPush: true });
       expect(d.sent).toEqual([]);
       const line = describeReport(r);
       expect(line).toContain('sale-sanctions-sync=not worked (not reached this run)');
+      expect(line).toContain('tier-push-retry=not worked (not reached this run)');
       expect(line).not.toContain('not armed');
     });
 
@@ -332,6 +334,8 @@ describe('a run', () => {
       expect(describeReport(r)).toContain(
         'sale-sanctions-sync=off (PREPAY_SALE_SANCTIONS_SYNC_ENABLED not armed)',
       );
+      expect(r.tierPush).toBeNull();
+      expect(describeReport(r)).toContain('tier-push-retry=off (TIER_PUSH_RETRY_ENABLED not armed)');
     });
 
     it('refreshes when a tier would change, and reports what the receipt wrote', async () => {

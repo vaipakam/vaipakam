@@ -407,7 +407,8 @@ journalctl -u vaipakam-keeper -f
    `REWARD_RETURN_TRANSPORT_ENABLED` (`rewardReturnTransport`, hourly at :29),
    `PROTOCOL_UPKEEP_ENABLED` (`protocolUpkeep`, hourly at :59; its
    prepay-sale sanctions sync step also needs
-   `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`),
+   `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, and its tier-push retry step
+   `TIER_PUSH_RETRY_ENABLED`),
    `PREPAY_AUTO_LIST_ENABLED` (`prepayAutoList`, every minute), and
    `DISCOUNT_PATH_CHAIN_IDS` (a list of chain ids, not `true`: the flash-loan
    branch of the liquidator, armed per chain by

@@ -214,6 +214,13 @@ interface BaseEnv {
    *  nothing to the keeper. Read only while PROTOCOL_UPKEEP_ENABLED arms the
    *  pass. */
   PREPAY_SALE_SANCTIONS_SYNC_ENABLED?: string;
+  /** #2984 — 'true' adds the tier-push retry to the protocol upkeep pass
+   *  (step 4): deliverTierPush for a user whose committed tier push a
+   *  broadcast lane is still owed, when the protocol broadcast budget can
+   *  pay the lane now. Permissionless; the keeper attaches no value, and the
+   *  lane's CCIP fee is the protocol budget's under the facet's own rule.
+   *  Read only while PROTOCOL_UPKEEP_ENABLED arms the pass. */
+  TIER_PUSH_RETRY_ENABLED?: string;
   /** Seconds after which a cached tier LTV is refreshed even when its value
    *  would not change (default 7 days; the contract uses a cached tier only
    *  while it is under 14 days old). A plain var. */
@@ -408,6 +415,7 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_CLOSE_OUT_WINDOW_DAYS',
   'PROTOCOL_UPKEEP_ENABLED',
   'PREPAY_SALE_SANCTIONS_SYNC_ENABLED',
+  'TIER_PUSH_RETRY_ENABLED',
   'PREPAY_AUTO_LIST_ENABLED',
   'TIER_LTV_REFRESH_AFTER_SEC',
   'REWARD_ZEROED_DAY_ENABLED',
@@ -591,6 +599,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_CLOSE_OUT_WINDOW_DAYS: raw.REWARD_CLOSE_OUT_WINDOW_DAYS,
     PROTOCOL_UPKEEP_ENABLED: raw.PROTOCOL_UPKEEP_ENABLED,
     PREPAY_SALE_SANCTIONS_SYNC_ENABLED: raw.PREPAY_SALE_SANCTIONS_SYNC_ENABLED,
+    TIER_PUSH_RETRY_ENABLED: raw.TIER_PUSH_RETRY_ENABLED,
     PREPAY_AUTO_LIST_ENABLED: raw.PREPAY_AUTO_LIST_ENABLED,
     TIER_LTV_REFRESH_AFTER_SEC: raw.TIER_LTV_REFRESH_AFTER_SEC,
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,

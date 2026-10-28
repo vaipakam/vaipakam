@@ -514,6 +514,32 @@ evidence that the migration has completed.
   costs reads, not transactions. The keeper pays only gas and moves no
   value.
 
+## Delivering owed tier pushes
+
+- Base carries a user's effective discount tier to each mirror chain inside
+  the user's own action. A mirror lane that cannot be paid or reached then
+  stays owed, and the protocol says so with a deferral record naming the
+  user, the lane and the reason. Anyone may deliver an owed push later.
+  Without a caller nothing does, and the mirror keeps the tier it last
+  received until the user's tier changes again. The keeper is the caller.
+- It checks every hour, as a step of protocol upkeep that is armed on its
+  own. The indexer's record of deferrals nominates the users; each is
+  decided from the protocol's own record of which lanes are owed and when
+  the protocol's broadcast budget may next pay each one.
+- The keeper attaches no value of its own. So it calls the delivery only
+  for a user with a lane the protocol budget may pay now and whose quoted
+  fee the budget still covers, counting what earlier deliveries in the
+  same run would spend. A user whose owed lanes all wait on spacing, or on
+  a budget that cannot cover them, is reported as waiting, with why, and
+  costs no transaction.
+- The delivery spends the protocol broadcast budget: each lane delivered
+  pays its cross-chain fee from it, under the protocol's own rule (a push
+  that lowers a lane's tier at once, any other at most once per spacing
+  window per lane). The report names each lane delivered and each lane
+  left owed with its reason, from the transaction's own records. A record
+  of a deferral is passed for good only once the finalized chain shows that
+  push delivered, superseded, or no longer owed.
+
 ## Listing NFT collateral during grace
 
 - While a loan backed by an NFT is in its grace window, anyone other than the
@@ -545,9 +571,9 @@ evidence that the migration has completed.
 
 The master keeper switch and each duty's own arming choice are separate.
 Delivery proofs, late acknowledgements, sanctions observation, reward-day
-automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep and its prepay-sale sanctions sync must each
+automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync and its tier-push retry must each
 disclose whether they are armed on the selected deployment. Reward-day
-automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep and its sanctions sync ship disabled and require
+automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep, its sanctions sync and its tier-push retry ship disabled and require
 deliberate activation. Deploying their software does not prove they run, that rewards have launched, or that custody or the
 expiry horizon has been activated. The mirror's day-delivery protection is
 required by its reward role, as stated in the current tokenomics spec; it is

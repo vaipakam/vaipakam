@@ -53,9 +53,10 @@ import { deadlineClient, PastRunDeadline, settledChunkedRead } from './batchRead
 import { boundedCall } from './passReader';
 import { shortErr } from './callErrors';
 import { readActiveWindow, type ScanWindow } from './activeLoanWindow';
-import { decodePos, encodePos, posAfter, rowFinalized, type EventLedger } from './eventLedger';
+import type { EventLedger } from './eventLedger';
+import { readLedgerRotation } from './ledgerRotation';
 import { priorStageCutoffMs, readCutoffMs } from './runWindow';
-import { finalFloor, type FinalBlock, type ScanCursors } from './scanCursors';
+import type { FinalBlock, ScanCursors } from './scanCursors';
 import type { StepSender } from './stepSender';
 
 export const SALES_ABI = [
@@ -282,39 +283,32 @@ async function readOfferListings(
   partiesOf: (raw: unknown) => { hash: string; parties: Address[] } | null,
 ): Promise<{ listings: Listing[]; liftFloor: () => Promise<void> }> {
   const listings: Listing[] = [];
-  const { cursors } = deps;
-  // The storage waits are bounded one by one, not with the reads around
-  // them: `settledChunkedRead` stops at the cutoff itself and keeps the
-  // batches it finished, which a bound over the whole stage would discard.
-  const stored = await boundedCall(cutoff, 'the offer cursors', () => cursors.get([OFFER_FLOOR_ITEM, OFFER_NEXT_ITEM]));
-  const floor = decodePos(stored.get(OFFER_FLOOR_ITEM));
-  const next = decodePos(stored.get(OFFER_NEXT_ITEM));
-  const start = next !== null && (floor === null || posAfter(next, floor)) ? next : floor;
-  const page = await boundedCall(cutoff, 'the listing ledger', () => deps.ledger.page(chainId, [LISTING_EVENT], start, OFFER_PAGE));
+  // The listing each row names; a row that names none nominates nothing.
+  const page = await readLedgerRotation<{ offerId: bigint; hash: string }>({
+    ledger: deps.ledger,
+    cursors: deps.cursors,
+    chainId,
+    kinds: [LISTING_EVENT],
+    floorItem: OFFER_FLOOR_ITEM,
+    nextItem: OFFER_NEXT_ITEM,
+    limit: OFFER_PAGE,
+    nominee: (row) => {
+      const hash = String(row.args.orderHash ?? '').toLowerCase();
+      let offerId: bigint;
+      try {
+        offerId = BigInt(String(row.args.offerId));
+      } catch {
+        return null;
+      }
+      return /^0x[0-9a-f]{64}$/.test(hash) ? { offerId, hash } : null;
+    },
+    id: (k) => `${k.offerId}:${k.hash}`,
+  });
   if (page === null) {
     sender.noteUnread('sales:offers', 'the event ledger of parallel-sale listings');
     return { listings, liftFloor: async () => {} };
   }
-  const last = page.rows[page.rows.length - 1];
-  // Past the last page the next run starts at the floor again.
-  const nextPos = page.more && last !== undefined ? encodePos(last) : '';
-  // Unwritten by the cutoff, the next run reads this page again.
-  if (nextPos !== (stored.get(OFFER_NEXT_ITEM) ?? '')) {
-    await boundedCall(cutoff, 'the offer rotation', () => cursors.put(OFFER_NEXT_ITEM, nextPos)).catch(() => undefined);
-  }
-
-  // The listing each row names; a row that names none nominates nothing.
-  const rows = page.rows.map((row) => {
-    const hash = String(row.args.orderHash ?? '').toLowerCase();
-    let offerId: bigint | null = null;
-    try {
-      offerId = BigInt(String(row.args.offerId));
-    } catch {
-      offerId = null;
-    }
-    return offerId === null || !/^0x[0-9a-f]{64}$/.test(hash) ? null : { offerId, hash };
-  });
-  const offers = [...new Set(rows.flatMap((r) => (r === null ? [] : [r.offerId])))];
+  const offersOf = (ks: readonly { offerId: bigint }[]) => [...new Set(ks.map((k) => k.offerId))];
   const readAt = async (ids: readonly bigint[], blockNumber?: bigint) =>
     settledChunkedRead(
       deps.readClient,
@@ -326,50 +320,35 @@ async function readOfferListings(
       deps.visit,
       blockNumber,
     );
-  const head = await readAt(offers);
-  const liveHash = new Map<bigint, string>();
-  let unread = 0;
-  for (const id of offers) {
-    const x = head.get(id);
-    const p = x?.status === 'success' ? partiesOf(x.result) : null;
-    if (p === null) {
-      unread += 1;
-      continue;
+  const hashesAt = async (ids: readonly bigint[], blockNumber?: bigint) => {
+    const res = await readAt(ids, blockNumber);
+    const out = new Map<bigint, { hash: string; parties: Address[] }>();
+    for (const id of ids) {
+      const x = res.get(id);
+      const p = x?.status === 'success' ? partiesOf(x.result) : null;
+      if (p !== null) out.set(id, p);
     }
-    liveHash.set(id, p.hash);
-    if (p.hash !== ZERO_HASH) listings.push({ kind: 'offer', id, parties: p.parties });
+    return out;
+  };
+  const offers = offersOf(page.nominees);
+  const head = await hashesAt(offers);
+  const unread = offers.filter((id) => !head.has(id)).length;
+  for (const id of offers) {
+    const p = head.get(id);
+    if (p !== undefined && p.hash !== ZERO_HASH) listings.push({ kind: 'offer', id, parties: p.parties });
   }
   if (unread > 0) sender.noteUnread('sales:offers', `the listing of ${unread} offer(s) the ledger names`);
 
   // A row is finished when the listing it records is no longer the offer's
   // live one: cancelled, filled, released, or replaced by a later post (whose
-  // own row is above it). On a page read from the floor, the floor moves past
-  // the leading finished rows, at the head AND at the finalized block.
-  if (start !== floor) return { listings, liftFloor: async () => {} };
-  const done = (i: number, hashes: ReadonlyMap<bigint, string>) => {
-    const r = rows[i];
-    if (r === null) return true;
-    const h = hashes.get(r.offerId);
-    return h !== undefined && h !== r.hash;
+  // own row is above it). An unread offer finishes nothing.
+  const replaced = (live: ReadonlyMap<bigint, { hash: string }>) => (k: { offerId: bigint; hash: string }) => {
+    const h = live.get(k.offerId)?.hash;
+    return h !== undefined && h !== k.hash;
   };
-  const positions = page.rows.map((_, i) => i);
   // The finalized block by this stage's cutoff too; unread, the floor stays.
   const finalized = () => boundedCall(cutoff, 'the finalized block', deps.finalized).catch(() => null);
-  const liftFloor = async () => {
-    const n = await finalFloor(0, positions, (i) => done(i, liveHash), finalized, async (passed, block) => {
-      const live = passed.filter((i) => rows[i] === null || rowFinalized(page.rows[i], block));
-      const named = [...new Set(live.flatMap((i) => (rows[i] === null ? [] : [rows[i]!.offerId])))];
-      const at = await readAt(named, block.number);
-      const hashes = new Map<bigint, string>();
-      for (const id of named) {
-        const x = at.get(id);
-        const p = x?.status === 'success' ? partiesOf(x.result) : null;
-        if (p !== null) hashes.set(id, p.hash);
-      }
-      return new Set(live.filter((i) => done(i, hashes)));
-    });
-    if (n > 0) await cursors.put(OFFER_FLOOR_ITEM, encodePos(page.rows[n - 1]));
-  };
+  const liftFloor = () => page.liftFloor(finalized, replaced(head), async (ks, block) => replaced(await hashesAt(offersOf(ks), block.number)));
   return { listings, liftFloor };
 }
 
