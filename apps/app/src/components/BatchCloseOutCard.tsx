@@ -17,13 +17,17 @@
 import { useState } from 'react';
 import { Layers, LoaderCircle } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import { erc20Abi } from 'viem';
 import { useQueryClient } from '@tanstack/react-query';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useMode } from '../app/ModeContext';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
-import { ensureAllowance, trackApproval, useTokenMeta } from '../contracts/erc20';
+import {
+  ensureAllowance,
+  readAllowanceNotBefore,
+  trackApproval,
+  useTokenMeta,
+} from '../contracts/erc20';
 import { assertErc20BalanceLive } from '../contracts/preflights';
 import { LOAN_STATUS_ACTIVE, readLoanLive } from '../contracts/loanLive';
 import { LoanStatus } from '../lib/types';
@@ -151,6 +155,8 @@ export function BatchCloseOutCard({
       // its loans' outcomes: a pending send whose loans could not be read
       // back is still pending.
       let sendPending = false;
+      // The latest block a batch transaction mined in.
+      let lastBatchBlock = 0n;
       for (const [index, planned] of chunks.entries()) {
         // A transaction still unconfirmed may yet spend the approval, so
         // nothing more is sent behind it; the rest wait for their pages.
@@ -190,6 +196,7 @@ export function BatchCloseOutCard({
           mined = await settleFailedSend(ctx.publicClient, submitted, err);
         }
         sendPending = 'pending' in mined;
+        if ('block' in mined && mined.block > lastBatchBlock) lastBatchBlock = mined.block;
         outcomes.push(...(await readBack(ctx, ids, functionName, mined)));
       }
       let note: string | null = null;
@@ -201,7 +208,14 @@ export function BatchCloseOutCard({
         // unwind leaves an allowance it did not write untouched.
         const noneClosed = outcomes.every((o) => o.kind === 'open' || o.kind === 'changed');
         const cleanupFailed = noneClosed && !(await unwindAll());
-        const left = await approvalLeftNote(ctx, totals.map((t) => t.token), amount);
+        // Read from a node that has reached every write this flow made
+        // (the approval, each batch, the restore): a lagging one could
+        // answer from before them and understate what is left.
+        const notBefore = approvals.reduce((max, a) => {
+          const b = a.tracker.lastMinedBlock();
+          return b !== null && b > max ? b : max;
+        }, lastBatchBlock);
+        const left = await approvalLeftNote(ctx, totals.map((t) => t.token), amount, notBefore);
         note = cleanupFailed ? `${copy.errors.approvalCleanupFailed} ${left}` : left;
       }
       setStage({ kind: 'done', action, outcomes: [...outcomes, ...leftOut], note });
@@ -394,28 +408,25 @@ function outcomeText(action: CloseOutAction, o: BatchOutcome): string {
   }
 }
 
-/** The allowance left standing after a batch that closed loans, read
- *  live. One lending asset per offer, so one figure in practice. */
+/** The allowance left standing after a batch, read live from a node
+ *  that has reached `notBefore`, the last block this flow wrote in. One
+ *  lending asset per offer, so one figure in practice. Unread when no
+ *  node answered from that far: a figure from before our own writes
+ *  would be stated as current. */
 async function approvalLeftNote(
   ctx: CloseOutCtx,
   tokens: readonly `0x${string}`[],
   amount: (raw: bigint) => string,
+  notBefore: bigint,
 ): Promise<string> {
-  try {
-    const left = await Promise.all(
-      tokens.map((token) =>
-        ctx.publicClient.readContract({
-          address: token,
-          abi: erc20Abi,
-          functionName: 'allowance',
-          args: [ctx.holder, ctx.diamond],
-        }),
-      ),
-    );
-    return copy.batchClose.approvalLeft(left.map(amount).join(', '));
-  } catch {
-    return copy.batchClose.approvalLeftUnread;
-  }
+  const left = await Promise.all(
+    tokens.map((token) =>
+      readAllowanceNotBefore(ctx.publicClient, token, ctx.holder, ctx.diamond, notBefore),
+    ),
+  );
+  const read = left.filter((v): v is bigint => v !== null);
+  if (read.length !== left.length) return copy.batchClose.approvalLeftUnread;
+  return copy.batchClose.approvalLeft(read.map(amount).join(', '));
 }
 
 /**

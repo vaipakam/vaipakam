@@ -154,7 +154,10 @@ about the figure. Whatever happened, the allowance that remains is read
 from the chain afterwards and stated, with where to lower it (the unused
 pad, and the share of any loan that stayed open). The single-loan flow
 leaves its pad as allowance too; the batch says so because its remainder
-can be larger.
+can be larger. That read is taken from a node that has reached the last
+block any of the flow's own writes mined in (the approval, each batch, the
+restore), pinned to that node's head; when none answers from that far the
+figure is reported as unread, never a stale one from before those writes.
 
 **The card outlives its group.** A batch that closes loans can leave the
 offer with fewer than two open loans, which drops the group from the
