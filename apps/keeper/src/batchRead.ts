@@ -163,12 +163,14 @@ export async function boundedRead(
   contracts: readonly unknown[],
   label: string,
   deadline: number,
+  /** Read at this block rather than the head (see {@link batchedRead}). */
+  blockNumber?: bigint,
 ): Promise<BatchResult[]> {
   if (Date.now() >= deadline) {
     const error = new Error(`${label}: past the run deadline — read next run`);
     return contracts.map(() => ({ status: 'failure' as const, error }));
   }
-  return batchedRead(client, contracts, label, undefined, 'unread');
+  return batchedRead(client, contracts, label, blockNumber, 'unread');
 }
 
 /**
@@ -185,8 +187,10 @@ export async function settledRead(
   contracts: readonly unknown[],
   label: string,
   deadline: number,
+  /** Read at this block rather than the head (see {@link batchedRead}). */
+  blockNumber?: bigint,
 ): Promise<BatchResult[]> {
-  return settleBy(boundedRead(client, contracts, label, deadline), deadline, () => {
+  return settleBy(boundedRead(client, contracts, label, deadline, blockNumber), deadline, () => {
     const error = new Error(`${label}: still in flight at the read deadline — read next run`);
     return contracts.map(() => ({ status: 'failure' as const, error }));
   });

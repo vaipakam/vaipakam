@@ -48,7 +48,10 @@
 // every provable day; each closed day's epochs 50 a run; the entry scan from a
 // floor below which every entry ended. The floors and cursors are rows of the
 // keeper's private database (`scanCursors.ts`), and only say where to start
-// reading: every decision is still an on-chain read.
+// reading: every decision is still an on-chain read. The era and closure
+// floors move only on what the chain's finalized block shows (Codex #2993 r4),
+// so a finalization or closure reorged out stays above its floor and is done
+// again.
 //
 // Every call is simulated on the current state first and waits for its
 // receipt before the next (`stepSender.ts`), so the steps of one walk land in
@@ -307,8 +310,9 @@ class Reader {
     return (await this.deps.client.readContract({ address: this.diamond, abi: ABI, functionName, args })) as T;
   }
 
-  /** Many reads of one function; `undefined` where a read did not come back. */
-  async many(calls: readonly { functionName: string; args: readonly unknown[] }[], label: string): Promise<unknown[]> {
+  /** Many reads of one function; `undefined` where a read did not come back.
+   *  At the head, or at `blockNumber` when one is given. */
+  async many(calls: readonly { functionName: string; args: readonly unknown[] }[], label: string, blockNumber?: bigint): Promise<unknown[]> {
     const out: unknown[] = [];
     for (let i = 0; i < calls.length; i += READ_CHUNK) {
       const part = calls.slice(i, i + READ_CHUNK);
@@ -318,15 +322,59 @@ class Reader {
         part.map((c) => ({ address: this.diamond, abi: ABI, functionName: c.functionName, args: c.args })),
         `rewardCloseOut ${label}`,
         this.deps.sendDeadline,
+        blockNumber,
       );
       for (const x of res) out.push(x.status === 'success' ? x.result : undefined);
     }
     return out;
   }
 
-  days(days: readonly number[], functionName: string, label: string): Promise<unknown[]> {
-    return this.many(days.map((d) => ({ functionName, args: [BigInt(d)] })), label);
+  days(days: readonly number[], functionName: string, label: string, blockNumber?: bigint): Promise<unknown[]> {
+    return this.many(days.map((d) => ({ functionName, args: [BigInt(d)] })), label, blockNumber);
   }
+
+  private finalizedBlock: Promise<bigint | null> | undefined;
+
+  /** The chain's finalized block, read once a run; null when it cannot be
+   *  read (an RPC without the tag, the run deadline), which only holds every
+   *  floor where it is until a run that can read it. */
+  finalized(): Promise<bigint | null> {
+    this.finalizedBlock ??= this.deps.client
+      .getBlock({ blockTag: 'finalized' })
+      .then((b) => b.number ?? null)
+      .catch(() => null);
+    return this.finalizedBlock;
+  }
+}
+
+/**
+ * How far a stored floor of finished items may move (Codex #2993 r4): past
+ * the leading `items` that `doneAtHead` holds AND that `readFinal` reads as
+ * finished at the chain's finalized block. Nothing below a floor is read
+ * again, so an item it passes must stay finished for good, and a transaction
+ * seen landed at the head can still be reorged out: the era it finalized or
+ * the day it closed would then sit below the floor unfinished, and no later
+ * run would look at it. Finality is where that stops being possible, so a
+ * floor moves only on what finality shows. An item finished at the head and
+ * not yet at finality keeps its place in the rotation and lifts the floor a
+ * run or two later; a finalized read that cannot be made leaves the floor
+ * where it is.
+ */
+async function finalFloor(
+  r: Reader,
+  floor: number,
+  items: readonly number[],
+  doneAtHead: (item: number) => boolean,
+  readFinal: (items: readonly number[], block: bigint) => Promise<unknown[]>,
+  finished: (value: unknown) => boolean,
+): Promise<number> {
+  const head = advanceFloor(floor, items, doneAtHead);
+  if (head === floor) return floor;
+  const block = await r.finalized();
+  if (block === null) return floor;
+  const passed = span(floor, head - 1);
+  const atFinal = await readFinal(passed, block);
+  return advanceFloor(floor, passed, (i) => finished(atFinal[i - floor]));
 }
 
 interface Gate {
@@ -424,7 +472,14 @@ async function finalizeEras(r: Reader, sender: StepSender, report: CloseOutRepor
       terminal.add(era);
     }
   }
-  const newFloor = advanceFloor(floor, ids, (e) => terminal.has(e));
+  const newFloor = await finalFloor(
+    r,
+    floor,
+    ids,
+    (e) => terminal.has(e),
+    (es, block) => r.many(es.map((e) => ({ functionName: 'getCustodyEra', args: [BigInt(e)] })), 'eras-final', block),
+    (rec) => (rec as EraRecord | undefined)?.terminal === true,
+  );
   if (newFloor !== floor) await cursors.put(ERA_FLOOR_ITEM, String(newFloor));
   if (String(win.next) !== stored.get(ERA_NEXT_ITEM)) await cursors.put(ERA_NEXT_ITEM, String(win.next));
 }
@@ -484,18 +539,28 @@ async function workDays(r: Reader, sender: StepSender, report: CloseOutReport, p
   const days = win === null ? [] : span(win.from, win.to);
   await readClosed(days);
   const open = days.filter((d) => known.get(d) === false);
-  // Closed days already read lift the floor before any walk, and the days a
-  // walk closes lift it again after.
+  // The oldest day that may be open, as this run reads the head. It anchors
+  // the entry scan and is never stored: a day reorged back open puts the
+  // next run's anchor below the entry floor's recorded day, which restarts
+  // that scan from the first entry. The stored closure floor moves only on
+  // what finality shows, after any walk (finalFloor).
   const readFloor = advanceFloor(floor, days, isClosed);
   if (paused) {
     if (open.length > 0) sender.noteUnread('closure', 'the protocol is paused, so no closure walk can run');
   } else if (open.length > 0) {
-    // The scan is anchored at that floor, the oldest day that may be open, so
-    // its stored entry floor stays valid whichever window a run reads.
+    // Anchored there, the stored entry floor stays valid whichever window a
+    // run reads.
     await proveDays(r, sender, report, open, readFloor, deps.keeper, cursors);
     for (const d of report.daysClosed) known.set(d, true);
   }
-  const newFloor = advanceFloor(readFloor, days.filter((d) => d >= readFloor), isClosed);
+  const newFloor = await finalFloor(
+    r,
+    floor,
+    days,
+    isClosed,
+    (ds, block) => r.days(ds, 'isDayObligationsClosed', 'closure-final', block),
+    (closed) => closed === true,
+  );
   if (newFloor !== floor) await cursors.put(CLOSURE_FLOOR_ITEM, String(newFloor));
   if (win !== null && String(win.next) !== stored.get(CLOSURE_NEXT_ITEM)) await cursors.put(CLOSURE_NEXT_ITEM, String(win.next));
 

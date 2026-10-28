@@ -187,6 +187,10 @@ class FakeDiamond {
   /** Another caller closes this day after the run reads it, before its send. */
   closedByOtherBeforeSend: number | null = null;
   sent: { fn: string; args: readonly unknown[] }[] = [];
+  /** What the finalized block shows, when it lags the head: null reads the
+   *  head's state there too. `finalized: 'none'` is an RPC without the tag. */
+  final: { closed: Set<number>; eras: Era[] } | 'none' | null = null;
+  readonly finalNumber = 100n;
 
   addEntry(x: Partial<Entry> & { side: number; startDay: number; endDay: number; perDay: bigint }): number {
     this.entries.push({ user: OTHER, open: false, ...x });
@@ -226,8 +230,17 @@ class FakeDiamond {
     return this.dayIndex.get(day)?.[i];
   }
 
-  readContract = async ({ functionName, args = [] }: { functionName: string; args?: readonly unknown[] }): Promise<unknown> => {
+  readContract = async ({ functionName, args = [], blockNumber }: { functionName: string; args?: readonly unknown[]; blockNumber?: bigint }): Promise<unknown> => {
     const a = args as readonly any[];
+    if (blockNumber !== undefined) {
+      if (blockNumber !== this.finalNumber) throw new Error(`read at unexpected block ${blockNumber}`);
+      const f = this.final;
+      if (f !== null && f !== 'none') {
+        if (functionName === 'isDayObligationsClosed') return f.closed.has(Number(a[0]));
+        if (functionName === 'getCustodyEra') return f.eras[Number(a[0])];
+        throw new Error(`unexpected finalized read ${functionName}`);
+      }
+    }
     switch (functionName) {
       case 'getRewardReporterConfig':
         return [ZERO, this.chainNamed, 84532, false, 3600n];
@@ -298,11 +311,11 @@ class FakeDiamond {
     }
   };
 
-  multicall = async ({ contracts }: { contracts: { functionName: string; args?: readonly unknown[] }[] }) =>
+  multicall = async ({ contracts, blockNumber }: { contracts: { functionName: string; args?: readonly unknown[] }[]; blockNumber?: bigint }) =>
     Promise.all(
       contracts.map(async (c) => {
         try {
-          return { status: 'success' as const, result: await this.readContract(c) };
+          return { status: 'success' as const, result: await this.readContract({ ...c, blockNumber }) };
         } catch (error) {
           return { status: 'failure' as const, error };
         }
@@ -417,6 +430,11 @@ class FakeDiamond {
     if (functionName === 'startDayClosure' && this.closedByOtherBeforeSend === Number(args[0] as bigint)) this.closed.add(this.closedByOtherBeforeSend);
     this.admit(functionName, args);
     return { result: undefined };
+  };
+
+  getBlock = async ({ blockTag }: { blockTag: string }) => {
+    if (blockTag !== 'finalized' || this.final === 'none') throw new Error('finalized block not available');
+    return { number: this.finalNumber };
   };
 
   getTransactionCount = async () => 7;
@@ -621,6 +639,33 @@ describe('a run', () => {
       expect(cursors.rows.get(CLOSURE_NEXT_ITEM), 'then back to the floor').toBe('1');
     });
 
+    it('moves its closure floor only on what the finalized block shows, so a reorged closure is walked again (Codex #2993 r4)', async () => {
+      d.today = 4;
+      d.final = { closed: new Set(), eras: d.eras };
+      let r = await run();
+      expect(r.daysClosed).toEqual([0, 1, 2, 3]);
+      expect(cursors.rows.has(CLOSURE_FLOOR_ITEM), 'closed at the head, not yet final').toBe(false);
+      // Finality reaches days 0 and 1; then a reorg drops day 2's closure.
+      d.final = { closed: new Set([0, 1]), eras: d.eras };
+      d.closed.delete(2);
+      d.sent = [];
+      r = await run();
+      expect(cursors.rows.get(CLOSURE_FLOOR_ITEM)).toBe('2');
+      expect(r.daysClosed, 'the reorged day is above the floor and walked again').toEqual([2]);
+      d.final = null;
+      await run();
+      expect(cursors.rows.get(CLOSURE_FLOOR_ITEM), 'then the floor passes every final day').toBe('4');
+    });
+
+    it('holds its floors where they are on an RPC that gives no finalized block', async () => {
+      d.today = 3;
+      d.final = 'none';
+      const r = await run();
+      expect(r.daysClosed).toEqual([0, 1, 2]);
+      expect(cursors.rows.has(CLOSURE_FLOOR_ITEM)).toBe(false);
+      expect(cursors.rows.get(CLOSURE_NEXT_ITEM), 'the rotation still moves').toBe('0');
+    });
+
     it('continues each day\'s own unfinished walk when the window rotates between days', async () => {
       closeAllButDay(-1);
       d.closed.delete(1);
@@ -699,6 +744,23 @@ describe('a run', () => {
       expect(fns()).toEqual(['finalizeCustodyEra']);
       expect(d.eras[0].terminal).toBe(true);
       expect(d.baseline).toBe(50n);
+    });
+
+    it('moves its era floor only on what the finalized block shows, so a reorged finalization is sent again (Codex #2993 r4)', async () => {
+      d.eras = [
+        { holderRow: 50n, daysClosed: 2n, boundaryDay: 0n, terminal: false, stagedFresh: 0n },
+        { holderRow: 0n, daysClosed: 0n, boundaryDay: 2n, terminal: false, stagedFresh: 0n },
+      ];
+      d.final = { closed: d.closed, eras: d.eras.map((e) => ({ ...e })) };
+      let r = await run();
+      expect(r.erasFinalized).toEqual([0]);
+      expect(cursors.rows.has(ERA_FLOOR_ITEM), 'finalized at the head, not yet final').toBe(false);
+      d.eras[0].terminal = false; // the finalization is reorged out
+      r = await run();
+      expect(r.erasFinalized, 'still above the floor, so finalized again').toEqual([0]);
+      d.final = null;
+      await run();
+      expect(cursors.rows.get(ERA_FLOOR_ITEM)).toBe('1');
     });
 
     it(`reaches an era more than ${MAX_ERAS} role changes back, rotating above a floor of finalized ones`, async () => {

@@ -4,7 +4,10 @@
 // work one run does is bounded while what the pass covers over many runs is
 // not: a reward-entry scan's floor, a day's transport-epoch discovery cursor.
 // Each is one row of the keeper's private open-work table under kind
-// `scan_cursor`, keyed by the pass's own item name, on the active Diamond.
+// `scan_cursor`, on the active Diamond, keyed by the PASS and the pass's own
+// item name together (`<pass>:<item>`). Two passes can use the same item name
+// (`entry-floor`) for different things; the pass in the key keeps one pass's
+// cursor from ever moving another's.
 //
 // A cursor is only an optimisation of where to start reading. Every decision a
 // pass makes still comes from an on-chain read, so a cursor that cannot be
@@ -23,12 +26,20 @@ export interface ScanCursors {
   put(item: string, value: string): Promise<void>;
 }
 
+/** The stored key of a pass's cursor item. Exported for the tests. */
+export const scanCursorKey = (pass: string, item: string) => `${pass}:${item}`;
+
 export function d1ScanCursors(db: KeeperD1, chainId: number, diamond: string, pass: string): ScanCursors {
   return {
     async get(items) {
       try {
-        const rows = await getWorkItems<{ value: string }>(db, chainId, diamond, 'scan_cursor', items);
-        return new Map([...rows].flatMap(([k, v]) => (typeof v.payload?.value === 'string' ? [[k, v.payload.value] as const] : [])));
+        const rows = await getWorkItems<{ value: string }>(db, chainId, diamond, 'scan_cursor', items.map((i) => scanCursorKey(pass, i)));
+        return new Map(
+          items.flatMap((i) => {
+            const v = rows.get(scanCursorKey(pass, i));
+            return typeof v?.payload?.value === 'string' ? [[i, v.payload.value] as const] : [];
+          }),
+        );
       } catch (err) {
         console.warn(`[keeper] ${pass} chain=${chainId}: its scan cursors could not be read, so it reads from the start (${shortErr(err)})`);
         return new Map();
@@ -36,7 +47,7 @@ export function d1ScanCursors(db: KeeperD1, chainId: number, diamond: string, pa
     },
     async put(item, value) {
       try {
-        await putWork(db, chainId, diamond, 'scan_cursor', { item, block: 0, payload: { value } });
+        await putWork(db, chainId, diamond, 'scan_cursor', { item: scanCursorKey(pass, item), block: 0, payload: { value } });
       } catch (err) {
         console.warn(`[keeper] ${pass} chain=${chainId}: scan cursor ${item} could not be recorded, so the next run reads it again (${shortErr(err)})`);
       }
