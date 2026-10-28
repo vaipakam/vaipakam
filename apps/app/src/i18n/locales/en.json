@@ -832,6 +832,43 @@
       "changedSinceReview": "What this listing involves changed after your review. List it from its own page, which shows the current terms.",
       "ownPageShape": "Only loans with token principal and token collateral can be listed for sale."
     },
+    "batchRefinance": {
+      "action": "Refinance all",
+      "lede": "Post a refinance request for each of these loans, at one rate ceiling and one duration. Each request is the one its loan’s own page would post: the moment a lender accepts one, that loan is paid off and closed in the same transaction, and its collateral moves to the new loan. Each loan is checked on its own first, and a loan that can’t take a request is left out and named.",
+      "review": "Review the requests",
+      "checking": "Checking each loan and working out its payoff…",
+      "phase": {
+        "approving": "Approve the total in your wallet…",
+        "checking": "Checking each loan again…",
+        "submitting": "Confirm the transaction in your wallet…"
+      },
+      "reviewTitle": "Post these refinance requests",
+      "loanPayoff": "Loan #{{id}}: ~{{payoff}} to pay it off today, pulled automatically when a lender accepts its request.",
+      "loanGrowth": "If a lender accepts after this loan’s due date, the payoff grows (the late fee plus interest that keeps building up) by up to ~{{amount}} more before the request ends.",
+      "loanTopUp": "Spare in your wallet when a lender accepts: about {{amount}}. That is the payoff’s interest and the new loan’s initiation fee; the new principal arrives in the same transaction.",
+      "leftOut": "Loan #{{id}} is left out: {{reason}}",
+      "noneReady": "None of these loans can take a refinance request together right now. Open each loan to see its options.",
+      "totals": "Together: about {{topUp}} spare in your wallet if every request is accepted. Your wallet holds enough for that now, or nothing is sent.",
+      "approval": "You’ll approve {{amount}}: the sum of each request’s largest possible payoff. Each payoff is pulled from this one approval when its request is accepted, and so is the payoff of any other refinance request you have open on the same token. A lender taking one request can therefore leave too little for another; each loan’s page says when its request’s approval runs short.",
+      "consentLabel": "I understand the payoff and wallet-balance terms below and agree to them for every loan listed above.",
+      "confirm": "Confirm — post these requests",
+      "cancel": "Cancel",
+      "dismiss": "Done",
+      "receiveEach": "For each request a lender accepts, a new loan at your terms the moment it is accepted: that loan’s collateral moves to the new loan without ever unlocking, and the old loan closes in the same transaction.",
+      "youMayOwe": "Each loan’s payoff shown above, pulled from your wallet through the approval below when a lender accepts its request. Your wallet must hold that loan’s spare amount at that moment.",
+      "endsEach": "Each request ends when a lender accepts it, when you cancel it from its loan’s page, or when it expires; each loan’s line above says when. One transaction posts up to 15 requests. A request that fails is skipped, and the results say why; the guardrails written for it can stay set at your rate and end date, and they only limit what a request on that loan can complete at.",
+      "posted": "Loan #{{id}}: request posted as offer #{{offerId}}. Its page shows the request and lets you cancel it.",
+      "notPosted": "Loan #{{id}}: no request posted. {{reason}}",
+      "changedOtherwise": "Loan #{{id}}: no request posted. The loan is no longer active, so open it to see where it stands.",
+      "unknown": "Loan #{{id}}: we couldn’t read whether its request was posted. Open the loan to check.",
+      "pending": "Loan #{{id}}: the transaction was sent but hasn’t confirmed yet. It may still post this request, so check the loan in a few minutes.",
+      "notSentPending": "Not sent, because an earlier transaction in this batch hasn’t confirmed yet. Post its request from its own page once that settles.",
+      "skippedRetry": "The transaction ran, but this request was skipped. It can be posted now from the loan’s own page.",
+      "changedSinceReview": "What this request involves changed after your review. Post it from its own page, which shows the current terms.",
+      "ownPageRental": "A rental can’t take a refinance request; only token loans can.",
+      "ownPageOpenRequest": "A refinance request is already open on this loan. Its own page shows it and lets you cancel it.",
+      "approvalLeft": "Your token approval for the protocol now stands at {{amount}}. Your open refinance requests draw their payoffs from it, so lowering it can leave a request unable to complete."
+    },
     "preclose": {
       "title": "Close this loan early",
       "blurb": "Pay everything now and close the loan today — your collateral is released immediately after.",
@@ -951,6 +988,7 @@
       "onlyBeforeDue": "An offset needs a replacement term that ends before this loan’s due date — it’s no longer available this close to (or past) the due date."
     },
     "refinance": {
+      "inFallback": "This loan is in its fallback period, so it can’t take a refinance request. Its own page explains its options.",
       "postedButUnconfirmed": "Your request was sent, but we could not confirm whether it went through. Check your open requests before trying again — if it did land, requesting a second time would create a duplicate. The spending approval has been left in place, because a lender accepting the request needs it to collect the payoff.",
       "receiptYouMayOwe": "~{{payoff}} to pay off this loan, pulled automatically when a lender accepts.",
       "feesTreasuryNote": "The protocol’s {{cut}} cut of the payoff interest settles inside the payoff.",

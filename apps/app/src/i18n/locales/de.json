@@ -929,7 +929,8 @@
       "repayRecheck": "Wir haben gerade erneut geprüft: Für diesen Kredit ist möglicherweise eine Refinanzierungsanfrage offen, daher wurde noch nichts gesendet. Die Übersicht zeigt jetzt, was die Rückzahlung mit ihr macht – bestätigen Sie erneut, um zurückzuzahlen.",
       "ownScanCapped": "Diese Wallet hat seit dem Angebot dieses Kredits mehr Angebote erstellt, als wir hier prüfen können. Falls sie eine Refinanzierungsanfrage für diesen Kredit gestellt hat, während sie die Kreditnehmerposition hielt, kann diese Seite sie nicht anzeigen. Falls sie noch offen ist, können Sie sie unter „Ihre offenen Angebote“ im Zins-Desk stornieren (eine abgelaufene Anfrage wird dort nicht aufgeführt); entfernen Sie in jedem Fall die Token-Freigabe, auf die sie sich stützte, unter „Dauerhafte Token-Genehmigungen“ in den Einstellungen (erweiterter Modus), falls nichts anderes sie benötigt.",
       "ownScanFailed": "Wir konnten die eigenen Angebote dieser Wallet gerade nicht prüfen. Falls sie eine Refinanzierungsanfrage für diesen Kredit gestellt hat, während sie die Kreditnehmerposition hielt, kann diese Seite sie noch nicht anzeigen – versuchen Sie es gleich noch einmal. Falls sie noch offen ist, können Sie sie unter „Ihre offenen Angebote“ im Zins-Desk stornieren (eine abgelaufene Anfrage wird dort nicht aufgeführt); entfernen Sie in jedem Fall die Token-Freigabe, auf die sie sich stützte, unter „Dauerhafte Token-Genehmigungen“ in den Einstellungen (erweiterter Modus), falls nichts anderes sie benötigt.",
-      "repayWarnPending": "Für diesen Kredit ist noch eine Refinanzierungsanfrage aktiv. Die Rückzahlung schließt den Kredit ab; danach kann die Anfrage nie mehr abgeschlossen werden — stornieren Sie sie anschließend über ihre Karte (das entfernt auch ihre bestehende Ablöse-Freigabe); bis dahin liegt sie einfach da, bis sie abläuft."
+      "repayWarnPending": "Für diesen Kredit ist noch eine Refinanzierungsanfrage aktiv. Die Rückzahlung schließt den Kredit ab; danach kann die Anfrage nie mehr abgeschlossen werden — stornieren Sie sie anschließend über ihre Karte (das entfernt auch ihre bestehende Ablöse-Freigabe); bis dahin liegt sie einfach da, bis sie abläuft.",
+      "inFallback": "Dieser Kredit befindet sich in seiner Fallback-Phase und kann daher keine Refinanzierungsanfrage erhalten. Seine eigene Seite erklärt die Möglichkeiten."
     },
     "approvals": {
       "title": "Dauerhafte Token-Genehmigungen",
@@ -3458,6 +3459,43 @@
       "changedSinceReview": "Was dieses Inserat umfasst, hat sich nach deiner Prüfung geändert. Inseriere ihn auf seiner eigenen Seite, die die aktuellen Bedingungen zeigt.",
       "ownPageShape": "Nur Kredite mit Token als Kreditbetrag und Token als Sicherheit können zum Verkauf angeboten werden.",
       "unavailableNetwork": "Die Kredite {{ids}} stammen aus demselben Angebot. Sie zum Verkauf anzubieten ist in diesem Netzwerk noch nicht verfügbar: Die Verkaufswerkzeuge sind in dieser Bereitstellung nicht veröffentlicht."
+    },
+    "batchRefinance": {
+      "action": "Alle refinanzieren",
+      "lede": "Stellen Sie für jeden dieser Kredite eine Refinanzierungsanfrage, mit einem Höchstsatz und einer Laufzeit für alle. Jede Anfrage ist die, die die Seite des Kredits selbst stellen würde: Sobald ein Kreditgeber eine annimmt, wird dieser Kredit in derselben Transaktion abgelöst und geschlossen, und seine Sicherheit geht auf den neuen Kredit über. Jeder Kredit wird zuerst einzeln geprüft; ein Kredit, der keine Anfrage erhalten kann, wird ausgelassen und genannt.",
+      "review": "Anfragen prüfen",
+      "checking": "Jeder Kredit wird geprüft und seine Ablösesumme berechnet…",
+      "phase": {
+        "approving": "Geben Sie den Gesamtbetrag in Ihrer Wallet frei…",
+        "checking": "Jeder Kredit wird erneut geprüft…",
+        "submitting": "Bestätigen Sie die Transaktion in Ihrer Wallet…"
+      },
+      "reviewTitle": "Diese Refinanzierungsanfragen stellen",
+      "loanPayoff": "Kredit #{{id}}: ~{{payoff}}, um ihn heute abzulösen, automatisch eingezogen, wenn ein Kreditgeber seine Anfrage annimmt.",
+      "loanGrowth": "Nimmt ein Kreditgeber nach dem Fälligkeitsdatum dieses Kredits an, steigt die Ablösesumme (die Verzugsgebühr plus weiterlaufende Zinsen) bis zum Ende der Anfrage um bis zu ~{{amount}}.",
+      "loanTopUp": "Frei verfügbar in Ihrer Wallet, wenn ein Kreditgeber annimmt: etwa {{amount}}. Das sind die Zinsen der Ablösesumme und die Abschlussgebühr des neuen Kredits; der neue Kreditbetrag kommt in derselben Transaktion an.",
+      "leftOut": "Kredit #{{id}} wird ausgelassen: {{reason}}",
+      "noneReady": "Keiner dieser Kredite kann gerade zusammen eine Refinanzierungsanfrage erhalten. Öffnen Sie jeden Kredit, um seine Möglichkeiten zu sehen.",
+      "totals": "Zusammen: etwa {{topUp}} frei in Ihrer Wallet, wenn jede Anfrage angenommen wird. Ihre Wallet hält das jetzt, sonst wird nichts gesendet.",
+      "approval": "Sie geben {{amount}} frei: die Summe der größtmöglichen Ablösesumme jeder Anfrage. Jede Ablösesumme wird aus dieser einen Freigabe eingezogen, wenn ihre Anfrage angenommen wird, ebenso die jeder anderen Refinanzierungsanfrage, die Sie auf demselben Token offen haben. Ein Kreditgeber, der eine Anfrage annimmt, kann daher zu wenig für eine andere übrig lassen; die Seite jedes Kredits sagt, wenn die Freigabe seiner Anfrage nicht mehr reicht.",
+      "consentLabel": "Ich verstehe die unten genannten Ablöse- und Wallet-Guthaben-Bedingungen und stimme ihnen für jeden oben aufgeführten Kredit zu.",
+      "confirm": "Bestätigen — diese Anfragen stellen",
+      "cancel": "Abbrechen",
+      "dismiss": "Fertig",
+      "receiveEach": "Für jede Anfrage, die ein Kreditgeber annimmt, einen neuen Kredit zu Ihren Bedingungen im Moment der Annahme: Die Sicherheit dieses Kredits geht auf den neuen über, ohne je freigegeben zu werden, und der alte Kredit wird in derselben Transaktion geschlossen.",
+      "youMayOwe": "Die oben gezeigte Ablösesumme jedes Kredits, über die unten genannte Freigabe aus Ihrer Wallet eingezogen, wenn ein Kreditgeber seine Anfrage annimmt. Ihre Wallet muss in diesem Moment den frei verfügbaren Betrag dieses Kredits halten.",
+      "endsEach": "Jede Anfrage endet, wenn ein Kreditgeber sie annimmt, wenn Sie sie auf der Seite ihres Kredits stornieren oder wenn sie abläuft; die Zeile jedes Kredits oben sagt, wann. Eine Transaktion stellt bis zu 15 Anfragen. Eine fehlgeschlagene Anfrage wird übersprungen, und die Ergebnisse sagen warum; die für sie geschriebenen Leitplanken können auf Ihrem Satz und Enddatum stehen bleiben und begrenzen nur, zu welchen Bedingungen eine Anfrage auf diesen Kredit abgeschlossen werden kann.",
+      "posted": "Kredit #{{id}}: Anfrage als Angebot #{{offerId}} gestellt. Seine Seite zeigt die Anfrage und lässt Sie sie stornieren.",
+      "notPosted": "Kredit #{{id}}: keine Anfrage gestellt. {{reason}}",
+      "changedOtherwise": "Kredit #{{id}}: keine Anfrage gestellt. Der Kredit ist nicht mehr aktiv; öffnen Sie ihn, um seinen Stand zu sehen.",
+      "unknown": "Kredit #{{id}}: Wir konnten nicht lesen, ob seine Anfrage gestellt wurde. Öffnen Sie den Kredit, um nachzusehen.",
+      "pending": "Kredit #{{id}}: Die Transaktion wurde gesendet, ist aber noch nicht bestätigt. Sie kann diese Anfrage noch stellen; prüfen Sie den Kredit in ein paar Minuten.",
+      "notSentPending": "Nicht gesendet, weil eine frühere Transaktion dieses Stapels noch nicht bestätigt ist. Stellen Sie die Anfrage auf seiner eigenen Seite, sobald diese abgeschlossen ist.",
+      "skippedRetry": "Die Transaktion lief, aber diese Anfrage wurde übersprungen. Sie kann jetzt auf der Seite des Kredits gestellt werden.",
+      "changedSinceReview": "Was diese Anfrage umfasst, hat sich nach Ihrer Prüfung geändert. Stellen Sie sie auf ihrer eigenen Seite, die die aktuellen Bedingungen zeigt.",
+      "ownPageRental": "Eine Vermietung kann keine Refinanzierungsanfrage erhalten; das können nur Token-Kredite.",
+      "ownPageOpenRequest": "Für diesen Kredit ist bereits eine Refinanzierungsanfrage offen. Seine eigene Seite zeigt sie und lässt Sie sie stornieren.",
+      "approvalLeft": "Ihre Token-Freigabe für das Protokoll beträgt jetzt {{amount}}. Ihre offenen Refinanzierungsanfragen ziehen ihre Ablösesummen daraus, daher kann eine Senkung eine Anfrage am Abschluss hindern."
     }
   },
   "contractError": {

@@ -49,30 +49,19 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
 import { ensureAllowance, restoreAllowance } from '../contracts/erc20';
 import { TxNotSettledError } from '../contracts/ownReceipt';
-import {
-  assertAssetNotPausedLive,
-  assertErc20BalanceLive,
-  assertPositionNftHeldLive,
-  readGraceSecondsLive,
-} from '../contracts/preflights';
+import { assertErc20BalanceLive } from '../contracts/preflights';
 import {
   loanEndTimeOf,
-  LOAN_STATUS_ACTIVE,
-  readLoanLive,
   refinanceApprovalOf,
   refinancePayoffOf,
   type LoanLive,
 } from '../contracts/loanLive';
-import { assertWalletNotSanctionedLive } from '../data/sanctions';
-import { readLiveProtocolFees, useProtocolFees } from '../data/fees';
+import { useProtocolFees } from '../data/fees';
+import { REQUEST_WINDOW_DAYS, checkRefinanceRequest } from '../data/refinancePlan';
 import { useAutoRefinancePosture } from '../data/protocol';
 import { AutoMatchPostureBanner } from './AutoMatchPostureBanner';
 import type { IndexedLoan } from '../data/indexer';
-import {
-  MAX_INTEREST_BPS,
-  percentToBps,
-  toRefinanceOfferPayload,
-} from '../lib/offerSchema';
+import { MAX_INTEREST_BPS, percentToBps } from '../lib/offerSchema';
 import {
   formatBpsAsPercent,
   formatDate,
@@ -82,13 +71,6 @@ import { ConfirmReceipt } from './ConfirmReceipt';
 import { useReviewConsent } from '../hooks/useReviewConsent';
 import { ConsentWithdrawnNote } from './ConsentWithdrawnNote';
 import type { TokenMeta } from '../contracts/erc20';
-
-/** The request's on-chain lifetime (its `expiresAt`), and the extra
- *  headroom the caps' end-date window carries past the new-loan
- *  duration. Disclosed in the review; enforced by the OFFER's own
- *  expiry (accept refuses an expired offer), so it holds even when
- *  looser caps pre-exist. */
-const REQUEST_WINDOW_DAYS = 30n;
 
 export function RefinanceFlow({
   preSubmitBlock,
@@ -269,6 +251,9 @@ export function RefinanceFlow({
     }
     if (!address || !walletChain || !walletClient || !publicClient) return;
     if (rateBps === null || durationDays === null) return;
+    // The request is posted with consent given (the plan's payload);
+    // the confirm button is held until the box is ticked.
+    if (!consent.given) return;
     setBusy(true);
     setError(null);
     // The allowance as it stood BEFORE this attempt, so an abandoned
@@ -300,129 +285,50 @@ export function RefinanceFlow({
     let createOfferTx: `0x${string}` | null = null;
     let approvalToken: `0x${string}` | null = null;
     try {
-      // createOffer + the accept-time refinance are Tier-1 — live
-      // re-screen before anything can mine.
-      await assertWalletNotSanctionedLive(
-        publicClient,
-        walletChain.diamondAddress,
-        address,
+      // The live checks and the request they produce, shared with the
+      // "Refinance all" batch on Positions (#126 slice 3): sanctions, the
+      // borrower position still held, both assets unpaused, the loan
+      // Active and still in or before its grace window, the ORIGINAL
+      // borrower (see header), the reviewed fee config, the guardrails the
+      // request needs, and the payoff and approval at the request's last
+      // fillable moment. Read failures throw.
+      const plan = await checkRefinanceRequest(
+        { publicClient, diamond: walletChain.diamondAddress, holder: address },
+        row,
+        { rateBps, durationDays },
+        fees,
       );
-      // Live state, one round-trip: current holdership (refinance
-      // authority follows the borrower NFT), the loan itself (the
-      // payload copies its collateral identity VERBATIM — stale
-      // values would break carry-over), chain time, the existing
-      // guardrails, live fees (the receipt quoted the cached config),
-      // and both legs' pause state (asset addresses are immutable on
-      // a loan, so the indexed row's addresses are safe here).
-      const [, liveLoan, latestBlock, caps, liveFees] = await Promise.all([
-        assertPositionNftHeldLive({
-          publicClient,
-          diamondAddress: walletChain.diamondAddress,
-          tokenId: row.borrowerTokenId,
-          expectedOwner: address,
-        }),
-        readLoanLive(publicClient, walletChain.diamondAddress, row.loanId),
-        publicClient.getBlock({ blockTag: 'latest' }),
-        publicClient.readContract({
-          address: walletChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getAutoRefinanceCaps',
-          args: [BigInt(row.loanId)],
-        }) as Promise<{ enabled: boolean; maxRateBps: number; maxNewExpiry: bigint }>,
-        readLiveProtocolFees(publicClient, walletChain.diamondAddress),
-        assertAssetNotPausedLive({
-          publicClient,
-          diamondAddress: walletChain.diamondAddress,
-          asset: row.lendingAsset as `0x${string}`,
-        }),
-        assertAssetNotPausedLive({
-          publicClient,
-          diamondAddress: walletChain.diamondAddress,
-          asset: row.collateralAsset as `0x${string}`,
-        }),
-      ]);
-      if (liveLoan.status !== LOAN_STATUS_ACTIVE) {
-        setError(copy.errors.loanAlreadySettled);
+      if (plan.kind === 'refused') {
+        if (plan.feesMoved) {
+          // The receipt quoted the CACHED fee config — a governance retune
+          // inside its window forces a re-review.
+          void queryClient.invalidateQueries({ queryKey: ['protocolFees'] });
+          throw new Error(plan.reason);
+        }
+        setError(plan.reason);
         return;
       }
-      // Carry-over binds to the ORIGINAL borrower (see header) — the
-      // parent gate used the indexed row; re-check against the chain.
-      if (liveLoan.borrower.toLowerCase() !== address.toLowerCase()) {
-        setError(copy.errors.refinanceNotOriginalBorrower);
-        return;
-      }
-      // #1189/#1236 — the admission gate blocks only STRICTLY past
-      // the grace window (a fresh in-grace request is valid; its
-      // accept charges the late fee). Judged on the LIVE term fields
-      // and the LIVE grace bucket, mirroring LibAutoRefinanceCheck.
-      const graceSecLive = await readGraceSecondsLive({
-        publicClient,
-        diamondAddress: walletChain.diamondAddress,
-        durationDays: Number(liveLoan.durationDays),
-      });
-      // The EFFECTIVE due date (#668 / #935), as LibAutoRefinanceCheck
-      // reads it through LibLoanClock.graceEnd.
-      const endTime = loanEndTimeOf(liveLoan, latestBlock.timestamp);
-      if (latestBlock.timestamp > endTime + graceSecLive) {
-        setError(copy.errors.refinancePastGrace);
-        return;
-      }
-      // The receipt quoted the CACHED fee config — a governance retune
-      // inside its window must force a re-review, not a silent drift
-      // between the quoted fees and the enforced ones.
-      if (
-        liveFees.treasuryFeeBps !== fees.treasuryFeeBps ||
-        liveFees.loanInitiationFeeBps !== fees.loanInitiationFeeBps ||
-        liveFees.maxOfferDurationDays !== fees.maxOfferDurationDays
-      ) {
-        void queryClient.invalidateQueries({ queryKey: ['protocolFees'] });
+      const { liveLoan } = plan;
+      // The receipt disclosed the approval bound from the RENDER-time
+      // chain clock — a backgrounded tab freezes it, and the plan is
+      // judged at the live block. If the bound GREW (the loan slid toward
+      // or past maturity while the receipt sat open), force a re-review
+      // instead of signing headroom the reviewed figures never showed
+      // (Codex #1256 r3). Shrinkage (a partial settled) is fine — the
+      // pull only gets smaller. Checked before any write.
+      if (plan.approval > approvalBound) {
+        void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
         throw new Error(copy.match.termsChanged);
       }
-      // Guardrails: rate ceiling = the reviewed rate; end-date window
-      // = accept-time + duration must fit inside it. Only (re)written
-      // when the existing caps don't already cover the reviewed terms
-      // — the OFFER's own rate ceiling and expiry are what bind the
-      // accept, so looser pre-existing caps are harmless.
-      const neededExpiry =
-        latestBlock.timestamp +
-        (BigInt(durationDays) + REQUEST_WINDOW_DAYS) * 86_400n;
-      if (
-        !caps.enabled ||
-        Number(caps.maxRateBps) < rateBps ||
-        caps.maxNewExpiry < neededExpiry
-      ) {
+      // Guardrails at the reviewed rate ceiling and end-date window,
+      // written only when the existing caps don't already cover them.
+      if (plan.caps) {
         await write('setAutoRefinanceCaps', [
           BigInt(row.loanId),
           true,
-          rateBps,
-          neededExpiry,
+          plan.caps.rateBps,
+          plan.caps.maxNewExpiry,
         ]);
-      }
-      // Standing approval for the accept-time payoff pull — computed
-      // from the LIVE loan at the request's LAST fillable moment
-      // (its own expiry or the grace end, whichever first). Since
-      // #1189 the pull GROWS past maturity by the grace-window late
-      // fee, so an approval of today's figure would strand an
-      // otherwise-valid request the moment the loan crosses its due
-      // date (#1236); this bound is still exact against the maximum
-      // the contract can ever pull for THIS request.
-      const requestExpiry =
-        latestBlock.timestamp + REQUEST_WINDOW_DAYS * 86_400n;
-      const livePayoff = refinancePayoffOf(liveLoan, latestBlock.timestamp);
-      const liveApproval = refinanceApprovalOf(liveLoan, {
-        expiresAt: requestExpiry,
-        graceSeconds: graceSecLive,
-      });
-      // The receipt disclosed the approval bound from the RENDER-time
-      // chain clock — a backgrounded tab freezes it, and submit
-      // recomputes from the live block. If the bound GREW (the loan
-      // slid toward or past maturity while the receipt sat open),
-      // force a re-review instead of signing headroom the reviewed
-      // figures never showed (Codex #1256 r3). Shrinkage (a partial
-      // settled) is fine — the pull only gets smaller.
-      if (liveApproval > approvalBound) {
-        void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
-        throw new Error(copy.match.termsChanged);
       }
       // The approval itself needs no balance, but a wallet that can't
       // even cover the INTEREST portion today should hear it now, not
@@ -434,9 +340,7 @@ export function RefinanceFlow({
         publicClient,
         token: liveLoan.principalAsset,
         owner: address,
-        amount:
-          livePayoff - liveLoan.principal +
-          (liveLoan.principal * BigInt(liveFees.loanInitiationFeeBps)) / 10_000n,
+        amount: plan.topUp,
         symbol: sym,
       });
       // The standing allowance is what an abandoned step 3 restores. Any
@@ -472,7 +376,7 @@ export function RefinanceFlow({
         token: liveLoan.principalAsset,
         owner: address,
         spender: walletChain.diamondAddress,
-        amount: liveApproval,
+        amount: plan.approval,
         onObserved: (value) => {
           priorAllowance = value;
         },
@@ -484,15 +388,10 @@ export function RefinanceFlow({
           confirmedAllowance = value;
         },
       });
-      const payload = toRefinanceOfferPayload(liveLoan, row.loanId, {
-        rateBpsMax: rateBps,
-        durationDays,
-        consent: consent.given,
-        // The request's own hard expiry — this is what makes the
-        // reviewed lifetime true even when looser caps pre-exist
-        // (and the bound the approval above was computed against).
-        expiresAt: requestExpiry,
-      });
+      // The request itself, with its own hard expiry — what makes the
+      // reviewed lifetime true even when looser caps pre-exist, and the
+      // bound the approval above was computed against.
+      const payload = plan.payload;
       // LATE re-gate (Codex #1511 r10 P1) — see the entry gate note.
       if (preSubmitBlock) {
         const blockedLate = await preSubmitBlock();

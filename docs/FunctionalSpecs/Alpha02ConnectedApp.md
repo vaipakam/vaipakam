@@ -1960,6 +1960,61 @@ Thin-market honesty rules apply.
   loan's status, so that loan may have been listed before it closed. Each listed loan's own page then shows its listing and lets the lender
   cancel it.
 
+### Refinancing several loans from one offer at once (#126)
+
+- On the borrower's card for an offer that filled into two or more open
+  loans, the positions page offers, in Advanced mode like the loan page's own
+  refinance form, to post a refinance request for every loan in it, at one
+  highest rate and one duration. Only one of the card's actions runs at a time.
+- Each loan passes the same live checks its own page's refinance form runs
+  before a request is posted, and the two must never disagree: the wallet is
+  not sanctioned, still holds the borrower position and is the loan's original
+  borrower, the loan is active and not past its grace window, neither asset is
+  paused, the fee terms are the ones the review quoted, and no request is
+  already on record for the loan (open, or expired and never cancelled). A
+  rental, a loan with an accepted sale waiting to complete, a loan with an open
+  offset, a loan in its fallback period, and any loan the platform would
+  refuse are left out and named with the reason. A loan whose checks could not
+  be read is left out too, never included on a guess.
+- Before anything is signed the borrower sees, for every loan: today's payoff;
+  how much more the payoff can grow if a lender accepts after the due date;
+  what the wallet must hold spare when a lender accepts (the payoff's interest
+  and the new loan's initiation fee, since the new principal arrives in the
+  same transaction); and what that loan's own page states before a request
+  (the late fee when it is past due, the end of scheduled interest payments
+  when the loan pays on a schedule, and when the request expires). The review
+  also states the spare amount for all the loans together, which the wallet
+  must hold now or nothing is sent, and the single approval it will grant: the
+  sum of every request's largest possible payoff. It says that this one
+  approval also serves any other refinance request the borrower has open on
+  the same token, so one acceptance can leave another request short. The
+  borrower agrees to the payoff and balance terms for every listed loan before
+  confirming; the agreement covers exactly what the review shows and is
+  withdrawn if any of it changes.
+- Each request is exactly the one the loan page would post: its own hard
+  expiry, the reviewed rate ceiling and duration, and the loan's collateral
+  carried over. Where a loan's on-chain guardrails do not already cover the
+  request, they are written in the same transaction, immediately before it; a
+  request is never posted without the guardrails it needs. A guardrail written
+  for a request that then fails can stay, and it only limits what a request
+  on that loan can complete at.
+- One approval for the sum comes first, then one transaction for up to 15
+  loans. Each request runs as the borrower, with its own checks, and a request
+  that fails is skipped while the others are posted. Immediately before each
+  transaction every loan in it is checked again in full; a loan whose largest
+  possible payoff grew, or whose statements changed, since the review is left
+  out and named.
+- Which loans got a request is established from the chain, never assumed: a
+  loan is reported as having a request, with its offer number, only when that
+  transaction itself posted it. Otherwise it is reported as no request with the
+  reason, no longer active, left out, not confirmed yet (every loan in a
+  transaction that has not confirmed is reported so, and nothing more is sent
+  behind it), or could not be read. The approval is set back to what it was
+  only when it is established that no request was posted; otherwise the
+  approval left standing is read from the chain and stated, with the reminder
+  that open requests draw on it. Each loan's own page then shows its request
+  and lets the borrower cancel it.
+
 ### Taking back extra collateral
 
 The platform lets a borrower withdraw collateral from an open loan as long as

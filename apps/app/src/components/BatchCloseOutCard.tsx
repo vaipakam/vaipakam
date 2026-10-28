@@ -13,6 +13,10 @@
  * assumed from it: a loan is "closed" only when its live status reads
  * Repaid. Where nothing closed, the approval is set back the way the
  * single-loan flow sets it back.
+ *
+ * In Advanced mode the card also offers "Refinance all" (#126 slice 3),
+ * which hands the card's body to `BatchRefinancePanel`, so a group runs
+ * one batch at a time.
  */
 import { useState } from 'react';
 import { Layers, LoaderCircle } from 'lucide-react';
@@ -24,7 +28,6 @@ import { useMode } from '../app/ModeContext';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import {
   ensureAllowance,
-  readAllowanceNotBefore,
   trackApproval,
   useTokenMeta,
 } from '../contracts/erc20';
@@ -41,8 +44,10 @@ import {
   type CloseOutPlan,
 } from '../data/closeOutPlan';
 import { ConfirmReceipt } from './ConfirmReceipt';
+import { BatchRefinancePanel } from './BatchRefinancePanel';
 import {
   pullTotals,
+  readApprovalsLeft,
   settleFailedSend,
   type BatchOutcome,
   type Mined,
@@ -55,7 +60,9 @@ type Stage =
   | { kind: 'planning'; action: CloseOutAction }
   | { kind: 'review'; action: CloseOutAction; plans: CloseOutPlan[] }
   | { kind: 'sending'; action: CloseOutAction; step: 'approving' | 'checking' | 'submitting' }
-  | { kind: 'done'; action: CloseOutAction; outcomes: BatchOutcome[]; note: string | null };
+  | { kind: 'done'; action: CloseOutAction; outcomes: BatchOutcome[]; note: string | null }
+  /** "Refinance all" (#126 slice 3): its panel runs its own stages. */
+  | { kind: 'refinance' };
 
 export function BatchCloseOutCard({
   group,
@@ -243,9 +250,11 @@ export function BatchCloseOutCard({
           {copy.batchClose.title(group.offerId)}
         </h2>
       </div>
-      <p className="muted" style={{ marginTop: 0 }}>
-        {copy.batchClose.lede(ids)}
-      </p>
+      {stage.kind !== 'refinance' ? (
+        <p className="muted" style={{ marginTop: 0 }}>
+          {copy.batchClose.lede(ids)}
+        </p>
+      ) : null}
 
       {stage.kind === 'idle' ? (
         <div className="stack" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
@@ -268,7 +277,27 @@ export function BatchCloseOutCard({
               {copy.batchClose.closeAllEarly}
             </button>
           ) : null}
+          {/* Refinancing is an Advanced-mode action on the loan page too.
+              It opens its own terms form; the group is held once it plans. */}
+          {isAdvanced ? (
+            <button
+              type="button"
+              className="btn"
+              disabled={!ready}
+              onClick={() => setStage({ kind: 'refinance' })}
+            >
+              {copy.batchRefinance.action}
+            </button>
+          ) : null}
         </div>
+      ) : null}
+
+      {stage.kind === 'refinance' ? (
+        <BatchRefinancePanel
+          group={group}
+          onStart={() => onHeldChange?.(group, true)}
+          onExit={toIdle}
+        />
       ) : null}
 
       {busy ? (
@@ -408,24 +437,15 @@ function outcomeText(action: CloseOutAction, o: BatchOutcome): string {
   }
 }
 
-/** The allowance left standing after a batch, read live from a node
- *  that has reached `notBefore`, the last block this flow wrote in. One
- *  lending asset per offer, so one figure in practice. Unread when no
- *  node answered from that far: a figure from before our own writes
- *  would be stated as current. */
+/** The allowance left standing after a batch, worded (`readApprovalsLeft`). */
 async function approvalLeftNote(
   ctx: CloseOutCtx,
   tokens: readonly `0x${string}`[],
   amount: (raw: bigint) => string,
   notBefore: bigint,
 ): Promise<string> {
-  const left = await Promise.all(
-    tokens.map((token) =>
-      readAllowanceNotBefore(ctx.publicClient, token, ctx.holder, ctx.diamond, notBefore),
-    ),
-  );
-  const read = left.filter((v): v is bigint => v !== null);
-  if (read.length !== left.length) return copy.batchClose.approvalLeftUnread;
+  const read = await readApprovalsLeft(ctx, tokens, notBefore);
+  if (read === null) return copy.batchClose.approvalLeftUnread;
   return copy.batchClose.approvalLeft(read.map(amount).join(', '));
 }
 

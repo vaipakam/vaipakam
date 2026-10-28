@@ -929,7 +929,8 @@
       "repayRecheck": "हमने अभी फिर से जाँच की और इस लोन पर कोई रीफ़ाइनेंस अनुरोध खुला हो सकता है, इसलिए अभी तक कुछ नहीं भेजा गया। समीक्षा अब बताती है कि पुनर्भुगतान उसके साथ क्या करेगा — पुनर्भुगतान के लिए फिर से पुष्टि करें।",
       "ownScanCapped": "इस वॉलेट ने इस लोन के ऑफ़र के बाद से इतने ऑफ़र पोस्ट किए हैं जितने हम यहाँ जाँच नहीं सकते। अगर इसने बॉरोअर पोज़िशन रखते समय इस लोन के लिए रीफ़ाइनेंस अनुरोध पोस्ट किया था, तो यह पेज उसे नहीं दिखा सकता। अगर वह अभी भी खुला है, तो आप उसे रेट डेस्क पर “आपके खुले offers” में रद्द कर सकते हैं (समाप्त हो चुका अनुरोध वहाँ नहीं दिखता); हर हाल में, अगर किसी और चीज़ को उसकी ज़रूरत नहीं है तो सेटिंग्स (एडवांस्ड मोड) में “स्थायी token approvals” के तहत वह टोकन मंज़ूरी हटाएँ जिस पर वह निर्भर था।",
       "ownScanFailed": "हम अभी इस वॉलेट के अपने ऑफ़र नहीं जाँच सके। अगर इसने बॉरोअर पोज़िशन रखते समय इस लोन के लिए रीफ़ाइनेंस अनुरोध पोस्ट किया था, तो यह पेज उसे अभी नहीं दिखा सकता — थोड़ी देर में फिर से कोशिश करें। अगर वह अभी भी खुला है, तो आप उसे रेट डेस्क पर “आपके खुले offers” में रद्द कर सकते हैं (समाप्त हो चुका अनुरोध वहाँ नहीं दिखता); हर हाल में, अगर किसी और चीज़ को उसकी ज़रूरत नहीं है तो सेटिंग्स (एडवांस्ड मोड) में “स्थायी token approvals” के तहत वह टोकन मंज़ूरी हटाएँ जिस पर वह निर्भर था।",
-      "repayWarnPending": "इस loan के लिए refinance request अभी भी live है। Repaying loan settle करता है, जिसके बाद request कभी complete नहीं हो सकती — बाद में card से cancel करें (standing payoff approval भी हटेगी); तब तक यह expiry तक बैठी रहती है।"
+      "repayWarnPending": "इस loan के लिए refinance request अभी भी live है। Repaying loan settle करता है, जिसके बाद request कभी complete नहीं हो सकती — बाद में card से cancel करें (standing payoff approval भी हटेगी); तब तक यह expiry तक बैठी रहती है।",
+      "inFallback": "यह loan अपनी fallback अवधि में है, इसलिए इस पर refinance request नहीं डाली जा सकती। इसका अपना page इसके विकल्प बताता है।"
     },
     "approvals": {
       "title": "स्थायी token approvals",
@@ -3458,6 +3459,43 @@
       "changedSinceReview": "आपकी समीक्षा के बाद इस लिस्टिंग में शामिल बातें बदल गईं। इसे इसके अपने पेज से सूचीबद्ध करें, जो मौजूदा शर्तें दिखाता है।",
       "ownPageShape": "केवल वे ऋण बिक्री के लिए सूचीबद्ध हो सकते हैं जिनका मूलधन और संपार्श्विक दोनों टोकन हों।",
       "unavailableNetwork": "Loans {{ids}} एक ही offer से आए हैं। इस network पर इन्हें बिक्री के लिए list करना अभी उपलब्ध नहीं है: listing tools इस deployment पर प्रकाशित नहीं हुए हैं।"
+    },
+    "batchRefinance": {
+      "action": "सबको refinance करें",
+      "lede": "इन सभी loans में से हर एक के लिए एक ही अधिकतम rate और एक ही अवधि पर refinance request डालें। हर request वही है जो loan का अपना page डालता: जैसे ही कोई lender किसी एक को accept करता है, वह loan उसी transaction में चुका कर बंद हो जाता है, और उसका collateral नए loan में चला जाता है। हर loan पहले अलग से जाँचा जाता है, और जिस loan पर request नहीं डाली जा सकती उसे बाहर रखा जाता है और कारण बताया जाता है।",
+      "review": "Requests की समीक्षा करें",
+      "checking": "हर loan की जाँच और उसकी payoff रकम निकाली जा रही है…",
+      "phase": {
+        "approving": "अपने wallet में कुल रकम approve करें…",
+        "checking": "हर loan फिर से जाँचा जा रहा है…",
+        "submitting": "अपने wallet में transaction confirm करें…"
+      },
+      "reviewTitle": "ये refinance requests डालें",
+      "loanPayoff": "Loan #{{id}}: आज चुकाने के लिए ~{{payoff}}, जो lender के इसकी request accept करने पर अपने-आप कट जाएगा।",
+      "loanGrowth": "अगर कोई lender इस loan की due date के बाद accept करता है, तो request खत्म होने से पहले payoff (late fee और बढ़ता ब्याज) ~{{amount}} तक और बढ़ सकता है।",
+      "loanTopUp": "Lender के accept करते समय आपके wallet में अलग से चाहिए: लगभग {{amount}}। यह payoff का ब्याज और नए loan की initiation fee है; नया principal उसी transaction में आता है।",
+      "leftOut": "Loan #{{id}} बाहर रखा गया: {{reason}}",
+      "noneReady": "अभी इनमें से कोई भी loan साथ में refinance request नहीं ले सकता। हर loan खोलकर उसके विकल्प देखें।",
+      "totals": "कुल: अगर हर request accept होती है तो wallet में लगभग {{topUp}} अलग से चाहिए। आपके wallet में अभी इतना होना चाहिए, वरना कुछ नहीं भेजा जाएगा।",
+      "approval": "आप {{amount}} approve करेंगे: हर request के सबसे बड़े संभव payoff का जोड़। हर payoff इसी एक approval से कटता है जब उसकी request accept होती है, और उसी token पर आपकी किसी दूसरी खुली refinance request का payoff भी। इसलिए एक lender के एक request लेने से दूसरी के लिए बहुत कम बच सकता है; हर loan का page बताता है जब उसकी request का approval कम पड़ता है।",
+      "consentLabel": "मैं नीचे दी गई payoff और wallet-balance शर्तें समझता/समझती हूँ और ऊपर दिए हर loan के लिए इनसे सहमत हूँ।",
+      "confirm": "पुष्टि करें — ये requests डालें",
+      "cancel": "रद्द करें",
+      "dismiss": "हो गया",
+      "receiveEach": "हर accept की गई request के लिए, accept होते ही आपकी शर्तों पर एक नया loan: उस loan का collateral कभी unlock हुए बिना नए loan में जाता है, और पुराना loan उसी transaction में बंद होता है।",
+      "youMayOwe": "ऊपर दिखाया गया हर loan का payoff, जो lender के उसकी request accept करने पर नीचे के approval से आपके wallet से कटता है। उस समय आपके wallet में उस loan की अलग रकम होनी चाहिए।",
+      "endsEach": "हर request तब खत्म होती है जब कोई lender उसे accept करता है, जब आप उसे उसके loan के page से cancel करते हैं, या जब वह expire होती है; ऊपर हर loan की line बताती है कब। एक transaction में 15 तक requests डलती हैं। Fail हुई request छोड़ दी जाती है, और नतीजे कारण बताते हैं; उसके लिए लिखे गए guardrails आपकी rate और end date पर बने रह सकते हैं, और वे सिर्फ़ यह सीमित करते हैं कि उस loan पर request किन शर्तों पर पूरी हो सकती है।",
+      "posted": "Loan #{{id}}: request offer #{{offerId}} के रूप में डाली गई। इसका page request दिखाता है और आपको उसे cancel करने देता है।",
+      "notPosted": "Loan #{{id}}: कोई request नहीं डली। {{reason}}",
+      "changedOtherwise": "Loan #{{id}}: कोई request नहीं डली। Loan अब active नहीं है, इसलिए उसे खोलकर देखें कि वह किस स्थिति में है।",
+      "unknown": "Loan #{{id}}: हम नहीं पढ़ पाए कि इसकी request डली या नहीं। जाँचने के लिए loan खोलें।",
+      "pending": "Loan #{{id}}: transaction भेजा गया पर अभी confirm नहीं हुआ। यह अब भी यह request डाल सकता है, इसलिए कुछ मिनट बाद loan देखें।",
+      "notSentPending": "नहीं भेजा गया, क्योंकि इस batch का पिछला transaction अभी confirm नहीं हुआ। उसके settle होने के बाद इसके अपने page से request डालें।",
+      "skippedRetry": "Transaction चला, पर यह request छोड़ दी गई। इसे अब loan के अपने page से डाला जा सकता है।",
+      "changedSinceReview": "आपकी समीक्षा के बाद इस request में शामिल चीज़ें बदल गईं। इसे इसके अपने page से डालें, जो मौजूदा शर्तें दिखाता है।",
+      "ownPageRental": "Rental पर refinance request नहीं डाली जा सकती; सिर्फ़ token loans पर।",
+      "ownPageOpenRequest": "इस loan पर पहले से एक refinance request खुली है। इसका अपना page उसे दिखाता है और आपको उसे cancel करने देता है।",
+      "approvalLeft": "प्रोटोकॉल के लिए आपकी token approval अब {{amount}} है। आपकी खुली refinance requests अपना payoff इसी से लेती हैं, इसलिए इसे घटाने से कोई request पूरी न हो पाए, ऐसा हो सकता है।"
     }
   },
   "contractError": {
