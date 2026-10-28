@@ -2221,9 +2221,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = DefaultedFacet.triggerDefault.selector;
         s[1] = DefaultedFacet.isLoanDefaultable.selector;
+        s[2] = DefaultedFacet.defaultKycAdmission.selector;
     }
 
     function _getRiskSelectors() internal pure returns (bytes4[] memory s) {

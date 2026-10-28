@@ -1479,6 +1479,61 @@ contract DefaultedFacetTest is Test {
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
     }
 
+    /// @dev #2083 — the view reports the same verdict the default applies:
+    ///      admitted while enforcement is off, refused with `KYCRequired()`'s
+    ///      exact revert data once it is on and the lender falls short of the
+    ///      tier, and admitted again when the lender's tier covers the value.
+    function testDefaultKycAdmissionMatchesTriggerDefault() public {
+        uint256 loanId = createAndAcceptOffer(
+            mockERC20,
+            mockCollateralERC20,
+            LibVaipakam.AssetType.ERC20,
+            3000 ether,
+            6000 ether,
+            30,
+            0,
+            0
+        );
+        ProfileFacet(address(diamond)).updateKYCTier(lender, LibVaipakam.KYCTier.Tier0);
+
+        (bool admitted, bytes memory refusal) =
+            DefaultedFacet(address(diamond)).defaultKycAdmission(loanId);
+        assertTrue(admitted, "enforcement off: admitted");
+        assertEq(refusal.length, 0);
+
+        AdminFacet(address(diamond)).setKYCEnforcement(true);
+        (admitted, refusal) = DefaultedFacet(address(diamond)).defaultKycAdmission(loanId);
+        assertFalse(admitted, "lender below tier: refused");
+        assertEq(refusal, abi.encodeWithSelector(IVaipakamErrors.KYCRequired.selector));
+
+        vm.warp(block.timestamp + 31 days + 1);
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        vm.expectRevert(refusal);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
+
+        ProfileFacet(address(diamond)).updateKYCTier(lender, LibVaipakam.KYCTier.Tier2);
+        (admitted, refusal) = DefaultedFacet(address(diamond)).defaultKycAdmission(loanId);
+        assertTrue(admitted, "lender tier covers the value: admitted");
+        assertEq(refusal.length, 0);
+    }
+
+    /// @dev #2083 — an illiquid principal is worth 0, which the gate always
+    ///      admits, so the view admits a lender below every tier.
+    function testDefaultKycAdmissionIlliquidPrincipalAdmitted() public {
+        mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Illiquid);
+        uint256 loanId = createAndAcceptOffer(
+            mockERC20, mockIlliquidERC20, LibVaipakam.AssetType.ERC20,
+            5000 ether, 7500 ether, 30, 0, 0
+        );
+        AdminFacet(address(diamond)).setKYCEnforcement(true);
+        ProfileFacet(address(diamond)).updateKYCTier(lender, LibVaipakam.KYCTier.Tier0);
+        (bool admitted, bytes memory refusal) =
+            DefaultedFacet(address(diamond)).defaultKycAdmission(loanId);
+        assertTrue(admitted);
+        assertEq(refusal.length, 0);
+        mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
+    }
+
     function testIsLoanDefaultable() public {
         uint256 loanId = createAndAcceptOffer(
             mockERC20,
