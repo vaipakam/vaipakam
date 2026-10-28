@@ -58,7 +58,7 @@ import { shortErr } from '../callErrors';
 import { feeCeiling } from '../feeCeiling';
 import { sendOpsAlert } from '../opsAlert';
 import { conservationGap, coveringEntries, decodeEntryFloor, encodeEntryFloor, scanEntries, SIDE_BORROWER, SIDE_LENDER, type EntryRow, type ScannedEntry, type Side } from '../rewardEntries';
-import { advanceFloor, d1ScanCursors, decodeIndex, rotatingWindow, type ScanCursors } from '../scanCursors';
+import { advanceFloor, d1ScanCursors, decodeIndex, finalFloor, finalizedBlockOnce, rotatingWindow, type FinalBlock, type ScanCursors } from '../scanCursors';
 import { StepSender, type SendFeeCeiling } from '../stepSender';
 import { pagesAfter } from '../rewardCloseOut/plan';
 import { accumulationWedge, zeroedDayStep, type ZeroedDayState } from './plan';
@@ -238,6 +238,8 @@ export async function zeroedDayOnce(chainId: number, diamond: Address, deps: Zer
     // clock installed and either not zeroed or at a terminal. A window fixed
     // on the newest days would leave an older zeroed day unquoted and
     // unlapsed for good (Codex #2993 r2, the same rule as the close-out pass).
+    // The floor moves only on what the finalized block shows (Codex #2993 r4),
+    // so a lapse a reorg undoes stays above it and is sent again.
     const stored = await deps.cursors.get([DAY_FLOOR_ITEM, DAY_NEXT_ITEM]);
     const floor = Math.min(decodeIndex(stored.get(DAY_FLOOR_ITEM)) ?? 0, gate.today);
     const win = rotatingWindow(floor, gate.today - 1, deps.windowDays, decodeIndex(stored.get(DAY_NEXT_ITEM)));
@@ -258,7 +260,7 @@ export async function zeroedDayOnce(chainId: number, diamond: Address, deps: Zer
     if (report.zeroed.length > 0) {
       for (const d of await workDays(r, sender, report, gate.messenger, deps, readFloor)) settled.add(d);
     }
-    const newFloor = advanceFloor(floor, days, (d) => settled.has(d));
+    const newFloor = await finalFloor(floor, days, (d) => settled.has(d), r.finalized, (ds, block) => settledAt(r, ds, block));
     if (newFloor !== floor) await deps.cursors.put(DAY_FLOOR_ITEM, String(newFloor));
     if (win !== null && String(win.next) !== stored.get(DAY_NEXT_ITEM)) await deps.cursors.put(DAY_NEXT_ITEM, String(win.next));
   } catch (err) {
@@ -270,16 +272,22 @@ export async function zeroedDayOnce(chainId: number, diamond: Address, deps: Zer
 }
 
 class Reader {
+  /** The chain's finalized block, read once a run (`scanCursors.finalFloor`). */
+  readonly finalized: () => Promise<FinalBlock | null>;
+
   constructor(
     readonly deps: ZeroedDayDeps,
     readonly diamond: Address,
-  ) {}
+  ) {
+    this.finalized = finalizedBlockOnce(deps.client);
+  }
 
   async one<T>(functionName: string, args: readonly unknown[] = [], address: Address = this.diamond, abi: Abi = ABI): Promise<T> {
     return (await this.deps.client.readContract({ address, abi, functionName, args })) as T;
   }
 
-  async many(calls: readonly { functionName: string; args: readonly unknown[] }[], label: string): Promise<unknown[]> {
+  /** At the head, or at `blockNumber` when one is given. */
+  async many(calls: readonly { functionName: string; args: readonly unknown[] }[], label: string, blockNumber?: bigint): Promise<unknown[]> {
     const out: unknown[] = [];
     for (let i = 0; i < calls.length; i += READ_CHUNK) {
       const part = calls.slice(i, i + READ_CHUNK);
@@ -289,14 +297,15 @@ class Reader {
         part.map((c) => ({ address: this.diamond, abi: ABI, functionName: c.functionName, args: c.args })),
         `rewardZeroedDay ${label}`,
         this.deps.sendDeadline,
+        blockNumber,
       );
       for (const x of res) out.push(x.status === 'success' ? x.result : undefined);
     }
     return out;
   }
 
-  days(days: readonly number[], functionName: string, label: string): Promise<unknown[]> {
-    return this.many(days.map((d) => ({ functionName, args: [BigInt(d)] })), label);
+  days(days: readonly number[], functionName: string, label: string, blockNumber?: bigint): Promise<unknown[]> {
+    return this.many(days.map((d) => ({ functionName, args: [BigInt(d)] })), label, blockNumber);
   }
 }
 
@@ -331,19 +340,24 @@ async function readGate(r: Reader, chainId: number): Promise<Gate | string> {
 }
 
 /** Every zeroed day's state, read in one batch per field. */
-async function readStates(r: Reader, sender: StepSender, days: readonly number[]): Promise<Map<number, ZeroedDayState & { totals: { lender: bigint; borrower: bigint } }>> {
+async function readStates(
+  r: Reader,
+  onUnread: (day: number) => void,
+  days: readonly number[],
+  blockNumber?: bigint,
+): Promise<Map<number, ZeroedDayState & { totals: { lender: bigint; borrower: bigint } }>> {
   const fns = ['getChainReportSentAt', 'getDayPoolStamp', 'getCompQuoteAccum', 'getDayLapseClock', 'getDayCompensation', 'getDayResolvedZero', 'getLapsedDayLoss', 'getShortLapseDeadline'];
   const calls = days.flatMap((d) => [
     ...fns.map((functionName) => ({ functionName, args: [BigInt(d)] as readonly unknown[] })),
     { functionName: 'getInteractionDayEntry', args: [BigInt(d), zeroAddress] as readonly unknown[] },
   ]);
-  const res = await r.many(calls, 'day-state');
+  const res = await r.many(calls, blockNumber === undefined ? 'day-state' : 'day-state-final', blockNumber);
   const width = fns.length + 1;
   const out = new Map<number, ZeroedDayState & { totals: { lender: bigint; borrower: bigint } }>();
   days.forEach((d, i) => {
     const row = res.slice(i * width, (i + 1) * width);
     if (row.some((x) => x === undefined)) {
-      sender.noteUnread(`day:${d}`, 'its quote, clock, compensation or loss record');
+      onUnread(d);
       return;
     }
     const [sentAt, stamp, accum, clock, comp, resolvedZero, loss, short, totals] = row as [
@@ -374,11 +388,31 @@ async function readStates(r: Reader, sender: StepSender, days: readonly number[]
   return out;
 }
 
+/** The days of `days` settled at `block`, by the same rule the run applies
+ *  at the head: a clock installed and no zeroed marker, or a zeroed day at a
+ *  terminal. A value that cannot be read there reads as not settled. */
+async function settledAt(r: Reader, days: readonly number[], block: FinalBlock): Promise<Set<number>> {
+  const flags = await r.days(days, 'getDayDeliberatelyZeroed', 'zeroed-final', block.number);
+  const clocks = await r.days(days, 'getDayLapseClock', 'clock-final', block.number);
+  const out = new Set<number>();
+  const zeroed: number[] = [];
+  days.forEach((d, i) => {
+    const clock = clocks[i] as readonly [bigint, ...unknown[]] | undefined;
+    if (flags[i] === true) zeroed.push(d);
+    else if (flags[i] === false && clock !== undefined && BigInt(clock[0]) !== 0n) out.add(d);
+  });
+  if (zeroed.length > 0) {
+    const states = await readStates(r, () => {}, zeroed, block.number);
+    for (const [d, s] of states) if (zeroedDayStep(s, block.timestamp).kind === 'done') out.add(d);
+  }
+  return out;
+}
+
 /** Works every zeroed day of the run; returns the ones at a terminal. The
  *  entry scan is anchored at `scanFrom`, the oldest day the pass may still
  *  work, so its stored floor stays valid whichever window a run reads. */
 async function workDays(r: Reader, sender: StepSender, report: ZeroedDayReport, messenger: Address, deps: ZeroedDayDeps, scanFrom: number): Promise<number[]> {
-  const states = await readStates(r, sender, report.zeroed);
+  const states = await readStates(r, (d) => sender.noteUnread(`day:${d}`, 'its quote, clock, compensation or loss record'), report.zeroed);
   const now = (await deps.client.getBlock({ blockTag: 'latest' })).timestamp;
   // One entry scan for every day that needs a walk this run.
   const plans = [...states.values()].map((s) => ({ s, step: zeroedDayStep(s, now) }));

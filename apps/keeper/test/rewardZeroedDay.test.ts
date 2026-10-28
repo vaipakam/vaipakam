@@ -195,13 +195,14 @@ class FakeMirror {
     return this.days.get(Number(d));
   }
 
-  readContract = async ({ address, functionName, args = [] }: { address: Address; functionName: string; args?: readonly unknown[] }): Promise<unknown> => {
+  readContract = async ({ address, functionName, args = [], blockNumber }: { address: Address; functionName: string; args?: readonly unknown[]; blockNumber?: bigint }): Promise<unknown> => {
     const a = args as readonly any[];
     if (address === MESSENGER) {
       if (functionName !== 'quoteSendCompQuote') throw new Error(`unexpected messenger read ${functionName}`);
       return this.fee;
     }
-    const d = this.day(a[0]);
+    if (blockNumber !== undefined && blockNumber !== this.finalNumber) throw new Error(`read at unexpected block ${blockNumber}`);
+    const d = blockNumber !== undefined && this.finalDays !== null ? this.finalDays.get(Number(a[0])) : this.day(a[0]);
     switch (functionName) {
       case 'getRewardReporterConfig':
         return [MESSENGER, this.chainNamed, 84532, false, 3600n];
@@ -240,18 +241,24 @@ class FakeMirror {
     }
   };
 
-  multicall = async ({ contracts }: { contracts: { address: Address; functionName: string; args?: readonly unknown[] }[] }) =>
+  multicall = async ({ contracts, blockNumber }: { contracts: { address: Address; functionName: string; args?: readonly unknown[] }[]; blockNumber?: bigint }) =>
     Promise.all(
       contracts.map(async (c) => {
         try {
-          return { status: 'success' as const, result: await this.readContract(c) };
+          return { status: 'success' as const, result: await this.readContract({ ...c, blockNumber }) };
         } catch (error) {
           return { status: 'failure' as const, error };
         }
       }),
     );
 
-  getBlock = async () => ({ timestamp: this.now });
+  /** The zeroed days as the finalized block shows them, when it lags the
+   *  head; null reads the head's days there too. */
+  finalDays: Map<number, Day> | null = null;
+  readonly finalNumber = 100n;
+
+  getBlock = async ({ blockTag }: { blockTag?: string } = {}) =>
+    blockTag === 'finalized' ? { number: this.finalNumber, timestamp: this.now } : { timestamp: this.now };
 
   private admit(functionName: string, a: readonly any[], value: bigint): () => void {
     const d = this.day(a[0]);
@@ -493,6 +500,27 @@ describe('a run', () => {
     expect(m.days.get(5)!.loss, 'refined once the rotation is back at it').toMatchObject({ partialFigure: false });
     await runs(30, () => cursors.rows.get(DAY_FLOOR_ITEM) === '100');
     expect(cursors.rows.get(DAY_FLOOR_ITEM), 'then the floor passes every settled day').toBe('100');
+  });
+
+  it('moves its day floor only on what the finalized block shows, so a reorged lapse is sent again (Codex #2993 r4)', async () => {
+    m.today = 6;
+    m.clockedThrough = 5;
+    m.zero(3, { finalizedAt: NOW - WINDOW - 1n });
+    const before = structuredClone(m.days.get(3)!);
+    m.finalDays = new Map([[3, structuredClone(before)]]);
+    const cursors = memoryScanCursors();
+    await run({ cursors });
+    expect(fns()).toEqual(['lapseZeroedDay']);
+    await run({ cursors });
+    expect(cursors.rows.get(DAY_FLOOR_ITEM), 'lapsed at the head, not yet final').toBe('3');
+    m.days.set(3, structuredClone(before)); // the lapse is reorged out
+    m.sent = [];
+    await run({ cursors });
+    expect(fns(), 'above the floor, so lapsed again').toEqual(['lapseZeroedDay']);
+    m.finalDays = null;
+    await run({ cursors });
+    await run({ cursors });
+    expect(cursors.rows.get(DAY_FLOOR_ITEM)).toBe('6');
   });
 
   it('short-lapses a compensated day funded below its quote once its deadline passed', async () => {
