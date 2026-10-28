@@ -35,8 +35,7 @@ import {LibInteractionRewards} from "../src/libraries/LibInteractionRewards.sol"
 import {ICrossChainMessenger} from "../src/crosschain/ICrossChainMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
-import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
-import {RemitWire} from "../src/crosschain/RemitWire.sol";
+import {LibD8Delivery} from "./helpers/LibD8Delivery.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {MockCrossChainMessenger} from "./mocks/MockCrossChainMessenger.sol";
 
@@ -231,14 +230,12 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         internal
         returns (bytes32 h)
     {
-        uint256[] memory days_ = new uint256[](1);
-        days_[0] = 1;
-        (h, ) = LibD6Delivery.deliver(
+        h = LibD8Delivery.deliver(
             address(diamond),
-            LibD6Delivery.Delivery({
+            LibD8Delivery.Delivery({
                 token: address(vpfi),
                 amount: amount,
-                dayIds: days_,
+                dayId: 1,
                 sourceChainId: CHAIN_BASE,
                 remitId: remitId,
                 remitter: REMITTER,
@@ -1269,18 +1266,14 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _deliverStamped(amount, 0, amount, remitId, id);
         _releaseEpoch(_packetHash(id));
     }
-    /// @dev Index the batch's one chunk, then park its remainder and record
-    ///      the acknowledgment — the two halves of the release, which together
-    ///      are what make the packet classifiable.
+    /// @dev Release the batch (indexed into its day at ingress, #2828) —
+    ///      what makes the packet classifiable.
     function _releaseEpoch(bytes32 batchId) internal {
         RewardEpochFacet ep = RewardEpochFacet(address(diamond));
         // A delivery that landed before custody was ACTIVATED opens no epoch,
         // so there may be nothing to release. Section 7 drives both fixtures.
-        (bytes32 packetHash, , , , , ) = ep.getTransportBatch(batchId);
+        (bytes32 packetHash, , , , ) = ep.getTransportBatch(batchId);
         if (packetHash == bytes32(0)) return;
-        uint256[] memory one = new uint256[](1);
-        one[0] = 1;
-        LibD6Delivery.indexChunk(address(diamond), batchId, one, RemitWire.d6Chunks(one), 0);
         // #2258 — the production release is shut in 3b-i; the classification
         // tests here need a released batch, which only the raw entry gives.
         _mut().releaseTransportBatchRaw(batchId);
@@ -2763,46 +2756,36 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(frontier, 0);
     }
 
-    // ─── 9. the attested split + the day-list commitment ─────────────────────
+    // ─── 9. the attested split + the stamped day ─────────────────────────────
 
-    function _dayCommitment(uint256 day) internal pure returns (bytes32) {
-        uint256[] memory one = new uint256[](1);
-        one[0] = day;
-        return keccak256(abi.encode(one));
-    }
     function _pkt(bytes32 id) internal view returns (LibVaipakam.IngressPacket memory) {
         return _rlens().getIngressPacket(_packetHash(id));
     }
 
-    /// Every arrival commits to its day list in the same transaction as the
-    /// record. A budget delivery records the ROOT over its list's chunks, the
-    /// extent and the era its wire names, and on an activated deployment its
-    /// split is attested from that wire. A compensation, which names one day,
-    /// records the flat commitment to it as provenance.
-    function test_Ingress_CommitsToItsDayList() public {
+    /// Every arrival stamps its ONE day in the same transaction as the record
+    /// (#2828): a budget delivery the day its d8 wire carries inline, a
+    /// compensation the one day it names. On an activated deployment a budget
+    /// delivery's split is also attested from that wire.
+    function test_Ingress_StampsItsDay() public {
         _activatedMirror();
         _seedDiamond(14e18); // the 10 budget delivery below, then the 4 compensation
         bytes32 id = keccak256("dl");
-        uint256[] memory one = new uint256[](1);
-        one[0] = 1;
-        bytes32 root = RemitWire.d6Root(RemitWire.d6Chunks(one));
-        vm.expectEmit(true, false, false, true, address(diamond));
-        emit LibRewardCustody.IngressPacketDayListRooted(_packetHash(id), root, 1, 1, 0);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit LibRewardCustody.IngressPacketDayStamped(_packetHash(id), 1);
         _deliverStamped(10e18, 6e18, 4e18, 200, id);
         LibVaipakam.IngressPacket memory p = _pkt(id);
-        assertEq(p.dayListRoot, root, "the budget delivery's day-list root");
-        assertEq(p.dayListHash, bytes32(0), "and no flat commitment");
-        assertEq(p.dayCount, 1);
-        assertEq(p.chunkCount, 1);
+        assertEq(p.dayId, 1, "the budget delivery's day");
+        assertTrue(p.dayNamed, "and it is named");
         assertTrue(p.attested, "the split is attested from the wire");
         assertEq(p.freshAttested, 6e18);
         assertEq(p.recycledAttested, 4e18);
         bytes32 cid = keccak256("dl-comp");
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit LibRewardCustody.IngressPacketDayStamped(_packetHash(cid), 3);
         _deliverCompensation(4e18, 201, 0, cid);
         p = _pkt(cid);
-        assertEq(p.dayListHash, _dayCommitment(3), "the compensation's one day");
-        assertEq(p.dayListRoot, bytes32(0));
-        assertEq(p.dayCount, 1);
+        assertEq(p.dayId, 3, "the compensation's one day");
+        assertTrue(p.dayNamed);
     }
 
     /// The wire-attested split is DARK until the epoch is released: while the

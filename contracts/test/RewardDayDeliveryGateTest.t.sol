@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {Vm} from "forge-std/Vm.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
@@ -26,13 +25,11 @@ import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensF
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibRewardCustody} from "../src/libraries/LibRewardCustody.sol";
 import {LibInteractionRewards} from "../src/libraries/LibInteractionRewards.sol";
-import {RemitWire} from "../src/crosschain/RemitWire.sol";
 import {RewardBroadcastV2} from "../src/interfaces/IRewardMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
-import {MerkleFixture} from "./mocks/MerkleFixture.sol";
-import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
+import {LibD8Delivery} from "./helpers/LibD8Delivery.sol";
 
 /**
  * @title  RewardDayDeliveryGateBase -- #1944 consequence 1, the mirror-side
@@ -43,10 +40,11 @@ import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
  *         priced against the FUNGIBLE delivered bound and paid out of another
  *         day's delivery. With the gate armed, a day priced to owe FRESH value
  *         here waits -- the fold halts before it, every settlement defers by
- *         name, no value moves -- until a budget packet PROVEN to list it has
- *         landed: an indexed transport epoch, or a batchless (pre-activation)
- *         packet whose day list was proven chunk by chunk with
- *         `proveDeliveryDayChunk`.
+ *         name, no value moves -- until a budget packet for it has landed. The
+ *         d8 wire names the packet's one day (#2828), so its landing counts
+ *         its part toward that day in the same transaction, whether it opened
+ *         a transport epoch or (before activation) took the typed-ledger path:
+ *         there is no later index or proof step.
  * @dev    The fixture is the epoch-draw suites' mirror (Arbitrum chain id,
  *         Base as the reward chain, this contract as the remittance receiver).
  *         Days are stamped by REAL broadcasts (the per-destination fields
@@ -76,13 +74,17 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
     /// @dev The claimant's need on an armed fixture day: the per-user ceiling
     ///      binds below the day's 1e18 fresh half.
     uint256 internal constant NEED = 0.4e18;
-    uint256 internal constant S = 16; // RemitWire.D6_CHUNK_DAYS
-    uint8 internal constant ROUTE_CHUNK = 2;
-    bytes32 internal constant PROVED_SIG = keccak256("DayDeliveryProved(uint256,bytes32,uint256,uint8)");
 
     /// @dev Redeclared so `expectEmit` can name them; the emitters are the
-    ///      libraries inlined into the epoch facet.
-    event DayDeliveryProved(uint256 indexed dayId, bytes32 indexed packetHash, uint256 remitId, uint8 route);
+    ///      libraries inlined into the ingress and epoch facets.
+    event DayDeliveryPartLanded(
+        uint256 indexed dayId,
+        bytes32 indexed packetHash,
+        uint256 landedFresh,
+        uint256 landedRecycled,
+        uint256 wholeFresh,
+        uint256 wholeRecycled
+    );
     event TransportDrawn(bytes32 indexed batchId, uint256 indexed dayId, uint256 fresh, uint256 recycled);
 
     /// @dev {RewardRemittanceLensFacet.getDayDeliveryState}, named.
@@ -97,16 +99,6 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
         bool reportSent;
         bool awaitsLender;
         bool awaitsBorrower;
-    }
-
-    /// @dev {RewardRemittanceLensFacet.getPacketDeliveryProof}, named.
-    struct GatePacket {
-        bytes32 dayListRoot;
-        uint32 chunkCount;
-        uint256 chunksIndexed;
-        bool batched;
-        bool classificationFinal;
-        uint256 disposed;
     }
 
     /// @dev Whether `setUp` activates reward custody.
@@ -160,26 +152,6 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
         return _row(LibVaipakam.RewardCustodyRow.LiveFresh);
     }
 
-    /// @dev Give packet `h` a non-zero `disposed`. No production writer reaches
-    ///      a BUDGET packet (disposal is the repatriation's exit, which binds
-    ///      only compensation packets), so the word is found the way a probe
-    ///      would: among the slots the packet read touches, the one zero word
-    ///      whose write the packet read reports back as `disposed`. Every
-    ///      other probe is restored, and a miss is a loud fixture failure.
-    function _setPacketDisposedRaw(bytes32 h, uint256 v) internal {
-        vm.record();
-        _rlens().getIngressPacket(h);
-        (bytes32[] memory reads, ) = vm.accesses(address(diamond));
-        for (uint256 i; i < reads.length; ++i) {
-            bytes32 was = vm.load(address(diamond), reads[i]);
-            if (was != bytes32(0)) continue;
-            vm.store(address(diamond), reads[i], bytes32(v));
-            if (_rlens().getIngressPacket(h).disposed == v) return;
-            vm.store(address(diamond), reads[i], was);
-        }
-        revert("fixture: the packet disposed word was not found");
-    }
-
     /// @dev What custody holds that a fresh claim can be paid from: the live
     ///      row and the epochs' unclassified value.
     function _payable() internal view returns (uint256) {
@@ -203,15 +175,9 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
         ) = _rlens().getDayDeliveryState(d);
     }
 
-    function _gp(bytes32 h) internal view returns (GatePacket memory v) {
-        (
-            v.dayListRoot,
-            v.chunkCount,
-            v.chunksIndexed,
-            v.batched,
-            v.classificationFinal,
-            v.disposed
-        ) = _rlens().getPacketDeliveryProof(h);
+    /// @dev Whether packet `h` opened a transport epoch (an activated custody).
+    function _batched(bytes32 h) internal view returns (bool) {
+        return _rlens().getIngressPacket(h).batchId != bytes32(0);
     }
 
     function _awaits(uint8 side, uint256 d) internal view returns (bool) {
@@ -221,17 +187,6 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
     /// @dev The lender fold's stored cursor.
     function _cursor() internal view returns (uint256 c) {
         (c, , , , ) = _mut().getCumStateRaw(0, 0);
-    }
-
-    /// @dev `DayDeliveryProved` logs for `dayId` among `logs`.
-    function _provedLogs(Vm.Log[] memory logs, uint256 dayId) internal view returns (uint256 n) {
-        for (uint256 i; i < logs.length; ++i) {
-            Vm.Log memory l = logs[i];
-            if (
-                l.emitter == address(diamond) && l.topics.length == 3 && l.topics[0] == PROVED_SIG
-                    && uint256(l.topics[1]) == dayId
-            ) ++n;
-        }
     }
 
     // ─── the gate ───
@@ -339,67 +294,53 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
         a[1] = d2;
     }
 
-    function _days(uint256 n, uint256 from) internal pure returns (uint256[] memory a) {
-        a = new uint256[](n);
-        for (uint256 i; i < n; ++i) a[i] = from + i;
+    /// @dev A whole-fresh budget delivery for day `d` on the d8 wire, the
+    ///      only budget shape the receiver accepts. Its landing lands its day
+    ///      (#2828). Before activation it takes the typed-ledger path (counted
+    ///      live, no epoch); on an activated custody it opens its epoch,
+    ///      indexed into its day at ingress, which is the delivery's funding.
+    function _liveOf(uint256 amount, uint256 d, uint256 remitId, bytes32 id) internal returns (bytes32 h) {
+        h = _d8(amount, d, remitId, id, 0, 0);
     }
 
-    /// @dev A whole-fresh budget delivery on the rooted (d6) wire, the only
-    ///      budget shape the receiver accepts, with its days NOT yet landed.
-    ///      Before activation it takes the typed-ledger path (counted live,
-    ///      no epoch) and its days land through the chunk proof. On an
-    ///      activated custody it opens its epoch at ingress: indexing the
-    ///      epoch lands its days and makes it drawable, so the epoch is the
-    ///      delivery's funding.
-    function _liveOf(uint256 amount, uint256[] memory dayIds, uint256 remitId, bytes32 id)
-        internal
-        returns (bytes32 h)
-    {
-        (h, ) = _d6(amount, dayIds, remitId, id, 0, 0);
-    }
-
-    /// @dev A rooted delivery whose epoch's split is NOT attested (see
-    ///      {LibD6Delivery.deliverUnattested}). On an activated custody its
-    ///      epoch opens COMPACTLY at ingress; its membership is indexed later.
-    function _untyped(uint256 amount, uint256[] memory dayIds, uint256 remitId, bytes32 id)
-        internal
-        returns (bytes32 h)
-    {
-        (h, ) = LibD6Delivery.deliverUnattested(
-            address(diamond), address(vpfi), amount, dayIds, CHAIN_BASE, remitId, REMITTER, id
+    /// @dev A delivery whose epoch's split is NOT attested (see
+    ///      {LibD8Delivery.deliverUnattested}).
+    function _untyped(uint256 amount, uint256 d, uint256 remitId, bytes32 id) internal returns (bytes32 h) {
+        h = LibD8Delivery.deliverUnattested(
+            address(diamond), address(vpfi), amount, d, CHAIN_BASE, remitId, REMITTER, id
         );
     }
 
     function _attest(uint256 remitId, uint256 fresh, uint256 recycled) internal {
-        LibD6Delivery.attest(address(diamond), REMITTER, remitId, fresh, recycled);
+        LibD8Delivery.attest(address(diamond), REMITTER, remitId, fresh, recycled);
     }
 
     /// @dev Counted LIVE funding with no packet behind it, standing in what a
-    ///      typed delivery credited before the rooted wire: on an activated
+    ///      typed delivery credited before the epoch ledger: on an activated
     ///      custody a budget delivery feeds its epoch, never the live row.
     function _liveFunding(uint256 amount) internal {
         _mut().relocateFreshIngressRaw(amount);
     }
 
-    /// @dev A rooted (d7) delivery as the registered receiver forwards it,
-    ///      carrying its day's whole slice as its one part (#918).
-    function _d6(uint256 amount, uint256[] memory dayIds, uint256 remitId, bytes32 id, uint256 recycled, uint64 era)
+    /// @dev A d8 delivery as the registered receiver forwards it, carrying
+    ///      its day's whole slice as its one part (#918).
+    function _d8(uint256 amount, uint256 d, uint256 remitId, bytes32 id, uint256 recycled, uint64 era)
         internal
-        returns (bytes32 h, bytes32[] memory leaves)
+        returns (bytes32 h)
     {
-        (h, leaves) = LibD6Delivery.deliver(address(diamond), _delivery(amount, dayIds, remitId, id, recycled, era));
+        h = LibD8Delivery.deliver(address(diamond), _delivery(amount, d, remitId, id, recycled, era));
     }
 
-    /// @dev The rooted delivery {_d6} and {_part} land.
-    function _delivery(uint256 amount, uint256[] memory dayIds, uint256 remitId, bytes32 id, uint256 recycled, uint64 era)
+    /// @dev The delivery {_d8} and {_part} land.
+    function _delivery(uint256 amount, uint256 d, uint256 remitId, bytes32 id, uint256 recycled, uint64 era)
         internal
         view
-        returns (LibD6Delivery.Delivery memory)
+        returns (LibD8Delivery.Delivery memory)
     {
-        return LibD6Delivery.Delivery({
+        return LibD8Delivery.Delivery({
             token: address(vpfi),
             amount: amount,
-            dayIds: dayIds,
+            dayId: d,
             sourceChainId: CHAIN_BASE,
             remitId: remitId,
             remitter: REMITTER,
@@ -421,10 +362,10 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
         uint256 wholeFresh,
         uint256 wholeRecycled
     ) internal returns (bytes32 h) {
-        (h, ) = LibD6Delivery.deliverPart(
+        h = LibD8Delivery.deliverPart(
             address(diamond),
-            _delivery(amount, _one(d), remitId, id, recycled, 0),
-            LibD6Delivery.Part({
+            _delivery(amount, d, remitId, id, recycled, 0),
+            LibD8Delivery.Part({
                 declaredTotal: amount,
                 declaredRecycled: recycled,
                 wholeFresh: wholeFresh,
@@ -438,45 +379,14 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
         return _rlens().getDayDeliveryParts(d);
     }
 
-    /// @dev Index chunk `c` of a BATCHED rooted delivery (the epoch route).
-    function _indexChunk(bytes32 h, uint256[] memory dayIds, bytes32[] memory leaves, uint256 c) internal returns (uint32) {
-        return _epoch().materializeTransportBatchChunk(
-            h, c, MerkleFixture.chunk(dayIds, c, S), MerkleFixture.proof(leaves, c), new bytes32[](0), new bytes32[](0)
-        );
-    }
-
-    function _d6Whole(uint256 amount, uint256[] memory dayIds, uint256 remitId, bytes32 id) internal returns (bytes32 h) {
-        bytes32[] memory leaves;
-        (h, leaves) = _d6(amount, dayIds, remitId, id, 0, 0);
-        for (uint256 c; c < leaves.length; ++c) _indexChunk(h, dayIds, leaves, c);
-    }
-
-    /// @dev Land `dayIds` through packet `h`: a BATCHED packet's epoch is
-    ///      indexed chunk by chunk (the epoch route, which writes no mark); a
-    ///      batchless one (before activation) is proven chunk by chunk.
-    function _prove(bytes32 h, uint256[] memory dayIds) internal {
-        bytes32[] memory leaves = RemitWire.d6Chunks(dayIds);
-        bool batched = _gp(h).batched;
-        for (uint256 c; c < leaves.length; ++c) {
-            if (batched) _indexChunk(h, dayIds, leaves, c);
-            else _proveRooted(h, dayIds, leaves, c);
-        }
-    }
-
-    /// @dev Whether day `d` landed through packet `h`: by its epoch's index
-    ///      (a batched packet) or by its chunk proof (a batchless one). Either
-    ///      way the packet counted the day's part (#918) and, as the day's one
-    ///      part, is its first.
+    /// @dev Whether day `d` landed through packet `h`: the packet counted the
+    ///      day's part at its ingress (#918, #2828) and, as the day's one part,
+    ///      is its first. A batched packet's epoch is also in the day's index.
     function _landedBy(uint256 d, bytes32 h) internal view returns (bool) {
         GateDay memory g = _gd(d);
         if (!g.landed) return false;
-        if (_gp(h).batched) return g.firstPart == h && g.epochCount > 0;
+        if (_batched(h)) return g.firstPart == h && g.epochCount > 0;
         return g.firstPart == h;
-    }
-
-    /// @dev Prove chunk `c` of a batchless ROOTED packet.
-    function _proveRooted(bytes32 h, uint256[] memory dayIds, bytes32[] memory leaves, uint256 c) internal {
-        _epoch().proveDeliveryDayChunk(h, c, MerkleFixture.chunk(dayIds, c, S), MerkleFixture.proof(leaves, c));
     }
 
     // ─── claims ───
@@ -510,22 +420,18 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
 
     /**
      * @notice Cell 918-a (both routes: the base runs it activated and not)
-     *         -- a day sent in PARTS opens only when the last one lands,
-     *         in whatever order they are indexed or proven, and a replayed
-     *         packet or chunk counts nothing.
+     *         -- a day sent in PARTS opens only when the last one lands, in
+     *         whatever order they land, and a replayed packet counts nothing.
      * @dev    Mutation: land on the first part, or sum a replay, and the held
      *         claim below pays early.
      */
     function test_918_a_ADayInParts_OpensOnlyOnTheLast_InAnyOrder() public {
         _gateBinds();
         _owedDay1();
-        bytes32 hA = _part(3e18, 1, 181, keccak256("p-a"), 0, 10e18, 0);
-        bytes32 hB = _part(3e18, 1, 182, keccak256("p-b"), 0, 10e18, 0);
-        bytes32 hC = _part(4e18, 1, 183, keccak256("p-c"), 0, 10e18, 0);
         _expectHeld(1);
 
-        _prove(hC, _one(1));
-        _prove(hA, _one(1));
+        bytes32 hC = _part(4e18, 1, 183, keccak256("p-c"), 0, 10e18, 0);
+        bytes32 hA = _part(3e18, 1, 181, keccak256("p-a"), 0, 10e18, 0);
         LibVaipakam.DayDeliveryParts memory dp = _parts(1);
         assertEq(dp.parts, 2, "stored: two parts counted");
         assertEq(dp.landedFresh, 7e18, "stored: their sum");
@@ -534,16 +440,11 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
         assertFalse(_gd(1).landed, "two of three parts: still held");
         _expectHeld(1);
 
-        bytes32[] memory leaves = RemitWire.d6Chunks(_one(1));
-        bool batched = _gp(hA).batched;
-        vm.expectRevert(abi.encodeWithSelector(TransportChunkAlreadyIndexed.selector, hA, uint256(0)));
-        if (batched) _indexChunk(hA, _one(1), leaves, 0);
-        else _proveRooted(hA, _one(1), leaves, 0);
         vm.expectRevert(abi.encodeWithSelector(IngressPacketReplayed.selector, hA));
         _part(3e18, 1, 181, keccak256("p-a"), 0, 10e18, 0);
         assertEq(_parts(1).landedFresh, 7e18, "a replay counts nothing");
 
-        _prove(hB, _one(1));
+        _part(3e18, 1, 182, keccak256("p-b"), 0, 10e18, 0);
         assertTrue(_gd(1).landed, "the last part opens the day");
         assertEq(_parts(1).parts, 3);
         assertEq(_claim(), NEED, "and the claim pays");
@@ -561,16 +462,13 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
         _owedDay1();
         bytes32 hR1 = _part(4e18, 1, 191, keccak256("r-1"), 4e18, 6e18, 4e18);
         bytes32 hR2 = _part(4e18, 1, 192, keccak256("r-2"), 4e18, 6e18, 4e18);
-        _prove(hR1, _one(1));
-        _prove(hR2, _one(1));
         LibVaipakam.DayDeliveryParts memory dp = _parts(1);
         assertEq(dp.landedRecycled, 8e18, "stored: the recycled over-landed");
         assertEq(dp.landedFresh, 0);
         assertFalse(_gd(1).landed, "the fresh component is still missing");
         _expectHeld(1);
 
-        bytes32 hF = _part(6e18, 1, 193, keccak256("f-1"), 0, 6e18, 4e18);
-        _prove(hF, _one(1));
+        _part(6e18, 1, 193, keccak256("f-1"), 0, 6e18, 4e18);
         assertTrue(_gd(1).landed, "the fresh part opens it");
     }
 
@@ -585,8 +483,6 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
         _owedDay1();
         bytes32 hA = _part(5e18, 1, 201, keccak256("w-a"), 0, 10e18, 0);
         bytes32 hB = _part(7e18, 1, 202, keccak256("w-b"), 0, 12e18, 0);
-        _prove(hA, _one(1));
-        _prove(hB, _one(1));
         LibVaipakam.DayDeliveryParts memory dp = _parts(1);
         assertTrue(dp.wholeConflict, "stored: the conflict");
         assertEq(dp.wholeFresh, 10e18, "the first part's whole stands");
@@ -608,10 +504,7 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
         _entry(2, 3);
         hA = _part(5e18, 1, 501, keccak256("skip-a"), 0, 10e18, 0);
         hB = _part(7e18, 1, 502, keccak256("skip-b"), 0, 12e18, 0);
-        _prove(hA, _one(1));
-        _prove(hB, _one(1));
-        bytes32 h2 = _part(10e18, 2, 503, keccak256("skip-day2"), 0, 10e18, 0);
-        _prove(h2, _one(2));
+        _part(10e18, 2, 503, keccak256("skip-day2"), 0, 10e18, 0);
         assertTrue(_parts(1).wholeConflict, "fixture: day 1 is conflicted");
         assertTrue(_gd(2).landed, "fixture: day 2 landed");
     }
@@ -715,32 +608,6 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
     }
 
     /**
-     * @notice Cell 918-e (#2961) -- a DISPOSED delivery's part never counts
-     *         toward its day, on either route: the proof refuses it by name,
-     *         and the epoch index indexes it but counts no part. One writer
-     *         holds the rule, so the two routes cannot disagree.
-     * @dev    Mutation: drop the disposed line from `_noteDayDeliveryPart`
-     *         and the batched route opens the day on value that left.
-     */
-    function test_918_e_ADisposedPart_NeverCounts_OnEitherRoute() public {
-        _gateBinds();
-        _owedDay1();
-        bytes32 h = _part(10e18, 1, 401, keccak256("disposed-part"), 0, 10e18, 0);
-        _mut().setPacketDisposedRaw(h, 1);
-        if (_gp(h).batched) {
-            _prove(h, _one(1));
-            assertEq(_parts(1).parts, 0, "stored: the index counted no part");
-            assertEq(_parts(1).landedFresh, 0, "stored: and no value");
-        } else {
-            bytes32[] memory leaves = RemitWire.d6Chunks(_one(1));
-            vm.expectRevert(abi.encodeWithSelector(DeliveryPacketDisposed.selector, h, uint256(1)));
-            _proveRooted(h, _one(1), leaves, 0);
-        }
-        assertFalse(_gd(1).landed, "a disposed whole opens nothing");
-        _expectHeld(1);
-    }
-
-    /**
      * @notice Cell 918-d (#2961, scout case 8) -- a day sent in MORE parts
      *         than one draw window scans (65 > `TRANSPORT_DRAW_SCAN_CAP` = 64)
      *         opens on its last part and still pays the claim in full. Each
@@ -754,17 +621,15 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
         _owedDay1();
         uint256 n = 65;
         uint256 whole = n * 1e17;
-        bytes32[] memory hs = new bytes32[](n);
-        for (uint256 i; i < n; ++i) {
-            hs[i] = _part(1e17, 1, 3000 + i, keccak256(abi.encode("p65", i)), 0, whole, 0);
+        for (uint256 i; i + 1 < n; ++i) {
+            _part(1e17, 1, 3000 + i, keccak256(abi.encode("p65", i)), 0, whole, 0);
         }
-        for (uint256 i; i + 1 < n; ++i) _prove(hs[i], _one(1));
         LibVaipakam.DayDeliveryParts memory dp = _parts(1);
         assertEq(dp.parts, n - 1, "stored: every part but the last counted");
         assertFalse(_gd(1).landed, "one part short: still held");
         _expectHeld(1);
 
-        _prove(hs[n - 1], _one(1));
+        _part(1e17, 1, 3000 + n - 1, keccak256(abi.encode("p65", n - 1)), 0, whole, 0);
         dp = _parts(1);
         assertEq(dp.parts, n, "stored: all 65 parts counted");
         assertEq(dp.landedFresh, whole, "stored: their sum is the whole");
@@ -781,11 +646,11 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
 
 /**
  * @title  RewardDayDeliveryGateTest -- the gate on an ACTIVATED mirror.
- * @notice Cells 1-4, 5 (the batched refusals), 6-11 and 14-17 of the #1944
- *         consequence-1 brief. Every cell asserts its fixture is LIVE -- the
- *         day pays once its delivery is proven, or the rule's sibling side
- *         pays -- and STRADDLES the rule: one proof short defers by name, the
- *         proof pays. Each cell's natspec names the mutation of the production
+ * @notice Cells 1-4, 6-11, 14, 15 and 17 of the #1944 consequence-1 brief.
+ *         Every cell asserts its fixture is LIVE -- the day pays once its
+ *         delivery lands, or the rule's sibling side pays -- and STRADDLES
+ *         the rule: before the delivery lands the claim defers by name, after
+ *         it the claim pays. Each cell's natspec names the mutation of the production
  *         rule that turns it red.
  */
 contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
@@ -811,20 +676,10 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         _rep().setBaseChainId(CHAIN_BASE);
     }
 
-    /// @dev A quarantined COMPENSATION packet (finalizedAt 0) -- the kind the
-    ///      proof entries refuse: only a budget packet funds days.
-    function _compensation(uint256 remitId, bytes32 id) internal returns (bytes32 h) {
-        _ingress().onCompensationBudgetReceived(
-            address(vpfi), 5 ether, 7, CHAIN_BASE, remitId, REMITTER, 3 ether, 2 ether, 0, 1, uint64(7 days),
-            uint64(24 hours), id
-        );
-        h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
-    }
-
 
     // ─────────────────────── cells 1-2: broadcast first ───────────────────────
 
-    /// @dev Day 1 LANDED by a delivery whose epoch is indexed to list it, and
+    /// @dev Day 1 LANDED by a delivery whose epoch is indexed into it, and
     ///      the live row funded with NEED beside it, so a fungible bound alone
     ///      would pay day 2 out of it. Day 2 stamped by Base, closed here with
     ///      lender interest, OWED, and listed by nothing that landed. Alice's
@@ -837,8 +692,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         _closeLocal(2, 1e18, 0);
         _broadcastV2(_armedPacket(2));
         id = _entry(2, 3);
-        h1 = _liveOf(NEED, _one(1), 1, keccak256("gate-live-1"));
-        _prove(h1, _one(1));
+        h1 = _liveOf(NEED, 1, 1, keccak256("gate-live-1"));
         _liveFunding(NEED);
     }
 
@@ -851,14 +705,13 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         named deferral fails. Drop the walk's `awaitingDay` naming and the
      *         same claim reverts `NoInteractionRewardsToClaim` instead.
      */
-    function test_1944_1_BroadcastFirst_AnUnprovenDayDefersByName_MovingNothing() public {
+    function test_1944_1_BroadcastFirst_AnUndeliveredDayDefersByName_MovingNothing() public {
         (, bytes32 h1) = _heldScene();
 
-        // LIVE first: once a delivery proven to list day 2 lands, the same claim pays it.
+        // LIVE first: once a delivery for day 2 lands, the same claim pays it.
         uint256 snap = vm.snapshotState();
-        bytes32 h2 = _liveOf(1, _one(2), 2, keccak256("gate-live-2"));
-        _prove(h2, _one(2));
-        assertEq(_claim(), NEED, "LIVE: once its delivery is proven, day 2 pays");
+        _liveOf(1, 2, 2, keccak256("gate-live-2"));
+        assertEq(_claim(), NEED, "LIVE: once its delivery lands, day 2 pays");
         vm.revertToState(snap);
 
         uint256 live = _live();
@@ -881,9 +734,9 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         GateDay memory g = _gd(2);
         assertTrue(g.gateBinds, "the gate binds day 2");
         assertTrue(g.stamped && g.freshStamped, "Base's stamp prices fresh on day 2");
-        assertFalse(g.landed, "nothing listing day 2 has landed");
+        assertFalse(g.landed, "nothing for day 2 has landed");
         assertEq(g.firstPart, bytes32(0), "no part of day 2 has landed");
-        assertEq(g.epochCount, 0, "no epoch lists day 2");
+        assertEq(g.epochCount, 0, "no epoch funds day 2");
         assertTrue(g.reported, "this chain reported day 2");
         assertFalse(g.reportSent, "its commitment report is not sent");
         assertTrue(g.awaitsLender, "the lender side owes fresh: it waits");
@@ -892,60 +745,56 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
 
         GateDay memory g1 = _gd(1);
         assertTrue(g1.landed, "day 1 landed");
-        assertTrue(_landedBy(1, h1), "stored: by the packet proven to list it");
+        assertTrue(_landedBy(1, h1), "stored: by the packet that funds it");
         assertFalse(g1.awaitsLender || g1.awaitsBorrower, "so day 1 is open");
     }
 
     /**
-     * @notice Cell 2 -- the CONTROL: a delivery listing day 2 arrives (still one
-     *         proof short: the claim defers by name), then its epoch is
-     *         indexed. The day lands, and the same claim pays out of that
-     *         epoch with the fold past the day.
-     * @dev    Mutation: make the batch index land no day (or another day) and
-     *         the claim after it stays held.
+     * @notice Cell 2 -- the CONTROL: held until a delivery for day 2 arrives;
+     *         its landing lands the day, and the same claim pays out of that
+     *         delivery's epoch with the fold past the day.
+     * @dev    Mutation: drop the ingress's part count (or count it toward
+     *         another day) and the claim after the delivery stays held.
      */
-    function test_1944_2_TheProofLandsTheDay_AndTheSameClaimPays() public {
+    function test_1944_2_TheDeliveryLandsTheDay_AndTheSameClaimPays() public {
         _heldScene();
-        bytes32 h2 = _liveOf(NEED, _one(2), 2, keccak256("gate-live-2"));
-        _expectHeld(2); // one proof short: the delivery landed its value, not the day
-
-        _prove(h2, _one(2));
+        _expectHeld(2);
+        bytes32 h2 = _liveOf(NEED, 2, 2, keccak256("gate-live-2"));
 
         GateDay memory g = _gd(2);
         assertTrue(g.landed, "stored: day 2 landed");
-        assertTrue(_landedBy(2, h2), "stored: by the packet proven to list it");
+        assertTrue(_landedBy(2, h2), "stored: by the packet that funds it");
         assertFalse(g.awaitsLender, "nothing waits any more");
 
         uint256 uncl = _row(LibVaipakam.RewardCustodyRow.Unclassified);
-        assertEq(_claim(), NEED, "the proof pays the day");
+        assertEq(_claim(), NEED, "the delivery pays the day");
         assertEq(vpfi.balanceOf(alice), NEED, "to the claimant");
         assertEq(uncl - _row(LibVaipakam.RewardCustodyRow.Unclassified), NEED, "out of its epoch");
         assertGe(_cursor(), 2, "stored: the fold passed day 2");
     }
 
-    // ─────────────────────── cell 3: proof first ───────────────────────
+    // ─────────────────────── cell 3: delivery first ───────────────────────
 
     /**
-     * @notice Cell 3 -- PROOF BEFORE THE BROADCAST: a delivery proven to list
-     *         day 1 lands before Base's stamp does. The day is landed and not
+     * @notice Cell 3 -- DELIVERY BEFORE THE BROADCAST: a delivery for day 1
+     *         lands before Base's stamp does. The day is landed and not
      *         stamped; before the stamp a claim pays nothing and nothing waits
      *         on the gate; the first claim after the stamp pays.
      * @dev    Mutation: let the broadcast clear or ignore a landing recorded
      *         before it (an order-dependent landed reader) and the claims after
      *         the stamp defer on the gate.
      */
-    function test_1944_3_ProofBeforeTheBroadcast_LandsAnUnstampedDay() public {
+    function test_1944_3_DeliveryBeforeTheBroadcast_LandsAnUnstampedDay() public {
         _gateBinds();
         _loanSideOpen(1);
         _closeLocal(1, 1e18, 0);
         _entry(1, 2);
-        bytes32 h = _liveOf(NEED, _one(1), 31, keccak256("gate-early"));
-        _prove(h, _one(1));
+        bytes32 h = _liveOf(NEED, 1, 31, keccak256("gate-early"));
 
         GateDay memory g = _gd(1);
         assertTrue(g.landed, "landed before Base priced it");
         assertFalse(g.stamped, "and not yet stamped");
-        assertTrue(_landedBy(1, h), "stored: the early proof");
+        assertTrue(_landedBy(1, h), "stored: the early delivery");
         assertFalse(_awaits(2, 1), "an unstamped day never waits");
 
         // On an activated custody the delivery is an epoch, and the entry's
@@ -967,23 +816,23 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
     // ─────────────────────── cells 4a-4b: the epoch path ───────────────────────
 
     /**
-     * @notice Cell 4a -- a d6 delivery whose every chunk is indexed (and whose
-     *         split the wire attested) lands the day through the BATCH INDEX,
-     *         with no mark, and the claim pays FROM THE EPOCH: the unclassified
-     *         row falls, the live row is untouched.
-     * @dev    Mutation: make the landed reader read only the proof mark and this
-     *         day never pays -- an epoch-path packet writes no mark.
+     * @notice Cell 4a -- a d8 delivery (whose split the wire attested) lands
+     *         the day at its ingress, with its epoch indexed into the day, and
+     *         the claim pays FROM THE EPOCH: the unclassified row falls, the
+     *         live row is untouched.
+     * @dev    Mutation: skip the part count on the epoch path and this day
+     *         never pays.
      */
     function test_1944_4a_AWholeAttestedEpoch_LandsTheDay_AndPaysFromIt() public {
         _gateBinds();
         _owedDay1();
         _expectHeld(1);
 
-        bytes32 h = _d6Whole(10e18, _days(1, 1), 41, keccak256("gate-d6-whole"));
+        bytes32 h = _liveOf(10e18, 1, 41, keccak256("gate-d8-whole"));
         GateDay memory g = _gd(1);
-        assertTrue(g.landed, "the epoch index lands the day");
-        assertEq(g.epochCount, 1, "one epoch lists it");
-        assertEq(g.firstPart, h, "the index counted the packet's part (#918)");
+        assertTrue(g.landed, "the delivery lands the day");
+        assertEq(g.epochCount, 1, "one epoch funds it");
+        assertEq(g.firstPart, h, "the ingress counted the packet's part (#918)");
         assertFalse(_awaits(2, 1), "nothing waits");
 
         uint256 uncl = _row(LibVaipakam.RewardCustodyRow.Unclassified);
@@ -998,69 +847,6 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         assertEq(lr, 0, "and no recycled leg");
     }
 
-    /**
-     * @notice Cell 4b (#918) -- only a ONE-DAY packet counts a part: a 20-day
-     *         epoch indexed chunk by chunk lands no day (Base funds one day per
-     *         send, #2821, and a wider epoch is withheld for good), so the day
-     *         stays held until a one-day delivery of it lands.
-     * @dev    Mutation: count a part for a wider packet and day 1 opens on the
-     *         20-day epoch's index.
-     */
-    function test_918_4b_AWiderPacket_LandsNoDay() public {
-        _gateBinds();
-        _owedDay1();
-        uint256[] memory list = _days(20, 1);
-        (bytes32 h, bytes32[] memory leaves) = _d6(10e18, list, 42, keccak256("gate-d6-part"), 0, 0);
-        for (uint256 c; c < leaves.length; ++c) _indexChunk(h, list, leaves, c);
-        GateDay memory g = _gd(1);
-        assertEq(g.epochCount, 1, "stored: the day's index holds the epoch");
-        assertFalse(g.landed, "but a wider packet carries no day's part");
-        assertEq(_parts(1).parts, 0, "stored: no part counted");
-        _expectHeld(1);
-
-        bytes32 h1 = _d6Whole(10e18, _one(1), 43, keccak256("gate-one-day"));
-        assertTrue(_landedBy(1, h1), "the one-day delivery lands it");
-        assertEq(_claim(), NEED, "and pays");
-    }
-
-    // ─────────────────────── cell 5: the batched refusals ───────────────────────
-
-    /**
-     * @notice Cell 5 (activated half) -- the chunk proof refuses, by name,
-     *         what it cannot prove: an unknown packet, a BATCHED packet (its
-     *         days land through the batch index) and a non-budget packet. None
-     *         of them marks anything; the batched packet's own index lands
-     *         the day. On an activated custody every budget delivery is
-     *         batched, so the index is the only route that lands a day here.
-     * @dev    Mutation: let the proof entry accept `batchId != 0` and the
-     *         `DeliveryProofRouteIsBatch` expectation fails -- a second
-     *         statement of a fact the batch index already owns.
-     */
-    function test_1944_5_TheProofRoutes_RefuseWhatTheyCannotProve() public {
-        _gateBinds();
-        bytes32 nobody = keccak256("gate-nobody");
-        vm.expectRevert(abi.encodeWithSelector(IngressPacketUnknown.selector, nobody));
-        _epoch().proveDeliveryDayChunk(nobody, 0, _one(1), new bytes32[](0));
-
-        (bytes32 h6, bytes32[] memory leaves) = _d6(5e18, _one(1), 51, keccak256("gate-batched-d6"), 0, 0);
-        assertTrue(_gp(h6).batched, "fixture: on an activated custody a d6 opens its epoch at ingress");
-        vm.expectRevert(abi.encodeWithSelector(DeliveryProofRouteIsBatch.selector, h6));
-        _epoch().proveDeliveryDayChunk(h6, 0, _one(1), MerkleFixture.proof(leaves, 0));
-
-        bytes32 hC = _compensation(53, keccak256("gate-comp"));
-        vm.expectRevert(
-            abi.encodeWithSelector(DeliveryProofNotBudget.selector, hC, LibRewardCustody.PACKET_KIND_COMPENSATION)
-        );
-        _epoch().proveDeliveryDayChunk(hC, 0, _one(7), new bytes32[](0));
-
-        GateDay memory g = _gd(1);
-        assertFalse(g.landed, "no refused proof marked anything; no epoch was indexed");
-        assertEq(g.firstPart, bytes32(0));
-
-        _prove(h6, _one(1));
-        assertTrue(_landedBy(1, h6), "the batched packet's own index lands the day");
-    }
-
     // ─────────────────────── cell 6: before D* ───────────────────────
 
     /**
@@ -1068,7 +854,8 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         Base's unarmed stamp prices fresh here, so the day waits. The
      *         claimant's legacy WINDOW counter (rung B, the window clamp) and
      *         her legacy ENTRY slice (rung A, the fold) both wait until the
-     *         proof, then both pay -- exactly what they pay when proven first.
+     *         delivery lands, then both pay -- exactly what they pay when it
+     *         landed first.
      * @dev    Mutations: delete rung B and the window pays the unfunded day;
      *         delete rung A and the legacy entry slice pays it. Either turns
      *         the named deferral below red.
@@ -1080,7 +867,6 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         _broadcastV2(_unarmedPacket(1, h1));
         _mut().setDailyLenderInterest(1, alice, 50e18, 100e18); // the window counter
         _legacyEntry(50e18, 1, 2); // and the legacy entry, same day
-        bytes32 h = _liveOf(2 * h1, _one(1), 61, keccak256("gate-pre-dstar"));
         // The legacy window half is live-paid: the claim weighs it against
         // LIVE backing, which an activated custody's budget delivery never
         // credits (it feeds its epoch). Live funding stands it in here. The
@@ -1091,12 +877,12 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         assertTrue(_gd(1).awaitsLender, "fixture: no D*, yet the unarmed day owes fresh and waits");
 
         uint256 snap = vm.snapshotState();
-        _prove(h, _one(1));
+        _liveOf(2 * h1, 1, 61, keccak256("gate-pre-dstar"));
         // The window half pays on the first claim, which also prepares the
         // legacy slice's domain; the next claim pays the slice.
         uint256 livePaid = _claim();
         livePaid += _claim();
-        assertApproxEqAbs(livePaid, h1, 1e6, "LIVE: proven, the window half and the legacy slice both pay");
+        assertApproxEqAbs(livePaid, h1, 1e6, "LIVE: delivered, the window half and the legacy slice both pay");
         vm.revertToState(snap);
 
         uint256 live = _payable();
@@ -1104,21 +890,19 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         assertEq(_payable(), live, "nothing paid while held");
         assertEq(_mut().advanceCumThroughRaw(0, 1), 0, "the fold halts before the unarmed day too");
 
-        _prove(h, _one(1));
+        _liveOf(2 * h1, 1, 61, keccak256("gate-pre-dstar"));
+        live = _payable();
         uint256 paid = _claim();
         paid += _claim();
-        assertEq(paid, livePaid, "the held claims pay exactly what the proven-first claims paid");
+        assertEq(paid, livePaid, "the held claims pay exactly what the delivered-first claims paid");
         assertEq(live - _payable(), paid, "out of custody");
     }
 
     // ─────────────────────── cell 7: zero slices never wait ───────────────────────
 
     /// @dev Day 1 is the zero-slice day under test; day 2 is a funded, owed
-    ///      day behind it that alice claims, listed by an unproven delivery.
-    function _zeroSliceThenOwedDay2(RewardBroadcastV2 memory day1, uint256 lender1, uint256 borrower1)
-        internal
-        returns (bytes32 h2)
-    {
+    ///      day behind it that alice claims, whose delivery {_landDay2} lands.
+    function _zeroSliceThenOwedDay2(RewardBroadcastV2 memory day1, uint256 lender1, uint256 borrower1) internal {
         _gateBinds();
         _loanSideOpen(1);
         _closeLocal(1, lender1, borrower1);
@@ -1126,13 +910,17 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         _closeLocal(2, 1e18, 0);
         _broadcastV2(_armedPacket(2));
         _entry(2, 3);
-        h2 = _liveOf(NEED, _one(2), 71, keccak256("gate-zero-slice"));
+    }
+
+    /// @dev Day 2's delivery.
+    function _landDay2() internal {
+        _liveOf(NEED, 2, 71, keccak256("gate-zero-slice"));
     }
 
     /**
      * @notice Cell 7a -- an EXCLUDED destination's day (zero fresh halves)
      *         never waits, so the owed day behind it waits only for its own
-     *         proof and then pays: the cursor walks through the excluded day.
+     *         delivery and then pays: the cursor walks through the excluded day.
      * @dev    Mutation: drop step 7 (zero fresh half) and the excluded day reads
      *         as awaiting -- the view assertion fails.
      */
@@ -1140,16 +928,16 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         RewardBroadcastV2 memory b = _armedPacket(1);
         b.freshLenderHalf = 0;
         b.freshBorrowerHalf = 0;
-        bytes32 h2 = _zeroSliceThenOwedDay2(b, 1e18, 1e18);
+        _zeroSliceThenOwedDay2(b, 1e18, 1e18);
 
         GateDay memory g = _gd(1);
         assertTrue(g.stamped && g.reported && !g.landed, "fixture: stamped, reported, never delivered");
         assertFalse(g.freshStamped, "Base excluded this chain: zero fresh halves");
         assertFalse(g.awaitsLender || g.awaitsBorrower, "so neither side waits");
 
-        _expectHeld(2); // straddle: the funded day behind it still waits for its own proof
-        _prove(h2, _one(2));
-        assertEq(_claim(), NEED, "and pays once proven: the excluded day did not wedge the cursor");
+        _expectHeld(2); // straddle: the funded day behind it still waits for its own delivery
+        _landDay2();
+        assertEq(_claim(), NEED, "and pays once delivered: the excluded day did not wedge the cursor");
         assertGe(_cursor(), 2, "stored: the fold walked through both days");
     }
 
@@ -1160,27 +948,27 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         -- the fold halts at day 0 and day 2 can never pay (wedge).
      */
     function test_1944_7b_AZeroInterestDay_NeverWaits() public {
-        bytes32 h2 = _zeroSliceThenOwedDay2(_armedPacket(1), 0, 0);
+        _zeroSliceThenOwedDay2(_armedPacket(1), 0, 0);
 
         GateDay memory g = _gd(1);
         assertTrue(g.stamped && g.freshStamped && g.reported && !g.landed, "fixture: priced fresh, never delivered");
         assertFalse(g.awaitsLender || g.awaitsBorrower, "no interest closed here: nothing owed, nothing waits");
 
         _expectHeld(2);
-        _prove(h2, _one(2));
-        assertEq(_claim(), NEED, "the day behind it pays once proven");
+        _landDay2();
+        assertEq(_claim(), NEED, "the day behind it pays once delivered");
         assertGe(_cursor(), 2, "stored: the fold walked through both days");
     }
 
     /**
      * @notice Cell 7c -- a RECYCLED-ONLY side (fresh halves zero, a recycled
      *         equivalent, the mirror's own bucket backing it) never waits: it
-     *         pays from the bucket with nothing proven. The straddle: the same
+     *         pays from the bucket with nothing delivered. The straddle: the same
      *         day stamped with a fresh half waits.
      * @dev    Mutation: gate the recycled half too and this day wedges -- Base
      *         may send nothing for a locally backed side.
      */
-    function test_1944_7c_ARecycledOnlySide_PaysFromTheBucket_WithNothingProven() public {
+    function test_1944_7c_ARecycledOnlySide_PaysFromTheBucket_WithNothingDelivered() public {
         _gateBinds();
         _loanSideOpen(1);
         _mut().setRecycleBucketRaw(10e18);
@@ -1204,7 +992,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         assertFalse(_awaits(2, 1), "a recycled-only side never waits");
 
         uint256 bucket = _cfg().getRecycleBucket();
-        assertEq(_claim(), NEED, "paid with nothing proven");
+        assertEq(_claim(), NEED, "paid with nothing delivered");
         assertEq(bucket - _cfg().getRecycleBucket(), NEED, "from the bucket");
         assertEq(_mut().getArmedFreshPaidRaw(), 0, "nothing fresh charged");
     }
@@ -1256,7 +1044,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      * @notice Cell 7f -- a day this chain NEVER REPORTED never waits: until the
      *         report is sent, Base's numerator for this chain is zero, so Base
      *         owes the day nothing here. The straddle: the same day, reported,
-     *         waits. The owed day behind it then waits only for its own proof.
+     *         waits. The owed day behind it then waits only for its own delivery.
      * @dev    Mutation: drop step 5 (`chainReportSentAt == 0`) and the
      *         unreported day reads as awaiting -- the view assertion fails, and
      *         the fold halts before day 1, so the claim names day 1, not day 2.
@@ -1266,7 +1054,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         day this chain never closed -- the same stored word either way.
      */
     function test_1944_7f_ANeverReportedDay_NeverWaits() public {
-        bytes32 h2 = _zeroSliceThenOwedDay2(_armedPacket(1), 1e18, 0);
+        _zeroSliceThenOwedDay2(_armedPacket(1), 1e18, 0);
         assertTrue(_awaits(2, 1), "straddle: reported, priced fresh and owed, the day waits");
 
         _mut().setChainReportSentAtRaw(1, 0);
@@ -1277,8 +1065,8 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         assertFalse(_awaits(2, 1), "and the either-side form agrees");
 
         _expectHeld(2);
-        _prove(h2, _one(2));
-        assertEq(_claim(), NEED, "the day behind it pays once proven: day 1 did not wedge the cursor");
+        _landDay2();
+        assertEq(_claim(), NEED, "the day behind it pays once delivered: day 1 did not wedge the cursor");
         assertGe(_cursor(), 2, "stored: the fold walked through both days");
     }
 
@@ -1294,7 +1082,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         word whichever writer put it there.
      */
     function test_1944_7g_AZeroThresholdDay_NeverWaits() public {
-        bytes32 h2 = _zeroSliceThenOwedDay2(_armedPacket(1), 1e18, 0);
+        _zeroSliceThenOwedDay2(_armedPacket(1), 1e18, 0);
         assertTrue(_awaits(2, 1), "straddle: with its threshold the day waits");
 
         _mut().setDayCapThreshold18(1, 0);
@@ -1304,8 +1092,8 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         assertFalse(_awaits(2, 1), "and the either-side form agrees");
 
         _expectHeld(2);
-        _prove(h2, _one(2));
-        assertEq(_claim(), NEED, "the day behind it pays once proven");
+        _landDay2();
+        assertEq(_claim(), NEED, "the day behind it pays once delivered");
         assertGe(_cursor(), 2, "stored: the fold walked through both days");
     }
 
@@ -1331,7 +1119,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         RewardBroadcastV2 memory b = _armedPacket(1);
         b.globalLenderNumeraire18 = 2e18;
         b.freshLenderHalf = 1; // 1 * 1e18 / 2e18 == 0: Base's floored delta is zero
-        bytes32 h2 = _zeroSliceThenOwedDay2(b, 1e18, 0);
+        _zeroSliceThenOwedDay2(b, 1e18, 0);
 
         GateDay memory g = _gd(1);
         assertTrue(g.stamped && g.freshStamped && g.reported && !g.landed, "fixture: a non-zero half, never delivered");
@@ -1339,8 +1127,8 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         assertFalse(_awaits(2, 1), "and the either-side form agrees");
 
         _expectHeld(2);
-        _prove(h2, _one(2));
-        assertEq(_claim(), NEED, "the day behind it pays once proven: the dust day did not wedge the cursor");
+        _landDay2();
+        assertEq(_claim(), NEED, "the day behind it pays once delivered: the dust day did not wedge the cursor");
         assertGe(_cursor(), 2, "stored: the fold walked through both days");
     }
 
@@ -1417,8 +1205,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         assertTrue(_awaits(0, 1), "a positive liability: Base funds that leg, so the day waits for it");
         _expectHeld(1);
 
-        bytes32 h = _liveOf(NEED, _one(1), 91, keccak256("gate-9"));
-        _prove(h, _one(1));
+        _liveOf(NEED, 1, 91, keccak256("gate-9"));
         assertEq(_claim(), NEED, "landed: pays");
     }
 
@@ -1426,11 +1213,11 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
 
     /**
      * @notice Cell 10 (#1566 PR C revision) -- a delivery for a RETIRED custody era
-     *         is not held: a list-bearing delivery naming a retired-era day opens its
-     *         epoch in that day's era, so the day LANDS through the epoch's index and
-     *         the chunk proof names the epoch route (`DeliveryProofRouteIsBatch`). An
-     *         earlier revision quarantined such a packet until an administrator
-     *         classified it; the custody-era revision removed every manual step.
+     *         is not held: a delivery naming a retired-era day opens its epoch in
+     *         that day's era, indexed into the day, so the day LANDS at its
+     *         ingress. An earlier revision quarantined such a packet until an
+     *         administrator classified it; the custody-era revision removed every
+     *         manual step.
      * @dev    Mutation: re-admit a quarantine (refuse the retired-era packet's
      *         epoch) and the day never lands.
      */
@@ -1441,17 +1228,13 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         _reattach();
         assertEq(_eraF().getCustodyEraCurrent(), 2, "fixture: two effective role changes after day 1 was owed");
         assertTrue(_awaits(0, 1), "fixture: day 1 still owes fresh and waits");
+        assertFalse(_gd(1).landed, "straddle: not before the delivery");
 
-        bytes32 h = _untyped(4e18, _one(1), 101, keccak256("gate-retired-era"));
-        assertTrue(_gp(h).batched, "the retired-era delivery opened its epoch");
-        bytes32[] memory leaves = RemitWire.d6Chunks(_one(1));
-        vm.expectRevert(abi.encodeWithSelector(DeliveryProofRouteIsBatch.selector, h));
-        _epoch().proveDeliveryDayChunk(h, 0, _one(1), MerkleFixture.proof(leaves, 0));
-        assertFalse(_gd(1).landed, "straddle: not before the epoch's index lists the day");
-        _indexChunk(h, _one(1), leaves, 0); // the index, as the keeper's pass builds it
+        bytes32 h = _untyped(4e18, 1, 101, keccak256("gate-retired-era"));
+        assertTrue(_batched(h), "the retired-era delivery opened its epoch");
         GateDay memory g = _gd(1);
-        assertTrue(g.landed, "its epoch's index lands the day");
-        assertGt(g.epochCount, 0, "an epoch lists it");
+        assertTrue(g.landed, "its landing lands the day");
+        assertGt(g.epochCount, 0, "its epoch is in the day's index");
     }
 
     /**
@@ -1465,7 +1248,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      */
     function test_1944_10b_TheGate_FollowsTheRole_PastEraZero() public {
         _owedDay1();
-        assertTrue(_awaits(0, 1), "fixture: a mirror's owed, unproven day waits");
+        assertTrue(_awaits(0, 1), "fixture: a mirror's owed, undelivered day waits");
         _detach();
         assertFalse(_gd(1).gateBinds, "detached: the gate does not bind");
         assertFalse(_awaits(0, 1), "detached: nothing waits");
@@ -1484,8 +1267,8 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         while held, an ADVANCING caller cannot pass the day, the static
      *         preview prices nothing, the clock's predicate reads
      *         non-executable, the sweep never starts the clock across four
-     *         weeks of sweeps, and preview-by-execution defers by name. Proven,
-     *         every one of them comes alive.
+     *         weeks of sweeps, and preview-by-execution defers by name.
+     *         Delivered, every one of them comes alive.
      * @dev    Mutation: route any of these readers around rung A (a second,
      *         per-site guard that a refactor drops) and the clock starts on an
      *         unfunded day -- the never-started assertions fail.
@@ -1503,7 +1286,6 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         _gateBinds();
         uint256 id = _owedDay1();
         _cfg().setRewardClaimHorizonDays(180);
-        bytes32 h = _liveOf(NEED, _one(1), 121, keccak256("gate-clock"));
         uint256[] memory ids = _one(id);
 
         _mut().userClaimFundingNeedRaw(alice);
@@ -1519,9 +1301,9 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         }
         _expectHeld(1);
 
-        _prove(h, _one(1));
+        _liveOf(NEED, 1, 121, keccak256("gate-clock"));
         _mut().userClaimFundingNeedRaw(alice);
-        assertEq(_cursor(), 1, "stored: proven, the fold passes the day");
+        assertEq(_cursor(), 1, "stored: delivered, the fold passes the day");
         assertEq(RewardEpochViewFacet(address(diamond)).getUserArmedFreshNeed(alice), NEED, "the static preview prices it");
         assertTrue(_mut().entryExecutableNowRaw(id), "the clock's predicate reads executable");
         assertEq(_sweeper().sweepExpiredInteractionRewards(ids), 0, "the first executable sweep stamps only");
@@ -1535,12 +1317,12 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
     /**
      * @notice #1499 acceptance -- AWAITING DELIVERY on both readers. Refusal
      *         cause: the day owes fresh value on this mirror and no delivery
-     *         proven to list it has landed (rung A). Variable: the proof of
-     *         the delivery's day list. Held: the expiry predicate reads false
-     *         AND the claim refuses `InteractionDayAwaitingDelivery(1)`.
-     *         Proven: predicate true AND the claim pays the day.
+     *         for it has landed (rung A). Variable: the delivery. Held: the
+     *         expiry predicate reads false AND the claim refuses
+     *         `InteractionDayAwaitingDelivery(1)`. Delivered: predicate true
+     *         AND the claim pays the day.
      * @dev    Cell 11a pins the predicate and the previews across the same
-     *         variable; this cell adds the CLAIM on both sides. The proven
+     *         variable; this cell adds the CLAIM on both sides. The delivered
      *         side delivers EXACTLY the need, so it also sits on the delivered
      *         bound's boundary: `>` → `>=` in the predicate's bound test reads
      *         it non-executable while the claim pays, and fails this cell. The
@@ -1552,7 +1334,6 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
     function test_1499_AwaitingDelivery_PredicateAndClaimAgree_BothSides() public {
         _gateBinds();
         uint256 id = _owedDay1();
-        bytes32 h = _liveOf(NEED, _one(1), 149, keccak256("gate-1499"));
         _mut().userClaimFundingNeedRaw(alice);
 
         assertFalse(_mut().entryExecutableNowRaw(id), "held: non-executable");
@@ -1560,15 +1341,15 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         vm.expectRevert(abi.encodeWithSelector(InteractionDayAwaitingDelivery.selector, 1));
         RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
-        _prove(h, _one(1));
+        _liveOf(NEED, 1, 149, keccak256("gate-1499"));
         _mut().userClaimFundingNeedRaw(alice);
-        assertTrue(_mut().entryExecutableNowRaw(id), "proven: executable");
-        assertEq(_claim(), NEED, "proven: the claim pays the day");
+        assertTrue(_mut().entryExecutableNowRaw(id), "delivered: executable");
+        assertEq(_claim(), NEED, "delivered: the claim pays the day");
     }
 
     /**
      * @notice Cell 11b -- the FORFEIT sweep shares the rung: held, it credits
-     *         nothing and moves nothing; proven, it settles the forfeited
+     *         nothing and moves nothing; delivered, it settles the forfeited
      *         share into the bucket.
      * @dev    Mutation: as 11a -- a forfeit pricing around the rung recycles a
      *         share of a day this chain was never funded for.
@@ -1578,7 +1359,6 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         uint256 id = _owedDay1();
         _mut().setRewardEntryForfeitedRaw(id);
         _mut().setLoanActiveLenderEntryId(LOAN, id);
-        bytes32 h = _liveOf(NEED, _one(1), 122, keccak256("gate-forfeit"));
         uint256 bucket = _cfg().getRecycleBucket();
         uint256 live = _payable();
 
@@ -1586,9 +1366,9 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         assertEq(_cfg().getRecycleBucket(), bucket, "no credit to the bucket");
         assertEq(_payable(), live, "and custody is untouched");
 
-        _prove(h, _one(1));
+        _liveOf(NEED, 1, 122, keccak256("gate-forfeit"));
         uint256 swept = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
-        assertEq(swept, NEED, "proven: the forfeit settles the capped share");
+        assertEq(swept, NEED, "delivered: the forfeit settles the capped share");
         assertEq(_cfg().getRecycleBucket() - bucket, swept, "recycled into the bucket");
     }
 
@@ -1611,10 +1391,11 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         held. Across four sweeps a week apart A's deadline stands still
      *         -- its clock runs, because the claimant CAN claim A (the static
      *         preview prices exactly A) -- while B's clock never starts.
-     *         Proven, day 2 no longer waits and the claim pays both days.
+     *         Delivered, day 2 no longer waits and the claim pays both days.
      *         (B's clock would start only once B reaches its side's front --
      *         the A2-iii static read files an entry behind a pending day as
-     *         not executable -- so after the proof the claim is the evidence.)
+     *         not executable -- so after the delivery the claim is the
+     *         evidence.)
      * @dev    Mutations: route the sweep's clock around rung A and B's clock
      *         starts on an unfunded day; hold the whole claim instead of the
      *         day and A's sweep observes a block, so its deadline moves and
@@ -1645,11 +1426,9 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         uint256 a = _entry(1, 2);
         uint256 b = _entry(2, 3);
         _cfg().setRewardClaimHorizonDays(180);
-        bytes32 h1 = _liveOf(2 * NEED, _one(1), 131, keccak256("gate-11c-a"));
-        _prove(h1, _one(1));
-        bytes32 h2 = _liveOf(NEED, _one(2), 132, keccak256("gate-11c-b"));
+        _liveOf(2 * NEED, 1, 131, keccak256("gate-11c-a"));
         uint256[] memory ids = _two(a, b);
-        assertTrue(_awaits(0, 2), "fixture: day 2 owes fresh and its delivery is unproven");
+        assertTrue(_awaits(0, 2), "fixture: day 2 owes fresh and its delivery has not landed");
 
         // One second past setUp's pause boundary: the clock treats an observation
         // in the boundary's own block as spanning the pause and drops the next
@@ -1674,8 +1453,8 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
             "the claimant can claim A, and only A"
         );
 
-        _prove(h2, _one(2));
-        assertFalse(_awaits(2, 2), "stored: proven, day 2 no longer waits");
+        _liveOf(NEED, 2, 132, keccak256("gate-11c-b"));
+        assertFalse(_awaits(2, 2), "stored: delivered, day 2 no longer waits");
         assertEq(_claim(), 2 * NEED, "and the claim pays both days");
     }
 
@@ -1685,7 +1464,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         record per day; at a held day the preparation PAUSES -- no
      *         record for that day, nothing charged, the claim paying nothing
      *         as a domain always does -- and the same claim resumes from that
-     *         day once its delivery is proven.
+     *         day once its delivery lands.
      * @dev    Reachable where a single record's re-pricing is not: the
      *         domain's extent is fixed by its entries' `endDay`s when it opens
      *         and runs AHEAD of the fold, so `_prepareDomainDays` prices days
@@ -1695,7 +1474,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
      *         delivery lands -- the `preparedThrough` and record-phase
      *         assertions fail.
      */
-    function test_1944_11d_ADomainPreparation_PausesAtAHeldDay_AndResumesOnceProven() public {
+    function test_1944_11d_ADomainPreparation_PausesAtAHeldDay_AndResumesOnceDelivered() public {
         uint32 n = 32; // > MAX_INTERACTION_CLAIM_DAYS (30): the side is a domain
         _gateBinds();
         _loanSideOpen(n);
@@ -1705,14 +1484,12 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         }
         _entry(1, n + 1);
         // One delivery per day, as the canonical chain sends them (#2821):
-        // days 1-4 landed and proven, days 5..n landed and not yet proven.
-        bytes32[] memory held = new bytes32[](n + 1);
-        for (uint256 d = 1; d <= n; ++d) {
-            held[d] = _liveOf(d <= 4 ? 5e18 : 1e18, _one(d), 140 + d, keccak256(abi.encode("gate-11d", d)));
-            if (d <= 4) _prove(held[d], _one(d));
+        // days 1-4 delivered now, days 5..n later.
+        for (uint256 d = 1; d <= 4; ++d) {
+            _liveOf(5e18, d, 140 + d, keccak256(abi.encode("gate-11d", d)));
         }
         assertFalse(_awaits(0, 4), "fixture: day 4 landed");
-        assertTrue(_awaits(0, 5), "fixture: day 5 owes fresh and its delivery is unproven");
+        assertTrue(_awaits(0, 5), "fixture: day 5 owes fresh and its delivery has not landed");
 
         uint256 paidBefore = _mut().getArmedFreshPaidRaw();
         assertEq(_claim(), 0, "a domain pays nothing while it prepares");
@@ -1726,8 +1503,8 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         assertEq(_mut().getArmedFreshPaidRaw(), paidBefore, "nothing fresh charged");
         assertEq(_cursor(), 4, "stored: the fold rests before the held day");
 
-        for (uint256 d = 5; d <= n; ++d) _prove(held[d], _one(d));
-        assertEq(_claim(), 0, "proven: the same claim resumes the preparation");
+        for (uint256 d = 5; d <= n; ++d) _liveOf(1e18, d, 140 + d, keccak256(abi.encode("gate-11d", d)));
+        assertEq(_claim(), 0, "delivered: the same claim resumes the preparation");
         (phase, prepared, , records) = _domainOf();
         assertEq(phase, uint8(LibVaipakam.DomainPhase.Staging), "still preparing, nothing paid");
         assertEq(prepared, n, "stored: through the extent's last day");
@@ -1738,18 +1515,19 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
     // ─────────────────────── cell 14: no arming step ───────────────────────
 
     /**
-     * @notice Cell 14 -- with NO arming step, an owed, unproven day waits from
-     *         a mirror's very first day: the claim defers by name and pays
-     *         nothing until the proof lands.
+     * @notice Cell 14 -- with NO arming step, an owed, undelivered day waits
+     *         from a mirror's very first day: the claim defers by name and pays
+     *         nothing until its delivery lands.
      * @dev    Mutation: put any latch or first-day exit back in front of the
-     *         role test and this day pays unproven -- the named deferral fails.
+     *         role test and this day pays undelivered -- the named deferral
+     *         fails.
      */
     function test_1944_14_AnOwedDay_WaitsFromTheFirstDay_WithNoArmingStep() public {
         _owedDay1();
         _liveFunding(NEED);
         GateDay memory g = _gd(1);
         assertTrue(g.gateBinds, "the gate binds with nothing armed");
-        assertTrue(g.stamped && g.reported && !g.landed, "fixture: an owed, unproven day");
+        assertTrue(g.stamped && g.reported && !g.landed, "fixture: an owed, undelivered day");
         assertTrue(g.awaitsLender, "day 1 waits");
         uint256 live = _payable();
         _expectHeld(1);
@@ -1761,10 +1539,10 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
 
     /**
      * @notice Cell 15 -- a replayed broadcast is idempotent and never touches
-     *         the mark: before the proof it does not land the day, after the
-     *         proof the mark stands, and a diverging replay reverts.
-     * @dev    Mutation: write the mark (or clear it) in the broadcast apply and
-     *         one of the two stored-mark assertions fails.
+     *         the landing: before the delivery it does not land the day, after
+     *         the delivery the landing stands, and a diverging replay reverts.
+     * @dev    Mutation: write the landing (or clear it) in the broadcast apply
+     *         and one of the two stored-landing assertions fails.
      */
     function test_1944_15_AReplayedBroadcast_IsIdempotent_AndNeverTheMark() public {
         _gateBinds();
@@ -1773,8 +1551,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         assertTrue(_awaits(0, 1), "a replay is not a delivery");
         assertFalse(_gd(1).landed, "stored: nothing landed");
 
-        bytes32 h = _liveOf(NEED, _one(1), 151, keccak256("gate-replay"));
-        _prove(h, _one(1));
+        bytes32 h = _liveOf(NEED, 1, 151, keccak256("gate-replay"));
         _broadcastV2(_armedPacket(1));
         assertTrue(_landedBy(1, h), "stored: the landing survives a replay");
 
@@ -1787,34 +1564,27 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         assertEq(_claim(), NEED, "the day pays once");
     }
 
-    // ─────────────────────── cell 17: ingress writes no day ───────────────────────
+    // ─────────────────────── cell 17: the ingress lands its day ───────────────────────
 
     /**
-     * @notice Cell 17 -- INGRESS writes nothing per day: a rooted delivery
-     *         lands its value and none of its days, whether its split is
-     *         attested at the wire or not. The batch index then lands the day
-     *         (term i), and the attested epoch pays.
-     * @dev    Mutation: add a per-day write at the ingress and a `landed`
-     *         assertion right after it fails.
+     * @notice Cell 17 (#2828) -- the INGRESS lands its day: a d8 delivery
+     *         names its one day, so its landing counts its part and indexes
+     *         its epoch into the day in the same transaction, whether its
+     *         split is attested at the wire or not. An unattested epoch is
+     *         landed but does not pay until attested.
+     * @dev    Mutation: drop the ingress's day-part note and the `landed`
+     *         assertion right after the delivery fails.
      */
-    function test_1944_17_IngressWritesNothingPerDay() public {
+    function test_2828_17_TheIngressLandsItsDay() public {
         _gateBinds();
         _owedDay1();
-
-        bytes32 hU = _untyped(10e18, _one(1), 172, keccak256("gate-i-unattested"));
-        assertFalse(_gd(1).landed, "an unattested delivery's ingress lands no day");
-        assertEq(_gd(1).epochCount, 0, "its epoch opened compactly, indexing nothing");
-        assertTrue(_gp(hU).batched, "fixture: the epoch exists");
-
-        (bytes32 h6, ) = _d6(5e18, _one(1), 173, keccak256("gate-i-d6"), 0, 0);
-        assertFalse(_gd(1).landed, "a d6 delivery's ingress lands no day");
-        assertEq(_gp(h6).chunksIndexed, 0, "stored: no chunk indexed");
         _expectHeld(1);
 
-        _prove(hU, _one(1));
+        bytes32 hU = _untyped(10e18, 1, 172, keccak256("gate-i-unattested"));
+        assertTrue(_batched(hU), "fixture: the epoch exists");
         GateDay memory g = _gd(1);
-        assertTrue(g.landed, "the batch index lands the day");
-        assertEq(g.epochCount, 1, "stored: one indexed epoch");
+        assertTrue(g.landed, "the delivery's ingress lands the day");
+        assertEq(g.epochCount, 1, "stored: its epoch is in the day's index");
         assertEq(g.firstPart, hU, "its part is the day's first (#918)");
 
         _attest(172, 1, 0);
@@ -1827,10 +1597,9 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
 /**
  * @title  RewardDayDeliveryGatePreActivationTest -- the gate on a mirror whose
  *         reward custody is NOT yet activated.
- * @notice Cell 5 (a pre-activation d6 takes the typed-ledger path, holds no
- *         batch, and is proven chunk by chunk), cells 10c and 16 (the proof
- *         mark, which only a batchless packet writes) and cell 12 (the role
- *         exemption).
+ * @notice Cell 5 (a pre-activation delivery takes the typed-ledger path,
+ *         holds no batch, and lands its day at ingress), cell 16 (each part
+ *         counted once) and cell 12 (the role exemption).
  */
 contract RewardDayDeliveryGatePreActivationTest is RewardDayDeliveryGateBase {
     function _custodyActive() internal pure override returns (bool) {
@@ -1838,98 +1607,56 @@ contract RewardDayDeliveryGatePreActivationTest is RewardDayDeliveryGateBase {
     }
 
     /**
-     * @notice Cell 5 -- a PRE-ACTIVATION d6 holds no epoch: the chunk
-     *         materializer refuses it as an unknown batch, the flat route
-     *         refuses it as rooted, and `proveDeliveryDayChunk` marks its day
-     *         -- once, with the chunk's bit stored -- after which it pays.
-     * @dev    Mutation: route the chunk proof through the batch materializer
-     *         only and this day can never land.
+     * @notice Cell 5 (#2828) -- a PRE-ACTIVATION delivery holds no epoch, and
+     *         its landing lands its day all the same: the d8 wire names the
+     *         day, so the typed-ledger path counts the part at ingress, and
+     *         the day pays.
+     * @dev    Mutation: count the part only on the epoch path and this day can
+     *         never land before activation.
      */
-    function test_1944_5_APreActivationD6_IsProvenByChunk_AndPays() public {
+    function test_1944_5_APreActivationDelivery_LandsItsDayAtIngress_AndPays() public {
         _gateBinds();
         _owedDay1();
-        uint256[] memory list = _days(1, 1);
-        (bytes32 h, bytes32[] memory leaves) =
-            LibD6Delivery.deliver(address(diamond), _delivery(10e18, list, 51, keccak256("gate-pre-act-d6"), 0, 0));
-        GatePacket memory p = _gp(h);
-        assertFalse(p.batched, "fixture: before activation a rooted delivery opens no epoch");
-        assertEq(p.dayListRoot, RemitWire.d6Root(leaves), "stored: the commitment");
-        assertEq(p.chunkCount, 1);
         _expectHeld(1);
-
-        bytes32[] memory none = new bytes32[](0);
-        vm.expectRevert(abi.encodeWithSelector(TransportBatchUnknown.selector, h));
-        _epoch().materializeTransportBatchChunk(h, 0, list, MerkleFixture.proof(leaves, 0), none, none);
-
-        vm.expectEmit(true, true, false, true, address(diamond));
-        emit DayDeliveryProved(1, h, 51, ROUTE_CHUNK);
-        _proveRooted(h, list, leaves, 0);
-        assertEq(_gp(h).chunksIndexed, 1, "stored: chunk 0 proven");
+        bytes32 h = _d8(10e18, 1, 51, keccak256("gate-pre-act-d8"), 0, 0);
+        assertFalse(_batched(h), "fixture: before activation a delivery opens no epoch");
+        (bytes32 stamp, , , , ) = _epoch().getTransportBatch(h);
+        assertEq(stamp, bytes32(0), "and the ledger has none under its stamp");
         GateDay memory g = _gd(1);
-        assertTrue(g.landed, "the proof lands the day");
+        assertTrue(g.landed, "the delivery lands the day");
         assertEq(g.firstPart, h, "stored: by this packet");
         assertEq(g.epochCount, 0, "with no epoch anywhere");
-
-        vm.expectRevert(abi.encodeWithSelector(TransportChunkAlreadyIndexed.selector, h, uint256(0)));
-        _proveRooted(h, list, leaves, 0);
-
-        assertEq(_claim(), NEED, "proven: pays");
+        assertEq(_claim(), NEED, "delivered: pays");
     }
 
     /**
-     * @notice Cell 10c (S1) -- a batchless packet whose value was DISPOSED of
-     *         funds no day: its chunk proof is refused by name. Straddle: undisposed, the same
-     *         packet proves.
-     * @dev    Mutation: drop the `disposed == 0` refusal and the packet marks.
+     * @notice Cell 16 (#918) -- each packet's part counts ONCE: one event per
+     *         packet, a replay refused writing nothing, and a second packet is
+     *         the day's next part, not a duplicate. The first part's packet
+     *         stays recorded as the first.
+     * @dev    Mutation: let a replay sum again, or overwrite the first packet,
+     *         and the stored sums or the first-part assertion fail.
      */
-    function test_1944_10c_ADisposedPacket_IsRefused() public {
-        _gateBinds();
-        bytes32 h = _liveOf(NEED, _one(1), 111, keccak256("gate-disposed"));
-        uint256 snap = vm.snapshotState();
-        _prove(h, _one(1));
-        assertEq(_gd(1).firstPart, h, "straddle: undisposed, the packet proves");
-        vm.revertToState(snap);
-
-        _setPacketDisposedRaw(h, 1);
-        assertEq(_gp(h).disposed, 1, "fixture: one wei disposed");
-        bytes32[] memory leaves = RemitWire.d6Chunks(_one(1));
-        vm.expectRevert(abi.encodeWithSelector(DeliveryPacketDisposed.selector, h, uint256(1)));
-        _proveRooted(h, _one(1), leaves, 0);
-        assertFalse(_gd(1).landed, "nothing marked");
-    }
-
-    /**
-     * @notice Cell 16 (#918) -- the chunk proof counts each packet's part
-     *         ONCE: one event per (packet, day), a repeat refused writing
-     *         nothing, and a second packet is the day's next part, not a
-     *         duplicate. The first part's packet stays recorded as the first.
-     * @dev    Mutation: let a repeat proof sum again, or overwrite the first
-     *         packet, and the stored sums or the first-part assertion fail.
-     */
-    function test_1944_16_TheProofCountsEachPartOnce_TheFirstPartStays() public {
+    function test_1944_16_EachPartCountsOnce_TheFirstPartStays() public {
         _gateBinds();
         _owedDay1();
         uint256 half = NEED / 2;
-        bytes32 hA = _part(half, 1, 161, keccak256("gate-first"), 0, NEED, 0);
-
         vm.expectEmit(true, true, false, true, address(diamond));
-        emit DayDeliveryProved(1, hA, 161, ROUTE_CHUNK);
-        _prove(hA, _one(1));
+        emit DayDeliveryPartLanded(1, LibD8Delivery.packetHash(CHAIN_BASE, keccak256("gate-first")), half, 0, NEED, 0);
+        bytes32 hA = _part(half, 1, 161, keccak256("gate-first"), 0, NEED, 0);
         assertFalse(_gd(1).landed, "half the day: held");
 
-        bytes32[] memory leavesA = RemitWire.d6Chunks(_one(1));
-        vm.expectRevert(abi.encodeWithSelector(TransportChunkAlreadyIndexed.selector, hA, uint256(0)));
-        _proveRooted(hA, _one(1), leavesA, 0); // a repeat proof is refused whole, writing and emitting nothing
+        vm.expectRevert(abi.encodeWithSelector(IngressPacketReplayed.selector, hA));
+        _part(half, 1, 161, keccak256("gate-first"), 0, NEED, 0); // a replay is refused whole
         assertEq(_parts(1).landedFresh, half, "stored: counted once");
 
-        bytes32 hB = _part(NEED - half, 1, 162, keccak256("gate-second"), 0, NEED, 0);
-        vm.recordLogs();
-        _prove(hB, _one(1));
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        assertEq(_provedLogs(logs, 1), 1, "the second part's proof is its own event");
+        bytes32 hB = LibD8Delivery.packetHash(CHAIN_BASE, keccak256("gate-second"));
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit DayDeliveryPartLanded(1, hB, NEED, 0, NEED, 0);
+        _part(NEED - half, 1, 162, keccak256("gate-second"), 0, NEED, 0);
         assertEq(_gd(1).firstPart, hA, "stored: the first part stays first");
         assertTrue(_gd(1).landed, "both parts: landed");
-        assertEq(_claim(), NEED, "and the proven day pays");
+        assertEq(_claim(), NEED, "and the delivered day pays");
     }
 
     /**
@@ -1958,7 +1685,7 @@ contract RewardDayDeliveryGatePreActivationTest is RewardDayDeliveryGateBase {
         _mut().setDailyLenderInterest(2, alice, 50e18, 100e18); // day 2: unstamped, the window counter
         _mut().setDayCapThreshold18(2, type(uint256).max);
         uint256 expected = h1 + (h2 * 50e18) / 100e18;
-        assertTrue(_awaits(0, 1), "straddle: as a Mirror the unproven day waits");
+        assertTrue(_awaits(0, 1), "straddle: as a Mirror the undelivered day waits");
         _expectHeld(1);
 
         snap = vm.snapshotState();

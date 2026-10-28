@@ -19,7 +19,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibVpfiRecycle} from "../src/libraries/LibVpfiRecycle.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
-import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
+import {LibD8Delivery} from "./helpers/LibD8Delivery.sol";
 
 /**
  * @title RewardDeliveredChokepointTest
@@ -119,10 +119,10 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
     /// @dev A budget delivery on the rooted (d6) wire, the only budget shape
     ///      the remittance receiver accepts, filed in the live era. Returns
     ///      the packet stamp.
-    function _d6(
+    function _d8(
         address token,
         uint256 amount,
-        uint256[] memory dayIds,
+        uint256 dayId,
         uint256 sourceChainId,
         uint256 remitId,
         address remitter,
@@ -130,12 +130,12 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
         uint256 fresh,
         bytes32 messageId
     ) internal returns (bytes32 h) {
-        (h, ) = LibD6Delivery.deliver(
+        h = LibD8Delivery.deliver(
             address(diamond),
-            LibD6Delivery.Delivery({
+            LibD8Delivery.Delivery({
                 token: token,
                 amount: amount,
-                dayIds: dayIds,
+                dayId: dayId,
                 sourceChainId: sourceChainId,
                 remitId: remitId,
                 remitter: remitter,
@@ -153,9 +153,7 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
     function _deliverFresh(uint256 fresh, uint256 recycled, uint256 remitId)
         internal
     {
-        uint256[] memory days_ = new uint256[](1);
-        days_[0] = 1;
-        _d6(address(vpfi), fresh + recycled, days_, CHAIN_BASE, remitId, REMITTER, recycled, fresh, bytes32(0));
+        _d8(address(vpfi), fresh + recycled, 1, CHAIN_BASE, remitId, REMITTER, recycled, fresh, bytes32(0));
     }
 
     function _seedPayable(address user, uint64 loanId)
@@ -282,12 +280,10 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
         assertEq(uncounted, 0, "nothing uncounted");
         assertEq(_cfg().getRecycleBucket() - bucketBefore, 2e18, "recycled share relocated");
 
-        uint256[] memory days_ = new uint256[](1);
-        days_[0] = 1;
         // A split that is not whole is refused at the ingress (#2910), so no
         // delivery leaves value unattributed.
         vm.expectPartialRevert(IVaipakamErrors.TransportSplitNotWhole.selector);
-        _d6(address(vpfi), 3e18, days_, CHAIN_BASE, 12, REMITTER, 0, 0, bytes32(0)); // no share stated
+        _d8(address(vpfi), 3e18, 1, CHAIN_BASE, 12, REMITTER, 0, 0, bytes32(0)); // no share stated
         (counted, uncounted) = _rlens().getDeliveredFreshPosition();
         assertEq(counted, 5e18, "the refused delivery counts nothing");
         assertEq(uncounted, 0, "...and leaves nothing uncounted");

@@ -2743,12 +2743,6 @@ contract TestMutatorFacet {
         dom.lastDay = lastDay;
     }
 
-    /// @dev 3c-1 test-only — forget a batch's kept day list, the state of a
-    ///      batch indexed before the list was kept (withheld as contested).
-    function clearTransportBatchDaysRaw(bytes32 batchId) external {
-        delete LibVaipakam.storageSlot().transportBatchDays[batchId];
-    }
-
     /// @dev slice 4 PR C-1 test-only — declare the backfill done so the dark
     ///      era writers can be exercised before PR C-5 exists.
     /// @dev #1566 PR C revision test-only — the era routing rule for a packet's

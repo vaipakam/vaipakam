@@ -28,7 +28,7 @@ import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {MockCrossChainMessenger} from "./mocks/MockCrossChainMessenger.sol";
 import {LibRewardRemitDispatch} from "../src/libraries/LibRewardRemitDispatch.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
-import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
+import {LibD8Delivery} from "./helpers/LibD8Delivery.sol";
 
 /**
  * @title RewardRemitLedgerTest — #1222 M3 B2-d2 delivered-backing ledger.
@@ -1484,10 +1484,10 @@ contract RewardRemitLedgerTest is SetupTest {
     /// @dev A budget delivery on the rooted (d6) wire, the only budget shape
     ///      the remittance receiver accepts, filed in the live era. Returns
     ///      the packet stamp.
-    function _d6(
+    function _d8(
         address token,
         uint256 amount,
-        uint256[] memory dayIds,
+        uint256 dayId,
         uint256 sourceChainId,
         uint256 remitId,
         address remitter,
@@ -1495,12 +1495,12 @@ contract RewardRemitLedgerTest is SetupTest {
         uint256 fresh,
         bytes32 messageId
     ) internal returns (bytes32 h) {
-        (h, ) = LibD6Delivery.deliver(
+        h = LibD8Delivery.deliver(
             address(diamond),
-            LibD6Delivery.Delivery({
+            LibD8Delivery.Delivery({
                 token: token,
                 amount: amount,
-                dayIds: dayIds,
+                dayId: dayId,
                 sourceChainId: sourceChainId,
                 remitId: remitId,
                 remitter: remitter,
@@ -1528,7 +1528,7 @@ contract RewardRemitLedgerTest is SetupTest {
     function test_MirrorIngress_RecordsReceipt_and_AckIsResendable() public {
         _configureMirror();
 
-        _d6(address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 0, 7e18, bytes32(0));
+        _d8(address(vpfiTok), 7e18, 3, CHAIN_BASE, 42, address(0xBA5E), 0, 7e18, bytes32(0));
         LibVaipakam.ReceivedRemit memory rec =
             rlens.getReceivedRemit(address(0xBA5E), 42);
         assertEq(rec.srcChainId, CHAIN_BASE, "src");
@@ -1552,7 +1552,7 @@ contract RewardRemitLedgerTest is SetupTest {
 
     function test_MirrorIngress_LegacyDeliveryHasNoReceipt() public {
         _configureMirror();
-        _d6(address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 0, address(0xBA5E), 0, 7e18, bytes32(0));
+        _d8(address(vpfiTok), 7e18, 3, CHAIN_BASE, 0, address(0xBA5E), 0, 7e18, bytes32(0));
         assertEq(
             rlens.getReceivedRemit(address(0xBA5E), 0).receivedAt,
             0,
@@ -1575,7 +1575,7 @@ contract RewardRemitLedgerTest is SetupTest {
     ///      and could finalize an unrelated same-numbered reservation).
     function test_SendRemitAck_RejectsStaleReceiptAfterBaseRotation() public {
         _configureMirror();
-        _d6(address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 0, 7e18, bytes32(0));
+        _d8(address(vpfiTok), 7e18, 3, CHAIN_BASE, 42, address(0xBA5E), 0, 7e18, bytes32(0));
         // Owner rotates the canonical deployment — through Detached, as
         // #1566 slice 4 PR B requires of a mirror's source; the freeze is
         // lifted raw (the stale-receipt rule is what this test pins).
@@ -1628,8 +1628,8 @@ contract RewardRemitLedgerTest is SetupTest {
     ///      with its own recorded remitter.
     function test_MirrorIngress_DeploymentReceiptsCoexist() public {
         _configureMirror();
-        _d6(address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0x01D), 0, 7e18, keccak256("receipt-old-era"));
-        _d6(address(vpfiTok), 9e18, _days(4), CHAIN_BASE, 42, address(0x2EF), 0, 9e18, keccak256("receipt-new-era"));
+        _d8(address(vpfiTok), 7e18, 3, CHAIN_BASE, 42, address(0x01D), 0, 7e18, keccak256("receipt-old-era"));
+        _d8(address(vpfiTok), 9e18, 4, CHAIN_BASE, 42, address(0x2EF), 0, 9e18, keccak256("receipt-new-era"));
         assertEq(
             rlens.getReceivedRemit(address(0x01D), 42).amount,
             7e18,
@@ -1650,7 +1650,7 @@ contract RewardRemitLedgerTest is SetupTest {
                 keccak256(abi.encode(address(0x2EF), uint256(42)))
             )
         );
-        _d6(address(vpfiTok), 1e18, _days(5), CHAIN_BASE, 42, address(0x2EF), 0, 1e18, keccak256("receipt-duplicate"));
+        _d8(address(vpfiTok), 1e18, 5, CHAIN_BASE, 42, address(0x2EF), 0, 1e18, keccak256("receipt-duplicate"));
         assertEq(
             rlens.getReceivedRemit(address(0x2EF), 42).amount,
             9e18,

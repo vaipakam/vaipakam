@@ -15,13 +15,13 @@ import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
-import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
+import {LibD8Delivery} from "./helpers/LibD8Delivery.sol";
 
 /// @title RewardTransportParkTest
 /// @notice 3b-ii-B — the PARK is the release gate: a batch's remainder parks only
-///         once every day it listed is proven closed, checked against the batch's
-///         own day-list commitment, paged; the acknowledgment that releases it is
-///         the administrator's disposition.
+///         once the ONE day it funds is proven closed (#2828: the day rides the
+///         wire inline, so the check is a single read, never paged); the
+///         acknowledgment that releases it is the administrator's disposition.
 contract RewardTransportParkTest is SetupTest, IVaipakamErrors {
     VPFIToken internal vpfi;
     MockRewardMessenger internal messenger;
@@ -30,7 +30,6 @@ contract RewardTransportParkTest is SetupTest, IVaipakamErrors {
     address internal constant REMITTER = address(0xBA5E);
     uint256 internal constant SEED = 1_000_000 ether;
     uint256 internal constant EPOCH = 0.1e18;
-    uint256 internal constant PAGE = 32; // TRANSPORT_INDEX_PAGE
     uint256 internal launch;
 
     function setUp() public {
@@ -63,67 +62,63 @@ contract RewardTransportParkTest is SetupTest, IVaipakamErrors {
     function _rep() internal view returns (RewardReporterFacet) { return RewardReporterFacet(address(diamond)); }
     function _clo() internal view returns (RewardClosureFacet) { return RewardClosureFacet(address(diamond)); }
 
-    function _days(uint256 n) internal pure returns (uint256[] memory a) {
-        a = new uint256[](n);
-        for (uint256 i; i < n; ++i) a[i] = i + 1;
+    /// @dev An admitted epoch of EPOCH for day `d`, indexed at its ingress.
+    function _epochOn(uint256 d, uint256 remitId) internal returns (bytes32 h) {
+        bytes32 id = keccak256(abi.encode("park-epoch", d, remitId));
+        h = LibD8Delivery.deliverFresh(address(diamond), address(vpfi), EPOCH, d, CHAIN_BASE, remitId, REMITTER, id);
     }
 
-    /// @dev An admitted, fully indexed epoch of EPOCH listing days 1..n.
-    function _epochOn(uint256 n, uint256 remitId) internal returns (bytes32 h, uint256[] memory list) {
-        list = _days(n);
-        bytes32 id = keccak256(abi.encode("park-epoch", n, remitId));
-        (h, ) = LibD6Delivery.deliverFresh(address(diamond), address(vpfi), EPOCH, list, CHAIN_BASE, remitId, REMITTER, id);
-        LibD6Delivery.indexAllDays(address(diamond), h, list);
+    /// @dev Day `d` elapses, the chain closes it, and it is proven closed — no
+    ///      obligation covers it, so the proof completes at its start.
+    function _closeDay(uint256 d) internal {
+        vm.warp(launch + (d + 1) * 1 days + 1);
+        _rep().closeDay(d);
+        (, , bool closed) = _clo().startDayClosure(d);
+        assertTrue(closed, "no obligation: closes at start");
     }
 
-    /// @dev Days 1..n elapse, the chain closes each, and each is proven closed —
-    ///      no obligation covers any of them, so each proof completes at its start.
-    function _closeDays(uint256 n) internal {
-        vm.warp(launch + (n + 1) * 1 days + 1);
-        for (uint256 d = 1; d <= n; ++d) {
-            _rep().closeDay(d);
-            (, , bool closed) = _clo().startDayClosure(d);
-            assertTrue(closed, "no obligation: closes at start");
-        }
-    }
-
-    /// @dev The gate: an open listed day refuses the park by name; once every listed
-    ///      day is proven closed the remainder parks, whole.
-    function test_ThePark_RequiresEveryListedDayProvenClosed() public {
-        (bytes32 h, ) = _epochOn(2, 7);
-        vm.expectRevert(abi.encodeWithSelector(TransportDayNotClosed.selector, h, 1));
+    /// @dev The gate: while its day is open the park is refused by name; once the
+    ///      day is proven closed the remainder parks, whole, in one call that
+    ///      anyone may make.
+    function test_ThePark_RequiresItsDayProvenClosed() public {
+        bytes32 h = _epochOn(2, 7);
+        vm.expectRevert(abi.encodeWithSelector(TransportDayNotClosed.selector, h, 2));
         _epoch().parkTransportBatchRemainder(h);
         vm.warp(launch + 3 days + 1);
         _rep().closeDay(1);
         _clo().startDayClosure(1);
         vm.expectRevert(abi.encodeWithSelector(TransportDayNotClosed.selector, h, 2));
-        _epoch().parkTransportBatchRemainder(h);
+        _epoch().parkTransportBatchRemainder(h); // another day's closure is not this one's
         _rep().closeDay(2);
         _clo().startDayClosure(2);
         address anyone = makeAddr("anyone");
         vm.prank(anyone);
-        (uint32 checked, bool parked, uint256 amount) = _epoch().parkTransportBatchRemainder(h);
-        assertEq(checked, 2); assertTrue(parked); assertEq(amount, EPOCH, "the whole remainder");
-        (uint256 remAmount, uint32 remDays, bool acked, ) = _epoch().getTransportRemainder(h);
-        assertEq(remAmount, EPOCH); assertEq(remDays, 2); assertFalse(acked);
-        (, uint256 balance, , , , bool released) = _epoch().getTransportBatch(h);
-        assertEq(balance, 0, "moved out of the batch"); assertFalse(released, "parked is not released");
+        uint256 amount = _epoch().parkTransportBatchRemainder(h);
+        assertEq(amount, EPOCH, "the whole remainder");
+        (bool parked, uint256 remAmount, uint256 remDay, bool acked, ) = _epoch().getTransportRemainder(h);
+        assertTrue(parked); assertEq(remAmount, EPOCH); assertEq(remDay, 2, "parked against its day"); assertFalse(acked);
+        (, uint256 balance, , uint256 batchDay, bool released) = _epoch().getTransportBatch(h);
+        assertEq(balance, 0, "moved out of the batch"); assertEq(batchDay, 2); assertFalse(released, "parked is not released");
+        vm.expectRevert(abi.encodeWithSelector(TransportRemainderAlreadyParked.selector, h));
+        _epoch().parkTransportBatchRemainder(h);
     }
 
-    /// @dev A day list longer than one page is checked across calls with a cursor.
-    function test_ThePark_IsPaged() public {
-        (bytes32 h, ) = _epochOn(PAGE + 8, 9);
-        _closeDays(PAGE + 8);
-        (uint32 checked, bool parked, ) = _epoch().parkTransportBatchRemainder(h);
-        assertEq(checked, PAGE); assertFalse(parked, "one page per call");
-        (checked, parked, ) = _epoch().parkTransportBatchRemainder(h);
-        assertEq(checked, PAGE + 8); assertTrue(parked);
+    /// @dev Day 0 is a real reward day: an epoch funding it parks once it closes,
+    ///      like any other.
+    function test_ThePark_DayZero_IsARealDay() public {
+        bytes32 h = _epochOn(0, 8);
+        vm.expectRevert(abi.encodeWithSelector(TransportDayNotClosed.selector, h, 0));
+        _epoch().parkTransportBatchRemainder(h);
+        _closeDay(0);
+        assertEq(_epoch().parkTransportBatchRemainder(h), EPOCH);
+        (bool parked, , uint256 remDay, , ) = _epoch().getTransportRemainder(h);
+        assertTrue(parked); assertEq(remDay, 0);
     }
 
     /// @dev The acknowledgment is the administrator's disposition; it releases the batch.
     function test_TheAcknowledgment_IsTheAdministrators_AndReleases() public {
-        (bytes32 h, ) = _epochOn(1, 10);
-        _closeDays(1);
+        bytes32 h = _epochOn(1, 10);
+        _closeDay(1);
         _epoch().parkTransportBatchRemainder(h);
         address stranger = makeAddr("stranger");
         vm.expectRevert(
@@ -132,9 +127,9 @@ contract RewardTransportParkTest is SetupTest, IVaipakamErrors {
         vm.prank(stranger);
         _epoch().acknowledgeTransportBatchRemainder(h);
         _epoch().acknowledgeTransportBatchRemainder(h);
-        (, , bool acked, ) = _epoch().getTransportRemainder(h);
+        (, , , bool acked, ) = _epoch().getTransportRemainder(h);
         assertTrue(acked);
-        (, , , , , bool released) = _epoch().getTransportBatch(h);
+        (, , , , bool released) = _epoch().getTransportBatch(h);
         assertTrue(released);
         vm.expectRevert(abi.encodeWithSelector(TransportRemainderAlreadyAcknowledged.selector, h));
         _epoch().acknowledgeTransportBatchRemainder(h);

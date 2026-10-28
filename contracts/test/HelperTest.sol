@@ -115,7 +115,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](259); // #2961 +setPacketDisposedRaw (was 258); #2876 +setOfferPrepayListingExecutorRaw (was 257); #1980 -setBorrowerLifVpfiHeldRaw (was 258); #918 setDayDeliveryProvedByRaw -> setDayDeliveryLandedRaw (net 0); #2910 PR 2 -setRemitReservationFinalizedRaw -setReleasedRemitHistoryRaw -setRemitReservationReleasedRaw (was 261); #2910 -setRecoveryAttributionRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](258); // #2828 -clearTransportBatchDaysRaw (was 259); #2961 +setPacketDisposedRaw (was 258); #2876 +setOfferPrepayListingExecutorRaw (was 257); #1980 -setBorrowerLifVpfiHeldRaw (was 258); #918 setDayDeliveryProvedByRaw -> setDayDeliveryLandedRaw (net 0); #2910 PR 2 -setRemitReservationFinalizedRaw -setReleasedRemitHistoryRaw -setRemitReservationReleasedRaw (was 261); #2910 -setRecoveryAttributionRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -541,7 +541,6 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setInterestFoldDeltaRaw.selector; // #2277
         selectors[n++] = TestMutatorFacet.setRewardEntryProcessedRaw.selector; // 3b-ii-B
         selectors[n++] = TestMutatorFacet.setLegacyDomainOpenRaw.selector; // 3b-ii-B
-        selectors[n++] = TestMutatorFacet.clearTransportBatchDaysRaw.selector; // 3c-1
         selectors[n++] = TestMutatorFacet.creditFreshToEraFromRowRaw.selector; // PR C-1
         selectors[n++] = TestMutatorFacet.setCustodyEraCountersRaw.selector; // PR C-1
         selectors[n++] = TestMutatorFacet.setAggregatorAdapterRaw.selector; // #2459 r4
@@ -2551,8 +2550,8 @@ contract HelperTest {
         selectors = new bytes4[](3);
         selectors[0] = RewardIngressFacet.onCompensationBudgetReceived.selector;
         selectors[1] = RewardIngressFacet.onCompensationDayBroadcastArrived.selector;
-        // 3d-1 / #918 — the rooted (d7) ingress.
-        selectors[2] = RewardIngressFacet.onRewardBudgetReceivedD7.selector;
+        // #2828 — the d8 ingress: the one funded day carried inline.
+        selectors[2] = RewardIngressFacet.onRewardBudgetReceivedD8.selector;
     }
 
     /// #1566 transport epochs PR 3b — the transport epochs' ledger. Mirrors
@@ -2563,33 +2562,28 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](22);
-        selectors[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
-        selectors[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
-        selectors[3] = RewardEpochFacet.getTransportBatch.selector;
-        selectors[4] = RewardEpochFacet.getTransportBatchLegs.selector;
-        selectors[5] = RewardEpochFacet.getTransportRemainder.selector;
-        selectors[6] = RewardEpochFacet.getTransportDayBatches.selector;
+        selectors = new bytes4[](18);
+        selectors[0] = RewardEpochFacet.parkTransportBatchRemainder.selector;
+        selectors[1] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
+        selectors[2] = RewardEpochFacet.getTransportBatch.selector;
+        selectors[3] = RewardEpochFacet.getTransportBatchLegs.selector;
+        selectors[4] = RewardEpochFacet.getTransportRemainder.selector;
+        selectors[5] = RewardEpochFacet.getTransportDayBatches.selector;
         // 3b-ii-A — the draws (mirrors `DeployDiamond._getRewardEpochSelectors`).
-        selectors[8] = RewardEpochFacet.getTransportCoverageForDay.selector;
-        selectors[9] = RewardEpochFacet.epochDrawForDay.selector;
-        selectors[10] = RewardEpochFacet.epochPruneTransportDayCursor.selector;
-        selectors[11] = RewardEpochFacet.getTransportAllocationForDay.selector;
-        selectors[12] = RewardEpochFacet.epochSettleLegs.selector; // A2-ii
-        selectors[14] = RewardEpochFacet.getTransportDayBatchesFrom.selector;
-        selectors[15] = RewardEpochFacet.getTransportDayIndex.selector;
-        selectors[16] = RewardEpochFacet.getTransportDayScanIds.selector;
-        selectors[17] = RewardEpochFacet.getTransportBatchStaged.selector;
-        // The batch gates and the indexed day list.
-        selectors[18] = RewardEpochFacet.getTransportBatchGates.selector;
-        selectors[19] = RewardEpochFacet.getTransportBatchDays.selector;
-        // 3d-1 — the rooted (d6) chunk index.
-        selectors[0] = RewardEpochFacet.materializeTransportBatchChunk.selector;
-        // #1944 consequence 1 — the delivery proofs for packets holding no batch.
-        selectors[7] = RewardEpochFacet.proveDeliveryDayChunk.selector;
-        selectors[13] = RewardEpochFacet.getTransportDayLateFrom.selector; // #2489 (Codex r2): the late chain, for verified late hints
-        selectors[20] = RewardEpochFacet.skipConflictedDay.selector; // #2961
-        selectors[21] = RewardEpochFacet.recycleSkippedDayValue.selector; // #2961
+        selectors[6] = RewardEpochFacet.getTransportCoverageForDay.selector;
+        selectors[7] = RewardEpochFacet.epochDrawForDay.selector;
+        selectors[8] = RewardEpochFacet.epochPruneTransportDayCursor.selector;
+        selectors[9] = RewardEpochFacet.getTransportAllocationForDay.selector;
+        selectors[10] = RewardEpochFacet.epochSettleLegs.selector; // A2-ii
+        selectors[11] = RewardEpochFacet.getTransportDayBatchesFrom.selector;
+        selectors[12] = RewardEpochFacet.getTransportDayIndex.selector;
+        selectors[13] = RewardEpochFacet.getTransportDayScanIds.selector;
+        selectors[14] = RewardEpochFacet.getTransportBatchStaged.selector;
+        // The batch gates. (#2828 retired the chunk index, the delivery proof,
+        // the late-chain hint read and the batch day-list read.)
+        selectors[15] = RewardEpochFacet.getTransportBatchGates.selector;
+        selectors[16] = RewardEpochFacet.skipConflictedDay.selector; // #2961
+        selectors[17] = RewardEpochFacet.recycleSkippedDayValue.selector; // #2961
     }
 
     /// 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads. Mirrors
@@ -2837,7 +2831,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](46);
+        selectors = new bytes4[](45);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2891,7 +2885,6 @@ contract HelperTest {
         // target) and its two operator reads.
         selectors[37] = RewardRemittanceLensFacet.dayAwaitsFreshDelivery.selector;
         selectors[38] = RewardRemittanceLensFacet.getDayDeliveryState.selector;
-        selectors[30] = RewardRemittanceLensFacet.getPacketDeliveryProof.selector;
         selectors[31] = RewardRemittanceLensFacet.getChainRemittedRecycled.selector; // #1452
         selectors[35] = RewardRemittanceLensFacet.getRemitRoute.selector; // #2561
         // #918 — the per-day ledger, the per-day delivery record, the lane bucket.
@@ -2901,7 +2894,7 @@ contract HelperTest {
         selectors[42] = RewardRemittanceLensFacet.getRemitDayFreshReserved.selector;
         selectors[43] = RewardRemittanceLensFacet.getRemitDestinationRelease.selector; // #2963
         selectors[44] = RewardRemittanceLensFacet.getRemitInboundLaneBucket.selector; // #2960
-        selectors[45] = RewardRemittanceLensFacet.getRemitOpenDays.selector; // #2960
+        selectors[30] = RewardRemittanceLensFacet.getRemitOpenDays.selector; // #2960; slot freed by #2828
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.

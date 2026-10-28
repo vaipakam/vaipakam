@@ -37,7 +37,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
-import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
+import {LibD8Delivery} from "./helpers/LibD8Delivery.sol";
 
 /**
  * @title  RewardSanctionsForfeitTest (and its siblings in this file)
@@ -2462,11 +2462,6 @@ abstract contract RewardSanctionsMirrorBase is RewardSanctionsTestBase {
 
     // ----------------------------- fixtures -----------------------------
 
-    function _one(uint256 d) internal pure returns (uint256[] memory a) {
-        a = new uint256[](1);
-        a[0] = d;
-    }
-
     function _armedDay(uint256 d, uint256 cap) internal {
         _mut().setDayPoolStampRaw(d, uint128(2e18), 0);
         _mut().setKnownGlobalDailyInterest(d, 1e18, 0, true);
@@ -2535,14 +2530,13 @@ abstract contract RewardSanctionsMirrorBase is RewardSanctionsTestBase {
     ///      receipt per call: the ingress refuses a repeated receipt id.
     function _liveFresh(uint256 amount) internal {
         ++liveNonce;
-        LibD6Delivery.liveFresh(address(diamond), address(vpfi), amount, _one(1), CHAIN_BASE, 5000 + liveNonce, REMITTER, keccak256(abi.encode("sanc-live", liveNonce)));
+        LibD8Delivery.liveFresh(address(diamond), address(vpfi), amount, 1, CHAIN_BASE, 5000 + liveNonce, REMITTER, keccak256(abi.encode("sanc-live", liveNonce)));
         _mut().setArmedFreshLedgerRaw(amount, 0);
     }
 
     function _epochOf(uint256 amount, uint256 remitId, bytes32 bid) internal returns (bytes32 h) {
-        LibD6Delivery.deliverUnattested(address(diamond), address(vpfi), amount, _one(1), CHAIN_BASE, remitId, REMITTER, bid);
+        LibD8Delivery.deliverUnattested(address(diamond), address(vpfi), amount, 1, CHAIN_BASE, remitId, REMITTER, bid);
         h = keccak256(abi.encode(uint256(CHAIN_BASE), bid));
-        LibD6Delivery.indexAllDays(address(diamond), h, _one(1));
     }
 
     /// @dev 65 attested fresh epochs listing day 1, ten seconds apart.
@@ -2551,15 +2545,13 @@ abstract contract RewardSanctionsMirrorBase is RewardSanctionsTestBase {
         for (uint256 i; i < WIDE; ++i) {
             vm.warp(t0 + 10 * (i + 1));
             _epochOf(TINY, 100 + i, keccak256(abi.encode("sanc-tiny", i)));
-            LibD6Delivery.attest(address(diamond), REMITTER, 100 + i, TINY, 0);
+            LibD8Delivery.attest(address(diamond), REMITTER, 100 + i, TINY, 0);
         }
     }
 
     function _epochOnDay(uint256 amount, uint256 d, uint256 remitId, bytes32 bid) internal {
-        LibD6Delivery.deliverUnattested(address(diamond), address(vpfi), amount, _one(d), CHAIN_BASE, remitId, REMITTER, bid);
-        bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), bid));
-        LibD6Delivery.indexAllDays(address(diamond), h, _one(d));
-        LibD6Delivery.attest(address(diamond), REMITTER, remitId, amount, 0);
+        LibD8Delivery.deliverUnattested(address(diamond), address(vpfi), amount, d, CHAIN_BASE, remitId, REMITTER, bid);
+        LibD8Delivery.attest(address(diamond), REMITTER, remitId, amount, 0);
     }
 
     function _wideDayOn(uint256 d, uint256 salt) internal {
