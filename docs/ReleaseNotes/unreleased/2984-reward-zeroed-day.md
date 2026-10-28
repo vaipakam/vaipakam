@@ -8,4 +8,4 @@ Accumulation is open to anyone, so a third party can move a side's cursor past e
 
 > Caveat: ships disarmed. Arming it on any chain is a separate owner decision.
 > Caveat: a quote already dispatched is not re-sent. If a dispatched quote never reaches Base, the day lapses at the end of its window.
-> Caveat: the entry scan reads the chain's reward-entry list from the start on every run, up to the same bound as the close-out duty. A longer list is reported as not walked.
+> Caveat: the entry scan is bounded per run like the close-out duty's, and starts from its own stored floor, so the bound applies to the entries live across the days it accumulates rather than to the chain's whole history. A day its scan does not reach in a run is reported as not accumulated.

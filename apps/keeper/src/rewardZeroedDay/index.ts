@@ -55,7 +55,8 @@ import { deadlineClient, PastRunDeadline, settledRead, type BatchResult } from '
 import { shortErr } from '../callErrors';
 import { feeCeiling } from '../feeCeiling';
 import { sendOpsAlert } from '../opsAlert';
-import { conservationGap, coveringEntries, scanEntries, SIDE_BORROWER, SIDE_LENDER, type EntryRow, type ScannedEntry, type Side } from '../rewardEntries';
+import { conservationGap, coveringEntries, decodeEntryFloor, encodeEntryFloor, scanEntries, SIDE_BORROWER, SIDE_LENDER, type EntryRow, type ScannedEntry, type Side } from '../rewardEntries';
+import { d1ScanCursors, type ScanCursors } from '../scanCursors';
 import { StepSender, type SendFeeCeiling } from '../stepSender';
 import { pagesAfter } from '../rewardCloseOut/plan';
 import { accumulationWedge, zeroedDayStep, type ZeroedDayState } from './plan';
@@ -79,8 +80,10 @@ export const RECEIPT_TIMEOUT_MS = 30_000;
 export const DEFAULT_LOOKBACK_DAYS = 60;
 /** Entry ids per `accumulateCompQuoteBatch`. */
 export const PAGE_IDS = 100;
-/** Entry pages one run may read. */
+/** Entry pages one run may read, from the scan's stored floor. */
 export const MAX_ENTRY_PAGES = 20;
+/** The scan-cursor item this pass keeps (`scanCursors.ts`). */
+export const ENTRY_FLOOR_ITEM = 'entry-floor';
 export const MAX_FEE_VAR = 'REWARD_ZEROED_DAY_MAX_FEE_WEI';
 /** An operator alert about a wedged accumulation re-sends after this. */
 const WEDGE_ALERT_INTERVAL_SEC = 6 * 3600;
@@ -102,6 +105,8 @@ export interface ZeroedDayDeps {
   sendDeadline: number;
   lookbackDays: number;
   feeCeiling: SendFeeCeiling;
+  /** Where its entry scan got to on this chain, across runs. */
+  cursors: ScanCursors;
   /** Posts an operator alert; resolves whether it went out. Injected so a run
    *  is testable. */
   alert: (key: string, text: string, minIntervalSec: number) => Promise<unknown>;
@@ -147,6 +152,7 @@ export async function runRewardZeroedDay(env: Env, tick: PassTick): Promise<void
           sendDeadline,
           lookbackDays,
           feeCeiling: feeCeiling(env.REWARD_ZEROED_DAY_MAX_FEE_WEI, chain.id, MAX_FEE_VAR),
+          cursors: d1ScanCursors(env.KEEPER_DB, chain.id, chain.diamond as string, 'rewardZeroedDay'),
           alert: (key, text, interval) => sendOpsAlert(env, key, text, interval, undefined, chain.id),
         });
         console.log(describeReport(report));
@@ -346,10 +352,28 @@ async function workDays(r: Reader, sender: StepSender, report: ZeroedDayReport, 
   // One entry scan for every day that needs a walk this run.
   const plans = [...states.values()].map((s) => ({ s, step: zeroedDayStep(s, now) }));
   const walkDays = plans.filter((p) => p.step.kind === 'quote' || p.step.kind === 'refine').map((p) => p.s.day);
-  let entries: ScannedEntry[] | null = [];
+  let entries: ScannedEntry[] = [];
+  let completeThrough = Number.POSITIVE_INFINITY;
   if (walkDays.length > 0) {
-    entries = await scanEntries((from, n) => r.one<readonly EntryRow[]>('getRewardEntriesRange', [from, n]), walkDays[0], walkDays[walkDays.length - 1], MAX_ENTRY_PAGES);
-    if (entries === null) sender.noteUnread('quote', `the reward-entry sequence is longer than ${MAX_ENTRY_PAGES} pages, so no quote was accumulated (a quote on a partial scan cannot complete)`);
+    // From the stored floor: entries below it ended before the oldest day
+    // walked, so a run reads the entries live across those days, not the
+    // chain's whole history (`rewardEntries.ts`, Codex #2993 r1).
+    const stored = (await deps.cursors.get([ENTRY_FLOOR_ITEM])).get(ENTRY_FLOOR_ITEM);
+    const scan = await scanEntries(
+      (from, n) => r.one<readonly EntryRow[]>('getRewardEntriesRange', [from, n]),
+      walkDays[0],
+      walkDays[walkDays.length - 1],
+      MAX_ENTRY_PAGES,
+      decodeEntryFloor(stored),
+    );
+    const floor = encodeEntryFloor(scan.floor);
+    if (floor !== stored) await deps.cursors.put(ENTRY_FLOOR_ITEM, floor);
+    entries = scan.entries;
+    completeThrough = scan.completeThrough;
+    const beyond = walkDays.filter((d) => d > completeThrough);
+    if (beyond.length > 0) {
+      sender.noteUnread('quote', `the reward-entry scan reads at most ${MAX_ENTRY_PAGES} pages a run from its stored floor and reached only the entries starting by day ${completeThrough}, so days ${beyond.join(',')} are not accumulated this run (a quote on a partial scan cannot complete)`);
+    }
   }
   for (const { s, step } of plans) {
     if (sender.stopped) return;
@@ -382,7 +406,7 @@ async function workDays(r: Reader, sender: StepSender, report: ZeroedDayReport, 
       }
       case 'quote':
       case 'refine': {
-        if (entries === null) break;
+        if (d > completeThrough) break;
         if (deps.keeper === null && step.kind === 'quote') {
           sender.noteUnread(`quote:${d}`, 'no signing key, so no quote can be dispatched');
           break;

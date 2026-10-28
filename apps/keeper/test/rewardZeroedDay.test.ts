@@ -22,6 +22,7 @@ import {
 } from '../src/rewardZeroedDay';
 import { SIDE_BORROWER, SIDE_LENDER, type ScannedEntry } from '../src/rewardEntries';
 import type { SendFeeCeiling } from '../src/stepSender';
+import { memoryScanCursors } from '../src/scanCursors';
 import type { KeeperContext } from '../src/keeper';
 
 const CHAIN = 421614;
@@ -366,6 +367,7 @@ describe('a run', () => {
       keeper: o.keeper === undefined ? KEEPER : o.keeper,
       sendDeadline: Number.POSITIVE_INFINITY,
       lookbackDays: 60,
+      cursors: memoryScanCursors(),
       feeCeiling: o.cap ?? CAP,
       alert: async (key, text) => void alerts.push({ key, text }),
     });
