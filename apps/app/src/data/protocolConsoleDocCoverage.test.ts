@@ -8,9 +8,9 @@
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { PROTOCOL_KNOB_GETTERS } from '@vaipakam/lib/protocolKnobs';
+import { LABELLED_KNOB_KEYS, PROTOCOL_KNOB_GETTERS } from '@vaipakam/lib/protocolKnobs';
 import { DOC_COVERAGE } from './protocolConsoleDocCoverage';
-import { RENDERED_KEYS } from './protocolConsoleRows';
+import { GRACE_DOCUMENTED_DEFAULT_SCHEDULE, RENDERED_KEYS } from './protocolConsoleRows';
 
 const DOC = readFileSync(
   new URL('../../../../docs/ops/AdminConfigurableKnobsAndSwitches.md', import.meta.url),
@@ -54,5 +54,27 @@ describe('Protocol Console coverage of the knob reference', () => {
     for (const k of PROTOCOL_KNOB_GETTERS) {
       expect(RENDERED_KEYS.has(k.key as never), k.key).toBe(true);
     }
+    // #2680 — the parts of multi-part reads too.
+    for (const k of LABELLED_KNOB_KEYS) {
+      expect(RENDERED_KEYS.has(k as never), k).toBe(true);
+    }
+  });
+
+  // #2680 — the default grace schedule the page states while none is set
+  // is the one the reference documents, row for row.
+  it('states the documented default grace schedule', () => {
+    const section = DOC.split('### Loan-default grace buckets')[1]?.split('\n### ')[0] ?? '';
+    const table = section.split('Default schedule')[1]?.split('\n\n')[1] ?? '';
+    const unit: Record<string, number> = { hour: 3600, day: 86_400, days: 86_400, week: 604_800, weeks: 604_800 };
+    const rows = table
+      .split('\n')
+      .filter((l) => /^\|\s*\d+\s*\|/.test(l))
+      .map((l) => {
+        const cells = l.split('|').map((c) => c.trim());
+        const [n, u] = cells[4].split(/\s+/);
+        return { maxDurationDays: Number(cells[3].split(/\s+/)[0]), graceSeconds: Number(n) * unit[u] };
+      });
+    expect(rows).toHaveLength(6);
+    expect(rows).toEqual(GRACE_DOCUMENTED_DEFAULT_SCHEDULE);
   });
 });

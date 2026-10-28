@@ -26,12 +26,23 @@ export interface Numeraire {
  * raw word (or no unit) rather than invent a name for it.
  */
 export function numeraireOf(word: string): Numeraire | null {
-  if (!/^0x[0-9a-fA-F]{64}$/.test(word)) return null;
   if (/^0x0{64}$/.test(word)) return { symbol: DEFAULT_NUMERAIRE, isDefault: true };
+  const text = packedText(word);
+  return text === null ? null : { symbol: text.toUpperCase(), isDefault: false };
+}
+
+/**
+ * The printable text packed into a 32-byte word, as written (no case
+ * change), or null when the word is not 32 bytes, is empty, or does not
+ * hold printable text. The caller then shows the raw word rather than
+ * invent a reading of it.
+ */
+export function packedText(word: string): string | null {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(word) || /^0x0{64}$/.test(word)) return null;
   try {
     // With a size, viem trims the trailing zero bytes itself.
     const text = hexToString(word as Hex, { size: 32 });
-    return /^[\x20-\x7e]+$/.test(text) ? { symbol: text.toUpperCase(), isDefault: false } : null;
+    return /^[\x20-\x7e]+$/.test(text) ? text : null;
   } catch {
     return null;
   }

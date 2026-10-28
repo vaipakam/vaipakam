@@ -4,7 +4,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { encodeAbiParameters, type Hex, type PublicClient } from 'viem';
 import { getDeployment } from '@vaipakam/contracts/deployments';
-import { PROTOCOL_KNOB_GETTERS, abiOutputNames } from '@vaipakam/lib/protocolKnobs';
+import { LABELLED_KNOB_KEYS, PROTOCOL_KNOB_GETTERS, abiOutputNames } from '@vaipakam/lib/protocolKnobs';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
   CONSOLE_SNAPSHOT_MAX_AGE_SEC,
@@ -51,7 +51,7 @@ describe('rendered values', () => {
     // Otherwise no snapshot could ever be complete, and the page would read
     // the chain on every visit while calling the snapshot incomplete.
     const bundle = new Set(abiOutputNames(DIAMOND_ABI_VIEM, 'getProtocolConfigBundle') ?? []);
-    const knobs = new Set<string>(PROTOCOL_KNOB_GETTERS.map((k) => k.key));
+    const knobs = new Set<string>([...PROTOCOL_KNOB_GETTERS.map((k) => k.key), ...LABELLED_KNOB_KEYS]);
     expect([...RENDERED_KEYS].filter((k) => !bundle.has(k) && !knobs.has(k))).toEqual([]);
   });
 

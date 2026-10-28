@@ -130,8 +130,8 @@ including people who never will.
   never by inferring which value belongs to which name from ordering.
 - The console states that it shows a subset rather than implying it is
   complete, and it names what is left out: settings that differ per asset
-  or per chain, the reward and recycling settings, and a few protocol-wide
-  settings not yet shown. A reader is pointed at the full parameter
+  or per chain, the reward and recycling settings, and the few protocol-wide
+  settings the contracts give no way to read. A reader is pointed at the full parameter
   reference rather than left to infer that what is shown is all there is.
   An incomplete view that asserts completeness is worse than an incomplete
   view, because it stops the reader looking further.
@@ -139,13 +139,31 @@ including people who never will.
   for: either the console shows its current value, or the omission has a
   recorded reason (it differs per asset or chain, it is a fixed constant,
   it belongs to the rewards and recycling surfaces, it is off on this
-  deployment, the contracts expose no way to read it, or it is not shown
-  yet). A setting added to the reference without either is a defect the
+  deployment, or the contracts expose no way to read it). A setting added to the reference without either is a defect the
   build catches, so the console cannot silently fall behind the reference.
   Within that, the fees, the risk and price-oracle limits, the periodic
   interest and reference-currency settings, the automation switches and
   the keeper pause, the automatic pause's length and cooldown, the
-  cross-chain reporting window and the treasury address are shown.
+  cross-chain reporting window and the treasury address are shown, and so
+  are the settings that are read only as one part of a larger answer
+  (#2680): the partial-liquidation sizing, the liquidator discount per
+  liquidity tier, the price-feed registry and the keys it is asked under,
+  the wrapped-ether token, the pricing anchor and its feeds, the
+  notification fee, the swap venues with a protocol-wide switch, and the
+  loan-default grace schedule.
+- A value read as one part of a larger answer is shown only when the code
+  that gave the answer is shown to be the code whose part names the app
+  holds, at the same block as the value; otherwise every part of that
+  answer is reported as not reported, never some of them, and never a
+  value under a name it may not carry. A part of such an answer that is
+  not a setting (a running total of fees billed) is never shown as one.
+- A liquidator discount is labelled by the liquidity tier of the
+  collateral's market it applies to, never in a way that reads as a VPFI
+  holding tier. A pricing setting that no price path reads today says so.
+- The loan-default grace schedule is shown row by row, each row saying the
+  loan lengths it covers. When governance never set one, the console says
+  so and shows the documented default schedule, marked as the default,
+  rather than an empty schedule or no grace.
 - Beside the automatic pause's cooldown, the console states when the next
   automatic pause that stops the protocol may start (#2843): the time the
   protocol recorded, and whether that time has passed or how long remains,
@@ -162,7 +180,9 @@ including people who never will.
   documented default, the console names that default and marks it as the
   default, never as a configured value: an unset day-close grace window
   reads as the documented four hours, and a reference currency governance
-  never changed is named and marked as the default.
+  never changed is named and marked as the default. Where an unset value
+  means a feature is off rather than a default, it says that: an unset
+  dust floor turns dust handling off, and an unset swap venue is off.
 - Where a value's meaning depends on another setting, or a switch does less
   than its name suggests, the row says so: the Pyth cross-check runs only
   while both its oracle and its feed id are set, and the keeper pause stops

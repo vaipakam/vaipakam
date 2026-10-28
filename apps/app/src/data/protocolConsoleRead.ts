@@ -18,6 +18,7 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import {
   LABELLED_GETTER_HOST,
+  LABELLED_KNOB_KEYS,
   PROTOCOL_KNOB_GETTERS,
   abiDescribesGetterAt,
   readProtocolConfigBundle,
@@ -39,7 +40,10 @@ import { RENDERED_KEYS } from './protocolConsoleRows';
 export const CONSOLE_SNAPSHOT_MAX_AGE_SEC = 7 * 3600;
 
 /** The settings read beside the bundle; only these can be named unreported. */
-const KNOB_KEYS: ReadonlySet<string> = new Set(PROTOCOL_KNOB_GETTERS.map((k) => k.key));
+const KNOB_KEYS: ReadonlySet<string> = new Set([
+  ...PROTOCOL_KNOB_GETTERS.map((k) => k.key),
+  ...LABELLED_KNOB_KEYS,
+]);
 
 /** Why the snapshot did not stand in for the chain. */
 export type SnapshotGap =
@@ -116,17 +120,18 @@ export async function readProtocolConsoleLive(
   diamond: `0x${string}`,
 ): Promise<ChainConsoleRead> {
   const blockNumber = await client.getBlockNumber();
+  const facets = getDeployment(chainId)?.facets;
   const [labelsHold, bundle, knobs] = await Promise.all([
     abiDescribesGetterAt({
       client,
       diamond,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'getProtocolConfigBundle',
-      expectedHost: getDeployment(chainId)?.facets?.[LABELLED_GETTER_HOST.getProtocolConfigBundle],
+      expectedHost: facets?.[LABELLED_GETTER_HOST.getProtocolConfigBundle],
       blockNumber,
     }),
     readProtocolConfigBundle({ client, diamond, abi: DIAMOND_ABI_VIEM, blockNumber }),
-    readProtocolKnobGetters({ client, diamond, abi: DIAMOND_ABI_VIEM, blockNumber }),
+    readProtocolKnobGetters({ client, diamond, abi: DIAMOND_ABI_VIEM, blockNumber, facets }),
   ]);
   if (!labelsHold) {
     throw new Error('this build cannot show its names describe the deployed configuration code');

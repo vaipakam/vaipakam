@@ -401,6 +401,32 @@
       "locales": [
         "fr"
       ]
+    },
+    "copy.protocolConsole.vpfiValue": {
+      "reason": "An amount followed by the token's ticker. The ticker is a symbol, not a word, and the amount placeholder arrives already formatted for the locale, so there is nothing left to translate.",
+      "source": "{{amount}} VPFI",
+      "locales": [
+        "ar",
+        "de",
+        "es",
+        "fr",
+        "hi",
+        "ja",
+        "ko",
+        "ta",
+        "zh"
+      ],
+      "invariant": true
+    },
+    "copy.protocolConsole.hfBpsValue": {
+      "reason": "German DeFi usage keeps \"Health Factor\" as the term of art, and this bundle already uses it in seven other strings (the loan page, the alerts and the console's own partial-liquidation hints), so this value matches its siblings rather than skipping translation.",
+      "source": "health factor {{hf}} ({{bps}} bps)",
+      "locales": [
+        "de"
+      ],
+      "values": {
+        "de": "Health Factor {{hf}} ({{bps}} bps)"
+      }
     }
   }
 }
