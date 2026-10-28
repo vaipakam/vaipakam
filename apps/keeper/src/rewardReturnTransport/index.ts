@@ -21,6 +21,14 @@
 //   3. A retired mirror's pending surplus (#917) goes home in chunks
 //      (`sendRetiredSurplusReturn`).
 //
+// Every return names the Base Diamond that credits it (the issuing Base, the
+// remitter of a quarantined receipt, the Diamond a retired mirror detached
+// from), and Base refuses one naming another Diamond. Before any return is
+// sent, its destination is checked (`returnRefusal`): the keeper must serve
+// Base, Base's Diamond must be the one named, and Base's return receiver must
+// deliver to it. A return that would be refused is not sent; it is alerted, and
+// what it would have carried stays on the mirror for an operator to recover.
+//
 // What it never does: issue or cancel an authorization (`authorizeRepatriation`,
 // `requestRepatriationCancel` are the administrator's), or choose an amount the
 // chain did not record. Every chunk is bounded by the lanes at both ends
@@ -47,6 +55,7 @@ import {
   RewardReporterFacetABI,
   VaipakamDiamondABI,
   VaipakamRewardMessengerABI,
+  VpfiReturnReceiverABI,
   VpfiReturnSenderABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env, KeeperD1 } from '../env';
@@ -78,6 +87,7 @@ export const ABI = [
 ] as Abi;
 const MESSENGER_ABI = VaipakamRewardMessengerABI as Abi;
 const RETURN_SENDER_ABI = VpfiReturnSenderABI as Abi;
+const RETURN_RECEIVER_ABI = VpfiReturnReceiverABI as Abi;
 
 export const PASS_CADENCE_SEC = 60 * 60;
 /** Sends per chain per run. */
@@ -276,6 +286,9 @@ interface ChainState {
   /** Base's authorization nonce: ids 1..authNonce were ever issued. */
   authNonce: bigint;
   retirement: { retired: boolean; returnChainId: number; returnDeployment: Address };
+  /** Where this chain's return receiver delivers (`returnRefusal`), read once
+   *  a run; null when it could not be read. */
+  receiverDiamond?: Promise<Address | null>;
 }
 
 /** One run over every configured chain. Exported for tests. */
@@ -453,6 +466,48 @@ async function stall(s: ChainState, key: string, text: string): Promise<void> {
 async function notice(s: ChainState, what: string): Promise<void> {
   const tx = s.sender.receipt?.transactionHash ?? 'unknown';
   await s.deps.alert(`return-transport-sent:${s.deps.chainId}:${tx}`, `ℹ️ Return transport on chain ${s.deps.chainId}: ${what} (tx ${tx}).`, NOTICE_INTERVAL_SEC);
+}
+
+/**
+ * Why a return from a mirror toward `dstChainId`, naming the Base Diamond
+ * `named`, would not be credited there, or null when it would (Codex #3002).
+ * Base credits a return only when the Diamond its return receiver calls is the
+ * one the return names (`StrandedReturnWrongEra`, and the same binding on the
+ * repatriation and retired-surplus ingresses), and a refused delivery spends
+ * the CCIP fee and leaves the VPFI in a failed message rather than on the
+ * mirror, where an operator can recover it. So the destination is read, never
+ * assumed: the keeper must serve Base, the Diamond it serves there must be the
+ * one named, and that Diamond's return receiver must deliver to it. `stall` is
+ * a route that cannot settle, for an operator; `unread` is a check this run
+ * could not make.
+ */
+async function returnRefusal(dst: ChainState | undefined, dstChainId: number, named: Address): Promise<{ stall: string } | { unread: string } | null> {
+  if (dst === undefined) return { unread: `chain ${dstChainId}, which this keeper has no RPC or Diamond for (or whose gate refused it), so where the return would land cannot be checked` };
+  if (dst.role !== ROLE_CANONICAL) return { stall: `chain ${dstChainId} has reward role ${dst.role}, not Canonical, so no Diamond there would credit the return` };
+  const lower = named.toLowerCase();
+  if (dst.deps.diamond.toLowerCase() !== lower) {
+    return { stall: `the return names the Base Diamond ${named}, and the Diamond on chain ${dstChainId} is ${dst.deps.diamond}, which refuses it` };
+  }
+  if (dst.receiver === zeroAddress) return { stall: `the Base Diamond on chain ${dstChainId} has no return receiver configured, so nothing there would deliver the return` };
+  dst.receiverDiamond ??= dst.r.one<Address>('diamond', [], dst.receiver, RETURN_RECEIVER_ABI).catch((err) => {
+    if (err instanceof PastRunDeadline) throw err;
+    return null;
+  });
+  const to = await dst.receiverDiamond;
+  if (to === null) return { unread: `the return receiver on chain ${dstChainId} (where it delivers)` };
+  if (to.toLowerCase() !== lower) {
+    return { stall: `the return receiver on chain ${dstChainId} delivers to ${to}, not the Base Diamond ${named} the return names, which refuses it there` };
+  }
+  return null;
+}
+
+/** `returnRefusal`, said on `from`: true when the return may be sent. */
+async function returnMayGo(from: ChainState, dst: ChainState | undefined, dstChainId: number, named: Address, key: string, label: string): Promise<boolean> {
+  const refusal = await returnRefusal(dst, dstChainId, named);
+  if (refusal === null) return true;
+  if ('unread' in refusal) from.sender.noteUnread(key, refusal.unread);
+  else await stall(from, key, `${label}: ${refusal.stall}, so the keeper does not send it; what it would carry stays on chain ${from.deps.chainId} for an operator to recover`);
+  return false;
 }
 
 // ─── 1. Repatriation ───────────────────────────────────────────────────────
@@ -634,6 +689,7 @@ async function oneAuthorization(
         mirror.sender.noteUnread(`auth:${authId}`, 'the keeper key (no refund address)');
         return;
       }
+      if (!(await returnMayGo(mirror, base, base.deps.chainId, base.deps.diamond, `auth:${key}`, label))) return;
       const blocked = executeBlocked(amount, await mirror.r.bucket('getRemitLaneBucket', mirror.baseChainId));
       if (blocked !== null) {
         if (blocked.stalled) await stall(mirror, `auth:${key}`, `${label}: ${blocked.why}`);
@@ -656,6 +712,7 @@ async function oneAuthorization(
         mirror.sender.noteUnread(`auth:${authId}`, 'the keeper key (no refund address)');
         return;
       }
+      if (!(await returnMayGo(mirror, base, base.deps.chainId, base.deps.diamond, `auth:${key}`, label))) return;
       const fee = await mirror.r.tryOne<bigint>(mirror.sender, `auth:${authId}`, 'the return sender\'s fee for the ACK', 'quoteRepatriationCancelAck', [BigInt(mirror.baseChainId), base.deps.diamond, authId], mirror.returnSender, RETURN_SENDER_ABI);
       if (fee === undefined) return;
       const res = await sendRecorded(mirror, deps, RECORD_ACK(base.deps.diamond, authId), () =>
@@ -749,6 +806,8 @@ async function strandedReturns(mirror: ChainState, states: ReadonlyMap<number, C
       continue;
     }
     // eslint-disable-next-line no-await-in-loop
+    if (!(await returnMayGo(mirror, states.get(mirror.baseChainId), mirror.baseChainId, remitter, `stranded:${remitter}:${remitId}`, subject))) continue;
+    // eslint-disable-next-line no-await-in-loop
     const plan = await chunkFor(mirror, states.get(mirror.baseChainId), mirror.baseChainId, rec.amount, deps.minPart);
     if ('wait' in plan) {
       mirror.report.waiting.push(`${subject}: ${plan.wait}`);
@@ -788,6 +847,7 @@ async function retiredSurplus(s: ChainState, states: ReadonlyMap<number, ChainSt
   if (ledger === undefined) return;
   const pending = ledger[5];
   if (pending === 0n) return;
+  if (!(await returnMayGo(s, states.get(returnChainId), returnChainId, returnDeployment, 'retired-surplus', `retired surplus ${pending}`))) return;
   const plan = await chunkFor(s, states.get(returnChainId), returnChainId, pending, deps.minPart);
   if ('wait' in plan) {
     s.report.waiting.push(`retired surplus ${pending}: ${plan.wait}`);

@@ -123,6 +123,7 @@
     "CcipMessenger",
     "VaipakamRewardMessenger",
     "VaipakamTimelock",
-    "VpfiReturnSender"
+    "VpfiReturnSender",
+    "VpfiReturnReceiver"
   ]
 }

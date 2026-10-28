@@ -51,7 +51,9 @@ const MESSENGER: Address = '0x00000000000000000000000000000000000000c2';
 const RETURN_SENDER: Address = '0x00000000000000000000000000000000000000c3';
 const RECEIVER: Address = '0x00000000000000000000000000000000000000c4';
 const KEEPER: Address = '0x00000000000000000000000000000000000000ee';
-const REMITTER: Address = '0x00000000000000000000000000000000000000ab';
+/** A quarantined receipt names the Base Diamond that remitted it. */
+const REMITTER: Address = BASE;
+const OTHER_BASE: Address = '0x00000000000000000000000000000000000000ab';
 const ZERO: Address = '0x0000000000000000000000000000000000000000';
 const ROLE_CANONICAL = 0;
 const ROLE_MIRROR = 1;
@@ -175,6 +177,9 @@ class FakeChain {
   chainNamed: number;
   sender: Address = RETURN_SENDER;
   receiver: Address = RECEIVER;
+  /** Where its return receiver delivers: its own Diamond unless set;
+   *  'unreadable' throws. */
+  deliversTo: Address | 'unreadable' | null = null;
   retirement: readonly [boolean, number, Address, bigint] = [false, 0, ZERO, 0n];
   pendingSurplus = 0n;
   paused = false;
@@ -211,6 +216,11 @@ class FakeChain {
     if (address === MESSENGER) {
       if (functionName !== 'quoteSendRepatriationInstruction') throw new Error(`unexpected messenger read ${functionName}`);
       return this.fee;
+    }
+    if (address === RECEIVER) {
+      if (functionName !== 'diamond') throw new Error(`unexpected receiver read ${functionName}`);
+      if (this.deliversTo === 'unreadable') throw new Error('receiver unreadable');
+      return this.deliversTo ?? this.diamond;
     }
     if (address === RETURN_SENDER) {
       if (!['quoteRepatriationReturn', 'quoteRepatriationCancelAck', 'quoteStrandedReturn', 'quoteRetiredSurplusReturn'].includes(functionName)) throw new Error(`unexpected return-sender read ${functionName}`);
@@ -690,6 +700,59 @@ describe('a run', () => {
     expect(moved.sent).toEqual([]);
     expect(r[0].stalled[0]).toMatch(new RegExp(`authorization 2 to chain ${MIRROR_ID}: chain ${MIRROR_ID} now returns to chain 11155111, not to the issuing Base on chain ${BASE_ID}`));
     expect(alerts.map((a) => a.key)).toContain(`return-transport-stalled:${BASE_ID}:auth:2`);
+  });
+
+  describe('checks where a return lands before sending it (Codex #3002)', () => {
+    const quarantine = (remitter: Address) => {
+      mirror.stranded.set(`${remitter}:9`, { amount: 300n * E18, dayId: 4n });
+      ledger.add(MIRROR_ID, 'CompensationQuarantined', { dayId: '4', remitter, remitId: '9', amount: '1', reason: 0 }, NOW - 600);
+    };
+
+    it('holds a quarantine naming another Base Diamond, and alerts', async () => {
+      quarantine(OTHER_BASE);
+      const r = await run();
+      expect(mirror.sent).toEqual([]);
+      expect(r[1].stalled[0]).toMatch(new RegExp(`stranded ${OTHER_BASE}:9: the return names the Base Diamond ${OTHER_BASE}, and the Diamond on chain ${BASE_ID} is ${BASE}, which refuses it, so the keeper does not send it; what it would carry stays on chain ${MIRROR_ID}`));
+      expect(alerts.map((a) => a.key)).toEqual([`return-transport-stalled:${MIRROR_ID}:stranded:${OTHER_BASE}:9`]);
+    });
+
+    it('holds a return whose Base receiver delivers to another Diamond', async () => {
+      quarantine(REMITTER);
+      base.deliversTo = OTHER_BASE;
+      const r = await run();
+      expect(mirror.sent).toEqual([]);
+      expect(r[1].stalled[0]).toMatch(new RegExp(`the return receiver on chain ${BASE_ID} delivers to ${OTHER_BASE}, not the Base Diamond ${BASE}`));
+    });
+
+    it('names an unread receiver, or a Base it does not serve, and sends nothing', async () => {
+      quarantine(REMITTER);
+      base.deliversTo = 'unreadable';
+      let r = await run();
+      expect(mirror.sent).toEqual([]);
+      expect(r[1].unread.get(`stranded:${REMITTER}:9`)).toMatch(/the return receiver on chain 84532/);
+      r = await run({ chains: [mirror] });
+      expect(mirror.sent).toEqual([]);
+      expect(r[0].unread.get(`stranded:${REMITTER}:9`)).toMatch(/no RPC or Diamond for .* where the return would land cannot be checked/);
+      expect(alerts).toEqual([]);
+    });
+
+    it('holds an execute whose Base receiver delivers elsewhere', async () => {
+      authorize(2n, 400n * E18);
+      ledger.add(BASE_ID, 'RepatriationInstructionDispatched', { authId: '2' }, NOW - 600);
+      mirror.instr.set(`${BASE}:2`, { state: INSTR_PENDING, amount: 400n * E18 });
+      base.deliversTo = OTHER_BASE;
+      const r = await run();
+      expect(mirror.sent).toEqual([]);
+      expect(r[1].stalled[0]).toMatch(/authorization 2 to chain 421614: the return receiver on chain 84532 delivers to/);
+    });
+
+    it('holds a retired surplus whose detach origin is not the Diamond Base runs now', async () => {
+      mirror.retirement = [true, BASE_ID, OTHER_BASE, 0n];
+      mirror.pendingSurplus = 800n * E18;
+      const r = await run();
+      expect(mirror.sent).toEqual([]);
+      expect(r[1].stalled[0]).toMatch(new RegExp(`retired surplus ${800n * E18}: the return names the Base Diamond ${OTHER_BASE}`));
+    });
   });
 
   it('waits rather than spend a fee on a dust part', async () => {

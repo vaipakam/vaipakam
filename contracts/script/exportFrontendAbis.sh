@@ -387,6 +387,12 @@ FACETS=(
   # `quoteRepatriationCancelAck`, `quoteStrandedReturn` and
   # `quoteRetiredSurplusReturn`.
   "VpfiReturnSender"
+  # #2984 — the Base-side vpfi-return channel receiver (standalone; NOT a
+  # diamond facet). Before a return leaves a mirror, the keeper's
+  # return-transport pass reads `diamond()` from the receiver the Base Diamond
+  # names, so a return naming another Base Diamond is never sent into a
+  # delivery that Base would refuse.
+  "VpfiReturnReceiver"
   # #2399 — the Diamond PROXY itself. Not a facet: its fallback raises
   # `FunctionDoesNotExist()` for an unrouted selector, the revert a stale ABI
   # produces. Listed under `proxy` in diamond-facets.json, and the combined

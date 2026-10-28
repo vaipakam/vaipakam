@@ -330,6 +330,18 @@ evidence that the migration has completed.
   elsewhere, the keeper sends nothing for that authorization and alerts
   operators. Sending would move the VPFI to the other chain and leave the
   issuing Base's authorization unsettled.
+- **The right Base Diamond.** Every return names the Base Diamond that is
+  meant to credit it: the Base that issued an authorization, the Base that
+  remitted a quarantined compensation, or the Base a retired mirror detached
+  from. Base credits only a return naming itself. Before sending any return,
+  the keeper checks that it serves that Base chain, that the Diamond it
+  serves there is the one the return names, and that the Base Diamond's
+  return receiver delivers to it. When any of these fails, as after a Base
+  Diamond rotation or a mirror that reattached to another Base, the keeper
+  sends nothing and alerts operators: the VPFI stays on the mirror, where an
+  operator can recover it, instead of travelling to a Base that would refuse
+  it. When the keeper cannot make the check (it does not serve Base, or a read
+  failed), it sends nothing and says so.
 - **Chunked returns.** Compensation a mirror quarantined, and a retired
   mirror's pending surplus, go home in parts. Each part is bounded by the
   sending chain's outbound lane and by the receiving chain's inbound
