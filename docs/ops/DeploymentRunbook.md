@@ -250,20 +250,12 @@ mainnet without preflight discipline:
   RPC secrets before the first deploy targeting that chain** (see
   next section).
 
-### Prerequisites: one-time watcher RPC-secret setup
+### Prerequisites: one-time Worker RPC-secret setup
 
-> **STALE — the pre-split `hf-watcher` Worker no longer exists.** It was removed by the
-> Stage 3 split; its role is now `apps/{keeper,indexer,agent}`, and their
-> per-chain `RPC_*` values live in the **account-level Secrets Store**, not
-> in per-Worker `wrangler secret put`. The database is `vaipakam-warm`,
-> not `vaipakam-alerts-db`.
->
-> A normal contract deployment following the commands below stops on
-> directories that do not exist, or verifies the wrong database. Use the
-> Secrets Store form (see `SecretsStoreMigration.md` §9) against the live
-> Workers instead. Bringing this whole section up to date is tracked
-> separately — it predates #1440 and is not that removal's doing, but it is
-> live imperative text and should not be followed as written (#1450 r4).
+The pre-split `hf-watcher` Worker is gone (Stage 3 split). Its role is
+now `apps/{keeper,indexer,agent}`, their per-chain `RPC_*` values live in
+the account-level Secrets Store, and the shared database is
+`vaipakam-warm`. This section describes that topology (#1455).
 
 
 Per `CLAUDE.md`, RPC URLs carry operator-curated paid-tier API keys
@@ -1050,7 +1042,10 @@ four code edits**:
 2. **`contracts/script/lib/Deployments.sol#envPrefix()`** — add
    `if (cid == X) return "<PREFIX>_";`. This is the binding that turns
    `block.chainid == 97` into `vm.envAddress("BNB_TESTNET_DIAMOND_ADDRESS")`
-   when the artifact file is missing.
+   when the artifact file is missing. It is also the prefix
+   `ConfigureOracle`, `ConfigureVPFIBuy` and `DeployUniV3Adapter` read the
+   chain's settings under (#1721), so it must equal the wrappers'
+   `CCIP_SLUG` plus `_`.
 3. **`contracts/script/lib/Deployments.sol#ccipSelectorForChainId()`** —
    add the chain's CCIP chain-selector row (from Chainlink's published
    Supported Networks directory), the CCIP analogue of what used to be
@@ -1330,8 +1325,8 @@ therefore a hard gate only for keeper-gated intents + all auto-roll; for
 plain permissionless lending it's optional. (Pre-live today, so nothing
 to populate yet.)
 
-Both the frontend and the hf-watcher Worker consume these via a
-single consolidated `deployments.json` keyed by `chainId`:
+The apps and all three Workers (`apps/{keeper,indexer,agent}`) consume
+these via a single consolidated `deployments.json` keyed by `chainId`:
 
 - `packages/contracts/src/deployments.json` — read by
   [`packages/contracts/src/deployments.ts`](../../packages/contracts/src/deployments.ts)

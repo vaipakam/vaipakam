@@ -198,73 +198,31 @@ contract DeployUniV3Adapter is Script {
     }
 
     /// @dev Resolve the SwapRouter: chain-prefixed `<CHAIN>_UNISWAP_V3_ROUTER`
-    ///      first, then a bare `UNISWAP_V3_ROUTER` fallback. Only the chains
-    ///      that currently use an on-chain DEX route are mapped; extend as
-    ///      needed (a bare env always works as the escape hatch).
+    ///      first, then a bare `UNISWAP_V3_ROUTER` fallback.
     function _resolveRouter() internal view returns (address) {
         return _resolveChainAddr("UNISWAP_V3_ROUTER");
     }
 
     /// @dev The oracle's configured v3 factory for this chain — used to confirm
-    ///      the router belongs to the same DEX. This is ConfigureOracle's var, so
-    ///      it MUST resolve to the same key that script reads. #862 round-2: the
-    ///      two prefix maps diverge on chain 1 — this script's CCIP_SLUG map uses
-    ///      `ETHEREUM_`, but `ConfigureOracle._prefix()` uses `MAINNET_`. Try the
-    ///      CCIP_SLUG prefix (+ bare) first, then ConfigureOracle's prefix, so an
-    ///      operator who set the oracle-documented `MAINNET_UNISWAP_V3_FACTORY`
-    ///      isn't rejected by the now-hard factory requirement above.
+    ///      the router belongs to the same DEX. This is ConfigureOracle's var,
+    ///      and both scripts read it under `Deployments.envPrefix()` (#1721),
+    ///      so they resolve the same key on every chain. (Before #1721 the two
+    ///      prefix maps disagreed on chain 1, `ETHEREUM_` here and `MAINNET_`
+    ///      there, and this script carried a fallback for it.)
     function _resolveFactory() internal view returns (address) {
-        // 1) This script's CCIP_SLUG-prefixed key (ETHEREUM_ on chain 1).
-        string memory prefix = _ccipSlugPrefix();
-        if (bytes(prefix).length != 0) {
-            address p = vm.envOr(string.concat(prefix, "UNISWAP_V3_FACTORY"), address(0));
-            if (p != address(0)) return p;
-        }
-        // 2) ConfigureOracle's prefix where it diverges (chain 1: MAINNET_). The
-        //    factory is ConfigureOracle's var, so prefer its documented key OVER a
-        //    stale/global bare value that a shared multi-chain env might carry —
-        //    otherwise the hard factory check could reject a valid mainnet router.
-        if (block.chainid == 1) {
-            address m = vm.envOr("MAINNET_UNISWAP_V3_FACTORY", address(0));
-            if (m != address(0)) return m;
-        }
-        // 3) Bare escape hatch, last.
-        return vm.envOr("UNISWAP_V3_FACTORY", address(0));
+        return _resolveChainAddr("UNISWAP_V3_FACTORY");
     }
 
     /// @dev Chain-prefixed `<CHAIN>_<key>` first, then bare `<key>` fallback.
-    ///      The prefix MUST match the wrapper scripts' `CCIP_SLUG` (they gate the
-    ///      swap-adapters phase on `${CCIP_SLUG}_UNISWAP_V3_ROUTER`, so the
-    ///      variable that triggers this deploy must be the one it reads). Covers
-    ///      every chain the deploy wrappers support.
+    ///      The prefix is `Deployments.envPrefix()`, which matches the wrapper
+    ///      scripts' `CCIP_SLUG` (they gate the swap-adapters phase on
+    ///      `${CCIP_SLUG}_UNISWAP_V3_ROUTER`, so the variable that triggers
+    ///      this deploy is the one it reads).
     function _resolveChainAddr(string memory key) internal view returns (address) {
-        string memory prefix = _ccipSlugPrefix();
-        address prefixed = bytes(prefix).length == 0
-            ? address(0)
-            : vm.envOr(string.concat(prefix, key), address(0));
+        address prefixed =
+            vm.envOr(string.concat(Deployments.envPrefix(), key), address(0));
         if (prefixed != address(0)) return prefixed;
         return vm.envOr(key, address(0));
-    }
-
-    /// @dev chainId → `<CCIP_SLUG>_` prefix, matching deploy-{mainnet,testnet,
-    ///      chain}.sh. Empty for an unmapped chain (bare-key fallback only).
-    function _ccipSlugPrefix() internal view returns (string memory) {
-        uint256 c = block.chainid;
-        // mainnets
-        if (c == 1) return "ETHEREUM_";
-        if (c == 8453) return "BASE_";
-        if (c == 42161) return "ARBITRUM_";
-        if (c == 10) return "OPTIMISM_";
-        if (c == 56) return "BNB_";
-        if (c == 137) return "POLYGON_";
-        // testnets
-        if (c == 84532) return "BASE_SEPOLIA_";
-        if (c == 11155111) return "SEPOLIA_";
-        if (c == 421614) return "ARB_SEPOLIA_";
-        if (c == 11155420) return "OP_SEPOLIA_";
-        if (c == 97) return "BNB_TESTNET_";
-        if (c == 80002) return "POLYGON_AMOY_";
-        return "";
     }
 
     /// @dev True if `sel` (a 4-byte function selector) appears anywhere in the
