@@ -11,6 +11,7 @@ import {
   MULTICALL3_ADDRESS,
   encodeBatchCalls,
   batchCalls,
+  aggregateReads,
   type BatchCall,
 } from './multicall';
 
@@ -174,5 +175,76 @@ describe('batchCalls', () => {
     expect(call3.target).toBe(TARGET);
     expect(call3.allowFailure).toBe(true);
     expect(call3.callData).toBe(calls[0].callData);
+  });
+});
+
+describe('aggregateReads', () => {
+  const MC3: Address = '0x00000000000000000000000000000000000000c3';
+  const read = (account: Address) => ({
+    address: TARGET,
+    abi: BALANCE_ABI,
+    functionName: 'balanceOf',
+    args: [account],
+  });
+
+  it('reads every call in ONE aggregate3, in order, against the given Multicall3', async () => {
+    const { client, readContract } = stubClient([
+      [
+        { success: true, returnData: uint256Result(5n) },
+        { success: true, returnData: uint256Result(6n) },
+      ],
+    ]);
+    const out = await aggregateReads(client, MC3, [read(ADDR_A), read(ADDR_B)]);
+    expect(out).toEqual([
+      { status: 'success', result: 5n },
+      { status: 'success', result: 6n },
+    ]);
+    expect(readContract).toHaveBeenCalledTimes(1);
+    const callArgs = readContract.mock.calls[0][0] as {
+      address: Address;
+      functionName: string;
+      args: [{ allowFailure: boolean; callData: `0x${string}` }[]];
+    };
+    expect(callArgs.address).toBe(MC3);
+    expect(callArgs.functionName).toBe('aggregate3');
+    expect(callArgs.args[0].map((c) => c.allowFailure)).toEqual([true, true]);
+    expect(callArgs.args[0][1].callData).toBe(
+      encodeFunctionData({ abi: BALANCE_ABI, functionName: 'balanceOf', args: [ADDR_B] }),
+    );
+  });
+
+  it('reports a reverted, empty or undecodable answer as that call failing', async () => {
+    const { client } = stubClient([
+      [
+        { success: false, returnData: '0x08c379a0' },
+        { success: true, returnData: '0x' },
+        { success: true, returnData: '0xdeadbeef' },
+      ],
+    ]);
+    const out = await aggregateReads(client, MC3, [read(ADDR_A), read(ADDR_B), read(ADDR_A)]);
+    expect(out.map((s) => s.status)).toEqual(['failure', 'failure', 'failure']);
+  });
+
+  it('REJECTS when the request itself fails, rather than failing every slot', async () => {
+    const outage = new Error('429 Too Many Requests');
+    const client = {
+      readContract: vi.fn(async () => {
+        throw outage;
+      }),
+    } as unknown as PublicClient;
+    await expect(aggregateReads(client, MC3, [read(ADDR_A)])).rejects.toBe(outage);
+  });
+
+  it('rejects an answer whose length does not match the calls', async () => {
+    const { client } = stubClient([[{ success: true, returnData: uint256Result(1n) }]]);
+    await expect(aggregateReads(client, MC3, [read(ADDR_A), read(ADDR_B)])).rejects.toThrow(
+      /1 result\(s\) for 2 call\(s\)/,
+    );
+  });
+
+  it('sends nothing for no reads', async () => {
+    const { client, readContract } = stubClient([]);
+    expect(await aggregateReads(client, MC3, [])).toEqual([]);
+    expect(readContract).not.toHaveBeenCalled();
   });
 });

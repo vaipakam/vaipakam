@@ -75,7 +75,7 @@ export interface ForcedCloseReadEntry {
   };
 }
 
-/** What `multicall({ allowFailure: true })` hands back, per call. */
+/** What `readAggregate` hands back, per call. */
 export interface MulticallSlot {
   status: 'success' | 'failure';
   result?: unknown;

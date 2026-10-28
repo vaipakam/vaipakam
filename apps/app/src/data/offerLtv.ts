@@ -37,6 +37,7 @@
  *                   no collateral, or a sale vehicle (its collateral is
  *                   the running loan's, not the row's).
  */
+import type { AggregateRead } from '../contracts/aggregate';
 import { AssetType } from '../lib/types';
 import type { IndexedOffer } from './indexer';
 
@@ -159,14 +160,14 @@ export function offerLtv(
 export function pricingPlan(
   diamond: `0x${string}`,
   assets: readonly string[],
-  abis: { diamond: unknown; erc20: unknown },
-): { asset: string; contracts: unknown[] }[] {
+  abis: { diamond: readonly unknown[]; erc20: readonly unknown[] },
+): { asset: string; contracts: AggregateRead[] }[] {
   return assets.map((asset) => ({
     asset,
     contracts: [
       { address: diamond, abi: abis.diamond, functionName: 'checkLiquidity', args: [asset] },
       { address: diamond, abi: abis.diamond, functionName: 'getAssetPrice', args: [asset] },
-      { address: asset, abi: abis.erc20, functionName: 'decimals' },
+      { address: asset as `0x${string}`, abi: abis.erc20, functionName: 'decimals' },
     ],
   }));
 }

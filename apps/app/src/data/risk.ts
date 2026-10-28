@@ -17,8 +17,9 @@ import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { useActiveChain } from '../chain/useActiveChain';
 import { tipAware } from '../chain/railHealth';
+import { readAggregate } from '../contracts/aggregate';
 import { copy } from '../content/copy';
-import { formatTokenAmount } from '../lib/format';
+import { formatTokenAmountUp } from '../lib/format';
 import {
   loanRiskFromSlots,
   loanRiskReadPlan,
@@ -67,14 +68,17 @@ export function useLoanRisk(
       // ONLY an on-chain revert means "illiquid legs — HF doesn't
       // apply", and inside the aggregate that is exactly a slot whose
       // status is `failure`. Anything else (RPC outage, timeout, rate
-      // limit) fails the whole call and surfaces as a query ERROR, never
-      // as priced:false — otherwise a flaky RPC shows a liquid, possibly
-      // liquidatable loan as "no automatic liquidation applies".
-      const slots = await publicClient!.multicall({
-        allowFailure: true,
-        contracts: plan.map((e) => e.contract) as never,
-      });
-      return loanRiskFromSlots(plan, slots as never);
+      // limit) rejects `readAggregate` and surfaces as a query ERROR,
+      // never as priced:false — otherwise a flaky RPC shows a liquid,
+      // possibly liquidatable loan as "no automatic liquidation applies",
+      // and stops polling it. (viem's own `multicall` with `allowFailure`
+      // cannot tell the two apart: it fails every slot of a request that
+      // did not complete.)
+      const slots = await readAggregate(
+        publicClient!,
+        plan.map((e) => e.contract),
+      );
+      return loanRiskFromSlots(plan, slots);
     },
   });
 }
@@ -150,7 +154,10 @@ export function liquidationPriceText(
     case 'unknown':
       return copy.risk.liquidationPriceUnknown;
     case 'priced': {
-      const price = formatTokenAmount(lp.perUnitWad, 18);
+      // Rounded UP at the shown precision too: `perUnitWad` is already a
+      // ceiling, and a to-nearest display would undo it (33.3333…34 shown
+      // as 33.3333, below the line).
+      const price = formatTokenAmountUp(lp.perUnitWad, 18);
       const unit = lp.numeraire?.symbol ?? copy.risk.liquidationPriceUnitUnknown;
       return risk.healthFactor < WAD
         ? copy.risk.liquidationPricePassed(price, unit, collateralSymbol)

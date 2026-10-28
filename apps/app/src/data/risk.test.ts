@@ -30,6 +30,21 @@ describe('liquidationPriceText', () => {
     );
   });
 
+  it('rounds the shown price UP, never below the line (100 / 3)', () => {
+    // 33.333…334 to nearest would read 33.3333, under the real line.
+    const risk = priced({
+      healthFactor: 3n * WAD,
+      liquidationPrice: {
+        kind: 'priced',
+        perUnitWad: 33_333_333_333_333_333_334n,
+        numeraire: { symbol: 'USD', isDefault: true },
+      },
+    });
+    expect(liquidationPriceText(risk, 'WBTC')).toBe(
+      copy.risk.liquidationPriceAt('33.3334', 'USD', 'WBTC'),
+    );
+  });
+
   it('names the reference currency generically when its symbol is unread', () => {
     const risk = priced({
       liquidationPrice: { kind: 'priced', perUnitWad: 30_000n * WAD, numeraire: null },

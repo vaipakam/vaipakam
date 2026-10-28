@@ -15,7 +15,10 @@
  * That last property is also what lets the aggregate tell an on-chain
  * revert from a provider failure without inspecting error classes: a slot
  * that reports `failure` is the chain refusing that call, while a provider
- * failure fails the whole aggregate and surfaces as a query error.
+ * failure rejects the whole aggregate and surfaces as a query error. Both
+ * halves hold because the aggregate is read through `readAggregate` (one
+ * `eth_call`), not viem's `multicall`, which may split the plan across
+ * requests and fails every slot of a request that did not complete.
  *
  * ## Why the liquidation price is derived, not asked
  *
@@ -47,7 +50,7 @@ export interface LoanRiskReadEntry {
   };
 }
 
-/** What `multicall({ allowFailure: true })` hands back, per call. */
+/** What `readAggregate` hands back, per call. */
 export interface MulticallSlot {
   status: 'success' | 'failure';
   result?: unknown;
