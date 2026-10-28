@@ -268,7 +268,11 @@ issue keyed by stable problem names plus the ops chat, on:
   length, or its header is malformed or names other recipients than the set in
   force at its B2 upload time (§3.3). Judging against the set in force then,
   not today's set, keeps a rotation from turning every older archive into an
-  alert.
+  alert. A manifest larger than any real one (256,000 bytes) counts as
+  unreadable, and an archive larger than the nightly can store is recorded
+  with its B2 length and no digest, without being downloaded: both are
+  mismatches, because what the bucket holds is the input under test and must
+  never stop the watcher reaching a verdict on the rest.
 - **Ledger tampered**: a ledger name has more than one version or a hide
   marker (§5.2). The honest watcher never writes either, so this means the
   ledger key was used by someone else.

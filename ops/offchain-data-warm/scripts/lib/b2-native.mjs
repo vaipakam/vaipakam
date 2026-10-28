@@ -194,14 +194,20 @@ export async function digestById(auth, fileId, { fetchImpl = fetch } = {}) {
   return { sha256: hash.digest('hex'), length };
 }
 
-/** One small file version's bytes, refused past `maxBytes`. */
+/**
+ * One small file version's bytes, or `null` past `maxBytes`. Oversize is a
+ * fact about the file, which a caller judges; a failed download is an error.
+ */
 export async function bytesById(auth, fileId, { fetchImpl = fetch, maxBytes = 1 << 20 } = {}) {
   const res = await download(auth, fileId, fetchImpl);
   const parts = [];
   let length = 0;
   for await (const chunk of res.body) {
     length += chunk.byteLength;
-    if (length > maxBytes) throw new Error(`${fileId} is larger than ${maxBytes} bytes; refusing to read it`);
+    if (length > maxBytes) {
+      await res.body.cancel?.().catch(() => {});
+      return null;
+    }
     parts.push(chunk);
   }
   return Buffer.concat(parts);

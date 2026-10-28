@@ -18,6 +18,8 @@
  * marker, as tampering.
  */
 
+import { createHash } from 'node:crypto';
+
 import { TIERS, classifyListing, isRealPeriod, periodOf } from '../../src/tiers.ts';
 
 export const LEDGER_PREFIX = 'entries/';
@@ -109,12 +111,14 @@ export function minimumRetention(tier, entryUploadedMs) {
  * The manifest verdict on one archive, from its bytes and its manifest.
  *
  * @param {{sha256: string, length: number}} archive computed by the watcher
- * @param {Array<{bytes: Buffer}>} manifests every uploaded version of the
- *        sibling manifest name
+ * @param {Array<{bytes: Buffer | null}>} manifests every uploaded version of
+ *        the sibling manifest name; `null` bytes were too large to read
  */
 export function manifestCheck(archive, manifests) {
   if (manifests.length === 0) return { check: 'no-manifest', format: 'unknown', declared: null };
   if (manifests.length > 1) return { check: 'ambiguous-manifest', format: 'unknown', declared: null };
+  // `bytes: null` is a manifest the caller refused to read for its size.
+  if (manifests[0].bytes == null) return { check: 'bad-manifest', format: 'unknown', declared: null };
   let m;
   try {
     m = JSON.parse(manifests[0].bytes.toString('utf8'));
@@ -132,7 +136,14 @@ export function manifestCheck(archive, manifests) {
   return { check: 'match', format, declared };
 }
 
-const CHECKS = ['match', 'sha-mismatch', 'length-mismatch', 'no-manifest', 'bad-manifest', 'ambiguous-manifest'];
+const CHECKS = ['match', 'sha-mismatch', 'length-mismatch', 'no-manifest', 'bad-manifest', 'ambiguous-manifest', 'oversized'];
+
+/**
+ * The digest field of an archive the watcher would not download because it is
+ * larger than the nightly can write. Its length is B2's; nothing else about
+ * its bytes is claimed.
+ */
+export const NOT_DIGESTED = '-';
 const FORMATS = [LEGACY_FORMAT, 'unknown'];
 
 /**
@@ -173,7 +184,7 @@ export function readEntryInfo(v, named) {
     i.tier !== named.tier ||
     i.period !== named.period ||
     !NONCE.test(i.nonce ?? '') ||
-    !SHA256.test(i.sha256 ?? '') ||
+    !(SHA256.test(i.sha256 ?? '') || (i.check === 'oversized' && i.sha256 === NOT_DIGESTED)) ||
     !Number.isSafeInteger(length) ||
     length < 0 ||
     !Number.isSafeInteger(uploaded) ||
@@ -313,7 +324,7 @@ export function readArchiveBucket(archiveVersions) {
     hideTimes.set(name, g.hides.map((v) => v.uploadTimestamp).sort((a, b) => a - b));
     const a = parseArchiveName(name);
     if (a) {
-      for (const v of g.uploads) archives.push({ ...a, archiveName: name, fileId: v.fileId, uploadTimestamp: v.uploadTimestamp, versions: g.uploads.length });
+      for (const v of g.uploads) archives.push({ ...a, archiveName: name, fileId: v.fileId, uploadTimestamp: v.uploadTimestamp, contentLength: v.contentLength, versions: g.uploads.length });
       if (isCurrent(g)) currentArchives.get(a.tier).push(name);
       continue;
     }
@@ -384,6 +395,7 @@ const CHECK_TEXT = {
   'no-manifest': 'it has no manifest beside it',
   'bad-manifest': 'its manifest cannot be read',
   'ambiguous-manifest': 'its manifest name holds more than one version',
+  oversized: 'it is larger than the nightly can write, so it was not downloaded',
 };
 
 /**
@@ -482,7 +494,7 @@ export function judge({ now, ledger, bucket, lifecycle, baseline, baselineErrors
     const check = manifestRechecks.get(r.fileId) ?? r.check;
     const again = manifestRechecks.has(r.fileId) ? ' since it was recorded, its manifest changed and' : '';
     if (check !== 'match') add(`mismatch:${r.fileId}`, `Mismatch: the ${r.tier} archive for ${r.period} (${r.fileId}):${again} ${CHECK_TEXT[check]}.`);
-    const earlier = all.find(
+    const earlier = r.sha256 !== NOT_DIGESTED && all.find(
       (o) => o.fileId !== r.fileId && o.sha256 === r.sha256 && (o.uploaded < r.uploaded || (o.uploaded === r.uploaded && o.fileId < r.fileId)),
     );
     if (earlier && !isLegacyJanuaryPair(r, earlier)) {
@@ -551,6 +563,28 @@ export function renewalsDue({ now, ledger, bucket }) {
   return [...ledger.recorded.values()].filter(
     (r) => r.tier === 'yearly' && present.has(r.fileId) && !(r.retainUntil >= now + YEARLY_RENEW_BELOW_DAYS * DAY),
   );
+}
+
+/**
+ * The condition keys as one bounded value for the alert job. Every key is
+ * kept while they fit; past the budget the rest are replaced by one key
+ * carrying a digest of the WHOLE sorted set, so the value stays stable while
+ * the condition lasts and changes whenever any key does. The alert job holds
+ * this in its environment, where an unbounded value would stop it starting.
+ */
+export function boundedKeys(keys, budget = 3000) {
+  const sorted = [...new Set(keys)].sort();
+  const all = sorted.join(',');
+  if (all.length <= budget) return all;
+  const kept = [];
+  let used = 0;
+  for (const k of sorted) {
+    if (used + k.length + 1 > budget - 40) break;
+    kept.push(k);
+    used += k.length + 1;
+  }
+  const digest = createHash('sha256').update(all).digest('hex').slice(0, 16);
+  return [...kept, `and-more:${sorted.length - kept.length}:${digest}`].join(',');
 }
 
 /** Problem keys an operator acknowledged in a reviewed commit, comma-separated. */

@@ -16,6 +16,8 @@ import { createHash } from 'node:crypto';
 import { isBackblazeHost, requireScope } from './lib/b2-native.mjs';
 import {
   ENTRY_RETENTION_DAYS,
+  NOT_DIGESTED,
+  boundedKeys,
   LEGACY_FORMAT,
   MANIFEST_GRACE_MS,
   YEARLY_RETENTION_DAYS,
@@ -34,6 +36,7 @@ import {
   safeKey,
 } from './lib/ledger-rules.mjs';
 import { ARCHIVE_KEY_SCOPE, LEDGER_KEY_SCOPE, runWatcher } from './backup-ledger.mjs';
+import { MAX_MANIFEST_BYTES, MAX_STORED_ARCHIVE_BYTES } from '../src/limits.ts';
 
 const DAY = 86_400_000;
 const NOW = Date.UTC(2026, 9, 28, 4, 17); // 2026-10-28 04:17 UTC
@@ -343,6 +346,7 @@ function fakeB2({ pageSize = 2 } = {}) {
   const keyOf = (auth) => keys.get(auth);
 
   const b2 = {
+    downloads: [],
     bucket(name, { lock = false } = {}) {
       buckets.set(name, { id: `bkt-${name}`, name, lock, versions: [], bytes: new Map() });
       return b2;
@@ -354,8 +358,9 @@ function fakeB2({ pageSize = 2 } = {}) {
     put(bucketName, fileName, body, at) {
       const b = buckets.get(bucketName);
       const fileId = `4_z${b.id}_f${++ids}`;
-      b.versions.push({ action: 'upload', fileName, fileId, uploadTimestamp: at ?? (clock += 1000), fileInfo: {}, fileRetention: null });
-      b.bytes.set(fileId, Buffer.from(body));
+      const bytes = Buffer.from(body);
+      b.versions.push({ action: 'upload', fileName, fileId, uploadTimestamp: at ?? (clock += 1000), contentLength: bytes.byteLength, fileInfo: {}, fileRetention: null });
+      b.bytes.set(fileId, bytes);
       return fileId;
     },
     hide(bucketName, fileName) {
@@ -400,6 +405,7 @@ function fakeB2({ pageSize = 2 } = {}) {
         });
       }
       if (u.pathname.endsWith('/b2_download_file_by_id')) {
+        b2.downloads.push(u.searchParams.get('fileId'));
         const bytes = b.bytes.get(u.searchParams.get('fileId'));
         return bytes ? new Response(bytes) : json({ message: 'not found' }, 404);
       }
@@ -418,6 +424,7 @@ function fakeB2({ pageSize = 2 } = {}) {
           fileName: decodeURIComponent(init.headers['X-Bz-File-Name']),
           fileId,
           uploadTimestamp: NOW,
+          contentLength: Buffer.byteLength(init.body),
           fileInfo,
           fileRetention: { mode: init.headers['X-Bz-File-Retention-Mode'], retainUntilTimestamp: Number(init.headers['X-Bz-File-Retention-Retain-Until-Timestamp']) },
         });
@@ -610,4 +617,57 @@ test('no verdict without the right keys and a locked ledger bucket', async () =>
   const wide = world().key('ledger', { bucket: 'vaipakam-offchain-backup-ledger', capabilities: [...LEDGER_KEY_SCOPE.required, 'deleteFiles'] });
   await assert.rejects(run(wide), /must not have: deleteFiles/);
   await assert.rejects(run(world(), { env: { LEDGER_BUCKET: 'vaipakam-offchain-data-warm' } }), /scoped to vaipakam-offchain-backup-ledger/);
+});
+
+test('a manifest too large to be one is a bad manifest, and the run goes on', async () => {
+  const b2 = world();
+  const ok = nightly(b2, 'daily', '2026-10-26', N2, 'night-26', NOW - 2 * DAY);
+  const id = nightly(b2, 'daily', '2026-10-27', N1, 'night', NOW - DAY, { manifest: false });
+  b2.put('vaipakam-offchain-data-warm', `manifests/2026-10-27/${N1}.json`, 'x'.repeat(MAX_MANIFEST_BYTES + 1), NOW - DAY + 1000);
+  const r = await run(b2);
+  assert.deepEqual(r.live.flatMap((p) => p.keys), [`mismatch:${id}`]);
+  assert.match(r.live[0].text, /manifest cannot be read/);
+  const entries = dailyEntries(b2);
+  assert.deepEqual(entries.map((e) => e.fileName).sort(), [`entries/daily/2026-10-26/${ok}.json`, `entries/daily/2026-10-27/${id}.json`]);
+  const entry = entries.find((e) => e.fileName.endsWith(`/${id}.json`));
+  assert.equal(entry.fileInfo.check, 'bad-manifest');
+  const body = JSON.parse(Buffer.from(await (await b2.fetch(`https://f005.backblazeb2.com/b2api/v3/b2_download_file_by_id?fileId=${entry.fileId}`, { headers: { Authorization: 'ledger' } })).arrayBuffer()).toString());
+  assert.equal(body.manifest.versions[0].sha256, null);
+  assert.match(body.manifest.versions[0].refused, /larger than/);
+});
+
+test('an archive larger than the nightly can write is recorded as such, never downloaded', async () => {
+  const b2 = world();
+  nightly(b2, 'daily', '2026-10-26', N2, 'night-26', NOW - 2 * DAY);
+  const id = nightly(b2, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
+  b2.versions('vaipakam-offchain-data-warm').find((v) => v.fileId === id).contentLength = MAX_STORED_ARCHIVE_BYTES + 1;
+  const r = await run(b2);
+  assert.ok(!b2.downloads.includes(id));
+  assert.deepEqual(r.live.flatMap((p) => p.keys), [`mismatch:${id}`]);
+  assert.match(r.live[0].text, /larger than the nightly can write/);
+  const entry = dailyEntries(b2).find((e) => e.fileName.endsWith(`/${id}.json`));
+  assert.equal(entry.fileInfo.check, 'oversized');
+  assert.equal(entry.fileInfo.sha256, NOT_DIGESTED);
+  assert.equal(entry.fileInfo.length, String(MAX_STORED_ARCHIVE_BYTES + 1));
+  // Read back by the next run as a valid entry, still paging, never as tampering.
+  const again = await run(b2);
+  assert.deepEqual(again.live.flatMap((p) => p.keys), [`mismatch:${id}`]);
+  assert.equal(again.written.length, 0);
+  // A not-digested entry is no reason to match another one as a replay.
+  assert.ok(!again.live.some((p) => p.keys.some((k) => k.startsWith('replay:'))));
+});
+
+test('the condition keys reach the alert job bounded, stable, and changed by any key', () => {
+  const few = ['b', 'a', 'a'];
+  assert.equal(boundedKeys(few), 'a,b');
+  const many = Array.from({ length: 400 }, (_, i) => `mismatch:4_zbkt_f${String(i).padStart(6, '0')}`);
+  const out = boundedKeys(many);
+  assert.ok(out.length <= 3000, String(out.length));
+  assert.match(out, /,and-more:\d+:[0-9a-f]{16}$/);
+  assert.equal(boundedKeys([...many].reverse()), out);
+  const changed = boundedKeys([...many.slice(0, -1), 'mismatch:4_zbkt_fzzzzzz']);
+  assert.notEqual(changed, out);
+  const kept = out.split(',');
+  const more = Number(kept.at(-1).split(':')[1]);
+  assert.equal(kept.length - 1 + more, many.length);
 });

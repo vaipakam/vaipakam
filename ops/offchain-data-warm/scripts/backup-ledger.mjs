@@ -49,10 +49,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { MAX_MANIFEST_BYTES, MAX_STORED_ARCHIVE_BYTES } from '../src/limits.ts';
 import { TIERS, validateBaseline } from '../src/tiers.ts';
 import { authorize, bytesById, digestById, extendRetention, listAllVersions, requireScope, uploadLocked } from './lib/b2-native.mjs';
 import {
   MANIFEST_GRACE_MS,
+  NOT_DIGESTED,
+  boundedKeys,
   entryBody,
   entryFileInfo,
   entryName,
@@ -149,12 +152,17 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
       // The watcher would then report its own entry as tampering.
       throw new Error(`the ${a.tier} archive for ${a.period} has a file id the ledger cannot name`);
     }
-    const digest = await digestById(archiveAuth, a.fileId, io);
+    // What the bucket holds is the input under test, so its size is judged,
+    // never allowed to stop the run: an archive larger than the nightly can
+    // write is recorded as such without downloading it, and a manifest too
+    // large to be one is a bad manifest.
+    const oversized = Number.isSafeInteger(a.contentLength) && a.contentLength > MAX_STORED_ARCHIVE_BYTES;
+    const digest = oversized ? { sha256: NOT_DIGESTED, length: a.contentLength } : await digestById(archiveAuth, a.fileId, io);
     const manifests = [];
     for (const m of manifestUploads) {
-      manifests.push({ bytes: await bytesById(archiveAuth, m.fileId, io), fileId: m.fileId, uploadTimestamp: m.uploadTimestamp });
+      manifests.push({ bytes: await bytesById(archiveAuth, m.fileId, { ...io, maxBytes: MAX_MANIFEST_BYTES }), fileId: m.fileId, uploadTimestamp: m.uploadTimestamp });
     }
-    const verdict = manifestCheck(digest, manifests);
+    const verdict = oversized ? { check: 'oversized', format: 'unknown', declared: null } : manifestCheck(digest, manifests);
     const record = {
       ...a,
       sha256: digest.sha256,
@@ -166,7 +174,8 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
         versions: manifests.map((m) => ({
           fileId: m.fileId,
           uploadTimestamp: m.uploadTimestamp,
-          sha256: createHash('sha256').update(m.bytes).digest('hex'),
+          sha256: m.bytes == null ? null : createHash('sha256').update(m.bytes).digest('hex'),
+          ...(m.bytes == null ? { refused: `larger than ${MAX_MANIFEST_BYTES} bytes` } : {}),
         })),
         declared: verdict.declared,
       },
@@ -220,11 +229,11 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
   const present = new Map(bucket.archives.map((a) => [a.fileId, a]));
   for (const r of ledger.recorded.values()) {
     const a = present.get(r.fileId);
-    if (!a) continue;
+    if (!a || r.sha256 === NOT_DIGESTED) continue;
     const uploads = bucket.manifests.get(a.manifestName)?.uploads ?? [];
     if (manifestIdsField(uploads.map((m) => m.fileId)) === r.manifests) continue;
     const manifests = [];
-    for (const m of uploads) manifests.push({ bytes: await bytesById(archiveAuth, m.fileId, io) });
+    for (const m of uploads) manifests.push({ bytes: await bytesById(archiveAuth, m.fileId, { ...io, maxBytes: MAX_MANIFEST_BYTES }) });
     manifestRechecks.set(r.fileId, manifestCheck({ sha256: r.sha256, length: r.length }, manifests).check);
   }
 
@@ -291,7 +300,7 @@ function writeVerdict(live) {
     // the condition the issue tracks is whole.
     const lines = live.slice(0, MAX_ALERT_LINES).map((p) => p.text.replace(/[\r\n]+/g, ' ').slice(0, 500));
     if (live.length > MAX_ALERT_LINES) lines.push(`… and ${live.length - MAX_ALERT_LINES} more problem(s), listed in the run summary.`);
-    const keys = [...new Set(live.flatMap((p) => p.keys))].sort().join(',');
+    const keys = boundedKeys(live.flatMap((p) => p.keys));
     appendFileSync(process.env.GITHUB_OUTPUT, `problems<<${delimiter}\n${lines.join('\n')}\n${delimiter}\nkeys=${keys}\n`);
   }
   process.exitCode = 1;
