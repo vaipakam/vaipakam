@@ -147,33 +147,68 @@ async function signRequest(
     `SignedHeaders=${signedHeaders}, Signature=${signature}`;
 }
 
-/** PUT an object to B2. Returns the response so callers can read
- *  the ETag the operator might want to log. Throws on non-2xx. */
+/**
+ * How many times a PUT is tried before the nightly gives up, and the pause
+ * before each retry. B2 answers a small share of uploads with a 5xx
+ * "internal incident" (one took the 2026-10-25 manifest, #3048) and its own
+ * guidance is to retry them.
+ */
+export const PUT_ATTEMPTS = 3;
+const PUT_BACKOFF_MS = [2_000, 8_000];
+
+/** A failure worth trying again: the network, throttling, or B2's own fault. */
+function isTransient(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+/**
+ * PUT an object to B2. Returns the response so callers can read the ETag the
+ * operator might want to log. Throws on a 4xx, or once every attempt has hit
+ * a transient failure.
+ *
+ * A retry signs afresh (SigV4 binds the request time) and PUTs the SAME key
+ * and bytes. One case it cannot rule out, because this key cannot list or
+ * read the bucket: B2 storing an upload and still answering 5xx. The retry
+ * then leaves a second version of the name. That is stated, not hidden: the
+ * backup watcher reports a name holding two versions as ambiguous, which is
+ * a page an operator can check, never a silent loss.
+ */
 export async function putObject(
   cfg: B2Config,
   key: string,
   body: Uint8Array,
   contentType = 'application/octet-stream',
+  { fetchImpl = fetch, sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms)) }: {
+    fetchImpl?: typeof fetch;
+    sleep?: (ms: number) => Promise<void>;
+  } = {},
 ): Promise<Response> {
   const url = `https://${cfg.endpoint}/${cfg.bucket}/${encodeURI(key)}`;
   const payloadHash = await sha256Hex(body);
-  const req: SignedRequest = {
-    url,
-    method: 'PUT',
-    headers: { 'content-type': contentType },
-    body,
-  };
-  await signRequest(cfg, req, payloadHash, new Date());
-  const res = await fetch(url, {
-    method: 'PUT',
-    headers: req.headers,
-    body,
-  });
-  if (!res.ok) {
+  const failures: string[] = [];
+  for (let attempt = 0; attempt < PUT_ATTEMPTS; attempt++) {
+    if (attempt > 0) await sleep(PUT_BACKOFF_MS[attempt - 1] ?? PUT_BACKOFF_MS[PUT_BACKOFF_MS.length - 1]);
+    const req: SignedRequest = {
+      url,
+      method: 'PUT',
+      headers: { 'content-type': contentType },
+      body,
+    };
+    await signRequest(cfg, req, payloadHash, new Date());
+    let res: Response;
+    try {
+      res = await fetchImpl(url, { method: 'PUT', headers: req.headers, body });
+    } catch (e) {
+      failures.push(`network: ${e instanceof Error ? e.message : String(e)}`.slice(0, 200));
+      continue;
+    }
+    if (res.ok) return res;
     const txt = await res.text().catch(() => '<no body>');
-    throw new Error(`B2 PUT ${key} failed: ${res.status} ${txt.slice(0, 200)}`);
+    const failure = `${res.status} ${txt.slice(0, 200)}`;
+    if (!isTransient(res.status)) throw new Error(`B2 PUT ${key} failed: ${failure}`);
+    failures.push(failure);
   }
-  return res;
+  throw new Error(`B2 PUT ${key} failed after ${PUT_ATTEMPTS} attempts: ${failures.join(' | ')}`);
 }
 
 /** HEAD an object — returns null if 404, response otherwise. */

@@ -11,8 +11,9 @@ name: Backup ledger
 # an older archive in a newer period, an archive that disagrees with its
 # manifest (re-checked whenever the manifest changes), a ledger entry with a
 # second version or a hide marker, an archive hidden or deleted before its
-# lifecycle could do it, and a yearly entry whose
-# retention could not be lengthened.
+# lifecycle could do it, a yearly entry whose retention could not be
+# lengthened, an archive the ledger has failed to record for two days, and a
+# ledger that still holds nothing after a run that could not write to it.
 #
 # The rules and their fixtures live in
 # ops/offchain-data-warm/scripts/lib/ledger-rules.mjs and
@@ -45,6 +46,7 @@ on:
       - 'ops/offchain-data-warm/scripts/lib/**'
       - 'ops/offchain-data-warm/src/tiers.ts'
       - 'ops/offchain-data-warm/src/limits.ts'
+      - 'ops/offchain-data-warm/src/b2.ts'
 
 permissions:
   contents: read # the alert job adds issues: write for itself

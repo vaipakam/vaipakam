@@ -53,7 +53,7 @@ function pinned(url, what) {
  *   accountId: string, capabilities: string[], bucketId: string | null,
  *   bucketName: string | null, namePrefix: string | null}>}
  */
-export async function authorize(keyId, appKey, { fetchImpl = fetch } = {}) {
+export async function authorize(keyId, appKey, io = {}) {
   if (!keyId || !appKey) throw new Error('a B2 key id and application key are required');
   // lgtm[js/file-data-in-outbound-network-request]
   // codeql[js/file-data-in-outbound-network-request]
@@ -61,9 +61,24 @@ export async function authorize(keyId, appKey, { fetchImpl = fetch } = {}) {
   // the credential is read from the environment (or, for the one-time setup,
   // the repo `.env`) and goes nowhere else. Every later host comes from this
   // response and is pinned to Backblaze before it is called.
-  const res = await fetchImpl(AUTHORIZE_URL, {
-    headers: { Authorization: `Basic ${Buffer.from(`${keyId}:${appKey}`).toString('base64')}` },
-  });
+  const { fetchImpl = fetch, sleep = realSleep } = io;
+  let res;
+  for (let attempt = 0; ; attempt++) {
+    // Retried like every idempotent call (see `send`), with the request kept
+    // here so the one place the key leaves this process stays in view.
+    try {
+      res = await fetchImpl(AUTHORIZE_URL, {
+        headers: { Authorization: `Basic ${Buffer.from(`${keyId}:${appKey}`).toString('base64')}` },
+      });
+    } catch (e) {
+      if (attempt === ATTEMPTS - 1) throw e;
+      await sleep(BACKOFF_MS[attempt] ?? BACKOFF_MS.at(-1));
+      continue;
+    }
+    if (res.ok || !isTransientStatus(res.status) || attempt === ATTEMPTS - 1) break;
+    await res.body?.cancel?.().catch(() => {});
+    await sleep(BACKOFF_MS[attempt] ?? BACKOFF_MS.at(-1));
+  }
   if (!res.ok) {
     throw new Error(`b2_authorize_account failed: ${res.status} ${(await res.text()).slice(0, 300)}`);
   }
@@ -116,15 +131,57 @@ export function requireScope(auth, { label, bucket, allowed, required }) {
   return auth.bucketId;
 }
 
-/** One native API call. A non-2xx answer throws with B2's own message. */
-export async function call(auth, endpoint, body, { fetchImpl = fetch } = {}) {
-  const res = await fetchImpl(`${auth.apiUrl}/b2api/v3/${endpoint}`, {
-    method: 'POST',
-    headers: { Authorization: auth.token, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+export const ATTEMPTS = 3;
+const BACKOFF_MS = [2_000, 8_000];
+const realSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** A failure worth trying again: throttling, a timeout or B2's own fault. */
+export function isTransientStatus(status) {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+/**
+ * One HTTP request, tried up to ATTEMPTS times when `retry` is set and the
+ * failure is transient (a network error or a transient status). B2 answers a
+ * small share of requests with a 500 "internal incident" and asks clients to
+ * retry them (#3048). Returns the last response, ok or not; throws only the
+ * last network error. Only a request that is safe to repeat may set `retry`.
+ */
+async function send(url, init, { fetchImpl = fetch, sleep = realSleep, retry = false } = {}) {
+  const tries = retry ? ATTEMPTS : 1;
+  let lastError;
+  for (let attempt = 0; attempt < tries; attempt++) {
+    if (attempt > 0) await sleep(BACKOFF_MS[attempt - 1] ?? BACKOFF_MS.at(-1));
+    let res;
+    try {
+      res = await fetchImpl(url, init);
+    } catch (e) {
+      lastError = e;
+      continue;
+    }
+    if (res.ok || !isTransientStatus(res.status) || attempt === tries - 1) return res;
+    await res.body?.cancel?.().catch(() => {});
+  }
+  throw lastError;
+}
+
+/**
+ * The native calls that read, or that leave the same state however often they
+ * run, and so are retried. Creating a bucket or a key is not on it.
+ */
+const IDEMPOTENT = new Set(['b2_list_file_versions', 'b2_get_upload_url', 'b2_update_file_retention', 'b2_list_buckets', 'b2_list_keys']);
+
+/** One native API call. A non-2xx answer throws with B2's own message and its status. */
+export async function call(auth, endpoint, body, io = {}) {
+  const res = await send(
+    `${auth.apiUrl}/b2api/v3/${endpoint}`,
+    { method: 'POST', headers: { Authorization: auth.token, 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    { ...io, retry: IDEMPOTENT.has(endpoint) },
+  );
   if (!res.ok) {
-    throw new Error(`${endpoint} failed: ${res.status} ${(await res.text()).slice(0, 300)}`);
+    const err = new Error(`${endpoint} failed: ${res.status} ${(await res.text()).slice(0, 300)}`);
+    err.status = res.status;
+    throw err;
   }
   return res.json();
 }
@@ -140,7 +197,7 @@ export const LIST_PAGE_CAP = 500;
  * the bucket, because every check built on it would then be a check of that
  * part.
  */
-export async function listAllVersions(auth, bucketId, prefix, { fetchImpl = fetch, pageCap = LIST_PAGE_CAP } = {}) {
+export async function listAllVersions(auth, bucketId, prefix, { pageCap = LIST_PAGE_CAP, ...io } = {}) {
   const out = [];
   let startFileName = null;
   let startFileId = null;
@@ -158,7 +215,7 @@ export async function listAllVersions(auth, bucketId, prefix, { fetchImpl = fetc
         ...(startFileName ? { startFileName } : {}),
         ...(startFileId ? { startFileId } : {}),
       },
-      { fetchImpl },
+      io,
     );
     out.push(...(data.files ?? []));
     if (!data.nextFileName) return out;
@@ -169,9 +226,9 @@ export async function listAllVersions(auth, bucketId, prefix, { fetchImpl = fetc
   }
 }
 
-async function download(auth, fileId, fetchImpl) {
+async function download(auth, fileId, io) {
   const url = `${auth.downloadUrl}/b2api/v3/b2_download_file_by_id?fileId=${encodeURIComponent(fileId)}`;
-  const res = await fetchImpl(pinned(url, 'download URL'), { headers: { Authorization: auth.token } });
+  const res = await send(pinned(url, 'download URL'), { headers: { Authorization: auth.token } }, { ...io, retry: true });
   if (!res.ok) {
     throw new Error(`download of ${fileId} failed: ${res.status} ${(await res.text()).slice(0, 300)}`);
   }
@@ -183,8 +240,8 @@ async function download(auth, fileId, fetchImpl) {
  * arrive. Nothing is kept in memory past the digest, so an archive's size is
  * not a limit.
  */
-export async function digestById(auth, fileId, { fetchImpl = fetch } = {}) {
-  const res = await download(auth, fileId, fetchImpl);
+export async function digestById(auth, fileId, io = {}) {
+  const res = await download(auth, fileId, io);
   const hash = createHash('sha256');
   let length = 0;
   for await (const chunk of res.body) {
@@ -198,8 +255,8 @@ export async function digestById(auth, fileId, { fetchImpl = fetch } = {}) {
  * One small file version's bytes, or `null` past `maxBytes`. Oversize is a
  * fact about the file, which a caller judges; a failed download is an error.
  */
-export async function bytesById(auth, fileId, { fetchImpl = fetch, maxBytes = 1 << 20 } = {}) {
-  const res = await download(auth, fileId, fetchImpl);
+export async function bytesById(auth, fileId, { maxBytes = 1 << 20, ...io } = {}) {
+  const res = await download(auth, fileId, io);
   const parts = [];
   let length = 0;
   for await (const chunk of res.body) {
@@ -220,9 +277,19 @@ export async function bytesById(auth, fileId, { fetchImpl = fetch, maxBytes = 1 
  * the version or shorten its retention before `retainUntil`. The upload is
  * refused outright when the bucket has no Object Lock, which is what keeps a
  * misconfigured ledger bucket from being used as if it were locked.
+ *
+ * The upload itself is tried ONCE. A failed upload is indeterminate: B2 can
+ * store a file and still answer with an error, and a request cut off in
+ * flight can still commit after the caller has given up on it. A second
+ * upload in the same run could then leave a second compliance-locked version,
+ * which the watcher reads as tampering, and no listing taken now can rule
+ * that out. So a transient failure (a network error, 408, 429 or 5xx) throws
+ * with `transient` set, for the caller to leave to the next run, when the
+ * first request has long settled and the run's own listing says whether it
+ * landed. Anything else is a refusal and throws plainly.
  */
-export async function uploadLocked(auth, bucketId, { fileName, bytes, contentType, fileInfo, retainUntil }, { fetchImpl = fetch } = {}) {
-  const target = await call(auth, 'b2_get_upload_url', { bucketId }, { fetchImpl });
+export async function uploadLocked(auth, bucketId, { fileName, bytes, contentType, fileInfo, retainUntil }, io = {}) {
+  const target = await call(auth, 'b2_get_upload_url', { bucketId }, io);
   const headers = {
     Authorization: target.authorizationToken,
     'X-Bz-File-Name': encodeURIComponent(fileName).replace(/%2F/g, '/'),
@@ -235,19 +302,27 @@ export async function uploadLocked(auth, bucketId, { fileName, bytes, contentTyp
   for (const [k, v] of Object.entries(fileInfo ?? {})) {
     headers[`X-Bz-Info-${k}`] = encodeURIComponent(String(v));
   }
-  const res = await fetchImpl(pinned(target.uploadUrl, 'upload URL'), { method: 'POST', headers, body: bytes });
-  if (!res.ok) {
-    throw new Error(`upload of ${fileName} failed: ${res.status} ${(await res.text()).slice(0, 300)}`);
+  const url = pinned(target.uploadUrl, 'upload URL');
+  let res;
+  try {
+    res = await (io.fetchImpl ?? fetch)(url, { method: 'POST', headers, body: bytes });
+  } catch (e) {
+    throw Object.assign(new Error(`upload of ${fileName} failed: network: ${String(e?.message ?? e).slice(0, 200)}`), { transient: true });
   }
-  return res.json();
+  if (res.ok) return res.json();
+  // The body is diagnostics only; failing to read it changes nothing.
+  const text = await res.text().catch(() => '<no body>');
+  throw Object.assign(new Error(`upload of ${fileName} failed: ${res.status} ${text.slice(0, 300)}`), {
+    transient: isTransientStatus(res.status),
+  });
 }
 
 /** Lengthen one version's compliance retention. B2 refuses a shortening. */
-export async function extendRetention(auth, { fileName, fileId, retainUntil }, { fetchImpl = fetch } = {}) {
+export async function extendRetention(auth, { fileName, fileId, retainUntil }, io = {}) {
   return call(
     auth,
     'b2_update_file_retention',
     { fileName, fileId, fileRetention: { mode: 'compliance', retainUntilTimestamp: retainUntil } },
-    { fetchImpl },
+    io,
   );
 }

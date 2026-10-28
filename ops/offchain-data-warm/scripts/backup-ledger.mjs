@@ -113,10 +113,10 @@ async function readManifests(archiveAuth, uploads, io) {
  * in-memory B2.
  *
  * @returns {Promise<{live: Array<{keys: string[], text: string}>, quieted: number,
- *   notes: string[], summary: string, written: object[], deferred: object[]}>}
+ *   notes: string[], summary: string, written: object[], unwritten: object[], deferred: object[]}>}
  */
-export async function runWatcher({ env = process.env, dryRun = false, now = Date.now(), fetchImpl = fetch, log = () => {} } = {}) {
-  const io = { fetchImpl };
+export async function runWatcher({ env = process.env, dryRun = false, now = Date.now(), fetchImpl = fetch, sleep, log = () => {} } = {}) {
+  const io = { fetchImpl, ...(sleep ? { sleep } : {}) };
   const archiveBucket = env.ARCHIVE_BUCKET || 'vaipakam-offchain-data-warm';
   const ledgerBucket = env.LEDGER_BUCKET || 'vaipakam-offchain-backup-ledger';
   const lifecycle = JSON.parse(readFileSync(resolve(HERE, '../bucket-lifecycle.json'), 'utf8'));
@@ -157,6 +157,9 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
   // 2. Record what the ledger has not seen.
   const deferred = [];
   const written = [];
+  // Entries whose upload failed transiently: judged this run from what it
+  // computed, and uploaded by a later run once the failed request has settled.
+  const unwritten = [];
   for (const a of unrecorded(bucket, ledgerBefore.recorded)) {
     const manifestUploads = bucket.manifests.get(a.manifestName)?.uploads ?? [];
     if (manifestUploads.length === 0 && now - a.uploadTimestamp < MANIFEST_GRACE_MS) {
@@ -194,21 +197,31 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
       },
     };
     const retainUntil = retentionFor(a.tier, now);
+    const entry = { ...record, uploaded: record.uploadTimestamp, retainUntil, manifests: manifestSetDigest(manifests.map((m) => m.fileId)) };
     if (!dryRun) {
-      await uploadLocked(
-        ledgerAuth,
-        ledgerBucketId,
-        {
-          fileName: name,
-          bytes: Buffer.from(`${JSON.stringify(entryBody(record, ctx), null, 2)}\n`),
-          contentType: 'application/json',
-          fileInfo: entryFileInfo(record),
-          retainUntil,
-        },
-        io,
-      );
+      try {
+        await uploadLocked(
+          ledgerAuth,
+          ledgerBucketId,
+          {
+            fileName: name,
+            bytes: Buffer.from(`${JSON.stringify(entryBody(record, ctx), null, 2)}\n`),
+            contentType: 'application/json',
+            fileInfo: entryFileInfo(record),
+            retainUntil,
+          },
+          io,
+        );
+      } catch (e) {
+        if (!e?.transient) throw e;
+        // When the ledger could first have recorded it: its upload, or the
+        // ledger's start for an archive older than the ledger.
+        unwritten.push({ ...entry, error: String(e.message).slice(0, 300), recordableSince: Math.max(entry.uploaded, ctx.ledgerStartedAt) });
+        log(`could not record ${a.tier} ${a.period} (${a.fileId}) this run: ${String(e.message).slice(0, 300)}`);
+        continue;
+      }
     }
-    written.push({ ...record, uploaded: record.uploadTimestamp, retainUntil, manifests: manifestSetDigest(manifests.map((m) => m.fileId)) });
+    written.push(entry);
     log(`${dryRun ? 'would record' : 'recorded'} ${a.tier} ${a.period} (${a.fileId}): ${verdict.check}`);
   }
 
@@ -230,9 +243,17 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
   // 4. Judge from the ledger as it now stands. After a write that is a fresh
   // listing, so the verdict rests on what B2 holds, not on what this run
   // believes it wrote.
-  const ledger = dryRun
+  const ledgerAfter = dryRun ? null : await listAllVersions(ledgerAuth, ledgerBucketId, '', io);
+  const listed = dryRun
     ? { recorded: new Map([...ledgerBefore.recorded, ...written.map((r) => [r.fileId, r])]), tampered: ledgerBefore.tampered }
-    : readLedger(await listAllVersions(ledgerAuth, ledgerBucketId, '', io));
+    : readLedger(ledgerAfter);
+  // Whether the ledger holds anything at all. Its oldest version is the clock
+  // an unrecorded archive's age is read from, so an empty ledger has none.
+  const ledgerStarted = dryRun ? ledgerVersions.length > 0 || written.length > 0 : ledgerAfter.length > 0;
+  // An entry whose upload failed is still judged, from what this run computed,
+  // unless the listing shows the upload landed after all.
+  const pending = unwritten.filter((r) => !listed.recorded.has(r.fileId));
+  const ledger = { ...listed, recorded: new Map([...pending.map((r) => [r.fileId, r]), ...listed.recorded]) };
 
   // Before judging, a manifest whose versions differ from the ones an entry
   // was checked against is checked again, against the digest the entry recorded: the
@@ -257,6 +278,8 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
     baseline: baselineCheck.baseline,
     baselineErrors: baselineCheck.byTier,
     deferred,
+    unwritten: pending,
+    ledgerStarted,
     renewalFailures,
     manifestRechecks,
   });
@@ -266,8 +289,8 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
     .map((p) => ({ ...p, keys: p.keys.filter((k) => !acknowledged.has(k)) }))
     .filter((p) => p.keys.length > 0);
   const quieted = problems.length - live.length;
-  const summary = summarise({ dryRun, bucket, ledger, written, deferred, notes, live, quieted });
-  return { live, quieted, notes, summary, written, deferred };
+  const summary = summarise({ dryRun, bucket, ledger: listed, written, unwritten: pending, deferred, notes, live, quieted });
+  return { live, quieted, notes, summary, written, unwritten: pending, deferred };
 }
 
 /**
@@ -275,7 +298,7 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
  * printed as the values to commit for ARCHIVE_FIRST_* once the operator has
  * confirmed nothing older was ever written.
  */
-function summarise({ dryRun, bucket, ledger, written, deferred, notes, live, quieted }) {
+function summarise({ dryRun, bucket, ledger, written, unwritten, deferred, notes, live, quieted }) {
   const lines = [];
   lines.push(live.length > 0 ? '## Backup watcher: problems found' : '## Backup watcher: no problems');
   lines.push('');
@@ -283,6 +306,7 @@ function summarise({ dryRun, bucket, ledger, written, deferred, notes, live, qui
   if (live.length > 0) lines.push('');
   lines.push(
     `${dryRun ? 'Dry run: would record' : 'Recorded'} ${written.length} archive version(s); ` +
+      (unwritten.length > 0 ? `${unwritten.length} could not be recorded this run and are left to the next; ` : '') +
       `the ledger holds ${ledger.recorded.size}; ${deferred.length} wait for a manifest; ` +
       `${quieted} problem(s) acknowledged.`,
   );
