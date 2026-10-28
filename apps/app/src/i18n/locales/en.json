@@ -1335,6 +1335,8 @@
         "sellNowAlreadyListedNoCancel": "Not available while this position is listed for sale. The listing was made from another device, so it can’t be cancelled here — cancel it where it was listed.",
         "listAlreadyListedCancelUnverified": "Already listed — this position is on sale now. We couldn’t confirm you still hold it from this device, so the cancel control isn’t available here at the moment; the card below shows what we can see, and reloading may restore it.",
         "sellNowAlreadyListedCancelUnverified": "Not available while this position is listed for sale. We couldn’t confirm you still hold it from this device, so cancelling isn’t offered here at the moment — reloading may restore it.",
+        "listAlreadyListedUnread": "Already listed — this position is on sale now. This device hasn’t read the listing’s details yet, so its terms and cancel control aren’t shown here; reloading retries.",
+        "sellNowAlreadyListedUnread": "Not available while this position is listed for sale. This device hasn’t read the listing’s details yet, so cancelling isn’t offered here at the moment — reloading retries.",
         "saleToolsChecking": "Not available yet — we’re still reading the details a sale needs before it can be started.",
         "saleToolsFailed": "Not available right now — one of the details a sale needs couldn’t be loaded. Reload the page to try again.",
         "listUnavailableFlowDisabled": "Not available right now — new listings are paused on this deployment while an issue is looked into. Your position is unaffected and the other options still apply.",

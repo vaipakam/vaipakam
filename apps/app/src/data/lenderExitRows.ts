@@ -99,8 +99,15 @@ export type SaleToolsState =
 
 /** Whether the pending card below will offer a cancel, and if not, why.
  *
- *  Three-valued rather than a boolean (Codex r8 P2), because the two
- *  ways it can be absent want different sentences. A missing offer
+ *  `'unread'` comes first and is the one case where no card below
+ *  renders at all: the contract says a listing stands, but this device's
+ *  own listing read has not answered (in flight, failed, or not yet
+ *  showing it), so neither its terms nor where it was made are known
+ *  (Codex #3024 r1). Naming "another device" there would be a
+ *  fabricated cause, and pointing at the card would point at nothing.
+ *
+ *  The other three answer from a read that HAS answered (Codex r8 P2):
+ *  the two ways a cancel can be absent want different sentences. A missing offer
  *  record means the listing was made elsewhere and this device cannot
  *  act on it — "cancel it where you listed it" is the right advice. An
  *  unverified holder means the card's isolated `ownerOf` read failed,
@@ -108,7 +115,7 @@ export type SaleToolsState =
  *  on the next attempt — telling that lender to go to another device
  *  would be a fabricated cause, and my own r7 fix introduced exactly
  *  that by folding the holder failure into the elsewhere wording. */
-export type SaleCancelState = 'yes' | 'no-elsewhere' | 'no-unverified';
+export type SaleCancelState = 'yes' | 'no-elsewhere' | 'no-unverified' | 'unread';
 
 export type LenderExitJumpTarget = 'early-exit-card' | 'loan-sale-card';
 
@@ -248,16 +255,18 @@ function refusalText(
         // The cancel is the way out, so the sentence names it only when
         // this device can perform it.
         return route === 'listing'
-          ? input.saleCancel === 'yes'
-            ? o.listAlreadyListed
-            : input.saleCancel === 'no-elsewhere'
-              ? o.listAlreadyListedNoCancel
-              : o.listAlreadyListedCancelUnverified
-          : input.saleCancel === 'yes'
-            ? o.sellNowAlreadyListed
-            : input.saleCancel === 'no-elsewhere'
-              ? o.sellNowAlreadyListedNoCancel
-              : o.sellNowAlreadyListedCancelUnverified;
+          ? {
+              yes: o.listAlreadyListed,
+              'no-elsewhere': o.listAlreadyListedNoCancel,
+              'no-unverified': o.listAlreadyListedCancelUnverified,
+              unread: o.listAlreadyListedUnread,
+            }[input.saleCancel]
+          : {
+              yes: o.sellNowAlreadyListed,
+              'no-elsewhere': o.sellNowAlreadyListedNoCancel,
+              'no-unverified': o.sellNowAlreadyListedCancelUnverified,
+              unread: o.sellNowAlreadyListedUnread,
+            }[input.saleCancel];
       case 'OffsetActiveOnLoan':
         return o.listUnavailableOffsetPending;
       case 'SaleLoanPastMaturity':
@@ -356,7 +365,6 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
           : o.waitDescAtClose;
 
   const v = input.verdict;
-  const directOpen = v.kind === 'known' && v.direct.length === 0;
 
   // Precedence on each row: the contract's refusal (see `statedRefusal`),
   // then this app's own gates on its tools. The
@@ -366,7 +374,8 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
   const sellNowUnavailable =
     verdictPendingText(v) ??
     (v.kind === 'known' && v.direct.length > 0
-      ? refusalText(statedRefusal(v.direct), 'direct', input, directOpen)
+      ? // The direct route's own refusals never use `directOpen`.
+        refusalText(statedRefusal(v.direct), 'direct', input, false)
       : undefined) ??
     toolsText(input) ??
     (input.instantSellCandidates === 'checking'
@@ -378,6 +387,11 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
           // we have not looked and must not pretend to have. The
           // difference is visible in the tool, not here.
           undefined);
+  // "Selling into a standing offer still works" is a claim about the
+  // ROW, not the contract's route alone: the row can be closed by this
+  // app's own gates with the contract clear, and the two rows would then
+  // contradict each other (Codex #3024 r1).
+  const directOpen = sellNowUnavailable === undefined;
 
   const listUnavailable =
     verdictPendingText(v) ??

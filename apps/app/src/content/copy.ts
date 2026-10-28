@@ -3236,6 +3236,13 @@ const copySource = {
         'Already listed — this position is on sale now. We couldn’t confirm you still hold it from this device, so the cancel control isn’t available here at the moment; the card below shows what we can see, and reloading may restore it.',
       sellNowAlreadyListedCancelUnverified:
         'Not available while this position is listed for sale. We couldn’t confirm you still hold it from this device, so cancelling isn’t offered here at the moment — reloading may restore it.',
+      // Codex #3024 r1 — the contract says a listing stands, but this
+      // device's own listing read has not answered, so no listing card
+      // renders below and where it was made is unknown.
+      listAlreadyListedUnread:
+        'Already listed — this position is on sale now. This device hasn’t read the listing’s details yet, so its terms and cancel control aren’t shown here; reloading retries.',
+      sellNowAlreadyListedUnread:
+        'Not available while this position is listed for sale. This device hasn’t read the listing’s details yet, so cancelling isn’t offered here at the moment — reloading retries.',
       // Codex r8/r9/r10 P2 — these two sentences used to NAME the read
       // involved, and the name was wrong twice: r8 sent a token-metadata
       // failure into a fee-terms sentence, r9 split them apart, r10

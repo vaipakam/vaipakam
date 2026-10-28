@@ -4631,10 +4631,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // local marker, taking the cancel path with it. Verification
           // failure maps to the unverified line, which says we cannot
           // confirm rather than naming a place.
+          // `'unread'` first (Codex #3024 r1): the verdict can report a
+          // listing this device's own read has not shown — in flight,
+          // failed before it answered, or a poll behind the contract —
+          // and then no listing card renders below, so neither "cancel
+          // it below" nor "made elsewhere" is something we know.
           saleCancel={
-            sale.state?.offerIdVerifyFailed === true
+            sale.state?.listed !== true
+              ? 'unread'
+              : sale.state.offerIdVerifyFailed === true
               ? 'no-unverified'
-              : sale.state?.offerId == null
+              : sale.state.offerId == null
                 ? 'no-elsewhere'
                 : sale.state.isHolder === true
                   ? 'yes'

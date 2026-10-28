@@ -205,6 +205,9 @@ describe('an existing listing — do not promise a cancel the pending card withh
     ['yes', o.listAlreadyListed, o.sellNowAlreadyListed],
     ['no-elsewhere', o.listAlreadyListedNoCancel, o.sellNowAlreadyListedNoCancel],
     ['no-unverified', o.listAlreadyListedCancelUnverified, o.sellNowAlreadyListedCancelUnverified],
+    // The contract reports a listing this device's own read has not shown
+    // (Codex #3024 r1): neither "below" nor "elsewhere" is known.
+    ['unread', o.listAlreadyListedUnread, o.sellNowAlreadyListedUnread],
   ] as const)('saleCancel %s', (saleCancel, listText, sellText) => {
     expect(rowFor({ verdict: listed, saleCancel }, 'list').unavailable).toBe(listText);
     expect(rowFor({ verdict: listed, saleCancel }, 'sell-now').unavailable).toBe(sellText);
@@ -215,6 +218,17 @@ describe('the final-hour listing window', () => {
   it('reassures about the instant sale only while the contract leaves it open', () => {
     const verdict = known([], [refusal('SaleListingWindowInvalid')]);
     expect(rowFor({ verdict }, 'list').unavailable).toBe(o.listUnavailableTooClose);
+  });
+
+  it('drops the reassurance when the direct ROW is closed by this app’s own gates (Codex #3024 r1)', () => {
+    const verdict = known([], [refusal('SaleListingWindowInvalid')]);
+    for (const input of [
+      { saleTools: 'checking' },
+      { saleTools: 'failed' },
+      { instantSellCandidates: 'none' },
+    ] as Partial<LenderExitInput>[]) {
+      expect(rowFor({ verdict, ...input }, 'list').unavailable).toBe(o.listUnavailableTooCloseOnly);
+    }
   });
 
   it('drops the reassurance when the direct route is refused too', () => {

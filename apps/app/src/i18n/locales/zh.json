@@ -1196,6 +1196,8 @@
         "sellNowAlreadyListedNoCancel": "该头寸正在挂牌出售期间不可用。挂牌是在另一台设备上完成的，无法在此取消——请到挂牌的那台设备上取消。",
         "listAlreadyListedCancelUnverified": "已挂牌——这笔头寸正在出售中。本设备无法确认你仍持有它，因此此处暂时无法取消挂牌；下方卡片显示我们仍能看到的信息，重新加载或可恢复该操作。",
         "sellNowAlreadyListedCancelUnverified": "该头寸正在挂牌出售期间不可用。本设备无法确认你仍持有它，因此此处不提供取消操作——重新加载或可恢复。",
+        "listAlreadyListedUnread": "已挂牌——此头寸目前正在出售。此设备尚未读取到挂牌详情，因此这里不显示其条款和取消操作；重新加载会再次尝试。",
+        "sellNowAlreadyListedUnread": "此头寸挂牌出售期间不可用。此设备尚未读取到挂牌详情，因此目前这里不提供取消——重新加载会再次尝试。",
         "saleToolsChecking": "尚不可用——我们仍在读取出售开始前所需的信息。",
         "saleToolsFailed": "当前不可用——出售所需的一项信息无法加载。请重新加载页面后再试。",
         "listUnavailableFlowDisabled": "当前不可用——本部署在排查问题期间已暂停新建挂牌。你的头寸不受影响，其他选项仍然适用。",

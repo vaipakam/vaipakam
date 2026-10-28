@@ -73,6 +73,11 @@ export const LIVE_KEYS: ReadonlySet<string> = new Set([
   // prices, debt and third-party actions on the loan, so it rides the
   // same block-driven rail as the other action gates.
   'maxWithdrawable',
+  // Lender exit chooser's sale verdict (#1841): the contract's answer on
+  // whether each sale can be started moves with third-party actions (a
+  // pause, a listing expiring, the due date), so it rides every rail the
+  // other action gates do.
+  'saleExitVerdict',
   'standingApprovals',
   'keeperConfig',
   // #1131/#1145 round-5 — the crossable band's chain reads (previewMatch
@@ -127,6 +132,11 @@ export const TIP_KEYS: ReadonlySet<string> = new Set([
   // Take-back-collateral ceiling (UX3-009) — see LIVE_KEYS. tipAware
   // stretches its interval on WS deploys on exactly this promise.
   'maxWithdrawable',
+  // Lender exit chooser's sale verdict (#1841): the contract's answer on
+  // whether each sale can be started moves with third-party actions (a
+  // pause, a listing expiring, the due date), so it rides every rail the
+  // other action gates do.
+  'saleExitVerdict',
   // Past-due/grace banner terms (Codex #1228 r1 P3): tipAware-
   // stretched on PositionDetails, so the tip nudge must cover a keeper
   // extension restamping the terms.

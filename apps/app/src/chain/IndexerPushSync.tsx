@@ -249,6 +249,15 @@ export const STRETCHED_ROOTS: readonly string[] = [
   'positionOwners',
   'offerLinkedLoan',
   'loanSalePending',
+  // Take-back-collateral ceiling (UX3-009): tipAware-stretched like the
+  // roots around it, and missing from this list until #1841's rail test
+  // asked every action gate the same four questions.
+  'maxWithdrawable',
+  // Lender exit chooser's sale verdict (#1841): the contract's answer on
+  // whether each sale can be started moves with third-party actions (a
+  // pause, a listing expiring, the due date), so it rides every rail the
+  // other action gates do.
+  'saleExitVerdict',
   'refinancePending',
   'deskPreviewMatch',
   'graceBannerTerms',
