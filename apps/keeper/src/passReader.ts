@@ -36,6 +36,15 @@ export async function boundedCall<T>(cutoff: number, what: string, work: () => P
   });
 }
 
+/**
+ * The chain's finalized block, by `cutoff`: a floor lift that cannot read it
+ * in time leaves the floor where it is (`scanCursors.finalFloor` reads null as
+ * "not this run"), rather than waiting past the cutoff.
+ */
+export function finalizedBy(cutoff: number, finalized: () => Promise<FinalBlock | null>): () => Promise<FinalBlock | null> {
+  return () => boundedCall(cutoff, 'the finalized block', finalized).catch(() => null);
+}
+
 /** The clients a pass reads through. */
 export interface PassReadClients {
   /** For single reads and the finalized block. */

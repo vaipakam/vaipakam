@@ -97,7 +97,8 @@ import { buildKeeperContext, passIsArmed, resolveKeeperAccount, type KeeperConte
 import type { PassTick } from '../passSchedule';
 import { deadlineClient, PastRunDeadline } from '../batchRead';
 import { shortErr } from '../callErrors';
-import { d1EventLedger, decodePos, encodePos, posAfter, rowFinalized, type EventLedger } from '../eventLedger';
+import { d1EventLedger, type EventLedger } from '../eventLedger';
+import { readLedgerRotation } from '../ledgerRotation';
 import {
   advanceEntryFloor,
   continueDaySums,
@@ -577,26 +578,27 @@ async function drainSurplus(r: Reader, sender: StepSender, report: CloseOutRepor
  * day's finalization costs nothing.
  */
 async function releaseDestinations(r: Reader, sender: StepSender, report: CloseOutReport, chainId: number, paused: boolean, deps: CloseOutDeps): Promise<void> {
-  const { cursors } = deps;
-  const stored = await cursors.get([RELEASE_FLOOR_ITEM, RELEASE_NEXT_ITEM]);
-  const floor = decodePos(stored.get(RELEASE_FLOOR_ITEM));
-  const next = decodePos(stored.get(RELEASE_NEXT_ITEM));
-  const start = next !== null && (floor === null || posAfter(next, floor)) ? next : floor;
-  const page = await deps.ledger.page(chainId, [REMOVAL_EVENT], start, RELEASE_PAGE);
+  // The chain each row names; a row that names none nominates nothing.
+  const page = await readLedgerRotation<number>({
+    ledger: deps.ledger,
+    cursors: deps.cursors,
+    chainId,
+    kinds: [REMOVAL_EVENT],
+    floorItem: RELEASE_FLOOR_ITEM,
+    nextItem: RELEASE_NEXT_ITEM,
+    limit: RELEASE_PAGE,
+    cutoff: r.cutoff,
+    nominee: (row) => {
+      const c = Number(row.args.dstChainId);
+      return Number.isSafeInteger(c) && c > 0 && c <= 0xffffffff ? c : null;
+    },
+    id: String,
+  });
   if (page === null) {
     sender.noteUnread('release', 'the event ledger of removed remit destinations');
     return;
   }
-  const last = page.rows[page.rows.length - 1];
-  // Past the last page the next run starts at the floor again.
-  const nextPos = page.more && last !== undefined ? encodePos(last) : '';
-  if (nextPos !== (stored.get(RELEASE_NEXT_ITEM) ?? '')) await cursors.put(RELEASE_NEXT_ITEM, nextPos);
-  // The chain each row names; a row that names none nominates nothing.
-  const rows: (number | null)[] = page.rows.map((row) => {
-    const c = Number(row.args.dstChainId);
-    return Number.isSafeInteger(c) && c > 0 && c <= 0xffffffff ? c : null;
-  });
-  const chains = [...new Set(rows.flatMap((c) => (c === null ? [] : [c])))];
+  const chains = page.nominees;
   const readRelease = (cs: readonly number[], label: string, blockNumber?: bigint) =>
     r.many(cs.map((c) => ({ functionName: 'getRemitDestinationRelease', args: [c] })), label, blockNumber);
   const done = new Set<number>();
@@ -648,25 +650,19 @@ async function releaseDestinations(r: Reader, sender: StepSender, report: CloseO
     // Done only on what a read showed: a walk whose outcome is unread is not.
     if (entry?.to !== null && cursor >= bound) done.add(chain);
   }
-  // On a page read from the floor, the floor moves past the leading rows whose
-  // chain's release is done, at the head AND at the finalized block: a walk a
-  // reorg undoes leaves its row above the floor, to be walked again. At the
-  // finalized block a row counts only when its removal is itself finalized
-  // (Codex #3010): below the removal the record is empty, or an earlier
-  // removal's finished one, and either reads as done.
-  if (start !== floor) return;
-  const positions = page.rows.map((_, i) => i);
-  const n = await finalFloor(0, positions, (i) => rows[i] === null || done.has(rows[i]!), r.finalized, async (passed, block) => {
-    const live = passed.filter((i) => rows[i] === null || rowFinalized(page.rows[i], block));
-    const named = [...new Set(live.flatMap((i) => (rows[i] === null ? [] : [rows[i]!])))];
-    const at = await readRelease(named, 'releases-final', block.number);
-    const finished = new Set(named.filter((_, j) => {
+  // A row is finished when its chain's release is done (`ledgerRotation.ts`):
+  // a walk a reorg undoes leaves its row above the floor, to be walked again.
+  // At the finalized block the removal must itself be finalized (Codex
+  // #3010): below it the record is empty, or an earlier removal's finished
+  // one, and either reads as done.
+  await page.liftFloor(r.finalized, (c) => done.has(c), async (cs, block) => {
+    const at = await readRelease(cs, 'releases-final', block.number);
+    const finished = new Set(cs.filter((_, j) => {
       const st = at[j] as readonly [bigint, bigint] | undefined;
       return st !== undefined && st[1] >= st[0];
     }));
-    return new Set(live.filter((i) => rows[i] === null || finished.has(rows[i]!)));
+    return (c) => finished.has(c);
   });
-  if (n > 0) await cursors.put(RELEASE_FLOOR_ITEM, encodePos(page.rows[n - 1]));
 }
 
 // ─── Days read for 4–6 ─────────────────────────────────────────────────────
