@@ -223,16 +223,19 @@ contract SaleExitVerdictFacet {
 
         // A linked listing closes both routes until it is cancelled, completed
         // or torn down. Teardown is permissionless once the listing has expired
-        // unaccepted; it then starts the relist cooldown for the listing route.
+        // unaccepted, so the earliest teardown is the later of now and its
+        // expiry; the teardown then starts the relist cooldown for the listing
+        // route FROM THE MOMENT IT RUNS, never from the expiry.
         uint256 saleOfferId = s.loanToSaleOfferId[loanId];
         if (saleOfferId != 0) {
             LibVaipakam.Offer storage sale = s.offers[saleOfferId];
             uint64 reopens;
             if (!sale.accepted && sale.expiresAt != 0) {
-                reopens = listing
-                    // forge-lint: disable-next-line(unsafe-typecast)
-                    ? uint64(uint256(sale.expiresAt) + LibVaipakam.SALE_RELIST_COOLDOWN_SECONDS)
-                    : sale.expiresAt;
+                uint256 teardown = _earliestTeardown(sale.expiresAt);
+                // forge-lint: disable-next-line(unsafe-typecast)
+                reopens = uint64(
+                    listing ? teardown + LibVaipakam.SALE_RELIST_COOLDOWN_SECONDS : teardown
+                );
             }
             _add(r, abi.encodeWithSelector(IVaipakamErrors.SaleOfferAlreadyExists.selector), reopens);
             if (_full(r)) return _trim(r);
@@ -246,7 +249,10 @@ contract SaleExitVerdictFacet {
             _add(
                 r,
                 abi.encodeWithSelector(EarlyWithdrawalFacet.OffsetActiveOnLoan.selector),
-                !offset.accepted ? offset.expiresAt : 0
+                // forge-lint: disable-next-line(unsafe-typecast)
+                !offset.accepted && offset.expiresAt != 0
+                    ? uint64(_earliestTeardown(offset.expiresAt))
+                    : 0
             );
             if (_full(r)) return _trim(r);
         }
@@ -312,14 +318,17 @@ contract SaleExitVerdictFacet {
         // A vault behind the mandatory version is refused when funds move
         // through it: the holder's on the listing (the vehicle is created for
         // it), and the stored lender's wherever its held balance moves (the
-        // listing's consolidation, the direct sale's held migration).
+        // listing's consolidation, the direct sale's held migration). The
+        // direct sale migrates the held balance out of the stored lender's
+        // vault whoever holds the position, so only the listing, where a
+        // holder who IS the stored lender was already checked above, skips it.
         if (listing && LibVaipakam.vaultUpgradeRequired(holder)) {
             _add(r, abi.encodeWithSelector(VaultFactoryFacet.VaultUpgradeRequired.selector), 0);
             if (_full(r)) return _trim(r);
         }
         if (
             s.heldForLender[loanId] != 0 &&
-            loan.lender != holder &&
+            !(listing && loan.lender == holder) &&
             LibVaipakam.vaultUpgradeRequired(loan.lender)
         ) {
             _add(r, abi.encodeWithSelector(VaultFactoryFacet.VaultUpgradeRequired.selector), 0);
@@ -351,6 +360,12 @@ contract SaleExitVerdictFacet {
         if (LibFacet.isAssetPaused(asset)) {
             _add(r, abi.encodeWithSelector(IVaipakamErrors.AssetPaused.selector, asset), 0);
         }
+    }
+
+    /// @dev The earliest moment an unaccepted offer expiring at `expiresAt`
+    ///      can be torn down by anyone: its expiry, or now if that has passed.
+    function _earliestTeardown(uint64 expiresAt) private view returns (uint256) {
+        return block.timestamp > expiresAt ? block.timestamp : expiresAt;
     }
 
     function _add(Refusals memory r, bytes memory reason, uint64 reopensAt) private pure {

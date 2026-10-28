@@ -1,4 +1,4 @@
-## Thread — One answer to "can this lender sell now?" (PR #TBD)
+## Thread — One answer to "can this lender sell now?" (PR #3008)
 
 A lender can leave a loan early in two ways: sell straight into a standing buy
 offer, or list the position for sale. Until now the app had to guess, route by
@@ -29,4 +29,4 @@ needs an upgrade, and selling a loan that has no live lender position reports
 that the loan is not active. The new host must be refreshed together with both
 sale facets. Closes #1841.
 
-> Caveat: the answer reports when a listing route could reopen at the earliest; a relist cooldown actually runs from when an expired listing is cleared away, which can be later.
+> Caveat: a relist cooldown runs from when an expired listing is cleared away, so the listing route's reopening time assumes it is cleared at the earliest moment anyone may do so; if nobody clears it then, the route reopens later.

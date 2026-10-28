@@ -8209,6 +8209,66 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @dev Codex #3008 r1 — once the listing has expired but nobody has torn
+    ///      it down, the earliest teardown is NOW, and the relist cooldown runs
+    ///      from that teardown, not from the expiry. The verdict must not name a
+    ///      reopening time already in the past.
+    function test_SaleExitVerdict_ExpiredListingReopensFromTheTeardown() public {
+        uint256 saleOfferId = _listSaleOffer();
+        uint64 expiresAt = OfferCancelFacet(address(diamond)).getOffer(saleOfferId).expiresAt;
+        vm.warp(uint256(expiresAt) + 1 days);
+
+        (
+            SaleExitVerdictFacet.SaleRefusal[] memory direct,
+            SaleExitVerdictFacet.SaleRefusal[] memory listing
+        ) = _verdict(activeLoanId, lender);
+        bytes memory exists =
+            abi.encodeWithSelector(IVaipakamErrors.SaleOfferAlreadyExists.selector);
+        assertEq(direct[0].reason, exists);
+        assertEq(listing[0].reason, exists);
+        assertEq(direct[0].reopensAt, block.timestamp, "a teardown can run now");
+        uint64 promised = listing[0].reopensAt;
+        assertEq(
+            promised,
+            block.timestamp + LibVaipakam.SALE_RELIST_COOLDOWN_SECONDS,
+            "the cooldown starts at the earliest teardown, which is now"
+        );
+
+        // Tearing it down now makes the promised time exactly the cooldown's end.
+        OfferCancelFacet(address(diamond)).teardownStaleSaleListing(activeLoanId);
+        (, listing) = _verdict(activeLoanId, lender);
+        assertEq(listing.length, 1, "only the cooldown refuses the listing");
+        assertEq(listing[0].reopensAt, promised, "the promise matches the cooldown the teardown started");
+    }
+
+    /// @dev Codex #3008 r1 — the direct sale migrates the held balance out of
+    ///      the STORED lender's vault whoever holds the position, including when
+    ///      the holder is the stored lender. An outdated vault there refuses the
+    ///      sale, so the verdict reports it on the direct route too, and only
+    ///      once on the listing route (where the holder check already covers it).
+    function test_SaleExitVerdict_OutdatedStoredLenderVaultRefusesTheDirectSale() public {
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 1e6);
+        VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(address(new VaipakamVaultImplementation()));
+        (uint256 lenderVersion, uint256 currentVersion,,) =
+            VaultFactoryFacet(address(diamond)).getVaultVersionInfo(lender);
+        assertGt(currentVersion, lenderVersion, "fixture: the lender's vault is below the new version");
+        VaultFactoryFacet(address(diamond)).setMandatoryVaultUpgrade(currentVersion);
+
+        (
+            SaleExitVerdictFacet.SaleRefusal[] memory direct,
+            SaleExitVerdictFacet.SaleRefusal[] memory listing
+        ) = _verdict(activeLoanId, lender);
+        bytes memory upgrade = abi.encodeWithSelector(VaultFactoryFacet.VaultUpgradeRequired.selector);
+        (bool found,) = _hasReason(direct, upgrade);
+        assertTrue(found, "the held migration needs the stored lender's vault upgraded");
+        uint256 n;
+        for (uint256 i; i < listing.length; ++i) {
+            if (keccak256(listing[i].reason) == keccak256(upgrade)) ++n;
+        }
+        assertEq(n, 1, "the listing reports the one vault once");
+        _assertEntriesMatchVerdict(activeLoanId, lender);
+    }
+
     /// @dev A live borrower offset closes both routes; it can be torn down by
     ///      anyone once it expires, so that is when they reopen.
     function test_SaleExitVerdict_LiveOffsetClosesBothRoutes() public {
