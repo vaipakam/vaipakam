@@ -67,13 +67,20 @@ import {
   type ConsoleReading,
   type SnapshotGap,
 } from '../data/protocolConsoleRead';
-import { CONSOLE_SECTIONS, readNotBefore, type ConsoleRow } from '../data/protocolConsoleRows';
+import {
+  CONSOLE_SECTIONS,
+  GRACE_DOCUMENTED_DEFAULT_SCHEDULE,
+  readGraceSchedule,
+  readNotBefore,
+  type ConsoleRow,
+  type GraceScheduleRow,
+} from '../data/protocolConsoleRows';
 import { EVENTLESS_PROTOCOL_KNOBS } from '@vaipakam/lib/protocolKnobs';
 import { useActiveChain } from '../chain/useActiveChain';
 import { exactAmountString, formatExactSpan, localeDecimalString, localeNumber } from '../lib/format';
 import { VPFI_DECIMALS } from '../data/vpfi';
 import { useNowSec } from '../hooks/useNowSec';
-import { numeraireOf } from '../data/numeraire';
+import { numeraireOf, packedText } from '../data/numeraire';
 import { idleAware } from '../lib/idle';
 import { isProtocolConsolePublic } from '../lib/protocolConsoleVisibility';
 
@@ -155,6 +162,14 @@ function makeFormatters(locale: string | undefined) {
     const v = values[row.key];
     if (v === undefined) return '—';
     const str = String(v);
+    // #2680 — a zero that means more than "not set" says so.
+    if (
+      row.zeroMeans &&
+      row.format !== 'notBefore' &&
+      (str === '0' || ZERO_ADDRESS.test(str) || ZERO_WORD.test(str))
+    ) {
+      return copy.protocolConsole[row.zeroMeans];
+    }
     switch (row.format) {
       case 'bps':
         return bps(str);
@@ -187,6 +202,18 @@ function makeFormatters(locale: string | undefined) {
         const n = values.numeraireSymbol === undefined ? null : numeraireOf(values.numeraireSymbol);
         return n === null ? copy.protocolConsole.numeraireUnits(amount) : `${amount} ${n.symbol}`;
       }
+      case 'vpfiAmount':
+        return copy.protocolConsole.vpfiValue(exactDecimal(exactAmountString(BigInt(str), VPFI_DECIMALS)));
+      case 'hfBps': {
+        if (!/^\d+$/.test(str)) return str;
+        // Exact: bps of the HF scale is the health factor with 4 decimals.
+        return copy.protocolConsole.hfBpsValue(exactDecimal(exactAmountString(BigInt(str), 4)), num(Number(str)));
+      }
+      case 'symbolText': {
+        if (ZERO_WORD.test(str)) return copy.protocolConsole.notSet;
+        const text = packedText(str);
+        return text ?? str;
+      }
       case 'notBefore': {
         // #2843 — the recorded time, always shown beside the verdict.
         const r = readNotBefore(str, nowSec);
@@ -204,7 +231,7 @@ function makeFormatters(locale: string | undefined) {
     }
   }
 
-  return { bps, exactDecimal, rowValue };
+  return { bps, exactDecimal, rowValue, seconds };
 }
 
 /** Why the page read the chain instead of the snapshot, in the reader's words. */
@@ -280,7 +307,7 @@ export function ProtocolConsole() {
   // device's. `LanguageRemount` re-keys the tree on a change, so these
   // formatters are rebuilt with it.
   const { i18n } = useTranslation();
-  const { bps, exactDecimal, rowValue } = makeFormatters(i18n.resolvedLanguage);
+  const { bps, exactDecimal, rowValue, seconds } = makeFormatters(i18n.resolvedLanguage);
   // Ticks, so the snapshot age below advances instead of freezing at
   // whenever React last rendered.
   const nowSec = useNowSec();
@@ -538,6 +565,41 @@ export function ProtocolConsole() {
                 />
               ))
             )}
+          </section>
+
+          {/* #2680 — the loan-default grace schedule. An empty list is not
+              "no grace": the protocol then applies its documented default
+              schedule, which is shown and marked as the default. */}
+          <section className="pc-section" aria-labelledby="pc-grace">
+            <h2 id="pc-grace">{copy.protocolConsole.graceHeading}</h2>
+            {(() => {
+              const schedule = readGraceSchedule(v.graceBuckets);
+              if (schedule === null) return <Row label={copy.protocolConsole.graceSchedule} value="—" />;
+              const rows = schedule === 'unset' ? GRACE_DOCUMENTED_DEFAULT_SCHEDULE : schedule;
+              const graceRow = (r: GraceScheduleRow, i: number) => (
+                <Row
+                  // Keyed by position: the schedule is a fixed positional
+                  // table, and two rows may share a value.
+                  key={`grace-${i}`}
+                  label={
+                    r.maxDurationDays === 0
+                      ? copy.protocolConsole.graceLongerLoans
+                      : copy.protocolConsole.graceUnder(localeNumber(r.maxDurationDays, i18n.resolvedLanguage))
+                  }
+                  value={seconds(String(r.graceSeconds))}
+                />
+              );
+              return (
+                <>
+                  <p className="pc-row-hint">
+                    {schedule === 'unset'
+                      ? copy.protocolConsole.graceUnsetNote
+                      : copy.protocolConsole.graceNote}
+                  </p>
+                  {rows.map(graceRow)}
+                </>
+              );
+            })()}
           </section>
         </>
       )}

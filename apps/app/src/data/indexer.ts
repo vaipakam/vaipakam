@@ -1066,6 +1066,39 @@ export interface ProtocolKnobValues {
   lenderIntentEnabled?: boolean;
   minIntentFillNumeraire?: string;
   treasury?: string;
+  // #2680 — single-output settings added with the multi-part reads.
+  /** The predominant denominator (PAD) and its feeds; the zero address /
+   *  zero symbol while none is set. */
+  predominantDenominator?: string;
+  predominantDenominatorSymbol?: string;
+  ethPadFeed?: string;
+  padNumeraireRateFeed?: string;
+  wethContract?: string;
+  pancakeswapV3Factory?: string;
+  sushiswapV3Factory?: string;
+  // #2680 — settings read as one part of a multi-part answer
+  // (`LABELLED_KNOB_GETTERS`), each published only when the code that
+  // answered is the code this build's ABI describes.
+  /** Graduated partial-liquidation sizing (#395): HF-scale bps (10000 =
+   *  an HF of 1.0), and the dust floor in 1e18 numeraire units. */
+  partialLiqTargetHfCeilingBps?: string;
+  partialLiqDeepUnderwaterHfBps?: string;
+  partialLiqDustFloorNumeraire?: string;
+  /** The liquidator discount per VPFI tier, effective values in bps. */
+  tier1LiqDiscountBps?: string;
+  tier2LiqDiscountBps?: string;
+  tier3LiqDiscountBps?: string;
+  /** The Chainlink feed registry and the two keys the oracle asks it
+   *  under. The primary key is the effective one: the PAD when set, the
+   *  numeraire's Chainlink denominator otherwise. */
+  feedRegistry?: string;
+  feedRegistryPrimaryKey?: string;
+  feedRegistryEthKey?: string;
+  /** The notification fee per loan side, in VPFI (1e18), effective. */
+  notificationFeeVpfi?: string;
+  /** The loan-default grace schedule; an empty list means none is set and
+   *  the compile-time default applies. Values as decimal strings. */
+  graceBuckets?: { maxDurationDays: string; graceSeconds: string }[];
 }
 
 /** Compile-time proof that every setting the shared reader publishes is

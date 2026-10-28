@@ -26,9 +26,6 @@ export type NotShownReason =
   | 'not-on-retail'
   /** The contract exposes no read for it. */
   | 'no-getter'
-  /** Protocol-wide and readable, but only as one field of a multi-value
-   *  read or a list; tracked in #2680. */
-  | 'not-yet'
   /** An explanatory section of the document, not a setting. */
   | 'explanatory';
 
@@ -51,16 +48,18 @@ export const DOC_COVERAGE: Readonly<Record<string, DocCoverage>> = {
   'Liquidation handling fee + max slippage + max liquidator incentive': {
     shown: ['liquidationHandlingFeeBps', 'maxLiquidationSlippageBps', 'maxLiquidatorIncentiveBps'],
   },
-  'Graduated partial-liquidation sizing (#395)': { notShown: 'not-yet' },
+  'Graduated partial-liquidation sizing (#395)': {
+    shown: ['partialLiqTargetHfCeilingBps', 'partialLiqDeepUnderwaterHfBps', 'partialLiqDustFloorNumeraire'],
+  },
   'Loan-admission HF floor (#394)': { shown: ['minHealthFactor'] },
   'Quote-time interest-rate model (#400)': { shown: ['rateModel', 'rateModelMaxDeviationBps', 'rateModelRelativeDeviationBps', 'rateModelMinDeviationBps'] },
   'Swap-to-Repay max slippage (T-090)': { shown: ['maxSwapToRepaySlippageBps'] },
   'Risk config — volatility-LTV threshold + rental buffer': {
     shown: ['volatilityLtvThresholdBps', 'rentalBufferBps'],
   },
-  'Loan-default grace buckets': { notShown: 'not-yet' },
+  'Loan-default grace buckets': { shown: ['graceBuckets'] },
   'Per-asset risk parameters': { notShown: 'per-asset-or-chain' },
-  'Notification fee (per loan-side)': { notShown: 'not-yet' },
+  'Notification fee (per loan-side)': { shown: ['notificationFeeVpfi'] },
   'Max offer duration days': { shown: ['maxOfferDurationDays'] },
   'Auto-pause duration seconds': { shown: ['autoPauseDurationSeconds'] },
   // #2843 — the heading also documents `autoPauseAvailableAt()`.
@@ -77,8 +76,15 @@ export const DOC_COVERAGE: Readonly<Record<string, DocCoverage>> = {
   'Per-asset Chainlink feed override': { notShown: 'per-asset-or-chain' },
   'Stable-token feed override': { notShown: 'per-asset-or-chain' },
   'Sequencer uptime feed': { shown: ['sequencerUptimeFeed'] },
+  // #2680 — the USD denominator is read only as the registry's key in
+  // force (`feedRegistryPrimaryKey`, which is it while no pricing anchor is
+  // set); the ETH-USD feed is `ethNumeraireFeed`, claimed under the
+  // numeraire-rotation heading below.
   'Chainlink Feed Registry / USD denominator / ETH denominator / WETH contract / ETH-USD feed / Uniswap V3 factory':
-    { notShown: 'not-yet' },
+    {
+      shown: ['feedRegistry', 'feedRegistryPrimaryKey', 'feedRegistryEthKey', 'wethContract'],
+      alsoNotShown: { usdChainlinkDenominator: 'no-getter', uniswapV3Factory: 'no-getter' },
+    },
   'Reward grace seconds': { shown: ['rewardGraceSeconds'] },
   'Reward messenger / base chain id / canonical reward chain flag': { notShown: 'rewards-and-recycling' },
   'Interaction-rewards launch timestamp': { notShown: 'rewards-and-recycling' },
@@ -107,7 +113,9 @@ export const DOC_COVERAGE: Readonly<Record<string, DocCoverage>> = {
   'Standing-intent admission floor (`minIntentFillNumeraire`)': { shown: ['minIntentFillNumeraire'] },
   'Matching kill-switch (`partialFillEnabled`)': { shown: ['partialFillEnabled'] },
   'Master kill-switch — `discountPathEnabled`': { notShown: 'no-getter' },
-  'Per-tier liquidator discount (BPS)': { notShown: 'not-yet' },
+  'Per-tier liquidator discount (BPS)': {
+    shown: ['tier1LiqDiscountBps', 'tier2LiqDiscountBps', 'tier3LiqDiscountBps'],
+  },
   'Periodic interest enabled flag (periodicInterestEnabled)': { shown: ['periodicInterestEnabled'] },
   'Numeraire swap enabled flag (numeraireSwapEnabled)': { shown: ['numeraireSwapEnabled'] },
   // The heading's feed-side slots are the symbol, the ETH feed, the
@@ -121,12 +129,17 @@ export const DOC_COVERAGE: Readonly<Record<string, DocCoverage>> = {
       kycTierThresholdsNumeraire: 'not-on-retail',
     },
   },
-  'Predominantly Available Denominator (PAD)': { notShown: 'not-yet' },
+  'Predominantly Available Denominator (PAD)': {
+    shown: ['predominantDenominator', 'predominantDenominatorSymbol', 'ethPadFeed', 'padNumeraireRateFeed'],
+  },
   'Min principal for finer cadence (minPrincipalForFinerCadence)': { shown: ['minPrincipalForFinerCadence'] },
   'Pre-notify lead time in days (preNotifyDays)': { shown: ['preNotifyDays'] },
   'Range-orders cancel cooldown': { notShown: 'compile-time' },
   'Treasury address': { shown: ['treasury'] },
-  '0x proxy / Pancakeswap V3 factory / Sushiswap V3 factory': { notShown: 'not-yet' },
+  '0x proxy / Pancakeswap V3 factory / Sushiswap V3 factory': {
+    shown: ['pancakeswapV3Factory', 'sushiswapV3Factory'],
+    alsoNotShown: { zeroExProxy: 'no-getter' },
+  },
   'Reward messenger address mapping': { notShown: 'per-asset-or-chain' },
   'CCIP messenger registry (chain selectors, remote messengers, channel peers)': {
     notShown: 'per-asset-or-chain',

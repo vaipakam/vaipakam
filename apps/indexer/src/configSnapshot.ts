@@ -304,6 +304,25 @@ function storedNames(json: string | null | undefined): readonly string[] | null 
   }
 }
 
+function isScalarKnobValue(v: unknown): boolean {
+  return typeof v === 'string' || typeof v === 'boolean';
+}
+
+/** A stored value: a scalar, or (#2680) a list of records of scalars. */
+function isStoredKnobValue(v: unknown): boolean {
+  if (isScalarKnobValue(v)) return true;
+  return (
+    Array.isArray(v) &&
+    v.every(
+      (r) =>
+        typeof r === 'object' &&
+        r !== null &&
+        !Array.isArray(r) &&
+        Object.values(r as Record<string, unknown>).every(isScalarKnobValue),
+    )
+  );
+}
+
 /** The settings stored beside the tuples (#2071), or null when the column
  *  is empty or does not hold the shape the refresh writes. */
 function storedKnobs(json: string | null | undefined): ProtocolKnobRead | null {
@@ -316,7 +335,7 @@ function storedKnobs(json: string | null | undefined): ProtocolKnobRead | null {
       typeof values !== 'object' ||
       values === null ||
       Array.isArray(values) ||
-      !Object.values(values).every((v) => typeof v === 'string' || typeof v === 'boolean') ||
+      !Object.values(values).every(isStoredKnobValue) ||
       !Array.isArray(unreported) ||
       !unreported.every((u) => typeof u === 'string')
     ) {
@@ -526,11 +545,15 @@ export async function maybeRefreshProtocolConfig(opts: {
       // failure stores NULL (the route then serves none of them, and the
       // connected app reads them from the chain), never a previous row's
       // values under this row's block.
+      // #2680 — the multi-part settings in the same batch, each published
+      // only when the loupe's host for its getter at this block is the
+      // facet this build's deployment artifact records.
       readProtocolKnobGetters({
         client: opts.client,
         diamond: opts.diamond,
         abi: DIAMOND_ABI_VIEM,
         blockNumber: opts.blockNumber,
+        facets: getDeployment(opts.chainId)?.facets,
       }).catch((err: unknown) => {
         // eslint-disable-next-line no-console
         console.error(
