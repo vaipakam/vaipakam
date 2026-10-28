@@ -46,6 +46,12 @@ export function decodePos(raw: string | undefined): LedgerPos | null {
 }
 export const posAfter = (a: LedgerPos, b: LedgerPos) => a.block > b.block || (a.block === b.block && a.log > b.log);
 
+/** Whether a row's event is in the given (finalized) block or below it. A
+ *  floor over ledger rows moves past a row only when this holds: a chain read
+ *  at a block below the event shows the state before it, which can read as
+ *  "nothing to do" and would put the row below the floor for good. */
+export const rowFinalized = (row: LedgerPos, block: { number: bigint }) => BigInt(row.block) <= block.number;
+
 
 /** The shared indexer's event ledger (`activity_events`). */
 export function d1EventLedger(db: D1Database): EventLedger {
