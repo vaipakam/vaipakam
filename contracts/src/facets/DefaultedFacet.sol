@@ -26,6 +26,7 @@ import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
 import {FallbackCustodyFacet} from "./FallbackCustodyFacet.sol";
 import {ForcedSaleFacet} from "./ForcedSaleFacet.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
+import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibDefaultRoute} from "../libraries/LibDefaultRoute.sol";
@@ -242,33 +243,9 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         s; // suppress unused-storage warning; the library reads it.
         LibPrepayCleanup.clearActiveListing(loan, loanId);
 
-        // Tiered KYC check on loan value for the lender. Both branches
-        // (ERC20 loan / NFT rental) value the same way — we only differ in
-        // which asset + amount to value. #2419 — through the one shared rule
-        // ({NumeraireValueFacet.getLiquidNumeraireValue}, rounded down).
-        // Illiquid assets have no oracle feed, so valued at 0 per README — KYC always passes.
-        {
-            address valueAsset;
-            uint256 valueAmount;
-            if (loan.assetType == LibVaipakam.AssetType.ERC20) {
-                valueAsset = loan.principalAsset;
-                valueAmount = loan.principal;
-            } else {
-                // NFT rental: principalAsset is the NFT contract; price the prepay.
-                valueAsset = loan.prepayAsset;
-                valueAmount = loan.prepayAmount;
-            }
-
-            uint256 valueNumeraire = NumeraireValueFacet(address(this))
-                .getLiquidNumeraireValue(valueAsset, valueAmount);
-            if (
-                valueNumeraire != 0 &&
-                !ProfileFacet(address(this)).meetsKYCRequirement(loan.lender, valueNumeraire)
-            ) {
-                revert KYCRequired();
-            }
-            // Illiquid asset: valued at 0, KYC always passes.
-        }
+        // Tiered KYC check on the lender, by the one rule
+        // {defaultKycAdmission} also reports (#2083).
+        if (!_lenderKycAdmitted(loan)) revert KYCRequired();
 
         uint256 endTime = LibLoanClock.maturity(loan);
         uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
@@ -691,6 +668,46 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 endTime = LibLoanClock.maturity(loan);
         uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
         return block.timestamp > graceEnd;
+    }
+
+    /**
+     * @notice #2083 — whether {triggerDefault}'s lender-KYC gate admits this
+     *         loan now, by the same rule the default applies.
+     * @dev Reports this one gate only: a loan this admits may still be
+     *      refused by the others (status, grace, pause, sequencer). The gate
+     *      can refuse only where KYC enforcement is switched on; on a
+     *      deployment that leaves it off it always admits.
+     * @param loanId The loan ID.
+     * @return admitted True when the gate passes.
+     * @return refusal Empty when admitted; otherwise the exact revert data
+     *         {triggerDefault} raises (`KYCRequired()`).
+     */
+    function defaultKycAdmission(
+        uint256 loanId
+    ) external view returns (bool admitted, bytes memory refusal) {
+        admitted = _lenderKycAdmitted(LibVaipakam.storageSlot().loans[loanId]);
+        if (!admitted) refusal = abi.encodeWithSelector(KYCRequired.selector);
+    }
+
+    /// @dev The lender-KYC rule a time-based default applies (#2083, owner
+    ///      decision 2026-10-28: kept for a deployment that turns KYC on). The
+    ///      loan's value is the one the KYC thresholds name: for an ERC-20 loan
+    ///      its liquid principal plus its liquid collateral as it stands now
+    ///      ({LibCompliance.calculateValueNumeraire}, the rule every other KYC
+    ///      comparison uses), and for an NFT rental the prepaid rent. Each leg
+    ///      is valued by the one shared rule (#2419, rounded down), so an
+    ///      illiquid leg is worth 0, and a loan worth 0 always passes.
+    ///      Otherwise the loan's LENDER (not the caller) must meet the tier for
+    ///      that value ({ProfileFacet.meetsKYCRequirement}, which admits
+    ///      everyone while enforcement is off).
+    function _lenderKycAdmitted(LibVaipakam.Loan storage loan) private view returns (bool) {
+        uint256 valueNumeraire = loan.assetType == LibVaipakam.AssetType.ERC20
+            ? LibCompliance.calculateValueNumeraire(
+                address(this), loan.principalAsset, loan.principal, loan.collateralAsset, loan.collateralAmount
+            )
+            : NumeraireValueFacet(address(this)).getLiquidNumeraireValue(loan.prepayAsset, loan.prepayAmount);
+        return valueNumeraire == 0
+            || ProfileFacet(address(this)).meetsKYCRequirement(loan.lender, valueNumeraire);
     }
 
     /// @dev #1566 S2a: the swap failed, so enter FallbackPending through the

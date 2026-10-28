@@ -129,3 +129,7 @@ See the [audit record](../procedures/FunctionalSpecsCodeVsDocsAudit.md#the-conne
 ## Forced sales: the spec now sizes them to the debt, ahead of the code (#2796, 2026-10-25)
 
 See the [audit record](../procedures/FunctionalSpecsCodeVsDocsAudit.md#forced-sales-the-spec-now-sizes-them-to-the-debt-ahead-of-the-code-2796-2026-10-25).
+
+## The default's lender-KYC check valued the principal only (#2083, 2026-10-28)
+
+See the [audit record](../procedures/FunctionalSpecsCodeVsDocsAudit.md#the-defaults-lender-kyc-check-valued-the-principal-only-2083-2026-10-28).

@@ -1357,3 +1357,32 @@ the code needed because every sale is an exact-input swap.
 
 **Status:** resolved — the code follows the stated intent on every forced-sale
 path. The 2% quote margin is the owner's decision of 2026-10-25.
+
+## The default's lender-KYC check valued the principal only (#2083, 2026-10-28)
+
+**The intent.** The owner decided on 2026-10-28 that the time-based default
+keeps its lender-KYC check. KYC is off on the retail deploy, but the check is
+kept for the industrial fork. The spec now states it under KYC/AML
+Integration. The spec's valuation rule for an ERC-20 loan is the liquid
+principal **plus** the liquid collateral. For a rental it is the total rental
+value.
+
+**The code before #2083.** The default valued the principal alone for an
+ERC-20 loan. So with enforcement on, a lender whose tier covered the
+principal but not principal plus collateral passed the default's check,
+where the spec says they should not.
+
+**The fix.** The default now values an ERC-20 loan with the same helper every
+other KYC comparison uses: liquid principal plus liquid collateral, with the
+collateral as it stands at the default. The `defaultKycAdmission` view gives
+the same answer, so the app, the default and the spec agree.
+
+**A rental.** The default values a rental at its prepaid rent: the daily
+rate times the duration, without the rental buffer. That is the spec's rental
+value. The accept path does not do the same. It values a rental at the NFT
+(0) plus the collateral, and a rental has no collateral, so the accept counts
+no rent. That is a separate divergence on the accept path, tracked in #3044.
+
+**Status:** resolved for the default. The accept-side rental value is open
+in #3044. Nothing changes on any deployment while enforcement is off, which is
+every deployment today.

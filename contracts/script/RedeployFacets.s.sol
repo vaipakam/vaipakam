@@ -340,6 +340,12 @@ contract RedeployFacets is Script {
         // new (Add); on a pre-#594 diamond all five would be new (Add).
         (bytes4[] memory consToAdd, bytes4[] memory consToReplace) =
             _partitionByRouting(diamond, _consolidationSelectors());
+        // #2083 — DefaultedFacet gained the `defaultKycAdmission` view, new on
+        // a pre-#2083 diamond (Add) and routed after (Replace). The routed
+        // subset is never empty (`isLoanDefaultable` is routed on every
+        // existing diamond), so the fixed Replace slot below stays valid.
+        (bytes4[] memory dfToAdd, bytes4[] memory dfToReplace) =
+            _partitionByRouting(diamond, _defaultedSelectors());
         // #1810 — EarlyWithdrawalFacet gained `createLoanSaleOfferBound`, so
         // its list is partitioned like the others: on a pre-#1810 diamond the
         // three older selectors are routed (Replace) and the bound entry is
@@ -508,11 +514,12 @@ contract RedeployFacets is Script {
             (tfToAdd.length > 0 ? 1 : 0) + (tfToReplace.length > 0 ? 1 : 0) +
             (nvToAdd.length > 0 ? 1 : 0) + (nvToReplace.length > 0 ? 1 : 0) +
             (nfToAdd.length > 0 ? 1 : 0) + (nfToReplace.length > 0 ? 1 : 0) +
-            (fsToAdd.length > 0 ? 1 : 0) + (fsToReplace.length > 0 ? 1 : 0);
+            (fsToAdd.length > 0 ? 1 : 0) + (fsToReplace.length > 0 ? 1 : 0) +
+            (dfToAdd.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
             new IDiamondCut.FacetCut[](9 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
-        cuts[1] = _replace(address(defaultedFacet), _defaultedSelectors());
+        cuts[1] = _replace(address(defaultedFacet), dfToReplace);
         cuts[2] = _replace(address(loanFacet), _loanSelectors());
         cuts[3] = _replace(address(precloseFacet), _precloseSelectors());
         cuts[4] = _replace(address(earlyWithdrawalFacet), ewToReplace);
@@ -561,6 +568,11 @@ contract RedeployFacets is Script {
         }
         if (consToAdd.length > 0) {
             cuts[idx++] = _add(address(consolidationFacet), consToAdd);
+        }
+        // #2083 — the default-KYC verdict view is an Add on a pre-#2083
+        // diamond; on a current one the subset is empty and no Add is cut.
+        if (dfToAdd.length > 0) {
+            cuts[idx++] = _add(address(defaultedFacet), dfToAdd);
         }
         // #1810 — the quote-bound listing entry is an Add on any pre-#1810
         // diamond (the routed subset went through the fixed Replace above).
@@ -1075,12 +1087,15 @@ contract RedeployFacets is Script {
         s[0] = RiskSplitLiquidationFacet.triggerLiquidationSplit.selector;
     }
 
-    /// @dev The DefaultedFacet selectors routed on every Diamond this script
-    ///      accepts. #2796's sell-amount `triggerDefault` is cut by
-    ///      {_forcedSaleEntryCuts} instead, because it may be new.
+    /// @dev The DefaultedFacet selectors this script cuts through its routing
+    ///      partition: `isLoanDefaultable`, routed on every Diamond it accepts,
+    ///      and #2083's `defaultKycAdmission`, which may be new. #2796's
+    ///      sell-amount `triggerDefault` is cut by {_forcedSaleEntryCuts}
+    ///      instead.
     function _defaultedSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](2);
         s[0] = DefaultedFacet.isLoanDefaultable.selector;
+        s[1] = DefaultedFacet.defaultKycAdmission.selector;
     }
 
     /// @dev #2796 - the cuts the sell-amount entry points need beyond the
