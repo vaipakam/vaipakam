@@ -36,7 +36,7 @@ Folder, package name, Worker name were all switched together at the labs → www
 ```bash
 pnpm --filter @vaipakam/www dev       # local Vite dev server
 pnpm --filter @vaipakam/www build     # Vite production build
-pnpm --filter @vaipakam/www run deploy    # wrangler deploy; uses `wrangler login` on the operator's machine
+pnpm --filter @vaipakam/www run deploy    # wrangler deploy, stamped with the commit (#2242); uses `wrangler login` on the operator's machine
 ```
 
 ## How to test

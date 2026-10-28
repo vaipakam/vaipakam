@@ -119,5 +119,13 @@ Next milestones (in rough order):
 pnpm --filter @vaipakam/app dev        # local dev
 pnpm --filter @vaipakam/app typecheck  # tsc -b --noEmit
 pnpm --filter @vaipakam/app build      # tsc + vite build
-pnpm --filter @vaipakam/app run deploy     # build + wrangler deploy
+pnpm --filter @vaipakam/app run deploy     # build + wrangler deploy, stamped with the commit
 ```
+
+The deploy records the commit it was built from on the Worker version
+(`packages/lib/bin/wrangler-deploy.mjs`), and the hourly
+`.github/workflows/deploy-lag.yml` check compares it with `main`. A merged
+change to the app that has not been deployed for six hours opens a "Workers
+behind main" issue (#2242). Deploy through `run deploy`, not a bare
+`wrangler deploy`: without the stamp the check can only infer the commit from
+the deploy time, and says so.

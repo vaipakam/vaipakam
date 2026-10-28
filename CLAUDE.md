@@ -1709,6 +1709,15 @@ Otherwise review the `workers.dev` URL `pnpm run deploy` prints. Do not
 review `alpha02.vaipakam.com` as a stand-in — it serves the frozen
 `vaipakam-alpha02` Worker, not the `vaipakam-app` one the deploy
 publishes, so a green review there says nothing about what shipped.
+**A deploy that never happens is no longer silent** (#2242): every package
+`deploy` script records the commit it was built from on the Worker version
+(`packages/lib/bin/wrangler-deploy.mjs`), and the hourly
+`.github/workflows/deploy-lag.yml` compares each Worker's live deployment with
+`main`, opening a "Workers behind main" issue once a merged change has waited
+six hours. Deploy through the package script, never a bare `wrangler deploy`:
+an unstamped deployment can only be placed by its upload time, and the check
+marks it INFERRED. A Worker whose lag is deliberate goes in that workflow's
+`DEPLOY_LAG_HELD` with its reason, in a reviewed commit.
 Then — drive the actual
 feature end-to-end with the dev test wallets (the scratchpad Playwright
 driver), and confirm the observable behaviour, not just preview builds,
