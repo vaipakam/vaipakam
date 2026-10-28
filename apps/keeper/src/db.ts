@@ -1633,6 +1633,23 @@ export async function checkHorizonEntries(db: KeeperD1, chainId: number, diamond
   }
 }
 
+/** Clear the horizon clock's diagnostics of entries that left it (a
+ *  forfeited entry never expires): their pause count and touch readings, so
+ *  no stale paused-clock report names them. Their queue row, and with it any
+ *  close-out still owed, stays. */
+export async function retireHorizonClock(db: KeeperD1, chainId: number, diamond: string, entryIds: readonly number[]): Promise<void> {
+  if (entryIds.length === 0) return;
+  for (const c of chunkD1InList(entryIds, { before: [chainId, diamond.toLowerCase()] })) {
+    await db
+      .prepare(
+        `UPDATE keeper_horizon_entry SET paused_runs = 0, touched_at = 0, expires_at = 0, prev_touched_at = 0, prev_expires_at = 0
+          WHERE chain_id = ? AND diamond = ? AND entry_id IN (${c.placeholders}) AND (paused_runs <> 0 OR touched_at <> 0)`,
+      )
+      .bind(...c.binds)
+      .run();
+  }
+}
+
 /** Record a LANDED touch: the estimate read just before it and the pause count
  *  it measured, per entry. The touch it replaces moves to `prev_*` (SQLite
  *  reads the right-hand sides from the row as it was). */

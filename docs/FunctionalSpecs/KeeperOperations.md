@@ -391,15 +391,21 @@ evidence that the migration has completed.
   which moves no value and only releases the commitments it still carried;
   an entry that retires a day at a time is retired again until it is done.
   The loan of a forfeited entry is swept once for all its entries, sending
-  the forfeited reward to the recycle bucket, again until nothing more moves.
+  the forfeited reward to the recycle bucket. A sweep can make progress
+  while moving nothing, so the keeper does not judge it by the amount it
+  returns: it sweeps such a loan once each round, and again within the run
+  while the last sweep moved value or reported progress and an entry is
+  still unfinished.
   A forfeited entry stays in the heartbeat's queue until that sweep has
   processed it, whether or not the switch is on, so turning the switch on
-  later reaches every forfeited entry already found. Nothing is sent when
-  the call would move nothing. The run states how many entries were retired
+  later reaches every forfeited entry already found. A forfeited entry has no
+  expiry clock, so any paused-clock or touch report it carried is cleared.
+  A retirement is not sent when it would retire nothing. Each run states
+  whether the close-out switch is on, and the form of a value it refuses. The run states how many entries were retired
   and the commitments released, and how much each sweep moved, as reported
   just before each call was sent. A refused call is alerted for each entry
   it covers, naming the call and the reason, until the entry runs clean or
-  settles. Every one of these calls is open to anyone, and none moves value
+  settles; a call that reverts on chain keeps it open. Every one of these calls is open to anyone, and none moves value
   to the keeper.
 - The sanctions-hold pass observes held claimants and advances settlements
   only under the protocol's final verdict. Notices state amounts held, paid,
