@@ -1798,7 +1798,11 @@ Three profiles live in `contracts/foundry.toml`:
   predates a Foundry fix for stale cached bytecode behind
   `type(X).runtimeCode`, which the full regression's
   `test/helpers/LibOneTx*Fill` use, so the release gate and the e2e jobs
-  stay on `stable`.
+  are on a different pin: v1.8.6, which has that fix and ran the last green
+  sharded full regression. No CI job floats on `stable` any more (owner
+  decision 2026-10-28, #1984): a toolchain bump is a reviewed commit, and
+  the release gate and the three e2e workflows move together. The docs
+  jobs stay on v1.7.1 for `forge doc --build`.
 - **`quick`** — fast inner-loop iteration. Compiles `src/` + `lib/`
   only (skips project `test/` and `script/`); viaIR + optimizer still
   ON (some src/ facets, e.g. `VaultFactoryFacet.sol:631`,
@@ -2469,7 +2473,10 @@ work and never lag behind a merge.
 
 - **Every behaviour-changing PR carries its own fragment** in its diff:
   a file `docs/ReleaseNotes/unreleased/<TASK-ID>-<slug>.md`, written in
-  plain English (no code), describing what changed and why. Copy
+  plain English (no code), describing what changed and why in at most
+  about six short paragraphs. Reasoning that needs more room goes in a
+  design doc the fragment links, and `Closes #<n>` is written only when
+  the PR closes an issue (owner decision 2026-10-28, #1799). Copy
   `docs/ReleaseNotes/unreleased/_TEMPLATE.md` as the starting point.
   This is part of the PR — not a post-merge step.
 - **After the day's PRs merge**, fold the fragments into the dated file:

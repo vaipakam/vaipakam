@@ -787,7 +787,10 @@ the periodic FORCING FUNCTION, not the volume.
 
 **Every behaviour-changing PR carries** a fragment in its diff at
 `docs/ReleaseNotes/unreleased/<task-id>-<slug>.md` — plain English,
-no code, describing what changed and why.
+no code, describing what changed and why, in at most about six short
+paragraphs. Longer reasoning goes in a design doc the fragment links,
+and "Closes #<n>" is written only when the PR closes an issue (owner
+decision 2026-10-28, #1799).
 
 Template at `docs/ReleaseNotes/unreleased/_TEMPLATE.md`.
 
@@ -1579,6 +1582,25 @@ to a decision. Listed by category.
   each edit LANDED (`grep` the new text; `wc -l` after) before any reply
   references it. Mutate each call site by index when testing a scripted
   change.
+
+**Retiring a claim — sweep every surface that states it** (owner decision
+2026-10-28, #2189: two habits, not a linter):
+
+- **Sweep with a pattern that crosses wrapped lines.** Claims live in
+  comments and prose that wrap, so a line-based `grep` for the phrase
+  misses the copy split by a newline and a `//` or `*`. Search
+  multi-line (`rg -U`, allowing `\s*(//|\*|#)?\s*` between words), and
+  include the verb variants (would / will / could / can) and title case.
+- **List every document the PR convention requires, and check each.**
+  One behaviour is usually described in several places at once: the
+  release-note fragment, `apps/app/e2e/COVERAGE.md`, the FunctionalSpec,
+  and the code comments. Sweep all of them, not only the one the finding
+  named. A sweep reported as complete without that list is how #2187 lost
+  two rounds.
+
+A retired claim may still appear where the record explains why it was
+retired. That quotation is intended. The sweep is for places that still
+assert it.
 
 ### 12.8 Testing
 
