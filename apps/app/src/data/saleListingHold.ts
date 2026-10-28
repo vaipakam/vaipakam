@@ -175,7 +175,7 @@ export function useSaleListingHold(
     // The state flips exactly once (at the listing's expiry moment),
     // so a slow cadence is enough; the post-receipt invalidation
     // floor refreshes it immediately after the borrower's own writes.
-    refetchInterval: tipAware(60_000, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('saleListingHold', 60_000, Boolean(readChain.wsUrl)),
     // The account keeps the probe faithful to the transaction the
     // button would send; the entry is permissionless, so any works.
     // Unknown RPC failures propagate as query errors (fail closed

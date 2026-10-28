@@ -957,7 +957,7 @@ export function usePreviewMatch(
     // RPC read-diet PR A (Codex #1228 r1) — crossability is an ACTION
     // gate: stretch only when the chain WS tip nudge actually covers it
     // (LiveChainSync never mounts on HTTP-only chains).
-    refetchInterval: tipAware(REFRESH_MS, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('deskPreviewMatch', REFRESH_MS, Boolean(readChain.wsUrl)),
     queryFn: () =>
       readMatchPreviewLive(publicClient!, readChain.diamondAddress, pair!, matcher),
   });
@@ -986,7 +986,7 @@ export function usePreviewMatchRiskBlock(
     // RPC read-diet PR A (Codex #1228 r1) — crossability is an ACTION
     // gate: stretch only when the chain WS tip nudge actually covers it
     // (LiveChainSync never mounts on HTTP-only chains).
-    refetchInterval: tipAware(REFRESH_MS, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('deskPreviewMatch', REFRESH_MS, Boolean(readChain.wsUrl)),
     queryFn: () =>
       readMatchRiskBlockLive(publicClient!, readChain.diamondAddress, pair!),
   });

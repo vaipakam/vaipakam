@@ -112,6 +112,7 @@ import { EarlyExitFlow } from '../components/EarlyExitFlow';
 import { loanSaleListingEnabled, LoanSaleFlow } from '../components/LoanSaleFlow';
 import { LoanSalePendingCard } from '../components/LoanSalePendingCard';
 import { LoanKeeperCard } from '../components/LoanKeeperCard';
+import { PeriodicInterestCard } from '../components/PeriodicInterestCard';
 import { LOCK_EARLY_WITHDRAWAL_SALE, useLoanSalePending } from '../data/loanSalePending';
 import {
   readRefinanceMarker,
@@ -300,7 +301,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const nftOwners = useQuery({
     queryKey: ['positionOwners', readChain.chainId, loan.data?.loanId],
     enabled: Boolean(loan.data) && Boolean(readClient),
-    refetchInterval: tipAware(60_000, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('positionOwners', 60_000, Boolean(readChain.wsUrl)),
     queryFn: async () => {
       const row = loan.data!;
       // Tri-state per side: an address (live owner), 'burned' (the
@@ -441,7 +442,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     queryKey: ['loanLiveStatus', readChain.chainId, loan.data?.loanId],
     enabled: liveStatusEnabled,
     staleTime: 15_000,
-    refetchInterval: tipAware(30_000, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('loanLiveStatus', 30_000, Boolean(readChain.wsUrl)),
     // Returns the STATUS plus the interest mode: the same single
     // getLoanDetails call answers both, and the early-repay chooser
     // needs the mode in Basic mode too (the loanLive strategy read is
@@ -1014,7 +1015,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     queryKey: ['loanLive', readChain.chainId, loan.data?.loanId],
     enabled: loanLiveEnabled,
     staleTime: 30_000,
-    refetchInterval: tipAware(60_000, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('loanLive', 60_000, Boolean(readChain.wsUrl)),
     queryFn: async () => {
       const [live, calcDue, latestBlock, saleLock] = await Promise.all([
         readLoanLive(readClient!, readChain.diamondAddress, loan.data!.loanId),
@@ -1185,7 +1186,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     queryKey: ['graceBannerTerms', readChain.chainId, loan.data?.loanId],
     enabled: bannerTermsEnabled,
     staleTime: 30_000,
-    refetchInterval: tipAware(60_000, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('graceBannerTerms', 60_000, Boolean(readChain.wsUrl)),
     // chainNow rides along (Codex #1166 r2): the contracts gate on
     // block.timestamp, so the banner must not trust a skewed device
     // clock. fetchedAtLocal lets the countdown advance between
@@ -1405,6 +1406,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const saleHoldResolving =
     row.status === 'active' && saleHold.resolving === true;
   const principal = principalMeta.data;
+  // The loan's interest schedule as the page already knows it, from the
+  // first of its reads that answered (the lender chooser below reads the
+  // same three). `undefined` = not known yet.
+  const pageCadence =
+    loanLive.data?.live.periodicInterestCadence ??
+    liveStatus.data?.periodicInterestCadence ??
+    (bannerTerms.isError ? undefined : bannerTermsData?.live.periodicInterestCadence);
   const collateral = collateralMeta.data;
   const interest = fullTermInterest(
     BigInt(row.principal),
@@ -3486,6 +3494,23 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           </div>
         </dl>
       </section>
+
+      {/* #2524 — the current interest period of a loan on a schedule:
+          deadline, grace, what is owed, and what can happen once the
+          grace is over. Mounted while the page's cadence is unknown too
+          (the card reads its own and shows nothing for a loan with no
+          schedule), never once a read has said "no schedule". */}
+      {row.status === 'active' && !closedThisSession && !isRental ? (
+        <PeriodicInterestCard
+          loanId={row.loanId}
+          role={role === 'borrower' || role === 'lender' ? role : 'viewer'}
+          principal={principal}
+          enabled={pageCadence !== 0}
+          scheduled={pageCadence !== undefined && pageCadence !== 0}
+          busy={busy}
+          setBusy={setBusy}
+        />
+      ) : null}
 
       {/* #1033 — one-line alerts nudge: deadlines happen while the
           site is closed, and the borrower on an active loan is the
