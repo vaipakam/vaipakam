@@ -226,10 +226,17 @@ export interface CloseOutReport {
   daysWaitingOnEntries: number[];
   /** Days whose scanned entries did not account for their totals. */
   daysScanGap: number[];
-  parked: { batchId: string; amount: bigint }[];
+  /** Batches whose park walk landed this run: `amount` once a read shows the
+   *  remainder parked, `parking` while the read shows it unfinished, `unread`
+   *  when the read after the last landed page failed (`afterLanding`). */
+  parked: { batchId: string; pages: number; state: 'parked' | 'parking' | 'unread'; amount: bigint | null }[];
   pruned: number[];
-  /** Removed remit destinations whose release moved this run (Base). */
-  released: { chain: number; from: number; to: number; bound: number }[];
+  /** Removed remit destinations whose release walk landed this run (Base):
+   *  the walks that landed, and where the release stands after the last of
+   *  them. `to` and `bound` are null when the read after the last landed walk
+   *  failed: the walks stand, and where they left the release is unknown
+   *  (`afterLanding`). */
+  released: { chain: number; from: number; walks: number; to: number | null; bound: number | null }[];
   /** Releases waiting on an abandoned day's finalization. */
   releaseWaiting: string[];
   /** Reconciliation queues that held pending takes: the walks that landed,
@@ -237,7 +244,7 @@ export interface CloseOutReport {
    *  change between the two is net: another caller's outflow can add takes,
    *  and anyone may walk the queue, between the reads (Codex #3010). `after`
    *  is null when the read after the last landed walk failed: the figure was
-   *  not observed, so none is reported. */
+   *  not observed, so none is reported (`afterLanding`). */
   queues: { side: string; walks: number; before: bigint; after: bigint | null }[];
   refused: Map<string, string>;
   unread: Map<string, string>;
@@ -282,6 +289,13 @@ function readPositive(env: Env, key: PlainVarKey, fallback: number): number {
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
 }
 
+const describePark = (p: CloseOutReport['parked'][number]): string =>
+  `${p.batchId.slice(0, 10)}(${p.state === 'parked' ? p.amount : `${p.pages} page(s), ${p.state === 'parking' ? 'not yet parked' : 'outcome unread'}`})`;
+const describeRelease = (x: CloseOutReport['released'][number]): string =>
+  x.to === null || x.bound === null
+    ? `chain ${x.chain} ${x.walks} walk(s) from day ${x.from}, where they left it unread`
+    : `chain ${x.chain} days ${x.from}..${x.to - 1} in ${x.walks} walk(s) (${x.to >= x.bound ? 'done' : `${x.bound - x.to} left`})`;
+
 /** The run's one line for a chain. */
 export function describeReport(r: CloseOutReport): string {
   if (r.skipped) return `[keeper] rewardCloseOut chain=${r.chainId}: not worked this run: ${r.skipped}`;
@@ -294,9 +308,9 @@ export function describeReport(r: CloseOutReport): string {
     `days-closed=${r.daysClosed.join(',') || 'none'}`,
     ...(r.daysWaitingOnEntries.length > 0 ? [`days-waiting-on-open-entries=${summarizeDays(r.daysWaitingOnEntries)}`] : []),
     ...(r.daysScanGap.length > 0 ? [`days-scan-short=${r.daysScanGap.join(',')}`] : []),
-    `parked=${r.parked.map((p) => `${p.batchId.slice(0, 10)}(${p.amount})`).join(',') || 'none'}${r.parked.length > 0 ? ' (release is the administrator\'s acknowledgment)' : ''}`,
+    `parked=${r.parked.map(describePark).join(',') || 'none'}${r.parked.some((p) => p.state === 'parked') ? ' (release is the administrator\'s acknowledgment)' : ''}`,
     `pruned=${r.pruned.join(',') || 'none'}`,
-    ...(r.released.length > 0 ? [`released=${r.released.map((x) => `chain ${x.chain} days ${x.from}..${x.to - 1} (${x.to >= x.bound ? 'done' : `${x.bound - x.to} left`})`).join(',')}`] : []),
+    ...(r.released.length > 0 ? [`released=${r.released.map(describeRelease).join(',')}`] : []),
     ...(r.releaseWaiting.length > 0 ? [`release-waiting=${r.releaseWaiting.join('; ')}`] : []),
     ...r.queues.map((q) => `queue-${q.side}=${q.walks} walk(s), pending ${q.before} before, ${q.after === null ? 'unread' : q.after} after (net of other callers)`),
     ...(r.refused.size > 0 ? [`refused=${[...r.refused].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
@@ -505,6 +519,24 @@ async function finalizeEras(r: Reader, sender: StepSender, report: CloseOutRepor
   if (String(win.next) !== stored.get(ERA_NEXT_ITEM)) await cursors.put(ERA_NEXT_ITEM, String(win.next));
 }
 
+/**
+ * The read that follows a landed send, to see what it did (Codex #3010). The
+ * one rule for every such read in this pass: the step records the landing in
+ * its report BEFORE this read, and the read only refines that record, so
+ * nothing it does can drop work that landed. A read that fails is noted and
+ * returns null, leaving the outcome unknown in the report; past the run's
+ * deadline it throws, and the recorded landing stands.
+ */
+async function afterLanding<T>(sender: StepSender, key: string, what: string, read: () => Promise<T>): Promise<T | null> {
+  try {
+    return await read();
+  } catch (err) {
+    if (err instanceof PastRunDeadline) throw err;
+    sender.noteUnread(key, `${what} (${shortErr(err)})`);
+    return null;
+  }
+}
+
 // ─── 2. Pending surplus ─────────────────────────────────────────────────────
 
 async function drainSurplus(r: Reader, sender: StepSender, report: CloseOutReport, role: number): Promise<void> {
@@ -591,7 +623,7 @@ async function releaseDestinations(r: Reader, sender: StepSender, report: CloseO
       sender.noteUnread(`release:${subject}`, 'the protocol is paused, so the release cannot continue');
       continue;
     }
-    const from = cursor;
+    let entry: CloseOutReport['released'][number] | null = null;
     while (cursor < bound) {
       const at = cursor;
       // eslint-disable-next-line no-await-in-loop
@@ -601,16 +633,25 @@ async function releaseDestinations(r: Reader, sender: StepSender, report: CloseO
         break;
       }
       if (res !== 'landed') break;
-      // eslint-disable-next-line no-await-in-loop
-      const after = (await readRelease([chain], 'release'))[0] as readonly [bigint, bigint] | undefined;
-      if (after === undefined) {
-        sender.noteUnread(`release:${subject}`, 'its release record after a walk');
-        break;
+      // Recorded before the read that says where it left the release.
+      if (entry === null) {
+        entry = { chain, from: cursor, walks: 0, to: null, bound: null };
+        report.released.push(entry);
       }
+      entry.walks++;
+      entry.to = entry.bound = null;
+      // eslint-disable-next-line no-await-in-loop
+      const after = await afterLanding(sender, `release:${subject}`, 'its release record after a walk', async () => {
+        const st = (await readRelease([chain], 'release'))[0] as readonly [bigint, bigint] | undefined;
+        if (st === undefined) throw new Error('the read did not come back');
+        return st;
+      });
+      if (after === null) break;
       [bound, cursor] = [Number(after[0]), Number(after[1])];
+      [entry.bound, entry.to] = [bound, cursor];
     }
-    if (cursor > from) report.released.push({ chain, from, to: cursor, bound });
-    if (cursor >= bound) done.add(chain);
+    // Done only on what a read showed: a walk whose outcome is unread is not.
+    if (entry?.to !== null && cursor >= bound) done.add(chain);
   }
   // On a page read from the floor, the floor moves past the leading rows whose
   // chain's release is done, at the head AND at the finalized block: a walk a
@@ -882,16 +923,28 @@ async function parkBatches(r: Reader, sender: StepSender, report: CloseOutReport
       if (verdict !== null) sender.noteUnread(`park:${batchId.slice(0, 10)}`, verdict);
       continue;
     }
+    let entry: CloseOutReport['parked'][number] | null = null;
     for (let page = 0; page < MAX_PARK_PAGES; page++) {
       // eslint-disable-next-line no-await-in-loop
       const res = await sender.call('park', batchId.slice(0, 10), 'parkTransportBatchRemainder', [batchId]);
       if (res !== 'landed') break;
+      // Recorded before the read that says whether the remainder is parked.
+      if (entry === null) {
+        entry = { batchId, pages: 0, state: 'unread', amount: null };
+        report.parked.push(entry);
+      }
+      entry.pages++;
+      entry.state = 'unread';
       // eslint-disable-next-line no-await-in-loop
-      const rem = await r.one<readonly [bigint, number, boolean, bigint]>('getTransportRemainder', [batchId]);
+      const rem = await afterLanding(sender, `park:${batchId.slice(0, 10)}`, 'its remainder after a park page', () =>
+        r.one<readonly [bigint, number, boolean, bigint]>('getTransportRemainder', [batchId]),
+      );
+      if (rem === null) break;
       if (Number(rem[1]) > 0) {
-        report.parked.push({ batchId, amount: rem[0] });
+        [entry.state, entry.amount] = ['parked', rem[0]];
         break;
       }
+      entry.state = 'parking';
     }
   }
 }
@@ -1025,24 +1078,20 @@ async function advanceQueues(r: Reader, sender: StepSender, report: CloseOutRepo
       continue;
     }
     if (pos.pending === 0n) continue;
-    const before = pos.pending;
-    let walks = 0;
-    let observed = true;
+    // Recorded before any walk, so every landed walk is counted whatever the
+    // read after it does.
+    const entry: CloseOutReport['queues'][number] = { side: q.name, walks: 0, before: pos.pending, after: pos.pending };
+    report.queues.push(entry);
     while (pos.pending > 0n) {
       // eslint-disable-next-line no-await-in-loop
       const res = await sender.call('queue', q.name, 'advanceReconciliationQueue', [q.side, BigInt(QUEUE_STEPS)]);
       if (res !== 'landed') break;
-      walks++;
-      let after: QueuePosition;
-      try {
-        // eslint-disable-next-line no-await-in-loop
-        after = await q.read(r);
-      } catch (err) {
-        if (err instanceof PastRunDeadline) throw err;
-        sender.noteUnread(`queue:${q.name}`, `the ${q.name} reconciliation queue after a walk (${shortErr(err)})`);
-        observed = false;
-        break;
-      }
+      entry.walks++;
+      entry.after = null;
+      // eslint-disable-next-line no-await-in-loop
+      const after = await afterLanding(sender, `queue:${q.name}`, `the ${q.name} reconciliation queue after a walk`, () => q.read(r));
+      if (after === null) break;
+      entry.after = after.pending;
       const moved = after.pending < pos.pending || after.frontiers.some((f, i) => f > pos.frontiers[i]);
       pos = after;
       if (!moved) {
@@ -1050,6 +1099,5 @@ async function advanceQueues(r: Reader, sender: StepSender, report: CloseOutRepo
         break;
       }
     }
-    report.queues.push({ side: q.name, walks, before, after: observed ? pos.pending : null });
   }
 }

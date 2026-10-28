@@ -98,6 +98,11 @@ evidence that the migration has completed.
   is reported as a failure; an unanswered broadcast or missing receipt has
   an unknown outcome until chain evidence resolves it. A later receipt has
   the same status as one seen immediately.
+- A transaction that landed stays reported as landed. When the keeper reads
+  the chain afterwards to see what the transaction did, and that read fails
+  or the run's time runs out, the report still lists the landed transaction
+  and says its result is unknown. It never drops the transaction, and never
+  presents an earlier reading as the result.
 - Operator-managed tuning survives deployment. Shipping a release must not
   silently reset liquidation thresholds, confidence windows, or arming
   choices. Signing keys and settings whose presence enables transactions
