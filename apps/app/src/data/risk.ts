@@ -1,33 +1,52 @@
 /**
  * Loan risk reads — RiskFacet's `calculateHealthFactor(loanId)` /
- * `calculateLTV(loanId)`. Both REVERT for loans whose legs aren't
- * priceable (illiquid); that's not an error, it's the protocol saying
- * "no automatic liquidation applies here", and the UI copy reflects
- * exactly that instead of showing a spinner forever.
+ * `calculateLTV(loanId)`, and on the position page the collateral price
+ * the liquidation price is derived from (#2531). Both risk reads REVERT for
+ * loans whose legs aren't priceable (illiquid); that's not an error, it's
+ * the protocol saying "no automatic liquidation applies here", and the UI
+ * copy reflects exactly that instead of showing a spinner forever.
+ *
+ * Every read is one Multicall3 aggregate (`loanRiskReads.ts`), so the
+ * health factor, the LTV and the price behind the liquidation price share
+ * one block, and a revert is told from a provider failure by the slot's
+ * own status rather than by error class.
  *
  * HF and LTV are 1e18-scaled ratios.
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
-import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError } from 'viem';
-import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { tipAware } from '../chain/railHealth';
 import { copy } from '../content/copy';
+import { formatTokenAmount } from '../lib/format';
+import {
+  loanRiskFromSlots,
+  loanRiskReadPlan,
+  type LoanRisk,
+  type RiskCollateral,
+} from './loanRiskReads';
 
-export interface LoanRisk {
-  /** False when the reads reverted → illiquid legs, no HF applies. */
-  priced: boolean;
-  healthFactor: bigint;
-  ltv: bigint;
-}
+export type { LiquidationPrice, LoanRisk, RiskCollateral } from './loanRiskReads';
 
-export function useLoanRisk(loanId: number | undefined, enabled: boolean) {
+/** `collateral`, when given, adds the liquidation price to the read. Only
+ *  the position page passes it; list rows read the health factor alone. */
+export function useLoanRisk(
+  loanId: number | undefined,
+  enabled: boolean,
+  collateral?: RiskCollateral,
+) {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
 
   return useQuery({
-    queryKey: ['loanRisk', readChain.chainId, loanId],
+    // The collateral is part of the key because it changes the plan.
+    queryKey: [
+      'loanRisk',
+      readChain.chainId,
+      loanId,
+      collateral?.asset.toLowerCase() ?? '',
+      collateral?.decimals ?? '',
+    ],
     enabled: enabled && loanId !== undefined && Boolean(publicClient),
     // Stop polling once a loan is known unpriceable — that
     // classification doesn't change for an open loan. Otherwise the
@@ -40,35 +59,22 @@ export function useLoanRisk(loanId: number | undefined, enabled: boolean) {
         ? false
         : tipAware(60_000, Boolean(readChain.wsUrl))(),
     queryFn: async (): Promise<LoanRisk> => {
-      try {
-        const [healthFactor, ltv] = await Promise.all([
-          publicClient!.readContract({
-            address: readChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'calculateHealthFactor',
-            args: [BigInt(loanId!)],
-          }) as Promise<bigint>,
-          publicClient!.readContract({
-            address: readChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'calculateLTV',
-            args: [BigInt(loanId!)],
-          }) as Promise<bigint>,
-        ]);
-        return { priced: true, healthFactor, ltv };
-      } catch (err) {
-        // ONLY an on-chain revert means "illiquid legs — HF doesn't
-        // apply". Anything else (RPC outage, timeout, rate limit) must
-        // surface as a query ERROR, never as priced:false — otherwise
-        // a flaky RPC shows a liquid, possibly liquidatable loan as
-        // "no automatic liquidation applies".
-        const isRevert =
-          err instanceof BaseError &&
-          (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
-            err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
-        if (isRevert) return { priced: false, healthFactor: 0n, ltv: 0n };
-        throw err;
-      }
+      const plan = loanRiskReadPlan({
+        diamond: readChain.diamondAddress as `0x${string}`,
+        loanId: BigInt(loanId!),
+        collateral,
+      });
+      // ONLY an on-chain revert means "illiquid legs — HF doesn't
+      // apply", and inside the aggregate that is exactly a slot whose
+      // status is `failure`. Anything else (RPC outage, timeout, rate
+      // limit) fails the whole call and surfaces as a query ERROR, never
+      // as priced:false — otherwise a flaky RPC shows a liquid, possibly
+      // liquidatable loan as "no automatic liquidation applies".
+      const slots = await publicClient!.multicall({
+        allowFailure: true,
+        contracts: plan.map((e) => e.contract) as never,
+      });
+      return loanRiskFromSlots(plan, slots as never);
     },
   });
 }
@@ -118,4 +124,37 @@ export function healthView(risk: LoanRisk): HealthView {
       return pct >= 1 ? `${pct}%` : null;
     })(),
   };
+}
+
+/**
+ * The liquidation-price sentence for the position page (#2531). Every
+ * branch states what it knows or why it has no figure; no branch renders a
+ * zero price.
+ *
+ * `collateralSymbol` is `undefined` when the collateral token's details
+ * could not be read, in which case the read was never asked for the price
+ * and `risk.liquidationPrice` is absent.
+ */
+export function liquidationPriceText(
+  risk: LoanRisk,
+  collateralSymbol: string | undefined,
+): string {
+  if (!risk.priced) return copy.risk.liquidationPriceNotPriced;
+  const lp = risk.liquidationPrice;
+  if (lp === undefined || collateralSymbol === undefined) {
+    return copy.risk.liquidationPriceTokenUnknown;
+  }
+  switch (lp.kind) {
+    case 'none':
+      return copy.risk.liquidationPriceNone;
+    case 'unknown':
+      return copy.risk.liquidationPriceUnknown;
+    case 'priced': {
+      const price = formatTokenAmount(lp.perUnitWad, 18);
+      const unit = lp.numeraire?.symbol ?? copy.risk.liquidationPriceUnitUnknown;
+      return risk.healthFactor < WAD
+        ? copy.risk.liquidationPricePassed(price, unit, collateralSymbol)
+        : copy.risk.liquidationPriceAt(price, unit, collateralSymbol);
+    }
+  }
 }

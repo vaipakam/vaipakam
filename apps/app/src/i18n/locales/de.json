@@ -1350,6 +1350,7 @@
           "owed": "Geschuldet",
           "terms": "Bedingungen",
           "health": "Gesundheit",
+          "liquidationPrice": "Liquidationspreis",
           "whatNext": "Was als Nächstes passiert",
           "ifNothing": "Wenn nichts passiert",
           "dueMoved": "Fälligkeit verschoben"
@@ -2594,7 +2595,14 @@
       "listChecking": "Gesundheit wird geprüft",
       "listCheckingTitle": "Die Gesundheit dieses Kredits wurde noch nicht ausgelesen, daher bleibt das Abzeichen neutral. Der Liquidationsschutz greift on-chain weiterhin.",
       "advancedDetail": "(Gesundheitsfaktor {{ratio}} — der Wert der Sicherheit gemessen am Geschuldeten; unter 1,00 kann der Kredit liquidiert werden. Loan-to-Value {{ltvPct}} — der geliehene Betrag als Anteil am Wert der Sicherheit.{{dropClause}})",
-      "advancedDetailDrop": " Grob beginnt die Liquidation, wenn der Wert der Sicherheit um etwa {{drop}} fällt."
+      "advancedDetailDrop": " Grob beginnt die Liquidation, wenn der Wert der Sicherheit um etwa {{drop}} fällt.",
+      "liquidationPriceAt": "Etwa {{price}} {{unit}} pro {{symbol}}. Fällt der Preis der Sicherheit darunter, kann der Kredit liquidiert werden. Das setzt den Preis des geliehenen Assets und den geschuldeten Betrag wie jetzt voraus; auflaufende Zinsen schieben ihn nach oben.",
+      "liquidationPricePassed": "Etwa {{price}} {{unit}} pro {{symbol}}. Der Preis der Sicherheit liegt bereits darunter, daher kann der Kredit jetzt liquidiert werden.",
+      "liquidationPriceUnitUnknown": "in der Referenzwährung des Protokolls",
+      "liquidationPriceNone": "Keiner beim heutigen geschuldeten Betrag: Kein Preis der Sicherheit bringt diesen Kredit an die Liquidationsgrenze.",
+      "liquidationPriceNotPriced": "Keiner: Das Protokoll bepreist die Assets dieses Kredits nicht, daher löst keine Preisbewegung eine Liquidation aus.",
+      "liquidationPriceUnknown": "Unbekannt: Der Preis der Sicherheit konnte gerade nicht gelesen werden, daher wird keine Zahl angezeigt.",
+      "liquidationPriceTokenUnknown": "Unbekannt: Die Angaben zum Token der Sicherheit konnten nicht gelesen werden, daher wird keine Zahl angezeigt."
     },
     "notFound": {
       "title": "Diese Seite existiert nicht",

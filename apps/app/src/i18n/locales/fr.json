@@ -1350,6 +1350,7 @@
           "owed": "Dû",
           "terms": "Conditions",
           "health": "Santé",
+          "liquidationPrice": "Prix de liquidation",
           "whatNext": "Ce qui se passe ensuite",
           "ifNothing": "Si rien ne se passe",
           "dueMoved": "Échéance reportée"
@@ -2594,7 +2595,14 @@
       "listChecking": "vérification de la santé",
       "listCheckingTitle": "La santé de ce prêt n'a pas encore été lue, le badge reste donc neutre. La protection contre la liquidation s'applique toujours on-chain.",
       "advancedDetail": "(Facteur de santé {{ratio}} — la valeur de la garantie mesurée face au montant dû ; sous 1,00, le prêt peut être liquidé. Loan-to-value {{ltvPct}} — le montant emprunté comme part de la valeur de la garantie.{{dropClause}})",
-      "advancedDetailDrop": " En gros, la liquidation commence si la valeur de la garantie chute d’environ {{drop}}."
+      "advancedDetailDrop": " En gros, la liquidation commence si la valeur de la garantie chute d’environ {{drop}}.",
+      "liquidationPriceAt": "Environ {{price}} {{unit}} par {{symbol}}. Si le prix de la garantie passe en dessous, le prêt peut être liquidé. Cela suppose le prix de l’actif emprunté et le montant dû inchangés ; les intérêts qui courent le font monter.",
+      "liquidationPricePassed": "Environ {{price}} {{unit}} par {{symbol}}. Le prix de la garantie est déjà en dessous, le prêt peut donc être liquidé maintenant.",
+      "liquidationPriceUnitUnknown": "dans la monnaie de référence du protocole",
+      "liquidationPriceNone": "Aucun au montant dû actuel : aucun prix de la garantie n’amène ce prêt au seuil de liquidation.",
+      "liquidationPriceNotPriced": "Aucun : le protocole ne valorise pas les actifs de ce prêt, donc aucune variation de prix ne déclenche de liquidation.",
+      "liquidationPriceUnknown": "Inconnu : le prix de la garantie n’a pas pu être lu pour l’instant, aucun chiffre n’est donc affiché.",
+      "liquidationPriceTokenUnknown": "Inconnu : les informations du jeton de garantie n’ont pas pu être lues, aucun chiffre n’est donc affiché."
     },
     "notFound": {
       "title": "Cette page n'existe pas",

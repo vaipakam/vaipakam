@@ -1350,6 +1350,7 @@
           "owed": "支払額",
           "terms": "条件",
           "health": "健全性",
+          "liquidationPrice": "清算価格",
           "whatNext": "次に起きること",
           "ifNothing": "何もしない場合",
           "dueMoved": "期日の変更"
@@ -2594,7 +2595,14 @@
       "listChecking": "健全性を確認中",
       "listCheckingTitle": "このローンの健全性はまだ読み取られていないため、バッジは中立のままです。清算保護はオンチェーンで引き続き適用されます。",
       "advancedDetail": "（ヘルスファクター {{ratio}} — 借入に対する担保価値。1.00 未満でローンは清算可能です。Loan-to-value {{ltvPct}} — 担保価値に対する借入額の割合。{{dropClause}}）",
-      "advancedDetailDrop": " おおよそ、担保価値が約 {{drop}} 下がると清算が始まります。"
+      "advancedDetailDrop": " おおよそ、担保価値が約 {{drop}} 下がると清算が始まります。",
+      "liquidationPriceAt": "{{symbol}}あたり約{{price}} {{unit}}。担保の価格がこれを下回ると、ローンは清算される可能性があります。借りた資産の価格と未返済額が今のままだと仮定しています。利息が積み上がるとこの値は上がります。",
+      "liquidationPricePassed": "{{symbol}}あたり約{{price}} {{unit}}。担保の価格はすでにこれを下回っているため、ローンは今清算される可能性があります。",
+      "liquidationPriceUnitUnknown": "プロトコルの基準通貨で",
+      "liquidationPriceNone": "現在の未返済額ではなし：担保がどの価格でも、このローンは清算ラインに達しません。",
+      "liquidationPriceNotPriced": "なし：プロトコルはこのローンの資産に価格を付けていないため、価格の変動で清算は起こりません。",
+      "liquidationPriceUnknown": "不明：担保の価格を今は読み取れなかったため、数値は表示していません。",
+      "liquidationPriceTokenUnknown": "不明：担保トークンの情報を読み取れなかったため、数値は表示していません。"
     },
     "notFound": {
       "title": "このページは存在しません",

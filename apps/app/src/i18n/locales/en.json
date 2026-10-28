@@ -1501,6 +1501,7 @@
           "terms": "Terms",
           "dueMoved": "Due date moved",
           "health": "Health",
+          "liquidationPrice": "Liquidation price",
           "whatNext": "What happens next",
           "ifNothing": "If nothing happens"
         },
@@ -2733,7 +2734,14 @@
       "listChecking": "checking health",
       "listCheckingTitle": "This loan’s health hasn’t been read yet, so the badge stays neutral. Liquidation protection still applies on-chain.",
       "advancedDetail": "(Health factor {{ratio}} — the collateral’s value measured against what’s owed; below 1.00 the loan can be liquidated. Loan-to-value {{ltvPct}} — the borrowed amount as a share of the collateral’s value.{{dropClause}})",
-      "advancedDetailDrop": " Roughly, liquidation begins if the collateral’s value falls about {{drop}}."
+      "advancedDetailDrop": " Roughly, liquidation begins if the collateral’s value falls about {{drop}}.",
+      "liquidationPriceAt": "About {{price}} {{unit}} per {{symbol}}. If the collateral’s price falls below this, the loan can be liquidated. This holds the borrowed asset’s price and the amount owed where they are now; interest accruing moves it up.",
+      "liquidationPricePassed": "About {{price}} {{unit}} per {{symbol}}. The collateral’s price is already below this, so the loan can be liquidated now.",
+      "liquidationPriceUnitUnknown": "in the protocol’s reference currency",
+      "liquidationPriceNone": "None at today’s amount owed: no collateral price brings this loan to the liquidation line.",
+      "liquidationPriceNotPriced": "None: the protocol doesn’t price this loan’s assets, so no price move triggers a liquidation.",
+      "liquidationPriceUnknown": "Unknown: the collateral’s price could not be read just now, so no figure is shown.",
+      "liquidationPriceTokenUnknown": "Unknown: the collateral token’s details could not be read, so no figure is shown."
     },
     "notFound": {
       "title": "This page doesn’t exist",

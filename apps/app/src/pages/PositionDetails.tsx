@@ -32,7 +32,7 @@ import { freshData } from '../lib/freshData';
 import { useLoan } from '../data/hooks';
 import { FEE_MODE_FULL, FEE_MODE_HOLD_ONLY, useFeeEntitlement } from '../data/tariff';
 import { VPFI_DECIMALS } from '../data/vpfi';
-import { useLoanRisk, healthView } from '../data/risk';
+import { useLoanRisk, healthView, liquidationPriceText } from '../data/risk';
 import { formatRemaining, useGraceSeconds } from '../data/grace';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import {
@@ -509,9 +509,29 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
 
   // HF/LTV apply only to active, priced (ERC-20) loans; the hook maps
   // the illiquid-leg revert to `priced: false`.
+  //
+  // #2531 — the page also asks for the liquidation price, which needs the
+  // collateral's decimals to value one whole unit. So the read waits for the
+  // collateral's details to settle (an NFT collateral has none to wait for):
+  // starting without them and re-keying when they land would blank the
+  // health row in between. A details read that FAILED goes ahead without
+  // the price, and the row says the token could not be read.
+  const riskCollateral =
+    !collateralIsNft && collateralMeta.data
+      ? {
+          asset: collateralMeta.data.address as `0x${string}`,
+          decimals: collateralMeta.data.decimals,
+        }
+      : undefined;
   const risk = useLoanRisk(
     loan.data?.loanId,
-    Boolean(loan.data && effectivelyActive && !loanIsRental),
+    Boolean(
+      loan.data &&
+        effectivelyActive &&
+        !loanIsRental &&
+        (collateralIsNft || collateralMeta.data || collateralMeta.isError),
+    ),
+    riskCollateral,
   );
 
   // UX3-009 — the live ceiling for taking collateral back. Only the
@@ -3383,6 +3403,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   </>
                 ) : (
                   copy.risk.notPriced
+                )}
+              </dd>
+            </div>
+          ) : null}
+          {/* #2531 — next to the health factor, so advanced only, like the
+              ratio it is derived from. */}
+          {!isRental && row.status === 'active' && risk.data && isAdvanced ? (
+            <div className="receipt-row" data-testid="position-liquidation-price">
+              <dt>{copy.positions.details.labels.liquidationPrice}</dt>
+              <dd>
+                {liquidationPriceText(
+                  risk.data,
+                  collateralIsNft ? undefined : collateralMeta.data?.symbol,
                 )}
               </dd>
             </div>

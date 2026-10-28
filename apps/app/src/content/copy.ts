@@ -3611,6 +3611,8 @@ const copySource = {
         // #2808 — the row that says a pause moved the due date.
         dueMoved: 'Due date moved',
         health: 'Health',
+        // #2531 — the collateral price at which the health factor reaches 1.00.
+        liquidationPrice: 'Liquidation price',
         whatNext: 'What happens next',
         ifNothing: 'If nothing happens',
       },
@@ -5798,6 +5800,28 @@ const copySource = {
       ` Roughly, liquidation begins if the collateral’s value falls about {{drop}}.`,
       ['drop'],
     ),
+    // #2531 — the liquidation price, derived from the health factor and the
+    // collateral's price read in the same block. Every state says what the
+    // figure assumes or why there is none; nothing renders as a zero price.
+    liquidationPriceAt: tmpl(
+      'About {{price}} {{unit}} per {{symbol}}. If the collateral’s price falls below this, the loan can be liquidated. This holds the borrowed asset’s price and the amount owed where they are now; interest accruing moves it up.',
+      ['price', 'unit', 'symbol'],
+    ),
+    liquidationPricePassed: tmpl(
+      'About {{price}} {{unit}} per {{symbol}}. The collateral’s price is already below this, so the loan can be liquidated now.',
+      ['price', 'unit', 'symbol'],
+    ),
+    // The numeraire symbol could not be read or decoded, so the unit is
+    // named by what it is rather than guessed.
+    liquidationPriceUnitUnknown: 'in the protocol’s reference currency',
+    liquidationPriceNone:
+      'None at today’s amount owed: no collateral price brings this loan to the liquidation line.',
+    liquidationPriceNotPriced:
+      'None: the protocol doesn’t price this loan’s assets, so no price move triggers a liquidation.',
+    liquidationPriceUnknown:
+      'Unknown: the collateral’s price could not be read just now, so no figure is shown.',
+    liquidationPriceTokenUnknown:
+      'Unknown: the collateral token’s details could not be read, so no figure is shown.',
   },
 
   notFound: {

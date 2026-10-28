@@ -1350,6 +1350,7 @@
           "owed": "Debido",
           "terms": "Términos",
           "health": "Salud",
+          "liquidationPrice": "Precio de liquidación",
           "whatNext": "Qué pasa después",
           "ifNothing": "Si no pasa nada",
           "dueMoved": "Vencimiento aplazado"
@@ -2594,7 +2595,14 @@
       "listChecking": "comprobando salud",
       "listCheckingTitle": "La salud de este préstamo aún no se ha leído, así que la insignia queda neutral. La protección de liquidación sigue aplicando on-chain.",
       "advancedDetail": "(Factor de salud {{ratio}} — el valor de la garantía medido contra lo adeudado; por debajo de 1,00 el préstamo puede liquidarse. Loan-to-value {{ltvPct}} — el importe prestado como parte del valor de la garantía.{{dropClause}})",
-      "advancedDetailDrop": " Aproximadamente, la liquidación empieza si el valor de la garantía cae alrededor de {{drop}}."
+      "advancedDetailDrop": " Aproximadamente, la liquidación empieza si el valor de la garantía cae alrededor de {{drop}}.",
+      "liquidationPriceAt": "Unos {{price}} {{unit}} por {{symbol}}. Si el precio de la garantía cae por debajo, el préstamo puede liquidarse. Supone que el precio del activo prestado y el importe adeudado siguen como ahora; los intereses que se acumulan lo suben.",
+      "liquidationPricePassed": "Unos {{price}} {{unit}} por {{symbol}}. El precio de la garantía ya está por debajo, así que el préstamo puede liquidarse ahora.",
+      "liquidationPriceUnitUnknown": "en la moneda de referencia del protocolo",
+      "liquidationPriceNone": "Ninguno con el importe adeudado actual: ningún precio de la garantía lleva este préstamo a la línea de liquidación.",
+      "liquidationPriceNotPriced": "Ninguno: el protocolo no pone precio a los activos de este préstamo, así que ningún movimiento de precio desencadena una liquidación.",
+      "liquidationPriceUnknown": "Desconocido: no se pudo leer el precio de la garantía en este momento, así que no se muestra ninguna cifra.",
+      "liquidationPriceTokenUnknown": "Desconocido: no se pudieron leer los datos del token de la garantía, así que no se muestra ninguna cifra."
     },
     "notFound": {
       "title": "Esta página no existe",

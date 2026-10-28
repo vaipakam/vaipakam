@@ -1350,6 +1350,7 @@
           "owed": "مستحق",
           "terms": "الشروط",
           "health": "الصحة",
+          "liquidationPrice": "سعر التصفية",
           "whatNext": "ما الذي يحدث بعد ذلك",
           "ifNothing": "إذا لم يحدث شيء",
           "dueMoved": "تأخر موعد الاستحقاق"
@@ -2594,7 +2595,14 @@
       "listChecking": "جارٍ فحص الصحة",
       "listCheckingTitle": "لم تُقرأ صحة هذا القرض بعد، لذا تبقى الشارة محايدة. لا تزال حماية التصفية سارية على السلسلة.",
       "advancedDetail": "(Health factor {{ratio}} — قيمة collateral مقاسة مقابل ما هو مستحق؛ دون 1.00 يمكن تصفية loan. Loan-to-value {{ltvPct}} — المبلغ المقترض كنسبة من قيمة collateral.{{dropClause}})",
-      "advancedDetailDrop": " تقريبا، تبدأ التصفية إذا انخفضت قيمة collateral حوالي {{drop}}."
+      "advancedDetailDrop": " تقريبا، تبدأ التصفية إذا انخفضت قيمة collateral حوالي {{drop}}.",
+      "liquidationPriceAt": "نحو {{price}} {{unit}} لكل {{symbol}}. إذا هبط سعر الضمان دون ذلك، يمكن تصفية القرض. يفترض هذا بقاء سعر الأصل المقترض والمبلغ المستحق كما هما الآن؛ والفائدة المتراكمة ترفعه.",
+      "liquidationPricePassed": "نحو {{price}} {{unit}} لكل {{symbol}}. سعر الضمان أدنى من ذلك بالفعل، لذا يمكن تصفية القرض الآن.",
+      "liquidationPriceUnitUnknown": "بعملة البروتوكول المرجعية",
+      "liquidationPriceNone": "لا يوجد عند المبلغ المستحق اليوم: لا يوجد سعر للضمان يوصل هذا القرض إلى حدّ التصفية.",
+      "liquidationPriceNotPriced": "لا يوجد: البروتوكول لا يسعّر أصول هذا القرض، لذا لا تؤدي أي حركة سعرية إلى تصفية.",
+      "liquidationPriceUnknown": "غير معروف: تعذّرت قراءة سعر الضمان الآن، لذلك لا يُعرض أي رقم.",
+      "liquidationPriceTokenUnknown": "غير معروف: تعذّرت قراءة بيانات رمز الضمان، لذلك لا يُعرض أي رقم."
     },
     "notFound": {
       "title": "هذه الصفحة غير موجودة",

@@ -1350,6 +1350,7 @@
           "owed": "Owed",
           "terms": "Terms",
           "health": "Health",
+          "liquidationPrice": "परिसमापन मूल्य",
           "whatNext": "आगे क्या होगा",
           "ifNothing": "अगर कुछ नहीं होता",
           "dueMoved": "नियत तारीख आगे बढ़ी"
@@ -2594,7 +2595,14 @@
       "listChecking": "health check कर रहे हैं",
       "listCheckingTitle": "इस loan की health अभी read नहीं हुई, इसलिए badge neutral रहता है। Liquidation protection on-chain फिर भी apply होती है।",
       "advancedDetail": "(Health factor {{ratio}} — collateral की value को owed amount के against मापा गया; 1.00 से नीचे loan liquidate हो सकता है। Loan-to-value {{ltvPct}} — collateral value में borrowed amount का हिस्सा।{{dropClause}})",
-      "advancedDetailDrop": " मोटे तौर पर, collateral value लगभग {{drop}} गिरने पर liquidation शुरू होती है।"
+      "advancedDetailDrop": " मोटे तौर पर, collateral value लगभग {{drop}} गिरने पर liquidation शुरू होती है।",
+      "liquidationPriceAt": "लगभग {{price}} {{unit}} प्रति {{symbol}}। अगर कोलैटरल का मूल्य इससे नीचे गिरता है, तो ऋण का परिसमापन हो सकता है। यह उधार ली गई संपत्ति के मूल्य और बकाया राशि को अभी जैसा ही मानता है; जुड़ता ब्याज इसे ऊपर ले जाता है।",
+      "liquidationPricePassed": "लगभग {{price}} {{unit}} प्रति {{symbol}}। कोलैटरल का मूल्य पहले से इससे नीचे है, इसलिए ऋण का परिसमापन अभी हो सकता है।",
+      "liquidationPriceUnitUnknown": "प्रोटोकॉल की संदर्भ मुद्रा में",
+      "liquidationPriceNone": "आज की बकाया राशि पर कोई नहीं: कोलैटरल का कोई भी मूल्य इस ऋण को परिसमापन रेखा तक नहीं लाता।",
+      "liquidationPriceNotPriced": "कोई नहीं: प्रोटोकॉल इस ऋण की संपत्तियों का मूल्य नहीं लगाता, इसलिए कोई मूल्य बदलाव परिसमापन शुरू नहीं करता।",
+      "liquidationPriceUnknown": "अज्ञात: कोलैटरल का मूल्य अभी पढ़ा नहीं जा सका, इसलिए कोई आंकड़ा नहीं दिखाया गया।",
+      "liquidationPriceTokenUnknown": "अज्ञात: कोलैटरल टोकन का विवरण पढ़ा नहीं जा सका, इसलिए कोई आंकड़ा नहीं दिखाया गया।"
     },
     "notFound": {
       "title": "यह page मौजूद नहीं है",

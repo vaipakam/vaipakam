@@ -1350,6 +1350,7 @@
           "owed": "欠款",
           "terms": "条款",
           "health": "健康度",
+          "liquidationPrice": "清算价格",
           "whatNext": "接下来会发生什么",
           "ifNothing": "如果什么都不做",
           "dueMoved": "到期日已顺延"
@@ -2594,7 +2595,14 @@
       "listChecking": "正在检查健康度",
       "listCheckingTitle": "此贷款的健康度尚未读取，因此徽章保持中性。清算保护仍在链上适用。",
       "advancedDetail": "（健康因子 {{ratio}} — 抵押品价值相对欠款的衡量；低于 1.00 时贷款可被清算。Loan-to-value {{ltvPct}} — 借入金额占抵押品价值的比例。{{dropClause}}）",
-      "advancedDetailDrop": " 大致上，抵押品价值下降约 {{drop}} 时开始清算。"
+      "advancedDetailDrop": " 大致上，抵押品价值下降约 {{drop}} 时开始清算。",
+      "liquidationPriceAt": "每 {{symbol}} 约 {{price}} {{unit}}。若抵押品价格跌破此值，贷款可被清算。此值假设借出资产的价格和欠款金额保持当前水平；累积的利息会使它上升。",
+      "liquidationPricePassed": "每 {{symbol}} 约 {{price}} {{unit}}。抵押品价格已低于此值，因此贷款现在即可被清算。",
+      "liquidationPriceUnitUnknown": "以协议的参考货币计",
+      "liquidationPriceNone": "按当前欠款金额无：抵押品在任何价格下都不会使这笔贷款到达清算线。",
+      "liquidationPriceNotPriced": "无：协议不为这笔贷款的资产定价，因此任何价格变动都不会触发清算。",
+      "liquidationPriceUnknown": "未知：暂时无法读取抵押品价格，因此不显示数值。",
+      "liquidationPriceTokenUnknown": "未知：无法读取抵押品代币的信息，因此不显示数值。"
     },
     "notFound": {
       "title": "此页面不存在",
