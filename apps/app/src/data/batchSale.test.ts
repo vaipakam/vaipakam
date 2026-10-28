@@ -100,14 +100,23 @@ describe('readBackListings', () => {
     expect(out).toEqual([{ loanId: 6, kind: 'open', reason: copy.batchSale.skippedRetry }]);
   });
 
-  it('is pending, never open, for an active loan behind a pending send', async () => {
+  it('is pending for every loan behind a pending send, without reading its status', async () => {
+    // A listing leaves the loan's status as it was: loan 7 may have been
+    // listed by the pending send and then defaulted, so "not listed" would
+    // be a claim its status cannot make.
     reads.status = { 6: LoanStatus.Active, 7: LoanStatus.Defaulted };
     const out = await readBackListings(ctx, [plan(6), plan(7)], TERMS, { pending: true });
     expect(out).toEqual([
       { loanId: 6, kind: 'pending' },
-      { loanId: 7, kind: 'changed' },
+      { loanId: 7, kind: 'pending' },
     ]);
-    expect(reads.blocks).toEqual([undefined, undefined]);
+    expect(reads.blocks).toEqual([]);
+  });
+
+  it('says not listed for a loan no longer active after a send that did not run', async () => {
+    reads.status = { 7: LoanStatus.Defaulted };
+    const out = await readBackListings(ctx, [plan(7)], TERMS, { failure: 'rejected' });
+    expect(out).toEqual([{ loanId: 7, kind: 'changed' }]);
   });
 
   it('carries the send’s failure, and is unknown when the loan cannot be read', async () => {

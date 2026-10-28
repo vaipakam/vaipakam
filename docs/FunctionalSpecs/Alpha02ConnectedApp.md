@@ -1936,7 +1936,9 @@ Thin-market honesty rules apply.
   listed it. Otherwise it is reported not listed with the reason, no longer
   active, left out, not confirmed yet (when the transaction was sent but has not
   confirmed, in which case nothing more is sent behind it), or could not be
-  read. Each listed loan's own page then shows its listing and lets the lender
+  read. Every loan in a transaction that has not confirmed is reported not
+  confirmed yet, even one no longer active: a listing does not change the
+  loan's status, so that loan may have been listed before it closed. Each listed loan's own page then shows its listing and lets the lender
   cancel it.
 
 ### Taking back extra collateral

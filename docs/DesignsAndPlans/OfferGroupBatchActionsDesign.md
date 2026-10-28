@@ -222,7 +222,10 @@ lock could not tell this batch's listing from one made elsewhere in
 between. The receipt's logs are therefore carried with a mined send,
 including one recovered by `settleFailedSend`. A loan not in the logs
 is read at the transaction's block (no longer Active, or still Active
-with the simulated reason), and one behind a pending send is pending.
+with the simulated reason). Every loan behind a pending send is pending,
+read or not: a listing leaves the loan's status as it was, so a loan no
+longer Active may have been listed by that send before it was repaid or
+liquidated, and only the send's logs can say.
 Each listed loan's offer id is written to the loan page's listing
 marker, so its page can offer cancel straight away.
 

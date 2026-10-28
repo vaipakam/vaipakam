@@ -60,8 +60,14 @@ export function listingsInLogs(
  * transaction's block: one that left Active is `changed`; one still Active
  * is asked, at that block, why its bound listing would fail — the multicall
  * skips a failing item without saying why. After a failed send the read is
- * at the latest block; after a pending one a loan still Active is
- * `pending`, never open, since that transaction may still list it.
+ * at the latest block: that send did not run, so a loan no longer Active
+ * was not listed by it.
+ *
+ * After a PENDING send nothing is read and every loan is `pending`. A
+ * listing leaves the loan's status as it was, so a loan read as no longer
+ * Active may have been listed by that send first and then repaid or
+ * liquidated: its status cannot say whether the send listed it, and only
+ * the send's own logs can.
  */
 export async function readBackListings(
   ctx: SaleListingCtx,
@@ -75,10 +81,10 @@ export async function readBackListings(
     planned.map(async ({ loanId, bounds }): Promise<SaleBatchOutcome> => {
       const offerId = listed.get(loanId);
       if (offerId !== undefined) return { loanId, kind: 'listed', offerId };
+      if ('pending' in mined) return { loanId, kind: 'pending' };
       try {
         const live = await readLoanLive(ctx.publicClient, ctx.diamond, loanId, block);
         if (live.status !== LOAN_STATUS_ACTIVE) return { loanId, kind: 'changed' };
-        if ('pending' in mined) return { loanId, kind: 'pending' };
         if ('failure' in mined) return { loanId, kind: 'open', reason: mined.failure };
         try {
           await ctx.publicClient.simulateContract({
