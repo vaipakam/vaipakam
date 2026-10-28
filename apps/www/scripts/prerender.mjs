@@ -55,7 +55,6 @@ import { policyScriptSources, uncoveredScripts } from '@vaipakam/lib/cspScriptHa
 import {
   LOCALES,
   ROUTES,
-  EN_ONLY_ROUTES,
   hasBodyFile,
   indexedLocales,
   localizedPath,
@@ -303,11 +302,6 @@ for (const route of ROUTES) {
     jobs.push({ route, locale });
   }
 }
-// English-only routes (no localized content — see seo-routes.mjs):
-// snapshot the root URL only, matching the sitemap's advertisement.
-for (const route of EN_ONLY_ROUTES) {
-  jobs.push({ route, locale: 'en' });
-}
 
 const results = [];
 let cursor = 0;
@@ -381,7 +375,6 @@ const CACHE_LINE = '  Cache-Control: public, max-age=0, must-revalidate';
 const rulePaths = [
   ...LOCALES.filter((l) => l !== 'en').flatMap((l) => [`/${l}`, `/${l}/*`]),
   ...ROUTES.filter((r) => r !== '/'),
-  ...EN_ONLY_ROUTES,
 ];
 let headersBody = '';
 try {

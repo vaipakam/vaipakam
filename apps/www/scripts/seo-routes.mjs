@@ -70,19 +70,15 @@ export const ROUTES = [
   '/terms',
   '/privacy',
   '/data-rights',
+  // The console runbook is env-gated (above). Its body is English today
+  // (`AdminConfigurableKnobsAndSwitches.en.md`, auditor-facing copy), and
+  // it goes through the same loops as every other route: `indexedLocales`
+  // reads its body-source pattern, so it is advertised in English alone
+  // until a translated file exists, and then the translation is advertised
+  // and snapshotted like any other (#1314, Codex #3036 r3). There is no
+  // separate English-only route list for it to be stranded in.
+  ...(PROTOCOL_CONSOLE_PUBLIC ? ['/protocol-console/docs'] : []),
 ];
-
-/** Routes advertised/prerendered in ENGLISH ONLY. The console docs
- *  page renders `AdminConfigurableKnobsAndSwitches.en.md` with no
- *  localized markdown (auditor-facing runbook — translation drift
- *  would harm more than help, per the page header), so emitting
- *  `/es/protocol-console/docs` etc. would advertise English
- *  duplicates as localized pages (Codex #1309 r3). Locale-prefixed
- *  URLs still WORK for a user who navigates there — they're just not
- *  advertised or snapshotted. */
-export const EN_ONLY_ROUTES = PROTOCOL_CONSOLE_PUBLIC
-  ? ['/protocol-console/docs']
-  : [];
 
 /** Compose a localised URL — English at the unprefixed root, every
  *  other locale gets a `/<locale>/` prefix. Mirrors the

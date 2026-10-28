@@ -3,10 +3,12 @@
  * reference. Renders
  * `apps/www/src/content/admin/AdminConfigurableKnobsAndSwitches.en.md`
  * (mirrored from `docs/ops/AdminConfigurableKnobsAndSwitches.md` via
- * `contracts/script/sync-admin-knobs-doc.sh`). English-only on
- * purpose — same translation policy as the Whitepaper, since the
- * runbook is auditor-facing technical copy where translation drift
- * would harm more than it would help.
+ * `contracts/script/sync-admin-knobs-doc.sh`). English is the only
+ * edition today — the runbook is auditor-facing technical copy where
+ * translation drift would harm more than it would help. The body and
+ * its indexing follow `bodySources.json` like every help page, so a
+ * translation added later is served, advertised and prerendered
+ * without a code change here or in the SEO scripts (#1314).
  *
  * Each knob's heading uses an H3 with a slug-derived `id` so the
  * defi-side dashboard's info-icons can deep-link directly

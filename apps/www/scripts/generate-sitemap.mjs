@@ -55,7 +55,7 @@ import { fileURLToPath } from 'node:url';
 // Route × locale registry — shared with prerender.mjs so the sitemap
 // and the prerendered page set can't drift apart. See seo-routes.mjs
 // for the sync contracts (TRANSLATED_LOCALES / App.tsx).
-import { ROUTES, EN_ONLY_ROUTES, indexedLocales, localizedPath } from './seo-routes.mjs';
+import { ROUTES, indexedLocales, localizedPath } from './seo-routes.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -130,18 +130,6 @@ function buildSitemap() {
     }
   }
 
-  // English-only routes (see EN_ONLY_ROUTES in seo-routes.mjs): one
-  // URL, no locale alternates — the content has no localized variant
-  // to advertise.
-  for (const route of EN_ONLY_ROUTES) {
-    urls += 1;
-    lines.push('  <url>');
-    lines.push(`    <loc>${escapeXml(`${ORIGIN}${route}`)}</loc>`);
-    lines.push(`    <lastmod>${today}</lastmod>`);
-    lines.push('    <priority>0.5</priority>');
-    lines.push('  </url>');
-  }
-
   lines.push('</urlset>');
   return { xml: lines.join('\n') + '\n', urls };
 }
@@ -173,7 +161,7 @@ function main() {
   writeFileSync(robotsPath, buildRobots(), 'utf8');
   // eslint-disable-next-line no-console
   console.log(
-    `[sitemap] wrote ${sitemapPath} (${sitemap.urls} indexed URLs across ${ROUTES.length} routes + ${EN_ONLY_ROUTES.length} en-only)`,
+    `[sitemap] wrote ${sitemapPath} (${sitemap.urls} indexed URLs across ${ROUTES.length} routes)`,
   );
   // eslint-disable-next-line no-console
   console.log(`[sitemap] wrote ${robotsPath}`);

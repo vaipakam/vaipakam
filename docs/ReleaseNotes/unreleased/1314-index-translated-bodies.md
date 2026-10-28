@@ -21,6 +21,10 @@ prerender step now checks every page it snapshots against the sitemap's
 answer, so a deploy stops if the two ever disagree. Each help page also picks
 the text it shows by that same rule, so a translation that is indexed is the
 one served, and the prerender checks the language of the body each page
-actually rendered as well as its head. The language alternates
+actually rendered as well as its head. The protocol console reference used
+to sit on a separate English-only list in the sitemap and prerender steps,
+where a translation could never have been advertised; it now goes through the
+same pass as every other page, so its language addresses get prerendered
+copies too, canonical to English until a translation exists. The language alternates
 moved into the same per-page step that sets the canonical and the robots
 directive, since all three are one decision about the page. Closes #1314.
