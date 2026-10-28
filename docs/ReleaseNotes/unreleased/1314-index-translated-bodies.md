@@ -1,4 +1,4 @@
-## Thread — Search engines index only the language copies that are translated (PR #<n>)
+## Thread — Search engines index only the language copies that are translated (PR #3036)
 
 Every page on the marketing site still has a copy under each language's
 address, so a visitor who picks Spanish keeps Spanish navigation everywhere.
