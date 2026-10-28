@@ -285,6 +285,15 @@ test('an entry that does not describe the archive it names is tampering', () => 
   }
 });
 
+test('a name planted in the ledger reaches the alert text narrowed', () => {
+  const { result } = scene({
+    archives: [archive('daily', '2026-10-27', N1, 'A1', NOW - DAY)],
+    recorded: [rec('A1')],
+    tampered: [{ name: 'entries/@someone [x](https://e.example)', why: 'a name the watcher never writes' }],
+  });
+  assert.ok(!/[@\[\]()]|:\/\//.test(result.problems[0].text), result.problems[0].text);
+});
+
 test('a key carries only the characters the alert issue can record', () => {
   assert.equal(safeKey('ledger-tampered:entries/x y,-->z'), 'ledger-tampered:entries/x?y?--?z');
   assert.deepEqual([...parseAcknowledged(' a , ,b')], ['a', 'b']);

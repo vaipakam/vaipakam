@@ -413,7 +413,13 @@ export function judge({ now, ledger, bucket, lifecycle, baseline, baselineErrors
   for (const [tier, msg] of Object.entries(baselineErrors)) add(`baseline:${tier}`, `Baseline invalid: ${msg}.`);
 
   // Ledger tampered.
-  for (const t of ledger.tampered) add(`ledger-tampered:${t.name}`, `Ledger tampered: ${t.name} has ${t.why}. The honest watcher never writes that.`);
+  // A tampered name can be anything the ledger key chose, and the alert issue
+  // is public, so the text carries it narrowed to the characters a genuine
+  // entry name uses: no mention, link or markup reaches the issue through it.
+  for (const t of ledger.tampered) {
+    const shown = String(t.name).replace(/[^0-9A-Za-z_./-]/g, '?').slice(0, 200);
+    add(`ledger-tampered:${t.name}`, `Ledger tampered: ${shown} has ${t.why}. The honest watcher never writes that.`);
+  }
 
   // Missing: the same tier rules the healthcheck runs, on what is current.
   for (const spec of TIERS) {
