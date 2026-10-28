@@ -1,4 +1,4 @@
-## Thread — One cadence admission rule, and a preview of it (PR #TBD)
+## Thread — One cadence admission rule, and a preview of it (PR #3020)
 
 Offer creation refused every offer longer than a year that asked for no
 periodic interest, even where the specification accepts one: with periodic
