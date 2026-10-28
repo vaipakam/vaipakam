@@ -25,6 +25,7 @@ import { SIDE_BORROWER, SIDE_LENDER, type ScannedEntry } from '../src/rewardEntr
 import type { SendFeeCeiling } from '../src/stepSender';
 import { memoryScanCursors, type ScanCursors } from '../src/scanCursors';
 import type { KeeperContext } from '../src/keeper';
+import type { OpsAlertOutcome } from '../src/opsAlert';
 
 const CHAIN = 421614;
 const DIAMOND: Address = '0x00000000000000000000000000000000000000c1';
@@ -145,6 +146,7 @@ class FakeMirror {
   /** Days up to this one, not zeroed, have their clock installed. */
   clockedThrough = -1;
   fee = FEE;
+  paused = false;
   sent: { fn: string; args: readonly unknown[]; value: bigint }[] = [];
 
   zero(day: number, o: Partial<Day> = {}): Day {
@@ -208,6 +210,8 @@ class FakeMirror {
         return [MESSENGER, this.chainNamed, 84532, false, 3600n];
       case 'getRewardRole':
         return this.role;
+      case 'paused':
+        return this.paused;
       case 'getInteractionCurrentDay':
         return [BigInt(this.today), true];
       case 'getDayDeliberatelyZeroed':
@@ -360,10 +364,13 @@ class FakeMirror {
 describe('a run', () => {
   let m: FakeMirror;
   let alerts: { key: string; text: string }[];
+  /** What the next alert posts resolve to. */
+  let alertOutcome: OpsAlertOutcome;
 
   beforeEach(() => {
     m = new FakeMirror();
     alerts = [];
+    alertOutcome = 'sent';
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
@@ -379,7 +386,10 @@ describe('a run', () => {
       windowDays: o.windowDays ?? 60,
       cursors: o.cursors ?? memoryScanCursors(),
       feeCeiling: o.cap ?? CAP,
-      alert: async (key, text) => void alerts.push({ key, text }),
+      alert: async (key, text) => {
+        alerts.push({ key, text });
+        return alertOutcome;
+      },
     });
   const fns = () => m.sent.map((s) => s.fn);
 
@@ -472,16 +482,19 @@ describe('a run', () => {
     const r = await run();
     expect(fns()).toEqual(['lapseZeroedDay']);
     expect(r.lapsed).toEqual([3]);
-    expect(alerts.map((a) => a.key)).toEqual([`zeroed-day-lapse:${CHAIN}:3`]);
-    expect(alerts[0].text).toMatch(/never compensated .* recorded loss: lender side 0, borrower side 0 .*PARTIAL/);
+    expect(alerts.map((a) => a.key)).toEqual([`zeroed-day-lapse:${CHAIN}:3:partial`]);
+    expect(alerts[0].text).toMatch(/never compensated .* recorded loss: lender side 0, borrower side 0 \(VPFI, 18 decimals\).*PARTIAL/);
     m.sent = [];
     const next = await run();
     expect(fns(), 'refined: accumulated, never dispatched after a lapse').toEqual(['accumulateCompQuoteBatch']);
     expect(next.refined).toEqual([3]);
     expect(m.days.get(3)!.loss).toMatchObject({ lender18: 20n, partialFigure: false });
     m.sent = [];
+    alerts = [];
     await run();
     expect(m.sent).toEqual([]);
+    expect(alerts.map((a) => a.key), 'the exact figure is noticed once it is exact').toEqual([`zeroed-day-lapse:${CHAIN}:3:exact`]);
+    expect(alerts[0].text).toMatch(/lender side 20, borrower side 0 \(VPFI, 18 decimals\)\.$/);
   });
 
   it('reaches a zeroed day far older than one window, rotating above a floor of settled days', async () => {
@@ -529,6 +542,44 @@ describe('a run', () => {
     expect(fns()).toEqual(['lapseShortCompensatedDay']);
     expect(r.shortLapsed).toEqual([3]);
     expect(alerts[0].text).toMatch(/funded below its quote past its deadline .* lender side 8/);
+  });
+
+  it('retries a lapse notice that did not go out, holding the day above its floor until it does (Codex #3000)', async () => {
+    m.today = 6;
+    m.clockedThrough = 5;
+    m.zero(3, { finalizedAt: NOW - WINDOW - 1n });
+    const cursors = memoryScanCursors();
+    alertOutcome = 'failed';
+    await run({ cursors });
+    expect(fns()).toEqual(['lapseZeroedDay']);
+    const held = await run({ cursors });
+    expect(held.unread.get('notice:3')).toMatch(/did not go out \(failed\)/);
+    expect(cursors.rows.get(DAY_FLOOR_ITEM), 'the lapse stands, its notice is still owed').toBe('3');
+    expect(alerts.map((a) => a.key)).toEqual([`zeroed-day-lapse:${CHAIN}:3:exact`, `zeroed-day-lapse:${CHAIN}:3:exact`]);
+    alertOutcome = 'sent';
+    await run({ cursors });
+    expect(cursors.rows.get(DAY_FLOOR_ITEM), 'delivered: the floor passes it').toBe('6');
+    expect(m.sent.map((x) => x.fn), 'never lapsed twice').toEqual(['lapseZeroedDay']);
+  });
+
+  it('notices a lapse another caller made, from the chain\'s record', async () => {
+    m.zero(3, { lapsed: true, loss: { lender18: 7n, borrower18: 2n, partialFigure: false, shortLapse: false, recorded: true } });
+    await run();
+    expect(m.sent).toEqual([]);
+    expect(alerts.map((a) => a.key)).toEqual([`zeroed-day-lapse:${CHAIN}:3:exact`]);
+    expect(alerts[0].text).toMatch(/never compensated .* lender side 7, borrower side 2 \(VPFI/);
+  });
+
+  it('works nothing while the Diamond is paused: none of its calls is pause-guarded on chain (Codex #3000)', async () => {
+    m.zero(3, { finalizedAt: NOW - WINDOW - 1n });
+    m.zero(4);
+    m.paused = true;
+    const r = await run();
+    expect(m.sent).toEqual([]);
+    expect(r.skipped).toMatch(/the Diamond is paused/);
+    m.paused = false;
+    await run();
+    expect(fns()).toEqual(['lapseZeroedDay', 'quoteZeroedDayCompensation']);
   });
 
   it('leaves a compensated day funded below its quote before its deadline', async () => {

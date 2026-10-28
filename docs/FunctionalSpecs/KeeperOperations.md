@@ -291,8 +291,13 @@ evidence that the migration has completed.
   covering entries up to its cursor, it raises an operator alert. Only the
   administrator's reset can free that side, and the keeper never attempts
   it.
-- Each lapse or short lapse is announced to operators with the loss it
-  recorded. A paused protocol, a missing signing key, an unread value, a
+- Each lapse or short lapse the chain records, whoever made it, is
+  announced to operators with the loss it recorded, in VPFI, and again once
+  a partial figure becomes exact. A day whose announcement has not gone out
+  is kept in view and announced again until it is delivered. None of the
+  zeroed-day calls refuses on its own while the protocol is paused, so the
+  keeper checks the pause itself and makes none of them while it is set.
+  A paused protocol, a missing signing key, an unread value, a
   chain without a live reward role, or a Diamond that names another chain
   stops the affected step, and the run's report says so. None of these
   conditions is ever treated as nothing to do.

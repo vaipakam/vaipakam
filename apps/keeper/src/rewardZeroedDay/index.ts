@@ -34,13 +34,22 @@
 //     past its bounded deadline switches to pool-scaled pricing
 //     (`lapseShortCompensatedDay`).
 //
-// Every lapse the pass makes is posted as an operator notice with the loss the
-// chain recorded. Every call is simulated first and waits for its receipt
-// before the next (`../stepSender`). Gated by KEEPER_ENABLED +
-// REWARD_ZEROED_DAY_ENABLED. Ships disarmed.
+// Every lapse the chain records on a day the pass reads, the keeper's or
+// anyone's, is posted as an operator notice with the loss the chain recorded
+// (in VPFI), and again once a partial figure becomes exact. The notice is
+// derived from the chain's loss record every run, not from the keeper's own
+// send, and a day whose notice has not gone out keeps its place above the
+// day floor, so a failed post is retried until it is delivered (Codex #3000).
+//
+// None of these calls is pause-guarded on chain, so the pass reads the
+// Diamond's pause itself and works nothing while it is paused (Codex #3000).
+// Every call is simulated first and waits for its receipt before the next
+// (`../stepSender`). Gated by KEEPER_ENABLED + REWARD_ZEROED_DAY_ENABLED.
+// Ships disarmed.
 
 import { createPublicClient, http, zeroAddress, type Abi, type Address, type PublicClient } from 'viem';
 import {
+  AdminFacetABI,
   InteractionRewardsLensFacetABI,
   RewardAggregatorFacetABI,
   RewardCommitmentFacetABI,
@@ -56,7 +65,7 @@ import type { PassTick } from '../passSchedule';
 import { deadlineClient, PastRunDeadline, settledRead, type BatchResult } from '../batchRead';
 import { shortErr } from '../callErrors';
 import { feeCeiling } from '../feeCeiling';
-import { sendOpsAlert } from '../opsAlert';
+import { sendOpsAlert, type OpsAlertOutcome } from '../opsAlert';
 import { conservationGap, coveringEntries, decodeEntryFloor, encodeEntryFloor, scanEntries, SIDE_BORROWER, SIDE_LENDER, type EntryRow, type ScannedEntry, type Side } from '../rewardEntries';
 import { advanceFloor, d1ScanCursors, decodeIndex, finalFloor, finalizedBlockOnce, rotatingWindow, type FinalBlock, type ScanCursors } from '../scanCursors';
 import { StepSender, type SendFeeCeiling } from '../stepSender';
@@ -66,6 +75,7 @@ import { accumulationWedge, zeroedDayStep, type ZeroedDayState } from './plan';
 export * from './plan';
 
 export const ABI = [
+  ...(AdminFacetABI as Abi),
   ...(RewardReporterFacetABI as Abi),
   ...(RewardCommitmentFacetABI as Abi),
   ...(RewardRemittanceLensFacetABI as Abi),
@@ -95,8 +105,13 @@ export const DAY_NEXT_ITEM = 'day-next';
 export const MAX_FEE_VAR = 'REWARD_ZEROED_DAY_MAX_FEE_WEI';
 /** An operator alert about a wedged accumulation re-sends after this. */
 const WEDGE_ALERT_INTERVAL_SEC = 6 * 3600;
-/** A lapse notice is a one-off: its key is never re-sent. */
+/** A lapse notice is a one-off: its key is never re-sent once delivered. */
 const NOTICE_INTERVAL_SEC = 10 * 365 * 86_400;
+/** Outcomes after which a notice is not owed again. `suppressed` means its key
+ *  was delivered before; `unconfigured` means the deployment has no ops bot,
+ *  and `sendOpsAlert` has written the notice to the journal instead, which is
+ *  the only place it can go there. */
+const NOTICE_DELIVERED: ReadonlySet<OpsAlertOutcome> = new Set(['sent', 'suppressed', 'unconfigured']);
 const READ_CHUNK = 100;
 
 const ROLE_MIRROR = 1;
@@ -117,7 +132,7 @@ export interface ZeroedDayDeps {
   cursors: ScanCursors;
   /** Posts an operator alert; resolves whether it went out. Injected so a run
    *  is testable. */
-  alert: (key: string, text: string, minIntervalSec: number) => Promise<unknown>;
+  alert: (key: string, text: string, minIntervalSec: number) => Promise<OpsAlertOutcome>;
 }
 
 export interface ZeroedDayReport {
@@ -333,11 +348,29 @@ async function readGate(r: Reader, chainId: number): Promise<Gate | string> {
   const role = await read<number>('getRewardRole', 'its reward role');
   if (typeof role === 'string') return role;
   if (Number(role) !== ROLE_MIRROR) return `its reward role is ${Number(role)}, not Mirror: only a mirror has zeroed days to quote or lapse`;
+  // The quote pages, the dispatch and both lapses carry no pause guard, so a
+  // paused protocol would not refuse them: the pass stops on the pause itself.
+  const paused = await read<boolean>('paused', 'whether the Diamond is paused');
+  if (typeof paused === 'string') return paused;
+  if (paused) return 'the Diamond is paused, so no quote page, dispatch or lapse is sent (none of them is pause-guarded on chain)';
   const day = await read<readonly [bigint, boolean]>('getInteractionCurrentDay', 'its reward day');
   if (typeof day === 'string') return day;
   if (!day[1]) return 'its reward clock is not running';
   return { today: Number(day[0]), messenger: cfg[0] };
 }
+
+/** The chain's record of a lapsed day's loss (`getLapsedDayLoss`). The
+ *  figures are VPFI, 18 decimals: the quote accumulation they come from
+ *  prices each entry's interest at the day's VPFI-per-numeraire delta. */
+interface LossRecord {
+  lender18: bigint;
+  borrower18: bigint;
+  partialFigure: boolean;
+  shortLapse: boolean;
+  recorded: boolean;
+}
+
+type DayState = ZeroedDayState & { totals: { lender: bigint; borrower: bigint }; lossRecord: LossRecord };
 
 /** Every zeroed day's state, read in one batch per field. */
 async function readStates(
@@ -345,7 +378,7 @@ async function readStates(
   onUnread: (day: number) => void,
   days: readonly number[],
   blockNumber?: bigint,
-): Promise<Map<number, ZeroedDayState & { totals: { lender: bigint; borrower: bigint } }>> {
+): Promise<Map<number, DayState>> {
   const fns = ['getChainReportSentAt', 'getDayPoolStamp', 'getCompQuoteAccum', 'getDayLapseClock', 'getDayCompensation', 'getDayResolvedZero', 'getLapsedDayLoss', 'getShortLapseDeadline'];
   const calls = days.flatMap((d) => [
     ...fns.map((functionName) => ({ functionName, args: [BigInt(d)] as readonly unknown[] })),
@@ -353,7 +386,7 @@ async function readStates(
   ]);
   const res = await r.many(calls, blockNumber === undefined ? 'day-state' : 'day-state-final', blockNumber);
   const width = fns.length + 1;
-  const out = new Map<number, ZeroedDayState & { totals: { lender: bigint; borrower: bigint } }>();
+  const out = new Map<number, DayState>();
   days.forEach((d, i) => {
     const row = res.slice(i * width, (i + 1) * width);
     if (row.some((x) => x === undefined)) {
@@ -367,7 +400,7 @@ async function readStates(
       readonly [bigint, number, bigint, bigint],
       { compensated: boolean; provisional: boolean; lenderPool18: bigint; borrowerPool18: bigint },
       boolean,
-      { recorded: boolean; partialFigure: boolean },
+      LossRecord,
       readonly [bigint, bigint, bigint],
       readonly [bigint, bigint, bigint, bigint],
     ];
@@ -383,6 +416,7 @@ async function readStates(
       // A deadline of 0 means "not applicable" (no window): unread as a time.
       shortDeadline: comp.compensated && short[2] > 0n ? short[2] : null,
       totals: { lender: totals[2], borrower: totals[3] },
+      lossRecord: loss,
     });
   });
   return out;
@@ -440,9 +474,16 @@ async function workDays(r: Reader, sender: StepSender, report: ZeroedDayReport, 
       sender.noteUnread('quote', `the reward-entry scan reads at most ${MAX_ENTRY_PAGES} pages a run from its stored floor and reached only the entries starting by day ${completeThrough}, so days ${beyond.join(',')} are not accumulated this run (a quote on a partial scan cannot complete)`);
     }
   }
-  const terminal = plans.filter((p) => p.step.kind === 'done').map((p) => p.s.day);
+  const terminal = new Set(plans.filter((p) => p.step.kind === 'done').map((p) => p.s.day));
+  // Every lapse already on chain is noticed from its record, whoever made it;
+  // a day whose notice did not go out stays above the floor to be retried.
+  for (const { s } of plans) {
+    if (!s.lossRecord.recorded) continue;
+    // eslint-disable-next-line no-await-in-loop
+    if (!(await noticeLapse(deps, sender, report.chainId, s.day, s.lossRecord))) terminal.delete(s.day);
+  }
   for (const { s, step } of plans) {
-    if (sender.stopped) return terminal;
+    if (sender.stopped) return [...terminal];
     const d = s.day;
     switch (step.kind) {
       case 'done':
@@ -456,7 +497,7 @@ async function workDays(r: Reader, sender: StepSender, report: ZeroedDayReport, 
         if (res === 'landed') {
           report.lapsed.push(d);
           // eslint-disable-next-line no-await-in-loop
-          await noticeLapse(r, deps, report.chainId, d, false);
+          await noticeLanded(r, deps, sender, report.chainId, d);
         }
         break;
       }
@@ -466,7 +507,7 @@ async function workDays(r: Reader, sender: StepSender, report: ZeroedDayReport, 
         if (res === 'landed') {
           report.shortLapsed.push(d);
           // eslint-disable-next-line no-await-in-loop
-          await noticeLapse(r, deps, report.chainId, d, true);
+          await noticeLanded(r, deps, sender, report.chainId, d);
         }
         break;
       }
@@ -490,7 +531,7 @@ async function workDays(r: Reader, sender: StepSender, report: ZeroedDayReport, 
       }
     }
   }
-  return terminal;
+  return [...terminal];
 }
 
 /** Page every covering id past each side's cursor into the quote; true once
@@ -500,7 +541,7 @@ async function accumulate(
   sender: StepSender,
   report: ZeroedDayReport,
   deps: ZeroedDayDeps,
-  s: ZeroedDayState & { totals: { lender: bigint; borrower: bigint } },
+  s: DayState,
   entries: readonly ScannedEntry[],
 ): Promise<boolean> {
   const d = s.day;
@@ -555,19 +596,35 @@ async function dispatch(r: Reader, sender: StepSender, report: ZeroedDayReport, 
   if (res === 'landed') report.quoted.push(d);
 }
 
-/** One operator notice per lapse the keeper made, with the loss the chain
- *  recorded for it, read back from the chain rather than computed here. */
-async function noticeLapse(r: Reader, deps: ZeroedDayDeps, chainId: number, d: number, short: boolean): Promise<void> {
-  let figure: string;
+/** A lapse this run landed is noticed at once, from the record read back.
+ *  When that read fails, the day is not yet at a terminal in this run's view,
+ *  so it stays above the floor and the next run notices it from its state. */
+async function noticeLanded(r: Reader, deps: ZeroedDayDeps, sender: StepSender, chainId: number, d: number): Promise<void> {
+  let loss: LossRecord;
   try {
-    const loss = await r.one<{ lender18: bigint; borrower18: bigint; partialFigure: boolean }>('getLapsedDayLoss', [BigInt(d)]);
-    figure = `recorded loss: lender side ${loss.lender18}, borrower side ${loss.borrower18} (numeraire, 18 decimals)${loss.partialFigure ? ', a PARTIAL figure: the quote had not completed, and the keeper keeps accumulating until it is exact' : ''}`;
+    loss = await r.one<LossRecord>('getLapsedDayLoss', [BigInt(d)]);
   } catch (err) {
     if (err instanceof PastRunDeadline) throw err;
-    figure = `the recorded loss could not be read back (${shortErr(err)}); read getLapsedDayLoss(${d})`;
+    sender.noteUnread(`notice:${d}`, `its recorded loss could not be read back (${shortErr(err)}); the next run posts its notice`);
+    return;
   }
-  const what = short
+  if (loss.recorded) await noticeLapse(deps, sender, chainId, d, loss);
+}
+
+/** One operator notice per lapse the chain records, with the loss it
+ *  recorded, read from the chain rather than computed here; a partial figure
+ *  is noticed again once it is exact. Resolves whether the notice is
+ *  delivered (or was before). */
+async function noticeLapse(deps: ZeroedDayDeps, sender: StepSender, chainId: number, d: number, loss: LossRecord): Promise<boolean> {
+  const what = loss.shortLapse
     ? `was funded below its quote past its deadline and now prices from the pool it was funded with`
     : `was never compensated before its frozen expiry and retired at zero for its users`;
-  await deps.alert(`zeroed-day-lapse:${chainId}:${d}`, `ℹ️ Zeroed reward day ${d} on chain ${chainId} ${what}; ${figure}.`, NOTICE_INTERVAL_SEC);
+  const figure = `recorded loss: lender side ${loss.lender18}, borrower side ${loss.borrower18} (VPFI, 18 decimals)${
+    loss.partialFigure ? ', a PARTIAL figure: the quote had not completed, and the keeper keeps accumulating until it is exact' : ''
+  }`;
+  const key = `zeroed-day-lapse:${chainId}:${d}:${loss.partialFigure ? 'partial' : 'exact'}`;
+  const out = await deps.alert(key, `ℹ️ Zeroed reward day ${d} on chain ${chainId} ${what}; ${figure}.`, NOTICE_INTERVAL_SEC);
+  if (NOTICE_DELIVERED.has(out)) return true;
+  sender.noteUnread(`notice:${d}`, `its lapse notice did not go out (${out}); the day stays in the rotation until it does`);
+  return false;
 }
