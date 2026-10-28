@@ -16,7 +16,7 @@ import { deployStamp, wranglerDeploy } from '../src/deployStamp.mjs';
 const stamp = deployStamp();
 if ('reason' in stamp) {
   console.warn(`[deploy-stamp] not recording the commit on this deployment: ${stamp.reason}`);
-  console.warn('[deploy-stamp] the deploy-lag check will infer it from the deploy time, and say so.');
+  console.warn('[deploy-stamp] the deploy-lag check will infer it from the upload time, and say so.');
 } else {
   console.log(`[deploy-stamp] ${stamp.message}`);
 }

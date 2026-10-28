@@ -1714,7 +1714,7 @@ publishes, so a green review there says nothing about what shipped.
 `.github/workflows/deploy-lag.yml` compares each Worker's live deployment with
 `main`, opening a "Workers behind main" issue once a merged change has waited
 six hours. Deploy through the package script, never a bare `wrangler deploy`:
-an unstamped deployment can only be placed by its deploy time, and the check
+an unstamped deployment can only be placed by its upload time, and the check
 marks it INFERRED. A Worker whose lag is deliberate goes in that workflow's
 `DEPLOY_LAG_HELD` with its reason, in a reviewed commit.
 Then — drive the actual

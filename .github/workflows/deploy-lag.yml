@@ -9,7 +9,7 @@ name: Worker deploy lag
 # a Worker's deployments cannot be read, so "unknown" is never reported as
 # "current". What counts as a Worker's code, and how a deployment is matched
 # to a commit (exactly from the stamp every deploy now records, or INFERRED
-# from the deploy time, and said so), is in .github/scripts/check-deploy-lag.mjs
+# from the upload time, and said so), is in .github/scripts/check-deploy-lag.mjs
 # (`--selftest`).
 #
 # It needs read-only access to the account's Worker deployments: the
@@ -74,7 +74,7 @@ jobs:
         slot (docs/ops/CloudflareCronSlots.md)
     steps:
       # The whole history: a deployment is placed on main by its commit, or
-      # by the last commit before its deploy time.
+      # by the last commit before its upload time.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0

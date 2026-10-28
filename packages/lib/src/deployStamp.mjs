@@ -8,7 +8,7 @@
  * WHEN a version was uploaded but not WHAT it was built from, so every deploy
  * this repository runs stamps that itself: the version's tag carries the
  * commit, and its message says so in words. Without a stamp the check can
- * only infer the commit from the deploy time, and it says that it did.
+ * only infer the commit from the upload time, and it says that it did.
  *
  * WHAT THE STAMP SAYS, and does not.
  *   - `tag`     — the first 12 hex digits of the commit, with `-dirty` when

@@ -23,7 +23,7 @@
  *     `workspace:` protocol, and theirs, transitively;
  *   - a Worker outside the workspace (ops/*) reaches the packages its own
  *     tracked sources name by a relative path into `packages/`, and theirs.
- * A change only to tests, end-to-end drivers, Markdown, or a dependency
+ * A change only to tests, end-to-end drivers, a README or CHANGELOG, or a dependency
  * package's `scripts/` is not a bundle change and is not counted. The root
  * lockfile is not counted either: a dependency bump also edits the package's
  * own package.json, which is. What this cannot see: a change outside those
@@ -76,7 +76,9 @@ const SOURCE_EXT = /\.(?:[cm]?[jt]sx?)$/;
  */
 export function isNonBundle(file, ownDir) {
   const segments = file.split('/');
-  if (/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file) || file.endsWith('.md')) return true;
+  // A README or CHANGELOG is documentation by name. Other Markdown counts:
+  // the marketing site embeds its pages, guide and terms from .md files.
+  if (/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file) || /^(?:README|CHANGELOG)\.md$/i.test(posix.basename(file))) return true;
   if (segments.some((s) => s === 'test' || s === 'tests' || s === '__tests__' || s === 'e2e')) return true;
   return !(file === ownDir || file.startsWith(`${ownDir}/`)) && (segments.includes('scripts') || segments.includes('bin'));
 }
@@ -148,7 +150,7 @@ export function judgeDeployLag(workers, { now, graceSeconds, held }) {
     const split = w.versions.length > 1 ? ` (split deployment, ${w.versions.length} versions)` : '';
     const unplaced = w.versions.find((v) => !v.pending);
     if (unplaced) {
-      fail('unplaced', `deployed ${w.deployedAt}, but version ${unplaced.id} cannot be placed on main: no commit on main precedes that time${split}`);
+      fail('unplaced', `deployed ${w.deployedAt}, but version ${unplaced.id} cannot be placed on main: ${unplaced.unplaced ?? 'no commit could be found for it'}${split}`);
       continue;
     }
     const judged = w.versions.map((v) => ({ v, overdue: v.pending.filter((c) => now - c.time > graceSeconds) }));
@@ -174,9 +176,9 @@ export function judgeDeployLag(workers, { now, graceSeconds, held }) {
 function describeBasis(v) {
   if (v.basis === 'tag') return `from ${v.commit.slice(0, 9)}${v.dirty ? ' plus uncommitted changes' : ''}`;
   if (v.basis === 'tag-unknown') {
-    return `from ${v.tag}, a commit this checkout of main does not have — so placed by deploy time at ${v.commit?.slice(0, 9) ?? 'nothing'} (INFERRED)`;
+    return `from ${v.tag}, a commit this checkout of main does not have — so placed by its upload time at ${v.commit?.slice(0, 9) ?? 'nothing'} (INFERRED)`;
   }
-  return `with no recorded commit — placed by deploy time at ${v.commit?.slice(0, 9) ?? 'nothing'} (INFERRED)`;
+  return `with no recorded commit — placed by its upload time${v.uploadedAt ? ` (${v.uploadedAt})` : ''} at ${v.commit?.slice(0, 9) ?? 'nothing'} (INFERRED)`;
 }
 
 // ── facts ────────────────────────────────────────────────────────────────
@@ -310,20 +312,28 @@ async function gather(worker, { ref, auth }) {
   }
   if (deployments.length === 0) return { ...worker, read: 'none' };
   const latest = [...deployments].sort((a, b) => Date.parse(b.created_on) - Date.parse(a.created_on))[0];
-  const placedByTime = () => {
-    const sha = git(['rev-list', '-1', '--first-parent', `--before=${latest.created_on}`, ref]).trim();
+  // An unstamped version is placed by when THAT VERSION was uploaded, never
+  // by the deployment's time: a rollback deploys an old version today, and
+  // placing it at today's main would hide every change it lacks.
+  const placedByTime = (uploadedAt) => {
+    if (!uploadedAt || Number.isNaN(Date.parse(uploadedAt))) return null;
+    const sha = git(['rev-list', '-1', '--first-parent', `--before=${uploadedAt}`, ref]).trim();
     return sha || null;
   };
   const versions = [];
-  for (const v of latest.versions ?? []) {
+  // Only versions that take traffic run code anyone reaches; a version kept
+  // at 0% is listed but serves nothing.
+  for (const v of (latest.versions ?? []).filter((x) => Number(x.percentage) > 0)) {
     let tag = '';
+    let uploadedAt = null;
     try {
       const r = await cloudflare(`${encodeURIComponent(worker.name)}/versions/${encodeURIComponent(v.version_id)}`, auth);
       // A version the deployment names but the API cannot find is a failed
       // read, never an unstamped version: only a version actually read may
-      // be placed by its deploy time.
+      // be placed by its upload time.
       if (r.status !== 200) throw new Error(`HTTP ${r.status}`);
       tag = String(r.result?.annotations?.['workers/tag'] ?? '');
+      uploadedAt = r.result?.metadata?.created_on ?? null;
     } catch (err) {
       return { ...worker, read: 'error', error: `version ${v.version_id}: ${String(err.message).slice(0, 80)}` };
     }
@@ -334,18 +344,28 @@ async function gather(worker, { ref, auth }) {
       commit = commitExists(stamp[1]);
       basis = commit ? 'tag' : 'tag-unknown';
     }
-    if (!commit) commit = placedByTime();
+    let unplaced = null;
+    if (!commit) {
+      commit = placedByTime(uploadedAt);
+      if (!commit) {
+        unplaced = uploadedAt
+          ? `it is unstamped and no commit on main precedes its upload at ${uploadedAt}`
+          : 'it is unstamped and the API gave no upload time for it';
+      }
+    }
     versions.push({
       id: v.version_id,
       percentage: v.percentage,
       tag,
       basis,
       commit,
+      uploadedAt,
+      unplaced,
       dirty: Boolean(stamp?.[2]),
       pending: commit ? pendingSince(commit, ref, worker) : null,
     });
   }
-  if (versions.length === 0) return { ...worker, read: 'error', error: 'the latest deployment lists no versions' };
+  if (versions.length === 0) return { ...worker, read: 'error', error: 'the latest deployment lists no version taking traffic' };
   return { ...worker, read: 'ok', deployedAt: latest.created_on, versions };
 }
 
@@ -398,7 +418,9 @@ function selftest() {
   ok(isNonBundle('packages/contracts/scripts/build-diamond-abi.mjs', 'apps/indexer'), "a dependency's scripts/ is not bundle code");
   ok(!isNonBundle('apps/app/scripts/viteEnv.mjs', 'apps/app'), "the Worker's own scripts/ can feed its build");
   ok(!isNonBundle('packages/contracts/src/abis/RiskFacet.json', 'apps/indexer'), 'an ABI is bundle code');
-  ok(isNonBundle('apps/www/README.md', 'apps/www'), 'Markdown is not bundle code');
+  ok(isNonBundle('apps/www/README.md', 'apps/www'), 'a README is not bundle code');
+  ok(!isNonBundle('apps/www/src/content/userguide/UserGuide.en.md', 'apps/www'), 'Markdown the site embeds is bundle code');
+  ok(!isNonBundle('apps/www/src/pages/terms/v3.md', 'apps/www'), 'the terms the site embeds are bundle code');
 
   const reached = packagesReachedBy('ops/w/src/a.ts', "import x from '../../../packages/lib/src/d1Binds';\nimport y from './local';\nconst z = '../../../packages/contracts/src/deployments.json';");
   ok(reached.size === 2 && reached.has('packages/lib') && reached.has('packages/contracts'), 'relative paths into packages/ are found, local ones ignored');
