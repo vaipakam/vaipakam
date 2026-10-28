@@ -610,9 +610,10 @@ jobs:
           # `type(X).runtimeCode` (#2713 review). Nothing compiled under
           # `cifast` reads it (its only users are `test/helpers/LibOneTx*Fill`,
           # run by the full regression), so these two jobs are not exposed.
-          # The full release gate and the e2e jobs stay on `stable` for that
-          # reason; do not extend this pin to them. Move it only to a version
-          # that still compiles 33 files in the deploy-sanity step.
+          # The full release gate and the e2e jobs are pinned to v1.8.6, which
+          # has that fix, for that reason (#1984); do not extend this pin to
+          # them. Move it only to a version that still compiles 33 files in
+          # the deploy-sanity step.
           version: v1.8.3
 
       # Foundry's `out/` (artifact tree) and `cache/` (incremental compile)
@@ -838,9 +839,10 @@ jobs:
           # `type(X).runtimeCode` (#2713 review). Nothing compiled under
           # `cifast` reads it (its only users are `test/helpers/LibOneTx*Fill`,
           # run by the full regression), so these two jobs are not exposed.
-          # The full release gate and the e2e jobs stay on `stable` for that
-          # reason; do not extend this pin to them. Move it only to a version
-          # that still compiles 33 files in the deploy-sanity step.
+          # The full release gate and the e2e jobs are pinned to v1.8.6, which
+          # has that fix, for that reason (#1984); do not extend this pin to
+          # them. Move it only to a version that still compiles 33 files in
+          # the deploy-sanity step.
           version: v1.8.3
 
       - name: Setup Python

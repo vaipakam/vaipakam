@@ -121,7 +121,14 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
         with:
-          version: stable
+          # PINNED by number, never `stable` (#1984, owner decision
+          # 2026-10-28): the release gate's compiler must not change without a
+          # commit. v1.8.6 ran the last green sharded full regression
+          # (2026-10-25) and has the Foundry fix for stale cached bytecode
+          # behind `type(X).runtimeCode` that `test/helpers/LibOneTx*Fill`
+          # need, which is why this is not ci.yml's v1.8.3. Bump it by PR, in
+          # the same change as the three e2e workflows.
+          version: v1.8.6
 
       # Same content-based cache key as `ci.yml` — release branches share
       # the same artifact lineage as main branches, so warm hits from
