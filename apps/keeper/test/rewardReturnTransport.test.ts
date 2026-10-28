@@ -187,10 +187,12 @@ class FakeChain {
   readonly inbound = new Map<number, LaneBucket>();
   sent: { fn: string; args: readonly unknown[]; value: bigint }[] = [];
   txs = 0;
+  /** How the next receipts read: seen, reverted, or not seen in time. */
+  receipt: 'success' | 'reverted' | 'timeout' = 'success';
   /** The authorizations and quarantines as the finalized block shows them,
    *  when it lags the head; null reads the head's there too. */
   final: { auths: Map<bigint, Auth>; stranded: Map<string, { amount: bigint; dayId: bigint }> } | null = null;
-  readonly finalNumber = 100n;
+  readonly finalNumber = 10_000n;
 
   constructor(
     readonly chainId: number,
@@ -325,7 +327,10 @@ class FakeChain {
   };
 
   getTransactionCount = async () => 7;
-  waitForTransactionReceipt = async ({ hash }: { hash: string }) => ({ status: 'success', logs: [], blockNumber: 1n, transactionHash: hash });
+  waitForTransactionReceipt = async ({ hash }: { hash: string }) => {
+    if (this.receipt === 'timeout') throw new Error('timed out waiting for the receipt');
+    return { status: this.receipt, logs: [], blockNumber: 1n, transactionHash: hash };
+  };
 
   client(): PublicClient {
     return this as unknown as PublicClient;
@@ -355,9 +360,9 @@ class FakeLedger implements ReturnLedger {
   down = false;
   pages = 0;
 
-  add(chainId: number, kind: string, args: Record<string, unknown>, blockAt: number): void {
+  add(chainId: number, kind: string, args: Record<string, unknown>, blockAt: number, block?: number): void {
     const list = this.rows.get(chainId) ?? [];
-    list.push({ kind, args, blockAt, block: list.length + 1, log: 0 });
+    list.push({ kind, args, blockAt, block: block ?? list.length + 1, log: 0 });
     this.rows.set(chainId, list);
   }
 
@@ -475,6 +480,31 @@ describe('a run', () => {
     expect(alerts).toEqual([]);
   });
 
+  it('counts an instruction whose receipt was not seen as sent, so it is not paid for twice (Codex #3002)', async () => {
+    authorize(1n, 400n * E18);
+    base.receipt = 'timeout';
+    await run();
+    expect(fns(base)).toEqual(['sendRepatriationInstruction']);
+    expect(records.rows.get(`${BASE_ID}:${BASE}:instruction:1`), 'recorded before it went out, and kept').toBe(NOW);
+    // It mined after the run; the indexer has not recorded it yet.
+    base.receipt = 'success';
+    base.sent = [];
+    const again = await run();
+    expect(base.sent).toEqual([]);
+    expect(again[0].waiting[0]).toMatch(/its instruction is in flight/);
+  });
+
+  it('puts the record back when the instruction reverted or the node refused it, so it is sent again', async () => {
+    authorize(1n, 400n * E18);
+    base.receipt = 'reverted';
+    await run();
+    expect(records.rows.has(`${BASE_ID}:${BASE}:instruction:1`)).toBe(false);
+    base.receipt = 'success';
+    base.sent = [];
+    await run();
+    expect(fns(base)).toEqual(['sendRepatriationInstruction']);
+  });
+
   it('never re-sends a late instruction: it alerts once on its own key', async () => {
     authorize(1n, 400n * E18);
     ledger.add(BASE_ID, 'RepatriationInstructionDispatched', { authId: '1', dstChainId: String(MIRROR_ID), amount: '1', messageId: '0x' }, NOW - 600);
@@ -573,6 +603,24 @@ describe('a run', () => {
     expect(c.rows.get(AUTH_FLOOR_ITEM)).toBe('4');
   });
 
+  it('does not read an id not yet issued at finality as finished (Codex #3002)', async () => {
+    for (let i = 1n; i <= 3n; i++) base.auths.set(i, { status: 2, dst: MIRROR_ID, amount: 1n });
+    // Ids 2 and 3 were issued and settled after the finalized block.
+    base.final = { auths: new Map([[1n, { status: 2, dst: MIRROR_ID, amount: 1n }]]), stranded: new Map() };
+    await run();
+    expect(cursors.get(`${BASE_ID}:${BASE}`)!.rows.get(AUTH_FLOOR_ITEM)).toBe('2');
+  });
+
+  it('does not lift its quarantine floor past a quarantine not yet finalized (Codex #3002)', async () => {
+    ledger.add(MIRROR_ID, 'CompensationQuarantined', { remitter: REMITTER, remitId: '100' }, NOW - 600, 1);
+    ledger.add(MIRROR_ID, 'CompensationQuarantined', { remitter: REMITTER, remitId: '101' }, NOW - 600, 2);
+    ledger.add(MIRROR_ID, 'CompensationQuarantined', { remitter: REMITTER, remitId: '102' }, NOW - 60, Number(mirror.finalNumber) + 5);
+    // All three are returned in full at the head; the third's quarantine is
+    // past the finalized block, where its record reads empty too.
+    await run();
+    expect(cursors.get(`${MIRROR_ID}:${MIRROR}`)!.rows.get(STRANDED_FLOOR_ITEM)).toBe('2:0');
+  });
+
   it('moves its quarantine floor only on what the finalized block shows (Codex #2993 r4)', async () => {
     for (let i = 0; i < 3; i++) ledger.add(MIRROR_ID, 'CompensationQuarantined', { remitter: REMITTER, remitId: String(100 + i) }, NOW - 600);
     mirror.final = { auths: new Map(), stranded: new Map([[`${REMITTER}:101`, { amount: 5n, dayId: 4n }]]) };
@@ -585,7 +633,7 @@ describe('a run', () => {
   });
 
   it('a mirror this keeper does not serve is named, and nothing is sent for it', async () => {
-    authorize(6n, 1n);
+    authorize(1n, 1n);
     const r = await run({ chains: [base] });
     expect(base.sent).toEqual([]);
     expect([...r[0].unread.values()][0]).toMatch(/no RPC or Diamond for/);

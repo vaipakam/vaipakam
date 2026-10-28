@@ -59,8 +59,8 @@ import { deploymentFloor, finishWork, getWorkItems, putWork } from '../db';
 import { feeCeiling } from '../feeCeiling';
 import { sendOpsAlert } from '../opsAlert';
 import { d1ScanCursors, decodeIndex, finalFloor, finalizedBlockOnce, rotatingWindow, type FinalBlock, type ScanCursors } from '../scanCursors';
-import { StepSender, type SendFeeCeiling } from '../stepSender';
-import { AUTH_PENDING, executeBlocked, repatStep, returnChunk, type LaneBucket, type RepatState } from './plan';
+import { StepSender, type CallResult, type SendFeeCeiling } from '../stepSender';
+import { AUTH_PENDING, AUTH_RELEASED, AUTH_SETTLED, executeBlocked, repatStep, returnChunk, type LaneBucket, type RepatState } from './plan';
 
 export * from './plan';
 
@@ -454,6 +454,32 @@ async function notice(s: ChainState, what: string): Promise<void> {
 // ─── 1. Repatriation ───────────────────────────────────────────────────────
 
 const RECORD_INSTRUCTION = (authId: bigint) => `instruction:${authId}`;
+/** An authorization the administrator's flow has finished with: settled by an
+ *  execution, or released by a cancellation ACK. Anything else, including
+ *  the zero status of an id not yet issued, is not finished (Codex #3002). */
+const authFinished = (status: number): boolean => status === AUTH_SETTLED || status === AUTH_RELEASED;
+
+/**
+ * Sends one of the re-sendable paid messages (an instruction or an ACK) with
+ * this keeper's record of it written BEFORE it goes out, and put back only
+ * when no transaction can have gone out. A send whose receipt was not seen
+ * may land after the run, and the indexer may not have recorded it by the
+ * next run, so it counts as made: the next run waits on it, and alerts if it
+ * runs late, rather than paying for a second copy (Codex #3002, the day-close
+ * broadcast rule). A reverted send or one the node refused left nothing.
+ */
+async function sendRecorded(s: ChainState, deps: ReturnTransportDeps, item: string, send: () => Promise<CallResult>): Promise<CallResult> {
+  const { chainId, diamond } = s.deps;
+  const prior = (await deps.records.get(chainId, diamond, [item])).get(item);
+  const before = s.sender.maybeSent;
+  await deps.records.put(chainId, diamond, item, deps.now());
+  const res = await send();
+  if (s.sender.maybeSent === before) {
+    if (prior === undefined) await deps.records.finish(chainId, diamond, [item]);
+    else await deps.records.put(chainId, diamond, item, prior);
+  }
+  return res;
+}
 const RECORD_ACK = (base: Address, authId: bigint) => `ack:${base.toLowerCase()}:${authId}`;
 
 async function repatriations(base: ChainState, states: ReadonlyMap<number, ChainState>, deps: ReturnTransportDeps): Promise<void> {
@@ -482,7 +508,7 @@ async function repatriations(base: ChainState, states: ReadonlyMap<number, Chain
       base.sender.noteUnread(`auth:${authId}`, 'its authorization record');
       continue;
     }
-    if (Number(st[0]) !== AUTH_PENDING) {
+    if (authFinished(Number(st[0]))) {
       finished.add(nums[i]);
       settled.push(RECORD_INSTRUCTION(authId));
       const m = states.get(Number(st[1]));
@@ -490,16 +516,22 @@ async function repatriations(base: ChainState, states: ReadonlyMap<number, Chain
       if (m !== undefined) await deps.records.finish(m.deps.chainId, m.deps.diamond, [RECORD_ACK(base.deps.diamond, authId)]);
       continue;
     }
+    if (Number(st[0]) !== AUTH_PENDING) {
+      base.sender.noteUnread(`auth:${authId}`, `its authorization status ${Number(st[0])}, which is neither pending nor finished`);
+      continue;
+    }
     pending.push({ authId, dst: Number(st[1]), amount: st[3] });
   }
   if (settled.length > 0) await deps.records.finish(base.deps.chainId, base.deps.diamond, settled);
   // The floor moves only on what the finalized block shows (Codex #2993 r4):
-  // an authorization a reorg puts back to pending stays above it.
+  // an authorization a reorg puts back to pending stays above it. It must read
+  // FINISHED there, not merely not pending: an id issued and finished since
+  // the finalized block reads zero at it (Codex #3002).
   const newFloor = await finalFloor(floor, nums, (id) => finished.has(id), base.r.finalized, async (passed, block) => {
     const at = await base.r.many(passed.map((id) => ({ functionName: 'getRepatriationAuthorization', args: [BigInt(id)] })), 'authorizations-final', block.number);
     return new Set(passed.filter((_, i) => {
       const st = at[i] as readonly [number, ...unknown[]] | undefined;
-      return st !== undefined && Number(st[0]) !== AUTH_PENDING;
+      return st !== undefined && authFinished(Number(st[0]));
     }));
   });
   if (newFloor !== floor) await cursors.put(AUTH_FLOOR_ITEM, String(newFloor));
@@ -578,11 +610,10 @@ async function oneAuthorization(
       }
       const fee = await base.r.tryOne<bigint>(base.sender, `auth:${authId}`, 'the messenger\'s fee for the instruction', 'quoteSendRepatriationInstruction', [BigInt(dst), authId, amount], base.messenger, MESSENGER_ABI);
       if (fee === undefined) return;
-      const res = await base.sender.call('instruction', `authorization ${authId}`, 'sendRepatriationInstruction', [authId, deps.keeper], fee);
-      if (res === 'landed') {
-        base.report.dispatched.push(String(authId));
-        await deps.records.put(base.deps.chainId, base.deps.diamond, RECORD_INSTRUCTION(authId), deps.now());
-      }
+      const res = await sendRecorded(base, deps, RECORD_INSTRUCTION(authId), () =>
+        base.sender.call('instruction', `authorization ${authId}`, 'sendRepatriationInstruction', [authId, deps.keeper], fee),
+      );
+      if (res === 'landed') base.report.dispatched.push(String(authId));
       return;
     }
     case 'execute': {
@@ -614,11 +645,10 @@ async function oneAuthorization(
       }
       const fee = await mirror.r.tryOne<bigint>(mirror.sender, `auth:${authId}`, 'the return sender\'s fee for the ACK', 'quoteRepatriationCancelAck', [BigInt(mirror.baseChainId), base.deps.diamond, authId], mirror.returnSender, RETURN_SENDER_ABI);
       if (fee === undefined) return;
-      const res = await mirror.sender.call('ack', `authorization ${authId}`, 'sendRepatriationCancelAck', [base.deps.diamond, authId, deps.keeper], fee);
-      if (res === 'landed') {
-        mirror.report.acked.push(String(authId));
-        await deps.records.put(mirror.deps.chainId, mirror.deps.diamond, RECORD_ACK(base.deps.diamond, authId), deps.now());
-      }
+      const res = await sendRecorded(mirror, deps, RECORD_ACK(base.deps.diamond, authId), () =>
+        mirror.sender.call('ack', `authorization ${authId}`, 'sendRepatriationCancelAck', [base.deps.diamond, authId, deps.keeper], fee),
+      );
+      if (res === 'landed') mirror.report.acked.push(String(authId));
       return;
     }
   }
@@ -668,13 +698,15 @@ async function strandedReturns(mirror: ChainState, states: ReadonlyMap<number, C
   // On a page read from the floor, the floor moves past the leading rows whose
   // quarantine is returned in full, or which nominate nothing, at the head AND
   // at the finalized block (Codex #2993 r4): a return a reorg undoes leaves
-  // its row above the floor, to be returned again.
+  // its row above the floor, to be returned again. At the finalized block the
+  // row's own quarantine must be finalized too: an empty record before the
+  // quarantine was made is not a return (Codex #3002).
   const liftFloor = async () => {
     if (start !== floor) return;
     const positions = ledger.rows.map((_, i) => i);
     const doneAtHead = (i: number) => rowKey[i] === null || returned.has(rowKey[i]!);
     const n = await finalFloor(0, positions, doneAtHead, mirror.r.finalized, async (passed, block) => {
-      const named = passed.filter((i) => rowKey[i] !== null);
+      const named = passed.filter((i) => rowKey[i] !== null && ledger.rows[i].block <= Number(block.number));
       const at = await mirror.r.many(named.map((i) => ({ functionName: 'getStrandedRecovery', args: [keys.get(rowKey[i]!)!.remitter, keys.get(rowKey[i]!)!.remitId] })), 'stranded-final', block.number);
       const done = new Set(passed.filter((i) => rowKey[i] === null));
       named.forEach((i, j) => {

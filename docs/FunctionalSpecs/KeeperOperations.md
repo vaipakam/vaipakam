@@ -319,7 +319,9 @@ evidence that the migration has completed.
 - **Each message once.** An instruction or acknowledgement is sent once. One
   that has not landed within a day is announced to operators instead of
   being paid for a second time, because a cross-chain message that failed on
-  arrival stays there for manual re-execution. A repatriation the lane can
+  arrival stays there for manual re-execution. A send whose outcome the
+  keeper did not see counts as sent, since it may still land; only a send
+  that reverted, or that the node refused, is sent again. A repatriation the lane can
   never carry, or one the mirror cannot yet fund, is stated rather than
   attempted.
 - **Chunked returns.** Compensation a mirror quarantined, and a retired

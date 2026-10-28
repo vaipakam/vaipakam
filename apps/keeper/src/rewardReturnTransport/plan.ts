@@ -13,8 +13,11 @@ export interface LaneBucket {
   capacity: bigint;
 }
 
-// Base's authorization status (`getRepatriationAuthorization`).
+// Base's authorization status (`getRepatriationAuthorization`): 0 for an id
+// not issued, then pending, and finished as settled or released.
 export const AUTH_PENDING = 1;
+export const AUTH_SETTLED = 2;
+export const AUTH_RELEASED = 3;
 // The mirror's instruction state (`getRepatriationInstruction`).
 export const INSTR_NONE = 0;
 export const INSTR_PENDING = 1;
