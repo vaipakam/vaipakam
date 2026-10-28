@@ -435,22 +435,42 @@ export function useForcedCloseSubmission({
    *  submission lacks one. Only onto the submission it was read for: the
    *  answer carries its hash, and a newer submission under the same key
    *  does not inherit another transaction's nonce. */
+  //
+  // The in-memory half is a render-phase ADJUSTMENT, the shape the seeding
+  // above uses: React re-runs the render before painting, and the guard
+  // (the submission still lacks a nonce) makes it fire once. The device
+  // record is a side effect and stays in the effect below.
+  if (
+    identityData !== null &&
+    submitted !== null &&
+    submitted.hash === identityData.hash &&
+    submitted.nonce === undefined
+  ) {
+    const learned: ForcedCloseSubmission = {
+      ...submitted,
+      sender: identityData.sender,
+      nonce: identityData.nonce,
+    };
+    setSubmissions((prev) =>
+      prev[submissionKey] === undefined || prev[submissionKey].hash === learned.hash
+        ? { ...prev, [submissionKey]: learned }
+        : prev,
+    );
+  }
+  const learnedHash = submitted?.nonce !== undefined ? submitted.hash : null;
+  const learnedSender = submitted?.sender;
+  const learnedNonce = submitted?.nonce;
   useEffect(() => {
-    if (identityData === null) return;
-    const { hash, sender, nonce } = identityData;
-    const learn = (s: ForcedCloseSubmission | null | undefined) =>
-      s !== null && s !== undefined && s.hash === hash && s.nonce === undefined;
+    if (learnedHash === null || learnedSender === undefined || learnedNonce === undefined) return;
     const stored = readForcedCloseSubmission(chainId, loanId);
-    setSubmissions((prev) => {
-      const current = prev[submissionKey] ?? stored;
-      return learn(current)
-        ? { ...prev, [submissionKey]: { ...current!, sender, nonce } }
-        : prev;
-    });
-    if (learn(stored)) {
-      writeForcedCloseSubmission(chainId, loanId, { ...stored!, sender, nonce });
+    if (stored?.hash === learnedHash && stored.nonce === undefined) {
+      writeForcedCloseSubmission(chainId, loanId, {
+        ...stored,
+        sender: learnedSender,
+        nonce: learnedNonce,
+      });
     }
-  }, [identityData, submissionKey, chainId, loanId]);
+  }, [learnedHash, learnedSender, learnedNonce, chainId, loanId]);
 
   /** #2086 — the nonce reconciliation, run ALONGSIDE the live wait rather
    *  than after it (Codex #3040 r1).
