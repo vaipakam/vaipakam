@@ -550,7 +550,8 @@
       "risk": "Informations sur les risques",
       "mid": " et les ",
       "terms": "Conditions Vaipakam",
-      "suffix": "."
+      "suffix": ".",
+      "withdrawn": "Ce que vous examinez a changé après que vous avez coché cette case, la confirmation a donc été effacée. Relisez le récapitulatif et cochez-la pour confirmer ce qui est affiché maintenant."
     },
     "match": {
       "borrowTitle": "Prêteurs prêts à vous financer maintenant",

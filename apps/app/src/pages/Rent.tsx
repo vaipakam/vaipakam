@@ -104,6 +104,8 @@ import { Checklist, allChecksPass, type CheckItem } from '../components/Checklis
 import { ReviewReceipt, type ReceiptData } from '../components/ReviewReceipt';
 import { StepNav } from '../components/StepNav';
 import { useEligibility } from '../components/useEligibility';
+import { useReviewConsent } from '../hooks/useReviewConsent';
+import { ConsentWithdrawnNote } from '../components/ConsentWithdrawnNote';
 
 type Path = 'own' | 'want' | null;
 
@@ -125,7 +127,6 @@ function ListNftFlow() {
   const [prepayAsset, setPrepayAsset] = useState('');
   const [dailyFee, setDailyFee] = useState('');
   const [durationDays, setDurationDays] = useState('30');
-  const [consent, setConsent] = useState(false);
   // #1037 — staged submit progress (busy derives from it).
   const [progress, setProgress] = useState<SubmitProgress | null>(null);
   const busy = progress !== null;
@@ -166,6 +167,27 @@ function ListNftFlow() {
   );
   const durationValid = Number(durationDays) <= fees.maxOfferDurationDays;
 
+  // Consent covers exactly what the review shows (#1696): every listed
+  // term, the fee it is charged, the token it is paid in, the rental
+  // support disclosure and the account signing. Keyed on the values and
+  // cleared in the same render they change, so an edit or a background
+  // refresh never leaves a tick from the earlier terms.
+  const consent = useReviewConsent([
+    standard,
+    contract.toLowerCase(),
+    tokenId,
+    standard === 'erc1155' ? quantity : '1',
+    prepayAsset.toLowerCase(),
+    dailyFeeWei,
+    durationDays,
+    fees.treasuryFeeBps,
+    prepayMeta.data?.symbol,
+    prepayMeta.data?.decimals,
+    rentalSupport.data,
+    address,
+    walletChain?.chainId,
+  ]);
+
   const form = useMemo((): OfferFormState | null => {
     if (!dailyFeeWei || !isAddressLike(contract) || !/^\d+$/.test(tokenId)) return null;
     // '0' is truthy as a string — a zero-edition ERC-1155 listing must
@@ -185,13 +207,13 @@ function ListNftFlow() {
       tokenId,
       quantity: standard === 'erc1155' ? quantity || '1' : '1',
       prepayAsset,
-      riskAndTermsConsent: consent,
+      riskAndTermsConsent: consent.given,
     };
-  }, [dailyFeeWei, contract, tokenId, standard, durationDays, quantity, prepayAsset, consent]);
+  }, [dailyFeeWei, contract, tokenId, standard, durationDays, quantity, prepayAsset, consent.given]);
 
   const detailsComplete = form !== null && durationValid;
 
-  const baseChecks = useEligibility({ consent });
+  const baseChecks = useEligibility({ consent: consent.given });
   // The contract rejects VPFI as a rental prepay asset
   // (VpfiNotAllowedAsRentalPrepay) — catch it BEFORE the user pays for
   // setApprovalForAll on the NFT.
@@ -443,7 +465,6 @@ function ListNftFlow() {
               value={standard}
               onChange={(next) => {
                 setStandard(next as 'erc721' | 'erc1155');
-                setConsent(false);
               }}
               options={[
                 { value: 'erc721', label: copy.rent.nftTypeErc721 },
@@ -460,7 +481,6 @@ function ListNftFlow() {
               value={contract}
               onChange={(e) => {
                 setContract(e.target.value.trim());
-                setConsent(false);
               }}
               spellCheck={false}
               autoComplete="off"
@@ -479,7 +499,6 @@ function ListNftFlow() {
               value={tokenId}
               onChange={(e) => {
                 setTokenId(e.target.value.trim());
-                setConsent(false);
               }}
             />
           </div>
@@ -494,7 +513,6 @@ function ListNftFlow() {
                 value={quantity}
                 onChange={(e) => {
                   setQuantity(e.target.value.trim());
-                  setConsent(false);
                 }}
               />
             </div>
@@ -506,7 +524,6 @@ function ListNftFlow() {
             value={prepayAsset}
             onChange={(v) => {
               setPrepayAsset(v);
-              setConsent(false);
             }}
           />
           <div className="field">
@@ -521,7 +538,6 @@ function ListNftFlow() {
               value={dailyFee}
               onChange={(e) => {
                 setDailyFee(e.target.value.trim());
-                setConsent(false);
               }}
             />
             <span className="field-hint">
@@ -542,7 +558,6 @@ function ListNftFlow() {
               value={durationDays}
               onChange={(next) => {
                 setDurationDays(next);
-                setConsent(false);
               }}
               options={durationOptions.map((d) => ({
                 value: String(d),
@@ -612,12 +627,13 @@ function ListNftFlow() {
             >
               <input
                 type="checkbox"
-                checked={consent}
-                onChange={(e) => setConsent(e.target.checked)}
+                checked={consent.given}
+                onChange={(e) => consent.set(e.target.checked)}
                 style={{ marginTop: 3 }}
               />
               <ConsentLabel />
             </label>
+            <ConsentWithdrawnNote consent={consent} />
             {error ? (
               <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
                 <span className="banner-body">{error}</span>
@@ -736,7 +752,6 @@ function RentNftFlow() {
 
   const [step, setStep] = useState<'browse' | 'review' | 'done'>('browse');
   const [selected, setSelected] = useState<IndexedOffer | null>(null);
-  const [consent, setConsent] = useState(false);
   // #1037 — staged submit progress (busy derives from it).
   const [progress, setProgress] = useState<SubmitProgress | null>(null);
   const busy = progress !== null;
@@ -801,7 +816,6 @@ function RentNftFlow() {
     // that must act on them.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelected(row);
-    setConsent(false);
     setStep('review');
   }, [
     offerParam,
@@ -857,56 +871,7 @@ function RentNftFlow() {
     selected ? screenTargets(selected) : [],
   );
   const prepaySecBlocked = !tokenScreen.ok;
-  const prepaySecWarned = tokenScreen.warned.length > 0;
-  // Late-disclosure rule: a warning/block arriving after the consent
-  // box was ticked voids the consent. Fingerprinted on the REASON
-  // content too — changed warning text is a new disclosure even when
-  // the verdict kind stayed 'warn'.
-  const prepaySecFingerprint = tokenScreen.fingerprint;
-  // Fingerprint current when consent was LAST ticked (stamped in the
-  // checkbox handler). canSign requires a match while a warning is
-  // disclosed — the clear-effect below only runs after a commit,
-  // leaving one render where a fresh warn and stale consent coexist.
-  const prepayConsentFpRef = useRef<string | null>(null);
-  // The ONLY site here that is a consent gate, and the only one whose
-  // suppression is meant to be temporary. The authority is the ref
-  // comparison in `canSign` above; this clear is the cosmetic half, and it
-  // trails by one render — which is precisely why the gate exists. #1696
-  // asks whether it should instead clear during render as `OffsetFlow`
-  // does (`prepaySecFingerprint` IS render-derivable, so the option is
-  // open); if that lands, this effect and its suppression go with it.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (prepaySecBlocked || prepaySecWarned) setConsent(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prepaySecFingerprint, prepaySecBlocked]);
 
-  const baseChecks = useEligibility({
-    asset: selected
-      ? {
-          meta: prepayMeta.data,
-          metaError: prepayMeta.isError,
-          balance: prepayBalance.data,
-          required: totalPrepay,
-        }
-      : undefined,
-    consent,
-  });
-  // The prepay pull depends on the LIVE buffer — signing before the
-  // config read lands would compute the approval from a default.
-  const checks = useMemo(
-    (): CheckItem[] => [
-      ...baseChecks,
-      {
-        id: 'rental-config',
-        label: bufferReady
-          ? copy.rent.liveRentalLoaded
-          : copy.rent.liveRentalLoading,
-        state: bufferReady ? 'pass' : 'pending',
-      },
-    ],
-    [baseChecks, bufferReady],
-  );
 
   const receipt = useMemo((): ReceiptData | null => {
     if (!selected || !prepayMeta.data || totalPrepay === undefined) return null;
@@ -968,10 +933,13 @@ function RentNftFlow() {
   const listingNamesCollateral =
     (selected !== null && rentalNamesCollateral(selected)) ||
     rentLifecycleQuery.data?.namesCollateral === true;
-  // Consent is given against the terms on screen: when the listed terms
-  // change (first arrival included), the tick does not carry over. Adjusted
-  // during render, like OfferFlow's assertion epoch, so no frame can sign
-  // against consent that predates the change.
+  // Consent covers exactly what the review shows (#1696): the listing and
+  // its lifecycle terms (first arrival included), the prepayment and the
+  // live buffer it is sized by, the token screen's verdicts with their
+  // REASON text (a changed warning is a new disclosure even when the kind
+  // stayed 'warn'), and the account signing. Keyed on the values and
+  // cleared in the same render they change, so no frame can sign against a
+  // tick that predates a late disclosure.
   const rentLifecycleFp = rentLifecycle
     ? [
         rentLifecycle.useFullTermInterest,
@@ -984,11 +952,46 @@ function RentNftFlow() {
         rentLifecycle.parallelSaleOrderHash,
       ].join(':')
     : 'pending';
-  const [seenRentLifecycleFp, setSeenRentLifecycleFp] = useState(rentLifecycleFp);
-  if (seenRentLifecycleFp !== rentLifecycleFp) {
-    setSeenRentLifecycleFp(rentLifecycleFp);
-    if (consent) setConsent(false);
-  }
+  const consent = useReviewConsent([
+    selected?.offerId,
+    totalPrepay,
+    bufferBps,
+    bufferReady,
+    prepayMeta.data?.symbol,
+    prepayMeta.data?.decimals,
+    tokenScreen.fingerprint,
+    rentLifecycleFp,
+    listingNamesCollateral,
+    address,
+    walletChain?.chainId,
+  ]);
+
+  const baseChecks = useEligibility({
+    asset: selected
+      ? {
+          meta: prepayMeta.data,
+          metaError: prepayMeta.isError,
+          balance: prepayBalance.data,
+          required: totalPrepay,
+        }
+      : undefined,
+    consent: consent.given,
+  });
+  // The prepay pull depends on the LIVE buffer — signing before the
+  // config read lands would compute the approval from a default.
+  const checks = useMemo(
+    (): CheckItem[] => [
+      ...baseChecks,
+      {
+        id: 'rental-config',
+        label: bufferReady
+          ? copy.rent.liveRentalLoaded
+          : copy.rent.liveRentalLoading,
+        state: bufferReady ? 'pass' : 'pending',
+      },
+    ],
+    [baseChecks, bufferReady],
+  );
 
   // #1028 — operator kill switch (position-opening flows only).
   const killed = flowDisabled('nft-rent');
@@ -1000,16 +1003,11 @@ function RentNftFlow() {
     !listingNamesCollateral &&
     Boolean(walletClient) &&
     Boolean(publicClient) &&
+    // A disclosed warning needs no clause of its own: the consent check in
+    // `checks` requires a tick, and a tick is always one given against the
+    // CURRENT verdicts, since a changed verdict clears it in the same render
+    // (#1696).
     !prepaySecBlocked &&
-    // A disclosed warning requires consent granted AGAINST the
-    // current fingerprint, not consent left over from before it
-    // appeared.
-    // Same shape as OfferFlow's canSign gate: the sole write is the consent
-    // checkbox handler, which also sets state, so a re-render always
-    // follows. State would delay the comparison by a render and briefly
-    // permit a submit against a warning the user has not consented to.
-    // eslint-disable-next-line react-hooks/refs
-    (!prepaySecWarned || prepayConsentFpRef.current === prepaySecFingerprint) &&
     !killed &&
     !busy;
 
@@ -1119,7 +1117,7 @@ function RentNftFlow() {
         stepper.next('sign');
         signed = await signAcceptTerms({
           offerId: BigInt(selected.offerId),
-          consent,
+          consent: consent.given,
           expected: reviewedRentTerms,
           // #2726 — the token-security verdicts this review showed.
           screen: tokenScreen.reviewed,
@@ -1354,9 +1352,10 @@ function RentNftFlow() {
                       offer={o}
                       bufferBps={bufferBps}
                       onChoose={() => {
+                        // A chosen listing is a new review, so it starts
+                        // unticked even when it is the one last reviewed.
+                        consent.clear();
                         setSelected(o);
-                        // A different listing needs a fresh acknowledgement.
-                        setConsent(false);
                         setStep('review');
                       }}
                     />
@@ -1433,20 +1432,13 @@ function RentNftFlow() {
             >
               <input
                 type="checkbox"
-                checked={consent}
-                onChange={(e) => {
-                  // Stamp what was on screen when consent was given —
-                  // canSign requires this to match the live security
-                  // fingerprint while a warning is disclosed.
-                  if (e.target.checked) {
-                    prepayConsentFpRef.current = prepaySecFingerprint;
-                  }
-                  setConsent(e.target.checked);
-                }}
+                checked={consent.given}
+                onChange={(e) => consent.set(e.target.checked)}
                 style={{ marginTop: 3 }}
               />
               <ConsentLabel />
             </label>
+            <ConsentWithdrawnNote consent={consent} />
             {error ? (
               <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
                 <span className="banner-body">{error}</span>

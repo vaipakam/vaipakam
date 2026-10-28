@@ -568,7 +568,8 @@
       "risk": "Risk Disclosures",
       "mid": " and ",
       "terms": "Vaipakam Terms",
-      "suffix": "."
+      "suffix": ".",
+      "withdrawn": "What you are reviewing changed after you ticked this, so the acknowledgement cleared. Check the review again and tick it to confirm against what is shown now."
     },
     "acceptTerms": {
       "heading": "Terms of the loan for its whole life",
