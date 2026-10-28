@@ -1,5 +1,6 @@
 /**
- * Holds `e2e/COVERAGE.md` to its shape (#2143): every cell within the cap,
+ * Holds `e2e/COVERAGE.md` to its shape (#2143): every row inside a table
+ * with no more cells than its columns, every cell within the cap,
  * every link into `e2e/COVERAGE-NOTES.md` landing, every notes section
  * linked. The rule and its reasons are in `e2e/lib/coverageMatrix.ts`.
  */
@@ -19,4 +20,4 @@ if (problems.length > 0) {
   }
   process.exit(1);
 }
-console.log('[check-coverage-matrix] OK — every matrix cell within the cap and every notes link lands.');
+console.log('[check-coverage-matrix] OK — every matrix row within its table and the cap, and every notes link lands.');

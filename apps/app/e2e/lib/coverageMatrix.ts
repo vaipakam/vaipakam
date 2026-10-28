@@ -8,8 +8,8 @@
  * per-PR rule that every behaviour change updates the matrix only ever
  * appends, so the shape needs a check rather than a convention: a cell may
  * hold at most {@link CELL_CAP} characters, a row may hold no more cells
- * than its table has columns, and every link from the matrix into the notes
- * must land on an anchor that exists.
+ * than its table has columns nor sit outside a table, and every link from
+ * the matrix into the notes must land on an anchor that exists.
  *
  * Pure, so it is unit-tested; `scripts/check-coverage-matrix.ts` runs it
  * over the committed files in the app's typecheck.
@@ -20,16 +20,49 @@ export const CELL_CAP = 600;
 
 const NOTES_FILE = 'COVERAGE-NOTES.md';
 
-/** A table row's cells, split on unescaped pipes. Null for a line that is
- *  not a table row, or for a header separator (`| --- | --- |`). */
-export function tableCells(line: string): string[] | null {
-  if (!line.startsWith('|')) return null;
-  const cells = line
-    .split(/(?<!\\)\|/)
-    .slice(1, -1)
-    .map((c) => c.trim());
-  if (cells.length > 0 && cells.every((c) => /^:?-{3,}:?$/.test(c))) return null;
-  return cells;
+/** A table row's cells, read as GFM reads them: an optional leading pipe
+ *  and an optional trailing (unescaped) pipe are delimiters, not cells, and
+ *  every other unescaped pipe splits, inside a code span too. */
+export function rowCells(line: string): string[] {
+  let row = line.trim();
+  if (row.startsWith('|')) row = row.slice(1);
+  if (/(?<!\\)\|$/.test(row)) row = row.slice(0, -1);
+  return row.split(/(?<!\\)\|/).map((c) => c.trim());
+}
+
+/** True for a GFM delimiter row (`| --- | :---: |`). */
+function isDelimiterRow(line: string): boolean {
+  return line.includes('-') && rowCells(line).every((c) => /^:?-+:?$/.test(c));
+}
+
+export interface MatrixTable {
+  /** Header cell count, which is every row's rendered column count. */
+  columns: number;
+  /** Body rows, with their 1-based line numbers. */
+  rows: { line: number; cells: string[] }[];
+}
+
+/** The tables in a Markdown file, found the way GFM finds them: a header
+ *  row followed by a delimiter row with the same cell count, then body rows
+ *  up to the first blank line. Locating rows by context rather than by a
+ *  leading pipe means a row written without its outer pipes is still read. */
+export function matrixTables(markdown: string): MatrixTable[] {
+  const lines = markdown.split('\n');
+  const tables: MatrixTable[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const header = lines[i - 1];
+    if (!header.includes('|') || !isDelimiterRow(lines[i])) continue;
+    const columns = rowCells(header).length;
+    if (rowCells(lines[i]).length !== columns) continue;
+    const table: MatrixTable = { columns, rows: [{ line: i, cells: rowCells(header) }] };
+    let j = i + 1;
+    for (; j < lines.length && lines[j].trim() !== ''; j++) {
+      table.rows.push({ line: j + 1, cells: rowCells(lines[j]) });
+    }
+    tables.push(table);
+    i = j;
+  }
+  return tables;
 }
 
 /** The anchors the notes file declares (`<a id="…"></a>`). */
@@ -48,40 +81,46 @@ export function checkCoverageMatrix(matrix: string, notes: string): MatrixProble
   const anchors = notesAnchors(notes);
   const linked = new Set<string>();
   const linkRe = new RegExp(`${NOTES_FILE.replace('.', '\\.')}#([A-Za-z0-9_-]+)`, 'g');
-  const lines = matrix.split('\n');
-  // Columns of the table the current row belongs to: its header row is the
-  // line just above a separator (`| --- | --- |`).
-  let columns: number | null = null;
-  lines.forEach((text, i) => {
-    const line = i + 1;
-    if (!text.startsWith('|')) columns = null;
-    else if (tableCells(text) === null && i > 0) columns = tableCells(lines[i - 1])?.length ?? null;
+  matrix.split('\n').forEach((text, i) => {
     for (const m of text.matchAll(linkRe)) {
       linked.add(m[1]);
       if (!anchors.has(m[1])) {
-        problems.push({ line, message: `links to ${NOTES_FILE}#${m[1]}, which has no such anchor` });
+        problems.push({ line: i + 1, message: `links to ${NOTES_FILE}#${m[1]}, which has no such anchor` });
       }
     }
-    const cells = tableCells(text);
-    if (!cells) return;
-    // GFM splits a cell on EVERY unescaped pipe, inside a code span too, and
-    // drops the cells past the header's count without a trace: the matrix
-    // carried three rows whose last columns never rendered that way.
-    if (columns !== null && cells.length > columns) {
+  });
+  const tables = matrixTables(matrix);
+  const tableLines = new Set(tables.flatMap((t) => [t.rows[0].line + 1, ...t.rows.map((r) => r.line)]));
+  matrix.split('\n').forEach((text, i) => {
+    // A blank line ends a GFM table: a row written after one renders as text.
+    if (text.trimStart().startsWith('|') && !tableLines.has(i + 1)) {
       problems.push({
-        line,
-        message: `row has ${cells.length} cells but its table has ${columns} columns: escape a pipe inside a cell, code spans included, as \\|`,
+        line: i + 1,
+        message: 'row is outside any table (a blank line above it ended the table, so it renders as text): keep a table\'s rows together',
       });
     }
-    cells.forEach((cell, k) => {
-      if (cell.length > CELL_CAP) {
+  });
+  for (const { columns, rows } of tables) {
+    for (const { line, cells } of rows) {
+      // GFM splits a cell on EVERY unescaped pipe, inside a code span too,
+      // and drops the cells past the header's count without a trace: the
+      // matrix carried three rows whose last columns never rendered that way.
+      if (cells.length > columns) {
         problems.push({
           line,
-          message: `cell ${k + 1} holds ${cell.length} characters (cap ${CELL_CAP}): keep a sentence or two here and move the rest to ${NOTES_FILE}`,
+          message: `row has ${cells.length} cells but its table has ${columns} columns: escape a pipe inside a cell, code spans included, as \\|`,
         });
       }
-    });
-  });
+      cells.forEach((cell, k) => {
+        if (cell.length > CELL_CAP) {
+          problems.push({
+            line,
+            message: `cell ${k + 1} holds ${cell.length} characters (cap ${CELL_CAP}): keep a sentence or two here and move the rest to ${NOTES_FILE}`,
+          });
+        }
+      });
+    }
+  }
   for (const a of anchors) {
     if (!linked.has(a)) {
       problems.push({ line: 0, message: `${NOTES_FILE}#${a} is not linked from the matrix` });
