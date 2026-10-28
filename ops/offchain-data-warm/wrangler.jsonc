@@ -196,5 +196,14 @@
   //     cd ops/offchain-data-warm && npm run archive:baselines
   // While unset, the weekly report says COVERAGE DEGRADED for that tier,
   // which is the truthful state for a bucket with nothing older to lose.
-  "vars": {},
+  //
+  // MONTHLY IS NOW SET: 2026-09. The new bucket dates from #1537 (merged
+  // 2026-08-03) and a monthly is cut on the 1st, so September 2026 is the
+  // first month it could hold; it is also the earliest monthly the backup
+  // ledger's first run found (2026-10-28). The ledger workflow
+  // (.github/workflows/backup-ledger.yml) declares the same value, and the
+  // two must stay equal. Yearly stays unset until the first Jan 1 cut.
+  "vars": {
+    "ARCHIVE_FIRST_MONTHLY": "2026-09",
+  },
 }

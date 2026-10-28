@@ -91,7 +91,13 @@ jobs:
       # without them. Unset while they are unconfirmed; the run summary prints
       # the earliest period present, and the tier reports its coverage as
       # degraded until one is set here.
-      ARCHIVE_FIRST_MONTHLY: ''
+      #
+      # Monthly 2026-09: the bucket was created empty by the archive-to-warm
+      # rename (#1537, merged 2026-08-03), a monthly is cut on the 1st, so
+      # 2026-09 is the first month this bucket could hold; it is also the
+      # earliest monthly the first watcher run found (2026-10-28). Keep it
+      # equal to the Worker's own value in wrangler.jsonc.
+      ARCHIVE_FIRST_MONTHLY: '2026-09'
       ARCHIVE_FIRST_YEARLY: ''
       # Problem keys an operator has investigated, comma-separated. Listing one
       # here, in a reviewed commit, is what stops that page. Empty: everything
