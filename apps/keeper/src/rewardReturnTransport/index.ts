@@ -28,9 +28,12 @@
 // its amount and transaction, and a message that has not landed within
 // `LANDING_ALERT_SEC` is alerted.
 //
-// Its work comes from the shared indexer's event ledger (the authorizations,
-// the dispatches others made, the quarantines), and every decision from an
-// on-chain read: the ledger only nominates. What this keeper itself sent is
+// Base's authorizations come from its own nonce: ids are issued in sequence,
+// so they are read from the chain a bounded number a run, rotating above a
+// floor of settled ones. The quarantines, which no view lists, come from the
+// shared indexer's event ledger a page a run, rotating the same way, and the
+// ledger also says when others sent a message, asked for by id. Every
+// decision is an on-chain read: the ledger only nominates and times. What this keeper itself sent is
 // recorded in its private database, so a send is never repeated in the
 // minutes before the indexer has recorded it.
 //
@@ -55,6 +58,7 @@ import { shortErr } from '../callErrors';
 import { deploymentFloor, finishWork, getWorkItems, putWork } from '../db';
 import { feeCeiling } from '../feeCeiling';
 import { sendOpsAlert } from '../opsAlert';
+import { advanceFloor, d1ScanCursors, decodeIndex, rotatingWindow, type ScanCursors } from '../scanCursors';
 import { StepSender, type SendFeeCeiling } from '../stepSender';
 import { AUTH_PENDING, executeBlocked, repatStep, returnChunk, type LaneBucket, type RepatState } from './plan';
 
@@ -84,8 +88,16 @@ export const LANDING_ALERT_SEC = 24 * 3600;
 const STALL_ALERT_INTERVAL_SEC = 6 * 3600;
 /** A send notice is a one-off: its key (the transaction) never repeats. */
 const NOTICE_INTERVAL_SEC = 10 * 365 * 86_400;
-/** Ledger rows one run reads per chain; a longer ledger is said, not walked. */
-export const LEDGER_LIMIT = 2000;
+/** Authorizations one run reads on Base, rotating over every id not yet
+ *  settled (`scanCursors.rotatingWindow`). */
+export const MAX_AUTHS_PER_RUN = 50;
+/** Quarantine rows one run reads per mirror, from where the last run stopped. */
+export const LEDGER_PAGE = 200;
+/** The scan-cursor items this pass keeps (`scanCursors.ts`). */
+export const AUTH_FLOOR_ITEM = 'auth-floor';
+export const AUTH_NEXT_ITEM = 'auth-next';
+export const STRANDED_FLOOR_ITEM = 'stranded-floor';
+export const STRANDED_NEXT_ITEM = 'stranded-next';
 export const DEFAULT_MIN_PART = 1000n * 10n ** 18n;
 export const MAX_FEE_VAR = 'REWARD_RETURN_TRANSPORT_MAX_FEE_WEI';
 const READ_CHUNK = 100;
@@ -114,13 +126,24 @@ export interface LedgerRow {
   /** Unix seconds of its block. */
   blockAt: number;
   block: number;
+  log: number;
 }
 
+/** A position in a chain's ledger: a row's block and log index. */
+export interface LedgerPos {
+  block: number;
+  log: number;
+}
+
+/** Every read is from the active Diamond's deploy block on, and null when the
+ *  ledger cannot be read. Neither read is bounded by the ledger's length: one
+ *  is keyed by the ids a run already holds, the other is a page from a cursor. */
 export interface ReturnLedger {
-  /** The rows of `kinds` on `chainId` since the active Diamond's deploy
-   *  block, oldest first; `truncated` when more remain than were read. Null
-   *  when the ledger cannot be read. */
-  events(chainId: number, kinds: readonly string[]): Promise<{ rows: LedgerRow[]; truncated: boolean } | null>;
+  /** The rows of `kinds` on `chainId` whose `arg` is one of `values`, oldest first. */
+  matching(chainId: number, kinds: readonly string[], arg: string, values: readonly string[]): Promise<LedgerRow[] | null>;
+  /** At most `limit` rows of `kinds` on `chainId` after `after` (from the
+   *  start when null), oldest first; `more` when rows remain past them. */
+  page(chainId: number, kinds: readonly string[], after: LedgerPos | null, limit: number): Promise<{ rows: LedgerRow[]; more: boolean } | null>;
 }
 
 /** This keeper's own record of the re-sendable messages it sent. */
@@ -145,6 +168,8 @@ export interface ReturnTransportDeps {
   chains: readonly ChainDeps[];
   ledger: ReturnLedger;
   records: SendRecords;
+  /** Where each chain's bounded reads got to, across runs. */
+  cursors: (chainId: number, diamond: Address) => ScanCursors;
   keeper: Address | null;
   sendDeadline: number;
   minPart: bigint;
@@ -195,6 +220,7 @@ export async function runRewardReturnTransport(env: Env, tick: PassTick): Promis
       chains,
       ledger: d1Ledger(env.DB),
       records: d1Records(env.KEEPER_DB),
+      cursors: (chainId, diamond) => d1ScanCursors(env.KEEPER_DB, chainId, diamond, 'rewardReturnTransport'),
       keeper,
       sendDeadline,
       minPart,
@@ -243,6 +269,8 @@ interface ChainState {
   messenger: Address;
   returnSender: Address;
   receiver: Address;
+  /** Base's authorization nonce: ids 1..authNonce were ever issued. */
+  authNonce: bigint;
   retirement: { retired: boolean; returnChainId: number; returnDeployment: Address };
 }
 
@@ -390,6 +418,7 @@ async function readGate(r: Reader, chainId: number): Promise<Gate | string> {
     messenger: cfg[0],
     returnSender: pos[1],
     receiver: pos[2],
+    authNonce: pos[3],
     retirement: { retired: ret[0], returnChainId: Number(ret[1]), returnDeployment: ret[2] },
   };
 }
@@ -421,26 +450,23 @@ const RECORD_INSTRUCTION = (authId: bigint) => `instruction:${authId}`;
 const RECORD_ACK = (base: Address, authId: bigint) => `ack:${base.toLowerCase()}:${authId}`;
 
 async function repatriations(base: ChainState, states: ReadonlyMap<number, ChainState>, deps: ReturnTransportDeps): Promise<void> {
-  const ledger = await deps.ledger.events(base.deps.chainId, ['RepatriationAuthorized', 'RepatriationInstructionDispatched']);
-  if (ledger === null) {
-    base.sender.noteUnread('repatriation', 'the event ledger');
-    return;
-  }
-  if (ledger.truncated) base.sender.noteUnread('repatriation', `the event ledger beyond its first ${LEDGER_LIMIT} rows`);
-  const auths = new Map<bigint, { dst: number; amount: bigint }>();
-  const dispatchedAt = new Map<bigint, number>();
-  for (const row of ledger.rows) {
-    const id = asBig(row.args.authId);
-    if (id === null) continue;
-    if (row.kind === 'RepatriationAuthorized') {
-      const amount = asBig(row.args.amount);
-      if (amount !== null) auths.set(id, { dst: Number(row.args.dstChainId), amount });
-    } else dispatchedAt.set(id, Math.max(dispatchedAt.get(id) ?? 0, row.blockAt));
-  }
-  if (auths.size === 0) return;
-  const ids = [...auths.keys()];
+  // Base issues authorization ids in sequence, so the chain itself names every
+  // one: they are read MAX_AUTHS_PER_RUN a run, rotating above a stored floor
+  // every id below which is settled for good. The ledger only says when an
+  // instruction left, and is asked for exactly the ids still pending.
+  const nonce = Number(base.authNonce);
+  if (nonce === 0) return;
+  const cursors = deps.cursors(base.deps.chainId, base.deps.diamond);
+  const stored = await cursors.get([AUTH_FLOOR_ITEM, AUTH_NEXT_ITEM]);
+  const floor = Math.min(decodeIndex(stored.get(AUTH_FLOOR_ITEM)) ?? 1, nonce + 1);
+  const win = rotatingWindow(floor, nonce, MAX_AUTHS_PER_RUN, decodeIndex(stored.get(AUTH_NEXT_ITEM)));
+  if (win === null) return;
+  const nums: number[] = [];
+  for (let id = win.from; id <= win.to; id++) nums.push(id);
+  const ids = nums.map(BigInt);
   const statuses = await base.r.many(ids.map((id) => ({ functionName: 'getRepatriationAuthorization', args: [id] })), 'authorizations');
-  const own = await deps.records.get(base.deps.chainId, base.deps.diamond, ids.map(RECORD_INSTRUCTION));
+  const finished = new Set<number>();
+  const pending: { authId: bigint; dst: number; amount: bigint }[] = [];
   const settled: string[] = [];
   for (let i = 0; i < ids.length; i++) {
     const authId = ids[i];
@@ -450,42 +476,35 @@ async function repatriations(base: ChainState, states: ReadonlyMap<number, Chain
       continue;
     }
     if (Number(st[0]) !== AUTH_PENDING) {
+      finished.add(nums[i]);
       settled.push(RECORD_INSTRUCTION(authId));
       const m = states.get(Number(st[1]));
       // eslint-disable-next-line no-await-in-loop
       if (m !== undefined) await deps.records.finish(m.deps.chainId, m.deps.diamond, [RECORD_ACK(base.deps.diamond, authId)]);
       continue;
     }
-    const dst = Number(st[1]);
-    const amount = st[3];
+    pending.push({ authId, dst: Number(st[1]), amount: st[3] });
+  }
+  if (settled.length > 0) await deps.records.finish(base.deps.chainId, base.deps.diamond, settled);
+  const newFloor = advanceFloor(floor, nums, (id) => finished.has(id));
+  if (newFloor !== floor) await cursors.put(AUTH_FLOOR_ITEM, String(newFloor));
+  if (String(win.next) !== stored.get(AUTH_NEXT_ITEM)) await cursors.put(AUTH_NEXT_ITEM, String(win.next));
+  if (pending.length === 0) return;
+  const rows = await deps.ledger.matching(base.deps.chainId, ['RepatriationInstructionDispatched'], 'authId', pending.map((p) => String(p.authId)));
+  if (rows === null) {
+    base.sender.noteUnread('repatriation', 'the event ledger');
+    return;
+  }
+  const dispatchedAt = new Map<bigint, number>();
+  for (const row of rows) {
+    const id = asBig(row.args.authId);
+    if (id !== null) dispatchedAt.set(id, Math.max(dispatchedAt.get(id) ?? 0, row.blockAt));
+  }
+  const own = await deps.records.get(base.deps.chainId, base.deps.diamond, pending.map((p) => RECORD_INSTRUCTION(p.authId)));
+  for (const { authId, dst, amount } of pending) {
     // eslint-disable-next-line no-await-in-loop
     await oneAuthorization(base, states.get(dst), deps, authId, dst, amount, Math.max(dispatchedAt.get(authId) ?? 0, own.get(RECORD_INSTRUCTION(authId)) ?? 0) || null);
   }
-  if (settled.length > 0) await deps.records.finish(base.deps.chainId, base.deps.diamond, settled);
-}
-
-/** The mirror-side ledger, per mirror and per run. */
-const mirrorLedgers = new WeakMap<ChainState, Promise<{ executedAt: Map<string, number>; ackAt: Map<string, number> } | null>>();
-
-function mirrorLedger(mirror: ChainState, deps: ReturnTransportDeps): Promise<{ executedAt: Map<string, number>; ackAt: Map<string, number> } | null> {
-  let p = mirrorLedgers.get(mirror);
-  if (p === undefined) {
-    p = (async () => {
-      const l = await deps.ledger.events(mirror.deps.chainId, ['RepatriationExecuted', 'RepatriationCancelAckDispatched']);
-      if (l === null) return null;
-      if (l.truncated) mirror.sender.noteUnread('repatriation', `the event ledger beyond its first ${LEDGER_LIMIT} rows`);
-      const executedAt = new Map<string, number>();
-      const ackAt = new Map<string, number>();
-      for (const row of l.rows) {
-        const key = `${asAddr(row.args.issuingBase)}:${asBig(row.args.authId)}`;
-        const into = row.kind === 'RepatriationExecuted' ? executedAt : ackAt;
-        into.set(key, Math.max(into.get(key) ?? 0, row.blockAt));
-      }
-      return { executedAt, ackAt };
-    })();
-    mirrorLedgers.set(mirror, p);
-  }
-  return p;
 }
 
 async function oneAuthorization(
@@ -504,12 +523,20 @@ async function oneAuthorization(
   }
   const instr = await mirror.r.tryOne<readonly [number, bigint]>(mirror.sender, `auth:${authId}`, `its instruction record on chain ${dst}`, 'getRepatriationInstruction', [base.deps.diamond, authId]);
   if (instr === undefined) return;
-  const ml = await mirrorLedger(mirror, deps);
+  // The mirror's own record of this id's execution and ACK, asked for by id.
+  const ml = await deps.ledger.matching(mirror.deps.chainId, ['RepatriationExecuted', 'RepatriationCancelAckDispatched'], 'authId', [String(authId)]);
   if (ml === null) {
     mirror.sender.noteUnread(`auth:${authId}`, 'the mirror\'s event ledger');
     return;
   }
   const key = `${base.deps.diamond.toLowerCase()}:${authId}`;
+  let executedAt = 0;
+  let ackAt = 0;
+  for (const row of ml) {
+    if (asAddr(row.args.issuingBase) !== base.deps.diamond.toLowerCase()) continue;
+    if (row.kind === 'RepatriationExecuted') executedAt = Math.max(executedAt, row.blockAt);
+    else ackAt = Math.max(ackAt, row.blockAt);
+  }
   const ownAck = (await deps.records.get(mirror.deps.chainId, mirror.deps.diamond, [RECORD_ACK(base.deps.diamond, authId)])).get(RECORD_ACK(base.deps.diamond, authId));
   const state: RepatState = {
     authId,
@@ -518,8 +545,8 @@ async function oneAuthorization(
     baseStatus: AUTH_PENDING,
     mirrorState: Number(instr[0]),
     instructionSentAt,
-    executedAt: ml.executedAt.get(key) ?? null,
-    ackSentAt: Math.max(ml.ackAt.get(key) ?? 0, ownAck ?? 0) || null,
+    executedAt: executedAt || null,
+    ackSentAt: Math.max(ackAt, ownAck ?? 0) || null,
   };
   const step = repatStep(state, deps.now(), LANDING_ALERT_SEC);
   switch (step.kind) {
@@ -590,20 +617,51 @@ interface StrandedRecord {
 }
 
 async function strandedReturns(mirror: ChainState, states: ReadonlyMap<number, ChainState>, deps: ReturnTransportDeps): Promise<void> {
-  const ledger = await deps.ledger.events(mirror.deps.chainId, ['CompensationQuarantined']);
+  // No view lists the quarantines, so the ledger nominates them: LEDGER_PAGE
+  // rows a run, from where the last run stopped and wrapping round, above a
+  // stored floor every row before which has been returned in full. A read of
+  // the oldest rows only would never reach a later quarantine (the Codex
+  // #2993 r2 rule).
+  const cursors = deps.cursors(mirror.deps.chainId, mirror.deps.diamond);
+  const stored = await cursors.get([STRANDED_FLOOR_ITEM, STRANDED_NEXT_ITEM]);
+  const floor = decodePos(stored.get(STRANDED_FLOOR_ITEM));
+  const next = decodePos(stored.get(STRANDED_NEXT_ITEM));
+  const start = next !== null && (floor === null || posAfter(next, floor)) ? next : floor;
+  const ledger = await deps.ledger.page(mirror.deps.chainId, ['CompensationQuarantined'], start, LEDGER_PAGE);
   if (ledger === null) {
     mirror.sender.noteUnread('stranded', 'the event ledger');
     return;
   }
-  if (ledger.truncated) mirror.sender.noteUnread('stranded', `the event ledger beyond its first ${LEDGER_LIMIT} rows`);
+  const last = ledger.rows[ledger.rows.length - 1];
+  // Past the last page the next run starts at the floor again.
+  const nextPos = ledger.more && last !== undefined ? encodePos(last) : '';
+  if (nextPos !== (stored.get(STRANDED_NEXT_ITEM) ?? '')) await cursors.put(STRANDED_NEXT_ITEM, nextPos);
   const keys = new Map<string, { remitter: Address; remitId: bigint }>();
+  const rowKey: (string | null)[] = [];
   for (const row of ledger.rows) {
     const remitId = asBig(row.args.remitId);
     const remitter = asAddr(row.args.remitter);
-    if (remitId === null || !/^0x[0-9a-f]{40}$/.test(remitter)) continue;
-    keys.set(`${remitter}:${remitId}`, { remitter: remitter as Address, remitId });
+    if (remitId === null || !/^0x[0-9a-f]{40}$/.test(remitter)) {
+      rowKey.push(null);
+      continue;
+    }
+    const k = `${remitter}:${remitId}`;
+    rowKey.push(k);
+    keys.set(k, { remitter: remitter as Address, remitId });
   }
-  if (keys.size === 0) return;
+  const returned = new Set<string>();
+  // On a page read from the floor, the floor moves past the leading rows whose
+  // quarantine is returned in full, or which nominate nothing.
+  const liftFloor = async () => {
+    if (start !== floor) return;
+    let i = 0;
+    while (i < ledger.rows.length && (rowKey[i] === null || returned.has(rowKey[i]!))) i++;
+    if (i > 0) await cursors.put(STRANDED_FLOOR_ITEM, encodePos(ledger.rows[i - 1]));
+  };
+  if (keys.size === 0) {
+    await liftFloor();
+    return;
+  }
   const list = [...keys.values()];
   const recs = await mirror.r.many(list.map((k) => ({ functionName: 'getStrandedRecovery', args: [k.remitter, k.remitId] })), 'stranded records');
   for (let i = 0; i < list.length; i++) {
@@ -614,7 +672,10 @@ async function strandedReturns(mirror: ChainState, states: ReadonlyMap<number, C
       mirror.sender.noteUnread(subject, 'its stranded-recovery record');
       continue;
     }
-    if (rec.amount === 0n) continue;
+    if (rec.amount === 0n) {
+      returned.add(`${remitter}:${remitId}`);
+      continue;
+    }
     // eslint-disable-next-line no-await-in-loop
     const plan = await chunkFor(mirror, states.get(mirror.baseChainId), mirror.baseChainId, rec.amount, deps.minPart);
     if ('wait' in plan) {
@@ -636,6 +697,7 @@ async function strandedReturns(mirror: ChainState, states: ReadonlyMap<number, C
       await notice(mirror, `returned ${plan.amount} of the ${rec.amount} VPFI (wei) quarantined for remit ${remitId} (day ${rec.dayId}) to chain ${mirror.baseChainId}${plan.note ? `; ${plan.note}` : ''}`);
     }
   }
+  await liftFloor();
 }
 
 /** A chunk bounded by this chain's outbound lane toward `dst` and, when this
@@ -672,33 +734,64 @@ async function retiredSurplus(s: ChainState, states: ReadonlyMap<number, ChainSt
   }
 }
 
+const encodePos = (p: LedgerPos) => `${p.block}:${p.log}`;
+function decodePos(raw: string | undefined): LedgerPos | null {
+  const m = raw === undefined ? null : /^(\d+):(\d+)$/.exec(raw);
+  return m === null ? null : { block: Number(m[1]), log: Number(m[2]) };
+}
+const posAfter = (a: LedgerPos, b: LedgerPos) => a.block > b.block || (a.block === b.block && a.log > b.log);
+
 // ─── Production seams ──────────────────────────────────────────────────────
 
 /** The shared indexer's event ledger (`activity_events`). */
 export function d1Ledger(db: D1Database): ReturnLedger {
-  return {
-    async events(chainId, kinds) {
+  type Row = { kind: string; args_json: string; block_at: number; block_number: number; log_index: number };
+  const decode = (all: readonly Row[]): LedgerRow[] =>
+    all.map((r) => {
+      let args: Record<string, unknown> = {};
       try {
-        const marks = kinds.map((_, i) => `?${i + 3}`).join(', ');
+        args = JSON.parse(r.args_json) as Record<string, unknown>;
+      } catch {
+        // An unreadable row nominates nothing, and still holds its place, so
+        // a page past it does not stop at it.
+      }
+      return { kind: r.kind, args, blockAt: Number(r.block_at), block: Number(r.block_number), log: Number(r.log_index) };
+    });
+  return {
+    async matching(chainId, kinds, arg, values) {
+      if (values.length === 0) return [];
+      try {
+        const k = kinds.map((_, i) => `?${i + 3}`).join(', ');
+        const v = values.map((_, i) => `?${i + 3 + kinds.length}`).join(', ');
         const rows = await db
           .prepare(
-            `SELECT kind, args_json, block_at, block_number FROM activity_events
-              WHERE chain_id = ?1 AND block_number >= ?2 AND kind IN (${marks})
-              ORDER BY block_number ASC, log_index ASC
-              LIMIT ${LEDGER_LIMIT + 1}`,
+            `SELECT kind, args_json, block_at, block_number, log_index FROM activity_events
+              WHERE chain_id = ?1 AND block_number >= ?2 AND kind IN (${k})
+                AND CAST(json_extract(args_json, '$.${arg.replace(/[^A-Za-z0-9_]/g, '')}') AS TEXT) IN (${v})
+              ORDER BY block_number ASC, log_index ASC`,
           )
-          .bind(chainId, deploymentFloor(chainId), ...kinds)
-          .all<{ kind: string; args_json: string; block_at: number; block_number: number }>();
+          .bind(chainId, deploymentFloor(chainId), ...kinds, ...values)
+          .all<Row>();
+        return decode(rows.results ?? []);
+      } catch {
+        return null;
+      }
+    },
+    async page(chainId, kinds, after, limit) {
+      try {
+        const k = kinds.map((_, i) => `?${i + 5}`).join(', ');
+        const rows = await db
+          .prepare(
+            `SELECT kind, args_json, block_at, block_number, log_index FROM activity_events
+              WHERE chain_id = ?1 AND block_number >= ?2 AND kind IN (${k})
+                AND (block_number > ?3 OR (block_number = ?3 AND log_index > ?4))
+              ORDER BY block_number ASC, log_index ASC
+              LIMIT ${limit + 1}`,
+          )
+          .bind(chainId, deploymentFloor(chainId), after?.block ?? -1, after?.log ?? -1, ...kinds)
+          .all<Row>();
         const all = rows.results ?? [];
-        const out: LedgerRow[] = [];
-        for (const r of all.slice(0, LEDGER_LIMIT)) {
-          try {
-            out.push({ kind: r.kind, args: JSON.parse(r.args_json) as Record<string, unknown>, blockAt: Number(r.block_at), block: Number(r.block_number) });
-          } catch {
-            /* an unreadable row nominates nothing */
-          }
-        }
-        return { rows: out, truncated: all.length > LEDGER_LIMIT };
+        return { rows: decode(all.slice(0, limit)), more: all.length > limit };
       } catch {
         return null;
       }

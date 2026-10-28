@@ -330,8 +330,12 @@ evidence that the migration has completed.
   that would leave something behind waits for the lanes to refill; the last
   part is always sent.
 - Every send that moves VPFI is announced to operators with its amount and
-  transaction. The keeper's work list comes from the indexer's record of
-  on-chain events, but every decision comes from an on-chain read, and the
+  transaction. Base's own authorization count names every authorization, so
+  the keeper reads them from the chain a bounded number a run, resuming where
+  it stopped above a floor of settled ones; quarantines, which no view lists,
+  come from the indexer's record of on-chain events, read a page a run in the
+  same way. No authorization or quarantine is left out for good, however long
+  the history grows. Every decision comes from an on-chain read, and the
   keeper's own record of what it sent keeps it from repeating a message
   before the indexer has seen it. A paused protocol, a missing signing key, a
   fee above the ceiling, an unread value or a Diamond that names another

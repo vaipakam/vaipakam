@@ -31,10 +31,16 @@ import {
   type LaneBucket,
   type LedgerRow,
   type RepatState,
+  type LedgerPos,
+  AUTH_FLOOR_ITEM,
+  LEDGER_PAGE,
+  MAX_AUTHS_PER_RUN,
+  STRANDED_FLOOR_ITEM,
   type ReturnLedger,
   type SendRecords,
 } from '../src/rewardReturnTransport';
 import type { SendFeeCeiling } from '../src/stepSender';
+import { memoryScanCursors } from '../src/scanCursors';
 import type { KeeperContext } from '../src/keeper';
 
 const BASE_ID = 84532;
@@ -207,7 +213,7 @@ class FakeChain {
       case 'getRewardRole':
         return this.role;
       case 'getRepatriationPosition':
-        return [0n, this.sender, this.receiver, 0n];
+        return [0n, this.sender, this.receiver, [...this.auths.keys()].reduce((a, b) => (b > a ? b : a), 0n)];
       case 'getRewardChainRetirement':
         return this.retirement;
       case 'getRepatriationAuthorization': {
@@ -335,17 +341,24 @@ class FakeChain {
 class FakeLedger implements ReturnLedger {
   rows = new Map<number, LedgerRow[]>();
   down = false;
-  truncated = false;
+  pages = 0;
 
   add(chainId: number, kind: string, args: Record<string, unknown>, blockAt: number): void {
     const list = this.rows.get(chainId) ?? [];
-    list.push({ kind, args, blockAt, block: list.length + 1 });
+    list.push({ kind, args, blockAt, block: list.length + 1, log: 0 });
     this.rows.set(chainId, list);
   }
 
-  async events(chainId: number, kinds: readonly string[]) {
+  async matching(chainId: number, kinds: readonly string[], arg: string, values: readonly string[]) {
     if (this.down) return null;
-    return { rows: (this.rows.get(chainId) ?? []).filter((r) => kinds.includes(r.kind)), truncated: this.truncated };
+    return (this.rows.get(chainId) ?? []).filter((r) => kinds.includes(r.kind) && values.includes(String(r.args[arg])));
+  }
+
+  async page(chainId: number, kinds: readonly string[], after: LedgerPos | null, limit: number) {
+    if (this.down) return null;
+    this.pages += 1;
+    const all = (this.rows.get(chainId) ?? []).filter((r) => kinds.includes(r.kind) && (after === null || r.block > after.block || (r.block === after.block && r.log > after.log)));
+    return { rows: all.slice(0, limit), more: all.length > limit };
   }
 }
 
@@ -378,6 +391,7 @@ describe('a run', () => {
   let mirror: FakeChain;
   let ledger: FakeLedger;
   let records: FakeRecords;
+  let cursors: Map<string, ReturnType<typeof memoryScanCursors>>;
   let alerts: { key: string; text: string }[];
   let now: number;
 
@@ -388,6 +402,7 @@ describe('a run', () => {
     base.inbound.set(MIRROR_ID, bucket());
     ledger = new FakeLedger();
     records = new FakeRecords();
+    cursors = new Map();
     alerts = [];
     now = NOW;
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -409,6 +424,11 @@ describe('a run', () => {
       chains: (o.chains ?? [base, mirror]).map((c) => deps(c, o.cap ?? CAP)),
       ledger,
       records,
+      cursors: (chainId, diamond) => {
+        const k = `${chainId}:${diamond}`;
+        if (!cursors.has(k)) cursors.set(k, memoryScanCursors());
+        return cursors.get(k)!;
+      },
       keeper: o.keeper === undefined ? KEEPER : o.keeper,
       sendDeadline: Number.POSITIVE_INFINITY,
       minPart: MIN_PART,
@@ -519,6 +539,17 @@ describe('a run', () => {
     expect([...records.rows.keys()]).toEqual([]);
   });
 
+  it(`reaches an authorization past the first ${MAX_AUTHS_PER_RUN}, rotating above a floor of settled ids`, async () => {
+    for (let i = 1n; i <= BigInt(MAX_AUTHS_PER_RUN + 10); i++) base.auths.set(i, { status: 2, dst: MIRROR_ID, amount: 1n });
+    authorize(BigInt(MAX_AUTHS_PER_RUN + 11), 400n * E18);
+    let r = await run();
+    expect(base.sent).toEqual([]);
+    expect(cursors.get(`${BASE_ID}:${BASE}`)!.rows.get(AUTH_FLOOR_ITEM), 'the floor passes every settled id read').toBe(String(MAX_AUTHS_PER_RUN + 1));
+    r = await run();
+    expect(base.sent.map((x) => x.args[0])).toEqual([BigInt(MAX_AUTHS_PER_RUN + 11)]);
+    expect(r[0].dispatched).toEqual([String(MAX_AUTHS_PER_RUN + 11)]);
+  });
+
   it('a mirror this keeper does not serve is named, and nothing is sent for it', async () => {
     authorize(6n, 1n);
     const r = await run({ chains: [base] });
@@ -541,6 +572,19 @@ describe('a run', () => {
     r = await run();
     expect(mirror.sent).toEqual([]);
     expect(r[1].waiting).toEqual([]);
+  });
+
+  it(`reaches a quarantine past the first ${LEDGER_PAGE} ledger rows, from where the last run stopped`, async () => {
+    for (let i = 0; i < LEDGER_PAGE + 5; i++) ledger.add(MIRROR_ID, 'CompensationQuarantined', { remitter: REMITTER, remitId: String(100 + i) }, NOW - 600);
+    mirror.stranded.set(`${REMITTER}:9`, { amount: 300n * E18, dayId: 4n });
+    ledger.add(MIRROR_ID, 'CompensationQuarantined', { remitter: REMITTER, remitId: '9' }, NOW - 600);
+    await run();
+    expect(mirror.sent).toEqual([]);
+    const c = cursors.get(`${MIRROR_ID}:${MIRROR}`)!;
+    expect(c.rows.get(STRANDED_FLOOR_ITEM), 'every row read is returned in full').toBe(`${LEDGER_PAGE}:0`);
+    await run();
+    expect(mirror.sent).toEqual([{ fn: 'sendStrandedReturn', args: [REMITTER, 9n, 300n * E18, KEEPER], value: FEE }]);
+    expect(c.rows.get(STRANDED_FLOOR_ITEM), 'the floor stops at the quarantine it sent part of, until it reads it at zero').toBe(`${LEDGER_PAGE + 5}:0`);
   });
 
   it('waits rather than spend a fee on a dust part', async () => {
