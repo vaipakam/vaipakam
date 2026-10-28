@@ -7,7 +7,6 @@ import {PositiveFlowsBase} from "./PositiveFlowsBase.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../../src/libraries/LibSwap.sol";
 import {IVaipakamErrors} from "../../src/interfaces/IVaipakamErrors.sol";
-import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
@@ -63,8 +62,8 @@ import {FixedRateSwapAdapter} from "../mocks/FixedRateSwapAdapter.sol";
  *
  *         In the one-pass runner ({PositiveFlows}, or `run()`), a scenario
  *         whose wait applies says SKIP and names the staged run. The cancel
- *         cooldown applies only while partial fills are on, so PF-045 and
- *         PF-046 run in one pass where they are off.
+ *         cooldown applies to every fresh offer (#664), so every scenario here
+ *         takes the staged run.
  *
  *         What the first stage changes until the second restores it: when the
  *         periodic-interest switch is off, PF-116 turns it on, and it stays on
@@ -134,19 +133,16 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
 
     // ─── One-pass run ─────────────────────────────────────────────────────
 
-    /// @dev Runs a scenario in one pass where its wait does not apply, and
-    ///      skips it, naming the staged run, where it does.
+    /// @dev Every scenario here has a wait (the periodic checkpoint, or the
+    ///      cancel cooldown), so the one-pass run skips each, naming the
+    ///      staged run.
     function _runScenario(uint256 index) internal override {
         if (index == 2) {
             return _skip("a periodic checkpoint is due a month after the loan starts;"
                 " use the staged run (script/positive-flows/run-timed.sh)");
         }
-        if (_cancelCooldownApplies()) {
-            return _skip("the 5-minute cancel cooldown applies (partial fills on);"
-                " use the staged run (script/positive-flows/run-timed.sh)");
-        }
-        _openScenario(index);
-        _settleScenario(index);
+        return _skip("the 5-minute cancel cooldown applies to every fresh offer;"
+            " use the staged run (script/positive-flows/run-timed.sh)");
     }
 
     // ─── Staged run ───────────────────────────────────────────────────────
@@ -329,13 +325,9 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
     // ─── PF-045 / PF-046 ──────────────────────────────────────────────────
 
     /// @dev The Diamond refuses a cancel within `MIN_OFFER_CANCEL_DELAY` of
-    ///      an offer's creation while partial fills are on and nothing of the
-    ///      offer is filled. `OfferFacetCancelCooldownTest` covers the gate's
-    ///      edges; these scenarios show it holds, then lets go, on a chain.
-    function _cancelCooldownApplies() internal view returns (bool) {
-        bool partialFillOn = ConfigFacet(diamond).getPartialFillEnabled();
-        return partialFillOn;
-    }
+    ///      an offer's creation while nothing of the offer is filled and it
+    ///      has not expired, whatever the partial-fill setting (#664). These
+    ///      scenarios show it holds, then lets go, on a chain.
 
     function _openLenderOffer() internal {
         lenderOfferId = _createLenderOffer(lenderKey);
@@ -351,19 +343,17 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         _requireCooldownHolds(borrower, borrowerOfferId, "PF-046");
     }
 
-    /// @dev Where the cooldown applies, the creator's cancel is refused now,
-    ///      and the scenario becomes due when the cooldown ends.
+    /// @dev The creator's cancel is refused now, and the scenario becomes
+    ///      due when the cooldown ends.
     function _requireCooldownHolds(address creator, uint256 offerId, string memory id) internal {
         uint256 dueAt = OfferCancelFacet(diamond).getOffer(offerId).createdAt + LibVaipakam.MIN_OFFER_CANCEL_DELAY;
-        if (_cancelCooldownApplies()) {
-            _requireRefused(
-                creator,
-                abi.encodeWithSelector(OfferCancelFacet.cancelOffer.selector, offerId),
-                abi.encodeWithSelector(OfferCancelFacet.CancelCooldownActive.selector),
-                string.concat(id, ": a cancel inside the cooldown should be refused (CancelCooldownActive)")
-            );
-            console.log("Cancel refused inside the cooldown; due at", dueAt);
-        }
+        _requireRefused(
+            creator,
+            abi.encodeWithSelector(OfferCancelFacet.cancelOffer.selector, offerId),
+            abi.encodeWithSelector(OfferCancelFacet.CancelCooldownActive.selector),
+            string.concat(id, ": a cancel inside the cooldown should be refused (CancelCooldownActive)")
+        );
+        console.log("Cancel refused inside the cooldown; due at", dueAt);
         _noteDue(dueAt);
     }
 

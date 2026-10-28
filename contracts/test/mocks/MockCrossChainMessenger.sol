@@ -10,8 +10,8 @@ import {
 /**
  * @title MockCrossChainMessenger
  * @notice In-memory implementation of the {ICrossChainMessenger} port for
- *         unit-testing Vaipakam's cross-chain DOMAIN contracts — the VPFI
- *         buy adapter/receiver and the reward messenger (T-068 Phases 3–4)
+ *         unit-testing Vaipakam's cross-chain DOMAIN contracts — the reward
+ *         messenger and the remittance receivers (T-068 Phases 3–4)
  *         — without CCIP or {CcipMessenger}.
  *
  * @dev The port's whole point: a domain contract depends only on

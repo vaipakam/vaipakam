@@ -574,6 +574,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         _f().extendLoanInPlace(loanId, 500, 45);
 
         // Once the request is cancelled the extension goes through.
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(borrower);
         OfferCancelFacet(address(diamond)).cancelOffer(taggedOfferId);
         vm.prank(borrower);

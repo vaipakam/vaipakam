@@ -91,6 +91,7 @@ RISK_PREVIEW_SELECTORS=(
   0x2c87c1a3  # saleAdmission
   0x03530269  # sellerForfeitureWindow  (#1503 item 28)
   0xda39c1e5  # quoteSellerBounds       (#1503 item 4)
+  0x1a3370e0  # getSaleListingBounds    (#2672)
 )
 
 # KNOWN FAILURE — ReplaceStaleFacets still fails at step 6, and the failure is

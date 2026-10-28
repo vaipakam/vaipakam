@@ -10,6 +10,7 @@ import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
@@ -335,6 +336,8 @@ contract OfferExpiryTest is SetupTest {
 
     function testCreatorCanStillCancelUnexpiredGTCOffer() public {
         uint256 id = _createLender(0);
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(lender);
         OfferCancelFacet(address(diamond)).cancelOffer(id);
 
@@ -449,5 +452,49 @@ contract OfferExpiryTest is SetupTest {
         LibVaipakam.Offer memory o =
             OfferCancelFacet(address(diamond)).getOffer(id);
         assertEq(o.creator, address(0), "offer cleared despite cooldown window");
+    }
+
+    // ─── #664: the cooldown no longer depends on the partial-fill flag ──
+
+    /// A fresh, unfilled, unexpired offer cannot be cancelled inside the
+    /// cooldown even with partial-fill matching switched OFF; past the
+    /// cooldown the cancel lands.
+    function testCancelCooldownAppliesWithPartialFillOff() public {
+        ConfigFacet(address(diamond)).setPartialFillEnabled(false);
+        uint256 id = _createLender(uint64(block.timestamp + ONE_HOUR));
+
+        vm.prank(lender);
+        vm.expectRevert(OfferCancelFacet.CancelCooldownActive.selector);
+        OfferCancelFacet(address(diamond)).cancelOffer(id);
+
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
+        vm.prank(lender);
+        OfferCancelFacet(address(diamond)).cancelOffer(id);
+        assertEq(
+            OfferCancelFacet(address(diamond)).getOffer(id).creator,
+            address(0),
+            "cancel lands once the cooldown has passed"
+        );
+    }
+
+    // ─── #2529: the highest allocated position-NFT id ───────────────────────
+
+    /// The offer's position NFT takes the next id, so the view reads it back;
+    /// once the cancel burns it, the id stays at or below the view and
+    /// `ownerOf` reverts (burned, not never-minted).
+    function testHighestTokenIdTracksAllocationAndBurn() public {
+        VaipakamNFTFacet nft = VaipakamNFTFacet(address(diamond));
+        uint256 before_ = nft.highestTokenId();
+        uint256 id = _createLender(uint64(block.timestamp + ONE_HOUR));
+        uint256 tokenId = OfferCancelFacet(address(diamond)).getOffer(id).positionTokenId;
+        assertEq(tokenId, before_ + 1, "offer NFT takes the next id");
+        assertEq(nft.highestTokenId(), tokenId);
+
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
+        vm.prank(lender);
+        OfferCancelFacet(address(diamond)).cancelOffer(id);
+        assertEq(nft.highestTokenId(), tokenId, "a burn does not lower it");
+        vm.expectRevert();
+        nft.ownerOf(tokenId);
     }
 }

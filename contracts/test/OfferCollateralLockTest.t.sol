@@ -176,6 +176,8 @@ contract OfferCollateralLockTest is SetupTest {
         uint256 id = _createBorrowerOffer(5000 ether, 5000 ether);
         uint256 walletBefore = ERC20Mock(mockCollateralERC20).balanceOf(borrower);
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(borrower);
         OfferCancelFacet(address(diamond)).cancelOffer(id);
 

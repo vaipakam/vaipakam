@@ -284,7 +284,9 @@ contract MetricsDashboardFacetTest is SetupTest {
     // ── paginated claimables ───────────────────────────────────────────────
 
     function testClaimables_lenderSide() public {
-        _seedActiveLoan(1, lender, borrower);
+        // #941 — a claim is payable only on a terminal status, so the row is
+        // seeded on a repaid loan.
+        _seedLoanStatus(1, lender, borrower, LibVaipakam.LoanStatus.Repaid);
         TestMutatorFacet(address(diamond)).setNextLoanId(2);
         // Populate the lender claim — Raw setters touch the
         // {asset, amount} fields independently; default `claimed`
@@ -304,5 +306,47 @@ contract MetricsDashboardFacetTest is SetupTest {
             abi.encodeWithSelector(MetricsDashboardFacet.LimitTooLarge.selector, 101, 100)
         );
         dash.getUserDashboardClaimables(lender, false, 0, 101);
+    }
+
+    /// @dev #941 — an NFT return carries amount 0 and is still a claim: the
+    ///      dashboard lists it on both sides, exactly as the claim would pay it.
+    function testClaimables_nftRowsWithZeroAmountAreListed() public {
+        _seedLoanStatus(1, lender, borrower, LibVaipakam.LoanStatus.Repaid);
+        TestMutatorFacet(address(diamond)).setNextLoanId(2);
+        TestMutatorFacet(address(diamond)).setLenderClaimAssetRaw(1, mockERC20);
+        TestMutatorFacet(address(diamond)).setLenderClaimNFTFieldsRaw(
+            1, LibVaipakam.AssetType.ERC721, 7, 1
+        );
+        TestMutatorFacet(address(diamond)).setBorrowerClaimAssetRaw(1, mockERC20);
+        TestMutatorFacet(address(diamond)).setBorrowerClaimNFTFieldsRaw(
+            1, LibVaipakam.AssetType.ERC721, 9, 1
+        );
+
+        (uint256[] memory lIds, LibVaipakam.ClaimInfo[] memory lClaims, ) =
+            dash.getUserDashboardClaimables(lender, false, 0, 50);
+        assertEq(lIds.length, 1, "lender NFT return listed");
+        assertEq(lClaims[0].amount, 0);
+        assertEq(lClaims[0].tokenId, 7);
+
+        (uint256[] memory bIds, LibVaipakam.ClaimInfo[] memory bClaims, ) =
+            dash.getUserDashboardClaimables(borrower, true, 0, 50);
+        assertEq(bIds.length, 1, "borrower NFT collateral return listed");
+        assertEq(bClaims[0].tokenId, 9);
+
+        MetricsDashboardFacet.DashboardScalars memory snapL = dash.getUserDashboardSnapshot(lender);
+        assertEq(snapL.lenderClaimableCount, 1, "lender count matches the list");
+        MetricsDashboardFacet.DashboardScalars memory snapB = dash.getUserDashboardSnapshot(borrower);
+        assertEq(snapB.borrowerClaimableCount, 1, "borrower count matches the list");
+    }
+
+    /// @dev #941 — a row on a loan the claim refuses (still Active) is not
+    ///      listed, whatever it holds.
+    function testClaimables_nonTerminalLoanNotListed() public {
+        _seedActiveLoan(1, lender, borrower);
+        TestMutatorFacet(address(diamond)).setNextLoanId(2);
+        TestMutatorFacet(address(diamond)).setLenderClaimAssetRaw(1, mockERC20);
+        TestMutatorFacet(address(diamond)).setLenderClaimAmountRaw(1, 200 ether);
+        (uint256[] memory loanIds, , ) = dash.getUserDashboardClaimables(lender, false, 0, 50);
+        assertEq(loanIds.length, 0);
     }
 }

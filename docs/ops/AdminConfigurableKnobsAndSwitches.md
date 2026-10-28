@@ -1864,12 +1864,8 @@ after handover — the same posture as the #399 backstop switches.
 
 ### `aggregatorAdaptersPaused` — external yield-aggregator pause
 
-- **Getter:** none on the ABI. `LibVaipakam.cfgAggregatorAdaptersPaused()`
-  is an `internal` library read, so it is not callable from outside the
-  Diamond and does not appear in the Protocol Console — the facet
-  exposes the setter only. To confirm the live state, read the
-  `AggregatorAdaptersPausedSet` event or the storage slot directly.
-  (An external getter would be the better fix; tracked separately.)
+- **Getter:** `AdminFacet.aggregatorAdaptersPaused() → bool` (#1637).
+  Read it after the setter to confirm the switch took effect.
 - **Setter:** `AdminFacet.setAggregatorAdaptersPaused(bool value)` → emits
   `AggregatorAdaptersPausedSet`.
 - **What `true` blocks:** onboarding a new aggregator
@@ -1883,9 +1879,8 @@ after handover — the same posture as the #399 backstop switches.
 
 ### `peerLtvReadsPaused` — peer-protocol data-read pause
 
-- **Getter:** none on the ABI — `LibVaipakam.cfgPeerLtvReadsPaused()` is
-  an `internal` library read, same as the aggregator flag above. Confirm
-  the live state from `PeerLtvReadsPausedSet`.
+- **Getter:** `AdminFacet.peerLtvReadsPaused() → bool` (#1637). Read it
+  after the setter to confirm the switch took effect.
 - **Setter:** `AdminFacet.setPeerLtvReadsPaused(bool value)` → emits
   `PeerLtvReadsPausedSet`. The setter also **invalidates the tier-LTV
   cache** (zeroes `tierLtvCache[t].lastRefreshedAt` for every tier) on

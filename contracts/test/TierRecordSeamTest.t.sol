@@ -250,6 +250,8 @@ contract TierRecordSeamTest is SetupTest {
         assertEq(uint256(dayClose), amount, "record carries the escrowed VPFI");
 
         vm.expectCall(address(diamond), abi.encodeCall(VPFIDiscountAccumulatorFacet.syncTierRecord, (lender)));
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(lender);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         (,, dayClose,) = TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(lender);

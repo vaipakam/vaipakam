@@ -367,6 +367,15 @@ contract MetricsFacet {
 
     /// @notice Paginated slice of the active-loan list. O(limit) — the
     ///         underlying list is maintained swap-and-pop by LibMetricsHooks.
+    /// @dev    #942 — pages taken in separate calls are NOT a consistent
+    ///         snapshot. Removing a loan moves the list's last entry into the
+    ///         freed slot, so a loan can move from a page not yet read into one
+    ///         already read and be missed by that sweep. A caller that needs every active loan must
+    ///         treat a sweep as best effort and start the next one again from
+    ///         offset 0, as the reference keeper does; liquidation and default
+    ///         are permissionless and idempotent, so a skipped loan is picked up
+    ///         by the following sweep. Every id returned is active at the block
+    ///         read.
     function getActiveLoansPaginated(uint256 offset, uint256 limit)
         external
         view

@@ -747,12 +747,9 @@ contract ClaimFacet is
         // FallbackPending-only block below is skipped for InternalMatched
         // (no claim-time retry/auto-dispatch), so this falls straight through
         // to the standard claim-record payout.
-        if (
-            loan.status != LibVaipakam.LoanStatus.Repaid &&
-            loan.status != LibVaipakam.LoanStatus.Defaulted &&
-            loan.status != LibVaipakam.LoanStatus.FallbackPending &&
-            loan.status != LibVaipakam.LoanStatus.InternalMatched
-        ) revert InvalidLoanStatus();
+        // #941 — the status set is {LibCloseoutFreeze.lenderClaimableStatus},
+        // the rule the dashboard's claimables view reads too.
+        if (!LibCloseoutFreeze.lenderClaimableStatus(loan.status)) revert InvalidLoanStatus();
 
         // Already-claimed guard FIRST. A successful claim burns the
         // lender position NFT, so on a double-claim attempt
@@ -949,8 +946,8 @@ contract ClaimFacet is
         // nothing leaves a written claim of zero; the claim must still run, or
         // the lender NFT, the intent release and the settle below could never
         // happen. Only a claim no close-out wrote (asset unset) is nothing to
-        // claim. {_lenderSideOpen} is the same rule the borrower's claim reads.
-        if (!_lenderSideOpen(s, loanId, loan)) revert NothingToClaim();
+        // claim. {LibCloseoutFreeze.lenderSideOpen} is the same rule the borrower's claim reads.
+        if (!LibCloseoutFreeze.lenderSideOpen(s, loanId, loan)) revert NothingToClaim();
 
         // Lender position-NFT ownership was already verified at the top
         // of this function (before the claim-time fallback resolution).
@@ -1215,11 +1212,9 @@ contract ClaimFacet is
         // holder. Accept it here so the holder can retrieve the residual
         // (the lien is released atomically below, the same anti-drain
         // release-at-claim flow proper closes use).
-        if (
-            loan.status != LibVaipakam.LoanStatus.Repaid &&
-            loan.status != LibVaipakam.LoanStatus.Defaulted &&
-            loan.status != LibVaipakam.LoanStatus.InternalMatched
-        ) revert InvalidLoanStatus();
+        // #941 — the status set is {LibCloseoutFreeze.borrowerClaimableStatus},
+        // the rule the dashboard's claimables view reads too.
+        if (!LibCloseoutFreeze.borrowerClaimableStatus(loan.status)) revert InvalidLoanStatus();
 
         LibVaipakam.ClaimInfo storage claim = s.borrowerClaims[loanId];
         // #2795 — root rule: each lane is paid on its OWN flag, and the claim
@@ -1418,10 +1413,10 @@ contract ClaimFacet is
 
         // If lender already claimed or truly has nothing to claim, settle the loan.
         // Must check heldForLender, NFT rental returns, and NFT collateral claims.
-        // #2440 — "has nothing" is {_lenderSideOpen}'s rule, the one the
+        // #2440 — "has nothing" is {LibCloseoutFreeze.lenderSideOpen}'s rule, the one the
         // lender's own claim reads: a written claim of zero (a forced close-out
         // that received nothing) still has to run, so it keeps the loan open.
-        bool willSettle = s.lenderClaims[loanId].claimed || !_lenderSideOpen(s, loanId, loan);
+        bool willSettle = s.lenderClaims[loanId].claimed || !LibCloseoutFreeze.lenderSideOpen(s, loanId, loan);
         // #585 — for an InternalMatched loan the lender side is now closed
         // through the standard lender claim path: the match records the
         // matched proceeds as a `lenderClaims` row owed to the current
@@ -1494,28 +1489,6 @@ contract ClaimFacet is
                 VaultWithdrawFailed.selector
             );
         }
-    }
-
-    /// @dev #2440 — whether the lender side of `loanId` still has a claim to
-    ///      run: a claim a close-out recorded (keyed on its asset, so a forced
-    ///      close-out that received nothing still leaves one), funds held for
-    ///      the lender, an NFT rental to return, or an NFT collateral claim.
-    ///      The lender's claim refuses with `NothingToClaim` when this is
-    ///      false, and the borrower's claim settles the loan only once it is
-    ///      false or the lender has claimed, so both sides read one rule and a
-    ///      lender whose close-out received nothing can still close the
-    ///      position (burn the NFT, release the intent's exposure, settle).
-    function _lenderSideOpen(
-        LibVaipakam.Storage storage s,
-        uint256 loanId,
-        LibVaipakam.Loan storage loan
-    ) private view returns (bool) {
-        LibVaipakam.ClaimInfo storage claim = s.lenderClaims[loanId];
-        return claim.asset != address(0) ||
-            claim.amount > 0 ||
-            s.heldForLender[loanId] > 0 ||
-            loan.assetType != LibVaipakam.AssetType.ERC20 ||
-            claim.assetType != LibVaipakam.AssetType.ERC20;
     }
 
     /// @dev Resolves a pending fallback snapshot at claim time. When

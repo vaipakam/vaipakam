@@ -731,4 +731,25 @@ contract BackstopAbsorbTest is SetupTest {
         );
         vm.stopPrank();
     }
+
+    // ─── #2685: the backstop switches announce their changes ────────────────
+
+    function testBackstopSwitchesEmit() public {
+        BackstopFacet b = BackstopFacet(address(diamond));
+        vm.expectEmit(false, false, false, true, address(diamond));
+        emit BackstopFacet.BackstopEnabledSet(false);
+        b.setBackstopEnabled(false);
+
+        vm.expectEmit(false, false, false, true, address(diamond));
+        emit BackstopFacet.BackstopFillEnabledSet(true);
+        b.setBackstopFillEnabled(true);
+
+        vm.expectEmit(false, false, false, true, address(diamond));
+        emit BackstopFacet.BackstopAbsorbEnabledSet(true);
+        b.setBackstopAbsorbEnabled(true);
+
+        vm.expectEmit(false, false, false, true, address(diamond));
+        emit BackstopFacet.MinBackstopDelaySet(2 hours);
+        b.setMinBackstopDelay(2 hours);
+    }
 }

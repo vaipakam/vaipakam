@@ -89,16 +89,17 @@ export const PROTOCOL_KNOB_GETTERS = [
   { key: 'pythMaxStalenessSeconds', getter: 'getPythMaxStalenessSeconds', setterEvents: ['PythMaxStalenessSecondsSet'] },
   { key: 'pythCrossCheckMaxDeviationBps', getter: 'getPythNumeraireMaxDeviationBps', setterEvents: ['PythNumeraireMaxDeviationBpsSet'] },
   { key: 'pythConfidenceMaxBps', getter: 'getPythConfidenceMaxBps', setterEvents: ['PythConfidenceMaxBpsSet'] },
-  { key: 'sequencerUptimeFeed', getter: 'getSequencerUptimeFeed', setterEvents: [], eventless: true },
+  // #2685 — the setter announces the change since the event was added.
+  { key: 'sequencerUptimeFeed', getter: 'getSequencerUptimeFeed', setterEvents: ['SequencerUptimeFeedSet'] },
   // Cross-chain reward reporting
   { key: 'rewardGraceSeconds', getter: 'getRewardGraceSeconds', setterEvents: ['RewardReporterConfigUpdated'] },
   // Periodic interest and the numeraire
   { key: 'periodicInterestEnabled', getter: 'getPeriodicInterestEnabled', setterEvents: ['PeriodicInterestEnabledSet'] },
   { key: 'numeraireSwapEnabled', getter: 'getNumeraireSwapEnabled', setterEvents: ['NumeraireSwapEnabledSet'] },
   { key: 'numeraireSymbol', getter: 'getNumeraireSymbol', setterEvents: ['NumeraireUpdated'] },
-  // Codex #2815 r1 — `setNumeraire` announces it (NumeraireUpdated), but
-  // `OracleAdminFacet.setEthUsdFeed` writes the same slot and emits nothing.
-  { key: 'ethNumeraireFeed', getter: 'getEthNumeraireFeed', setterEvents: ['NumeraireUpdated'], eventless: true },
+  // Two setters write this slot: `setNumeraire` (NumeraireUpdated) and
+  // `OracleAdminFacet.setEthUsdFeed` (EthNumeraireFeedSet, since #2685).
+  { key: 'ethNumeraireFeed', getter: 'getEthNumeraireFeed', setterEvents: ['NumeraireUpdated', 'EthNumeraireFeedSet'] },
   { key: 'minPrincipalForFinerCadence', getter: 'getMinPrincipalForFinerCadence', setterEvents: ['MinPrincipalForFinerCadenceSet', 'NumeraireUpdated'] },
   { key: 'preNotifyDays', getter: 'getPreNotifyDays', setterEvents: ['PreNotifyDaysSet'] },
   // Automation and pauses
