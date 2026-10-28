@@ -12,6 +12,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
@@ -38,7 +39,7 @@ contract PerAssetPauseTest is Test {
         diamond = new VaipakamDiamond(address(this), address(cutFacet));
         HelperTest helper = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](7);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](8);
         cuts[0] = _cut(ArtifactDeploy.deploy(type(AccessControlFacet).name), helper.getAccessControlFacetSelectors());
         cuts[1] = _cut(ArtifactDeploy.deploy(type(AdminFacet).name), helper.getAdminFacetSelectors());
         cuts[2] = _cut(ArtifactDeploy.deploy(type(OfferCreateFacet).name), helper.getOfferCreateFacetSelectors());
@@ -48,6 +49,15 @@ contract PerAssetPauseTest is Test {
 
         // #569 (2026-06-13) — encumbrance mutate facet for lien wires.
         cuts[6] = _cut(ArtifactDeploy.deploy(type(EncumbranceMutateFacet).name), helper.getEncumbranceMutateFacetSelectors());
+
+        // #1841 - both lender-exit entries gate on SaleExitVerdictFacet by
+        // self-call (`requireSaleExitOpen`), so a hand-built Diamond that cuts
+        // either entry must cut this host too.
+        cuts[7] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helper.getSaleExitVerdictFacetSelectors()
+        });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();

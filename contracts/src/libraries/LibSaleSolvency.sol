@@ -148,6 +148,13 @@ library LibSaleSolvency {
      *         if the oracle cannot price a position we believe is priceable,
      *         `saleAdmission` reverts and so does the sale, rather than
      *         admitting a buyer against an unverifiable figure.
+     *
+     *         #1841 — this is the ONE place the classifier's codes become
+     *         errors. `SaleExitVerdictFacet` reads them through
+     *         `requireSaleAdmission`, which runs this guard, so the sale-exit
+     *         verdict and the binding accept-time check name the same reason.
+     *         Kept as typed reverts (not encoded bytes) so every reason stays in
+     *         the ABI of each contract that runs the guard.
      */
     function assertSaleSolvent(uint256 loanId) internal view {
         (uint8 code, uint256 a, uint256 b) =

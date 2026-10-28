@@ -99,7 +99,9 @@ abstract contract DiamondFacetNames {
     ///      VaipakamNFTFacet).
     ///      101 → 102 with `RewardRemitDestinationFacet` (#2963 — what Base
     ///      does when a remit destination leaves its expected-source list).
-    function cutFacetNames() internal pure returns (string[102] memory) {
+    ///      102 → 103 with `SaleExitVerdictFacet` (#1841 — the one classifier
+    ///      of a lender sale exit, self-called by both sale facets).
+    function cutFacetNames() internal pure returns (string[103] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -230,6 +232,8 @@ abstract contract DiamondFacetNames {
             "RateModelFacet",
             // #2957 - the position NFT's public metadata.
             "VaipakamNFTMetadataFacet",
+            // #1841 - the sale-exit verdict both sale facets self-call.
+            "SaleExitVerdictFacet",
             "RiskFacet",
             "RiskMatchLiquidationFacet",
             "RiskSplitLiquidationFacet",

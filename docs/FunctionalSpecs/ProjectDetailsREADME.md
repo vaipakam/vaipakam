@@ -2371,6 +2371,19 @@ sibling already has.
   before starting the second. This is symmetric — neither route is privileged
   over the other — because the failure it prevents is the same in both
   directions: one position handed to two buyers.
+- **One answer to whether each route is open.** For a given loan and the wallet
+  that would act, the platform answers, for each sale route, whether it would be
+  accepted right now. When it would not, it names every reason, and for each one
+  the earliest moment it can lift by time alone or by a step anyone may take (an
+  expired listing or offset being cleared away), or says that no such moment is
+  known because a decision is needed or the refusal never lifts. The routes refuse
+  for exactly the reasons this answer reports and raise the first of them, so an
+  interface that offers only the routes the answer clears never offers an exit the
+  platform would refuse at submission, and never hides one it would accept. The
+  answer says what it does not cover: anything about the particular buy offer a
+  direct sale would consume, the listing's own inputs (its window, rate and
+  consent), and a keeper's service capacity. Overdue periodic interest does not
+  close either route.
 
 ### Option 1: Sell the Loan to Another Lender
 

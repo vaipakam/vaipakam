@@ -89,7 +89,7 @@ library LibConsolidation {
         ) {
             return Result.NoOp;
         }
-        if (_isExcludedLive(s, loan, loanId, isLenderSide)) {
+        if (isExcludedLive(s, loan, loanId, isLenderSide)) {
             return Result.Skipped;
         }
 
@@ -209,12 +209,14 @@ library LibConsolidation {
     ///      load-bearing for the fee tier: the FallbackPending tier exclusion
     ///      is charged to the stored borrower (`LibTierExclusion`), and it
     ///      cannot go stale only because this keeps that party fixed.
-    function _isExcludedLive(
+    ///      `internal` (#1841) so the sale-exit verdict reports the listing
+    ///      route's `SalePositionNotConsolidatable` by this same rule.
+    function isExcludedLive(
         LibVaipakam.Storage storage s,
         LibVaipakam.Loan storage loan,
         uint256 loanId,
         bool isLenderSide
-    ) private view returns (bool) {
+    ) internal view returns (bool) {
         if (loan.status == LibVaipakam.LoanStatus.FallbackPending) {
             return true;
         }

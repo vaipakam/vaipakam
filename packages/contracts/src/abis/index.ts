@@ -61,6 +61,8 @@ import NumeraireValueFacetABI from './NumeraireValueFacet.json';
 import NotificationFeeFacetABI from './NotificationFeeFacet.json';
 // #2795 — the forced-sale host (sized to the debt, lender first).
 import ForcedSaleFacetABI from './ForcedSaleFacet.json';
+// #1841 — the sale-exit verdict host (both lender-exit routes, one rule).
+import SaleExitVerdictFacetABI from './SaleExitVerdictFacet.json';
 // #2748 — the rate-model host (model, band, offer-rate clamp).
 import RateModelFacetABI from './RateModelFacet.json';
 import RiskSplitLiquidationFacetABI from './RiskSplitLiquidationFacet.json';
@@ -224,6 +226,7 @@ export {
   NumeraireValueFacetABI,
   NotificationFeeFacetABI,
   ForcedSaleFacetABI,
+  SaleExitVerdictFacetABI,
   RateModelFacetABI,
   RiskSplitLiquidationFacetABI,
   ClaimFacetABI,

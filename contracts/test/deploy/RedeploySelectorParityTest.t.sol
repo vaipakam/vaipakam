@@ -136,6 +136,12 @@ contract RedeploySelectorParityTest is Test {
         _assertParity("ForcedSaleFacet", FacetSelectors.forcedSale());
     }
 
+    /// @dev #1841 - the sale-exit verdict host, cut by `RedeployFacets`
+    ///      alongside both lender-exit entries.
+    function test_SaleExitVerdictSelectors_MatchCompiledAbi() public view {
+        _assertParity("SaleExitVerdictFacet", FacetSelectors.saleExitVerdict());
+    }
+
     /// @dev #1503 item 28 — the RETIRED 3-argument resident-payout selector must
     ///      be GONE from the facet's compiled surface, so the curated refresh's
     ///      Remove leg targets a genuinely-retired entry point and no dual entry

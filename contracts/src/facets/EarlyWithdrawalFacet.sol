@@ -12,7 +12,6 @@ import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
-import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
 import {LibSaleListing} from "../libraries/LibSaleListing.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -32,6 +31,7 @@ import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
+import {SaleExitVerdictFacet} from "./SaleExitVerdictFacet.sol";
 
 /**
  * @title EarlyWithdrawalFacet
@@ -243,92 +243,44 @@ contract EarlyWithdrawalFacet is
         bool creatorRiskAndTermsConsent,
         uint64 listingSeconds
     ) private {
-        // Tier-1 sanctions gate — creating a sale offer is a state-
-        // creating action by msg.sender; sanctioned wallet blocked.
-        LibVaipakam._assertNotSanctioned(msg.sender);
+        // #1841 — every loan- and caller-level refusal of this route is
+        // classified ONCE, in `SaleExitVerdictFacet`, which the lender exit
+        // chooser reads too. It reverts with the first refusal, the same error
+        // the verdict reports:
+        //   • the global and per-asset pauses; the Tier-1 screens of the caller
+        //     and of the lender-position holder (#819 — the proceeds settle to
+        //     the holder, and a keeper caller would leave it unscreened);
+        //   • who may list (Phase 6): the current lender-NFT owner, or a keeper
+        //     authorised for the InitEarlyWithdraw action;
+        //   • an Active loan with an ERC-20 principal (NFT rental sale is not
+        //     supported) and ERC-20 collateral (#951 — the vehicle escrows no
+        //     collateral; NFT-collateral sale is #974);
+        //   • one live listing per loan (#951) and no live borrower offset
+        //     (#1001 — a sale would be a second settlement racing the first;
+        //     the offset is GTC and creator-cancellable only, #1814);
+        //   • a loan before maturity, with at least `MIN_SALE_LISTING_SECONDS`
+        //     of term left for the listing to run in (design item 1);
+        //   • the relist cooldown after a listing ended unfilled (chaining
+        //     bounded listings would recreate the indefinite borrower freeze
+        //     the mandatory expiry removed; the error names when it lifts);
+        //   • a position the consolidation below can move (#597 — unreserved
+        //     held-for-lender VPFI cannot be consolidated);
+        //   • the offer-duration cap on the remaining term, the vault version,
+        //     and sale admission (#1503 PR-E — fail fast rather than publish a
+        //     listing that could not lawfully be filled; the BINDING check is
+        //     the accept-time one in `OfferAcceptFacet`).
+        SaleExitVerdictFacet(address(this)).requireSaleExitOpen(
+            loanId, msg.sender, SaleExitVerdictFacet.SaleRoute.Listing
+        );
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        // Phase 6: lender-entitled strategic flow. Authority binds to the
-        // current lender-NFT owner OR a keeper with the
-        // InitEarlyWithdraw action bit.
-        if (LibAuth.requireKeeperFor(
-            LibVaipakam.KEEPER_ACTION_INIT_EARLY_WITHDRAW,
-            loan,
-            /* lenderSide */ true
-        )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
-        // #819 Tier-1 sanctions on the LENDER-position holder. `requireKeeperFor`
-        // authorises against the lender NFT owner, but a keeper caller leaves
-        // that holder unscreened — and the eventual sale proceeds settle to the
-        // seller (that holder). Screen the holder here at listing CREATION: no
-        // buyer is committed yet, so an atomic revert strands no counterparty.
-        // (The flagged-after-listing residual on `completeLoanSale` is the
-        // deferred-proceeds liveness case tracked under #821.)
         // The exiting lender (current lender-NFT holder) is the sale offer's
         // real creator — proceeds and cancel authority bind to them, NOT to a
-        // keeper caller. Capture once: used for the screen here and passed as
-        // the `creator` into the internal offer-create hop below (#951).
+        // keeper caller (#951). The verdict has authorised the caller; a
+        // keeper's action is charged against its service capacity (#1219).
         address seller = LibERC721.ownerOf(loan.lenderTokenId);
-        LibVaipakam._assertNotSanctioned(seller);
-        if (loan.status != LibVaipakam.LoanStatus.Active)
-            revert LoanNotActive();
-        // NFT rental lender-sale not supported in Phase 1
-        if (loan.assetType != LibVaipakam.AssetType.ERC20)
-            revert InvalidSaleOffer();
-        // #951 (Codex #959 round-2) — Phase 1 lender-sale requires ERC-20
-        // collateral. The vehicle escrows no fresh collateral (it stays on the
-        // live loan), so an ERC-721/ERC-1155 collateral loan would make the
-        // downstream accept / complete / cancel paths try to move an NFT the
-        // vehicle never held. NFT-collateral lender-sale is tracked as #974.
-        if (loan.collateralAssetType != LibVaipakam.AssetType.ERC20)
-            revert SaleOfferCollateralMustBeERC20();
-
-        // #951 (Codex #959) — one live listing per loan. Without this, a second
-        // `createLoanSaleOffer` for the same loan mints another sale offer,
-        // overwrites `loanToSaleOfferId` and strands the first `saleOfferToLoanId`,
-        // so accepting one listing completes through the other and cancelling
-        // either unlinks both. The link is cleared on cancel + completion, so a
-        // genuine re-list is still allowed.
-        if (s.loanToSaleOfferId[loanId] != 0) revert SaleOfferAlreadyExists();
-        // #1001 (S3, Codex #1070) — refuse to list the lender position for sale
-        // while a Preclose Option-3 offset offer is live on this loan. A sale is a
-        // second SETTLEMENT of a loan that already has one in flight, and the two
-        // would race. Either outcome clears the link, but only CANCELLING
-        // leaves something to sell: a completed offset terminalises the loan
-        // Active -> Repaid, and both sale routes require Active.
-        //
-        // NOT "short-lived" (#1503 item 21): `_buildOffsetParams` leaves an
-        // offset GTC on purpose (#1032 L-c), and `cancelOffer` lets a third
-        // party clean up only an EXPIRED offer — so a GTC link is
-        // creator-cancellable only, and an unaccepted offset can sit on the loan
-        // for its whole life. Brevity is the borrower's intent, not an enforced
-        // property, and the consequence — a borrower-side veto over both
-        // protocol-mediated lender exits — is tracked in #1814.
-        //
-        // Corrected wording (#1503 item 21): this comment used to say the conflict
-        // was the position "changing hands", which is not what makes it unsafe —
-        // the offset locks only the BORROWER NFT, and `_completeOffsetImpl`
-        // deliberately re-anchors to a lender NFT transferred while it was live.
-        // A bare transfer is supported; a second settlement is not. The old
-        // phrasing was copied verbatim into the direct route's new guard before
-        // review caught it, which is why it is fixed at the source too.
-        if (s.loanToOffsetOfferId[loanId] != 0) revert OffsetActiveOnLoan();
-        // #1503 PR-E (design item 11) — fail fast rather than publish a
-        // listing that could not lawfully be filled. The BINDING check is
-        // the accept-time one in `OfferAcceptFacet` (the position keeps
-        // moving after listing, so only the fill-time read governs); this
-        // one exists so a lender is told at listing time, not after a
-        // buyer's transaction reverts.
-        LibSaleSolvency.assertSaleSolvent(loanId);
-        // Borrower action window — a previous listing on this loan ended
-        // without completing (cancel / expiry / teardown). Chaining bounded
-        // listings back-to-back would recreate the indefinite borrower freeze
-        // the mandatory expiry exists to remove, with the seller front-running
-        // the borrower's unblocked transaction at every gap. Refuse to relist
-        // until the cooldown passes, surfacing WHEN so the frontend can say it.
-        {
-            uint64 cooldownUntil = s.saleRelistCooldownUntil[loanId];
-            if (block.timestamp < cooldownUntil)
-                revert SaleRelistCooldownActive(cooldownUntil);
+        if (msg.sender != seller && msg.sender != address(this)) {
+            LibServiceCapacity.chargeKeeper();
         }
 
         // #951 (redesign D1) — consolidate the lender position to its CURRENT
@@ -353,9 +305,8 @@ contract EarlyWithdrawalFacet is
         }
 
         // Remaining term to the loan's EFFECTIVE maturity (the pause credit
-        // included, #668 / #935) — revert once the loan has reached it.
+        // included, #668 / #935); the verdict above refused a matured loan.
         uint256 remainingDays = LibLoanClock.remainingTermDays(loan);
-        if (remainingDays == 0) revert InvalidSaleOffer();
 
         // Design item 1 — mandatory finite expiry, clamped at the loan's own
         // maturity. Validated in its own frame (viaIR stack ceiling).
@@ -564,12 +515,12 @@ contract EarlyWithdrawalFacet is
             listingSeconds < LibVaipakam.MIN_SALE_LISTING_SECONDS ||
             listingSeconds > LibVaipakam.MAX_SALE_LISTING_SECONDS
         ) revert SaleListingWindowInvalid();
+        // The verdict refused a loan with less than `MIN_SALE_LISTING_SECONDS`
+        // of term left, so with a window of at least that long the clamped
+        // expiry below still leaves the listing that long to run (#1841).
         uint256 maturity = LibLoanClock.maturity(loan);
         uint256 requested = block.timestamp + uint256(listingSeconds);
-        uint256 bounded = requested < maturity ? requested : maturity;
-        if (bounded < block.timestamp + LibVaipakam.MIN_SALE_LISTING_SECONDS)
-            revert SaleListingWindowInvalid();
-        expiresAt = uint64(bounded);
+        expiresAt = uint64(requested < maturity ? requested : maturity);
     }
 
     /**

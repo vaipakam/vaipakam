@@ -7,6 +7,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibLifecycle} from "../src/libraries/LibLifecycle.sol";
@@ -255,7 +256,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // reads to prove a torn-down vehicle drops out of the open-position view.
         MetricsFacet metricsFacet = MetricsFacet(ArtifactDeploy.deploy(type(MetricsFacet).name));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](36);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](37);
         cuts[25] = IDiamondCut.FacetCut({
             facetAddress: address(metricsFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -380,6 +381,15 @@ contract EarlyWithdrawalFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(NumeraireValueFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNumeraireValueFacetSelectors()
+        });
+
+        // #1841 - both lender-exit entries gate on SaleExitVerdictFacet by
+        // self-call (`requireSaleExitOpen`), so a hand-built Diamond that cuts
+        // either entry must cut this host too.
+        cuts[36] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSaleExitVerdictFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -513,13 +523,10 @@ contract EarlyWithdrawalFacetTest is Test {
     }
 
     function testSellLoanRevertsForNonExistentLoan() public {
-        // Non-existent loan has lenderTokenId = 0 which is not minted; the
-        // ownerOf lookup now reverts with OZ's ERC721NonexistentToken(0)
-        // before any facet-level field check runs.
+        // #1841 - a loan with no live lender position is reported as not
+        // Active by the shared sale-exit verdict, before any NFT lookup.
         vm.prank(lender);
-        vm.expectRevert(
-            abi.encodeWithSignature("ERC721NonexistentToken(uint256)", 0)
-        );
+        vm.expectRevert(IVaipakamErrors.LoanNotActive.selector);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(999, buyOfferId);
     }
 
@@ -868,7 +875,10 @@ contract EarlyWithdrawalFacetTest is Test {
         o.amountFilled = 1; // trip a LATER guard, proving expiry did not fire
         TestMutatorFacet(address(diamond)).setOffer(buyOfferId, o);
 
-        vm.warp(block.timestamp + 365 days);
+        // Any time past the epoch trips a bare `>=` guard; stay inside the
+        // 30-day term so the loan itself is still saleable (#1841 - past
+        // maturity the shared sale-exit verdict refuses first).
+        vm.warp(block.timestamp + 20 days);
 
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
@@ -2093,12 +2103,10 @@ contract EarlyWithdrawalFacetTest is Test {
     }
 
     function testCreateSaleOfferRevertsForNonExistentLoan() public {
-        // Non-existent loan has lenderTokenId = 0 which is not minted; the
-        // ownerOf lookup reverts with OZ's ERC721NonexistentToken(0).
+        // #1841 - a loan with no live lender position is reported as not
+        // Active by the shared sale-exit verdict, before any NFT lookup.
         vm.prank(lender);
-        vm.expectRevert(
-            abi.encodeWithSignature("ERC721NonexistentToken(uint256)", 0)
-        );
+        vm.expectRevert(IVaipakamErrors.LoanNotActive.selector);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(999, 500, true, 7 days);
     }
 
@@ -4777,8 +4785,9 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCreateSaleOfferRevertsPastMaturity() public {
         vm.warp(block.timestamp + 31 days);
 
+        // #1841 - both routes now report past maturity with one error.
         vm.prank(lender);
-        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        vm.expectRevert(EarlyWithdrawalDirectFacet.SaleLoanPastMaturity.selector);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
     }
 
@@ -8015,4 +8024,404 @@ contract EarlyWithdrawalFacetTest is Test {
         OfferCancelFacet(address(diamond)).teardownStaleSaleListing(activeLoanId);
     }
 
+    // ─── #1841: the loan-keyed sale-exit verdict ─────────────────────────────
+
+    /// @dev The two routes' verdicts for `caller` on `loanId`.
+    function _verdict(uint256 loanId, address caller)
+        internal
+        view
+        returns (
+            SaleExitVerdictFacet.SaleRefusal[] memory direct,
+            SaleExitVerdictFacet.SaleRefusal[] memory listing
+        )
+    {
+        return SaleExitVerdictFacet(address(diamond)).saleExitVerdict(loanId, caller);
+    }
+
+    /// @dev Each entry, submitted by `caller`, reverts with exactly the first
+    ///      refusal the verdict reports for its route. This is the property the
+    ///      chooser relies on: what it shows is what the contract does.
+    function _assertEntriesMatchVerdict(uint256 loanId, address caller) internal {
+        (
+            SaleExitVerdictFacet.SaleRefusal[] memory direct,
+            SaleExitVerdictFacet.SaleRefusal[] memory listing
+        ) = _verdict(loanId, caller);
+        assertGt(direct.length, 0, "fixture-live: the direct route is refused");
+        assertGt(listing.length, 0, "fixture-live: the listing route is refused");
+
+        uint256 snap = vm.snapshotState();
+        vm.prank(caller);
+        vm.expectRevert(direct[0].reason);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(loanId, buyOfferId);
+        vm.revertToState(snap);
+
+        vm.prank(caller);
+        vm.expectRevert(listing[0].reason);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
+            loanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS)
+        );
+        vm.revertToState(snap);
+    }
+
+    function _hasReason(SaleExitVerdictFacet.SaleRefusal[] memory list, bytes memory reason)
+        internal
+        pure
+        returns (bool found, uint64 reopensAt)
+    {
+        for (uint256 i; i < list.length; ++i) {
+            if (keccak256(list[i].reason) == keccak256(reason)) return (true, list[i].reopensAt);
+        }
+    }
+
+    function test_SaleExitVerdict_OpenLoanHolderHasNoRefusal() public view {
+        (
+            SaleExitVerdictFacet.SaleRefusal[] memory direct,
+            SaleExitVerdictFacet.SaleRefusal[] memory listing
+        ) = _verdict(activeLoanId, lender);
+        assertEq(direct.length, 0, "the holder may sell now");
+        assertEq(listing.length, 0, "the holder may list now");
+    }
+
+    /// @dev The verdict is caller-relative: a non-holder may not sell directly,
+    ///      and may list only as a keeper authorised for the holder.
+    function test_SaleExitVerdict_NonHolderRefusedPerRoute() public {
+        (
+            SaleExitVerdictFacet.SaleRefusal[] memory direct,
+            SaleExitVerdictFacet.SaleRefusal[] memory listing
+        ) = _verdict(activeLoanId, borrower);
+        assertEq(direct[0].reason, abi.encodeWithSelector(IVaipakamErrors.NotNFTOwner.selector));
+        assertEq(
+            listing[0].reason, abi.encodeWithSelector(IVaipakamErrors.KeeperAccessRequired.selector)
+        );
+        assertEq(direct[0].reopensAt, 0, "no time lifts an authorisation refusal");
+        _assertEntriesMatchVerdict(activeLoanId, borrower);
+    }
+
+    /// @dev The Diamond's own address is exempt only where it always was: the
+    ///      listing's keeper gate admits the self-call, while the direct sale,
+    ///      which settles to its caller, admits nobody but the holder.
+    function test_SaleExitVerdict_DiamondSelfCallAdmittedOnlyOnTheListing() public view {
+        (
+            SaleExitVerdictFacet.SaleRefusal[] memory direct,
+            SaleExitVerdictFacet.SaleRefusal[] memory listing
+        ) = _verdict(activeLoanId, address(diamond));
+        assertEq(direct.length, 1, "the direct sale refuses the Diamond");
+        assertEq(direct[0].reason, abi.encodeWithSelector(IVaipakamErrors.NotNFTOwner.selector));
+        assertEq(listing.length, 0, "the listing's self-call exemption is kept");
+    }
+
+    /// @dev A loan with no live lender position is not Active, on both routes,
+    ///      and the entries say so rather than failing inside an NFT lookup.
+    function test_SaleExitVerdict_NonexistentLoanIsNotActive() public {
+        (
+            SaleExitVerdictFacet.SaleRefusal[] memory direct,
+            SaleExitVerdictFacet.SaleRefusal[] memory listing
+        ) = _verdict(999, lender);
+        bytes memory notActive = abi.encodeWithSelector(IVaipakamErrors.LoanNotActive.selector);
+        assertEq(direct.length, 1);
+        assertEq(listing.length, 1);
+        assertEq(direct[0].reason, notActive);
+        assertEq(listing[0].reason, notActive);
+        _assertEntriesMatchVerdict(999, lender);
+    }
+
+    /// @dev Past maturity both routes are closed for good, with one error.
+    function test_SaleExitVerdict_PastMaturityClosesBothRoutes() public {
+        vm.warp(block.timestamp + 30 days);
+        (
+            SaleExitVerdictFacet.SaleRefusal[] memory direct,
+            SaleExitVerdictFacet.SaleRefusal[] memory listing
+        ) = _verdict(activeLoanId, lender);
+        bytes memory past =
+            abi.encodeWithSelector(EarlyWithdrawalDirectFacet.SaleLoanPastMaturity.selector);
+        assertEq(direct[0].reason, past);
+        assertEq(listing[0].reason, past);
+        assertEq(direct[0].reopensAt, 0);
+        _assertEntriesMatchVerdict(activeLoanId, lender);
+    }
+
+    /// @dev In the loan's last hour the direct sale stays open, but a listing
+    ///      has no minimum window left to run in.
+    function test_SaleExitVerdict_FinalHourClosesOnlyTheListing() public {
+        vm.warp(block.timestamp + 30 days - 30 minutes);
+        (
+            SaleExitVerdictFacet.SaleRefusal[] memory direct,
+            SaleExitVerdictFacet.SaleRefusal[] memory listing
+        ) = _verdict(activeLoanId, lender);
+        (bool directHas,) = _hasReason(
+            direct, abi.encodeWithSelector(EarlyWithdrawalFacet.SaleListingWindowInvalid.selector)
+        );
+        assertFalse(directHas, "the direct sale has no listing window");
+        assertEq(
+            listing[0].reason,
+            abi.encodeWithSelector(EarlyWithdrawalFacet.SaleListingWindowInvalid.selector)
+        );
+        vm.prank(lender);
+        vm.expectRevert(listing[0].reason);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
+            activeLoanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS)
+        );
+    }
+
+    /// @dev A live listing closes both routes. Anyone may tear it down once it
+    ///      expires unaccepted, so the direct sale reopens at its expiry and the
+    ///      listing route one relist cooldown later.
+    function test_SaleExitVerdict_LiveListingNamesWhenEachRouteReopens() public {
+        uint256 saleOfferId = _listSaleOffer();
+        uint64 expiresAt = OfferCancelFacet(address(diamond)).getOffer(saleOfferId).expiresAt;
+        assertGt(expiresAt, 0, "fixture-live: the listing carries its expiry");
+
+        (
+            SaleExitVerdictFacet.SaleRefusal[] memory direct,
+            SaleExitVerdictFacet.SaleRefusal[] memory listing
+        ) = _verdict(activeLoanId, lender);
+        bytes memory exists =
+            abi.encodeWithSelector(IVaipakamErrors.SaleOfferAlreadyExists.selector);
+        assertEq(direct[0].reason, exists);
+        assertEq(listing[0].reason, exists);
+        assertEq(direct[0].reopensAt, expiresAt, "direct reopens when the listing can be torn down");
+        assertEq(
+            listing[0].reopensAt,
+            expiresAt + LibVaipakam.SALE_RELIST_COOLDOWN_SECONDS,
+            "a relist waits out the cooldown the teardown starts"
+        );
+    }
+
+    /// @dev After an unfilled listing is torn down, the cooldown refusal names
+    ///      its own end, and the direct sale is open again.
+    function test_SaleExitVerdict_RelistCooldownNamesItsEnd() public {
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
+            activeLoanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS)
+        );
+        vm.warp(block.timestamp + LibVaipakam.MIN_SALE_LISTING_SECONDS + 1);
+        OfferCancelFacet(address(diamond)).teardownStaleSaleListing(activeLoanId);
+
+        (
+            SaleExitVerdictFacet.SaleRefusal[] memory direct,
+            SaleExitVerdictFacet.SaleRefusal[] memory listing
+        ) = _verdict(activeLoanId, lender);
+        assertEq(listing.length, 1, "only the cooldown refuses the listing");
+        bytes4 sel;
+        bytes memory reason = listing[0].reason;
+        assembly ("memory-safe") {
+            sel := mload(add(reason, 0x20))
+        }
+        assertEq(sel, EarlyWithdrawalFacet.SaleRelistCooldownActive.selector);
+        assertEq(
+            listing[0].reopensAt,
+            uint64(block.timestamp + LibVaipakam.SALE_RELIST_COOLDOWN_SECONDS),
+            "reopens when the cooldown the teardown started ends"
+        );
+        assertEq(direct.length, 0, "the cooldown does not bar the direct sale");
+
+        vm.prank(lender);
+        vm.expectRevert(listing[0].reason);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
+            activeLoanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS)
+        );
+    }
+
+    /// @dev Codex #3008 r1 — once the listing has expired but nobody has torn
+    ///      it down, the earliest teardown is NOW, and the relist cooldown runs
+    ///      from that teardown, not from the expiry. The verdict must not name a
+    ///      reopening time already in the past.
+    function test_SaleExitVerdict_ExpiredListingReopensFromTheTeardown() public {
+        uint256 saleOfferId = _listSaleOffer();
+        uint64 expiresAt = OfferCancelFacet(address(diamond)).getOffer(saleOfferId).expiresAt;
+        vm.warp(uint256(expiresAt) + 1 days);
+
+        (
+            SaleExitVerdictFacet.SaleRefusal[] memory direct,
+            SaleExitVerdictFacet.SaleRefusal[] memory listing
+        ) = _verdict(activeLoanId, lender);
+        bytes memory exists =
+            abi.encodeWithSelector(IVaipakamErrors.SaleOfferAlreadyExists.selector);
+        assertEq(direct[0].reason, exists);
+        assertEq(listing[0].reason, exists);
+        assertEq(direct[0].reopensAt, block.timestamp, "a teardown can run now");
+        uint64 promised = listing[0].reopensAt;
+        assertEq(
+            promised,
+            block.timestamp + LibVaipakam.SALE_RELIST_COOLDOWN_SECONDS,
+            "the cooldown starts at the earliest teardown, which is now"
+        );
+
+        // Tearing it down now makes the promised time exactly the cooldown's end.
+        OfferCancelFacet(address(diamond)).teardownStaleSaleListing(activeLoanId);
+        (, listing) = _verdict(activeLoanId, lender);
+        assertEq(listing.length, 1, "only the cooldown refuses the listing");
+        assertEq(listing[0].reopensAt, promised, "the promise matches the cooldown the teardown started");
+    }
+
+    /// @dev Codex #3008 r1 — the direct sale migrates the held balance out of
+    ///      the STORED lender's vault whoever holds the position, including when
+    ///      the holder is the stored lender. An outdated vault there refuses the
+    ///      sale, so the verdict reports it on the direct route too, and only
+    ///      once on the listing route (where the holder check already covers it).
+    function test_SaleExitVerdict_OutdatedStoredLenderVaultRefusesTheDirectSale() public {
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 1e6);
+        VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(address(new VaipakamVaultImplementation()));
+        (uint256 lenderVersion, uint256 currentVersion,,) =
+            VaultFactoryFacet(address(diamond)).getVaultVersionInfo(lender);
+        assertGt(currentVersion, lenderVersion, "fixture: the lender's vault is below the new version");
+        VaultFactoryFacet(address(diamond)).setMandatoryVaultUpgrade(currentVersion);
+
+        (
+            SaleExitVerdictFacet.SaleRefusal[] memory direct,
+            SaleExitVerdictFacet.SaleRefusal[] memory listing
+        ) = _verdict(activeLoanId, lender);
+        bytes memory upgrade = abi.encodeWithSelector(VaultFactoryFacet.VaultUpgradeRequired.selector);
+        (bool found,) = _hasReason(direct, upgrade);
+        assertTrue(found, "the held migration needs the stored lender's vault upgraded");
+        uint256 n;
+        for (uint256 i; i < listing.length; ++i) {
+            if (keccak256(listing[i].reason) == keccak256(upgrade)) ++n;
+        }
+        assertEq(n, 1, "the listing reports the one vault once");
+        _assertEntriesMatchVerdict(activeLoanId, lender);
+    }
+
+    /// @dev A live borrower offset closes both routes; it can be torn down by
+    ///      anyone once it expires, so that is when they reopen.
+    function test_SaleExitVerdict_LiveOffsetClosesBothRoutes() public {
+        TestMutatorFacet(address(diamond)).setLoanToOffsetOfferIdRaw(activeLoanId, buyOfferId);
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(buyOfferId);
+        o.expiresAt = uint64(block.timestamp + 3 days);
+        TestMutatorFacet(address(diamond)).setOffer(buyOfferId, o);
+
+        (
+            SaleExitVerdictFacet.SaleRefusal[] memory direct,
+            SaleExitVerdictFacet.SaleRefusal[] memory listing
+        ) = _verdict(activeLoanId, lender);
+        bytes memory offset =
+            abi.encodeWithSelector(EarlyWithdrawalFacet.OffsetActiveOnLoan.selector);
+        assertEq(direct[0].reason, offset);
+        assertEq(listing[0].reason, offset);
+        assertEq(direct[0].reopensAt, o.expiresAt);
+        assertEq(listing[0].reopensAt, o.expiresAt);
+        _assertEntriesMatchVerdict(activeLoanId, lender);
+    }
+
+    /// @dev Governance's per-asset pause names the paused asset on both routes,
+    ///      and needs a decision to lift, so it carries no reopening time.
+    function test_SaleExitVerdict_PausedAssetRefusesBothRoutes() public {
+        AdminFacet(address(diamond)).pauseAsset(mockCollateralERC20);
+        (
+            SaleExitVerdictFacet.SaleRefusal[] memory direct,
+            SaleExitVerdictFacet.SaleRefusal[] memory listing
+        ) = _verdict(activeLoanId, lender);
+        bytes memory paused =
+            abi.encodeWithSelector(IVaipakamErrors.AssetPaused.selector, mockCollateralERC20);
+        assertEq(direct[0].reason, paused);
+        assertEq(listing[0].reason, paused);
+        assertEq(listing[0].reopensAt, 0);
+        _assertEntriesMatchVerdict(activeLoanId, lender);
+    }
+
+    /// @dev The global pause is reported first; a manual pause names no end.
+    function test_SaleExitVerdict_GlobalPauseIsReported() public {
+        AdminFacet(address(diamond)).pause();
+        (
+            SaleExitVerdictFacet.SaleRefusal[] memory direct,
+            SaleExitVerdictFacet.SaleRefusal[] memory listing
+        ) = _verdict(activeLoanId, lender);
+        bytes memory paused = abi.encodeWithSelector(LibPausable.EnforcedPause.selector);
+        assertEq(direct[0].reason, paused);
+        assertEq(listing[0].reason, paused);
+        assertEq(direct[0].reopensAt, 0, "a manual pause needs an unpause");
+        _assertEntriesMatchVerdict(activeLoanId, lender);
+    }
+
+    /// @dev A flagged holder is refused on both routes, and the report lists
+    ///      every refusal, not only the first.
+    function test_SaleExitVerdict_SanctionedHolderAndEveryRefusalListed() public {
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(lender, true);
+        AdminFacet(address(diamond)).pauseAsset(mockERC20);
+
+        (
+            SaleExitVerdictFacet.SaleRefusal[] memory direct,
+            SaleExitVerdictFacet.SaleRefusal[] memory listing
+        ) = _verdict(activeLoanId, lender);
+        bytes memory flagged =
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, lender);
+        assertEq(direct[0].reason, flagged);
+        assertEq(listing[0].reason, flagged);
+        (bool directPaused,) = _hasReason(
+            direct, abi.encodeWithSelector(IVaipakamErrors.AssetPaused.selector, mockERC20)
+        );
+        (bool listingPaused,) = _hasReason(
+            listing, abi.encodeWithSelector(IVaipakamErrors.AssetPaused.selector, mockERC20)
+        );
+        assertTrue(directPaused && listingPaused, "later refusals are reported too");
+        _assertEntriesMatchVerdict(activeLoanId, lender);
+    }
+
+    /// @dev Sale admission is reported last, as the typed error the guard
+    ///      raises, and both entries raise exactly that error.
+    function test_SaleExitVerdict_AdmissionRefusalMatchesTheGuard() public {
+        (uint256 hf, uint256 floor) = _sinkBelowFloorButSolvent();
+        (
+            SaleExitVerdictFacet.SaleRefusal[] memory direct,
+            SaleExitVerdictFacet.SaleRefusal[] memory listing
+        ) = _verdict(activeLoanId, lender);
+        bytes memory belowFloor = abi.encodeWithSelector(
+            LibSaleSolvency.SalePositionBelowSolvencyFloor.selector, activeLoanId, hf, floor
+        );
+        assertEq(direct.length, 1);
+        assertEq(listing.length, 1);
+        assertEq(direct[0].reason, belowFloor);
+        assertEq(listing[0].reason, belowFloor);
+        assertEq(direct[0].reopensAt, 0, "a price move is not a time");
+        _assertEntriesMatchVerdict(activeLoanId, lender);
+    }
+
+    /// @dev A classifier that cannot run at all is reported as an unknown
+    ///      admission, never as clear.
+    function test_SaleExitVerdict_AdmissionThatCannotRunIsNotClear() public {
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(RiskPreviewFacet.saleAdmission.selector, activeLoanId),
+            ""
+        );
+        (SaleExitVerdictFacet.SaleRefusal[] memory direct,) = _verdict(activeLoanId, lender);
+        assertEq(direct.length, 1);
+        assertEq(
+            direct[0].reason,
+            abi.encodeWithSelector(
+                LibSaleSolvency.SaleAdmissionCodeUnknown.selector,
+                activeLoanId,
+                LibSaleSolvency.SALE_ADMISSION_UNAVAILABLE
+            )
+        );
+    }
+
+    /// @dev The listing carries the remaining term as its duration, so a cap
+    ///      below it refuses the listing until the term falls to the cap, and
+    ///      names that time. The direct sale has no such limit.
+    function test_SaleExitVerdict_DurationCapNamesWhenTheListingFits() public {
+        ConfigFacet(address(diamond)).setMaxOfferDurationDays(LibVaipakam.MIN_OFFER_DURATION_DAYS_FLOOR);
+        (
+            SaleExitVerdictFacet.SaleRefusal[] memory direct,
+            SaleExitVerdictFacet.SaleRefusal[] memory listing
+        ) = _verdict(activeLoanId, lender);
+        assertEq(direct.length, 0, "the direct sale is not capped");
+        assertEq(listing.length, 1);
+        (, , uint256 maturity, ) = LoanFacet(address(diamond)).getLoanDeadlines(activeLoanId);
+        assertEq(
+            listing[0].reopensAt,
+            maturity - uint256(LibVaipakam.MIN_OFFER_DURATION_DAYS_FLOOR) * 1 days
+        );
+        vm.prank(lender);
+        vm.expectRevert(listing[0].reason);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
+            activeLoanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS)
+        );
+
+        vm.warp(listing[0].reopensAt);
+        (, listing) = _verdict(activeLoanId, lender);
+        assertEq(listing.length, 0, "the listing fits once the term reaches the cap");
+    }
 }

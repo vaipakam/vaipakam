@@ -12629,6 +12629,34 @@ library LibVaipakam {
         _assertMovePartyNotSanctioned(to);
     }
 
+    /// @notice Whether `user`'s existing vault is behind the mandatory vault
+    ///         version, so every vault interaction through
+    ///         `VaultFactoryFacet` refuses it with `VaultUpgradeRequired`.
+    ///         False for a user with no vault: one created now is current.
+    /// @dev    The ONE rule `VaultFactoryFacet` enforces (#1841), read on its
+    ///         own by the sale-exit verdict.
+    function vaultUpgradeRequired(address user) internal view returns (bool) {
+        Storage storage s = storageSlot();
+        return s.userVaipakamVaults[user] != address(0) &&
+            s.mandatoryVaultVersion > 0 &&
+            s.vaultVersion[user] < s.mandatoryVaultVersion;
+    }
+
+    /// @notice Whether {assertPositionMoveNotSanctioned} would refuse `party`
+    ///         right now: the oracle is set and `party` is flagged, or the
+    ///         oracle is unavailable and `party` carries a confirmed flag.
+    /// @dev    The read-only half of the fail-closed move gate (#1841): the
+    ///         sale-exit verdict reports the direct sale's holder screen by it.
+    ///         The gate itself also self-heals a stale registry entry on a clean
+    ///         read, which a view cannot do and this does not try to.
+    function positionMovePartyBlocked(address party) internal view returns (bool) {
+        if (party == address(0) || storageSlot().sanctionsOracle == address(0)) return false;
+        SanctionsRead st = sanctionsStatus(party);
+        if (st == SanctionsRead.Flagged) return true;
+        if (st == SanctionsRead.Clean) return false;
+        return storageSlot().sanctionsConfirmedFlagged[party];
+    }
+
     function _assertMovePartyNotSanctioned(address party) private {
         if (party == address(0)) return;
         SanctionsRead st = sanctionsStatus(party);

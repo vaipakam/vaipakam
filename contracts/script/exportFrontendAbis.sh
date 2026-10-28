@@ -282,6 +282,8 @@ FACETS=(
   "NotificationFeeFacet"
   # #2795 -- the forced-sale host RepayPeriodicFacet self-calls.
   "ForcedSaleFacet"
+  # #1841 -- the sale-exit verdict host both lender-exit entries self-call.
+  "SaleExitVerdictFacet"
   # #2748 -- the rate-model host (model, band, offer-rate clamp).
   "RateModelFacet"
   "RiskSplitLiquidationFacet"

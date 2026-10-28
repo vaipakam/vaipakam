@@ -169,6 +169,7 @@ import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
+import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
@@ -396,6 +397,7 @@ contract SetupTest is Test {
     NumeraireValueFacet numeraireValueFacet;
     NotificationFeeFacet notificationFeeFacet;
     ForcedSaleFacet forcedSaleFacet;
+    SaleExitVerdictFacet saleExitVerdictFacet;
     RateModelFacet rateModelFacet;
     VaipakamNFTMetadataFacet nftMetadataFacet;
     RewardCompensationDispatchFacet rewardCompensationDispatchFacet;
@@ -550,6 +552,7 @@ contract SetupTest is Test {
         numeraireValueFacet = NumeraireValueFacet(ArtifactDeploy.deploy(type(NumeraireValueFacet).name));
         notificationFeeFacet = NotificationFeeFacet(ArtifactDeploy.deploy(type(NotificationFeeFacet).name));
         forcedSaleFacet = ForcedSaleFacet(ArtifactDeploy.deploy(type(ForcedSaleFacet).name));
+        saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
         rateModelFacet = RateModelFacet(ArtifactDeploy.deploy(type(RateModelFacet).name));
         nftMetadataFacet = VaipakamNFTMetadataFacet(ArtifactDeploy.deploy(type(VaipakamNFTMetadataFacet).name));
         rewardCompensationDispatchFacet = RewardCompensationDispatchFacet(ArtifactDeploy.deploy(type(RewardCompensationDispatchFacet).name));
@@ -584,7 +587,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](103);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](104);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1004,6 +1007,12 @@ contract SetupTest is Test {
             facetAddress: address(rewardRemitDestinationFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRewardRemitDestinationFacetSelectors()
+        });
+        // #1841 — the sale-exit verdict both sale facets self-call.
+        cuts[103] = IDiamondCut.FacetCut({
+            facetAddress: address(saleExitVerdictFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSaleExitVerdictFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).
