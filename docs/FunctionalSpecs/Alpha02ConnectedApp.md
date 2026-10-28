@@ -4458,7 +4458,8 @@ Its intended behaviour, as the test oracle for this surface:
   offer search is loading it says so (loading and "no matches" never
   look the same). The lender's exit chooser reads the very same list,
   never a second judgement of it: in Advanced mode its sell-now option
-  says when no offer matches and offers no jump to an empty picker,
+  says when no offer matches and offers no jump to an empty picker
+  (pointing to a listing instead only when listing is itself open),
   waits while the search is still loading, and makes no claim when the
   search could not be completed. In Basic mode the offer search is not
   run, so the option makes no claim either way. The payout math mirrors the protocol's settlement

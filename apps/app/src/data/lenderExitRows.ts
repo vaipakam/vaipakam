@@ -220,6 +220,10 @@ export interface LenderExitInput {
   instantSellCandidates: InstantSellCandidates;
 }
 
+/** Marks the sell-now row's empty-market answer until the listing row is
+ *  decided (see `lenderExitRows`). */
+const NO_OFFERS: unique symbol = Symbol('no-offers');
+
 /** The sentence for one refusal of one route.
  *
  *  Keyed on the custom error the ENTRY raises, which is what the verdict
@@ -371,7 +375,10 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
   // contract's reason leads because it is about the position and holds
   // whatever this app does; the app's gates only say the tool here
   // cannot be used for it.
-  const sellNowUnavailable =
+  // The empty-market sentence points the lender at the listing row, so
+  // which wording it takes waits until that row is decided below (#1849):
+  // a refused listing must not be offered as the way out.
+  const sellNowDecided =
     verdictPendingText(v) ??
     (v.kind === 'known' && v.direct.length > 0
       ? // The direct route's own refusals never use `directOpen`.
@@ -381,7 +388,7 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
     (input.instantSellCandidates === 'checking'
       ? copy.lenderExit.checking
       : input.instantSellCandidates === 'none'
-        ? o.sellNowNoOffers
+        ? NO_OFFERS
         : // 'some' and 'unknown' both leave the row available: one
           // because we looked and found candidates, the other because
           // we have not looked and must not pretend to have. The
@@ -391,7 +398,7 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
   // ROW, not the contract's route alone: the row can be closed by this
   // app's own gates with the contract clear, and the two rows would then
   // contradict each other (Codex #3024 r1).
-  const directOpen = sellNowUnavailable === undefined;
+  const directOpen = sellNowDecided === undefined;
 
   const listUnavailable =
     verdictPendingText(v) ??
@@ -404,6 +411,13 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
         ? o.listUnavailableFlowDisabled
         : undefined) ??
     toolsText(input);
+
+  const sellNowUnavailable =
+    sellNowDecided === NO_OFFERS
+      ? listUnavailable === undefined
+        ? o.sellNowNoOffers
+        : o.sellNowNoOffersNoListing
+      : sellNowDecided;
 
   return [
     {
