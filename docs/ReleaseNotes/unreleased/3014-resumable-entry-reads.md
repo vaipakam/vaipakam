@@ -1,4 +1,4 @@
-## Thread — busy reward days are no longer out of the keeper's reach (PR #<n>)
+## Thread — busy reward days are no longer out of the keeper's reach (PR #3022)
 
 Two keeper duties walk a day's reward entries: the close-out duty, which proves an elapsed day closed, and the zeroed-day duty, which builds a zeroed day's compensation quote. Both read a bounded number of entry pages per run. Before this change neither kept what it read: a day covered by more entries than one run's pages (more than ten thousand) was read from the same place every run, came up short every time, and was never proven or quoted. That is a stall, the case the keeper's own rules forbid ("a partial scan retains its progress").
 
