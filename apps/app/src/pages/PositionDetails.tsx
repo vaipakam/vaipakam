@@ -1327,15 +1327,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // #1849 — the instant-sale candidates, derived ONCE for both the exit
   // chooser and the sale tool (`EarlyExitFlow`), from the same live read,
   // so the chooser can no longer offer a jump to a tool that already knows
-  // the market is empty. Advanced only: in Basic neither the live loan read
-  // nor this page walk runs, and the chooser keeps saying `'unknown'`
-  // rather than putting a full active-offers walk on every lender who
-  // merely opens a position. The walk shares the one `activeOffers` cache
+  // the market is empty. The walk shares the one `activeOffers` cache
   // entry, so the tool mounting below adds no second walk.
-  // Enabled on the same two facts that mount the sale tool, so the tool is
-  // never left waiting on a walk this page switched off.
+  //
+  // The walk runs exactly while the sale tool is on the page: `true` only
+  // when `saleToolsMount` answers `tools` in Advanced (set during render
+  // below, where that answer is computed; hooks cannot follow the page's
+  // early returns). So a settled, matured or rental position, a Basic
+  // visit, or a tool still waiting on a read runs no full active-offers
+  // walk and no ghost scan with nothing to show them (Codex #3046 r1), and
+  // the gate is the tool's own, never a restatement of it.
+  const [instantSellWalkWanted, setInstantSellWalkWanted] = useState(false);
   const instantSellOffers = useActiveOffers({
-    enabled: isAdvanced && isLenderHolder,
+    enabled: instantSellWalkWanted,
   });
   const instantSellCandidates = useMemo(
     () =>
@@ -1998,6 +2002,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     },
   };
   const saleToolsMountState = saleToolsMount(saleToolsGateInput);
+  // The instant-sale walk follows the tool (see `instantSellWalkWanted`).
+  // Adjusted during render, so the commit that mounts the tool already
+  // has its walk enabled.
+  const instantSellWalkWantedNow = isAdvanced && saleToolsMountState.kind === 'tools';
+  if (instantSellWalkWantedNow !== instantSellWalkWanted) {
+    setInstantSellWalkWanted(instantSellWalkWantedNow);
+  }
 
   // `isError` disqualifies the snapshot here too (Codex r26 P2). This
   // consumer predates the health-check rule and was missed when the
@@ -4733,13 +4744,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             !feeEnt.isError &&
             feeEnt.data.lenderMode === FEE_MODE_FULL
           }
-          // #1849 — Advanced reads the SAME list the sale tool below
-          // renders (derived once, above). Basic stays `'unknown'`: the
-          // list there would cost a full active-offers walk on every
-          // lender who merely opens a position, and `'unknown'` makes no
-          // claim, leaving the row to the tool.
+          // #1849 — while the sale tool is on the page, the chooser reads
+          // the SAME list it renders (derived once, above). Otherwise no
+          // walk runs, so `'unknown'`: it makes no claim, and the row's
+          // own tool gate already explains why it is closed.
           instantSellCandidates={
-            isAdvanced
+            instantSellWalkWantedNow
               ? instantSellVerdict(instantSellCandidates)
               : 'unknown'
           }

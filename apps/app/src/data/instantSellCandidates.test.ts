@@ -83,6 +83,15 @@ describe('instantSellCandidatesOf — the three answers', () => {
     ).toBeNull();
   });
 
+  it('is null when a refetch failed behind a cached answer', () => {
+    // TanStack keeps the last success beside isError: an empty book from
+    // before the failure must not read as "no offer matches" now.
+    expect(instantSellCandidatesOf(input({ offers: [], offersFailed: true }))).toBeNull();
+    expect(
+      instantSellCandidatesOf(input({ offers: [offer()], offersFailed: true })),
+    ).toBeNull();
+  });
+
   it('is null when the indexer is unavailable', () => {
     expect(instantSellCandidatesOf(input({ offers: null }))).toBeNull();
   });

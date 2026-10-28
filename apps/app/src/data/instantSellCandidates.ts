@@ -35,9 +35,11 @@ import type { InstantSellCandidates } from './lenderExitRows';
 export interface InstantSellInput {
   /** `useActiveOffers().data`: undefined = loading, null = unavailable. */
   offers: IndexedOffer[] | null | undefined;
-  /** The offer read failed outright (its query threw). Without this a
-   *  thrown walk leaves `offers` undefined forever, and both surfaces
-   *  would wait on an answer that is not coming. */
+  /** The offer read's latest fetch failed (its query threw). Without this
+   *  a thrown first walk leaves `offers` undefined forever, and both
+   *  surfaces would wait on an answer that is not coming; and a failed
+   *  refetch leaves the last success in `offers`, which must not be
+   *  published as the current market. Either way: `null`. */
   offersFailed: boolean;
   /** The connected wallet, or undefined when none is connected. */
   address: string | undefined;
@@ -63,7 +65,12 @@ export function instantSellCandidatesOf(
   // list that cannot be priced is worse than saying so (Codex #1801 r11
   // P2): `null`, because `[]` would claim the market is empty.
   if (live.lenderForfeitFrom === undefined) return null;
-  if (offers === undefined) return offersFailed ? null : undefined;
+  // A failed walk states no market, even with an earlier answer cached:
+  // TanStack keeps the last success beside `isError`, and an empty book
+  // from before the failure is not a reason to say no offer matches now
+  // (Codex #3046 r1).
+  if (offersFailed) return null;
+  if (offers === undefined) return undefined;
   if (offers === null) return null;
   if (!address) return [];
   const me = address.toLowerCase();
