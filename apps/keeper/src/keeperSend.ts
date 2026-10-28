@@ -21,7 +21,7 @@
 
 import { keccak256, type Address, type Hex, type PublicClient, type WalletClient } from 'viem';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
-import { isDefinitiveRejection, isSendPastDeadline, withSubmissionSlot } from './submissionQueue';
+import { isDefinitiveRejection, isSendPastDeadline, withGasLimitRule, withSubmissionSlot } from './submissionQueue';
 
 /** Null when the keeper has no unmined transaction; otherwise the reason
  *  to hold this send. */
@@ -77,13 +77,17 @@ export async function sendInSubmissionSlot(
   let tx: Hex | undefined;
   try {
     await withSubmissionSlot(wallet, chainId, account.address, notAfterMs, async (nonce, signed) => {
-      const request = await wallet.prepareTransactionRequest({
-        account,
-        to,
-        data,
-        nonce,
-        chain: undefined,
-      } as never);
+      // Prepared with the keeper's one gas-limit rule (#2997).
+      const request = withGasLimitRule(
+        {},
+        await wallet.prepareTransactionRequest({
+          account,
+          to,
+          data,
+          nonce,
+          chain: undefined,
+        } as never),
+      );
       // `chain: null`: the client is chainless, and the chain id the request
       // was prepared with (read from the RPC) is the one signed over.
       const serialized = await wallet.signTransaction({ ...(request as object), chain: null } as never);
