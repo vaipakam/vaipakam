@@ -1,4 +1,4 @@
-## Thread — Interest schedules on the offer form and the loan page (PR #<n>)
+## Thread — Interest schedules on the offer form and the loan page (PR #3030)
 
 A loan on a periodic interest schedule now shows its current period on the loan page, in both modes and to anyone viewing it: the schedule, the period's deadline and grace end, the interest the period expects, what has been paid toward it and what is still owed. Until now the page said nothing about periods at all, so a borrower could reach a collateral sale without the app ever having named the deadline.
 
