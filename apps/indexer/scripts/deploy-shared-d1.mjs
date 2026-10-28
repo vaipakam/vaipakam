@@ -49,7 +49,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { applyRetiredDeployment, readRetiredDeploymentsFile, retiredDeploymentsFromManifest } from './lib/retiredDeploymentSeed.mjs';
-import { deployStamp, deployStampArgs } from '@vaipakam/lib/deployStamp';
+import { deployStamp, wranglerDeploy } from '@vaipakam/lib/deployStamp';
 
 /** apps/indexer — where wrangler.jsonc lives and every wrangler call runs. */
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -203,7 +203,9 @@ function main() {
   // deploy-lag check reads it back instead of inferring it (#2242).
   const stamp = deployStamp({ cwd: ROOT });
   console.log(`[deploy] publishing — ${'reason' in stamp ? `commit NOT recorded: ${stamp.reason}` : stamp.message}`);
-  const d = sh('wrangler', ['deploy', '--keep-vars', ...deployStampArgs(stamp)], { stdio: 'inherit' });
+  // Wrangler's own entry, without a shell, so the stamp's message stays one
+  // argument on Windows too (wranglerDeploy).
+  const d = wranglerDeploy(['--keep-vars'], { cwd: ROOT, stamp });
   if (d.status !== 0) process.exit(d.status ?? 1);
 }
 

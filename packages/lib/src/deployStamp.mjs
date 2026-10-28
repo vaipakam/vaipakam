@@ -27,7 +27,9 @@
  * git. Neither available → no stamp, a warning, and the deploy goes ahead: a
  * missing stamp costs the check its precision, not the release.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { join } from 'node:path';
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
 
@@ -77,4 +79,23 @@ export function deployStamp({ cwd = process.cwd(), env = process.env, git } = {}
 /** The wrangler flags that record `stamp` on the deployment. */
 export function deployStampArgs(stamp) {
   return 'tag' in stamp ? ['--tag', stamp.tag, '--message', stamp.message] : [];
+}
+
+/**
+ * Run `wrangler deploy <args…> <stamp flags>` for the package at `cwd`.
+ *
+ * Wrangler is started as its own JavaScript entry under this Node, never
+ * through a shell: on Windows a shell would split the stamp's message (it
+ * has spaces) into separate arguments, and wrangler would refuse them. The
+ * entry is resolved from `cwd`, so each package deploys with the wrangler
+ * it declares.
+ *
+ * @returns {import('node:child_process').SpawnSyncReturns<Buffer>}
+ */
+export function wranglerDeploy(args, { cwd = process.cwd(), stamp, stdio = 'inherit' } = {}) {
+  const entry = createRequire(join(cwd, 'package.json')).resolve('wrangler/bin/wrangler.js');
+  return spawnSync(process.execPath, [entry, 'deploy', ...args, ...deployStampArgs(stamp ?? { reason: 'none given' })], {
+    cwd,
+    stdio,
+  });
 }

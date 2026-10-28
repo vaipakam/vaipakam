@@ -59,8 +59,9 @@
  *   node .github/scripts/check-deploy-lag.mjs --selftest
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { posix } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, posix } from 'node:path';
 import { parseJsonc } from '../../apps/keeper/scripts/lib/jsonc.mjs';
 // The tag form the deploy stamp writes, from its one definition.
 import { DEPLOY_TAG as STAMP_TAG } from '../../packages/lib/src/deployStamp.mjs';
@@ -139,24 +140,32 @@ export function judgeDeployLag(workers, { now, graceSeconds, held }) {
       fail('undeployed', 'Cloudflare reports no deployment of this Worker');
       continue;
     }
-    // The version furthest behind decides; a split deployment says so.
-    const worst = [...w.versions].sort((a, b) => (b.pending?.length ?? Infinity) - (a.pending?.length ?? Infinity))[0];
-    const split = w.versions.length > 1 ? ` (split deployment, ${w.versions.length} versions; the one furthest behind is judged)` : '';
-    const from = describeBasis(worst);
-    if (!worst.pending) {
-      fail('unplaced', `deployed ${w.deployedAt}, but no commit on main precedes that time${split}`);
+    // Every version that takes traffic is judged on its own; the Worker is
+    // behind when ANY of them lacks an overdue change. Which version is
+    // "furthest behind" is not a count — two versions can each lack changes
+    // the other has — so the one lacking the OLDEST overdue change is the
+    // one described.
+    const split = w.versions.length > 1 ? ` (split deployment, ${w.versions.length} versions)` : '';
+    const unplaced = w.versions.find((v) => !v.pending);
+    if (unplaced) {
+      fail('unplaced', `deployed ${w.deployedAt}, but version ${unplaced.id} cannot be placed on main: no commit on main precedes that time${split}`);
       continue;
     }
-    const overdue = worst.pending.filter((c) => now - c.time > graceSeconds);
-    if (overdue.length === 0) {
-      const waiting = worst.pending.length ? `; ${worst.pending.length} newer change(s) still inside the grace period` : '';
-      report.push(`${w.name}: current — deployed ${w.deployedAt} ${from}${waiting}${split}${hold ? ` (held: ${hold})` : ''}`);
+    const judged = w.versions.map((v) => ({ v, overdue: v.pending.filter((c) => now - c.time > graceSeconds) }));
+    const behind = judged.filter((j) => j.overdue.length > 0);
+    if (behind.length === 0) {
+      const waiting = Math.max(...w.versions.map((v) => v.pending.length));
+      const note = waiting ? `; ${waiting} newer change(s) still inside the grace period` : '';
+      report.push(`${w.name}: current — deployed ${w.deployedAt} ${w.versions.map(describeBasis).join(' and ')}${note}${split}${hold ? ` (held: ${hold})` : ''}`);
       continue;
     }
-    const oldest = overdue[overdue.length - 1];
+    const oldestOf = (j) => j.overdue[j.overdue.length - 1];
+    const worst = behind.reduce((a, b) => (oldestOf(b).time < oldestOf(a).time ? b : a));
+    const oldest = oldestOf(worst);
+    const which = split ? `; ${behind.length} of ${w.versions.length} versions behind, described: ${worst.v.id}` : '';
     fail(
       'behind',
-      `${overdue.length} merged change(s) not deployed, the oldest ${oldest.sha.slice(0, 9)} (${oldest.subject.slice(0, 80)}) merged ${age(now - oldest.time)} ago; live deployment ${w.deployedAt} ${from}${split}`,
+      `${worst.overdue.length} merged change(s) not deployed, the oldest ${oldest.sha.slice(0, 9)} (${oldest.subject.slice(0, 80)}) merged ${age(now - oldest.time)} ago; live deployment ${w.deployedAt} ${describeBasis(worst.v)}${split}${which}`,
     );
   }
   return { problems, report };
@@ -172,7 +181,8 @@ function describeBasis(v) {
 
 // ── facts ────────────────────────────────────────────────────────────────
 
-const git = (args) => execFileSync('git', ['-c', 'core.quotePath=false', ...args], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+const git = (args, cwd) =>
+  execFileSync('git', ['-c', 'core.quotePath=false', ...args], { cwd, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
 
 function tracked() {
   return git(['ls-files', '-z']).split('\0').filter(Boolean);
@@ -253,9 +263,17 @@ function commitExists(rev) {
   }
 }
 
-/** Main's commits not in `base` that change a bundle input, newest first. */
-function pendingSince(base, ref, worker) {
-  const out = git(['log', '--format=%x1e%H%x1f%ct%x1f%s', '--name-only', `${base}..${ref}`, '--', ...worker.inputs]);
+/**
+ * The changes to the Worker's code that reached main after `base`, newest
+ * first, one per INTEGRATION — a commit on main's first-parent line — timed
+ * by when it landed on main. A merged branch's own commits keep their
+ * authoring times, so timing by them would start the grace period before
+ * the change reached main; the integration commit's committer time is when
+ * it did (a merge, squash or rebase onto main all stamp it then). A merge is
+ * read as what it brought in: its difference from its first parent.
+ */
+function pendingSince(base, ref, worker, cwd) {
+  const out = git(['log', '--first-parent', '--diff-merges=first-parent', '--format=%x1e%H%x1f%ct%x1f%s', '--name-only', `${base}..${ref}`], cwd);
   const pending = [];
   for (const block of out.split('\x1e').slice(1)) {
     const [head, ...rest] = block.split('\n');
@@ -301,6 +319,10 @@ async function gather(worker, { ref, auth }) {
     let tag = '';
     try {
       const r = await cloudflare(`${encodeURIComponent(worker.name)}/versions/${encodeURIComponent(v.version_id)}`, auth);
+      // A version the deployment names but the API cannot find is a failed
+      // read, never an unstamped version: only a version actually read may
+      // be placed by its deploy time.
+      if (r.status !== 200) throw new Error(`HTTP ${r.status}`);
       tag = String(r.result?.annotations?.['workers/tag'] ?? '');
     } catch (err) {
       return { ...worker, read: 'error', error: `version ${v.version_id}: ${String(err.message).slice(0, 80)}` };
@@ -360,7 +382,13 @@ function selftest() {
   r = judgeDeployLag([w('a', [v(null)])], opts);
   ok(r.problems[0].key === 'unplaced:a', 'a deployment no commit precedes fails as unplaced');
   r = judgeDeployLag([w('a', [v([]), v([c(30)], { id: 'w' })])], opts);
-  ok(r.problems.length === 1 && /split deployment/.test(r.problems[0].text), 'a split deployment is judged by the version furthest behind');
+  ok(r.problems.length === 1 && /split deployment/.test(r.problems[0].text) && /1 of 2 versions behind/.test(r.problems[0].text), 'a split deployment with one version behind is behind');
+  // Divergent versions: one lacks two NEW changes (inside grace), the other
+  // lacks one OLD change. A count would pick the first and pass.
+  r = judgeDeployLag([w('a', [v([c(1), c(2)], { id: 'x' }), v([c(30, '2'.repeat(40))], { id: 'y' })])], opts);
+  ok(r.problems.length === 1 && /described: y/.test(r.problems[0].text) && /222222222/.test(r.problems[0].text), 'every version is judged, not the one missing the most changes');
+  r = judgeDeployLag([w('a', [v([]), v(null, { id: 'z' })])], opts);
+  ok(r.problems[0]?.key === 'unplaced:a' && /version z/.test(r.problems[0].text), 'one unplaced version makes the Worker unplaced');
   const k1 = judgeDeployLag([w('a', [v([c(30)])])], opts).problems[0].key;
   const k2 = judgeDeployLag([w('a', [v([c(30), c(40), c(50)])])], opts).problems[0].key;
   ok(k1 === k2, 'the key carries no count, so more merges do not re-notify');
@@ -385,7 +413,55 @@ function selftest() {
     threw = true;
   }
   ok(threw, 'a hold with no reason is refused');
+  selftestIntegrationTime(ok);
   console.log('check-deploy-lag selftest: OK');
+}
+
+/**
+ * A branch authored days ago and merged a minute ago is timed by the merge:
+ * a throwaway repository, a merge without squashing, and pendingSince.
+ */
+function selftestIntegrationTime(ok) {
+  const repo = mkdtempSync(join(tmpdir(), 'deploy-lag-selftest-'));
+  try {
+    const at = (when) => ({
+      ...process.env,
+      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_AUTHOR_NAME: 't',
+      GIT_AUTHOR_EMAIL: 't@t.test',
+      GIT_COMMITTER_NAME: 't',
+      GIT_COMMITTER_EMAIL: 't@t.test',
+      GIT_AUTHOR_DATE: `@${when} +0000`,
+      GIT_COMMITTER_DATE: `@${when} +0000`,
+    });
+    const g = (args, when) => execFileSync('git', args, { cwd: repo, env: at(when), encoding: 'utf8' }).trim();
+    const put = (file, body) => {
+      mkdirSync(join(repo, dirname(file)), { recursive: true });
+      writeFileSync(join(repo, file), body);
+    };
+    g(['init', '-q', '-b', 'main'], 1000);
+    put('apps/w/src/a.ts', '1');
+    g(['add', '-A'], 1000);
+    g(['commit', '-q', '-m', 'base'], 1000);
+    const base = g(['rev-parse', 'HEAD'], 1000);
+    g(['checkout', '-q', '-b', 'feature'], 2000);
+    put('apps/w/src/a.ts', '2');
+    g(['commit', '-q', '-am', 'old branch work'], 2000);
+    put('apps/w/e2e/x.spec.ts', '');
+    g(['add', '-A'], 2000);
+    g(['commit', '-q', '-m', 'test only'], 2000);
+    g(['checkout', '-q', 'main'], 9000);
+    put('docs/x.md', '');
+    g(['add', '-A'], 9000);
+    g(['commit', '-q', '-m', 'unrelated'], 9000);
+    g(['merge', '-q', '--no-ff', '-m', 'merge feature', 'feature'], 9500);
+    const pending = pendingSince(base, 'HEAD', { dir: 'apps/w', inputs: ['apps/w'] }, repo);
+    ok(pending.length === 1 && pending[0].subject === 'merge feature', 'a merged branch is one change, the merge itself');
+    ok(pending[0].time === 9500, 'its time is when it reached main, not when the branch was written');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 }
 
 // ── main ─────────────────────────────────────────────────────────────────
