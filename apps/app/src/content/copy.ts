@@ -3222,10 +3222,6 @@ const copySource = {
       // directly above it.
       sellNowAlreadyListedNoCancel:
         'Not available while this position is listed for sale. The listing was made from another device, so it can’t be cancelled here — cancel it where it was listed.',
-      // Codex r1 P2 — the listing lock read is authoritative for BOTH
-      // sale paths, so an unanswered read must not read as "clear".
-      saleLockChecking:
-        'Checking whether this position is already listed…',
       // Codex r3 P2 — both sale tools are held behind the
       // fee-entitlement disclosure read, and their jump anchors go
       // with them. A row left available then rendered a jump to an
@@ -3240,19 +3236,6 @@ const copySource = {
         'Already listed — this position is on sale now. We couldn’t confirm you still hold it from this device, so the cancel control isn’t available here at the moment; the card below shows what we can see, and reloading may restore it.',
       sellNowAlreadyListedCancelUnverified:
         'Not available while this position is listed for sale. We couldn’t confirm you still hold it from this device, so cancelling isn’t offered here at the moment — reloading may restore it.',
-      // Codex r8 P2 — both sale entry points require the loan to be
-      // exactly Active, and a fallback-pending loan is not. The card
-      // stays mounted (the status is not terminal and the wait row
-      // still applies) but neither sale can be started.
-      saleFallbackPending:
-        'Not available while this loan is settling through its fallback path — a sale can only be started on a loan that is running normally. Waiting still applies, and the loan’s own settlement continues.',
-      // Codex r6 P2 — the due date is chain-anchored from whichever
-      // live read answered; with neither answering there is no
-      // authoritative source, and reporting "not past due" would be a
-      // claim made from a read that did not happen. Fails closed: both
-      // contracts refuse an exit past maturity.
-      maturityUnknown:
-        'Not available right now — we couldn’t confirm this loan’s due date, and a sale can’t be started once it has passed. This usually clears on its own in a moment.',
       // Codex r8/r9/r10 P2 — these two sentences used to NAME the read
       // involved, and the name was wrong twice: r8 sent a token-metadata
       // failure into a fee-terms sentence, r9 split them apart, r10
@@ -3291,10 +3274,69 @@ const copySource = {
         'Not available on this network yet — the listing tools aren’t published to this deployment.',
       listUnavailableNft:
         'Not available for this position — listing currently supports loans backed by ERC-20 collateral only.',
-      listUnavailableHeldVpfi:
-        'Not available until this position’s outstanding VPFI balance is cleared — a listing needs a single settlement identity. Selling now, or waiting for the loan to close, stay open meanwhile.',
       listUnavailableOffsetPending:
         'Not available while the borrower has a linked exit pending on this loan — that has to complete or be cancelled first.',
+      // #1841 — the sentence for each refusal the contract's sale verdict
+      // can return (`SaleExitVerdictFacet`), keyed in `lenderExitRows`
+      // on the custom error the sale entry itself raises. Refusals with
+      // an older sentence above (already listed, past due, too close to
+      // the due date, NFT collateral, the borrower's offset) keep it.
+      refusal: {
+        verdictChecking: 'Checking whether this sale can be started on this position…',
+        verdictFailed:
+          'Not available right now — we couldn’t check whether this sale can be started. This usually clears on its own; reloading also retries.',
+        // A Diamond cut before the verdict existed answers
+        // `FunctionDoesNotExist` every time, so this is a fact about the
+        // deployment, not a transient failure.
+        verdictUnserved:
+          'Not available here — this network’s contracts can’t yet say whether a sale can be started, so the app doesn’t offer one.',
+        paused:
+          'Not available while the protocol is paused. Waiting still applies.',
+        // Deliberately non-specific (the retail copy rule): the detailed
+        // explanation belongs to the in-app banner a flagged wallet sees.
+        screened:
+          'Not available — the protocol refuses this sale for one of the addresses involved.',
+        loanNotActive:
+          'Not available — a sale can only be started on a loan that is running normally, and this one isn’t right now (for example, it may be settling after a missed repayment). Waiting still applies.',
+        notHolder:
+          'Not available from this wallet — only the wallet holding the lender position can sell it.',
+        rental: 'Not available for this loan — positions in NFT rentals can’t be sold.',
+        relistCooldown:
+          'Not available yet — a listing that ended without a buyer can’t be relisted straight away.',
+        // Replaces the old held-VPFI line, which also promised that
+        // selling now stayed open. Whether it does is the direct route's
+        // own verdict, shown on its own row.
+        heldVpfi:
+          'Not available until the VPFI balance held on this position is cleared — a listing needs a single settlement identity.',
+        durationCap: tmpl(
+          'Not available yet — the rest of this loan’s term is longer than the longest listing allowed ({{cap}} days).',
+          ['cap'],
+        ),
+        assetPaused:
+          'Not available while one of this loan’s assets is paused by the protocol.',
+        // #1214: the app has no vault-upgrade action yet, and saying so
+        // is better than implying one exists somewhere on the page.
+        vaultUpgrade:
+          'Not available until a vault involved in this sale is upgraded to the current version, which this app can’t do yet.',
+        admissionBlocked:
+          'Not available right now — the position doesn’t meet the protocol’s conditions for a buyer to take it over (its collateral cover or terms). That can change as prices move.',
+        admissionUnpriceable:
+          'Not available right now — a price for one of this loan’s assets can’t be read, so the protocol can’t check the sale.',
+        admissionUnknown:
+          'Not available right now — the protocol couldn’t check whether this position can change hands.',
+        // A refusal this build has no words for is still a refusal: the
+        // route is closed either way, and calling it open because the
+        // sentence is missing would be the one wrong answer.
+        unrecognised: tmpl(
+          'Not available — the protocol refuses this sale ({{name}}).',
+          ['name'],
+        ),
+        unnamedError: 'a reason this app doesn’t recognise',
+        // The contract's own lower bound: by time alone, or by a step
+        // anyone may take (clearing an expired listing). It may lift
+        // later than this, never earlier.
+        reopensEarliest: tmpl('The earliest this can lift is {{time}}.', ['time']),
+      },
     },
     // Past maturity BOTH sale rows flip to this: a fully-elapsed term
     // is refused at creation, so advertising an exit that cannot be
