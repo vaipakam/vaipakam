@@ -1,4 +1,4 @@
-## Thread — Forced close-out reconciles a replaced transaction after a reload (PR #<n>)
+## Thread — Forced close-out reconciles a replaced transaction after a reload (PR #3040)
 
 The forced close-out card watches a submitted close-out with a wait that
 notices when the wallet speeds it up or cancels it. Closing the page lost
