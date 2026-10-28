@@ -1391,7 +1391,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](50);
+        s = new bytes4[](52);
         s[0] = AdminFacet.setTreasury.selector;
         s[1] = AdminFacet.getTreasury.selector;
         s[2] = AdminFacet.setZeroExProxy.selector;
@@ -1456,6 +1456,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[47] = AdminFacet.autoPauseCooldownSeconds.selector;
         s[48] = AdminFacet.autoPauseAvailableAt.selector;
         s[49] = AdminFacet.setAutoPauseCooldownSeconds.selector;
+        // #1637 — reads for the two kill switches.
+        s[50] = AdminFacet.aggregatorAdaptersPaused.selector;
+        s[51] = AdminFacet.peerLtvReadsPaused.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
@@ -1613,7 +1616,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // returns true for them. The token's metadata (tokenURI, contractURI
         // and their image / external_url configuration) is cut to
         // VaipakamNFTMetadataFacet (#2957), see {_getNftMetadataSelectors}.
-        s = new bytes4[](22);
+        s = new bytes4[](23);
         s[0] = VaipakamNFTFacet.mintNFT.selector;
         s[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         s[2] = VaipakamNFTFacet.burnNFT.selector;
@@ -1639,6 +1642,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[19] = bytes4(keccak256("tokenByIndex(uint256)"));
         s[20] = bytes4(keccak256("tokenOfOwnerByIndex(address,uint256)"));
         s[21] = VaipakamNFTFacet.nftStatusOf.selector;
+        s[22] = VaipakamNFTFacet.highestTokenId.selector;
     }
 
     /// @dev #2957 - the position NFT's public metadata: the token and
@@ -2094,7 +2098,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      asserts, split off `RiskAccessFacet` into its own `RiskPreviewFacet`
     ///      so both facets keep EIP-170 header room. All are `view`.
     function _getRiskPreviewFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](10);
+        s = new bytes4[](11);
         s[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         s[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         s[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -2114,6 +2118,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // mirrored client-side on purpose: a client copy of the rule drifts from
         // it the moment the rule changes, and this one has changed twice.
         s[9] = RiskPreviewFacet.quoteSellerBounds.selector;
+        // #2672 — the figures a standing listing recorded.
+        s[10] = RiskPreviewFacet.getSaleListingBounds.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.

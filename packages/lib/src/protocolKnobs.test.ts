@@ -50,11 +50,11 @@ describe('PROTOCOL_KNOB_GETTERS', () => {
   });
 
   it('marks exactly the settings that can change without an event (Codex #2683 r3, #2685, #2815 r1)', () => {
-    // `sequencerUptimeFeed`: its only setter emits nothing. `ethNumeraireFeed`:
-    // `setNumeraire` announces it, `setEthUsdFeed` writes the same slot
-    // silently. When #2685 adds the events, this list empties and the
-    // console's disclosure goes with it.
-    expect([...EVENTLESS_PROTOCOL_KNOBS].sort()).toEqual(['ethNumeraireFeed', 'sequencerUptimeFeed']);
+    // #2685 gave the last two (`sequencerUptimeFeed`, `ethNumeraireFeed`)
+    // their events, so no published setting changes silently any more and
+    // the console's disclosure shows on no row. A setting added later that
+    // has a silent setter must be marked here, by name.
+    expect([...EVENTLESS_PROTOCOL_KNOBS].sort()).toEqual([]);
   });
 
   it('names a setter event for every setting that is not eventless, each one an event the Diamond declares (Codex #2815 r1)', () => {

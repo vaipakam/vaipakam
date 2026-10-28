@@ -154,28 +154,30 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             revert OfferAlreadyConsumedBySale(uint96(offerId));
         }
 
-        // ── Range Orders Phase 1 — cancel cooldown ─────────────────
-        // Active ONLY when the master `partialFillEnabled` flag is on.
-        // Defends against the cancel-front-run vector on the matching
-        // path: an attacker can't watch matchOffers in mempool, race a
-        // cancelOffer in, and reclaim vaulted assets before the match
-        // lands. With matching dormant (default), there's no front-run
-        // vector, so the cooldown stays off. Partial-filled offers
-        // (`amountFilled > 0`) bypass the cooldown unconditionally —
-        // the lender already committed value through prior matches.
+        // ── Cancel cooldown (#664) ──────────────────────────────────
+        // Applies to EVERY unfilled offer, whichever path will bind it.
+        // A creator who watches the mempool can otherwise race a
+        // `cancelOffer` in front of a counterparty's `acceptOffer` (or a
+        // `matchOffers`) and have it revert; the direct-accept book is
+        // live whether or not range matching is switched on, so the
+        // cooldown is not tied to `partialFillEnabled`.
         //
-        // #195 — EXPIRED offers also bypass the cooldown. Rationale:
-        // every accept / match path refuses to bind an expired offer
-        // to a loan (the `isOfferExpired` gate in `_acceptOffer` and
-        // `previewMatch`), so a front-run cancel against an expired
-        // offer can't grief anyone — there's nothing left to race.
-        // Without this bypass an expiresAt < createdAt + 5 min offer
-        // would be stuck "expired but uncleanable" until the cooldown
-        // separately elapsed, which is a UX cliff with no defensive
-        // value.
+        // What it does NOT do, stated so nobody reads more into it: it
+        // only covers the first `MIN_OFFER_CANCEL_DELAY` after creation.
+        // Past that, a cancel and an accept for the same offer are an
+        // ordinary transaction race, and whichever lands first wins.
+        //
+        // Partial-filled offers (`amountFilled > 0`) bypass it — the
+        // creator already committed value through prior matches.
+        //
+        // #195 — EXPIRED offers also bypass it. Every accept / match path
+        // refuses to bind an expired offer (the `isOfferExpired` gate in
+        // `_acceptOffer` and `previewMatch`), so a cancel against one
+        // cannot grief anyone, and an offer whose expiry falls inside the
+        // window would otherwise be "expired but uncleanable" until the
+        // window separately elapsed.
         if (
-            s.protocolCfg.partialFillEnabled
-            && offer.amountFilled == 0
+            offer.amountFilled == 0
             && offer.createdAt != 0
             && block.timestamp < uint256(offer.createdAt) + LibVaipakam.MIN_OFFER_CANCEL_DELAY
             && !LibVaipakam.isOfferExpired(offer)

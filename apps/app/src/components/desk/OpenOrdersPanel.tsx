@@ -1118,14 +1118,12 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
 
   // Cancel-cooldown gate (Codex #1134 round-3) — mirrors
   // OfferCancelFacet's exact CancelCooldownActive condition:
-  // `partialFillEnabled && amountFilled == 0 && createdAt != 0 &&
+  // `amountFilled == 0 && createdAt != 0 &&
   // block.timestamp < createdAt + MIN_OFFER_CANCEL_DELAY &&
   // !isOfferExpired(offer)` — so expired and partially-filled rows
-  // keep the immediate cancel, exactly like the contract. The
-  // `partialFillEnabled` protocol flag isn't surfaced client-side;
-  // assuming it ON (it is, on every live deploy) costs at most a
-  // five-minute wait on a deploy where the contract wouldn't enforce
-  // one — strictly better than arming a doomed transaction. A row
+  // keep the immediate cancel, exactly like the contract. Since #664
+  // the contract applies it whatever the partial-fill flag says, so
+  // this gate no longer assumes that flag. A row
   // without `createdAt` (older indexer worker) fails open: the chain-
   // sourced rows that normally feed this panel always carry it.
   const createdAt = offer.createdAt ?? 0;

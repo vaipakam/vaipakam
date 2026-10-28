@@ -738,21 +738,13 @@ contract ConfigFacet is DiamondAccessControl {
     ///         native-VPFI tariff with no oracle step and no numeraire
     ///         linkage (`setNumeraire` no longer rotates it). This notice
     ///         said "value in numeraire-units" until #1349.
-    /// @dev    The PARAMETER NAME is still `newFeeNumeraire1e18` and is
-    ///         therefore still wrong for decoders that surface argument
-    ///         names. Renaming it changes the emitted ABI, so it needs the
-    ///         frontend/keeper ABI re-export in the same change rather than
-    ///         a comment-only edit — tracked separately (#1934). The event
-    ///         SIGNATURE and topic hash are unaffected by a name change, so
-    ///         topic routing and positional decoding keep working and an
-    ///         ALREADY-GENERATED ABI still decodes the on-chain layout. That
-    ///         is narrower than "nothing breaks", which is what this said
-    ///         until #1349: a consumer regenerated from the new ABI and
-    ///         reading `event.args.newFeeNumeraire1e18` by name breaks on
-    ///         the rename — which is exactly why #1934 has to carry the
-    ///         re-export and the consumer update together.
+    /// @dev    #1934 — the parameter was named `newFeeNumeraire1e18` until
+    ///         the rename; the event signature and topic hash do not include
+    ///         argument names, so positional and topic-based decoding are
+    ///         unchanged.
+    /// @param  newFeeVpfi1e18 The new fee, a VPFI quantity in wei.
     /// @custom:event-category informational/config
-    event NotificationFeeSet(uint256 newFeeNumeraire1e18);
+    event NotificationFeeSet(uint256 newFeeVpfi1e18);
     /// @notice T-032 — passed fee outside the [floor, ceil] bounds.
     error InvalidNotificationFee(
         uint256 provided,

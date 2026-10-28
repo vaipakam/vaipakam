@@ -125,6 +125,20 @@ const CONFIG_EVENT_NAMES: ReadonlySet<string> = new Set([
   'ZeroExProxySet',
   'AllowanceTargetSet',
   'SanctionsOracleSet',
+  // #2685 — chain-level oracle settings and the backstop switches, which
+  // wrote silently until they gained these events.
+  'ChainlinkRegistrySet',
+  'UsdChainlinkDenominatorSet',
+  'EthChainlinkDenominatorSet',
+  'WethContractSet',
+  'EthNumeraireFeedSet',
+  'StableTokenFeedSet',
+  'UniswapV3FactorySet',
+  'SequencerUptimeFeedSet',
+  'BackstopEnabledSet',
+  'BackstopFillEnabledSet',
+  'BackstopAbsorbEnabledSet',
+  'MinBackstopDelaySet',
   // #2071 — the setters of the single-output settings published beside the
   // bundle are NOT listed here: each `PROTOCOL_KNOB_GETTERS` entry names its
   // own setter events and they are added below (Codex #2815 r1), so a new

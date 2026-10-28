@@ -2180,6 +2180,28 @@ contract EarlyWithdrawalFacetTest is Test {
         assertFalse(o.accepted, "not yet accepted");
     }
 
+    /// @dev #2672 — the recorded seller floor and held ceiling are readable,
+    ///      and they are exactly the figures the pre-listing quote gave for the
+    ///      listing's terms.
+    function testSaleListingBoundsReadBackTheRecordedFigures() public {
+        (bool before_, , , , ) =
+            RiskPreviewFacet(address(diamond)).getSaleListingBounds(activeLoanId);
+        assertFalse(before_, "nothing recorded before listing");
+
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+
+        (bool recorded, uint256 floorNet, uint256 maxHeld, uint256 expiry, uint256 heldNow) =
+            RiskPreviewFacet(address(diamond)).getSaleListingBounds(activeLoanId);
+        assertTrue(recorded, "bounds recorded at listing");
+        assertGt(expiry, block.timestamp, "finite expiry recorded");
+        (uint256 qFloor, uint256 qHeld) =
+            RiskPreviewFacet(address(diamond)).quoteSellerBounds(activeLoanId, 500, expiry);
+        assertEq(floorNet, qFloor, "recorded floor = quoted floor");
+        assertEq(maxHeld, qHeld, "recorded ceiling = quoted ceiling");
+        assertLe(heldNow, maxHeld, "held now within the recorded ceiling");
+    }
+
     /// @dev #951 (Codex #959) — one live listing per loan. A second
     ///      createLoanSaleOffer for the same loan (while the first is live)
     ///      reverts instead of minting a duplicate that strands the link.

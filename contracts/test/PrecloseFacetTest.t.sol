@@ -1732,6 +1732,8 @@ contract PrecloseFacetTest is Test {
             activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20
         );
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(borrower);
         OfferCancelFacet(address(diamond)).cancelOffer(newOfferId);
 
@@ -1746,10 +1748,12 @@ contract PrecloseFacetTest is Test {
             "borrower made whole on cancel (new-offer principal refunded)"
         );
 
-        // Link cleared → a fresh offset is permitted again.
+        // Link cleared → a fresh offset is permitted again. 29 days: the
+        // cooldown wait moved the clock, and a replacement term may not end
+        // past the original loan's deadline.
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(
-            activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20
+            activeLoanId, 500, 29, mockCollateralERC20, COLLATERAL, true, mockERC20
         );
     }
 

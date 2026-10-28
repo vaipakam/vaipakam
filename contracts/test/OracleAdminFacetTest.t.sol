@@ -252,4 +252,31 @@ contract OracleAdminFacetTest is SetupTest {
         );
         OracleAdminFacet(address(diamond)).setTierReferenceAssets(1, assets);
     }
+
+    // ─── #2685: every chain-level oracle setter announces its change ─────────
+
+    function testChainLevelOracleSettersEmit() public {
+        OracleAdminFacet a = OracleAdminFacet(address(diamond));
+
+        vm.expectEmit(false, true, false, false, address(diamond));
+        emit LibVaipakam.SequencerUptimeFeedSet(address(0), address(0xA1));
+        a.setSequencerUptimeFeed(address(0xA1));
+
+        vm.expectEmit(false, true, false, false, address(diamond));
+        emit LibVaipakam.EthNumeraireFeedSet(address(0), address(0xA2));
+        a.setEthUsdFeed(address(0xA2));
+
+        vm.expectEmit(false, true, false, false, address(diamond));
+        emit LibVaipakam.WethContractSet(address(0), address(0xA3));
+        a.setWethContract(address(0xA3));
+
+        vm.expectEmit(false, true, false, false, address(diamond));
+        emit LibVaipakam.UniswapV3FactorySet(address(0), address(0xA4));
+        a.setUniswapV3Factory(address(0xA4));
+
+        // The previous value is the one the last write left.
+        vm.expectEmit(true, true, false, false, address(diamond));
+        emit LibVaipakam.SequencerUptimeFeedSet(address(0xA1), address(0));
+        a.setSequencerUptimeFeed(address(0));
+    }
 }
