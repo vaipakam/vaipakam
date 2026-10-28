@@ -5,12 +5,11 @@
  * answer: does this token currently exist on THIS network, who holds
  * it, which loan does it control, and is it transfer-locked?
  *
- * Existence honesty: `ownerOf` reverts identically for a burned
- * (claim-completed) token and one never minted, and the contracts
- * expose no mint-counter view — so the negative verdict states BOTH
- * possibilities rather than guessing. (Recorded as a spec divergence
- * in docs/FunctionalSpecs/_CodeVsDocsAudit.md — the spec wants the
- * three-way distinction; that needs a contract view.)
+ * Existence honesty: `ownerOf` reverts identically for a retired token
+ * and one never minted, so the negative verdict asks the contract's
+ * `highestTokenId` which it is (#2529, `data/nftAbsence.ts`). Where the
+ * deployment predates that view, or the read fails, the verdict states
+ * both possibilities rather than guessing.
  *
  * Clone resistance (#745): a copied verifier can render any verdict it
  * likes and add a "connect to confirm" step that drains the wallet. No
@@ -28,12 +27,13 @@ import {
   ContractFunctionRevertedError,
   ContractFunctionZeroDataError,
 } from 'viem';
-import { BadgeCheck, ShieldCheck, ShieldQuestion } from 'lucide-react';
+import { BadgeCheck, ShieldAlert, ShieldCheck, ShieldQuestion, ShieldX } from 'lucide-react';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
 import { LOAN_STATUS_ACTIVE, readLoanLive } from '../contracts/loanLive';
 import { isAssetIlliquidLive } from '../contracts/preflights';
+import { readNftAbsence, type NftAbsence } from '../data/nftAbsence';
 import { AssetType } from '../lib/types';
 import { shortAddress } from '../lib/format';
 import { EmptyState } from '../components/EmptyState';
@@ -50,6 +50,8 @@ const LOCK_LABELS = (): Record<number, string> => ({
 
 interface VerifierResult {
   exists: boolean;
+  /** Why the token does not exist; set only when `exists` is false. */
+  absence?: NftAbsence;
   owner?: `0x${string}`;
   loanId?: string;
   offerId?: string;
@@ -106,6 +108,9 @@ export function NftVerifier() {
     queryFn: async (): Promise<VerifierResult> => {
       const diamond = readChain.diamondAddress;
       const id = BigInt(tokenIdParam!);
+      // One block for the existence read and, on a revert, the read that
+      // says why — see `readNftAbsence`.
+      const blockNumber = await readClient!.getBlockNumber();
       let owner: `0x${string}`;
       try {
         owner = (await readClient!.readContract({
@@ -113,11 +118,11 @@ export function NftVerifier() {
           abi: DIAMOND_ABI_VIEM,
           functionName: 'ownerOf',
           args: [id],
+          blockNumber,
         })) as `0x${string}`;
       } catch (err) {
-        // Only a REVERT proves non-existence (burned OR never minted
-        // — indistinguishable on-chain today). A transport error is
-        // NOT knowledge: rethrow so the query lands in the visible
+        // Only a REVERT proves non-existence. A transport error is NOT
+        // knowledge: rethrow so the query lands in the visible
         // check-failed state instead of caching a false "worthless"
         // verdict (same revert-vs-transport split as the ownership
         // preflights).
@@ -125,7 +130,12 @@ export function NftVerifier() {
           err instanceof BaseError &&
           (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
             err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
-        if (isRevert) return { exists: false };
+        if (isRevert) {
+          return {
+            exists: false,
+            absence: await readNftAbsence(readClient!, diamond, id, blockNumber),
+          };
+        }
         throw err;
       }
       // Summary + lock are best-effort embellishments; owner alone
@@ -371,15 +381,45 @@ export function NftVerifier() {
           </p>
           {explorerCheck}
         </section>
+      ) : result.data.absence === 'retired' ? (
+        // A WARNING, not an error (the spec): the token was real here,
+        // and what it no longer carries is any claim or role.
+        <section className="card" data-testid="nft-verdict-retired">
+          <div className="card-title">
+            <ShieldAlert aria-hidden />
+            <h3 style={{ margin: 0 }}>
+              {copy.nftVerifier.retiredTitle(tokenIdParam!)}
+            </h3>
+          </div>
+          <p className="muted">{copy.nftVerifier.retiredBody}</p>
+          {explorerCheck}
+        </section>
+      ) : result.data.absence === 'never-minted' ? (
+        <section className="card" data-testid="nft-verdict-never-minted">
+          <div className="card-title">
+            <ShieldX aria-hidden />
+            <h3 style={{ margin: 0 }}>
+              {copy.nftVerifier.neverMintedTitle(tokenIdParam!, readChain.name)}
+            </h3>
+          </div>
+          <p className="muted">{copy.nftVerifier.neverMintedBody(readChain.name)}</p>
+          {explorerCheck}
+        </section>
       ) : (
-        <section className="card">
+        // The chain could not say which: either this deployment predates
+        // the view, or the read that would say failed.
+        <section className="card" data-testid="nft-verdict-gone">
           <div className="card-title">
             <ShieldQuestion aria-hidden />
             <h3 style={{ margin: 0 }}>
               {copy.nftVerifier.goneTitle(tokenIdParam!)}
             </h3>
           </div>
-          <p className="muted">{copy.nftVerifier.goneBody}</p>
+          <p className="muted">
+            {result.data.absence === 'unchecked'
+              ? copy.nftVerifier.goneBodyUnchecked
+              : copy.nftVerifier.goneBody}
+          </p>
           {explorerCheck}
         </section>
       )}
