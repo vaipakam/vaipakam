@@ -326,6 +326,20 @@ runs half of it on old code:
   (`PredatesLoanClock`). Never compute `startTime + durationDays * 1 days` as
   a deadline in new code; read `LibLoanClock`.
 
+- **OfferPreviewFacet + every facet that admits a periodic-interest cadence
+  (#3009, #3025).** The cadence rule lives once, in `LibCadenceAdmission`, and
+  is reached through OfferPreviewFacet: OfferCreateFacet, OfferMutateFacet and
+  OfferAcceptFacet self-call `requireCadenceAdmitted` when an offer is posted
+  or changed, and LoanFacet self-calls `requireOriginationCadenceAdmitted` for
+  every loan it opens from an offer (the lender-sale vehicle excepted), which
+  previewAccept and OfferMatchFacet's previewMatch ask too. A caller refreshed
+  without the host reverts `FunctionDoesNotExist` on every offer post or loan
+  creation (a hard revert, never an unchecked cadence). `RefreshAllFacetsInPlace`
+  and `ReplaceStaleFacets` carry the host; `RedeployFacets` carries LoanFacet
+  and OfferMatchFacet but not the host, so it refuses a Diamond that does not
+  already route `requireOriginationCadenceAdmitted`
+  (`PredatesCadenceAdmissionHost`).
+
 - **Every facet that writes a tracked VPFI balance or holds the reentrancy
   guard + the tier accumulator + ProtocolBroadcastFacet (#1820).** A user's
   tier record is refreshed inside `LibVaipakam.recordVaultDeposit` /
