@@ -144,9 +144,22 @@ the two runtimes is less uniform, and nothing here needs the saving.
   key. Its nightly report names the date, the tier, the size and the archive's
   SHA-256, which is enough to match it against the watcher's record and is no
   help in addressing the object.
-- Together these restore what the nonce was meant to give: to overwrite a
-  genuine archive in place, an attacker must now guess a 128-bit value. Any
-  extra object or version that does appear is caught by the watcher (§5.3).
+- Together these restore what the nonce was meant to give, **for archives
+  written after slice 2**: to overwrite one in place, an attacker must guess a
+  128-bit value. Any extra object or version that does appear is caught by the
+  watcher (§5.3).
+- **Archives written before slice 2 keep their exposure.** Their full keys,
+  nonce included, are already in the ops channel's nightly messages and in
+  Cloudflare's persisted Worker logs, and the January monthly and the yearly
+  share one nonce. Stopping the leak does not unsay that. For these archives
+  the design detects an overwrite the day it lands (the period turns
+  ambiguous, and the ledger holds the genuine version's record) but does not
+  prevent one, and the genuine version survives only until the lifecycle
+  deletes superseded versions. Two steps narrow it: the owner deletes the old
+  nightly messages that name archive keys from the ops channel (§9), and
+  Cloudflare's persisted logs age out on their own retention. Neither reaches
+  a copy someone already took, so these archives stay outside the
+  overwrite-prevention claim until they age out, and a yearly one never does.
 
 **Object Lock on the archive bucket itself is deliberately not part of this
 design.** It would guard against a key with `deleteFiles`, which only the
@@ -170,12 +183,16 @@ Its secrets:
 - the archive bucket **read** key (moved here from the Worker). After §3 it
   reads ciphertext only;
 - a **ledger** key, restricted to the ledger bucket, with `listFiles`,
-  `readFiles`, `writeFiles` and `writeFileRetentions`, and **no `deleteFiles`
-  and no `bypassGovernance`**;
+  `readFiles`, `writeFiles`, `readFileRetentions` and `writeFileRetentions`,
+  and **no `deleteFiles` and no `bypassGovernance`**. `readFileRetentions` is
+  what lets the watcher see each entry's retention deadline, which the yearly
+  renewal in §5.2 needs;
 - the ops bot token and chat id, already used by the ingest probe.
 
-A GitHub compromise therefore yields ciphertext and the power to **add** ledger
-entries. It cannot change or remove one, because of §5.2.
+A GitHub compromise therefore yields ciphertext and the power to **add** to
+the ledger: new entries, new versions or hide markers. It cannot delete or
+alter a stored version, and every reader sees the additions as conflicts,
+because of §5.2.
 
 ### 5.2 The ledger bucket
 
@@ -225,10 +242,10 @@ Each run lists every version in the archive bucket, records each one it has
 not recorded before, and checks the whole picture. It pages, through one alert
 issue keyed by stable problem names plus the ops chat, on:
 
-- **Missing**: an archive that should exist is not there. The watcher reuses
-  the tier rules the healthcheck runs today
-  (`ops/offchain-data-warm/src/tiers.ts`): every period a tier should still hold, from its declared first period to
-  now and within the tier's retention, is required, not only the newest. So a
+- **Missing**: an archive that should exist is not there. The watcher reuses the
+  tier rules the healthcheck runs today (`ops/offchain-data-warm/src/tiers.ts`):
+  every period a tier should still hold, from its declared first period to now
+  and within the tier's retention, is required, not only the newest. So a
   February monthly that never uploaded is still reported in June. The declared
   first periods (today the Worker's `ARCHIVE_FIRST_MONTHLY` /
   `ARCHIVE_FIRST_YEARLY`) move with the check into the watcher, as committed
@@ -241,12 +258,12 @@ issue keyed by stable problem names plus the ops chat, on:
   what the healthcheck's plaintext date check caught before, and it no longer
   needs the plaintext. There is one honest exception, and it is narrow: today's
   Worker uploads the same encrypted bytes as the January monthly and the yearly
-  archive on 1 January. A pair of old-format (symmetric) archives counts as that copy
-  only when one is the monthly for `<year>-01`, the other is the yearly for the
-  same year, and they share the nonce in their names. Any other equal pair is a
-  replay. The new format (§3.1) encrypts each tier separately, with its own IV
-  and its tier and period in the authenticated header, so it never produces two
-  equal archives, and the exception does not apply to it.
+  archive on 1 January. A pair of old-format (symmetric) archives counts as that
+  copy only when one is the monthly for `<year>-01`, the other is the yearly for
+  the same year, and they share the nonce in their names. Any other equal pair
+  is a replay. The new format (§3.1) encrypts each tier separately, with its own
+  IV and its tier and period in the authenticated header, so it never produces
+  two equal archives, and the exception does not apply to it.
 - **Mismatch**: the archive's bytes disagree with its manifest's SHA-256 or
   length, or its header is malformed or names other recipients than the set in
   force at its B2 upload time (§3.3). Judging against the set in force then,
@@ -344,7 +361,11 @@ ticket split"):
    attacker could overwrite the newest archive in place, leaving the genuine one
    alive only until the lifecycle deleted it. After §4 that overwrite needs a
    128-bit guess, any extra version pages the same day (§5.3), and the genuine
-   archive's ledger entry outlives the archive.
+   archive's ledger entry outlives the archive. Archives written before slice 2
+   are the exception (§4): their names are known, so for them the window is
+   still the time to act after the watcher pages. The declared 9 days of
+   hide-to-delete is that time, and it is enough for a page that arrives the
+   same day.
 
 So the lifecycle can stay as declared (20 days to hide, 9 to delete, within the
 29-day ceiling `lifecycle-policy.mjs` enforces), and #1474 closes on its third
@@ -405,6 +426,9 @@ These need the owner's accounts. Exact commands go in each slice's PR.
   Worker after slice 2. Keep a copy of the old AES key in the offline store for
   as long as any old-format archive is retained, which for the yearly tier is
   indefinitely.
+- **Delete the old nightly messages that name archive keys** from the ops
+  channel, after slice 2 (§4). It narrows, and cannot close, the exposure of
+  the archives written before then.
 - **Move the master B2 key** out of the developer `.env` into the offline
   store, and use scoped keys day to day (#1469's second finding). The ledger
   survives the master key; the archive bucket does not.
@@ -421,6 +445,9 @@ Stated so nobody reads more into it:
 - **Losing every private key** loses every archive. Two recipients and the
   drill make that unlikely; nothing makes it recoverable.
 - The watcher **cannot prove an archive decrypts**. Only the drill does.
+- Archives written **before slice 2** have names that were already published
+  (§4). An overwrite of one is detected, not prevented, and the genuine
+  version lasts only as long as the lifecycle keeps superseded versions.
 - An archive already in the bucket when the watcher first ran is vouched for
   only **from that run on**: its entry proves it has not changed since, not that
   it was genuine before. An archive the watcher never saw has no entry, and the
