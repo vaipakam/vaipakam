@@ -500,6 +500,14 @@ evidence that the migration has completed.
   for a listing with a recipient that reads as flagged. The protocol then
   decides: it re-reads every recipient, commits only a confirmed flag, and
   cancels only then.
+- Each recipient is screened by the protocol's own three-way read, the one
+  the sync acts on: clean, flagged, or not answerable. An oracle that cannot
+  answer for a recipient is never read as clean. A listing with no flagged
+  recipient but one the oracle could not answer for is reported by name as
+  not screened that run, so an outage cannot show up as "nothing flagged".
+- Its reads stop in time to leave its sends their time. Each read stage,
+  the oracle setting and the loan window included, stops at its own cutoff,
+  whether the read has not started or is still waiting.
 - Each sync that lands is reported as having cancelled its listing or as
   having left it live. A listing left live means the protocol found no
   confirmed flag at that moment. A listing whose recipients all read clean

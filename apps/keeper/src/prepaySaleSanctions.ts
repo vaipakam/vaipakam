@@ -28,7 +28,11 @@
 //      (the floor moves only on what the finalized block shows, as in step 1
 //      of this pass). Each offer's live listing and its parties come from
 //      `prepaySaleOfferParties`.
-//   3. Which parties read as flagged now (`ProfileFacet.isSanctionedAddress`).
+//   3. Which parties read as flagged now, by the contract's three-way read
+//      (`ProfileFacet.sanctionsStatus`: clean, flagged, or unavailable) — the
+//      rule the syncs themselves act on. An oracle that cannot answer for a
+//      party reads as unavailable, never as clean, and the run's line names
+//      each listing it left unscreened.
 //   4. A sync for each live listing with a flagged party, simulated first. The
 //      contract decides: it re-reads every party, commits only an
 //      authoritative Flagged read, and cancels only then. The run's line
@@ -46,6 +50,7 @@
 import { decodeEventLog, type Abi, type Address, type Hex, type PublicClient } from 'viem';
 import { NFTPrepayListingFacetABI, OfferParallelSaleFacetABI, ProfileFacetABI } from '@vaipakam/contracts/abis';
 import { deadlineClient, PastRunDeadline, settledChunkedRead } from './batchRead';
+import { boundedCall } from './passReader';
 import { shortErr } from './callErrors';
 import { readActiveWindow, type ScanWindow } from './activeLoanWindow';
 import { decodePos, encodePos, posAfter, rowFinalized, type EventLedger } from './eventLedger';
@@ -71,6 +76,9 @@ export const SALE_RACES: readonly string[] = ['PrepayListingNotFound', 'Parallel
 
 const ZERO_HASH = `0x${'0'.repeat(64)}`;
 const ZERO_ADDRESS = /^0x0{40}$/i;
+/** `ProfileFacet.sanctionsStatus`'s answers (`LibVaipakam.SanctionsRead`). */
+const SANCTIONS_FLAGGED = 1;
+const SANCTIONS_UNAVAILABLE = 2;
 
 /** What the step reads and signs with. */
 export interface SalesSyncDeps {
@@ -94,6 +102,9 @@ export interface SalesSyncReport {
   offerListings: number;
   /** Live listings with a party that reads as flagged, e.g. `loan 5`. */
   flagged: string[];
+  /** Live listings with no flagged party but one the oracle could not answer
+   *  for: not screened this run, so not known to be clean. */
+  unscreened: string[];
   /** Syncs that landed and cancelled their listing. */
   cancelled: string[];
   /** Syncs that landed and left their listing live: the contract's own read
@@ -104,7 +115,7 @@ export interface SalesSyncReport {
 }
 
 export function emptySalesReport(): SalesSyncReport {
-  return { off: null, window: null, loanListings: 0, offerListings: 0, flagged: [], cancelled: [], leftLive: [], landedUnread: [] };
+  return { off: null, window: null, loanListings: 0, offerListings: 0, flagged: [], unscreened: [], cancelled: [], leftLive: [], landedUnread: [] };
 }
 
 /** The step's figures for the run's line. */
@@ -116,6 +127,7 @@ export function describeSales(r: SalesSyncReport | null): string[] {
     ...(r.window ? [`sale-loan-window=${r.window.index + 1}/${r.window.count} of ${r.window.total} active`] : []),
     `sale-listings=${r.loanListings} by loan, ${r.offerListings} by offer`,
     `sale-flagged=${list(r.flagged)}`,
+    ...(r.unscreened.length > 0 ? [`sale-unscreened=${list(r.unscreened)} (the sanctions oracle could not answer for a party, so not known clean)`] : []),
     `sale-synced-cancelled=${list(r.cancelled)}`,
     ...(r.leftLive.length > 0 ? [`sale-synced-left-live=${list(r.leftLive)} (the contract found no authoritative flag at that block)`] : []),
     ...(r.landedUnread.length > 0 ? [`sale-synced-event-unread=${list(r.landedUnread)}`] : []),
@@ -130,7 +142,7 @@ interface Listing {
 
 const label = (l: Pick<Listing, 'kind' | 'id'>) => `${l.kind} ${l.id}`;
 
-/** One chain's step. Throws `PastRunDeadline` only from its gate read. */
+/** One chain's step. Throws `PastRunDeadline` only from its gate and window reads. */
 export async function syncSaleListings(chainId: number, diamond: Address, sender: StepSender, deps: SalesSyncDeps): Promise<SalesSyncReport> {
   const out = emptySalesReport();
   // Each read stage stops early enough to leave the stages after it their
@@ -145,7 +157,9 @@ export async function syncSaleListings(chainId: number, diamond: Address, sender
   // 0. The gate.
   let oracle: Address;
   try {
-    oracle = (await scanClient.readContract({ address: diamond, abi: SALES_ABI, functionName: 'getSanctionsOracle' })) as Address;
+    oracle = (await boundedCall(scanCutoff, 'the sanctions oracle setting', () =>
+      scanClient.readContract({ address: diamond, abi: SALES_ABI, functionName: 'getSanctionsOracle' }),
+    )) as Address;
   } catch (err) {
     if (err instanceof PastRunDeadline) throw err;
     sender.noteUnread('sales', `the sanctions oracle setting (${shortErr(err)})`);
@@ -165,7 +179,7 @@ export async function syncSaleListings(chainId: number, diamond: Address, sender
 
   // 1. Loan listings.
   try {
-    const scan = await readActiveWindow(scanClient, diamond, deps.visit);
+    const scan = await boundedCall(scanCutoff, 'the active-loan window', () => readActiveWindow(scanClient, diamond, deps.visit));
     out.window = scan.window;
     const res = await settledChunkedRead(
       deps.readClient,
@@ -204,7 +218,7 @@ export async function syncSaleListings(chainId: number, diamond: Address, sender
     deps.readClient,
     addrs,
     READ_CHUNK,
-    (a) => ({ address: diamond, abi: SALES_ABI, functionName: 'isSanctionedAddress', args: [a] }),
+    (a) => ({ address: diamond, abi: SALES_ABI, functionName: 'sanctionsStatus', args: [a] }),
     'protocolUpkeep sale-party screens',
     readCutoff,
     deps.visit,
@@ -213,14 +227,19 @@ export async function syncSaleListings(chainId: number, diamond: Address, sender
   for (const l of listings) {
     let flagged = false;
     let unread = false;
+    let unavailable = false;
     for (const a of l.parties) {
       if (ZERO_ADDRESS.test(a)) continue;
       const x = screens.get(a.toLowerCase());
       if (x?.status !== 'success') unread = true;
-      else if (x.result === true) flagged = true;
+      else if (Number(x.result) === SANCTIONS_FLAGGED) flagged = true;
+      else if (Number(x.result) === SANCTIONS_UNAVAILABLE) unavailable = true;
     }
     if (flagged) due.push(l);
-    else if (unread) sender.noteUnread(`sales:${l.kind}:${l.id}`, 'the sanctions screen of a party to its listing');
+    else if (unavailable) {
+      out.unscreened.push(label(l));
+      sender.noteUnread(`sales:${l.kind}:${l.id}`, 'the sanctions screen of a party to its listing (the oracle could not answer)');
+    } else if (unread) sender.noteUnread(`sales:${l.kind}:${l.id}`, 'the sanctions screen of a party to its listing');
   }
   out.flagged = due.map(label);
 
@@ -314,7 +333,9 @@ async function readOfferListings(
     return h !== undefined && h !== r.hash;
   };
   const positions = page.rows.map((_, i) => i);
-  const n = await finalFloor(0, positions, (i) => done(i, liveHash), deps.finalized, async (passed, block) => {
+  // The finalized block by this stage's cutoff too; unread, the floor stays.
+  const finalized = () => boundedCall(cutoff, 'the finalized block', deps.finalized).catch(() => null);
+  const n = await finalFloor(0, positions, (i) => done(i, liveHash), finalized, async (passed, block) => {
     const live = passed.filter((i) => rows[i] === null || rowFinalized(page.rows[i], block));
     const named = [...new Set(live.flatMap((i) => (rows[i] === null ? [] : [rows[i]!.offerId])))];
     const at = await readAt(named, block.number);

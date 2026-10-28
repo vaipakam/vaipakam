@@ -103,6 +103,45 @@ contract SanctionsFailClosedTransferTest is SetupTest {
         assertFalse(ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(wallet));
     }
 
+    // ─── sanctionsStatus (the three-way read, #2984) ────────────────────────
+
+    function _status(address who) internal view returns (LibVaipakam.SanctionsRead) {
+        return ProfileFacet(address(diamond)).sanctionsStatus(who);
+    }
+
+    function test_status_unavailableWhenOracleUnset() public view {
+        assertEq(uint8(_status(wallet)), uint8(LibVaipakam.SanctionsRead.Unavailable));
+    }
+
+    function test_status_cleanAndFlagged() public {
+        MockSanctionsList m = _oracle();
+        assertEq(uint8(_status(wallet)), uint8(LibVaipakam.SanctionsRead.Clean));
+        m.setFlagged(wallet, true);
+        assertEq(uint8(_status(wallet)), uint8(LibVaipakam.SanctionsRead.Flagged));
+    }
+
+    /// The case the fail-open boolean hides: an outage reads Unavailable here,
+    /// where `isSanctionedAddress` reads false.
+    function test_status_outageIsUnavailableNotClean() public {
+        MockSanctionsList m = _oracle();
+        m.setFlagged(wallet, true);
+        m.setRevertOnRead(true);
+        assertEq(uint8(_status(wallet)), uint8(LibVaipakam.SanctionsRead.Unavailable));
+        assertFalse(ProfileFacet(address(diamond)).isSanctionedAddress(wallet));
+    }
+
+    function test_status_sourceOutage_matchesRefresh() public {
+        MockSanctionsList m = _oracle();
+        address src = makeAddr("s2984-banned-source");
+        TestMutatorFacet(address(diamond)).setVaultBannedSourceRaw(wallet, src);
+        m.setRevertFor(src, true);
+        // Clean direct read with the source unreadable: neither confirmed nor cleared.
+        assertEq(uint8(_status(wallet)), uint8(LibVaipakam.SanctionsRead.Unavailable));
+        // A direct flag is still authoritative through the source outage.
+        m.setFlagged(wallet, true);
+        assertEq(uint8(_status(wallet)), uint8(LibVaipakam.SanctionsRead.Flagged));
+    }
+
     // ─── Movement gate — block paths (gate precedes the ownership check) ─────
 
     function test_transfer_flaggedRevertsNormalOp() public {

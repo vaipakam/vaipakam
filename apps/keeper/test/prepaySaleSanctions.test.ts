@@ -19,6 +19,8 @@ import { describeSales, OFFER_FLOOR_ITEM, SALE_RACES, SALES_ABI, syncSaleListing
 import { encodePos, type EventLedger, type LedgerPos, type LedgerRow } from '../src/eventLedger';
 import { finalizedBlockOnce, memoryScanCursors } from '../src/scanCursors';
 import { StepSender } from '../src/stepSender';
+import { PastRunDeadline } from '../src/batchRead';
+import { SEND_RESERVE_MS, STAGE_RESERVE_MS } from '../src/runWindow';
 import type { KeeperContext } from '../src/keeper';
 
 const CHAIN = 84532;
@@ -54,8 +56,10 @@ class FakeDiamond {
   offerListings = new Map<bigint, Listing>();
   /** The finalized block's view of the offer listings, when it lags the head. */
   finalOffers: Map<bigint, Listing> | null = null;
-  /** What `isSanctionedAddress` reads now. */
+  /** What `sanctionsStatus` reads as flagged now. */
   flagged = new Set<string>();
+  /** Parties the oracle cannot answer for now (`sanctionsStatus` = unavailable). */
+  unavailable = new Set<string>();
   /** What the sync's own authoritative read finds; defaults to `flagged`. */
   confirmed: Set<string> | null = null;
   sent: { fn: string; args: readonly unknown[] }[] = [];
@@ -77,8 +81,10 @@ class FakeDiamond {
         return view(this.loanListings.get(a[0]));
       case 'prepaySaleOfferParties':
         return view(((blockNumber !== undefined ? this.finalOffers : null) ?? this.offerListings).get(a[0]));
-      case 'isSanctionedAddress':
-        return this.flagged.has(String(a[0]).toLowerCase());
+      case 'sanctionsStatus': {
+        const who = String(a[0]).toLowerCase();
+        return this.flagged.has(who) ? 1 : this.unavailable.has(who) ? 2 : 0;
+      }
       default:
         throw new Error(`unexpected read ${functionName}`);
     }
@@ -187,7 +193,7 @@ describe('the prepay-sale sanctions sync', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  const run = () => {
+  const run = (sendDeadline = Number.POSITIVE_INFINITY) => {
     const sender = new StepSender(
       {
         pass: 'protocolUpkeep',
@@ -199,11 +205,11 @@ describe('the prepay-sale sanctions sync', () => {
         describe: (s) => String(s),
         spends: 'the gas',
       },
-      { context: () => d.ctx(), sendDeadline: Number.POSITIVE_INFINITY },
+      { context: () => d.ctx(), sendDeadline },
     );
     return syncSaleListings(CHAIN, DIAMOND, sender, {
       readClient: d.client(),
-      sendDeadline: Number.POSITIVE_INFINITY,
+      sendDeadline,
       visit: 0,
       cursors,
       ledger,
@@ -243,7 +249,36 @@ describe('the prepay-sale sanctions sync', () => {
     const { report } = await run();
     expect(d.sent).toEqual([]);
     expect(report.loanListings).toBe(1);
-    expect(d.reads.filter((r) => r === 'isSanctionedAddress')).toEqual([]);
+    expect(d.reads.filter((r) => r === 'sanctionsStatus')).toEqual([]);
+  });
+
+  it('names a listing the oracle could not screen, rather than reporting it clean', async () => {
+    d.active = [1n, 2n];
+    d.loanListings.set(1n, { hash: hash(1), parties: [addr(1)] });
+    d.loanListings.set(2n, { hash: hash(2), parties: [addr(2), addr(3)] });
+    d.unavailable.add(addr(1));
+    d.unavailable.add(addr(2));
+    d.flagged.add(addr(3)); // a flagged party still makes its listing due
+    const { report, sender } = await run();
+    expect(fns()).toEqual(['syncPrepaySaleListing(2)']);
+    expect(report.flagged).toEqual(['loan 2']);
+    expect(report.unscreened).toEqual(['loan 1']);
+    expect(describeSales(report).join(' ')).toContain('sale-unscreened=loan 1');
+    expect([...sender.unread.keys()]).toContain('sales:loan:1');
+  });
+
+  it('stops the gate read at its stage cutoff, waiting or not', async () => {
+    d.active = [1n];
+    d.loanListings.set(1n, { hash: hash(1), parties: [addr(1)] });
+    d.flagged.add(addr(1));
+    const real = d.readContract;
+    d.readContract = async (x) => (x.functionName === 'getSanctionsOracle' ? new Promise<never>(() => {}) : real(x));
+    // The gate's cutoff falls 200 ms from now: the send reserve and two stage
+    // reserves before the deadline.
+    const t0 = Date.now();
+    await expect(run(t0 + SEND_RESERVE_MS + 2 * STAGE_RESERVE_MS + 200)).rejects.toBeInstanceOf(PastRunDeadline);
+    expect(Date.now() - t0).toBeLessThan(2_000);
+    expect(d.sent).toEqual([]);
   });
 
   it('reports a sync the contract left live when its own read confirms no flag', async () => {

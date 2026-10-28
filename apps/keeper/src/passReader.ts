@@ -21,6 +21,21 @@ import { finalizedBlockOnce, type FinalBlock } from './scanCursors';
 /** Reads per aggregate. */
 export const PASS_READ_CHUNK = 100;
 
+/**
+ * One call of any kind (a view, the clock, the chain id, a simulation),
+ * bounded at `cutoff` the way every read here is: refused once the cutoff has
+ * passed, and abandoned there while still in flight. `deadlineClient` guards
+ * only the read methods it names, and refuses without abandoning, so a single
+ * call made through a client — `getBlock`, `getChainId`, `simulateCalls` —
+ * goes through this instead. `what` names the call in the refusal.
+ */
+export async function boundedCall<T>(cutoff: number, what: string, work: () => Promise<T>): Promise<T> {
+  if (Date.now() >= cutoff) throw new PastRunDeadline(`${what}: past the read cutoff — read next run`);
+  return settleBy(work(), cutoff, () => {
+    throw new PastRunDeadline(`${what}: still unread at the read cutoff — read next run`);
+  });
+}
+
 /** The clients a pass reads through. */
 export interface PassReadClients {
   /** For single reads and the finalized block. */
@@ -53,9 +68,7 @@ export class PassReader {
 
   /** One read at the head, by the cutoff. */
   async one<T>(functionName: string, args: readonly unknown[] = [], address: Address = this.diamond, abi: Abi = this.abi): Promise<T> {
-    return (await settleBy(this.bounded.readContract({ address, abi, functionName, args }), this.cutoff, () => {
-      throw new PastRunDeadline(`${functionName}: still unread at the read cutoff — read next run`);
-    })) as T;
+    return (await boundedCall(this.cutoff, functionName, () => this.bounded.readContract({ address, abi, functionName, args }))) as T;
   }
 
   /** Many reads; `undefined` where a read did not come back. At the head, or

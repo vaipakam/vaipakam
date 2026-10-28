@@ -1388,6 +1388,11 @@ sale proceeds, without weakening the lender's default rights.
   the sync would screen for it, built by the same rule the sync uses. So an
   operator or keeper deciding whether a sync is due works from the set the
   sync itself would read, never from a reconstruction of it.
+  The platform likewise offers the three-way sanctions read the sync acts on
+  for one address: clean, flagged, or unavailable when the oracle cannot
+  answer (or none is set). Unlike the fail-open yes-or-no screen, it never
+  reports an outage as clean, so a caller can tell a screened, clean
+  recipient from one that could not be screened, and can say so.
 - Listings may support fixed-price, Dutch-decay, or OpenSea-offer
   assisted English-style discovery. In every mode, the on-chain
   settlement floor remains authoritative and the borrower-facing ask
