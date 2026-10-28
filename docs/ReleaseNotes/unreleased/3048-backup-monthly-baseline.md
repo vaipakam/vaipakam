@@ -1,4 +1,4 @@
-## Thread — Off-chain backups: declare the first monthly archive (PR #<n>)
+## Thread — Off-chain backups: declare the first monthly archive (PR #3058)
 
 The backup watcher and the Worker's weekly healthcheck now both know that
 September 2026 is the first monthly archive this deployment wrote. Until now
