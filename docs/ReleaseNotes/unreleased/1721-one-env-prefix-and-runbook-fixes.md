@@ -1,4 +1,4 @@
-## Thread — one chain env-prefix map, and four runbook fixes (PR #<n>)
+## Thread — one chain env-prefix map, and four runbook fixes (PR #2989)
 
 The configure scripts now read every per-chain setting under one
 chain-to-prefix map, the one the deploy library already used for its
