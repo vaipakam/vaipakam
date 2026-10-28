@@ -479,6 +479,33 @@ evidence that the migration has completed.
   chain only when its connection answers for that chain, and a value it
   could not read stops the affected step and is stated in the run's report.
 
+## Committing flagged prepay-sale recipients
+
+- A prepay sale pays its recipients inside the marketplace fill. The fill's
+  own recipient screen reads the sanctions oracle, so during an oracle
+  outage it cannot tell a flagged recipient from a clean one, unless that
+  recipient is already in the protocol's fail-closed registry of confirmed
+  flags. The protocol offers a permissionless sync, by loan and by sale
+  offer, that commits any recipient the oracle confirms flagged to that
+  registry and cancels the listing. Without a caller nothing commits the
+  flag. The keeper is the caller.
+- It checks every hour, on every chain it serves that has a sanctions oracle
+  set, as a step of protocol upkeep that is armed on its own. Without an
+  oracle no address can read as flagged, and the report says so.
+- It reads the live listings and, for each, the exact recipients the sync
+  would screen, from the protocol's own read of that set. Loans are read a
+  window of the active list at a time. Sale offers are nominated by the
+  indexer's record of listings posted, and each is decided from the
+  protocol's own record. It screens each recipient and calls the sync only
+  for a listing with a recipient that reads as flagged. The protocol then
+  decides: it re-reads every recipient, commits only a confirmed flag, and
+  cancels only then.
+- Each sync that lands is reported as having cancelled its listing or as
+  having left it live. A listing left live means the protocol found no
+  confirmed flag at that moment. A listing whose recipients all read clean
+  costs reads, not transactions. The keeper pays only gas and moves no
+  value.
+
 ## Listing NFT collateral during grace
 
 - While a loan backed by an NFT is in its grace window, anyone other than the
@@ -510,9 +537,9 @@ evidence that the migration has completed.
 
 The master keeper switch and each duty's own arming choice are separate.
 Delivery proofs, late acknowledgements, sanctions observation, reward-day
-automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, and protocol upkeep must each
+automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep and its prepay-sale sanctions sync must each
 disclose whether they are armed on the selected deployment. Reward-day
-automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, and protocol upkeep ship disabled and require
+automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep and its sanctions sync ship disabled and require
 deliberate activation. Deploying their software does not prove they run, that rewards have launched, or that custody or the
 expiry horizon has been activated. The mirror's day-delivery protection is
 required by its reward role, as stated in the current tokenomics spec; it is

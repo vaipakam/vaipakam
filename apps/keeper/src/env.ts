@@ -207,6 +207,13 @@ interface BaseEnv {
    *  the buyback-intent expiry and the tier LTV cache refresh. Both
    *  permissionless; neither pays a fee or moves value to the keeper. */
   PROTOCOL_UPKEEP_ENABLED?: string;
+  /** 'true' adds the #2984 prepay-sale sanctions sync to the armed protocol
+   *  upkeep pass: `syncPrepaySaleListing` / `syncPrepaySaleOffer` for a live
+   *  listing with a party the oracle flags, which commits the flag to the
+   *  fail-closed registry and cancels the listing. Permissionless; no fee,
+   *  nothing to the keeper. Read only while PROTOCOL_UPKEEP_ENABLED arms the
+   *  pass. */
+  PREPAY_SALE_SANCTIONS_SYNC_ENABLED?: string;
   /** Seconds after which a cached tier LTV is refreshed even when its value
    *  would not change (default 7 days; the contract uses a cached tier only
    *  while it is under 14 days old). A plain var. */
@@ -400,6 +407,7 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_CLOSE_OUT_ENABLED',
   'REWARD_CLOSE_OUT_WINDOW_DAYS',
   'PROTOCOL_UPKEEP_ENABLED',
+  'PREPAY_SALE_SANCTIONS_SYNC_ENABLED',
   'PREPAY_AUTO_LIST_ENABLED',
   'TIER_LTV_REFRESH_AFTER_SEC',
   'REWARD_ZEROED_DAY_ENABLED',
@@ -582,6 +590,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_CLOSE_OUT_ENABLED: raw.REWARD_CLOSE_OUT_ENABLED,
     REWARD_CLOSE_OUT_WINDOW_DAYS: raw.REWARD_CLOSE_OUT_WINDOW_DAYS,
     PROTOCOL_UPKEEP_ENABLED: raw.PROTOCOL_UPKEEP_ENABLED,
+    PREPAY_SALE_SANCTIONS_SYNC_ENABLED: raw.PREPAY_SALE_SANCTIONS_SYNC_ENABLED,
     PREPAY_AUTO_LIST_ENABLED: raw.PREPAY_AUTO_LIST_ENABLED,
     TIER_LTV_REFRESH_AFTER_SEC: raw.TIER_LTV_REFRESH_AFTER_SEC,
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,

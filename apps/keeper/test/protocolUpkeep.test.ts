@@ -314,6 +314,11 @@ describe('a run', () => {
       expect(r.refreshIdle).toMatch(/unchanged and cached under/);
       expect(r.tiersRejected).toEqual(['tier 3: no-reference-assets']);
       expect(describeReport(r)).toContain('tier-ltv-refreshed=no');
+      // Step 3 ships disarmed: the run says so rather than omitting it.
+      expect(r.sales).toBeNull();
+      expect(describeReport(r)).toContain(
+        'sale-sanctions-sync=off (PREPAY_SALE_SANCTIONS_SYNC_ENABLED not armed)',
+      );
     });
 
     it('refreshes when a tier would change, and reports what the receipt wrote', async () => {
