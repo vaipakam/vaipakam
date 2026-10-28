@@ -8,12 +8,67 @@ test fails for the intended reason (each mutant IS the reverted fix).
 
 Rebuilt into the repo after the 2026-08-19 power outage wiped the
 session-scratchpad original (the lesson: tooling never lives only in a
-scratchpad). Rounds 1-9's earliest mutants are NOT yet restored here —
-their kills are recorded in PR #1699's per-round verification lines
-(13/13 by r9) and their killing tests all run in the ordinary suites;
-re-derivation is tracked in the PR's follow-up. Restored set: the r10-r17
-mutants plus every earlier one whose exact tuple survived in context,
-with the proven-equivalent set and its recorded evidence.
+scratchpad). Restored set: the r10-r17 mutants plus every earlier one
+whose exact tuple survived in context, with the proven-equivalent set and
+its recorded evidence.
+
+ROUNDS 1-9 (#1827). Re-derived from PR #1699's r1-r9 commits against the
+CURRENT code, never from memory: each fix was located in its present form,
+its anchor checked to occur exactly once, and its killer run with the mutant
+applied and confirmed to fail at an assertion or a revert inside the test
+(not at compile). Where a kill now arrives through the #1566 closure-2
+chokepoint (`DeliveredFreshBoundExceeded`), the fix still matters: without
+it the whole claim or sweep reverts where the rule is that the day defers.
+
+  Covered by a tuple added here:
+    r1  claim-walk delivered depletion        -> DeliveredFreshBoundExceeded
+    r1  forfeit armed leg bounded by delivery -> DeliveredFreshBoundExceeded
+        (r1's whole-sweep revert became a per-day defer in r18, 662144253)
+    r1  expiry armed leg bounded by the batch allowance -> killed through the
+        allowance's BACKING-room component (InsufficientRecycleBacking).
+        Before the removal point the clock gate (r2) masks the delivered-
+        ledger component, so no test isolates that component alone.
+    r2  the clock's delivered-payable predicate -> assertion
+    r7  spanning-entry bootstrap               -> RewardEntrySetMismatch(1),
+        the revert r7 reported
+    r8  wholly-legacy dispatch before the cursor read -> assertion
+    r8  the removal point, on BOTH legs that can be the first credited chunk
+        (spanning legacy leg; armed chunk)     -> assertion each
+    r8  `armedFrom < e.endDay`: EQUIVALENT, see EQUIVALENT below.
+
+  Already covered by an existing tuple (its anchor may be stale on main;
+  re-anchoring the r10+ rows is outside #1827):
+    r6  all-or-nothing within a day   ("expiry keeps ALL-OR-NOTHING ...")
+    r8  claim-skip at the removal point ("expiry claim-skip ...", equivalent)
+    r9  removal-point sequencing      ("a REMOVED entry terminates ...")
+    r9  role-transition residual retire ("a ROLE transition retires ...")
+
+  Retired -- the code no longer exists:
+    r1  pro-rata round-up and the `DeliveredFreshShortfall` forfeit revert,
+        and r2's post-cap forfeit gate: removed when the forfeit armed leg
+        moved onto the day engine (r18, 662144253)
+    r1  expiry's folded all-or-nothing gate, r4's loan-side-capped gate and
+        r5's D1-stage gate: the bespoke gate was deleted (r6, 0263f011a1)
+    r2/r3/r4  `seedArmedFreshPaid`, its refresh ceremony and its no-default
+        guard: retired with the paid-side seed (#2944, 7d6d093cc)
+    r3  mirror-only scoping of the paid-side writers: superseded by the
+        closure-2 chokepoint `chargeDeliveredFresh`, the one writer of the
+        paid side for every role
+    r4  the unarmed-day guards: refuted in r4 (equivalent), `_isArmedDay`
+        arm removed in r8 (9d235ca26f)
+
+  Gaps -- the fix survives but no test can kill its reversion:
+    r2  the expiry BATCH allowance depletion (RewardHorizonSweepFacet): no
+        test sweeps two entries against an allowance that fits only one
+    r3  the clock's per-USER aggregate need: GovernorDualAccumulatorTest's
+        own note above testP1bFirstCreditedChunkIsTheRemovalPoint records
+        that its day-pool sizing cannot separate grouped from per-entry
+    r4  `_entryArmedNeed` failing closed: no test makes the lens staticcall
+        fail or return short
+    r7  the whole-entry expiry accumulators: tests count the
+        `RewardEntryExpired` event, none decode its totals
+    r8  the unstamped-armed-day defer: r8 recorded it unreachable (finalize
+        writes the mode stamp and the row together)
 """
 import os, shutil, subprocess, sys
 
@@ -21,6 +76,80 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')
 SRC = os.path.join(ROOT, 'src')
 
 TARGETS = [
+    # --- Rounds 1-9, re-derived against main (#1827) ---
+    (
+        'r1: the claim walk DEPLETES its delivered budget between days',
+        'libraries/LibInteractionRewards.sol',
+        '                ctx.pool.deliveredFresh =\n                    db > liveSpent ? db - liveSpent : 0;',
+        '                ctx.pool.deliveredFresh = db;',
+        'test/ShareOfPoolClaimWalkTest.t.sol',
+        'test_P1b_DeliveredBoundDepletesAcrossDaysInOneClaim',
+    ),
+    (
+        "r1: the forfeit's armed day prices against the DELIVERED allowance",
+        'libraries/LibInteractionRewards.sol',
+        '        set[0] = id;\n        (DayCharge memory charge, DaySlice[] memory slices) =\n            processUserSideDay(\n                e.user,\n                d,\n                set,\n                PoolBudget({\n                    fresh: freshHeadroom,\n                    recycled: LibVpfiRecycle.bucketAvailable(s),\n                    deliveredFresh: deliveredAllowance',
+        '        set[0] = id;\n        (DayCharge memory charge, DaySlice[] memory slices) =\n            processUserSideDay(\n                e.user,\n                d,\n                set,\n                PoolBudget({\n                    fresh: freshHeadroom,\n                    recycled: LibVpfiRecycle.bucketAvailable(s),\n                    deliveredFresh: type(uint256).max',
+        'test/GovernorDualAccumulatorTest.t.sol',
+        'testP1bForfeitSweepRefusesWhenDeliveredIsShort',
+    ),
+    (
+        "r1: expiry's armed day prices against the batch DELIVERED allowance",
+        'libraries/LibInteractionRewards.sol',
+        '        ctx.recycleSettlement = true;\n        (DayCharge memory charge, DaySlice[] memory slices) = processUserSideDay(\n            e.user,\n            d,\n            set,\n            PoolBudget({\n                fresh: freshHeadroom,\n                recycled: LibVpfiRecycle.bucketAvailable(s),\n                deliveredFresh: deliveredAllowance',
+        '        ctx.recycleSettlement = true;\n        (DayCharge memory charge, DaySlice[] memory slices) = processUserSideDay(\n            e.user,\n            d,\n            set,\n            PoolBudget({\n                fresh: freshHeadroom,\n                recycled: LibVpfiRecycle.bucketAvailable(s),\n                deliveredFresh: type(uint256).max',
+        'test/GovernorDualAccumulatorTest.t.sol',
+        'testP1bRemovedEntryDefersOnABackingDip',
+    ),
+    (
+        'r2: the expiry clock does not run while delivered funding is short',
+        'libraries/LibInteractionRewards.sol',
+        '            bool deliveredPayable = freshNeed == 0\n                || freshNeed <= deliveredFreshBound(s);',
+        '            bool deliveredPayable = freshNeed == freshNeed;',
+        'test/RewardHorizonClaimAgreementTest.t.sol',
+        'test_DeliveredBound_StraddlesOneWei_PredicateClockAndClaimAgree',
+    ),
+    (
+        'r8: a WHOLLY pre-cutover entry dispatches before the cursor is read',
+        'libraries/LibInteractionRewards.sol',
+        '        if (armedFrom == 0 || e.endDay <= armedFrom) {\n            EntrySplit memory whole = st.rawSplit;',
+        '        if (armedFrom == 0) {\n            EntrySplit memory whole = st.rawSplit;',
+        'test/GovernorDualAccumulatorTest.t.sol',
+        'testP1bWhollyLegacyEntryTerminalisesOnceOnly',
+    ),
+    (
+        'r7: a SPANNING entry reaps its legacy leg, then its armed tail',
+        'libraries/LibInteractionRewards.sol',
+        '        if (\n            armedFrom != 0\n                && e.startDay < armedFrom\n                // Codex #1699 r8 P1',
+        '        if (\n            false\n                && e.startDay < armedFrom\n                // Codex #1699 r8 P1',
+        'test/GovernorDualAccumulatorTest.t.sol',
+        'testP1bSpanningEntryReapsAcrossTheCutover',
+    ),
+    (
+        'r8: the spanning bootstrap requires armedFrom < endDay',
+        'libraries/LibInteractionRewards.sol',
+        '                // SAME ENTRY AGAIN. A wholly pre-cutover entry belongs to the\n                // terminal branch below, which marks it processed.\n                && armedFrom < e.endDay\n',
+        '                // SAME ENTRY AGAIN. A wholly pre-cutover entry belongs to the\n                // terminal branch below, which marks it processed.\n',
+        'test/GovernorDualAccumulatorTest.t.sol',
+        'testP1bWhollyLegacyEntryTerminalisesOnceOnly|testP1bSpanningEntryReapsAcrossTheCutover',
+    ),
+    (
+        "r8: a spanning entry's credited legacy leg is the removal point",
+        'libraries/LibInteractionRewards.sol',
+        '            if (legacyFresh != 0) _beginExpiry(s, id, e);',
+        '            if (false) _beginExpiry(s, id, e);',
+        'test/GovernorDualAccumulatorTest.t.sol',
+        'testP1bFirstCreditedChunkIsTheRemovalPoint',
+    ),
+    (
+        'r8: a credited armed chunk is the removal point',
+        'libraries/LibInteractionRewards.sol',
+        '        if (charge.toTreasury.total != 0) _beginExpiry(s, id, e);',
+        '        if (false) _beginExpiry(s, id, e);',
+        'test/GovernorDualAccumulatorTest.t.sol',
+        'testP1bZeroCreditChunkDoesNotRemove',
+    ),
+    # --- Rounds 10+ ---
     (
         "expiry claim-skip at the removal point (defence-in-depth pair)",
         "libraries/LibInteractionRewards.sol",
@@ -208,6 +337,11 @@ EQUIVALENT = {
     # always has `processed` or a stamped cursor, which the preview already
     # prices at zero; the aggregate filter is the load-bearing one.
     "the pending PREVIEW excludes removed entries",
+    # Reachability (measured #1827): r8's own dispatch reorder returns every
+    # entry with endDay <= armedFrom from the wholly-legacy branch BEFORE the
+    # spanning test is evaluated, so the r8 `armedFrom < e.endDay` conjunct
+    # can no longer be the deciding term. Both its killers pass with it gone.
+    "r8: the spanning bootstrap requires armedFrom < endDay",
 }
 
 
