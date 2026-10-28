@@ -2241,6 +2241,21 @@ is the borrower's own money.
   its way; and equally, learning that the record has been cleared elsewhere
   must stop the wait rather than leave it running against a record that no
   longer exists.
+- A surface that returns to a submitted close-out after the page was closed
+  establishes what it can from the chain before it falls back on the lender's
+  word (#2086). A transaction's own receipt is its outcome. When there is no
+  receipt and the wallet has since spent the transaction's place in its queue,
+  something else from that wallet took that place — and the platform cannot
+  tell a sped-up copy of the same close-out, which may have gone through, from
+  a cancel or an unrelated transaction, which moved nothing. The surface says
+  exactly that, rather than claiming either outcome, and shows the position as
+  it stands once it has re-read it; it does not offer the action again until
+  that re-read is in. A surface that cannot read the wallet's queue keeps the
+  existing rule: it says it has lost track and leaves the answer to the
+  wallet.
+- Waiting on a transaction the network no longer reports must not become a
+  steady stream of requests. A surface that keeps asking about one slows its
+  asking the longer it goes unanswered.
 - A conditional sentence whose condition cannot arise on the route being shown
   does not belong on it. The swap-to-repay cancellation note is the case in
   point: that facility covers ordinary-asset loans only, so an overdue rental
