@@ -1,4 +1,4 @@
-## Thread — keeper backstop for returning reward VPFI to Base (PR #<n>)
+## Thread — keeper backstop for returning reward VPFI to Base (PR #3002)
 
 Reward VPFI that a mirror holds for Base moves home only when someone makes a permissionless call and pays its cross-chain fee. The same is true of the messages that let Base release what it reserved. Nothing made those calls on a schedule, so an issued repatriation could sit untravelled, a cancelled one could keep Base's availability reserved, and quarantined compensation or a retired mirror's pending surplus could stay on the mirror until someone acted by hand. The keeper now has a return-transport duty. It runs hourly and ships switched off, behind its own arming flag.
 
