@@ -1301,7 +1301,9 @@ The decrypted JSON has the shape produced by `backup.ts`:
 `vaipakam-lz-alerts-db` was removed with the retired LayerZero monitor
 (#1440). The format version stays `1` because nothing else about the shape
 changed — a reader must treat the key as optional rather than select a
-parser on the version marker.
+parser on the version marker. The database itself was deleted on
+2026-10-28 (it held 0 rows by then), so a legacy section always needs the
+hand-made database below.
 
 If you are restoring an archive that HAS the section and you genuinely need
 that data — alert de-duplication state and per-chain block cursors for a

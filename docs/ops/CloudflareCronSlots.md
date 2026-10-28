@@ -37,7 +37,7 @@ acts — that is what `packages/lib/src/cronCadence.ts` is for.
 
 Read from the account, not from the tree.
 
-**Verified: 2026-08-28T15:38:09Z.** Re-verify with the command in
+**Verified: 2026-10-28T06:50:17Z.** Re-verify with the command in
 [Re-verifying](#re-verifying) below; update this table and this stamp in
 the same commit.
 
@@ -58,7 +58,6 @@ one expression), and splitting on it produced two nonsense fragments.
 | `vaipakam-agent` | `* * * * *` | `apps/agent` | live |
 | `vaipakam-indexer` | `* * * * *` | `apps/indexer` | live |
 | `vaipakam-offchain-data-warm` | `17 3 * * *` | `ops/offchain-data-warm` | live |
-| `vaipakam-offchain-data-archive` | `17 3 * * *` | *none* | live — and should not be (#1977) |
 | `vaipakam-mesh-watcher` | *(would be `*/15 * * * *`)* | `ops/mesh-watcher` | undeployed — code-complete, holds no trigger |
 
 **The table above is the whole inventory.** A Worker not listed holds no
@@ -82,9 +81,9 @@ paragraph still asserting it had none.
 
 ## What that adds up to
 
-- **Live right now:** 4 of 5
-- **Committed, live only:** 4 of 5
-- **Genuinely spare:** 1
+- **Live right now:** 3 of 5
+- **Committed, live only:** 3 of 5
+- **Genuinely spare:** 2
 
 These three lines are **derived from the inventory above, and checked against
 it** — `check-cron-slots.mjs` fails if "Live right now" disagrees with the
@@ -118,12 +117,14 @@ occupancy scan. A restated count is no safer for being inside the authority.
 Any comment or design note claiming room that this file does not is either
 older than #1977 or has copied a count from something that is.
 
-**Why `vaipakam-offchain-data-archive` is in this file at all** — background,
-not a statement of current state. It is the **pre-rename** predecessor of
-`vaipakam-offchain-data-warm` and was supposed to be retired once the
-replacement completed a run. It has **no source in this repository**, so it
-is invisible to anyone counting `crons` entries across the tree, which is
-exactly how ten separate statements of the count came to omit it.
+**Why `vaipakam-offchain-data-archive` is named in this file** — history,
+not a statement of current state. It was the **pre-rename** predecessor of
+`vaipakam-offchain-data-warm`, it had **no source in this repository**, and
+it stayed armed on the account long after its replacement ran — invisible to
+anyone counting `crons` entries across the tree, which is exactly how ten
+separate statements of the count came to omit it. The owner deleted it on
+2026-10-28 (#1977), once the replacement had backed up every night from
+2026-10-20 into its own bucket.
 
 **Whether it is still armed is the table's answer, not this paragraph's.**
 An earlier revision said here that it *is* armed and *is* the fourth live
@@ -163,11 +164,11 @@ during exactly the cleanup the rest of this file anticipates.
   earlier revision of this file stated how many fit, along with what
   retirement would change it to, and both would have been wrong the moment
   the retirement landed.
-- Retiring `vaipakam-offchain-data-archive` is what frees a trigger. That is
-  the operator action tracked in #1977, and it is not something to do
-  casually: until the replacement is confirmed to be landing and verifying
-  in the new bucket, the un-retired predecessor is what would mask a defect
-  in it.
+- **Retiring a Worker frees its trigger only when the Worker is deleted.**
+  A stopped or disabled Worker keeps its schedule. Retire a predecessor only
+  once its replacement is confirmed to be landing and verifying on its own:
+  until then the predecessor is what would mask a defect in it. That was the
+  order for `vaipakam-offchain-data-archive` (#1977).
 - **Splitting an existing Worker's one cron into two costs a trigger** and
   has the same effect as a new deploy. This is why
   `ops/offchain-data-warm` folds its Monday healthcheck into the nightly

@@ -26,6 +26,15 @@
 # named: a report would carry the page address a visitor was on, and the
 # privacy spec sends nothing about a visit without consent.)
 #
+# CLOUDFLARE WEB ANALYTICS IS OFF ON PURPOSE (#1592). Cloudflare can inject
+# its beacon (static.cloudflareinsights.com) into every page at the edge,
+# outside this repository, and this policy then refuses it on every load.
+# The account's Web Analytics site for vaipakam.com is set to Disable
+# (owner, 2026-10-28), so nothing is injected. Do NOT add that host here to
+# silence a console error: if the error comes back, the injection was
+# turned on again, and analytics is a decision that goes through the
+# consent rules, not a CSP edit.
+#
 # script-src is `'self'` plus the hashes of the inline boot scripts in
 # index.html, and NOTHING else (#43 / ET-017). The upper-case token in
 # script-src below is a placeholder: the build replaces it with the
