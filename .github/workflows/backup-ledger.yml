@@ -102,7 +102,18 @@ jobs:
       # Problem keys an operator has investigated, comma-separated. Listing one
       # here, in a reviewed commit, is what stops that page. Empty: everything
       # pages.
-      BACKUP_ACKNOWLEDGED: ''
+      #
+      # Acknowledged by the owner on 2026-10-28 (#3048). None of the three can
+      # be recreated:
+      # - missing:monthly:2026-10 — the 2026-10-01 nightly did not run, so no
+      #   October monthly (nor that night's daily) was written.
+      # - the 2026-10-18 and 2026-10-25 dailies have no manifest beside them.
+      #   The 10-25 manifest PUT hit a B2 500 (the nightly now retries it,
+      #   #3052); the 10-18 cause is inferred to be the same.
+      BACKUP_ACKNOWLEDGED: >-
+        missing:monthly:2026-10,
+        mismatch:4_z188b1455c486cc519bfe0e15_f11164b9180e1bf40_d20261018_m031710_c003_v0312029_t0011_u01792293430874,
+        mismatch:4_z188b1455c486cc519bfe0e15_f1069d826d26e49f6_d20261025_m031710_c003_v0312019_t0009_u01792898230386
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4

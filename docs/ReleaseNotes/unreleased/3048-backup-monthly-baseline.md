@@ -1,4 +1,4 @@
-## Thread — Off-chain backups: declare the first monthly archive (PR #3058)
+## Thread — Off-chain backups: declare the first monthly archive, acknowledge the October gaps (PR #3058)
 
 The backup watcher and the Worker's weekly healthcheck now both know that
 September 2026 is the first monthly archive this deployment wrote. Until now
@@ -18,6 +18,13 @@ The workflow and the Worker each carry the value and must stay equal. The
 Worker's copy takes effect the next time it is deployed. The yearly tier stays
 unset until the first January cut exists.
 
-Advances #3048.
+The same change acknowledges, by owner decision, the three gaps the watcher's
+first run reported, none of which can be recreated: no October 2026 monthly
+(the October 1 nightly did not run), and the October 18 and 25 dailies, which
+have no manifest beside them (the October 25 manifest upload hit a storage
+fault that the nightly now retries). Acknowledging a gap stops only that
+gap's alert; any new gap still pages.
+
+Closes #3048.
 
 > Caveat: the Worker is deployed by hand, so its weekly healthcheck keeps reporting the monthly tier as "coverage degraded" until the next deploy.
