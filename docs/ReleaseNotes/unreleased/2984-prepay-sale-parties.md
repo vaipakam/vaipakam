@@ -1,4 +1,4 @@
-## Thread — Read the parties a prepay-sale sanctions sync screens (PR #TBD)
+## Thread — Read the parties a prepay-sale sanctions sync screens (PR #3049)
 
 The two prepay-sale sanctions syncs (the loan-keyed listing sync and the
 offer-keyed parallel-sale sync) now each have a read-only twin that returns
