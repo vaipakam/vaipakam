@@ -304,8 +304,7 @@ Reward pool पहले छह महीनों में सबसे बड
 ## किन chains पर?
 
 Vaipakam हर supported chain पर independent deployment के रूप में चलता
-है: **Ethereum**, **Base**, **Arbitrum**, **Optimism**, **Polygon
-zkEVM**, **BNB Chain**।
+है: **Ethereum**, **Base**, **Arbitrum**, **Optimism**, **Polygon**।
 
 Base पर open हुआ loan Base पर ही settle होता है। Arbitrum पर open हुआ
 loan Arbitrum पर ही settle होता है। Cross-chain debt नहीं है। Chains

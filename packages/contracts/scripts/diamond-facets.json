@@ -122,6 +122,8 @@
     "VaipakamFeedRegistry",
     "CcipMessenger",
     "VaipakamRewardMessenger",
-    "VaipakamTimelock"
+    "VaipakamTimelock",
+    "VpfiReturnSender",
+    "VpfiReturnReceiver"
   ]
 }

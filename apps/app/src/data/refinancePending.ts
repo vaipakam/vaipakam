@@ -245,7 +245,7 @@ export function useRefinancePending(
     enabled: Boolean(readClient) && candidateId !== null && Boolean(principalAsset),
     // RPC read-diet PR A — pending-card accept gate: tip-nudged per
     // block on WS deploys (§4.1.2), so the interval is only the net.
-    refetchInterval: tipAware(30_000, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('refinancePending', 30_000, Boolean(readChain.wsUrl)),
     queryFn: async (): Promise<RefinancePendingState | 'gone'> => {
       const diamond = readChain.diamondAddress;
       const [offer, live, fees, latestBlock, allowance, balance, record] =

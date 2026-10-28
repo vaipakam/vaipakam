@@ -8,7 +8,9 @@
  *  not serve. The Help page lists that address for every network.
  *
  *  Token 999999 is never minted on the fixture chain, so the verdict is the
- *  "does not exist" one, which must offer the explorer cross-check too.
+ *  "never minted" one (#2529: the fixture deploys the current contracts,
+ *  which carry the view that tells it from a retired token), and it must
+ *  offer the explorer cross-check too.
  */
 import { test, expect } from '../lib/wallet-fixture';
 import { DIAMOND } from '../lib/chain';
@@ -32,7 +34,8 @@ test('the verifier says it never needs a wallet and names the contract it checke
   await expect(contract).toHaveAttribute('target', '_blank');
 
   // The verdict renders, and it carries the independent cross-check.
-  await expect(page.getByText(/does not currently exist on this network/i)).toBeVisible();
+  await expect(page.getByTestId('nft-verdict-never-minted')).toBeVisible();
+  await expect(page.getByText(/has never been minted on/i)).toBeVisible();
   const explorer = page.locator(`a[href$="/nft/${DIAMOND}/${ABSENT_TOKEN}"]`);
   await expect(explorer).toBeVisible();
   await expect(explorer).toContainText(`#${ABSENT_TOKEN}`);

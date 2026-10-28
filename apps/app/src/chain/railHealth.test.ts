@@ -117,8 +117,8 @@ describe('railHealth', () => {
   });
 
   it('tipAware: stretches only when BOTH rails cover the root AND blocks flow', () => {
-    const withWs = tipAware(30_000, true);
-    const noWs = tipAware(30_000, false);
+    const withWs = tipAware('loan', 30_000, true);
+    const noWs = tipAware('loan', 30_000, false);
     railSocketLive(true);
     railCursorSignal(1_000, CADENCE);
     railCursorSignal(1_060, CADENCE);

@@ -116,11 +116,11 @@ export interface OfferFormState {
    *  now the field stays empty everywhere and the contract sees
    *  single-value collateral on every offer. */
   collateralAmountMax: string;
-  /** T-034 — lender's chosen Periodic Interest Payment cadence.
-   *  Numeric value matches the on-chain enum (0 = None ... 4 = Annual).
-   *  Default `0` (None) preserves backward compat. Visible only when
-   *  Advanced mode AND both legs are liquid AND
-   *  `periodicInterestEnabled` is true on the protocol config. */
+  /** T-034 — the offer's Periodic Interest Payment cadence. Numeric
+   *  value matches the on-chain enum (0 = None ... 4 = Annual). Default
+   *  `0` (None). Chosen in `CadencePicker` (#2524), which offers only
+   *  what the protocol's cadence rule admits for the entered terms
+   *  (`previewCadenceAdmission`). */
   periodicInterestCadence: number;
   /** T-086 Round-8 (#358) §19.5 — borrower opt-in for parallel-sale
    *  listing on OpenSea / Seaport-conformant marketplaces. Only valid

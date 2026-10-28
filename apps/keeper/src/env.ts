@@ -201,6 +201,19 @@ interface BaseEnv {
    *  `REWARD_DAY_CLOSE_MAX_FEE_WEI` format (`src/feeCeiling.ts`). A plain var. */
   REWARD_ZEROED_DAY_MAX_FEE_WEI?: string;
 
+  // Reward return-transport pass (#2984). `secret_text` like the flags above.
+  /** 'true' arms the reward return-transport pass (in addition to
+   *  KEEPER_ENABLED): repatriation instructions, executions and cancellation
+   *  ACKs, stranded-compensation returns and a retired mirror's surplus
+   *  return. Permissionless; every send pays its CCIP fee. */
+  REWARD_RETURN_TRANSPORT_ENABLED?: string;
+  /** The return-transport pass's CCIP fee ceiling per send, in the
+   *  `REWARD_DAY_CLOSE_MAX_FEE_WEI` format (`src/feeCeiling.ts`). A plain var. */
+  REWARD_RETURN_TRANSPORT_MAX_FEE_WEI?: string;
+  /** The smallest chunked return (wei) that may leave something behind
+   *  (default 1000e18). A plain var. */
+  REWARD_RETURN_MIN_PART?: string;
+
   // Depth-tiered-LTV liquidity-confidence relay knobs
   // (`liquidityConfidence.ts`, §4.4 step 5). Both default
   // conservatively when unset; demotion is always immediate.
@@ -365,6 +378,9 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_ZEROED_DAY_ENABLED',
   'REWARD_ZEROED_DAY_WINDOW_DAYS',
   'REWARD_ZEROED_DAY_MAX_FEE_WEI',
+  'REWARD_RETURN_TRANSPORT_ENABLED',
+  'REWARD_RETURN_TRANSPORT_MAX_FEE_WEI',
+  'REWARD_RETURN_MIN_PART',
   'LIQ_CONFIDENCE_MIN_CHECKS',
   'LIQ_CONFIDENCE_MIN_WINDOW_DAYS',
   'LIQ_TIER3_MIN_TVL_USD',
@@ -540,6 +556,9 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,
     REWARD_ZEROED_DAY_WINDOW_DAYS: raw.REWARD_ZEROED_DAY_WINDOW_DAYS,
     REWARD_ZEROED_DAY_MAX_FEE_WEI: raw.REWARD_ZEROED_DAY_MAX_FEE_WEI,
+    REWARD_RETURN_TRANSPORT_ENABLED: raw.REWARD_RETURN_TRANSPORT_ENABLED,
+    REWARD_RETURN_TRANSPORT_MAX_FEE_WEI: raw.REWARD_RETURN_TRANSPORT_MAX_FEE_WEI,
+    REWARD_RETURN_MIN_PART: raw.REWARD_RETURN_MIN_PART,
     LIQ_CONFIDENCE_MIN_CHECKS: raw.LIQ_CONFIDENCE_MIN_CHECKS,
     LIQ_CONFIDENCE_MIN_WINDOW_DAYS: raw.LIQ_CONFIDENCE_MIN_WINDOW_DAYS,
     LIQ_TIER3_MIN_TVL_USD: raw.LIQ_TIER3_MIN_TVL_USD,

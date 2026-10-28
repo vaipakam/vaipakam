@@ -124,7 +124,7 @@ export function useActiveOffers() {
     // Block-driven on WS deploys (tip nudge); on HTTP-only chains the
     // interval carries it at today's cadence, same as the pre-split
     // behaviour where the strip re-ran with each 30s walk refetch.
-    refetchInterval: tipAware(REFRESH_MS, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('bookGhostStrip', REFRESH_MS, Boolean(readChain.wsUrl)),
     // A background walk refetch mints a NEW strip key (fresh cursor
     // snapshot); carrying the previous scan as placeholder keeps the
     // book rendered during the re-scan instead of blanking to loading
@@ -392,7 +392,7 @@ export function useOffer(offerId: number | undefined) {
     // RPC read-diet PR A — detail-page action root: stretches only
     // when BOTH rails cover it (indexer push healthy + chain WS tip
     // nudge); on an HTTP-only chain deploy it keeps todays 30s.
-    refetchInterval: tipAware(REFRESH_MS, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('offer', REFRESH_MS, Boolean(readChain.wsUrl)),
     queryFn: async (): Promise<IndexedOffer | null> => {
       const row = await fetchOfferById(readChain.chainId, offerId!);
       if (row) return row;
@@ -426,7 +426,7 @@ export function useLoan(loanId: number | undefined) {
     queryKey: ['loan', readChain.chainId, loanId],
     enabled: loanId !== undefined && Number.isFinite(loanId),
     // RPC read-diet PR A — detail-page action root (see useOffer).
-    refetchInterval: tipAware(REFRESH_MS, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('loan', REFRESH_MS, Boolean(readChain.wsUrl)),
     queryFn: async (): Promise<IndexedLoan | null> => {
       const row = await fetchLoanById(readChain.chainId, loanId!);
       if (row) return row;
