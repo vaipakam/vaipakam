@@ -23,6 +23,15 @@ describe('the coverage matrix shape rule (#2143)', () => {
     expect(problems[0].message).toContain(`${CELL_CAP + 1} characters`);
   });
 
+  it('refuses a row with more cells than its table has columns', () => {
+    const header = '| Feature | Tier |\n| --- | --- |\n';
+    const problems = checkCoverageMatrix(`${header}| A | \`a || b\` |`, '');
+    expect(problems).toHaveLength(1);
+    expect(problems[0].line).toBe(3);
+    expect(problems[0].message).toContain('row has 4 cells but its table has 2 columns');
+    expect(checkCoverageMatrix(`${header}| A | \`a \\|\\| b\` |`, '')).toEqual([]);
+  });
+
   it('refuses a link to an anchor the notes do not declare', () => {
     const matrix = '| A | [More](COVERAGE-NOTES.md#cov-a) [More](COVERAGE-NOTES.md#cov-b) |';
     expect(checkCoverageMatrix(matrix, NOTES).map((p) => p.message)).toEqual([

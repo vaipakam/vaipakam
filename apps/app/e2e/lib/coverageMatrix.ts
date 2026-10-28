@@ -7,8 +7,9 @@
  * cell passed 60,000 characters), which no renderer shows as a table. The
  * per-PR rule that every behaviour change updates the matrix only ever
  * appends, so the shape needs a check rather than a convention: a cell may
- * hold at most {@link CELL_CAP} characters, and every link from the matrix
- * into the notes must land on an anchor that exists.
+ * hold at most {@link CELL_CAP} characters, a row may hold no more cells
+ * than its table has columns, and every link from the matrix into the notes
+ * must land on an anchor that exists.
  *
  * Pure, so it is unit-tested; `scripts/check-coverage-matrix.ts` runs it
  * over the committed files in the app's typecheck.
@@ -47,8 +48,14 @@ export function checkCoverageMatrix(matrix: string, notes: string): MatrixProble
   const anchors = notesAnchors(notes);
   const linked = new Set<string>();
   const linkRe = new RegExp(`${NOTES_FILE.replace('.', '\\.')}#([A-Za-z0-9_-]+)`, 'g');
-  matrix.split('\n').forEach((text, i) => {
+  const lines = matrix.split('\n');
+  // Columns of the table the current row belongs to: its header row is the
+  // line just above a separator (`| --- | --- |`).
+  let columns: number | null = null;
+  lines.forEach((text, i) => {
     const line = i + 1;
+    if (!text.startsWith('|')) columns = null;
+    else if (tableCells(text) === null && i > 0) columns = tableCells(lines[i - 1])?.length ?? null;
     for (const m of text.matchAll(linkRe)) {
       linked.add(m[1]);
       if (!anchors.has(m[1])) {
@@ -57,6 +64,15 @@ export function checkCoverageMatrix(matrix: string, notes: string): MatrixProble
     }
     const cells = tableCells(text);
     if (!cells) return;
+    // GFM splits a cell on EVERY unescaped pipe, inside a code span too, and
+    // drops the cells past the header's count without a trace: the matrix
+    // carried three rows whose last columns never rendered that way.
+    if (columns !== null && cells.length > columns) {
+      problems.push({
+        line,
+        message: `row has ${cells.length} cells but its table has ${columns} columns: escape a pipe inside a cell, code spans included, as \\|`,
+      });
+    }
     cells.forEach((cell, k) => {
       if (cell.length > CELL_CAP) {
         problems.push({
