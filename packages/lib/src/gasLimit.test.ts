@@ -14,10 +14,9 @@ describe('gasLimitFromEstimate', () => {
   });
 
   it('covers the drift #2997 measured', () => {
-    // remitRewardBudget: estimated 917,454 and reverted when mined having
-    // used 903,572; a limit of 1.3x is far above the extra the mined block
-    // needed.
-    expect(gasLimitFromEstimate(917_454n) > 917_454n + 917_454n / 64n).toBe(true);
+    // remitRewardBudget estimated 917,454 at the latest block's time and
+    // needed 917,944 once time had moved.
+    expect(gasLimitFromEstimate(917_454n) >= 917_944n).toBe(true);
   });
 
   it('refuses a negative estimate', () => {

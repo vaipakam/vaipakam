@@ -38,6 +38,7 @@ import {
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { gasLimitFromEstimate } from '@vaipakam/lib/gasLimit';
 import type { SpawnedAnvil } from './process';
 import { explainMinedRevert } from './minedRevert';
 import { ANVIL_DEV_KEYS } from './devKeys';
@@ -148,15 +149,14 @@ export class ScenarioChain<F extends ChainFixture = ChainFixture> {
     // far the chain moved in between (#2892).
     const simulatedAt = await this.blockNumber();
     // Simulate first, so a revert surfaces as the contract's own error.
-    const { request } = await this.pub.simulateContract({
-      account: this.accounts[who],
-      address,
-      abi,
-      functionName,
-      args,
-      value,
-    } as never);
-    const hash = await w.writeContract(request as never);
+    const call = { account: this.accounts[who], address, abi, functionName, args, value };
+    const { request } = await this.pub.simulateContract(call as never);
+    // Never the bare estimate as the limit (#2997): the node estimates in the
+    // latest block's environment and the write mines in a later one, and a
+    // call whose cost depends on elapsed time then runs out of gas. The one
+    // rule every sender uses: {@link gasLimitFromEstimate}.
+    const gas = gasLimitFromEstimate(await this.pub.estimateContractGas(call as never));
+    const hash = await w.writeContract({ ...(request as object), gas } as never);
     const receipt = await this.pub.waitForTransactionReceipt({ hash, timeout: 60_000 });
     if (receipt.status !== 'success') {
       // It simulated clean and reverted only when mined, so the simulation's

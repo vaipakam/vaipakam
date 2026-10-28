@@ -10,19 +10,25 @@
  * whose cost depends on how much time has passed costs more when mined than
  * when estimated, and at a zero-margin limit any extra gas is fatal.
  *
- * The protocol has such paths. A CCIP token pool's rate limiter refills and
- * re-stamps its bucket only when `block.timestamp` has moved since the last
- * stamp, so a send estimated in the second of the last stamp and mined in
- * the next one does extra work. When the shortfall lands inside a nested
- * call, that call runs out of gas under the 63/64 rule and the outer call
- * reverts with no reason, at about 98.5% of the limit (#2997).
+ * The protocol has such a path, and #2997 is it. In the two-chain Anvil
+ * scenario, a reward-budget remittance sent in the same second as an earlier
+ * one estimates at 917,454 gas against the latest block's time and needs
+ * 917,944 at any later time (measured with block overrides of +1 s, +2 s
+ * and +60 s). Mined a second later at the estimated limit, a nested call
+ * ran out of gas under the 63/64 rule and the remittance reverted with no
+ * reason, having used about 98.5% of the limit. The extra 490 gas is most
+ * likely the CCIP token pool's rate limiter, which refills and re-stamps its
+ * bucket only when `block.timestamp` has moved since the last stamp; that
+ * attribution is inferred, not traced. Of the scenario's 52 writes, the
+ * remittance was the only one whose estimate moved with time.
  *
- * Measured on anvil 1.5.1: a call that writes five slots only when the
- * timestamp has moved estimates at 23,306 gas a second after the stamp
- * (the cheap path, at the latest block's time) and reverts when mined with
- * that limit; with a block override naming the mined timestamp it
- * estimates at 52,639. A node on a live chain estimates against its latest
- * block the same way, and the next block is always later.
+ * The node behaviour is shown on its own too (anvil 1.5.1): a call that
+ * writes five slots only when the timestamp has moved estimates at 23,306
+ * gas a second after its stamp, which is the cheap path at the latest
+ * block's time, and reverts when mined with that limit; with a block
+ * override naming a later timestamp it estimates at 52,639. A node on a
+ * live chain estimates against its latest block in the same way, and the
+ * next block is always later.
  *
  * ── Why a margin, and why this one ───────────────────────────────────
  *
@@ -32,8 +38,8 @@
  * charged, so the margin costs nothing when it is not needed. 30% is the
  * margin `forge script` applies by default to every broadcast this
  * repository's deploy scripts make, so the contracts already reach every
- * chain under it. It is a bound on the drift seen so far (well under 2%
- * on #2997), not a proof of every future path: a call that still runs out
+ * chain under it. It is far above the drift seen so far (0.05% on
+ * #2997), and it is not a proof of every future path: a call that still runs out
  * of gas fails loudly, with its revert, and is a reason to look at that
  * path rather than to raise the margin silently.
  */
