@@ -381,6 +381,12 @@ FACETS=(
   # pastes it into Tenderly to decode the timelock's calls; it replaced a
   # hand-captured copy under docs/ops/tenderly-paste/.
   "VaipakamTimelock"
+  # #2984 — the mirror's vpfi-return channel sender (standalone; NOT a diamond
+  # facet). The keeper's return-transport pass prices each return it sends
+  # through the Diamond with its `quoteRepatriationReturn`,
+  # `quoteRepatriationCancelAck`, `quoteStrandedReturn` and
+  # `quoteRetiredSurplusReturn`.
+  "VpfiReturnSender"
   # #2399 — the Diamond PROXY itself. Not a facet: its fallback raises
   # `FunctionDoesNotExist()` for an unrouted selector, the revert a stale ABI
   # produces. Listed under `proxy` in diamond-facets.json, and the combined
