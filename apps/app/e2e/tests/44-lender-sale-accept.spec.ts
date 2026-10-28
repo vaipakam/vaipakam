@@ -141,19 +141,21 @@ test("a third wallet buys a listed lender position; the position migrates and th
   // behavioural term away from its default. A non-None cadence is
   // admitted only while periodic interest is on and the principal clears
   // the finer-cadence threshold, both off-range on the fresh chain, so
-  // the spec opens that window for the one offer it seeds and restores
-  // both values straight after. Only origination reads them (a sale
-  // vehicle stores the position's cadence verbatim), so nothing later in
-  // the spec depends on the window staying open. The threshold getter
-  // returns the effective value, so a library default comes back as the
-  // same number written explicitly, which admits exactly the same offers.
+  // the spec opens that window for the one loan it seeds and restores
+  // both values straight after. Posting the offer AND opening the loan
+  // read them (#3025: origination re-admits the cadence), so the window
+  // stays open through the accept. A sale vehicle stores the position's
+  // cadence verbatim and is exempt from the rule, so nothing later in the
+  // spec depends on the window staying open. The threshold getter returns
+  // the effective value, so a library default comes back as the same
+  // number written explicitly, which admits exactly the same offers.
   const periodicWas = await read<boolean>("getPeriodicInterestEnabled", []);
   const thresholdWas = await read<bigint>("getMinPrincipalForFinerCadence", []);
-  let offerId: bigint;
+  let loanId: bigint;
   try {
     await sendAsAdmin("setPeriodicInterestEnabled", [true]);
     await sendAsAdmin("setMinPrincipalForFinerCadence", [CADENCE_THRESHOLD_FLOOR]);
-    offerId = await seedDeskOffer({
+    const offerId = await seedDeskOffer({
       role: "lender",
       side: "lend",
       rateBps: 900,
@@ -163,11 +165,11 @@ test("a third wallet buys a listed lender position; the position migrates and th
       days: 60, // longer than one Monthly interval, as the cadence requires
       terms: SEEDED_TERMS,
     });
+    loanId = await acceptOfferDirect("borrower", offerId);
   } finally {
     await sendAsAdmin("setMinPrincipalForFinerCadence", [thresholdWas]);
     await sendAsAdmin("setPeriodicInterestEnabled", [periodicWas]);
   }
-  const loanId = await acceptOfferDirect("borrower", offerId);
 
   // CONFIRM THE SETUP FROM CHAIN STATE (#2183): the position carries the
   // seeded terms, or the preservation checks below would prove nothing.

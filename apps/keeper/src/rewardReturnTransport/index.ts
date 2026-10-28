@@ -64,14 +64,15 @@ import type { ChainConfig, Env, KeeperD1 } from '../env';
 import { getChainConfigs } from '../env';
 import { buildKeeperContext, passIsArmed, resolveKeeperAccount, type KeeperContext } from '../keeper';
 import type { PassTick } from '../passSchedule';
-import { deadlineClient, PastRunDeadline, settledRead, type BatchResult } from '../batchRead';
+import { deadlineClient, PastRunDeadline } from '../batchRead';
 import { shortErr } from '../callErrors';
 import { finishWork, getWorkItems, putWork } from '../db';
 import { d1EventLedger, decodePos, encodePos, posAfter, rowFinalized, type EventLedger, type LedgerRow } from '../eventLedger';
 import { feeCeiling } from '../feeCeiling';
 import { sendOpsAlert, type OpsAlertOutcome } from '../opsAlert';
-import { d1ScanCursors, decodeIndex, finalFloor, finalizedBlockOnce, rotatingWindow, type FinalBlock, type ScanCursors } from '../scanCursors';
+import { d1ScanCursors, decodeIndex, finalFloor, rotatingWindow, type ScanCursors } from '../scanCursors';
 import { StepSender, type CallResult, type SendFeeCeiling } from '../stepSender';
+import { PassReader } from '../passReader';
 import { AUTH_PENDING, AUTH_RELEASED, AUTH_SETTLED, executeBlocked, repatStep, returnChunk, type LaneBucket, type RepatState } from './plan';
 
 export * from './plan';
@@ -123,7 +124,6 @@ export const STRANDED_NEXT_ITEM = 'stranded-next';
 export const NOTICE_FLOOR_ITEM = 'notice-floor';
 export const DEFAULT_MIN_PART = 1000n * 10n ** 18n;
 export const MAX_FEE_VAR = 'REWARD_RETURN_TRANSPORT_MAX_FEE_WEI';
-const READ_CHUNK = 100;
 
 const ROLE_CANONICAL = 0;
 const ROLE_MIRROR = 1;
@@ -351,19 +351,9 @@ export async function returnTransportOnce(deps: ReturnTransportDeps): Promise<Re
   return reports;
 }
 
-class Reader {
-  /** The chain's finalized block, read once a run (`scanCursors.finalFloor`). */
-  readonly finalized: () => Promise<FinalBlock | null>;
-
-  constructor(
-    readonly deps: ChainDeps,
-    readonly deadline: number,
-  ) {
-    this.finalized = finalizedBlockOnce(deps.client);
-  }
-
-  async one<T>(functionName: string, args: readonly unknown[] = [], address: Address = this.deps.diamond, abi: Abi = ABI): Promise<T> {
-    return (await this.deps.client.readContract({ address, abi, functionName, args })) as T;
+class Reader extends PassReader {
+  constructor(deps: ChainDeps, sendDeadline: number) {
+    super(deps, sendDeadline, deps.diamond, ABI, 'rewardReturnTransport');
   }
 
   /** `one`, or undefined with why noted. */
@@ -375,24 +365,6 @@ class Reader {
       sender.noteUnread(key, `${what} (${shortErr(err)})`);
       return undefined;
     }
-  }
-
-  /** At the head, or at `blockNumber` when one is given. */
-  async many(calls: readonly { functionName: string; args: readonly unknown[] }[], label: string, blockNumber?: bigint): Promise<unknown[]> {
-    const out: unknown[] = [];
-    for (let i = 0; i < calls.length; i += READ_CHUNK) {
-      const part = calls.slice(i, i + READ_CHUNK);
-      // eslint-disable-next-line no-await-in-loop
-      const res: BatchResult[] = await settledRead(
-        this.deps.readClient,
-        part.map((c) => ({ address: this.deps.diamond, abi: ABI, functionName: c.functionName, args: c.args })),
-        `rewardReturnTransport ${label}`,
-        this.deadline,
-        blockNumber,
-      );
-      for (const x of res) out.push(x.status === 'success' ? x.result : undefined);
-    }
-    return out;
   }
 
   /** A lens lane bucket, or null when the view is absent or refuses. */

@@ -349,6 +349,10 @@ function fakeB2({ pageSize = 2 } = {}) {
 
   const b2 = {
     downloads: [],
+    // Faults to inject, each used once: {match(path), status, store}. With
+    // `store`, the request takes effect and the answer is still the error, as
+    // B2 can do.
+    faults: [],
     bucket(name, { lock = false } = {}) {
       buckets.set(name, { id: `bkt-${name}`, name, lock, versions: [], bytes: new Map() });
       return b2;
@@ -376,6 +380,16 @@ function fakeB2({ pageSize = 2 } = {}) {
       return buckets.get(bucketName).versions;
     },
     async fetch(url, init = {}) {
+      const u = new URL(url);
+      const i = b2.faults.findIndex((f) => f.match(u.pathname, init));
+      if (i >= 0) {
+        const [f] = b2.faults.splice(i, 1);
+        if (f.store) await b2.handle(url, init);
+        return json({ code: 'internal_error', message: 'incident' }, f.status);
+      }
+      return b2.handle(url, init);
+    },
+    async handle(url, init = {}) {
       const u = new URL(url);
       if (u.pathname.endsWith('/b2_authorize_account')) {
         const [id] = Buffer.from(init.headers.Authorization.slice(6), 'base64').toString().split(':');
@@ -429,8 +443,9 @@ function fakeB2({ pageSize = 2 } = {}) {
           action: 'upload',
           fileName: decodeURIComponent(init.headers['X-Bz-File-Name']),
           fileId,
-          uploadTimestamp: NOW,
+          uploadTimestamp: b2.now ?? NOW,
           contentLength: Buffer.byteLength(init.body),
+          contentSha1: createHash('sha1').update(init.body).digest('hex'),
           fileInfo,
           fileRetention: { mode: init.headers['X-Bz-File-Retention-Mode'], retainUntilTimestamp: Number(init.headers['X-Bz-File-Retention-Retain-Until-Timestamp']) },
         });
@@ -480,7 +495,8 @@ function nightly(b2, tier, period, nonce, body, at, { manifest = true, declared 
   return fileId;
 }
 
-const run = (b2, over = {}) => runWatcher({ env: { ...ENV, ...over.env }, now: over.now ?? NOW, fetchImpl: b2.fetch, dryRun: over.dryRun ?? false });
+const noSleep = async () => {};
+const run = (b2, over = {}) => runWatcher({ env: { ...ENV, ...over.env }, now: over.now ?? NOW, fetchImpl: b2.fetch, sleep: noSleep, dryRun: over.dryRun ?? false });
 
 test('a run records every archive once, locked in compliance mode, and a second run writes nothing', async () => {
   const b2 = world();
@@ -718,4 +734,113 @@ test('every file-info value is fixed in size, so the largest entry fits B2\'s 2,
   const bytes = Buffer.byteLength(name) + Object.entries(info).reduce((n, [k, v]) => n + Buffer.byteLength(k) + Buffer.byteLength(v), 0);
   assert.ok(bytes < 1024, String(bytes));
   assert.deepEqual(entryFileInfo({ ...r, manifest: { versions: [] } }).manifests, '-');
+});
+
+test('a failed ledger upload is never repeated in the run: judged now, recorded by the next run', async () => {
+  const uploadOf = (id) => (p, init) => p.startsWith('/upload/') && decodeURIComponent(init.headers['X-Bz-File-Name']).includes(id);
+  const ledgerVersions = (b2) => b2.versions('vaipakam-offchain-backup-ledger');
+  // A 500 that stored nothing: one POST only, the archive is still judged,
+  // and the next run records it.
+  const b2 = world();
+  const id = nightly(b2, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
+  b2.faults.push({ match: uploadOf(id), status: 500 });
+  const first = await run(b2);
+  assert.deepEqual(first.live, []);
+  assert.deepEqual(first.unwritten.map((u) => u.fileId), [id]);
+  assert.ok(first.notes.some((n) => n.includes(id) && n.includes('left to the next')), first.notes.join('\n'));
+  assert.ok(!ledgerVersions(b2).some((v) => v.fileName.endsWith(`/${id}.json`)));
+  const second = await run(b2);
+  assert.deepEqual(second.unwritten, []);
+  assert.equal(ledgerVersions(b2).filter((v) => v.fileName.endsWith(`/${id}.json`)).length, 1);
+  // A 500 that DID store: the run's own listing sees it landed, nothing is
+  // left pending, and no later run uploads it again.
+  const b3 = world();
+  const landed = nightly(b3, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
+  b3.faults.push({ match: uploadOf(landed), status: 500, store: true });
+  const r3 = await run(b3);
+  assert.deepEqual(r3.live, []);
+  assert.deepEqual(r3.unwritten, []);
+  await run(b3);
+  assert.equal(ledgerVersions(b3).filter((v) => v.fileName.endsWith(`/${landed}.json`)).length, 1);
+  // An archive whose upload fails is judged all the same: a mismatch pages.
+  const b4 = world();
+  const bad = nightly(b4, 'daily', '2026-10-27', N1, 'night', NOW - DAY, { declared: { sha256: sha('other'), byteLength: 5, encryption: 'AES-256-GCM' } });
+  b4.faults.push({ match: uploadOf(bad), status: 503 });
+  assert.deepEqual((await run(b4)).live.flatMap((p) => p.keys), [`mismatch:${bad}`]);
+  // Reads are retried: a listing and a download each fail once.
+  const b5 = world();
+  nightly(b5, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
+  b5.faults.push({ match: (p) => p.endsWith('/b2_list_file_versions'), status: 503 });
+  b5.faults.push({ match: (p) => p.endsWith('/b2_download_file_by_id'), status: 500 });
+  assert.deepEqual((await run(b5)).live, []);
+  assert.equal(b5.faults.length, 0);
+});
+
+test('a refused upload stops the run; an archive that stays unrecorded for days pages', async () => {
+  const uploadOf = (id) => (p, init) => p.startsWith('/upload/') && decodeURIComponent(init.headers['X-Bz-File-Name']).includes(id);
+  const b2 = world();
+  nightly(b2, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
+  b2.faults.push({ match: (p) => p.startsWith('/upload/'), status: 400 });
+  await assert.rejects(run(b2), /upload of .* failed: 400/);
+  // On the ledger's first run an old archive is only news; once the ledger
+  // has been running for days, an archive it still cannot record pages.
+  const b3 = world();
+  nightly(b3, 'daily', '2026-10-24', N3, 'night-24', NOW - 4 * DAY);
+  b3.now = NOW - 3 * DAY;
+  await run(b3, { now: b3.now });
+  const old = nightly(b3, 'daily', '2026-10-25', N2, 'night-25', NOW - 3 * DAY + 1000);
+  b3.now = NOW - 3 * DAY + MANIFEST_GRACE_MS + 2000;
+  b3.faults.push({ match: uploadOf(old), status: 503 });
+  const fresh = await run(b3, { now: b3.now });
+  assert.ok(!fresh.live.some((p) => p.keys.some((k) => k.startsWith('unrecorded:'))), JSON.stringify(fresh.live));
+  b3.now = NOW;
+  nightly(b3, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
+  b3.faults.push({ match: uploadOf(old), status: 503 });
+  const r = await run(b3);
+  assert.deepEqual(r.live.flatMap((p) => p.keys), [`unrecorded:${old}`]);
+  // A network error is as indeterminate as a 5xx.
+  const b4 = world();
+  nightly(b4, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
+  const fetchImpl = async (url, init) => {
+    if (new URL(url).pathname.startsWith('/upload/')) throw new TypeError('fetch failed');
+    return b4.fetch(url, init);
+  };
+  const r4 = await runWatcher({ env: ENV, now: NOW, fetchImpl, sleep: noSleep });
+  assert.equal(r4.unwritten.length, 2); // the October monthly and the daily
+  assert.equal(b4.versions('vaipakam-offchain-backup-ledger').length, 0);
+  // An empty ledger has no clock to age the failure by, so it pages at once,
+  // and keeps paging on later runs while it stays empty.
+  assert.deepEqual(r4.live.flatMap((p) => p.keys), ['ledger-not-started']);
+  const later = await runWatcher({ env: ENV, now: NOW + 3 * DAY, fetchImpl, sleep: noSleep });
+  assert.deepEqual(later.live.flatMap((p) => p.keys).filter((k) => !k.startsWith('missing:')), ['ledger-not-started']);
+  // Once one entry lands, the ledger has its clock and the page clears.
+  const healed = await run(b4);
+  assert.ok(!healed.live.some((p) => p.keys.includes('ledger-not-started')), JSON.stringify(healed.live));
+});
+
+test('the nightly\'s PUT retries a transient B2 failure and gives up on a refusal', async () => {
+  const { putObject, PUT_ATTEMPTS } = await import('../src/b2.ts');
+  const cfg = { endpoint: 's3.us-west-004.backblazeb2.com', bucket: 'b', region: 'us-west-004', accessKeyId: 'k', secretAccessKey: 's' };
+  const answers = (statuses) => {
+    const seen = [];
+    return {
+      seen,
+      fetchImpl: async (url, init) => {
+        seen.push(init.headers['x-amz-date'] ?? init.headers['X-Amz-Date']);
+        const status = statuses.shift() ?? 200;
+        if (status === 'network') throw new TypeError('fetch failed');
+        return new Response(status === 200 ? '' : 'oops', { status });
+      },
+    };
+  };
+  const sleep = async () => {};
+  const body = new TextEncoder().encode('{}');
+  const ok = answers([500, 'network', 200]);
+  assert.equal((await putObject(cfg, 'manifests/x.json', body, 'application/json', { fetchImpl: ok.fetchImpl, sleep })).status, 200);
+  assert.equal(ok.seen.length, 3);
+  const refused = answers([403, 200]);
+  await assert.rejects(putObject(cfg, 'k', body, 'application/json', { fetchImpl: refused.fetchImpl, sleep }), /failed: 403/);
+  assert.equal(refused.seen.length, 1);
+  const down = answers(Array(PUT_ATTEMPTS).fill(503));
+  await assert.rejects(putObject(cfg, 'k', body, 'application/json', { fetchImpl: down.fetchImpl, sleep }), new RegExp(`after ${PUT_ATTEMPTS} attempts`));
 });

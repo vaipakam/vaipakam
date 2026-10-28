@@ -78,6 +78,13 @@ evidence that the migration has completed.
   order. Work on another network is independent. A rejected unsent action
   cannot reserve a transaction number indefinitely; a broadcast whose result
   is unknown must not be replaced as if it had never reached the network.
+- Every transaction the keeper sends carries a gas limit above the node's
+  estimate by the repository's one fixed margin, unless the call names its
+  own limit. A node estimates against the latest block with no margin, and
+  the transaction mines in a later block, so a call whose cost moves with
+  time would otherwise run out of gas at the bare estimate. Unused gas is
+  not charged; the keeper's account must still hold the fee for the higher
+  limit for a send to be accepted.
 - Every pass has a finite deadline. Ordinarily it is the scheduled minute
   plus the pass's cadence, less a thirty-second margin. A send whose queue
   slot or preparation reaches that deadline is deferred without broadcast.
@@ -228,6 +235,12 @@ evidence that the migration has completed.
   on an incomplete reading could never finish. A day with an entry still
   running is counted as waiting, not attempted. Its own unfinished proof
   for a day is continued rather than replaced.
+- However many reward entries cover a day, its proof is reached. A day
+  covered by more entries than one run can read is checked, and then
+  proven, over several runs: each run carries on from where the last one
+  stopped, keeping the day's running sum and the position its proof has
+  reached, and never starts the reading again. A day whose reading carries
+  on is named on the run's report.
 - It finalizes a retired custody era once every day of the era's span is
   proven closed and no staging hold remains on its row, and never touches
   the live era. On a chain with an active reward role it drains the whole
@@ -295,7 +308,9 @@ evidence that the migration has completed.
   the covering reward entries page by page, in ascending order, and then
   dispatches the finished quote toward Base, paying the lane fee. Before it
   dispatches, the accumulated conservation must equal the day's recorded
-  totals on both sides. A day whose quote comes to nothing on both sides is
+  totals on both sides. A day covered by more entries than one run can
+  read is summed and submitted over several runs, each carrying on from
+  where the last stopped, so no day is out of reach because it was busy. A day whose quote comes to nothing on both sides is
   resolved as zero and needs nothing more. The fee for each send is held to
   this duty's own ceiling. A send whose quoted fee is above that ceiling is
   refused and stated, and it is tried again on a later run.
@@ -442,13 +457,35 @@ evidence that the migration has completed.
   only what is known. Notices are best-effort and cover the claimants touched
   by that run, not every claimant on the network.
 
+## Protocol upkeep outside the reward system
+
+- Two permissionless housekeeping steps outside the reward system have a
+  keeper backstop, checked every hour on every chain the keeper serves.
+- A buyback intent that has passed its expiry while still pending is rolled
+  back, so the unfilled part of its reservation returns to the spendable
+  buyback budget and its allowance and commitment slot are released. The
+  keeper finds intents from the indexer's record of commitments, but decides
+  each one from the intent's own on-chain record and the chain's own clock.
+  An intent that is still live, filled or already expired is left alone.
+- The per-tier loan-to-value cache is refreshed from the peer protocols
+  before it can lapse; a cached tier stops counting after fourteen days and
+  the governance tier cap applies instead. The keeper first previews the
+  refresh and sends it only when it would write a tier whose value changes,
+  or one cached long enough ago to need renewing, so a chain whose peers give
+  no reading costs nothing. Each tier the refresh rejects is reported with
+  the protocol's own reason. Nothing is refreshed while peer readings are
+  paused.
+- Neither step pays a fee or moves value to the keeper. The keeper works a
+  chain only when its connection answers for that chain, and a value it
+  could not read stops the affected step and is stated in the run's report.
+
 ## Activation and operator visibility
 
 The master keeper switch and each duty's own arming choice are separate.
 Delivery proofs, late acknowledgements, sanctions observation, reward-day
-automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out must each
+automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, and protocol upkeep must each
 disclose whether they are armed on the selected deployment. Reward-day
-automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out ship disabled and require
+automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, and protocol upkeep ship disabled and require
 deliberate activation. Deploying their software does not prove they run, that rewards have launched, or that custody or the
 expiry horizon has been activated. The mirror's day-delivery protection is
 required by its reward role, as stated in the current tokenomics spec; it is

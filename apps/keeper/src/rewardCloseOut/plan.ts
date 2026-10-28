@@ -5,7 +5,7 @@
 // be finalized, and when a day's transport cursor has an exhausted epoch to
 // pass. No reads and no sends: `index.ts` feeds these with what it read.
 
-export { SIDE_BORROWER, SIDE_LENDER, conservationGap, covers, coveringEntries, type ScannedEntry, type Side } from '../rewardEntries';
+export { SIDE_BORROWER, SIDE_LENDER, covers, type ScannedEntry, type Side } from '../rewardEntries';
 
 /** The newest day a run may try to prove closed: elapsed (before `today`)
  *  and reached by both interest frontiers. Below 0 when no day qualifies. The

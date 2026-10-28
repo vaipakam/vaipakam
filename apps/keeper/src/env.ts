@@ -196,6 +196,16 @@ interface BaseEnv {
    *  over every provable day not yet proven closed. A plain var. */
   REWARD_CLOSE_OUT_WINDOW_DAYS?: string;
 
+  // Protocol upkeep pass (#2984). `secret_text` like the flags above.
+  /** 'true' arms the protocol upkeep pass (in addition to KEEPER_ENABLED):
+   *  the buyback-intent expiry and the tier LTV cache refresh. Both
+   *  permissionless; neither pays a fee or moves value to the keeper. */
+  PROTOCOL_UPKEEP_ENABLED?: string;
+  /** Seconds after which a cached tier LTV is refreshed even when its value
+   *  would not change (default 7 days; the contract uses a cached tier only
+   *  while it is under 14 days old). A plain var. */
+  TIER_LTV_REFRESH_AFTER_SEC?: string;
+
   // Reward zeroed-day pass (#2984). `secret_text` like the flags above.
   /** 'true' arms the reward zeroed-day pass (in addition to KEEPER_ENABLED):
    *  a mirror's compensation quote for each deliberately zeroed day, and the
@@ -383,6 +393,8 @@ export const PLAIN_VAR_KEYS = [
   'PERIODIC_SETTLE_ENABLED',
   'REWARD_CLOSE_OUT_ENABLED',
   'REWARD_CLOSE_OUT_WINDOW_DAYS',
+  'PROTOCOL_UPKEEP_ENABLED',
+  'TIER_LTV_REFRESH_AFTER_SEC',
   'REWARD_ZEROED_DAY_ENABLED',
   'REWARD_ZEROED_DAY_WINDOW_DAYS',
   'REWARD_ZEROED_DAY_MAX_FEE_WEI',
@@ -562,6 +574,8 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     PERIODIC_SETTLE_ENABLED: raw.PERIODIC_SETTLE_ENABLED,
     REWARD_CLOSE_OUT_ENABLED: raw.REWARD_CLOSE_OUT_ENABLED,
     REWARD_CLOSE_OUT_WINDOW_DAYS: raw.REWARD_CLOSE_OUT_WINDOW_DAYS,
+    PROTOCOL_UPKEEP_ENABLED: raw.PROTOCOL_UPKEEP_ENABLED,
+    TIER_LTV_REFRESH_AFTER_SEC: raw.TIER_LTV_REFRESH_AFTER_SEC,
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,
     REWARD_ZEROED_DAY_WINDOW_DAYS: raw.REWARD_ZEROED_DAY_WINDOW_DAYS,
     REWARD_ZEROED_DAY_MAX_FEE_WEI: raw.REWARD_ZEROED_DAY_MAX_FEE_WEI,
