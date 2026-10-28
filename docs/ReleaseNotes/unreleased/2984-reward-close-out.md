@@ -1,4 +1,4 @@
-## Thread — keeper backstop for closing out finished reward days (PR #<n>)
+## Thread — keeper backstop for closing out finished reward days (PR #2993)
 
 Several steps that finish a reward day are permissionless on purpose, but nothing called them on a schedule. A day that had ended stayed open on paper, the transport epochs that listed it kept their remainders, and a retired custody era kept its row until someone made each call by hand. The keeper now has a close-out duty that makes those calls on every chain it serves, every fifteen minutes. It ships switched off, behind its own arming flag.
 
