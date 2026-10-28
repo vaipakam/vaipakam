@@ -5,14 +5,17 @@ name: Indexer ingest health
 # scheduled tick by name, in the Worker's logs, and the stall was found by a
 # stale screen. This probe reads the indexer's own `GET /health/ingest` from
 # outside the Worker every 15 minutes and FAILS when a watched chain's ingest
-# has stopped, when the schema gate is waiting on a migration (naming it), or
-# when the route cannot be read.
+# has stopped, when the schema gate is waiting on a migration (naming it),
+# when the indexer has recorded a loan-status announcement that disagrees
+# with the status diagram (#2337 — the check the retired reference subgraph
+# used to count, now in the indexer, and now paged on), or when the route
+# cannot be read.
 #
 # HOW THE OPERATOR HEARS OF IT. Not from the failed run alone: GitHub sends
 # scheduled-workflow notifications only to the account that last edited the
 # cron line, and only if that account has Actions notifications on, so a red
 # run is not an alert anyone is guaranteed to receive (#2482 r1). The probe
-# therefore OPENS AN ISSUE — titled "Indexer ingest stalled", labelled
+# therefore OPENS AN ISSUE — titled "Indexer not healthy", labelled
 # `infra`, assigned to INGEST_ALERT_ASSIGNEE — on the first failing run, adds
 # nothing while the same condition lasts — a CHANGED condition (another chain
 # stalls, the gate goes pending) is commented and notified again — and closes
@@ -89,6 +92,11 @@ jobs:
       # The indexer's cron runs every minute and a healthy cursor is ~1–2 min
       # old; 15 min of standing still is a stall, not a slow tick.
       INGEST_STALE_SECONDS: '900'
+      # #2337 — loan-status violations an operator has investigated, as
+      # `chainId:txHash:logIndex`, comma-separated. A recorded violation stays
+      # recorded on the indexer; listing it here, in a reviewed commit, is what
+      # stops the page. Empty: every recorded violation pages.
+      LIFECYCLE_ACKNOWLEDGED: ''
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -107,7 +115,7 @@ jobs:
         run: |
           if [ "$VERDICT" = "failure" ] && [ -n "$PROBLEMS" ]; then
             {
-              echo "## Indexer ingest is NOT healthy"
+              echo "## The indexer is NOT healthy"
               echo
               printf '%s\n' "$PROBLEMS" | sed 's/^/- /'
             } >> "$GITHUB_STEP_SUMMARY"
@@ -141,7 +149,10 @@ jobs:
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       # Who the alert issue is assigned to — the operator who acts on it.
       INGEST_ALERT_ASSIGNEE: vaipakam
-      STALL_TITLE: Indexer ingest stalled
+      # Every verdict the probe can reach — a stalled chain, a pending
+      # migration, a loan-status violation — shares this one issue; its body
+      # names which.
+      UNHEALTHY_TITLE: Indexer not healthy
       # A run that failed WITHOUT a verdict (checkout, setup, the checker's
       # own configuration, a timeout) says nothing about ingest; it gets its
       # own issue so the operator is never told ingest is stalled when its
@@ -152,7 +163,7 @@ jobs:
       - id: state
         run: |
           if [ "$PROBE_RESULT" = "success" ]; then s=healthy
-          elif [ "$VERDICT" = "failure" ] && [ -n "$KEYS" ]; then s=stalled
+          elif [ "$VERDICT" = "failure" ] && [ -n "$KEYS" ]; then s=unhealthy
           else s=broken
           fi
           echo "state=$s" >> "$GITHUB_OUTPUT"
@@ -179,15 +190,15 @@ jobs:
             timeout 30 gh issue close "$n" --repo "$GITHUB_REPOSITORY" --comment "The probe is producing verdicts again: $RUN_URL"
           done
       # Keyed to the VERDICT alone, never to the step above (#2482 r5).
-      - name: Close a recovered stall alert
+      - name: Close a recovered health alert
         if: always() && steps.state.outputs.state == 'healthy'
         timeout-minutes: 1
         run: |
           open=$(timeout 30 gh issue list --repo "$GITHUB_REPOSITORY" --state open --label infra \
-            --search "in:title \"$STALL_TITLE\"" --json number,title \
-            -q ".[] | select(.title == \"$STALL_TITLE\") | .number")
+            --search "in:title \"$UNHEALTHY_TITLE\"" --json number,title \
+            -q ".[] | select(.title == \"$UNHEALTHY_TITLE\") | .number")
           for n in $open; do
-            timeout 30 gh issue close "$n" --repo "$GITHUB_REPOSITORY" --comment "Ingest is healthy again: $RUN_URL"
+            timeout 30 gh issue close "$n" --repo "$GITHUB_REPOSITORY" --comment "The indexer is healthy again: $RUN_URL"
           done
       # The operator path: one open issue per condition. Opened on the first
       # failing run, left alone while the same condition lasts, commented and
@@ -201,10 +212,10 @@ jobs:
         env:
           STATE: ${{ steps.state.outputs.state }}
         run: |
-          if [ "$STATE" = "stalled" ]; then
-            title="$STALL_TITLE"
+          if [ "$STATE" = "unhealthy" ]; then
+            title="$UNHEALTHY_TITLE"
             {
-              echo "The scheduled ingest probe found the indexer's ingest is not healthy:"
+              echo "The scheduled ingest probe found the indexer is not healthy:"
               echo
               printf '%s\n' "$PROBLEMS" | sed 's/^/- /'
             } > "$RUNNER_TEMP/alert.md"
@@ -267,8 +278,8 @@ jobs:
             echo "Telegram secrets not set — the alert issue is the notification."
             exit 0
           fi
-          if [ "$STATE" = "stalled" ]; then
-            text=$(printf 'Indexer ingest is NOT healthy\n\n%s\n\n%s' "$PROBLEMS" "$RUN_URL")
+          if [ "$STATE" = "unhealthy" ]; then
+            text=$(printf 'The indexer is NOT healthy\n\n%s\n\n%s' "$PROBLEMS" "$RUN_URL")
           else
             text=$(printf 'The indexer ingest probe failed before it could judge ingest (state unknown)\n\n%s' "$RUN_URL")
           fi

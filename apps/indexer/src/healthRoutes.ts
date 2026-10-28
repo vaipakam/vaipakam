@@ -24,6 +24,11 @@
  *    is read from the bindings without resolving a secret, and says so:
  *    a configured chain whose secret fails to resolve stays in the set,
  *    because its standing cursor is the stall the prober exists to see.
+ *  - `lifecycle` (#2337): per chain, how many loan-status announcements
+ *    disagreed with the status diagram, the oldest of them by name, and how
+ *    many loans the check tracks (and how many from initiation, the ones it
+ *    checks fully). Null only before migration 0080 creates its tables. See
+ *    loanLifecycleGuard.ts.
  *
  * It does NOT decide what "stale" means. The cursor advances only after a
  * scan completes and only forward (chainIndexer.ts), so its age is the
@@ -39,6 +44,7 @@
 import { CURSOR_KIND } from './chainIndexer';
 import { schemaGate, type SchemaCheck } from './schemaGate';
 import { redactedError } from '@vaipakam/lib/errorDescription';
+import { readLifecycleHealth, type LifecycleHealth } from './loanLifecycleGuard';
 
 /** The narrow D1 surface this route reads. */
 interface D1Like {
@@ -97,6 +103,8 @@ export interface IngestHealth {
   schema: SchemaCheck;
   chains: ChainIngestState[];
   configured: ConfiguredScanSet;
+  /** The loan-status check (#2337); null before migration 0080. */
+  lifecycle: LifecycleHealth | null;
 }
 
 /**
@@ -183,6 +191,7 @@ export async function readIngestHealth(
     schema,
     chains,
     configured: { chains: configuredChains, basis: CONFIGURED_SCAN_BASIS },
+    lifecycle: await readLifecycleHealth(db),
   };
 }
 

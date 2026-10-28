@@ -173,7 +173,12 @@ describe('SQL-vs-schema guard (#1149)', () => {
     // Covered against the REAL migrated schema by
     // `closedLoanSideTables.test.ts`, which moves a loan end to end and
     // races a same-second write in to prove the move then changes nothing.
-    expect(skipped.length).toBeLessThanOrEqual(21);
+    // Raised 21 → 22 for #2337: the loan-status check reads the records of
+    // the loans a block announces through one chunked `IN (?, ?, …)` SELECT,
+    // one placeholder per loan id, values bound. Covered against the REAL
+    // migrated schema by `loanLifecycleGuard.test.ts`, which records loans
+    // across several calls and asserts the state each read returned.
+    expect(skipped.length).toBeLessThanOrEqual(22);
   });
 
   it('every static SQL statement prepares against the migrated schema', () => {

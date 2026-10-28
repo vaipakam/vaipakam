@@ -1593,6 +1593,44 @@ treat a move back into an ongoing state as a reason to overwrite what it holds.
 The requirement is that no loan is left presented as ongoing once the platform
 considers it finished.
 
+### The status diagram
+
+A loan is always in exactly one of six statuses, and may move only along the
+moves listed here. Every other move is refused.
+
+- **Active** — the loan is running. It may become **Repaid** (full repayment,
+  preclose, offset or refinance), **Defaulted** (a liquidation or a time-based
+  default that sold the collateral), **Fallback pending** (a liquidation or
+  default whose sale failed, so the collateral is held for the fallback
+  settlement), or **Internally matched** (closed in full against an opposing
+  position).
+- **Fallback pending** — the loan is awaiting its fallback settlement. It may
+  return to **Active** (the borrower cured it by adding collateral), become
+  **Repaid** (the borrower cured it by repaying in full), become **Defaulted**
+  (the lender's claim finalised the fallback), or become **Internally matched**
+  (rescued in full by an internal match).
+- **Repaid**, **Defaulted** and **Internally matched** — the loan has ended.
+  Each may only become **Settled**, once both sides have closed their
+  positions.
+- **Settled** — final. No move leaves it.
+
+A partial repayment, a partial liquidation, a partial internal match, or a
+collateral top-up that does not cure a fallback, changes a loan's figures,
+never its status, and so is not a move in this diagram.
+
+**The diagram is checked from outside the contracts as well.** The contracts
+refuse every move it does not list, and the platform's own off-chain reader
+independently checks every announced move against it: a move the diagram does
+not list, a move that does not start from the status last announced for that
+loan, or a second initiation of a loan already running. Any such observation
+means a contract defect or an off-chain reader that no longer agrees with the
+contracts, and it must reach an operator promptly rather than wait to be read.
+The check states what it cannot see: a loan whose earlier history it never
+observed is checked against the diagram from its first observed move, and the
+count of loans it has watched from initiation is published with its results.
+An observation stays recorded until an operator has investigated it and
+acknowledged it in a reviewed change; the check never quietly forgets one.
+
 ### Repayment Logic
 
 **ERC-20 Lending:**

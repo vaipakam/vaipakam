@@ -532,7 +532,7 @@ From ProjectDetailsREADME.md:
 
 From ProjectDetailsREADME.md:
 
-- **Operations Export Phase:** Deploy scripts should export the subgraph event ABI / per-chain YAML, Tenderly alert YAML, and CCIP watcher secret snippets from the same deployment artifacts used by the apps. These exports prevent monitoring, indexing, and cross-chain watcher configuration from drifting away from the deployed Diamond, messenger, token-pool, and adapter addresses.
+- **Operations Export Phase:** Deploy scripts should export the alert presets and CCIP watcher secret snippets from the same deployment artifacts used by the apps. These exports prevent monitoring and cross-chain watcher configuration from drifting away from the deployed Diamond, messenger, token-pool, and adapter addresses. (The reference subgraph's export was removed with the subgraph in #2337; the indexer reads the same deployment bundle as the apps.)
 
 From ProjectDetailsREADME.md:
 

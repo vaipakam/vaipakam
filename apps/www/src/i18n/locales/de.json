@@ -409,14 +409,14 @@
         "a1": "Den <s>Vaipakam-Treuhand-Wrapper</s> des Kreditgebers — nicht das zugrundeliegende NFT — über das Diamond abfragen. Bei ERC-1155-Vermietungen mit mehreren parallelen Mietern auf demselben <c>(nftContract, tokenId)</c> liefert <c2>vaultGetNFTQuantity</c2> die <em>aktive aggregierte</em> Menge und <c3>vaultGetNFTUserExpires</c3> den minimalen aktiven Ablauf.",
         "a2": "Der Wrapper hält den maßgeblichen Mietstatus auch dann vor, wenn das zugrundeliegende NFT ERC-4907 <s>nicht</s> implementiert, sodass Integratoren über alle vermieteten Assets eine einheitliche Schnittstelle erhalten."
       },
-      "integrator-subgraph": {
+      "integrator-events": {
         "q": "Welche Lifecycle-Ereignisse eines Kredits kann ich indexieren?",
-        "a1": "Das Diamond emittiert eine stabile Menge an Lifecycle-Ereignissen, die der Referenz-Subgraph indexiert. Diese können direkt abonniert oder über den Subgraph abgefragt werden:",
-        "li1": "<c>LoanInitiated</c> — Kredit erstellt, Konditionen fixiert",
-        "li2": "<c>LoanRepaid</c> — vollständige oder teilweise Rückzahlung verbucht",
-        "li3": "<c>LoanDefaulted</c> — Karenzzeit abgelaufen, Anspruchsweg freigeschaltet",
-        "li4": "<c>LoanLiquidated</c> — HF-ausgelöste DEX-Liquidation ausgeführt",
-        "li5": "<c>LiquidationFallback</c> — DEX-Pfad blockiert; Sicherheitsäquivalent + Prämie ausgezahlt"
+        "a1": "Jede Änderung des Status eines Kredits wird durch ein einziges Ereignis angekündigt, das die Statusänderung selbst auslöst. Wer nur dieses Ereignis abonniert, verfolgt also jeden Kredit. Die übrigen liefern die Details einzelner Schritte:",
+        "li1": "<c>LoanStatusChanged</c> — jede Statusänderung, mit dem Kredit, seinem alten und seinem neuen Status",
+        "li2": "<c>LoanInitiated</c> — Kredit erstellt, Konditionen festgelegt",
+        "li3": "<c>LoanRepaid</c> — Kredit vollständig zurückgezahlt (eine Teilrückzahlung löst <c>PartialRepaid</c> aus)",
+        "li4": "<c>LoanDefaulted</c> — Kredit endete im Ausfall",
+        "li5": "<c>LiquidationFallback</c> — keine Swap-Route hat funktioniert; die Sicherheit bleibt im Vault des Kreditnehmers, gesperrt für den Anspruch des Kreditgebers, und der Kreditnehmer kann den Kredit noch heilen"
       }
     }
   },

@@ -119,6 +119,16 @@ const CLASSIFICATION = {
       'numbered above every mark, which re-examines rather than skips',
   },
   loan_participants: { class: 'replay-derived', reason: 'append-only chain history (#1450 r31)' },
+  loan_lifecycle_state: {
+    class: 'replay-derived',
+    reason: 'the status each loan last announced, read off LoanInitiated / LoanStatusChanged (#2337)',
+  },
+  loan_lifecycle_violation: {
+    class: 'replay-derived',
+    reason:
+      'announcements that disagreed with the status diagram (#2337); a replay from genesis sees every ' +
+      'loan from initiation, so it re-records each one and checks more than the live pass could',
+  },
   notifications: {
     class: 'replay-derived',
     reason: 'derived inbox; cleared WITH hf_band_state; read-state is client-side (#1450 r33)',

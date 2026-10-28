@@ -1594,6 +1594,8 @@ DELETE FROM keeper_deployment" )
 wrangler d1 execute vaipakam-warm --remote --command="\
 DELETE FROM activity_events; \
 DELETE FROM loan_participants; \
+DELETE FROM loan_lifecycle_state; \
+DELETE FROM loan_lifecycle_violation; \
 DELETE FROM notifications; \
 DELETE FROM swap_to_repay_intents; \
 DELETE FROM loan_reconcile_quarantine; \
