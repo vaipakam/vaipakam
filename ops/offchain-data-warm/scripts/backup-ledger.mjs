@@ -14,9 +14,10 @@
  *      a compliance-mode retention nobody can shorten;
  *   3. lengthens the retention of each yearly entry whose archive still
  *      exists and which has under a year left;
- *   4. re-reads the ledger and judges the whole picture (`lib/ledger-rules.mjs`):
- *      missing, ambiguous, replay, mismatch, ledger tampered, deleted early,
- *      renewal failed.
+ *   4. re-reads the ledger, re-checks any manifest whose versions changed
+ *      since its archive was recorded, and judges the whole picture
+ *      (`lib/ledger-rules.mjs`): missing, ambiguous, replay, mismatch, ledger
+ *      tampered, hidden early, deleted early, renewal failed.
  *
  * A problem is written to GITHUB_OUTPUT in the shape the shared alert job
  * reads (`problems`, `keys`), and the run exits 1. A run that cannot reach a
@@ -57,6 +58,7 @@ import {
   entryName,
   judge,
   manifestCheck,
+  manifestIdsField,
   parseAcknowledged,
   parseEntryName,
   readArchiveBucket,
@@ -184,7 +186,7 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
         io,
       );
     }
-    written.push({ ...record, uploaded: record.uploadTimestamp, retainUntil });
+    written.push({ ...record, uploaded: record.uploadTimestamp, retainUntil, manifests: manifestIdsField(manifests.map((m) => m.fileId)) });
     log(`${dryRun ? 'would record' : 'recorded'} ${a.tier} ${a.period} (${a.fileId}): ${verdict.check}`);
   }
 
@@ -209,6 +211,23 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
   const ledger = dryRun
     ? { recorded: new Map([...ledgerBefore.recorded, ...written.map((r) => [r.fileId, r])]), tampered: ledgerBefore.tampered }
     : readLedger(await listAllVersions(ledgerAuth, ledgerBucketId, '', io));
+
+  // Before judging, a manifest whose versions differ from the ones an entry
+  // was checked against is checked again, against the digest the entry recorded: the
+  // archive's bytes cannot have changed (a B2 version is immutable), but the
+  // manifest beside it can be replaced.
+  const manifestRechecks = new Map();
+  const present = new Map(bucket.archives.map((a) => [a.fileId, a]));
+  for (const r of ledger.recorded.values()) {
+    const a = present.get(r.fileId);
+    if (!a) continue;
+    const uploads = bucket.manifests.get(a.manifestName)?.uploads ?? [];
+    if (manifestIdsField(uploads.map((m) => m.fileId)) === r.manifests) continue;
+    const manifests = [];
+    for (const m of uploads) manifests.push({ bytes: await bytesById(archiveAuth, m.fileId, io) });
+    manifestRechecks.set(r.fileId, manifestCheck({ sha256: r.sha256, length: r.length }, manifests).check);
+  }
+
   const { problems, notes } = judge({
     now,
     ledger,
@@ -218,6 +237,7 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
     baselineErrors: baselineCheck.byTier,
     deferred,
     renewalFailures,
+    manifestRechecks,
   });
 
   const acknowledged = parseAcknowledged(env.BACKUP_ACKNOWLEDGED);
@@ -256,6 +276,8 @@ function summarise({ dryRun, bucket, ledger, written, deferred, notes, live, qui
   return lines.join('\n');
 }
 
+const MAX_ALERT_LINES = 40;
+
 /**
  * The verdict, in the shape `alert-issue.yml` reads. Each problem is one line,
  * and the heredoc delimiter is random, so no text can end the value early and
@@ -264,7 +286,11 @@ function summarise({ dryRun, bucket, ledger, written, deferred, notes, live, qui
 function writeVerdict(live) {
   if (process.env.GITHUB_OUTPUT) {
     const delimiter = `EOF_${randomUUID()}`;
-    const lines = live.map((p) => p.text.replace(/[\r\n]+/g, ' ').slice(0, 500));
+    // At most MAX_ALERT_LINES lines reach the alert issue; the rest are
+    // counted, and every one is in the run summary. Every key is kept, so
+    // the condition the issue tracks is whole.
+    const lines = live.slice(0, MAX_ALERT_LINES).map((p) => p.text.replace(/[\r\n]+/g, ' ').slice(0, 500));
+    if (live.length > MAX_ALERT_LINES) lines.push(`… and ${live.length - MAX_ALERT_LINES} more problem(s), listed in the run summary.`);
     const keys = [...new Set(live.flatMap((p) => p.keys))].sort().join(',');
     appendFileSync(process.env.GITHUB_OUTPUT, `problems<<${delimiter}\n${lines.join('\n')}\n${delimiter}\nkeys=${keys}\n`);
   }

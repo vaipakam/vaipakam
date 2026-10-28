@@ -22,15 +22,21 @@ import { createHash } from 'node:crypto';
 
 const AUTHORIZE_URL = 'https://api.backblazeb2.com/b2api/v3/b2_authorize_account';
 
-/** A Backblaze host, by name. Anything else is refused before it is called. */
+/**
+ * A Backblaze host, by name, over https. Anything else is refused before it is
+ * called. Two domains, because B2 uses two: the API and download hosts are
+ * under `backblazeb2.com`, and the upload URLs `b2_get_upload_url` hands out
+ * are on `pod-….backblaze.com`. The match is on whole labels, so a host that
+ * merely ends in either string does not pass.
+ */
 export function isBackblazeHost(url) {
-  let host;
+  let u;
   try {
-    host = new URL(url).host;
+    u = new URL(url);
   } catch {
     return false;
   }
-  return /(^|\.)backblazeb2\.com$/.test(host) && new URL(url).protocol === 'https:';
+  return u.protocol === 'https:' && u.port === '' && /(^|\.)(backblaze|backblazeb2)\.com$/.test(u.hostname);
 }
 
 function pinned(url, what) {
@@ -49,6 +55,12 @@ function pinned(url, what) {
  */
 export async function authorize(keyId, appKey, { fetchImpl = fetch } = {}) {
   if (!keyId || !appKey) throw new Error('a B2 key id and application key are required');
+  // lgtm[js/file-data-in-outbound-network-request]
+  // codeql[js/file-data-in-outbound-network-request]
+  // Sending the key to B2's fixed authorize endpoint is this call's purpose:
+  // the credential is read from the environment (or, for the one-time setup,
+  // the repo `.env`) and goes nowhere else. Every later host comes from this
+  // response and is pinned to Backblaze before it is called.
   const res = await fetchImpl(AUTHORIZE_URL, {
     headers: { Authorization: `Basic ${Buffer.from(`${keyId}:${appKey}`).toString('base64')}` },
   });

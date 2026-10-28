@@ -16,10 +16,11 @@ lengthened every run while the archive still exists.
 
 It then pages, through one alert issue and the ops chat, on a missing period,
 a period holding more than one archive, a copy of an older archive in a newer
-period, an archive that disagrees with its manifest, a ledger entry with a
-second version or a hide marker (the ledger key can add, never remove, so any
-addition the watcher did not make is visible), an archive deleted before its
-lifecycle could remove it, and a yearly entry whose retention could not be
+period, an archive that disagrees with its manifest (checked again whenever
+the manifest beside a recorded archive changes), a ledger entry with a second
+version or a hide marker (the ledger key can add, never remove, so any
+addition the watcher did not make is visible), an archive hidden or deleted
+before its lifecycle could do it, and a yearly entry whose retention could not be
 lengthened. A run that cannot reach a verdict opens a separate "not running"
 issue, so an unknown state is never reported as a broken backup. Nothing it
 prints names an archive, because the random part of an archive's name is what

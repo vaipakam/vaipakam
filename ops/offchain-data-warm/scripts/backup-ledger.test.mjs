@@ -105,7 +105,7 @@ function entryVersion({ tier = 'daily', period = '2026-10-27', fileId = 'F1', up
     fileName: entryName(tier, period, fileId),
     fileId: `E${++seq}`,
     uploadTimestamp: at,
-    fileInfo: { tier, period, nonce, sha256, length: '10', uploaded: String(uploaded), check, format },
+    fileInfo: { tier, period, nonce, sha256, length: '10', uploaded: String(uploaded), check, format, manifests: 'M1' },
     fileRetention: retention ?? { isClientAuthorizedToRead: true, value: { mode: 'compliance', retainUntilTimestamp: retentionFor(tier, at) } },
   };
 }
@@ -155,7 +155,7 @@ function archive(tier, period, nonce, fileId, uploadTimestamp) {
 }
 
 function rec(fileId, over = {}) {
-  return { tier: 'daily', period: '2026-10-27', nonce: N1, sha256: sha(fileId), length: 10, uploaded: NOW - DAY, check: 'match', format: LEGACY_FORMAT, fileId, retainUntil: NOW + 399 * DAY, ...over };
+  return { tier: 'daily', period: '2026-10-27', nonce: N1, sha256: sha(fileId), length: 10, uploaded: NOW - DAY, check: 'match', format: LEGACY_FORMAT, fileId, manifests: `${fileId}m`, retainUntil: NOW + 399 * DAY, ...over };
 }
 
 // The monthly the October cut wrote, present in every scene that is not about
@@ -222,6 +222,36 @@ test('deleted early: gone before its lifecycle pages; gone after does not; a yea
   assert.ok(keysOf(yearly).includes('deleted-early:Y1'));
 });
 
+test('deleted early counts the second lifecycle term from a supersession, which itself pages', () => {
+  const live = archive('daily', '2026-10-27', N1, 'A1', NOW - DAY);
+  const name = `archives/2026-10-17/${N2}.bin`;
+  const overwrite = { action: 'upload', fileName: name, fileId: 'O1', uploadTimestamp: NOW - 10 * DAY };
+  // Uploaded 11 days ago, superseded a day later, gone now: the lifecycle
+  // deletes a superseded version 9 days after, so this is not early.
+  const superseded = scene({ archives: [live, [overwrite]], recorded: [rec('A1'), rec('G1', { period: '2026-10-17', nonce: N2, uploaded: NOW - 11 * DAY })] }).result;
+  assert.ok(!keysOf(superseded).includes('deleted-early:G1'), keysOf(superseded).join());
+  // The same archive gone with no sign it was ever superseded is early.
+  const plain = scene({ archives: [live], recorded: [rec('A1'), rec('G1', { period: '2026-10-17', nonce: N2, uploaded: NOW - 11 * DAY })] }).result;
+  assert.ok(keysOf(plain).includes('deleted-early:G1'));
+});
+
+test('hidden early: a hide marker before the age rule pages; the lifecycle\'s own hide does not', () => {
+  const name = `archives/2026-10-20/${N2}.bin`;
+  const a = archive('daily', '2026-10-20', N2, 'A2', NOW - 8 * DAY);
+  const hide = (t) => [{ action: 'hide', fileName: name, fileId: 'H1', uploadTimestamp: t }];
+  const early = scene({ archives: [archive('daily', '2026-10-27', N1, 'A1', NOW - DAY), a, hide(NOW - 2 * DAY)] }).result;
+  assert.ok(keysOf(early).includes('hidden-early:A2'), keysOf(early).join());
+  const old = archive('daily', '2026-09-30', N3, 'A3', NOW - 28 * DAY);
+  const aged = scene({ archives: [archive('daily', '2026-10-27', N1, 'A1', NOW - DAY), old, [{ action: 'hide', fileName: `archives/2026-09-30/${N3}.bin`, fileId: 'H2', uploadTimestamp: NOW - 7 * DAY }]] }).result;
+  assert.ok(!keysOf(aged).some((k) => k.startsWith('hidden-early')), keysOf(aged).join());
+});
+
+test('a manifest re-check overrides the recorded verdict', () => {
+  const { result } = scene({ archives: [archive('daily', '2026-10-27', N1, 'A1', NOW - DAY)], recorded: [rec('A1')], manifestRechecks: new Map([['A1', 'sha-mismatch']]) });
+  assert.deepEqual(keysOf(result), ['mismatch:A1']);
+  assert.match(result.problems[0].text, /manifest changed/);
+});
+
 test('renewal: a yearly entry still short of a year is due and, once overdue, pages', () => {
   const archives = [archive('daily', '2026-10-27', N1, 'A1', NOW - DAY), archive('yearly', '2026', N2, 'Y1', NOW - 300 * DAY)];
   const yearly = rec('Y1', { tier: 'yearly', period: '2026', nonce: N2, uploaded: NOW - 300 * DAY, retainUntil: NOW + 100 * DAY });
@@ -277,6 +307,9 @@ test('a key with more authority than the job, or less, or a wider scope, is refu
 test('only Backblaze hosts over https are called', () => {
   assert.equal(isBackblazeHost('https://api005.backblazeb2.com'), true);
   assert.equal(isBackblazeHost('https://f005.backblazeb2.com/file'), true);
+  assert.equal(isBackblazeHost('https://pod-000-1005-03.backblaze.com/b2api/v3/b2_upload_file/x'), true);
+  assert.equal(isBackblazeHost('https://evilbackblaze.com'), false);
+  assert.equal(isBackblazeHost('https://pod.backblaze.com:8443'), false);
   assert.equal(isBackblazeHost('http://api005.backblazeb2.com'), false);
   assert.equal(isBackblazeHost('https://backblazeb2.com.evil.example'), false);
   assert.equal(isBackblazeHost('not a url'), false);
@@ -362,7 +395,8 @@ function fakeB2({ pageSize = 2 } = {}) {
         return bytes ? new Response(bytes) : json({ message: 'not found' }, 404);
       }
       if (u.pathname.endsWith('/b2_get_upload_url')) {
-        return json({ uploadUrl: `${api}/upload/${b.name}`, authorizationToken: k.id });
+        // B2 hands out upload URLs on its pod hosts, under backblaze.com.
+        return json({ uploadUrl: `https://pod-000-1005-03.backblaze.com/upload/${b.name}`, authorizationToken: k.id });
       }
       if (u.pathname.startsWith('/upload/')) {
         if (!k.capabilities.includes('writeFiles')) return json({ message: 'unauthorized' }, 401);
@@ -497,6 +531,24 @@ test('an archive whose manifest has not landed waits, then is recorded as having
   assert.deepEqual(waiting.deferred.map((d) => d.fileId), [id]);
   const later = await run(b2, { now: NOW - 600_000 + MANIFEST_GRACE_MS + 1 });
   assert.deepEqual(later.live.flatMap((p) => p.keys), [`mismatch:${id}`]);
+});
+
+test('a manifest replaced after its archive was recorded is checked again', async () => {
+  const b2 = world();
+  const id = nightly(b2, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
+  assert.deepEqual((await run(b2)).live, []);
+  // A write key replaces the manifest; the original is then lifecycle-deleted.
+  const manifest = `manifests/2026-10-27/${N1}.json`;
+  b2.remove('vaipakam-offchain-data-warm', (v) => v.fileName === manifest);
+  b2.put('vaipakam-offchain-data-warm', manifest, JSON.stringify({ archive: { sha256: sha('other'), byteLength: 5, encryption: 'AES-256-GCM' } }));
+  assert.deepEqual((await run(b2)).live.flatMap((p) => p.keys), [`mismatch:${id}`]);
+  // A manifest that lands late, and agrees, raises nothing.
+  const b3 = world();
+  nightly(b3, 'daily', '2026-10-26', N2, 'night-26', NOW - 2 * DAY);
+  const late = nightly(b3, 'daily', '2026-10-27', N1, 'night', NOW - 3 * MANIFEST_GRACE_MS, { manifest: false });
+  assert.deepEqual((await run(b3)).live.flatMap((p) => p.keys), [`mismatch:${late}`]);
+  b3.put('vaipakam-offchain-data-warm', manifest, JSON.stringify({ archive: { sha256: sha('night'), byteLength: 5, encryption: 'AES-256-GCM' } }));
+  assert.deepEqual((await run(b3)).live, []);
 });
 
 test('a second version or a hide marker in the ledger pages as tampering', async () => {

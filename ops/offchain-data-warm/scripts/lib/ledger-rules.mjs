@@ -151,7 +151,17 @@ export function entryFileInfo(r) {
     uploaded: String(r.uploadTimestamp),
     check: r.check,
     format: r.format,
+    // The manifest versions the check was made against, so a later run can
+    // tell when the manifest beside a recorded archive has changed.
+    manifests: manifestIdsField(r.manifest.versions.map((m) => m.fileId)),
   };
+}
+
+const MANIFEST_IDS = /^(-|[A-Za-z0-9_-]{1,200}(\.[A-Za-z0-9_-]{1,200})*)$/;
+
+/** Manifest version ids as one ASCII file-info value: dot-joined, `-` for none. */
+export function manifestIdsField(ids) {
+  return ids.length === 0 ? '-' : [...ids].sort().join('.');
 }
 
 /** The file info of one stored entry version, or null when it is not one the watcher writes. */
@@ -168,11 +178,12 @@ export function readEntryInfo(v, named) {
     length < 0 ||
     !Number.isSafeInteger(uploaded) ||
     !CHECKS.includes(i.check) ||
-    !FORMATS.includes(i.format)
+    !FORMATS.includes(i.format) ||
+    !MANIFEST_IDS.test(i.manifests ?? '')
   ) {
     return null;
   }
-  return { tier: i.tier, period: i.period, nonce: i.nonce, sha256: i.sha256, length, uploaded, check: i.check, format: i.format };
+  return { tier: i.tier, period: i.period, nonce: i.nonce, sha256: i.sha256, length, uploaded, check: i.check, format: i.format, manifests: i.manifests };
 }
 
 /** The entry body: everything the file info holds, plus provenance. */
@@ -293,7 +304,13 @@ export function readArchiveBucket(archiveVersions) {
   const manifests = new Map();
   const currentManifests = new Map(TIERS.map((t) => [t.tier, []]));
   const currentArchives = new Map(TIERS.map((t) => [t.tier, []]));
+  // Every upload and hide time at each archive name, so a version's end as
+  // the current one (superseded or hidden) can be read back.
+  const changes = new Map();
+  const hideTimes = new Map();
   for (const [name, g] of groups) {
+    changes.set(name, [...g.uploads, ...g.hides].map((v) => v.uploadTimestamp).sort((a, b) => a - b));
+    hideTimes.set(name, g.hides.map((v) => v.uploadTimestamp).sort((a, b) => a - b));
     const a = parseArchiveName(name);
     if (a) {
       for (const v of g.uploads) archives.push({ ...a, archiveName: name, fileId: v.fileId, uploadTimestamp: v.uploadTimestamp, versions: g.uploads.length });
@@ -306,7 +323,7 @@ export function readArchiveBucket(archiveVersions) {
       if (isCurrent(g)) currentManifests.get(m.tier).push(name);
     }
   }
-  return { archives, manifests, currentArchives, currentManifests };
+  return { archives, manifests, currentArchives, currentManifests, changes, hideTimes };
 }
 
 /** The archive versions the ledger has not recorded, oldest first. */
@@ -317,14 +334,35 @@ export function unrecorded(bucket, recorded) {
 }
 
 /**
- * The days a version under `prefix` must exist before the declared lifecycle
- * can delete it: hidden by age after the first term, deleted after the second.
- * A prefix with no rule (the yearly tier) is never deleted by the lifecycle.
+ * The declared lifecycle for `prefix`, in days: `hide` after upload, then
+ * `del` after the version stops being current. A prefix with no rule (the
+ * yearly tier) is never hidden or deleted by the lifecycle.
  */
-export function lifecycleDays(lifecycle, prefix) {
+export function lifecycleTerms(lifecycle, prefix) {
   const rule = lifecycle.rules.find((r) => r.fileNamePrefix === prefix);
-  if (!rule || rule.daysFromUploadingToHiding == null) return Infinity;
-  return rule.daysFromUploadingToHiding + (rule.daysFromHidingToDeleting ?? 0);
+  if (!rule || rule.daysFromUploadingToHiding == null) return { hide: Infinity, del: Infinity };
+  return { hide: rule.daysFromUploadingToHiding, del: rule.daysFromHidingToDeleting ?? 0 };
+}
+
+/**
+ * When a version at `name` uploaded at `uploaded` stopped being current: the
+ * first upload or hide marker after it at the same name, if the listing still
+ * shows one.
+ */
+export function noncurrentAt(bucket, name, uploaded) {
+  return (bucket.changes.get(name) ?? []).find((t) => t > uploaded) ?? null;
+}
+
+/**
+ * The earliest time the declared lifecycle could delete a version. A version
+ * stops being current at its age-hide time, or earlier when it was
+ * superseded or hidden, and is deleted `del` days after that (B2 counts the
+ * second term from when the version stopped being current, not from upload).
+ */
+export function earliestLifecycleDeletion(terms, uploaded, endedAt) {
+  if (terms.hide === Infinity) return Infinity;
+  const end = Math.min(uploaded + terms.hide * DAY, endedAt ?? Infinity);
+  return end + terms.del * DAY;
 }
 
 /**
@@ -358,7 +396,7 @@ const CHECK_TEXT = {
  * nonce in an archive's name is what keeps a leaked write key from replacing
  * it (design §4).
  */
-export function judge({ now, ledger, bucket, lifecycle, baseline, baselineErrors = {}, deferred = [], renewalFailures = [] }) {
+export function judge({ now, ledger, bucket, lifecycle, baseline, baselineErrors = {}, deferred = [], renewalFailures = [], manifestRechecks = new Map() }) {
   const problems = [];
   const notes = [];
   // A problem carries one or more stable keys: the alert re-notifies when the
@@ -433,7 +471,11 @@ export function judge({ now, ledger, bucket, lifecycle, baseline, baselineErrors
   const all = [...ledger.recorded.values()];
   for (const r of all) {
     if (!present.has(r.fileId)) continue;
-    if (r.check !== 'match') add(`mismatch:${r.fileId}`, `Mismatch: the ${r.tier} archive for ${r.period} (${r.fileId}): ${CHECK_TEXT[r.check]}.`);
+    // The manifest as it stands now: re-checked by the caller when its
+    // versions differ from the ones recorded, else the recorded verdict.
+    const check = manifestRechecks.get(r.fileId) ?? r.check;
+    const again = manifestRechecks.has(r.fileId) ? ' since it was recorded, its manifest changed and' : '';
+    if (check !== 'match') add(`mismatch:${r.fileId}`, `Mismatch: the ${r.tier} archive for ${r.period} (${r.fileId}):${again} ${CHECK_TEXT[check]}.`);
     const earlier = all.find(
       (o) => o.fileId !== r.fileId && o.sha256 === r.sha256 && (o.uploaded < r.uploaded || (o.uploaded === r.uploaded && o.fileId < r.fileId)),
     );
@@ -442,13 +484,29 @@ export function judge({ now, ledger, bucket, lifecycle, baseline, baselineErrors
     }
   }
 
-  // Deleted early: a recorded archive gone before the lifecycle could remove it.
+  // Hidden early: an archive version stopped being current before its age
+  // rule. The nightly never hides or rewrites a name, so only a hand did; and
+  // the lifecycle deletes it `del` days later. A supersession by a second
+  // upload is the ambiguous period above; a hide marker is reported here.
+  for (const a of bucket.archives) {
+    const terms = lifecycleTerms(lifecycle, a.spec.archivePrefix);
+    const hides = (bucket.hideTimes.get(a.archiveName) ?? []).filter((t) => t > a.uploadTimestamp);
+    if (hides.length > 0 && hides[0] < a.uploadTimestamp + terms.hide * DAY) {
+      const fate = terms.del === Infinity ? 'no rule deletes it, but a restore no longer sees it as current' : `B2 deletes it ${terms.del} days later`;
+      add(`hidden-early:${a.fileId}`, `Hidden early: the ${a.tier} archive for ${a.period} (${a.fileId}) was hidden on ${new Date(hides[0]).toISOString().slice(0, 10)}, before its lifecycle would hide it; ${fate}.`);
+    }
+  }
+
+  // Deleted early: a recorded archive gone before the lifecycle could remove
+  // it. When the listing shows the version was superseded or hidden first,
+  // the lifecycle's clock starts there (that event pages on its own above).
   for (const r of all) {
     if (present.has(r.fileId)) continue;
     const spec = TIERS.find((t) => t.tier === r.tier);
-    const days = lifecycleDays(lifecycle, spec.archivePrefix);
-    if (now < r.uploaded + days * DAY) {
-      add(`deleted-early:${r.fileId}`, `Deleted early: the ${r.tier} archive for ${r.period} (${r.fileId}) is gone; the lifecycle could not have removed it before ${days === Infinity ? 'never' : new Date(r.uploaded + days * DAY).toISOString().slice(0, 10)}.`);
+    const name = `${spec.archivePrefix}${r.period}/${r.nonce}.bin`;
+    const deadline = earliestLifecycleDeletion(lifecycleTerms(lifecycle, spec.archivePrefix), r.uploaded, noncurrentAt(bucket, name, r.uploaded));
+    if (now < deadline) {
+      add(`deleted-early:${r.fileId}`, `Deleted early: the ${r.tier} archive for ${r.period} (${r.fileId}) is gone; the lifecycle could not have removed it before ${deadline === Infinity ? 'never' : new Date(deadline).toISOString().slice(0, 10)}.`);
     }
   }
 

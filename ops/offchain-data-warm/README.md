@@ -20,8 +20,9 @@ included), with the SHA-256 and length the watcher computed from the bytes.
 The Worker holds no key to that bucket. It then pages, through one alert issue
 and the ops chat, on a missing period, a period holding more than one archive,
 a copy of an older archive in a newer period, an archive that disagrees with
-its manifest, a ledger entry with a second version or a hide marker, an archive
-deleted before its lifecycle could remove it, and a yearly entry whose
+its manifest (re-checked whenever the manifest changes), a ledger entry with a
+second version or a hide marker, an archive hidden or deleted before its
+lifecycle could do it, and a yearly entry whose
 retention could not be lengthened. The design and its limits are in
 [`BackupSecurityDesign.md`](../../docs/DesignsAndPlans/BackupSecurityDesign.md)
 §5; the rules are `scripts/lib/ledger-rules.mjs`, pinned by
