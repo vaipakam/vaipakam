@@ -737,7 +737,6 @@
       "unknown": "贷款 #{{id}}：我们无法读取它是否已关闭。请打开该贷款查看。",
       "changedOtherwise": "贷款 #{{id}}：本次批量操作未将其结清。其状态已通过其他方式改变，请打开该贷款查看当前情况。",
       "skippedRetry": "交易已执行，但这笔贷款被跳过了。现在可以从它自己的页面关闭。",
-      "approvalReturned": "没有贷款被关闭，因此您的代币授权已恢复为之前的数值。",
       "approvalLeft": "您对协议的 token 批准额度现为 {{amount}}。可在“设置”的“常设 token 批准”中调低。",
       "approvalLeftUnread": "批量操作后未能读取您的 token 批准额度。可在“设置”的“常设 token 批准”中查看。",
       "ownPageRental": "租赁需从其各自的页面关闭。",

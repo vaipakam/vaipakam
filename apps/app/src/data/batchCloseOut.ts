@@ -53,6 +53,23 @@ export function borrowerOfferGroups<T extends GroupableLoan>(rows: readonly T[])
     }));
 }
 
+/**
+ * The groups to render: the live ones, plus every group whose card is
+ * mid-batch or showing results. A batch that closes loans can leave its
+ * offer with fewer than two open loans, which drops the group from the
+ * live list; without this the card would unmount and take the outcomes
+ * and the approval note with it. A held group renders as it was when its
+ * batch started, until it is dismissed.
+ */
+export function withHeldGroups<T extends GroupableLoan>(
+  live: readonly OfferGroup<T>[],
+  held: ReadonlyMap<number, OfferGroup<T>>,
+): OfferGroup<T>[] {
+  const byOffer = new Map(live.map((g) => [g.offerId, g]));
+  for (const [offerId, g] of held) byOffer.set(offerId, g);
+  return [...byOffer.values()].sort((a, b) => a.offerId - b.offerId);
+}
+
 /** What the ready loans will take, summed per token. */
 export function pullTotals(plans: readonly CloseOutPlan[]): CloseOutPull[] {
   const byToken = new Map<string, CloseOutPull>();

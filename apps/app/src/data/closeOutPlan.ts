@@ -360,23 +360,3 @@ export async function planCloseOutForBatch(
     return refused(loan, action, captureTxError(err));
   }
 }
-
-/**
- * The late re-check, run after the approval and immediately before the
- * send: an acceptance, request or offset can land while the wallet waits
- * on the approval. Null when the loan may still go in the batch.
- */
-export async function lateBatchRefusal(
-  ctx: CloseOutCtx,
-  loan: CloseOutLoan,
-): Promise<string | null> {
-  try {
-    return (
-      (await saleSettlementRefusal(ctx.publicClient, ctx.diamond, loan, ctx.holder)) ??
-      (await refinanceRefusal(ctx, loan, copy.batchClose.ownPageRefinance)) ??
-      (await offsetLockRefusal(ctx, loan))
-    );
-  } catch (err) {
-    return captureTxError(err);
-  }
-}

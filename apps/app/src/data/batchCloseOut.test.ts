@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { AssetType } from '../lib/types';
-import { borrowerOfferGroups, pullTotals, type GroupableLoan } from './batchCloseOut';
+import { borrowerOfferGroups, pullTotals, withHeldGroups, type GroupableLoan } from './batchCloseOut';
 import type { CloseOutPlan } from './closeOutPlan';
 
 const USDC = '0x00000000000000000000000000000000000000a1' as const;
@@ -73,5 +73,21 @@ describe('pullTotals', () => {
 
   it('is empty when nothing is ready', () => {
     expect(pullTotals([{ kind: 'refused', loanId: 1, action: 'repay', reason: 'x' }])).toEqual([]);
+  });
+});
+
+describe('withHeldGroups', () => {
+  it('keeps a held group after it leaves the live list, and the held copy wins', () => {
+    const live = borrowerOfferGroups([row(1, 2), row(3, 2), row(5, 9), row(6, 9)]);
+    const heldFour = { offerId: 4, loans: [row(7, 4), row(8, 4)] };
+    const heldNine = { offerId: 9, loans: [row(5, 9)] };
+    const shown = withHeldGroups(live, new Map([[4, heldFour], [9, heldNine]]));
+    expect(shown.map((g) => g.offerId)).toEqual([2, 4, 9]);
+    expect(shown[2]).toBe(heldNine);
+  });
+
+  it('is the live list when nothing is held', () => {
+    const live = borrowerOfferGroups([row(1, 2), row(3, 2)]);
+    expect(withHeldGroups(live, new Map())).toEqual(live);
   });
 });

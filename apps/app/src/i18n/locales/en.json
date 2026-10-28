@@ -785,7 +785,6 @@
       "unknown": "Loan #{{id}}: we couldn’t read whether it closed. Open the loan to check.",
       "changedOtherwise": "Loan #{{id}}: not closed by this batch. Its status changed another way, so open the loan to see where it stands.",
       "skippedRetry": "The transaction ran, but this loan was skipped. It can be closed now from its own page.",
-      "approvalReturned": "No loan closed, so your token approval was set back to what it was before.",
       "approvalLeft": "Your token approval for the protocol now stands at {{amount}}. You can lower it under Standing token approvals in Settings.",
       "approvalLeftUnread": "We couldn’t read your token approval after the batch. You can check it under Standing token approvals in Settings.",
       "ownPageRental": "Rentals are closed from their own page.",

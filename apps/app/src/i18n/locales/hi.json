@@ -737,7 +737,6 @@
       "unknown": "Loan #{{id}}: हम नहीं पढ़ पाए कि यह बंद हुआ या नहीं। जाँचने के लिए loan खोलें।",
       "changedOtherwise": "ऋण #{{id}}: यह बैच इसे बंद नहीं कर सका। इसकी स्थिति किसी और तरीके से बदल गई है, इसलिए वर्तमान स्थिति देखने के लिए ऋण खोलें।",
       "skippedRetry": "Transaction चला, लेकिन यह loan छोड़ दिया गया। इसे अब इसके अपने page से बंद किया जा सकता है।",
-      "approvalReturned": "कोई loan बंद नहीं हुआ, इसलिए आपका token approval पहले जैसा कर दिया गया।",
       "approvalLeft": "प्रोटोकॉल के लिए आपकी token approval अब {{amount}} है। आप इसे सेटिंग्स में स्थायी token approvals के अंतर्गत कम कर सकते हैं।",
       "approvalLeftUnread": "बैच के बाद हम आपकी token approval नहीं पढ़ सके। आप इसे सेटिंग्स में स्थायी token approvals के अंतर्गत देख सकते हैं।",
       "ownPageRental": "Rentals अपने-अपने page से बंद होते हैं।",

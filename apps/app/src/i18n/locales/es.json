@@ -737,7 +737,6 @@
       "unknown": "Préstamo #{{id}}: no pudimos leer si se cerró. Abre el préstamo para comprobarlo.",
       "changedOtherwise": "Préstamo #{{id}}: este lote no lo cerró. Su estado cambió por otra vía; abre el préstamo para ver cómo está.",
       "skippedRetry": "La transacción se ejecutó, pero este préstamo se omitió. Ahora puede cerrarse desde su propia página.",
-      "approvalReturned": "No se cerró ningún préstamo, así que tu aprobación del token volvió a su valor anterior.",
       "approvalLeft": "Tu aprobación de tokens para el protocolo es ahora de {{amount}}. Puedes reducirla en Aprobaciones permanentes de tokens, en Configuración.",
       "approvalLeftUnread": "No pudimos leer tu aprobación de tokens después del lote. Puedes revisarla en Aprobaciones permanentes de tokens, en Configuración.",
       "ownPageRental": "Los alquileres se cierran desde su propia página.",

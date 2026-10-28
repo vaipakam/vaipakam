@@ -1870,11 +1870,20 @@ Thin-market honesty rules apply.
   never assumed from it: repaid (or closed early), still open with the
   reason, changed another way (for example defaulted meanwhile, which is
   never reported as this batch's close), left out, or could not be read.
-- If no loan closed, the approval is set back to what it was before, and
-  the page says so, or says that setting it back failed. If any loan
-  closed, the approval that remains (the unused allowance, and the share
-  of any loan that stayed open) is read from the chain and stated, with
-  where to lower it; if it cannot be read, the page says that instead.
+- Immediately before each transaction is sent, every loan in it is
+  checked again in full, as at review, since the wallet may have waited on
+  the approval or an earlier transaction meanwhile. A loan that no longer
+  passes (its position has moved to another wallet, a sale was accepted, a
+  request or offset was posted) is left out and named.
+- The approval is set back to what it was before only when it is
+  established that no loan closed; an outcome that could not be read
+  counts as a possible close. Either way, the approval that remains is
+  read from the chain afterwards and stated, with where to lower it, and
+  never described as restored on the strength of the attempt. If it
+  cannot be read, the page says that instead.
+- The batch card stays on the page with its results until the borrower
+  dismisses it, even when the batch leaves the offer with fewer than two
+  open loans.
 
 ### Taking back extra collateral
 

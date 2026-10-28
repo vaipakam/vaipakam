@@ -31,7 +31,6 @@ import { captureTxError, submitErrorText } from '../lib/errors';
 import { formatTokenAmountUp } from '../lib/format';
 import type { PositionLoan } from '../data/hooks';
 import {
-  lateBatchRefusal,
   planCloseOutForBatch,
   type CloseOutAction,
   type CloseOutCtx,
@@ -47,7 +46,16 @@ type Stage =
   | { kind: 'sending'; action: CloseOutAction; step: 'approving' | 'checking' | 'submitting' }
   | { kind: 'done'; action: CloseOutAction; outcomes: BatchOutcome[]; note: string | null };
 
-export function BatchCloseOutCard({ group }: { group: OfferGroup<PositionLoan> }) {
+export function BatchCloseOutCard({
+  group,
+  onHeldChange,
+}: {
+  group: OfferGroup<PositionLoan>;
+  /** Told when the card starts a batch (true) and when its results are
+   *  dismissed (false), so the page keeps it mounted in between even if
+   *  the batch leaves the offer with fewer than two open loans. */
+  onHeldChange?: (group: OfferGroup<PositionLoan>, held: boolean) => void;
+}) {
   const { address, walletChain, onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
@@ -57,6 +65,19 @@ export function BatchCloseOutCard({ group }: { group: OfferGroup<PositionLoan> }
   const meta = useTokenMeta(group.loans[0]?.lendingAsset);
   const [stage, setStage] = useState<Stage>({ kind: 'idle' });
   const [error, setError] = useState<string | null>(null);
+
+  // Hold the card from the first step past idle until it is dismissed
+  // (both transitions happen only here, in event handlers).
+  const start = (action: CloseOutAction) => {
+    if (!ctx) return;
+    onHeldChange?.(group, true);
+    void plan(action);
+  };
+  const toIdle = () => {
+    setError(null);
+    setStage({ kind: 'idle' });
+    onHeldChange?.(group, false);
+  };
 
   const ctx: CloseOutCtx | null =
     address && walletChain && publicClient
@@ -83,7 +104,7 @@ export function BatchCloseOutCard({ group }: { group: OfferGroup<PositionLoan> }
     const leftOut: BatchOutcome[] = plans
       .filter((p) => p.kind === 'refused')
       .map((p) => ({ loanId: p.loanId, kind: 'left-out', reason: p.reason }));
-    let readyIds = plans.filter((p) => p.kind === 'ready').map((p) => p.loanId);
+    const readyIds = plans.filter((p) => p.kind === 'ready').map((p) => p.loanId);
     const totals = pullTotals(plans);
     const approvals = totals.map((t) => ({ token: t.token, tracker: trackApproval() }));
     const unwindClients = {
@@ -116,19 +137,25 @@ export function BatchCloseOutCard({ group }: { group: OfferGroup<PositionLoan> }
           ...approvals[i].tracker.hooks(t.token),
         });
       }
-      // LATE re-check: an acceptance, request or offset can land while the
-      // wallet waits on the approval.
-      setStage({ kind: 'sending', action, step: 'checking' });
-      const late = await Promise.all(
-        readyIds.map(async (id) => ({ id, reason: await lateBatchRefusal(ctx, byId.get(id)!) })),
-      );
-      for (const l of late) {
-        if (l.reason) leftOut.push({ loanId: l.id, kind: 'left-out', reason: l.reason });
-      }
-      readyIds = late.filter((l) => !l.reason).map((l) => l.id);
       const functionName = action === 'repay' ? 'repayLoan' : 'precloseDirect';
       const outcomes: BatchOutcome[] = [];
-      for (const ids of chunkForMulticall(readyIds)) {
+      for (const planned of chunkForMulticall(readyIds)) {
+        // LATE re-check, immediately before EACH send: the loan is planned
+        // again in full — the same checks as the review, not a subset —
+        // because the wallet may have waited on the approval, or on the
+        // previous chunk, while a sale was accepted, a request or offset
+        // posted, or the position NFT moved (repayLoan is permissionless,
+        // so only this check keeps the wallet from paying for a position
+        // it no longer holds).
+        setStage({ kind: 'sending', action, step: 'checking' });
+        const late = await Promise.all(
+          planned.map((id) => planCloseOutForBatch(ctx, byId.get(id)!, action)),
+        );
+        for (const p of late) {
+          if (p.kind === 'refused') leftOut.push({ loanId: p.loanId, kind: 'left-out', reason: p.reason });
+        }
+        const ids = late.filter((p) => p.kind === 'ready').map((p) => p.loanId);
+        if (ids.length === 0) continue;
         setStage({ kind: 'sending', action, step: 'submitting' });
         let mined: { block: bigint } | { failure: string };
         try {
@@ -143,15 +170,15 @@ export function BatchCloseOutCard({ group }: { group: OfferGroup<PositionLoan> }
       }
       let note: string | null = null;
       if (approvals.length > 0) {
-        if (!outcomes.some((o) => o.kind === 'closed')) {
-          note = (await unwindAll())
-            ? copy.batchClose.approvalReturned
-            : copy.errors.approvalCleanupFailed;
-        } else {
-          // Each close pulls only what it owes, so the pad, and the share
-          // of any loan that stayed open, is still approved. Say how much.
-          note = await approvalLeftNote(ctx, totals.map((t) => t.token), amount);
-        }
+        // Set the approval back only when it is ESTABLISHED that no loan
+        // closed: an unreadable outcome may be a close that spent part of
+        // it. Either way the figure stated is the one read from the chain
+        // afterwards, never what the unwind is assumed to have done — the
+        // unwind leaves an allowance it did not write untouched.
+        const noneClosed = outcomes.every((o) => o.kind === 'open' || o.kind === 'changed');
+        const cleanupFailed = noneClosed && !(await unwindAll());
+        const left = await approvalLeftNote(ctx, totals.map((t) => t.token), amount);
+        note = cleanupFailed ? `${copy.errors.approvalCleanupFailed} ${left}` : left;
       }
       setStage({ kind: 'done', action, outcomes: [...outcomes, ...leftOut], note });
     } catch (err) {
@@ -188,7 +215,7 @@ export function BatchCloseOutCard({ group }: { group: OfferGroup<PositionLoan> }
             type="button"
             className="btn btn-primary"
             disabled={!ready}
-            onClick={() => void plan('repay')}
+            onClick={() => start('repay')}
           >
             {copy.batchClose.repayAll}
           </button>
@@ -198,7 +225,7 @@ export function BatchCloseOutCard({ group }: { group: OfferGroup<PositionLoan> }
               type="button"
               className="btn"
               disabled={!ready}
-              onClick={() => void plan('preclose')}
+              onClick={() => start('preclose')}
             >
               {copy.batchClose.closeAllEarly}
             </button>
@@ -221,10 +248,7 @@ export function BatchCloseOutCard({ group }: { group: OfferGroup<PositionLoan> }
           plans={stage.plans}
           amount={amount}
           onConfirm={() => void confirm(stage.action, stage.plans)}
-          onCancel={() => {
-            setError(null);
-            setStage({ kind: 'idle' });
-          }}
+          onCancel={toIdle}
         />
       ) : null}
 
@@ -236,7 +260,7 @@ export function BatchCloseOutCard({ group }: { group: OfferGroup<PositionLoan> }
             ))}
           </ul>
           {stage.note ? <p className="muted">{stage.note}</p> : null}
-          <button type="button" className="btn" onClick={() => setStage({ kind: 'idle' })}>
+          <button type="button" className="btn" onClick={toIdle}>
             {copy.batchClose.dismiss}
           </button>
         </>

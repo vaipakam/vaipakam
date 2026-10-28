@@ -99,12 +99,15 @@ out.
    token (one lending asset per offer, so one approval in practice),
    through the same `ensureAllowance` / `trackApproval` machinery the
    single-loan flow uses.
-3. Re-check every loan after the approval (a sale acceptance, refinance
-   request or offset can land while the wallet waits). A loan that now
-   refuses is moved to "left out".
-4. Send `multicall` through `useDiamondWrite`, the one chokepoint for
-   Diamond writes (Terms gate, receipt check), one transaction per 30
-   loans.
+3. For each chunk of up to 30 loans, immediately before sending it, plan
+   every loan in it again in full: the late check is the plan, not a
+   subset of it. A sale acceptance, refinance request or offset can land
+   while the wallet waits on the approval or on the previous chunk, and
+   the position NFT can move; `repayLoan` is permissionless, so without
+   the re-check the wallet would pay for a position it no longer holds. A
+   loan that now refuses is moved to "left out".
+4. Send that chunk's `multicall` through `useDiamondWrite`, the one
+   chokepoint for Diamond writes (Terms gate, receipt check).
 
 ## Outcomes are read back, never assumed
 
@@ -125,13 +128,21 @@ of "still open":
 If the transaction itself failed to send or report, loans are read at the
 latest block, because a transaction can mine without reporting.
 
-**Approvals.** If no loan closed, the approval is set back to what it was
-before, through the same unwind as the single-loan flow, and the result
-says whether that worked. If some loans closed, the allowance that
-remains (the unused pad, and the share of any loan that stayed open) is
-read live and stated, with where to lower it. The single-loan flow leaves
-its pad as allowance too; the batch says so because its remainder can be
-larger.
+**Approvals.** The approval is set back, through the same unwind as the
+single-loan flow, only when it is established that no loan closed: an
+unreadable outcome may be a close that spent part of it. The unwind
+leaves alone an allowance it did not write, so its success says nothing
+about the figure. Whatever happened, the allowance that remains is read
+from the chain afterwards and stated, with where to lower it (the unused
+pad, and the share of any loan that stayed open). The single-loan flow
+leaves its pad as allowance too; the batch says so because its remainder
+can be larger.
+
+**The card outlives its group.** A batch that closes loans can leave the
+offer with fewer than two open loans, which drops the group from the
+page's list. The page holds a card from the moment its batch starts until
+its results are dismissed, rendering the group as it was when the batch
+began.
 
 ## Slices
 

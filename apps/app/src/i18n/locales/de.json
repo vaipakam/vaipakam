@@ -737,7 +737,6 @@
       "unknown": "Kredit #{{id}}: Wir konnten nicht lesen, ob er geschlossen wurde. Öffnen Sie den Kredit, um es zu prüfen.",
       "changedOtherwise": "Darlehen #{{id}}: von diesem Stapel nicht geschlossen. Sein Status hat sich auf anderem Weg geändert; öffne das Darlehen, um den aktuellen Stand zu sehen.",
       "skippedRetry": "Die Transaktion wurde ausgeführt, aber dieser Kredit wurde übersprungen. Er kann jetzt über seine eigene Seite geschlossen werden.",
-      "approvalReturned": "Kein Kredit wurde geschlossen, daher wurde Ihre Token-Freigabe auf den vorherigen Wert zurückgesetzt.",
       "approvalLeft": "Deine Token-Genehmigung für das Protokoll beträgt jetzt {{amount}}. Du kannst sie unter „Dauerhafte Token-Genehmigungen“ in den Einstellungen senken.",
       "approvalLeftUnread": "Wir konnten deine Token-Genehmigung nach dem Stapel nicht lesen. Du kannst sie unter „Dauerhafte Token-Genehmigungen“ in den Einstellungen prüfen.",
       "ownPageRental": "Mieten werden über ihre eigene Seite geschlossen.",

@@ -1593,7 +1593,6 @@ const copySource = {
     ),
     skippedRetry:
       'The transaction ran, but this loan was skipped. It can be closed now from its own page.',
-    approvalReturned: 'No loan closed, so your token approval was set back to what it was before.',
     approvalLeft: tmpl(
       'Your token approval for the protocol now stands at {{amount}}. You can lower it under Standing token approvals in Settings.',
       ['amount'],

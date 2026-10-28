@@ -5,7 +5,7 @@
  * cancelled from here (journeys B2/L2's cancellation branch —
  * releases the locked side).
  */
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { ListChecks, LoaderCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useModal } from 'connectkit';
@@ -27,7 +27,8 @@ import { WindowedRowList } from '../lib/visibleWindow';
 import { assertRowActionStillValid } from '../contracts/preflights';
 import type { IndexedOffer } from '../data/indexer';
 import { BatchCloseOutCard } from '../components/BatchCloseOutCard';
-import { borrowerOfferGroups } from '../data/batchCloseOut';
+import { borrowerOfferGroups, withHeldGroups, type OfferGroup } from '../data/batchCloseOut';
+import type { PositionLoan } from '../data/hooks';
 
 function OfferRow({ offer }: { offer: IndexedOffer }) {
   const isRental = offer.assetType !== AssetType.ERC20;
@@ -161,6 +162,24 @@ export function Positions() {
   // #1247 — window identity: a wallet/chain switch on this mounted
   // page must collapse every expanded window (Codex #1265 r1).
   const listKey = `${readChain.chainId}|${address?.toLowerCase() ?? ''}`;
+  // #126 — batch cards that are mid-batch or showing results, held here so
+  // a batch that closes its group's loans does not unmount its own card.
+  // Scoped to the list key: a wallet or chain switch drops them.
+  const [heldBatches, setHeldBatches] = useState<{
+    key: string;
+    groups: ReadonlyMap<number, OfferGroup<PositionLoan>>;
+  }>({ key: listKey, groups: new Map() });
+  const holdBatch = useCallback(
+    (group: OfferGroup<PositionLoan>, held: boolean) =>
+      setHeldBatches((prev) => {
+        const groups = new Map(prev.key === listKey ? prev.groups : []);
+        if (held) groups.set(group.offerId, group);
+        else groups.delete(group.offerId);
+        return { key: listKey, groups };
+      }),
+    [listKey],
+  );
+  const heldGroups = heldBatches.key === listKey ? heldBatches.groups : new Map();
   const { setOpen } = useModal();
   const loans = useMyLoansFull();
   const offers = useMyOffersFull();
@@ -306,8 +325,12 @@ export function Positions() {
                     {group(copy.positions.groupAttention, attention, true, false)}
                     {/* #126 — the borrower's loans from one offer can be
                         repaid or closed early together. */}
-                    {borrowerOfferGroups(live).map((g) => (
-                      <BatchCloseOutCard key={`${listKey}|offer-${g.offerId}`} group={g} />
+                    {withHeldGroups(borrowerOfferGroups(live), heldGroups).map((g) => (
+                      <BatchCloseOutCard
+                        key={`${listKey}|offer-${g.offerId}`}
+                        group={g}
+                        onHeldChange={holdBatch}
+                      />
                     ))}
                     {group(copy.positions.groupActive, live, false, true)}
                     {group(copy.positions.groupEnded, ended, false, true)}

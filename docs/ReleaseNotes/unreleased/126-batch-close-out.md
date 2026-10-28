@@ -21,9 +21,11 @@ its own page. The batch goes through the Diamond's existing multicall
 with each loan allowed to fail on its own, so one loan that fails never
 undoes the others. Afterwards every loan is read back from the chain at
 the block the transaction mined in: repaid, still open with the reason,
-changed another way, or unreadable. If nothing closed, the approval is
-set back; if something did, the approval left standing is read and
-stated.
+changed another way, or unreadable. Every loan is checked again in full
+right before its transaction is sent, including that the wallet still
+holds its position. The approval is set back only when it is established
+that nothing closed, and the approval left standing is always read from
+the chain and stated. The card stays with its results until dismissed.
 
 Advances #126 (slice 1 of 3; the lender's "List all for sale" and the
 borrower's "Refinance all" follow). Design:

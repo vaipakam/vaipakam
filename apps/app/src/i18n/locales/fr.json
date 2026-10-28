@@ -737,7 +737,6 @@
       "unknown": "Prêt #{{id}} : nous n’avons pas pu lire s’il a été clôturé. Ouvrez le prêt pour vérifier.",
       "changedOtherwise": "Prêt #{{id}} : ce lot ne l’a pas clôturé. Son statut a changé par une autre voie ; ouvrez le prêt pour voir où il en est.",
       "skippedRetry": "La transaction s’est exécutée, mais ce prêt a été ignoré. Il peut maintenant être clôturé depuis sa propre page.",
-      "approvalReturned": "Aucun prêt n’a été clôturé, votre approbation du jeton a donc été remise à sa valeur précédente.",
       "approvalLeft": "Votre approbation de tokens pour le protocole s’élève désormais à {{amount}}. Vous pouvez la réduire dans Approbations permanentes de tokens, dans Paramètres.",
       "approvalLeftUnread": "Nous n’avons pas pu lire votre approbation de tokens après le lot. Vous pouvez la vérifier dans Approbations permanentes de tokens, dans Paramètres.",
       "ownPageRental": "Les locations se clôturent depuis leur propre page.",
