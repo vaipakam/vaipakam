@@ -13,6 +13,9 @@
 
 import type { Abi, Address, PublicClient } from 'viem';
 import { MetricsFacetABI } from '@vaipakam/contracts/abis';
+import { deadlineClient } from './batchRead';
+import { boundedCall } from './passReader';
+import { priorStageCutoffMs } from './runWindow';
 
 const METRICS_ABI: Abi = MetricsFacetABI as Abi;
 
@@ -37,12 +40,38 @@ export interface ScanWindow {
   round: number;
 }
 
+/** When a run's window scan stops: the per-loan reads a stage reserve before
+ *  the read cutoff that bounds the pass's later reads, the window itself a
+ *  stage reserve before those (`runWindow.ts` rule 3). */
+export interface ScanCutoffs {
+  window: number;
+  reads: number;
+}
+
+/** The scan's cutoffs for a pass whose next stage reads until `nextStage`. */
+export function scanCutoffs(nextStage: number): ScanCutoffs {
+  const reads = priorStageCutoffMs(nextStage);
+  return { window: priorStageCutoffMs(reads), reads };
+}
+
 /** The ids of window `visit mod count`, the block they were read at, and
- *  where the window sits. Successive visits walk the list and wrap. */
-export async function readActiveWindow(
+ *  where the window sits. Successive visits walk the list and wrap. Every
+ *  request stops at `cutoff`: one not started by then is refused and one
+ *  still in flight is abandoned, so the window is read whole or the call
+ *  throws `PastRunDeadline` (`runWindow.ts` rule 3). */
+export function readActiveWindow(
   client: PublicClient,
   diamond: Address,
-  visit = 0,
+  visit: number,
+  cutoff: number,
+): Promise<{ ids: bigint[]; blockNumber: bigint; window: ScanWindow }> {
+  return boundedCall(cutoff, 'the active-loan window', () => readWindow(deadlineClient(client, cutoff), diamond, visit));
+}
+
+async function readWindow(
+  client: PublicClient,
+  diamond: Address,
+  visit: number,
 ): Promise<{ ids: bigint[]; blockNumber: bigint; window: ScanWindow }> {
   const blockNumber = await client.getBlockNumber({ cacheTime: 0 });
   const total = (await client.readContract({

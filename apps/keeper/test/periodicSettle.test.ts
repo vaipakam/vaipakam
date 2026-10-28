@@ -19,7 +19,8 @@ import {
   type WalletClient,
 } from 'viem';
 import { RepayPeriodicFacetABI } from '@vaipakam/contracts/abis';
-import { LEFT_TO_LIQUIDATOR, type GraceLoan } from '../src/closeOut';
+import { LEFT_TO_LIQUIDATOR, READS_PAST_CUTOFF, type GraceLoan } from '../src/closeOut';
+import { PastRunDeadline } from '../src/batchRead';
 import {
   attemptPeriodicSettle,
   findSettleable,
@@ -80,6 +81,10 @@ interface Scene {
   calls?: number;
   /** The simulation reverts with this error name. */
   simulateRevert?: string;
+  /** The attempt's read cutoff (`readsBy`); none unless given. */
+  readCutoff?: number;
+  /** The node never answers a block-number read. */
+  hangBlock?: boolean;
 }
 
 function harness(scene: Scene) {
@@ -90,7 +95,7 @@ function harness(scene: Scene) {
   let planReads = 0;
   const plans = scene.plans ?? [NO_SALE];
   const client = {
-    getBlockNumber: async () => 100n,
+    getBlockNumber: () => (scene.hangBlock ? new Promise<bigint>(() => {}) : Promise.resolve(100n)),
     getTransactionCount: async (args: { blockTag: string }) =>
       args.blockTag === 'pending' ? 7 + (scene.unmined ?? 0) : 7,
     readContract: async (args: { functionName: string; args?: readonly unknown[]; blockNumber?: bigint }) => {
@@ -144,6 +149,7 @@ function harness(scene: Scene) {
     diamond: DIAMOND,
     chainId: 84532,
     notAfterMs: Number.MAX_SAFE_INTEGER,
+    readCutoff: scene.readCutoff ?? Number.POSITIVE_INFINITY,
     buildRoute: async (_loan, sell) => {
       quotedFor.push(sell);
       const n = scene.calls ?? 1;
@@ -161,6 +167,12 @@ function harness(scene: Scene) {
 }
 
 describe('attemptPeriodicSettle', () => {
+  it('gives up on reads still in flight at the read cutoff, before any send (#3069)', async () => {
+    const h = harness({ plans: [SALE], calls: 1, hangBlock: true, readCutoff: Date.now() + 50 });
+    await expect(attemptPeriodicSettle(h.deps, LOAN_ID)).resolves.toEqual({ kind: 'skipped', reason: READS_PAST_CUTOFF });
+    expect(h.writes, 'nothing prepared or signed').toHaveLength(0);
+  });
+
   it('stamps a fully paid period with an empty try-list and quotes nothing', async () => {
     const h = harness({ plans: [NO_SALE] });
     const out = await attemptPeriodicSettle(h.deps, LOAN_ID);
@@ -282,6 +294,9 @@ describe('attemptPeriodicSettle', () => {
   });
 });
 
+/** Scan cutoffs that never cut. */
+const NO_CUTOFFS = { window: Number.POSITIVE_INFINITY, reads: Number.POSITIVE_INFINITY };
+
 describe('findSettleable', () => {
   const preview = (cadence: number, canSettleNow: boolean) => ({
     status: 'success',
@@ -309,7 +324,7 @@ describe('findSettleable', () => {
         ];
       },
     } as unknown as PublicClient;
-    await expect(findSettleable(client, DIAMOND, 84532)).resolves.toEqual({
+    await expect(findSettleable(client, DIAMOND, 84532, 0, NO_CUTOFFS)).resolves.toEqual({
       kind: 'scanned',
       due: [5n],
       unread: [7n],
@@ -333,7 +348,28 @@ describe('findSettleable', () => {
         return [];
       },
     } as unknown as PublicClient;
-    await expect(findSettleable(client, DIAMOND, 84532)).resolves.toEqual({ kind: 'disabled' });
+    await expect(findSettleable(client, DIAMOND, 84532, 0, NO_CUTOFFS)).resolves.toEqual({ kind: 'disabled' });
+    expect(aggregates).toBe(0);
+  });
+
+  it('stops the scan when the periodic-interest switch is not read by its cutoff (#3069)', async () => {
+    let aggregates = 0;
+    const client = {
+      getBlockNumber: async () => 1n,
+      readContract: (args: { functionName: string }) => {
+        if (args.functionName === 'getActiveLoansCount') return Promise.resolve(2n);
+        if (args.functionName === 'getActiveLoansPaginated') return Promise.resolve([1n, 2n]);
+        if (args.functionName === 'getPeriodicInterestEnabled') return new Promise(() => {});
+        return Promise.reject(new Error(`unexpected read ${args.functionName}`));
+      },
+      multicall: async () => {
+        aggregates += 1;
+        return [];
+      },
+    } as unknown as PublicClient;
+    await expect(
+      findSettleable(client, DIAMOND, 84532, 0, { window: Date.now() + 50, reads: Number.POSITIVE_INFINITY }),
+    ).rejects.toBeInstanceOf(PastRunDeadline);
     expect(aggregates).toBe(0);
   });
 });

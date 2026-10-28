@@ -27,7 +27,8 @@ import {
 } from '@vaipakam/lib/routeBuilder';
 import { FORCED_SALE_SURFACE_SELECTORS, type ForcedSaleSurface } from '@vaipakam/lib/routeBuilder';
 import { surfaceFacet } from './helpers/forcedSaleSurface';
-import { attemptCloseOut } from '../src/closeOut';
+import { attemptCloseOut, READS_PAST_CUTOFF } from '../src/closeOut';
+import { PastRunDeadline } from '../src/batchRead';
 import { attemptErrorReason } from '../src/keeperSend';
 import { SendPastDeadline } from '../src/submissionQueue';
 import { inKindBlocker, tryInKindCloseOut } from '../src/keeper';
@@ -94,6 +95,12 @@ interface Scene {
   defaultable?: boolean | null;
   /** The pass's run deadline; defaults to one no test reaches. */
   notAfterMs?: number;
+  /** The attempt's read cutoff (`readsBy`); none unless given. */
+  readCutoff?: number;
+  /** The node never answers a block-number read. */
+  hangBlock?: boolean;
+  /** The route quote answers only after this long. */
+  routeDelayMs?: number;
   /** `previewForcedSale(loanId, TimeBasedDefault)` as read on each call, in
    *  order (the last one repeats): the early read, then the gate's. */
   plans?: (Plan | 'revert')[];
@@ -128,8 +135,12 @@ function harness(scene: Scene) {
   const plans = scene.plans ?? [PLAN];
   const planBlocks: (bigint | undefined)[] = [];
   let surfaceReads = 0;
+  let blockReads = 0;
   const client = {
-    getBlockNumber: async () => 100n,
+    getBlockNumber: () => {
+      blockReads += 1;
+      return scene.hangBlock ? new Promise<bigint>(() => {}) : Promise.resolve(100n);
+    },
     getTransactionCount: async (args: { blockTag: string }) =>
       args.blockTag === 'pending' ? 7 + (scene.unmined ?? 0) : 7,
     readContract: async (args: { functionName: string; args?: readonly unknown[]; blockNumber?: bigint }) => {
@@ -215,7 +226,9 @@ function harness(scene: Scene) {
     diamond: DIAMOND,
     chainId: 84532,
     notAfterMs: scene.notAfterMs ?? Number.MAX_SAFE_INTEGER,
+    readCutoff: scene.readCutoff ?? Number.POSITIVE_INFINITY,
     buildRoute: async (loan, sellAmount) => {
+      if (scene.routeDelayMs) await new Promise((r) => setTimeout(r, scene.routeDelayMs));
       routes.push(loan);
       routeSizes.push(sellAmount);
       const n = scene.calls ?? 1;
@@ -229,7 +242,7 @@ function harness(scene: Scene) {
       } as unknown as ServerOrchestrationResult;
     },
   };
-  return { deps, writes, previews, routes, routeSizes, planBlocks, surfaceReads: () => surfaceReads };
+  return { deps, writes, previews, routes, routeSizes, planBlocks, surfaceReads: () => surfaceReads, blockReads: () => blockReads };
 }
 
 describe('attemptGraceDefault', () => {
@@ -254,6 +267,23 @@ describe('attemptGraceDefault', () => {
   it('does not report a broadcast the node refused as possibly sent', async () => {
     const h = harness({ ending: 'sale', calls: 1, broadcast: 'refused' });
     await expect(attemptGraceDefault(h.deps, LOAN_ID)).rejects.toThrow(/insufficient funds/);
+  });
+
+  it('gives up on reads still in flight at the read cutoff, before any send (#3069)', async () => {
+    const h = harness({ ending: 'sale', calls: 1, hangBlock: true, readCutoff: Date.now() + 50 });
+    await expect(attemptGraceDefault(h.deps, LOAN_ID)).resolves.toEqual({ kind: 'skipped', reason: READS_PAST_CUTOFF });
+    expect(h.writes, 'nothing prepared or signed').toHaveLength(0);
+  });
+
+  it('starts no read once its cutoff has passed, even when a late quote lets the abandoned attempt go on (#3070 r1)', async () => {
+    const h = harness({ ending: 'sale', calls: 1, routeDelayMs: 150, readCutoff: Date.now() + 50 });
+    await expect(attemptGraceDefault(h.deps, LOAN_ID)).resolves.toEqual({ kind: 'skipped', reason: READS_PAST_CUTOFF });
+    // Let the late quote answer: the gate's clock read would follow it.
+    await new Promise((r) => setTimeout(r, 250));
+    expect(h.routes, 'the quote did answer, late').toHaveLength(1);
+    expect(h.blockReads(), 'no gate read started past the cutoff').toBe(0);
+    expect(h.previews).toHaveLength(0);
+    expect(h.writes).toHaveLength(0);
   });
 
   it('submits triggerDefault with the quoted try-list when the preview is a sale', async () => {
@@ -743,6 +773,9 @@ describe('rotate', () => {
   });
 });
 
+/** Scan cutoffs that never cut. */
+const NO_CUTOFFS = { window: Number.POSITIVE_INFINITY, reads: Number.POSITIVE_INFINITY };
+
 describe('findDefaultable', () => {
   it('reads the active list AND every eligibility answer at one pinned block', async () => {
     const seen: (bigint | undefined)[] = [];
@@ -763,7 +796,7 @@ describe('findDefaultable', () => {
         ];
       },
     } as unknown as PublicClient;
-    await expect(findDefaultable(client, DIAMOND, 84532)).resolves.toEqual({
+    await expect(findDefaultable(client, DIAMOND, 84532, 0, NO_CUTOFFS)).resolves.toEqual({
       defaultable: [5n],
       unread: [6n],
       window: { index: 0, count: 1, total: 3, round: 0 },
@@ -792,7 +825,7 @@ describe('findDefaultable', () => {
       },
     } as unknown as PublicClient;
 
-    const third = await findDefaultable(client, DIAMOND, 84532, 2);
+    const third = await findDefaultable(client, DIAMOND, 84532, 2, NO_CUTOFFS);
     expect(third.window).toEqual({ index: 2, count: 3, total: Number(total), round: 0 });
     // The last window holds only the 50 ids past 2 × SCAN_WINDOW.
     expect(pages).toEqual([[BigInt(SCAN_WINDOW * 2), 50n]]);
@@ -800,7 +833,7 @@ describe('findDefaultable', () => {
 
     pages.length = 0;
     aggregates = 0;
-    const wrapped = await findDefaultable(client, DIAMOND, 84532, 3);
+    const wrapped = await findDefaultable(client, DIAMOND, 84532, 3, NO_CUTOFFS);
     expect(wrapped.window.index).toBe(0);
     // A full window: never more than SCAN_WINDOW ids, whatever the book.
     expect(pages.reduce((n, [, l]) => n + Number(l), 0)).toBe(SCAN_WINDOW);
@@ -827,10 +860,47 @@ describe('findDefaultable', () => {
         throw new Error('multicall unavailable');
       },
     } as unknown as PublicClient;
-    const scan = await findDefaultable(client, DIAMOND, 84532);
+    const scan = await findDefaultable(client, DIAMOND, 84532, 0, NO_CUTOFFS);
     expect(eligibilityReads).toBe(0);
     expect(aggregates).toBe(2);
     expect(scan.defaultable).toEqual([]);
     expect(scan.unread).toEqual(ids);
+  });
+
+  it('keeps the chunks it read when a later chunk is still in flight at the cutoff (#3069)', async () => {
+    const ids = Array.from({ length: 150 }, (_, i) => BigInt(i + 1));
+    let aggregates = 0;
+    const client = {
+      getBlockNumber: async () => 7n,
+      readContract: async (args: { functionName: string }) => {
+        if (args.functionName === 'getActiveLoansCount') return BigInt(ids.length);
+        if (args.functionName === 'getActiveLoansPaginated') return ids;
+        throw new Error(`unexpected read ${args.functionName}`);
+      },
+      multicall: (args: { contracts: unknown[] }) => {
+        aggregates += 1;
+        // The first chunk answers (every loan defaultable); the second never does.
+        if (aggregates === 1) return Promise.resolve(args.contracts.map(() => ({ status: 'success', result: true })));
+        return new Promise(() => {});
+      },
+    } as unknown as PublicClient;
+    const scan = await findDefaultable(client, DIAMOND, 84532, 0, {
+      window: Number.POSITIVE_INFINITY,
+      reads: Date.now() + 100,
+    });
+    expect(aggregates).toBe(2);
+    expect(scan.defaultable).toEqual(ids.slice(0, 100));
+    expect(scan.unread).toEqual(ids.slice(100));
+  });
+
+  it('stops the scan when the active-loan window is not read by its cutoff (#3069)', async () => {
+    const client = {
+      getBlockNumber: async () => 7n,
+      readContract: () => new Promise(() => {}),
+      multicall: async () => [],
+    } as unknown as PublicClient;
+    await expect(
+      findDefaultable(client, DIAMOND, 84532, 0, { window: Date.now() + 50, reads: Number.POSITIVE_INFINITY }),
+    ).rejects.toBeInstanceOf(PastRunDeadline);
   });
 });

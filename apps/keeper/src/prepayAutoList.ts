@@ -293,7 +293,7 @@ export async function autoListOnce(chainId: number, diamond: Address, deps: Auto
     if (bufferBps === 0n) return { ...report, skipped: 'the prepay-listing buffer is not configured on this chain, so the contract has no floor to list at' };
 
     // 2–3. One window, and which of it is in grace at that block.
-    const scan = await scanCall('the active-loan window', () => readActiveWindow(deadlineClient(deps.readClient, scanCutoff), diamond, deps.visit));
+    const scan = await readActiveWindow(deps.readClient, diamond, deps.visit, scanCutoff);
     report.window = scan.window;
     if (scan.ids.length === 0) return report;
     const at = { blockNumber: scan.blockNumber, round: scan.window.round };
