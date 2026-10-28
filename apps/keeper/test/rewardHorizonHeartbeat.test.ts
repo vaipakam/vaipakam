@@ -191,6 +191,9 @@ class FakeChain {
   sweepPrepares = new Map<bigint, number>();
   /** Step 5: loans whose sweep simulates clean but reverts on chain. */
   sweepRevertsOnChain = new Set<bigint>();
+  /** Step 5: the run's deadline passes while a landed sweep's entries are
+   *  re-read. */
+  deadlineOnRecheck = false;
   /** Logs the next receipt carries. */
   private nextLogs = 0;
   private nextReverts = false;
@@ -202,6 +205,7 @@ class FakeChain {
     if (functionName === 'paused') return this.protocolPaused;
     if (functionName === 'getRewardEntriesRange') {
       const [from, count] = args as [bigint, bigint];
+      if (this.deadlineOnRecheck && count === 1n && this.settleSent.length > 0) throw new PastRunDeadline('past the run deadline');
       return Array.from({ length: Number(count) }, (_, i) => this.entries.get(Number(from) + i) ?? unallocated());
     }
     if (functionName === 'getRewardEntryExpiry') {
@@ -442,6 +446,16 @@ describe('a run', () => {
       expect(chain.settleSent.map((x) => x.fn)).toEqual(['sweepForfeitedInteractionRewards', 'sweepForfeitedInteractionRewards']);
       expect(chain.entries.get(1)!.processed).toBe(true);
       expect(logged.join('\n')).toMatch(/forfeit=1 swept=4 VPFI in 2 call\(s\)/);
+    });
+
+    it('reports a landed sweep and finishes the run when the deadline passes as its entries are re-read (Codex #3006)', async () => {
+      chain.entries.set(1, entry({ forfeited: true, loanId: 9n }));
+      chain.sweepChunks.set(9n, [5n * 10n ** 18n, 3n * 10n ** 18n]);
+      chain.deadlineOnRecheck = true;
+      await run(true);
+      expect(chain.settleSent, 'no further send once the deadline passed').toEqual([{ fn: 'sweepForfeitedInteractionRewards', arg: 9n }]);
+      expect(logged.join('\n'), 'the run line still reports what landed').toMatch(/forfeit=1 swept=5 VPFI in 1 call\(s\)/);
+      expect(queued(), 'the loan stays due').toEqual([1]);
     });
 
     it('sweeps a deferred loan once a heartbeat, not more, while it moves nothing', async () => {

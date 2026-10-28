@@ -678,6 +678,19 @@ const vpfi = (x: bigint): string => `${formatUnits(x, 18)} VPFI`;
  */
 async function settleEntries(ctx: KeeperContext, plan: Pick<HeartbeatPlan, 'retire' | 'forfeit'>): Promise<SettleOutcome> {
   const out = emptySettle();
+  // The deadline stops the step; it never unwinds the run. Sends may already
+  // have landed, and `out` holds them for the run line and the alerts, so a
+  // read that meets the deadline ends the step here (Codex #3006). What it
+  // did not reach stays due for the next run.
+  try {
+    await settleInto(ctx, plan, out);
+  } catch (err) {
+    if (!(err instanceof PastRunDeadline)) throw err;
+  }
+  return out;
+}
+
+async function settleInto(ctx: KeeperContext, plan: Pick<HeartbeatPlan, 'retire' | 'forfeit'>, out: SettleOutcome): Promise<void> {
   let writes = SETTLE_WRITES_PER_RUN;
   // Returns false when the run must stop sending (deadline, chain-wide refusal, failed send).
   // `ids` are the entries the call stands for. A simulated refusal is pinned on
@@ -746,7 +759,7 @@ async function settleEntries(ctx: KeeperContext, plan: Pick<HeartbeatPlan, 'reti
         out.retireReleased += released;
       },
     );
-    if (r === 'stop') return out;
+    if (r === 'stop') return;
     if (r === 'moved') continue; // the same group again, while it still retires
     pending.shift();
     if (r === 'would-revert' && group.length > 1) {
@@ -779,10 +792,9 @@ async function settleEntries(ctx: KeeperContext, plan: Pick<HeartbeatPlan, 'reti
       if (r === 'moved') open = await stillUnprocessed(ctx, open);
     } while (r === 'moved' && open.length > 0);
     // Stopped mid-loan, the loan stays due and the next run takes it again.
-    if (r === 'stop') return out;
+    if (r === 'stop') return;
     out.reachedForfeits.push(...entryIds);
   }
-  return out;
 }
 
 /** The entries of `ids` the chain does not yet show processed; an entry that
