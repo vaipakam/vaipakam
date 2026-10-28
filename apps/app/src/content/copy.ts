@@ -2803,6 +2803,14 @@ const copySource = {
     // card body and its valuation note still promised one.
     matchMayAppear:
       'One thing can change this. The protocol looks for an opposing position to settle against at the moment the transaction runs, not when this page was loaded — so if one has appeared since, the loan is settled that way instead: you are repaid in the asset you lent, and possibly only in part.',
+    // #2082 — `matchMayAppear` with the possibility foreclosed. When the
+    // deployment has internal matching switched off, the contract never
+    // looks for an opposing position, so describing one appearing would
+    // describe an outcome that cannot occur. The setting is named as the
+    // reason (operational posture is disclosed), with the one thing that
+    // could still change it: the setting itself changing first.
+    matchingSwitchedOff:
+      'Internal matching is switched off on this deployment, as of the block this card was read at. So the protocol will not settle this loan against an opposing position, and what is described above is what happens. Only a change to that setting landing before your transaction runs would alter it.',
     raceFallbackFails:
       'Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Here that route cannot complete, so the attempt would fail and cost you only the network fee. The loan stays open and you can try again.',
     // #2078 — the fallback for a lost match on liquid collateral is a

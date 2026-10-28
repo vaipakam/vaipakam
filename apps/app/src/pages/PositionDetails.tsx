@@ -4391,6 +4391,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // those facts and must not be dated as if it were.
           resolvedBlock={saleHoldResolving ? undefined : forcedCloseReads.block}
           matchFallback={forcedCloseMatchFallback}
+          internalMatchEnabled={forcedCloseReads.internalMatchEnabled}
           swapToRepayPossible={forcedCloseSwapToRepayPossible}
           confirmOpen={confirmingSurface === 'forced-close'}
           onOpenConfirm={() => setConfirmingSurface('forced-close')}

@@ -275,6 +275,26 @@ test('the close-out card tracks the grace boundary for the lender', async ({
   );
   await expectDeclaredBlock(cardAfter, pub);
 
+  // The match-race sentence agrees with the deployment's switch (#2082).
+  // `ready-needs-route` is a state a match could still overtake, so the
+  // card says so — unless internal matching is switched off here, when
+  // it says THAT instead, since the possibility is foreclosed. Asked of
+  // the chain rather than assumed, so a fixture that flips the switch
+  // moves the expectation with it instead of failing on wording.
+  const [matchingOn] = (await pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'getInternalMatchConfigBundle',
+  })) as readonly [boolean, bigint, bigint];
+  const shown = matchingOn ? 'forced-close-match-may-appear' : 'forced-close-matching-off';
+  const hidden = matchingOn ? 'forced-close-matching-off' : 'forced-close-match-may-appear';
+  await expect(cardAfter.getByTestId(shown)).toBeVisible({ timeout: 30_000 });
+  await expect(cardAfter.getByTestId(hidden)).toHaveCount(0);
+  // The matcher-incentive line exists only where a match can happen.
+  await expect(cardAfter.getByTestId('forced-close-match-race-incentive')).toHaveCount(
+    matchingOn ? 1 : 0,
+  );
+
   // ---- The lender closes it out, with a route the app built ----
   //
   // Precondition 4 — the venue can PAY in the lent asset. The fixture's

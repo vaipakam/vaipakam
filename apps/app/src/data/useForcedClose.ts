@@ -66,6 +66,10 @@ export interface ForcedCloseReads {
   paused: boolean | undefined;
   consentFromBoth: boolean | undefined;
   internalMatchCandidate: boolean | undefined;
+  /** Whether internal matching is switched on for this deployment, from
+   *  the aggregate (#2082). Not a decision input — the card's disclosure
+   *  only; see `ForcedCloseFacts.internalMatchEnabled`. */
+  internalMatchEnabled: boolean | undefined;
   collateralIlliquid: boolean | undefined;
   ltvCollapsed: boolean | undefined;
   /** The block every fact above was evaluated at — `block.number` of
@@ -172,6 +176,7 @@ export function useForcedCloseReads(opts: {
     paused: facts?.paused,
     consentFromBoth: facts?.consentFromBoth,
     internalMatchCandidate: facts?.internalMatchCandidate,
+    internalMatchEnabled: facts?.internalMatchEnabled,
     collateralIlliquid: facts?.collateralIlliquid,
     ltvCollapsed: facts?.ltvCollapsed,
     block: facts?.block,

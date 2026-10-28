@@ -2062,6 +2062,18 @@ is the borrower's own money.
   receives, so choosing one of them on an unread answer is a claim, and
   the wrong one whenever the protocol settles the position against an
   opposing one instead.
+- Settling against an opposing position is a capability each deployment can
+  switch off (#2082). "No opposing position right now" and "this deployment
+  does not settle against opposing positions" are different statements, and
+  the surface keeps them apart: it reads the deployment's setting alongside
+  the other facts behind the card, as of the same block. Where the surface
+  would otherwise warn that an opposing position may appear before the
+  transaction runs, and the setting is off, it says instead that internal
+  matching is switched off on this deployment, so the outcome it describes is
+  the one that happens unless that setting changes first — and it does not
+  offer the matcher incentive, which only a settlement against an opposing
+  position pays. Where the setting cannot be read, the surface keeps the
+  warning, which is true whichever way the setting stands.
 - Where that opposing position exists, the surface must not describe the
   consequence of losing it as a single outcome. Another party may settle
   against the same position first, and what happens then is decided by the
