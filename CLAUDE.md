@@ -1056,7 +1056,11 @@ wrapper refuses arguments (dry runs: `pnpm run deploy:dry`, which never
 touches the database). **Migrations land while the old Workers are still
 serving, so each one must be compatible with the deployed code** — additive
 (expand/contract); a dropped/renamed column or a tightened constraint needs a
-coordinated two-step release. Workers Builds also auto-deploys on merge with a
+coordinated two-step release. `apps/indexer/scripts/check-migration-additivity.mjs`
+(in the indexer's `typecheck`, #2412) enforces this over both migration
+directories, reading the SQL through a lexer: a `DROP TABLE`, `DROP COLUMN`,
+`RENAME` or a `NOT NULL` column without a default fails unless the file is
+listed in its `CONTRACT_STEPS` as the second step of such a release. Workers Builds also auto-deploys on merge with a
 dashboard command the repo cannot pin, so every scheduled runner of the shared
 database carries one schema gate (`@vaipakam/lib/d1SchemaGate`, #2410): the
 indexer's cron and chain passes, the agent's cron and the keeper machine's

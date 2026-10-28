@@ -16,6 +16,15 @@
  *                                  lenders (courtesy) before the
  *                                  next interest-payment checkpoint.
  *   - `pruneOldDiagErrors`       — diagnostics retention prune.
+ *   - `pruneOldSupportTickets`   — support-ticket retention prune: the
+ *                                  only thing that deletes a ticket
+ *                                  after its 365 days, so it must not
+ *                                  be dropped in a cron refactor
+ *                                  (#1725).
+ *   - `sweepExpiredLinks`        — deletes expired Telegram link codes
+ *                                  (#1896).
+ * Every pass is skipped while the shared D1 schema is behind this
+ * build (#2410).
  *
  * `runDailyOracleSnapshot` USED to live here but moved to
  * `apps/keeper` in the Stage 3 architectural-rebalance commit

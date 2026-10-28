@@ -1393,26 +1393,33 @@ with cryptic "no such column" errors in the logs. See the
 T-041-specific notes on the bootstrap-time backfill behavior.
 
 **T-046 — chain redeploy / mainnet cutover purge.** When you
-redeploy the diamond on a chain (testnet iteration) or graduate
-from testnet to mainnet, the Worker's cached offer / loan /
-activity rows reference the OLD diamond's offer IDs / loan IDs.
-Cache and chain disagree until you clear the cache.
+redeploy the diamond on a chain (testnet iteration), the Worker's
+cached offer / loan / activity rows reference the OLD diamond's offer
+IDs / loan IDs. **There is no purge step to run: the indexer owns
+this (#1491).** A fresh Diamond is a new indexer *epoch*
+(`apps/indexer/src/deploymentEpoch.ts`). `indexer_deployment` records
+the Diamond each chain's rows were indexed from, and the first pass
+that sees a different, newer Diamond in the bundle resets that chain's
+rows in one batch. That covers every table with a `chain_id` column,
+except the user-owned ones `apps/indexer/src/diamondEpochKeep.json`
+names. The cursor is reset with them, so the scan reseeds from the
+new deploy block. A `--fresh` redeploy writes the retired Diamond to
+`contracts/deployments/archive-manifest.json`, and the indexer's
+deploy seeds it from there. That covers the case a pass alone cannot
+judge: an indexer with no prior record for the chain adopts whatever
+Diamond it first sees and resets nothing, and the seed is what tells
+it the old rows belong to a retired Diamond. The keeper's private database follows the
+same Diamond: its `keeper_deployment` record clears that chain's
+private rows once the indexer has adopted the new Diamond.
+`/health/ingest` states the adopted Diamond per chain, which is how to
+confirm the reset happened.
 
-> **The `db:purge-chain` / `db:purge-all` scripts were retired with
-> the pre-split watcher and have no Stage 3 replacement yet.** No
-> package in `apps/` carries them, so the historical commands are not
-> reproduced here — an instruction that fails on contact is worse
-> than a stated gap. Until the tracked replacement lands (**#1491**),
-> a redeploy purge is a manual, previewed `DELETE` against the shared
-> `vaipakam-warm` database, run from its owning Worker
-> (`cd apps/indexer && npx wrangler d1 execute vaipakam-warm
-> --remote --command "..."`), scoped to the affected `chain_id` and
-> preserving `user_locales` (wallet-scoped, not chain-scoped).
-> Preview every `DELETE` with the matching `SELECT COUNT(*)` first.
-**When NOT to purge:** routine Worker code-only redeploys (no
-diamond / contract changes) should NOT trigger a purge — the
-cache is still correct against the existing on-chain state.
-Purge only when the on-chain state model itself has changed.
+The retired `db:purge-chain` / `db:purge-all` scripts are not
+replaced, deliberately: per-chain rows reset by themselves, and a
+mainnet chain has its own `chain_id`, so testnet rows never mix with
+mainnet ones. Do not run a manual `DELETE` against the shared
+database for a redeploy. It would race the indexer's own reset, and
+it bypasses the user-owned keep list.
 
 What stays operator-side after this consolidation:
 
