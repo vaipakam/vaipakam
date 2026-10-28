@@ -54,7 +54,8 @@ export interface PassReadClients {
 }
 
 export class PassReader {
-  /** The chain's finalized block, read once a run (`scanCursors.finalFloor`). */
+  /** The chain's finalized block, read once a run (`scanCursors.finalFloor`),
+   *  by the cutoff. */
   readonly finalized: () => Promise<FinalBlock | null>;
   /** When this run's reads stop: the send deadline less the send reserve. */
   readonly cutoff: number;
@@ -70,14 +71,20 @@ export class PassReader {
     private readonly pass: string,
   ) {
     this.readClient = clients.readClient;
-    this.finalized = finalizedBlockOnce(clients.client);
     this.cutoff = readCutoffMs(sendDeadline);
+    this.finalized = finalizedBy(this.cutoff, finalizedBlockOnce(clients.client));
     this.bounded = deadlineClient(clients.client, this.cutoff);
   }
 
   /** One read at the head, by the cutoff. */
   async one<T>(functionName: string, args: readonly unknown[] = [], address: Address = this.diamond, abi: Abi = this.abi): Promise<T> {
     return (await boundedCall(this.cutoff, functionName, () => this.bounded.readContract({ address, abi, functionName, args }))) as T;
+  }
+
+  /** Any other call on the pass's client (the clock, the chain id, a
+   *  simulation), by the cutoff. */
+  call<T>(what: string, work: (client: PublicClient) => Promise<T>): Promise<T> {
+    return boundedCall(this.cutoff, what, () => work(this.bounded));
   }
 
   /** Many reads; `undefined` where a read did not come back. At the head, or

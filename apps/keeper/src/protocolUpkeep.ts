@@ -51,11 +51,12 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, resolveKeeperAccount, subStepArmed, type KeeperContext } from './keeper';
 import type { PassTick } from './passSchedule';
-import { deadlineClient, PastRunDeadline, settledRead, type BatchResult } from './batchRead';
+import { deadlineClient, PastRunDeadline } from './batchRead';
 import { shortErr } from './callErrors';
 import { d1EventLedger, type EventLedger } from './eventLedger';
 import { readLedgerRotation } from './ledgerRotation';
-import { d1ScanCursors, finalizedBlockOnce, type FinalBlock, type ScanCursors } from './scanCursors';
+import { d1ScanCursors, type ScanCursors } from './scanCursors';
+import { PassReader } from './passReader';
 import { StepSender } from './stepSender';
 import { describeSales, emptySalesReport, SALE_RACES, SALES_ABI, syncSaleListings, type SalesSyncReport } from './prepaySaleSanctions';
 import { describeTierPush, emptyTierPushReport, retryTierPushes, TIER_PUSH_ABI, type TierPushReport } from './tierPushRetry';
@@ -235,7 +236,7 @@ export async function upkeepOnce(chainId: number, diamond: Address, deps: Upkeep
     // a Diamond at the same address on another chain.
     let served: number;
     try {
-      served = await deps.client.getChainId();
+      served = await r.call('the chain id', (c) => c.getChainId());
     } catch (err) {
       if (err instanceof PastRunDeadline) throw err;
       return { ...report, skipped: `the RPC's chain id could not be read (${shortErr(err)})` };
@@ -271,34 +272,10 @@ export async function upkeepOnce(chainId: number, diamond: Address, deps: Upkeep
   return report;
 }
 
-/** Reads, each refused past the run's deadline. */
-class Reader {
-  /** The chain's finalized block, read once a run (`scanCursors.finalFloor`). */
-  readonly finalized: () => Promise<FinalBlock | null>;
-
-  constructor(
-    readonly deps: UpkeepDeps,
-    readonly diamond: Address,
-  ) {
-    this.finalized = finalizedBlockOnce(deps.client);
-  }
-
-  async one<T>(functionName: string, args: readonly unknown[] = []): Promise<T> {
-    return (await this.deps.client.readContract({ address: this.diamond, abi: ABI, functionName, args })) as T;
-  }
-
-  /** Many reads; `undefined` where a read did not come back. At the head, or
-   *  at `blockNumber` when one is given. */
-  async many(calls: readonly { functionName: string; args: readonly unknown[] }[], label: string, blockNumber?: bigint): Promise<unknown[]> {
-    if (calls.length === 0) return [];
-    const res: BatchResult[] = await settledRead(
-      this.deps.readClient,
-      calls.map((c) => ({ address: this.diamond, abi: ABI, functionName: c.functionName, args: c.args })),
-      `protocolUpkeep ${label}`,
-      this.deps.sendDeadline,
-      blockNumber,
-    );
-    return res.map((x) => (x.status === 'success' ? x.result : undefined));
+/** The pass's reads, each stopped at the run's read cutoff (`passReader.ts`). */
+class Reader extends PassReader {
+  constructor(deps: UpkeepDeps, diamond: Address) {
+    super(deps, deps.sendDeadline, diamond, ABI, 'protocolUpkeep');
   }
 }
 
@@ -340,7 +317,7 @@ async function expireBuybacks(r: Reader, sender: StepSender, report: UpkeepRepor
   if (orders.length > 0) {
     let now: bigint;
     try {
-      now = (await deps.client.getBlock()).timestamp;
+      now = (await r.call("the chain's clock", (c) => c.getBlock())).timestamp;
     } catch (err) {
       if (err instanceof PastRunDeadline) throw err;
       sender.noteUnread('buyback', `the chain's clock (${shortErr(err)})`);
@@ -430,11 +407,14 @@ async function refreshTierLtv(r: Reader, sender: StepSender, report: UpkeepRepor
   let now: bigint;
   let results;
   try {
-    now = (await deps.client.getBlock()).timestamp;
-    ({ results } = await deps.client.simulateCalls({
-      account: deps.keeper,
-      calls: [{ to: r.diamond, data: encodeFunctionData({ abi: ABI, functionName: 'refreshTierLtvCache', args: [] }) }],
-    }));
+    now = (await r.call("the chain's clock", (c) => c.getBlock())).timestamp;
+    const keeper = deps.keeper;
+    ({ results } = await r.call("the refresh's preview", (c) =>
+      c.simulateCalls({
+        account: keeper,
+        calls: [{ to: r.diamond, data: encodeFunctionData({ abi: ABI, functionName: 'refreshTierLtvCache', args: [] }) }],
+      }),
+    ));
   } catch (err) {
     if (err instanceof PastRunDeadline) throw err;
     sender.noteUnread('tier-ltv', `the refresh's preview (eth_simulateV1: ${shortErr(err)})`);
