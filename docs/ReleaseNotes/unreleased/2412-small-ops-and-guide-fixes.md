@@ -1,4 +1,4 @@
-## Thread — Additive D1 migrations enforced; guide anchors, Worker inventories and the redeploy purge note corrected (PR #TBD)
+## Thread — Additive D1 migrations enforced; guide anchors, Worker inventories and the redeploy purge note corrected (PR #2988)
 
 A shared D1 migration lands while the previous Workers are still serving, so it has to be additive. That rule was written down but not enforced. A new check in the indexer's typecheck now reads every migration in the shared and keeper-private directories, through a lexer rather than as raw text. It refuses dropping a table or column, renaming either, or adding a not-null column without a default. The exception is a migration listed as the second step of a two-step release, with its issue and the reason the deployed code no longer needs what it removes. The four existing removals are listed that way (Closes #2412).
 
