@@ -47,6 +47,7 @@ import { PASS_CADENCE_SEC as PERIODIC_SETTLE_CADENCE_SEC, runPeriodicSettle } fr
 import { PASS_CADENCE_SEC as DAY_CLOSE_CADENCE_SEC, runRewardDayClose } from './rewardDayClose';
 import { PASS_CADENCE_SEC as CLOSE_OUT_CADENCE_SEC, runRewardCloseOut } from './rewardCloseOut';
 import { PASS_CADENCE_SEC as ZEROED_DAY_CADENCE_SEC, runRewardZeroedDay } from './rewardZeroedDay';
+import { PASS_CADENCE_SEC as DELIVERY_CONFLICT_CADENCE_SEC, runRewardDeliveryConflict } from './rewardDeliveryConflict';
 import { PASS_CADENCE_SEC as RETURN_TRANSPORT_CADENCE_SEC, runRewardReturnTransport } from './rewardReturnTransport';
 import { PASS_CADENCE_SEC as PROTOCOL_UPKEEP_CADENCE_SEC, runProtocolUpkeep } from './protocolUpkeep';
 import { PASS_CADENCE_SEC as PREPAY_AUTO_LIST_CADENCE_SEC, runPrepayAutoList } from './prepayAutoList';
@@ -284,6 +285,16 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     offsetMinutes: 9,
     why: 'quotes a zeroed reward day so Base can compensate it before its lapse, and lapses it once the frozen window passes; a lapse window is days long (#2984)',
     run: runRewardZeroedDay,
+  },
+  {
+    name: 'rewardDeliveryConflict',
+    cadenceMinutes: DELIVERY_CONFLICT_CADENCE_SEC / 60,
+    // :01/:16/:31/:46 — clear of every staggered pass (the 5-minute ones sit
+    // on :02–:03 modulo 5, the other 15-minute ones on :00, :04, :05, :09 and
+    // :10 modulo 15, the hourly ones on :14, :29, :44 and :59).
+    offsetMinutes: 1,
+    why: 'skips a mirror day whose delivered parts conflict once the contract allows it, a day after the conflict, and recycles what landed for it; a conflict is a source fault, so minutes are not material (#2961)',
+    run: runRewardDeliveryConflict,
   },
   {
     name: 'rewardReturnTransport',

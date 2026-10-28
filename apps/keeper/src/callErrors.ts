@@ -21,6 +21,14 @@ export function revertName(err: unknown): string | undefined {
   return r instanceof ContractFunctionRevertedError ? r.data?.errorName : undefined;
 }
 
+/** The decoded arguments of the custom error a call reverted with, when the
+ *  ABI names it (empty otherwise). */
+export function revertArgs(err: unknown): readonly unknown[] {
+  if (!(err instanceof BaseError)) return [];
+  const r = err.walk((e) => e instanceof ContractFunctionRevertedError);
+  return r instanceof ContractFunctionRevertedError ? (r.data?.args ?? []) : [];
+}
+
 /** viem's one-line summary when there is one; otherwise a bounded description
  *  that never carries the raw message (RPC URLs carry API keys). */
 export function shortErr(err: unknown): string {

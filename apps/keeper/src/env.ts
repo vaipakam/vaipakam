@@ -227,6 +227,12 @@ interface BaseEnv {
    *  a mirror's compensation quote for each deliberately zeroed day, and the
    *  two lapse terminals. Permissionless; the quote pays its CCIP fee. */
   REWARD_ZEROED_DAY_ENABLED?: string;
+  // Reward delivery-conflict pass (#2961). `secret_text` like the flags above.
+  /** 'true' arms the reward delivery-conflict pass (in addition to
+   *  KEEPER_ENABLED): on a mirror, the skip of each day whose delivered parts
+   *  disagree on its whole, and the recycling of what landed for it.
+   *  Permissionless; it pays no fee. */
+  REWARD_DELIVERY_CONFLICT_ENABLED?: string;
   /** How many days the zeroed-day pass reads a run (default 60), rotating
    *  over every elapsed day not yet settled. A plain var. */
   REWARD_ZEROED_DAY_WINDOW_DAYS?: string;
@@ -416,6 +422,7 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_ZEROED_DAY_ENABLED',
   'REWARD_ZEROED_DAY_WINDOW_DAYS',
   'REWARD_ZEROED_DAY_MAX_FEE_WEI',
+  'REWARD_DELIVERY_CONFLICT_ENABLED',
   'REWARD_RETURN_TRANSPORT_ENABLED',
   'REWARD_RETURN_TRANSPORT_MAX_FEE_WEI',
   'REWARD_RETURN_MIN_PART',
@@ -599,6 +606,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,
     REWARD_ZEROED_DAY_WINDOW_DAYS: raw.REWARD_ZEROED_DAY_WINDOW_DAYS,
     REWARD_ZEROED_DAY_MAX_FEE_WEI: raw.REWARD_ZEROED_DAY_MAX_FEE_WEI,
+    REWARD_DELIVERY_CONFLICT_ENABLED: raw.REWARD_DELIVERY_CONFLICT_ENABLED,
     REWARD_RETURN_TRANSPORT_ENABLED: raw.REWARD_RETURN_TRANSPORT_ENABLED,
     REWARD_RETURN_TRANSPORT_MAX_FEE_WEI: raw.REWARD_RETURN_TRANSPORT_MAX_FEE_WEI,
     REWARD_RETURN_MIN_PART: raw.REWARD_RETURN_MIN_PART,
