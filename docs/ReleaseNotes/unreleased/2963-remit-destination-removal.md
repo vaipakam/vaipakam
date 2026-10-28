@@ -1,4 +1,4 @@
-## Thread — Removing a chain from Base's list releases its held pool room (PR #TBD)
+## Thread — Removing a chain from Base's list releases its held pool room (PR #2983)
 
 Taking a mirror off Base's expected-source list now ends Base's remittances to it for every day up to and including the day of the removal, and in the same write releases the pool room Base was holding for those days. Before this, a day sent in parts held the rest of its fresh in the 69M pool, and a day under the commitment regime held its commitments, for as long as the mirror might still be sent them. A mirror removed from the list would never be sent them, so that room stayed held for good. The owner chose to release it at the removal (2026-10-27, "On removal"): only Base releases, each day that releases anything is announced with its figures, and the removed mirror's users lose those days.
 
