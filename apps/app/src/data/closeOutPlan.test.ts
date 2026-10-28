@@ -11,7 +11,7 @@ import { copy } from '../content/copy';
 import { AssetType, LoanStatus } from '../lib/types';
 
 const reads = vi.hoisted(() => ({
-  live: {} as Record<string, bigint | number>,
+  live: {} as Record<string, bigint | number | boolean>,
   due: 0n,
   now: 0n,
   grace: 0n,
