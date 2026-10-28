@@ -587,6 +587,7 @@ async function releaseDestinations(r: Reader, sender: StepSender, report: CloseO
     floorItem: RELEASE_FLOOR_ITEM,
     nextItem: RELEASE_NEXT_ITEM,
     limit: RELEASE_PAGE,
+    cutoff: r.cutoff,
     nominee: (row) => {
       const c = Number(row.args.dstChainId);
       return Number.isSafeInteger(c) && c > 0 && c <= 0xffffffff ? c : null;

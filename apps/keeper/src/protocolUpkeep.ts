@@ -59,7 +59,7 @@ import { d1ScanCursors, finalizedBlockOnce, type FinalBlock, type ScanCursors } 
 import { StepSender } from './stepSender';
 import { describeSales, emptySalesReport, SALE_RACES, SALES_ABI, syncSaleListings, type SalesSyncReport } from './prepaySaleSanctions';
 import { describeTierPush, emptyTierPushReport, retryTierPushes, TIER_PUSH_ABI, type TierPushReport } from './tierPushRetry';
-import { runIndex } from './runWindow';
+import { readCutoffMs, runIndex } from './runWindow';
 
 export const ABI = [
   ...(AdminFacetABI as Abi),
@@ -322,6 +322,7 @@ async function expireBuybacks(r: Reader, sender: StepSender, report: UpkeepRepor
     floorItem: BUYBACK_FLOOR_ITEM,
     nextItem: BUYBACK_NEXT_ITEM,
     limit: BUYBACK_PAGE,
+    cutoff: readCutoffMs(deps.sendDeadline),
     nominee: (row) => {
       const h = String(row.args.orderHash ?? '').toLowerCase();
       return /^0x[0-9a-f]{64}$/.test(h) ? (h as Hex) : null;

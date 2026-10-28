@@ -5,9 +5,10 @@
  * AND at the finalized block, where a nominating row also needs its own
  * event finalized.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { encodePos, type EventLedger, type LedgerPos, type LedgerRow } from '../src/eventLedger';
 import { readLedgerRotation } from '../src/ledgerRotation';
+import { PastRunDeadline } from '../src/batchRead';
 import { memoryScanCursors } from '../src/scanCursors';
 
 class Ledger implements EventLedger {
@@ -24,12 +25,12 @@ class Ledger implements EventLedger {
 const row = (block: number, id: string | null): LedgerRow => ({ kind: 'E', args: id === null ? {} : { id }, blockAt: block, block, log: 0, tx: '0x' });
 const FINAL = { number: 100n, timestamp: 0n };
 
-function rotation(rows: LedgerRow[], cursors = memoryScanCursors(), limit = 10) {
+function rotation(rows: LedgerRow[], cursors = memoryScanCursors(), limit = 10, ledger: EventLedger = new Ledger(rows), cutoff = Number.POSITIVE_INFINITY) {
   return {
     cursors,
     read: () =>
       readLedgerRotation<string>({
-        ledger: new Ledger(rows),
+        ledger,
         cursors,
         chainId: 1,
         kinds: ['E'],
@@ -38,6 +39,7 @@ function rotation(rows: LedgerRow[], cursors = memoryScanCursors(), limit = 10) 
         limit,
         nominee: (r) => (typeof r.args.id === 'string' ? r.args.id : null),
         id: (k) => k,
+        cutoff,
       }),
   };
 }
@@ -75,5 +77,39 @@ describe('readLedgerRotation', () => {
     await page.liftFloor(async () => FINAL, () => true, async () => () => true);
     expect(cursors.rows.get('floor'), 'a page from the next cursor lifts nothing').toBeUndefined();
     expect(cursors.rows.get('next'), 'past the last page the next run starts at the floor').toBe('');
+  });
+
+  it('stops a ledger page still unread at the cutoff, as a bounded read does', async () => {
+    const hung: EventLedger = { matching: async () => null, page: () => new Promise<never>(() => {}) };
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      const { read } = rotation([], memoryScanCursors(), 10, hung, Date.now() + 100);
+      const done = read().then(
+        () => 'read',
+        (err: unknown) => err,
+      );
+      await vi.advanceTimersByTimeAsync(150);
+      expect(await done).toBeInstanceOf(PastRunDeadline);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the page when a cursor write is not finished by the cutoff', async () => {
+    const cursors = memoryScanCursors();
+    const put = cursors.put.bind(cursors);
+    cursors.put = (item: string, value: string) => (item === 'next' ? new Promise<never>(() => {}) : put(item, value));
+    const rows = [row(1, 'a'), row(2, 'b'), row(3, 'c')];
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      const { read } = rotation(rows, cursors, 2, new Ledger(rows), Date.now() + 100);
+      const done = read();
+      await vi.advanceTimersByTimeAsync(150);
+      const page = (await done)!;
+      expect(page.nominees, 'the next run reads this page again').toEqual(['a', 'b']);
+      expect(cursors.rows.get('next')).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

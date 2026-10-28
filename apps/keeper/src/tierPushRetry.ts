@@ -39,10 +39,10 @@
 
 import { decodeEventLog, type Abi, type Address, type Hex, type PublicClient } from 'viem';
 import { ProtocolBroadcastFacetABI, RewardReporterFacetABI, VaipakamRewardMessengerABI } from '@vaipakam/contracts/abis';
-import { deadlineClient, settledChunkedRead, settledRead } from './batchRead';
+import { deadlineClient, PastRunDeadline, settledChunkedRead, settledRead } from './batchRead';
 import { shortErr } from './callErrors';
 import type { EventLedger } from './eventLedger';
-import { readLedgerRotation } from './ledgerRotation';
+import { readLedgerRotation, type LedgerRotation } from './ledgerRotation';
 import { priorStageCutoffMs, readCutoffMs } from './runWindow';
 import type { FinalBlock, ScanCursors } from './scanCursors';
 import type { StepSender } from './stepSender';
@@ -181,29 +181,39 @@ export async function retryTierPushes(chainId: number, diamond: Address, sender:
   // ledger's nominees and the gate reads a stage reserve before those.
   const readCutoff = readCutoffMs(deps.sendDeadline);
   const statusCutoff = priorStageCutoffMs(readCutoff);
-  const gateClient = deadlineClient(deps.readClient, priorStageCutoffMs(statusCutoff));
+  const gateCutoff = priorStageCutoffMs(statusCutoff);
+  const gateClient = deadlineClient(deps.readClient, gateCutoff);
 
-  // 1. Nominate.
-  const page = await readLedgerRotation<Deferral>({
-    ledger: deps.ledger,
-    cursors: deps.cursors,
-    chainId,
-    kinds: [DEFERRAL_EVENT],
-    floorItem: DEFERRAL_FLOOR_ITEM,
-    nextItem: DEFERRAL_NEXT_ITEM,
-    limit: DEFERRAL_PAGE,
-    nominee: (row) => {
-      const user = String(row.args.user ?? '');
-      try {
-        const dst = BigInt(String(row.args.destChainId));
-        const nonce = BigInt(String(row.args.nonce));
-        return /^0x[0-9a-fA-F]{40}$/.test(user) && !ZERO_ADDRESS.test(user) ? { user: user as Address, dst, nonce } : null;
-      } catch {
-        return null;
-      }
-    },
-    id: (k) => `${userKey(k.user)}:${k.dst}:${k.nonce}`,
-  });
+  // 1. Nominate, by the gate's cutoff.
+  let page: LedgerRotation<Deferral> | null;
+  try {
+    page = await readLedgerRotation<Deferral>({
+      ledger: deps.ledger,
+      cursors: deps.cursors,
+      chainId,
+      kinds: [DEFERRAL_EVENT],
+      floorItem: DEFERRAL_FLOOR_ITEM,
+      nextItem: DEFERRAL_NEXT_ITEM,
+      limit: DEFERRAL_PAGE,
+      nominee: (row) => {
+        const user = String(row.args.user ?? '');
+        try {
+          const dst = BigInt(String(row.args.destChainId));
+          const nonce = BigInt(String(row.args.nonce));
+          return /^0x[0-9a-fA-F]{40}$/.test(user) && !ZERO_ADDRESS.test(user) ? { user: user as Address, dst, nonce } : null;
+        } catch {
+          return null;
+        }
+      },
+      id: (k) => `${userKey(k.user)}:${k.dst}:${k.nonce}`,
+      cutoff: gateCutoff,
+    });
+  } catch (err) {
+    if (!(err instanceof PastRunDeadline)) throw err;
+    sender.noteUnread('tier-push', `the event ledger of deferred tier pushes (${shortErr(err)})`);
+    out.off = 'the event ledger of deferred tier pushes was not read by its stage cutoff';
+    return out;
+  }
   if (page === null) {
     sender.noteUnread('tier-push', 'the event ledger of deferred tier pushes');
     out.off = 'the event ledger of deferred tier pushes could not be read';

@@ -291,6 +291,7 @@ async function readOfferListings(
     floorItem: OFFER_FLOOR_ITEM,
     nextItem: OFFER_NEXT_ITEM,
     limit: OFFER_PAGE,
+    cutoff,
     nominee: (row) => {
       const hash = String(row.args.orderHash ?? '').toLowerCase();
       let offerId: bigint;

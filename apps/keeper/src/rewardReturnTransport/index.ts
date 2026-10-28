@@ -773,6 +773,7 @@ async function strandedReturns(mirror: ChainState, states: ReadonlyMap<number, C
     floorItem: STRANDED_FLOOR_ITEM,
     nextItem: STRANDED_NEXT_ITEM,
     limit: LEDGER_PAGE,
+    cutoff: mirror.r.cutoff,
     nominee: (row) => {
       const remitId = asBig(row.args.remitId);
       const remitter = asAddr(row.args.remitter);

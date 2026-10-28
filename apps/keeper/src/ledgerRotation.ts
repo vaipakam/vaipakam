@@ -17,7 +17,15 @@
 // block a row counts only when the row's own event is finalized too (#3002):
 // below the event the chain shows the state before it, which can read as
 // "nothing to do". A row that nominates nothing is finished at once.
+//
+// Every storage wait of the rotation stops at the caller's stage cutoff, each
+// on its own (runWindow.ts, rule 3): the cursor and ledger reads throw
+// `PastRunDeadline` there, as every bounded read does, and a cursor write not
+// finished by then is left for the next run, which reads the same page again
+// or leaves the floor where it is. The caller's own reads of what the page
+// nominates carry the cutoff themselves and keep the batches they finished.
 
+import { boundedCall } from './passReader';
 import type { EventLedger, LedgerRow } from './eventLedger';
 import { decodePos, encodePos, posAfter, rowFinalized } from './eventLedger';
 import { finalFloor, type FinalBlock, type ScanCursors } from './scanCursors';
@@ -37,6 +45,8 @@ export interface RotationSpec<K> {
   nominee: (row: LedgerRow) => K | null;
   /** A nominee's identity, so several rows naming it are read once. */
   id: (k: K) => string;
+  /** No storage wait of the rotation runs past this. */
+  cutoff: number;
 }
 
 /** One run's page of a rotation. */
@@ -61,19 +71,23 @@ export interface LedgerRotation<K> {
 }
 
 /** This run's page, with the next-page cursor already stored; null when the
- *  ledger cannot be read (the caller says so in its own words). */
+ *  ledger cannot be read (the caller says so in its own words). Throws
+ *  `PastRunDeadline` when its cursors or page are not read by the cutoff. */
 export async function readLedgerRotation<K>(spec: RotationSpec<K>): Promise<LedgerRotation<K> | null> {
   const { cursors } = spec;
-  const stored = await cursors.get([spec.floorItem, spec.nextItem]);
+  const stored = await boundedCall(spec.cutoff, 'the ledger cursors', () => cursors.get([spec.floorItem, spec.nextItem]));
   const floor = decodePos(stored.get(spec.floorItem));
   const next = decodePos(stored.get(spec.nextItem));
   const start = next !== null && (floor === null || posAfter(next, floor)) ? next : floor;
-  const page = await spec.ledger.page(spec.chainId, spec.kinds, start, spec.limit);
+  const page = await boundedCall(spec.cutoff, 'the event ledger', () => spec.ledger.page(spec.chainId, spec.kinds, start, spec.limit));
   if (page === null) return null;
   const last = page.rows[page.rows.length - 1];
   // Past the last page the next run starts at the floor again.
   const nextPos = page.more && last !== undefined ? encodePos(last) : '';
-  if (nextPos !== (stored.get(spec.nextItem) ?? '')) await cursors.put(spec.nextItem, nextPos);
+  // Unwritten by the cutoff, the next run reads this page again.
+  if (nextPos !== (stored.get(spec.nextItem) ?? '')) {
+    await boundedCall(spec.cutoff, 'the ledger rotation', () => cursors.put(spec.nextItem, nextPos)).catch(() => undefined);
+  }
 
   const rows = page.rows;
   const named = rows.map((row) => spec.nominee(row));
@@ -97,7 +111,8 @@ export async function readLedgerRotation<K>(spec: RotationSpec<K>): Promise<Ledg
         const isDone = live.length === 0 ? () => false : await doneAtFinal(distinct(live.map((i) => named[i]!)), block);
         return new Set(passed.filter((i) => named[i] === null || (rowFinalized(rows[i], block) && isDone(named[i]!))));
       });
-      if (n > 0) await cursors.put(spec.floorItem, encodePos(rows[n - 1]));
+      // Unwritten by the cutoff, the floor stays where it is.
+      if (n > 0) await boundedCall(spec.cutoff, 'the ledger floor', () => cursors.put(spec.floorItem, encodePos(rows[n - 1]))).catch(() => undefined);
     },
   };
 }

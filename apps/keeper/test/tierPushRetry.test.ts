@@ -252,7 +252,8 @@ describe('the tier-push retry', () => {
     // The status stage's cutoff is 2 s away; the gate's passed 3 s ago.
     const { report, sender } = await run(Date.now() + SEND_RESERVE_MS + STAGE_RESERVE_MS + 2_000);
     expect(d.sent).toEqual([]);
-    expect(report.off).toContain('could not be read');
+    // The ledger is read by the gate's cutoff too, so the step stops there first.
+    expect(report.off).toContain('not read by its stage cutoff');
     expect(describeTierPush(report).join(' ')).not.toContain('not armed');
     expect(String(sender.unread.get('tier-push'))).toMatch(/deadline|cutoff/);
   });
