@@ -36,13 +36,50 @@ export function indexedLocales(
   route: string,
   bodyFiles?: Readonly<Record<string, unknown>>,
 ): readonly TranslatedLocale[] {
-  const key = route.replace(/\/+$/, '') || '/';
+  const key = routeKey(route);
   if (!(key in SOURCES)) return TRANSLATED_LOCALES;
-  const pattern = SOURCES[key];
-  if (pattern === null || bodyFiles === undefined) return ['en'];
-  const present = Object.keys(bodyFiles);
-  return TRANSLATED_LOCALES.filter((locale) => {
-    const suffix = `/${pattern.replace('{locale}', locale)}`;
-    return present.some((path) => path.endsWith(suffix));
-  });
+  if (SOURCES[key] === null || bodyFiles === undefined) return ['en'];
+  return TRANSLATED_LOCALES.filter(
+    (locale) => bodyFileFor(route, locale, bodyFiles) !== undefined,
+  );
+}
+
+function routeKey(route: string): string {
+  return route.replace(/\/+$/, '') || '/';
+}
+
+/** The key in `bodyFiles` of `route`'s body in `locale`, by the route's
+ *  pattern, or `undefined` when there is no such file (or the route has
+ *  no pattern). The ONE matching rule: `indexedLocales` indexes exactly
+ *  the locales this finds, and `resolveBody` serves exactly the file it
+ *  finds, so a copy is never indexed as translated while the page serves
+ *  English (Codex #3036 r1). */
+export function bodyFileFor(
+  route: string,
+  locale: string,
+  bodyFiles: Readonly<Record<string, unknown>>,
+): string | undefined {
+  const pattern = SOURCES[routeKey(route)];
+  if (typeof pattern !== 'string') return undefined;
+  const suffix = `/${pattern.replace('{locale}', locale)}`;
+  return Object.keys(bodyFiles).find((path) => path.endsWith(suffix));
+}
+
+/** The body a page renders for `locale`: its own file when there is one,
+ *  otherwise the English file. `locale` is the language of the text
+ *  actually returned, for the page's content language, number formatting
+ *  and English-only notice. */
+export function resolveBody(
+  route: string,
+  locale: string,
+  bodyFiles: Readonly<Record<string, string>>,
+): { text: string; locale: string; fellBackToEnglish: boolean } {
+  const own = bodyFileFor(route, locale, bodyFiles);
+  if (own !== undefined) return { text: bodyFiles[own], locale, fellBackToEnglish: false };
+  const english = bodyFileFor(route, 'en', bodyFiles);
+  return {
+    text: english !== undefined ? bodyFiles[english] : '',
+    locale: 'en',
+    fellBackToEnglish: locale !== 'en',
+  };
 }

@@ -116,3 +116,10 @@ export function indexedLocales(route) {
     existsSync(resolve(CONTENT_DIR, pattern.replace('{locale}', locale))),
   );
 }
+
+/** Whether `route`'s body is a per-locale FILE (a pattern entry in
+ *  `bodySources.json`). The prerender checks such a page's rendered body
+ *  language, not only its head (Codex #3036 r1). */
+export function hasBodyFile(route) {
+  return typeof BODY_SOURCES[route] === 'string';
+}

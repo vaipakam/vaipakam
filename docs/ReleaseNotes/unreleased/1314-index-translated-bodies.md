@@ -18,6 +18,9 @@ in its language, so a translated whitepaper or legal text joins the index by
 itself the moment its file is added, with no list to update. The pages read
 that declaration at runtime and the sitemap reads it at build time, and the
 prerender step now checks every page it snapshots against the sitemap's
-answer, so a deploy stops if the two ever disagree. The language alternates
+answer, so a deploy stops if the two ever disagree. Each help page also picks
+the text it shows by that same rule, so a translation that is indexed is the
+one served, and the prerender checks the language of the body each page
+actually rendered as well as its head. The language alternates
 moved into the same per-page step that sets the canonical and the robots
 directive, since all three are one decision about the page. Closes #1314.

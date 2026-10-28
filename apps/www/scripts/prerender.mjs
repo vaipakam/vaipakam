@@ -52,7 +52,14 @@ import { resolve, dirname, join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { policyScriptSources, uncoveredScripts } from '@vaipakam/lib/cspScriptHashes';
-import { LOCALES, ROUTES, EN_ONLY_ROUTES, indexedLocales, localizedPath } from './seo-routes.mjs';
+import {
+  LOCALES,
+  ROUTES,
+  EN_ONLY_ROUTES,
+  hasBodyFile,
+  indexedLocales,
+  localizedPath,
+} from './seo-routes.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DIST = resolve(__dirname, '..', 'dist');
@@ -210,6 +217,20 @@ async function snapshot(context, route, locale) {
       alternates: [...document.querySelectorAll('link[rel="alternate"][hreflang]')]
         .map((l) => `${l.hreflang} ${l.href}`)
         .sort(),
+      // The article body's own language, as the page declares it in its
+      // structured data (`inLanguage`, set from the body actually
+      // rendered). `null` on a page with no article.
+      bodyLanguage:
+        [...document.querySelectorAll('script[type="application/ld+json"]')]
+          .flatMap((s) => {
+            try {
+              const d = JSON.parse(s.textContent ?? '');
+              return Array.isArray(d['@graph']) ? d['@graph'] : [d];
+            } catch {
+              return [];
+            }
+          })
+          .find((n) => n && n['@type'] === 'TechArticle')?.inLanguage ?? null,
     }));
     const want = expectedIndexing(route, locale);
     if (
@@ -221,6 +242,21 @@ async function snapshot(context, route, locale) {
           `(want ${want.canonical}), hreflang [${head.alternates.join(', ')}] ` +
           `(want [${want.alternates.join(', ')}])`,
       );
+    }
+
+    // Indexing is decided from file presence; the body is chosen by the
+    // page. Check they agree on what was actually rendered, so a body file
+    // the page does not serve can never be advertised as a translation
+    // (Codex #3036 r1). An indexed copy's article must be in its own
+    // language; any other copy's must be English.
+    if (hasBodyFile(route) && head.bodyLanguage !== null) {
+      const wantLang = indexedLocales(route).includes(locale) ? locale : 'en';
+      if (head.bodyLanguage !== wantLang) {
+        throw new Error(
+          `rendered body language ${head.bodyLanguage} disagrees with indexing ` +
+            `(want ${wantLang}): the page does not serve the body seo-routes.mjs indexed`,
+        );
+      }
     }
 
     let html = await page.evaluate(() => {
