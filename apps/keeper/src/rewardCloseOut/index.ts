@@ -17,7 +17,15 @@
 //      (`RewardEraFacet.drainPendingSurplus`). On a Detached chain the row is
 //      the return transport's to send back to Base (`sendRetiredSurplusReturn`,
 //      a separate pass), and this pass only says how much waits there.
-//   3. CLOSURE — prove elapsed days closed (`RewardClosureFacet`): for each
+//   3. RELEASE — on Base, for each remit destination taken off its
+//      expected-source list whose release is unfinished, continue it
+//      (`RewardRemitDestinationFacet.continueRemitDestinationRelease`, #2963):
+//      release, day by day, the pool room Base still holds for the removed
+//      chain's abandoned days. The removal's own write walks 128 days and stops
+//      at the first abandoned day not yet finalized. The indexer's ledger of
+//      `RemitDestinationRemoved` nominates the chains; a walk is sent only when
+//      its simulation moves the release cursor.
+//   4. CLOSURE — prove elapsed days closed (`RewardClosureFacet`): for each
 //      day of its closure window not yet proven, oldest first, the pass scans
 //      the chain's reward-entry sequence (`getRewardEntriesRange`) for the
 //      entries covering it, checks that they sum to exactly the day's folded totals
@@ -28,30 +36,37 @@
 //      closes at the start. The keeper's unfinished walk for the day is
 //      continued rather than replaced: its nonce is kept per day, since the
 //      keeper's latest nonce names only its newest walk.
-//   4. PARK — for each closed day in its park window, every transport epoch it
+//   5. PARK — for each closed day in its park window, every transport epoch it
 //      lists whose remainder is not parked, whose membership is whole, which
 //      no staging record references and all of whose listed days are proven
 //      closed, is parked (`RewardEpochFacet.parkTransportBatchRemainder`).
 //      Releasing a parked remainder is the administrator's acknowledgment
 //      (`acknowledgeTransportBatchRemainder`), which this pass never calls;
 //      the run's line names each batch parked.
-//   5. PRUNE — for each day of the closure window still open, when the epoch
+//   6. PRUNE — for each day of the closure window still open, when the epoch
 //      after its consumption cursor is plainly exhausted (nothing left, fully
 //      indexed, unreferenced), advance the cursor (`RewardEpochFacet.epochPruneTransportDayCursor`).
 //      Exhausted only by its caps is not detected here; the day's next draw
 //      prunes that in passing.
+//   7. QUEUES — write each reconciliation queue's pending takes into its
+//      records (`RewardReconciliationFacet.advanceReconciliationQueue`), on
+//      every chain, while a queue holds any: a pool outflow's own walk is
+//      bounded and leaves the rest pending, and while any is pending the
+//      administrator's corrections on that side refuse. Moves no value. It
+//      runs last, on what the run's send budget leaves.
 //
 // A run's reads are bounded and rotate (Codex #2993 r1–r2), so what one run
 // reads is bounded while nothing is left out for good: retired eras 32 a run
 // above a floor of finalized ones; closure days `REWARD_CLOSE_OUT_WINDOW_DAYS`
 // a run above a floor of proven-closed ones; park days as many a run over
 // every provable day; each closed day's epochs 50 a run; the entry scan from a
-// floor below which every entry ended. The floors and cursors are rows of the
+// floor below which every entry ended; removal rows 200 a run above a floor of
+// rows whose chain's release is done. The floors and cursors are rows of the
 // keeper's private database (`scanCursors.ts`), and only say where to start
-// reading: every decision is still an on-chain read. The era and closure
-// floors move only on what the chain's finalized block shows (Codex #2993 r4),
-// so a finalization or closure reorged out stays above its floor and is done
-// again.
+// reading: every decision is still an on-chain read. The era, closure and
+// release floors move only on what the chain's finalized block shows (Codex
+// #2993 r4), so a finalization, closure or release walk reorged out stays
+// above its floor and is done again.
 //
 // Every call is simulated on the current state first and waits for its
 // receipt before the next (`stepSender.ts`), so the steps of one walk land in
@@ -67,6 +82,9 @@ import {
   RewardCustodyFacetABI,
   RewardEpochFacetABI,
   RewardEraFacetABI,
+  RewardReconciliationFacetABI,
+  RewardRemitDestinationFacetABI,
+  RewardRemittanceLensFacetABI,
   RewardReporterFacetABI,
   VaipakamDiamondABI,
 } from '@vaipakam/contracts/abis';
@@ -76,6 +94,7 @@ import { buildKeeperContext, passIsArmed, resolveKeeperAccount, type KeeperConte
 import type { PassTick } from '../passSchedule';
 import { deadlineClient, PastRunDeadline, settledRead, type BatchResult } from '../batchRead';
 import { shortErr } from '../callErrors';
+import { d1EventLedger, decodePos, encodePos, posAfter, rowFinalized, type EventLedger } from '../eventLedger';
 import { decodeEntryFloor, encodeEntryFloor, ENTRY_PAGE, scanEntries, type EntryRow } from '../rewardEntries';
 import { advanceFloor, d1ScanCursors, decodeIndex, finalFloor, finalizedBlockOnce, rotatingWindow, type FinalBlock, type ScanCursors } from '../scanCursors';
 import { StepSender } from '../stepSender';
@@ -103,6 +122,9 @@ export const ABI = [
   ...(RewardEraFacetABI as Abi),
   ...(RewardEpochFacetABI as Abi),
   ...(RewardCustodyFacetABI as Abi),
+  ...(RewardReconciliationFacetABI as Abi),
+  ...(RewardRemitDestinationFacetABI as Abi),
+  ...(RewardRemittanceLensFacetABI as Abi),
   ...(VaipakamDiamondABI as Abi).filter((x) => x.type === 'error'),
 ] as Abi;
 
@@ -140,6 +162,24 @@ export const parkCursorItem = (day: number) => `park:${day}`;
 export const walkCursorItem = (day: number) => `walk:${day}`;
 /** Park pages one batch may take in a run. */
 export const MAX_PARK_PAGES = 8;
+/** Days one `continueRemitDestinationRelease` walks: the removal's own write
+ *  walks as many. A settled day costs a few reads, an armed unsent one about
+ *  thirty thousand gas. */
+export const RELEASE_DAYS = 128;
+/** Removal rows read per run from the ledger, rotating above the release floor. */
+export const RELEASE_PAGE = 200;
+/** The scan-cursor items the release step keeps: ledger positions. */
+export const RELEASE_FLOOR_ITEM = 'release-floor';
+export const RELEASE_NEXT_ITEM = 'release-next';
+const REMOVAL_EVENT = 'RemitDestinationRemoved';
+/** Records one `advanceReconciliationQueue` visits. Each is a storage write or
+ *  two. */
+export const QUEUE_STEPS = 128;
+const QUEUE_SIDE_FRESH = 0;
+const QUEUE_SIDE_RECYCLED = 1;
+/** The era the reconciliation queues are keyed under (one, until they are
+ *  era-keyed). */
+const RECONCILIATION_QUEUE_ERA = 0n;
 /** Reads per aggregate. */
 const READ_CHUNK = 100;
 
@@ -148,7 +188,7 @@ const ROLE_MIRROR = 1;
 const ROLE_DETACHED = 3;
 
 /** Refusals that mean another caller got there first. */
-export const RACES = new Set(['ClosureDayAlreadyClosed', 'CustodyEraAlreadyFinalized', 'TransportRemainderAlreadyParked']);
+export const RACES = new Set(['ClosureDayAlreadyClosed', 'CustodyEraAlreadyFinalized', 'TransportRemainderAlreadyParked', 'RemitDestinationReleaseDone']);
 export const PAUSED_REFUSAL = 'EnforcedPause';
 
 const ZERO32 = `0x${'0'.repeat(64)}` as const;
@@ -167,6 +207,8 @@ export interface CloseOutDeps {
   windowDays: number;
   /** Where its bounded reads got to on this chain, across runs. */
   cursors: ScanCursors;
+  /** The indexer's event ledger: what nominates removed remit destinations. */
+  ledger: EventLedger;
 }
 
 /** What a run did on one chain: its log line's figures, and what tests read. */
@@ -184,8 +226,26 @@ export interface CloseOutReport {
   daysWaitingOnEntries: number[];
   /** Days whose scanned entries did not account for their totals. */
   daysScanGap: number[];
-  parked: { batchId: string; amount: bigint }[];
+  /** Batches whose park walk landed this run: `amount` once a read shows the
+   *  remainder parked, `parking` while the read shows it unfinished, `unread`
+   *  when the read after the last landed page failed (`afterLanding`). */
+  parked: { batchId: string; pages: number; state: 'parked' | 'parking' | 'unread'; amount: bigint | null }[];
   pruned: number[];
+  /** Removed remit destinations whose release walk landed this run (Base):
+   *  the walks that landed, and where the release stands after the last of
+   *  them. `to` and `bound` are null when the read after the last landed walk
+   *  failed: the walks stand, and where they left the release is unknown
+   *  (`afterLanding`). */
+  released: { chain: number; from: number; walks: number; to: number | null; bound: number | null }[];
+  /** Releases waiting on an abandoned day's finalization. */
+  releaseWaiting: string[];
+  /** Reconciliation queues that held pending takes: the walks that landed,
+   *  and the pending figure read before the first and after the last. The
+   *  change between the two is net: another caller's outflow can add takes,
+   *  and anyone may walk the queue, between the reads (Codex #3010). `after`
+   *  is null when the read after the last landed walk failed: the figure was
+   *  not observed, so none is reported (`afterLanding`). */
+  queues: { side: string; walks: number; before: bigint; after: bigint | null }[];
   refused: Map<string, string>;
   unread: Map<string, string>;
   stopped: string | null;
@@ -212,6 +272,7 @@ export async function runRewardCloseOut(env: Env, tick: PassTick): Promise<void>
           sendDeadline,
           windowDays,
           cursors: d1ScanCursors(env.KEEPER_DB, chain.id, chain.diamond as string, 'rewardCloseOut'),
+          ledger: d1EventLedger(env.DB),
         });
         console.log(describeReport(report));
       } catch (err) {
@@ -228,6 +289,13 @@ function readPositive(env: Env, key: PlainVarKey, fallback: number): number {
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
 }
 
+const describePark = (p: CloseOutReport['parked'][number]): string =>
+  `${p.batchId.slice(0, 10)}(${p.state === 'parked' ? p.amount : `${p.pages} page(s), ${p.state === 'parking' ? 'not yet parked' : 'outcome unread'}`})`;
+const describeRelease = (x: CloseOutReport['released'][number]): string =>
+  x.to === null || x.bound === null
+    ? `chain ${x.chain} ${x.walks} walk(s) from day ${x.from}, where they left it unread`
+    : `chain ${x.chain} days ${x.from}..${x.to - 1} in ${x.walks} walk(s) (${x.to >= x.bound ? 'done' : `${x.bound - x.to} left`})`;
+
 /** The run's one line for a chain. */
 export function describeReport(r: CloseOutReport): string {
   if (r.skipped) return `[keeper] rewardCloseOut chain=${r.chainId}: not worked this run: ${r.skipped}`;
@@ -240,8 +308,11 @@ export function describeReport(r: CloseOutReport): string {
     `days-closed=${r.daysClosed.join(',') || 'none'}`,
     ...(r.daysWaitingOnEntries.length > 0 ? [`days-waiting-on-open-entries=${summarizeDays(r.daysWaitingOnEntries)}`] : []),
     ...(r.daysScanGap.length > 0 ? [`days-scan-short=${r.daysScanGap.join(',')}`] : []),
-    `parked=${r.parked.map((p) => `${p.batchId.slice(0, 10)}(${p.amount})`).join(',') || 'none'}${r.parked.length > 0 ? ' (release is the administrator\'s acknowledgment)' : ''}`,
+    `parked=${r.parked.map(describePark).join(',') || 'none'}${r.parked.some((p) => p.state === 'parked') ? ' (release is the administrator\'s acknowledgment)' : ''}`,
     `pruned=${r.pruned.join(',') || 'none'}`,
+    ...(r.released.length > 0 ? [`released=${r.released.map(describeRelease).join(',')}`] : []),
+    ...(r.releaseWaiting.length > 0 ? [`release-waiting=${r.releaseWaiting.join('; ')}`] : []),
+    ...r.queues.map((q) => `queue-${q.side}=${q.walks} walk(s), pending ${q.before} before, ${q.after === null ? 'unread' : q.after} after (net of other callers)`),
     ...(r.refused.size > 0 ? [`refused=${[...r.refused].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.unread.size > 0 ? [`unread=${[...r.unread].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.stopped ? [`stopped=${r.stopped}`] : []),
@@ -279,6 +350,9 @@ export async function closeOutOnce(chainId: number, diamond: Address, deps: Clos
     daysScanGap: [],
     parked: [],
     pruned: [],
+    released: [],
+    releaseWaiting: [],
+    queues: [],
     refused: sender.refused,
     unread: sender.unread,
     stopped: null,
@@ -289,8 +363,10 @@ export async function closeOutOnce(chainId: number, diamond: Address, deps: Clos
     if (typeof gate === 'string') return { ...report, skipped: gate };
     await finalizeEras(r, sender, report, deps.cursors);
     await drainSurplus(r, sender, report, gate.role);
+    if (gate.role === ROLE_CANONICAL) await releaseDestinations(r, sender, report, chainId, gate.paused, deps);
     const upTo = provableThrough(gate.today, gate.lenderFrontier, gate.borrowerFrontier);
     if (upTo >= 0 && gate.active) await workDays(r, sender, report, gate.paused, upTo, deps);
+    await advanceQueues(r, sender, report);
   } catch (err) {
     if (!(err instanceof PastRunDeadline)) throw err;
     sender.noteUnread('run', 'the run deadline passed during its reads');
@@ -443,6 +519,24 @@ async function finalizeEras(r: Reader, sender: StepSender, report: CloseOutRepor
   if (String(win.next) !== stored.get(ERA_NEXT_ITEM)) await cursors.put(ERA_NEXT_ITEM, String(win.next));
 }
 
+/**
+ * The read that follows a landed send, to see what it did (Codex #3010). The
+ * one rule for every such read in this pass: the step records the landing in
+ * its report BEFORE this read, and the read only refines that record, so
+ * nothing it does can drop work that landed. A read that fails is noted and
+ * returns null, leaving the outcome unknown in the report; past the run's
+ * deadline it throws, and the recorded landing stands.
+ */
+async function afterLanding<T>(sender: StepSender, key: string, what: string, read: () => Promise<T>): Promise<T | null> {
+  try {
+    return await read();
+  } catch (err) {
+    if (err instanceof PastRunDeadline) throw err;
+    sender.noteUnread(key, `${what} (${shortErr(err)})`);
+    return null;
+  }
+}
+
 // ─── 2. Pending surplus ─────────────────────────────────────────────────────
 
 async function drainSurplus(r: Reader, sender: StepSender, report: CloseOutReport, role: number): Promise<void> {
@@ -468,7 +562,119 @@ async function drainSurplus(r: Reader, sender: StepSender, report: CloseOutRepor
   if (res === 'landed') report.drained = pending;
 }
 
-// ─── Days read for 3–5 ─────────────────────────────────────────────────────
+// ─── 3. Removed destinations (Base) ─────────────────────────────────────────
+
+/**
+ * Finish releasing what Base holds for each remit destination it took off its
+ * expected-source list (`RewardRemitDestinationFacet.continueRemitDestinationRelease`,
+ * #2963). The removal's own write walks a bounded number of days, and the walk
+ * stops at the first abandoned day not yet finalized, so a removal can leave
+ * days whose held pool room is released only by a later call; until it is,
+ * that room stays out of the pool and the chain cannot be listed again.
+ *
+ * No view lists the removed chains, so the indexer's ledger of
+ * `RemitDestinationRemoved` nominates them: a page a run, from where the last
+ * run stopped and wrapping round, above a stored floor every row before which
+ * names a chain whose release is done (the Codex #2993 r2 rule). The floor
+ * moves only on what the finalized block shows (r4). Every decision is the
+ * chain's own record (`getRemitDestinationRelease`), and a walk is sent only
+ * when its simulation moves the release cursor, so a release waiting on a
+ * day's finalization costs nothing.
+ */
+async function releaseDestinations(r: Reader, sender: StepSender, report: CloseOutReport, chainId: number, paused: boolean, deps: CloseOutDeps): Promise<void> {
+  const { cursors } = deps;
+  const stored = await cursors.get([RELEASE_FLOOR_ITEM, RELEASE_NEXT_ITEM]);
+  const floor = decodePos(stored.get(RELEASE_FLOOR_ITEM));
+  const next = decodePos(stored.get(RELEASE_NEXT_ITEM));
+  const start = next !== null && (floor === null || posAfter(next, floor)) ? next : floor;
+  const page = await deps.ledger.page(chainId, [REMOVAL_EVENT], start, RELEASE_PAGE);
+  if (page === null) {
+    sender.noteUnread('release', 'the event ledger of removed remit destinations');
+    return;
+  }
+  const last = page.rows[page.rows.length - 1];
+  // Past the last page the next run starts at the floor again.
+  const nextPos = page.more && last !== undefined ? encodePos(last) : '';
+  if (nextPos !== (stored.get(RELEASE_NEXT_ITEM) ?? '')) await cursors.put(RELEASE_NEXT_ITEM, nextPos);
+  // The chain each row names; a row that names none nominates nothing.
+  const rows: (number | null)[] = page.rows.map((row) => {
+    const c = Number(row.args.dstChainId);
+    return Number.isSafeInteger(c) && c > 0 && c <= 0xffffffff ? c : null;
+  });
+  const chains = [...new Set(rows.flatMap((c) => (c === null ? [] : [c])))];
+  const readRelease = (cs: readonly number[], label: string, blockNumber?: bigint) =>
+    r.many(cs.map((c) => ({ functionName: 'getRemitDestinationRelease', args: [c] })), label, blockNumber);
+  const done = new Set<number>();
+  const states = await readRelease(chains, 'releases');
+  for (let i = 0; i < chains.length; i++) {
+    const chain = chains[i];
+    const subject = `chain ${chain}`;
+    const st = states[i] as readonly [bigint, bigint] | undefined;
+    if (st === undefined) {
+      sender.noteUnread(`release:${subject}`, 'its release record');
+      continue;
+    }
+    let [bound, cursor] = [Number(st[0]), Number(st[1])];
+    if (cursor >= bound) {
+      done.add(chain);
+      continue;
+    }
+    if (paused) {
+      sender.noteUnread(`release:${subject}`, 'the protocol is paused, so the release cannot continue');
+      continue;
+    }
+    let entry: CloseOutReport['released'][number] | null = null;
+    while (cursor < bound) {
+      const at = cursor;
+      // eslint-disable-next-line no-await-in-loop
+      const res = await sender.call('release', subject, 'continueRemitDestinationRelease', [chain, BigInt(RELEASE_DAYS)], 0n, (sim) => Number((sim as readonly [bigint, bigint])[0]) > at);
+      if (res === 'idle') {
+        report.releaseWaiting.push(`${chain}: day ${cursor} of ${bound} is not finalized yet`);
+        break;
+      }
+      if (res !== 'landed') break;
+      // Recorded before the read that says where it left the release.
+      if (entry === null) {
+        entry = { chain, from: cursor, walks: 0, to: null, bound: null };
+        report.released.push(entry);
+      }
+      entry.walks++;
+      entry.to = entry.bound = null;
+      // eslint-disable-next-line no-await-in-loop
+      const after = await afterLanding(sender, `release:${subject}`, 'its release record after a walk', async () => {
+        const st = (await readRelease([chain], 'release'))[0] as readonly [bigint, bigint] | undefined;
+        if (st === undefined) throw new Error('the read did not come back');
+        return st;
+      });
+      if (after === null) break;
+      [bound, cursor] = [Number(after[0]), Number(after[1])];
+      [entry.bound, entry.to] = [bound, cursor];
+    }
+    // Done only on what a read showed: a walk whose outcome is unread is not.
+    if (entry?.to !== null && cursor >= bound) done.add(chain);
+  }
+  // On a page read from the floor, the floor moves past the leading rows whose
+  // chain's release is done, at the head AND at the finalized block: a walk a
+  // reorg undoes leaves its row above the floor, to be walked again. At the
+  // finalized block a row counts only when its removal is itself finalized
+  // (Codex #3010): below the removal the record is empty, or an earlier
+  // removal's finished one, and either reads as done.
+  if (start !== floor) return;
+  const positions = page.rows.map((_, i) => i);
+  const n = await finalFloor(0, positions, (i) => rows[i] === null || done.has(rows[i]!), r.finalized, async (passed, block) => {
+    const live = passed.filter((i) => rows[i] === null || rowFinalized(page.rows[i], block));
+    const named = [...new Set(live.flatMap((i) => (rows[i] === null ? [] : [rows[i]!])))];
+    const at = await readRelease(named, 'releases-final', block.number);
+    const finished = new Set(named.filter((_, j) => {
+      const st = at[j] as readonly [bigint, bigint] | undefined;
+      return st !== undefined && st[1] >= st[0];
+    }));
+    return new Set(live.filter((i) => rows[i] === null || finished.has(rows[i]!)));
+  });
+  if (n > 0) await cursors.put(RELEASE_FLOOR_ITEM, encodePos(page.rows[n - 1]));
+}
+
+// ─── Days read for 4–6 ─────────────────────────────────────────────────────
 
 /**
  * Days are read `windowDays` a run, rotating, for two jobs (Codex #2993 r2):
@@ -535,7 +741,7 @@ function span(from: number, to: number): number[] {
   return out;
 }
 
-// ─── 3. Closure ─────────────────────────────────────────────────────────────
+// ─── 4. Closure ─────────────────────────────────────────────────────────────
 
 interface WalkRecord {
   starter: Address;
@@ -680,7 +886,7 @@ async function walkDay(
   return { closed, nonce };
 }
 
-// ─── 4. Park ─────────────────────────────────────────────────────────────────
+// ─── 5. Park ─────────────────────────────────────────────────────────────────
 
 async function parkBatches(r: Reader, sender: StepSender, report: CloseOutReport, closedDays: readonly number[], cursors: ScanCursors): Promise<void> {
   if (closedDays.length === 0 || sender.stopped) return;
@@ -717,16 +923,28 @@ async function parkBatches(r: Reader, sender: StepSender, report: CloseOutReport
       if (verdict !== null) sender.noteUnread(`park:${batchId.slice(0, 10)}`, verdict);
       continue;
     }
+    let entry: CloseOutReport['parked'][number] | null = null;
     for (let page = 0; page < MAX_PARK_PAGES; page++) {
       // eslint-disable-next-line no-await-in-loop
       const res = await sender.call('park', batchId.slice(0, 10), 'parkTransportBatchRemainder', [batchId]);
       if (res !== 'landed') break;
+      // Recorded before the read that says whether the remainder is parked.
+      if (entry === null) {
+        entry = { batchId, pages: 0, state: 'unread', amount: null };
+        report.parked.push(entry);
+      }
+      entry.pages++;
+      entry.state = 'unread';
       // eslint-disable-next-line no-await-in-loop
-      const rem = await r.one<readonly [bigint, number, boolean, bigint]>('getTransportRemainder', [batchId]);
+      const rem = await afterLanding(sender, `park:${batchId.slice(0, 10)}`, 'its remainder after a park page', () =>
+        r.one<readonly [bigint, number, boolean, bigint]>('getTransportRemainder', [batchId]),
+      );
+      if (rem === null) break;
       if (Number(rem[1]) > 0) {
-        report.parked.push({ batchId, amount: rem[0] });
+        [entry.state, entry.amount] = ['parked', rem[0]];
         break;
       }
+      entry.state = 'parking';
     }
   }
 }
@@ -757,7 +975,7 @@ async function parkable(r: Reader, batchId: `0x${string}`, closedKnown: Readonly
   return 'park';
 }
 
-// ─── 5. Prune ───────────────────────────────────────────────────────────────
+// ─── 6. Prune ───────────────────────────────────────────────────────────────
 
 async function pruneDays(r: Reader, sender: StepSender, report: CloseOutReport, openDays: readonly number[]): Promise<void> {
   if (openDays.length === 0 || sender.stopped) return;
@@ -808,5 +1026,78 @@ async function pruneDays(r: Reader, sender: StepSender, report: CloseOutReport, 
     // eslint-disable-next-line no-await-in-loop
     const res = await sender.call('prune', `day ${day}`, 'epochPruneTransportDayCursor', [BigInt(day)]);
     if (res === 'landed') report.pruned.push(day);
+  }
+}
+
+// ─── 7. Reconciliation queues ───────────────────────────────────────────────
+
+/** A reconciliation queue's position: what its pending takes still hold, and
+ *  the frontiers its walk moves. Either moving is progress. */
+interface QueuePosition {
+  pending: bigint;
+  frontiers: readonly bigint[];
+}
+
+const QUEUES: readonly { side: number; name: string; read: (r: Reader) => Promise<QueuePosition> }[] = [
+  {
+    side: QUEUE_SIDE_FRESH,
+    name: 'fresh',
+    read: async (r) => {
+      const q = await r.one<readonly bigint[]>('getFreshQueueState', [RECONCILIATION_QUEUE_ERA]);
+      return { pending: q[4], frontiers: [q[0], q[6]] };
+    },
+  },
+  {
+    side: QUEUE_SIDE_RECYCLED,
+    name: 'recycled',
+    read: async (r) => {
+      const q = await r.one<readonly bigint[]>('getRecycledQueueState');
+      return { pending: q[4], frontiers: [q[0]] };
+    },
+  },
+];
+
+/**
+ * Write each reconciliation queue's pending takes into its records
+ * (`RewardReconciliationFacet.advanceReconciliationQueue`). A pool outflow's
+ * own walk is bounded and leaves the rest pending, in order; while any is
+ * pending, the administrator's corrections on that side refuse
+ * (`ReconciliationQueueBehind`). The call moves no value and changes no total.
+ * Sent while the queue still holds something, and repeated while a call moves
+ * it, with what the run's send budget leaves.
+ */
+async function advanceQueues(r: Reader, sender: StepSender, report: CloseOutReport): Promise<void> {
+  for (const q of QUEUES) {
+    if (sender.stopped) return;
+    let pos: QueuePosition;
+    try {
+      pos = await q.read(r);
+    } catch (err) {
+      if (err instanceof PastRunDeadline) throw err;
+      sender.noteUnread(`queue:${q.name}`, `the ${q.name} reconciliation queue (${shortErr(err)})`);
+      continue;
+    }
+    if (pos.pending === 0n) continue;
+    // Recorded before any walk, so every landed walk is counted whatever the
+    // read after it does.
+    const entry: CloseOutReport['queues'][number] = { side: q.name, walks: 0, before: pos.pending, after: pos.pending };
+    report.queues.push(entry);
+    while (pos.pending > 0n) {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await sender.call('queue', q.name, 'advanceReconciliationQueue', [q.side, BigInt(QUEUE_STEPS)]);
+      if (res !== 'landed') break;
+      entry.walks++;
+      entry.after = null;
+      // eslint-disable-next-line no-await-in-loop
+      const after = await afterLanding(sender, `queue:${q.name}`, `the ${q.name} reconciliation queue after a walk`, () => q.read(r));
+      if (after === null) break;
+      entry.after = after.pending;
+      const moved = after.pending < pos.pending || after.frontiers.some((f, i) => f > pos.frontiers[i]);
+      pos = after;
+      if (!moved) {
+        sender.refused.set(`queue:${q.name}`, 'a walk landed and moved neither its pending figure nor its frontier');
+        break;
+      }
+    }
   }
 }
