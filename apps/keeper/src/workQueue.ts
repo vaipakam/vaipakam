@@ -1,6 +1,6 @@
 /**
  * The keeper's OPEN-WORK queue (#2497 r8): one rule for every pass that finds
- * its work in the shared event ledger (`deliveryProof`, the late remit-ack).
+ * its work in the shared event ledger (the late remit-ack).
  *
  * Two independent motions, so neither can hold the other back:
  *

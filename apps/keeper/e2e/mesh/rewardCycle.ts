@@ -1,7 +1,6 @@
 /**
  * The cross-chain reward-budget cycle, driven the way it runs on a live
- * Base/mirror pair, up to the point where the keeper's delivery-proof pass
- * takes over:
+ * Base/mirror pair, up to the remittance's arrival on the mirror:
  *
  *   1. a real loan on the MIRROR, so the mirror has interest to report;
  *   2. two reward days elapse on both chains (one shared clock);
@@ -19,7 +18,8 @@
  *      from Base — `remitRewardBudget`, the keeper's own transaction;
  *   6. the relay lands the remittance on the mirror, VPFI and message
  *      together: the Base pool locks it, the mirror pool mints it, and the
- *      mirror's ingress records the packet.
+ *      mirror's ingress records the packet, names its one day and counts the
+ *      delivery toward that day (#2828).
  *
  * Day 0 is never remitted (the remit window starts at day 1), so day 1 is
  * the day whose slice moves.
@@ -255,30 +255,4 @@ async function deliverDayOne(m: MeshScenario, k: KeeperHarness, dayCloseRuns: Da
     mirrorVpfiTotalSupply: vpfiTotalSupply,
     remitTxs,
   };
-}
-
-/** The mirror's `getIngressPacket` record, by name. */
-export interface IngressPacket {
-  sourceChainId: number;
-  remitter: Address;
-  remitId: bigint;
-  kind: number;
-  batchId: Hex;
-  dayListHash: Hex;
-  dayListRoot: Hex;
-  chunkCount: number;
-  chunksIndexed: bigint;
-  disposed: bigint;
-  arrivedAt: bigint;
-  dayCount: bigint;
-}
-
-export async function ingressPacket(mirror: MeshChain, packetHash: Hex): Promise<IngressPacket> {
-  return mirror.read<IngressPacket>('getIngressPacket', [packetHash]);
-}
-
-/** `getTransportBatch` → its index progress. */
-export async function batchProgress(mirror: MeshChain, batchId: Hex): Promise<{ dayCount: number; indexedDays: number }> {
-  const b = await mirror.read<readonly [Hex, bigint, bigint, number, number, boolean]>('getTransportBatch', [batchId]);
-  return { dayCount: Number(b[3]), indexedDays: Number(b[4]) };
 }

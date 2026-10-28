@@ -2162,10 +2162,10 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   counts the part toward the day's delivery record and, on an activated
   custody, admits the epoch and indexes it under the day. Nothing is left for
   anyone to index or prove afterwards, so a day waits only on its own parts
-  arriving. The keeper's `deliveryProof` pass (`REWARD_DELIVERY_PROOF_ENABLED`)
-  has nothing to do on a mirror that runs this build, and calls entry points
-  this build removed; leave it unset there until the keeper change that
-  retires it ships. "Verified" on a mirror now means: every delivery Base
+  arriving. The keeper's delivery-proof pass is retired in the same change,
+  with its `REWARD_DELIVERY_PROOF_ENABLED` flag: a host env file that still
+  sets the flag is harmless (nothing reads it), and the line can be dropped
+  at the fresh deploy. "Verified" on a mirror now means: every delivery Base
   sent for the day executed there (CCIP shows it executed, and
   `getDayDeliveryParts(dayId)` counts its part), and `getDayDeliveryState`
   reads `landed`. Read `gateBinds` back from `getDayDeliveryState` (true on a

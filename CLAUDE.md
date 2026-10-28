@@ -1207,7 +1207,7 @@ artifacts and stay in their respective env / config:
   `PUSH_CHANNEL_PK`, aggregator API keys, `KEEPER_PRIVATE_KEY`.
 - apps/keeper Cloudflare secrets: `KEEPER_PRIVATE_KEY` +
   `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`,
-  `REWARD_DELIVERY_PROOF_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`,
+  `REWARD_SANCTIONS_KEEPER_ENABLED`,
   `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`, `RPC_*`,
   `TG_BOT_TOKEN`,
@@ -1219,8 +1219,7 @@ artifacts and stay in their respective env / config:
   which left THREE scheduled passes dark — `rewardBudgetRemit` and
   `remitAck` both gate on `REWARD_REMIT_ENABLED`, `commitmentReport` on
   `REWARD_COMMIT_ENABLED`; `rewardSanctionsHold` (#2450) gates on
-  `REWARD_SANCTIONS_KEEPER_ENABLED`, `deliveryProof` (#1944) on
-  `REWARD_DELIVERY_PROOF_ENABLED`, `rewardHorizonHeartbeat` (#2517) on
+  `REWARD_SANCTIONS_KEEPER_ENABLED`, `rewardHorizonHeartbeat` (#2517) on
   `REWARD_HORIZON_HEARTBEAT_ENABLED` (its #2984 entry close-out step also
   on `REWARD_ENTRY_SETTLE_ENABLED`), `rewardDayClose` (#2612) on
   `REWARD_DAY_CLOSE_ENABLED`, `rewardCloseOut` (#2984) on

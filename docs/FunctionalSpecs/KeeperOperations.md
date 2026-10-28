@@ -139,36 +139,10 @@ evidence that the migration has completed.
 
 ## Reward delivery proofs and acknowledgements
 
-- From #2828 a mirror lands each budget delivery's one day in the
-  transaction the delivery arrives in, so no indexing or proof is left for
-  the keeper to send. On a deployment running that change the delivery-proof
-  part of this pass has no work: it must not send the withdrawn calls, and it
-  stays disarmed until it is retired. The acknowledgement rules further down
-  are unaffected. The delivery-proof rules immediately below describe the
-  pass on deployments from before that change.
-- Each mirror's delivered budgets are discovered from fully indexed history
-  and retained as open work. Flat day lists are indexed or proven as their
-  delivery requires; rooted lists are rebuilt from the canonical reservation
-  and the days actually funded for that mirror. Both recorded roots must
-  agree before anything is sent.
-- A packet's reservation is read at the source deployment the packet names,
-  rather than whichever source is configured today. A delivery awaiting
-  admission is admitted before indexing; it must not be treated as having no
-  epoch and discarded.
-- Calls are simulated first. Sends are ordered and their results checked.
-  A delivery is complete only when a fresh read shows its required indexing
-  or proofs complete, not merely because an admission or proof transaction
-  succeeded. Independently provable chunks can progress despite another
-  chunk's refusal.
-- Per-mirror operations alerts identify deliveries still incomplete more
-  than ten minutes after arrival, oldest first. Partial discovery or reads
-  can raise an alert but cannot clear it; counts are qualified as "at least"
-  when completeness is unknown. Every affected delivery remains in the log
-  even if the chat message cannot hold them all.
-- Contract refusals name the affected delivery, day coverage, and safe
-  reason. Provider timeouts are retried and are not described as contract
-  refusals. Work another caller already completed is not a failure.
-  Network error text must not expose provider credentials.
+- A mirror lands each budget delivery's one day in the transaction the
+  delivery arrives in (#2828), so no indexing or proof is left for anyone to
+  send afterwards, and the keeper has no delivery-proof pass. A day waits
+  only on its own parts arriving.
 - Each canonical remittance records the destination messenger it was bound
   to. Quoting and sending require a known route before any value moves.
   Replacing a receiver behind the same messenger and replacing the messenger

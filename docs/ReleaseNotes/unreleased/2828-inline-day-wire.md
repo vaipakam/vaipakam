@@ -32,4 +32,13 @@ count itself.
 This changes the storage layout, so it reaches a chain only by fresh deploy,
 as the rest of the #1566 reward work does. Closes #2828.
 
-> Caveat: the keeper's delivery-proof pass calls entry points this change removes. It must stay unset on a chain running this build until the keeper change that retires it ships.
+The keeper's delivery-proof pass is retired in the same change, with its
+`REWARD_DELIVERY_PROOF_ENABLED` flag, since nothing is left for it to send.
+The keeper's close-out pass reads the new epoch and remainder records: an
+epoch names its one day, a parked remainder says it is parked rather than
+implying it from a day count, and a park is one call once that day is proven
+closed.
+
+> Caveat: the keeper and the contracts change together, so this merges at the
+> fresh deploy. On a chain still running the earlier contracts, the keeper
+> from this change would no longer prove or index mirror deliveries.

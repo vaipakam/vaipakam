@@ -39,15 +39,16 @@
 //      continued rather than replaced: its nonce is kept per day, since the
 //      keeper's latest nonce names only its newest walk.
 //   5. PARK — for each closed day in its park window, every transport epoch it
-//      lists whose remainder is not parked, whose membership is whole, which
-//      no staging record references and all of whose listed days are proven
-//      closed, is parked (`RewardEpochFacet.parkTransportBatchRemainder`).
+//      lists whose remainder is not parked, which no staging record references
+//      and whose one day is proven closed, is parked, in one call
+//      (`RewardEpochFacet.parkTransportBatchRemainder`). An epoch is whole at
+//      admission (#2828): its delivery names its one day.
 //      Releasing a parked remainder is the administrator's acknowledgment
 //      (`acknowledgeTransportBatchRemainder`), which this pass never calls;
 //      the run's line names each batch parked.
 //   6. PRUNE — for each day of the closure window still open, when the epoch
-//      after its consumption cursor is plainly exhausted (nothing left, fully
-//      indexed, unreferenced), advance the cursor (`RewardEpochFacet.epochPruneTransportDayCursor`).
+//      after its consumption cursor is plainly exhausted (nothing left,
+//      unreferenced), advance the cursor (`RewardEpochFacet.epochPruneTransportDayCursor`).
 //      Exhausted only by its caps is not detected here; the day's next draw
 //      prunes that in passing.
 //   7. QUEUES — write each reconciliation queue's pending takes into its
@@ -186,8 +187,6 @@ export const daySumsItem = (day: number) => `day-scan:${day}`;
 export const dayTermItem = (day: number) => `day-term:${day}`;
 /** How far a day's walk has been fed (`rewardEntries.FeedMark`). */
 export const dayFeedItem = (day: number) => `day-feed:${day}`;
-/** Park pages one batch may take in a run. */
-export const MAX_PARK_PAGES = 8;
 /** Days one `continueRemitDestinationRelease` walks: the removal's own write
  *  walks as many. A settled day costs a few reads, an armed unsent one about
  *  thirty thousand gas. */
@@ -253,10 +252,10 @@ export interface CloseOutReport {
   /** Days whose entry reads ran out of this run's pages; the next run reads
    *  on from where this one stopped. */
   daysScanPending: number[];
-  /** Batches whose park walk landed this run: `amount` once a read shows the
-   *  remainder parked, `parking` while the read shows it unfinished, `unread`
-   *  when the read after the last landed page failed (`afterLanding`). */
-  parked: { batchId: string; pages: number; state: 'parked' | 'parking' | 'unread'; amount: bigint | null }[];
+  /** Batches whose park landed this run: `amount` once a read shows the
+   *  remainder parked, `unread` when the read after the park failed
+   *  (`afterLanding`). */
+  parked: { batchId: string; state: 'parked' | 'unread'; amount: bigint | null }[];
   pruned: number[];
   /** Removed remit destinations whose release walk landed this run (Base):
    *  the walks that landed, and where the release stands after the last of
@@ -317,7 +316,7 @@ function readPositive(env: Env, key: PlainVarKey, fallback: number): number {
 }
 
 const describePark = (p: CloseOutReport['parked'][number]): string =>
-  `${p.batchId.slice(0, 10)}(${p.state === 'parked' ? p.amount : `${p.pages} page(s), ${p.state === 'parking' ? 'not yet parked' : 'outcome unread'}`})`;
+  `${p.batchId.slice(0, 10)}(${p.state === 'parked' ? p.amount : 'outcome unread'})`;
 const describeRelease = (x: CloseOutReport['released'][number]): string =>
   x.to === null || x.bound === null
     ? `chain ${x.chain} ${x.walks} walk(s) from day ${x.from}, where they left it unread`
@@ -978,31 +977,25 @@ async function parkBatches(r: Reader, sender: StepSender, report: CloseOutReport
       if (verdict !== null) sender.noteUnread(`park:${batchId.slice(0, 10)}`, verdict);
       continue;
     }
-    let entry: CloseOutReport['parked'][number] | null = null;
-    for (let page = 0; page < MAX_PARK_PAGES; page++) {
-      // eslint-disable-next-line no-await-in-loop
-      const res = await sender.call('park', batchId.slice(0, 10), 'parkTransportBatchRemainder', [batchId]);
-      if (res !== 'landed') break;
-      // Recorded before the read that says whether the remainder is parked.
-      if (entry === null) {
-        entry = { batchId, pages: 0, state: 'unread', amount: null };
-        report.parked.push(entry);
-      }
-      entry.pages++;
-      entry.state = 'unread';
-      // eslint-disable-next-line no-await-in-loop
-      const rem = await afterLanding(sender, `park:${batchId.slice(0, 10)}`, 'its remainder after a park page', () =>
-        r.one<readonly [bigint, number, boolean, bigint]>('getTransportRemainder', [batchId]),
-      );
-      if (rem === null) break;
-      if (Number(rem[1]) > 0) {
-        [entry.state, entry.amount] = ['parked', rem[0]];
-        break;
-      }
-      entry.state = 'parking';
-    }
+    // eslint-disable-next-line no-await-in-loop
+    const res = await sender.call('park', batchId.slice(0, 10), 'parkTransportBatchRemainder', [batchId]);
+    if (res !== 'landed') continue;
+    // Recorded before the read that says whether the remainder is parked.
+    const entry: CloseOutReport['parked'][number] = { batchId, state: 'unread', amount: null };
+    report.parked.push(entry);
+    // eslint-disable-next-line no-await-in-loop
+    const rem = await afterLanding(sender, `park:${batchId.slice(0, 10)}`, 'its remainder after the park', () =>
+      r.one<Remainder>('getTransportRemainder', [batchId]),
+    );
+    if (rem !== null && rem[0]) [entry.state, entry.amount] = ['parked', rem[1]];
   }
 }
+
+/** `getTransportBatch`: packet hash (zero when no batch exists), balance,
+ *  admitted, its one day, released. */
+type Batch = readonly [string, bigint, bigint, bigint, boolean];
+/** `getTransportRemainder`: parked, amount, day, acknowledged, debited. */
+type Remainder = readonly [boolean, bigint, bigint, boolean, bigint];
 
 /** 'park', null (nothing to do), or what could not be read. */
 async function parkable(r: Reader, batchId: `0x${string}`, closedKnown: ReadonlySet<number>): Promise<'park' | null | string> {
@@ -1015,17 +1008,16 @@ async function parkable(r: Reader, batchId: `0x${string}`, closedKnown: Readonly
     'batch',
   );
   if (batch === undefined || remainder === undefined || staged === undefined) return 'the epoch\'s record';
-  const b = batch as readonly [string, bigint, bigint, number, number, boolean];
+  const b = batch as Batch;
   if (b[0] === ZERO32) return null;
-  if (Number((remainder as readonly [bigint, number])[1]) > 0) return null; // parked already
-  if (Number(b[4]) < Number(b[3])) return null; // membership not whole yet
+  if ((remainder as Remainder)[0]) return null; // parked already
   if ((staged as readonly [bigint, bigint, bigint])[2] !== 0n) return null; // a staging record references it
-  const listed = (await r.one<readonly bigint[]>('getTransportBatchDays', [batchId])).map(Number);
-  const unknown = listed.filter((d) => !closedKnown.has(d));
-  if (unknown.length > 0) {
-    const closed = await r.days(unknown, 'isDayObligationsClosed', 'listed-days');
-    if (closed.some((x) => x === undefined)) return 'whether each listed day is proven closed';
-    if (closed.some((x) => x === false)) return null;
+  // The epoch's one day, which the park itself requires proven closed.
+  const day = Number(b[3]);
+  if (!closedKnown.has(day)) {
+    const [closed] = await r.days([day], 'isDayObligationsClosed', 'epoch-day');
+    if (closed === undefined) return 'whether the epoch\'s day is proven closed';
+    if (closed === false) return null;
   }
   return 'park';
 }
@@ -1069,12 +1061,10 @@ async function pruneDays(r: Reader, sender: StepSender, report: CloseOutReport, 
       sender.noteUnread(`prune:${day}`, 'the epoch after the cursor');
       continue;
     }
-    const b = batch as readonly [string, bigint, bigint, number, number, boolean];
+    const b = batch as Batch;
     const prunable = epochPrunable({
       exists: b[0] !== ZERO32,
       balance: b[1],
-      dayCount: Number(b[3]),
-      indexedDays: Number(b[4]),
       references: (staged as readonly [bigint, bigint, bigint])[2],
     });
     if (!prunable) continue;

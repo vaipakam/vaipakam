@@ -39,7 +39,6 @@ import { runAutoLifecycle } from './autoLifecycle';
 import { runPreGraceWatcher } from './preGraceWatcher';
 import { runRewardBudgetRemit } from './rewardBudgetRemit';
 import { PASS_CADENCE_SEC as SANCTIONS_HOLD_CADENCE_SEC, runRewardSanctionsHold } from './rewardSanctionsHold';
-import { PASS_CADENCE_SEC as DELIVERY_PROOF_CADENCE_SEC, runDeliveryProof } from './deliveryProof';
 import { PASS_CADENCE_SEC as HORIZON_HEARTBEAT_CADENCE_SEC, runRewardHorizonHeartbeat } from './rewardHorizonHeartbeat';
 import { runCommitmentReport } from './commitmentReport';
 import { runRemitAck } from './remitAck';
@@ -195,7 +194,7 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     // which is measured in days. Same bounds as graceDefault: one chain, one
     // scan window and one attempt per run, each costing a quote round, a
     // simulation and a send. :05/:20/:35/:50 — clear of every staggered
-    // pass (the 5-minute ones sit on :01–:03 modulo 5, the :04-modulo-5
+    // pass (the 5-minute ones sit on :02–:03 modulo 5, the :04-modulo-5
     // minutes are preGraceWatcher's, rewardSanctionsHold's and the
     // heartbeat's, and rewardDayClose has :10/:25/:40/:55).
     cadenceMinutes: PERIODIC_SETTLE_CADENCE_SEC / 60,
@@ -247,16 +246,9 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     run: runRewardSanctionsHold,
   },
   {
-    name: 'deliveryProof',
-    cadenceMinutes: DELIVERY_PROOF_CADENCE_SEC / 60,
-    offsetMinutes: 1,
-    why: 'a delivered day waits on its proof before a gated mirror may price it — minutes, not hours; the scan is bounded and idempotent (#1944)',
-    run: runDeliveryProof,
-  },
-  {
     name: 'rewardHorizonHeartbeat',
     cadenceMinutes: HORIZON_HEARTBEAT_CADENCE_SEC / 60,
-    // :44 — clear of every staggered pass (the 5-minute ones sit on :01–:03
+    // :44 — clear of every staggered pass (the 5-minute ones sit on :02–:03
     // modulo 5, preGraceWatcher on :04/:19/:34/:49, rewardSanctionsHold on :14).
     offsetMinutes: 44,
     why: 'touches every live reward entry about every 12 h, far inside the 7-day observation gap; hourly spreads the batches and retries a failed touch within the hour (#2517)',
@@ -266,7 +258,7 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     name: 'rewardDayClose',
     cadenceMinutes: DAY_CLOSE_CADENCE_SEC / 60,
     // :10/:25/:40/:55 — clear of every staggered pass (the 5-minute ones sit on
-    // :01–:03 modulo 5, preGraceWatcher on :04/:19/:34/:49, the hourly ones on
+    // :02–:03 modulo 5, preGraceWatcher on :04/:19/:34/:49, the hourly ones on
     // :14 and :44).
     offsetMinutes: 10,
     why: 'a reward day closes once a day, then waits on CCIP and a 4 h grace; a quarter-hour keeps each step within minutes of becoming possible (#2612)',
@@ -276,7 +268,7 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     name: 'rewardCloseOut',
     cadenceMinutes: CLOSE_OUT_CADENCE_SEC / 60,
     // :00/:15/:30/:45 — clear of every staggered pass (the 5-minute ones sit
-    // on :01–:03 modulo 5, the 15-minute ones on :04, :05, :09 and :10
+    // on :02–:03 modulo 5, the 15-minute ones on :04, :05, :09 and :10
     // modulo 15, the hourly ones on :14 and :44).
     offsetMinutes: 0,
     why: 'proves finished reward days closed and releases what they held; a day proven closed stays closed, so minutes are not material (#2984)',
@@ -286,7 +278,7 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     name: 'rewardZeroedDay',
     cadenceMinutes: ZEROED_DAY_CADENCE_SEC / 60,
     // :09/:24/:39/:54 — the one quarter-hour offset still clear of every
-    // staggered pass (the 5-minute ones sit on :01–:03 modulo 5, the
+    // staggered pass (the 5-minute ones sit on :02–:03 modulo 5, the
     // 15-minute ones on :00, :04, :05 and :10 modulo 15, the hourly ones on
     // :14 and :44).
     offsetMinutes: 9,
@@ -296,7 +288,7 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
   {
     name: 'rewardReturnTransport',
     cadenceMinutes: RETURN_TRANSPORT_CADENCE_SEC / 60,
-    // :29 — clear of every staggered pass (the 5-minute ones sit on :01–:03
+    // :29 — clear of every staggered pass (the 5-minute ones sit on :02–:03
     // modulo 5, the 15-minute ones on :00, :04, :05, :09 and :10 modulo 15,
     // the hourly ones on :14 and :44).
     offsetMinutes: 29,
@@ -307,7 +299,7 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     name: 'protocolUpkeep',
     cadenceMinutes: PROTOCOL_UPKEEP_CADENCE_SEC / 60,
     // :59 — the last hourly minute clear of every staggered pass (the
-    // 5-minute ones sit on :01–:03 modulo 5, the 15-minute ones on :00, :04,
+    // 5-minute ones sit on :02–:03 modulo 5, the 15-minute ones on :00, :04,
     // :05, :09 and :10 modulo 15, the hourly ones on :14, :29 and :44).
     offsetMinutes: 59,
     why: 'rolls back expired buyback intents and keeps the tier LTV cache from lapsing; an expired intent and a 14-day cache wait hours without harm (#2984)',

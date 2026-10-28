@@ -141,10 +141,6 @@ interface BaseEnv {
   /** recent-day window re-scanned for un-reported commitments each tick (default 14). */
   REWARD_COMMIT_LOOKBACK_DAYS?: string;
 
-  // #1944 + the transport epochs — the delivery-proof pass (`deliveryProof.ts`).
-  /** 'true' arms the mirror-side delivery indexing/proof pass (in addition to KEEPER_ENABLED). `secret_text`. */
-  REWARD_DELIVERY_PROOF_ENABLED?: string;
-
   // #2450 — the #1566 sanctions-hold observer (`rewardSanctionsHold.ts`).
   /** 'true' arms the sanctions-hold observer (in addition to KEEPER_ENABLED). `secret_text`, like the flags above. */
   REWARD_SANCTIONS_KEEPER_ENABLED?: string;
@@ -386,7 +382,6 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_REMIT_LANE_CAP',
   'REWARD_REMIT_MIN_PART',
   'REWARD_COMMIT_ENABLED',
-  'REWARD_DELIVERY_PROOF_ENABLED',
   'REWARD_SANCTIONS_KEEPER_ENABLED',
   'REWARD_HORIZON_HEARTBEAT_ENABLED',
   'REWARD_ENTRY_SETTLE_ENABLED',
@@ -568,7 +563,6 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_REMIT_LANE_CAP: raw.REWARD_REMIT_LANE_CAP,
     REWARD_REMIT_MIN_PART: raw.REWARD_REMIT_MIN_PART,
     REWARD_COMMIT_ENABLED: raw.REWARD_COMMIT_ENABLED,
-    REWARD_DELIVERY_PROOF_ENABLED: raw.REWARD_DELIVERY_PROOF_ENABLED,
     REWARD_SANCTIONS_KEEPER_ENABLED: raw.REWARD_SANCTIONS_KEEPER_ENABLED,
     REWARD_HORIZON_HEARTBEAT_ENABLED: raw.REWARD_HORIZON_HEARTBEAT_ENABLED,
     REWARD_ENTRY_SETTLE_ENABLED: raw.REWARD_ENTRY_SETTLE_ENABLED,
