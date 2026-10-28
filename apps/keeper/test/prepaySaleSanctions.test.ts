@@ -19,7 +19,6 @@ import { describeSales, OFFER_FLOOR_ITEM, SALE_RACES, SALES_ABI, syncSaleListing
 import { encodePos, type EventLedger, type LedgerPos, type LedgerRow } from '../src/eventLedger';
 import { finalizedBlockOnce, memoryScanCursors } from '../src/scanCursors';
 import { StepSender } from '../src/stepSender';
-import { PastRunDeadline } from '../src/batchRead';
 import { SEND_RESERVE_MS, STAGE_RESERVE_MS } from '../src/runWindow';
 import type { KeeperContext } from '../src/keeper';
 
@@ -267,7 +266,7 @@ describe('the prepay-sale sanctions sync', () => {
     expect([...sender.unread.keys()]).toContain('sales:loan:1');
   });
 
-  it('stops the gate read at its stage cutoff, waiting or not', async () => {
+  it('stops the gate read at its stage cutoff, waiting or not, and reports the armed step as not worked', async () => {
     d.active = [1n];
     d.loanListings.set(1n, { hash: hash(1), parties: [addr(1)] });
     d.flagged.add(addr(1));
@@ -276,9 +275,14 @@ describe('the prepay-sale sanctions sync', () => {
     // The gate's cutoff falls 200 ms from now: the send reserve and two stage
     // reserves before the deadline.
     const t0 = Date.now();
-    await expect(run(t0 + SEND_RESERVE_MS + 2 * STAGE_RESERVE_MS + 200)).rejects.toBeInstanceOf(PastRunDeadline);
+    const { report, sender } = await run(t0 + SEND_RESERVE_MS + 2 * STAGE_RESERVE_MS + 200);
     expect(Date.now() - t0).toBeLessThan(2_000);
     expect(d.sent).toEqual([]);
+    // Armed and not worked, by name: never the disarmed line.
+    expect(report.off).toContain('could not be read');
+    expect(describeSales(report).join(' ')).toContain('not worked');
+    expect(describeSales(report).join(' ')).not.toContain('not armed');
+    expect(String(sender.unread.get('sales'))).toMatch(/cutoff/);
   });
 
   it('reports a sync the contract left live when its own read confirms no flag', async () => {

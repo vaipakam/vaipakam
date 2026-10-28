@@ -141,8 +141,12 @@ interface Listing {
 }
 
 const label = (l: Pick<Listing, 'kind' | 'id'>) => `${l.kind} ${l.id}`;
+/** Why a read came back empty: its stage ran out of time, or the RPC said. */
+const whyUnread = (err: unknown) => (err instanceof PastRunDeadline ? 'not read by its stage cutoff' : shortErr(err));
 
-/** One chain's step. Throws `PastRunDeadline` only from its gate and window reads. */
+/** One chain's step. It never throws for running out of time: a stage that
+ *  reaches its cutoff is reported unread in the step's own report, so an armed
+ *  step always says what it read and what it did not. */
 export async function syncSaleListings(chainId: number, diamond: Address, sender: StepSender, deps: SalesSyncDeps): Promise<SalesSyncReport> {
   const out = emptySalesReport();
   // Each read stage stops early enough to leave the stages after it their
@@ -161,8 +165,7 @@ export async function syncSaleListings(chainId: number, diamond: Address, sender
       scanClient.readContract({ address: diamond, abi: SALES_ABI, functionName: 'getSanctionsOracle' }),
     )) as Address;
   } catch (err) {
-    if (err instanceof PastRunDeadline) throw err;
-    sender.noteUnread('sales', `the sanctions oracle setting (${shortErr(err)})`);
+    sender.noteUnread('sales', `the sanctions oracle setting (${whyUnread(err)})`);
     out.off = 'the sanctions oracle setting could not be read';
     return out;
   }
@@ -203,8 +206,7 @@ export async function syncSaleListings(chainId: number, diamond: Address, sender
     }
     if (unread > 0) sender.noteUnread('sales:loans', `the listing of ${unread} loan(s) in the window`);
   } catch (err) {
-    if (err instanceof PastRunDeadline) throw err;
-    sender.noteUnread('sales:loans', `the active-loan window (${shortErr(err)})`);
+    sender.noteUnread('sales:loans', `the active-loan window (${whyUnread(err)})`);
   }
   out.loanListings = listings.length;
 
