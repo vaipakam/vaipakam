@@ -1,4 +1,4 @@
-## Thread — List all for sale on lender positions from one offer (PR #TBD)
+## Thread — List all for sale on lender positions from one offer (PR #3066)
 
 When one of a lender's offers filled into two or more loans whose lender
 positions the wallet still holds, the Positions page now shows a card for
