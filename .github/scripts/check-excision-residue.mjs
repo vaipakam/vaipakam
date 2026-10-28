@@ -390,7 +390,7 @@ const PINNED = new Map([
   ["SECURITY.md", [3, "RETRACTION — the CCIP section's note that there is no purchase surface and the removed contracts are out of scope; #1728 took them out of the live scope lists", "8f06034746ef"]],
   ["apps/agent/README.md", [2, "RETRACTION — #1651 notes where the buy-watchdog responsibility stood (triaged #1728)", "abf12c10c2e6"]],
   ["apps/www/src/content/whitepaper/Whitepaper.en.md", [3, "LIVE-TEXT — user-facing; verify against the §8 supersede banner before raising", "285f32e0bdcf"]],
-  ["contracts/RUNBOOK.md", [18, "RETRACTION + LIVE-NAME — #687-A / #1651 notes where removed steps and env vars stood, plus the live ConfigureVPFIBuy.s.sol and VPFI_BUY_WEI_PER_VPFI, which set the fee-discount price anchor and only keep the old prefix. Nothing here instructs an operator to use the removed sale (triaged #1728)", "260c6b3e5857"]],
+  ["contracts/RUNBOOK.md", [18, "RETRACTION + LIVE-NAME — #687-A / #1651 notes where removed steps and env vars stood, plus the live ConfigureVPFIBuy.s.sol and VPFI_BUY_WEI_PER_VPFI, which set the fee-discount price anchor and only keep the old prefix. Nothing here instructs an operator to use the removed sale (triaged #1728)", "2c25ee1aa431"]],
   ["contracts/deployments/CCIP-INFRA-ADDRESSES.md", [4, "HISTORICAL — deployed-address record", "230dc02e4eea"]],
   ["docs/DesignsAndPlans/BorrowerPlatformFeeResearch.md", [1, "RETRACTION — says a buy spread was dropped because the adapter no longer exists (triaged #1728)", "a4b768866ea2"]],
   ["docs/DesignsAndPlans/CloudflareStagingDeployPlan.md", [1, "RETRACTION — #1651 note where the buy-watchdog schedule stood (triaged #1728)", "5e2ddf66262c"]],
@@ -408,15 +408,15 @@ const PINNED = new Map([
   ["docs/GLOSSARY.md", [5, "RETRACTION + HISTORICAL — the \"Buy adapter / receiver — REMOVED\" entry and the LayerZero-era contract list (#1728)", "13f885e282f0"]],
   ["docs/TestScopes/AdvancedUserGuideTestMatrix.md", [2, "RETRACTION — two rows marked retired by #687-A (#1728)", "2afacc140900"]],
   ["docs/ToDo.md", [31, "HISTORICAL — closed ToDo items and a past Safe-transaction record. The file is the owner's list and is not rewritten (triaged #1728)", "d5e9ebd21157"]],
-  ["docs/procedures/FunctionalSpecImplementationNotes.md", [1, "HISTORICAL RETRACTION — archived tokenomics checklist prohibits the removed fixed-rate buy form; supporting evidence, not an active implementation requirement (#2958)", "c08654e49a2c"]],
   ["docs/ops/AnalyticsLabelRegistration.md", [3, "HISTORICAL — label registry rows", "2b6cfcd8c015"]],
   ["docs/ops/BNBTestnetDeploy.md", [24, "LIVE-TEXT — known debt; largest unswept operator runbook after DeploymentRunbook", "48b79f5e343d"]],
   ["docs/ops/BaseSepoliaDeploy.md", [31, "LIVE-TEXT — known debt, PLUS a #884 retraction banner on §4 (+5). The banner is why the count rose: it names the removed knobs (VPFI_BUY_GLOBAL_CAP / _PER_WALLET_CAP / _ENABLED, getVPFIBuyConfig, DeployVPFIBuyReceiver) in order to tell an operator they no longer exist, and to stop §4's hand-invocation of ConfigureVPFIBuy walking around the peg gate. The residue BELOW the banner is untouched and still debt", "04af672b2a73"]],
-  ["docs/ops/CcipCutoverRunbook.md", [6, "RETRACTION — #1719 swept the dead steps and left the notes", "b37c80c4e196"]],
+  ["docs/ops/CcipCutoverRunbook.md", [6, "RETRACTION — #1719 swept the dead steps and left the notes", "c48083f01318"]],
   ["docs/ops/ChainByChainChecks.md", [6, "LIVE-TEXT — known debt", "64e398056c19"]],
   ["docs/ops/DeploymentRunbook.md", [46, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner. #884 LOWERED 47→46: the configure-phase prose no longer lists ConfigureVPFIBuy as a launch child", "1b0dfe86e18a"]],
   ["docs/ops/IncidentRunbook.md", [4, "HISTORICAL — past-incident record", "6a311da0a930"]],
   ["docs/ops/VPFITokenRotationRunbook.md", [1, "HISTORICAL — rotation-scope note", "192752fa405c"]],
+  ["docs/procedures/FunctionalSpecImplementationNotes.md", [1, "HISTORICAL RETRACTION — archived tokenomics checklist prohibits the removed fixed-rate buy form; supporting evidence, not an active implementation requirement (#2958)", "c08654e49a2c"]],
 ]);
 
 /**
