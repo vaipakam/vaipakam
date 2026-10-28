@@ -369,6 +369,29 @@ describe('useForcedCloseSubmission', () => {
       });
       expect(hook.result.current.submitted?.hash).toBe(HASH);
     });
+
+    it('keeps a learned nonce when a later identity read finds nothing (Codex #3040 r2)', async () => {
+      writeForcedCloseSubmission(CHAIN, LOAN, { hash: HASH, at: Date.now() });
+      const pc = orphanedChain(NONCE, true);
+      const { hook } = await mount(client, vi.fn(), pc as unknown as PublicClient);
+      await flush();
+      expect(hook.result.current.submitted).toMatchObject({ sender: SENDER, nonce: NONCE });
+      // The node drops the transaction, every query is asked again (a
+      // reconnect), and then a replacement takes the nonce.
+      pc.getTransaction.mockImplementation(async ({ hash }: { hash: `0x${string}` }) => {
+        throw new TransactionNotFoundError({ hash });
+      });
+      // Not awaited: the wait it also refetches never settles, as viem's
+      // does not for this hash.
+      void client.invalidateQueries();
+      await flush();
+      expect(hook.result.current.submitted).toMatchObject({ sender: SENDER, nonce: NONCE });
+      pc.getTransactionCount.mockResolvedValue(NONCE + 1);
+      void client.invalidateQueries({ queryKey: ['forcedClose', 'disposition'] });
+      await flush();
+      await flush();
+      expect(hook.result.current.disposition).toBe('superseded');
+    });
   });
 
   it('keeps a submission per chain and loan across a chain switch and back', async () => {

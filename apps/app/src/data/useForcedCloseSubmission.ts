@@ -392,7 +392,11 @@ export function useForcedCloseSubmission({
    *  the record carries them or the disposition is settled. Keyed under
    *  `['forcedClose', 'disposition', …]` so the readiness invalidation
    *  passes over it, as it does the wait. */
-  const identity = useQuery<{ sender: `0x${string}`; nonce: number } | null>({
+  const identity = useQuery<{
+    hash: `0x${string}`;
+    sender: `0x${string}`;
+    nonce: number;
+  } | null>({
     queryKey: ['forcedClose', 'disposition', submissionKey, submitted?.hash, 'identity'],
     enabled:
       submitted !== null &&
@@ -404,8 +408,9 @@ export function useForcedCloseSubmission({
       query.state.data == null ? dispositionRetryMs(query.state.dataUpdateCount) : false,
     queryFn: async () => {
       try {
-        const tx = await publicClient!.getTransaction({ hash: submitted!.hash });
-        return { sender: tx.from, nonce: tx.nonce };
+        const hash = submitted!.hash;
+        const tx = await publicClient!.getTransaction({ hash });
+        return { hash, sender: tx.from, nonce: tx.nonce };
       } catch {
         return null; // not visible yet, or the read failed
       }
@@ -417,14 +422,35 @@ export function useForcedCloseSubmission({
    *  identity between renders. */
   const submittedHash = submitted?.hash ?? null;
 
-  /** The submission with the sender and nonce read back above, when its
-   *  record does not carry them yet. Derived, not stored in state: the
-   *  identity query is keyed by the hash, so its answer belongs to this
-   *  submission and to no newer one under the same key. */
-  const withIdentity: ForcedCloseSubmission | null =
-    submitted !== null && submitted.nonce === undefined && identityData !== null
-      ? { ...submitted, ...identityData }
-      : submitted;
+  /** The sender and nonce, once read back, become part of the SUBMISSION
+   *  (#2086, Codex #3040 r2): the in-memory entry and the device record
+   *  both take them, and every reader uses `submitted` alone.
+   *
+   *  They used to be derived from the identity query on each render, which
+   *  made a fact already learned depend on a read that can regress: a
+   *  refetch on reconnect, after the node has dropped the transaction,
+   *  answers `null`, and the nonce disappeared with it, switching the
+   *  reconciliation off for good. A learned identity is now stored once
+   *  and the identity query stops, since it is enabled only while the
+   *  submission lacks one. Only onto the submission it was read for: the
+   *  answer carries its hash, and a newer submission under the same key
+   *  does not inherit another transaction's nonce. */
+  useEffect(() => {
+    if (identityData === null) return;
+    const { hash, sender, nonce } = identityData;
+    const learn = (s: ForcedCloseSubmission | null | undefined) =>
+      s !== null && s !== undefined && s.hash === hash && s.nonce === undefined;
+    const stored = readForcedCloseSubmission(chainId, loanId);
+    setSubmissions((prev) => {
+      const current = prev[submissionKey] ?? stored;
+      return learn(current)
+        ? { ...prev, [submissionKey]: { ...current!, sender, nonce } }
+        : prev;
+    });
+    if (learn(stored)) {
+      writeForcedCloseSubmission(chainId, loanId, { ...stored!, sender, nonce });
+    }
+  }, [identityData, submissionKey, chainId, loanId]);
 
   /** #2086 — the nonce reconciliation, run ALONGSIDE the live wait rather
    *  than after it (Codex #3040 r1).
@@ -444,8 +470,8 @@ export function useForcedCloseSubmission({
   const reconcile = useQuery<ForcedCloseDisposition>({
     queryKey: ['forcedClose', 'disposition', submissionKey, submitted?.hash, 'nonce'],
     enabled:
-      withIdentity !== null &&
-      withIdentity.nonce !== undefined &&
+      submitted !== null &&
+      submitted.nonce !== undefined &&
       Boolean(publicClient) &&
       (watch.data === undefined || watch.data === 'undetermined'),
     retry: false,
@@ -453,9 +479,9 @@ export function useForcedCloseSubmission({
       query.state.data === undefined || query.state.data === 'undetermined'
         ? dispositionRetryMs(query.state.dataUpdateCount)
         : false,
-    // The options are refreshed every render, so this reads the identity
-    // as it stands when the poll runs.
-    queryFn: () => reconcileByNonce(withIdentity!),
+    // The options are refreshed every render, so this reads the
+    // submission as it stands when the poll runs.
+    queryFn: () => reconcileByNonce(submitted!),
   });
 
   /** The wait's answer when it has one; otherwise the reconciliation's.
@@ -464,26 +490,6 @@ export function useForcedCloseSubmission({
     d !== undefined && d !== 'undetermined' ? d : undefined;
   const disposition: ForcedCloseDisposition | null =
     answered(watch.data) ?? answered(reconcile.data) ?? watch.data ?? reconcile.data ?? null;
-
-  /** Persists the sender and nonce into this submission's device record
-   *  (#2086), so a reload can reconcile by nonce. Only onto the record
-   *  they were read for: a newer submission written under the same key
-   *  must not inherit another transaction's nonce. */
-  const identityHash = withIdentity?.nonce !== undefined ? withIdentity.hash : null;
-  const identitySender = withIdentity?.sender;
-  const identityNonce = withIdentity?.nonce;
-  useEffect(() => {
-    if (identityHash === null || identitySender === undefined || identityNonce === undefined) return;
-    const stored = readForcedCloseSubmission(chainId, loanId);
-    if (stored?.hash === identityHash && stored.nonce === undefined) {
-      writeForcedCloseSubmission(chainId, loanId, {
-        hash: identityHash,
-        at: stored.at,
-        sender: identitySender,
-        nonce: identityNonce,
-      });
-    }
-  }, [identityHash, identitySender, identityNonce, chainId, loanId]);
 
   /** Every submission whose post-success refresh has come back.
    *
