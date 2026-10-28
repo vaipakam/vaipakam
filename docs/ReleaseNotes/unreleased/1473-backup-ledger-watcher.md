@@ -1,4 +1,4 @@
-## Backups — a watcher and a ledger the backup job cannot write (PR #<n>)
+## Backups — a watcher and a ledger the backup job cannot write (PR #3033)
 
 The nightly off-chain archive Worker checked its own archives, with keys it
 also held, so nothing it checked could survive the Worker being compromised.
