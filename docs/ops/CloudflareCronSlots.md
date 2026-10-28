@@ -164,11 +164,15 @@ during exactly the cleanup the rest of this file anticipates.
   earlier revision of this file stated how many fit, along with what
   retirement would change it to, and both would have been wrong the moment
   the retirement landed.
-- **Retiring a Worker frees its trigger only when the Worker is deleted.**
-  A stopped or disabled Worker keeps its schedule. Retire a predecessor only
-  once its replacement is confirmed to be landing and verifying on its own:
-  until then the predecessor is what would mask a defect in it. That was the
-  order for `vaipakam-offchain-data-archive` (#1977).
+- **A trigger is freed when the Worker's schedule is removed, not when the
+  Worker is stopped.** Two ways remove it: deploy the Worker with an empty
+  `crons` array, which keeps the Worker and its HTTP routes (`apps/keeper`
+  is deployed that way), or delete the Worker. A stopped or disabled Worker
+  keeps its schedule and its slot. Retire a predecessor only once its
+  replacement is confirmed to be landing and verifying on its own: until
+  then the predecessor is what would mask a defect in it. That was the order
+  for `vaipakam-offchain-data-archive` (#1977), which was deleted because
+  nothing else on it was in use.
 - **Splitting an existing Worker's one cron into two costs a trigger** and
   has the same effect as a new deploy. This is why
   `ops/offchain-data-warm` folds its Monday healthcheck into the nightly
