@@ -53,7 +53,8 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import type { PassTick } from './passSchedule';
-import { deadlineClient, PastRunDeadline, settleBy } from './batchRead';
+import { deadlineClient, PastRunDeadline } from './batchRead';
+import { boundedCall } from './passReader';
 import { shortErr } from './callErrors';
 import { deploymentFloor, discoverConflictedDayParts, finishWork, listOpenWorkPage, touchOpenWork, type ConflictedDayRow } from './db';
 import { journal, OPS_POST_TIMEOUT_MS, resolveOpsAlerts, sendOpsAlertDigest, sendOpsNoticeDigest, type OpsAlertOutcome } from './opsAlert';
@@ -324,14 +325,6 @@ function ownEvents(deps: ConflictDeps, logs: readonly Log[], eventName: string) 
 }
 
 // ─── The run ────────────────────────────────────────────────────────────────
-
-/** `work`, abandoned at `cutoff` if still waiting then (`PastRunDeadline`). */
-function boundedCall<T>(cutoff: number, what: string, work: () => Promise<T>): Promise<T> {
-  if (Date.now() >= cutoff) return Promise.reject(new PastRunDeadline(`${what}: past its cutoff — read next run`));
-  return settleBy(work(), cutoff, () => {
-    throw new PastRunDeadline(`${what}: still unread at its cutoff — read next run`);
-  });
-}
 
 export async function runRewardDeliveryConflict(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'rewardDeliveryConflict', 'REWARD_DELIVERY_CONFLICT_ENABLED')) return;
