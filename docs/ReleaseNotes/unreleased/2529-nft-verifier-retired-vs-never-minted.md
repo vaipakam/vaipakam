@@ -1,4 +1,4 @@
-## Thread — The NFT verifier tells a retired token from a never-minted one (PR #<n>)
+## Thread — The NFT verifier tells a retired token from a never-minted one (PR #3029)
 
 When a position NFT id does not exist, the verifier used to say only that it
 was either retired or never minted, because the chain gave the same answer for
