@@ -108,6 +108,12 @@ the two runtimes is less uniform, and nothing here needs the saving.
   passphrase-encrypted PKCS#8 file in the operator's offline store.
 - **Rotation** is adding the new public key as a recipient, letting one full
   retention cycle pass, then removing the old one. No archive is re-encrypted.
+- **The recipient set is versioned, not just current.** The directory holds a
+  `recipients.json` that lists every set the Worker has ever used, each with
+  the date it took effect. A rotation appends a set; it never edits or removes
+  an earlier one. So the watcher (§5.3) can judge each archive against the set
+  in force when it was uploaded, and the restore drill knows which private
+  keys an old archive needs.
 
 ### 3.4 What it proves and what it cannot
 
@@ -178,15 +184,34 @@ Retention per entry, as defaults for the owner to confirm:
 
 - an entry for a daily or monthly archive: **400 days**, longer than the
   12-month life of the longest of them;
-- an entry for a yearly archive: **10 years**, since the archive itself has no
-  deletion rule.
+- an entry for a yearly archive: **10 years**, renewed while the archive
+  exists. Compliance mode allows a retention to be lengthened, never
+  shortened, and the ledger key holds `writeFileRetentions`. Each run, the
+  watcher extends to ten years any yearly entry whose archive is still in the
+  bucket and whose retention has under a year left, and pages if an extension
+  fails. So a yearly archive's ledger protection lasts as long as the archive
+  does. If the watcher is ever retired, the yearly archives' supported life
+  ends with the last entry's retention, and the retirement must say so.
 
 One entry per archive **version**, named by the B2 file id, which is unique per
-upload: `entries/<tier>/<period>/<fileId>.json`. It records the archive key,
-file id, B2's server-side upload time, byte length, SHA-256 (computed by the
+upload: `entries/<tier>/<period>/<fileId>.json`. So the honest watcher writes
+each ledger name exactly once. An entry records the archive key, file id,
+B2's server-side upload time, byte length, SHA-256 (computed by the
 watcher from the bytes it downloaded, never copied from the manifest), the
 manifest's key and SHA-256, the header's recipient fingerprints, and the
 workflow run and commit that wrote it.
+
+**The ledger is only ever read as its full version list.** Object Lock
+protects each stored version, not what a plain listing shows as current: the
+ledger key can still upload a second version at an existing name, or hide a
+name, and a plain listing would then show the newer version or nothing. Every
+reader of the ledger, the watcher and the restore tool alike, therefore lists
+all file versions under the prefix, hide markers included, and treats a name
+with more than one version, or with any hide marker, as a conflict: the watcher
+pages on it (§5.3), and the restore refuses unless the operator names the
+version to trust (§6). The genuine first version
+cannot be deleted before its retention ends, so a version-aware reader always
+still sees it.
 
 ### 5.3 What the watcher checks and pages on
 
@@ -202,10 +227,22 @@ issue keyed by stable problem names plus the ops chat, on:
 - **Replay**: a new archive's SHA-256 equals one already in the ledger. A
   genuine archive copied into a newer period is the shape this catches; it is
   what the healthcheck's plaintext date check caught before, and it no longer
-  needs the plaintext.
+  needs the plaintext. There is one honest exception, and it is narrow: today's
+  Worker uploads the same encrypted bytes as the January monthly and the yearly
+  archive on 1 January. A pair of old-format (symmetric) archives counts as that copy
+  only when one is the monthly for `<year>-01`, the other is the yearly for the
+  same year, and they share the nonce in their names. Any other equal pair is a
+  replay. The new format (§3.1) encrypts each tier separately, with its own IV
+  and its tier and period in the authenticated header, so it never produces two
+  equal archives, and the exception does not apply to it.
 - **Mismatch**: the archive's bytes disagree with its manifest's SHA-256 or
-  length, or its header is malformed or names other recipients than the
-  committed set.
+  length, or its header is malformed or names other recipients than the set in
+  force at its B2 upload time (§3.3). Judging against the set in force then,
+  not today's set, keeps a rotation from turning every older archive into an
+  alert.
+- **Ledger tampered**: a ledger name has more than one version or a hide
+  marker (§5.2). The honest watcher never writes either, so this means the
+  ledger key was used by someone else.
 - **Deleted early**: an archive the ledger recorded is gone before its
   lifecycle could have removed it. This replaces the `ARCHIVE_FIRST_MONTHLY` /
   `ARCHIVE_FIRST_YEARLY` baselines, which existed only because the healthcheck
@@ -223,8 +260,9 @@ cannot write to, in a record nobody can rewrite**. So:
   genuine archive turns ambiguous and pages.
 - Archives written **before** a compromise keep their entries, untouched, and
   are identifiable as the genuine history.
-- An attacker in GitHub can add ledger entries but cannot remove the genuine
-  ones, so a restore sees the conflict instead of being steered by it.
+- An attacker in GitHub can add ledger entries, add versions or hide names,
+  but cannot remove the genuine versions. Since every reader lists all
+  versions (§5.2), a restore sees the conflict instead of being steered by it.
 
 Telling a forged archive from a genuine one inside the compromise window is a
 human judgment about when the compromise began. The restore makes that
@@ -237,7 +275,10 @@ A new offline tool, `decrypt-archive.mjs`, sits in front of the existing
 otherwise unchanged). It takes the downloaded archive, the private key file and
 the period being restored, and:
 
-1. downloads that period's ledger entries with the read key;
+1. downloads every version of that period's ledger entries, hide markers
+   included (§5.2). If any name has more than one version or a hide marker, it
+   **refuses**, printing every version with its upload time, unless the
+   operator names the version to trust (`--ledger-version <id>`);
 2. **refuses** unless the archive's B2 file id and its SHA-256, computed
    locally, equal one entry's;
 3. **refuses** when the period has more than one entry, printing every entry
