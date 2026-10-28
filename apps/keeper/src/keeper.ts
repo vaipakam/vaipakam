@@ -897,7 +897,8 @@ export type PassArmingFlag =
   | 'PERIODIC_SETTLE_ENABLED'
   | 'REWARD_CLOSE_OUT_ENABLED'
   | 'REWARD_ZEROED_DAY_ENABLED'
-  | 'REWARD_RETURN_TRANSPORT_ENABLED';
+  | 'REWARD_RETURN_TRANSPORT_ENABLED'
+  | 'REWARD_ENTRY_SETTLE_ENABLED';
 
 /**
  * Describe a rejected flag value WITHOUT echoing it.
@@ -1090,6 +1091,23 @@ export function passIsArmed(
   }
   console.log(`[keeper] ${pass} start`);
   return true;
+}
+
+/**
+ * Whether a SUB-STEP flag inside an already armed pass is on, and say so:
+ * the same accepted spellings as {@link passIsArmed} (`true` or `1`,
+ * case-sensitive), with one line per run naming the step, the flag and, when
+ * it is off, the FORM of the value (never the value, per `describeFlagValue`).
+ * A sub-step flag is a `secret_text` binding like a pass's own, so without the
+ * line a misspelled flag would leave its step dark looking exactly like a
+ * deliberate disarm (Codex #3006). A sub-step flag arms one more step of a
+ * running pass, never the pass itself.
+ */
+export function subStepArmed(env: Env, pass: string, step: string, flag: PassArmingFlag): boolean {
+  const raw = env[flag];
+  const on = raw === 'true' || raw === '1';
+  console.log(`[keeper] ${pass} ${step}: ${on ? `armed (${flag})` : `off: ${flag} ${describeFlagValue(raw, false)}`}`);
+  return on;
 }
 
 /** What a pass states when it builds its signing context (#2572). */

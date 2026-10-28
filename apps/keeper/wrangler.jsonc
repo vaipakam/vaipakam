@@ -334,6 +334,10 @@
   //     claim-horizon heartbeat (every reward chain; its entry queue and
   //     cursor are in the keeper's private `vaipakam-keeper-db`). Arm it on a
   //     chain BEFORE `setRewardClaimHorizonDays` (GovernanceRunbook, M7.2).
+  //   - REWARD_ENTRY_SETTLE_ENABLED — 'true' adds the #2984 entry close-out
+  //     to the armed heartbeat: retiring closed entries whose remaining window
+  //     prices to nothing, and sweeping forfeited entries into the recycle
+  //     bucket. Permissionless; no fee, nothing to the keeper. Ships unset.
   //     All three added after the 2026-07-30 readback above, so that
   //     readback says nothing about them.
   //
