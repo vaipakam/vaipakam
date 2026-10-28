@@ -315,12 +315,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
             emit UserVaultCreated(user, proxy);
         } else {
             // Block interactions with outdated vaults when a mandatory upgrade is active
-            if (
-                s.mandatoryVaultVersion > 0 &&
-                s.vaultVersion[user] < s.mandatoryVaultVersion
-            ) {
-                revert VaultUpgradeRequired();
-            }
+            if (LibVaipakam.vaultUpgradeRequired(user)) revert VaultUpgradeRequired();
         }
     }
 
@@ -687,12 +682,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     ) private view returns (address proxy) {
         proxy = s.userVaipakamVaults[user];
         if (proxy == address(0)) revert NoVault();
-        if (
-            s.mandatoryVaultVersion > 0 &&
-            s.vaultVersion[user] < s.mandatoryVaultVersion
-        ) {
-            revert VaultUpgradeRequired();
-        }
+        if (LibVaipakam.vaultUpgradeRequired(user)) revert VaultUpgradeRequired();
     }
 
     /**

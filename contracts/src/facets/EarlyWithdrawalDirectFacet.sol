@@ -5,10 +5,8 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
-import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
-import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
@@ -26,6 +24,7 @@ import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
+import {SaleExitVerdictFacet} from "./SaleExitVerdictFacet.sol";
 
 /**
  * @title EarlyWithdrawalDirectFacet
@@ -364,44 +363,26 @@ contract EarlyWithdrawalDirectFacet is
         uint256 buyOfferId,
         SaleBounds memory b
     ) private {
-        // Tier-1 sanctions gate — selling a loan routes funds back
-        // to msg.sender (the lender exiting early).
-        LibVaipakam._assertNotSanctioned(msg.sender);
+        // #1841 — every loan- and caller-level refusal of this route is
+        // classified ONCE, in `SaleExitVerdictFacet`, which the lender exit
+        // chooser reads too: the global and per-asset pauses, the Tier-1
+        // screen of the caller and the fail-closed screen of the holder, that
+        // the caller holds the lender position (authority binds to the current
+        // lender-NFT owner), an Active loan, an ERC-20 principal (an NFT rental
+        // needs custody transfer, not supported), no live listing (#951 — a
+        // live Option-2 listing has already native-locked the lender NFT, so a
+        // swap-in here would double-sell the position), no live borrower offset
+        // (#1503 item 21 — a second settlement would race the one in flight),
+        // a loan before maturity (#1923), the held-balance vault, and sale
+        // admission (#1503 PR-E — the incoming lender never underwrote this
+        // loan, so the sale must clear the same solvency floor the loan's own
+        // admission did). It reverts with the first refusal, the same error
+        // the verdict reports, before any vault work.
+        SaleExitVerdictFacet(address(this)).requireSaleExitOpen(
+            loanId, msg.sender, SaleExitVerdictFacet.SaleRoute.Direct
+        );
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        // Strategic flow — authority binds to current lender-side NFT owner.
-        LibAuth.requireLenderNftOwner(loan);
-        if (loan.status != LibVaipakam.LoanStatus.Active)
-            revert LoanNotActive();
-        // #951 (Codex #959 round-4) — a live Option-2 sale listing has already
-        // native-locked the lender NFT and pinned an immutable buyer-facing
-        // offer. Letting Option-1 (direct swap-in) re-anchor `loan.lender` while
-        // that listing is open would double-sell the same position: the Option-2
-        // buyer could still accept the stale vehicle. Require the seller to cancel
-        // the listing first. See LenderSaleVehicleRedesign.md (D4).
-        if (s.loanToSaleOfferId[loanId] != 0)
-            revert SaleOfferAlreadyExists();
-        // NFT rental lender-sale requires NFT custody transfer — not supported in Phase 1
-        if (loan.assetType != LibVaipakam.AssetType.ERC20)
-            revert InvalidSaleOffer();
-
-        // #1503 PR-E (design item 11) — the incoming lender never
-        // underwrote this loan, so the sale is an ADMISSION and must
-        // clear the same solvency floor the loan's own admission did.
-        // Without it a lender watching collateral fall could hand an
-        // already-underwater (possibly same-block liquidatable) position
-        // to a buyer whose standing offer was authored for a FRESH,
-        // comfortably over-collateralized position — priced off principal
-        // and accrued interest, which say nothing about the shortfall.
-        // Checked before any compliance / vault work so a doomed sale
-        // reverts cheaply.
-        LibSaleSolvency.assertSaleSolvent(loanId);
-
-        // Per-asset pause: direct lender swap-in is a creation path (Noah
-        // steps into new exposure without going through acceptOffer). The
-        // exit path for the old lender is still covered via claim/repay.
-        LibFacet.requireAssetNotPaused(loan.principalAsset);
-        LibFacet.requireAssetNotPaused(loan.collateralAsset);
 
         LibVaipakam.Offer storage buyOffer = s.offers[buyOfferId];
         if (
@@ -464,9 +445,9 @@ contract EarlyWithdrawalDirectFacet is
         // notice the offset and cancel.
         //
         // Every other mutator of this class already guards it: `PrecloseFacet`
-        // (a second offset), `PrepayListingFacet`, and `createLoanSaleOffer`. This
-        // path was the one that did not.
-        if (s.loanToOffsetOfferId[loanId] != 0) revert OffsetActiveOnLoan();
+        // (a second offset), `PrepayListingFacet`, and `createLoanSaleOffer`.
+        // #1841 — the loan-side refusal (`loanToOffsetOfferId[loanId]`) is the
+        // sale-exit verdict's, checked at the top of this function.
         // T-407-C (#566) Codex P2 — the loan sale consumes the buy offer
         // in full, so it must be a clean SINGLE-VALUE, UNFILLED offer:
         //   • Ranged (effective amountMax > amount): the offer pre-vaults
@@ -607,6 +588,8 @@ contract EarlyWithdrawalDirectFacet is
             // (remainDays hit 0, so any positive offer reverted); the maturity
             // check makes it explicit, matching the listed route's
             // `SaleLoanPastMaturity` refusal at the same boundary.
+            // #1841 — the sale-exit verdict refused this first; kept so the
+            // subtraction below cannot underflow.
             if (block.timestamp >= maturity) revert SaleLoanPastMaturity();
             uint256 liveRemainingSecs = maturity - block.timestamp;
             uint256 authoredSecs = uint256(buyOffer.durationDays) * 1 days;

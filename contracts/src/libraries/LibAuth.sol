@@ -103,19 +103,30 @@ library LibAuth {
         uint256 tokenId = lenderSide ? loan.lenderTokenId : loan.borrowerTokenId;
         address nftOwner = IERC721(address(this)).ownerOf(tokenId);
         if (msg.sender == nftOwner) return false;
-        // #633 — global delegated-keeper pause. The owner short-circuit above
-        // means owners can still act on their own positions; only third-party
-        // keepers are frozen.
-        if (LibVaipakam.cfgKeepersPaused()) {
+        if (!keeperMayActFor(msg.sender, action, loan.id, nftOwner)) {
             revert IVaipakamErrors.KeeperAccessRequired();
         }
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (
-            !s.keeperAccessEnabled[nftOwner] ||
-            !s.loanKeeperEnabled[loan.id][msg.sender] ||
-            (s.approvedKeeperActions[nftOwner][msg.sender] & action) == 0
-        ) revert IVaipakamErrors.KeeperAccessRequired();
         return true;
+    }
+
+    /// @notice Whether `keeper`, which is neither the Diamond nor the position's
+    ///         holder, may take `action` on loan `loanId` for `nftOwner`.
+    /// @dev    The keeper half of {requireKeeperFor}, factored out (#1841) so the
+    ///         sale-exit verdict (`SaleExitVerdictFacet`) classifies a keeper
+    ///         caller by the same rule the entry enforces. #633 — the global
+    ///         delegated-keeper pause refuses every third-party keeper; owners
+    ///         acting on their own positions never reach this.
+    function keeperMayActFor(
+        address keeper,
+        uint16 action,
+        uint256 loanId,
+        address nftOwner
+    ) internal view returns (bool) {
+        if (LibVaipakam.cfgKeepersPaused()) return false;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return s.keeperAccessEnabled[nftOwner] &&
+            s.loanKeeperEnabled[loanId][keeper] &&
+            (s.approvedKeeperActions[nftOwner][keeper] & action) != 0;
     }
 
     /// @notice #393 v1-c — PRE-loan keeper authorization, keyed by the PRINCIPAL

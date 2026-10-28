@@ -1,5 +1,18 @@
 # One verdict for "can this lender exit, and if not, why"
 
+> **Adopted shape (#1841, owner pick "One contract verdict").** Built as
+> `SaleExitVerdictFacet`, and narrower in one respect than the proposal below:
+> a refusal is not a code from a new enum or bitmap but the ABI-encoded custom
+> error the entry itself raises, plus `reopensAt` (the earliest time it can lift
+> by time alone or a permissionless teardown; 0 = needs a decision or never).
+> That removes the client-side schema this document spent several rounds
+> keeping in sync: the Diamond ABI already names every reason. Both entries
+> call `requireSaleExitOpen` first, so the shared-classifier precondition of
+> §4.6 holds by construction. Out of scope, as the facet's NatSpec states: the
+> buy offer a direct sale consumes, the listing's own inputs, a keeper's
+> capacity. Periodic interest is not a refusal on either route. The rest of
+> this document is the proposal as reviewed and is kept as the record.
+
 **Status: proposal, not a decision — REVISED REPEATEDLY under review.** It has
 been rewritten several times: two plain factual errors in the first draft, one
 finding that weakens the recommendation itself, and several defects introduced

@@ -14,6 +14,7 @@ import {SwapAttemptFacet} from "../../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../../src/facets/NotificationFeeFacet.sol";
+import {SaleExitVerdictFacet} from "../../src/facets/SaleExitVerdictFacet.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
 
 /**
@@ -521,6 +522,26 @@ library FacetSelectors {
         s[0] = NotificationFeeFacet.markNotifBilled.selector;
         s[1] = NotificationFeeFacet.setNotificationFeeConsent.selector;
         s[2] = NotificationFeeFacet.getNotificationFeeConsent.selector;
+    }
+
+    /// @notice Full external selector surface of {SaleExitVerdictFacet} (3).
+    ///
+    /// @dev    #1841. The one classifier of a lender sale exit: the chooser's
+    ///         view and the guard `EarlyWithdrawalFacet` and
+    ///         `EarlyWithdrawalDirectFacet` self-call before they move funds.
+    ///         `RedeployFacets` refreshes both sale facets, so it cuts this host
+    ///         in the same cut: a sale facet refreshed without it reverts
+    ///         `FunctionDoesNotExist` on every sale.
+    ///
+    ///         The ONLY copy of the list, as for {notificationFee}:
+    ///         `DeployDiamond` (`_getSaleExitVerdictSelectors`) and `HelperTest`
+    ///         (`getSaleExitVerdictFacetSelectors`) return it, and
+    ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
+    function saleExitVerdict() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = SaleExitVerdictFacet.saleExitVerdict.selector;
+        s[1] = SaleExitVerdictFacet.requireSaleExitOpen.selector;
+        s[2] = SaleExitVerdictFacet.requireSaleAdmission.selector;
     }
 
     /// @notice Full external selector surface of {NumeraireValueFacet} (3).

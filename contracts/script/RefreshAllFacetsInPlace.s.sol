@@ -104,6 +104,7 @@ import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
+import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
@@ -261,7 +262,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // 101 -> 102: RewardRemitDestinationFacet (#2963) - what Base does when a
     // remit destination leaves its expected-source list; both selectors are
     // new, so they are cut as Adds.
-    uint256 public constant EXPECTED_FACETS = 102;
+    // 102 -> 103: SaleExitVerdictFacet (#1841) - the one classifier of a
+    // lender sale exit, self-called by both sale facets; its selectors are
+    // new, so they are cut as Adds.
+    uint256 public constant EXPECTED_FACETS = 103;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1245,6 +1249,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[99] = Item("rateModelFacet", ArtifactDeploy.deploy(type(RateModelFacet).name), _getRateModelSelectors());
         items[100] = Item("vaipakamNFTMetadataFacet", ArtifactDeploy.deploy(type(VaipakamNFTMetadataFacet).name), _getNftMetadataSelectors());
         items[101] = Item("rewardRemitDestinationFacet", ArtifactDeploy.deploy(type(RewardRemitDestinationFacet).name), _getRewardRemitDestinationSelectors());
+        items[102] = Item("saleExitVerdictFacet", ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name), _getSaleExitVerdictSelectors());
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

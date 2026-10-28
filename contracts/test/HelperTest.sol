@@ -2697,6 +2697,12 @@ contract HelperTest {
         selectors = FacetSelectors.notificationFee();
     }
 
+    /// #1841 - the sale-exit verdict. Returns the ONE list in
+    /// `FacetSelectors.saleExitVerdict()` (the same one `DeployDiamond` cuts).
+    function getSaleExitVerdictFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = FacetSelectors.saleExitVerdict();
+    }
+
     /// #2795 - the forced-sale host. Returns the ONE list in
     /// `FacetSelectors.forcedSale()` (the same one `DeployDiamond` cuts).
     function getForcedSaleFacetSelectors() public pure returns (bytes4[] memory selectors) {

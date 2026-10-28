@@ -13,6 +13,7 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
@@ -475,7 +476,7 @@ contract GlobalPauseLoanClockTest is SetupTest {
         (, uint256 credit, , ) = _deadlines(loanId);
         assertEq(credit, 10 days, "fixture-live: at the moved maturity");
         vm.prank(lender);
-        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        vm.expectRevert(EarlyWithdrawalDirectFacet.SaleLoanPastMaturity.selector);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
             loanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS)
         );
