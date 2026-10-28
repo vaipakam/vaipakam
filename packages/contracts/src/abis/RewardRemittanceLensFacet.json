@@ -325,6 +325,36 @@
             "name": "firstPacket",
             "type": "bytes32",
             "internalType": "bytes32"
+          },
+          {
+            "name": "conflictAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "skippedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "skippedFreshLenderHalf",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "skippedFreshBorrowerHalf",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "skippedLenderHalfEquiv",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "skippedBorrowerHalfEquiv",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }

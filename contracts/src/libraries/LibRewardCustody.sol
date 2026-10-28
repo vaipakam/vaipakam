@@ -181,6 +181,26 @@ library LibRewardCustody {
         uint256 declaredWholeRecycled
     );
 
+    /// @notice #2961 — conflicted day `dayId` was SKIPPED: closed unpaid on this mirror. The four halves are
+    ///         the funding record's figures BEFORE the skip zeroed them (what the day would have priced), and
+    ///         `recycleConsume` the recycled commitment the broadcast reserved for it, released in the same
+    ///         transaction. The record of what was given up lives here.
+    /// @custom:event-category state-change/reward-custody
+    event DayDeliveryConflictSkipped(
+        uint256 indexed dayId,
+        uint64 conflictAt,
+        uint256 freshLenderHalf,
+        uint256 freshBorrowerHalf,
+        uint256 lenderHalfEquiv,
+        uint256 borrowerHalfEquiv,
+        uint256 recycleConsume
+    );
+
+    /// @notice #2961 — the value that landed for skipped day `dayId` left the day's epochs for the recycle
+    ///         bucket: `fresh` and `recycled` are the legs drawn this call (the call is repeatable).
+    /// @custom:event-category state-change/reward-custody
+    event DayDeliveryConflictValueRecycled(uint256 indexed dayId, uint256 fresh, uint256 recycled);
+
     // ─── Types ──────────────────────────────────────────────────────────────
 
     /// @notice The custody a transport draws on (design §5d, "transports: an
@@ -4197,12 +4217,21 @@ library LibRewardCustody {
     ///      packet — so a part is counted once, and the sums are commutative,
     ///      so parts may land in any order. The whole comes from the FIRST part
     ///      and stays; a part declaring another sets `wholeConflict`.
+    ///      #2961 — a DISPOSED packet's part does not count: its value left,
+    ///      so it funds no day here. The rule lives in this one writer so the
+    ///      epoch index and the proof cannot disagree about it. The proof
+    ///      refuses such a packet earlier and by name
+    ///      ({_requireProvablePacket}); the index has no such gate, and today
+    ///      cannot meet one (only {releaseUnclassifiedForReturn} disposes, and
+    ///      only of compensation packets, which never open an epoch). This
+    ///      line keeps that true if the call graph ever changes.
     function _noteDayDeliveryPart(
         LibVaipakam.Storage storage s,
         uint256 d,
         bytes32 h,
         LibVaipakam.IngressPacket storage p
     ) private {
+        if (p.disposed != 0) return;
         LibVaipakam.DayDeliveryParts storage dp = s.dayDeliveryParts[d];
         uint128 wholeFresh = p.dayWholeFresh;
         uint128 wholeRecycled = p.dayWholeRecycled;
@@ -4212,6 +4241,7 @@ library LibRewardCustody {
             dp.firstPacket = h;
         } else if (dp.wholeFresh != wholeFresh || dp.wholeRecycled != wholeRecycled) {
             dp.wholeConflict = true;
+            if (dp.conflictAt == 0) dp.conflictAt = uint64(block.timestamp);
             emit DayDeliveryWholeConflict(d, h, dp.wholeFresh, dp.wholeRecycled, wholeFresh, wholeRecycled);
         }
         uint256 landedFresh = uint256(dp.landedFresh) + p.declaredFresh;
@@ -4232,6 +4262,108 @@ library LibRewardCustody {
             dp.landedAt = uint64(block.timestamp);
         }
         emit DayDeliveryPartLanded(d, h, landedFresh, landedRecycled, dp.wholeFresh, dp.wholeRecycled);
+    }
+
+    /// @notice #2961 — how long a conflicted day waits, from its first
+    ///         conflicting part, before it may be skipped. Nothing can repair a
+    ///         conflict (the flag is sticky and Base re-sends the same locked
+    ///         whole), so the delay exists for disclosure: the conflict is on
+    ///         the record, and alerted, for a day before any claim is given up.
+    uint256 internal constant DELIVERY_CONFLICT_SKIP_DELAY = 1 days;
+
+    /// @notice #2961 (owner decision 2026-10-28, option B) — SKIP a conflicted
+    ///         day: close it UNPAID on this mirror so the reward cursor can
+    ///         move past it. Returns the recycled commitment the broadcast
+    ///         reserved for the day, for the caller to release.
+    /// @dev    The evidence is the conflict flag itself: this chain set it from
+    ///         two authenticated deliveries that disagreed, so no caller writes
+    ///         it, and the skip chooses no figure — neither whole is used.
+    ///
+    ///         Unpaid by ONE write rather than a new read: the day's funding
+    ///         record has its four halves zeroed, and every pricing reader (the
+    ///         fold, both sweeps, staging, the legacy window, the commitment
+    ///         delta) already prices a zero half at nothing, and the delivery
+    ///         gate already holds no side whose fresh half is zero. The figures
+    ///         given up are in {DayDeliveryConflictSkipped}, and are KEPT on
+    ///         the day's parts record (`skipped*`) as what Base sent, which a
+    ///         replayed broadcast is still compared against (Codex #2990 r2):
+    ///         a skip changes what this chain prices, never what Base said.
+    ///
+    ///         Refusals, each named:
+    ///           - not a Mirror (`OnlyMirrorRewardChain`);
+    ///           - the day has no conflict, or opened before it
+    ///             (`DayDeliveryNotConflicted`, `DayDeliveryAlreadyOpen`);
+    ///           - already skipped (`DayDeliveryAlreadySkipped`);
+    ///           - inside the delay (`DayDeliverySkipTooEarly`);
+    ///           - the broadcast has not stamped the day yet
+    ///             (`DayDeliverySkipAwaitsBroadcast`): a later broadcast would
+    ///             stamp the halves back;
+    ///           - a side that is NOT held carries a recycled half
+    ///             (`DayDeliverySkipSideNotHeld`). Such a side's claims may
+    ///             already have paid from the day and drawn on its recycled
+    ///             commitment, so zeroing it and releasing the whole
+    ///             commitment would misstate both. Every other side either is
+    ///             held (no claim has passed the day) or prices nothing.
+    function skipConflictedDay(LibVaipakam.Storage storage s, uint256 d)
+        internal
+        returns (uint256 recycleConsume)
+    {
+        if (LibVaipakam.rewardRole(s) != LibVaipakam.RewardRole.Mirror) {
+            revert IVaipakamErrors.OnlyMirrorRewardChain();
+        }
+        LibVaipakam.DayDeliveryParts storage dp = s.dayDeliveryParts[d];
+        if (!dp.wholeConflict) revert IVaipakamErrors.DayDeliveryNotConflicted(d);
+        if (dp.landedAt != 0) revert IVaipakamErrors.DayDeliveryAlreadyOpen(d);
+        if (dp.skippedAt != 0) revert IVaipakamErrors.DayDeliveryAlreadySkipped(d);
+        uint256 readyAt = uint256(dp.conflictAt) + DELIVERY_CONFLICT_SKIP_DELAY;
+        if (block.timestamp < readyAt) revert IVaipakamErrors.DayDeliverySkipTooEarly(d, readyAt);
+        LibVaipakam.ChainDayFunding storage f = s.chainDayRecycledFunding[d][uint32(block.chainid)];
+        if (!f.stamped || !s.broadcastV2Applied[d]) revert IVaipakamErrors.DayDeliverySkipAwaitsBroadcast(d);
+        if (f.lenderHalfEquiv != 0 && !dayAwaitsFreshDelivery(s, 0, d)) {
+            revert IVaipakamErrors.DayDeliverySkipSideNotHeld(d, 0);
+        }
+        if (f.borrowerHalfEquiv != 0 && !dayAwaitsFreshDelivery(s, 1, d)) {
+            revert IVaipakamErrors.DayDeliverySkipSideNotHeld(d, 1);
+        }
+        recycleConsume = f.recycleConsume;
+        emit DayDeliveryConflictSkipped(
+            d,
+            dp.conflictAt,
+            f.freshLenderHalf,
+            f.freshBorrowerHalf,
+            f.lenderHalfEquiv,
+            f.borrowerHalfEquiv,
+            recycleConsume
+        );
+        dp.skippedAt = uint64(block.timestamp);
+        dp.skippedFreshLenderHalf = f.freshLenderHalf;
+        dp.skippedFreshBorrowerHalf = f.freshBorrowerHalf;
+        dp.skippedLenderHalfEquiv = f.lenderHalfEquiv;
+        dp.skippedBorrowerHalfEquiv = f.borrowerHalfEquiv;
+        f.freshLenderHalf = 0;
+        f.freshBorrowerHalf = 0;
+        f.lenderHalfEquiv = 0;
+        f.borrowerHalfEquiv = 0;
+    }
+
+    /// @notice #2961 — draw what the day's epochs still hold for a SKIPPED
+    ///         day, for the caller to absorb into the recycle bucket. The draw
+    ///         is the settle path's own ({drawTransportForDay}), so each
+    ///         epoch's balance, legs and packet remainder fall exactly as they
+    ///         do for an epoch-funded forfeit. Repeatable: a scan reaches at
+    ///         most one draw window, and a part indexed after the skip adds an
+    ///         epoch to the day. Returns zero legs when nothing is left.
+    function drawSkippedDayRemainder(LibVaipakam.Storage storage s, uint256 d)
+        internal
+        returns (uint256 fresh, uint256 recycled)
+    {
+        if (s.dayDeliveryParts[d].skippedAt == 0) revert IVaipakamErrors.DayDeliveryNotSkipped(d);
+        TransportDrawPlan memory plan = planTransportDraw(s, d);
+        TransportTakes memory t = splitTransportTakes(plan, type(uint256).max, type(uint256).max);
+        fresh = t.coveredFresh;
+        recycled = t.coveredRecycled;
+        drawTransportForDay(s, d, fresh, recycled);
+        if (fresh + recycled != 0) emit DayDeliveryConflictValueRecycled(d, fresh, recycled);
     }
 
     /// @notice #1944 c1 — whether day `d` is priced to owe FRESH value on
@@ -4781,8 +4913,8 @@ library LibRewardCustody {
     ///         {unclassifiedQuarantine}, whose two call sites both pass a
     ///         COMPENSATION packet's stamp, and no compensation ever holds an
     ///         epoch: the one opener of a batch,
-    ///         {admitRootedTransportBatch}, is called only by the d6 BUDGET
-    ///         ingress, at the packet's own landing. So the exclusion rests on
+    ///         {admitRootedTransportBatch}, is called only by the BUDGET
+    ///         ingress (the d7 wire since #918), at the packet's own landing. So the exclusion rests on
     ///         that call graph, not on anything this door checks: give a
     ///         compensation an epoch and this door opens silently.
     function releaseUnclassifiedForReturn(

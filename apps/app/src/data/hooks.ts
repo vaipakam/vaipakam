@@ -57,12 +57,19 @@ interface ActiveOffersWalk {
   freshness: IndexerFreshness | null;
 }
 
-export function useActiveOffers() {
+/** `enabled: false` (#1849) lets a surface that needs the book only in
+ *  some states call the hook unconditionally without starting the page
+ *  walk: no fetch, `data` stays undefined and `isLoading` stays false, so
+ *  a disabled caller is never told a read is in flight. It still shares
+ *  the one cache entry, and reads it once another surface has filled it. */
+export function useActiveOffers(opts: { enabled?: boolean } = {}) {
+  const enabled = opts.enabled ?? true;
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
 
   const walk = useQuery({
     queryKey: ['activeOffers', readChain.chainId],
+    enabled,
     // RPC read-diet PR A — push-covered root: 180s net while the
     // rail is healthy, today's idle-aware 30s otherwise (§4.1.1).
     refetchInterval: signalAware(REFRESH_MS),
@@ -117,6 +124,7 @@ export function useActiveOffers() {
       walkData?.freshness?.lastBlock ?? null,
     ],
     enabled:
+      enabled &&
       walkData != null &&
       walkData.freshness != null &&
       walkData.offers.length > 0 &&
@@ -167,7 +175,8 @@ export function useActiveOffers() {
   // consumers branch on isLoading before interpreting data, and
   // without the override they'd render unavailable/empty-market for
   // the strip's first pass.
-  const isLoading = walk.isLoading || (data === undefined && !walk.isLoading);
+  const isLoading =
+    walk.isLoading || (enabled && data === undefined && !walk.isLoading);
   return { ...walk, data, isLoading, isPending: isLoading };
 }
 

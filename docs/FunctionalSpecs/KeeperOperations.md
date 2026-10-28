@@ -78,6 +78,13 @@ evidence that the migration has completed.
   order. Work on another network is independent. A rejected unsent action
   cannot reserve a transaction number indefinitely; a broadcast whose result
   is unknown must not be replaced as if it had never reached the network.
+- Every transaction the keeper sends carries a gas limit above the node's
+  estimate by the repository's one fixed margin, unless the call names its
+  own limit. A node estimates against the latest block with no margin, and
+  the transaction mines in a later block, so a call whose cost moves with
+  time would otherwise run out of gas at the bare estimate. Unused gas is
+  not charged; the keeper's account must still hold the fee for the higher
+  limit for a send to be accepted.
 - Every pass has a finite deadline. Ordinarily it is the scheduled minute
   plus the pass's cadence, less a thirty-second margin. A send whose queue
   slot or preparation reaches that deadline is deferred without broadcast.
@@ -98,6 +105,11 @@ evidence that the migration has completed.
   is reported as a failure; an unanswered broadcast or missing receipt has
   an unknown outcome until chain evidence resolves it. A later receipt has
   the same status as one seen immediately.
+- A transaction that landed stays reported as landed. When the keeper reads
+  the chain afterwards to see what the transaction did, and that read fails
+  or the run's time runs out, the report still lists the landed transaction
+  and says its result is unknown. It never drops the transaction, and never
+  presents an earlier reading as the result.
 - Operator-managed tuning survives deployment. Shipping a release must not
   silently reset liquidation thresholds, confidence windows, or arming
   choices. Signing keys and settings whose presence enables transactions
@@ -238,12 +250,32 @@ evidence that the migration has completed.
   plainly exhausted: nothing left, fully indexed and unreferenced. An epoch
   exhausted only by its caps is not detected by the keeper; the day's next
   draw passes it.
+- On Base, when a remit destination has been taken off the expected-source
+  list and the pool room Base held for its abandoned days is not yet fully
+  released, it continues that release. It finds the removed chains from the
+  indexer's record of removals, but decides from the chain's own record of
+  each release. A release that is waiting for an abandoned day to finalize
+  costs nothing: the keeper sends only a call that would move the release
+  forward, and the run's report names what it is waiting on. A removal is
+  treated as finished for good only once the removal itself, and not just its
+  release, is in the chain's finalized block.
+- It writes each reward reconciliation queue's pending takes into their
+  records while any remain, because the administrator's corrections on that
+  side refuse until they are written. This moves no value and changes no
+  total. It uses only what the run's send budget leaves after the other
+  steps. The run's report states how many of its calls landed and the
+  pending figure it read before and after them. It does not present the
+  difference as its own work, since other payouts can add pending takes, and
+  anyone can write them, between its reads. When the read after its last
+  call fails, it reports that figure as unread rather than repeating the
+  earlier one.
 - How long the chain's history grows never stops the duty, and no day, era
   or epoch is ever left out for good. Its work per run is bounded, and each
   bounded read resumes where the previous run stopped, wrapping round, above
   a floor of what is finished for good: the days not yet proven closed are
   read sixty at a time by default, every provable day is read the same way
   for parking, the retired eras not yet finalized are read thirty-two at a
+  time, the recorded removals of remit destinations are read a page at a
   time, a day's transport epochs are read a page at a time, and its reading
   of the reward entries starts past the entries that ended before the oldest
   day still open. A day that stays open therefore does not hold back the
@@ -386,6 +418,27 @@ evidence that the migration has completed.
   an owner who could not claim from touches that should have advanced the
   clock. The capacity limit of 300 entries per hour per chain, approximately
   3,600 per twelve-hour round, is disclosed when a backlog exceeds coverage.
+- The heartbeat also closes out the entries it reads, behind its own switch.
+  A closed entry whose remaining window is worth nothing payable is retired,
+  which moves no value and only releases the commitments it still carried;
+  an entry that retires a day at a time is retired again until it is done.
+  The loan of a forfeited entry is swept once for all its entries, sending
+  the forfeited reward to the recycle bucket. A sweep can make progress
+  while moving nothing, so the keeper does not judge it by the amount it
+  returns: it sweeps such a loan once each round, and again within the run
+  while the last sweep moved value or reported progress and an entry is
+  still unfinished.
+  A forfeited entry stays in the heartbeat's queue until that sweep has
+  processed it, whether or not the switch is on, so turning the switch on
+  later reaches every forfeited entry already found. A forfeited entry has no
+  expiry clock, so any paused-clock or touch report it carried is cleared.
+  A retirement is not sent when it would retire nothing. Each run states
+  whether the close-out switch is on, and the form of a value it refuses. The run states how many entries were retired
+  and the commitments released, and how much each sweep moved, as reported
+  just before each call was sent. A refused call is alerted for each entry
+  it covers, naming the call and the reason, until the entry runs clean or
+  settles; a call that reverts on chain keeps it open. Every one of these calls is open to anyone, and none moves value
+  to the keeper.
 - The sanctions-hold pass observes held claimants and advances settlements
   only under the protocol's final verdict. Notices state amounts held, paid,
   or forfeited from the transaction's own evidence. A transaction-wide
@@ -396,13 +449,35 @@ evidence that the migration has completed.
   only what is known. Notices are best-effort and cover the claimants touched
   by that run, not every claimant on the network.
 
+## Protocol upkeep outside the reward system
+
+- Two permissionless housekeeping steps outside the reward system have a
+  keeper backstop, checked every hour on every chain the keeper serves.
+- A buyback intent that has passed its expiry while still pending is rolled
+  back, so the unfilled part of its reservation returns to the spendable
+  buyback budget and its allowance and commitment slot are released. The
+  keeper finds intents from the indexer's record of commitments, but decides
+  each one from the intent's own on-chain record and the chain's own clock.
+  An intent that is still live, filled or already expired is left alone.
+- The per-tier loan-to-value cache is refreshed from the peer protocols
+  before it can lapse; a cached tier stops counting after fourteen days and
+  the governance tier cap applies instead. The keeper first previews the
+  refresh and sends it only when it would write a tier whose value changes,
+  or one cached long enough ago to need renewing, so a chain whose peers give
+  no reading costs nothing. Each tier the refresh rejects is reported with
+  the protocol's own reason. Nothing is refreshed while peer readings are
+  paused.
+- Neither step pays a fee or moves value to the keeper. The keeper works a
+  chain only when its connection answers for that chain, and a value it
+  could not read stops the affected step and is stated in the run's report.
+
 ## Activation and operator visibility
 
 The master keeper switch and each duty's own arming choice are separate.
 Delivery proofs, late acknowledgements, sanctions observation, reward-day
-automation, reward-day close-out, zeroed-day recovery, the return transport, and the reward heartbeat must each
+automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, and protocol upkeep must each
 disclose whether they are armed on the selected deployment. Reward-day
-automation, close-out, zeroed-day recovery, the return transport and the heartbeat ship disabled and require
+automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, and protocol upkeep ship disabled and require
 deliberate activation. Deploying their software does not prove they run, that rewards have launched, or that custody or the
 expiry horizon has been activated. The mirror's day-delivery protection is
 required by its reward role, as stated in the current tokenomics spec; it is

@@ -76,6 +76,9 @@ export const RECEIPT_FLOOR_ROOTS: readonly string[] = [
   // Take-back-collateral ceiling (UX3-009, #2389 r1): an own repay,
   // top-up or withdrawal moves it, in every tab.
   'maxWithdrawable',
+  // The lender exit chooser's sale verdict (#1841): an own listing,
+  // cancel or sale changes it, in every tab.
+  'saleExitVerdict',
   // A periodic-interest loan's current period (#2524, Codex #3030 r1): an
   // own repay moves what is owed and an own record starts the next period,
   // in every tab.

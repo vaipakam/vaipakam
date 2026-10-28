@@ -171,6 +171,10 @@ export async function aggregateReads(
   publicClient: Pick<PublicClient, 'readContract'>,
   multicall3: Address,
   reads: readonly AggregateRead[],
+  /** The block to read at; omitted, the node's `latest`. A caller that
+   *  states the block its figures describe pins it here, so the figures
+   *  and the stated block cannot disagree. */
+  blockNumber?: bigint,
 ): Promise<AggregateSlot[]> {
   if (reads.length === 0) return [];
   const calls = reads.map((r) => ({
@@ -187,6 +191,7 @@ export async function aggregateReads(
     abi: MULTICALL3_ABI,
     functionName: 'aggregate3',
     args: [calls],
+    ...(blockNumber === undefined ? {} : { blockNumber }),
   })) as readonly { success: boolean; returnData: `0x${string}` }[];
   if (results.length !== reads.length) {
     throw new Error(`aggregate3 answered ${results.length} result(s) for ${reads.length} call(s)`);

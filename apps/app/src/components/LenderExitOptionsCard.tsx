@@ -24,7 +24,9 @@
  *
  * Availability is honest and explanatory: a row that cannot be taken
  * says WHY and names what remains, instead of vanishing (which reads as
- * "no such option") or jumping to a card that would refuse.
+ * "no such option") or jumping to a card that would refuse. The WHY is
+ * the contract's own verdict on each sale route for this wallet
+ * (`saleExitVerdict`, #1841), never a rule restated here.
  *
  * Deliberately dumb, exactly like the borrower's chooser: it never
  * submits anything. Rows jump to the flow's own card, which owns its
@@ -36,119 +38,23 @@ import {
   buildLenderExitRows,
   chooserReadiness,
   hasJumpableRow,
-  type InstantSellCandidates,
+  type LenderExitInput,
   type LenderExitJumpTarget,
-  type MaturityState,
-  type SaleCancelState,
-  type SaleLockState,
-  type SaleToolsState,
 } from '../data/lenderExitRows';
 
 export type { LenderExitJumpTarget };
 
+/** The card's props are the rows' input plus the mode switch. Each field
+ *  is documented once, on `LenderExitInput`, so the card cannot carry a
+ *  second description of a rule that has since moved (#1841 replaced
+ *  most of them with the contract's verdict). */
 export function LenderExitOptionsCard({
   isAdvanced,
   onSwitchToAdvanced,
   ...rowInput
-}: {
+}: LenderExitInput & {
   isAdvanced: boolean;
   onSwitchToAdvanced: () => void;
-  /** Loan's periodic-interest cadence (0 = none). `undefined` while the
-   *  live read is in flight — renders the neutral checking wording
-   *  rather than asserting the at-close shape, which would misstate
-   *  when a periodically-settling lender is paid. */
-  periodicInterestCadence: number | undefined;
-  /** Whether that read FAILED rather than being in flight — see
-   *  `LenderExitInput.cadenceReadFailed`. */
-  cadenceReadFailed: boolean;
-  /** Chain-anchored. Past maturity BOTH sale rows flip to the past-due
-   *  line: a fully-elapsed term is refused at CREATION. Three-valued,
-   *  not a boolean — see `MaturityState`. */
-  maturity: MaturityState;
-  /** See `LenderExitInput.listingWindowTooShort`. */
-  listingWindowTooShort: boolean;
-  /** The listing surface is not published to every deployment. */
-  listingSupportedOnChain: boolean;
-  /** Operator kill switch — LISTING row only. See the input's note. */
-  listingFlowDisabled: boolean;
-  /** Whether the sale tools (and their jump anchors) can render at
-   *  all — see `SaleToolsState`. */
-  saleTools: SaleToolsState;
-  /** Phase 1 listing is ERC-20-collateral only. */
-  collateralIsNft: boolean;
-  /** Wait-row timing only — see `LenderExitInput.allowsPartialRepay`. */
-  allowsPartialRepay: boolean;
-  /** See `LenderExitInput.lenderFeeModeFull`. */
-  lenderFeeModeFull: boolean;
-  /** Whether the pending card below will offer a cancel, and if not,
-   *  why — see `SaleCancelState`. */
-  saleCancel: SaleCancelState;
-  /** Live status says FallbackPending: the card stays, both sales go.
-   *  See `LenderExitInput.fallbackPending`. */
-  fallbackPending: boolean;
-  /** Has every enabled live status read answered? Only the readiness
-   *  attribute reads it — see `LenderExitInput.statusSettled`. */
-  statusSettled: boolean;
-  /** Has every enabled MATURITY read answered? A different query set
-   *  from `statusSettled`'s, and only the readiness attribute reads it
-   *  — see `LenderExitInput.maturitySettled`. */
-  maturitySettled: boolean;
-  /** Did an enabled maturity read stop WITHOUT answering? Settled and
-   *  answered are different — see `LenderExitInput.maturityReadFailed`. */
-  maturityReadFailed: boolean;
-  /** The same for the status reads — see
-   *  `LenderExitInput.statusReadFailed`. */
-  statusReadFailed: boolean;
-  /** Did the sale-lock read fail rather than being in flight? See
-   *  `LenderExitInput.saleLockReadFailed`. */
-  saleLockReadFailed: boolean;
-  /** Has the sale-lock read stopped? See
-   *  `LenderExitInput.saleLockSettled`. */
-  saleLockSettled: boolean;
-  /** Has the fee-entitlement read that gates both sale tools stopped?
-   *  See `LenderExitInput.saleToolsSettled`. */
-  saleToolsSettled: boolean;
-  /** Has the source that reported FallbackPending stopped? See
-   *  `LenderExitInput.fallbackSourceSettled`. */
-  fallbackSourceSettled: boolean;
-  /** Whether this position already carries a live listing. A TRI-STATE
-   *  (`SaleLockState`), not a boolean: the lock refuses BOTH sale paths
-   *  (`SaleOfferAlreadyExists`, and the page unmounts the instant-exit
-   *  card entirely), so an unanswered read must not collapse to
-   *  "clear" — that showed both exits as available on a position whose
-   *  lock had never been checked (Codex r1 P2). */
-  saleLock: SaleLockState;
-  /** See `LenderExitInput.listingMayStand`. */
-  listingMayStand: boolean;
-  /** A position with unresolved held VPFI cannot be unified to one
-   *  settlement identity, so listing refuses it
-   *  (`SalePositionNotConsolidatable`).
-   *
-   *  KNOWN GAP: no caller can currently compute this — there is no
-   *  cheap client read for the held-for-lender balance, so every caller
-   *  passes `false` today and the refusal still surfaces as a revert in
-   *  the listing tool rather than as this row's explanation. The prop
-   *  exists so wiring it later is a one-line change at the call site
-   *  rather than a re-plumb, and so the omission is visible here
-   *  instead of silently absent. */
-  heldVpfiUnresolved: boolean;
-  /** The borrower has a linked exit (preclose offset) pending — the
-   *  protocol refuses a listing until it clears (`OffsetActiveOnLoan`).
-   *
-   *  KNOWN GAP, same shape as `heldVpfiUnresolved`: every caller passes
-   *  `false` today. `useOffsetPending` seeds from a browser-LOCAL
-   *  marker written by the borrower's own session, so a lender's
-   *  browser has nothing to read; surfacing it needs a chain read of
-   *  the loan→offset-offer link, tracked with the other deferred
-   *  pre-checks. Until then the listing tool still refuses correctly —
-   *  the cost is a wasted click, not a wrong action. */
-  borrowerOffsetPending: boolean;
-  /** See `InstantSellCandidates`. `'unknown'` is today's Basic-mode
-   *  answer and is deliberate: the candidate list comes from
-   *  `useActiveOffers`, a full active-offers page walk this page does
-   *  not otherwise make, and hoisting it would put that walk on every
-   *  lender who merely opens a position. */
-  instantSellCandidates: InstantSellCandidates;
 }) {
   const rows = buildLenderExitRows(rowInput);
 

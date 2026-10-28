@@ -1175,6 +1175,9 @@ const copySource = {
     mid: ' and ',
     terms: 'Vaipakam Terms',
     suffix: '.',
+    // #1696 — beneath the box when a change to the review unticked it.
+    withdrawn:
+      'What you are reviewing changed after you ticked this, so the acknowledgement cleared. Check the review again and tick it to confirm against what is shown now.',
   },
 
   // #2725 — the lifecycle terms every accept signature binds, shown on every
@@ -2959,6 +2962,13 @@ const copySource = {
       'You cancelled this close-out from your wallet before it went through, so nothing moved and the loan is exactly as it was. You can start again whenever you like.',
     outcomeReplaced:
       'Another transaction from your wallet took this one’s place before it went through, so the close-out never ran and nothing moved. You can start again whenever you like.',
+    /* #2086 — after a reload, the nonce this close-out was sent with has
+       been spent by a transaction we cannot identify: a Speed Up of the
+       close-out itself, a cancel, or something else. Only the first ran
+       the close-out, so the copy says it MAY have, and points at the
+       position, which the card refreshes before re-offering anything. */
+    outcomeSuperseded:
+      'While this page was closed, another transaction from your wallet took this close-out’s place in the queue, and we cannot tell which one. If your wallet sped the close-out up, it may have gone through; if it was a cancel or a different transaction, nothing moved. What you see here now is the loan as it actually stands.',
     /* Round 54 P2 — shown when this browser REFUSED to store the record
        of a close-out (private mode, storage disabled, quota). The hold
        still works on this page; what does not survive is a reload, which
@@ -3254,6 +3264,10 @@ const copySource = {
         'This position is on the Full fee plan, paid for in VPFI when the loan opened. The plan travels with the position, so the part of it covering the rest of the term goes to the buyer and is not refunded.',
       sellNowNoOffers:
         'No lending offer on the book matches this position right now — check back later, or list it below instead.',
+      // The same, when the listing row is refused too: the sentence
+      // must not offer a listing as the way out.
+      sellNowNoOffersNoListing:
+        'No lending offer on the book matches this position right now — check back later.',
 
       list: 'List your position for sale',
       listDesc:
@@ -3299,10 +3313,6 @@ const copySource = {
       // directly above it.
       sellNowAlreadyListedNoCancel:
         'Not available while this position is listed for sale. The listing was made from another device, so it can’t be cancelled here — cancel it where it was listed.',
-      // Codex r1 P2 — the listing lock read is authoritative for BOTH
-      // sale paths, so an unanswered read must not read as "clear".
-      saleLockChecking:
-        'Checking whether this position is already listed…',
       // Codex r3 P2 — both sale tools are held behind the
       // fee-entitlement disclosure read, and their jump anchors go
       // with them. A row left available then rendered a jump to an
@@ -3317,19 +3327,13 @@ const copySource = {
         'Already listed — this position is on sale now. We couldn’t confirm you still hold it from this device, so the cancel control isn’t available here at the moment; the card below shows what we can see, and reloading may restore it.',
       sellNowAlreadyListedCancelUnverified:
         'Not available while this position is listed for sale. We couldn’t confirm you still hold it from this device, so cancelling isn’t offered here at the moment — reloading may restore it.',
-      // Codex r8 P2 — both sale entry points require the loan to be
-      // exactly Active, and a fallback-pending loan is not. The card
-      // stays mounted (the status is not terminal and the wait row
-      // still applies) but neither sale can be started.
-      saleFallbackPending:
-        'Not available while this loan is settling through its fallback path — a sale can only be started on a loan that is running normally. Waiting still applies, and the loan’s own settlement continues.',
-      // Codex r6 P2 — the due date is chain-anchored from whichever
-      // live read answered; with neither answering there is no
-      // authoritative source, and reporting "not past due" would be a
-      // claim made from a read that did not happen. Fails closed: both
-      // contracts refuse an exit past maturity.
-      maturityUnknown:
-        'Not available right now — we couldn’t confirm this loan’s due date, and a sale can’t be started once it has passed. This usually clears on its own in a moment.',
+      // Codex #3024 r1 — the contract says a listing stands, but this
+      // device's own listing read has not answered, so no listing card
+      // renders below and where it was made is unknown.
+      listAlreadyListedUnread:
+        'Already listed — this position is on sale now. This device hasn’t read the listing’s details yet, so its terms and cancel control aren’t shown here; reloading retries.',
+      sellNowAlreadyListedUnread:
+        'Not available while this position is listed for sale. This device hasn’t read the listing’s details yet, so cancelling isn’t offered here at the moment — reloading retries.',
       // Codex r8/r9/r10 P2 — these two sentences used to NAME the read
       // involved, and the name was wrong twice: r8 sent a token-metadata
       // failure into a fee-terms sentence, r9 split them apart, r10
@@ -3368,10 +3372,73 @@ const copySource = {
         'Not available on this network yet — the listing tools aren’t published to this deployment.',
       listUnavailableNft:
         'Not available for this position — listing currently supports loans backed by ERC-20 collateral only.',
-      listUnavailableHeldVpfi:
-        'Not available until this position’s outstanding VPFI balance is cleared — a listing needs a single settlement identity. Selling now, or waiting for the loan to close, stay open meanwhile.',
       listUnavailableOffsetPending:
         'Not available while the borrower has a linked exit pending on this loan — that has to complete or be cancelled first.',
+      // #1841 — the sentence for each refusal the contract's sale verdict
+      // can return (`SaleExitVerdictFacet`), keyed in `lenderExitRows`
+      // on the custom error the sale entry itself raises. Refusals with
+      // an older sentence above (already listed, past due, too close to
+      // the due date, NFT collateral, the borrower's offset) keep it.
+      refusal: {
+        verdictChecking: 'Checking whether this sale can be started on this position…',
+        verdictFailed:
+          'Not available right now — we couldn’t check whether this sale can be started. This usually clears on its own; reloading also retries.',
+        // A Diamond cut before the verdict existed answers
+        // `FunctionDoesNotExist` every time, so this is a fact about the
+        // deployment, not a transient failure.
+        verdictUnserved:
+          'Not available here — this network’s contracts can’t yet say whether a sale can be started, so the app doesn’t offer one.',
+        paused:
+          'Not available while the protocol is paused. Waiting still applies.',
+        // Deliberately non-specific (the retail copy rule): the detailed
+        // explanation belongs to the in-app banner a flagged wallet sees.
+        screened:
+          'Not available — the protocol refuses this sale for one of the addresses involved.',
+        loanNotActive:
+          'Not available — a sale can only be started on a loan that is running normally, and this one isn’t right now (for example, it may be settling after a missed repayment). Waiting still applies.',
+        notHolder:
+          'Not available from this wallet — only the wallet holding the lender position can sell it.',
+        rental: 'Not available for this loan — positions in NFT rentals can’t be sold.',
+        relistCooldown:
+          'Not available yet — a listing that ended without a buyer can’t be relisted straight away.',
+        // Replaces the old held-VPFI line, which also promised that
+        // selling now stayed open. Whether it does is the direct route's
+        // own verdict, shown on its own row.
+        heldVpfi:
+          'Not available until the VPFI balance held on this position is cleared — a listing needs a single settlement identity.',
+        durationCap: tmpl(
+          'Not available yet — the rest of this loan’s term is longer than the longest listing allowed ({{cap}} days).',
+          ['cap'],
+        ),
+        assetPaused:
+          'Not available while one of this loan’s assets is paused by the protocol.',
+        // #1214: the app has no vault-upgrade action yet, and saying so
+        // is better than implying one exists somewhere on the page.
+        vaultUpgrade:
+          'Not available until a vault involved in this sale is upgraded to the current version, which this app can’t do yet.',
+        admissionBlocked:
+          'Not available right now — the position doesn’t meet the protocol’s conditions for a buyer to take it over (its collateral cover or terms). That can change as prices move.',
+        admissionUnpriceable:
+          'Not available right now — a price for one of this loan’s assets can’t be read, so the protocol can’t check the sale.',
+        admissionUnknown:
+          'Not available right now — the protocol couldn’t check whether this position can change hands.',
+        // A refusal this build has no words for is still a refusal: the
+        // route is closed either way, and calling it open because the
+        // sentence is missing would be the one wrong answer.
+        unrecognised: tmpl(
+          'Not available — the protocol refuses this sale ({{name}}).',
+          ['name'],
+        ),
+        unnamedError: 'a reason this app doesn’t recognise',
+        // The contract's lower bound by time alone, or by a step anyone
+        // may take (clearing an expired listing). A decision only some
+        // can make (the lender cancelling a listing) can lift it sooner,
+        // so the time is stated as that bound and no more (Codex #3024 r2).
+        reopensEarliest: tmpl(
+          'Left to time, the earliest this lifts is {{time}}. A step someone chooses to take, such as cancelling a listing, can lift it sooner.',
+          ['time'],
+        ),
+      },
     },
     // Past maturity BOTH sale rows flip to this: a fully-elapsed term
     // is refused at creation, so advertising an exit that cannot be
@@ -5198,6 +5265,10 @@ const copySource = {
       // recorded request and no early-close offset is open on that loan.
       refinanceUntakeable:
         'This refinance request can’t be taken right now — either it isn’t the request the protocol has on record for its loan (an older one, or one the borrower replaced), or the borrower has an early-close offset open on the loan. Nothing was sent.',
+      // #3025 — loan creation re-runs the cadence rule, and the switch, the
+      // threshold or a leg's liquidity moved since the offer was posted.
+      cadenceNotAdmitted:
+        'This offer’s interest-payment schedule isn’t allowed on these terms any more: the periodic-interest settings, the size threshold or an asset’s market status changed after it was posted. Its creator needs to cancel it and post it again. Nothing was sent.',
       // A refusal we have no words for — the app can be older than the
       // deployment it is talking to, and this vocabulary grows by
       // appending. Says only what is certainly true.
@@ -6211,7 +6282,7 @@ const copySource = {
   analytics: {
     title: 'Protocol analytics',
     lede: tmpl(
-      'Live counts from the public indexer for chain {{chain}}. No wallet needed — these are the same keyless endpoints anyone can query.',
+      'Live figures for chain {{chain}}: counts from the public indexer, and token and fee figures read straight from the platform contract. No wallet needed — anyone can query the same sources.',
       ['chain'],
     ),
     refresh: 'Refresh',
@@ -6292,7 +6363,7 @@ const copySource = {
       'Total counts the offers currently on record. Cancelled offers are dropped from the index after about a month, so this is not a lifetime count — it can go down as old cancellations age out.',
     transparencyHeading: 'Transparency',
     transparencyBody:
-      'Every figure above is read from the public indexer API, which is keyless and open-CORS. You do not have to trust this page — query the same endpoints yourself and compare.',
+      'The loan, offer and recycling figures above are read from the public indexer API, which is keyless and open-CORS. You do not have to trust this page — query the same endpoints yourself and compare. The token and fee figures below are read from the contract itself.',
     cursorBlock: 'Indexer cursor block',
     lastIngest: 'Last ingest',
     chain: 'Chain',
@@ -6302,6 +6373,60 @@ const copySource = {
     ageSeconds: tmpl('{{n}}s ago', ['n']),
     ageMinutes: tmpl('{{n}} min ago', ['n']),
     ageHours: tmpl('{{n}} h ago', ['n']),
+  },
+  /* #2437 — the VPFI token and treasury-fee figures on /analytics, read
+     from the platform contract's own view functions at one stated block.
+
+     COPY GATE (RL-6, VPFITokenomicsRedesignResearch.md §A.4): supply and
+     fee-flow transparency only. Never a price, a return, scarcity or a
+     purchase; nothing implies anyone decides an amount. Every caveat that
+     can make a figure lower than the truth is stated beside it. */
+  chainFigures: {
+    heading: 'Read from the contract',
+    intro:
+      'These figures do not come from the indexer. They are read straight from the platform contract on this chain, all at the one block named here, through public view functions anyone can call.',
+    loading: 'Reading the contract…',
+    unreachable:
+      'The contract could not be read just now, so none of these figures are shown. That is a fact about the connection, not about the figures.',
+    readAt: 'Read at block',
+    readAge: 'Age of this reading',
+    views: 'View functions read',
+    tokenHeading: 'VPFI token',
+    tokenAddress: 'Token contract',
+    totalSupply: 'Total supply on this chain',
+    cap: 'Supply cap',
+    headroom: 'Can still be minted under the cap',
+    minter: 'Address allowed to mint',
+    noMinter: 'none set',
+    canonicalNote:
+      'VPFI is issued on this chain. New VPFI can be minted only by the address above, and never past the cap.',
+    mirrorNote:
+      'VPFI is not issued on this chain. It arrives here by bridge from the chain where it is issued, so the supply shown is the amount on this chain only. The cap and the address allowed to mint belong to that chain, and this page shows them when it is read for that chain.',
+    unbound: 'No VPFI token is set up on this chain.',
+    tokenUnread: 'The token figures could not be read from the contract.',
+    feesHeading: 'Fees collected',
+    feesTotal: 'Since fee records began',
+    fees24h: 'Last 24 hours',
+    fees7d: 'Last 7 days',
+    feesUnread: 'The fee figures could not be read from the contract.',
+    feesUnit: tmpl(
+      'Each fee is valued in {{unit}} at the moment it was collected, and is not valued again later.',
+      ['unit'],
+    ),
+    feesUnitUnknown:
+      'Each fee is valued in the platform\'s reference currency at the moment it was collected. That currency could not be read, so no unit is shown.',
+    feesLowerBound:
+      'A fee in an asset the platform could not value at that moment is recorded as zero, so these figures can be lower than what was actually collected. The 24-hour and 7-day figures add up at most the latest 10,000 fee records, so on a very busy chain they can be lower too. If the reference currency has ever been changed, fees from before the change are counted in the old one.',
+    treasury: 'Treasury',
+    treasuryExternal:
+      'Fees are sent to this address as they are collected. It is an ordinary address you can check on the explorer, so this page shows no balance for it.',
+    treasuryDiamond: 'The platform contract keeps its own fees.',
+    held: 'Fees held by the contract, at current value',
+    heldNote:
+      'Counts only assets that appear in loans open right now, each at its current value, and includes amounts the contract has placed elsewhere on the treasury\'s behalf. An asset no longer in an open loan, or one with no current value, is not counted, so this can be lower than what is held.',
+    treasuryUnset: 'No treasury address is set on this chain.',
+    treasuryUnread: 'The treasury address could not be read from the contract.',
+    belowPrecision: tmpl('less than {{n}}', ['n']),
   },
   /* M5 (#1218 / #1349) — the public recycling account on /analytics.
      Ported from the retired dashboard's `recycling.*` keys, with two

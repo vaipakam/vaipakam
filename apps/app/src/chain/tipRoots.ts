@@ -42,6 +42,10 @@ export const TIP_ROOTS = [
   // Take-back-collateral ceiling (UX3-009, #2389 r1): moves with prices,
   // debt and third-party actions on the loan.
   'maxWithdrawable',
+  // Lender exit chooser's sale verdict (#1841): the contract's answer on
+  // whether each sale can be started moves with third-party actions (a
+  // pause, a listing expiring, the due date).
+  'saleExitVerdict',
   // A periodic-interest loan's current period (#2524): its phase, what is
   // owed and whether it can be recorded move with the chain clock, a
   // settlement by anyone, and the switch and the pause.

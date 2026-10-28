@@ -14,6 +14,8 @@
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -193,6 +195,8 @@ Claim Center तक न पहुँचें।
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -295,6 +299,8 @@ position NFTs mint करती है। initiation पर वही HF ≥ 1.5
 को बदलता नहीं, बल्कि नया loan बनाता है।
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -711,6 +717,8 @@ classes, अलग-अलग protocol stages पर surface होती है�
   UX follow-up के रूप में queue में है।
 
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -795,6 +803,8 @@ surplus का सबूत नहीं है: अगर liquidation ने �
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -810,6 +820,8 @@ events पहले। offers, loans, repayments, claims, liquidations,
 NFT mints / burns, और VPFI vault deposits / withdrawals दिखाता है।
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -894,6 +906,8 @@ chain के साथ Base पर भी चालू होना चाहि
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -931,6 +945,8 @@ VPFI section के "vault से VPFI निकालें" जैसा ह�
 loan पर post-balance re-stamp)।
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -1204,6 +1220,8 @@ price पर step in कर सके।
 
 ---
 
+<a id="chapter.how-liquidation-actually-works"></a>
+
 ## लिक्विडेशन (Liquidation) वास्तव में कैसे काम करता है
 
 ऑफ़र के समय आपने जिन Risk Disclosures को स्वीकार किया था, वे दो वाक्यों में सबसे खराब स्थिति को स्पष्ट करते हैं। यह अनुभाग इसके पीछे की मैकेनिक्स को समझाता है — यह तब उपयोगी है जब आप यह समझना चाहते हैं कि इन-काइंड (in-kind) फ़ॉलबैक क्यों मौजूद है, या आपका लोन वास्तव में चार शाखाओं में से कौन सा रास्ता लेगा।
@@ -1308,6 +1326,8 @@ price पर step in कर सके।
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -1329,6 +1349,8 @@ allowances नहीं माँगता, इसलिए typical revocation l
 रोकती।
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -1372,6 +1394,8 @@ Push channel publishing अभी channel creation तक stubbed है।
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -1398,6 +1422,8 @@ position NFT bearer instrument है — secondary market पर ख़री�
 से पहले verify करें।
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -1447,69 +1473,106 @@ Revocation सभी loans पर तुरंत लागू है — को
 
 ---
 
+<a id="chapter.public-analytics-dashboard"></a>
+
 ## Public Analytics Dashboard
 
 <a id="public-dashboard.overview"></a>
 
 ### Public Analytics के बारे में
 
-हर supported chain पर on-chain protocol view calls से live
-calculate होने वाला wallet-free aggregator। कोई backend, कोई
-database नहीं। CSV / JSON export available है; verifiability के
-लिए हर metric के पीछे protocol address और view function दिखाया
-जाता है।
+बिना वॉलेट वाला, एक चेन का पेज: यह वही चेन पढ़ता है जिस पर ऐप
+है (वॉलेट कनेक्ट न हो तो डिफ़ॉल्ट रीड चेन)। कोई क्रॉस-चेन जोड़ या
+एक्सपोर्ट नहीं है; चेन की तुलना के लिए हर चेन पर पेज खोलें। दो
+स्रोत, जहाँ इस्तेमाल हों वहाँ चिह्नित:
 
-<a id="public-dashboard.combined"></a>
+- इंडेक्सर का बिना कुंजी, खुले CORS वाला रीड API — लोन, ऑफ़र,
+  रीसाइक्लिंग और लूप-क्लोज़र के आँकड़े;
+- सार्वजनिक RPC पर Diamond के अपने व्यू फ़ंक्शन — VPFI टोकन और
+  शुल्क के आँकड़े।
 
-### Combined — All Chains
+पेज जो दिखाता है उसे दोहराने के लिए किसी भी स्रोत से सीधे पूछा जा
+सकता है।
 
-Cross-chain rollup. Header report करता है कि कितनी chains
-covered थीं और कितनी errored, ताकि fetch time पर unreachable
-RPC साफ़ दिखे। जब एक या ज़्यादा chains errored हों, तो
-per-chain table बताती है कौन सी — TVL totals फिर भी report
-होते हैं, लेकिन gap acknowledge किया जाता है।
+<a id="public-dashboard.loans-offers"></a>
 
-<a id="public-dashboard.per-chain"></a>
+### लोन और ऑफ़र
 
-### Per-Chain Breakdown
+`/loans/stats` से स्थिति के अनुसार लोन काउंटर, जिनमें सेटलमेंट
+लंबित, आंतरिक रूप से मैच हुए और शेष की श्रेणियाँ भी हैं, ताकि हिस्से
+कुल के बराबर हों; ERC-20 और NFT किराये के उप-योग, जिनमें ऐसा कोई भी
+सक्रिय लोन अलग से बताया जाता है जिसका एसेट प्रकार अभी पढ़ा नहीं
+गया; और `/offers/stats` से ऑफ़र काउंटर। ऑफ़र केवल `offers` तालिका
+हैं — बिना गैस वाले साइन किए ऑर्डर नहीं गिने जाते — और रद्द ऑफ़र
+इंडेक्स से हट जाते हैं, इसलिए ऑफ़र का कुल अब तक का आँकड़ा नहीं है।
+अनुपस्थित काउंटर "रिपोर्ट नहीं हुआ" दिखाता है और असंभव काउंटर
+"रिपोर्ट हुआ, पर उपयोग योग्य गिनती नहीं"; कोई भी 0 नहीं दिखता।
 
-Combined metrics का per-chain split। TVL concentration,
-mismatched VPFI mirror supplies (mirror supplies का sum
-canonical adapter के locked balance के बराबर होना चाहिए), या
-stalled chains spot करने के लिए useful।
+<a id="public-dashboard.recycling"></a>
 
-<a id="public-dashboard.vpfi-transparency"></a>
+### रीसाइक्लिंग खाता और लूप क्लोज़र
 
-### VPFI Token Transparency
-
-active chain पर on-chain VPFI accounting:
-
-- Total supply, सीधे ERC-20 से पढ़ा गया।
-- Circulating supply — total supply minus protocol-held
-  balances (treasury, reward pools, in-flight bridge
-  packets)।
-- शेष mintable cap — केवल canonical chain पर meaningful;
-  mirror chains cap के लिए "n/a" report करती हैं क्योंकि
-  वहाँ mints bridge-driven होते हैं, cap से नहीं।
-
-Cross-chain invariant: सभी mirror chains पर mirror supplies
-का sum canonical adapter के locked balance के बराबर होता है।
-एक watcher इसे monitor करता है और drift पर alert करता है।
+रीसाइक्लिंग खाता (`/metrics/recycling`) प्रोग्राम के हर दिन का
+पूल, उसकी फ़ंडिंग और निकासी दिखाता है, प्रोग्राम के अपने दिन-क्रमांक
+से चिह्नित; अंतिम न हुआ दिन बिना पूल के दिखता है और सक्रिय न किया
+गया दिन अनुमान के रूप में चिह्नित होता है। लूप क्लोज़र
+(`/metrics/loop-closure`) हर UTC दिन के लिए दिखाता है कि क्लेम ने
+क्या दिया, वॉल्ट में क्या रहा और क्या वापस समाहित हुआ, उस क्षण के
+सापेक्ष जहाँ तक रिकॉर्ड पहुँचता है। दिखाई जाने वाली सटीकता से कम
+धनात्मक राशियाँ चिह्नित होती हैं, हिस्से नीचे की ओर पूर्णांकित
+होते हैं, और अज्ञात आँकड़ा कभी शून्य नहीं दिखता।
 
 <a id="public-dashboard.transparency"></a>
 
-### Transparency & Source
+### पारदर्शिता और स्रोत
 
-हर metric के लिए page list करता है:
+एक्सप्लोरर लिंक के साथ Diamond का पता, चेन, और इंडेक्सर कर्सर का
+ब्लॉक और उम्र। इंडेक्सर का हर आँकड़ा उतना ही ताज़ा है जितना वह
+कर्सर, उससे ज़्यादा नहीं; दो प्रतिक्रियाएँ मिलाने पर पुराना कर्सर
+बताया जाता है।
 
-- Snapshot के रूप में इस्तेमाल हुआ block number।
-- Data freshness (chains के बीच अधिकतम age/staleness)।
-- Protocol address और view function call।
+<a id="public-dashboard.vpfi-transparency"></a>
 
-कोई भी इस page की किसी भी संख्या को RPC + block + protocol
-address + function name से re-derive कर सकता है — यही bar है।
+### VPFI टोकन
+
+Diamond पर `getVPFISnapshot()` से: इस चेन पर टोकन का पता और
+`totalSupply`। कैनॉनिकल चेन पर सीमा, गुंजाइश (`cap − totalSupply`,
+यानी अभी और कितना मिंट हो सकता है) और मिंटर भी। मिरर चेन पर
+स्नैपशॉट में न सीमा होती है न मिंटर — वहाँ आपूर्ति CCIP टोकन पूल
+से आती है — इसलिए पेज स्थानीय आपूर्ति दिखाता है और बताता है कि सीमा
+और मिंटर कैनॉनिकल चेन के हैं, शून्य दिखाने के बजाय। बिना बँधा टोकन
+और न पढ़ा जा सका स्नैपशॉट अलग-अलग बताए जाते हैं।
+
+<a id="public-dashboard.fees"></a>
+
+### शुल्क और ट्रेज़री
+
+`getTreasuryMetrics()`, `getTreasury()` और `getNumeraireSymbol()`
+से, स्नैपशॉट वाले उसी Multicall3 एग्रीगेट में पढ़े गए और एक ब्लॉक
+पर स्थिर, जिसे पेज उसकी उम्र के साथ बताता है:
+
+- शुल्क बही शुरू होने से अब तक, और पिछले 24 घंटे और 7 दिन के
+  शुल्क, हर एक दर्ज होते समय न्यूमेरेयर में आँका गया और फिर कभी
+  दोबारा नहीं आँका गया;
+- जिस शुल्क को प्रोटोकॉल दर्ज करते समय नहीं आँक सका, वह 0 दर्ज होता
+  है, और विंडो के योग अधिकतम पिछली 10,000 प्रविष्टियाँ पढ़ते हैं —
+  दोनों केवल आँकड़ा घटा सकते हैं, और पेज यह बताता है;
+- न्यूमेरेयर बदलने पर पहले की प्रविष्टियाँ पुरानी इकाई में रहती हैं,
+  इसलिए उसके बाद योग मौजूदा प्रतीक के नीचे दो इकाइयों की राशियाँ
+  जोड़ते हैं और किसी भी दिशा में गलत हो सकते हैं; पेज बताता है कि
+  पहले के शुल्क पुरानी इकाई में गिने गए हैं;
+- ट्रेज़री पता। अगर यह बाहरी पता है, तो शुल्क वसूली पर ही निकल
+  जाते हैं और इसका कोई बैलेंस नहीं दिखाया जाता। अगर Diamond खुद
+  अपनी ट्रेज़री है, तो रखी गई राशि दिखाई जाती है, जिसे केवल खुले
+  लोन में दिखने वाले एसेट पर आँका जाता है और जिसमें ट्रेज़री की ओर
+  से कहीं और रखी गई राशियाँ भी शामिल हैं।
+
+जो फ़ंक्शन विफल होता है वह "पढ़ा नहीं जा सका" दिखाता है और बाकी को
+नहीं छिपाता।
 
 ---
+
+<a id="chapter.refinance"></a>
 
 ## Refinance
 
@@ -1566,6 +1629,8 @@ lender उसे accept कर सकता है। आप acceptance से �
 
 ---
 
+<a id="chapter.preclose"></a>
+
 ## Preclose
 
 यह page सिर्फ़ borrower के लिए है — preclose borrower अपने loan
@@ -1621,6 +1686,8 @@ collateral position से भी बाहर निकलना चाहे�
 
 ---
 
+<a id="chapter.early-withdrawal-lender"></a>
+
 ## Early Withdrawal (Lender)
 
 यह page सिर्फ़ lender के लिए है — early withdrawal lender अपने
@@ -1661,6 +1728,8 @@ Position NFT को आपकी asking price पर protocol के ज़र�
 permission हो; initiate step खुद user-only ही रहता है।
 
 ---
+
+<a id="chapter.stuck-token-recovery"></a>
 
 ## फंसे हुए टोकन (Stuck-Token) की रिकवरी
 
@@ -1724,6 +1793,8 @@ permission हो; initiate step खुद user-only ही रहता है�
 
 डिसओन (disown) फ़ंक्शन अभी के लिए केवल सीधे कॉन्ट्रैक्ट कॉल के माध्यम से उपलब्ध है; Vaipakam फ्रंटएंड इसे बटन के रूप में नहीं दिखाता है। इसे कॉल करने के लिए ब्लॉक-एक्सप्लोरर "Write Contract" UI या कॉन्ट्रैक्ट-इंटरैक्शन टूल का उपयोग करें।
 
+<a id="chapter.how-vpfi-discounts-work"></a>
+
 ## VPFI Discount कैसे काम करते हैं
 
 Canonical chain, Base, पर आपके vault में रखा VPFI आपको protocol की अपनी
@@ -1752,6 +1823,8 @@ configure नहीं है। यह chapter इसी holding discount क�
 अलग paid fee mode, "Full", तब तक बंद रहता है जब तक कोई deployment उसे
 चालू न करे।
 
+<a id="vpfi-discounts.turning-on"></a>
+
 ### Discount चालू करना
 
 Discount opt-in है। Switch VPFI page पर है, और हर chain का अपना एक switch
@@ -1773,6 +1846,8 @@ VPFI तब गिना जाता है जब protocol उसे आपक
 VPFI page के ज़रिए deposit करते हैं, और वे VPFI rewards जो protocol आपके
 vault में पहुँचाता है। आपके vault के address पर सीधे भेजे गए tokens
 protocol track नहीं करता, और वे आपका tier नहीं बढ़ाते।
+
+<a id="vpfi-discounts.tier-calculation"></a>
 
 ### आपका tier कैसे तय होता है
 
@@ -1804,6 +1879,8 @@ protocol track नहीं करता, और वे आपका tier नह
 - जो withdrawal आपको किसी tier की सीमा से नीचे ले जाए, वह आपका tier
   तुरंत घटा देता है।
 - 30 दिन से पुरानी गिरावट अब आपको सीमित नहीं करती।
+
+<a id="vpfi-discounts.other-chains"></a>
 
 ### दूसरी chains पर आपका tier
 
@@ -1853,6 +1930,8 @@ chain को नई copy भेजता है, भले ही आपका t
 औसत बराबर आ गया — तो Base को आपके tier record के अगले update तक इसका पता
 नहीं चलता। Tier-refresh call से आप जब चाहें यह update कर सकते हैं; app
 इसे आपकी ओर से सिर्फ़ तब करता है जब आप discount बंद करते हैं।
+
+<a id="vpfi-discounts.operators"></a>
 
 ### Operators के लिए
 

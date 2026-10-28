@@ -14,7 +14,7 @@
  * Kill switch: the ticket is a position-OPENING flow → gated on
  * `flowDisabled('post-offer')`.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { CircleCheck } from 'lucide-react';
 import { useModal } from 'connectkit';
 import { usePublicClient, useWalletClient } from 'wagmi';
@@ -36,6 +36,8 @@ import { SimulationPreview } from '../SimulationPreview';
 import { AmountPrecisionHint } from '../AmountPrecisionHint';
 import { CollateralPrecheck } from '../CollateralPrecheck';
 import { ConsentLabel } from '../ConsentLabel';
+import { useReviewConsent } from '../../hooks/useReviewConsent';
+import { ConsentWithdrawnNote } from '../ConsentWithdrawnNote';
 import { FullTariffOptIn, FULL_TARIFF_OFF, type FullTariffChoice } from '../FullTariffOptIn';
 import {
   ensureAllowance,
@@ -51,12 +53,13 @@ import { readAllowance } from '../../lib/submitProgress';
 import { flowDisabled } from '../../lib/killSwitch';
 import { captureTxError, isPlainDecimal, isPositiveDecimal } from '../../lib/errors';
 import {
-  initialOfferForm,
+  initialOfferTerms,
   toCreateOfferPayload,
-  validateOfferForm,
+  validateOfferTerms,
+  withConsent,
   type CreateOfferPayload,
-  type OfferFormState,
   type OfferSide,
+  type OfferTerms,
 } from '../../lib/offerSchema';
 import { readLiveProtocolFees, useProtocolFees } from '../../data/fees';
 import {
@@ -199,41 +202,6 @@ export function OrderTicket({
   // through the open-orders panel instead), so the choice is made here and
   // signed with the order. Ignored on the on-chain path.
   const [makerFull, setMakerFull] = useState<FullTariffChoice>(FULL_TARIFF_OFF);
-  const makerFullRef = useRef<FullTariffChoice>(FULL_TARIFF_OFF);
-  const [consent, setConsent] = useState(false);
-  // UX-016 — surface a "terms changed, re-confirm" note whenever an
-  // edit auto-clears a consent the user had already given (the ticket
-  // voids consent on every term/market/keystroke change). Tracked via a
-  // ref so the term-change effects can read the live consent value
-  // without adding it to their dependency lists.
-  const [consentClearedNote, setConsentClearedNote] = useState(false);
-  const consentRef = useRef(consent);
-  useEffect(() => {
-    consentRef.current = consent;
-  }, [consent]);
-  const clearConsentOnEdit = useCallback(() => {
-    if (consentRef.current) setConsentClearedNote(true);
-    setConsent(false);
-  }, []);
-  // A change to a SIGNED field of the maker's opt-in (the opt-in itself, the
-  // ceiling, the downgrade permission) changes the artifact the user consented
-  // to, so it clears consent like any other edit. The control's own re-syncs
-  // of `blocked` are not signed and must not wipe consent on a quote refresh.
-  const onMakerFullChange = useCallback(
-    (v: FullTariffChoice) => {
-      const prev = makerFullRef.current;
-      if (
-        prev.full !== v.full ||
-        prev.maxCStar !== v.maxCStar ||
-        prev.allowDowngrade !== v.allowDowngrade
-      ) {
-        clearConsentOnEdit();
-      }
-      makerFullRef.current = v;
-      setMakerFull(v);
-    },
-    [clearConsentOnEdit],
-  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [postedHash, setPostedHash] = useState<string | null>(null);
@@ -256,38 +224,22 @@ export function OrderTicket({
     if (prefill === null) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setRate(String(prefill.rateBps / 100));
-    clearConsentOnEdit();
     setPostedHash(null);
     setGaslessPosted(null);
-  }, [prefill, clearConsentOnEdit]);
+  }, [prefill]);
 
-  // Any market change voids consent — the deal being consented to
-  // changed underneath the ticket. Posting-mode changes void it too:
-  // the consent line was read against a different escrow reality.
-  // Deliberately an effect (#1520), and checked rather than assumed: this
-  // fires on inputs that arrive as PROPS (pair, tenor, side) or from local
-  // chips (postMode), and none of them is resolved asynchronously. Every
-  // local path that changes them also calls `clearConsentOnEdit` in the same
-  // handler, so consent is voided in the same batch as the change; this
-  // effect is the backstop for a parent-driven change, where the user has
-  // just clicked a control elsewhere and so cannot be mid-click on Post.
-  //
-  // That claim was NOT true when this comment was written (Codex #1682 r1
-  // F2): the two side buttons and the posting-mode chips set their state and
-  // nothing else, so for `side` and `postMode` this effect was the ONLY thing
-  // clearing consent — a commit late, leaving exactly the frame the comment
-  // asserted could not exist. Those three handlers now clear in the same
-  // batch, which is what makes the claim, and this disable, correct.
-  // That is what distinguishes it from #1678, where the trigger was an async
-  // arrival that could coincide with a click — there, an effect was the wrong
-  // mechanism and the gate had to be derived.
+  // Any market or posting-mode change retires the last post's result and
+  // funds warning: they describe an order for a different deal. (The
+  // consent needs nothing here — it is keyed on these same inputs, below.)
+  // Deliberately an effect (#1520): the inputs arrive as PROPS (pair, tenor,
+  // side) or from local chips (postMode), and what is cleared is only the
+  // notice of a post already made, never a gate.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    clearConsentOnEdit();
     setPostedHash(null);
     setGaslessPosted(null);
     setGaslessFundsWarn(null);
-  }, [pair?.lendingAsset, pair?.collateralAsset, days, side, postMode, clearConsentOnEdit]);
+  }, [pair?.lendingAsset, pair?.collateralAsset, days, side, postMode]);
 
   // The collateral ASSET is fixed to the selected market's — the ticket
   // posts into the (pair, tenor) market shown in the header, and a
@@ -416,10 +368,41 @@ export function OrderTicket({
   // EFFECTIVE mode, so it judges the order that would actually be posted.
   const iocNeedsExpiry = effectiveFillMode === FILL_IOC && expiry === 'gtc';
 
+  // ---- consent ---------------------------------------------------------
+  // The risk-and-terms consent, keyed on every term the order carries and
+  // the summary shows (#1696, the one rule every signing review follows):
+  // the market, side, size, rate, tenor, posting mode, expiry and fill mode,
+  // the SIGNED fields of the maker's tariff opt-in (the control's own
+  // `blocked` re-sync is not signed and must not wipe consent on a quote
+  // refresh), the side's protocol fees and the wallet. Any change withdraws
+  // a given tick in the same render it lands in, and `withdrawnByChange`
+  // drives the "terms changed, re-confirm" note (UX-016).
+  const consent = useReviewConsent([
+    side,
+    pair?.lendingAsset,
+    pair?.collateralAsset,
+    amount,
+    rate,
+    collateralAmount,
+    days,
+    postMode,
+    expiry,
+    customExpiry,
+    effectiveFillMode,
+    makerFull.full,
+    makerFull.maxCStar,
+    makerFull.allowDowngrade,
+    fees.treasuryFeeBps,
+    fees.loanInitiationFeeBps,
+    address,
+    walletChain?.chainId,
+  ]);
+
   // ---- form + payload -------------------------------------------------
+  // The terms only; each payload states the consent it carries.
   const form = useMemo(
-    (): OfferFormState => ({
-      ...initialOfferForm,
+    (): OfferTerms => ({
+      ...initialOfferTerms,
       offerType: side,
       lendingAsset: pair?.lendingAsset ?? '',
       amount,
@@ -427,9 +410,8 @@ export function OrderTicket({
       collateralAsset,
       collateralAmount,
       durationDays: String(days),
-      riskAndTermsConsent: consent,
     }),
-    [side, pair, amount, rate, collateralAsset, collateralAmount, days, consent],
+    [side, pair, amount, rate, collateralAsset, collateralAmount, days],
   );
   // Validate the duration against the LIVE protocol cap, not the
   // schema's static 365 — a governance-raised cap must not dead-lock
@@ -439,7 +421,7 @@ export function OrderTicket({
   // the static default.
   // #2390 — with the legs' decimals, an amount finer than its token is a
   // named error (shown under the field), never rounded at payload time.
-  const formError = validateOfferForm(form, {
+  const formError = validateOfferTerms(form, {
     maxDurationDays: fees.maxOfferDurationDays,
     decimals: {
       lending: lendingMeta.data?.decimals,
@@ -454,7 +436,7 @@ export function OrderTicket({
    *  contract requires it, and the borrower payload is single-value
    *  already. */
   const buildPayload = (
-    withConsent: boolean,
+    consentGiven: boolean,
     now: number,
   ): CreateOfferPayload | null => {
     if (!fieldsComplete) return null;
@@ -462,7 +444,7 @@ export function OrderTicket({
     if (expiresAt === null || iocNeedsExpiry) return null;
     try {
       const base = toCreateOfferPayload(
-        { ...form, riskAndTermsConsent: withConsent },
+        withConsent(form, consentGiven),
         {
           lending: lendingMeta.data?.decimals,
           collateral: collateralMeta.data?.decimals,
@@ -495,7 +477,7 @@ export function OrderTicket({
   // that isn't going to happen.
   const simTx = useMemo((): TxSimInput | null => {
     if (postMode !== 'onchain') return null;
-    if (!walletChain || !consent || !decimalsReady) return null;
+    if (!walletChain || !consent.given || !decimalsReady) return null;
     const payload = buildPayload(true, nowSec);
     if (!payload) return null;
     try {
@@ -518,7 +500,7 @@ export function OrderTicket({
     // holding the payload from the last form edit, so the simulation would
     // describe an expiry the ticket no longer has.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [postMode, walletChain, consent, decimalsReady, form, effectiveFillMode, expiry, customExpiry, nowSec]);
+  }, [postMode, walletChain, consent.given, decimalsReady, form, effectiveFillMode, expiry, customExpiry, nowSec]);
   const preSign = useTxSimulation(simTx);
 
   // #1112 — early under-collateral warning for the borrow side, consent
@@ -588,12 +570,10 @@ export function OrderTicket({
     fieldsComplete &&
     formError === null &&
     // Explicit consent gate (Codex #1145 round-1 P2 #2). `formError`
-    // already encodes it (validateOfferForm rejects consent-false
-    // forms), but the GASLESS path has no contract backstop — the fill
-    // stamps `creatorRiskAndTermsConsent = true` from the signature —
-    // so the button gate must not hinge on a validator's internal
-    // check ordering.
-    consent &&
+    // validates the terms only; the GASLESS path has no contract backstop
+    // — the fill stamps `creatorRiskAndTermsConsent = true` from the
+    // signature — so this gate is what stands for the consent.
+    consent.given &&
     expiryOk &&
     !iocNeedsExpiry &&
     !overDurationCap &&
@@ -652,7 +632,7 @@ export function OrderTicket({
       // phase. Reading a ticking value here would be the regression --
       // it would post a deadline up to one tick stale.
       // eslint-disable-next-line react-hooks/purity
-      const payload = buildPayload(consent, Math.floor(Date.now() / 1000));
+      const payload = buildPayload(consent.given, Math.floor(Date.now() / 1000));
       if (!payload) {
         throw new Error(
           customExpiryTooFar()
@@ -795,8 +775,7 @@ export function OrderTicket({
 
   function afterPost(hash: string) {
     setPostedHash(hash);
-    setConsent(false);
-    setConsentClearedNote(false);
+    consent.clear();
     setAmount('');
     void queryClient.invalidateQueries({ queryKey: ['deskBook'] });
     void queryClient.invalidateQueries({ queryKey: ['deskMarkets'] });
@@ -853,7 +832,7 @@ export function OrderTicket({
       // has a contract backstop (`RiskAndTermsConsentRequired` reverts
       // a consent-false payload); this guard is the gasless
       // equivalent: the button gate can regress, this must not.
-      if (!consent) {
+      if (!consent.given) {
         throw new Error(copy.desk.ticket.gaslessConsentRequired);
       }
       // #1145 round-2 (Codex P2) — a signed LENDER order must be
@@ -863,7 +842,7 @@ export function OrderTicket({
       // collateral is single-value by invariant. Collapse here —
       // structurally, not just via the fill-mode chip state — so the
       // signed wire order can never publish unmatchable partial depth.
-      const built = buildPayload(consent, Math.floor(Date.now() / 1000));
+      const built = buildPayload(consent.given, Math.floor(Date.now() / 1000));
       const payload = built === null ? null : collapseForSignedPost(built);
       if (!payload) {
         throw new Error(
@@ -1010,10 +989,8 @@ export function OrderTicket({
         throw new Error(copy.desk.ticket.gaslessRejected(res.error));
       }
       setGaslessPosted(res.orderHash);
-      setConsent(false);
-      setConsentClearedNote(false);
+      consent.clear();
       setAmount('');
-      makerFullRef.current = FULL_TARIFF_OFF;
       setMakerFull(FULL_TARIFF_OFF);
       void queryClient.invalidateQueries({ queryKey: ['deskSignedBook'] });
       // A signed post can CREATE a market — /offers/markets unions
@@ -1055,7 +1032,7 @@ export function OrderTicket({
     if (makerFullInvalid) {
       return makerFull.blocked ? copy.tariff.fullUnavailableNow : copy.tariff.maxCStarRequired;
     }
-    if (!consent) return text.blockConsent;
+    if (!consent.given) return text.blockConsent;
     return null;
   })();
 
@@ -1137,7 +1114,6 @@ export function OrderTicket({
   const fillAmountMax = () => {
     if (lendingBalance.data === undefined || lendingMeta.data === undefined) return;
     setAmount(exactAmountString(lendingBalance.data, lendingMeta.data.decimals));
-    clearConsentOnEdit();
   };
   const fillCollateralMax = () => {
     if (collateralBalance.data === undefined || collateralMeta.data === undefined) {
@@ -1146,7 +1122,6 @@ export function OrderTicket({
     setCollateralAmount(
       exactAmountString(collateralBalance.data, collateralMeta.data.decimals),
     );
-    clearConsentOnEdit();
   };
   const showAmountMax =
     side === 'lender' &&
@@ -1165,23 +1140,14 @@ export function OrderTicket({
         <button
           type="button"
           className={side === 'lender' ? 'active' : ''}
-          onClick={() => {
-            // Same batch as the change (Codex #1682 r1 F2) — the passive
-            // backstop effect lands a commit later, leaving a frame where the
-            // side has flipped but consent and canPost are still true.
-            setSide('lender');
-            clearConsentOnEdit();
-          }}
+          onClick={() => setSide('lender')}
         >
           {text.sideLend}
         </button>
         <button
           type="button"
           className={side === 'borrower' ? 'active' : ''}
-          onClick={() => {
-            setSide('borrower');
-            clearConsentOnEdit();
-          }}
+          onClick={() => setSide('borrower')}
         >
           {text.sideBorrow}
         </button>
@@ -1212,7 +1178,6 @@ export function OrderTicket({
           value={amount}
           onChange={(e) => {
             setAmount(e.target.value.trim());
-            clearConsentOnEdit();
           }}
         />
         {lendingMeta.data ? (
@@ -1237,7 +1202,6 @@ export function OrderTicket({
           value={rate}
           onChange={(e) => {
             setRate(e.target.value.trim());
-            clearConsentOnEdit();
           }}
         />
       </div>
@@ -1288,7 +1252,6 @@ export function OrderTicket({
           value={collateralAmount}
           onChange={(e) => {
             setCollateralAmount(e.target.value.trim());
-            clearConsentOnEdit();
           }}
         />
         {collateralMeta.data ? (
@@ -1320,7 +1283,6 @@ export function OrderTicket({
               }
               onClick={() => {
                 setExpiry(value);
-                clearConsentOnEdit();
               }}
             >
               {label}
@@ -1348,7 +1310,6 @@ export function OrderTicket({
             value={customExpiry}
             onChange={(e) => {
               setCustomExpiry(e.target.value);
-              clearConsentOnEdit();
             }}
           />
         ) : null}
@@ -1382,7 +1343,6 @@ export function OrderTicket({
                 disabled={unavailable}
                 onClick={() => {
                   setFillMode(value);
-                  clearConsentOnEdit();
                 }}
               >
                 {label}
@@ -1430,7 +1390,6 @@ export function OrderTicket({
               title={hint}
               onClick={() => {
                 setPostMode(value);
-                clearConsentOnEdit();
               }}
             >
               {label}
@@ -1490,7 +1449,7 @@ export function OrderTicket({
           principal={makerFullPrincipal}
           durationDays={days}
           value={makerFull}
-          onChange={onMakerFullChange}
+          onChange={setMakerFull}
         />
       ) : null}
 
@@ -1500,22 +1459,14 @@ export function OrderTicket({
       >
         <input
           type="checkbox"
-          checked={consent}
-          onChange={(e) => {
-            setConsent(e.target.checked);
-            // Re-ticking clears the "terms changed" note (UX-016).
-            if (e.target.checked) setConsentClearedNote(false);
-          }}
+          checked={consent.given}
+          onChange={(e) => consent.set(e.target.checked)}
           style={{ marginTop: 3 }}
         />
         <ConsentLabel />
       </label>
       {/* UX-016 — the auto-untick after a term edit, explained. */}
-      {consentClearedNote && !consent ? (
-        <p className="field-hint" style={{ color: 'var(--warn)', marginTop: -4 }}>
-          {text.consentRecheck}
-        </p>
-      ) : null}
+      <ConsentWithdrawnNote consent={consent} message={text.consentRecheck} />
 
       <SimulationPreview tx={simTx} result={preSign.result} />
 

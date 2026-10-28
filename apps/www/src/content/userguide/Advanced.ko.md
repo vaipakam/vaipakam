@@ -12,6 +12,8 @@
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -178,6 +180,8 @@ program을 알아차리기 어렵습니다.
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -270,6 +274,8 @@ immutable입니다 — refinance는 기존 loan을 변경하지 않고 새 loan�
 만듭니다.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -641,6 +647,8 @@ partial / IOC fill 모드는 단일 오퍼의 담보에 대해 여러 대출을
   후속 작업으로 큐에 있습니다.
 
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -718,6 +726,8 @@ Borrower position NFT는 claim할 때 burn되며 loan이 정리될 때가 아닙
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -732,6 +742,8 @@ multi-event transaction(예: accept + initiate가 같은 block 내에서 발생)
 liquidations, NFT mints / burns, VPFI vault deposits / withdrawals를 표시합니다.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -809,6 +821,8 @@ Base입니다. 다른 체인에서 빌리거나 빌려주면 그 체인은 tier�
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -843,6 +857,8 @@ wallet으로 VPFI를 다시 withdraw합니다. withdraw된 VPFI는 즉시 discou
 accumulator에서 빠집니다(모든 open loan에서 post-balance re-stamp).
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -1083,6 +1099,8 @@ land합니다. 트랜잭션은 완전히 성공하거나 (대출 상환 완료�
 
 ---
 
+<a id="chapter.how-liquidation-actually-works"></a>
+
 ## 청산(Liquidation)의 실제 작동 방식
 
 오퍼 시점에 동의한 Risk Disclosures는 최악의 결과를 두 문장으로 요약하고 있습니다. 이 섹션에서는 그 이면의 메커니즘을 설명합니다. 이는 왜 현물(in-kind) 폴백이 존재하는지, 그리고 대출이 실제로 네 가지 갈래 중 어떤 경로를 따르는지 이해하는 데 도움이 됩니다.
@@ -1187,6 +1205,8 @@ land합니다. 트랜잭션은 완전히 성공하거나 (대출 상환 완료�
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -1205,6 +1225,8 @@ allowance를 우회합니다. 따라서 여기 list가 clean해도 향후 deposi
 막지 않습니다.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -1243,6 +1265,8 @@ channel creation까지 stub 상태입니다.
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -1264,6 +1288,8 @@ position NFT는 bearer instrument입니다 — secondary market에서 매수하�
 verify하세요.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -1304,65 +1330,100 @@ frontend가 아직 reflect하지 않은 on-chain permissions는 명확한
 
 ---
 
+<a id="chapter.public-analytics-dashboard"></a>
+
 ## Public Analytics Dashboard
 
 <a id="public-dashboard.overview"></a>
 
 ### Public Analytics 소개
 
-supported chains 각각에서 on-chain protocol view calls로부터 live로
-calculate되는 wallet-free aggregator입니다. backend 없음, database 없음.
-CSV / JSON export가 available합니다. verifiability를 위해 각 metric 뒤의
-protocol address와 view function이 표시됩니다.
+지갑이 필요 없는 단일 체인 페이지입니다. 앱이 가리키는 체인(지갑이
+연결되지 않았으면 기본 읽기 체인)을 읽습니다. 체인 간 합산이나
+내보내기는 없습니다. 체인을 비교하려면 각 체인에서 페이지를 여세요.
+출처는 두 가지이며, 쓰이는 곳마다 표시됩니다.
 
-<a id="public-dashboard.combined"></a>
+- 인덱서의 키 없는, CORS가 열린 읽기 API — 대출, 오퍼, 리사이클링,
+  루프 클로저 수치
+- 공개 RPC를 통한 Diamond 자체의 뷰 함수 — VPFI 토큰과 수수료 수치
 
-### Combined — All Chains
+어느 출처든 직접 조회해 페이지가 보여주는 내용을 재현할 수
+있습니다.
 
-Cross-chain rollup입니다. header는 covered된 chains 수와 errored된 chains
-수를 report하므로 fetch 시 unreachable RPC가 명확히 드러납니다. 하나 이상의
-chain이 errored인 경우 per-chain table이 어느 chain인지 flag합니다 — TVL
-totals는 계속 report되지만 gap은 acknowledge됩니다.
+<a id="public-dashboard.loans-offers"></a>
 
-<a id="public-dashboard.per-chain"></a>
+### 대출과 오퍼
 
-### Per-Chain Breakdown
+`/loans/stats`의 상태별 대출 카운터(정산 대기, 내부 매칭, 나머지
+구분을 포함해 부분의 합이 총계가 됩니다), ERC-20과 NFT 렌탈 소계
+(자산 유형을 아직 읽지 못한 활성 대출은 따로 표시), 그리고
+`/offers/stats`의 오퍼 카운터입니다. 오퍼는 `offers` 테이블만
+해당하며 가스 없는 서명 주문은 세지 않습니다. 취소된 오퍼는
+인덱스에서 빠지므로 오퍼 합계는 누적 수치가 아닙니다. 없는 카운터는
+"보고되지 않음", 불가능한 값은 "보고되었지만 사용할 수 있는 건수가
+아님"으로 표시하며, 어느 쪽도 0으로 표시하지 않습니다.
 
-Combined metrics의 per-chain split입니다. TVL concentration, mismatched
-VPFI mirror supplies(mirror supplies의 sum은 canonical adapter의 locked
-balance와 같아야 함), 또는 stalled chain을 spot하는 데 유용합니다.
+<a id="public-dashboard.recycling"></a>
 
-<a id="public-dashboard.vpfi-transparency"></a>
+### 리사이클링 계정과 루프 클로저
 
-### VPFI Token Transparency
-
-active chain의 on-chain VPFI accounting:
-
-- total supply, ERC-20에서 직접 읽음.
-- circulating supply — total supply minus protocol-held balances(treasury,
-  reward pools, in-flight bridge packets).
-- 남은 mintable cap — canonical chain에서만 meaningful합니다. Mirror chains는
-  cap에 대해 "n/a"를 report합니다. 그곳의 mints는 cap이 아니라 bridge-driven
-  이기 때문입니다.
-
-Cross-chain invariant: 모든 mirror chains에 걸친 mirror supplies의 sum은
-canonical adapter의 locked balance와 같습니다. watcher가 이를 monitor하고
-drift에 alert합니다.
+리사이클링 계정(`/metrics/recycling`)은 프로그램의 각 날짜별
+풀, 그 재원, 인출액을 프로그램 고유의 일 번호로 보여줍니다. 확정되지
+않은 날은 풀 없이, 활성화되지 않은 날은 추정치로 표시됩니다. 루프
+클로저(`/metrics/loop-closure`)는 UTC 날짜별로 클레임이 지급한 양,
+볼트에 남은 양, 흡수된 양을 기록이 도달한 시점과 함께 보여줍니다.
+표시 정밀도보다 작은 양수 금액은 그렇다고 표시하고, 비율은 내림하며,
+알 수 없는 수치는 절대 0으로 표시하지 않습니다.
 
 <a id="public-dashboard.transparency"></a>
 
-### Transparency & Source
+### 투명성과 출처
 
-각 metric에 대해 page가 list하는 것:
+익스플로러 링크가 있는 Diamond 주소, 체인, 인덱서 커서의 블록과
+경과 시간입니다. 인덱서에서 온 모든 수치는 이 커서 시점까지만
+최신입니다. 두 응답을 합칠 때는 더 오래된 커서를 표시합니다.
 
-- snapshot으로 사용된 block number.
-- data freshness(chains 간 최대 지연 시간).
-- protocol address와 view function call.
+<a id="public-dashboard.vpfi-transparency"></a>
 
-이 page의 어떤 number든 RPC + block + protocol address + function name에서
-누구나 re-derive할 수 있습니다 — 그것이 기준입니다.
+### VPFI 토큰
+
+Diamond의 `getVPFISnapshot()`에서 이 체인의 토큰 주소와
+`totalSupply`를 가져옵니다. 정식(canonical) 체인에서는 상한, 여유분
+(`cap − totalSupply`, 아직 발행할 수 있는 양), 민터도 보여줍니다.
+미러 체인의 스냅샷에는 상한도 민터도 없습니다(공급은 CCIP 토큰 풀을
+통해 들어옵니다). 그래서 페이지는 로컬 공급량을 보여주고 상한과
+민터는 정식 체인의 것이라고 밝히며, 0을 표시하지 않습니다. 연결되지
+않은 토큰과 읽을 수 없는 스냅샷은 따로 표시합니다.
+
+<a id="public-dashboard.fees"></a>
+
+### 수수료와 트레저리
+
+`getTreasuryMetrics()`, `getTreasury()`, `getNumeraireSymbol()`
+에서 가져오며, 스냅샷과 같은 Multicall3 집계에서 읽고 하나의 블록에
+고정합니다. 페이지는 그 블록과 경과 시간을 보여줍니다.
+
+- 수수료 장부가 시작된 이후, 그리고 최근 24시간과 7일의 수수료.
+  각 수수료는 기록 시점에 뉴메레르로 평가되며 다시 평가되지
+  않습니다.
+- 기록 시점에 프로토콜이 평가할 수 없었던 수수료는 0으로 기록되고,
+  기간 합계는 최신 장부 항목을 최대 10,000개까지만 훑습니다. 이
+  두 가지는 수치를 적게 보이게만 할 수 있고, 페이지는 이를
+  밝힙니다.
+- 뉴메레르가 바뀌면 이전 항목은 옛 단위로 남으므로, 그 이후의 합계는
+  현재 기호 아래 두 단위의 금액을 더하게 되어 어느 방향으로든 어긋날
+  수 있습니다. 페이지는 이전 수수료가 옛 단위로 계산된다고 밝힙니다.
+- 트레저리 주소. 외부 주소라면 수수료는 징수될 때 빠져나가며 그
+  잔액은 표시하지 않습니다. Diamond 자신이 트레저리라면 보유액을
+  표시하며, 이는 열린 대출에 나타나는 자산만으로 평가하고 트레저리를
+  대신해 다른 곳에 둔 금액을 포함합니다.
+
+실패한 뷰 함수는 "읽을 수 없음"으로 표시되며 다른 항목을 가리지
+않습니다.
 
 ---
+
+<a id="chapter.refinance"></a>
 
 ## Refinance
 
@@ -1412,6 +1473,8 @@ cancel할 수 있습니다.
 새 terms에서 HF가 1.5 미만이면 revert합니다.
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -1464,6 +1527,8 @@ Uniswap V3 → Balancer V2).
 
 ---
 
+<a id="chapter.early-withdrawal-lender"></a>
+
 ## Early Withdrawal (Lender)
 
 이 페이지는 lender 전용입니다 — early withdrawal은 lender가 자신의 loan에서
@@ -1501,6 +1566,8 @@ permission을 가진 keeper에게 delegate할 수도 있습니다. initiate step
 user-only로 남습니다.
 
 ---
+
+<a id="chapter.stuck-token-recovery"></a>
 
 ## 묶인 토큰(Stuck-Token) 복구
 
@@ -1564,6 +1631,8 @@ user-only로 남습니다.
 
 소유권 포기 함수는 현재 직접 컨트랙트 호출을 통해서만 노출되며, Vaipakam 프런트엔드에서는 버튼으로 표시되지 않습니다. 블록 탐색기의 "Write Contract" UI나 컨트랙트 상호작용 도구를 사용하여 호출하십시오.
 
+<a id="chapter.how-vpfi-discounts-work"></a>
+
 ## VPFI 할인의 작동 방식
 
 canonical 체인인 Base의 vault에 VPFI를 보유하면, 플랫폼이 운영되는
@@ -1587,6 +1656,8 @@ VPFI가 빠져나가지 않습니다. 유일한 예외는 VPFI 가격 기준을 
 출시 시점에는 설정된 것이 없습니다. 이 장은 이 보유 할인을 다룹니다.
 별도의 유료 수수료 모드인 "Full"은 배포가 켜지 않는 한 꺼져 있습니다.
 
+<a id="vpfi-discounts.turning-on"></a>
+
 ### 할인 켜기
 
 할인은 opt-in입니다. 스위치는 VPFI 페이지에 있고, 체인마다 하나씩
@@ -1605,6 +1676,8 @@ Base에서 할인을 끄면, 다른 모든 체인에서도 적용이 멈추도�
 VPFI는 프로토콜이 당신의 vault에 기록할 때 인정됩니다. VPFI 페이지를 통해 입금한 VPFI와 프로토콜이 vault로
 전달한 VPFI rewards가 여기에 해당합니다. vault 주소로 직접 보낸 토큰은 프로토콜이 추적하지 않으며 tier를
 올리지 않습니다.
+
+<a id="vpfi-discounts.tier-calculation"></a>
 
 ### tier 계산 방식
 
@@ -1632,6 +1705,8 @@ tier는 세 가지 별도 검사로 정해지며, 세 가지를 모두 통과해
   됩니다.
 - tier 하한 아래로 내려가는 출금은 tier를 즉시 낮춥니다.
 - 30일보다 오래된 하락은 더 이상 상한이 되지 않습니다.
+
+<a id="vpfi-discounts.other-chains"></a>
 
 ### 다른 체인에서의 tier
 
@@ -1672,6 +1747,8 @@ Base의 tier는 즉시 최신이 되고, 다른 각 체인에는 도착할 때�
 시간만 지나 tier가 올랐다면(보유 기간을 채웠거나 평균이 따라잡은 경우), tier 기록의 다음 갱신 전까지 Base에서는
 아무것도 감지되지 않습니다. tier 갱신 호출로 원할 때 언제든 그 갱신을 할 수 있으며, 앱이 대신 호출하는 것은 할인을 끌
 때뿐입니다.
+
+<a id="vpfi-discounts.operators"></a>
 
 ### 운영자용
 

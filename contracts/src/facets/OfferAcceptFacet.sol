@@ -2023,7 +2023,14 @@ contract OfferAcceptFacet is
         // its target loan's recorded refinance request, or an offset is open
         // on that loan. The acceptance would create the replacement and then
         // revert in the refinance hook. APPENDED; prior values stay stable.
-        RefinanceRequestUntakeable
+        RefinanceRequestUntakeable,
+        // #3025 — loan creation would refuse the offer's periodic-interest
+        // cadence on the loan this accept opens: the switch, the threshold or
+        // a leg's liquidity has moved since the offer was posted. The exact
+        // refusal is `OfferPreviewFacet.requireOriginationCadenceAdmitted`'s
+        // revert for the same offer and principal. The creator must cancel and
+        // re-post. APPENDED; prior values stay stable.
+        CadenceNotAdmitted
     }
 
     /// @notice Projection of the loan that would land if the supplied

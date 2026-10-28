@@ -553,6 +553,8 @@ then deploy.
       | `REWARD_ZEROED_DAY_ENABLED` | zeroed-day pass skips — a mirror day its reward reporter deliberately zeroed is not quoted for compensation, so Base never funds it, and it never lapses, so its users neither recover the day nor see it retired | quoting each deliberately zeroed mirror day to Base for compensation, and lapsing a day whose compensation never came or came short once its window closes (#2984) |
       | `REWARD_RETURN_TRANSPORT_ENABLED` | return-transport pass skips — an issued repatriation is not carried to its mirror or executed there, a cancelled one's ACK is not sent so Base keeps its availability reserved, and quarantined compensation and a retired chain's pending surplus stay on the mirror, unless someone makes those permissionless calls by hand | carrying each repatriation authorization's instruction, execution and cancellation ACK, and returning quarantined compensation and a retired mirror's pending surplus to Base in lane-bounded parts (#2984) |
       | `REWARD_HORIZON_HEARTBEAT_ENABLED` | horizon heartbeat skips — no reward's claim-horizon clock is observed, so an armed horizon expires nothing and files no final notice (the safe direction: nothing is reaped) | touching every live reward entry about every 12 hours so its executable-time clock advances (#2517) |
+      | `REWARD_ENTRY_SETTLE_ENABLED` | the heartbeat's close-out step skips — a closed entry whose remainder prices to nothing stays open with its capped-off commitments still counted, and a forfeited entry's reward stays in custody instead of reaching the recycle bucket, unless someone makes those permissionless calls by hand | retiring zero-priced remainders and sweeping forfeited loans' rewards to the recycle bucket (#2984); needs `REWARD_HORIZON_HEARTBEAT_ENABLED` too |
+      | `PROTOCOL_UPKEEP_ENABLED` | upkeep pass skips — an expired buyback intent keeps its unfilled reservation out of the buyback budget, its allowance live and its live-commit slot held, and the tier LTV cache lapses to the governance tier caps 14 days after its last refresh, unless someone makes those permissionless calls by hand | rolling back expired buyback intents and keeping the tier LTV cache refreshed from the peer protocols (#2984) |
 
       The keeper's ops alert channel, `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID`, is
       captured the same way: while unset the observer's operator alerts reach
@@ -1943,7 +1945,7 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`,
    `REWARD_SANCTIONS_KEEPER_ENABLED`,
    `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
-   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
+   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
    file (`sudo -e /etc/vaipakam/keeper.env`), never by assuming what it held.
    Never paste a value from that file anywhere.
 

@@ -62,13 +62,14 @@ import type { ChainConfig, Env, PlainVarKey } from '../env';
 import { getChainConfigs } from '../env';
 import { buildKeeperContext, passIsArmed, resolveKeeperAccount, type KeeperContext } from '../keeper';
 import type { PassTick } from '../passSchedule';
-import { deadlineClient, PastRunDeadline, settledRead, type BatchResult } from '../batchRead';
+import { deadlineClient, PastRunDeadline } from '../batchRead';
 import { shortErr } from '../callErrors';
 import { feeCeiling } from '../feeCeiling';
 import { sendOpsAlert, type OpsAlertOutcome } from '../opsAlert';
 import { conservationGap, coveringEntries, decodeEntryFloor, encodeEntryFloor, scanEntries, SIDE_BORROWER, SIDE_LENDER, type EntryRow, type ScannedEntry, type Side } from '../rewardEntries';
-import { advanceFloor, d1ScanCursors, decodeIndex, finalFloor, finalizedBlockOnce, rotatingWindow, type FinalBlock, type ScanCursors } from '../scanCursors';
+import { advanceFloor, d1ScanCursors, decodeIndex, finalFloor, rotatingWindow, type FinalBlock, type ScanCursors } from '../scanCursors';
 import { StepSender, type SendFeeCeiling } from '../stepSender';
+import { PassReader } from '../passReader';
 import { pagesAfter } from '../rewardCloseOut/plan';
 import { accumulationWedge, zeroedDayStep, type ZeroedDayState } from './plan';
 
@@ -114,7 +115,6 @@ const NOTICE_INTERVAL_SEC = 10 * 365 * 86_400;
  *  either, so the journal repeats the notice on each run until the day drops
  *  below the floor. */
 const NOTICE_DELIVERED: ReadonlySet<OpsAlertOutcome> = new Set(['sent', 'suppressed', 'unconfigured']);
-const READ_CHUNK = 100;
 
 const ROLE_MIRROR = 1;
 
@@ -288,41 +288,9 @@ export async function zeroedDayOnce(chainId: number, diamond: Address, deps: Zer
   return report;
 }
 
-class Reader {
-  /** The chain's finalized block, read once a run (`scanCursors.finalFloor`). */
-  readonly finalized: () => Promise<FinalBlock | null>;
-
-  constructor(
-    readonly deps: ZeroedDayDeps,
-    readonly diamond: Address,
-  ) {
-    this.finalized = finalizedBlockOnce(deps.client);
-  }
-
-  async one<T>(functionName: string, args: readonly unknown[] = [], address: Address = this.diamond, abi: Abi = ABI): Promise<T> {
-    return (await this.deps.client.readContract({ address, abi, functionName, args })) as T;
-  }
-
-  /** At the head, or at `blockNumber` when one is given. */
-  async many(calls: readonly { functionName: string; args: readonly unknown[] }[], label: string, blockNumber?: bigint): Promise<unknown[]> {
-    const out: unknown[] = [];
-    for (let i = 0; i < calls.length; i += READ_CHUNK) {
-      const part = calls.slice(i, i + READ_CHUNK);
-      // eslint-disable-next-line no-await-in-loop
-      const res: BatchResult[] = await settledRead(
-        this.deps.readClient,
-        part.map((c) => ({ address: this.diamond, abi: ABI, functionName: c.functionName, args: c.args })),
-        `rewardZeroedDay ${label}`,
-        this.deps.sendDeadline,
-        blockNumber,
-      );
-      for (const x of res) out.push(x.status === 'success' ? x.result : undefined);
-    }
-    return out;
-  }
-
-  days(days: readonly number[], functionName: string, label: string, blockNumber?: bigint): Promise<unknown[]> {
-    return this.many(days.map((d) => ({ functionName, args: [BigInt(d)] })), label, blockNumber);
+class Reader extends PassReader {
+  constructor(deps: ZeroedDayDeps, diamond: Address) {
+    super(deps, deps.sendDeadline, diamond, ABI, 'rewardZeroedDay');
   }
 }
 

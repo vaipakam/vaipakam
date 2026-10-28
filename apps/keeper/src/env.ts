@@ -152,6 +152,13 @@ interface BaseEnv {
   // #2517 — the reward claim-horizon heartbeat (`rewardHorizonHeartbeat.ts`).
   /** 'true' arms the horizon heartbeat (in addition to KEEPER_ENABLED). `secret_text`, like the flags above. */
   REWARD_HORIZON_HEARTBEAT_ENABLED?: string;
+  /** 'true' adds the #2984 entry close-out to the armed horizon heartbeat:
+   *  retiring closed reward entries whose remaining window prices to nothing
+   *  (`retireZeroPricedRemainders`) and sweeping forfeited entries' rewards
+   *  into the recycle bucket (`sweepForfeitedInteractionRewards`). Both
+   *  permissionless; neither pays a fee or moves value to the keeper. Read
+   *  only while REWARD_HORIZON_HEARTBEAT_ENABLED arms the pass. */
+  REWARD_ENTRY_SETTLE_ENABLED?: string;
 
   // #2612 — the reward day-close pass (`rewardDayClose/`).
   /** 'true' arms the reward day-close pass (in addition to KEEPER_ENABLED). `secret_text`, like the flags above. */
@@ -188,6 +195,16 @@ interface BaseEnv {
   /** How many days the close-out pass reads a run (default 60), rotating
    *  over every provable day not yet proven closed. A plain var. */
   REWARD_CLOSE_OUT_WINDOW_DAYS?: string;
+
+  // Protocol upkeep pass (#2984). `secret_text` like the flags above.
+  /** 'true' arms the protocol upkeep pass (in addition to KEEPER_ENABLED):
+   *  the buyback-intent expiry and the tier LTV cache refresh. Both
+   *  permissionless; neither pays a fee or moves value to the keeper. */
+  PROTOCOL_UPKEEP_ENABLED?: string;
+  /** Seconds after which a cached tier LTV is refreshed even when its value
+   *  would not change (default 7 days; the contract uses a cached tier only
+   *  while it is under 14 days old). A plain var. */
+  TIER_LTV_REFRESH_AFTER_SEC?: string;
 
   // Reward zeroed-day pass (#2984). `secret_text` like the flags above.
   /** 'true' arms the reward zeroed-day pass (in addition to KEEPER_ENABLED):
@@ -366,6 +383,7 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_DELIVERY_PROOF_ENABLED',
   'REWARD_SANCTIONS_KEEPER_ENABLED',
   'REWARD_HORIZON_HEARTBEAT_ENABLED',
+  'REWARD_ENTRY_SETTLE_ENABLED',
   'REWARD_DAY_CLOSE_ENABLED',
   'REWARD_DAY_CLOSE_MAX_FEE_WEI',
   'TG_OPS_BOT_TOKEN',
@@ -375,6 +393,8 @@ export const PLAIN_VAR_KEYS = [
   'PERIODIC_SETTLE_ENABLED',
   'REWARD_CLOSE_OUT_ENABLED',
   'REWARD_CLOSE_OUT_WINDOW_DAYS',
+  'PROTOCOL_UPKEEP_ENABLED',
+  'TIER_LTV_REFRESH_AFTER_SEC',
   'REWARD_ZEROED_DAY_ENABLED',
   'REWARD_ZEROED_DAY_WINDOW_DAYS',
   'REWARD_ZEROED_DAY_MAX_FEE_WEI',
@@ -544,6 +564,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_DELIVERY_PROOF_ENABLED: raw.REWARD_DELIVERY_PROOF_ENABLED,
     REWARD_SANCTIONS_KEEPER_ENABLED: raw.REWARD_SANCTIONS_KEEPER_ENABLED,
     REWARD_HORIZON_HEARTBEAT_ENABLED: raw.REWARD_HORIZON_HEARTBEAT_ENABLED,
+    REWARD_ENTRY_SETTLE_ENABLED: raw.REWARD_ENTRY_SETTLE_ENABLED,
     REWARD_DAY_CLOSE_ENABLED: raw.REWARD_DAY_CLOSE_ENABLED,
     REWARD_DAY_CLOSE_MAX_FEE_WEI: raw.REWARD_DAY_CLOSE_MAX_FEE_WEI,
     TG_OPS_BOT_TOKEN: raw.TG_OPS_BOT_TOKEN,
@@ -553,6 +574,8 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     PERIODIC_SETTLE_ENABLED: raw.PERIODIC_SETTLE_ENABLED,
     REWARD_CLOSE_OUT_ENABLED: raw.REWARD_CLOSE_OUT_ENABLED,
     REWARD_CLOSE_OUT_WINDOW_DAYS: raw.REWARD_CLOSE_OUT_WINDOW_DAYS,
+    PROTOCOL_UPKEEP_ENABLED: raw.PROTOCOL_UPKEEP_ENABLED,
+    TIER_LTV_REFRESH_AFTER_SEC: raw.TIER_LTV_REFRESH_AFTER_SEC,
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,
     REWARD_ZEROED_DAY_WINDOW_DAYS: raw.REWARD_ZEROED_DAY_WINDOW_DAYS,
     REWARD_ZEROED_DAY_MAX_FEE_WEI: raw.REWARD_ZEROED_DAY_MAX_FEE_WEI,

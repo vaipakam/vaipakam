@@ -12,6 +12,8 @@ Each section corresponds to an `(i)` info icon next to a card title.
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -194,6 +196,8 @@ to fresh users until they wandered into the Claim Center.
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -293,6 +297,8 @@ lifetime — refinance creates a fresh loan rather than mutating
 the existing one.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -706,6 +712,8 @@ classes, surfaced at different protocol stages:
 
 ---
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -797,6 +805,8 @@ Read the claim, not the NFT.
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -813,6 +823,8 @@ repayments, claims, liquidations, NFT mints and burns, and
 VPFI vault deposits / withdrawals.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -895,6 +907,8 @@ below. The delivery design is in the
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -930,6 +944,8 @@ VPFI exits the discount accumulator immediately (post-balance
 re-stamp on every open loan).
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -1324,6 +1340,8 @@ buyer could step in at the matched price.
 
 ---
 
+<a id="chapter.how-liquidation-actually-works"></a>
+
 ## How Liquidation Actually Works
 
 The Risk Disclosures you agreed to at offer time capture the
@@ -1521,6 +1539,8 @@ strictly-better-when-available optimization, never a blocker.
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -1541,6 +1561,8 @@ the protocol by using a single signature instead, so a clean
 list here does not preclude future deposits.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -1582,6 +1604,8 @@ publishing is currently stubbed pending channel creation.
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -1607,6 +1631,8 @@ The position NFT is the bearer instrument — verify before
 buying on a secondary market.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -1654,69 +1680,110 @@ instantaneous on all loans — there is no waiting period.
 
 ---
 
+<a id="chapter.public-analytics-dashboard"></a>
+
 ## Public Analytics Dashboard
 
 <a id="public-dashboard.overview"></a>
 
 ### About Public Analytics
 
-A wallet-free aggregator computed live from on-chain protocol
-view calls across every supported chain. No backend, no
-database. CSV / JSON export is available; the protocol address
-plus the view function backing every metric is shown for
-verifiability.
+A wallet-free, single-chain page: it reads the chain the app is
+pointed at (the default read chain when no wallet is connected).
+There is no cross-chain rollup and no export; to compare chains,
+open the page on each. Two sources, each labelled where it is
+used:
 
-<a id="public-dashboard.combined"></a>
+- the indexer's keyless, open-CORS read API — the loan, offer,
+  recycling and loop-closure figures;
+- the Diamond's own view functions over a public RPC — the VPFI
+  token and fee figures.
 
-### Combined — All Chains
+Either source can be queried directly to reproduce what the page
+shows.
 
-Cross-chain rollup. The header reports how many chains were
-covered and how many errored, so an unreachable RPC at fetch
-time is explicit. When one or more chains errored, the
-per-chain table flags which one — TVL totals are still
-reported, but acknowledge the gap.
+<a id="public-dashboard.loans-offers"></a>
 
-<a id="public-dashboard.per-chain"></a>
+### Loans and Offers
 
-### Per-Chain Breakdown
+Loan counters by status from `/loans/stats`, including the
+settlement-pending, internally matched and remainder buckets, so
+the parts add up to the total; the ERC-20 and NFT-rental
+subtotals, with any active loan whose asset type is not yet read
+named separately; and offer counters from `/offers/stats`. Offers
+are the `offers` table only — gasless signed orders are not
+counted — and cancelled offers age out of the index, so the offer
+total is not a lifetime figure. An absent counter renders "not
+reported", and an impossible one "reported, but not a usable
+count"; neither is shown as 0.
 
-Per-chain split of the combined metrics. Useful for spotting
-TVL concentration, mismatched VPFI mirror supplies (the sum of
-mirror supplies should equal the canonical adapter's locked
-balance), or stalled chains.
+<a id="public-dashboard.recycling"></a>
 
-<a id="public-dashboard.vpfi-transparency"></a>
+### Recycling Account and Loop Closure
 
-### VPFI Token Transparency
-
-On-chain VPFI accounting on the active chain:
-
-- Total supply, read directly from the ERC-20.
-- Circulating supply — total supply minus protocol-held
-  balances (treasury, reward pools, in-flight bridge packets).
-- Remaining mintable cap — only meaningful on the canonical
-  chain; mirror chains report "n/a" for the cap because mints
-  there are bridge-driven, not minted from the cap.
-
-Cross-chain invariant: the sum of mirror supplies across all
-mirror chains equals the canonical adapter's locked balance.
-A watcher monitors this and alerts on drift.
+The recycling account (`/metrics/recycling`) lists each
+programme day's pool, its funding and what was drawn, labelled by
+the programme's own day index, with an unfinalized day shown
+without a pool and an unarmed day marked as an estimate. Loop
+closure (`/metrics/loop-closure`) shows, per UTC day, what claims
+paid out, what stayed in vaults and what was absorbed, against
+the moment the record reaches. Positive amounts below display
+precision are labelled, shares round down, and an unknown figure
+is never rendered as zero.
 
 <a id="public-dashboard.transparency"></a>
 
 ### Transparency & Source
 
-For every metric the page lists:
+The Diamond address with an explorer link, the chain, and the
+indexer cursor's block and age. Every indexer-sourced figure is
+as current as that cursor and no more; when two responses are
+combined, the older cursor is the one stated.
 
-- The block number used as the snapshot.
-- Data freshness (max staleness across chains).
-- The protocol address and view function call.
+<a id="public-dashboard.vpfi-transparency"></a>
 
-Anyone can re-derive any number on this page from
-RPC + block + protocol address + function name — that's the
-bar.
+### VPFI Token
+
+From `getVPFISnapshot()` on the Diamond: the token address and
+`totalSupply` on this chain. On the canonical chain, also the cap,
+the headroom (`cap − totalSupply`, what can still be minted) and
+the minter. On a mirror chain the snapshot carries no cap or
+minter — supply there arrives through the CCIP token pool — so
+the page shows the local supply and says the cap and minter belong
+to the canonical chain, rather than rendering zeros. An unbound
+token and an unreadable snapshot are stated separately.
+
+<a id="public-dashboard.fees"></a>
+
+### Fees and Treasury
+
+From `getTreasuryMetrics()`, `getTreasury()` and
+`getNumeraireSymbol()`, read in the same Multicall3 aggregate as
+the snapshot and pinned to one block, which the page states with
+its age:
+
+- fees since the fee ledger began, and over the last 24 hours and
+  7 days, each valued in the numeraire at accrual and never
+  revalued;
+- a fee the protocol could not value at accrual is logged as 0, and
+  the window sums scan at most the latest 10,000 ledger entries;
+  both can only understate, and the page says so;
+- a numeraire rotation leaves earlier entries in the old unit, so
+  after one the totals add amounts in two units under the current
+  symbol and can be off in either direction; the page says earlier
+  fees are counted in the old unit;
+- the treasury address. When it is an external address, fees
+  leave on collection and no balance is shown for it. When the
+  Diamond is its own treasury, the held figure is shown, priced
+  only over assets that appear in open loans and including
+  amounts deployed elsewhere on the treasury's behalf.
+
+A view that fails reads "could not be read" and does not hide the
+others.
 
 ---
+
+<a id="chapter.refinance"></a>
 
 ## Refinance
 
@@ -1770,6 +1837,8 @@ Atomic settlement after the new lender has accepted:
 Reverts if HF on the new terms would be below 1.5.
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -1827,6 +1896,8 @@ is bounded by the same 4-DEX failover used for liquidations
 
 ---
 
+<a id="chapter.early-withdrawal-lender"></a>
+
 ## Early Withdrawal (Lender)
 
 This page is lender-only — early withdrawal is initiated by
@@ -1867,6 +1938,8 @@ holding the "complete loan sale" permission; the initiate
 step itself stays user-only.
 
 ---
+
+<a id="chapter.stuck-token-recovery"></a>
 
 ## Stuck-Token Recovery
 
@@ -1982,6 +2055,8 @@ for now; the Vaipakam frontend does not surface it as a
 button. Use a block-explorer "Write Contract" UI or a
 contract-interaction tool to call it.
 
+<a id="chapter.how-vpfi-discounts-work"></a>
+
 ## How VPFI Discounts Work
 
 VPFI held in your vault on Base, the canonical chain, earns you a
@@ -2010,6 +2085,8 @@ none is configured at launch. This chapter covers that holding
 discount. A separate paid fee mode, "Full", stays switched off
 unless a deployment turns it on.
 
+<a id="vpfi-discounts.turning-on"></a>
+
 ### Turning the discount on
 
 The discount is opt-in. The switch is on the VPFI page, and it is
@@ -2031,6 +2108,8 @@ VPFI counts when the protocol records it in your vault: what you deposit
 through the VPFI page, and VPFI rewards the protocol delivers into your
 vault. Tokens sent straight to your vault address are not tracked by the
 protocol and do not raise your tier.
+
+<a id="vpfi-discounts.tier-calculation"></a>
 
 ### How your tier is worked out
 
@@ -2063,6 +2142,8 @@ What this means in practice:
 - A withdrawal that takes you below a tier's floor lowers your tier
   straight away.
 - A dip more than 30 days ago no longer caps you.
+
+<a id="vpfi-discounts.other-chains"></a>
 
 ### Your tier on other chains
 
@@ -2115,6 +2196,8 @@ ended, or the average has caught up — nothing on Base notices until the
 next update to your tier record. The tier-refresh call makes that update
 whenever you choose; the app makes it for you only when you switch the
 discount off.
+
+<a id="vpfi-discounts.operators"></a>
 
 ### For operators
 

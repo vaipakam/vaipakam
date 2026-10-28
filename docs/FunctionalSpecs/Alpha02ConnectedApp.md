@@ -105,6 +105,31 @@ including people who never will.
   being read and offers a way to open it on a public explorer, so a
   reader can go to the primary source rather than accept the page's
   reading of it.
+- The analytics view also states the VPFI token as the chain itself
+  reports it: the token's address, its supply on the chain being read,
+  and — on the chain where VPFI is issued — the supply cap, how much can
+  still be minted under it, and the one address allowed to mint. On a
+  chain VPFI reaches by bridge it shows that chain's supply only and says
+  the cap and the minter belong to the issuing chain, rather than showing
+  them as zero. A chain with no VPFI token set up says so.
+- It states the fees the protocol has recorded — since recording began,
+  over the last day and over the last week — each valued in the
+  reference currency at the moment it was collected, and names that
+  currency. Every reason these figures can be lower than what was really
+  collected is stated beside them: a fee in an asset that could not be
+  valued at the time counts as zero, the day and week figures add up only
+  a bounded number of recent records, and a change of reference currency
+  leaves earlier fees in the old one.
+- It names where fees go. Where the treasury is an ordinary address, the
+  view names and links it and shows no balance for it. Where the protocol
+  contract keeps its own fees, the view shows what it holds, at current
+  value, and says what that figure leaves out.
+- The token and fee figures are read from the protocol contract's own
+  public view functions, which the view names, all at one block; the view
+  states that block and how old the reading is. A figure that could not
+  be read says so and is never shown as zero, and a failed read of one
+  figure does not hide the others. These figures carry supply and fee
+  flows only — never a price, a return or a scarcity claim.
 - Any total the analytics view reports is the sum of the categories it
   shows beside it. Every state counted toward a total is either named or
   gathered into a stated remainder, so a reader can add up the parts and
@@ -1499,6 +1524,18 @@ Consent is collected against the terms actually shown. If a material term,
 warning, selected offer, selected listing, or disclosed risk changes after
 consent, consent is cleared and the user is told to review again.
 
+Every review that collects consent follows this one rule, the same way. The
+consent is tied to the values the review shows, not to how they are printed,
+so two different figures that happen to print alike still count as a change.
+The tick clears in the same update that shows the change, and a review that
+changes and then changes back does not get the consent back: the user ticks
+again against what is on screen. When a change the user did not make clears
+a tick they gave, a line beneath the box says so; clearing it themselves, or
+completing the action, shows no such line. A change that only stops signing
+for the moment, without changing anything that would be signed (a Full
+tariff quote that cannot complete right now), leaves the consent in place,
+and signing stays refused while it holds.
+
 Selecting another offer also resets its Full-tariff choice. Offset funding
 figures and a listing's lifecycle, network, or ownership changes invalidate
 their acknowledgements in the same update as the displayed change. If an
@@ -2204,6 +2241,21 @@ is the borrower's own money.
   its way; and equally, learning that the record has been cleared elsewhere
   must stop the wait rather than leave it running against a record that no
   longer exists.
+- A surface that returns to a submitted close-out after the page was closed
+  establishes what it can from the chain before it falls back on the lender's
+  word (#2086). A transaction's own receipt is its outcome. When there is no
+  receipt and the wallet has since spent the transaction's place in its queue,
+  something else from that wallet took that place — and the platform cannot
+  tell a sped-up copy of the same close-out, which may have gone through, from
+  a cancel or an unrelated transaction, which moved nothing. The surface says
+  exactly that, rather than claiming either outcome, and shows the position as
+  it stands once it has re-read it; it does not offer the action again until
+  that re-read is in. A surface that cannot read the wallet's queue keeps the
+  existing rule: it says it has lost track and leaves the answer to the
+  wallet.
+- Waiting on a transaction the network no longer reports must not become a
+  steady stream of requests. A surface that keeps asking about one slows its
+  asking the longer it goes unanswered.
 - A conditional sentence whose condition cannot arise on the route being shown
   does not belong on it. The swap-to-repay cancellation note is the case in
   point: that facility covers ordinary-asset loans only, so an overdue rental
@@ -4431,7 +4483,13 @@ Its intended behaviour, as the test oracle for this surface:
   principal, and cost within the principal), best payout first, with
   any truncation of the list stated rather than silent; while the
   offer search is loading it says so (loading and "no matches" never
-  look the same). The payout math mirrors the protocol's settlement
+  look the same). The lender's exit chooser reads the very same list,
+  never a second judgement of it: in Advanced mode its sell-now option
+  says when no offer matches and offers no jump to an empty picker
+  (pointing to a listing instead only when listing is itself open),
+  waits while the search is still loading, and makes no claim when the
+  search could not be completed. In Basic mode the offer search is not
+  run, so the option makes no claim either way. The payout math mirrors the protocol's settlement
   to the smallest unit (second-precision accrual, remaining term
   reduced by time elapsed). If the quoted figure moves while a
   review is open, the review closes with a visible explanation and

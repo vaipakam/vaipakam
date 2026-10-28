@@ -75,6 +75,11 @@ export const LIVE_KEYS: ReadonlySet<string> = new Set([
   // prices, debt and third-party actions on the loan, so it rides the
   // same block-driven rail as the other action gates.
   'maxWithdrawable',
+  // Lender exit chooser's sale verdict (#1841): the contract's answer on
+  // whether each sale can be started moves with third-party actions (a
+  // pause, a listing expiring, the due date), so it rides every rail the
+  // other action gates do.
+  'saleExitVerdict',
   // A periodic-interest loan's current period (#2524): moves with the
   // chain clock and a settlement by anyone, so it rides the same rail.
   'periodicInterest',

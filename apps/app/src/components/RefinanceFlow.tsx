@@ -38,7 +38,7 @@
  * cancel, and a pre-existing grant another arrangement depends on must
  * not be zeroed either.
  */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { parseEventLogs } from 'viem';
@@ -79,6 +79,8 @@ import {
   formatTokenAmountExact,
 } from '../lib/format';
 import { ConfirmReceipt } from './ConfirmReceipt';
+import { useReviewConsent } from '../hooks/useReviewConsent';
+import { ConsentWithdrawnNote } from './ConsentWithdrawnNote';
 import type { TokenMeta } from '../contracts/erc20';
 
 /** The request's on-chain lifetime (its `expiresAt`), and the extra
@@ -147,13 +149,10 @@ export function RefinanceFlow({
   const [durationInput, setDurationInput] = useState(() =>
     String(row.durationDays),
   );
-  const [consent, setConsent] = useState(false);
-
-  // Any term edit voids a previously ticked acknowledgement — the
-  // page-wide consent rule (consent covers exactly what was reviewed).
+  // A term edit closes the open review; the consent it carried clears
+  // with the reviewed values below (#1696).
   function setTerm(setter: (v: string) => void, value: string) {
     setter(value);
-    setConsent(false);
     onCloseConfirm();
   }
 
@@ -210,18 +209,27 @@ export function RefinanceFlow({
   const topUpStr = `${formatTokenAmountExact(walletTopUp, dec)} ${sym}`;
   const headroomStr = `${formatTokenAmountExact(payoffHeadroom, dec)} ${sym}`;
 
-  // The consent rule covers the FIGURES too: the live-loan prop, the
-  // fee config, and the grace bucket refresh in the background, so a
-  // payoff/fee quote can change inside an open review — a tick given
-  // against the old numbers must not survive.
-  useEffect(() => {
-    setConsent(false);
-  }, [
-    payoffStr,
-    topUpStr,
-    headroomStr,
+  // Consent covers exactly what was reviewed (#1696): the terms the user
+  // set, and the figures the live-loan prop, the fee config and the grace
+  // bucket refresh in the background, so a payoff or fee quote can change
+  // inside an open review. Keyed on the values, cleared in the same render.
+  const consent = useReviewConsent([
+    row.loanId,
+    rateBps,
+    durationDays,
+    payoff,
+    walletTopUp,
+    payoffHeadroom,
     fees.loanInitiationFeeBps,
     fees.treasuryFeeBps,
+    graceReady,
+    expiryGraceClamped,
+    graceEndTs,
+    live.periodicInterestCadence,
+    principalMeta.symbol,
+    principalMeta.decimals,
+    address,
+    walletChain?.chainId,
   ]);
 
   // #1189/#1236 — refinance stays valid THROUGH the grace window
@@ -479,7 +487,7 @@ export function RefinanceFlow({
       const payload = toRefinanceOfferPayload(liveLoan, row.loanId, {
         rateBpsMax: rateBps,
         durationDays,
-        consent,
+        consent: consent.given,
         // The request's own hard expiry — this is what makes the
         // reviewed lifetime true even when looser caps pre-exist
         // (and the bound the approval above was computed against).
@@ -511,7 +519,7 @@ export function RefinanceFlow({
       const offerId = created[0]?.args.offerId;
       if (offerId !== undefined) onPosted(offerId.toString());
       setDone(copy.refinance.done);
-      setConsent(false);
+      consent.clear();
       onCloseConfirm();
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
     } catch (err) {
@@ -701,12 +709,13 @@ export function RefinanceFlow({
             <label className="cluster" style={{ marginBottom: 12, alignItems: 'flex-start' }}>
               <input
                 type="checkbox"
-                checked={consent}
-                onChange={(e) => setConsent(e.target.checked)}
+                checked={consent.given}
+                onChange={(e) => consent.set(e.target.checked)}
                 style={{ marginTop: 4 }}
               />
               <span>{copy.refinance.consentLabel}</span>
             </label>
+            <ConsentWithdrawnNote consent={consent} />
             <ConfirmReceipt
               busy={busy}
               confirmLabel={copy.refinance.confirm}
@@ -716,7 +725,7 @@ export function RefinanceFlow({
               // undefined (chain hop) while this receipt is open.
               disabled={
                 !walletReady ||
-                !consent ||
+                !consent.given ||
                 !graceReady ||
                 flowDisabled('post-offer')
               }

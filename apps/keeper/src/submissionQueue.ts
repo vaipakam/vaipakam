@@ -72,6 +72,7 @@
  */
 import type { Account, Address, WalletClient } from 'viem';
 import {
+  estimateGas,
   getTransactionCount,
   prepareTransactionRequest,
   sendRawTransaction,
@@ -80,6 +81,7 @@ import {
   writeContract,
 } from 'viem/actions';
 import { HttpRequestError, keccak256, TimeoutError, type Hex } from 'viem';
+import { gasLimitFromEstimate } from '@vaipakam/lib/gasLimit';
 import { SubrequestBudgetExhausted } from './subrequestBudget';
 import { assertEpochsHold } from './epochFence';
 
@@ -302,6 +304,24 @@ export function possiblyRelayedHash(err: unknown): Hex | undefined {
 }
 
 /**
+ * A prepared transaction with the gas limit every keeper send uses (#2997):
+ * when the caller (`args`) named no limit, the node's estimate plus the
+ * one margin {@link gasLimitFromEstimate} adds. A node estimates in the
+ * latest block's environment with no margin at all, and the transaction
+ * mines in a later block, so a call whose cost moves with time can run out
+ * of gas at the bare estimate. Unused gas is not charged, so the margin
+ * costs nothing when it is not needed; it does mean the account must hold
+ * the fee for the higher limit to be accepted.
+ *
+ * The keeper's two preparation sites both apply it: the queued wallet
+ * ({@link queuedWallet}) and the raw slot (`keeperSend.ts`).
+ */
+export function withGasLimitRule<R extends object>(args: { gas?: unknown }, request: R): R {
+  const gas = (request as { gas?: unknown }).gas;
+  return args.gas === undefined && typeof gas === 'bigint' ? { ...request, gas: gasLimitFromEstimate(gas) } : request;
+}
+
+/**
  * `wallet`, with `sendTransaction` AND `writeContract` routed through the
  * queue. Both must be replaced: the wallet's own `writeContract` is a
  * closure over the client it was built with, so replacing
@@ -329,22 +349,28 @@ export function queuedWallet(
   return wallet.extend((base) => {
     // Typed loosely: viem's generic signatures for these actions cannot be
     // restated by a wrapper; the arguments pass through unchanged.
-    const queuedSend = (args: Parameters<typeof sendTransaction>[1]) => {
+    const queuedSend = async (args: Parameters<typeof sendTransaction>[1]) => {
       const account = (args.account ?? base.account) as Account | Address | undefined;
       // Not a local signer, or a nonce the caller chose: viem handles the
       // first (and reports a missing account), and the second is the
       // caller's to coordinate.
       if (typeof account !== 'object' || account.type !== 'local' || args.nonce !== undefined) {
-        return sendTransaction(base, args);
+        // The same gas-limit rule on this path too (#2997): viem would
+        // otherwise prepare it at the bare estimate.
+        const gas = args.gas ?? gasLimitFromEstimate(await estimateGas(base, args as never));
+        return sendTransaction(base, { ...args, gas } as never);
       }
       // viem's own sendTransaction, split at the signature so the slot
       // knows whether a failure could have reached the network.
       return withSubmissionSlot(base, chainId, account.address, notAfterMs, async (nonce, signed) => {
-        const request = await prepareTransactionRequest(base, {
-          ...(args as object),
-          account,
-          nonce,
-        } as never);
+        const request = withGasLimitRule(
+          args,
+          await prepareTransactionRequest(base, {
+            ...(args as object),
+            account,
+            nonce,
+          } as never),
+        );
         const serialized = await signTransaction(base, {
           ...(request as object),
           account,

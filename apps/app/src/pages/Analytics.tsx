@@ -7,12 +7,14 @@
  * here, and pointing those links at an app that had no such route would
  * have landed visitors on an in-shell not-found.
  *
- * WALLET-FREE ON PURPOSE. Every figure comes from the indexer's keyless,
- * open-CORS read API — the same endpoints any third party can call. That
- * is the page's whole claim: a number a visitor cannot reproduce
- * independently is a number they have to take on trust, which is the
- * opposite of transparency. So this page must render fully for someone
- * who has never connected a wallet, and it does.
+ * WALLET-FREE ON PURPOSE. The counters and the recycling account come
+ * from the indexer's keyless, open-CORS read API — the same endpoints any
+ * third party can call — and the VPFI token and fee figures (#2437) from
+ * the Diamond's own view functions over the app's public RPC, at one
+ * stated block. That is the page's whole claim: a number a visitor cannot
+ * reproduce independently is a number they have to take on trust, which
+ * is the opposite of transparency. So this page must render fully for
+ * someone who has never connected a wallet, and it does.
  *
  * ABSENT IS NOT ZERO. Every counter is optional on the wire. When the
  * indexer does not report a field, this renders "not reported" rather
@@ -42,7 +44,6 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import {
-  CLOCK_SKEW_ALLOWANCE_SEC,
   fetchLoanStats,
   fetchOfferStats,
   indexerConfigured,
@@ -53,6 +54,8 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { RecyclingAccount } from '../components/analytics/RecyclingAccount';
 import { LoopClosure } from '../components/analytics/LoopClosure';
 import { useNowSec } from '../hooks/useNowSec';
+import { ageLabel } from '../components/analytics/ageLabel';
+import { ChainFigures } from '../components/analytics/ChainFigures';
 import { idleAware } from '../lib/idle';
 import { useEffect, useRef } from 'react';
 
@@ -91,34 +94,6 @@ function Stat({ label, value }: { label: string; value: number | undefined }) {
       )}
     </div>
   );
-}
-
-/**
- * How old the last ingest is, against a clock the CALLER supplies.
- *
- * `nowSec` is a parameter rather than a `Date.now()` read inside here on
- * purpose. Reading the clock during render freezes the answer at whenever
- * React happened to render: a visitor who leaves this page open would sit
- * on "12s ago" for hours, which is worse than showing no age at all —
- * this page states the age precisely so that stale figures cannot pass as
- * current, and a frozen age is the failure it exists to prevent, wearing
- * the mask of the fix. `useNowSec` is the app's existing ticking clock and
- * its own docstring names this exact bug.
- */
-function ageLabel(updatedAtSec: number | undefined, nowSec: number): string {
-  if (typeof updatedAtSec !== 'number') return copy.analytics.unknown;
-  const secs = nowSec - updatedAtSec;
-  // A STAMP FROM THE FUTURE IS UNKNOWN, NOT BRAND NEW (review round 22
-  // P2). `Math.max(0, …)` turned a negative age into "0s ago" — so a
-  // skewed or corrupted timestamp was rendered as the most current
-  // reading this page can show, which is the precise inverse of the
-  // rule it exists to honour: an unknown age must never pass as a fresh
-  // one. A small allowance keeps ordinary clock differences readable.
-  if (secs < -CLOCK_SKEW_ALLOWANCE_SEC) return copy.analytics.unknown;
-  if (secs < 0) return copy.analytics.ageSeconds(0);
-  if (secs < 90) return copy.analytics.ageSeconds(secs);
-  if (secs < 5400) return copy.analytics.ageMinutes(Math.round(secs / 60));
-  return copy.analytics.ageHours(Math.round(secs / 3600));
 }
 
 export function Analytics() {
@@ -516,6 +491,20 @@ export function Analytics() {
               {copy.analytics.caveat}
             </p>
           </section>
+
+      {/*
+        #2437 — THE CONTRACT'S OWN FIGURES. After the transparency section,
+        whose "figures above are read from the public indexer" must stay
+        true: these are not, and the section says where they come from,
+        at which block, and how old that reading is. Outside every
+        indexer guard, because an indexer outage is no reason to hide
+        what the chain answers directly.
+      */}
+      <ChainFigures
+        chainId={chainId}
+        diamond={readChain.diamondAddress}
+        explorer={readChain.blockExplorer}
+      />
     </div>
   );
 }

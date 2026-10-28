@@ -44,7 +44,7 @@ const LOAN_SALE_LISTING_CHAINS: ReadonlySet<number> = new Set([
 export function loanSaleListingEnabled(chainId: number): boolean {
   return LOAN_SALE_LISTING_CHAINS.has(chainId);
 }
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import {
@@ -80,6 +80,8 @@ import type { IndexedLoan } from '../data/indexer';
 import { MAX_INTEREST_BPS, percentToBps } from '../lib/offerSchema';
 import { formatDateTime, formatTokenAmountExact } from '../lib/format';
 import { ConfirmReceipt } from './ConfirmReceipt';
+import { useReviewConsent } from '../hooks/useReviewConsent';
+import { ConsentWithdrawnNote } from './ConsentWithdrawnNote';
 import { SimulationPreview } from './SimulationPreview';
 import type { TxSimInput } from '../contracts/useTxSimulation';
 import type { TokenMeta } from '../contracts/erc20';
@@ -139,10 +141,6 @@ export function LoanSaleFlow({
   const [rateInput, setRateInput] = useState(
     () => String(Number(live.interestRateBps) / 100),
   );
-  // Explicit risk-and-terms attestation — recorded on-chain on the
-  // offer (creatorRiskAndTermsConsent), so it must be a real tick,
-  // voided whenever the reviewed terms change.
-  const [consent, setConsent] = useState(false);
   // Mandatory finite listing window (LenderEarlyWithdrawalUXDesign item 1):
   // the seller picks a duration; there is no never-expires option. The
   // contract bounds it to [1 hour, 30 days] and additionally clamps the
@@ -184,35 +182,6 @@ export function LoanSaleFlow({
     quote.data !== undefined && !quote.isError ? quote.data : null;
   const [reviewed, setReviewed] = useState<SellerBoundsQuote | null>(null);
 
-  // #1028 item 2 — advisory pre-sign dry run of the exact listing
-  // calldata. All its args exist pre-sign; built only once consent
-  // is ticked (the contract checks it, and previewing consent=false
-  // would just show that revert). The listing needs no approval, so a
-  // "passed" verdict is accurate for what this signature sends.
-  const simTx = useMemo((): TxSimInput | null => {
-    if (!walletChain || rateBps === null || !rateValid || !consent || !reviewed) {
-      return null;
-    }
-    return {
-      to: walletChain.diamondAddress,
-      data: encodeFunctionData({
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'createLoanSaleOfferBound',
-        args: [
-          BigInt(row.loanId),
-          rateBps,
-          consent,
-          listingSeconds,
-          reviewed.minSellerNet,
-          reviewed.maxHeld,
-        ],
-      }),
-      value: 0n,
-    };
-  }, [walletChain, rateBps, rateValid, consent, row.loanId, listingSeconds, reviewed]);
-
-  const sym = principalMeta.symbol;
-  const dec = principalMeta.decimals;
   // An unavailable QUOTE must not take the listing surface with it (Codex
   // #1801 r10 P2). `readLoanLive` deliberately still resolves when the optional
   // window read fails, and `sellerEconomics` throws rather than substituting a
@@ -228,19 +197,72 @@ export function LoanSaleFlow({
       ? saleSettlementNow(live, BigInt(rateBps))
       : null;
 
+  // Explicit risk-and-terms attestation — recorded on-chain on the offer
+  // (creatorRiskAndTermsConsent), so it must be a real tick, voided whenever
+  // the reviewed terms change: the rate and window the user set, the figures
+  // frozen with the review, and today's settlement cost, which moves with
+  // the live loan. Keyed on the values and cleared in the same render
+  // (#1696).
+  const consent = useReviewConsent([
+    row.loanId,
+    rateBps,
+    listingSeconds,
+    reviewed?.minSellerNet,
+    reviewed?.maxHeld,
+    nowCost,
+    principalMeta.symbol,
+    principalMeta.decimals,
+    address,
+    walletChain?.chainId,
+  ]);
+
+  // #1028 item 2 — advisory pre-sign dry run of the exact listing
+  // calldata. All its args exist pre-sign; built only once consent
+  // is ticked (the contract checks it, and previewing consent=false
+  // would just show that revert). The listing needs no approval, so a
+  // "passed" verdict is accurate for what this signature sends.
+  // Not memoized: the simulation keys on the calldata, not on the object.
+  const boundListingTx = ((): TxSimInput | null => {
+    if (!walletChain || rateBps === null || !rateValid || !reviewed) {
+      return null;
+    }
+    return {
+      to: walletChain.diamondAddress,
+      data: encodeFunctionData({
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'createLoanSaleOfferBound',
+        args: [
+          BigInt(row.loanId),
+          rateBps,
+          true,
+          listingSeconds,
+          reviewed.minSellerNet,
+          reviewed.maxHeld,
+        ],
+      }),
+      value: 0n,
+    };
+  })();
+  // Previewed with consent `true`, which is the only value it is ever
+  // shown for.
+  const simTx = consent.given ? boundListingTx : null;
+
+  const sym = principalMeta.symbol;
+  const dec = principalMeta.decimals;
+
   // ONE way into the review and one way out of a stale one (Codex #2673 r1).
   // Consent always covers exactly the figures frozen with it, so opening a
   // review clears it. A stale review also drops the cached quote — the
   // figures that just failed — so Review stays unavailable until the current
   // figures have been read, rather than re-offering the same refusal.
   function openReview(q: SellerBoundsQuote) {
-    setConsent(false);
+    consent.clear();
     setReviewed(q);
     onOpenConfirm();
   }
 
   function closeStaleReview() {
-    setConsent(false);
+    consent.clear();
     setReviewed(null);
     onCloseConfirm();
     void queryClient.resetQueries({
@@ -341,7 +363,7 @@ export function LoanSaleFlow({
           args: [
             BigInt(row.loanId),
             rateBps,
-            consent,
+            consent.given,
             listingSeconds,
             reviewed.minSellerNet,
             reviewed.maxHeld,
@@ -376,7 +398,7 @@ export function LoanSaleFlow({
       const { receipt } = await write('createLoanSaleOfferBound', [
         BigInt(row.loanId),
         rateBps,
-        consent,
+        consent.given,
         listingSeconds,
         reviewed.minSellerNet,
         reviewed.maxHeld,
@@ -417,7 +439,6 @@ export function LoanSaleFlow({
             value={rateInput}
             onChange={(e) => {
               setRateInput(e.target.value.trim());
-              setConsent(false); // consent covers what was reviewed
               setReviewed(null);
               onCloseConfirm(); // edited terms void the open review
             }}
@@ -431,7 +452,6 @@ export function LoanSaleFlow({
             value={listingDays}
             onChange={(e) => {
               setListingDays(Number(e.target.value));
-              setConsent(false); // consent covers what was reviewed
               setReviewed(null);
               onCloseConfirm(); // edited terms void the open review
             }}
@@ -508,18 +528,19 @@ export function LoanSaleFlow({
           <label className="cluster" style={{ marginBottom: 12, alignItems: 'flex-start' }}>
             <input
               type="checkbox"
-              checked={consent}
-              onChange={(e) => setConsent(e.target.checked)}
+              checked={consent.given}
+              onChange={(e) => consent.set(e.target.checked)}
               style={{ marginTop: 4 }}
             />
             <span>{copy.loanSale.consentLabel}</span>
           </label>
+          <ConsentWithdrawnNote consent={consent} />
           <ConfirmReceipt
             busy={busy}
             confirmLabel={copy.loanSale.confirm}
             onBack={onCloseConfirm}
             onConfirm={() => void submit()}
-            disabled={!walletReady || !consent || quoteUnavailable || flowDisabled('post-offer')}
+            disabled={!walletReady || !consent.given || quoteUnavailable || flowDisabled('post-offer')}
             data={{
               youReceive: [
                 copy.loanSale.receiptFloor(formatTokenAmountExact(reviewed.minSellerNet, dec), sym),

@@ -13,6 +13,8 @@
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -117,6 +119,8 @@ switch はいつでも off にできます。vault から VPFI を引き出す
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -170,6 +174,8 @@ asset が borrower に渡り、lender は lender-of-record になり、
 この rate は loan の作成時に固定されるため、後から protocol fee が変更されても、すでに開いている loan は開始時の rate のままです。
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -321,6 +327,8 @@ desk が巻き戻すことはできません。sign する前に、ここをよ�
 
 ---
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -376,6 +384,8 @@ claim はあなたの borrower position NFT を consume します。逆は成り
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -390,6 +400,8 @@ live に読み取られます。落ちる可能性のある central server は
 group されるので、同じ click で行った操作はまとまって見えます。
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -435,6 +447,8 @@ discount math は低い tier で計算されます。
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -458,6 +472,8 @@ claim できます。interaction-pool の share は 1 日に 1 回 settle
 は次の daily window が閉じた少し後に live になります。
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -579,6 +595,8 @@ role-specific tabs で各 side の options を確認できます。今は
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -596,6 +614,8 @@ clean な approvals list を保つのは、Uniswap や 1inch と同じく
 良い hygiene です。
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -632,6 +652,8 @@ Push Protocol (wallet への direct notification)、または両方を
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -650,6 +672,8 @@ position NFT _こそ_ が loan から claim する権利です。fake、また�
 ます。
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -678,53 +702,79 @@ list から remove します。
 
 ---
 
+<a id="chapter.public-analytics-dashboard"></a>
+
 ## Public Analytics Dashboard
 
 <a id="public-dashboard.overview"></a>
 
 ### Public Analytics について
 
-wallet 不要で見られる、protocol 全体の透明な view です: total
-value locked、loan volumes、default rates、VPFI supply、recent
-activity。すべて on-chain data から live に計算されます — この
-ページのどの数字にも private database はありません。
+1つのネットワーク上のプロトコルを、ウォレットなしで見られる
+ページです。対象はアプリが読み取っているネットワークです。何も
+接続する必要はありません。ページは2つの公開情報源に基づき、各
+数値がどちらから来たかを示します。キーなしで誰でも照会できる
+公開インデクサーと、プラットフォームのコントラクトそのものです。
+数値を鵜呑みにする必要はありません。
 
-<a id="public-dashboard.combined"></a>
+<a id="public-dashboard.loans-offers"></a>
 
-### Combined — All Chains
+### ローンとオファー
 
-supported chains すべてを合計した protocol-wide totals です。
-小さな "X chains covered, Y unreachable" の行は、page load 時に
-どこかの chain network が offline だったかを示します — もし
-あれば、該当 chain が下の per-chain table で flag されます。
+状態別のローン件数(アクティブ、返済済み、デフォルト、清算済み
+など)と状態別のオファー件数で、公開インデクサーから取得します。
+インデクサーが報告しなかった件数は「報告なし」と表示され、ゼロと
+表示されることはありません。数えるのはオンチェーンのオファーのみ
+で、ガス不要の署名済み注文はここでは数えません(Offer Book には
+表示されます)。オファーの合計は現在記録されているオファーで、
+累計ではありません。
 
-<a id="public-dashboard.per-chain"></a>
+<a id="public-dashboard.recycling"></a>
 
-### Per-Chain Breakdown
+### リサイクル勘定とループクロージャー
 
-同じ totals を chain ごとに分けた view です。どの chain に最も
-TVL があるか、どこで loans が多く起きているか、どこかの chain
-が stalled していないかを見るのに便利です。
-
-<a id="public-dashboard.vpfi-transparency"></a>
-
-### VPFI Token Transparency
-
-この chain 上の VPFI の live state です — total supply、実際に
-circulating している量 (protocol-held balances を差し引いた後)、
-そして cap の下でまだどれだけ mint 可能か。設計上、全 chains
-を通じて supply は bounded に保たれます。
+各日の報酬プールがどこから来て、そのうちどれだけが引き出された
+か、そしてクレームで支払われた報酬 VPFI のうちどれだけがプラット
+フォーム内にとどまっているかを示します。公開インデクサーの帳簿
+記録です。まだ分からない数値は、ゼロを表示せずにそのことを示し
+ます。
 
 <a id="public-dashboard.transparency"></a>
 
-### Transparency & Source
+### 透明性と情報源
 
-このページのどの数字も、blockchain から直接 re-derive できます。
-このカードには snapshot block、data がいつ fetch されたか、各
-metric がどの contract address から来たかが表示されます。数字を
-verify したいなら、ここから始めます。
+プラットフォームのコントラクトのアドレス(ブロックエクスプローラー
+で開くリンク付き)、ネットワーク、インデクサーが最後に読み取った
+ブロックとそれがどれだけ前か。インデクサーの数値はそのブロック
+時点までのものなので、経過時間を表示しています。
+
+<a id="public-dashboard.vpfi-transparency"></a>
+
+### VPFI トークン
+
+インデクサーではなく、プラットフォームのコントラクトから直接読み
+取ります。VPFI トークンのアドレスと、このネットワーク上の供給量
+です。VPFI が発行されるネットワークでは、供給量の上限、上限内で
+まだミントできる量、ミントを許可された唯一のアドレスも表示します。
+ブリッジで VPFI が届くネットワークでは、そのネットワークの供給量
+のみを表示します。
+
+<a id="public-dashboard.fees"></a>
+
+### 手数料とトレジャリー
+
+これもコントラクトから読み取ります。記録開始以降、過去1日、過去1
+週間にプロトコルが記録した手数料と、その送り先のトレジャリーアドレ
+スです。ページは読み取ったブロック、その読み取りの経過時間、呼び出
+した関数を示し、手数料の数値が実際の徴収額より少なくなりうる理由を
+すべて記載します。基準通貨が変更された後は以前の手数料が旧単位のま
+ま残り、合計が多くも少なくもずれることがあります。ページはこのこと
+も記載します。読み取れなかった数値は、ゼロを表示せずにそのことを示
+します。
 
 ---
+
+<a id="chapter.refinance"></a>
 
 ## Refinance
 
@@ -769,6 +819,8 @@ loan を返済し、新しい loan を open し、その間ずっと collateral
 window なしです。
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -818,6 +870,8 @@ exit するついでに collateral の一部を売りたいなら **Offset** を
 preclose で half-close はできません。
 
 ---
+
+<a id="chapter.early-withdrawal-lender"></a>
 
 ## Early Withdrawal (Lender)
 

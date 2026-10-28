@@ -14,6 +14,8 @@ Karten-Titel.
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -211,6 +213,8 @@ neue Nutzer unsichtbar, bis sie zufällig ins Claim Center gehen.
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -319,6 +323,8 @@ unveränderlich — Refinance erstellt einen neuen Loan, statt den
 bestehenden zu verändern.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Offer erstellen
 
@@ -759,6 +765,8 @@ oberflächlich gemacht:
   Warteschlange.
 
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -850,6 +858,8 @@ nicht den NFT.
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -866,6 +876,8 @@ zuerst. Zeigt Offers, Loans, Rückzahlungen, Claims, Liquidationen,
 NFT-Mints/-Burns und VPFI-Vault-Einzahlungen / -Abhebungen.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -955,6 +967,8 @@ Zustellung steht im
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -993,6 +1007,8 @@ Abgehobenes VPFI verlässt den Rabatt-Akkumulator sofort
 (Post-Saldo-Re-Stamp auf jedem offenen Loan).
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -1277,6 +1293,8 @@ ein Dritt-Käufer beim matched price eingreifen könnte.
 
 ---
 
+<a id="chapter.how-liquidation-actually-works"></a>
+
 ## Wie Liquidationen tatsächlich funktionieren
 
 Die Risiko-Hinweise, denen du bei der Angebotserstellung zugestimmt hast, fassen das Worst-Case-Szenario in zwei Sätzen zusammen. Dieser Abschnitt erklärt die zugrunde liegenden Mechanismen — nützlich, wenn du verstehen willst, WARUM der In-Kind-Fallback existiert oder welchen der vier Wege dein Loan tatsächlich nehmen würde.
@@ -1375,6 +1393,8 @@ Wenn keine Gegenpartei existiert, fällt das Protokoll auf den oben beschriebene
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -1396,6 +1416,8 @@ verwenden, sodass eine saubere Liste hier zukünftige Deposits
 nicht ausschließt.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -1439,6 +1461,8 @@ bis der Channel erstellt ist.
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT-Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -1463,6 +1487,8 @@ Der Position-NFT ist das Inhaber-Instrument — verifiziere ihn,
 bevor du auf einem Sekundärmarkt kaufst.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper-Einstellungen
 
@@ -1513,71 +1539,117 @@ Wartezeit.
 
 ---
 
+<a id="chapter.public-analytics-dashboard"></a>
+
 ## Public Analytics Dashboard
 
 <a id="public-dashboard.overview"></a>
 
 ### Über Public Analytics
 
-Ein walletfreier Aggregator, der live aus On-Chain-View-Calls des
-Protokolls über jede unterstützte Chain berechnet wird. Kein
-Backend, keine Datenbank. CSV- / JSON-Export ist verfügbar; die
-Protokolladresse plus die View-Funktion hinter jeder Metrik werden
-zur Verifizierbarkeit angezeigt.
+Eine Wallet-freie Seite für eine einzelne Chain: Sie liest die
+Chain, auf die die App zeigt (ohne verbundene Wallet die
+Standard-Lese-Chain). Es gibt keinen Cross-Chain-Rollup und keinen
+Export; um Chains zu vergleichen, öffne die Seite auf jeder. Zwei
+Quellen, jeweils dort gekennzeichnet, wo sie genutzt werden:
 
-<a id="public-dashboard.combined"></a>
+- die schlüssellose Lese-API des Indexers mit offenem CORS — die
+  Loan-, Offer-, Recycling- und Loop-Closure-Zahlen;
+- die View-Funktionen des Diamonds selbst über einen öffentlichen
+  RPC — die VPFI-Token- und Gebührenzahlen.
 
-### Kombiniert — Alle Chains
+Jede Quelle kann direkt abgefragt werden, um das Gezeigte
+nachzuvollziehen.
 
-Cross-Chain-Rollup. Der Header zeigt, wie viele Chains abgedeckt
-wurden und wie viele Fehler hatten, sodass ein zur Fetch-Zeit nicht
-erreichbarer RPC explizit sichtbar ist. Wenn eine oder mehrere
-Chains Fehler hatten, markiert die Per-Chain-Tabelle, welche —
-TVL-Summen werden trotzdem angezeigt, aber mit dieser Lücke.
+<a id="public-dashboard.loans-offers"></a>
 
-<a id="public-dashboard.per-chain"></a>
+### Loans und Offers
 
-### Aufschlüsselung pro Chain
+Loan-Zähler nach Status aus `/loans/stats`, einschließlich der
+Töpfe für ausstehende Abwicklung, intern gematchte Loans und den
+Rest, sodass die Teile die Summe ergeben; die Teilsummen für
+ERC-20 und NFT-Rentals, wobei aktive Loans, deren Asset-Typ noch
+nicht gelesen ist, gesondert genannt werden; und Offer-Zähler aus
+`/offers/stats`. Offers sind nur die `offers`-Tabelle — gaslose
+signierte Orders zählen nicht —, und stornierte Offers fallen aus
+dem Index, daher ist die Offer-Summe keine Gesamtzahl über die
+Laufzeit. Ein fehlender Zähler erscheint als „nicht gemeldet", ein
+unmöglicher als „gemeldet, aber keine verwendbare Anzahl"; keiner
+wird als 0 gezeigt.
 
-Per-Chain-Aufteilung der kombinierten Metriken. Nützlich, um
-TVL-Konzentration, nicht passende VPFI-Mirror-Supplies (die Summe
-der Mirror-Supplies sollte dem Lock-Saldo des kanonischen Adapters
-entsprechen) oder stillstehende Chains zu erkennen.
+<a id="public-dashboard.recycling"></a>
 
-<a id="public-dashboard.vpfi-transparency"></a>
+### Recyclingkonto und Loop Closure
 
-### VPFI-Token-Transparenz
-
-On-Chain-VPFI-Buchhaltung auf der aktiven Chain:
-
-- Gesamt-Supply, direkt aus dem ERC-20 gelesen.
-- Zirkulierender Supply — Gesamt-Supply minus
-  vom Protokoll gehaltene Bestände (Treasury, Reward-Pools,
-  in-flight Bridge-Pakete).
-- Verbleibender mintbarer Cap — nur auf der kanonischen Chain
-  aussagekräftig; Mirror-Chains berichten "n/a" für den Cap,
-  weil Mints dort bridge-getrieben sind, nicht aus dem Cap
-  geminted.
-
-Cross-Chain-Invariante: Die Summe der Mirror-Supplies über alle
-Mirror-Chains entspricht dem Lock-Saldo des kanonischen
-Adapters. Ein Watcher überwacht das und alarmiert bei Drift.
+Das Recyclingkonto (`/metrics/recycling`) listet für jeden
+Programmtag den Pool, seine Finanzierung und die Entnahme,
+beschriftet mit dem eigenen Tagesindex des Programms; ein nicht
+finalisierter Tag erscheint ohne Pool, ein nicht scharf
+geschalteter Tag als Schätzung. Loop Closure
+(`/metrics/loop-closure`) zeigt pro UTC-Tag, was Claims
+ausgezahlt haben, was in Vaults blieb und was absorbiert wurde,
+gemessen am Zeitpunkt, bis zu dem die Aufzeichnung reicht.
+Positive Beträge unter der Anzeigegenauigkeit werden beschriftet,
+Anteile abgerundet, und eine unbekannte Zahl wird nie als null
+gezeigt.
 
 <a id="public-dashboard.transparency"></a>
 
 ### Transparenz & Quelle
 
-Für jede Metrik werden gelistet:
+Die Diamond-Adresse mit Explorer-Link, die Chain sowie Block und
+Alter des Indexer-Cursors. Jede Zahl aus dem Indexer ist genau so
+aktuell wie dieser Cursor; werden zwei Antworten kombiniert, wird
+der ältere Cursor angegeben.
 
-- Die als Snapshot verwendete Block-Nummer.
-- Daten-Aktualität (max. Staleness über Chains hinweg).
-- Die Adresse des Protokolls und der View-Funktionsaufruf.
+<a id="public-dashboard.vpfi-transparency"></a>
 
-Jeder kann jede Zahl auf dieser Seite aus RPC + Block + Adresse
-des Protokolls + Funktionsname neu ableiten — das ist der
-Maßstab.
+### VPFI-Token
+
+Aus `getVPFISnapshot()` am Diamond: die Token-Adresse und
+`totalSupply` auf dieser Chain. Auf der kanonischen Chain zusätzlich
+die Obergrenze, der Spielraum (`cap − totalSupply`, also was noch
+geprägt werden kann) und der Minter. Auf einer Mirror-Chain trägt
+der Snapshot weder Obergrenze noch Minter — die Menge kommt dort
+über den CCIP-Token-Pool —, daher zeigt die Seite die lokale Menge
+und sagt, dass Obergrenze und Minter zur kanonischen Chain gehören,
+statt Nullen anzuzeigen. Ein nicht gebundener Token und ein nicht
+lesbarer Snapshot werden getrennt genannt.
+
+<a id="public-dashboard.fees"></a>
+
+### Gebühren und Treasury
+
+Aus `getTreasuryMetrics()`, `getTreasury()` und
+`getNumeraireSymbol()`, im selben Multicall3-Aggregat wie der
+Snapshot gelesen und an einen Block gebunden, den die Seite mit
+seinem Alter nennt:
+
+- Gebühren seit Beginn des Gebührenbuchs sowie über die letzten
+  24 Stunden und 7 Tage, jeweils bei Erfassung im Numeraire
+  bewertet und nie neu bewertet;
+- eine Gebühr, die das Protokoll bei Erfassung nicht bewerten
+  konnte, wird mit 0 gebucht, und die Fenstersummen lesen höchstens
+  die letzten 10.000 Einträge — beides kann nur unterzeichnen, und
+  die Seite sagt das;
+- ein Wechsel des Numeraires lässt frühere Einträge in der alten
+  Einheit, sodass die Summen danach Beträge in zwei Einheiten unter
+  dem aktuellen Symbol addieren und in beide Richtungen abweichen
+  können; die Seite sagt, dass frühere Gebühren in der alten Einheit
+  gezählt sind;
+- die Treasury-Adresse. Ist es eine externe Adresse, verlassen
+  Gebühren den Vertrag bei Erhebung, und es wird kein Saldo dafür
+  gezeigt. Ist der Diamond seine eigene Treasury, wird der
+  gehaltene Betrag gezeigt, bewertet nur über Assets, die in
+  offenen Loans vorkommen, und einschließlich Beträgen, die im
+  Namen der Treasury anderswo angelegt sind.
+
+Eine fehlgeschlagene View zeigt „konnte nicht gelesen werden" und
+verdeckt die anderen nicht.
 
 ---
+
+<a id="chapter.refinance"></a>
 
 ## Refinance
 
@@ -1634,6 +1706,8 @@ Atomares Settlement, nachdem der neue Lender akzeptiert hat:
 Revertet, wenn HF unter den neuen Konditionen unter 1,5 läge.
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -1694,6 +1768,8 @@ Balancer V2).
 
 ---
 
+<a id="chapter.early-withdrawal-lender"></a>
+
 ## Early Withdrawal (Lender)
 
 Diese Seite ist nur für Lender — Early Withdrawal wird vom Lender
@@ -1735,6 +1811,8 @@ delegierbar, der die "Loan-Verkauf abschließen"-Permission hält;
 der Initiate-Schritt selbst bleibt user-only.
 
 ---
+
+<a id="chapter.stuck-token-recovery"></a>
 
 ## Wiederherstellung hängengebliebener Token
 
@@ -1795,6 +1873,8 @@ Wenn du einen öffentlichen On-Chain-Nachweis möchtest, dass ein bestimmter Tok
 
 Die Disown-Funktion ist derzeit nur über direkten Vertragsaufruf zugänglich; das Vaipakam-Frontend bietet dafür keinen Button an. Nutze die "Write Contract"-Oberfläche eines Block-Explorers oder ein Tool zur Interaktion mit Smart Contracts, um sie aufzurufen.
 
+<a id="chapter.how-vpfi-discounts-work"></a>
+
 ## Wie VPFI-Rabatte funktionieren
 
 VPFI in deinem Vault auf Base, der kanonischen Chain, bringt dir einen
@@ -1824,6 +1904,8 @@ behandelt diesen Halte-Rabatt. Ein separater bezahlter Gebührenmodus,
 „Full“, bleibt ausgeschaltet, solange ein Deployment ihn nicht
 einschaltet.
 
+<a id="vpfi-discounts.turning-on"></a>
+
 ### Den Rabatt einschalten
 
 Der Rabatt ist Opt-in. Der Schalter liegt auf der VPFI-Seite, und es
@@ -1847,6 +1929,8 @@ VPFI zählt, wenn das Protokoll es in deinem Vault erfasst: was du über
 die VPFI-Seite einzahlst, und VPFI-Rewards, die das Protokoll in deinen
 Vault liefert. Token, die direkt an die Adresse deines Vaults geschickt
 werden, verfolgt das Protokoll nicht, und sie erhöhen dein Tier nicht.
+
+<a id="vpfi-discounts.tier-calculation"></a>
 
 ### Wie dein Tier berechnet wird
 
@@ -1882,6 +1966,8 @@ Was das praktisch heißt:
   senkt dein Tier sofort.
 - Ein Absinken, das mehr als 30 Tage zurückliegt, begrenzt dich nicht
   mehr.
+
+<a id="vpfi-discounts.other-chains"></a>
 
 ### Dein Tier auf anderen Chains
 
@@ -1941,6 +2027,8 @@ erreicht oder der Durchschnitt hat aufgeholt —, bemerkt Base das erst
 bei der nächsten Aktualisierung deines Tier-Eintrags. Der Aufruf zum
 Auffrischen des Tiers macht diese Aktualisierung, wann immer du willst;
 die App macht ihn für dich nur, wenn du den Rabatt ausschaltest.
+
+<a id="vpfi-discounts.operators"></a>
 
 ### Für Betreiber
 

@@ -24,7 +24,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { CircleCheck, LoaderCircle, Search } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { encodeFunctionData, type Address } from 'viem';
@@ -64,10 +64,11 @@ import {
 import type { IndexedOffer } from '../data/indexer';
 import {
   OFFER_DURATION_BUCKETS_DAYS,
-  initialOfferForm,
+  initialOfferTerms,
   toCreateOfferPayload,
-  validateOfferForm,
-  type OfferFormState,
+  validateOfferTerms,
+  withConsent,
+  type OfferTerms,
 } from '../lib/offerSchema';
 import {
   cadenceAllowed,
@@ -112,7 +113,7 @@ import {
   captureTxError,
 } from '../lib/errors';
 import { copy } from '../content/copy';
-import { ConsentLabel } from './ConsentLabel';
+import { FlowDoneCard, ReviewFooter } from './FlowFinish';
 import { LifecycleTermsList } from './LifecycleTermsList';
 import { TokenScreenBanner } from './TokenScreenBanner';
 import {
@@ -158,8 +159,9 @@ import { Checklist, allChecksPass, type CheckItem } from './Checklist';
 import { ReviewReceipt, type ReceiptData } from './ReviewReceipt';
 import { EmptyState } from './EmptyState';
 import { ConnectButton } from './ConnectButton';
-import { StepNav } from './StepNav';
-import { useEligibility } from './useEligibility';
+import { StepNav, type StepDef } from './StepNav';
+import { consentCheck, useEligibility } from './useEligibility';
+import { useReviewConsent } from '../hooks/useReviewConsent';
 import { idleAware } from '../lib/idle';
 
 type Side = 'lender' | 'borrower';
@@ -375,8 +377,10 @@ export function OfferFlow({ side }: { side: Side }) {
     setFullTariffFor(selectedOfferId);
     setFullTariff(FULL_TARIFF_OFF);
   }
-  const [form, setForm] = useState<OfferFormState>({
-    ...initialOfferForm,
+  // The terms only: the risk-and-terms consent lives with the review
+  // (`useReviewConsent` below, #1696) and joins them at payload time.
+  const [form, setForm] = useState<OfferTerms>({
+    ...initialOfferTerms,
     offerType: side,
   });
   // #1037 — null while idle; {kind, current, total} during the
@@ -400,16 +404,11 @@ export function OfferFlow({ side }: { side: Side }) {
   // what KIND of accept just completed.
   const [doneWasSaleBuy, setDoneWasSaleBuy] = useState<string | null>(null);
 
-  // ANY form edit is potentially disclosure-driving — the central rule
-  // voids prior consent on every patch that doesn't itself set the
-  // consent field. New inputs get the reset for free; forgetting it at
-  // a call site is impossible.
-  const set = (patch: Partial<OfferFormState>) =>
-    setForm((f) => ({
-      ...f,
-      ...('riskAndTermsConsent' in patch ? {} : { riskAndTermsConsent: false }),
-      ...patch,
-    }));
+  // ANY form edit is potentially disclosure-driving. The consent is keyed
+  // on the whole form (see `useReviewConsent` below), so every edit voids
+  // it without a call site having to remember to.
+  const set = (patch: Partial<OfferTerms>) =>
+    setForm((f) => ({ ...f, ...patch }));
 
   // ---- Deep link (?offer=<id>) from the Offer Book -------------------
   // Validates the SAME rules as the browse path (side, open, ERC-20
@@ -478,7 +477,7 @@ export function OfferFlow({ side }: { side: Side }) {
     // and the guards above (wrong side, wrong kind, own offer, gone) all read
     // the resolved row.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setForm((f) => ({ ...f, lendingAsset: row.lendingAsset, riskAndTermsConsent: false }));
+    setForm((f) => ({ ...f, lendingAsset: row.lendingAsset }));
     setSelected(row);
     setMode('accept');
     setStep('review');
@@ -764,7 +763,7 @@ export function OfferFlow({ side }: { side: Side }) {
     const raw = side === 'lender' ? form.amount : form.collateralAmount;
     if (!meta || !raw || Number(raw) <= 0) return undefined;
     try {
-      const payload = toCreateOfferPayload(form, {
+      const payload = toCreateOfferPayload(withConsent(form, false), {
         lending: lendingMeta.data?.decimals,
         collateral: collateralMeta.data?.decimals,
       });
@@ -812,24 +811,9 @@ export function OfferFlow({ side }: { side: Side }) {
           metaError: counterMeta.isError,
         }
       : undefined,
-    consent: form.riskAndTermsConsent,
+    // The consent item joins these where the consent is read, after the
+    // review it is keyed on is known (`checks`, below).
   });
-  // The receipt's fee row must quote the GOVERNED values — hold the
-  // sign button until the live config read lands rather than letting
-  // users sign against compile-time defaults.
-  const checks = useMemo(
-    (): CheckItem[] => [
-      ...baseChecks,
-      {
-        id: 'live-fees',
-        label: fees.ready
-          ? copy.offerFlow.liveFeesLoaded
-          : copy.offerFlow.liveFeesLoading,
-        state: fees.ready ? 'pass' : 'pending',
-      },
-    ],
-    [baseChecks, fees.ready],
-  );
 
   // ---- Matching offers -------------------------------------------------
   const activeOffers = useActiveOffers();
@@ -911,33 +895,23 @@ export function OfferFlow({ side }: { side: Side }) {
   }
 
   // ---- Step plumbing ----------------------------------------------------
-  const stepLabels =
+  // The steps this mode walks, each with its label. `terms` is post-only:
+  // an accept goes from the chosen offer straight to its review.
+  const flowSteps: readonly StepDef<FlowStep>[] =
     mode === 'post'
-      ? ([
-          copy.offerFlow.steps.details,
-          copy.offerFlow.steps.offers,
-          copy.offerFlow.steps.terms,
-          copy.offerFlow.steps.review,
-          copy.offerFlow.steps.done,
-        ] as const)
-      : ([
-          copy.offerFlow.steps.details,
-          copy.offerFlow.steps.offers,
-          copy.offerFlow.steps.review,
-          copy.offerFlow.steps.done,
-        ] as const);
-  const stepIndex =
-    step === 'details'
-      ? 0
-      : step === 'choose'
-        ? 1
-        : step === 'terms'
-          ? 2
-          : step === 'review'
-            ? mode === 'post'
-              ? 3
-              : 2
-            : stepLabels.length - 1;
+      ? [
+          { id: 'details', label: copy.offerFlow.steps.details },
+          { id: 'choose', label: copy.offerFlow.steps.offers },
+          { id: 'terms', label: copy.offerFlow.steps.terms },
+          { id: 'review', label: copy.offerFlow.steps.review },
+          { id: 'done', label: copy.offerFlow.steps.done },
+        ]
+      : [
+          { id: 'details', label: copy.offerFlow.steps.details },
+          { id: 'choose', label: copy.offerFlow.steps.offers },
+          { id: 'review', label: copy.offerFlow.steps.review },
+          { id: 'done', label: copy.offerFlow.steps.done },
+        ];
 
   // Strict decimal gating — Number('1e18') > 0 and Number('abc') < 0
   // checks let inputs through that the exact parse / BigInt later refuse.
@@ -968,7 +942,9 @@ export function OfferFlow({ side }: { side: Side }) {
     isPositiveDecimal(form.amount) &&
     !amountTooPrecise &&
     durationValid;
-  const formError = validateOfferForm(form, {
+  // The terms alone: the consent is the review's (`consent`, below), and
+  // signing is gated on it there.
+  const formError = validateOfferTerms(form, {
     decimals: {
       lending: lendingMeta.data?.decimals,
       collateral: collateralMeta.data?.decimals,
@@ -999,7 +975,7 @@ export function OfferFlow({ side }: { side: Side }) {
     if (!lending || !collateral || !detailsComplete) return null;
     if (!isAddressLike(form.collateralAsset) || selfCollateral) return null;
     try {
-      const p = toCreateOfferPayload(form, {
+      const p = toCreateOfferPayload(withConsent(form, false), {
         lending: lending.decimals,
         collateral: collateral.decimals,
       });
@@ -1097,19 +1073,10 @@ export function OfferFlow({ side }: { side: Side }) {
         ? Number(saleData.live.durationDays)
         : (selected?.durationDays ?? 0)
       : Number(form.durationDays) || 0;
+  // If the label MOVES after the user already ticked consent (the live
+  // bucket read resolving to a non-default window), that consent predates
+  // the corrected term: the label is part of what the consent is keyed on.
   const grace = useGraceLabel(activeDurationDays);
-  // If the label MOVES after the user already ticked consent (the
-  // live bucket read resolving to a non-default window), that consent
-  // predates the corrected term — same re-consent rule as the late
-  // illiquid/linked-loan disclosures.
-  const prevGraceLabel = useRef(grace.label);
-  useEffect(() => {
-    if (prevGraceLabel.current === grace.label) return;
-    prevGraceLabel.current = grace.label;
-    setForm((f) =>
-      f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
-    );
-  }, [grace.label]);
 
   const lifPct = formatBpsAsPercent(fees.loanInitiationFeeBps);
   const yieldPct = formatBpsAsPercent(fees.treasuryFeeBps);
@@ -1144,7 +1111,7 @@ export function OfferFlow({ side }: { side: Side }) {
     // settled edit — and on paths that render no preview at all.
     if (mode !== 'post' || step !== 'review' || !walletChain) return null;
     try {
-      const payload = toCreateOfferPayload({ ...form, riskAndTermsConsent: true }, {
+      const payload = toCreateOfferPayload(withConsent(form, true), {
         lending: lendingMeta.data?.decimals,
         collateral: collateralMeta.data?.decimals,
       });
@@ -1196,7 +1163,7 @@ export function OfferFlow({ side }: { side: Side }) {
     }
     try {
       const payload = toCreateOfferPayload(
-        { ...form, riskAndTermsConsent: true },
+        withConsent(form, true),
         { lending: lendingMeta.data.decimals, collateral: collateralMeta.data.decimals },
       );
       return {
@@ -1334,7 +1301,7 @@ export function OfferFlow({ side }: { side: Side }) {
       const lending = lendingMeta.data;
       const collateral = collateralMeta.data;
       if (!lending || !collateral || !postDetailsComplete) return null;
-      const payload = toCreateOfferPayload(form, {
+      const payload = toCreateOfferPayload(withConsent(form, false), {
         lending: lending.decimals,
         collateral: collateral.decimals,
       });
@@ -1568,38 +1535,48 @@ export function OfferFlow({ side }: { side: Side }) {
   ].join('||');
 
   /**
-   * How many times the review's assertions have CHANGED this session.
+   * The risk-and-terms consent, keyed on everything the review shows: the
+   * form's terms, the deal chosen, the SIGNED fields of the tariff election
+   * (its `blocked` mark is not signed — the signer refuses while it is set —
+   * so a background quote refresh flipping it does not wipe consent), the
+   * grace label and every disclosure folded into `reviewAssertions` (#1696,
+   * the one rule every signing review follows).
    *
-   * Comparing the stamped assertions to the live ones by equality is not
-   * enough (#1679 r1 F4): a disclosure that leaves and returns identical —
-   * illiquid → liquid → illiquid, or warn A → clean → warn A — ends on a
-   * value equal to what was acknowledged, so the gate would reopen even
-   * though the review changed twice since. An epoch answers the question
-   * that actually matters, "has anything changed since you consented",
-   * rather than "does it look the same as when you consented".
-   *
-   * Advanced by a render-phase adjustment (the pattern from #1677), never
-   * from an effect: an effect would land a render late, which is the exact
-   * window this gate exists to close. State rather than a ref because
-   * `react-hooks/refs` correctly forbids writing a ref during render.
+   * Any change withdraws a given consent in the SAME render it lands in —
+   * the box shows the withdrawal and signing closes together, never a frame
+   * apart (#1678, #1679 r2 N3). And a review that changes and changes back
+   * (illiquid → liquid → illiquid, warn A → clean → warn A) does not get the
+   * consent back, because it was withdrawn on the first change (#1679 r1
+   * F4): the question is "has anything changed since you consented", not
+   * "does it look the same as when you consented".
    */
-  const [seenAssertions, setSeenAssertions] = useState(reviewAssertions);
-  const [assertionEpoch, setAssertionEpoch] = useState(0);
-  if (seenAssertions !== reviewAssertions) {
-    setSeenAssertions(reviewAssertions);
-    setAssertionEpoch((e) => e + 1);
-    // Untick the box in the SAME pass (#1679 r2 N3). The epoch alone closes
-    // signing, but it left a checked box beside a dead button with nothing
-    // explaining why, and the user had to guess that untick/retick was the
-    // remedy — which also contradicted the spec line this PR added. Done
-    // here rather than in an effect for the same reason the epoch is: an
-    // effect lands a render late, which is the window all of this closes.
-    setForm((f) =>
-      f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
-    );
-  }
-  /** The epoch that was current when the user LAST ticked the consent box. */
-  const consentEpochRef = useRef<number | null>(null);
+  const consent = useReviewConsent([
+    form,
+    mode,
+    selected?.offerId,
+    fullTariff.full,
+    fullTariff.maxCStar,
+    fullTariff.allowDowngrade,
+    grace.label,
+    reviewAssertions,
+  ]);
+  // The receipt's fee row must quote the GOVERNED values — hold the
+  // sign button until the live config read lands rather than letting
+  // users sign against compile-time defaults.
+  const checks = useMemo(
+    (): CheckItem[] => [
+      ...baseChecks,
+      consentCheck(consent.given),
+      {
+        id: 'live-fees',
+        label: fees.ready
+          ? copy.offerFlow.liveFeesLoaded
+          : copy.offerFlow.liveFeesLoading,
+        state: fees.ready ? 'pass' : 'pending',
+      },
+    ],
+    [baseChecks, consent.given, fees.ready],
+  );
 
   const canSign =
     allChecksPass(checks) &&
@@ -1641,13 +1618,8 @@ export function OfferFlow({ side }: { side: Side }) {
     // given against the whole receipt, and #1679 r1 F1 showed the terms can
     // change without any warning being present.
     //
-    // Deliberate ref, and state would reopen the gap: the only write is the
-    // checkbox handler below, which also sets form state, so a re-render
-    // always follows and the read cannot go stale. Holding it in state
-    // would move the comparison a render later — the exact window this
-    // gate closes.
-    // eslint-disable-next-line react-hooks/refs
-    consentEpochRef.current === assertionEpoch &&
+    // `useReviewConsent` withdraws it in the render the change lands in.
+    consent.given &&
     // The forced preview must have SETTLED, not merely been started
     // (#1679 r3). Comparing epochs alone left signing enabled through the
     // debounce and the eth_call, so a user could start submitting before a
@@ -1696,7 +1668,7 @@ export function OfferFlow({ side }: { side: Side }) {
       };
     }
     try {
-      const payload = toCreateOfferPayload(form, {
+      const payload = toCreateOfferPayload(withConsent(form, false), {
         lending: lendingMeta.data?.decimals,
         collateral: collateralMeta.data?.decimals,
       });
@@ -1715,8 +1687,8 @@ export function OfferFlow({ side }: { side: Side }) {
     selected,
     side,
     form,
-    lendingMeta.data?.decimals,
-    collateralMeta.data?.decimals,
+    lendingMeta.data,
+    collateralMeta.data,
     acceptIsLoanSale,
     saleData,
   ]);
@@ -1790,7 +1762,8 @@ export function OfferFlow({ side }: { side: Side }) {
       void queryClient.invalidateQueries({ queryKey: ['protocolFees'] });
       throw new Error(copy.match.termsChanged);
     }
-    const payload = toCreateOfferPayload(form, {
+    // What is SENT: the consent as the review holds it now (canSign required it).
+    const payload = toCreateOfferPayload(withConsent(form, consent.given), {
       lending: lendingMeta.data?.decimals,
       collateral: collateralMeta.data?.decimals,
     });
@@ -1836,11 +1809,9 @@ export function OfferFlow({ side }: { side: Side }) {
         queryClient,
       });
     } catch (err) {
-      // Untick at once as well: the assertion epoch voids consent on the
-      // next render, and this keeps the box from showing a stale tick.
-      setForm((f) =>
-        f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
-      );
+      // Untick at once as well: the new verdict voids consent when it
+      // renders, and this keeps the box from showing a stale tick until then.
+      consent.clear();
       throw err;
     }
     // Permit2 first (#1038): one gasless signature replaces the
@@ -2134,7 +2105,7 @@ export function OfferFlow({ side }: { side: Side }) {
       stepper.next('sign');
       signed = await signAcceptTerms({
         offerId: BigInt(selected.offerId),
-        consent: form.riskAndTermsConsent,
+        consent: consent.given,
         // #1355 — the review screen's Full tariff opt-in. Undefined
         // (⇒ non-Full) unless the user engaged the control.
         fullTariff: fullTariff.full ? fullTariff : undefined,
@@ -2445,7 +2416,7 @@ export function OfferFlow({ side }: { side: Side }) {
     <div>
       <h1 className="page-title">{text.title}</h1>
       <p className="page-lede">{text.lede}</p>
-      <StepNav steps={stepLabels} current={stepIndex} />
+      <StepNav steps={flowSteps} current={step} />
 
       {deepLinkNotice && step === 'details' ? (
         <div className="banner banner-warn" role="alert">
@@ -2598,7 +2569,7 @@ export function OfferFlow({ side }: { side: Side }) {
                             setMode('accept');
                             // A DIFFERENT deal needs a fresh acknowledgement
                             // — never carry consent across selections.
-                            set({ riskAndTermsConsent: false });
+                            consent.clear();
                             setStep('review');
                           }}
                         />
@@ -3063,101 +3034,44 @@ export function OfferFlow({ side }: { side: Side }) {
                       ? null
                       : prev,
                   );
-                  // Codex #1412 r1 — a tariff edit changes the terms
-                  // the accept signature will carry, so an already-
-                  // given consent no longer covers them: clear it,
-                  // same as every other disclosure-driving edit.
-                  setForm((f) =>
-                    f.riskAndTermsConsent
-                      ? { ...f, riskAndTermsConsent: false }
-                      : f,
-                  );
+                  // Codex #1412 r1 — a tariff edit changes the terms the
+                  // accept signature will carry, so an already-given consent
+                  // no longer covers them: the election is part of what the
+                  // consent is keyed on, so it is withdrawn on its own.
                 }}
               />
             ) : null}
-            <label
-              className="cluster"
-              style={{ marginTop: 16, fontSize: '0.9rem', alignItems: 'flex-start' }}
-            >
-              <input
-                type="checkbox"
-                checked={form.riskAndTermsConsent}
-                onChange={(e) => {
-                  // Stamp WHEN consent was given, measured in review
-                  // revisions — canSign requires the review to have changed
-                  // zero times since (#1678, #1679 r1 F4).
-                  if (e.target.checked) {
-                    consentEpochRef.current = assertionEpoch;
-                  }
-                  set({ riskAndTermsConsent: e.target.checked });
-                }}
-                style={{ marginTop: 3 }}
-              />
-              <ConsentLabel />
-            </label>
-            {submitError ? (
-              <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
-                <span className="banner-body">{submitError}</span>
-              </div>
-            ) : null}
-            <div className="cluster" style={{ marginTop: 16 }}>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setStep(mode === 'post' ? 'terms' : 'choose')}
-                disabled={submitting}
-              >
-                {copy.offerFlow.back}
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                style={{ flex: 1 }}
-                disabled={!canSign}
-                onClick={() => void submit()}
-              >
-                {submitting ? (
-                  <LoaderCircle className="spin" aria-hidden size={18} />
-                ) : null}
-                {progress !== null
-                  ? progress.current === 0
-                    ? copy.offerFlow.waitingForWallet
-                    : progress.kind === 'sign'
-                      ? copy.signing.phaseSign(progress.current, progress.total)
-                      : progress.kind === 'permit'
-                        ? copy.signing.phasePermit(progress.current, progress.total)
-                        : progress.kind === 'approve'
-                          ? copy.signing.phaseApprove(progress.current, progress.total)
-                          : copy.signing.phaseSend(progress.current, progress.total)
-                  : mode === 'accept'
-                    ? text.acceptSubmitLabel
-                    : text.submitLabel}
-              </button>
-            </div>
+            <ReviewFooter
+              consent={consent}
+              error={submitError}
+              backLabel={copy.offerFlow.back}
+              onBack={() => setStep(mode === 'post' ? 'terms' : 'choose')}
+              busy={submitting}
+              canSign={canSign}
+              onSubmit={() => void submit()}
+              progress={progress}
+              submitLabel={
+                mode === 'accept' ? text.acceptSubmitLabel : text.submitLabel
+              }
+              waitingLabel={copy.offerFlow.waitingForWallet}
+            />
           </div>
         </div>
       ) : null}
 
       {step === 'done' ? (
-        <div className="card" style={{ textAlign: 'center' }}>
-          <CircleCheck
-            aria-hidden
-            size={40}
-            style={{ color: 'var(--ok)', marginBottom: 8 }}
-          />
-          <h2>{doneTitle}</h2>
-          <p className="muted">{doneBody}</p>
-          {txHash && walletChain ? (
-            <p className="muted">
-              <a
-                href={`${walletChain.blockExplorer}/tx/${txHash}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {copy.offerFlow.viewTransaction}
-              </a>
-            </p>
-          ) : null}
+        <FlowDoneCard
+          title={doneTitle}
+          body={doneBody}
+          tx={
+            txHash && walletChain
+              ? {
+                  href: `${walletChain.blockExplorer}/tx/${txHash}`,
+                  label: copy.offerFlow.viewTransaction,
+                }
+              : null
+          }
+        >
           <div
             className="cluster"
             style={{ justifyContent: 'center', marginTop: 4 }}
@@ -3186,7 +3100,7 @@ export function OfferFlow({ side }: { side: Side }) {
                   setSearchParams({}, { replace: true });
                   setDeepLinkNotice(null);
                   setSelected(null);
-                  setForm({ ...initialOfferForm, offerType: side });
+                  setForm({ ...initialOfferTerms, offerType: side });
                   setTxHash(null);
                   setDoneWasSaleBuy(null);
                   setSubmitError(null);
@@ -3197,7 +3111,7 @@ export function OfferFlow({ side }: { side: Side }) {
               </button>
             ) : null}
           </div>
-        </div>
+        </FlowDoneCard>
       ) : null}
     </div>
   );

@@ -14,6 +14,8 @@ Karten-Titel.
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -126,6 +128,8 @@ nur keine Historie zu zeigen.
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -183,6 +187,8 @@ Dieser Satz wird bei der Kreditvergabe festgeschrieben; eine spätere
 seinem ursprünglichen Satz.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Offer erstellen
 
@@ -340,6 +346,8 @@ beruhigt überspringen.
 
 ---
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -405,6 +413,8 @@ den NFT als Zusage zu nehmen.
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -420,6 +430,8 @@ gruppiert nach Transaktion, sodass Dinge, die du in einem Klick
 gemacht hast, zusammenbleiben.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -466,6 +478,8 @@ Rabatt-Mathematik ab diesem Moment auf das niedrigere Tier.
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -491,6 +505,8 @@ wird er erst kurz nach Schluss des nächsten Tagesfensters
 scharfgeschaltet.
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -618,6 +634,8 @@ mit einem kleinen Tooltip, das erklärt, warum.
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -636,6 +654,8 @@ Eine saubere Approvals-Liste ist eine Hygienegewohnheit — genau
 wie auf Uniswap oder 1inch.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -674,6 +694,8 @@ Schwellen-Leiter oben — du stellst sie nicht separat ein.
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT-Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -692,6 +714,8 @@ Fälschung — oder eine Position, die bereits gesettled ist — zu
 erkennen, erspart dir den schlechten Trade.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper-Einstellungen
 
@@ -722,57 +746,82 @@ Liste.
 
 ---
 
+<a id="chapter.public-analytics-dashboard"></a>
+
 ## Public Analytics Dashboard
 
 <a id="public-dashboard.overview"></a>
 
 ### Über Public Analytics
 
-Eine Wallet-freie, transparente Sicht auf das gesamte Protokoll:
-Total Value Locked, Loan-Volumina, Default-Raten, VPFI-Supply,
-aktuelle Aktivität. Alles davon wird live aus On-Chain-Daten
-berechnet — es gibt keine private Datenbank hinter irgendeiner
-Zahl auf dieser Seite.
+Eine Wallet-freie Sicht auf das Protokoll in einem Netzwerk:
+dem, das die App gerade liest. Du musst nichts verbinden. Die
+Seite stützt sich auf zwei öffentliche Quellen und sagt bei jeder
+Zahl, woher sie stammt — den öffentlichen Indexer, den jede und
+jeder ohne Schlüssel abfragen kann, und den Plattformvertrag
+selbst —, damit du keiner Zahl einfach glauben musst.
 
-<a id="public-dashboard.combined"></a>
+<a id="public-dashboard.loans-offers"></a>
 
-### Kombiniert — Alle Chains
+### Loans und Offers
 
-Die protokollweiten Summen, über jede unterstützte Chain
-aufaddiert. Die kleine Zeile "X Chains abgedeckt, Y nicht
-erreichbar" sagt dir, ob das Netz einer Chain zum Zeitpunkt des
-Seitenladens offline war — wenn ja, wird die spezifische Chain in
-der Pro-Chain-Tabelle unten markiert.
+Anzahl der Loans nach Status (aktiv, zurückgezahlt, ausgefallen,
+liquidiert usw.) und der Offers nach Status, aus dem öffentlichen
+Indexer. Eine Zahl, die der Indexer nicht gemeldet hat, steht als
+„nicht gemeldet" da, nie als null. Gezählt werden nur On-Chain-
+Offers: signierte gaslose Orders zählen hier nicht, erscheinen aber
+im Offer Book. Die Offer-Summe sind die derzeit erfassten Offers,
+keine Zahl über die gesamte Laufzeit.
 
-<a id="public-dashboard.per-chain"></a>
+<a id="public-dashboard.recycling"></a>
 
-### Aufschlüsselung pro Chain
+### Recyclingkonto und Loop Closure
 
-Dieselben Summen, aufgeteilt pro Chain. Nützlich, um zu sehen,
-welche Chain den meisten TVL hält, wo die meisten Loans
-stattfinden, oder um zu erkennen, wann eine Chain stillsteht.
-
-<a id="public-dashboard.vpfi-transparency"></a>
-
-### VPFI-Token-Transparenz
-
-Der Live-Zustand von VPFI auf dieser Chain — wie viel insgesamt
-existiert, wie viel tatsächlich zirkuliert (nach Abzug der
-protokollgehaltenen Bestände), und wie viel unter dem Cap noch
-mintbar ist. Über alle Chains bleibt der Supply per Konstruktion
-beschränkt.
+Woher der Belohnungspool jedes Tages stammte und wie viel davon
+entnommen wurde, und wie viel der durch Claims ausgezahlten
+Belohnungs-VPFI innerhalb der Plattform bleibt. Das sind
+Buchungsaufzeichnungen aus dem öffentlichen Indexer; eine noch
+unbekannte Zahl sagt das, statt null zu zeigen.
 
 <a id="public-dashboard.transparency"></a>
 
 ### Transparenz & Quelle
 
-Jede Zahl auf dieser Seite kann direkt aus der Blockchain
-neuabgeleitet werden. Diese Karte listet den Snapshot-Block, wie
-aktuell die Daten geholt wurden, und die Vertragsadresse, von der
-jede Metrik kam. Wenn jemand eine Zahl prüfen will, hier fängt
-man an.
+Die Adresse des Plattformvertrags mit einem Link zum Öffnen in
+einem Block-Explorer, das Netzwerk, der letzte vom Indexer
+gelesene Block und wie lange das her ist. Die Indexer-Zahlen sind
+nur so aktuell wie dieser Block — deshalb wird sein Alter
+angezeigt.
+
+<a id="public-dashboard.vpfi-transparency"></a>
+
+### VPFI-Token
+
+Direkt aus dem Plattformvertrag gelesen, nicht aus dem Indexer:
+die Adresse des VPFI-Tokens und seine Menge in diesem Netzwerk. Im
+Netzwerk, in dem VPFI ausgegeben wird, zeigt die Seite außerdem
+die Mengenobergrenze, wie viel darunter noch geprägt werden kann,
+und die eine Adresse, die prägen darf. In einem Netzwerk, das VPFI
+per Bridge erreicht, zeigt sie nur die Menge dieses Netzwerks.
+
+<a id="public-dashboard.fees"></a>
+
+### Gebühren und Treasury
+
+Ebenfalls aus dem Vertrag gelesen: die Gebühren, die das Protokoll
+seit Beginn der Aufzeichnung, am letzten Tag und in der letzten
+Woche erfasst hat, und die Treasury-Adresse, an die sie gehen. Die
+Seite nennt den gelesenen Block, das Alter dieser Ablesung und die
+aufgerufenen Funktionen, und sie nennt jeden Grund, warum die
+Gebührenzahlen niedriger sein können als das tatsächlich
+Eingenommene. Nach einem Wechsel der Referenzwährung bleiben
+frühere Gebühren in der alten Einheit, was eine Summe in beide
+Richtungen verschieben kann; auch das sagt die Seite. Eine Zahl,
+die nicht gelesen werden konnte, sagt das, statt null zu zeigen.
 
 ---
+
+<a id="chapter.refinance"></a>
 
 ## Refinance
 
@@ -820,6 +869,8 @@ Collateral die ganze Zeit gesperrt. Eine Transaktion,
 Zwei-Status-Wechsel, kein Expositionsfenster.
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -874,6 +925,8 @@ schließen den Loan vollständig; mit Preclose kannst du nicht
 halb-schließen.
 
 ---
+
+<a id="chapter.early-withdrawal-lender"></a>
 
 ## Early Withdrawal (Lender)
 

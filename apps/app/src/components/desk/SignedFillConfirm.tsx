@@ -45,6 +45,8 @@ import {
 } from '../../contracts/preflights';
 import { assertWalletNotSanctionedLive } from '../../data/sanctions';
 import { ConsentLabel } from '../ConsentLabel';
+import { useReviewConsent } from '../../hooks/useReviewConsent';
+import { ConsentWithdrawnNote } from '../ConsentWithdrawnNote';
 import { LifecycleTermsList } from '../LifecycleTermsList';
 import { reviewedTermsFromOrder } from '../../contracts/acceptReview';
 import { screenTargets, useTokenScreen } from '../../contracts/acceptTokenScreen';
@@ -109,7 +111,6 @@ export function SignedFillConfirm({
   const collateralMeta = useTokenMeta(o.collateralAsset);
   const payMeta = isLenderOrder ? collateralMeta : lendingMeta;
 
-  const [consent, setConsent] = useState(false);
   // #2726 — the token screen the other accepts run, on the order's ERC-20
   // legs. The signed-offer routes admit any ERC-20 pair, so this card is
   // where a honeypot or fee-on-transfer token is caught before the taker
@@ -126,17 +127,29 @@ export function SignedFillConfirm({
     [o],
   );
   const tokenScreen = useTokenScreen(readChain.chainId, screenLegs);
-  // Consent is given against what the card shows: a verdict that arrives
-  // or changes after the tick voids it, in the same render (no frame can
-  // sign against consent that predates the disclosure).
-  const [seenScreen, setSeenScreen] = useState(tokenScreen.fingerprint);
-  if (seenScreen !== tokenScreen.fingerprint) {
-    setSeenScreen(tokenScreen.fingerprint);
-    if (consent) setConsent(false);
-  }
   // #1355 — the TAKER's own Full VPFI tariff opt-in for this fill (the
   // maker of a signed order cannot opt in — #1369).
   const [fullTariff, setFullTariff] = useState<FullTariffChoice>(FULL_TARIFF_OFF);
+  // Consent is given against what the card shows (#1696, the one rule every
+  // signing review follows): the order and its tokens' metadata, the
+  // token-screen verdicts, the SIGNED fields of the tariff election (its
+  // `blocked` mark is not signed; the signer refuses while it is set) and the
+  // wallet. A verdict that arrives or changes after the tick, or a tariff
+  // edit, withdraws it in the same render, so no frame can sign against
+  // consent that predates it.
+  const consent = useReviewConsent([
+    reviewed,
+    lendingMeta.data?.symbol,
+    lendingMeta.data?.decimals,
+    collateralMeta.data?.symbol,
+    collateralMeta.data?.decimals,
+    tokenScreen.fingerprint,
+    fullTariff.full,
+    fullTariff.maxCStar,
+    fullTariff.allowDowngrade,
+    address,
+    walletChain?.chainId,
+  ]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Same post-approval re-check as the direct accept (Codex #1700 r7): the
@@ -284,7 +297,7 @@ export function SignedFillConfirm({
         reviewed,
         // #2726 — the token-security verdicts this card showed.
         screen: tokenScreen.reviewed,
-        consent,
+        consent: consent.given,
         // #1355 — undefined (⇒ non-Full) unless the taker engaged it.
         fullTariff: fullTariff.full ? fullTariff : undefined,
       });
@@ -479,9 +492,9 @@ export function SignedFillConfirm({
                 ? null
                 : prev,
             );
-            // Codex #1412 r1 — a tariff edit changes the signed
-            // terms, so a prior consent no longer covers them.
-            setConsent(false);
+            // Codex #1412 r1 — a tariff edit changes the signed terms, so a
+            // prior consent no longer covers them: the consent is keyed on
+            // the election's signed fields and is withdrawn on its own.
           }}
         />
       ) : null}
@@ -494,12 +507,13 @@ export function SignedFillConfirm({
       >
         <input
           type="checkbox"
-          checked={consent}
-          onChange={(e) => setConsent(e.target.checked)}
+          checked={consent.given}
+          onChange={(e) => consent.set(e.target.checked)}
           style={{ marginTop: 3 }}
         />
         <ConsentLabel />
       </label>
+      <ConsentWithdrawnNote consent={consent} />
 
       {killed ? (
         <div className="banner banner-warn" role="alert" style={{ margin: '8px 0' }}>
@@ -532,7 +546,7 @@ export function SignedFillConfirm({
             style={{ flex: 1 }}
             disabled={
               busy ||
-              !consent ||
+              !consent.given ||
               !tokenScreen.ok ||
               !onSupportedChain ||
               killed ||

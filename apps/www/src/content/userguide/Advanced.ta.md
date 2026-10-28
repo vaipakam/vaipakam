@@ -14,6 +14,8 @@ App-இல் உள்ள ஒவ்வொரு card-க்கும் து�
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -196,6 +198,8 @@ zero என்ற நிலையிலும். empty-state hint திட்�
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -299,6 +303,8 @@ Initiation-இல் அதே HF ≥ 1.5 gate. நிலையான APR offer 
 தற்போதைய loan-ஐ மாற்றாமல் புதிய loan-ஐ உருவாக்கும்.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -718,6 +724,8 @@ classes:
   separate UX follow-up-ஆக queue-இல் உள்ளது.
 
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -806,6 +814,8 @@ NFT-ஐ அல்ல, claim-ஐப் படியுங்கள்.
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -821,6 +831,8 @@ first. Offers, loans, repayments, claims, liquidations, NFT mints மற்ற�
 burns, VPFI vault deposits / withdrawals ஆகியவை காட்டப்படும்.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -906,6 +918,8 @@ withdrawal அல்லது பிற செயலுக்குப் பி
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -942,6 +956,8 @@ VPFI section-இல் "உங்கள் vault-இலிருந்து VPF
 வெளியேறும் (ஒவ்வொரு open loan-இல் post-balance re-stamp).
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -1213,6 +1229,8 @@ matched price-இல் step in செய்யக்கூடிய **window �
 
 ---
 
+<a id="chapter.how-liquidation-actually-works"></a>
+
 ## Liquidation உண்மையில் எப்படி செயல்படுகிறது
 
 Offer உருவாக்கும் போது நீங்கள் ஒப்புக்கொண்ட Risk Disclosures, மோசமான விளைவை இரண்டு வாக்கியங்களில் விளக்குகின்றன. இந்த பகுதி அதன் பின்னணியில் உள்ள தொழில்நுட்ப முறைகளை விளக்குகிறது — in-kind fallback ஏன் உள்ளது என்பதைப் புரிந்துகொள்ள அல்லது உங்கள் loan நான்கு வழிகளில் எதை எடுக்கும் என்பதை அறிய இது பயனுள்ளதாக இருக்கும்.
@@ -1317,6 +1335,8 @@ Loan A, WETH-இல் விற்று USDC பெற வேண்டும�
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -1336,6 +1356,8 @@ per-asset allowance-ஐத் தாண்டிச் செல்கின்�
 எதிர்கால deposits தடுக்கப்படாது.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -1377,6 +1399,8 @@ channel publishing தற்போது channel creation வரை stub நி�
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -1402,6 +1426,8 @@ Position NFT bearer instrument — secondary market-இல் வாங்கு
 verify செய்யுங்கள்.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -1446,67 +1472,116 @@ loans-களிலும் உடனடி — காத்திருப்�
 
 ---
 
+<a id="chapter.public-analytics-dashboard"></a>
+
 ## Public Analytics Dashboard
 
 <a id="public-dashboard.overview"></a>
 
 ### Public Analytics பற்றி
 
-ஆதரிக்கப்படும் ஒவ்வொரு chain-இல் on-chain protocol view calls-இல் இருந்து
-live ஆக கணக்கிடப்படும் wallet-free aggregator. Backend இல்லை, database
-இல்லை. CSV / JSON export கிடைக்கும்; verifiability-க்காக protocol address
-மற்றும் ஒவ்வொரு metric-இல் backing செய்யும் view function காட்டப்படும்.
+வாலட் இல்லாத, ஒரே செயின் பக்கம்: ஆப் சுட்டும் செயினைப் படிக்கிறது
+(வாலட் இணைக்கப்படவில்லை என்றால் இயல்பான வாசிப்புச் செயின்).
+செயின்களுக்கு இடையிலான தொகுப்போ ஏற்றுமதியோ இல்லை; செயின்களை ஒப்பிட
+ஒவ்வொன்றிலும் பக்கத்தைத் திறக்கவும். இரண்டு மூலங்கள், பயன்படும்
+இடத்தில் குறிக்கப்பட்டவை:
 
-<a id="public-dashboard.combined"></a>
+- இன்டெக்சரின் சாவி இல்லாத, திறந்த CORS வாசிப்பு API — கடன், ஆஃபர்,
+  மறுசுழற்சி, லூப் மூடல் எண்கள்;
+- பொது RPC வழியாக Diamond-இன் சொந்த வியூ செயல்பாடுகள் — VPFI
+  டோக்கன் மற்றும் கட்டண எண்கள்.
 
-### Combined — அனைத்து Chains
+பக்கம் காட்டுவதை மீண்டும் உருவாக்க எந்த மூலத்தையும் நேரடியாக
+வினவலாம்.
 
-Cross-chain rollup. எத்தனை chains cover செய்யப்பட்டன, எத்தனை error ஆனது
-என்பதை header report செய்கிறது; எனவே fetch time-இல் unreachable RPC
-இருந்தால் அது explicit. ஒன்று அல்லது அதற்கு மேற்பட்ட chains error ஆனால்,
-per-chain table எது என்பதை குறிக்கும் — TVL totals இன்னும் report
-செய்யப்படும், ஆனால் gap தெளிவாக ஒப்புக்கொள்ளப்படும்.
+<a id="public-dashboard.loans-offers"></a>
 
-<a id="public-dashboard.per-chain"></a>
+### கடன்களும் ஆஃபர்களும்
 
-### Per-Chain Breakdown
+`/loans/stats`-இலிருந்து நிலைவாரியான கடன் கவுண்டர்கள், தீர்வு
+நிலுவை, உள்ளே பொருத்தப்பட்டவை, மீதம் ஆகிய பிரிவுகள் உட்பட, எனவே
+பகுதிகள் மொத்தத்துக்குச் சமம்; ERC-20, NFT வாடகை உட்கூட்டுத்தொகைகள்,
+சொத்து வகை இன்னும் படிக்கப்படாத செயலில் உள்ள கடன் தனியாகக்
+குறிப்பிடப்படும்; `/offers/stats`-இலிருந்து ஆஃபர் கவுண்டர்கள்.
+ஆஃபர்கள் என்பவை `offers` அட்டவணை மட்டுமே — கேஸ் இல்லாத கையொப்பமிட்ட
+ஆர்டர்கள் எண்ணப்படுவதில்லை — ரத்தான ஆஃபர்கள் குறியீட்டிலிருந்து
+நீங்குகின்றன, எனவே ஆஃபர் மொத்தம் எல்லாக் காலத்துக்குமான எண் அல்ல.
+இல்லாத கவுண்டர் "தெரிவிக்கப்படவில்லை" என்றும், சாத்தியமற்றது
+"தெரிவிக்கப்பட்டது, ஆனால் பயன்படுத்தக்கூடிய எண்ணிக்கை அல்ல"
+என்றும் காட்டும்; எதுவும் 0 ஆகக் காட்டப்படுவதில்லை.
 
-Combined metrics-இன் per-chain split. TVL concentration, mismatched VPFI
-mirror supplies (mirror supplies-இன் கூட்டுத்தொகை canonical adapter-இன்
-locked balance-க்கு சமமாக இருக்க வேண்டும்), அல்லது stalled chains-இல்
-கண்டறிய உதவும்.
+<a id="public-dashboard.recycling"></a>
 
-<a id="public-dashboard.vpfi-transparency"></a>
+### மறுசுழற்சிக் கணக்கும் லூப் மூடலும்
 
-### VPFI Token Transparency
-
-Active chain-இல் on-chain VPFI accounting:
-
-- ERC-20-இல் இருந்து நேரடியாக படிக்கப்பட்ட Total supply.
-- Circulating supply — Total supply minus protocol வசம் உள்ள balances
-  (treasury, reward pools, in-flight bridge packets).
-- மீதமுள்ள mintable cap — canonical chain-இல் மட்டுமே அர்த்தமுள்ளது;
-  mirror chains cap-க்கு "n/a" report செய்கின்றன, ஏனெனில் அங்கு mints
-  bridge-driven, cap-இல் இருந்து mint செய்யப்படவில்லை.
-
-Cross-chain invariant: அனைத்து mirror chains-களின் mirror supplies
-கூட்டுத்தொகை canonical adapter-இன் locked balance-க்கு சமம். watcher இதை
-கண்காணித்து drift ஏற்பட்டால் alert அனுப்புகிறது.
+மறுசுழற்சிக் கணக்கு (`/metrics/recycling`) திட்டத்தின் ஒவ்வொரு
+நாளுக்கும் குளம், அதன் நிதி, எடுக்கப்பட்டது ஆகியவற்றைத் திட்டத்தின்
+சொந்த நாள் எண்ணுடன் பட்டியலிடுகிறது; இறுதியாகாத நாள் குளம் இல்லாமல்
+காட்டப்படும், செயல்படுத்தப்படாத நாள் மதிப்பீடாகக் குறிக்கப்படும்.
+லூப் மூடல் (`/metrics/loop-closure`) ஒவ்வொரு UTC நாளுக்கும்
+கிளெய்ம்கள் வழங்கியது, வால்ட்களில் தங்கியது, உள்வாங்கப்பட்டது
+ஆகியவற்றைப் பதிவு எட்டும் கணத்துடன் காட்டுகிறது. காட்சித்
+துல்லியத்துக்குக் கீழ் உள்ள நேர்மறைத் தொகைகள் குறிக்கப்படும், பங்குகள்
+கீழ்நோக்கி முழுமையாக்கப்படும், தெரியாத எண் ஒருபோதும் பூஜ்ஜியமாகக்
+காட்டப்படாது.
 
 <a id="public-dashboard.transparency"></a>
 
-### Transparency & Source
+### வெளிப்படைத்தன்மையும் மூலமும்
 
-ஒவ்வொரு metric-க்கும் page காட்டுவது:
+எக்ஸ்ப்ளோரர் இணைப்புடன் Diamond முகவரி, செயின், இன்டெக்சர்
+கர்சரின் பிளாக்கும் வயதும். இன்டெக்சரின் ஒவ்வொரு எண்ணும் அந்தக்
+கர்சர் அளவுக்கே புதியது, அதற்கு மேல் அல்ல; இரண்டு பதில்கள்
+இணைக்கப்படும்போது பழைய கர்சர் குறிப்பிடப்படும்.
 
-- Snapshot-ஆகப் பயன்படுத்தப்பட்ட block number.
-- Data freshness (chains-களில் அதிகபட்ச தாமதம்).
-- Protocol address மற்றும் view function call.
+<a id="public-dashboard.vpfi-transparency"></a>
 
-இந்த page-இல் உள்ள எந்த எண்ணையும் RPC + block + protocol address +
-function name-இல் இருந்து யாரும் re-derive செய்யலாம் — அதுதான் தரநிலை.
+### VPFI டோக்கன்
+
+Diamond-இல் உள்ள `getVPFISnapshot()`-இலிருந்து: இந்த செயினில்
+டோக்கன் முகவரியும் `totalSupply`-உம். கேனானிக்கல் செயினில் வரம்பு,
+இடைவெளி (`cap − totalSupply`, இன்னும் மின்ட் செய்யக்கூடியது), மின்டர்
+ஆகியவையும். மிரர் செயினில் ஸ்னாப்ஷாட்டில் வரம்போ மின்டரோ இல்லை —
+அங்கே வழங்கல் CCIP டோக்கன் பூல் வழியாக வருகிறது — எனவே பக்கம்
+உள்ளூர் வழங்கலைக் காட்டி, வரம்பும் மின்டரும் கேனானிக்கல் செயினுக்கு
+உரியவை என்று சொல்கிறது, பூஜ்ஜியங்களைக் காட்டாமல். இணைக்கப்படாத
+டோக்கனும் படிக்க முடியாத ஸ்னாப்ஷாட்டும் தனித்தனியாகக்
+குறிப்பிடப்படும்.
+
+<a id="public-dashboard.fees"></a>
+
+### கட்டணங்களும் கருவூலமும்
+
+`getTreasuryMetrics()`, `getTreasury()`, `getNumeraireSymbol()`
+ஆகியவற்றிலிருந்து, ஸ்னாப்ஷாட் படிக்கப்பட்ட அதே Multicall3 தொகுப்பில்
+படிக்கப்பட்டு, ஒரே பிளாக்கில் நிலைநிறுத்தப்பட்டவை; அந்த பிளாக்கை
+அதன் வயதுடன் பக்கம் குறிப்பிடுகிறது:
+
+- கட்டணப் பேரேடு தொடங்கியதிலிருந்தும், கடந்த 24 மணி நேரம், 7
+  நாட்களிலும் உள்ள கட்டணங்கள், ஒவ்வொன்றும் பதிவாகும்போது
+  நியூமரேரில் மதிப்பிடப்பட்டு, மீண்டும் மதிப்பிடப்படுவதில்லை;
+- பதிவின்போது புரோட்டோகால் மதிப்பிட முடியாத கட்டணம் 0 எனப்
+  பதியப்படும், சாளரக் கூட்டுத்தொகைகள் அதிகபட்சம் சமீபத்திய 10,000
+  பதிவுகளையே படிக்கும் — இவ்விரண்டும் எண்ணைக் குறைக்க மட்டுமே
+  முடியும், பக்கம் அதைச் சொல்கிறது;
+- நியூமரேர் மாற்றம் முந்தைய பதிவுகளைப் பழைய அலகிலேயே விடும்; ஆகவே
+  அதன் பிறகு கூட்டுத்தொகைகள் தற்போதைய குறியீட்டின் கீழ் இரண்டு
+  அலகுகளின் தொகைகளைக் கூட்டுவதால் எந்தத் திசையிலும் விலகலாம்;
+  முந்தைய கட்டணங்கள் பழைய அலகில் கணக்கிடப்பட்டவை என்று பக்கம்
+  சொல்கிறது;
+- கருவூல முகவரி. அது வெளி முகவரி என்றால், கட்டணங்கள் வசூலாகும்போதே
+  வெளியேறும், அதற்கு இருப்பு எதுவும் காட்டப்படாது. Diamond தானே
+  கருவூலம் என்றால், வைத்திருக்கும் தொகை காட்டப்படும்; அது திறந்த
+  கடன்களில் தோன்றும் சொத்துகளின் மேல் மட்டுமே மதிப்பிடப்பட்டு,
+  கருவூலத்தின் சார்பில் வேறிடத்தில் வைக்கப்பட்ட தொகைகளையும்
+  உள்ளடக்கும்.
+
+தோல்வியடையும் செயல்பாடு "படிக்க முடியவில்லை" என்று காட்டும்,
+மற்றவற்றை மறைக்காது.
 
 ---
+
+<a id="chapter.refinance"></a>
 
 ## Refinance
 
@@ -1560,6 +1635,8 @@ accept செய்யலாம். Acceptance-க்கு முன் cancel 
 புதிய terms-இல் HF 1.5-க்குக் கீழே இருந்தால் revert ஆகிறது.
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -1616,6 +1693,8 @@ Balancer V2) வரம்புக்குள் வைக்கப்படு
 
 ---
 
+<a id="chapter.early-withdrawal-lender"></a>
+
 ## Early Withdrawal (Lender)
 
 இந்த page lender-only — Early withdrawal, lender-இன் loan-இல் lender-ஆல்
@@ -1653,6 +1732,8 @@ cancel செய்யலாம். "Complete loan sale" permission வைத்
 optional-ஆக delegatable; initiate step user-only-ஆகவே இருக்கும்.
 
 ---
+
+<a id="chapter.stuck-token-recovery"></a>
 
 ## சிக்கிய Token-களை மீட்டெடுத்தல் (Stuck-Token Recovery)
 
@@ -1716,6 +1797,8 @@ Tokens இரண்டு வழிகளில் சிக்கிக் க�
 
 Disown வசதி தற்போது நேரடியாக contract call மூலம் மட்டுமே கிடைக்கிறது; Vaipakam frontend-ல் இதற்கான பட்டன் இல்லை. Use a block-explorer "Write Contract" UI or a contract-interaction tool to call it.
 
+<a id="chapter.how-vpfi-discounts-work"></a>
+
 ## VPFI தள்ளுபடிகள் எப்படி வேலை செய்கின்றன
 
 Canonical chain ஆன Base-இல் உள்ள உங்கள் vault-இல் வைத்திருக்கும் VPFI,
@@ -1745,6 +1828,8 @@ VPFI விலை மேற்கோளை அமைத்த deployment-இல�
 "Full" என்ற தனியான கட்டண முறை, ஒரு deployment அதை இயக்காதவரை அணைந்தே
 இருக்கும்.
 
+<a id="vpfi-discounts.turning-on"></a>
+
 ### தள்ளுபடியை இயக்குதல்
 
 தள்ளுபடி opt-in ஆகும். Switch VPFI பக்கத்தில் உள்ளது; ஒவ்வொரு chain-க்கும்
@@ -1769,6 +1854,8 @@ Protocol உங்கள் vault-இல் பதிவுசெய்யும
 vault-க்குள் வழங்கும் VPFI rewards-உம். உங்கள் vault முகவரிக்கு நேரடியாக
 அனுப்பப்படும் token-களை protocol கண்காணிப்பதில்லை; அவை உங்கள் tier-ஐ
 உயர்த்தாது.
+
+<a id="vpfi-discounts.tier-calculation"></a>
 
 ### உங்கள் tier எப்படிக் கணக்கிடப்படுகிறது
 
@@ -1802,6 +1889,8 @@ vault-க்குள் வழங்கும் VPFI rewards-உம். உங
 - ஒரு tier-இன் வரம்புக்குக் கீழே கொண்டுசெல்லும் withdrawal உங்கள்
   tier-ஐ உடனே குறைக்கும்.
 - 30 நாட்களுக்கு முந்தைய இறக்கம் இனி உங்களைக் கட்டுப்படுத்தாது.
+
+<a id="vpfi-discounts.other-chains"></a>
 
 ### மற்ற chain-களில் உங்கள் tier
 
@@ -1858,6 +1947,8 @@ table-இன் பதிப்பு. ஆகவே tier table மாறிய �
 புதுப்பிப்பு வரை Base-இல் எதுவும் அதைக் கவனிக்காது. நீங்கள்
 விரும்பும்போது tier-refresh call அந்தப் புதுப்பிப்பைச் செய்யும்; நீங்கள்
 தள்ளுபடியை அணைக்கும்போது மட்டுமே app அதை உங்களுக்காகச் செய்கிறது.
+
+<a id="vpfi-discounts.operators"></a>
 
 ### Operator-களுக்கு
 

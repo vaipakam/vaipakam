@@ -14,6 +14,8 @@ junto al título de una tarjeta.
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -206,6 +208,8 @@ reclamaciones.
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Libro de ofertas
 
 <a id="offer-book.filters"></a>
@@ -314,6 +318,8 @@ vida del préstamo —el refinance crea un préstamo nuevo en lugar de
 modificar el existente.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Crear oferta
 
@@ -753,6 +759,8 @@ distintas, superficializadas en diferentes etapas del protocolo:
   seguimiento de UX separado.
 
 
+<a id="chapter.claim-center"></a>
+
 ## Centro de reclamaciones
 
 <a id="claim-center.claims"></a>
@@ -846,6 +854,8 @@ Lee la reclamación, no el NFT.
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Actividad
 
 <a id="activity.feed"></a>
@@ -863,6 +873,8 @@ reclamaciones, liquidaciones, mints y burns de NFT, y depósitos /
 retiros de VPFI en vault.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -948,6 +960,8 @@ la entrega está en el
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Recompensas
 
 <a id="rewards.overview"></a>
@@ -985,6 +999,8 @@ retirado sale del acumulador de descuento inmediatamente (refijación
 posterior al saldo en cada préstamo abierto).
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Detalles del préstamo
 
@@ -1266,6 +1282,8 @@ precio matched.
 
 ---
 
+<a id="chapter.how-liquidation-actually-works"></a>
+
 ## Cómo funciona realmente la liquidación
 
 Las Divulgaciones de Riesgo que aceptaste al momento de la oferta resumen el resultado en el peor de los casos en dos frases. Esta sección explica la mecánica subyacente, útil si quieres entender POR QUÉ existe el respaldo en especie (in-kind fallback), o cuál de las cuatro ramas tomaría realmente tu préstamo.
@@ -1370,6 +1388,8 @@ Si no existe una contraparte opuesta, el protocolo cae en el camino del agregado
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -1390,6 +1410,8 @@ activo en el protocolo usando una sola firma en su lugar, así que
 una lista limpia aquí no impide depósitos futuros.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alertas
 
@@ -1433,6 +1455,8 @@ pendiente de la creación del canal.
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## Verificador de NFTs
 
 <a id="nft-verifier.lookup"></a>
@@ -1458,6 +1482,8 @@ El NFT de posición es el instrumento al portador —verifica antes
 de comprar en un mercado secundario.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Configuración de keepers
 
@@ -1508,73 +1534,116 @@ instantánea en todos los préstamos —no hay periodo de espera.
 
 ---
 
+<a id="chapter.public-analytics-dashboard"></a>
+
 ## Dashboard de analítica pública
 
 <a id="public-dashboard.overview"></a>
 
-### Sobre la analítica pública
+### Acerca de Public Analytics
 
-Un agregador sin necesidad de billetera, calculado en vivo a
-partir de llamadas view del protocolo on-chain a través de cada
-cadena soportada. Sin backend, sin base de datos. Disponible
-exportación CSV / JSON; la dirección del protocolo más la función
-view que respalda cada métrica se muestra para fines de
-verificabilidad.
+Una página sin wallet y de una sola cadena: lee la cadena a la que
+apunta la app (la cadena de lectura por defecto si no hay wallet
+conectada). No hay agregado entre cadenas ni exportación; para
+comparar cadenas, abre la página en cada una. Dos fuentes, cada
+una señalada donde se usa:
 
-<a id="public-dashboard.combined"></a>
+- la API de lectura del indexador, sin clave y con CORS abierto —
+  las cifras de préstamos, ofertas, reciclaje y cierre del ciclo;
+- las propias funciones de lectura del Diamond a través de un RPC
+  público — las cifras del token VPFI y de comisiones.
 
-### Combinado — Todas las cadenas
+Cualquiera de las dos se puede consultar directamente para
+reproducir lo que muestra la página.
 
-Rollup cross-chain. La cabecera informa cuántas cadenas se
-cubrieron y cuántas fallaron, de modo que un RPC inalcanzable en el
-momento de la consulta queda explícito. Cuando una o más cadenas fallaron,
-la tabla por cadena marca cuáles —los totales de TVL aún se
-reportan, pero reconocen el hueco.
+<a id="public-dashboard.loans-offers"></a>
 
-<a id="public-dashboard.per-chain"></a>
+### Préstamos y ofertas
 
-### Desglose por cadena
+Contadores de préstamos por estado de `/loans/stats`, incluidos
+los grupos de liquidación pendiente, emparejados internamente y
+resto, para que las partes sumen el total; los subtotales ERC-20 y
+de alquiler de NFT, nombrando aparte cualquier préstamo activo cuyo
+tipo de activo aún no se ha leído; y contadores de ofertas de
+`/offers/stats`. Las ofertas son solo la tabla `offers` — las
+órdenes firmadas sin gas no se cuentan — y las ofertas canceladas
+salen del índice, así que el total de ofertas no es una cifra
+histórica. Un contador ausente muestra «no informado» y uno
+imposible «informado, pero no es un recuento utilizable»; ninguno
+se muestra como 0.
 
-División por cadena de las métricas combinadas. Útil para
-detectar concentración de TVL, suministros de espejos VPFI
-desalineados (la suma de los suministros espejo debería igualar
-el saldo bloqueado del adaptador canónico), o cadenas estancadas.
+<a id="public-dashboard.recycling"></a>
 
-<a id="public-dashboard.vpfi-transparency"></a>
+### Cuenta de reciclaje y cierre del ciclo
 
-### Transparencia del token VPFI
-
-Contabilidad VPFI on-chain en la cadena activa:
-
-- Suministro total, leído directamente del ERC-20.
-- Suministro circulante — suministro total menos saldos en poder
-  del protocolo (tesorería, pools de recompensas, paquetes del
-  puente in-flight).
-- Tope de minteo restante — sólo significativo en la cadena
-  canónica; las cadenas espejo reportan "n/a" para el tope
-  porque los mints allí son impulsados por puente, no minteados
-  desde el tope.
-
-Invariante cross-chain: la suma de los suministros espejo a
-través de todas las cadenas espejo iguala al saldo bloqueado del
-adaptador canónico. Un watcher monitorea esto y alerta sobre
-deriva.
+La cuenta de reciclaje (`/metrics/recycling`) lista el fondo de
+cada día del programa, su financiación y lo retirado, etiquetado
+con el índice de día propio del programa; un día sin finalizar
+aparece sin fondo y un día no activado se marca como estimación.
+El cierre del ciclo (`/metrics/loop-closure`) muestra, por día
+UTC, lo que pagaron los reclamos, lo que quedó en los vaults y lo
+absorbido, frente al momento hasta el que llega el registro. Los
+importes positivos por debajo de la precisión mostrada se
+etiquetan, las proporciones se redondean hacia abajo y una cifra
+desconocida nunca se muestra como cero.
 
 <a id="public-dashboard.transparency"></a>
 
 ### Transparencia y fuente
 
-Para cada métrica, la página lista:
+La dirección del Diamond con enlace al explorador, la cadena y el
+bloque y la antigüedad del cursor del indexador. Cada cifra del
+indexador está tan al día como ese cursor y no más; al combinar
+dos respuestas, se indica el cursor más antiguo.
 
-- El número de bloque usado como instantánea.
-- Frescura de los datos (antigüedad máxima entre cadenas).
-- La dirección del protocolo y la llamada de función view.
+<a id="public-dashboard.vpfi-transparency"></a>
 
-Cualquiera puede re-derivar cualquier número de esta página desde
-RPC + bloque + dirección del protocolo + nombre de función —ese
-es el listón.
+### Token VPFI
+
+De `getVPFISnapshot()` en el Diamond: la dirección del token y el
+`totalSupply` en esta cadena. En la cadena canónica, además el
+tope, el margen (`cap − totalSupply`, lo que aún se puede acuñar) y
+el minter. En una cadena espejo la instantánea no trae tope ni
+minter — allí el suministro llega por el token pool de CCIP —, así
+que la página muestra el suministro local y dice que el tope y el
+minter pertenecen a la cadena canónica, en lugar de mostrar ceros.
+Un token no vinculado y una instantánea ilegible se indican por
+separado.
+
+<a id="public-dashboard.fees"></a>
+
+### Comisiones y tesorería
+
+De `getTreasuryMetrics()`, `getTreasury()` y
+`getNumeraireSymbol()`, leídos en el mismo agregado Multicall3 que
+la instantánea y fijados a un bloque, que la página indica con su
+antigüedad:
+
+- comisiones desde que empezó el libro de comisiones, y en las
+  últimas 24 horas y 7 días, cada una valorada en el numerario al
+  registrarse y nunca revalorada;
+- una comisión que el protocolo no pudo valorar al registrarse
+  consta como 0, y las sumas de ventana recorren como mucho las
+  últimas 10.000 entradas — ambas solo pueden quedarse cortas, y la
+  página lo dice;
+- un cambio de numerario deja las entradas anteriores en la unidad
+  antigua, así que después los totales suman importes en dos
+  unidades bajo el símbolo actual y pueden desviarse en cualquier
+  sentido; la página dice que las comisiones anteriores se cuentan
+  en la unidad antigua;
+- la dirección de tesorería. Si es una dirección externa, las
+  comisiones salen al cobrarse y no se muestra saldo para ella. Si
+  el Diamond es su propia tesorería, se muestra lo que tiene,
+  valorado solo sobre activos que aparecen en préstamos abiertos e
+  incluyendo importes colocados en otro lugar en nombre de la
+  tesorería.
+
+Una función que falla muestra «no se pudo leer» y no oculta las
+demás.
 
 ---
+
+<a id="chapter.refinance"></a>
 
 ## Refinanciar
 
@@ -1634,6 +1703,8 @@ Revierte si HF bajo los nuevos términos quedaría por debajo de
 
 ---
 
+<a id="chapter.preclose"></a>
+
 ## Cierre anticipado
 
 Esta página es sólo para prestatarios —el preclose lo inicia el
@@ -1691,6 +1762,8 @@ usado para liquidaciones (0x → 1inch → Uniswap V3 → Balancer V2).
 
 ---
 
+<a id="chapter.early-withdrawal-lender"></a>
+
 ## Retiro anticipado (prestamista)
 
 Esta página es sólo para prestamistas —el retiro anticipado lo
@@ -1731,6 +1804,8 @@ que tenga el permiso de "completar venta de préstamo"; el paso
 de iniciar en sí permanece sólo de usuario.
 
 ---
+
+<a id="chapter.stuck-token-recovery"></a>
 
 ## Recuperación de tokens atascados
 
@@ -1794,6 +1869,8 @@ Si deseas un registro público on-chain que afirme que cierto saldo de tokens en
 
 La función disown está expuesta solo a través de llamada directa al contrato por ahora; el frontend de Vaipakam no la muestra como un botón. Usa una interfaz "Write Contract" de un explorador de bloques o una herramienta de interacción con contratos para llamarla.
 
+<a id="chapter.how-vpfi-discounts-work"></a>
+
 ## Cómo funcionan los descuentos VPFI
 
 El VPFI que tienes en tu vault en Base, la cadena canónica, te da un
@@ -1823,6 +1900,8 @@ vault. No hay ninguna configurada en el lanzamiento. Este capítulo
 trata de ese descuento por tenencia. Un modo de comisión de pago
 distinto, «Full», sigue desactivado salvo que un despliegue lo active.
 
+<a id="vpfi-discounts.turning-on"></a>
+
 ### Activar el descuento
 
 El descuento es opcional (opt-in). El interruptor está en la página de
@@ -1847,6 +1926,8 @@ El VPFI cuenta cuando el protocolo lo registra en tu vault: lo que
 depositas desde la página de VPFI y las recompensas VPFI que el
 protocolo entrega en tu vault. Los tokens enviados directamente a la
 dirección de tu vault no los sigue el protocolo y no suben tu tier.
+
+<a id="vpfi-discounts.tier-calculation"></a>
 
 ### Cómo se calcula tu tier
 
@@ -1879,6 +1960,8 @@ Qué significa esto en la práctica:
 - Un retiro que te deja por debajo del umbral de un tier baja tu tier
   al instante.
 - Una bajada de hace más de 30 días ya no te limita.
+
+<a id="vpfi-discounts.other-chains"></a>
 
 ### Tu tier en otras cadenas
 
@@ -1934,6 +2017,8 @@ de tenencia o el promedio ha alcanzado tu saldo—, nada en Base lo nota
 hasta la próxima actualización de tu registro de tier. La llamada para
 refrescar el tier hace esa actualización cuando tú quieras; la
 aplicación solo la hace por ti cuando desactivas el descuento.
+
+<a id="vpfi-discounts.operators"></a>
 
 ### Para operadores
 

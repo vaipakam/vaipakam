@@ -1720,6 +1720,32 @@ contract NFTPrepayListingFacetTest is SetupTest {
         NFTPrepayListingFacet(address(diamond)).syncPrepaySaleListing(LOAN_ID);
     }
 
+    /// @dev #2984 — the read side names exactly the set the sync screens: the
+    ///      live borrower-position holder first, then the recorded fee-leg
+    ///      recipients, and never the lender-position holder.
+    function test_prepaySaleListingParties_namesTheSyncsSet() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        (bytes32 noHash, address[] memory none) =
+            NFTPrepayListingFacet(address(diamond)).prepaySaleListingParties(LOAN_ID);
+        assertEq(noHash, bytes32(0), "no listing reads as no order hash");
+        assertEq(none.length, 0, "and no parties");
+
+        address feeRecipient = makeAddr("saleFeeRecipient");
+        FeeLeg[] memory legs = new FeeLeg[](1);
+        legs[0] = FeeLeg({recipient: feeRecipient, startAmount: 1, endAmount: 1});
+        vm.prank(borrowerHolder);
+        bytes32 orderHash = NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, _floorPlusBuffer() + 1 ether, TEST_SALT_A, conduitKey, legs
+        );
+
+        (bytes32 liveHash, address[] memory parties) =
+            NFTPrepayListingFacet(address(diamond)).prepaySaleListingParties(LOAN_ID);
+        assertEq(liveHash, orderHash, "the live listing's order hash");
+        assertEq(parties.length, 2, "holder plus one fee leg");
+        assertEq(parties[0], borrowerHolder, "the borrower-position holder first");
+        assertEq(parties[1], feeRecipient, "then the recorded fee-leg recipient");
+    }
+
     function test_syncPrepaySaleListing_disabledRegime_staleMarker_doesNotCancel() public {
         // Codex #1146-r2 P2 — a stale marker must not drive a cancel once the oracle
         // is disabled (the disabled regime ignores the registry entirely).

@@ -646,6 +646,46 @@ contract OfferParallelSaleFacetTest is SetupTest {
         OfferParallelSaleFacet(address(diamond)).syncPrepaySaleOffer(uint96(OFFER_ID));
     }
 
+    /// @dev #2984 — the read side names exactly the set the sync screens: the
+    ///      recorded fee-leg recipients, then the offer creator before acceptance
+    ///      (Scenario A) or the live borrower-position holder after it
+    ///      (Scenario B), never both.
+    function test_prepaySaleOfferParties_namesTheSyncsSet() public {
+        _scaffoldDefaultOffer();
+        (bytes32 noHash, address[] memory none) =
+            OfferParallelSaleFacet(address(diamond)).prepaySaleOfferParties(uint96(OFFER_ID));
+        assertEq(noHash, bytes32(0), "no listing reads as no order hash");
+        assertEq(none.length, 0, "and no parties");
+
+        MockSanctionsList m = new MockSanctionsList();
+        address fee = makeAddr("partiesOfferFee");
+        bytes32 orderHash = _postOfferListingWithFee(m, fee); // creator = borrowerHolder
+
+        (bytes32 liveHash, address[] memory a) =
+            OfferParallelSaleFacet(address(diamond)).prepaySaleOfferParties(uint96(OFFER_ID));
+        assertEq(liveHash, orderHash, "the live listing's order hash");
+        assertEq(a.length, 2, "one fee leg plus the creator");
+        assertEq(a[0], fee, "the fee-leg recipient first");
+        assertEq(a[1], borrowerHolder, "Scenario A: the offer creator");
+
+        uint256 loanId = 9_300;
+        address liveBorrower = makeAddr("partiesScenBBorrower");
+        LibVaipakam.Loan memory loan;
+        loan.status = LibVaipakam.LoanStatus.Active;
+        loan.lenderTokenId = 701;
+        loan.borrowerTokenId = 702;
+        TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(makeAddr("partiesScenBLender"), 701);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(liveBorrower, 702);
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanId(OFFER_ID, loanId);
+
+        (, address[] memory b) =
+            OfferParallelSaleFacet(address(diamond)).prepaySaleOfferParties(uint96(OFFER_ID));
+        assertEq(b.length, 2, "one fee leg plus the live holder");
+        assertEq(b[0], fee, "the fee-leg recipient first");
+        assertEq(b[1], liveBorrower, "Scenario B: the live borrower-position holder, not the creator");
+    }
+
     function test_syncPrepaySaleOffer_noListing_reverts() public {
         _scaffoldDefaultOffer(); // offer exists, no parallel-sale listing posted
         vm.prank(nonCreator);
