@@ -77,7 +77,7 @@ import { attemptErrorReason } from './keeperSend';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
-import { PastRunDeadline, settledChunkedRead } from './batchRead';
+import { deadlineFetch, PastRunDeadline, readPhaseClient, settledChunkedRead } from './batchRead';
 import { readCutoffMs } from './runWindow';
 import { createSubrequestBudget } from './subrequestBudget';
 import { orchestrateServerQuotes } from './serverQuotes';
@@ -218,15 +218,16 @@ async function processChain(env: Env, chain: ChainConfig, visit: number, deadlin
     chainId: chain.id,
     notAfterMs: ctx.notAfterMs,
     readCutoff,
-    buildRoute: (loan, sellAmount) =>
-      orchestrateServerQuotes(env, client, {
+    // The route's reads and quotes are the attempt's: none starts past its cutoff.
+    buildRoute: (loan, sellAmount, cutoff) =>
+      orchestrateServerQuotes(env, readPhaseClient(client, cutoff), {
         chainId: chain.id,
         diamond: ctx.diamond,
         sellToken: loan.collateralAsset,
         buyToken: loan.principalAsset,
         sellAmount,
         txOrigin: keeper,
-        fetchFn: budget.fetch,
+        fetchFn: deadlineFetch(budget.fetch, cutoff),
       }),
   };
 

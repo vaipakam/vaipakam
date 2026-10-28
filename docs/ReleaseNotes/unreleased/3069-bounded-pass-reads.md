@@ -11,8 +11,10 @@ Each attempt now reads first and sends second. Its checks, from the loan and
 the forced-sale plan to the route quotes and the final preview, have to
 finish by the read cutoff. If they do not, the attempt sends nothing, is
 reported as skipped because the reads ran past the cutoff, and is tried again
-on a later run. The send itself keeps its own deadline rule and is never cut
-off once it starts.
+on a later run. An attempt given up at the cutoff also starts no further
+request of any kind, RPC or quote, even if a late answer lets its checks go
+on. The send itself keeps its own deadline rule and is never cut off once it
+starts.
 
 The active-loan window that four passes scan now has its own cutoff ahead of
 the reads that follow it. That covers grace default, periodic settlement,

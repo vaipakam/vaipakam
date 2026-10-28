@@ -296,3 +296,34 @@ export function deadlineClient<T extends object>(client: T, deadline: number): T
     },
   });
 }
+
+/**
+ * `client` for a phase that only READS (an attempt's judge, #3069): EVERY
+ * method refused once `cutoff` has passed, not only the reads
+ * {@link deadlineClient} names, so a phase abandoned at its cutoff cannot
+ * start one more request of any kind (the clock, a nonce count, a
+ * simulation) when a late answer lets it go on. Never use it for a client
+ * that sends or waits for a receipt.
+ */
+export function readPhaseClient<T extends object>(client: T, cutoff: number): T {
+  return new Proxy(client, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value !== 'function') return value;
+      return (...args: unknown[]) => {
+        if (Date.now() >= cutoff) throw new PastRunDeadline(`${String(prop)}: past the read cutoff — read next run`);
+        return value.apply(target, args);
+      };
+    },
+  });
+}
+
+/** `fetchFn`, refusing every request that would start at or after `cutoff`:
+ *  the route quotes of a read-only phase (#3069), bounded the way
+ *  {@link readPhaseClient} bounds its RPC reads. */
+export function deadlineFetch(fetchFn: typeof fetch, cutoff: number): typeof fetch {
+  return ((input: RequestInfo | URL, init?: RequestInit) =>
+    Date.now() >= cutoff
+      ? Promise.reject(new PastRunDeadline('a quote request: past the read cutoff — read next run'))
+      : fetchFn(input, init)) as typeof fetch;
+}

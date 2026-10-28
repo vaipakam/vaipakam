@@ -99,7 +99,7 @@ import type { AdapterCall } from '@vaipakam/lib/swapRoutes';
 import { HF_LIQUIDATION_THRESHOLD } from './hfLine';
 import type { ServerOrchestrationResult } from './serverQuotes';
 import { keeperTxPending, sendInSubmissionSlot } from './keeperSend';
-import { PastRunDeadline } from './batchRead';
+import { PastRunDeadline, readPhaseClient } from './batchRead';
 import { boundedCall } from './passReader';
 
 const LOUPE_ABI: Abi = DiamondLoupeFacetABI as Abi;
@@ -152,11 +152,18 @@ export const READS_PAST_CUTOFF = 'reads-past-cutoff (the run reached its read cu
  * An attempt's read phase, stopped at `cutoff` (`runWindow.ts` rule 3): every
  * read before the send, the gate's included, either finishes by then or is
  * abandoned, and the attempt sends nothing, so a slow RPC cannot use the time
- * the send needs. Any other failure is the caller's, as before.
+ * the send needs. The judge reads only through `reads`, which refuses any
+ * request past the cutoff, so a judge abandoned there and then let go on by
+ * a late answer starts nothing more (#3070 r1). Any other failure is the
+ * caller's, as before.
  */
-export async function readsBy<T>(cutoff: number, judge: () => Promise<T | Skipped>): Promise<T | Skipped> {
+export async function readsBy<T>(
+  cutoff: number,
+  client: PublicClient,
+  judge: (reads: PublicClient) => Promise<T | Skipped>,
+): Promise<T | Skipped> {
   try {
-    return await boundedCall(cutoff, 'the attempt\'s reads', judge);
+    return await boundedCall(cutoff, 'the attempt\'s reads', () => judge(readPhaseClient(client, cutoff)));
   } catch (err) {
     if (err instanceof PastRunDeadline) return { kind: 'skipped', reason: READS_PAST_CUTOFF };
     throw err;
@@ -176,9 +183,10 @@ export interface GraceDefaultDeps {
    *  less the send reserve (`readCutoffMs`). */
   readCutoff: number;
   /** Builds the try-list for a sale of `sellAmount` of the loan's
-   *  collateral. The `in-kind` role never calls it: it sends an empty list
-   *  by definition. */
-  buildRoute: (loan: GraceLoan, sellAmount: bigint) => Promise<ServerOrchestrationResult>;
+   *  collateral, making no request (RPC or quote) at or after `cutoff`, the
+   *  attempt's read cutoff. The `in-kind` role never calls it: it sends an
+   *  empty list by definition. */
+  buildRoute: (loan: GraceLoan, sellAmount: bigint, cutoff: number) => Promise<ServerOrchestrationResult>;
 }
 
 /** The grace-default pass's attempt: {@link attemptCloseOut} as `grace`. */
@@ -197,7 +205,7 @@ export async function attemptCloseOut(
   loanId: bigint,
   role: CloseOutRole,
 ): Promise<GraceDefaultOutcome> {
-  const judged = await readsBy(deps.readCutoff, () => judgeCloseOut(deps, loanId, role));
+  const judged = await readsBy(deps.readCutoff, deps.client, (reads) => judgeCloseOut(deps, reads, loanId, role));
   if (judged.kind === 'skipped') return judged;
   const { data, preview, calls, sellAmount } = judged;
   // Prepared, signed and broadcast in the account's submission slot (#2486),
@@ -218,13 +226,15 @@ interface JudgedCloseOut {
   sellAmount: bigint;
 }
 
-/** The attempt's read phase: interlock, route, preview, final gate. */
+/** The attempt's read phase: interlock, route, preview, final gate. Every
+ *  read goes through `client`, the cutoff-bound one `readsBy` gives. */
 async function judgeCloseOut(
   deps: GraceDefaultDeps,
+  client: PublicClient,
   loanId: bigint,
   role: CloseOutRole,
 ): Promise<JudgedCloseOut | Skipped> {
-  const { client, wallet, diamond } = deps;
+  const { wallet, diamond } = deps;
   const keeper = wallet.account?.address;
   if (!keeper) return { kind: 'skipped', reason: 'no-keeper-account' };
 
@@ -279,7 +289,7 @@ async function judgeCloseOut(
   let planSells = false;
   if (sells && surface === 'whole') {
     sellAmount = loan.collateralAmount;
-    const route = await deps.buildRoute(loan, sellAmount);
+    const route = await deps.buildRoute(loan, sellAmount, deps.readCutoff);
     calls = route.calls;
     if (route.failed.length > 0) routeNote = ` (failed: ${route.failed.join(',')})`;
   }
@@ -293,7 +303,7 @@ async function judgeCloseOut(
     if (quoted !== null) {
       planSells = true;
       sellAmount = quoted;
-      const route = await deps.buildRoute(loan, sellAmount);
+      const route = await deps.buildRoute(loan, sellAmount, deps.readCutoff);
       calls = route.calls;
       if (route.failed.length > 0) routeNote = ` (failed: ${route.failed.join(',')})`;
     }

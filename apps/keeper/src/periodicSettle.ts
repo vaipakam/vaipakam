@@ -90,7 +90,7 @@ import type { AdapterCall } from '@vaipakam/lib/swapRoutes';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
-import { PastRunDeadline, settledChunkedRead } from './batchRead';
+import { deadlineFetch, PastRunDeadline, readPhaseClient, settledChunkedRead } from './batchRead';
 import { boundedCall } from './passReader';
 import { readCutoffMs } from './runWindow';
 import { createSubrequestBudget } from './subrequestBudget';
@@ -156,8 +156,9 @@ export interface PeriodicSettleDeps {
   /** When the attempt's reads stop (`runWindow.ts` rule 3): the run deadline
    *  less the send reserve (`readCutoffMs`). */
   readCutoff: number;
-  /** Builds the try-list for a sale of `sell` of the collateral. */
-  buildRoute: (loan: GraceLoan, sell: bigint) => Promise<ServerOrchestrationResult>;
+  /** Builds the try-list for a sale of `sell` of the collateral, making no
+   *  request (RPC or quote) at or after `cutoff`, the attempt's read cutoff. */
+  buildRoute: (loan: GraceLoan, sell: bigint, cutoff: number) => Promise<ServerOrchestrationResult>;
 }
 
 export async function runPeriodicSettle(env: Env, tick: PassTick): Promise<void> {
@@ -226,15 +227,16 @@ async function processChain(env: Env, chain: ChainConfig, visit: number, deadlin
     chainId: chain.id,
     notAfterMs: ctx.notAfterMs,
     readCutoff,
-    buildRoute: (loan, sell) =>
-      orchestrateServerQuotes(env, client, {
+    // The route's reads and quotes are the attempt's: none starts past its cutoff.
+    buildRoute: (loan, sell, cutoff) =>
+      orchestrateServerQuotes(env, readPhaseClient(client, cutoff), {
         chainId: chain.id,
         diamond: ctx.diamond,
         sellToken: loan.collateralAsset,
         buyToken: loan.principalAsset,
         sellAmount: sell,
         txOrigin: keeper,
-        fetchFn: budget.fetch,
+        fetchFn: deadlineFetch(budget.fetch, cutoff),
       }),
   };
 
@@ -346,7 +348,7 @@ export async function attemptPeriodicSettle(
   deps: PeriodicSettleDeps,
   loanId: bigint,
 ): Promise<PeriodicSettleOutcome> {
-  const judged = await readsBy(deps.readCutoff, () => judgePeriodicSettle(deps, loanId));
+  const judged = await readsBy(deps.readCutoff, deps.client, (reads) => judgePeriodicSettle(deps, reads, loanId));
   if (judged.kind === 'skipped') return judged;
   const { path, sell, calls } = judged;
   const sent = await sendInSubmissionSlot(
@@ -369,9 +371,14 @@ interface JudgedSettle {
   calls: readonly AdapterCall[];
 }
 
-/** The attempt's read phase: owner rule, plan, route, final gate. */
-async function judgePeriodicSettle(deps: PeriodicSettleDeps, loanId: bigint): Promise<JudgedSettle | Skipped> {
-  const { client, wallet, diamond } = deps;
+/** The attempt's read phase: owner rule, plan, route, final gate. Every read
+ *  goes through `client`, the cutoff-bound one `readsBy` gives. */
+async function judgePeriodicSettle(
+  deps: PeriodicSettleDeps,
+  client: PublicClient,
+  loanId: bigint,
+): Promise<JudgedSettle | Skipped> {
+  const { wallet, diamond } = deps;
   const keeper = wallet.account?.address;
   if (!keeper) return { kind: 'skipped', reason: 'no-keeper-account' };
 
@@ -410,7 +417,7 @@ async function judgePeriodicSettle(deps: PeriodicSettleDeps, loanId: bigint): Pr
       // exists only between two ERC-20s.
       return { kind: 'skipped', reason: 'not-swappable (shortfall needs an ERC-20 to ERC-20 sale)' };
     }
-    const route = await deps.buildRoute(loan, sell);
+    const route = await deps.buildRoute(loan, sell, deps.readCutoff);
     calls = route.calls;
     if (route.failed.length > 0) routeNote = ` (failed: ${route.failed.join(',')})`;
     if (calls.length === 0) {

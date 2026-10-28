@@ -99,6 +99,8 @@ interface Scene {
   readCutoff?: number;
   /** The node never answers a block-number read. */
   hangBlock?: boolean;
+  /** The route quote answers only after this long. */
+  routeDelayMs?: number;
   /** `previewForcedSale(loanId, TimeBasedDefault)` as read on each call, in
    *  order (the last one repeats): the early read, then the gate's. */
   plans?: (Plan | 'revert')[];
@@ -133,8 +135,12 @@ function harness(scene: Scene) {
   const plans = scene.plans ?? [PLAN];
   const planBlocks: (bigint | undefined)[] = [];
   let surfaceReads = 0;
+  let blockReads = 0;
   const client = {
-    getBlockNumber: () => (scene.hangBlock ? new Promise<bigint>(() => {}) : Promise.resolve(100n)),
+    getBlockNumber: () => {
+      blockReads += 1;
+      return scene.hangBlock ? new Promise<bigint>(() => {}) : Promise.resolve(100n);
+    },
     getTransactionCount: async (args: { blockTag: string }) =>
       args.blockTag === 'pending' ? 7 + (scene.unmined ?? 0) : 7,
     readContract: async (args: { functionName: string; args?: readonly unknown[]; blockNumber?: bigint }) => {
@@ -222,6 +228,7 @@ function harness(scene: Scene) {
     notAfterMs: scene.notAfterMs ?? Number.MAX_SAFE_INTEGER,
     readCutoff: scene.readCutoff ?? Number.POSITIVE_INFINITY,
     buildRoute: async (loan, sellAmount) => {
+      if (scene.routeDelayMs) await new Promise((r) => setTimeout(r, scene.routeDelayMs));
       routes.push(loan);
       routeSizes.push(sellAmount);
       const n = scene.calls ?? 1;
@@ -235,7 +242,7 @@ function harness(scene: Scene) {
       } as unknown as ServerOrchestrationResult;
     },
   };
-  return { deps, writes, previews, routes, routeSizes, planBlocks, surfaceReads: () => surfaceReads };
+  return { deps, writes, previews, routes, routeSizes, planBlocks, surfaceReads: () => surfaceReads, blockReads: () => blockReads };
 }
 
 describe('attemptGraceDefault', () => {
@@ -266,6 +273,17 @@ describe('attemptGraceDefault', () => {
     const h = harness({ ending: 'sale', calls: 1, hangBlock: true, readCutoff: Date.now() + 50 });
     await expect(attemptGraceDefault(h.deps, LOAN_ID)).resolves.toEqual({ kind: 'skipped', reason: READS_PAST_CUTOFF });
     expect(h.writes, 'nothing prepared or signed').toHaveLength(0);
+  });
+
+  it('starts no read once its cutoff has passed, even when a late quote lets the abandoned attempt go on (#3070 r1)', async () => {
+    const h = harness({ ending: 'sale', calls: 1, routeDelayMs: 150, readCutoff: Date.now() + 50 });
+    await expect(attemptGraceDefault(h.deps, LOAN_ID)).resolves.toEqual({ kind: 'skipped', reason: READS_PAST_CUTOFF });
+    // Let the late quote answer: the gate's clock read would follow it.
+    await new Promise((r) => setTimeout(r, 250));
+    expect(h.routes, 'the quote did answer, late').toHaveLength(1);
+    expect(h.blockReads(), 'no gate read started past the cutoff').toBe(0);
+    expect(h.previews).toHaveLength(0);
+    expect(h.writes).toHaveLength(0);
   });
 
   it('submits triggerDefault with the quoted try-list when the preview is a sale', async () => {
