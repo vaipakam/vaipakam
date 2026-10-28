@@ -21,7 +21,7 @@ import {SellerClaimFacet} from "../facets/SellerClaimFacet.sol";
  *         - **Checkpoint** ({touch}): interest from the last checkpoint to now,
  *           priced seconds-precise at the principal and rate in force over that
  *           segment, is added to the holder's earned figure. It runs before
- *           every principal or rate change ({setPrincipal}, {setRate},
+ *           every principal or rate change ({reducePrincipal}, {setRate},
  *           {writeOffPrincipal}), at every sale ({recordSale}) and at every
  *           interest payout ({paySellersFirst}). Because principal and rate
  *           change only through this library, each segment is priced on the
@@ -164,6 +164,21 @@ library LibInterestLedger {
         return LibVaipakam.positionMovePartyBlocked(frozen) ? frozen : address(0);
     }
 
+    /// @notice What the holder's claim on `loanId`'s lender claim row pays
+    ///         them: the row less the part the terminal split moves to the
+    ///         open seller claims. Every view that shows the holder their
+    ///         claim reads this, so no surface shows the sellers' share as the
+    ///         holder's.
+    function holderClaimAmount(LibVaipakam.Storage storage s, uint256 loanId)
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 amount = s.lenderClaims[loanId].amount;
+        if (s.sellerInterestClaims[loanId].length == 0) return amount;
+        return amount - SellerClaimFacet(address(this)).getSellersShareOfLenderClaim(loanId);
+    }
+
     // ─── Checkpoint and the single writer ──────────────────────────────────
 
     /// @notice Opens the ledger of a loan being originated, at its start time,
@@ -199,24 +214,30 @@ library LibInterestLedger {
         }
     }
 
-    /// @notice Sets `loan.principal`, checkpointing the old principal first and
-    ///         moving the owed principal by the same amount.
-    function setPrincipal(
+    /// @notice Lowers `loan.principal` by `cleared`, checkpointing the old
+    ///         principal first, and lowers the owed principal by `delivered`:
+    ///         the part of the repaid principal that reached the lender side
+    ///         now (the holder, or the held balance the holder's claim pays).
+    /// @dev    The two differ on purpose. The borrower's debt falls by what the
+    ///         step cleared; the holder is owed principal until it is paid to
+    ///         them. Principal a step leaves in the terminal lender claim row
+    ///         (a full internal match) is NOT delivered: the terminal split
+    ///         ranks the holder's principal first out of that row, so it must
+    ///         still count as owed there. A cost the step took out of the
+    ///         repaid principal (a matcher's incentive) is not delivered
+    ///         either, so the holder's principal still ranks ahead of the
+    ///         seller claims for it. The caller pins `cleared <= loan.principal`.
+    function reducePrincipal(
         LibVaipakam.Storage storage s,
         LibVaipakam.Loan storage loan,
-        uint256 newPrincipal
+        uint256 cleared,
+        uint256 delivered
     ) internal {
         touch(s, loan);
-        uint256 old = loan.principal;
-        loan.principal = newPrincipal;
+        loan.principal -= cleared;
         if (loan.assetType != LibVaipakam.AssetType.ERC20) return;
         LibVaipakam.InterestLedger storage l = s.interestLedger[loan.id];
-        if (newPrincipal < old) {
-            uint256 repaid = old - newPrincipal;
-            l.principalOwed = l.principalOwed > repaid ? l.principalOwed - repaid : 0;
-        } else {
-            l.principalOwed += newPrincipal - old;
-        }
+        l.principalOwed = l.principalOwed > delivered ? l.principalOwed - delivered : 0;
     }
 
     /// @notice Zeroes `loan.principal` for a shortfall written off at a
@@ -279,6 +300,13 @@ library LibInterestLedger {
             owed = earned;
             ++n;
         }
+        // Every later payout to this seller is a deposit into their own vault,
+        // made inside someone else's transaction (a repayment, a settlement, the
+        // buyer's claim). Open the vault now, while the sale has screened the
+        // seller clean: a vault cannot be created for a wallet flagged later,
+        // so without it a later flag would block those transactions instead of
+        // parking the seller's share.
+        if (s.userVaipakamVaults[seller] == address(0)) LibFacet.getOrCreateVault(seller);
         emit SellerInterestClaimRecorded(loan.id, seller, earned, owed, n);
     }
 
@@ -369,7 +397,8 @@ library LibInterestLedger {
     ///         claim at), never more than the slice still has: the holder's
     ///         yield-fee discount is the holder's, so it neither lowers nor
     ///         raises a seller's fee ({LibVPFIDiscount.resolveLenderYieldFeeFor}
-    ///         prices it on the holder's part only). Fully paid claims leave the
+    ///         prices it on the holder's part only). A slice that charged no
+    ///         yield fee pays the sellers gross. Fully paid claims leave the
     ///         list.
     /// @dev    Bookkeeping only; {SellerClaimFacet} moves the funds. `shares`
     ///         has one entry per claim that was open; an entry the slice did
@@ -385,7 +414,14 @@ library LibInterestLedger {
         shares = new SellerShare[](n);
         uint256 remaining = interestGross;
         uint256 netLeft = interestNet;
-        uint256 keepBps = LibVaipakam.BASIS_POINTS - LibVaipakam.effectiveTreasuryFeeBps(s.loans[loanId]);
+        // A seller pays the yield fee the slice charged, at the loan's own
+        // rate (never the holder's discount, which prices the holder's part
+        // only). A slice that charged no fee (its net is its gross: the
+        // periodic forced sale) pays the sellers gross, so no withheld fee is
+        // left over for the holder.
+        uint256 keepBps = interestNet >= interestGross
+            ? LibVaipakam.BASIS_POINTS
+            : LibVaipakam.BASIS_POINTS - LibVaipakam.effectiveTreasuryFeeBps(s.loans[loanId]);
         uint256 paidOff;
         for (uint256 i; i < n && remaining > 0; ++i) {
             uint256 owed = claims[i].grossOwed;

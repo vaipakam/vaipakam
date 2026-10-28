@@ -80,13 +80,25 @@ This bounds the gas of every interest payout against a seller who resells to
 themselves to grow the list.
 
 **One writer per field.** `loan.principal` and `loan.interestRateBps` are
-written through one library (`LibInterestLedger.setPrincipal`,
+written through one library (`LibInterestLedger.reducePrincipal`,
 `writeOffPrincipal`, `setRate`), which checkpoints first. A pre-deploy guard
 (`contracts/script/check-loan-terms-writer.mjs`, reading the compiler's AST)
 fails if any other file in `contracts/src/` assigns either field, except the origination
 lines in `LoanFacet` (the ledger opens at the loan's start, so nothing earlier
 exists to checkpoint). This is the guardrail #1808 asked for, built on a single
 writer instead of a list of call sites to remember.
+
+**Owed principal falls on delivery, not on repayment.** `reducePrincipal`
+takes two figures: what the step cleared from the borrower's debt, and what of
+it was delivered to the lender side now (to the holder, or into the held
+balance the holder's claim pays). Most steps deliver what they clear. A full
+internal match does not: its proceeds wait in the terminal lender claim row,
+and the terminal split ranks the holder's principal first out of that row, so
+it still counts as owed there. A matcher's incentive is never delivered, so the
+holder's principal still ranks ahead of the seller claims for it. The first
+revision lowered the owed principal by whatever the debt fell by, which let a
+full match pay seller claims out of the holder's recovered principal (Codex
+#3068 r2).
 
 **As built: the ledger opens lazily.** A loan whose ledger was never touched
 reads `touchedAt` as the loan's start time and `principalOwed` as the loan's
@@ -131,7 +143,10 @@ keeper's settlement), and a past lender's wallet must never be able to refuse
 it. A share for a flagged seller simply waits in their vault: the withdrawal is
 screened fail-closed. Each seller's share is netted at the loan's own yield
 fee (`effectiveTreasuryFeeBps`, the rate the terminal split nets a claim at),
-never more than the slice still has. The holder's discount is the holder's:
+never more than the slice still has. A slice that charges no yield fee (the
+periodic forced sale, whose interest is credited against the loan and never
+charged the fee later) pays the sellers gross, so no withheld fee is left over
+for the holder. The holder's discount is the holder's:
 `LibVPFIDiscount.resolveLenderYieldFeeFor` resolves it on the holder's part of
 the interest only (`LibInterestLedger.sellersPart` names the sellers' part), so
 the holder never pays a seller's fee in VPFI and a seller's fee is never
@@ -146,6 +161,12 @@ exiting borrower's interest and records the holder's part as held interest
 (below), and the offset completion pays sellers from the payoff's interest
 before the rest lands in the held balance, which the terminal split does not
 rank.
+
+The sale opens the seller's vault if they have none, while the sale has just
+screened them clean. Every later credit is a deposit into that vault inside
+someone else's transaction, and no vault can be created for a wallet flagged
+later, so without it a later flag would block a repayment, a settlement or the
+buyer's claim instead of parking the seller's share (Codex #3068 r2).
 
 Every seller credit observes the seller's sanctions status through the
 registry-aware read (`SellerClaimFacet._setAsideForSeller`, the one step every
@@ -171,6 +192,16 @@ principal outstanding at the terminal, and the open seller claims:
   platform could not show was whole, against the "principal first" decision.
 - A seller claim the recovery cannot cover is closed at what it was paid, and
   the claim records the unpaid part. Nothing is hidden.
+
+Every surface that shows the holder their claim shows what they will be paid:
+the row less the sellers' part of it
+(`SellerClaimFacet.getSellersShareOfLenderClaim`, the same ranking the split
+runs, read through `LibInterestLedger.holderClaimAmount`). That covers
+`ClaimFacet.getClaimable` and `getClaimableAmount`, the position NFT's
+metadata and the dashboard's claim list, so the app's payout text needs no
+change of its own. The intent auto-roll refuses a loan with open seller
+claims, because it would compound their interest into the owner's intent; the
+normal claim splits it first.
 
 `ClaimFacet.claimAsLender` self-calls the split before paying the holder, and
 sellers withdraw through `SellerClaimFacet.claimAsSeller(loanId)`, which runs

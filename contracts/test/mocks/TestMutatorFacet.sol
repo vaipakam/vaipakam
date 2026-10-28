@@ -2766,4 +2766,13 @@ contract TestMutatorFacet {
         delete s.expectedSourceChainIds;
         for (uint256 i; i < chainIds.length; ++i) s.expectedSourceChainIds.push(chainIds[i]);
     }
+
+    /// @dev #1209 (Codex #3068 r2) test-only — open a seller claim on a
+    ///      scaffolded loan, which no sale created, so a test can drive a
+    ///      terminal path (an internal match) with a past seller on the loan.
+    function pushSellerClaimRaw(uint256 loanId, address seller, uint256 grossOwed) external {
+        LibVaipakam.storageSlot().sellerInterestClaims[loanId].push(
+            LibVaipakam.SellerInterestClaim({seller: seller, grossOwed: grossOwed})
+        );
+    }
 }

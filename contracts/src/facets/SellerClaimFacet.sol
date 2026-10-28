@@ -290,6 +290,27 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
         sellerClaims = s.sellerInterestClaims[loanId];
     }
 
+    /// @notice The part of `loanId`'s lender claim row that the terminal split
+    ///         moves to the open seller claims, as the row stands now. The
+    ///         holder's claim pays the row less this, so every surface that
+    ///         shows the holder what they will receive subtracts it
+    ///         ({LibInterestLedger.holderClaimAmount}). 0 when no seller claim
+    ///         is open or the row has nothing to split.
+    /// @dev    The same ranking the split itself runs ({_rank}). On a
+    ///         FallbackPending loan the row can still change at the claim-time
+    ///         retry, so the figure is for the row as it stands.
+    function getSellersShareOfLenderClaim(uint256 loanId) external view returns (uint256 share) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.SellerInterestClaim[] memory claims = s.sellerInterestClaims[loanId];
+        if (claims.length == 0) return 0;
+        LibVaipakam.ClaimInfo storage claim = s.lenderClaims[loanId];
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        uint256[] memory pays = _rank(
+            s, loan, claims, claim.asset, _rowRecovery(claim), LibVaipakam.effectiveTreasuryFeeBps(loan)
+        );
+        for (uint256 i; i < pays.length; ++i) share += pays[i];
+    }
+
     /// @notice What is waiting in `seller`'s vault for them on `loanId`, in
     ///         `asset`, ready for {claimAsSeller}.
     function getSellerInterestHeld(uint256 loanId, address seller, address asset)
@@ -316,11 +337,15 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (!_final(loan)) revert SellerClaimsNotFinal(loanId);
         LibVaipakam.ClaimInfo storage claim = s.lenderClaims[loanId];
-        // A claim already paid, not in an ERC-20, or never written has nothing
-        // to split: the seller claims close unpaid (recovery 0).
-        uint256 recovery = claim.claimed || claim.asset == address(0) ||
+        _splitAndPay(s, loanId, loan, loan.lender, claim.asset, _rowRecovery(claim), true);
+    }
+
+    /// @dev What a lender claim row offers the split. A row already paid, not
+    ///      in an ERC-20, or never written has nothing to split: the seller
+    ///      claims close unpaid (recovery 0).
+    function _rowRecovery(LibVaipakam.ClaimInfo storage claim) private view returns (uint256) {
+        return claim.claimed || claim.asset == address(0) ||
             claim.assetType != LibVaipakam.AssetType.ERC20 ? 0 : claim.amount;
-        _splitAndPay(s, loanId, loan, loan.lender, claim.asset, recovery, true);
     }
 
     /// @dev Ranks `recovery` (in `asset`) between the holder's principal and

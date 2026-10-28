@@ -1126,7 +1126,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // maturity. The pre-partial coupon was already settled interest-first
         // from the swap proceeds above.
         loan.collateralAmount -= swappedCollateral;
-        LibInterestLedger.setPrincipal(s, loan, loan.principal - principalRepaid);
+        LibInterestLedger.reducePrincipal(s, loan, principalRepaid, principalRepaid);
         uint256 remainingDays = (endTime - block.timestamp) / 1 days;
         loan.interestAccrualStart = uint64(block.timestamp);
         loan.interestRemainingDays = uint16(remainingDays);

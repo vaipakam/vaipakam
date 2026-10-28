@@ -66,7 +66,7 @@ test('other fields, other structs, the home library and lib/ are not counted', (
     expression: ident('struct LibVaipakam.Offer storage pointer'),
   };
   assert.deepEqual(writes(unit('src/facets/X.sol', 'X', 'h', [assign(member('collateralAmount')), assign(offer)])), {});
-  assert.deepEqual(writes(unit(HOME, 'LibInterestLedger', 'setPrincipal', [assign(member('principal'))])), {});
+  assert.deepEqual(writes(unit(HOME, 'LibInterestLedger', 'reducePrincipal', [assign(member('principal'))])), {});
   assert.deepEqual(writes(unit('lib/x/Y.sol', 'Y', 'f', [assign(member('principal'))])), {});
 });
 

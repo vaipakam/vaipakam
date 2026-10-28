@@ -22,6 +22,7 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 
 /// @title SellerInterestClaimTest
 /// @notice #1209 + #1808 — a lender who sells keeps the interest they earned,
@@ -445,5 +446,62 @@ contract SellerInterestClaimTest is SetupTest {
         vm.prank(lender);
         vm.expectRevert(abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, lender));
         SellerClaimFacet(address(diamond)).claimAsSeller(loanId);
+    }
+
+    // ─── Codex #3068 r2 ──────────────────────────────────────────────────────
+
+    /// @dev The holder's claim views show what the holder is paid: the row
+    ///      less the sellers' part of it, which is what the claim then pays.
+    function test_holderClaimView_showsTheRowLessTheSellersPart() public {
+        uint256 loanId = _openLoan();
+        _skip(10 days);
+        uint256 sellerGross = _accrual(PRINCIPAL, 10 days);
+        address buyer = _sell(loanId, lender, "buyer1");
+        _skip(5 days);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+
+        uint256 sellers = SellerClaimFacet(address(diamond)).getSellersShareOfLenderClaim(loanId);
+        assertEq(sellers, _net(loanId, sellerGross), "the sellers' part is the seller's net claim");
+        (, uint256 shown,,,,,,) = ClaimFacet(address(diamond)).getClaimable(loanId, true);
+        (, uint256 shownAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        assertEq(shown, shownAmount, "both claim views agree");
+
+        uint256 before = ERC20(mockERC20).balanceOf(buyer);
+        vm.prank(buyer);
+        ClaimFacet(address(diamond)).claimAsLender(loanId);
+        assertEq(ERC20(mockERC20).balanceOf(buyer) - before, shown, "the holder is paid what they were shown");
+    }
+
+    /// @dev A holder who got the position by plain transfer has no vault. The
+    ///      sale opens one while it has the seller screened clean, so a flag
+    ///      raised later parks the seller's share instead of blocking the
+    ///      borrower's repayment.
+    function test_sale_opensTheSellersVault_soALaterFlagCannotBlockRepayment() public {
+        uint256 loanId = _openLoan();
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        address holder = makeAddr("transfereeHolder");
+        uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).lenderTokenId;
+        vm.prank(lender);
+        IERC721(address(diamond)).transferFrom(lender, holder, tokenId);
+        assertEq(VaultFactoryFacet(address(diamond)).getUserVaultAddress(holder), address(0), "no vault yet");
+
+        _skip(10 days);
+        _sell(loanId, holder, "buyer1");
+        assertTrue(
+            VaultFactoryFacet(address(diamond)).getUserVaultAddress(holder) != address(0),
+            "the sale opened the seller's vault"
+        );
+
+        _skip(5 days);
+        m.setFlagged(holder, true);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayPartial(loanId, PRINCIPAL / 2);
+        assertGt(
+            SellerClaimFacet(address(diamond)).getSellerInterestHeld(loanId, holder, mockERC20),
+            0,
+            "the flagged seller's share is parked in their vault"
+        );
     }
 }

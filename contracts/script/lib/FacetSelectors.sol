@@ -564,7 +564,7 @@ library FacetSelectors {
     ///         (`getSellerClaimFacetSelectors`) return it, and
     ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
     function sellerClaim() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](8);
         s[0] = SellerClaimFacet.paySellersFirst.selector;
         s[1] = SellerClaimFacet.resolveSellerClaims.selector;
         s[2] = SellerClaimFacet.settleSellerClaimsFrom.selector;
@@ -572,6 +572,7 @@ library FacetSelectors {
         s[4] = SellerClaimFacet.getInterestLedger.selector;
         s[5] = SellerClaimFacet.getSellerInterestHeld.selector;
         s[6] = SellerClaimFacet.settleParkedInterestAtSale.selector;
+        s[7] = SellerClaimFacet.getSellersShareOfLenderClaim.selector;
     }
 
     /// @notice Full external selector surface of {NumeraireValueFacet} (3).

@@ -2443,8 +2443,11 @@ which Liam forfeited his accrued interest to the treasury at the sale.
   carries exactly the borrower risk he carried while he held the position, and
   no more.
 - **The yield fee is taken once, when interest is paid.** A seller claim is
-  recorded gross and paid net of the loan's own yield fee. The treasury takes
-  nothing at the sale itself.
+  recorded gross and paid net of the loan's own yield fee, when the payment
+  carries that fee. A payment that carries no yield fee (a periodic settlement
+  made by selling collateral) pays the seller gross, so the fee withheld from a
+  seller can never end up with the holder. The treasury takes nothing at the
+  sale itself.
 - **A holder's fee discount is the holder's alone.** A fee discount the current
   holder has earned (their VPFI tier) applies only to the interest the holder
   is paid. It never lowers the fee on a seller's share, and the holder never
@@ -2472,19 +2475,38 @@ which Liam forfeited his accrued interest to the treasury at the sale.
   holder receives all of it and the seller claims close unpaid. A seller claim
   that a recovery does not cover is closed at what it was paid, and the unpaid
   part is stated, not hidden.
+- **Principal stays owed to the holder until it reaches them.** Repaid
+  principal counts as paid to the holder only once it is delivered to them (or
+  into the balance set aside for their claim). Principal that waits in the
+  holder's claim on the closed loan (as when an internal match closes a loan)
+  is still the holder's principal there, so it is paid to the holder before any
+  seller claim. A cost taken out of repaid principal, such as a matcher's
+  incentive, is not delivered to the holder either, so their principal still
+  ranks first for it.
+- **The holder is shown what they will be paid.** Wherever the platform shows
+  the current holder their claim on a closed loan (the claim figure, the
+  position's own description, the list of claims), the figure is what the
+  holder will receive: the claim less the part that goes to the seller claims.
 - **A seller collects from their own vault.** A seller's share lands in their
   own Vaipakam vault, set aside for them, and they withdraw it whenever they
   choose. It is never pushed to a seller's wallet, because the payment is part
   of someone else's transaction and a past lender must never be able to block
   it. A share for a sanctions-flagged seller simply waits there until they are
   clear. A seller seen flagged when a share is credited to them is recorded as
-  confirmed, so an outage of the sanctions source cannot release it later.
+  confirmed, so an outage of the sanctions source cannot release it later. The
+  seller's vault is opened at the sale if they have none, while the sale has
+  just shown them clear, so a seller flagged later can never block another
+  party's repayment or claim.
 - **The number of open seller claims on one loan is bounded.** A loan carries
   at most four open seller claims. A sale that would open a fifth is refused
   until older claims are paid, and the answer to whether the sale route is open
   names this reason. A seller reselling the same position to themselves adds to
   their own newest claim rather than opening a new one. This keeps every
   interest payment's cost bounded.
+- **An automatic renewal never takes a seller's interest.** A position that
+  carries open seller claims (sold and later bought back) is not renewed
+  automatically into its owner's standing offer; it settles through the
+  ordinary claim, which pays the sellers their part first.
 - **A plain transfer is not a sale.** Sending the lender position to another
   wallet settles nothing: the earned interest travels with the position, as
   the unpaid interest it represents does.

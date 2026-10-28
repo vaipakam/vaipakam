@@ -828,7 +828,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
 
             // #1808 — through the ledger's single writer (checkpoint first).
             // `partialAmount < loan.principal` is pinned above.
-            LibInterestLedger.setPrincipal(s, loan, loan.principal - partialAmount);
+            LibInterestLedger.reducePrincipal(s, loan, partialAmount, partialAmount);
             // #408 / #410 / #413 (2026-06-12) — Option A: track
             // remaining committed term. The accrual clock reset
             // below (`interestAccrualStart = now`) measures `elapsedDays`

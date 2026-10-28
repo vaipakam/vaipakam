@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
@@ -1805,7 +1806,10 @@ contract ClaimFacet is
         LibVaipakam.ClaimInfo storage claim = isLender
             ? s.lenderClaims[loanId]
             : s.borrowerClaims[loanId];
-        return (claim.asset, claim.amount, claim.claimed);
+        // #1209 — the lender side reads what the holder is paid: the row less
+        // the part the terminal split moves to past sellers.
+        amount = isLender ? LibInterestLedger.holderClaimAmount(s, loanId) : claim.amount;
+        return (claim.asset, amount, claim.claimed);
     }
 
     /// @notice Full claim payload for the requested side of a loan — use
@@ -1842,7 +1846,9 @@ contract ClaimFacet is
             ? s.lenderClaims[loanId]
             : s.borrowerClaims[loanId];
         asset = claim.asset;
-        amount = claim.amount;
+        // #1209 — the lender side reads what the holder is paid: the row less
+        // the part the terminal split moves to past sellers.
+        amount = isLender ? LibInterestLedger.holderClaimAmount(s, loanId) : claim.amount;
         claimed = claim.claimed;
         assetType = claim.assetType;
         tokenId = claim.tokenId;

@@ -6,7 +6,7 @@
  * The interest ledger prices each stretch of a loan's life at the principal
  * and rate in force over it, so every change to either must first close the
  * stretch at the old figures. `src/libraries/LibInterestLedger.sol` is the one
- * place that is written (`setPrincipal`, `writeOffPrincipal`, `setRate`). A
+ * place that is written (`reducePrincipal`, `writeOffPrincipal`, `setRate`). A
  * write anywhere else would price the stretch before it at the new figures, so
  * this check fails on any write to a stored loan's `principal` or
  * `interestRateBps` in src/ outside that library, unless the site is LISTED
@@ -147,7 +147,7 @@ export function verdict(sites, allowed = ALLOWED) {
     const where = site.refs.map((r) => `${r.label}${r.line ? ` @${r.line}` : ''}`).join(', ');
     const entry = listed.get(key);
     if (!entry) {
-      problems.push(`${key}: ${site.writes} write(s) to a loan's principal or rate outside LibInterestLedger (${where}) — use setPrincipal / writeOffPrincipal / setRate`);
+      problems.push(`${key}: ${site.writes} write(s) to a loan's principal or rate outside LibInterestLedger (${where}) — use reducePrincipal / writeOffPrincipal / setRate`);
     } else if (entry.writes !== site.writes) {
       problems.push(`${key}: listed with ${entry.writes} write(s), found ${site.writes} (${where}) — a changed count is a new write to justify`);
     }

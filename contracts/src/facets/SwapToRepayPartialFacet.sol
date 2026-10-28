@@ -367,7 +367,7 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // ── Loan state updates ───────────────────────────────────────
         // #1808 — through the ledger's single writer (checkpoint first).
         // `partialPrincipal < loan.principal` is pinned above.
-        LibInterestLedger.setPrincipal(s, loan, loan.principal - partialPrincipal);
+        LibInterestLedger.reducePrincipal(s, loan, partialPrincipal, partialPrincipal);
         unchecked {
             // Codex round-1 P1 #4 — reduce collateralAmount so HF /
             // default / claim logic reflects true post-swap backing.

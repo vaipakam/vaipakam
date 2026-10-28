@@ -34,6 +34,17 @@ accrues on the ledger only while a loan is active, so a closed loan reports
 nothing earned and no principal owed there; the lender side's claim on the
 closed loan is what it is owed.
 
+Repaid principal counts as paid to the holder only once it reaches them, so
+principal that waits in the holder's claim on a closed loan (an internal match
+that closes it) is paid to the holder before any seller claim. A payment that
+carries no yield fee, such as a periodic settlement made by selling
+collateral, pays a seller gross. The seller's vault is opened at the sale, so a
+seller flagged later cannot block another party's repayment or claim. Wherever
+the platform shows the holder their claim on a closed loan, it shows what they
+will be paid, after the sellers' part. An automatic renewal into the owner's
+standing offer is refused for a position with open seller claims; it settles
+through the ordinary claim instead.
+
 Underneath, each loan now keeps an exact interest ledger: every stretch of time
 is priced at the principal and rate in force over it, and interest counts as
 paid only when it reaches the payee. This replaces the old "paid through" mark

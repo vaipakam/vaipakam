@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibMetricsTypes} from "../libraries/LibMetricsTypes.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -1923,7 +1924,11 @@ contract MetricsFacet {
                 ? vs.lenderClaims[s.loanId]
                 : vs.borrowerClaims[s.loanId];
             s.claimableAsset = claim.asset;
-            s.claimableAmount = claim.amount;
+            // #1209 — a lender NFT shows what its holder is paid: the row less
+            // the part the terminal split moves to past sellers.
+            s.claimableAmount = s.isLender
+                ? LibInterestLedger.holderClaimAmount(vs, s.loanId)
+                : claim.amount;
             if (claim.asset != address(0)) {
                 s.claimableAssetType = claim.assetType;
                 (s.claimableSymbol, s.claimableDecimals) =
