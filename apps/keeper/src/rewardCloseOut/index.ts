@@ -92,12 +92,13 @@ import type { ChainConfig, Env, PlainVarKey } from '../env';
 import { getChainConfigs } from '../env';
 import { buildKeeperContext, passIsArmed, resolveKeeperAccount, type KeeperContext } from '../keeper';
 import type { PassTick } from '../passSchedule';
-import { deadlineClient, PastRunDeadline, settledRead, type BatchResult } from '../batchRead';
+import { deadlineClient, PastRunDeadline } from '../batchRead';
 import { shortErr } from '../callErrors';
 import { d1EventLedger, decodePos, encodePos, posAfter, rowFinalized, type EventLedger } from '../eventLedger';
 import { decodeEntryFloor, encodeEntryFloor, ENTRY_PAGE, scanEntries, type EntryRow } from '../rewardEntries';
-import { advanceFloor, d1ScanCursors, decodeIndex, finalFloor, finalizedBlockOnce, rotatingWindow, type FinalBlock, type ScanCursors } from '../scanCursors';
+import { advanceFloor, d1ScanCursors, decodeIndex, finalFloor, rotatingWindow, type ScanCursors } from '../scanCursors';
 import { StepSender } from '../stepSender';
+import { PassReader } from '../passReader';
 import {
   provableThrough,
   conservationGap,
@@ -180,8 +181,6 @@ const QUEUE_SIDE_RECYCLED = 1;
 /** The era the reconciliation queues are keyed under (one, until they are
  *  era-keyed). */
 const RECONCILIATION_QUEUE_ERA = 0n;
-/** Reads per aggregate. */
-const READ_CHUNK = 100;
 
 const ROLE_CANONICAL = 0;
 const ROLE_MIRROR = 1;
@@ -376,44 +375,10 @@ export async function closeOutOnce(chainId: number, diamond: Address, deps: Clos
 }
 
 /** Reads, each refused past the run's deadline. */
-class Reader {
-  /** The chain's finalized block, read once a run (`scanCursors.finalFloor`). */
-  readonly finalized: () => Promise<FinalBlock | null>;
-
-  constructor(
-    readonly deps: CloseOutDeps,
-    readonly diamond: Address,
-  ) {
-    this.finalized = finalizedBlockOnce(deps.client);
+class Reader extends PassReader {
+  constructor(deps: CloseOutDeps, diamond: Address) {
+    super(deps, deps.sendDeadline, diamond, ABI, 'rewardCloseOut');
   }
-
-  async one<T>(functionName: string, args: readonly unknown[] = []): Promise<T> {
-    return (await this.deps.client.readContract({ address: this.diamond, abi: ABI, functionName, args })) as T;
-  }
-
-  /** Many reads of one function; `undefined` where a read did not come back.
-   *  At the head, or at `blockNumber` when one is given. */
-  async many(calls: readonly { functionName: string; args: readonly unknown[] }[], label: string, blockNumber?: bigint): Promise<unknown[]> {
-    const out: unknown[] = [];
-    for (let i = 0; i < calls.length; i += READ_CHUNK) {
-      const part = calls.slice(i, i + READ_CHUNK);
-      // eslint-disable-next-line no-await-in-loop
-      const res: BatchResult[] = await settledRead(
-        this.deps.readClient,
-        part.map((c) => ({ address: this.diamond, abi: ABI, functionName: c.functionName, args: c.args })),
-        `rewardCloseOut ${label}`,
-        this.deps.sendDeadline,
-        blockNumber,
-      );
-      for (const x of res) out.push(x.status === 'success' ? x.result : undefined);
-    }
-    return out;
-  }
-
-  days(days: readonly number[], functionName: string, label: string, blockNumber?: bigint): Promise<unknown[]> {
-    return this.many(days.map((d) => ({ functionName, args: [BigInt(d)] })), label, blockNumber);
-  }
-
 }
 
 interface Gate {
