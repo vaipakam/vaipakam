@@ -2,7 +2,7 @@
 
 **Status**: Design doc, alternatives stage. No code shipped.
 **Item**: B.2 in
-[`docs/internal/PendingTasks-2026-05-14.md`](../internal/PendingTasks-2026-05-14.md).
+`docs/internal/PendingTasks-2026-05-14.md` (a private record since #2764).
 **Companion**: shares the per-tier liquidation-discount budget
 modeled in
 [`FlashLoanLiquidationPath.md`](FlashLoanLiquidationPath.md) §4.
@@ -80,7 +80,7 @@ counterparty in a later block — and every liquidation trigger
 (HF-based, time-based, claim-time) routes through internal-match
 first, automatically, with no caller-side dispatch knowledge
 required. Full audit detail:
-[`docs/internal/InternalMatchFallbackRescueAudit-2026-05-16.md`](../internal/InternalMatchFallbackRescueAudit-2026-05-16.md).
+`docs/internal/InternalMatchFallbackRescueAudit-2026-05-16.md` (a private record since #2764).
 
 ## 0. Architectural pivot (2026-05-14 — post-§9.1 review)
 

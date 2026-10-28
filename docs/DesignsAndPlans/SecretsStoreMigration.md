@@ -20,6 +20,11 @@ Provisioned 2026-05-17:
 - Store ID: `1e66429d0fa24aa38a27bc05b7bcf63e`
 - Account: `f8d28a27e95d4eab69364d7b3341fa7d`
 
+Neither ID is a secret (#2764). The store ID has to appear in every
+Worker's `wrangler.jsonc` for its secret bindings to resolve, and an
+account or store ID grants nothing without an API token scoped to it.
+The tokens are what protect the store, and they never enter the repo.
+
 > Cloudflare Secrets Store is an **open beta**. Decision below (§4)
 > accepts that for all secrets including signing keys.
 

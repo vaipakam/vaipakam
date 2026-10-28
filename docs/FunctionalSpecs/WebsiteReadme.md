@@ -1219,7 +1219,7 @@ Quality requirements:
 - the public transparency page includes descriptive search and sharing metadata
 
 Dashboard coding and build guidance is preserved in the
-[internal implementation notes](../internal/FunctionalSpecImplementationNotes.md#dashboard-coding-and-build-guidance).
+[implementation notes](../procedures/FunctionalSpecImplementationNotes.md#dashboard-coding-and-build-guidance).
 
 Security, privacy, and compliance requirements:
 

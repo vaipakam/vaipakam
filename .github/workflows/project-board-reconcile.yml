@@ -255,7 +255,7 @@ jobs:
           # binding anywhere else.
           #
           # AND NO LATER SNAPSHOT FIXES THAT, which is the whole point.
-          # `docs/internal/ProjectProcedures.md` records it for this account:
+          # `docs/procedures/ProjectProcedures.md` records it for this account:
           # a secondary limit does NOT appear in `/rate_limit` — the endpoint
           # keeps reporting 5000/5000 while requests come back 403 or 429 —
           # and the same account has had the PRIMARY form while it read 5000

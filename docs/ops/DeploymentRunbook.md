@@ -1020,7 +1020,8 @@ each item is checked:
       address.
 - [ ] `PositiveFlows.s.sol` + `PartialFlows.s.sol` green on every
       chain — capture the broadcast logs in
-      `docs/internal/RehearsalReports/<date>/`. The positive flows run
+      `docs/internal/RehearsalReports/<date>/` (a private, git-ignored
+      folder, #2764: the logs stay off GitHub). The positive flows run
       only against a Diamond deployed for the rehearsal, with
       `REHEARSAL_ALLOW_CHAIN_ID` set to that chain's id: their
       fixture replaces the Diamond's oracle and sanctions sources with

@@ -362,7 +362,9 @@ For each new chain we deploy on, complete in order:
 | 9    | Update frontend copy once labels confirmed                          | Frontend eng             | When confirmed |
 
 Track each chain's progress in
-`docs/internal/AnalyticsLabelStatus.md` (create on first use). Each
+`docs/internal/AnalyticsLabelStatus.md` (create on first use; the
+folder is private and git-ignored, #2764, so the tracker stays off
+GitHub). Each
 row: chain, firm, submission date, confirmation date, label string,
 notes.
 

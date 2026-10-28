@@ -6,7 +6,7 @@ Standard.
 
 This file is the **30-second contributor's guide**. The full
 contributor handbook lives at
-[`docs/internal/ProjectProcedures.md`](docs/internal/ProjectProcedures.md)
+[`docs/procedures/ProjectProcedures.md`](docs/procedures/ProjectProcedures.md)
 — read that before opening a non-trivial PR.
 
 ## Before you start
@@ -55,7 +55,7 @@ pnpm --filter @vaipakam/www typecheck
 
 The `nice -n -10 ionice -c 2 -n 0` prefix on `forge` is convention —
 viaIR runs are long and benefit from higher priority. See
-[`ProjectProcedures.md §9`](docs/internal/ProjectProcedures.md).
+[`ProjectProcedures.md §9`](docs/procedures/ProjectProcedures.md).
 
 ## PR workflow
 
@@ -82,7 +82,7 @@ viaIR runs are long and benefit from higher priority. See
    per project convention).
 
 Full step-by-step in
-[`ProjectProcedures.md §3`](docs/internal/ProjectProcedures.md).
+[`ProjectProcedures.md §3`](docs/procedures/ProjectProcedures.md).
 
 ## Conventions worth knowing up front
 
@@ -110,7 +110,7 @@ Full step-by-step in
 | [`contracts/`](contracts/) | Solidity contracts (Diamond + facets), Foundry tests, deploy scripts. |
 | [`apps/`](apps/) | Workspaces: `defi` (connected app), `www` (marketing), `keeper`, `indexer`, `agent` (Cloudflare Workers), `labs` (internal). |
 | [`packages/`](packages/) | Shared packages: `contracts` (ABIs + deployments), `lib`, `ui`. |
-| [`docs/`](docs/) | Living docs — `DesignsAndPlans/`, `FunctionalSpecs/`, `ReleaseNotes/`, `internal/`, `ops/`. |
+| [`docs/`](docs/) | Living docs — `DesignsAndPlans/`, `FunctionalSpecs/`, `ReleaseNotes/`, `procedures/`, `ops/`. (`docs/internal/` is the owner's private, git-ignored folder, #2764.) |
 | [`audits/`](audits/) | Audit reports + auditor working directories (populated as audits land). |
 | [`.github/`](.github/) | Issue templates, workflows, CODEOWNERS, LABELS reference. |
 
@@ -120,7 +120,7 @@ Full step-by-step in
   you prefer the Issue surface).
 - **Architecture**: design rationale lives in
   `docs/DesignsAndPlans/`. The agent handbook
-  `docs/internal/ProjectProcedures.md` summarises load-bearing
+  `docs/procedures/ProjectProcedures.md` summarises load-bearing
   conventions.
 - **Security**: private disclosure via the IncidentRunbook (above).
 

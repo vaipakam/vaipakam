@@ -26,7 +26,7 @@
 # gate is `mainnet-gate.yml`, which runs on the same `v*` tag push in
 # parallel. The convention is: only push a `v*` tag after the
 # corresponding `release/**` branch has been gated green by
-# `mainnet-gate` — see `docs/internal/ProjectProcedures.md` §7.3.
+# `mainnet-gate` — see `docs/procedures/ProjectProcedures.md` §7.3.
 
 name: Release artifacts
 

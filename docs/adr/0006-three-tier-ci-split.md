@@ -151,7 +151,7 @@ not necessary.
 
 - Workflow: [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml),
   [`.github/workflows/mainnet-gate.yml`](../../.github/workflows/mainnet-gate.yml)
-- Doc: [`docs/internal/ProjectProcedures.md`](../internal/ProjectProcedures.md) §7
+- Doc: [`docs/procedures/ProjectProcedures.md`](../procedures/ProjectProcedures.md) §7
 - Pre-deploy gate: [`contracts/script/predeploy-check.sh`](../../contracts/script/predeploy-check.sh)
 - Deploy-sanity suite: [`contracts/test/deploy/`](../../contracts/test/deploy/)
 - Related PRs (cache-key v1 → v4 evolution): #80, #84, #86, #87, #88, #90
