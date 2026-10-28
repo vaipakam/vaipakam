@@ -18,14 +18,16 @@ A loan with anything the borrower should see first (a sale waiting to
 complete, a refinance request, an offset offer, a loan in its fallback
 period, a rental) is left out of the batch and named, with a pointer to
 its own page. The batch goes through the Diamond's existing multicall
-with each loan allowed to fail on its own, so one loan that fails never
+(the owner's choice over a wallet batch, so every wallet gets one
+prompt) with each loan allowed to fail on its own, so one loan that fails never
 undoes the others. Afterwards every loan is read back from the chain at
 the block the transaction mined in: repaid, still open with the reason,
 changed another way, or unreadable. Every loan is checked again in full
 right before its transaction is sent, including that the wallet still
 holds its position. The approval is set back only when it is established
 that nothing closed, and the approval left standing is always read from
-the chain and stated. The card stays with its results until dismissed.
+the chain and stated. The card stays with its results until dismissed, also while the
+positions lists cannot be read.
 A transaction that is sent but not yet confirmed is reported as such,
 never as a failure. The review is the usual six-row review and repeats,
 under each loan, what its own page says before an early close: the
@@ -36,5 +38,4 @@ Advances #126 (slice 1 of 3; the lender's "List all for sale" and the
 borrower's "Refinance all" follow). Design:
 `docs/DesignsAndPlans/OfferGroupBatchActionsDesign.md`.
 
-> Caveat: the owner's recorded decision on #126 names an EIP-5792 wallet batch; this slice uses the Diamond multicall instead and the choice is with the owner. Only the sender changes if EIP-5792 is kept.
 > Caveat: no Anvil end-to-end spec yet; it needs a seed that fills one offer into two loans.
