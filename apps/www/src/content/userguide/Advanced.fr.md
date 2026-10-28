@@ -1548,67 +1548,103 @@ il n'y a pas de période d'attente.
 
 <a id="public-dashboard.overview"></a>
 
-### À propos de l'analytique publique
+### À propos de Public Analytics
 
-Un agrégateur sans wallet calculé en direct à partir d'appels
-view du protocole on-chain sur chaque chaîne supportée. Pas de
-backend, pas de base de données. Export CSV / JSON disponible ;
-l'adresse du protocole plus la fonction view qui supporte chaque
-métrique sont affichées pour la vérifiabilité.
+Une page sans wallet, sur une seule chaîne : elle lit la chaîne
+vers laquelle pointe l'app (la chaîne de lecture par défaut sans
+wallet connecté). Pas d'agrégat multi-chaînes ni d'export ; pour
+comparer des chaînes, ouvre la page sur chacune. Deux sources,
+chacune signalée là où elle sert :
 
-<a id="public-dashboard.combined"></a>
+- l'API de lecture de l'indexeur, sans clé et en CORS ouvert — les
+  chiffres des prêts, des offres, du recyclage et du bouclage ;
+- les fonctions de lecture du Diamond lui-même via un RPC public —
+  les chiffres du jeton VPFI et des frais.
 
-### Combiné — Toutes les chaînes
+Chaque source peut être interrogée directement pour reproduire ce
+que montre la page.
 
-Rollup cross-chain. L'en-tête rapporte combien de chaînes ont
-été couvertes et combien ont échoué, donc un RPC inaccessible
-au moment de la récupération est explicite. Quand une ou plusieurs
-chaînes ont échoué, le tableau par chaîne signale laquelle —
-les totaux TVL sont quand même rapportés, mais reconnaissent
-l'écart.
+<a id="public-dashboard.loans-offers"></a>
 
-<a id="public-dashboard.per-chain"></a>
+### Prêts et offres
 
-### Détail par chaîne
+Compteurs de prêts par statut depuis `/loans/stats`, y compris
+les catégories règlement en attente, appariés en interne et reste,
+pour que les parties fassent le total ; les sous-totaux ERC-20 et
+location de NFT, en nommant à part tout prêt actif dont le type
+d'actif n'est pas encore lu ; et les compteurs d'offres depuis
+`/offers/stats`. Les offres ne sont que la table `offers` — les
+ordres signés sans gas ne sont pas comptés — et les offres
+annulées sortent de l'index, donc le total des offres n'est pas
+un chiffre historique. Un compteur absent affiche « non fourni »
+et un compteur impossible « fourni, mais pas un nombre
+utilisable » ; aucun n'est affiché comme 0.
 
-Ventilation par chaîne des métriques combinées. Utile pour
-repérer une concentration de TVL, des supplies mirror VPFI
-incohérents (la somme des supplies mirror devrait égaler le
-solde verrouillé de l'adaptateur canonique), ou des chaînes à
-l'arrêt.
+<a id="public-dashboard.recycling"></a>
 
-<a id="public-dashboard.vpfi-transparency"></a>
+### Compte de recyclage et bouclage
 
-### Transparence du token VPFI
-
-Comptabilité VPFI on-chain sur la chaîne active :
-
-- Offre totale, lue directement depuis l'ERC-20.
-- Offre circulante — offre totale moins les soldes détenus par
-  le protocole (trésorerie, pools de récompenses, paquets du
-  pont in-flight).
-- Plafond de minting restant — n'a de sens que sur la chaîne
-  canonique ; les chaînes mirror rapportent « n/a » pour le
-  plafond car les mints y sont pilotés par le pont, pas mintés
-  depuis le plafond.
-
-Invariant cross-chain : la somme des supplies mirror sur toutes
-les chaînes mirror égale le solde verrouillé de l'adaptateur
-canonique. Un watcher surveille cela et alerte sur la dérive.
+Le compte de recyclage (`/metrics/recycling`) liste pour chaque
+jour du programme la réserve, son financement et le prélèvement,
+étiquetés par l'index de jour propre au programme ; un jour non
+finalisé apparaît sans réserve et un jour non armé est marqué
+comme estimation. Le bouclage (`/metrics/loop-closure`) montre,
+par jour UTC, ce que les réclamations ont versé, ce qui est resté
+dans les vaults et ce qui a été absorbé, au regard du moment
+jusqu'où va l'enregistrement. Les montants positifs sous la
+précision affichée sont signalés, les parts arrondies vers le bas,
+et un chiffre inconnu n'est jamais affiché comme zéro.
 
 <a id="public-dashboard.transparency"></a>
 
-### Transparence & Source
+### Transparence & source
 
-Pour chaque métrique, la page liste :
+L'adresse du Diamond avec un lien d'explorateur, la chaîne, ainsi
+que le bloc et l'âge du curseur de l'indexeur. Chaque chiffre de
+l'indexeur est à jour autant que ce curseur, pas plus ; quand deux
+réponses sont combinées, c'est le curseur le plus ancien qui est
+indiqué.
 
-- Le numéro de bloc utilisé comme instantané.
-- Fraîcheur des données (ancienneté maximale parmi les chaînes).
-- L'adresse du protocole et l'appel de fonction view.
+<a id="public-dashboard.vpfi-transparency"></a>
 
-N'importe qui peut redériver n'importe quel chiffre de cette
-page depuis RPC + bloc + adresse du protocole + nom de
-fonction — c'est le standard.
+### Jeton VPFI
+
+Depuis `getVPFISnapshot()` sur le Diamond : l'adresse du jeton et
+`totalSupply` sur cette chaîne. Sur la chaîne canonique, aussi le
+plafond, la marge (`cap − totalSupply`, ce qui peut encore être
+émis) et le minter. Sur une chaîne miroir, l'instantané ne porte
+ni plafond ni minter — l'offre y arrive par le token pool CCIP —,
+donc la page montre l'offre locale et dit que le plafond et le
+minter appartiennent à la chaîne canonique, plutôt que d'afficher
+des zéros. Un jeton non lié et un instantané illisible sont
+signalés séparément.
+
+<a id="public-dashboard.fees"></a>
+
+### Frais et trésorerie
+
+Depuis `getTreasuryMetrics()`, `getTreasury()` et
+`getNumeraireSymbol()`, lus dans le même agrégat Multicall3 que
+l'instantané et figés sur un bloc, que la page indique avec son
+âge :
+
+- les frais depuis le début du registre des frais, et sur les
+  dernières 24 heures et 7 jours, chacun évalué dans le numéraire
+  à l'enregistrement et jamais réévalué ;
+- un frais que le protocole n'a pas pu évaluer à l'enregistrement
+  est inscrit à 0, les sommes de fenêtre parcourent au plus les
+  10 000 dernières entrées, et un changement de numéraire laisse
+  les entrées antérieures dans l'ancienne unité — les trois ne
+  peuvent que sous-estimer, et la page le dit ;
+- l'adresse de trésorerie. Si c'est une adresse externe, les frais
+  partent à la perception et aucun solde n'est affiché pour elle.
+  Si le Diamond est sa propre trésorerie, le montant détenu est
+  affiché, évalué seulement sur les actifs présents dans des
+  prêts ouverts et incluant les montants placés ailleurs pour le
+  compte de la trésorerie.
+
+Une fonction qui échoue affiche « n'a pas pu être lu » et ne
+masque pas les autres.
 
 ---
 

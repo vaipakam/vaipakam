@@ -1338,57 +1338,85 @@ frontend가 아직 reflect하지 않은 on-chain permissions는 명확한
 
 ### Public Analytics 소개
 
-supported chains 각각에서 on-chain protocol view calls로부터 live로
-calculate되는 wallet-free aggregator입니다. backend 없음, database 없음.
-CSV / JSON export가 available합니다. verifiability를 위해 각 metric 뒤의
-protocol address와 view function이 표시됩니다.
+지갑이 필요 없는 단일 체인 페이지입니다. 앱이 가리키는 체인(지갑이
+연결되지 않았으면 기본 읽기 체인)을 읽습니다. 체인 간 합산이나
+내보내기는 없습니다. 체인을 비교하려면 각 체인에서 페이지를 여세요.
+출처는 두 가지이며, 쓰이는 곳마다 표시됩니다.
 
-<a id="public-dashboard.combined"></a>
+- 인덱서의 키 없는, CORS가 열린 읽기 API — 대출, 오퍼, 리사이클링,
+  루프 클로저 수치
+- 공개 RPC를 통한 Diamond 자체의 뷰 함수 — VPFI 토큰과 수수료 수치
 
-### Combined — All Chains
+어느 출처든 직접 조회해 페이지가 보여주는 내용을 재현할 수
+있습니다.
 
-Cross-chain rollup입니다. header는 covered된 chains 수와 errored된 chains
-수를 report하므로 fetch 시 unreachable RPC가 명확히 드러납니다. 하나 이상의
-chain이 errored인 경우 per-chain table이 어느 chain인지 flag합니다 — TVL
-totals는 계속 report되지만 gap은 acknowledge됩니다.
+<a id="public-dashboard.loans-offers"></a>
 
-<a id="public-dashboard.per-chain"></a>
+### 대출과 오퍼
 
-### Per-Chain Breakdown
+`/loans/stats`의 상태별 대출 카운터(정산 대기, 내부 매칭, 나머지
+구분을 포함해 부분의 합이 총계가 됩니다), ERC-20과 NFT 렌탈 소계
+(자산 유형을 아직 읽지 못한 활성 대출은 따로 표시), 그리고
+`/offers/stats`의 오퍼 카운터입니다. 오퍼는 `offers` 테이블만
+해당하며 가스 없는 서명 주문은 세지 않습니다. 취소된 오퍼는
+인덱스에서 빠지므로 오퍼 합계는 누적 수치가 아닙니다. 없는 카운터는
+"보고되지 않음", 불가능한 값은 "보고되었지만 사용할 수 있는 건수가
+아님"으로 표시하며, 어느 쪽도 0으로 표시하지 않습니다.
 
-Combined metrics의 per-chain split입니다. TVL concentration, mismatched
-VPFI mirror supplies(mirror supplies의 sum은 canonical adapter의 locked
-balance와 같아야 함), 또는 stalled chain을 spot하는 데 유용합니다.
+<a id="public-dashboard.recycling"></a>
 
-<a id="public-dashboard.vpfi-transparency"></a>
+### 리사이클링 계정과 루프 클로저
 
-### VPFI Token Transparency
-
-active chain의 on-chain VPFI accounting:
-
-- total supply, ERC-20에서 직접 읽음.
-- circulating supply — total supply minus protocol-held balances(treasury,
-  reward pools, in-flight bridge packets).
-- 남은 mintable cap — canonical chain에서만 meaningful합니다. Mirror chains는
-  cap에 대해 "n/a"를 report합니다. 그곳의 mints는 cap이 아니라 bridge-driven
-  이기 때문입니다.
-
-Cross-chain invariant: 모든 mirror chains에 걸친 mirror supplies의 sum은
-canonical adapter의 locked balance와 같습니다. watcher가 이를 monitor하고
-drift에 alert합니다.
+리사이클링 계정(`/metrics/recycling`)은 프로그램의 각 날짜별
+풀, 그 재원, 인출액을 프로그램 고유의 일 번호로 보여줍니다. 확정되지
+않은 날은 풀 없이, 활성화되지 않은 날은 추정치로 표시됩니다. 루프
+클로저(`/metrics/loop-closure`)는 UTC 날짜별로 클레임이 지급한 양,
+볼트에 남은 양, 흡수된 양을 기록이 도달한 시점과 함께 보여줍니다.
+표시 정밀도보다 작은 양수 금액은 그렇다고 표시하고, 비율은 내림하며,
+알 수 없는 수치는 절대 0으로 표시하지 않습니다.
 
 <a id="public-dashboard.transparency"></a>
 
-### Transparency & Source
+### 투명성과 출처
 
-각 metric에 대해 page가 list하는 것:
+익스플로러 링크가 있는 Diamond 주소, 체인, 인덱서 커서의 블록과
+경과 시간입니다. 인덱서에서 온 모든 수치는 이 커서 시점까지만
+최신입니다. 두 응답을 합칠 때는 더 오래된 커서를 표시합니다.
 
-- snapshot으로 사용된 block number.
-- data freshness(chains 간 최대 지연 시간).
-- protocol address와 view function call.
+<a id="public-dashboard.vpfi-transparency"></a>
 
-이 page의 어떤 number든 RPC + block + protocol address + function name에서
-누구나 re-derive할 수 있습니다 — 그것이 기준입니다.
+### VPFI 토큰
+
+Diamond의 `getVPFISnapshot()`에서 이 체인의 토큰 주소와
+`totalSupply`를 가져옵니다. 정식(canonical) 체인에서는 상한, 여유분
+(`cap − totalSupply`, 아직 발행할 수 있는 양), 민터도 보여줍니다.
+미러 체인의 스냅샷에는 상한도 민터도 없습니다(공급은 CCIP 토큰 풀을
+통해 들어옵니다). 그래서 페이지는 로컬 공급량을 보여주고 상한과
+민터는 정식 체인의 것이라고 밝히며, 0을 표시하지 않습니다. 연결되지
+않은 토큰과 읽을 수 없는 스냅샷은 따로 표시합니다.
+
+<a id="public-dashboard.fees"></a>
+
+### 수수료와 트레저리
+
+`getTreasuryMetrics()`, `getTreasury()`, `getNumeraireSymbol()`
+에서 가져오며, 스냅샷과 같은 Multicall3 집계에서 읽고 하나의 블록에
+고정합니다. 페이지는 그 블록과 경과 시간을 보여줍니다.
+
+- 수수료 장부가 시작된 이후, 그리고 최근 24시간과 7일의 수수료.
+  각 수수료는 기록 시점에 뉴메레르로 평가되며 다시 평가되지
+  않습니다.
+- 기록 시점에 프로토콜이 평가할 수 없었던 수수료는 0으로 기록되고,
+  기간 합계는 최신 장부 항목을 최대 10,000개까지만 훑으며,
+  뉴메레르가 바뀌면 이전 항목은 옛 단위로 남습니다. 세 가지 모두
+  수치를 적게 보이게만 할 수 있고, 페이지는 이를 밝힙니다.
+- 트레저리 주소. 외부 주소라면 수수료는 징수될 때 빠져나가며 그
+  잔액은 표시하지 않습니다. Diamond 자신이 트레저리라면 보유액을
+  표시하며, 이는 열린 대출에 나타나는 자산만으로 평가하고 트레저리를
+  대신해 다른 곳에 둔 금액을 포함합니다.
+
+실패한 뷰 함수는 "읽을 수 없음"으로 표시되며 다른 항목을 가리지
+않습니다.
 
 ---
 

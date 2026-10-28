@@ -676,43 +676,61 @@ checks를 수정하세요. keeper를 완전히 없애고 싶다면 list에서 re
 
 ### Public Analytics 소개
 
-wallet 없이 볼 수 있는 protocol 전체의 transparent view입니다: total
-value locked, loan volumes, default rates, VPFI supply, recent activity.
-모두 on-chain data에서 live로 계산됩니다 — 이 페이지의 어떤 숫자 뒤에도
-private database는 없습니다.
+한 네트워크에서 프로토콜을 지갑 없이 볼 수 있는 화면입니다. 대상
+네트워크는 앱이 읽고 있는 네트워크입니다. 아무것도 연결할 필요가
+없습니다. 페이지는 두 가지 공개 출처를 사용하고 각 수치가 어디에서
+왔는지 밝힙니다. 키 없이 누구나 조회할 수 있는 공개 인덱서와
+플랫폼 컨트랙트 자체입니다. 그래서 어떤 수치도 그냥 믿을 필요가
+없습니다.
 
-<a id="public-dashboard.combined"></a>
+<a id="public-dashboard.loans-offers"></a>
 
-### Combined — All Chains
+### 대출과 오퍼
 
-모든 supported chains를 합산한 protocol-wide totals입니다. 작은 "X
-chains covered, Y unreachable" 줄은 page load 시 어떤 chain network가
-offline이었는지 알려줍니다 — 그런 chain이 있다면 아래 per-chain table에
-flag됩니다.
+상태별 대출 건수(활성, 상환, 연체, 청산 등)와 상태별 오퍼 건수로,
+공개 인덱서에서 가져옵니다. 인덱서가 보고하지 않은 건수는 "보고되지
+않음"으로 표시되며 0으로 표시되지 않습니다. 온체인 오퍼만 셉니다.
+가스 없는 서명 주문은 Offer Book에는 보이지만 여기서는 세지
+않습니다. 오퍼 합계는 현재 기록된 오퍼이며, 누적 건수가 아닙니다.
 
-<a id="public-dashboard.per-chain"></a>
+<a id="public-dashboard.recycling"></a>
 
-### Per-Chain Breakdown
+### 리사이클링 계정과 루프 클로저
 
-같은 totals를 chain별로 나눈 view입니다. 어느 chain에 TVL이 가장 많은지,
-loans가 어디서 가장 많이 일어나는지, 특정 chain이 stalled되었는지
-살펴보는 데 유용합니다.
-
-<a id="public-dashboard.vpfi-transparency"></a>
-
-### VPFI Token Transparency
-
-이 chain의 VPFI live state입니다 — total supply, 실제 circulating
-amount(protocol-held balances 차감 후), cap 아래에서 아직 mint 가능한
-양. 모든 chains에 걸쳐 supply는 설계상 bounded로 유지됩니다.
+매일의 리워드 풀이 어디에서 왔고 그중 얼마가 인출되었는지, 그리고
+클레임으로 지급된 리워드 VPFI 중 얼마가 플랫폼 안에 남는지를
+보여줍니다. 공개 인덱서의 장부 기록입니다. 아직 알 수 없는 수치는
+0을 표시하지 않고 그 사실을 알려줍니다.
 
 <a id="public-dashboard.transparency"></a>
 
-### Transparency & Source
+### 투명성과 출처
 
-이 페이지의 모든 숫자는 blockchain에서 직접 re-derive할 수 있습니다.
-이 카드는 snapshot block, data fetch 시점, 각 metric이 나온 contract
-address를 보여 줍니다. 숫자를 verify하려면 여기서 시작하면 됩니다.
+플랫폼 컨트랙트 주소(블록 익스플로러에서 여는 링크 포함), 네트워크,
+인덱서가 마지막으로 읽은 블록과 그 시점이 얼마나 지났는지입니다.
+인덱서의 수치는 그 블록 시점까지만 최신이므로 경과 시간을
+표시합니다.
+
+<a id="public-dashboard.vpfi-transparency"></a>
+
+### VPFI 토큰
+
+인덱서가 아니라 플랫폼 컨트랙트에서 직접 읽습니다. VPFI 토큰의
+주소와 이 네트워크의 공급량입니다. VPFI가 발행되는 네트워크에서는
+공급 상한, 상한 내에서 아직 발행할 수 있는 양, 발행이 허용된 유일한
+주소도 보여줍니다. 브리지로 VPFI가 들어오는 네트워크에서는 그
+네트워크의 공급량만 보여줍니다.
+
+<a id="public-dashboard.fees"></a>
+
+### 수수료와 트레저리
+
+이것도 컨트랙트에서 읽습니다. 기록 시작 이후, 최근 하루, 최근 일주일
+동안 프로토콜이 기록한 수수료와 수수료가 가는 트레저리 주소입니다.
+페이지는 읽은 블록, 그 읽기의 경과 시간, 호출한 함수를 밝히고,
+수수료 수치가 실제 징수액보다 적을 수 있는 모든 이유를 적어
+둡니다. 읽을 수 없었던 수치는 0을 표시하지 않고 그 사실을
+알려줍니다.
 
 ---
 
