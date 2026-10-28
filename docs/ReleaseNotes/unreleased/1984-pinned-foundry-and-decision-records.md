@@ -1,4 +1,4 @@
-## Thread — Foundry pinned on every CI job, and three recorded owner decisions (PR #<n>)
+## Thread — Foundry pinned on every CI job, and three recorded owner decisions (PR #2998)
 
 The release gate and the three end-to-end workflows installed whatever
 Foundry release was current upstream, so the compiler that gates a
