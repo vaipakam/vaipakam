@@ -50,7 +50,7 @@
 import { decodeEventLog, type Abi, type Address, type Hex, type PublicClient } from 'viem';
 import { NFTPrepayListingFacetABI, OfferParallelSaleFacetABI, ProfileFacetABI } from '@vaipakam/contracts/abis';
 import { deadlineClient, settledChunkedRead } from './batchRead';
-import { boundedCall } from './passReader';
+import { boundedCall, finalizedBy } from './passReader';
 import { shortErr } from './callErrors';
 import { readActiveWindow, type ScanWindow } from './activeLoanWindow';
 import type { EventLedger } from './eventLedger';
@@ -347,8 +347,7 @@ async function readOfferListings(
     return h !== undefined && h !== k.hash;
   };
   // The finalized block by this stage's cutoff too; unread, the floor stays.
-  const finalized = () => boundedCall(cutoff, 'the finalized block', deps.finalized).catch(() => null);
-  const liftFloor = () => page.liftFloor(finalized, replaced(head), async (ks, block) => replaced(await hashesAt(offersOf(ks), block.number)));
+  const liftFloor = () => page.liftFloor(finalizedBy(cutoff, deps.finalized), replaced(head), async (ks, block) => replaced(await hashesAt(offersOf(ks), block.number)));
   return { listings, liftFloor };
 }
 

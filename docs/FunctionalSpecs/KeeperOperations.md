@@ -99,6 +99,16 @@ evidence that the migration has completed.
   slot or preparation reaches that deadline is deferred without broadcast.
   The next run starts from fresh state. Logs distinguish this from a failed
   transaction and never imply a transaction exists when nothing was sent.
+- A pass's reads stop early enough to leave its sends their time: every read,
+  of any kind (a view, the chain's clock or id, a simulation), stops at the
+  read cutoff, which sits a send reserve before the deadline. A read not yet
+  started there is not made, and one still waiting is abandoned. Either way
+  the value counts as unread and is read again next run. A pass that reads in
+  stages gives each earlier stage an earlier cutoff, so a slow stage cannot
+  use the time of the stages after it.
+  The chain's finalized block, which decides whether a stored floor may
+  move, is read under the same rule: when it does not come back in time the
+  floor stays where it is until a later run.
 - The daily oracle snapshot has a separate deadline one hour before the end
   of the UTC day being captured. It records the day the mined block actually
   filed, reports a different day explicitly, and records no successful
