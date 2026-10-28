@@ -8,6 +8,7 @@ import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
+import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
@@ -812,7 +813,11 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
                     loan.id,
                     msg.sender,
                     loan.principalAsset,
-                    partialAmount + lenderShare
+                    partialAmount + lenderShare,
+                    // #1209 / #1808 — the interest in the payout: open seller
+                    // claims are paid out of it before the holder.
+                    accrued,
+                    lenderShare
                 ),
                 bytes4(0)
             );
@@ -821,9 +826,9 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // #1281-011 — and it refuses a short arrival by name.
             LibFacet.transferFromPayerToTreasury(msg.sender, loan.principalAsset, treasuryShare);
 
-            unchecked {
-                loan.principal -= partialAmount;
-            }
+            // #1808 — through the ledger's single writer (checkpoint first).
+            // `partialAmount < loan.principal` is pinned above.
+            LibInterestLedger.reducePrincipal(s, loan, partialAmount, partialAmount);
             // #408 / #410 / #413 (2026-06-12) — Option A: track
             // remaining committed term. The accrual clock reset
             // below (`interestAccrualStart = now`) measures `elapsedDays`

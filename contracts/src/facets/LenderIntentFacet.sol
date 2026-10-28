@@ -653,6 +653,10 @@ contract LenderIntentFacet is
         // claim makes but this roll doesn't. Rather than strand it (the NFT is
         // about to burn), reject the loan to the normal claim path.
         if (s.heldForLender[loanId] != 0) revert LenderIntentLoanNotRollable();
+        // #1209 — a position sold and bought back carries seller claims on this
+        // claim row; the normal claim splits it with them first. The roll
+        // would compound their interest into the owner's intent, so refuse.
+        if (s.sellerInterestClaims[loanId].length != 0) revert LenderIntentLoanNotRollable();
         // #2860 — a VPFI loan's repayment proceeds are RESERVED by RepayFacet
         // (`lenderProceedsEncumbered`) until the position holder claims them;
         // this roll can't release that reservation, and consuming the claim

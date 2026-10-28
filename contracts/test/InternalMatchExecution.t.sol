@@ -7,6 +7,7 @@ import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -1173,6 +1174,42 @@ contract InternalMatchExecutionTest is SetupTest {
             uint8(_getLoan(LOAN_A).status),
             uint8(LibVaipakam.LoanStatus.Settled),
             "zero-residual match settles on the lender claim alone"
+        );
+    }
+
+    /// @notice #1209 / #1808 (Codex #3068 r2) — a full internal match leaves
+    ///         the holder's recovered principal in the lender claim row, so it
+    ///         is still owed to the holder there. A past seller's claim ranks
+    ///         behind it: it is paid nothing out of the recovered principal,
+    ///         the holder is shown the whole row, and is paid exactly that.
+    function test_1209_fullMatch_sellerClaimRanksBehindRecoveredPrincipal() public {
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+        address pastSeller = makeAddr("pastSeller");
+        TestMutatorFacet(address(diamond)).pushSellerClaimRaw(LOAN_A, pastSeller, 50);
+
+        vm.prank(matcher);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+
+        assertEq(
+            SellerClaimFacet(address(diamond)).getSellersShareOfLenderClaim(LOAN_A),
+            0,
+            "no interest was recovered, so the seller claim takes nothing"
+        );
+        (, uint256 shown,,,,,,) = ClaimFacet(address(diamond)).getClaimable(LOAN_A, true);
+        assertEq(shown, 990, "the holder is shown the whole recovered principal");
+
+        _mockLenderNft(LOAN_A, lender);
+        uint256 before = IERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
+        assertEq(IERC20(mockERC20).balanceOf(lender) - before, 990, "and is paid exactly that");
+        assertEq(
+            SellerClaimFacet(address(diamond)).getSellerInterestHeld(LOAN_A, pastSeller, mockERC20),
+            0,
+            "nothing of the principal reached the seller"
         );
     }
 

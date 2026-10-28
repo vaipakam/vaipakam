@@ -161,7 +161,7 @@ export function LoanSaleFlow({
   //
   // Same guard EarlyExitFlow got in r8; this component is its sibling and I
   // fixed only the one the finding named.
-  const quoteUnavailable = live.lenderForfeitFrom === undefined;
+  const quoteUnavailable = live.sellerClaimOnSale === undefined;
   const nowCost =
     rateBps !== null && !quoteUnavailable
       ? saleSettlementNow(live, BigInt(rateBps))

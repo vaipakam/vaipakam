@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
+import {LibInterestLedger} from "./LibInterestLedger.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
@@ -901,6 +902,38 @@ library LibVPFIDiscount {
         if (treasuryShare == 0 || !lenderYieldFeeEligible(loan, lender)) {
             return (0, treasuryShare, 0);
         }
+        // #1209 — the open seller claims take their part of this interest
+        // first, and each pays the loan's own fee on it: `lender` is not paid
+        // that interest, so their discount does not price it and their VPFI
+        // does not pay its fee. The discount resolves on the holder's part
+        // only; the sellers' part of the fee stays with the treasury.
+        uint256 sellers = LibInterestLedger.sellersPart(
+            LibVaipakam.storageSlot(), loan.id, interestForQuote
+        );
+        if (sellers != 0) {
+            if (sellers == interestForQuote) return (0, treasuryShare, 0);
+            uint256 holderInterest = interestForQuote - sellers;
+            uint256 holderFee = (treasuryShare * holderInterest) / interestForQuote;
+            (lenderExtra, treasuryRemaining, vpfiDeducted) =
+                _resolveYieldFeeOn(loan, lender, holderInterest, holderFee);
+            treasuryRemaining += treasuryShare - holderFee;
+            return (lenderExtra, treasuryRemaining, vpfiDeducted);
+        }
+        return _resolveYieldFeeOn(loan, lender, interestForQuote, treasuryShare);
+    }
+
+    /// @dev The delivery {resolveLenderYieldFeeFor} runs on the interest
+    ///      `lender` is paid and its share of the treasury fee.
+    function _resolveYieldFeeOn(
+        LibVaipakam.Loan storage loan,
+        address lender,
+        uint256 interestForQuote,
+        uint256 treasuryShare
+    )
+        private
+        returns (uint256 lenderExtra, uint256 treasuryRemaining, uint256 vpfiDeducted)
+    {
+        if (treasuryShare == 0) return (0, 0, 0);
         // VPFI-payment delivery (peg set + consent + tracked coverage): the
         // treasury cut is satisfied in VPFI from the lender's vault and the
         // lender keeps the whole fee in the lending asset.

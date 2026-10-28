@@ -361,7 +361,7 @@ jobs:
           # contracts/script/check-measured-delivery.mjs (#2440), and for the
           # restore converter, which the indexer's table-classification guard
           # imports (#1481).
-          WORKSPACES_RE='^(apps/|packages/|contracts/script/storage-layout-guard\.mjs$|contracts/script/check-measured-delivery\.mjs$|.*\.(jsonc|json)$|.*wrangler[^/]*\.toml$|ops/offchain-data-warm/src/|ops/offchain-data-warm/scripts/restore-from-archive\.mjs$|docs/Terms/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
+          WORKSPACES_RE='^(apps/|packages/|contracts/script/storage-layout-guard\.mjs$|contracts/script/check-measured-delivery\.mjs$|contracts/script/check-loan-terms-writer\.mjs$|.*\.(jsonc|json)$|.*wrangler[^/]*\.toml$|ops/offchain-data-warm/src/|ops/offchain-data-warm/scripts/restore-from-archive\.mjs$|docs/Terms/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
           if echo "$CHANGED" | grep -Eq "$WORKSPACES_RE"; then
             echo "workspaces=true" >> "$GITHUB_OUTPUT"
           else

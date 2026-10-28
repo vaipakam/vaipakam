@@ -9,6 +9,7 @@ import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
+import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
@@ -1074,9 +1075,6 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // a close-out, which is exactly what Tier-2 handling exists to avoid.
         // Paying the stale `loan.lender` instead was the original bug.
         //
-        // `deliveredThroughAt` is 0: this payout settles no interest period, and
-        // the host's NatSpec asks for 0 from such callers.
-        //
         // #2440 — a partial liquidation leaves the loan ACTIVE and books this
         // payout as received in full: the interest settled from it, the
         // principal it retires, and the accrual restart below. So, like the
@@ -1095,7 +1093,10 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
                         loanId,
                         loan.principalAsset,
                         lenderProceeds,
-                        uint256(0)
+                        // #1209 / #1808 — the interest in the payout, gross and
+                        // net of the fee: open seller claims are paid first.
+                        interestPortion,
+                        interestPortion - treasuryInterestFee
                     ),
                     bytes4(0)
                 ),
@@ -1125,7 +1126,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // maturity. The pre-partial coupon was already settled interest-first
         // from the swap proceeds above.
         loan.collateralAmount -= swappedCollateral;
-        loan.principal -= principalRepaid;
+        LibInterestLedger.reducePrincipal(s, loan, principalRepaid, principalRepaid);
         uint256 remainingDays = (endTime - block.timestamp) / 1 days;
         loan.interestAccrualStart = uint64(block.timestamp);
         loan.interestRemainingDays = uint16(remainingDays);

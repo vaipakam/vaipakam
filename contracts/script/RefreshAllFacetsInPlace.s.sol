@@ -105,6 +105,7 @@ import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
 import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
+import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
@@ -265,7 +266,11 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // 102 -> 103: SaleExitVerdictFacet (#1841) - the one classifier of a
     // lender sale exit, self-called by both sale facets; its selectors are
     // new, so they are cut as Adds.
-    uint256 public constant EXPECTED_FACETS = 103;
+    // 103 -> 104: SellerClaimFacet (#1209 / #1808) - the seller-claim host:
+    // the seller-first interest payout, the terminal split, claimAsSeller
+    // and the interest ledger view; its selectors are new, so they are cut
+    // as Adds.
+    uint256 public constant EXPECTED_FACETS = 104;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -339,6 +344,49 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         }
     }
 
+    /// @notice #1209 / #1808 - the target Diamond predates the interest ledger
+    ///         and has an ERC-20 loan open; see {_requireNoOpenLoanAcrossInterestLedger}.
+    error OpenLoanAcrossInterestLedger(address diamond, uint256 loanId);
+
+    /// @notice #1209 / #1808 - the target Diamond predates the interest ledger
+    ///         and is not under the manual pause.
+    error InterestLedgerCrossingNeedsManualPause(address diamond);
+
+    /// @dev #1209 / #1808 - the interest ledger is opened when a loan is
+    ///      originated, and a ledger never opened opens at the loan's start
+    ///      time, on the assumption that principal and rate have not moved
+    ///      and no interest has been paid since. That holds for every loan a
+    ///      ledger-era Diamond originated and for none an older one did: a
+    ///      pre-ledger loan that was partly repaid, settled a period or
+    ///      changed rate would open with an earned figure it never earned, and
+    ///      a sale would turn that figure into a seller claim paid from the
+    ///      buyer's interest. So crossing the boundary in place is refused
+    ///      while any ERC-20 loan is open (`Active` or `FallbackPending`):
+    ///      close those loans, or cross by fresh deploy. A Diamond that
+    ///      already routes `getInterestLedger` is past the boundary and is not
+    ///      walked. The walk and the manual-pause requirement follow
+    ///      {_requireNoOpenErc1155RentalAcross902}, for the same reasons.
+    function _requireNoOpenLoanAcrossInterestLedger(address diamond) internal view {
+        if (IDiamondLoupe(diamond).facetAddress(SellerClaimFacet.getInterestLedger.selector) != address(0)) {
+            return;
+        }
+        (bool manual,,,) = LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
+        if (!manual) revert InterestLedgerCrossingNeedsManualPause(diamond);
+        (uint256 highestLoanId,) = MetricsFacet(diamond).getGlobalCounts();
+        for (uint256 loanId = 1; loanId <= highestLoanId; ++loanId) {
+            if (_isOpenErc20Loan(diamond, loanId)) {
+                revert OpenLoanAcrossInterestLedger(diamond, loanId);
+            }
+        }
+    }
+
+    /// @dev Kept in its own frame, like {_isOpenErc1155Rental}.
+    function _isOpenErc20Loan(address diamond, uint256 loanId) private view returns (bool) {
+        LibVaipakam.Loan memory loan = LoanFacet(diamond).getLoanDetails(loanId);
+        return loan.assetType == LibVaipakam.AssetType.ERC20
+            && (loan.status == LibVaipakam.LoanStatus.Active || loan.status == LibVaipakam.LoanStatus.FallbackPending);
+    }
+
     /// @notice #934 (Codex #2642 r8) - the target Diamond's role root is not
     ///         where D1 requires it; see {_requireD1RootTopology}.
     error RootAdminNotOnOwner(address diamond, address owner);
@@ -406,6 +454,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         );
         _requireSlice3Diamond(diamond);
         _requireNoOpenErc1155RentalAcross902(diamond);
+        _requireNoOpenLoanAcrossInterestLedger(diamond);
         _requireD1RootTopology(diamond, currentOwner);
         // #2092 item 1 — the code this run cuts must keep every storage-layout
         // fact recorded for this chain. Before the first transaction, so a
@@ -1250,6 +1299,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[100] = Item("vaipakamNFTMetadataFacet", ArtifactDeploy.deploy(type(VaipakamNFTMetadataFacet).name), _getNftMetadataSelectors());
         items[101] = Item("rewardRemitDestinationFacet", ArtifactDeploy.deploy(type(RewardRemitDestinationFacet).name), _getRewardRemitDestinationSelectors());
         items[102] = Item("saleExitVerdictFacet", ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name), _getSaleExitVerdictSelectors());
+        items[103] = Item("sellerClaimFacet", ArtifactDeploy.deploy(type(SellerClaimFacet).name), _getSellerClaimSelectors());
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

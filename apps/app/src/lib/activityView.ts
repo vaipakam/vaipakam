@@ -130,6 +130,14 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // #2795 — a borrower extra held on an open loan, paid out when the
   // obligation was handed over to a replacement borrower.
   BorrowerHeldExtraPaid: { label: 'Held sale extra paid out', category: 'collateral', priority: 50 },
+  // #1209 — a lender sale's seller keeps a claim on the interest they earned.
+  // Recorded rides the sale (below LoanSold's 80); a payment rides the
+  // repayment that funded it; the withdrawal is the seller's own transaction;
+  // the close rides the terminal claim that settled it.
+  SellerInterestClaimRecorded: { label: 'Seller interest claim recorded', category: 'loan-modify', priority: 70 },
+  SellerInterestPaid: { label: 'Seller interest paid', category: 'loan-repay', priority: 60 },
+  SellerInterestWithdrawn: { label: 'Seller interest withdrawn', category: 'loan-close', priority: 90 },
+  SellerInterestClaimClosed: { label: 'Seller interest claim closed', category: 'loan-close', priority: 50 },
   // Signed offers
   SignedOfferFilled: { label: 'Signed offer filled', category: 'loan-open', priority: 80 },
   SignedOfferMatched: { label: 'Signed offers matched', category: 'loan-open', priority: 80 },

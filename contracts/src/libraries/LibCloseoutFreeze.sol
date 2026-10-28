@@ -6,7 +6,7 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibSanctionedLock} from "./LibSanctionedLock.sol";
 import {LibDelivery} from "./LibDelivery.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
-import {LibEntitlement} from "./LibEntitlement.sol";
+import {LibInterestLedger} from "./LibInterestLedger.sol";
 import {LibTierRecord} from "./LibTierRecord.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -510,14 +510,11 @@ library LibCloseoutFreeze {
         uint256 amount
     ) private {
         s.heldForLender[loanId] += amount;
-        // #1801 — this share was FROZEN, not delivered, so the loan's
-        // paid-through mark stops describing reality and can never be trusted
-        // again for this lender: delivery on this position is now
-        // non-contiguous, and one timestamp cannot say "paid for the later
-        // period, not the earlier one". Voided here rather than at each caller
-        // because every Active-loan park funnels through this helper, which makes
-        // the coverage a property of the code shape instead of a checklist.
-        LibEntitlement.voidInterestDeliveredMark(s, loanId);
+        // #1808 — a parked share is NOT reported to the interest ledger as paid
+        // (`LibInterestLedger.holderPaid` runs on the clean branches only), so
+        // the holder's earned figure keeps it. The callers record its interest
+        // part (`LibInterestLedger.holderParked`), and a sale pays that part to
+        // the seller out of the held balance before the rest moves on.
         LibSanctionedLock.recordFrozenClaimant(s, loanId, true, frozenHolder);
         // #998 S10 Class B — reserve through the DEDICATED active-held ledger, NOT
         // the single-terminal `encumberLenderProceeds` ledger. That ledger records
@@ -546,7 +543,14 @@ library LibCloseoutFreeze {
     ///         proceeds, freshly swapped into the Diamond). Clean/never-confirmed
     ///         holder → direct transfer. Frozen holder → `depositLocked` (Diamond
     ///         → stored lender vault) + the shared park.
-    /// @dev    #2440 — the two branches read a delivery in different places,
+    /// @dev    #1209 / #1808 — `amount` is the lender side's whole payout
+    ///         (principal and net interest); `interestGross` / `interestNet` name
+    ///         the interest in it. The open seller claims are paid first, out of
+    ///         the interest ({LibInterestLedger.paySellersFirst}), and the holder
+    ///         is paid the rest. The holder's part of the interest is reported to
+    ///         the ledger as paid only on the clean branch.
+    ///
+    ///         #2440 — the two branches read a delivery in different places,
     ///         and only one of them is a place a reading can be trusted
     ///         (LibDelivery, WHERE A READING CAN BE TRUSTED):
     ///         - CLEAN: the payout goes to the holder's WALLET, whose owner can
@@ -555,7 +559,7 @@ library LibCloseoutFreeze {
     ///           the rest owed to that owner, who could then be paid again. So
     ///           a short arrival is REFUSED here, in every flow (the periodic
     ///           auto-liquidation included), and a full payout returns
-    ///           `amount` and moves the paid-through mark.
+    ///           `amount`.
     ///         - FROZEN: the payout is credited to the stored lender's VAULT,
     ///           which is custody. That branch acts on what arrived and returns
     ///           it; the CALLER decides what a short return means. The periodic
@@ -563,18 +567,25 @@ library LibCloseoutFreeze {
     ///           the difference stays owed on the loan; a partial HF
     ///           liquidation refuses it, since it books the payout as received
     ///           in full on a loan that stays open.
+    ///         The sellers' part is counted as delivered in full: it left the
+    ///         Diamond for their vaults, and each seller's credit is recorded
+    ///         as it arrived ({SellerClaimFacet.paySellersFirst}).
     /// @return delivered `amount` on the clean branch (anything less was
-    ///         refused); what the stored lender's vault received on the frozen
-    ///         branch, never more than `amount`.
+    ///         refused); the sellers' part plus what the stored lender's vault
+    ///         received on the frozen branch, never more than `amount`.
     function freezeOrPayActiveLenderResident(
         LibVaipakam.Storage storage s,
         uint256 loanId,
         LibVaipakam.Loan storage loan,
         address asset,
         uint256 amount,
-        uint256 deliveredThroughAt
+        uint256 interestGross,
+        uint256 interestNet
     ) internal returns (uint256 delivered) {
         if (amount == 0) return 0;
+        (uint256 sellersGross, uint256 sellersNet) =
+            LibInterestLedger.paySellersFirst(s, loan, address(0), asset, interestGross, interestNet);
+        uint256 holderAmount = amount - sellersNet;
         // Resolve the CURRENT lender-position holder here (the loan is Active, so
         // the lender NFT is live and `ownerOf` holds) — the intended payee AND the
         // party the fail-closed marker keys on. Resolving inside the helper keeps
@@ -582,24 +593,18 @@ library LibCloseoutFreeze {
         address lenderRecipient = IERC721(address(this)).ownerOf(loan.lenderTokenId);
         if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
             // #2440 — a wallet reading is trusted only to refuse (see @dev).
-            LibDelivery.pushExact(asset, lenderRecipient, amount);
-            // #1503 item 28 — the lender is now PAID THROUGH the boundary of the
-            // period this payout settles, so a later sale must not forfeit that
-            // stretch a second time. Advanced on THIS branch only: the freeze
-            // branch below parks the tokens in `heldForLender`, which migrates to
-            // the BUYER on a sale, so treating a frozen payout as delivered would
-            // pay the seller for tokens they never held and do not keep.
-            //
-            // Monotone: a caller settling an older boundary after a newer one can
-            // never walk the mark backwards and re-open a window already paid.
-            if (deliveredThroughAt > s.lenderInterestDeliveredThroughAt[loanId]) {
-                LibEntitlement.stampInterestDelivered(s, loanId, deliveredThroughAt);
-            }
+            if (holderAmount > 0) LibDelivery.pushExact(asset, lenderRecipient, holderAmount);
+            LibInterestLedger.holderPaid(s, loan, interestGross - sellersGross);
             return amount;
         }
         // #2440 — park what the vault received.
-        delivered = LibSanctionedLock.depositLocked(s, loan.lender, loanId, asset, amount);
-        _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, delivered);
+        if (holderAmount == 0) return sellersNet;
+        uint256 parked = LibSanctionedLock.depositLocked(s, loan.lender, loanId, asset, holderAmount);
+        _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, parked);
+        LibInterestLedger.holderParked(
+            s, loan, interestGross - sellersGross, interestNet - sellersNet, parked, true
+        );
+        delivered = sellersNet + parked;
     }
 
     /// @notice Class B — pay-or-freeze an Active-loan lender share funded by a
@@ -608,40 +613,38 @@ library LibCloseoutFreeze {
     ///         holder → direct `safeTransferFrom(payer → holder)` (unchanged).
     ///         Frozen holder → `depositLockedFrom` (payer → stored lender vault) +
     ///         the shared park.
+    /// @dev    #1209 / #1808 — as {freezeOrPayActiveLenderResident}: the open
+    ///         seller claims are paid first out of the interest in `amount`,
+    ///         straight from `payer` into each seller's vault, and the holder's
+    ///         part is reported to the ledger as paid only on the clean branch.
     function freezeOrPayActiveLenderFromPayer(
         LibVaipakam.Storage storage s,
         uint256 loanId,
         LibVaipakam.Loan storage loan,
         address payer,
         address asset,
-        uint256 amount
+        uint256 amount,
+        uint256 interestGross,
+        uint256 interestNet
     ) internal {
         if (amount == 0) return;
+        (uint256 sellersGross, uint256 sellersNet) =
+            LibInterestLedger.paySellersFirst(s, loan, payer, asset, interestGross, interestNet);
+        uint256 holderAmount = amount - sellersNet;
         address lenderRecipient = IERC721(address(this)).ownerOf(loan.lenderTokenId);
         if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
-            // #1281-011 — the lender is recorded as paid through now, so the
-            // payment must have arrived in full; a short arrival is refused.
-            LibDelivery.pullExact(asset, payer, lenderRecipient, amount);
-            // #1503 item 28 (Codex #1801 r4 P1) — DELIVERED, so the seller is
-            // paid through NOW. Unlike the resident-payout helper this one needs
-            // no boundary parameter: every caller pays interest accrued to the
-            // present and resets the accrual clock in the same transaction, so
-            // `block.timestamp` IS the correct mark.
-            //
-            // The freeze branch below deliberately does not stamp, and that is
-            // the whole point of doing this here at all: a frozen partial
-            // repayment parks the interest in `heldForLender` — which migrates
-            // to the BUYER on a sale — while the caller still resets the accrual
-            // clock. With the clock as the fallback the reset would act as the
-            // credit and close the seller's window over interest they never
-            // received. The mark stays put, so the window stays open.
-            if (block.timestamp > s.lenderInterestDeliveredThroughAt[loanId]) {
-                LibEntitlement.stampInterestDelivered(s, loanId, block.timestamp);
-            }
+            // #1281-011 — the holder is booked as paid, so the payment must have
+            // arrived in full; a short arrival is refused.
+            if (holderAmount > 0) LibDelivery.pullExact(asset, payer, lenderRecipient, holderAmount);
+            LibInterestLedger.holderPaid(s, loan, interestGross - sellersGross);
             return;
         }
-        LibSanctionedLock.depositLockedFrom(s, payer, loan.lender, loanId, asset, amount);
-        _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, amount);
+        if (holderAmount == 0) return;
+        LibSanctionedLock.depositLockedFrom(s, payer, loan.lender, loanId, asset, holderAmount);
+        _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, holderAmount);
+        LibInterestLedger.holderParked(
+            s, loan, interestGross - sellersGross, interestNet - sellersNet, holderAmount, true
+        );
     }
 
     /// @notice Class B — pay-or-freeze an Active-loan lender share funded from a
@@ -677,12 +680,6 @@ library LibCloseoutFreeze {
                     s, fromUser, asset, lenderRecipient, amount
                 )
             );
-            // #1503 item 28 — DELIVERED, paid through now. Same reasoning as the
-            // from-payer helper above, including why the freeze branch below does
-            // not stamp.
-            if (block.timestamp > s.lenderInterestDeliveredThroughAt[loanId]) {
-                LibEntitlement.stampInterestDelivered(s, loanId, block.timestamp);
-            }
             return;
         }
         LibDelivery.requireFull(

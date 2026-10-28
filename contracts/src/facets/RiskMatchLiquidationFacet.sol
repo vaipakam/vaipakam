@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
@@ -458,11 +459,11 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // State updates — each loan's principal cleared by what its leg
         // paid (#2440), each borrower's collateral debited by the NEXT
         // loan's leg (the whole moved amount left that vault).
-        la.principal -= r.paidX;
+        _clearMatched(s, la, r.paidX, r.incentiveX);
         lb.collateralAmount -= r.movedX;
-        lb.principal -= r.paidY;
+        _clearMatched(s, lb, r.paidY, r.incentiveY);
         lc.collateralAmount -= r.movedY;
-        lc.principal -= r.paidZ;
+        _clearMatched(s, lc, r.paidZ, r.incentiveZ);
         la.collateralAmount -= r.movedZ;
 
         // EC-003 Phase 1 — collateral consumed per leg:
@@ -692,9 +693,9 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // #2440 — `paid*` is `moved*` less any delivery shortfall, which
         // stays owed; each borrower's collateral falls by the whole amount
         // that left their vault.
-        la.principal -= r.paidX;
+        _clearMatched(s, la, r.paidX, r.incentiveX);
         lb.collateralAmount -= r.movedX;
-        lb.principal -= r.paidY;
+        _clearMatched(s, lb, r.paidY, r.incentiveY);
         la.collateralAmount -= r.movedY;
 
         // Status transitions + snapshot scaling. Full match → loan
@@ -708,6 +709,25 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // by Leg X (movedX − incentiveX); symmetrically for lb.
         _settleFallbackOrTransitionPostMatch(la, r.movedY, r.paidX, r.paidX - r.incentiveX);
         _settleFallbackOrTransitionPostMatch(lb, r.movedX, r.paidY, r.paidY - r.incentiveY);
+    }
+
+    /// @dev #1209 / #1808 — clears the principal a leg paid off `loan`,
+    ///      through the ledger's single writer. A partial match delivers the
+    ///      leg's lender proceeds (`paid - incentive`) into the held balance the
+    ///      holder's claim pays, so the owed principal falls by that much. A
+    ///      full match leaves them in the terminal lender claim row
+    ///      ({_settleFallbackOrTransitionPostMatch}), so nothing is delivered
+    ///      yet: the terminal split ranks the holder's principal first out of
+    ///      that row, ahead of any seller claim. The matcher's incentive is
+    ///      never delivered to the holder, so it stays owed either way.
+    function _clearMatched(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.Loan storage loan,
+        uint256 paid,
+        uint256 incentive
+    ) private {
+        uint256 delivered = paid == loan.principal ? 0 : paid - incentive;
+        LibInterestLedger.reducePrincipal(s, loan, paid, delivered);
     }
 
     /// @dev Internal helper for `triggerInternalMatchLiquidation` —
@@ -1186,7 +1206,10 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // The matched proceeds already exited; the lender's residual
                 // collateral claim is zero (Diamond consumed).
                 s.lenderClaims[loan.id].amount = 0;
-                loan.principal = 0; // fallback shortfall written off — loan terminal.
+                // Fallback shortfall written off — loan terminal. #1808 — the
+                // owed principal is kept, so a seller claim on this loan still
+                // ranks behind the holder's principal.
+                LibInterestLedger.writeOffPrincipal(s, loan);
                 s.fallbackSnapshot[loan.id].active = false;
                 // #1067 — DURABLE liquidation reward forfeit: an internal match
                 // is a liquidation-class terminal, so close the reward entries

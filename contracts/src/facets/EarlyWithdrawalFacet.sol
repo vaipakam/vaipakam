@@ -30,7 +30,6 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
-import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {SaleExitVerdictFacet} from "./SaleExitVerdictFacet.sol";
 
 /**
@@ -56,7 +55,8 @@ import {SaleExitVerdictFacet} from "./SaleExitVerdictFacet.sol";
  *        b) A new lender accepts the sale offer (via {OfferFacet.acceptOffer},
  *           which atomically calls {completeLoanSale}). The live loan's
  *           lender field is updated to the new lender, new NFTs are minted,
- *           old NFTs burned, and accrued interest forfeited to treasury.
+ *           old NFTs burned. The seller's earned-unpaid interest stays a
+ *           seller claim on the loan (#1209, {LibInterestLedger}).
  *
  *      Sanctions/KYC enforced via {LibCompliance}. The borrower and loan
  *      terms are unchanged — only the lender relationship transfers.
@@ -535,7 +535,7 @@ contract EarlyWithdrawalFacet is
      *      per-loan enable for this loan (lender-entitled action).
      *      Verifies the linked sale offer was accepted, then:
      *      - Principal: Already transferred from Noah to liam by acceptOffer() (no second transfer).
-     *      - Forfeits accrued interest to treasury (or applies toward shortfall).
+     *      - Records the seller's earned-unpaid interest as a seller claim (#1209).
      *      - Handles rate shortfall if applicable.
      *      - Updates loan.lender to Noah on the live loan.
      *      - Burns liam's lender NFT and mints one for Noah.
@@ -606,7 +606,7 @@ contract EarlyWithdrawalFacet is
         // `acceptOffer` paid the sale principal to, and it is whose vault
         // physically holds `heldForLender`. Every operation below — the
         // held-proceeds migration, the `releaseLenderProceeds` reservation
-        // release, and the accrued / shortfall settlement — keys on this single
+        // release, and the shortfall settlement — keys on this single
         // identity, so there is no stored-vs-economic divergence to reconcile.
         // (Codex #959 round-2 tried `ownerOf` here, which split settlement from
         // the held-proceeds custody under the stored lender; consolidating at the
@@ -651,33 +651,18 @@ contract EarlyWithdrawalFacet is
         // Snapshot pre-existing heldForLender before any new shortfall deposits
         uint256 priorHeldSale = s.heldForLender[loanId];
 
-        // ── Accrued interest & shortfall ────────────────────────────────────
-        // "Forfeited accrued" means liam absorbs the cost — the borrower has
-        // not paid this interest yet.  liam must fund every token that gets
-        // routed to treasury or Noah.
-        // #641 — accrued/remaining split reads the interest clock (post-partial
-        // origin + remaining term), not the immutable term tuple.
-        // #668 / #935 — the remaining term runs to the pause-moved end
-        // ({LibLoanClock.interestTermEnd}), so a buyer is compensated for the
-        // days a pause added to the position they take on.
-        uint256 accrualStart = LibVaipakam.interestAccrualStartOf(loan);
+        // ── Rate shortfall ──────────────────────────────────────────────────
+        // #1209 (owner decision 2026-10-28, "seller keeps a claim") — the seller
+        // no longer forfeits the interest they earned and were not yet paid.
+        // {LibLoan.migrateLenderPosition} below records it as a seller claim on
+        // the loan, paid first from the borrower's later interest
+        // ({LibInterestLedger}). So the seller's only cost here is the RATE
+        // SHORTFALL — the buyer's higher rate over the remaining term, deposited
+        // to the buyer's held balance — and the treasury takes nothing at sale:
+        // its yield fee is taken once, on each interest slice, when paid.
+        // #641 / #668 / #935 — the remaining term runs from the interest clock
+        // to the pause-moved end ({LibLoanClock.interestTermEnd}).
         uint256 remainingSecs = LibLoanClock.remainingInterestSeconds(loan, block.timestamp);
-        // #1503 item 28 — the FORFEITURE clock is not the accrual clock. The
-        // seller forfeits accrued interest because the borrower has not paid it;
-        // on a periodic loan the borrower has paid part of it, since periodic
-        // auto-liquidation forwards interest to the lender WITHOUT moving the
-        // accrual clock. Charging from the accrual origin bills the seller for
-        // interest already in their hands.
-        //
-        // Narrowing the WINDOW rather than subtracting an amount — see
-        // {LibEntitlement.forfeitureAccrualStart}. `remainingSecs` above still
-        // measures the loan's own progress from the accrual clock; only the
-        // forfeiture figure uses the later start.
-        uint256 forfeitFrom = LibEntitlement.forfeitureAccrualStart(loanId, accrualStart);
-        uint256 forfeitSecs =
-            block.timestamp > forfeitFrom ? block.timestamp - forfeitFrom : 0;
-        uint256 accrued = (loan.principal * loan.interestRateBps * forfeitSecs) /
-            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
         uint256 originalRemainingInterest = (loan.principal *
             loan.interestRateBps *
             remainingSecs) /
@@ -686,67 +671,35 @@ contract EarlyWithdrawalFacet is
             saleOffer.interestRateBps *
             remainingSecs) /
             (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        uint256 saleShortfall = saleRemainingInterest > originalRemainingInterest
+            ? saleRemainingInterest - originalRemainingInterest
+            : 0;
 
-        // #1659 — NET SETTLEMENT out of the escrowed proceeds. Canonical spec,
-        // "Smart Contract Actions": *"the sale flow should prefer net settlement
-        // so protocol-defined forfeitures or shortfalls can be deducted directly
-        // from the incoming proceeds instead of requiring Liam to source separate
-        // wallet liquidity in the same asset"*.
+        // #1659 — NET SETTLEMENT out of the escrowed proceeds (canonical spec,
+        // "Smart Contract Actions": the sale flow prefers net settlement so the
+        // shortfall is deducted from the incoming proceeds rather than sourced
+        // from the seller's wallet). `OfferAcceptFacet` escrows the buyer's
+        // principal in Diamond custody on the resting-listing accept, so the
+        // fan-out below matches the direct sale (`sellLoanViaBuyOffer`).
         //
-        // `OfferAcceptFacet` escrows the buyer's principal in Diamond custody on
-        // the resting-listing accept, so the fan-out below is the one the DIRECT
-        // sale (`sellLoanViaBuyOffer`) has always used: the same
-        // `liamCost` / `treasuryCut` algebra, the same `RateShortfallTooHigh`
-        // guard, and the same Diamond-resident helpers. The two routes had
-        // duplicated this algebra and diverged on who funds the forfeit; they now
-        // agree.
-        //
-        // The T-037 shape kept below (for the manual-recovery entry) paid each
-        // destination with a `transferFrom` on the seller's WALLET, which assumes
-        // the payer is the caller and has approved the Diamond. That holds on the
-        // direct sale and on `completeLoanSale`, where the seller calls, and fails
-        // on the listing accept, where the BUYER calls — reverting
-        // `ERC20InsufficientAllowance` for any seller without a standing
-        // allowance, masked only because the pull is skipped when `accrued == 0`.
+        // The wallet-funded branch further down is the manual-recovery entry
+        // (`completeLoanSale` with no escrow), where the seller is the caller.
         uint256 proceeds = s.saleProceedsEscrow[loanId];
         if (proceeds > 0) {
             delete s.saleProceedsEscrow[loanId];
-            uint256 saleShortfall = saleRemainingInterest >
-                originalRemainingInterest
-                ? saleRemainingInterest - originalRemainingInterest
-                : 0;
-            // Forfeited accrued is applied to the shortfall FIRST, with only the
-            // unused excess going to treasury — the spec's own ordering.
-            uint256 liamCost = accrued > saleShortfall
-                ? accrued
-                : saleShortfall;
-            // #1503 item 4 — the seller's FLOOR. Ordinary accrual across the
-            // listing window cannot trip this: the floor was derived at the
-            // listing's BOTH endpoints (plus truncation slack — see
-            // LibSaleListing.projectSellerBounds), so the whole window sits
-            // inside it. What
-            // trips it is a step the seller never reviewed — a principal
-            // movement or a park disqualifying the paid-through mark, which
-            // re-opens the forfeiture window earlier than the projection
-            // assumed. Refusing is the point; the remedy is to relist.
-            // ...but only while the seller's projection still DESCRIBES the
-            // fill. The floor is derived from the window's own endpoints, so it
-            // bounds every fill inside the window and says nothing about one
-            // after it.
-            // `completeLoanSale` is lender-side-gated and deliberately remains
-            // callable past the window — the seller invoking it themselves is
-            // fresh authorisation, not a race — and enforcing a stale
-            // projection there would refuse the seller's own deliberate act.
-            //
-            // Caught by an EXISTING #1801 test rather than by a new one: the
-            // targeted run of the four new cases was green, and only the full
-            // suite showed `forfeitsOnlyTheUnpaidStretch` completing past the
-            // window and tripping a bound that was never meant to reach it.
+            // #1503 item 4 — the seller's FLOOR and held CEILING, enforced only
+            // while the listing's projection still describes the fill. The
+            // floor bounds `proceeds − shortfall`; the shortfall only shrinks as
+            // the remaining term runs down, so ordinary time inside the listing
+            // window cannot trip it — a principal movement the seller never
+            // reviewed can. `completeLoanSale` stays callable past the window
+            // (the seller's own deliberate act), where the stale projection is
+            // not enforced.
             if (
                 s.saleListingBoundsRecorded[loanId] &&
                 block.timestamp <= s.saleListingBoundsExpiry[loanId]
             ) {
-                uint256 sellerNet = proceeds > liamCost ? proceeds - liamCost : 0;
+                uint256 sellerNet = proceeds > saleShortfall ? proceeds - saleShortfall : 0;
                 uint256 floorNet = s.saleListingMinSellerNet[loanId];
                 if (sellerNet < floorNet) {
                     revert SaleBelowSellerFloor(floorNet, sellerNet);
@@ -757,29 +710,21 @@ contract EarlyWithdrawalFacet is
                     revert SaleAboveHeldCeiling(heldCeiling, heldNow);
                 }
             }
-            uint256 treasuryCut = accrued > saleShortfall
-                ? accrued - saleShortfall
-                : 0;
-            // Same rule the direct sale applies: if liam's cost exceeds what the
-            // buyer brought, net settlement cannot complete — liam would owe
-            // tokens we never collected from him. Fail closed with the existing
-            // named error rather than reverting deep inside a token transfer.
-            if (liamCost > proceeds) revert RateShortfallTooHigh();
+            // The shortfall exceeding what the buyer brought cannot net-settle;
+            // fail closed with the named error.
+            if (saleShortfall > proceeds) revert RateShortfallTooHigh();
 
-            uint256 toLiam = proceeds - liamCost;
+            uint256 toLiam = proceeds - saleShortfall;
             if (toLiam > 0) {
                 // #2440 — a voluntary sale: the seller's net is refused unless
-                // it all arrived, so the seller floor checked above is what
-                // the seller actually receives.
+                // it all arrived, so the floor checked above is what arrives.
                 LibDelivery.pushExact(loan.principalAsset, originalLender, toLiam);
             }
-            LibFacet.transferToTreasury(loan.principalAsset, treasuryCut);
             if (saleShortfall > 0) {
-                // #831 — vault-lock the buyer's (newLender) receive, exactly as
-                // the pulled variant did: a buyer flagged AFTER committing the
-                // sale must not brick the completion and strand the committed
-                // seller. The shortfall parks frozen in the buyer's OWN vault
-                // behind the #821 freeze.
+                // #831 — vault-lock the buyer's receive: a buyer flagged AFTER
+                // committing the sale must not brick the completion and strand
+                // the committed seller. The shortfall parks frozen in the
+                // buyer's OWN vault behind the #821 freeze.
                 LibSanctionedLock.begin(s, newLender);
                 LibFacet.depositForNewLender(
                     loan.principalAsset,
@@ -791,52 +736,19 @@ contract EarlyWithdrawalFacet is
                     s, newLender, loanId, loan.principalAsset, saleShortfall
                 );
             }
-        } else if (saleRemainingInterest > originalRemainingInterest) {
-            uint256 shortfall = saleRemainingInterest -
-                originalRemainingInterest;
-            if (accrued >= shortfall) {
-                uint256 excessAccrued = accrued - shortfall;
-                LibFacet.transferFromPayerToTreasury(
-                    originalLender,
-                    loan.principalAsset,
-                    excessAccrued
-                );
-                // #831 — vault-lock the buyer's (newLender) receive: a buyer
-                // flagged AFTER committing the sale must not brick the completion
-                // (which would strand the committed seller). The shortfall parks
-                // frozen in the buyer's OWN vault behind the #821 freeze.
-                LibSanctionedLock.begin(s, newLender);
-                LibFacet.depositFromPayerForLender(
-                    loan.principalAsset,
-                    originalLender,
-                    newLender,
-                    shortfall,
-                    loanId
-                );
-                LibSanctionedLock.end(
-                    s, newLender, loanId, loan.principalAsset, shortfall
-                );
-            } else {
-                uint256 remainingShortfall = shortfall - accrued;
-                uint256 totalFromLiam = accrued + remainingShortfall;
-                // #831 — same buyer-receive vault-lock as the branch above.
-                LibSanctionedLock.begin(s, newLender);
-                LibFacet.depositFromPayerForLender(
-                    loan.principalAsset,
-                    originalLender,
-                    newLender,
-                    totalFromLiam,
-                    loanId
-                );
-                LibSanctionedLock.end(
-                    s, newLender, loanId, loan.principalAsset, totalFromLiam
-                );
-            }
-        } else {
-            LibFacet.transferFromPayerToTreasury(
-                originalLender,
+        } else if (saleShortfall > 0) {
+            // #831 — same buyer-receive vault-lock as the branch above; the
+            // seller (the caller here) funds the shortfall from their wallet.
+            LibSanctionedLock.begin(s, newLender);
+            LibFacet.depositFromPayerForLender(
                 loan.principalAsset,
-                accrued
+                originalLender,
+                newLender,
+                saleShortfall,
+                loanId
+            );
+            LibSanctionedLock.end(
+                s, newLender, loanId, loan.principalAsset, saleShortfall
             );
         }
 
@@ -884,7 +796,7 @@ contract EarlyWithdrawalFacet is
         // Migrate live-loan lender position in one shot. (#998 S10 Class B —
         // `migrateLenderPosition` carries the dedicated active-held reservation to
         // `newLender` internally, before it re-anchors `loan.lender`.)
-        LibLoan.migrateLenderPosition(loanId, newLender);
+        LibLoan.migrateLenderPosition(loanId, newLender, originalLender);
 
         // #998 S10 (#1006) — the shortfall + migrated held above were parked into
         // the BUYER's (`newLender`) vault as `heldForLender`, claimed later via

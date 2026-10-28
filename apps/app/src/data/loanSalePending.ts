@@ -35,7 +35,8 @@ import { tipAware } from '../chain/railHealth';
 export const LOCK_EARLY_WITHDRAWAL_SALE = 2;
 
 /** The settlement a buyer's acceptance would deduct from their payment to
- *  the seller RIGHT NOW: max(accrued interest forfeited, rate top-up). */
+ *  the seller RIGHT NOW: the rate top-up only. The seller's earned interest
+ *  is not deducted; it becomes their claim on the loan (#1209). */
 export function saleSettlementNow(
   live: LoanLive,
   saleRateBps: bigint,

@@ -15,6 +15,7 @@ import {TreasuryFeeFacet} from "../../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../../src/facets/NotificationFeeFacet.sol";
 import {SaleExitVerdictFacet} from "../../src/facets/SaleExitVerdictFacet.sol";
+import {SellerClaimFacet} from "../../src/facets/SellerClaimFacet.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
 
 /**
@@ -195,7 +196,7 @@ library FacetSelectors {
         s[22] = VaipakamNFTFacet.highestTokenId.selector;
     }
 
-    /// @notice Full external selector surface of {RiskPreviewFacet} (11) —
+    /// @notice Full external selector surface of {RiskPreviewFacet} (10) —
     ///         mirrors `DeployDiamond._getRiskPreviewFacetSelectors`.
     ///
     /// @dev    #1649. This facet is not itself refreshed for its own sake by the
@@ -222,7 +223,7 @@ library FacetSelectors {
     ///         Replace the routed), so it is correct against a pre-#1503 diamond
     ///         and a current one alike.
     function riskPreview() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](11);
+        s = new bytes4[](10);
         s[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         s[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         s[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -231,30 +232,28 @@ library FacetSelectors {
         s[5] = RiskPreviewFacet.previewCreatorBlock.selector;
         s[6] = RiskPreviewFacet.previewIntent.selector;
         s[7] = RiskPreviewFacet.saleAdmission.selector;
-        // #1503 item 28 — the seller's forfeiture window. Same reason the whole
-        // facet is enumerated here: a `Replace` cut must carry the WHOLE routed
-        // surface, so omitting a new selector leaves it pointed at stale
-        // bytecode after a curated refresh.
-        s[8] = RiskPreviewFacet.sellerForfeitureWindow.selector;
-        // #1503 item 4 — listing bounds quote. Same `Replace`-completeness
-        // reason as the line above.
-        s[9] = RiskPreviewFacet.quoteSellerBounds.selector;
+        // #1503 item 4 — listing bounds quote. Same reason the whole facet is
+        // enumerated here: a `Replace` cut must carry the WHOLE routed surface,
+        // so omitting a new selector leaves it pointed at stale bytecode after
+        // a curated refresh. (#1209 retired `sellerForfeitureWindow`; every
+        // curated script refuses a Diamond that predates that change, so no
+        // Diamond they cut still routes it.)
+        s[8] = RiskPreviewFacet.quoteSellerBounds.selector;
         // #2672 — the figures a standing listing recorded.
-        s[10] = RiskPreviewFacet.getSaleListingBounds.selector;
+        s[9] = RiskPreviewFacet.getSaleListingBounds.selector;
     }
 
     /// @notice Full external selector surface of {RepayPeriodicFacet} (4).
     ///
-    /// @dev    #1503 item 28. This facet is here for the same reason
-    ///         {riskPreview} is — not for its own sake, but because a curated
-    ///         refresh that leaves it behind produces a HALF-UPGRADED protocol.
-    ///         The refreshed sale routes READ `lenderInterestDeliveredThroughAt`;
-    ///         this facet is what WRITES it, by passing the settled period
-    ///         boundary down to the pay-or-freeze host. Refresh the readers
-    ///         alone and the mark is never written on the upgraded Diamond, so
-    ///         every periodic payment silently re-opens the seller's forfeiture
-    ///         over interest the borrower already paid — the exact bug item 28
-    ///         fixes, reintroduced by the upgrade that was meant to deliver it.
+    /// @dev    #1503 item 28, now #1209 / #1808. This facet is here for the
+    ///         same reason {riskPreview} is — not for its own sake, but because
+    ///         a curated refresh that leaves it behind produces a HALF-UPGRADED
+    ///         protocol. It pays the lender side periodic interest through the
+    ///         pay-or-freeze host, which since #1209 pays open seller claims
+    ///         first; refreshed apart from the host and the sale routes, the
+    ///         interest ledger would be kept by only some of the paths that
+    ///         move interest. (Item 28's paid-through mark, the original
+    ///         reason, is retired.)
     ///
     ///         Its selectors are UNCHANGED by that work; only its bytecode
     ///         moved. It is a plain Replace of the whole surface.
@@ -268,17 +267,18 @@ library FacetSelectors {
 
     /// @notice Full external selector surface of {EncumbranceMutateFacet} (24).
     ///
-    /// @dev    #1503 item 28, and the other half of {repayPeriodic}: this facet
-    ///         hosts `freezeOrPayActiveLenderResident`, which performs the write
-    ///         on its clean branch. Same half-upgrade hazard.
+    /// @dev    The other half of {repayPeriodic}: this facet hosts the
+    ///         pay-or-freeze entries every open-loan interest payout goes
+    ///         through, which pay the seller claims first (#1209). Same
+    ///         half-upgrade hazard.
     ///
-    ///         Unlike its partner this facet's SURFACE changed —
-    ///         `freezeOrPayActiveLenderResident` gained the paid-through
-    ///         boundary, so the 4-argument selector is new and the 3-argument one
-    ///         is retired. A curated refresh therefore Adds the new selector and
-    ///         Removes the old, on top of Replacing the rest; leaving the old
-    ///         selector routed would keep a live entry point whose callers pass
-    ///         one argument too few.
+    ///         Its SURFACE changed twice: #1503 item 28 retired the 3-argument
+    ///         `freezeOrPayActiveLenderResident` (the curated refresh still
+    ///         Removes it wherever routed), and #1209 gave the resident and
+    ///         payer entries the payout's gross and net interest. The curated
+    ///         scripts refuse a Diamond from before #1209
+    ///         (`PredatesInterestLedger`), so on every Diamond they cut the
+    ///         #1209 selectors are already routed.
     function encumbranceMutate() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](24);
         s[0] = EncumbranceMutateFacet.assertNotFrozenParty.selector;
@@ -547,6 +547,32 @@ library FacetSelectors {
         s[0] = SaleExitVerdictFacet.saleExitVerdict.selector;
         s[1] = SaleExitVerdictFacet.requireSaleExitOpen.selector;
         s[2] = SaleExitVerdictFacet.requireSaleAdmission.selector;
+    }
+
+    /// @notice Full external selector surface of {SellerClaimFacet} (7).
+    ///
+    /// @dev    #1209 / #1808. The seller-claim host: the seller-first payout
+    ///         and the terminal split every interest path and ClaimFacet
+    ///         self-call, the sale-time settlement of parked interest, the
+    ///         seller's own claim, and the ledger views. No
+    ///         curated script cuts it: they all refuse a Diamond that predates
+    ///         it (`PredatesInterestLedger`), so it reaches a chain by fresh
+    ///         deploy or the all-facets refresh.
+    ///
+    ///         The ONLY copy of the list: `DeployDiamond`
+    ///         (`_getSellerClaimSelectors`) and `HelperTest`
+    ///         (`getSellerClaimFacetSelectors`) return it, and
+    ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
+    function sellerClaim() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](8);
+        s[0] = SellerClaimFacet.paySellersFirst.selector;
+        s[1] = SellerClaimFacet.resolveSellerClaims.selector;
+        s[2] = SellerClaimFacet.settleSellerClaimsFrom.selector;
+        s[3] = SellerClaimFacet.claimAsSeller.selector;
+        s[4] = SellerClaimFacet.getInterestLedger.selector;
+        s[5] = SellerClaimFacet.getSellerInterestHeld.selector;
+        s[6] = SellerClaimFacet.settleParkedInterestAtSale.selector;
+        s[7] = SellerClaimFacet.getSellersShareOfLenderClaim.selector;
     }
 
     /// @notice Full external selector surface of {NumeraireValueFacet} (3).

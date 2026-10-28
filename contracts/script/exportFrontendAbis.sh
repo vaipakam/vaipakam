@@ -284,6 +284,8 @@ FACETS=(
   "ForcedSaleFacet"
   # #1841 -- the sale-exit verdict host both lender-exit entries self-call.
   "SaleExitVerdictFacet"
+  # #1209 / #1808 -- the seller-claim host (seller-first payout, claimAsSeller).
+  "SellerClaimFacet"
   # #2748 -- the rate-model host (model, band, offer-rate clamp).
   "RateModelFacet"
   "RiskSplitLiquidationFacet"

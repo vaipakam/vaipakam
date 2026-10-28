@@ -2424,137 +2424,119 @@ This option allows Liam to recover principal early by selling his lender positio
 
 #### Economic Treatment
 
-##### Accrued Interest
+##### Accrued Interest — the Seller Keeps a Claim
 
-- Any interest accrued up to the time of sale is forfeited by Liam and routed to treasury, subject to the platform’s sale rules.
-- This avoids complex retroactive splitting of interest across multiple lenders.
-- **Only interest Liam has not already been paid is forfeitable.** On a loan with
-  periodic interest servicing, Alice pays interest to the lender during the term,
-  and those payments do not stop the accrual measure from advancing. What Liam
-  forfeits is therefore the interest accrued over the stretch he has **not** been
-  paid for — measured from the point he was last paid through — never the raw
-  accrual, which would bill him a second
-  time for interest already in his hands on a route where he is exiting rather
-  than being made whole.
-- **Being paid is what moves that point, not the loan's own interest clock.**
-  The loan's clock restarts whenever Alice's obligation is re-based, which is a
-  different event from Liam being paid. They come apart in a case that matters:
-  when a payment is due to a lender the sanctions registry has flagged, the money
-  is held rather than delivered while the obligation still re-bases. Reading the
-  obligation clock as evidence of payment would close Liam's forfeiture over money
-  that never reached him — and that held balance goes to Noah on the sale. Where a
-  lender has never been paid at all, the loan's clock is the starting point; after
-  that, only actual payment moves it. A payment the platform failed to account for
-  therefore over-charges Liam slightly rather than quietly paying him twice.
-- **A period counts as paid only when it is paid in FULL.** A partial settlement
-  leaves the remainder in Alice's obligation, so treating the period as settled
-  would let Liam collect that remainder through his sale price while Noah can
-  still collect it later when Alice repays — the same interest, paid twice, and
-  the effect is largest exactly where collateral is nearly exhausted and the
-  payment smallest.
-- **The measure is a period of time, not a running total.** The forfeiture belongs
-  to the loan's current accrual stretch, and ordinary events — a partial
-  repayment, a swap-to-repay — restart that stretch. A lifetime total of interest
-  paid would not be comparable with it: right after a restart the total describes
-  a period the forfeiture no longer covers, and once the same interest accrued
-  again it would be deducted twice. A fully paid-up lender simply forfeits
-  nothing and completes the sale, rather than being blocked by a leftover the
-  platform has nowhere to put.
-- **The paid-through point is only honoured while it still describes the
-  position.** A point in time carries no amount, so it can only stand in for
-  "interest already received" when nothing has happened since that would change
-  what that stretch is worth or break it into pieces. Two things do, and either
-  one discards the credit in favour of charging Liam the full accrual:
-  - **The principal has moved.** The unpaid stretch is priced at the principal it
-    accrued on. A partial repayment inside that stretch means part of it accrued
-    on a larger balance than the one now on the loan, so a single figure would
-    bill it at the wrong size.
-  - **A payment to Liam was held rather than delivered.** Once that happens his
-    delivery is no longer one continuous run — some earlier period is unpaid
-    while a later one is settled — and a single point in time cannot say which.
-    Reading it as "paid through the later one" would credit him for the held
-    period as well. This disqualification lasts for the rest of Liam's tenure,
-    because no later payment restores the missing one.
+Owner decision 2026-10-28 (#1209, #1808). It replaces the earlier rule, under
+which Liam forfeited his accrued interest to the treasury at the sale.
 
-    Sanctions are not the only reason interest gets held back, and the others
-    count identically. Handing the borrower's obligation to a replacement
-    borrower settles Liam's accrued share into the same holding account on a
-    loan that carries on running: Liam has not been paid it, and it goes to
-    whoever buys his position next. The platform therefore asks whether anything
-    is being held for Liam that was not being held when his mark was last
-    recorded — a question about the loan's own state, not a rule each holding
-    site has to remember.
-
-  Neither refusal lifts on its own. A later clean payment cannot repair a period
-  that is already broken, so once either has happened Liam is charged the full
-  accrual for the rest of his tenure. The sequence that makes this matter looks
-  entirely routine: a balance change followed by an ordinary successful payment
-  would otherwise make the record look sound again while excluding the stretch
-  charged at the larger balance.
-
-  For the same reason a loan needs a starting balance recorded when it opens, so
-  the first payment has something to compare against. A loan already running when
-  this takes effect has none, and no later event supplies one: the stretch
-  between the loan opening and the first payment is never reconciled, so a record
-  installed after it excludes whatever happened in there just as surely. Such a
-  position therefore earns no credit for the rest of Liam's tenure — it keeps the
-  charge it already had. Recording a starting balance at the first payment would
-  make the SECOND payment look trustworthy while its window still began inside
-  the unreconciled stretch.
-
-  Refusing the credit must not RESET the window, and that distinction is
-  load-bearing. Falling back to the loan's own interest clock reads as the
-  obvious answer and is wrong for the same reason the clock is not evidence of
-  payment: it moves. A partial repayment that holds Liam's interest back also
-  re-bases the clock to that moment, so a fallback to the clock would open his
-  window at the reset and skip precisely the held stretch. The recorded point is
-  therefore kept and the EARLIER of the two is used — neither Liam's last
-  recorded payment nor the borrower's obligation restart can be later than the
-  moment he was genuinely paid through.
-
-  Under all of it sits a floor: the moment Liam's own involvement began, which
-  is the loan opening if he lent originally, or the purchase if he bought the
-  position. It is what keeps the window inside the tenure it belongs to, in both
-  directions. If the very first payment due to Liam is the one held back there
-  is no earlier payment to fall back to, and only the floor keeps that unpaid
-  stretch in his charge. And if Liam BOUGHT the position and is later
-  disqualified, without the floor he would fall back to the loan's original
-  clock — charging him for the previous lender's entire stretch, which the sale
-  he bought through already settled. Positions that predate this change record
-  no such moment, so nothing is assumed about them.
-
-  A sale clears all three: Noah's period opens at the purchase, at the principal
-  on the loan then, and carries nothing from Liam's tenure. The conditions are read
-  from the loan's own recorded state rather than reported by whatever caused
-  them, so a path nobody thought to update cannot leave a stale credit standing.
-  Where the credit is refused, Liam is charged interest he may genuinely have
-  received — the platform errs toward over-charging the exiting lender and never
-  toward paying the same interest twice. Because a larger forfeiture is a larger
-  cost, and a sale that would leave the position below its solvency floor is
-  refused, this can also mean Liam is unable to sell at a moment when a credited
-  window would have let him. That is the platform declining to fund a credit it
-  cannot size correctly.
-- **Only interest Liam has actually RECEIVED counts as already paid.** Interest
-  the platform recorded as settled to the lender side is not always interest the
-  lender got: when a periodic payment is made to a lender whose wallet is
-  sanctions-flagged, the money is held rather than delivered, while the record
-  still shows it as settled — correctly, because the borrower paid it and their
-  obligation must reduce by it either way. But a sale hands that held balance to
-  the buyer, so it is money the seller never received and does not keep. It
-  therefore does not move the point Liam is paid through; crediting it as well
-  would pay him for it a second time, out of the platform's share.
-- **A completed sale moves the paid-through point forward; a plain transfer does
-  not.** A sale settles the outstanding forfeiture — to the platform, or into the
-  buyer's rate compensation — so the position the buyer receives is clean and
-  their own forfeiture period opens at the sale. Without that, the same stretch
-  would be forfeited again on every resale, at the seller's expense once per hop.
-  A transfer settles nothing, so the outstanding forfeiture travels with the
-  position exactly as the unpaid interest it represents does. Treating a transfer
-  like a sale would let Liam zero his own forfeiture by sending the position to a
-  second wallet — or to himself — and selling from there.
+- **Liam keeps the interest he earned.** Interest that accrued while Liam held
+  the position, and that has not yet reached him, is not forfeited. At the sale
+  it becomes **a claim Liam holds on the loan**. Noah pays the outstanding
+  principal, exactly as his offer says, and nothing more; no buyer ever funds
+  more than their offer stated.
+- **Liam is paid when Alice pays, from what Alice pays.** Every later interest
+  payment Alice makes towards the lender side, of any kind (a periodic
+  settlement, a partial repayment, a partial liquidation, a renewal, a handover
+  of her obligation, the final repayment), pays the open seller claims first,
+  oldest first, each up to what it is owed, and only then the current holder.
+  Principal in the same payment always goes to the holder. Liam therefore
+  carries exactly the borrower risk he carried while he held the position, and
+  no more.
+- **The yield fee is taken once, when interest is paid.** A seller claim is
+  recorded gross and paid net of the loan's own yield fee, when the payment
+  carries that fee. A payment that carries no yield fee (a periodic settlement
+  made by selling collateral) pays the seller gross, so the fee withheld from a
+  seller can never end up with the holder. The treasury takes nothing at the
+  sale itself.
+- **A holder's fee discount is the holder's alone.** A fee discount the current
+  holder has earned (their VPFI tier) applies only to the interest the holder
+  is paid. It never lowers the fee on a seller's share, and the holder never
+  pays, in VPFI or otherwise, the fee on interest that goes to a seller.
+- **Every payment of interest to the lender side pays sellers first.** That
+  includes interest the borrower pays when handing the loan to a new borrower,
+  and the payoff of a borrower's offset close, even though those land in the
+  lender side's held balance rather than in the holder's wallet. The holder's
+  part of such interest that is still held when the position next sells is
+  paid to that seller at the sale, like interest held for a frozen holder.
+- **What Liam earned is measured exactly.** The platform keeps a running record
+  per loan of the interest the current holder has earned and not been paid.
+  Each stretch of time is priced at the principal and rate in force over that
+  stretch; any change to the loan's principal or rate first closes the stretch
+  at the old figures. Interest counts as paid to a holder only when it actually
+  reaches them. A share held back because the holder is sanctions-flagged is
+  not paid in this sense, so it stays in what they are owed.
+- **A short recovery pays the buyer's principal first.** When the loan ends in
+  default or liquidation and the lender side recovers less than everything owed,
+  the current holder's principal is paid first, then the seller claims oldest
+  first, then the holder takes any remainder. Where the recovery is in the
+  collateral rather than the lending asset, the same ranking applies to its
+  value. A recovery the platform cannot value (no trusted price, an illiquid
+  asset, an NFT) cannot show that the holder's principal was covered, so the
+  holder receives all of it and the seller claims close unpaid. A seller claim
+  that a recovery does not cover is closed at what it was paid, and the unpaid
+  part is stated, not hidden.
+- **Principal stays owed to the holder until it reaches them.** Repaid
+  principal counts as paid to the holder only once it is delivered to them (or
+  into the balance set aside for their claim). Principal that waits in the
+  holder's claim on the closed loan (as when an internal match closes a loan)
+  is still the holder's principal there, so it is paid to the holder before any
+  seller claim. A cost taken out of repaid principal, such as a matcher's
+  incentive, is not delivered to the holder either, so their principal still
+  ranks first for it.
+- **The holder is shown what they will be paid.** Wherever the platform shows
+  the current holder their claim on a closed loan (the claim figure, the
+  position's own description, the list of claims), the figure is what the
+  holder will receive: the claim less the part that goes to the seller claims.
+- **A seller collects from their own vault.** A seller's share lands in their
+  own Vaipakam vault, set aside for them, and they withdraw it whenever they
+  choose. It is never pushed to a seller's wallet, because the payment is part
+  of someone else's transaction and a past lender must never be able to block
+  it. A share for a sanctions-flagged seller simply waits there until they are
+  clear. A seller seen flagged when a share is credited to them is recorded as
+  confirmed, so an outage of the sanctions source cannot release it later. The
+  seller's vault is opened at the sale if they have none, while the sale has
+  just shown them clear, so a seller flagged later can never block another
+  party's repayment or claim.
+- **The number of open seller claims on one loan is bounded.** A loan carries
+  at most four open seller claims. A sale that would open a fifth is refused
+  until older claims are paid, and the answer to whether the sale route is open
+  names this reason. A seller reselling the same position to themselves adds to
+  their own newest claim rather than opening a new one. This keeps every
+  interest payment's cost bounded.
+- **An automatic renewal never takes a seller's interest.** A position that
+  carries open seller claims (sold and later bought back) is not renewed
+  automatically into its owner's standing offer; it settles through the
+  ordinary claim, which pays the sellers their part first.
+- **A plain transfer is not a sale.** Sending the lender position to another
+  wallet settles nothing: the earned interest travels with the position, as
+  the unpaid interest it represents does.
 - **These rules bind both sale routes identically.** A rule that applied to the
-  direct sale and not to the listed sale's completion would let the same position
-  be sold on different economics depending on which door it left by.
+  direct sale and not to the listed sale's completion would let the same
+  position be sold on different economics depending on which door it left by.
+- **Interest set aside for the seller is paid to the seller at the sale.**
+  Interest the borrower paid while Liam's share was frozen (for example while
+  he was sanctions-flagged) was set aside for the lender and never reached him.
+  At the sale that interest goes to Liam, into his own vault and set aside for
+  him, and his earned figure falls by it before his claim is recorded. The rest
+  of the money set aside for the lender moves to Noah with the position. So the
+  seller is paid from money that already exists, never from interest the loan
+  may not go on to earn.
+- **Set-aside interest stays tied to the frozen party.** If Liam himself is
+  still frozen when his position sells, the interest lands locked in his own
+  vault and he can withdraw it only once he is shown to be clear. If the party
+  recorded as frozen is someone else (an earlier holder) and is still flagged,
+  or cannot be shown to be clear after a confirmed flag, the sale is refused,
+  and the answer to whether the sale route is open names that party, because
+  the set-aside money waits on them whoever holds the position.
+- **Interest accrues until the loan ends.** It accrues while the loan is
+  active and while it waits in a pending fallback, because a cured fallback
+  owes the whole stretch; a change of principal during the fallback first
+  settles the stretch at the principal it replaces. Once a loan has ended, the
+  record reports nothing earned and no principal owed by the ledger; what the
+  lender side is owed is its claim on the closed loan.
+- **Anyone can see the record.** The platform reports, per loan, what the
+  current holder has earned and not been paid, the principal the lender side is
+  owed, and each open seller claim with what it is owed.
 
 ##### Reward Migration Is Part of the Sale
 
@@ -2638,24 +2620,24 @@ This option allows Liam to recover principal early by selling his lender positio
 
 If Noah’s replacement terms imply that the remaining lender-side economics differ from Liam’s original position, Liam may need to cover a shortfall.
 
-Example rule:
+Rule:
 
-- if Noah’s replacement yield for the remaining duration is higher than what Alice’s existing loan would produce, Liam must cover the difference
-- forfeited accrued interest may first be applied toward that difference
-- any remaining excess forfeited accrued interest goes to treasury
-- if forfeited accrued interest is insufficient, Liam pays the remainder directly
+- if Noah’s replacement yield for the remaining duration is higher than what Alice’s existing loan would produce, Liam must cover the difference, and it is deducted from what Noah pays him
+- the difference is paid to Noah, set aside for him on the position
+- Liam's accrued interest is never applied toward the difference; it stays his claim on the loan (see Accrued Interest above)
+- a difference larger than the principal Liam is paid cannot be covered and the sale is refused
 
 ##### Frontend Warning
 
-- The frontend should display how much the original lender will net after accounting for forfeited accrued interest and any required shortfall payment before the sale is confirmed.
-- The confirmation step should explicitly state that selling the lender position forfeits interest accrued so far, with forfeited interest routed to treasury or applied toward a rate shortfall before any remainder is handled under the sale rules.
+- The frontend should display how much the original lender will net now (the principal less any required shortfall payment) before the sale is confirmed.
+- The confirmation step should explicitly state that the interest accrued so far is not paid at the sale: it becomes a claim on the loan, paid from the borrower's later interest ahead of the buyer, and on a default it ranks after the buyer's principal.
 
 #### Smart Contract Actions
 
 1. Noah funds the purchase.
-2. Liam receives the agreed principal recovery amount. Where possible, the sale flow should prefer net settlement so protocol-defined forfeitures or shortfalls can be deducted directly from the incoming proceeds instead of requiring Liam to source separate wallet liquidity in the same asset.
-3. Accrued interest is forfeited and routed according to treasury rules.
-4. Any required shortfall is paid by Liam.
+2. Liam receives the agreed principal recovery amount. Where possible, the sale flow should prefer net settlement so a required shortfall can be deducted directly from the incoming proceeds instead of requiring Liam to source separate wallet liquidity in the same asset.
+3. Liam's accrued and unpaid interest is recorded as his claim on the loan.
+4. Any required shortfall is paid by Liam, to Noah.
 5. The lender field on the loan is updated from Liam to Noah.
 6. NFT updates occur:
    - Liam’s lender NFT is closed, burned, or marked sold
@@ -2702,17 +2684,15 @@ Once a listing has expired on a still-active loan, **anyone** — the seller, a 
 
 A listing also records **what the seller is agreeing to**, and a sale that would breach it is refused rather than completed. Two bounds are stored when the listing is made, and their shapes differ because the two costs behave differently over time.
 
-The **floor** is the least the seller will receive out of the buyer's payment once the settlement forfeiture is deducted. It is not the figure shown on their screen at the instant they look: the forfeited interest grows for as long as the listing stands, so a floor set at the displayed value would make the seller's own listing unfillable within minutes. The enforceable floor is the worst case they are accepting across the whole window — which is a true statement to show them ("fill any time before this runs out and you receive at least this much") and a bound the platform can check. It is computable only because a listing must carry a finite expiry.
-
-"Across the whole window" is not the same as "at expiry", and the difference is observable. The settlement cost is the greater of two quantities that move in OPPOSITE directions: the interest the seller forfeits grows as the listing stands, while the compensation owed to the buyer for taking a rate above the loan's own is calculated over the REMAINING term and therefore shrinks. So the costliest moment to fill is one end of the window or the other, and which end depends on the terms — a listing priced well above the loan's rate is most expensive to exit immediately. The floor accounts for both ends. Evaluating only the expiry would record a floor above the seller's own instant net and reject an early fill that nothing had disturbed.
+The **floor** is the least the seller will receive out of the buyer's payment once the settlement cost is deducted. Since the seller keeps their accrued interest as a claim (see Accrued Interest), that cost is only the compensation owed to the buyer for taking a rate above the loan's own, calculated over the REMAINING term. It shrinks as the listing stands, so the costliest moment to fill is the moment of listing, and the enforceable floor is the seller's net at that moment: "fill any time before this runs out and you receive at least this much" stays true for the whole window. A listing still carries a finite expiry, for the reward forfeiture the next paragraphs describe.
 
 What the floor binds is the stretch from listing to sale: the figures recorded when the listing was posted govern the fill. Binding the figures a seller *reviewed* to the listing they subsequently submit is a separate and narrower guarantee — those can differ if the loan changes in the moments between — and the platform provides it as a second, optional way to submit a listing: the submission carries the floor and the held ceiling the seller was shown, and is refused outright when the listing would record figures worse for the seller — a lower floor, or a higher held ceiling — with the refusal naming both the recorded and the reviewed figure so the interface can re-quote and explain what moved. Only adverse drift is refused; figures at or better than what was reviewed always pass, so ordinary favorable movement never blocks a listing. The original, unbound submission remains available and unchanged, and an interface that shows a seller a quote is expected to submit through the bound form, so the quote a seller sees is the quote they are held to.
 
 The **ceiling** is on money already set aside for the lender, which transfers to the buyer with the position. That quantity does not grow with time; it grows only when a settlement parks more into it between listing and sale, which is precisely the drift being refused. So the recorded value is the balance at listing, and a later park fails the sale rather than enlarging what the seller surrenders. "Nothing was set aside" is RECORDED rather than inferred, so a listing whose ceiling is legitimately zero is distinguishable from one made before these bounds existed.
 
-Neither bound is redundant, and the reason is worth stating because they look like two views of one quantity. A park trips both — it enlarges the transferring balance and it disqualifies the record of what the lender has been paid, which widens the forfeiture. But a repayment that reduces the loan's balance disqualifies that record while parking nothing, so the floor catches a case the ceiling cannot see.
+Neither bound is redundant. A park enlarges the transferring balance, which only the ceiling sees. A repayment that reduces the loan's balance parks nothing but changes the principal the seller is paid, which only the floor sees.
 
-The **direct sale** — the one-transaction route that spends a standing buy offer rather than resting a listing — carries the same optional bound, because the two sale routes must let a seller bind their economics identically or the same position could be sold on different terms depending on which route it left by. Here there is no listing window; the drift the bound guards is the interval between the seller reading a quote and their own transaction mining, in which a settlement can move the live state the sale recomputes from. The bound submission carries the same figures the listed route binds — the seller's reviewed minimum net receipt and a ceiling on the held-for-lender balance that migrates to the buyer — plus a required deadline, and the sale is refused when execution would be worse for the seller: a net below the floor, a migrating held balance above the ceiling (parked interest that grows between quote and fill is forfeited whole to the buyer, so the ceiling is the seller's protection against it), or a fill past the deadline. It passes when execution is at least as good, each refusal naming its condition. The bound is checked against the very figures the settlement uses, so it cannot diverge from what the seller actually receives. The original unbound direct sale is unchanged and remains available.
+The **direct sale** — the one-transaction route that spends a standing buy offer rather than resting a listing — carries the same optional bound, because the two sale routes must let a seller bind their economics identically or the same position could be sold on different terms depending on which route it left by. Here there is no listing window; the drift the bound guards is the interval between the seller reading a quote and their own transaction mining, in which a settlement can move the live state the sale recomputes from. The bound submission carries the same figures the listed route binds — the seller's reviewed minimum net receipt and a ceiling on the held-for-lender balance that migrates to the buyer — plus a required deadline, and the sale is refused when execution would be worse for the seller: a net below the floor, a migrating held balance above the ceiling (the held balance can grow between quote and fill, so the ceiling is the seller's protection against it; it counts the whole held balance, including any interest set aside for the seller that the sale then pays to the seller rather than moving it to the buyer), or a fill past the deadline. It passes when execution is at least as good, each refusal naming its condition. The bound is checked against the very figures the settlement uses, so it cannot diverge from what the seller actually receives. The original unbound direct sale is unchanged and remains available.
 
 The deadline is required on the bound route rather than optional, and it caps a third cost the other two bounds cannot: the sale forfeits the seller's pending usage reward measured at the day it settles, a loss that grows the longer the transaction is delayed. A finite deadline bounds that forfeiture to the window the seller chose, mirroring the mandatory finite expiry the listed route carries. The two routes must cap the same three costs — settlement, transferred held balance, and reward forfeiture — or the same position could be sold on materially different terms by choosing a route; a seller who wants none of the three capped uses the unbound sale, where the unbounded reward loss is disclosed rather than consented to.
 
@@ -2730,7 +2710,7 @@ For this option to be implementation-ready, the following must be explicit:
 - who vaults or locks funds during offer creation
 - what exact amount the buyer pays when accepting
 - whether the buyer must fund principal only or principal plus another negotiated amount
-- how accrued interest forfeiture is handled
+- how the seller's accrued interest becomes a claim on the loan
 - how rate shortfalls are handled
 - how the newly created offer links to the underlying live loan
 - what happens if the borrower repays while the sale offer is still open
@@ -2740,7 +2720,7 @@ For this option to be implementation-ready, the following must be explicit:
 #### Intended Economic Result
 
 - Liam typically aims to recover principal early.
-- Accrued interest is still forfeited to treasury according to the lender-exit rules.
+- Liam's accrued interest is not forfeited: it becomes his claim on the loan under the lender-exit rules.
 - If Liam selects or creates an offsetting offer on economically less favorable terms, Liam may recover less than full principal or may need to subsidize the transition.
 
 #### Acceptance Outcome
@@ -2771,7 +2751,7 @@ If the lender does not find a suitable exit path, the lender may simply keep the
 #### Outcome
 
 - No transfer of lender rights occurs.
-- No sale discount, sale shortfall, or accrued-interest forfeiture applies beyond the platform’s normal repayment/default rules.
+- No sale discount or sale shortfall applies beyond the platform’s normal repayment/default rules.
 
 ### Implementation Checklist for Preclose and Early-Withdrawal Flows
 
