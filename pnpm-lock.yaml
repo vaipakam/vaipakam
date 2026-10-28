@@ -314,6 +314,9 @@ importers:
       '@vaipakam/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@vaipakam/lib':
+        specifier: workspace:*
+        version: link:../lib
     devDependencies:
       '@types/node':
         specifier: ^22
