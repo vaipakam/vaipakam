@@ -63,7 +63,8 @@ import { buildKeeperContext, passIsArmed, resolveKeeperAccount, type KeeperConte
 import type { PassTick } from '../passSchedule';
 import { deadlineClient, PastRunDeadline, settledRead, type BatchResult } from '../batchRead';
 import { shortErr } from '../callErrors';
-import { ENTRY_PAGE, scanEntries, type EntryRow } from '../rewardEntries';
+import { decodeEntryFloor, encodeEntryFloor, ENTRY_PAGE, scanEntries, type EntryRow } from '../rewardEntries';
+import { d1ScanCursors, type ScanCursors } from '../scanCursors';
 import { StepSender } from '../stepSender';
 import {
   closureWindow,
@@ -103,13 +104,18 @@ export const RECEIPT_TIMEOUT_MS = 30_000;
 export const DEFAULT_LOOKBACK_DAYS = 60;
 /** Entry ids per `proveDayClosurePage`. */
 export const PAGE_IDS = 100;
-/** Entry pages one run may read. A sequence longer than this is not walked
- *  this run, and the line says so: a walk on a partial scan cannot close. */
+/** Entry pages one run may read, from the scan's stored floor. A day whose
+ *  entries the pages do not reach is not walked this run, and the line says
+ *  so: a walk on a partial scan cannot close. */
 export const MAX_ENTRY_PAGES = 20;
 /** Retired eras looked at per run, newest first. */
 export const MAX_ERAS = 32;
-/** Epochs read per closed day for the park step. */
+/** Epochs read per closed day for the park step, from the day's stored
+ *  discovery cursor, so a day listing more is covered over several runs. */
 export const MAX_BATCHES_PER_DAY = 50;
+/** The scan-cursor items this pass keeps (`scanCursors.ts`). */
+export const ENTRY_FLOOR_ITEM = 'entry-floor';
+export const parkCursorItem = (day: number) => `park:${day}`;
 /** Park pages one batch may take in a run. */
 export const MAX_PARK_PAGES = 8;
 /** Reads per aggregate. */
@@ -137,6 +143,8 @@ export interface CloseOutDeps {
   keeper: Address | null;
   sendDeadline: number;
   lookbackDays: number;
+  /** Where its bounded reads got to on this chain, across runs. */
+  cursors: ScanCursors;
 }
 
 /** What a run did on one chain: its log line's figures, and what tests read. */
@@ -181,6 +189,7 @@ export async function runRewardCloseOut(env: Env, tick: PassTick): Promise<void>
           keeper,
           sendDeadline,
           lookbackDays,
+          cursors: d1ScanCursors(env.KEEPER_DB, chain.id, chain.diamond as string, 'rewardCloseOut'),
         });
         console.log(describeReport(report));
       } catch (err) {
@@ -273,10 +282,10 @@ export async function closeOutOnce(chainId: number, diamond: Address, deps: Clos
       if (gate.paused) {
         if (open.length > 0) sender.noteUnread('closure', 'the protocol is paused, so no closure walk can run');
       } else if (open.length > 0) {
-        await proveDays(r, sender, report, open, deps.keeper);
+        await proveDays(r, sender, report, open, deps.keeper, deps.cursors);
         for (const d of report.daysClosed) known.set(d, true);
       }
-      await parkBatches(r, sender, report, days.filter((d) => known.get(d) === true));
+      await parkBatches(r, sender, report, days.filter((d) => known.get(d) === true), deps.cursors);
       await pruneDays(r, sender, report, days.filter((d) => known.get(d) === false));
     }
   } catch (err) {
@@ -439,16 +448,41 @@ interface WalkRecord {
   borrowerCursor: bigint;
 }
 
-async function proveDays(r: Reader, sender: StepSender, report: CloseOutReport, open: readonly number[], keeper: Address | null): Promise<void> {
+async function proveDays(
+  r: Reader,
+  sender: StepSender,
+  report: CloseOutReport,
+  allOpen: readonly number[],
+  keeper: Address | null,
+  cursors: ScanCursors,
+): Promise<void> {
   if (keeper === null) {
     sender.noteUnread('closure', 'no signing key, so no walk can be started');
     return;
   }
-  const entries = await scanEntries((from, n) => r.one<readonly EntryRow[]>('getRewardEntriesRange', [from, n]), open[0], open[open.length - 1], MAX_ENTRY_PAGES);
-  if (entries === null) {
-    sender.noteUnread('closure', `the reward-entry sequence is longer than ${MAX_ENTRY_PAGES} pages of ${ENTRY_PAGE}, so no walk was started (a walk on a partial scan cannot close)`);
-    return;
+  // The scan starts at its stored floor: entries below it all end before the
+  // oldest open day, so what a run reads is the entries live across the open
+  // days, not every entry the chain has made (Codex #2993 r1).
+  const stored = (await cursors.get([ENTRY_FLOOR_ITEM])).get(ENTRY_FLOOR_ITEM);
+  const scan = await scanEntries(
+    (from, n) => r.one<readonly EntryRow[]>('getRewardEntriesRange', [from, n]),
+    allOpen[0],
+    allOpen[allOpen.length - 1],
+    MAX_ENTRY_PAGES,
+    decodeEntryFloor(stored),
+  );
+  const floor = encodeEntryFloor(scan.floor);
+  if (floor !== stored) await cursors.put(ENTRY_FLOOR_ITEM, floor);
+  const open = allOpen.filter((d) => d <= scan.completeThrough);
+  const beyond = allOpen.filter((d) => d > scan.completeThrough);
+  if (beyond.length > 0) {
+    sender.noteUnread(
+      'closure',
+      `the reward-entry scan reads at most ${MAX_ENTRY_PAGES} pages of ${ENTRY_PAGE} a run from its stored floor and reached only the entries starting by day ${scan.completeThrough}; days ${summarizeDays(beyond)} are not walked this run (a walk on a partial scan cannot close)`,
+    );
   }
+  if (open.length === 0) return;
+  const entries = scan.entries;
   const totals = await r.many(open.map((d) => ({ functionName: 'getInteractionDayEntry', args: [BigInt(d), zeroAddress] })), 'day-totals');
   let lastNonce: bigint;
   try {
@@ -532,17 +566,32 @@ async function walkDay(
 
 // ─── 4. Park ────────────────────────────────────────────────────────────────
 
-async function parkBatches(r: Reader, sender: StepSender, report: CloseOutReport, closedDays: readonly number[]): Promise<void> {
+async function parkBatches(r: Reader, sender: StepSender, report: CloseOutReport, closedDays: readonly number[], cursors: ScanCursors): Promise<void> {
   if (closedDays.length === 0 || sender.stopped) return;
-  const pages = await r.many(closedDays.map((d) => ({ functionName: 'getTransportDayBatches', args: [BigInt(d), 0n, BigInt(MAX_BATCHES_PER_DAY)] })), 'day-batches');
+  // Each closed day's epochs are discovered a page at a time from where the
+  // last run stopped, wrapping to the head at the end of the list: parking
+  // an epoch does not take it out of the day's list, so reading from the head
+  // every run would never get past the first page (Codex #2993 r1).
+  const stored = await cursors.get(closedDays.map(parkCursorItem));
+  const from = closedDays.map((d) => (stored.get(parkCursorItem(d)) as `0x${string}` | undefined) ?? ZERO32);
+  const pages = await r.many(
+    closedDays.map((d, i) => ({ functionName: 'getTransportDayBatchesFrom', args: [BigInt(d), from[i], BigInt(MAX_BATCHES_PER_DAY)] })),
+    'day-batches',
+  );
   const batches = new Set<string>();
-  pages.forEach((p, i) => {
+  for (let i = 0; i < closedDays.length; i++) {
+    const p = pages[i] as readonly [readonly string[], unknown, string] | undefined;
     if (p === undefined) {
       sender.noteUnread(`park:${closedDays[i]}`, 'the day\'s transport epochs');
-      return;
+      continue;
     }
-    for (const id of (p as readonly [readonly string[]])[0]) batches.add(id.toLowerCase());
-  });
+    for (const id of p[0]) batches.add(id.toLowerCase());
+    // The end of the list, or a stored node no longer in it (which pages
+    // nothing), starts the next run from the head.
+    const next = p[0].length === 0 ? ZERO32 : p[2].toLowerCase();
+    // eslint-disable-next-line no-await-in-loop
+    if (next !== from[i].toLowerCase()) await cursors.put(parkCursorItem(closedDays[i]), next);
+  }
   const known = new Set(closedDays);
   for (const batchId of batches) {
     if (sender.stopped) return;

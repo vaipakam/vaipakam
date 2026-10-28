@@ -912,8 +912,9 @@ function firstReleases(rows: readonly ReleaseEventRow[]): { remitId: number; blo
  *  `day_owed`; `day_open` (an open day on Base, the block it was last seen
  *  open from) and `day_dispatch` (a mirror close whose report left through a
  *  messenger other than the one checked) are per-day records like
- *  `day_broadcast`. */
-export type WorkKind = 'delivery_proof' | 'late_ack' | 'day_broadcast' | 'day_zeroed' | 'day_close' | 'day_owed' | 'day_clock' | 'day_dispatch' | 'day_open';
+ *  `day_broadcast`. `scan_cursor` holds how far a pass's bounded reads got
+ *  (`scanCursors.ts`), keyed by the pass's own item name. */
+export type WorkKind = 'delivery_proof' | 'late_ack' | 'day_broadcast' | 'day_zeroed' | 'day_close' | 'day_owed' | 'day_clock' | 'day_dispatch' | 'day_open' | 'scan_cursor';
 
 /** The last block the shared indexer has completely recorded on `chainId`
  *  (its `diamond` cursor, advanced only after a whole window is written), or

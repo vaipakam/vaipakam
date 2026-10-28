@@ -238,6 +238,13 @@ evidence that the migration has completed.
   plainly exhausted: nothing left, fully indexed and unreferenced. An epoch
   exhausted only by its caps is not detected by the keeper; the day's next
   draw passes it.
+- How long the chain's history grows never stops the duty. Its work per run
+  is bounded, and it resumes where the previous run stopped: its reading of
+  the reward entries starts past the entries that ended before the oldest
+  day still open, and a day's transport epochs are discovered a page at a
+  time, so every closed day's epochs are eventually examined. Where the
+  bound keeps a day from being reached in one run, the run's report says
+  so.
 - None of these steps pays a fee or moves value to the keeper. A paused
   protocol, a missing signing key, an unread value or a Diamond that names
   another chain stops the affected step and is stated in the run's report,

@@ -27,8 +27,14 @@ import {
   epochPrunable,
   eraReadiness,
   pagesAfter,
+  ENTRY_FLOOR_ITEM,
+  MAX_BATCHES_PER_DAY,
+  MAX_ENTRY_PAGES,
+  parkCursorItem,
   type ScannedEntry,
 } from '../src/rewardCloseOut';
+import { decodeEntryFloor, encodeEntryFloor, ENTRY_PAGE, scanEntries, type EntryRow } from '../src/rewardEntries';
+import { memoryScanCursors } from '../src/scanCursors';
 import type { KeeperContext } from '../src/keeper';
 
 const CHAIN = 421614;
@@ -423,12 +429,43 @@ class FakeDiamond {
   }
 }
 
+describe('scanEntries', () => {
+  const row = (startDay: number, endDay: number): EntryRow => ({ user: OTHER, startDay, endDay, side: SIDE_LENDER, perDayNumeraire18: 1n });
+  const reader = (rows: EntryRow[]) => async (from: bigint, n: bigint) => rows.slice(Number(from) - 1, Number(from) - 1 + Number(n));
+
+  it('starts at a floor recorded for the same or an earlier first day, and from id 1 otherwise', async () => {
+    const rows = [row(0, 1), row(0, 2), row(3, 9), row(4, 9)];
+    const fromFloor = await scanEntries(reader(rows), 3, 4, 1, { id: 3n, day: 2 });
+    expect(fromFloor.entries.map((e) => e.id)).toEqual([3n, 4n]);
+    expect(fromFloor.completeThrough).toBe(4);
+    expect(fromFloor.floor).toEqual({ id: 3n, day: 3 });
+    const later = await scanEntries(reader(rows), 1, 4, 1, { id: 3n, day: 2 + 5 });
+    expect(later.entries.map((e) => e.id), 'a floor for a later day is not used').toEqual([2n, 3n, 4n]);
+    expect(later.floor).toEqual({ id: 2n, day: 1 });
+  });
+
+  it('says which days a page budget still covers whole when it runs out', async () => {
+    const rows = Array.from({ length: Number(ENTRY_PAGE) + 5 }, (_, i) => row(i < Number(ENTRY_PAGE) - 1 ? 2 : 6, 9));
+    const s = await scanEntries(reader(rows), 2, 8, 1, null);
+    expect(s.completeThrough, 'an unread entry may still start on day 6').toBe(5);
+    expect(s.floor).toEqual({ id: 1n, day: 2 });
+  });
+
+  it('round-trips a floor, and reads a malformed one as none', () => {
+    expect(decodeEntryFloor(encodeEntryFloor({ id: 12n, day: 4 }))).toEqual({ id: 12n, day: 4 });
+    expect(decodeEntryFloor('x')).toBeNull();
+    expect(decodeEntryFloor(undefined)).toBeNull();
+  });
+});
+
 describe('a run', () => {
   let d: FakeDiamond;
   let logged: string[];
+  let cursors: ReturnType<typeof memoryScanCursors>;
 
   beforeEach(() => {
     d = new FakeDiamond();
+    cursors = memoryScanCursors();
     logged = [];
     vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => void logged.push(a.map(String).join(' ')));
     vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => void logged.push('ERR ' + a.map(String).join(' ')));
@@ -443,6 +480,7 @@ describe('a run', () => {
       keeper: opts.keeper === undefined ? KEEPER : opts.keeper,
       sendDeadline: Number.POSITIVE_INFINITY,
       lookbackDays: opts.lookbackDays ?? DEFAULT_LOOKBACK_DAYS,
+      cursors,
     });
   const fns = () => d.sent.map((s) => s.fn);
   const closeAllButDay = (day: number) => {
@@ -450,6 +488,22 @@ describe('a run', () => {
   };
 
   describe('closure', () => {
+    it(`resumes the entry scan from its stored floor, so a history longer than ${MAX_ENTRY_PAGES} pages does not stop closure`, async () => {
+      closeAllButDay(4);
+      // A long history whose entries all ended before day 1.
+      const history = MAX_ENTRY_PAGES * Number(ENTRY_PAGE) + 1;
+      for (let i = 0; i < history; i++) d.addEntry({ side: SIDE_LENDER, startDay: 0, endDay: 1, perDay: 1n });
+      const live = d.addEntry({ side: SIDE_LENDER, startDay: 4, endDay: 6, perDay: 5n });
+      let r = await run();
+      expect(r.daysClosed).toEqual([]);
+      expect(r.unread.get('closure')).toMatch(/reached only the entries starting by day 0; days 4 are not walked this run/);
+      expect(cursors.rows.get(ENTRY_FLOOR_ITEM), 'the floor moves past the history read').toBe(`${MAX_ENTRY_PAGES * Number(ENTRY_PAGE) + 1}:4`);
+      r = await run();
+      expect(r.daysClosed).toEqual([4]);
+      expect(r.unread.has('closure')).toBe(false);
+      expect(cursors.rows.get(ENTRY_FLOOR_ITEM), 'the first entry live on day 4').toBe(`${live}:4`);
+    });
+
     it('proves a day closed once every covering entry has terminated: a start, then a page a side', async () => {
       closeAllButDay(2);
       d.addEntry({ side: SIDE_LENDER, startDay: 0, endDay: 4, perDay: 10n }); // id 1, covers days 1..3
@@ -641,6 +695,24 @@ describe('a run', () => {
       d.sent = [];
       expect((await run()).parked).toEqual([]);
       expect(d.sent).toEqual([]);
+    });
+
+    it(`discovers a day's epochs ${MAX_BATCHES_PER_DAY} a run from where the last run stopped, so one past the first page is parked`, async () => {
+      closeAllButDay(99);
+      for (let i = 1; i <= MAX_BATCHES_PER_DAY + 1; i++) d.addBatch(batchId(i), { days: [2], balance: BigInt(i) });
+      const parked = new Set<string>();
+      let runs = 0;
+      while (parked.size < MAX_BATCHES_PER_DAY + 1 && runs < 10) {
+        // eslint-disable-next-line no-await-in-loop
+        for (const p of (await run()).parked) parked.add(p.batchId);
+        runs += 1;
+        if (runs === 2) expect(parked.has(batchId(MAX_BATCHES_PER_DAY + 1)), 'the epoch past the first page, on the second run').toBe(true);
+      }
+      expect(parked.size).toBe(MAX_BATCHES_PER_DAY + 1);
+      // A stored node no longer in the day's list starts the next run at the head.
+      cursors.rows.set(parkCursorItem(2), `0x${'ee'.repeat(32)}`);
+      await run();
+      expect(cursors.rows.get(parkCursorItem(2))).toBe(ZERO32);
     });
 
     it('does not park an epoch listing a day still open', async () => {

@@ -84,34 +84,84 @@ export interface EntryRow {
 }
 
 /**
- * The reward-entry sequence from id 1 up to the first entry starting after
- * `lastDay`, keeping only entries that end after `firstDay`. `readPage(from,
- * n)` is `getRewardEntriesRange`. Null when `maxPages` ran out first: a walk
- * on a partial scan cannot close, so the caller starts none.
+ * A scan's persisted starting point (Codex #2993 r1): every entry below `id`
+ * ends on or before `day`, so a later scan whose oldest day is at least `day`
+ * can start at `id`. It moves forward only as the oldest day a pass still
+ * works moves forward, so what a scan reads is bounded by the entries live
+ * across the days it works, never by every entry the chain has made.
+ */
+export interface EntryFloor {
+  id: bigint;
+  day: number;
+}
+
+/** A floor as a scan cursor stores it (`scanCursors.ts`). */
+export function encodeEntryFloor(f: EntryFloor): string {
+  return `${f.id}:${f.day}`;
+}
+
+/** A stored floor, or null when there is none or it cannot be read. */
+export function decodeEntryFloor(raw: string | undefined): EntryFloor | null {
+  const m = raw === undefined ? null : /^(\d+):(\d+)$/.exec(raw);
+  return m === null ? null : { id: BigInt(m[1]), day: Number(m[2]) };
+}
+
+/** What one bounded scan read. */
+export interface EntryScan {
+  /** The entries read that end after the scan's first day, ascending. */
+  entries: ScannedEntry[];
+  /** Every entry starting on or before this day was read, so each day up to
+   *  it has all its covering entries in `entries`. Below the scan's first day
+   *  when not even that day's could be read within the page budget. */
+  completeThrough: number;
+  /** Where the next scan starts, valid for any first day at or after this
+   *  scan's. */
+  floor: EntryFloor;
+}
+
+/**
+ * The reward-entry sequence from `floor` (id 1 when there is none, or when it
+ * was recorded for a later first day than `firstDay`) up to the first entry
+ * starting after `lastDay`, keeping only entries that end after `firstDay`.
+ * `readPage(from, n)` is `getRewardEntriesRange`. At most `maxPages` pages are
+ * read; when they run out first, `completeThrough` says which days the scan
+ * still covers whole, since `startDay` never decreases along the ids. A walk
+ * on a day past it would open on a partial reading, so the caller starts none.
  */
 export async function scanEntries(
   readPage: (from: bigint, n: bigint) => Promise<readonly EntryRow[]>,
   firstDay: number,
   lastDay: number,
   maxPages: number,
-): Promise<ScannedEntry[] | null> {
+  floor: EntryFloor | null,
+): Promise<EntryScan> {
   const out: ScannedEntry[] = [];
-  let next = 1n;
+  let next = floor !== null && floor.id > 1n && floor.day <= firstDay ? floor.id : 1n;
+  const done = (): EntryScan => ({ entries: out, completeThrough: lastDay, floor: { id: out[0]?.id ?? next, day: firstDay } });
+  let lastFirst = firstDay;
   for (let page = 0; page < maxPages; page++) {
     // eslint-disable-next-line no-await-in-loop
     const rows = await readPage(next, ENTRY_PAGE);
     for (let i = 0; i < rows.length; i++) {
       const e = rows[i];
       // A zeroed slot is past the end of the allocated sequence.
-      if (e.user === zeroAddress && Number(e.endDay) === 0 && e.perDayNumeraire18 === 0n) return out;
+      if (e.user === zeroAddress && Number(e.endDay) === 0 && e.perDayNumeraire18 === 0n) {
+        next += BigInt(i);
+        return done();
+      }
       const first = Number(e.startDay) === 0 ? 1 : Number(e.startDay);
-      if (first > lastDay) return out;
+      if (first > lastDay) {
+        next += BigInt(i);
+        return done();
+      }
+      lastFirst = first;
       if (Number(e.endDay) > firstDay) {
         out.push({ id: next + BigInt(i), side: Number(e.side), first, endDay: Number(e.endDay), perDayNumeraire18: e.perDayNumeraire18 });
       }
     }
     next += BigInt(rows.length);
-    if (rows.length < Number(ENTRY_PAGE)) return out;
+    if (rows.length < Number(ENTRY_PAGE)) return done();
   }
-  return null;
+  // The pages ran out: an entry not yet read may still start on `lastFirst`.
+  return { entries: out, completeThrough: lastFirst - 1, floor: { id: out[0]?.id ?? next, day: firstDay } };
 }
