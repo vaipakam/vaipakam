@@ -37,8 +37,11 @@ import {
   MAX_AUTHS_PER_RUN,
   STRANDED_FLOOR_ITEM,
   type ReturnLedger,
+  type NoticeOutbox,
+  type PendingNotice,
   type SendRecords,
 } from '../src/rewardReturnTransport';
+import type { OpsAlertOutcome } from '../src/opsAlert';
 import type { SendFeeCeiling } from '../src/stepSender';
 import { memoryScanCursors } from '../src/scanCursors';
 import type { KeeperContext } from '../src/keeper';
@@ -411,6 +414,24 @@ class FakeRecords implements SendRecords {
   }
 }
 
+class FakeNotices implements NoticeOutbox {
+  readonly rows = new Map<string, PendingNotice>();
+  private k = (chainId: number, diamond: Address, item: string) => `${chainId}:${diamond.toLowerCase()}:${item}`;
+
+  async pending(chainId: number, diamond: Address, limit: number) {
+    const prefix = this.k(chainId, diamond, '');
+    return [...this.rows].filter(([k]) => k.startsWith(prefix)).map(([, v]) => v).slice(0, limit);
+  }
+
+  async put(chainId: number, diamond: Address, n: PendingNotice) {
+    this.rows.set(this.k(chainId, diamond, n.item), n);
+  }
+
+  async finish(chainId: number, diamond: Address, item: string) {
+    this.rows.delete(this.k(chainId, diamond, item));
+  }
+}
+
 // ─── Runs ───────────────────────────────────────────────────────────────────
 
 describe('a run', () => {
@@ -418,6 +439,8 @@ describe('a run', () => {
   let mirror: FakeChain;
   let ledger: FakeLedger;
   let records: FakeRecords;
+  let notices: FakeNotices;
+  let alertOutcome: OpsAlertOutcome;
   let cursors: Map<string, ReturnType<typeof memoryScanCursors>>;
   let alerts: { key: string; text: string }[];
   let now: number;
@@ -429,6 +452,8 @@ describe('a run', () => {
     base.inbound.set(MIRROR_ID, bucket());
     ledger = new FakeLedger();
     records = new FakeRecords();
+    notices = new FakeNotices();
+    alertOutcome = 'sent';
     cursors = new Map();
     alerts = [];
     now = NOW;
@@ -444,13 +469,17 @@ describe('a run', () => {
     readClient: c.client(),
     context: () => c.ctx(),
     feeCeiling: cap,
-    alert: async (key: string, text: string) => void alerts.push({ key, text }),
+    alert: async (key: string, text: string) => {
+      alerts.push({ key, text });
+      return alertOutcome;
+    },
   });
   const run = (o: { keeper?: Address | null; cap?: SendFeeCeiling; chains?: FakeChain[] } = {}) =>
     returnTransportOnce({
       chains: (o.chains ?? [base, mirror]).map((c) => deps(c, o.cap ?? CAP)),
       ledger,
       records,
+      notices,
       cursors: (chainId, diamond) => {
         const k = `${chainId}:${diamond}`;
         if (!cursors.has(k)) cursors.set(k, memoryScanCursors());
@@ -527,6 +556,40 @@ describe('a run', () => {
     expect(alerts[0].text).toMatch(/re-executed by hand/);
   });
 
+  it('keeps a send notice whose post failed and posts it on a later run, after the source record is consumed (Codex #3002)', async () => {
+    authorize(2n, 400n * E18);
+    ledger.add(BASE_ID, 'RepatriationInstructionDispatched', { authId: '2' }, NOW - 600);
+    mirror.instr.set(`${BASE}:2`, { state: INSTR_PENDING, amount: 400n * E18 });
+    alertOutcome = 'failed';
+    const r = await run();
+    expect(fns(mirror)).toEqual(['executeRepatriation']);
+    expect(notices.rows.size, 'queued, not dropped').toBe(1);
+    expect([...r[1].unread.values()].join(' ')).toMatch(/send notice did not go out \(failed\); it stays queued/);
+    // The next run sends nothing for the executed authorization, yet still
+    // owes the notice of the send it made, and posts it under the same key.
+    mirror.sent = [];
+    alerts = [];
+    alertOutcome = 'sent';
+    await run();
+    expect(mirror.sent).toEqual([]);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].key).toMatch(new RegExp(`^return-transport-sent:${MIRROR_ID}:0x`));
+    expect(alerts[0].text).toMatch(/executed repatriation 2, sending 400000000000000000000 VPFI/);
+    expect(notices.rows.size, 'cleared once delivered').toBe(0);
+    alerts = [];
+    await run();
+    expect(alerts).toEqual([]);
+  });
+
+  it('posts a queued notice even on a chain whose gate refuses this run', async () => {
+    await notices.put(MIRROR_ID, MIRROR, { item: '0xab', key: `return-transport-sent:${MIRROR_ID}:0xab`, text: 'earlier send' });
+    mirror.chainNamed = 1;
+    const r = await run();
+    expect(r[1].skipped).toBeDefined();
+    expect(alerts.map((a) => a.text)).toEqual(['earlier send']);
+    expect(notices.rows.size).toBe(0);
+  });
+
   it('executes a recorded instruction on the mirror, posting the amount it sent home', async () => {
     authorize(2n, 400n * E18);
     ledger.add(BASE_ID, 'RepatriationInstructionDispatched', { authId: '2' }, NOW - 600);
@@ -543,6 +606,7 @@ describe('a run', () => {
     const again = await run();
     expect(mirror.sent).toEqual([]);
     expect(again[0].waiting[0]).toMatch(/its return is in flight to Base/);
+    expect(notices.rows.size, 'a delivered notice leaves the queue').toBe(0);
   });
 
   it('holds an execute the outbound lane cannot carry: above capacity stalls, short of tokens waits', async () => {

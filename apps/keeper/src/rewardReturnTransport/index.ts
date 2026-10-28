@@ -64,9 +64,9 @@ import { buildKeeperContext, passIsArmed, resolveKeeperAccount, type KeeperConte
 import type { PassTick } from '../passSchedule';
 import { deadlineClient, PastRunDeadline, settledRead, type BatchResult } from '../batchRead';
 import { shortErr } from '../callErrors';
-import { deploymentFloor, finishWork, getWorkItems, putWork } from '../db';
+import { deploymentFloor, finishWork, getWorkItems, listOpenWork, putWork, touchOpenWork } from '../db';
 import { feeCeiling } from '../feeCeiling';
-import { sendOpsAlert } from '../opsAlert';
+import { sendOpsAlert, type OpsAlertOutcome } from '../opsAlert';
 import { d1ScanCursors, decodeIndex, finalFloor, finalizedBlockOnce, rotatingWindow, type FinalBlock, type ScanCursors } from '../scanCursors';
 import { StepSender, type CallResult, type SendFeeCeiling } from '../stepSender';
 import { AUTH_PENDING, AUTH_RELEASED, AUTH_SETTLED, executeBlocked, repatStep, returnChunk, type LaneBucket, type RepatState } from './plan';
@@ -98,6 +98,13 @@ export const LANDING_ALERT_SEC = 24 * 3600;
 const STALL_ALERT_INTERVAL_SEC = 6 * 3600;
 /** A send notice is a one-off: its key (the transaction) never repeats. */
 const NOTICE_INTERVAL_SEC = 10 * 365 * 86_400;
+/** Outcomes after which a send notice is no longer owed. `suppressed` means
+ *  its key was delivered before; `unconfigured` means the deployment has no
+ *  ops bot and `sendOpsAlert` wrote the notice to the journal, the only place
+ *  it can go there. Anything else keeps it queued for the next run. */
+const NOTICE_DELIVERED: ReadonlySet<OpsAlertOutcome> = new Set(['sent', 'suppressed', 'unconfigured']);
+/** Queued send notices one run re-posts per chain, oldest first. */
+export const NOTICE_RETRY_PER_RUN = 20;
 /** Authorizations one run reads on Base, rotating over every id not yet
  *  settled (`scanCursors.rotatingWindow`). */
 export const MAX_AUTHS_PER_RUN = 50;
@@ -160,6 +167,24 @@ export interface ReturnLedger {
   page(chainId: number, kinds: readonly string[], after: LedgerPos | null, limit: number): Promise<{ rows: LedgerRow[]; more: boolean } | null>;
 }
 
+/** A send notice not yet delivered: what it posts, under which key. */
+export interface PendingNotice {
+  /** The send's transaction hash. */
+  item: string;
+  key: string;
+  text: string;
+}
+
+/** Send notices queued until delivered (Codex #3002): a notice is queued
+ *  before it is posted and leaves only once the post is delivered, so a
+ *  failed post is retried on later runs, whatever the source record now
+ *  shows. */
+export interface NoticeOutbox {
+  pending(chainId: number, diamond: Address, limit: number): Promise<PendingNotice[]>;
+  put(chainId: number, diamond: Address, notice: PendingNotice): Promise<void>;
+  finish(chainId: number, diamond: Address, item: string): Promise<void>;
+}
+
 /** This keeper's own record of the re-sendable messages it sent. */
 export interface SendRecords {
   get(chainId: number, diamond: Address, items: readonly string[]): Promise<Map<string, number>>;
@@ -182,6 +207,7 @@ export interface ReturnTransportDeps {
   chains: readonly ChainDeps[];
   ledger: ReturnLedger;
   records: SendRecords;
+  notices: NoticeOutbox;
   /** Where each chain's bounded reads got to, across runs. */
   cursors: (chainId: number, diamond: Address) => ScanCursors;
   keeper: Address | null;
@@ -234,6 +260,7 @@ export async function runRewardReturnTransport(env: Env, tick: PassTick): Promis
       chains,
       ledger: d1Ledger(env.DB),
       records: d1Records(env.KEEPER_DB),
+      notices: d1Notices(env.KEEPER_DB),
       cursors: (chainId, diamond) => d1ScanCursors(env.KEEPER_DB, chainId, diamond, 'rewardReturnTransport'),
       keeper,
       sendDeadline,
@@ -278,6 +305,7 @@ interface ChainState {
   r: Reader;
   sender: StepSender;
   report: ReturnTransportReport;
+  notices: NoticeOutbox;
   role: number;
   baseChainId: number;
   messenger: Address;
@@ -324,6 +352,10 @@ export async function returnTransportOnce(deps: ReturnTransportDeps): Promise<Re
       stopped: null,
     };
     reports.push(report);
+    // Notices of earlier sends that did not go out, before anything else: they
+    // are owed whatever the chain's state now shows, gate included.
+    // eslint-disable-next-line no-await-in-loop
+    await retryNotices(c, sender, deps.notices);
     const r = new Reader(c, deps.sendDeadline);
     try {
       // eslint-disable-next-line no-await-in-loop
@@ -333,7 +365,7 @@ export async function returnTransportOnce(deps: ReturnTransportDeps): Promise<Re
         continue;
       }
       report.role = gate.role;
-      states.set(c.chainId, { deps: c, r, sender, report, ...gate });
+      states.set(c.chainId, { deps: c, r, sender, report, notices: deps.notices, ...gate });
     } catch (err) {
       if (!(err instanceof PastRunDeadline)) throw err;
       report.skipped = 'the run deadline passed during its reads';
@@ -409,7 +441,7 @@ class Reader {
   }
 }
 
-type Gate = Omit<ChainState, 'deps' | 'r' | 'sender' | 'report'>;
+type Gate = Omit<ChainState, 'deps' | 'r' | 'sender' | 'report' | 'notices'>;
 
 /** The Diamond must name itself this chain; its role, transport endpoints and
  *  retirement record decide which steps apply. */
@@ -462,10 +494,52 @@ async function stall(s: ChainState, key: string, text: string): Promise<void> {
   await s.deps.alert(`return-transport-stalled:${s.deps.chainId}:${key}`, `⚠️ Return transport on chain ${s.deps.chainId}: ${text}.`, STALL_ALERT_INTERVAL_SEC);
 }
 
-/** A send that moved VPFI, posted once with its amount and transaction. */
+/** A send that moved VPFI, announced with its amount and transaction. The
+ *  notice is queued before it is posted and leaves the queue only once
+ *  delivered, so a post that fails is retried on later runs (Codex #3002):
+ *  the next run cannot rebuild it from the source record, which the send
+ *  has already consumed. */
 async function notice(s: ChainState, what: string): Promise<void> {
   const tx = s.sender.receipt?.transactionHash ?? 'unknown';
-  await s.deps.alert(`return-transport-sent:${s.deps.chainId}:${tx}`, `ℹ️ Return transport on chain ${s.deps.chainId}: ${what} (tx ${tx}).`, NOTICE_INTERVAL_SEC);
+  const n: PendingNotice = {
+    item: tx,
+    key: `return-transport-sent:${s.deps.chainId}:${tx}`,
+    text: `ℹ️ Return transport on chain ${s.deps.chainId}: ${what} (tx ${tx}).`,
+  };
+  try {
+    await s.notices.put(s.deps.chainId, s.deps.diamond, n);
+  } catch (err) {
+    s.sender.noteUnread(`notice:${tx}`, `its send notice could not be queued (${shortErr(err)}), so it is posted once and not retried if that fails`);
+  }
+  await deliverNotice(s.deps, s.sender, s.notices, n);
+}
+
+/** Posts a queued notice; clears it once delivered, else says it is owed. */
+async function deliverNotice(c: ChainDeps, sender: StepSender, notices: NoticeOutbox, n: PendingNotice): Promise<void> {
+  const out = (await c.alert(n.key, n.text, NOTICE_INTERVAL_SEC)) as OpsAlertOutcome;
+  if (!NOTICE_DELIVERED.has(out)) {
+    sender.noteUnread(`notice:${n.item}`, `its send notice did not go out (${out}); it stays queued for the next run`);
+    return;
+  }
+  try {
+    await notices.finish(c.chainId, c.diamond, n.item);
+  } catch (err) {
+    // Delivered: a later retry is de-duplicated by its key.
+    sender.noteUnread(`notice:${n.item}`, `its delivered send notice could not be cleared from the queue (${shortErr(err)})`);
+  }
+}
+
+/** Re-posts this chain's queued notices, oldest first, a bounded number. */
+async function retryNotices(c: ChainDeps, sender: StepSender, notices: NoticeOutbox): Promise<void> {
+  let queued: PendingNotice[];
+  try {
+    queued = await notices.pending(c.chainId, c.diamond, NOTICE_RETRY_PER_RUN);
+  } catch (err) {
+    sender.noteUnread('notices', `the queue of undelivered send notices (${shortErr(err)})`);
+    return;
+  }
+  // eslint-disable-next-line no-await-in-loop
+  for (const n of queued) await deliverNotice(c, sender, notices, n);
 }
 
 /**
@@ -928,6 +1002,21 @@ export function d1Ledger(db: D1Database): ReturnLedger {
         return null;
       }
     },
+  };
+}
+
+/** Undelivered send notices, in the keeper's private open-work table. */
+export function d1Notices(db: KeeperD1): NoticeOutbox {
+  return {
+    async pending(chainId, diamond, limit) {
+      const rows = await listOpenWork<{ key: string; text: string }>(db, chainId, diamond, 'return_notice', limit);
+      // Read is checked: the next run takes the next ones, so a backlog
+      // longer than one run's share is worked through, not re-tried in place.
+      await touchOpenWork(db, chainId, diamond, 'return_notice', rows.map((r) => r.item));
+      return rows.map((r) => ({ item: r.item, key: String(r.payload.key), text: String(r.payload.text) }));
+    },
+    put: (chainId, diamond, n) => putWork(db, chainId, diamond, 'return_notice', { item: n.item, block: 0, payload: { key: n.key, text: n.text } }),
+    finish: (chainId, diamond, item) => finishWork(db, chainId, diamond, 'return_notice', [item]),
   };
 }
 
