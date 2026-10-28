@@ -896,7 +896,8 @@ export type PassArmingFlag =
   | 'GRACE_DEFAULT_ENABLED'
   | 'PERIODIC_SETTLE_ENABLED'
   | 'REWARD_CLOSE_OUT_ENABLED'
-  | 'REWARD_ZEROED_DAY_ENABLED';
+  | 'REWARD_ZEROED_DAY_ENABLED'
+  | 'REWARD_RETURN_TRANSPORT_ENABLED';
 
 /**
  * Describe a rejected flag value WITHOUT echoing it.

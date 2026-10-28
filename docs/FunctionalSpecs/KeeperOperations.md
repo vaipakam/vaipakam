@@ -302,6 +302,41 @@ evidence that the migration has completed.
   stops the affected step, and the run's report says so. None of these
   conditions is ever treated as nothing to do.
 
+## Returning reward VPFI to Base
+
+- Reward VPFI that a mirror holds for Base, and the messages that let Base
+  release what it reserved, move only when someone makes a permissionless
+  call and pays its cross-chain fee. The keeper has a backstop for each such
+  call, so nothing waits for someone to decide to pay. This duty checks
+  hourly and pays each fee from the keeper's own key, held to the duty's own
+  ceiling.
+- **Repatriation.** Only the administrator issues or cancels a repatriation
+  authorization; the keeper never does either. For each authorization Base
+  holds pending, the keeper sends its instruction to the mirror, executes it
+  on the mirror once the mirror's outbound lane can carry the whole amount,
+  and, for an authorization the administrator cancelled, sends the mirror's
+  cancellation acknowledgement so Base can release the reserved amount.
+- **Each message once.** An instruction or acknowledgement is sent once. One
+  that has not landed within a day is announced to operators instead of
+  being paid for a second time, because a cross-chain message that failed on
+  arrival stays there for manual re-execution. A repatriation the lane can
+  never carry, or one the mirror cannot yet fund, is stated rather than
+  attempted.
+- **Chunked returns.** Compensation a mirror quarantined, and a retired
+  mirror's pending surplus, go home in parts. Each part is bounded by the
+  sending chain's outbound lane and by the receiving chain's inbound
+  capacity where that can be read; where it cannot, the run says the part
+  was sized by the outbound lane alone. A part too small to be worth its fee
+  that would leave something behind waits for the lanes to refill; the last
+  part is always sent.
+- Every send that moves VPFI is announced to operators with its amount and
+  transaction. The keeper's work list comes from the indexer's record of
+  on-chain events, but every decision comes from an on-chain read, and the
+  keeper's own record of what it sent keeps it from repeating a message
+  before the indexer has seen it. A paused protocol, a missing signing key, a
+  fee above the ceiling, an unread value or a Diamond that names another
+  chain stops the affected step and is stated in the run's report.
+
 ## Claim-horizon and sanctions observation
 
 - The reward heartbeat discovers all unsettled reward entries and touches
@@ -331,9 +366,9 @@ evidence that the migration has completed.
 
 The master keeper switch and each duty's own arming choice are separate.
 Delivery proofs, late acknowledgements, sanctions observation, reward-day
-automation, reward-day close-out, zeroed-day recovery, and the reward heartbeat must each
+automation, reward-day close-out, zeroed-day recovery, the return transport, and the reward heartbeat must each
 disclose whether they are armed on the selected deployment. Reward-day
-automation, close-out, zeroed-day recovery and the heartbeat ship disabled and require
+automation, close-out, zeroed-day recovery, the return transport and the heartbeat ship disabled and require
 deliberate activation. Deploying their software does not prove they run, that rewards have launched, or that custody or the
 expiry horizon has been activated. The mirror's day-delivery protection is
 required by its reward role, as stated in the current tokenomics spec; it is
