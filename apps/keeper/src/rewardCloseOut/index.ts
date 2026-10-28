@@ -63,6 +63,7 @@ import { buildKeeperContext, passIsArmed, resolveKeeperAccount, type KeeperConte
 import type { PassTick } from '../passSchedule';
 import { deadlineClient, PastRunDeadline, settledRead, type BatchResult } from '../batchRead';
 import { shortErr } from '../callErrors';
+import { ENTRY_PAGE, scanEntries, type EntryRow } from '../rewardEntries';
 import { StepSender } from '../stepSender';
 import {
   closureWindow,
@@ -102,8 +103,6 @@ export const RECEIPT_TIMEOUT_MS = 30_000;
 export const DEFAULT_LOOKBACK_DAYS = 60;
 /** Entry ids per `proveDayClosurePage`. */
 export const PAGE_IDS = 100;
-/** `getRewardEntriesRange` page size (the view clamps at 500). */
-export const ENTRY_PAGE = 500n;
 /** Entry pages one run may read. A sequence longer than this is not walked
  *  this run, and the line says so: a walk on a partial scan cannot close. */
 export const MAX_ENTRY_PAGES = 20;
@@ -429,32 +428,6 @@ async function drainSurplus(r: Reader, sender: StepSender, report: CloseOutRepor
 
 // ─── 3. Closure ─────────────────────────────────────────────────────────────
 
-/** The reward-entry sequence from id 1 up to the first entry starting after
- *  `lastDay` (ids are creation-ordered, so nothing later can cover it),
- *  keeping only entries that end after `firstDay`. Null when the page budget
- *  ran out first. */
-async function scanEntries(r: Reader, firstDay: number, lastDay: number): Promise<ScannedEntry[] | null> {
-  const out: ScannedEntry[] = [];
-  let next = 1n;
-  for (let page = 0; page < MAX_ENTRY_PAGES; page++) {
-    // eslint-disable-next-line no-await-in-loop
-    const rows = await r.one<readonly { user: Address; startDay: number; endDay: number; side: number; perDayNumeraire18: bigint }[]>('getRewardEntriesRange', [next, ENTRY_PAGE]);
-    for (let i = 0; i < rows.length; i++) {
-      const e = rows[i];
-      // A zeroed slot is past the end of the allocated sequence.
-      if (e.user === zeroAddress && e.endDay === 0 && e.perDayNumeraire18 === 0n) return out;
-      const first = Number(e.startDay) === 0 ? 1 : Number(e.startDay);
-      if (first > lastDay) return out;
-      if (Number(e.endDay) > firstDay) {
-        out.push({ id: next + BigInt(i), side: Number(e.side), first, endDay: Number(e.endDay), perDayNumeraire18: e.perDayNumeraire18 });
-      }
-    }
-    next += BigInt(rows.length);
-    if (rows.length < Number(ENTRY_PAGE)) return out;
-  }
-  return null;
-}
-
 interface WalkRecord {
   starter: Address;
   day: bigint;
@@ -471,7 +444,7 @@ async function proveDays(r: Reader, sender: StepSender, report: CloseOutReport, 
     sender.noteUnread('closure', 'no signing key, so no walk can be started');
     return;
   }
-  const entries = await scanEntries(r, open[0], open[open.length - 1]);
+  const entries = await scanEntries((from, n) => r.one<readonly EntryRow[]>('getRewardEntriesRange', [from, n]), open[0], open[open.length - 1], MAX_ENTRY_PAGES);
   if (entries === null) {
     sender.noteUnread('closure', `the reward-entry sequence is longer than ${MAX_ENTRY_PAGES} pages of ${ENTRY_PAGE}, so no walk was started (a walk on a partial scan cannot close)`);
     return;

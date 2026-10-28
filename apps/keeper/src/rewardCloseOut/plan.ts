@@ -1,27 +1,11 @@
 // apps/keeper/src/rewardCloseOut/plan.ts
 //
 // The close-out pass's pure rules: which days a run may try to prove closed,
-// which reward entries cover a day, whether a scan accounts for a day's whole
-// total, how a walk's remaining ids are paged, when a retired custody era may
+// how a walk's remaining ids are paged, when a retired custody era may
 // be finalized, and when a day's transport cursor has an exhausted epoch to
 // pass. No reads and no sends: `index.ts` feeds these with what it read.
 
-/** Reward sides, as `LibVaipakam.RewardSide` numbers them. */
-export const SIDE_LENDER = 0;
-export const SIDE_BORROWER = 1;
-export type Side = typeof SIDE_LENDER | typeof SIDE_BORROWER;
-
-/** One reward entry, reduced to what the closure proof reads. */
-export interface ScannedEntry {
-  id: bigint;
-  side: number;
-  /** The first day the entry covers, read as the proof reads it: a
-   *  `startDay` of 0 counts from day 1. */
-  first: number;
-  /** Exclusive. */
-  endDay: number;
-  perDayNumeraire18: bigint;
-}
+export { SIDE_BORROWER, SIDE_LENDER, conservationGap, covers, coveringEntries, type ScannedEntry, type Side } from '../rewardEntries';
 
 /** The days a run may try to prove closed: elapsed (before `today`), reached
  *  by both interest frontiers, and no older than the lookback. Null when no
@@ -36,44 +20,6 @@ export function closureWindow(
   if (upTo < 0) return null;
   const from = Math.max(0, upTo - lookbackDays + 1);
   return { from, upTo };
-}
-
-/** Whether `e` covers `day`, as the proof checks it. */
-export function covers(e: ScannedEntry, day: number): boolean {
-  return day >= e.first && day < e.endDay;
-}
-
-/** The entries covering `day`, per side, in ascending id order. */
-export function coveringEntries(entries: readonly ScannedEntry[], day: number): { lender: ScannedEntry[]; borrower: ScannedEntry[] } {
-  const lender: ScannedEntry[] = [];
-  const borrower: ScannedEntry[] = [];
-  for (const e of entries) {
-    if (!covers(e, day)) continue;
-    if (e.side === SIDE_LENDER) lender.push(e);
-    else if (e.side === SIDE_BORROWER) borrower.push(e);
-  }
-  const asc = (a: ScannedEntry, b: ScannedEntry) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-  return { lender: lender.sort(asc), borrower: borrower.sort(asc) };
-}
-
-/**
- * Whether the scanned entries account for each side's whole folded total.
- * The proof completes a side only when the per-day figures it visited sum to
- * exactly that total, so a walk started on a scan that does not would open,
- * page, and never close. Null when both sides balance; otherwise what is off,
- * for the log.
- */
-export function conservationGap(
-  cover: { lender: readonly ScannedEntry[]; borrower: readonly ScannedEntry[] },
-  totals: { lender: bigint; borrower: bigint },
-): string | null {
-  const sum = (xs: readonly ScannedEntry[]) => xs.reduce((a, e) => a + e.perDayNumeraire18, 0n);
-  const gaps: string[] = [];
-  const l = sum(cover.lender);
-  const b = sum(cover.borrower);
-  if (l !== totals.lender) gaps.push(`lender entries sum to ${l} of a ${totals.lender} total`);
-  if (b !== totals.borrower) gaps.push(`borrower entries sum to ${b} of a ${totals.borrower} total`);
-  return gaps.length === 0 ? null : gaps.join('; ');
 }
 
 /** The ids past `cursor`, ascending, in pages of at most `pageSize`. */
