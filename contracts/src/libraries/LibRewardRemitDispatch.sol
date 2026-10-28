@@ -71,31 +71,34 @@ library LibRewardRemitDispatch {
     ///         receiver with — the ONE constant the send and its quote both
     ///         read. DERIVED from the mirror ingress it must carry, never
     ///         matched to another receiver's (#1566 PR 1 review): the Diamond's
-    ///         rooted (d6) ingress, the one wire a remittance takes since #2669
-    ///         retired the typed (d5) one, as measured by the cell that pins it
-    ///         in `RewardTransportD7Test` — cold, over the widest list — plus
+    ///         d8 ingress, the one budget wire since #2828, as measured by the
+    ///         cold cell that pins it in `RewardTransportD8Test` (the first
+    ///         part of its day: packet, epoch, day stamp, day index link and
+    ///         delivery record all first writes) — plus
     ///         {REWARD_BUDGET_RECEIVER_RESERVE} for the receiver's own work,
     ///         with a quarter's margin, rounded up to the next 50,000.
-    ///         Re-measured 2026-10-27 after #918 (the day's whole and
-    ///         per-part sums on the D7 wire), as the Diamond call's own gas
-    ///         under forge 1.8.3, the version CI pins: rooted 750,163, so
-    ///         (750,163 + 100,000) x 1.25 = 1,062,704, rounded up to
-    ///         1,100,000. #918 recorded 735,327 and kept 1,050,000, but that
-    ///         figure came from forge 1.5.1, which reads the same bytecode
-    ///         24,708 gas lower on this call (which of the two matches a
-    ///         chain is not established, so the derivation takes the higher),
-    ///         and from a gasleft() window that also counted the test
-    ///         helper's own work. Measure with the pinned forge. Earlier figures, both window-based: 710,205 on
-    ///         2026-10-24 (#2777) and 685,689 on 2026-10-12, under limits of
-    ///         1,050,000 and 1,000,000. Headroom now: about 29,800 gas before
-    ///         the next step to 1,150,000. Re-derive it whenever the cell's
-    ///         figure moves; the cell fails once the margin is gone. Raising it raises only the
+    ///         Re-measured 2026-10-28 for #2828, whose ingress now also links
+    ///         the epoch into its day's order and counts the part toward the
+    ///         day (each a separate permissionless call before): 884,708 as
+    ///         the Diamond call's own gas under forge 1.5.1. That version read
+    ///         the #918 cell 24,708 gas (3.4%) below forge 1.8.3, the version
+    ///         CI pins, and which of the two matches a chain is not
+    ///         established, so the derivation takes the higher of the two
+    ///         corrections: 884,708 x 1.0341 = 914,840, so
+    ///         (914,840 + 100,000) x 1.25 = 1,268,550, rounded up to
+    ///         1,300,000. Re-measure under 1.8.3 before relying on the
+    ///         headroom: about 25,000 gas on the corrected figure, about
+    ///         55,000 on the raw one. A later part of a day reads 592,792
+    ///         under 1.5.1. Earlier limits: 1,100,000 for the d7 ingress
+    ///         (750,163 under 1.8.3, #918), 1,050,000 (#2777) and 1,000,000.
+    ///         Re-derive it whenever the cell's figure moves; the cell fails
+    ///         once the margin is gone. Raising it raises only the
     ///         destination-execution part of each remittance's CCIP fee, which
     ///         the sender quotes on-chain from this same constant. The 300,000
     ///         it once stood at was below even the ingress, so automatic
     ///         execution would have failed on every delivery to an activated
     ///         mirror.
-    uint256 internal constant REWARD_BUDGET_DEST_GAS_LIMIT = 1_100_000;
+    uint256 internal constant REWARD_BUDGET_DEST_GAS_LIMIT = 1_300_000;
 
     /// @notice What the budget reserves for the receiver's own work around the
     ///         Diamond's ingress — the router's call, the frame decode, the token
