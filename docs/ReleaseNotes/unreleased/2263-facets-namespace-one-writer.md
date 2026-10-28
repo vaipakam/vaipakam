@@ -1,4 +1,4 @@
-## Thread — One writer for the deployment artifact's facet addresses (PR #TBD)
+## Thread — One writer for the deployment artifact's facet addresses (PR #3016)
 
 Each chain's deployment artifact keeps the address of every Diamond facet
 under one section, and the deploy and refresh scripts are meant to record a

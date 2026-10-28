@@ -1,4 +1,4 @@
-## Thread — Testnet faucet NFTs can only be burned by their owner (PR #TBD)
+## Thread — Testnet faucet NFTs can only be burned by their owner (PR #3016)
 
 The two faucet NFT collections deployed on the testnets for rental demos
 (vRENT and vART) let any wallet burn any token, including one another user
