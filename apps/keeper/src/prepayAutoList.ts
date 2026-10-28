@@ -60,7 +60,7 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import type { PassTick } from './passSchedule';
-import { deadlineClient, PastRunDeadline, settledRead, type BatchResult } from './batchRead';
+import { deadlineClient, PastRunDeadline, settledChunkedRead } from './batchRead';
 import { shortErr } from './callErrors';
 import { readActiveWindow, type ScanWindow } from './activeLoanWindow';
 import { pickBatch } from './rotate';
@@ -238,26 +238,31 @@ export async function autoListOnce(chainId: number, diamond: Address, deps: Auto
   const readCutoff = readCutoffMs(deps.sendDeadline);
   const deadlinesCutoff = priorStageCutoffMs(readCutoff);
   const scanCutoff = priorStageCutoffMs(deadlinesCutoff);
+  // Through the keeper's one chunked read, which starts each visit's reads
+  // at a point that moves with the window's own visit count, so a cutoff that
+  // ends a stage partway never leaves the same tail unread every visit.
+  // `undefined` where a read did not come back, in the order of `ids`.
   const many = async (
     functionName: string,
     ids: readonly bigint[],
     label: string,
-    blockNumber: bigint,
+    at: { blockNumber: bigint; round: number },
     cutoff: number,
   ): Promise<unknown[]> => {
-    const out: unknown[] = [];
-    for (let i = 0; i < ids.length; i += READ_CHUNK) {
-      // eslint-disable-next-line no-await-in-loop
-      const res: BatchResult[] = await settledRead(
-        deps.readClient,
-        ids.slice(i, i + READ_CHUNK).map((id) => ({ address: diamond, abi: ABI, functionName, args: [id] })),
-        `prepayAutoList ${label}`,
-        cutoff,
-        blockNumber,
-      );
-      for (const x of res) out.push(x.status === 'success' ? x.result : undefined);
-    }
-    return out;
+    const res = await settledChunkedRead(
+      deps.readClient,
+      ids,
+      READ_CHUNK,
+      (id) => ({ address: diamond, abi: ABI, functionName, args: [id] }),
+      `prepayAutoList ${label}`,
+      cutoff,
+      at.round,
+      at.blockNumber,
+    );
+    return ids.map((id) => {
+      const x = res.get(id);
+      return x?.status === 'success' ? x.result : undefined;
+    });
   };
   try {
     // The RPC must answer for this chain: a deterministic deployment can put
@@ -287,8 +292,9 @@ export async function autoListOnce(chainId: number, diamond: Address, deps: Auto
     const scan = await readActiveWindow(deadlineClient(deps.readClient, scanCutoff), diamond, deps.visit);
     report.window = scan.window;
     if (scan.ids.length === 0) return report;
+    const at = { blockNumber: scan.blockNumber, round: scan.window.round };
     const now = (await deps.client.getBlock({ blockNumber: scan.blockNumber })).timestamp;
-    const deadlines = await many('getLoanDeadlines', scan.ids, 'deadlines', scan.blockNumber, deadlinesCutoff);
+    const deadlines = await many('getLoanDeadlines', scan.ids, 'deadlines', at, deadlinesCutoff);
     const inGrace: bigint[] = [];
     let deadlinesUnread = 0;
     scan.ids.forEach((id, i) => {
@@ -306,8 +312,8 @@ export async function autoListOnce(chainId: number, diamond: Address, deps: Auto
 
     // 4. Which of them the call can apply to, at the same block.
     const [details, optedOut] = await Promise.all([
-      many('getLoanDetails', inGrace, 'details', scan.blockNumber, readCutoff),
-      many('getPrepayListingAutoListOptedOut', inGrace, 'opt-outs', scan.blockNumber, readCutoff),
+      many('getLoanDetails', inGrace, 'details', at, readCutoff),
+      many('getPrepayListingAutoListOptedOut', inGrace, 'opt-outs', at, readCutoff),
     ]);
     const applicable: bigint[] = [];
     inGrace.forEach((id, i) => {

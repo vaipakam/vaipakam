@@ -124,7 +124,21 @@ class FakeDiamond {
     }
   };
 
-  multicall = async ({ contracts }: { contracts: { functionName: string; args?: readonly unknown[] }[] }) =>
+  /** How many more aggregate reads of a function come back this run, as a
+   *  cutoff that ends a stage partway would leave it; unlimited when absent. */
+  aggregateBudget = new Map<string, number>();
+
+  multicall = async ({ contracts }: { contracts: { functionName: string; args?: readonly unknown[] }[] }) => {
+    const fn = contracts[0]?.functionName ?? '';
+    const left = this.aggregateBudget.get(fn);
+    if (left !== undefined) {
+      if (left <= 0) return contracts.map(() => ({ status: 'failure' as const, error: new Error('cut') }));
+      this.aggregateBudget.set(fn, left - 1);
+    }
+    return this.aggregate(contracts);
+  };
+
+  private aggregate = async (contracts: { functionName: string; args?: readonly unknown[] }[]) =>
     Promise.all(
       contracts.map(async (c) => {
         try {
@@ -326,6 +340,19 @@ describe('a run', () => {
     const again = await run({ visit: 2 });
     expect(again.window).toEqual({ index: 0, count: 2, total: SCAN_WINDOW * 2, round: 1 });
     expect(new Set(d.sent).size, 'every in-grace loan of window 0 across its two visits').toBe(n);
+  });
+
+  it('starts each visit\'s reads at a moving point, so a stage cut short never starves the same tail', async () => {
+    // 101 loans; only the last is in grace. Each visit reads one chunk of
+    // deadlines before its cutoff. A fixed order would read loans 1–100 on
+    // every visit and never see loan 101.
+    for (let i = 1; i <= 101; i += 1) d.loans.set(BigInt(i), i === 101 ? inGraceLoan() : inGraceLoan({ maturity: NOW + 60n }));
+    for (let visit = 0; visit < 6 && d.sent.length === 0; visit += 1) {
+      d.aggregateBudget.set('getLoanDeadlines', 1);
+      // eslint-disable-next-line no-await-in-loop
+      await run({ visit });
+    }
+    expect(d.sent).toEqual([101n]);
   });
 
   it('stops its reads early enough to leave the sends their reserve', async () => {
