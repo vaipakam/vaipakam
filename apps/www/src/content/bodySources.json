@@ -1,0 +1,9 @@
+{
+  "/help/overview": "overview/Overview.{locale}.md",
+  "/help/basic": "userguide/Basic.{locale}.md",
+  "/help/advanced": "userguide/Advanced.{locale}.md",
+  "/help/technical": "whitepaper/Whitepaper.{locale}.md",
+  "/protocol-console/docs": "admin/AdminConfigurableKnobsAndSwitches.{locale}.md",
+  "/terms": null,
+  "/privacy": null
+}
