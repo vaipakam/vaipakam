@@ -9,6 +9,7 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -514,20 +515,12 @@ contract GlobalPauseLoanClockTest is SetupTest {
         );
     }
 
-    /// @dev The paid-through mark (`lenderInterestDeliveredThroughAt`) has no
-    ///      getter: slot 480 of the Diamond's namespace, per
-    ///      `storage-layout/layout.golden.json`. Proved by writing a known
-    ///      value through the mutator before it is read.
-    function _paidThrough(uint256 loanId) internal view returns (uint256) {
-        bytes32 slot = keccak256(abi.encode(loanId, uint256(LibVaipakam.VANGKI_STORAGE_POSITION) + 480));
-        return uint256(vm.load(address(diamond), slot));
-    }
-
     /// @dev #2809 r2 P1 — a periodic settlement after a pause pays one
-    ///      interval of interest, so it marks the lender paid through the
-    ///      UNMOVED period end; the paused stretch stays unpaid. The deadline
-    ///      the settlement was due by is the moved one.
-    function test_clock_periodicSettlementMarksPaidThroughTheUnmovedPeriodEnd() public {
+    ///      interval of interest and settles the UNMOVED period end; the
+    ///      deadline it was due by is the moved one. #1808 — the payout is
+    ///      checkpointed into the interest ledger, and what the lender has
+    ///      earned and not been paid drops by the interest it delivered.
+    function test_clock_periodicSettlementSettlesTheUnmovedPeriodEnd() public {
         vm.prank(owner);
         NumeraireConfigFacet(address(diamond)).setPeriodicInterestEnabled(true);
         vm.prank(owner);
@@ -568,10 +561,6 @@ contract GlobalPauseLoanClockTest is SetupTest {
         uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
         uint256 start = LoanFacet(address(diamond)).getLoanDetails(loanId).startTime;
 
-        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(loanId, 7);
-        assertEq(_paidThrough(loanId), 7, "fixture: the slot is the paid-through mark");
-        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(loanId, 0);
-
         vm.warp(start + 5 days);
         admin.pause();
         vm.warp(vm.getBlockTimestamp() + 60 days);
@@ -587,7 +576,11 @@ contract GlobalPauseLoanClockTest is SetupTest {
             start + 30 days,
             "fixture-live: the first period settled"
         );
-        assertEq(_paidThrough(loanId), start + 30 days, "paid through the unmoved period end");
+        (uint256 earned,, uint64 touchedAt,) = SellerClaimFacet(address(diamond)).getInterestLedger(loanId);
+        assertEq(touchedAt, block.timestamp, "the payout checkpointed the ledger");
+        uint256 accruedSinceStart =
+            (PRINCIPAL * 1200 * (block.timestamp - start)) / (365 days * 10_000);
+        assertLt(earned, accruedSinceStart, "the delivered interest left the holder's unpaid figure");
     }
 
     /// @dev #2809 r2 — rent is charged by elapsed day, pause included, so a

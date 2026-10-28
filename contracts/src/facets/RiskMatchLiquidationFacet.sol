@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
@@ -458,11 +459,11 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // State updates — each loan's principal cleared by what its leg
         // paid (#2440), each borrower's collateral debited by the NEXT
         // loan's leg (the whole moved amount left that vault).
-        la.principal -= r.paidX;
+        LibInterestLedger.setPrincipal(s, la, la.principal - r.paidX);
         lb.collateralAmount -= r.movedX;
-        lb.principal -= r.paidY;
+        LibInterestLedger.setPrincipal(s, lb, lb.principal - r.paidY);
         lc.collateralAmount -= r.movedY;
-        lc.principal -= r.paidZ;
+        LibInterestLedger.setPrincipal(s, lc, lc.principal - r.paidZ);
         la.collateralAmount -= r.movedZ;
 
         // EC-003 Phase 1 — collateral consumed per leg:
@@ -692,9 +693,9 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // #2440 — `paid*` is `moved*` less any delivery shortfall, which
         // stays owed; each borrower's collateral falls by the whole amount
         // that left their vault.
-        la.principal -= r.paidX;
+        LibInterestLedger.setPrincipal(s, la, la.principal - r.paidX);
         lb.collateralAmount -= r.movedX;
-        lb.principal -= r.paidY;
+        LibInterestLedger.setPrincipal(s, lb, lb.principal - r.paidY);
         la.collateralAmount -= r.movedY;
 
         // Status transitions + snapshot scaling. Full match → loan
@@ -1186,7 +1187,10 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // The matched proceeds already exited; the lender's residual
                 // collateral claim is zero (Diamond consumed).
                 s.lenderClaims[loan.id].amount = 0;
-                loan.principal = 0; // fallback shortfall written off — loan terminal.
+                // Fallback shortfall written off — loan terminal. #1808 — the
+                // owed principal is kept, so a seller claim on this loan still
+                // ranks behind the holder's principal.
+                LibInterestLedger.writeOffPrincipal(s, loan);
                 s.fallbackSnapshot[loan.id].active = false;
                 // #1067 — DURABLE liquidation reward forfeit: an internal match
                 // is a liquidation-class terminal, so close the reward entries

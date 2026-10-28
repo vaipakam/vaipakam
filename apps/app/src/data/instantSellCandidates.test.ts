@@ -31,7 +31,7 @@ const live = {
   interestRemainingDays: 0,
   interestSettled: 0n,
   useFullTermInterest: false,
-  lenderForfeitFrom: START,
+  sellerClaimOnSale: 0n,
   readAtTimestamp: NOW,
   collateralAssetType: 0,
   collateralAmount: 2_000n * 10n ** 18n,
@@ -96,8 +96,8 @@ describe('instantSellCandidatesOf — the three answers', () => {
     expect(instantSellCandidatesOf(input({ offers: null }))).toBeNull();
   });
 
-  it('is null, never [], when the seller window is unreadable', () => {
-    const noWindow = { ...live, lenderForfeitFrom: undefined } as LoanLive;
+  it('is null, never [], when the interest ledger is unreadable', () => {
+    const noWindow = { ...live, sellerClaimOnSale: undefined } as LoanLive;
     // Even with matching offers in hand: no candidate can be priced.
     expect(
       instantSellCandidatesOf(input({ live: noWindow, offers: [offer()] })),

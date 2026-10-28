@@ -564,7 +564,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
         if (sp.bonus > 0) LibDelivery.pushOut(loan.principalAsset, j.keeper, sp.bonus);
 
         if (j.kind == ForcedSaleKind.PeriodicSettlement) {
-            _bookPeriodic(s, j.loanId, loan, j.debt, sp, out);
+            _bookPeriodic(s, j.loanId, loan, sp, out);
             loan.collateralAmount = j.unsold;
         } else {
             _bookTerminal(s, j.loanId, loan, sp, out);
@@ -626,25 +626,22 @@ contract ForcedSaleFacet is IVaipakamErrors {
         LibVaipakam.Storage storage s,
         uint256 loanId,
         LibVaipakam.Loan storage loan,
-        uint256 debt,
         Split memory sp,
         ForcedSaleOutcome memory out
     ) private {
         // The treasury accrues what reached it (TreasuryFeeFacet).
         LibFacet.transferToTreasury(loan.principalAsset, sp.fee);
-        // The paid-through mark moves only on full coverage of the shortfall
-        // (Codex #1801 r4 P1): a partial payout leaves the window open over
-        // what is still owed. The mark is the UNMOVED period end
-        // ({LibPeriodicInterest.deliveredThroughAt}, #668 / #935), not the
-        // payment deadline: the deadline carries the pause credit, while the
-        // shortfall covered here is one interval of interest.
+        // #1209 / #1808 — the whole payout is interest, and this slice carries
+        // no treasury cut, so it is passed as both the gross and the net
+        // interest: open seller claims are paid out of it first, in full.
         out.lenderPaid = LibCloseoutFreeze.freezeOrPayActiveLenderResident(
             s,
             loanId,
             loan,
             loan.principalAsset,
             sp.lender,
-            sp.lender >= debt ? LibPeriodicInterest.deliveredThroughAt(loan) : 0
+            sp.lender,
+            sp.lender
         );
         // #2795 — credit exactly what the lender received, never more than the
         // shortfall: the extra above it is the borrower's, not prepaid interest.

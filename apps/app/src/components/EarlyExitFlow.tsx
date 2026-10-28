@@ -7,8 +7,9 @@
  *
  * Economics (mirrors the facet): the buyer's already-vaulted
  * principal funds the payout; the seller receives
- * `principal − max(accruedForfeited, rateShortfall)` straight to
- * their wallet in the same transaction. The seller pre-approves
+ * `principal − rateShortfall` straight to their wallet in the same
+ * transaction, and the interest they earned becomes their claim on the
+ * loan (#1209), paid later from the borrower's interest. The seller pre-approves
  * NOTHING and claims nothing afterwards. The borrower's loan terms
  * (rate, maturity) are untouched — only the lender side migrates.
  *
@@ -111,12 +112,12 @@ export function EarlyExitFlow({
   // cannot pair the loan with a different one. Offer expiry and the
   // remaining term are judged on the chain clock where the candidate list
   // is derived (`instantSellCandidatesOf`), not here.
-  // ...and when the window could not be read at all, there is no seller quote
+  // ...and when the interest ledger could not be read, there is no seller quote
   // to show. `sellerEconomics` throws rather than substituting a number, so the
   // surface has to say so instead of rendering a wrong one — an unavailable
   // quote is recoverable, a silently understated one funds a sale the contract
   // then rejects.
-  const quoteUnavailable = live.lenderForfeitFrom === undefined;
+  const quoteUnavailable = live.sellerClaimOnSale === undefined;
 
   const selected =
     candidates?.find((o) => o.offerId === selectedId) ?? null;
@@ -423,7 +424,6 @@ export function EarlyExitFlow({
                     ),
                     youLock: copy.earlyExit.receiptLockNothing,
                     youMayOwe: `${copy.earlyExit.receiptOweNothing} ${copy.earlyExit.forfeitNote}`,
-                    // max(accrued, shortfall) — never the sum.
                     youCanLose: copy.earlyExit.receiptCanLose,
                     fees: copy.earlyExit.receiptFees,
                     whenThisEnds: copy.earlyExit.receiptEnds,

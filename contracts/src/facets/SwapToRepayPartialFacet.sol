@@ -8,6 +8,7 @@ import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
+import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
@@ -341,7 +342,8 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // paid through now, and this is the borrower's own choice, so the
         // payout must reach the lender in full; a short arrival is refused, as
         // `repayPartial`'s lender payout is.
-        LibDelivery.pushExact(loan.principalAsset, currentLenderHolder, lenderTotal);
+        // #1209 / #1808 — open seller claims are paid first, out of the interest.
+        _payLenderSide(s, loan, currentLenderHolder, accrued, lenderShare, lenderTotal);
 
         // Any leftover principal (above accrued + partialPrincipal) →
         // current borrower-NFT holder's EOA directly (Codex round-4
@@ -363,8 +365,10 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         }
 
         // ── Loan state updates ───────────────────────────────────────
+        // #1808 — through the ledger's single writer (checkpoint first).
+        // `partialPrincipal < loan.principal` is pinned above.
+        LibInterestLedger.setPrincipal(s, loan, loan.principal - partialPrincipal);
         unchecked {
-            loan.principal -= partialPrincipal;
             // Codex round-1 P1 #4 — reduce collateralAmount so HF /
             // default / claim logic reflects true post-swap backing.
             // Codex round-4 P1 #1 — use `actualCollateralConsumed`,
@@ -470,6 +474,26 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
     /// @dev #407 PR 4 round-1 Codex P1 #3 (2026-06-12) — consolidated
     ///      cross-facet helpers. One per arg-shape; each call site
     ///      picks the selector.
+    /// @dev #1209 / #1808 — the lender side's payout on this path, which pays
+    ///      a screened holder directly from the Diamond: the open seller claims
+    ///      take their part of the interest first ({LibInterestLedger.paySellersFirst}),
+    ///      the holder is paid the rest of `lenderTotal`, and the holder's part
+    ///      of the interest is recorded as paid.
+    function _payLenderSide(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.Loan storage loan,
+        address holder,
+        uint256 interestGross,
+        uint256 interestNet,
+        uint256 lenderTotal
+    ) private {
+        (uint256 sellersGross, uint256 sellersNet) = LibInterestLedger.paySellersFirst(
+            s, loan, address(0), loan.principalAsset, interestGross, interestNet
+        );
+        LibDelivery.pushExact(loan.principalAsset, holder, lenderTotal - sellersNet);
+        LibInterestLedger.holderPaid(s, loan, interestGross - sellersGross);
+    }
+
     function _callEncumb2(bytes4 selector, uint256 loanId, uint256 arg2) private {
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(selector, loanId, arg2),

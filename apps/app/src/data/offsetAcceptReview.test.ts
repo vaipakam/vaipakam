@@ -101,8 +101,8 @@ function client(setup: Setup, asked: string[] = []): PublicClient {
           return loanDetails(setup.loan);
         case "getPauseIntervals":
           return [setup.pauses ?? [], BigInt(setup.pauses?.length ?? 0)];
-        case "sellerForfeitureWindow":
-          return [START, 0n];
+        case "getInterestLedger":
+          return [0n, 0n, 0n, []];
         case "ownerOf":
           asked.push("ownerOf");
           if (setup.holder === "burned") throw new Error("ERC721NonexistentToken");

@@ -478,8 +478,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         periodicInterestCadence: live.periodicInterestCadence,
         // Third field lifted out of the SAME struct, for the third time
         // and the same reason (Codex r24 P2). `readLoanLive` returns
-        // `lenderForfeitFrom === undefined` when the optional seller-
-        // window call fails softly — on an unrefreshed deployment, say
+        // `sellerClaimOnSale === undefined` when the optional interest-
+        // ledger call fails softly — on a Diamond without it, say
         // — and neither sale tool can quote a price without it.
         //
         // The advanced-only `loanLive` already carried that verdict
@@ -488,7 +488,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         // shown both rows as available AND offered the Advanced switch,
         // and only after taking it did the rows turn to "failed". The
         // switch was an invitation to discover a dead end.
-        sellerWindowReadable: live.lenderForfeitFrom !== undefined,
+        sellerWindowReadable: live.sellerClaimOnSale !== undefined,
         // #2461 r1 (P2) — the two amounts a terminal transition moves,
         // from the same struct: when this read reconciles the status ahead
         // of the indexed row, the row's principal and collateral are just
@@ -1667,10 +1667,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     (r) => (r.fresh ? r.status : undefined),
   );
 
-  /** Whether the optional seller-window call inside `readLoanLive`
+  /** Whether the optional interest-ledger call inside `readLoanLive`
    *  answered — `false` when a HEALTHY snapshot carries
-   *  `lenderForfeitFrom === undefined`, which is how that call fails
-   *  softly (an unrefreshed deployment, say). Neither sale tool can
+   *  `sellerClaimOnSale === undefined`, which is how that call fails
+   *  softly (a Diamond without the ledger, say). Neither sale tool can
    *  quote a price without it.
    *
    *  **Derived from all three sources in ONE place, deliberately**
@@ -1697,13 +1697,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const sellerWindowReadable: boolean | undefined = (() => {
     const answers = [
       loanLive.data && !loanLive.isError
-        ? loanLive.data.live.lenderForfeitFrom !== undefined
+        ? loanLive.data.live.sellerClaimOnSale !== undefined
         : undefined,
       liveStatus.data && !liveStatus.isError
         ? liveStatus.data.sellerWindowReadable
         : undefined,
       bannerTermsData && !bannerTerms.isError
-        ? bannerTermsData.live.lenderForfeitFrom !== undefined
+        ? bannerTermsData.live.sellerClaimOnSale !== undefined
         : undefined,
     ].filter((a): a is boolean => a !== undefined);
     if (answers.length === 0) return undefined;

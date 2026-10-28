@@ -29,6 +29,7 @@
     "NotificationFeeFacet",
     "ForcedSaleFacet",
     "SaleExitVerdictFacet",
+    "SellerClaimFacet",
     "RateModelFacet",
     "IntentDispatchFacet",
     "AutoLifecycleFacet",

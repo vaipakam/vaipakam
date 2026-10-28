@@ -314,6 +314,60 @@ library LibEncumbrance {
         notifyTierExclusion(loanId, true);
     }
 
+    /// @notice #1209 — shrink a loan's lender-proceeds reservation by the part
+    ///         of its terminal lender claim paid out to seller claims
+    ///         (`SellerClaimFacet`), so the vault-withdraw guard lets that part
+    ///         leave the stored lender's vault while the rest stays reserved for
+    ///         the holder's claim. Only a reservation recorded under `asset`
+    ///         shrinks, by at most what it holds. No-op otherwise.
+    function reduceLenderProceeds(
+        uint256 loanId,
+        address lender,
+        address asset,
+        uint256 amount
+    ) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 reserved = s.lenderProceedsEncumbered[loanId];
+        if (amount == 0 || reserved == 0 || s.lenderProceedsEncumberedAsset[loanId] != asset) return;
+        uint256 take = amount < reserved ? amount : reserved;
+        _decrementAggregate(lender, asset, 0, take);
+        s.lenderProceedsEncumbered[loanId] = reserved - take;
+        if (take == reserved) s.lenderProceedsEncumberedAsset[loanId] = address(0);
+        notifyTierExclusion(loanId, true);
+    }
+
+    // ─── #1209 — seller-claim interest waiting in the seller's own vault ──
+
+    /// @notice Reserve seller-claim interest just paid into `seller`'s own
+    ///         vault until `SellerClaimFacet.claimAsSeller` withdraws it, so it
+    ///         is neither spent as offer capital nor counted free. The tokens
+    ///         are the seller's own, so this is no fee-tier exclusion.
+    function encumberSellerInterest(
+        uint256 loanId,
+        address seller,
+        address asset,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.sellerInterestHeld[loanId][seller][asset] += amount;
+        s.encumbered[seller][asset][0] += amount;
+    }
+
+    /// @notice Release the whole of `seller`'s waiting seller-claim interest on
+    ///         `loanId` in `asset`, returning it for the withdraw.
+    function releaseSellerInterest(
+        uint256 loanId,
+        address seller,
+        address asset
+    ) internal returns (uint256 amount) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        amount = s.sellerInterestHeld[loanId][seller][asset];
+        if (amount == 0) return 0;
+        s.sellerInterestHeld[loanId][seller][asset] = 0;
+        _decrementAggregate(seller, asset, 0, amount);
+    }
+
     // ─── #998 S10 (#1006) Class B — ACTIVE-loan held reservation ─────────────
     //
     // A DEDICATED per-loan reservation for a mid-loan Class B lender-share park

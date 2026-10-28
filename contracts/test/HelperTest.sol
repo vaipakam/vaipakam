@@ -115,7 +115,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](259); // #2961 +setPacketDisposedRaw (was 258); #2876 +setOfferPrepayListingExecutorRaw (was 257); #1980 -setBorrowerLifVpfiHeldRaw (was 258); #918 setDayDeliveryProvedByRaw -> setDayDeliveryLandedRaw (net 0); #2910 PR 2 -setRemitReservationFinalizedRaw -setReleasedRemitHistoryRaw -setRemitReservationReleasedRaw (was 261); #2910 -setRecoveryAttributionRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](255); // #1209 -setLenderPaidThroughRaw -setLenderPaidThroughWithPrincipalRaw -setLenderMarkVoidedRaw -setLenderTenureStartRaw (was 259); #2961 +setPacketDisposedRaw (was 258); #2876 +setOfferPrepayListingExecutorRaw (was 257); #1980 -setBorrowerLifVpfiHeldRaw (was 258); #918 setDayDeliveryProvedByRaw -> setDayDeliveryLandedRaw (net 0); #2910 PR 2 -setRemitReservationFinalizedRaw -setReleasedRemitHistoryRaw -setRemitReservationReleasedRaw (was 261); #2910 -setRecoveryAttributionRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -268,15 +268,8 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.metricsCountLoanRaw.selector;
         selectors[n++] = TestMutatorFacet.getActiveLoanListPosRaw.selector;
         selectors[n++] = TestMutatorFacet.getLifetimeLoanCountersRaw.selector;
-        selectors[n++] = TestMutatorFacet.setLenderPaidThroughRaw.selector;
-        // #1801 — the two DISQUALIFICATION seeds: a mark recorded against a
-        // principal the loan no longer carries, and the sticky freeze void.
-        // Both are read off state by `forfeitureAccrualStart`, so the tests
-        // seed the state rather than driving the writers that cause it.
-        selectors[n++] = TestMutatorFacet.setLenderPaidThroughWithPrincipalRaw.selector;
-        selectors[n++] = TestMutatorFacet.setLenderMarkVoidedRaw.selector;
+        // Re-base a loan's interest-accrual clock directly.
         selectors[n++] = TestMutatorFacet.setInterestAccrualStartRaw.selector;
-        selectors[n++] = TestMutatorFacet.setLenderTenureStartRaw.selector;
         // Layout-resilient claim writers used by ClaimFacetTest to
         // exercise the NothingToClaim revert + held-only paths
         // without slot math.
@@ -1266,7 +1259,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](11);
+        selectors = new bytes4[](10);
         selectors[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         selectors[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         selectors[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -1277,12 +1270,10 @@ contract HelperTest {
         // #1503 PR-E — sale admission classification (live health floor +
         // inherited-risk-terms compatibility), read by LibSaleSolvency.
         selectors[7] = RiskPreviewFacet.saleAdmission.selector;
-        // #1503 item 28 — seller forfeiture window (see DeployDiamond).
-        selectors[8] = RiskPreviewFacet.sellerForfeitureWindow.selector;
         // #1503 item 4 — listing bounds quote (see DeployDiamond).
-        selectors[9] = RiskPreviewFacet.quoteSellerBounds.selector;
+        selectors[8] = RiskPreviewFacet.quoteSellerBounds.selector;
         // #2672 — the figures a standing listing recorded.
-        selectors[10] = RiskPreviewFacet.getSaleListingBounds.selector;
+        selectors[9] = RiskPreviewFacet.getSaleListingBounds.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.
@@ -2710,6 +2701,12 @@ contract HelperTest {
     /// `FacetSelectors.saleExitVerdict()` (the same one `DeployDiamond` cuts).
     function getSaleExitVerdictFacetSelectors() public pure returns (bytes4[] memory selectors) {
         selectors = FacetSelectors.saleExitVerdict();
+    }
+
+    /// #1209 / #1808 - the seller-claim host. Returns the ONE list in
+    /// `FacetSelectors.sellerClaim()` (the same one `DeployDiamond` cuts).
+    function getSellerClaimFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = FacetSelectors.sellerClaim();
     }
 
     /// #2795 - the forced-sale host. Returns the ONE list in

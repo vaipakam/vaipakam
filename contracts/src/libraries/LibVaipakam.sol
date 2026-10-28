@@ -3040,6 +3040,36 @@ library LibVaipakam {
         address lopAtCommit;
     }
 
+    /// @notice #1808 — the interest ledger of an ERC-20 loan's CURRENT
+    ///         lender-position holder: what they have earned and not yet been
+    ///         paid, priced segment by segment. Written only by
+    ///         `LibInterestLedger`. See
+    ///         docs/DesignsAndPlans/LenderSaleSellerInterestClaimDesign.md.
+    struct InterestLedger {
+        /// @dev The last checkpoint. Interest from here to now is priced at
+        ///      the loan's current principal and rate when the next
+        ///      checkpoint folds it in. 0 = never opened (read as the loan's
+        ///      start time).
+        uint64 touchedAt;
+        /// @dev Gross interest the current holder has earned and has not been
+        ///      paid, up to `touchedAt`. A share held fail-closed for a
+        ///      flagged holder is NOT paid in this sense, so it stays here.
+        uint256 holderEarnedGross;
+        /// @dev The principal the lender side is still owed. Follows
+        ///      `loan.principal` through every repayment, but NOT through a
+        ///      write-off (`LibInterestLedger.writeOffPrincipal`): a recovery
+        ///      ranks the holder's principal first at this figure.
+        uint256 principalOwed;
+    }
+
+    /// @notice #1209 — one open seller claim: gross interest a lender who
+    ///         sold the position earned while they held it and has not yet
+    ///         been paid. Paid before the current holder, oldest first.
+    struct SellerInterestClaim {
+        address seller;
+        uint256 grossOwed;
+    }
+
     struct Storage {
         uint256 nextOfferId;
         uint256 nextLoanId;
@@ -6828,8 +6858,7 @@ library LibVaipakam {
         // #1659 — sale proceeds held in Diamond custody by `OfferAcceptFacet`
         //   on the resting-listing accept, consumed by
         //   `EarlyWithdrawalFacet._completeLoanSaleImpl`'s net settlement so the
-        //   seller's forfeited accrued interest and any rate shortfall are
-        //   deducted from the INCOMING proceeds rather than pulled from the
+        //   rate shortfall is deducted from the INCOMING proceeds rather than pulled from the
         //   seller's wallet (which cannot work when the buyer is the caller).
         //   Keyed by the UNDERLYING loan id, not the sale offer id. Written and
         //   consumed inside one atomic accept-then-complete transaction, so a
@@ -6945,172 +6974,33 @@ library LibVaipakam {
         //   (`RewardAggregatorFacet.getRecycleCompositionPosition`), so the
         //   counter stays the whole record of what was resolved.
         uint256 recycleReleasedRemitResolvedCumulative;
-        /// @dev #1503 item 28 — the point in time through which the CURRENT
-        ///      lender-position holder has actually been PAID their interest.
-        ///
-        ///      APPENDED AT THE STRUCT TAIL — never insert mid-struct.
-        ///
-        ///      A lender-position sale forfeits the interest that accrued during
-        ///      the seller's tenure, because the borrower has not paid it yet. On
-        ///      a periodic loan the borrower HAS paid part of it: periodic
-        ///      auto-liquidation forwards interest to the lender without moving
-        ///      the accrual clock, so the raw clock still spans periods already
-        ///      settled and the seller is billed for interest they received.
-        ///
-        ///      This is stored as a TIMESTAMP, not an amount. An amount cannot be
-        ///      compared with the forfeiture figure at all: that figure is scoped
-        ///      to the current accrual SEGMENT, and `repayPartial` (among six
-        ///      other paths) restarts the segment, after which a lifetime amount
-        ///      is measuring a different window than the one it would be
-        ///      subtracted from — under-charging on one side of the reset and
-        ///      double-crediting on the other (Codex #1801 r3 P1). A timestamp
-        ///      composes with a clock reset by construction: the forfeiture
-        ///      window starts at whichever is LATER, the accrual origin or this
-        ///      mark, so a reset that moves past it simply wins the `max` and
-        ///      nothing historical carries over. There is likewise no "excess
-        ///      credit" case to refuse, because a clamped window cannot
-        ///      over-subtract.
-        ///
-        ///      It advances in exactly two places, and the difference between
-        ///      them is worth stating because it is not obvious.
-        ///
-        ///      One: a periodic payout that genuinely REACHES the lender — never
-        ///      the freeze branch, whose tokens are parked in `heldForLender` and
-        ///      migrate to the BUYER on a sale.
-        ///
-        ///      Two: a SALE. The forfeiture settles the outstanding accrual (to
-        ///      treasury, or into the buyer's rate shortfall), so the position
-        ///      the buyer receives is clean and their own window opens at the
-        ///      sale. Without this the same stretch would be forfeited again on
-        ///      every resale.
-        ///
-        ///      A plain position TRANSFER does NOT advance it, and must not.
-        ///      Nothing is settled by a transfer, so the outstanding forfeiture
-        ///      travels with the position — exactly as the unpaid interest it
-        ///      represents does. Stamping there instead would let any lender
-        ///      zero their own forfeiture by transferring the position to
-        ///      themselves and selling from the other side, which is a larger
-        ///      hole than the one this whole mechanism closes.
-        ///
-        ///      Zero for a loan predating this upgrade, which makes the `max`
-        ///      pick the accrual origin — precisely the behaviour those loans
-        ///      already had. Grandfathered loans keep it rather than acquiring a
-        ///      wrong new one, and no backfill of unreconstructable history is
-        ///      needed.
+        /// @dev RETIRED (#1209 / #1808). The five fields below were the
+        ///      paid-through mark (#1503 item 28, #1801): a scalar timestamp the
+        ///      sale routes read to decide how much accrued interest the seller
+        ///      forfeited. A sale no longer forfeits interest — the seller keeps
+        ///      a claim, kept in the per-segment ledger
+        ///      (`interestLedger` / `sellerInterestClaims`, {LibInterestLedger})
+        ///      — so nothing writes or reads them. The slots are kept so the
+        ///      storage layout does not move; do not reuse them for a new
+        ///      meaning, and do not read them.
         mapping(uint256 => uint256) lenderInterestDeliveredThroughAt;
-        /// @notice #1801 — the loan's `principal` at the moment the mark above
-        ///         was stamped. Written with the mark and never apart from it
-        ///         (both go through {LibEntitlement.stampInterestDelivered}).
-        ///
-        /// @dev    The mark names a WINDOW; a window is only meaningful at the
-        ///         principal it was priced against. Principal is decremented at
-        ///         eight sites across five facets — `RepayFacet`,
-        ///         `SwapToRepayFacet`, `RiskFacet` and `RiskMatchLiquidationFacet`
-        ///         (five) — and a design that asks each of them to keep the mark
-        ///         honest has eight places to miss, in facets edited for
-        ///         unrelated reasons.
-        ///
-        ///         So the mark is not maintained by them; it is INVALIDATED BY
-        ///         STATE. A read honours it only while this equals the live
-        ///         principal, which means any principal change anywhere — today's
-        ///         eight sites and any added later by someone who has never read
-        ///         this — voids the credit automatically and charges the seller
-        ///         the full accrual instead. Fail-safe by construction rather
-        ///         than by cooperation.
         mapping(uint256 => uint256) lenderMarkPrincipalAt;
-        /// @notice #1801 — set once this position's delivery record has become
-        ///         DISCONTINUOUS, which permanently disqualifies the scalar mark
-        ///         for the rest of the lender's tenure. Two causes: a lender
-        ///         share frozen rather than delivered, and a stamp whose window
-        ///         would span a principal change that no settlement reconciled.
-        ///
-        /// @dev    Voiding the mark at the freeze is not enough on its own: a
-        ///         later clean delivery re-stamps it, and the window from the
-        ///         new mark back to the previous one then spans the frozen
-        ///         stretch, crediting the seller for interest that went to
-        ///         `heldForLender` and migrates to the buyer. That is exactly
-        ///         the "do not leap the mark over frozen periods" case — a
-        ///         single timestamp cannot say "paid for the second period, not
-        ///         the first", so once delivery has become non-contiguous no
-        ///         stamp on this loan is trustworthy again.
-        ///
-        ///         Cleared on a position SALE, through
-        ///         {LibEntitlement.stampInterestDeliveredForNewLender},
-        ///         because the incoming lender's window opens at the sale and
-        ///         carries none of the seller's history — frozen or otherwise.
         mapping(uint256 => bool) lenderMarkVoided;
-
-        /// @notice #1503 item 28 — the `heldForLender` balance the mark was
-        ///         stamped at, so a park that happened since it is DETECTABLE.
-        ///
-        /// @dev    Codex #1801 r11 P1. Parked interest is interest the lender did
-        ///         not receive, so it disqualifies the mark for exactly the
-        ///         reason a freeze does — but the two are not the same event, and
-        ///         only the freeze path was setting {lenderMarkVoided}. The
-        ///         obligation-transfer route parks the lender's accrued share on
-        ///         a CONTINUING loan and never touched the flag, so a later clean
-        ///         settlement re-stamped the mark over the parked stretch and the
-        ///         sale excluded it from the seller's charge — money the seller
-        ///         never received and which migrates to the buyer.
-        ///
-        ///         Reading the balance rather than trusting the park sites is the
-        ///         same choice made for principal one field up, and for the same
-        ///         reason: there are SEVEN places that park to `heldForLender`
-        ///         across four facets, one of which remembered to void, and any
-        ///         future eighth would have to remember too. A rule read off
-        ///         state cannot be forgotten by code that has never seen it.
-        ///
-        ///         Safe as an equality test because `heldForLender[loanId]` only
-        ///         grows while a loan is live — it is consumed at terminal claim,
-        ///         never decremented during a lender's tenure — so a difference
-        ///         is proof of a park and nothing else.
         mapping(uint256 => uint256) lenderMarkHeldAt;
-
-        /// @notice #1503 item 28 — the moment THIS lender's tenure began: loan
-        ///         origination, or the sale that handed them the position.
-        ///
-        /// @dev    Codex #1801 r13, two P1s that turned out to be one missing
-        ///         idea. A disqualified mark falls back to the earlier of the
-        ///         recorded delivery and the accrual clock, and neither of those
-        ///         is anchored to the party being charged:
-        ///
-        ///         - a loan whose FIRST lender payment is the one that freezes
-        ///           has no recorded delivery at all, so the fallback was the
-        ///           clock — which that same repayment had just re-based, giving
-        ///           a window of roughly zero over a genuinely unpaid stretch;
-        ///         - a BUYER disqualified after purchase fell back to the loan's
-        ///           original accrual clock, which predates them, charging them
-        ///           for the seller's whole pre-purchase tenure — a stretch the
-        ///           first sale already settled.
-        ///
-        ///         One bound fixes both, because both are the window escaping
-        ///         the tenure it belongs to. The window may open no earlier than
-        ///         here and, when nothing is disqualified, no earlier than the
-        ///         recorded delivery either.
-        ///
-        ///         Zero for loans that predate this change: nothing is known
-        ///         about when their lender's tenure started, so no clamp is
-        ///         applied and they keep the behaviour they already had.
         mapping(uint256 => uint256) lenderTenureStart;
 
         /// @notice #1503 item 4 — the seller's FLOOR on a sale listing: the
         ///         least they will accept out of the buyer's escrowed proceeds,
-        ///         after the settlement forfeiture is deducted.
+        ///         after the rate shortfall is deducted.
         ///
-        /// @dev    The listing stored no economic bound of any kind, so
-        ///         completion recomputed the forfeiture at the acceptance block
-        ///         and the seller was bound by whatever it came to then.
-        ///
-        ///         The floor is NOT the figure the seller saw. Accrued interest
-        ///         grows across the listing window, so a floor at the displayed
-        ///         value would make the listing unfillable almost immediately.
-        ///         It is the worst case they accepted — the same settlement
-        ///         arithmetic evaluated at BOTH ends of the listing window,
-        ///         taking whichever is worse for them, plus slack for integer
-        ///         truncation. Not the expiry alone: the two legs of the cost
-        ///         move in opposite directions, so an above-rate listing is
-        ///         costliest to fill immediately. Computable only because the
-        ///         expiry is mandatory and finite. See
+        /// @dev    The floor is the worst case the seller accepted: the same
+        ///         settlement arithmetic evaluated at BOTH ends of the listing
+        ///         window, taking whichever is worse for them, plus slack for
+        ///         integer truncation. Since #1209 the cost is the rate shortfall
+        ///         alone (the seller's earned interest becomes a seller claim,
+        ///         not a cost), so what moves the net below the floor is a
+        ///         principal change the seller never reviewed. Computable only
+        ///         because the expiry is mandatory and finite. See
         ///         `LibSaleListing.projectSellerBounds`.
         ///
         ///         Zero does NOT mean "no floor recorded". `projectSellerBounds`
@@ -8254,6 +8144,20 @@ library LibVaipakam {
         ///      abandoned-day walk releases it. Written only by
         ///      `LibRemitDayLedger`. Base-only. Appended — append-only.
         mapping(uint32 => EnumerableSet.UintSet) remitOpenDays;
+        /// @dev #1808 — per ERC-20 loan, the current lender-position holder's
+        ///      interest ledger. Written only by `LibInterestLedger`. Appended
+        ///      — append-only.
+        mapping(uint256 => InterestLedger) interestLedger;
+        /// @dev #1209 — per loan, the open seller claims, oldest first, at
+        ///      most `LibInterestLedger.MAX_SELLER_CLAIMS`. Written only by
+        ///      `LibInterestLedger`. Appended — append-only.
+        mapping(uint256 => SellerInterestClaim[]) sellerInterestClaims;
+        /// @dev #1209 — per loan, seller and asset: seller-claim interest
+        ///      already paid into the seller's own vault and not yet withdrawn
+        ///      by `SellerClaimFacet.claimAsSeller`. Reserved in `encumbered`
+        ///      under the seller while it waits. Written only by
+        ///      `SellerClaimFacet`. Appended — append-only.
+        mapping(uint256 => mapping(address => mapping(address => uint256))) sellerInterestHeld;
     }
 
     /// @notice #918 — one (destination, day)'s remit ledger on Base. See

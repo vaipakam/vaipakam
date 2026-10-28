@@ -10,6 +10,7 @@ import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
+import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
@@ -1123,13 +1124,16 @@ contract PrecloseFacet is
         loan.collateralTokenId = offer.collateralTokenId;
         loan.collateralQuantity = offer.collateralQuantity;
         loan.durationDays = offer.durationDays;
+        // #1808 — the new rate goes through the ledger's single writer, which
+        // checkpoints the old segment first, and BEFORE the new start time is
+        // written: a ledger still unopened would otherwise open at the new start.
+        LibInterestLedger.setRate(LibVaipakam.storageSlot(), loan, offer.interestRateBps);
         // T-034 — startTime downsized to uint64; explicit cast.
         loan.startTime = uint64(block.timestamp);
         // #641 — offset re-originates the obligation under a new term; mirror
         // the interest-accrual clock onto it (validated 1..365 ⇒ uint16 exact).
         loan.interestAccrualStart = uint64(block.timestamp);
         loan.interestRemainingDays = uint16(offer.durationDays);
-        loan.interestRateBps = offer.interestRateBps;
         // #915 (Codex #1087 r1 P2) — the re-originated obligation restarts its
         // accrual clock above, so any periodic-settled interest credited to the
         // EXITING borrower (already netted from their step-2 payment) belongs to

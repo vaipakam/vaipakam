@@ -25,6 +25,7 @@ import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {FallbackCustodyFacet} from "./FallbackCustodyFacet.sol";
 import {LibFallbackCustody} from "../libraries/LibFallbackCustody.sol";
+import {SellerClaimFacet} from "./SellerClaimFacet.sol";
 
 /**
  * @title ClaimFacet
@@ -584,7 +585,23 @@ contract ClaimFacet is
         // marked cash-satisfied above, so the cash must arrive in full; the
         // absorb is optional, and a short payment refuses it, leaving the
         // lender the ordinary claim.
-        LibFacet.vaultWithdrawExact(vault, p, nftOwner, due, VaultWithdrawFailed.selector);
+        // #1209 — the cash buys out the WHOLE lender slice, past sellers'
+        // earned-unpaid interest included, so it is split the way the claim
+        // row would be: the holder's principal first, then each seller's claim
+        // oldest first, then the rest to the holder.
+        uint256 toSellers;
+        if (s.sellerInterestClaims[loanId].length != 0) {
+            toSellers = abi.decode(
+                LibFacet.crossFacetCallReturn(
+                    abi.encodeCall(SellerClaimFacet.settleSellerClaimsFrom, (loanId, vault, p, due)),
+                    bytes4(0)
+                ),
+                (uint256)
+            );
+        }
+        if (due > toSellers) {
+            LibFacet.vaultWithdrawExact(vault, p, nftOwner, due - toSellers, VaultWithdrawFailed.selector);
+        }
 
         // Release any heldForLender (prior partial-rescue proceeds) from the
         // lender's OWN vault reservation to the NFT owner — its existing balance,
@@ -951,6 +968,20 @@ contract ClaimFacet is
 
         // Lender position-NFT ownership was already verified at the top
         // of this function (before the claim-time fallback resolution).
+
+        // #1209 — split the final lender claim with the past sellers of this
+        // position before the holder is paid: the holder's principal first,
+        // then each seller's earned-unpaid interest oldest first, then the
+        // holder takes the rest ({SellerClaimFacet}). The sellers' part leaves
+        // the row and its reservation here, so the payout below pays the holder
+        // only what remains. Idempotent: a seller who claimed first already ran
+        // it, and the list is then empty.
+        if (s.sellerInterestClaims[loanId].length != 0) {
+            LibFacet.crossFacetCall(
+                abi.encodeCall(SellerClaimFacet.resolveSellerClaims, (loanId)),
+                bytes4(0)
+            );
+        }
 
         // Mark claimed before transfer to prevent re-entrancy
         claim.claimed = true;

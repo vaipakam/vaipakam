@@ -39,6 +39,7 @@ import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
 import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
+import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 
 /**
  * @title RedeployFacets
@@ -90,6 +91,9 @@ contract RedeployFacets is Script {
     /// @notice #2419 - the target Diamond predates the 1e18 numeraire value
     ///         rule; see {_requireNumeraireValueRule}.
     error PredatesNumeraireValueRule(address diamond);
+    /// @notice #1209 / #1808 - the target Diamond predates the interest ledger;
+    ///         see {_requireInterestLedger}.
+    error PredatesInterestLedger(address diamond);
     /// @notice #668 / #935 - the target Diamond predates the loan clock (the
     ///         global pause credit); see {_requireLoanClock}.
     error PredatesLoanClock(address diamond);
@@ -164,6 +168,9 @@ contract RedeployFacets is Script {
         // #3009 / #3025 - and one whose OfferPreviewFacet cannot answer the
         // origination cadence check; see {_requireCadenceAdmissionHost}.
         _requireCadenceAdmissionHost(diamond);
+        // #1209 / #1808 - and one from before the interest ledger; see
+        // {_requireInterestLedger}.
+        _requireInterestLedger(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -237,16 +244,13 @@ contract RedeployFacets is Script {
         // classifier's host alongside and cut its selectors (partitioned by
         // routing below), exactly as #658 does for ConsolidationFacet.
         RiskPreviewFacet riskPreviewFacet = RiskPreviewFacet(ArtifactDeploy.deploy(type(RiskPreviewFacet).name));
-        // #1503 item 28 (Codex #1801 r4 P1) — the same dependency, one step
-        // further out. The refreshed sale routes READ the seller's paid-through
-        // mark; these two facets are what WRITE it — `RepayPeriodicFacet` passes
-        // the settled period boundary down, and `EncumbranceMutateFacet` records
-        // it on the clean payout branch. Refresh the readers without the writers
-        // and the mark is never written on the upgraded Diamond, so every
-        // periodic payment re-opens the seller's forfeiture over interest the
-        // borrower already paid: the exact bug item 28 fixes, reintroduced by
-        // the upgrade meant to deliver it. Silent, and only visible as sellers
-        // being over-charged.
+        // #1209 / #1808 — the same dependency, one step further out. Every
+        // open-loan interest payout goes through EncumbranceMutateFacet's
+        // pay-or-freeze entries, which pay open seller claims first, and
+        // RepayPeriodicFacet pays the periodic interest through them. Refresh
+        // the sale routes without them and the interest ledger is kept by only
+        // some of the paths that move interest. (This pairing first existed for
+        // #1503 item 28's paid-through mark, now retired.)
         RepayPeriodicFacet repayPeriodicFacet = RepayPeriodicFacet(ArtifactDeploy.deploy(type(RepayPeriodicFacet).name));
         EncumbranceMutateFacet encumbranceMutateFacet = EncumbranceMutateFacet(ArtifactDeploy.deploy(type(EncumbranceMutateFacet).name));
         // #1566 slice 2 - RiskFacet and DefaultedFacet now ENTER the fallback, and
@@ -442,12 +446,11 @@ contract RedeployFacets is Script {
         retiredPreview[0] = FacetSelectors.retiredPreviewIntentSelector();
         (, bytes4[] memory rpToRemove) = _partitionByRouting(diamond, retiredPreview);
 
-        // #1503 item 28 — the mark's WRITERS. `RepayPeriodicFacet`'s surface is
-        // unchanged (plain Replace); `EncumbranceMutateFacet`'s is not — the
-        // resident-payout entry gained the paid-through boundary, so its 4-arg
-        // selector is an Add on a pre-item-28 Diamond and the retired 3-arg one
-        // must be Removed, or a live entry point survives whose callers pass one
-        // argument too few.
+        // The interest payout entries. `RepayPeriodicFacet`'s surface is
+        // unchanged (plain Replace). `EncumbranceMutateFacet`'s retired 3-arg
+        // resident payout (#1503 item 28) is Removed wherever still routed; the
+        // #1209 entries are already routed on every Diamond this script admits
+        // (`_requireInterestLedger`).
         (bytes4[] memory rpsToAdd, bytes4[] memory rpsToReplace) =
             _partitionByRouting(diamond, FacetSelectors.repayPeriodic());
         (bytes4[] memory encToAdd, bytes4[] memory encToReplace) =
@@ -872,6 +875,22 @@ contract RedeployFacets is Script {
     ///      never this refresh. The marker is the routing of
     ///      `getLiquidNumeraireValue`, which #2419 introduced. Called before
     ///      the broadcast starts, so a refused run sends nothing.
+    /// @dev #1209 / #1808 - refuse a Diamond from before the interest ledger.
+    ///      The ledger is one behaviour across every facet that changes a
+    ///      loan's principal or rate or pays the lender side interest, the two
+    ///      sale facets, ClaimFacet and the new SellerClaimFacet host; this
+    ///      curated set carries only some of them, and none of them opens the
+    ///      ledgers of loans the older Diamond originated. Crossing the
+    ///      boundary is a fresh deploy, or the all-facets refresh with no
+    ///      ERC-20 loan open, never this refresh. The marker is the routing of
+    ///      `SellerClaimFacet.getInterestLedger`. Called before the broadcast
+    ///      starts, so a refused run sends nothing.
+    function _requireInterestLedger(address diamond) internal view {
+        if (IDiamondLoupe(diamond).facetAddress(SellerClaimFacet.getInterestLedger.selector) == address(0)) {
+            revert PredatesInterestLedger(diamond);
+        }
+    }
+
     function _requireNumeraireValueRule(address diamond) internal view {
         if (
             IDiamondLoupe(diamond).facetAddress(NumeraireValueFacet.getLiquidNumeraireValue.selector)

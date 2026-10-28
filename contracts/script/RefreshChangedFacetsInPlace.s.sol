@@ -126,6 +126,7 @@ contract RefreshChangedFacetsInPlace is RefreshAllFacetsInPlace {
         );
         _requireSlice3Diamond(diamond);
         _requireNoOpenErc1155RentalAcross902(diamond);
+        _requireNoOpenLoanAcrossInterestLedger(diamond);
         // #2092 item 1 — refuse code that drops a storage-layout fact this
         // chain records, before anything is broadcast (needs `--ffi`). Here in
         // the shared body, so neither entry skips it; `forge test` skips it by

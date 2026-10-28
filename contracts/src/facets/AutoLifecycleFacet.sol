@@ -8,6 +8,7 @@ import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
+import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibKeeperReward} from "../libraries/LibKeeperReward.sol";
@@ -785,9 +786,10 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
                 }
             }
             _routeInterest(
-                loan.principalAsset,
+                loan,
                 borrowerNftOwner,
                 lenderNftOwner,
+                totalInterestLike,
                 lenderShare,
                 treasuryShare
             );
@@ -832,8 +834,11 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             /* borrowerClean */ inTermExtension,
             /* lenderForfeit */ false
         );
+        // #1808 — the new rate goes through the ledger's single writer, which
+        // checkpoints the old segment first, and BEFORE the new start time is
+        // written: a ledger still unopened would otherwise open at the new start.
+        LibInterestLedger.setRate(LibVaipakam.storageSlot(), loan, newRateBps);
         loan.startTime = uint64(block.timestamp);
-        loan.interestRateBps = newRateBps;
         loan.durationDays = newDurationDays;
         // #641 — auto-refinance commits a NEW term; mirror the interest-accrual
         // clock onto it (validated 1..365 ⇒ uint16 exact).
@@ -954,15 +959,21 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     }
 
     /// @dev Moves accrued interest from the borrower-NFT owner's vault
-    ///      to the lender-NFT owner's vault + treasury. Factored out
-    ///      so {extendLoanInPlace} stays under viaIR's stack budget.
+    ///      to the lender side + treasury. Factored out so
+    ///      {extendLoanInPlace} stays under viaIR's stack budget.
+    ///      #1209 / #1808 — the open seller claims are paid first out of the
+    ///      interest ({LibInterestLedger.paySellersFirst}); the lender-NFT
+    ///      owner's vault receives the rest, recorded as paid to the holder.
     function _routeInterest(
-        address principalAsset,
+        LibVaipakam.Loan storage loan,
         address borrowerNftOwner,
         address lenderNftOwner,
+        uint256 interestGross,
         uint256 lenderShare,
         uint256 treasuryShare
     ) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address principalAsset = loan.principalAsset;
         // 1. Withdraw the full accrued interest from the borrower's
         //    vault to the diamond itself. #2440 — a consented extension, not
         //    a forced close-out: refused unless all of it arrived, so the
@@ -978,15 +989,20 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // 2. Forward treasury share + record accrual. #2440 — measured,
         //    accrued as it arrived (TreasuryFeeFacet).
         LibFacet.transferToTreasury(principalAsset, treasuryShare);
-        // 3. Push lender share into the lender's vault.
+        // 3. Seller claims first, then the lender's vault.
+        (uint256 sellersGross, uint256 sellersNet) = LibInterestLedger.paySellersFirst(
+            s, loan, address(0), principalAsset, interestGross, lenderShare
+        );
+        uint256 holderShare = lenderShare - sellersNet;
         address lenderVault = LibFacet.getOrCreateVault(lenderNftOwner);
-        if (lenderShare > 0) {
+        if (holderShare > 0) {
             // #2440 — the extension re-terms the loan as if the lender received
             // all of `lenderShare`, and it is consented, not forced, so a short
             // arrival is refused like step 1's withdrawal.
-            LibDelivery.pushExact(principalAsset, lenderVault, lenderShare);
-            LibVaipakam.recordVaultDeposit(lenderNftOwner, principalAsset, lenderShare);
+            LibDelivery.pushExact(principalAsset, lenderVault, holderShare);
+            LibVaipakam.recordVaultDeposit(lenderNftOwner, principalAsset, holderShare);
         }
+        LibInterestLedger.holderPaid(s, loan, interestGross - sellersGross);
     }
 
     function _validateExtendCaps(

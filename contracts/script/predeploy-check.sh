@@ -184,6 +184,25 @@ else
   FAIL=1
 fi
 
+# ── 1d. Loan-terms writer guard ───────────────────────────────────────
+# The interest ledger prices each stretch of a loan at the principal and
+# rate in force over it, so both are written only through LibInterestLedger,
+# which closes the stretch first (#1808). This fails on any other write in
+# src/ that its own list does not name with a reason. It reads the AST
+# artifacts step 1c just built, so it runs only when 1c's build succeeded.
+echo
+echo "[predeploy 1d/4] loan-terms writer guard (#1808)"
+if [ "$BUILD_OK" -ne 1 ] || [ ! -d "$SCRIPT_DIR/../out-measured-delivery" ]; then
+  echo "  ✗ skipped — no AST artifacts to read (step 1 or 1c failed)" >&2
+  FAIL=1
+elif node "$SCRIPT_DIR/check-loan-terms-writer.mjs"; then
+  : # the script prints its own lines
+else
+  echo "  ✗ loan-terms writer guard failed — write principal and rate through" >&2
+  echo "    LibInterestLedger, or list the site with its reason (see above)" >&2
+  FAIL=1
+fi
+
 # ── 2. Forge test suite ───────────────────────────────────────────────
 echo
 if [ "$MODE_FULL" -eq 1 ]; then
