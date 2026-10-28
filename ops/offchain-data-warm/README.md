@@ -7,6 +7,49 @@ operator-offline key. Stage A of the off-chain data resilience plan —
 issue [#30 (T-077)](https://github.com/vaipakam/vaipakam/issues/30).
 Design notes: [`docs/DesignsAndPlans/OffChainDataResilience.md`](../../docs/DesignsAndPlans/OffChainDataResilience.md).
 
+## The backup watcher and its ledger (#1469, #1473)
+
+Nothing the Worker checks about its own archives survives the Worker being
+compromised, because it holds the keys those checks would rely on. So the
+archives are also watched from GitHub, a different credential boundary:
+`.github/workflows/backup-ledger.yml` runs `scripts/backup-ledger.mjs` daily at
+04:17 UTC, an hour after the nightly. Each run records every archive version it
+has not seen in a separate **ledger bucket with Object Lock**, one entry per
+version under a compliance-mode retention nobody can shorten (the master key
+included), with the SHA-256 and length the watcher computed from the bytes.
+The Worker holds no key to that bucket. It then pages, through one alert issue
+and the ops chat, on a missing period, a period holding more than one archive,
+a copy of an older archive in a newer period, an archive that disagrees with
+its manifest (re-checked whenever the manifest changes), a ledger entry with a
+second version or a hide marker, an archive hidden or deleted before its
+lifecycle could do it, and a yearly entry whose
+retention could not be lengthened. The design and its limits are in
+[`BackupSecurityDesign.md`](../../docs/DesignsAndPlans/BackupSecurityDesign.md)
+§5; the rules are `scripts/lib/ledger-rules.mjs`, pinned by
+`scripts/backup-ledger.test.mjs`.
+
+**Setup, once** (owner): with the master key in the repo `.env` and `gh` signed
+in as a repository admin,
+
+```bash
+cd ops/offchain-data-warm
+npm run backup:ledger:setup
+```
+
+It creates the ledger bucket with Object Lock, creates the watcher's two keys
+(its own archive read key, and the ledger key without `deleteFiles` or
+`bypassGovernance`), and stores them straight into the repository's Actions
+secrets, printing neither. Then run the **Backup ledger** workflow once from
+the Actions tab to record the archives that exist today. Until the keys exist,
+the workflow keeps one "Backup watcher not running" issue open, which is the
+honest state.
+
+**Acknowledging a page.** An investigated problem key goes into
+`BACKUP_ACKNOWLEDGED` in the workflow, in a reviewed commit; nothing else
+silences it. The first monthly and yearly periods are committed there too
+(`ARCHIVE_FIRST_MONTHLY` / `ARCHIVE_FIRST_YEARLY`); the run summary prints the
+earliest period present to help confirm them.
+
 ## Bucket lifecycle — declared, not console-only
 
 The B2 bucket's retention behaviour is declared in
@@ -126,7 +169,10 @@ the healthcheck makes passes.
 So the window is not "time after an alert" against a competent attacker — it is
 time for a human or an out-of-band signal to notice. Real, but much weaker than
 an earlier revision of this file implied, and it is the integrity-is-not-
-provenance gap tracked as **#1473**, which is what would actually close it. The
+provenance gap tracked as **#1473**. The backup watcher above is what closes
+it: an overwrite at a known key adds a second version, which the watcher reports
+the same day, and the ledger keeps the genuine version's digest and upload time
+where the Worker cannot reach them. The
 floors in `lifecycle-policy.mjs` are a floor of usefulness, not a sufficiency
 argument, and its comments say so.
 

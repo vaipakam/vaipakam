@@ -12,6 +12,8 @@ section corresponds to an `(i)` info icon next to a card title.
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -113,6 +115,8 @@ done anything wrong — there's just no history to show.
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -168,6 +172,8 @@ That rate is fixed when the loan is created, so a later change to the
 protocol fee leaves an already-open loan on the rate it started with.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -313,6 +319,8 @@ offer.
 
 ---
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -377,6 +385,8 @@ taking the NFT as a promise.
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -391,6 +401,8 @@ offline. Newest first, grouped by transaction so things you did in
 the same click stay together.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -434,6 +446,8 @@ switches to the lower tier from this moment forward.
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -457,6 +471,8 @@ some since the last settlement, it only goes live shortly after the
 next daily window closes.
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -576,6 +592,8 @@ will be greyed out, with a small tooltip explaining why.
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -593,6 +611,8 @@ A clean approvals list is a hygienic habit — same as on Uniswap or
 1inch.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -628,6 +648,8 @@ don't tune them separately.
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -646,6 +668,8 @@ a fake — or a position that already settled — saves you the bad
 trade.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -673,53 +697,80 @@ want a keeper gone entirely, remove them from the list.
 
 ---
 
+<a id="chapter.public-analytics-dashboard"></a>
+
 ## Public Analytics Dashboard
 
 <a id="public-dashboard.overview"></a>
 
 ### About Public Analytics
 
-A wallet-free, transparent view of the whole protocol: total
-value locked, loan volumes, default rates, VPFI supply, recent
-activity. All of it is computed live from on-chain data — there's
-no private database behind any number on this page.
+A wallet-free view of the protocol on one network: the network
+the app is reading. You don't need to connect anything. The page
+draws on two public sources and says which one each figure comes
+from — the public indexer, which anyone can query without a key,
+and the platform contract itself — so you never have to take a
+number on trust.
 
-<a id="public-dashboard.combined"></a>
+<a id="public-dashboard.loans-offers"></a>
 
-### Combined — All Chains
+### Loans and Offers
 
-The protocol-wide totals, summed across every supported chain.
-The small "X chains covered, Y unreachable" line tells whether
-any chain's network was offline at the time the page loaded — if
-so, the specific chain is flagged in the per-chain table below.
+Counts of loans by state (active, repaid, defaulted, liquidated
+and so on) and of offers by state, from the public indexer. A
+count the indexer did not report shows as "not reported", never
+as zero. Offers here are on-chain offers only: signed gasless
+orders are not counted, though they do appear in the Offer Book.
+The offer total is the offers currently on record, not a
+lifetime count.
 
-<a id="public-dashboard.per-chain"></a>
+<a id="public-dashboard.recycling"></a>
 
-### Per-Chain Breakdown
+### Recycling Account and Loop Closure
 
-The same totals, split per chain. Useful to see which chain holds
-the most TVL, where most loans are happening, or to spot when one
-chain has stalled.
-
-<a id="public-dashboard.vpfi-transparency"></a>
-
-### VPFI Token Transparency
-
-The live state of VPFI on this chain — how much exists in total,
-how much is actually circulating (after subtracting protocol-held
-balances), and how much is still mintable under the cap. Across
-all chains the supply stays bounded by design.
+Where each day's reward pool came from and how much of it was
+drawn, and how much of the reward VPFI paid out by claims stays
+inside the platform. These are bookkeeping records from the
+public indexer; a figure that is not known yet says so instead of
+showing zero.
 
 <a id="public-dashboard.transparency"></a>
 
 ### Transparency & Source
 
-Every number on this page can be re-derived directly from the
-blockchain. This card lists the snapshot block, how recently the
-data was fetched, and the contract address each metric came
-from. If anyone wants to verify a number, this is where to start.
+The platform contract's address, with a link to open it on a
+block explorer, the network, the last block the indexer has read
+and how long ago that was. The indexer's figures are only as
+current as that block, which is why its age is shown.
+
+<a id="public-dashboard.vpfi-transparency"></a>
+
+### VPFI Token
+
+Read straight from the platform contract, not from the indexer:
+the VPFI token's address and its supply on this network. On the
+network where VPFI is issued it also shows the supply cap, how
+much can still be minted under it, and the one address allowed to
+mint. On a network VPFI reaches by bridge it shows that network's
+supply only.
+
+<a id="public-dashboard.fees"></a>
+
+### Fees and Treasury
+
+Also read from the contract: the fees the protocol has recorded
+since recording began, over the last day and over the last week,
+and the treasury address they go to. The page names the block it
+read at, how old that reading is and the functions it called, and
+it states every reason the fee figures can be lower than what was
+really collected. After a change of reference currency, earlier
+fees stay in the old unit, which can push a total either way; the
+page says that too. A figure that could not be read says so
+instead of showing zero.
 
 ---
+
+<a id="chapter.refinance"></a>
 
 ## Refinance
 
@@ -765,6 +816,8 @@ the whole time. One transaction, two-state change, no exposure
 window.
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -814,6 +867,8 @@ the way out. Either path closes the loan in full; you can't
 half-close with preclose.
 
 ---
+
+<a id="chapter.early-withdrawal-lender"></a>
 
 ## Early Withdrawal (Lender)
 

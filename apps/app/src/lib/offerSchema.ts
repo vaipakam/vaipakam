@@ -116,11 +116,11 @@ export interface OfferFormState {
    *  now the field stays empty everywhere and the contract sees
    *  single-value collateral on every offer. */
   collateralAmountMax: string;
-  /** T-034 — lender's chosen Periodic Interest Payment cadence.
-   *  Numeric value matches the on-chain enum (0 = None ... 4 = Annual).
-   *  Default `0` (None) preserves backward compat. Visible only when
-   *  Advanced mode AND both legs are liquid AND
-   *  `periodicInterestEnabled` is true on the protocol config. */
+  /** T-034 — the offer's Periodic Interest Payment cadence. Numeric
+   *  value matches the on-chain enum (0 = None ... 4 = Annual). Default
+   *  `0` (None). Chosen in `CadencePicker` (#2524), which offers only
+   *  what the protocol's cadence rule admits for the entered terms
+   *  (`previewCadenceAdmission`). */
   periodicInterestCadence: number;
   /** T-086 Round-8 (#358) §19.5 — borrower opt-in for parallel-sale
    *  listing on OpenSea / Seaport-conformant marketplaces. Only valid
@@ -144,6 +144,17 @@ export interface OfferFormState {
    *  elapsed. */
   useFullTermInterest: boolean;
 }
+
+/**
+ * The offer's TERMS — everything in {@link OfferFormState} the user edits.
+ * The risk-and-terms consent is not one of them: it is the user's
+ * attestation that they reviewed these terms, held by the review that
+ * shows them (`useReviewConsent`, #1696) and withdrawn there whenever the
+ * terms change. A flow keeps its terms in state and joins the consent in
+ * only when it builds the payload, so a terms edit can never carry an old
+ * tick along with it.
+ */
+export type OfferTerms = Omit<OfferFormState, 'riskAndTermsConsent'>;
 
 export const initialOfferForm: OfferFormState = {
   offerType: 'lender',
@@ -171,6 +182,20 @@ export const initialOfferForm: OfferFormState = {
   refinanceTargetLoanId: '', // T-092 #511 sub (#523) — standard offer; non-empty enables refinance-tagged flow
   useFullTermInterest: true, // #408 — default true; lenders opt OUT for "soft" pro-rata loans
 };
+
+/** {@link initialOfferForm} without the consent — see {@link OfferTerms}. */
+export const initialOfferTerms: OfferTerms = (() => {
+  const { riskAndTermsConsent: _consent, ...terms } = initialOfferForm;
+  return terms;
+})();
+
+/** `terms` with the consent the CALLER attests, for the readers that take
+ *  a whole {@link OfferFormState}. Say `false` where only the figures are
+ *  read, `true` only for a read-only preview of the signed calldata, and
+ *  the review's live consent for what is actually sent. */
+export function withConsent(terms: OfferTerms, consent: boolean): OfferFormState {
+  return { ...terms, riskAndTermsConsent: consent };
+}
 
 /** Payload shape expected by `Diamond.createOffer`. */
 export interface CreateOfferPayload {
@@ -297,6 +322,21 @@ export function validateOfferForm(
   s: OfferFormState,
   opts?: { maxDurationDays?: number; decimals?: OfferPayloadDecimals },
 ): OfferFormError | null {
+  return (
+    validateOfferTerms(s, opts) ??
+    (s.riskAndTermsConsent ? null : { code: 'riskAndTermsConsentRequired' })
+  );
+}
+
+/**
+ * {@link validateOfferForm} without the consent: the terms alone, for a
+ * flow whose review holds the consent itself (#1696) and gates signing on
+ * it there.
+ */
+export function validateOfferTerms(
+  s: OfferTerms,
+  opts?: { maxDurationDays?: number; decimals?: OfferPayloadDecimals },
+): OfferFormError | null {
   const maxDurationDays = opts?.maxDurationDays ?? MAX_OFFER_DURATION_DAYS;
   if (!ADDRESS_RE.test(s.lendingAsset)) return { code: 'lendingAssetInvalid' };
   if (!s.amount || Number(s.amount) <= 0) return { code: 'amountNonPositive' };
@@ -338,9 +378,6 @@ export function validateOfferForm(
   }
   if (s.prepayAsset && !ADDRESS_RE.test(s.prepayAsset)) {
     return { code: 'prepayAssetInvalid' };
-  }
-  if (!s.riskAndTermsConsent) {
-    return { code: 'riskAndTermsConsentRequired' };
   }
   // Range Orders Phase 1 — when an upper bound is populated it must
   // be ≥ the corresponding minimum. Empty bounds auto-collapse and

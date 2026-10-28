@@ -14,6 +14,8 @@ l'application. Chaque section correspond à une icône d'information
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Tableau de bord
 
 <a id="dashboard.your-vault"></a>
@@ -208,6 +210,8 @@ qu'ils ouvrent le Centre de réclamations.
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Carnet d'offres
 
 <a id="offer-book.filters"></a>
@@ -314,6 +318,8 @@ vie du prêt — le refinancement crée un nouveau prêt plutôt que de
 modifier celui existant.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Créer une offre
 
@@ -750,6 +756,8 @@ conflit distinctes, surfacées à différentes étapes du protocole :
   séparé.
 
 
+<a id="chapter.claim-center"></a>
+
 ## Centre de réclamations
 
 <a id="claim-center.claims"></a>
@@ -845,6 +853,8 @@ la créance, pas le NFT.
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activité
 
 <a id="activity.feed"></a>
@@ -862,6 +872,8 @@ liquidations, mints / burns de NFT, et dépôts / retraits de VPFI
 en vault.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -914,63 +926,43 @@ l'ancien tier s'applique encore.
 
 <a id="buy-vpfi.cross-chain-tier"></a>
 
-### Comment ton tier VPFI voyage entre les chains
+### Comment ton tier VPFI voyage entre les chaînes
 
-Tu déposes du VPFI dans ton vault sur Base — Base est la chain
-canonique qui détient l'état de ton accumulateur. Quand tu agis sur une
-autre chain (emprunter sur Sepolia, prêter sur Arbitrum, etc.), cette
-chain lit une copie *en cache* de ton tier. Le cache est tenu à jour
-par un push inter-chains : dès que ton tier effectif change sur Base,
-ta PROCHAINE action côté Base diffuse un message CCIP vers chaque chain
-miroir où tu pourrais agir. Le push voyage avec chaque action Base
-ordinaire — et depuis T-087 Sub 4 le Dashboard expose aussi un bouton
-« Pousser mon tier vers les miroirs maintenant » (qui appelle
-`pokeMyTier()`) pour forcer l'envoi sans muter le vault. Pour le
-parcours complet, y compris le consentement local et les exigences de
-VPFI local sur les chains miroirs, vois le chapitre « How VPFI
-Discounts Work » — actuellement présent uniquement dans le guide
-anglais.
+Tu détiens tes VPFI dans ton vault sur Base, la chaîne canonique, et
+c'est Base qui calcule ton tier. Quand tu empruntes ou prêtes sur une
+autre chaîne, celle-ci applique une copie de ton tier, que Base envoie
+via Chainlink CCIP après chaque dépôt, retrait ou autre action qui le
+modifie.
 
 Trois choses à savoir :
 
-- **La maturation du tier demande une action de suivi.** Ton premier
-  stake ne diffuse PAS immédiatement : ton tier effectif est bridé par
-  une période d'historique minimale (3 jours par défaut), si bien qu'un
-  stake récent se résout d'abord en tier 0 et que la diffusion est
-  silencieusement sautée. Une fois la période écoulée, la barrière
-  s'ouvre aussitôt sur Base, mais les miroirs ne l'apprennent qu'au
-  moment où ta PROCHAINE action Base porteuse du rollup (tout dépôt,
-  retrait ou action de prêt — tout ce qui mute ton vault sur Base) OU
-  un clic sur « Pousser mon tier vers les miroirs maintenant » dans le
-  Dashboard (Sub 4) déclenche un push. Un top-up de 1 wei suffit aussi.
-- **Temps de propagation.** Une fois le push envoyé, il atterrit
-  généralement sur le miroir en quelques minutes via CCIP. D'ici là, le
-  miroir honore toujours ton tier mis en cache précédemment — il n'y a
-  pas de retour momentané au tier 0.
-- **Expiration du cache.** Un tier en cache reste honoré jusqu'à ce que
-  (a) un nouveau push arrive, (b) la gouvernance fasse passer la table
-  des seuils de tier à une nouvelle version et que la version suivie
-  par le miroir augmente (ce qui se produit la première fois que le
-  push post-bump de N'IMPORTE QUEL utilisateur atteint ce miroir — les
-  utilisateurs dormants sans activité récente sur Base perdent eux
-  aussi, à cet instant, leur remise en cache de l'ancienne version,
-  jusqu'à ce que leur propre push suivant les rattrape), ou (c) le cache
-  dépasse sa limite d'âge maximale (60 jours par défaut). Si tu n'agis
-  pas pendant longtemps sur une chain donnée, ton cache y finira par
-  expirer et la chain te traitera comme tier 0 jusqu'au push suivant.
-  Pour le rafraîchir, effectue n'importe quelle action Base porteuse du
-  rollup qui produise un nouveau tuple de push — une mutation de solde
-  changeant de tier, OU N'IMPORTE QUELLE action Base après un
-  changement de version de la table de gouvernance. Un rollup « no-op »
-  au même tuple NE renverra PAS de push — c'est voulu, pour ne pas
-  brûler le budget de diffusion du protocole sur des caches déjà
-  corrects.
+- **Un tier qui monte avec le seul passage du temps a besoin d'une
+  action sur Base pour voyager.** Quand ta période de détention se
+  termine, ou que ta moyenne rattrape ton solde, sans dépôt ni
+  retrait, le chiffre de Base est à jour tout de suite. Les autres
+  chaînes l'apprennent avec ton prochain dépôt ou retrait sur Base,
+  quel qu'en soit le montant.
+- **Un tier plus bas voyage en premier.** Le protocole envoie un tier
+  plus bas immédiatement et ne paie un tier plus haut qu'au plus une
+  fois par jour et par chaîne. La livraison via CCIP prend ensuite
+  quelques minutes en général. Tant qu'elle n'est pas arrivée, la
+  chaîne continue d'appliquer ton tier précédent.
+- **Une copie peut expirer.** Après 60 jours sans nouvelle copie (la
+  valeur par défaut), ou dès qu'un changement de la table des tiers
+  atteint cette chaîne, l'ancienne copie ne donne plus de remise sur
+  cette chaîne. Une nouvelle copie n'est envoyée que lorsque ton tier
+  change.
 
-Si les barrières exactes que le cache applique pour détecter la
-péremption t'intéressent, vois la
-[functional spec de propagation du tier inter-chains](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/CrossChainTierPropagation.md).
+Les règles complètes, y compris l'interrupteur de remise qu'il te
+faut sur Base comme sur la chaîne que tu utilises, sont dans le
+chapitre « Comment fonctionnent les remises VPFI » plus bas. La
+conception de la livraison est décrite dans le
+[document de conception de la livraison des tiers](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/TierPushDeliveryDesign.md)
+(en anglais).
 
 ---
+
+<a id="chapter.rewards"></a>
 
 ## Récompenses
 
@@ -1011,6 +1003,8 @@ retiré sort de l'accumulateur de remise immédiatement (refixation
 après solde sur chaque prêt ouvert).
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Détails du prêt
 
@@ -1292,6 +1286,8 @@ prix matched.
 
 ---
 
+<a id="chapter.how-liquidation-actually-works"></a>
+
 ## Comment fonctionne réellement la liquidation
 
 Les Avertissements de Risque que tu as acceptés au moment de l'offre résument le résultat dans le pire des cas en deux phrases. Cette section explique la mécanique sous-jacente — utile si tu veux comprendre POURQUOI le secours en nature (in-kind fallback) existe, ou laquelle des quatre branches ton prêt prendrait réellement.
@@ -1396,6 +1392,8 @@ Si aucune contrepartie opposée n'existe, le protocole se replie sur le chemin d
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -1417,6 +1415,8 @@ place, donc une liste propre ici n'empêche pas les dépôts
 futurs.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alertes
 
@@ -1461,6 +1461,8 @@ actuellement stubée en attendant la création du canal.
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## Vérificateur de NFT
 
 <a id="nft-verifier.lookup"></a>
@@ -1487,6 +1489,8 @@ Le NFT de position est l'instrument au porteur — vérifie avant
 d'acheter sur un marché secondaire.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Paramètres des keepers
 
@@ -1538,73 +1542,117 @@ il n'y a pas de période d'attente.
 
 ---
 
+<a id="chapter.public-analytics-dashboard"></a>
+
 ## Tableau de bord d'analytique publique
 
 <a id="public-dashboard.overview"></a>
 
-### À propos de l'analytique publique
+### À propos de Public Analytics
 
-Un agrégateur sans wallet calculé en direct à partir d'appels
-view du protocole on-chain sur chaque chaîne supportée. Pas de
-backend, pas de base de données. Export CSV / JSON disponible ;
-l'adresse du protocole plus la fonction view qui supporte chaque
-métrique sont affichées pour la vérifiabilité.
+Une page sans wallet, sur une seule chaîne : elle lit la chaîne
+vers laquelle pointe l'app (la chaîne de lecture par défaut sans
+wallet connecté). Pas d'agrégat multi-chaînes ni d'export ; pour
+comparer des chaînes, ouvre la page sur chacune. Deux sources,
+chacune signalée là où elle sert :
 
-<a id="public-dashboard.combined"></a>
+- l'API de lecture de l'indexeur, sans clé et en CORS ouvert — les
+  chiffres des prêts, des offres, du recyclage et du bouclage ;
+- les fonctions de lecture du Diamond lui-même via un RPC public —
+  les chiffres du jeton VPFI et des frais.
 
-### Combiné — Toutes les chaînes
+Chaque source peut être interrogée directement pour reproduire ce
+que montre la page.
 
-Rollup cross-chain. L'en-tête rapporte combien de chaînes ont
-été couvertes et combien ont échoué, donc un RPC inaccessible
-au moment de la récupération est explicite. Quand une ou plusieurs
-chaînes ont échoué, le tableau par chaîne signale laquelle —
-les totaux TVL sont quand même rapportés, mais reconnaissent
-l'écart.
+<a id="public-dashboard.loans-offers"></a>
 
-<a id="public-dashboard.per-chain"></a>
+### Prêts et offres
 
-### Détail par chaîne
+Compteurs de prêts par statut depuis `/loans/stats`, y compris
+les catégories règlement en attente, appariés en interne et reste,
+pour que les parties fassent le total ; les sous-totaux ERC-20 et
+location de NFT, en nommant à part tout prêt actif dont le type
+d'actif n'est pas encore lu ; et les compteurs d'offres depuis
+`/offers/stats`. Les offres ne sont que la table `offers` — les
+ordres signés sans gas ne sont pas comptés — et les offres
+annulées sortent de l'index, donc le total des offres n'est pas
+un chiffre historique. Un compteur absent affiche « non fourni »
+et un compteur impossible « fourni, mais pas un nombre
+utilisable » ; aucun n'est affiché comme 0.
 
-Ventilation par chaîne des métriques combinées. Utile pour
-repérer une concentration de TVL, des supplies mirror VPFI
-incohérents (la somme des supplies mirror devrait égaler le
-solde verrouillé de l'adaptateur canonique), ou des chaînes à
-l'arrêt.
+<a id="public-dashboard.recycling"></a>
 
-<a id="public-dashboard.vpfi-transparency"></a>
+### Compte de recyclage et bouclage
 
-### Transparence du token VPFI
-
-Comptabilité VPFI on-chain sur la chaîne active :
-
-- Offre totale, lue directement depuis l'ERC-20.
-- Offre circulante — offre totale moins les soldes détenus par
-  le protocole (trésorerie, pools de récompenses, paquets du
-  pont in-flight).
-- Plafond de minting restant — n'a de sens que sur la chaîne
-  canonique ; les chaînes mirror rapportent « n/a » pour le
-  plafond car les mints y sont pilotés par le pont, pas mintés
-  depuis le plafond.
-
-Invariant cross-chain : la somme des supplies mirror sur toutes
-les chaînes mirror égale le solde verrouillé de l'adaptateur
-canonique. Un watcher surveille cela et alerte sur la dérive.
+Le compte de recyclage (`/metrics/recycling`) liste pour chaque
+jour du programme la réserve, son financement et le prélèvement,
+étiquetés par l'index de jour propre au programme ; un jour non
+finalisé apparaît sans réserve et un jour non armé est marqué
+comme estimation. Le bouclage (`/metrics/loop-closure`) montre,
+par jour UTC, ce que les réclamations ont versé, ce qui est resté
+dans les vaults et ce qui a été absorbé, au regard du moment
+jusqu'où va l'enregistrement. Les montants positifs sous la
+précision affichée sont signalés, les parts arrondies vers le bas,
+et un chiffre inconnu n'est jamais affiché comme zéro.
 
 <a id="public-dashboard.transparency"></a>
 
-### Transparence & Source
+### Transparence & source
 
-Pour chaque métrique, la page liste :
+L'adresse du Diamond avec un lien d'explorateur, la chaîne, ainsi
+que le bloc et l'âge du curseur de l'indexeur. Chaque chiffre de
+l'indexeur est à jour autant que ce curseur, pas plus ; quand deux
+réponses sont combinées, c'est le curseur le plus ancien qui est
+indiqué.
 
-- Le numéro de bloc utilisé comme instantané.
-- Fraîcheur des données (ancienneté maximale parmi les chaînes).
-- L'adresse du protocole et l'appel de fonction view.
+<a id="public-dashboard.vpfi-transparency"></a>
 
-N'importe qui peut redériver n'importe quel chiffre de cette
-page depuis RPC + bloc + adresse du protocole + nom de
-fonction — c'est le standard.
+### Jeton VPFI
+
+Depuis `getVPFISnapshot()` sur le Diamond : l'adresse du jeton et
+`totalSupply` sur cette chaîne. Sur la chaîne canonique, aussi le
+plafond, la marge (`cap − totalSupply`, ce qui peut encore être
+émis) et le minter. Sur une chaîne miroir, l'instantané ne porte
+ni plafond ni minter — l'offre y arrive par le token pool CCIP —,
+donc la page montre l'offre locale et dit que le plafond et le
+minter appartiennent à la chaîne canonique, plutôt que d'afficher
+des zéros. Un jeton non lié et un instantané illisible sont
+signalés séparément.
+
+<a id="public-dashboard.fees"></a>
+
+### Frais et trésorerie
+
+Depuis `getTreasuryMetrics()`, `getTreasury()` et
+`getNumeraireSymbol()`, lus dans le même agrégat Multicall3 que
+l'instantané et figés sur un bloc, que la page indique avec son
+âge :
+
+- les frais depuis le début du registre des frais, et sur les
+  dernières 24 heures et 7 jours, chacun évalué dans le numéraire
+  à l'enregistrement et jamais réévalué ;
+- un frais que le protocole n'a pas pu évaluer à l'enregistrement
+  est inscrit à 0, et les sommes de fenêtre parcourent au plus les
+  10 000 dernières entrées — les deux ne peuvent que sous-estimer,
+  et la page le dit ;
+- un changement de numéraire laisse les entrées antérieures dans
+  l'ancienne unité, si bien qu'ensuite les totaux additionnent des
+  montants en deux unités sous le symbole actuel et peuvent
+  s'écarter dans un sens comme dans l'autre ; la page dit que les
+  frais antérieurs sont comptés dans l'ancienne unité ;
+- l'adresse de trésorerie. Si c'est une adresse externe, les frais
+  partent à la perception et aucun solde n'est affiché pour elle.
+  Si le Diamond est sa propre trésorerie, le montant détenu est
+  affiché, évalué seulement sur les actifs présents dans des
+  prêts ouverts et incluant les montants placés ailleurs pour le
+  compte de la trésorerie.
+
+Une fonction qui échoue affiche « n'a pas pu être lu » et ne
+masque pas les autres.
 
 ---
+
+<a id="chapter.refinance"></a>
 
 ## Refinancer
 
@@ -1661,6 +1709,8 @@ Règlement atomique après que le nouveau prêteur a accepté :
 Revert si HF sous les nouvelles conditions serait inférieur à 1,5.
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Clôture anticipée
 
@@ -1719,6 +1769,8 @@ Balancer V2).
 
 ---
 
+<a id="chapter.early-withdrawal-lender"></a>
+
 ## Retrait anticipé (prêteur)
 
 Cette page est réservée aux prêteurs — le retrait anticipé est
@@ -1760,6 +1812,8 @@ keeper détenant la permission « finaliser une vente de prêt » ;
 l'étape d'initiation reste réservée à l'utilisateur.
 
 ---
+
+<a id="chapter.stuck-token-recovery"></a>
 
 ## Récupération de jetons bloqués
 
@@ -1822,3 +1876,212 @@ Deux résultats possibles :
 Si tu souhaites un enregistrement public on-chain affirmant qu'un certain solde de jetons dans ton vault n'est PAS le tien, le protocole fournit une fonction `disown(token)`. Elle émet un événement (`TokenDisowned`) et ne change rien d'autre — les jetons restent dans l'vault comme avant. Utile lors de litiges de conformité si un CEX ou un régulateur demande « avez-vous reçu ces fonds ? » : tu peux pointer vers l'événement on-chain.
 
 La fonction disown est exposée uniquement via un appel direct au contrat pour l'instant ; le frontend Vaipakam ne la propose pas sous forme de bouton. Utilise l'interface « Write Contract » d'un explorateur de blocs ou un outil d'interaction avec les contrats pour l'appeler.
+
+<a id="chapter.how-vpfi-discounts-work"></a>
+
+## Comment fonctionnent les remises VPFI
+
+Les VPFI détenus dans ton vault sur Base, la chaîne canonique, te
+donnent droit à une remise sur les frais du protocole, sur toutes les
+chaînes où la plateforme fonctionne. Plus tu en détiens, et plus
+longtemps, plus ton tier est élevé et plus la remise est grande. Les
+tiers figurent dans l'[échelle de tiers](#dashboard.fee-discount-consent)
+plus haut ; la gouvernance peut les modifier.
+
+Ce que la remise réduit :
+
+- **En tant que prêteur**, la commission de rendement que le protocole
+  prélève sur les intérêts que tu gagnes. Elle est lue à chaque
+  règlement d'intérêts, par exemple au remboursement, à la clôture
+  anticipée ou au refinancement, selon ton tier à ce moment-là, et non
+  selon ton tier au début du prêt.
+- **En tant qu'emprunteur**, le Loan Initiation Fee prélevé au
+  démarrage du prêt. Elle est lue une seule fois, à l'acceptation, et
+  reste attachée à ce prêt. Elle ne s'applique que si l'actif prêté est
+  liquide ; un prêt illiquide paie les frais complets.
+
+La remise est déduite des frais eux-mêmes, dans l'actif du prêt, et
+aucun VPFI ne quitte ton vault pour cela. La seule exception est la
+remise du prêteur sur un déploiement qui configure une référence de
+prix VPFI : elle peut alors être réglée en VPFI depuis ton vault.
+Aucune n'est configurée au lancement. Ce chapitre traite de cette
+remise de détention. Un mode de frais payant distinct, « Full », reste
+désactivé tant qu'un déploiement ne l'active pas.
+
+<a id="vpfi-discounts.turning-on"></a>
+
+### Activer la remise
+
+La remise est facultative (opt-in). L'interrupteur se trouve sur la
+page VPFI, et il y en a un par chaîne, car chaque chaîne garde son
+propre réglage :
+
+- **Sur la chaîne où les frais sont prélevés**, l'interrupteur doit
+  être activé, sinon cette chaîne prélève les frais complets quel que
+  soit ton tier.
+- **Sur Base**, l'interrupteur doit aussi être activé, même si tu n'y
+  empruntes ni n'y prêtes jamais. Tant qu'il est désactivé, Base envoie
+  à toutes les autres chaînes un tier zéro pour toi.
+
+Quand tu désactives la remise sur Base, l'application enchaîne avec une
+mise à jour de tier pour que toutes les autres chaînes cessent aussi de
+l'appliquer : Base leur envoie alors un tier zéro pour toi. Si cette
+deuxième étape échoue, la page le dit, et les autres chaînes gardent ton
+dernier tier jusqu'à ce qu'une nouvelle mise à jour soit envoyée. La
+désactiver sur une autre chaîne ne change que cette chaîne.
+
+Les VPFI comptent quand le protocole les enregistre dans ton vault :
+ceux que tu déposes via la page VPFI, et les récompenses VPFI que le
+protocole verse dans ton vault. Les jetons envoyés directement à
+l'adresse de ton vault ne sont pas suivis par le protocole et
+n'augmentent pas ton tier.
+
+<a id="vpfi-discounts.tier-calculation"></a>
+
+### Comment ton tier est calculé
+
+Ton tier résulte de trois vérifications distinctes, et les trois
+doivent passer :
+
+1. **Une période de détention minimale.** Ton tier reste à zéro tant
+   que ta détention actuelle n'a pas duré au moins 3 jours. Une
+   détention commence au moment où le solde de ton vault passe
+   au-dessus de zéro et dure jusqu'à ce qu'il revienne à zéro. Y
+   ajouter des VPFI ne remet pas le compteur à zéro ; tout retirer, si.
+   (3 jours est la valeur par défaut ; la gouvernance peut la fixer
+   entre 2 et 14.)
+2. **Une moyenne pondérée vers le récent.** Ton solde est moyenné sur
+   les 30 derniers jours, les 7 derniers jours comptant trois fois plus
+   que les précédents. La moyenne ne remonte jamais avant le début de
+   ta détention actuelle, si bien qu'un nouveau détenteur n'est pas
+   pénalisé par des jours où il ne détenait rien. (La fenêtre, le
+   nombre de jours récents et le poids sont des paramètres de
+   gouvernance ; la fenêtre peut aller de 14 à 30 jours.)
+3. **Le tier le plus bas que tu as touché.** Indépendamment de la
+   moyenne, ton tier ne peut pas dépasser le tier le plus bas atteint
+   par ton solde pendant la détention actuelle, en remontant au plus
+   30 jours en arrière. C'est le point le plus bas de chaque jour qui
+   compte : une baisse suivie d'une remontée dans la même journée
+   compte quand même comme une baisse.
+
+Ce que cela signifie en pratique :
+
+- Un dépôt juste avant le règlement d'un prêt ne relève pas ton tier
+  tout de suite. Le montant ajouté doit d'abord entrer dans la
+  moyenne, et le point le plus bas que tu as touché te plafonne
+  toujours.
+- Un retrait qui te fait passer sous le seuil d'un tier fait baisser
+  ton tier immédiatement.
+- Une baisse vieille de plus de 30 jours ne te plafonne plus.
+
+<a id="vpfi-discounts.other-chains"></a>
+
+### Ton tier sur les autres chaînes
+
+Base calcule ton tier. Toutes les autres chaînes appliquent une copie
+que Base leur envoie via Chainlink CCIP. Base met à jour ton
+enregistrement de tier quand l'un de ces événements se produit sur Base
+: des VPFI entrent dans ton vault ou en sortent (un dépôt, un retrait ou
+une récompense versée dedans) ; un prêt démarre avec toi comme prêteur
+ou emprunteur ; une étape d'un prêt bloque ou libère des VPFI à toi ; ou
+tu fais l'appel de rafraîchissement du tier. Chaque mise à jour envoie
+une nouvelle copie aux autres chaînes quand la copie changerait.
+
+Chaque chaîne est livrée séparément. Une chaîne injoignable ne retient
+pas les autres, et **une livraison qui ne peut pas partir ne fait
+jamais échouer ta propre action** : ton tier sur Base est à jour tout
+de suite, et la mise à jour reste due à chaque autre chaîne jusqu'à ce
+qu'elle arrive.
+
+Le protocole paie ces livraisons, avec une limite :
+
+- **Un tier plus bas** est envoyé immédiatement, tant que le budget
+  peut le payer. En attendant qu'il arrive, la chaîne continue
+  d'appliquer ton tier précédent, plus élevé.
+- **Un tier plus haut**, ou un changement de la table des tiers, est
+  payé au plus une fois par jour et par chaîne (un paramètre de
+  gouvernance entre 1 heure et 7 jours). D'ici là, la chaîne garde ton
+  tier précédent.
+- Une mise à jour retenue par cette attente, ou que le budget n'a pas
+  pu payer, **n'est pas renvoyée d'elle-même à la fin de l'attente**. Elle
+  part avec la prochaine mise à jour de votre enregistrement de palier sur
+  Base, ou lorsque quelqu'un effectue l'appel de livraison pour vous.
+- N'importe qui peut effectuer cet appel. Une fois l'attente passée, et
+  si le budget peut payer, le protocole paie ; avant cela, l'appelant paie
+  les frais cross-chain pour livrer plus tôt. Les contrats proposent cet
+  appel ; l'application ne le propose pas encore.
+
+Une copie cesse de compter, et la chaîne ne donne alors aucune remise,
+quand :
+
+- elle est plus ancienne que l'âge maximal de la chaîne (60 jours par
+  défaut, jamais moins de 30) ; ou
+- elle a été faite avec une table des tiers plus ancienne que celle que
+  la chaîne connaît désormais.
+
+Une copie n'est renvoyée que si quelque chose en elle changerait : ton
+tier, sa remise, sa durée de validité ou la version de la table des
+tiers. Après un changement de la table des tiers, la prochaine mise à
+jour de ton enregistrement de tier sur Base envoie donc une copie neuve
+à chaque chaîne, même si ton tier reste le même, sauf s'il vaut zéro. Si
+rien de tout cela n'a changé, une chaîne dont la copie a expiré
+n'applique aucune remise jusqu'à ce que quelque chose change.
+
+Si ton tier monte uniquement parce que le temps a passé — la période de
+détention est terminée, ou la moyenne a rattrapé ton solde —, rien sur
+Base ne s'en aperçoit avant la prochaine mise à jour de ton
+enregistrement de tier. L'appel de rafraîchissement du tier fait cette
+mise à jour quand tu le veux ; l'application ne le fait pour toi que
+lorsque tu désactives la remise.
+
+<a id="vpfi-discounts.operators"></a>
+
+### Pour les opérateurs
+
+La partie cross-chain de la remise nécessite la configuration
+suivante. Elle est listée ici pour quiconque exploite son propre
+déploiement.
+
+**Sur Base :**
+
+- `VPFITokenFacet.setCanonicalVPFIChain(true)`. Sans cela, Base
+  calcule les tiers mais ne les envoie nulle part.
+- `RewardReporterFacet.setRewardMessenger` pointant vers le
+  `VaipakamRewardMessenger`, et `setBroadcastDestinations` sur le
+  messenger, listant toutes les autres chaînes.
+- Un budget de diffusion alimenté :
+  `ProtocolBroadcastFacet.topUpBroadcastBudget()` (payable). Un budget
+  vide ne bloque rien. Chaque livraison qu'il ne peut pas payer reste
+  due et émet `TierPushDeferred` avec la raison, et
+  `getTierPushStatus(user)` montre l'état de chaque chaîne pour un
+  utilisateur. Un budget insuffisant signifie que les autres chaînes
+  appliquent d'anciens tiers plus longtemps : surveille les reports et
+  réalimente.
+- La fenêtre d'espacement des hausses payées : `setTierPushSpacingSec`
+  (1 jour par défaut, de 1 heure à 7 jours).
+
+**Sur chaque autre chaîne :**
+
+- `RewardReporterFacet.setRewardMessenger(addr)` : le seul expéditeur
+  dont la chaîne accepte les mises à jour de tier.
+- `RewardReporterFacet.setBaseChainId(chainId)` : l'identifiant de
+  chaîne EVM de Base (8453 sur mainnet, 84532 sur Base Sepolia), et non
+  son sélecteur de chaîne CCIP.
+- `ConfigFacet.setMirrorTierMaxAgeSec(seconds)` : la durée pendant
+  laquelle une copie compte (60 jours par défaut ; les valeurs
+  inférieures à 30 jours sont refusées). Une baisse prend effet à la
+  lecture suivante.
+
+**Modifier la table des tiers :**
+
+- `setVpfiTierThresholds` et `setVpfiTierDiscountBps` sur Base font
+  avancer la version de la table. Une autre chaîne apprend la nouvelle
+  version par la première mise à jour de tier qui la porte, quel que
+  soit l'utilisateur. À partir de là, toute copie faite avec l'ancienne
+  table vaut zéro remise jusqu'à ce que la mise à jour propre à cet
+  utilisateur arrive, et ces mises à jour sont des hausses payées au
+  plus une fois par fenêtre d'espacement. Alimente le budget avant de
+  modifier la table.
+- `setTwaMinStakedDays` modifie la période de détention minimale sans
+  faire avancer la version. Le changement prend effet à la lecture
+  suivante.

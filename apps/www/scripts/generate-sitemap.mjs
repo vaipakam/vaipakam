@@ -9,10 +9,11 @@
  * the same pass guarantees they agree.
  *
  * Output:
- *   - apps/www/public/sitemap.xml — every (route × translated-locale)
- *     pair, with `<xhtml:link rel="alternate" hreflang>` siblings so
- *     Google indexes each locale variant as part of one page-group
- *     instead of treating them as duplicates.
+ *   - apps/www/public/sitemap.xml — every INDEXED (route × locale)
+ *     copy (`indexedLocales` in seo-routes.mjs, #1314), with
+ *     `<xhtml:link rel="alternate" hreflang>` siblings so Google
+ *     indexes each locale variant as part of one page-group instead
+ *     of treating them as duplicates.
  *   - apps/www/public/robots.txt — opens crawling for every UA and
  *     points at the sitemap.
  *
@@ -54,7 +55,7 @@ import { fileURLToPath } from 'node:url';
 // Route × locale registry — shared with prerender.mjs so the sitemap
 // and the prerendered page set can't drift apart. See seo-routes.mjs
 // for the sync contracts (TRANSLATED_LOCALES / App.tsx).
-import { LOCALES, ROUTES, EN_ONLY_ROUTES, localizedPath } from './seo-routes.mjs';
+import { ROUTES, indexedLocales, localizedPath } from './seo-routes.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -81,19 +82,26 @@ function buildSitemap() {
       'xmlns:xhtml="http://www.w3.org/1999/xhtml">',
   );
 
+  let urls = 0;
   for (const route of ROUTES) {
-    for (const locale of LOCALES) {
+    // Only the INDEXED copies (#1314): a copy whose body fell back to
+    // English canonicalises to the English page and is not advertised.
+    const indexed = indexedLocales(route);
+    for (const locale of indexed) {
+      urls += 1;
       const loc = `${ORIGIN}${localizedPath(route, locale)}`;
       lines.push('  <url>');
       lines.push(`    <loc>${escapeXml(loc)}</loc>`);
       lines.push(`    <lastmod>${today}</lastmod>`);
       // Per-locale alternates — every URL in this <url> entry's
-      // group lists every other locale's variant as an alternate,
-      // plus an x-default pointing at the English (root) variant.
-      // Google uses these to dedupe locale variants under one
-      // canonical group instead of treating them as duplicate
-      // content competing for ranking.
-      for (const alt of LOCALES) {
+      // group lists every other indexed copy as an alternate, plus
+      // an x-default pointing at the English (root) variant. Google
+      // uses these to dedupe locale variants under one canonical
+      // group instead of treating them as duplicate content
+      // competing for ranking. A page indexed in English alone has
+      // no group, so it carries none (the same rule the pages'
+      // own hreflang follows, in src/lib/usePageMeta.ts).
+      for (const alt of indexed.length > 1 ? indexed : []) {
         const altLoc = `${ORIGIN}${localizedPath(route, alt)}`;
         lines.push(
           `    <xhtml:link rel="alternate" hreflang="${alt}" href="${escapeXml(
@@ -101,12 +109,14 @@ function buildSitemap() {
           )}" />`,
         );
       }
-      const xDefault = `${ORIGIN}${localizedPath(route, 'en')}`;
-      lines.push(
-        `    <xhtml:link rel="alternate" hreflang="x-default" href="${escapeXml(
-          xDefault,
-        )}" />`,
-      );
+      if (indexed.length > 1) {
+        const xDefault = `${ORIGIN}${localizedPath(route, 'en')}`;
+        lines.push(
+          `    <xhtml:link rel="alternate" hreflang="x-default" href="${escapeXml(
+            xDefault,
+          )}" />`,
+        );
+      }
       // Priority + changefreq are advisory — Google ignores them
       // in 2026 — but Bing / Yandex / DuckDuckGo still consult
       // them. Landing page is highest, docs medium, legal lowest.
@@ -120,19 +130,8 @@ function buildSitemap() {
     }
   }
 
-  // English-only routes (see EN_ONLY_ROUTES in seo-routes.mjs): one
-  // URL, no locale alternates — the content has no localized variant
-  // to advertise.
-  for (const route of EN_ONLY_ROUTES) {
-    lines.push('  <url>');
-    lines.push(`    <loc>${escapeXml(`${ORIGIN}${route}`)}</loc>`);
-    lines.push(`    <lastmod>${today}</lastmod>`);
-    lines.push('    <priority>0.5</priority>');
-    lines.push('  </url>');
-  }
-
   lines.push('</urlset>');
-  return lines.join('\n') + '\n';
+  return { xml: lines.join('\n') + '\n', urls };
 }
 
 function buildRobots() {
@@ -157,11 +156,12 @@ function main() {
   mkdirSync(publicDir, { recursive: true });
   const sitemapPath = resolve(publicDir, 'sitemap.xml');
   const robotsPath = resolve(publicDir, 'robots.txt');
-  writeFileSync(sitemapPath, buildSitemap(), 'utf8');
+  const sitemap = buildSitemap();
+  writeFileSync(sitemapPath, sitemap.xml, 'utf8');
   writeFileSync(robotsPath, buildRobots(), 'utf8');
   // eslint-disable-next-line no-console
   console.log(
-    `[sitemap] wrote ${sitemapPath} (${ROUTES.length} routes × ${LOCALES.length} locales + ${EN_ONLY_ROUTES.length} en-only = ${ROUTES.length * LOCALES.length + EN_ONLY_ROUTES.length} URLs)`,
+    `[sitemap] wrote ${sitemapPath} (${sitemap.urls} indexed URLs across ${ROUTES.length} routes)`,
   );
   // eslint-disable-next-line no-console
   console.log(`[sitemap] wrote ${robotsPath}`);

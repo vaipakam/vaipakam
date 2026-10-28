@@ -14,6 +14,8 @@ titre d'une carte.
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Tableau de bord
 
 <a id="dashboard.your-vault"></a>
@@ -123,6 +125,8 @@ d'historique à montrer.
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Carnet d'offres
 
 <a id="offer-book.filters"></a>
@@ -180,6 +184,8 @@ frais du protocole laisse un prêt déjà ouvert au taux avec lequel il a
 commencé.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Créer une offre
 
@@ -338,6 +344,8 @@ risque pour une première offre.
 
 ---
 
+<a id="chapter.claim-center"></a>
+
 ## Centre de réclamations
 
 <a id="claim-center.claims"></a>
@@ -403,6 +411,8 @@ prendre le NFT pour une promesse.
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activité
 
 <a id="activity.feed"></a>
@@ -418,6 +428,8 @@ plus récents en premier, regroupés par transaction pour que les
 choses faites en un même clic restent ensemble.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -466,6 +478,8 @@ instant.
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Récompenses
 
 <a id="rewards.overview"></a>
@@ -491,6 +505,8 @@ ne devient effective que peu après la fermeture de la prochaine
 fenêtre journalière.
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Détails du prêt
 
@@ -618,6 +634,8 @@ info-bulle expliquant pourquoi.
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -636,6 +654,8 @@ Une liste d'approbations propre est une habitude d'hygiène — comme
 sur Uniswap ou 1inch.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alertes
 
@@ -674,6 +694,8 @@ dans ton wallet), ou les deux. Les deux canaux partagent la même
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## Vérificateur de NFT
 
 <a id="nft-verifier.lookup"></a>
@@ -692,6 +714,8 @@ un faux — ou une position déjà réglée — t'évite la mauvaise
 transaction.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Paramètres des keepers
 
@@ -721,57 +745,82 @@ totalement, retire-le de la liste.
 
 ---
 
+<a id="chapter.public-analytics-dashboard"></a>
+
 ## Tableau de bord d'analytique publique
 
 <a id="public-dashboard.overview"></a>
 
-### À propos de l'analytique publique
+### À propos de Public Analytics
 
-Une vue transparente, sans wallet, de tout le protocole : total
-value locked, volumes de prêts, taux de défaut, offre VPFI,
-activité récente. Le tout calculé en direct à partir des données
-on-chain — il n'y a aucune base de données privée derrière les
-chiffres de cette page.
+Une vue du protocole sans wallet, sur un réseau : celui que l'app
+lit. Tu n'as rien à connecter. La page s'appuie sur deux sources
+publiques et indique d'où vient chaque chiffre — l'indexeur
+public, que chacun peut interroger sans clé, et le contrat de la
+plateforme lui-même —, pour que tu n'aies jamais à croire un
+chiffre sur parole.
 
-<a id="public-dashboard.combined"></a>
+<a id="public-dashboard.loans-offers"></a>
 
-### Combiné — Toutes les chaînes
+### Prêts et offres
 
-Les totaux à l'échelle du protocole, sommés sur toutes les chaînes
-supportées. La petite ligne "X chaînes couvertes, Y inaccessibles"
-indique si le réseau d'une chaîne était hors ligne au moment du
-chargement de la page — si c'est le cas, la chaîne concernée est
-signalée dans le tableau par chaîne ci-dessous.
+Le nombre de prêts par état (actifs, remboursés, en défaut,
+liquidés, etc.) et d'offres par état, depuis l'indexeur public. Un
+nombre que l'indexeur n'a pas fourni s'affiche « non fourni »,
+jamais zéro. Seules les offres on-chain sont comptées : les ordres
+signés sans gas ne le sont pas ici, même s'ils apparaissent dans
+l'Offer Book. Le total des offres correspond aux offres
+actuellement enregistrées, pas à un total historique.
 
-<a id="public-dashboard.per-chain"></a>
+<a id="public-dashboard.recycling"></a>
 
-### Détail par chaîne
+### Compte de recyclage et bouclage
 
-Les mêmes totaux, ventilés par chaîne. Utile pour voir quelle
-chaîne détient le plus de TVL, où la plupart des prêts se font, ou
-pour repérer quand une chaîne est à l'arrêt.
-
-<a id="public-dashboard.vpfi-transparency"></a>
-
-### Transparence du token VPFI
-
-L'état en direct de VPFI sur cette chaîne — combien existent au
-total, combien circulent réellement (après soustraction des soldes
-détenus par le protocole), et combien restent à minter sous le
-plafond. À travers toutes les chaînes, l'offre reste bornée par
-construction.
+D'où venait la réserve de récompenses de chaque jour et combien
+en a été prélevé, et quelle part du VPFI de récompense versé par
+les réclamations reste dans la plateforme. Ce sont des écritures
+comptables de l'indexeur public ; un chiffre encore inconnu le dit
+au lieu d'afficher zéro.
 
 <a id="public-dashboard.transparency"></a>
 
-### Transparence & Source
+### Transparence & source
 
-Chaque chiffre de cette page peut être redérivé directement depuis
-la blockchain. Cette carte liste le bloc de snapshot, à quel point
-les données sont récentes, et l'adresse du contrat d'où provient
-chaque métrique. Si quelqu'un veut vérifier un chiffre, c'est par
-là qu'il commence.
+L'adresse du contrat de la plateforme, avec un lien pour l'ouvrir
+dans un explorateur de blocs, le réseau, le dernier bloc lu par
+l'indexeur et depuis combien de temps. Les chiffres de l'indexeur
+ne sont à jour que jusqu'à ce bloc, d'où l'affichage de son
+âge.
+
+<a id="public-dashboard.vpfi-transparency"></a>
+
+### Jeton VPFI
+
+Lu directement dans le contrat de la plateforme, pas dans
+l'indexeur : l'adresse du jeton VPFI et son offre sur ce réseau.
+Sur le réseau où VPFI est émis, la page montre aussi le plafond
+d'offre, ce qui peut encore être émis en dessous, et la seule
+adresse autorisée à émettre. Sur un réseau que VPFI atteint par
+pont, elle ne montre que l'offre de ce réseau.
+
+<a id="public-dashboard.fees"></a>
+
+### Frais et trésorerie
+
+Également lus dans le contrat : les frais enregistrés par le
+protocole depuis le début de l'enregistrement, sur le dernier jour
+et sur la dernière semaine, et l'adresse de trésorerie où ils
+vont. La page indique le bloc lu, l'âge de cette lecture et les
+fonctions appelées, et énonce chaque raison pour laquelle les
+chiffres des frais peuvent être inférieurs à ce qui a réellement
+été perçu. Après un changement de devise de référence, les frais
+antérieurs restent dans l'ancienne unité, ce qui peut écarter un
+total dans un sens comme dans l'autre ; la page le dit aussi. Un
+chiffre qui n'a pas pu être lu le dit au lieu d'afficher zéro.
 
 ---
+
+<a id="chapter.refinance"></a>
 
 ## Refinancer
 
@@ -819,6 +868,8 @@ et garde ton collatéral verrouillé tout du long. Une transaction,
 deux états changés, aucune fenêtre d'exposition.
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Clôture anticipée
 
@@ -872,6 +923,8 @@ collatéral en sortie. L'une ou l'autre voie clôt le prêt en
 totalité ; tu ne peux pas faire une demi-clôture en preclose.
 
 ---
+
+<a id="chapter.early-withdrawal-lender"></a>
 
 ## Retrait anticipé (prêteur)
 

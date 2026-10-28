@@ -270,8 +270,7 @@ DEX (0x، 1inch، Uniswap، Balancer)، يأخذ أفضل تنفيذ، يدفع 
 ## ما السلاسل؟
 
 يعمل Vaipakam كنشر مستقل على كل سلسلة مدعومة: **Ethereum**،
-**Base**، **Arbitrum**، **Optimism**، **Polygon zkEVM**،
-**BNB Chain**.
+**Base**، **Arbitrum**، **Optimism**، **Polygon**.
 
 قرض مفتوح على Base يُسوَّى على Base. قرض مفتوح على Arbitrum يُسوَّى
 على Arbitrum. لا دين عبر السلاسل. الشيء الوحيد الذي يعبر السلاسل

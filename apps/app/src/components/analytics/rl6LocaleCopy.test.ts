@@ -39,8 +39,9 @@ import { describe, expect, it } from 'vitest';
 
 const localesDir = resolve(__dirname, '..', '..', 'i18n', 'locales');
 
-/** The sections that render on the two public surfaces. */
-const SECTIONS = ['recycling', 'loopClosure'] as const;
+/** The sections that render on the public surfaces: the recycling account,
+ *  loop closure, and the contract's VPFI token and fee figures (#2437). */
+const SECTIONS = ['recycling', 'loopClosure', 'chainFigures'] as const;
 
 /**
  * Per-locale forbidden vocabulary, by RL-6 rule:
@@ -135,7 +136,7 @@ const bundles = readdirSync(localesDir)
   // to English, which the `en` bundle (the copy.ts template) covers.
   .filter(({ json }) => SECTIONS.some((s) => json.copy?.[s] !== undefined));
 
-describe('RL-6 copy gate across every shipped locale (recycling + loop closure)', () => {
+describe('RL-6 copy gate across every shipped locale (recycling + loop closure + contract figures)', () => {
   it('reads every translating bundle, and every one has a term list', () => {
     // Non-vacuity: the directory scan found English and the nine shipped
     // translations, and none of them is unguarded.

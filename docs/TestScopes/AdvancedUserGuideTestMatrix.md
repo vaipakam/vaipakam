@@ -270,5 +270,5 @@ deployed inside the script for chain-self-containment).
 - **Buy VPFI** flow needs LayerZero endpoint mocks + cross-chain message simulation. Anvil is a single-chain testbed; this belongs in a separate fork test or LZ-multi-chain harness.
 - **Alerts** is a Cloudflare Worker concern (`ops/hf-watcher`); covered by worker integration tests, not the contract test suite.
 - **NFT Verifier** is a pure oracle view (`OracleFacet.checkLiquidity`); already exercised indirectly by every NFT scenario.
-- **Public Analytics Dashboard** is a frontend page reading on-chain metrics; no state change.
+- **Public Analytics Dashboard** is a frontend page reading indexer counts and the Diamond's own view functions; no state change.
 - **Allowances** is a frontend ERC-20 approval-management surface; the contract side is just `IERC20.approve` which has no Vaipakam-specific code path.

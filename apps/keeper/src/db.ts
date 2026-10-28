@@ -913,8 +913,11 @@ function firstReleases(rows: readonly ReleaseEventRow[]): { remitId: number; blo
  *  open from) and `day_dispatch` (a mirror close whose report left through a
  *  messenger other than the one checked) are per-day records like
  *  `day_broadcast`. `scan_cursor` holds how far a pass's bounded reads got
- *  (`scanCursors.ts`), keyed by the pass and its own item name. */
-export type WorkKind = 'delivery_proof' | 'late_ack' | 'day_broadcast' | 'day_zeroed' | 'day_close' | 'day_owed' | 'day_clock' | 'day_dispatch' | 'day_open' | 'scan_cursor';
+ *  (`scanCursors.ts`), keyed by the pass and its own item name. The
+ *  return-transport pass (#2984) records each re-sendable message it sent
+ *  under `return_send` (`item` names the message, `block` is 0), so it is not
+ *  sent again before the indexer has recorded it. */
+export type WorkKind = 'delivery_proof' | 'late_ack' | 'day_broadcast' | 'day_zeroed' | 'day_close' | 'day_owed' | 'day_clock' | 'day_dispatch' | 'day_open' | 'scan_cursor' | 'return_send';
 
 /** The last block the shared indexer has completely recorded on `chainId`
  *  (its `diamond` cursor, advanced only after a whole window is written), or
@@ -1625,6 +1628,23 @@ export async function checkHorizonEntries(db: KeeperD1, chainId: number, diamond
   for (const c of chunkD1InList(entryIds, { before: [nowSec, chainId, diamond.toLowerCase()] })) {
     await db
       .prepare(`UPDATE keeper_horizon_entry SET checked_at = ? WHERE chain_id = ? AND diamond = ? AND entry_id IN (${c.placeholders})`)
+      .bind(...c.binds)
+      .run();
+  }
+}
+
+/** Clear the horizon clock's diagnostics of entries that left it (a
+ *  forfeited entry never expires): their pause count and touch readings, so
+ *  no stale paused-clock report names them. Their queue row, and with it any
+ *  close-out still owed, stays. */
+export async function retireHorizonClock(db: KeeperD1, chainId: number, diamond: string, entryIds: readonly number[]): Promise<void> {
+  if (entryIds.length === 0) return;
+  for (const c of chunkD1InList(entryIds, { before: [chainId, diamond.toLowerCase()] })) {
+    await db
+      .prepare(
+        `UPDATE keeper_horizon_entry SET paused_runs = 0, touched_at = 0, expires_at = 0, prev_touched_at = 0, prev_expires_at = 0
+          WHERE chain_id = ? AND diamond = ? AND entry_id IN (${c.placeholders}) AND (paused_runs <> 0 OR touched_at <> 0)`,
+      )
       .bind(...c.binds)
       .run();
   }

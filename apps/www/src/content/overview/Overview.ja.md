@@ -289,8 +289,7 @@ Reward poolは最初の6か月が最も大きく、その後7年かけてtaper�
 ## 対応しているchainsは？
 
 Vaipakamは、supported chainごとにindependent deploymentとして動作します:
-**Ethereum**, **Base**, **Arbitrum**, **Optimism**, **Polygon zkEVM**,
-**BNB Chain**。
+**Ethereum**, **Base**, **Arbitrum**, **Optimism**, **Polygon**。
 
 BaseでopenしたloanはBaseでsettleします。Arbitrumでopenしたloanは
 Arbitrumでsettleします。cross-chain debtはありません。chainsをまたぐ

@@ -41,6 +41,7 @@ import {
   railBlockSignal,
   railBlockWatchReset,
 } from './railHealth';
+import { TIP_ROOTS } from './tipRoots';
 import { useActiveChain } from './useActiveChain';
 
 /** queryKey[0] values that move when a transaction lands. Everything
@@ -63,6 +64,7 @@ export const LIVE_KEYS: ReadonlySet<string> = new Set([
   'vaultAssets',
   'loanSalePending',
   'refinancePending',
+  'offsetPending',
   // Borrower-side listing-hold probe (#1511): the cleanup button's
   // appearance (expiry) and disappearance (cleanup from another
   // tab/actor) are both driven by chain state with no own-wallet
@@ -73,6 +75,14 @@ export const LIVE_KEYS: ReadonlySet<string> = new Set([
   // prices, debt and third-party actions on the loan, so it rides the
   // same block-driven rail as the other action gates.
   'maxWithdrawable',
+  // Lender exit chooser's sale verdict (#1841): the contract's answer on
+  // whether each sale can be started moves with third-party actions (a
+  // pause, a listing expiring, the due date), so it rides every rail the
+  // other action gates do.
+  'saleExitVerdict',
+  // A periodic-interest loan's current period (#2524): moves with the
+  // chain clock and a settlement by anyone, so it rides the same rail.
+  'periodicInterest',
   'standingApprovals',
   'keeperConfig',
   // #1131/#1145 round-5 — the crossable band's chain reads (previewMatch
@@ -109,36 +119,11 @@ export const LIVE_KEYS: ReadonlySet<string> = new Set([
  *  recurring RPC cost. Each of these roots mounts only on its
  *  specific surface, so the tip-driven cost is bounded to the page
  *  actually being viewed. When the rail is DOWN, the full LIVE_KEYS
- *  blanket returns (today's behaviour, the honest fallback). */
-export const TIP_KEYS: ReadonlySet<string> = new Set([
-  // Detail-page cluster — owner/role/status gates on PositionDetails.
-  'loanLive',
-  'loanLiveStatus',
-  'loanRisk',
-  'positionOwners',
-  'offer',
-  'loan',
-  'offerLinkedLoan',
-  // Pending-card accept gates.
-  'loanSalePending',
-  'refinancePending',
-  // Borrower listing-hold card action gate (#1511) — see LIVE_KEYS.
-  'saleListingHold',
-  // Take-back-collateral ceiling (UX3-009) — see LIVE_KEYS. tipAware
-  // stretches its interval on WS deploys on exactly this promise.
-  'maxWithdrawable',
-  // Past-due/grace banner terms (Codex #1228 r1 P3): tipAware-
-  // stretched on PositionDetails, so the tip nudge must cover a keeper
-  // extension restamping the terms.
-  'graceBannerTerms',
-  // Desk crossable band — a stale band shows an executable match that
-  // isn't (§4.1.2 / the r5 table split).
-  'deskPreviewMatch',
-  // Shared-book ghost-strip (§4.1.2a) — its own query root after the
-  // split out of useActiveOffers; block-driven so a just-ended offer
-  // never outlives the throttle window on the book.
-  'bookGhostStrip',
-]);
+ *  blanket returns (today's behaviour, the honest fallback).
+ *
+ *  Built from `TIP_ROOTS` (`tipRoots.ts`), the one list `tipAware`
+ *  accepts, so a stretched root cannot be missing here. */
+export const TIP_KEYS: ReadonlySet<string> = new Set<string>(TIP_ROOTS);
 
 /** Extra roots the idle-RESUME refresh covers beyond LIVE_KEYS:
  *  own-wallet reads that feed form gates (balance / Max / over-max)
@@ -155,15 +140,15 @@ export const TIP_KEYS: ReadonlySet<string> = new Set([
  *  window — the refetch reconciles, it can't clobber a fresh cache
  *  patch (Codex round-3 P2: stale VPFI free balance could gate the
  *  first post-idle withdraw for another stretched tick). */
-const RESUME_EXTRA_KEYS: ReadonlySet<string> = new Set([
+export const RESUME_EXTRA_KEYS: ReadonlySet<string> = new Set<string>([
   'tokenBalance',
   'vpfi',
   'loanKeeperEnabled',
-  // tipAware-stretched but outside LIVE_KEYS (Codex #1228 r3): a
-  // keeper extension restamping terms during an idle stretch must
-  // reach the past-due/grace banner on the first interaction —
-  // HTTP-only chains have no block nudge to carry it.
-  'graceBannerTerms',
+  // Every tip root, LIVE_KEYS or not: a stretched interval may be in
+  // flight when the user comes back, and a root outside LIVE_KEYS (the
+  // past-due/grace banner's terms, Codex #1228 r3) would otherwise wait
+  // it out. HTTP-only chains have no block nudge to carry it either.
+  ...TIP_ROOTS,
 ]);
 
 /** Floor between block-driven invalidations. Base Sepolia mines ~every

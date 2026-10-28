@@ -159,7 +159,7 @@ Reward pool 在最初六个月最大，随后在七年内逐步 taper。Early us
 
 ## 支持哪些 chains？
 
-Vaipakam 在每条 supported chain 上都是 independent deployment：**Ethereum**、**Base**、**Arbitrum**、**Optimism**、**Polygon zkEVM**、**BNB Chain**。
+Vaipakam 在每条 supported chain 上都是 independent deployment：**Ethereum**、**Base**、**Arbitrum**、**Optimism**、**Polygon**。
 
 在 Base 上 opened loan，就在 Base 上 settle。在 Arbitrum 上 opened loan，就在 Arbitrum 上 settle。没有 cross-chain debt。跨 chain 的只有 VPFI token，以及 daily reward denominator；它确保 busy chains 和 quiet chains 之间的 rewards 保持 fair。
 

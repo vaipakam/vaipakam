@@ -283,8 +283,7 @@ early users가 가장 큰 emissions를 받습니다.
 ## 지원되는 chains는 무엇인가요?
 
 Vaipakam은 각 supported chain에서 independent deployment로 실행됩니다:
-**Ethereum**, **Base**, **Arbitrum**, **Optimism**, **Polygon zkEVM**,
-**BNB Chain**.
+**Ethereum**, **Base**, **Arbitrum**, **Optimism**, **Polygon**.
 
 Base에서 open된 loan은 Base에서 settle됩니다. Arbitrum에서 open된 loan은
 Arbitrum에서 settle됩니다. cross-chain debt는 없습니다. chains를 넘나드는 것은

@@ -1,12 +1,14 @@
 /**
  * /help/technical — the full Vaipakam Technical Whitepaper.
  *
- * Renders the canonical English whitepaper from
- * `apps/www/src/content/whitepaper/Whitepaper.en.md`. The whitepaper
- * is intentionally **not translated** — translation drift on a
- * technical specification is a worse failure mode than asking
- * non-English readers to use English here. The legal-style "English
- * only" notice surfaces this clearly to non-English visitors.
+ * Renders the technical whitepaper from
+ * `apps/www/src/content/whitepaper/Whitepaper.<locale>.md`, resolved by the
+ * same rule that decides which language copies are indexed
+ * (`resolveBody`, #1314). Only the English file exists today: translation
+ * drift on a technical specification is a worse failure mode than asking
+ * non-English readers to use English here, and the legal-style "English
+ * only" notice says so to them. A translation added later is served, and
+ * indexed, by itself.
  *
  * Layout matches Overview: HelpTabs strip on top, sticky sidebar TOC
  * on desktop, accordion TOC on mobile. The TOC is derived from
@@ -31,6 +33,7 @@ import {
   markdownComponents,
 } from '../lib/markdownToc';
 import { usePageMeta } from '../lib/usePageMeta';
+import { resolveBody } from '../lib/indexedLocales';
 import { useArticleJsonLd } from '../lib/useArticleJsonLd';
 import './UserGuide.css';
 import { useActiveLocale } from '../i18n/useActiveLocale';
@@ -41,9 +44,6 @@ const WHITEPAPER_FILES = import.meta.glob('../content/whitepaper/*.md', {
   import: 'default',
 }) as Record<string, string>;
 
-function resolveWhitepaper(): string {
-  return WHITEPAPER_FILES['../content/whitepaper/Whitepaper.en.md'] ?? '';
-}
 
 export default function Whitepaper() {
   const { i18n } = useTranslation();
@@ -51,29 +51,30 @@ export default function Whitepaper() {
   usePageMeta({
     titleKey: 'pageMeta.whitepaper.title',
     descriptionKey: 'pageMeta.whitepaper.description',
+    bodyFiles: WHITEPAPER_FILES,
   });
+  const lang = useActiveLocale();
+  const body = useMemo(() => resolveBody('/help/technical', lang, WHITEPAPER_FILES), [lang]);
+  const { text, fellBackToEnglish } = body;
   useArticleJsonLd({
     titleKey: 'pageMeta.whitepaper.title',
     descriptionKey: 'pageMeta.whitepaper.description',
-    // The whitepaper body ships English-only (Whitepaper.en.md) on
-    // every localized route — advertise what's actually rendered.
-    contentLanguage: 'en',
+    // Advertise the language of the markdown actually rendered.
+    contentLanguage: body.locale,
   });
-  const text = useMemo(() => resolveWhitepaper(), []);
   const toc = useMemo(() => extractMarkdownToc(text), [text]);
   const basePath = location.pathname.replace(/\/$/, '');
-  const isNonEnglish = useActiveLocale() !== 'en';
 
   const collapseEnclosingDetails = (e: React.MouseEvent<HTMLAnchorElement>) => {
     const details = e.currentTarget.closest('details');
     if (details) details.removeAttribute('open');
   };
 
-  // 'en' regardless of the route: resolveWhitepaper() always loads the .en.md source,
-  // so embedded values must format as English even on a
-  // locale-prefixed URL. Using the UI locale here rendered
-  // German grouping inside English prose (#1610 review r5).
-  const headingComps = useMemo(() => markdownComponents('en'), []);
+  // The language of the body actually rendered, not the route's: an
+  // English body on a locale-prefixed URL must format as English
+  // (#1610 review r5 — the UI locale rendered German grouping inside
+  // English prose).
+  const headingComps = useMemo(() => markdownComponents(body.locale), [body.locale]);
 
   return (
     <div className="user-guide-page">
@@ -95,8 +96,8 @@ export default function Whitepaper() {
 
           <article className="user-guide-content">
             <HelpTabs />
-            {isNonEnglish && <EnglishOnlyNotice variant="legal" />}
-            {!isNonEnglish && (
+            {fellBackToEnglish && <EnglishOnlyNotice variant="legal" />}
+            {lang === 'en' && (
               <p>
                 This page renders the canonical technical whitepaper. The repository root README
                 is the GitHub-facing project overview; legacy section citations are mapped in

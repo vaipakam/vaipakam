@@ -5,7 +5,6 @@ import Footer from './components/Footer';
 import ConsentBanner from './components/ConsentBanner';
 import { ScrollToHash } from './components/ScrollToHash';
 import { LocaleResolver } from './components/LocaleResolver';
-import { HreflangAlternates } from './components/HreflangAlternates';
 import { DefaultLocaleRedirect } from './components/DefaultLocaleRedirect';
 import type { ReactElement } from 'react';
 
@@ -188,7 +187,6 @@ export default function App() {
     <BrowserRouter>
       <ScrollToHash />
       <ConsentBanner />
-      <HreflangAlternates />
       <DefaultLocaleRedirect />
       <Suspense fallback={<RouteLoading />}>
         <Routes>

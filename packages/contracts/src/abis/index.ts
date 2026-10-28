@@ -188,6 +188,10 @@ import CcipMessengerABI from './CcipMessenger.json';
 import VaipakamRewardMessengerABI from './VaipakamRewardMessenger.json';
 // #2650 — the governance timelock (standalone; NOT a diamond facet).
 import VaipakamTimelockABI from './VaipakamTimelock.json';
+import VpfiReturnSenderABI from './VpfiReturnSender.json';
+// #2984 — the Base-side vpfi-return receiver (standalone; NOT a diamond
+// facet): the keeper's return-transport pass reads which Diamond it delivers to.
+import VpfiReturnReceiverABI from './VpfiReturnReceiver.json';
 
 export {
   OfferCreateFacetABI,
@@ -308,6 +312,8 @@ export {
   CcipMessengerABI,
   VaipakamRewardMessengerABI,
   VaipakamTimelockABI,
+  VpfiReturnSenderABI,
+  VpfiReturnReceiverABI,
 };
 
 import type { Abi } from 'viem';

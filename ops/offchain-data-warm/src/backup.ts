@@ -26,6 +26,7 @@
 import { encrypt, sha256Hex } from './crypto';
 import type { B2Config } from './b2';
 import { putObject } from './b2';
+import { MAX_ARCHIVE_BYTES } from './limits';
 import type { Env } from './env';
 
 interface TableExport {
@@ -161,7 +162,7 @@ const ARCHIVE_TABLES_OPTIONAL = [
 // resource-limit crash. A streaming implementation that removes this
 // ceiling is tracked as a Stage A.1 follow-up; the design doc §6
 // sequencing already lists it.
-const MAX_ARCHIVE_BYTES = 100_000_000;
+// The value lives in ./limits, shared with the backup watcher (#1473).
 
 /** True when a migration whose name starts with `namePrefix` has
  *  been applied to this DB (wrangler records applied migrations in

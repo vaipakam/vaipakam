@@ -12,6 +12,8 @@
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -178,6 +180,8 @@ program을 알아차리기 어렵습니다.
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -270,6 +274,8 @@ immutable입니다 — refinance는 기존 loan을 변경하지 않고 새 loan�
 만듭니다.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -641,6 +647,8 @@ partial / IOC fill 모드는 단일 오퍼의 담보에 대해 여러 대출을
   후속 작업으로 큐에 있습니다.
 
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -718,6 +726,8 @@ Borrower position NFT는 claim할 때 burn되며 loan이 정리될 때가 아닙
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -732,6 +742,8 @@ multi-event transaction(예: accept + initiate가 같은 block 내에서 발생)
 liquidations, NFT mints / burns, VPFI vault deposits / withdrawals를 표시합니다.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -781,53 +793,35 @@ VPFI를 vault에서 wallet으로 다시 withdraw합니다. approval leg는 없�
 
 <a id="buy-vpfi.cross-chain-tier"></a>
 
-### VPFI tier가 chain 사이를 이동하는 방식
+### VPFI tier가 체인 사이를 이동하는 방식
 
-VPFI는 Base의 vault에 deposit합니다 — Base가 회원님의 accumulator
-state를 소유한 canonical chain입니다. 다른 chain에서 action할 때
-(Sepolia에서 borrow, Arbitrum에서 lend 등) 그 chain은 tier의 *cached*
-사본을 읽습니다. 이 cache는 cross-chain push로 최신 상태를 유지합니다:
-Base에서 실효 tier가 바뀌면, 다음 Base 측 action이 회원님이 action할 수
-있는 모든 mirror chain으로 CCIP message를 broadcast합니다. push는 모든
-일반 Base action에 함께 실려 갑니다 — 그리고 T-087 Sub 4부터 Dashboard
-에 "지금 mirror로 내 tier push하기" 버튼(`pokeMyTier()`를 호출)이 있어
-vault mutation 없이 push를 강제할 수 있습니다. mirror chain에서의 local
-consent와 local VPFI 요건을 포함한 전체 설명은 "How VPFI Discounts
-Work" 장에 있으며, 현재는 영어 가이드에만 존재합니다.
+VPFI는 canonical 체인인 Base의 vault에 보유하며, tier를 계산하는 것은
+Base입니다. 다른 체인에서 빌리거나 빌려주면 그 체인은 tier의 사본을
+적용합니다. 이 사본은 tier를 바꾸는 입금, 출금 또는 다른 작업이 있을
+때마다 Base가 Chainlink CCIP로 보냅니다.
 
-알아둘 점 세 가지:
+알아 둘 점은 세 가지입니다.
 
-- **tier 성숙에는 후속 action이 필요합니다.** 첫 stake는 즉시
-  broadcast하지 않습니다 — 실효 tier는 최소 이력 기간(기본 3일)으로
-  gate되므로, 갓 넣은 stake는 처음에 tier 0으로 해석되고 broadcast는
-  조용히 skip됩니다. 기간이 지나면 Base에서는 gate가 즉시 열리지만,
-  mirror는 다음 rollup을 동반한 Base action(모든 deposit, withdrawal,
-  loan action — Base의 vault를 mutate하는 모든 것) 또는 Dashboard의
-  "지금 mirror로 내 tier push하기" 클릭(Sub 4)이 push를 trigger할 때까지
-  알지 못합니다. 1 wei top-up으로도 됩니다.
-- **전파 시간.** push가 발송되면 보통 CCIP를 통해 몇 분 안에 mirror에
-  도착합니다. 그때까지 mirror는 이전 cached tier를 계속 인정합니다 —
-  tier 0으로 깜빡이는 일은 없습니다.
-- **cache 만료.** cached tier는 (a) 새 push가 도착하거나, (b)
-  governance가 tier 임계값 표를 새 version으로 올리고 mirror가 추적하는
-  version이 상승하거나(이는 어떤 user든 bump 이후의 push가 그 mirror에
-  처음 도착하는 시점에 일어납니다 — Base에서 최근 활동이 없는 휴면
-  user도 그 순간 구 version의 cached discount를 잃고, 자신의 다음
-  push가 따라잡을 때까지 회복되지 않습니다), (c) cache가 최대 수명
-  backstop(기본 60일)을 넘길 때까지 인정됩니다. 특정 chain에서 오랫동안
-  action하지 않으면 그곳의 cache는 결국 만료되고, 그 chain은 다음
-  push까지 회원님을 tier 0으로 취급합니다. 갱신하려면 새 push tuple을
-  만드는 rollup 동반 Base action을 하십시오 — tier가 바뀌는 balance
-  mutation, 또는 governance table version bump 이후의 아무 Base action.
-  동일한 tuple의 "no-op" rollup은 push를 재전송하지 않습니다 — 이미
-  올바른 cache에 protocol의 broadcast 예산을 쓰지 않기 위한 의도된
-  동작입니다.
+- **시간이 지나서만 오른 tier는 Base에서 작업이 있어야 전달됩니다.**
+  입금이나 출금 없이 보유 기간이 채워지거나 평균이 따라잡으면 Base의
+  값은 즉시 최신이 됩니다. 다른 체인은 Base에서의 다음 입금 또는
+  출금(금액 무관) 때 이를 알게 됩니다.
+- **낮아진 tier가 먼저 전달됩니다.** 프로토콜은 낮아진 tier를 즉시
+  보내고, 높아진 tier의 비용은 체인당 하루에 한 번까지만 부담합니다.
+  이후 CCIP 배송에는 보통 몇 분이 걸립니다. 도착할 때까지 그 체인은
+  이전 tier를 계속 적용합니다.
+- **사본은 만료될 수 있습니다.** 새 사본 없이 60일(기본값)이 지나거나
+  tier 표 변경이 그 체인에 도달하면, 오래된 사본으로는 그 체인에서
+  할인을 받을 수 없습니다. 새 사본은 tier가 바뀔 때만 보내집니다.
 
-cache가 staleness를 감지하기 위해 적용하는 정확한 gate가 궁금하다면
-[Cross-Chain Tier Propagation functional spec](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/CrossChainTierPropagation.md)
-을 참고하십시오.
+사용하는 체인뿐 아니라 Base에서도 필요한 할인 스위치를 포함한 전체
+규칙은 아래 "VPFI 할인의 작동 방식" 장에 있습니다. 배송 설계는
+[tier 배송 설계 문서](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/TierPushDeliveryDesign.md)
+(영어)에 있습니다.
 
 ---
+
+<a id="chapter.rewards"></a>
 
 ## Rewards
 
@@ -863,6 +857,8 @@ wallet으로 VPFI를 다시 withdraw합니다. withdraw된 VPFI는 즉시 discou
 accumulator에서 빠집니다(모든 open loan에서 post-balance re-stamp).
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -1103,6 +1099,8 @@ land합니다. 트랜잭션은 완전히 성공하거나 (대출 상환 완료�
 
 ---
 
+<a id="chapter.how-liquidation-actually-works"></a>
+
 ## 청산(Liquidation)의 실제 작동 방식
 
 오퍼 시점에 동의한 Risk Disclosures는 최악의 결과를 두 문장으로 요약하고 있습니다. 이 섹션에서는 그 이면의 메커니즘을 설명합니다. 이는 왜 현물(in-kind) 폴백이 존재하는지, 그리고 대출이 실제로 네 가지 갈래 중 어떤 경로를 따르는지 이해하는 데 도움이 됩니다.
@@ -1207,6 +1205,8 @@ land합니다. 트랜잭션은 완전히 성공하거나 (대출 상환 완료�
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -1225,6 +1225,8 @@ allowance를 우회합니다. 따라서 여기 list가 clean해도 향후 deposi
 막지 않습니다.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -1263,6 +1265,8 @@ channel creation까지 stub 상태입니다.
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -1284,6 +1288,8 @@ position NFT는 bearer instrument입니다 — secondary market에서 매수하�
 verify하세요.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -1324,65 +1330,100 @@ frontend가 아직 reflect하지 않은 on-chain permissions는 명확한
 
 ---
 
+<a id="chapter.public-analytics-dashboard"></a>
+
 ## Public Analytics Dashboard
 
 <a id="public-dashboard.overview"></a>
 
 ### Public Analytics 소개
 
-supported chains 각각에서 on-chain protocol view calls로부터 live로
-calculate되는 wallet-free aggregator입니다. backend 없음, database 없음.
-CSV / JSON export가 available합니다. verifiability를 위해 각 metric 뒤의
-protocol address와 view function이 표시됩니다.
+지갑이 필요 없는 단일 체인 페이지입니다. 앱이 가리키는 체인(지갑이
+연결되지 않았으면 기본 읽기 체인)을 읽습니다. 체인 간 합산이나
+내보내기는 없습니다. 체인을 비교하려면 각 체인에서 페이지를 여세요.
+출처는 두 가지이며, 쓰이는 곳마다 표시됩니다.
 
-<a id="public-dashboard.combined"></a>
+- 인덱서의 키 없는, CORS가 열린 읽기 API — 대출, 오퍼, 리사이클링,
+  루프 클로저 수치
+- 공개 RPC를 통한 Diamond 자체의 뷰 함수 — VPFI 토큰과 수수료 수치
 
-### Combined — All Chains
+어느 출처든 직접 조회해 페이지가 보여주는 내용을 재현할 수
+있습니다.
 
-Cross-chain rollup입니다. header는 covered된 chains 수와 errored된 chains
-수를 report하므로 fetch 시 unreachable RPC가 명확히 드러납니다. 하나 이상의
-chain이 errored인 경우 per-chain table이 어느 chain인지 flag합니다 — TVL
-totals는 계속 report되지만 gap은 acknowledge됩니다.
+<a id="public-dashboard.loans-offers"></a>
 
-<a id="public-dashboard.per-chain"></a>
+### 대출과 오퍼
 
-### Per-Chain Breakdown
+`/loans/stats`의 상태별 대출 카운터(정산 대기, 내부 매칭, 나머지
+구분을 포함해 부분의 합이 총계가 됩니다), ERC-20과 NFT 렌탈 소계
+(자산 유형을 아직 읽지 못한 활성 대출은 따로 표시), 그리고
+`/offers/stats`의 오퍼 카운터입니다. 오퍼는 `offers` 테이블만
+해당하며 가스 없는 서명 주문은 세지 않습니다. 취소된 오퍼는
+인덱스에서 빠지므로 오퍼 합계는 누적 수치가 아닙니다. 없는 카운터는
+"보고되지 않음", 불가능한 값은 "보고되었지만 사용할 수 있는 건수가
+아님"으로 표시하며, 어느 쪽도 0으로 표시하지 않습니다.
 
-Combined metrics의 per-chain split입니다. TVL concentration, mismatched
-VPFI mirror supplies(mirror supplies의 sum은 canonical adapter의 locked
-balance와 같아야 함), 또는 stalled chain을 spot하는 데 유용합니다.
+<a id="public-dashboard.recycling"></a>
 
-<a id="public-dashboard.vpfi-transparency"></a>
+### 리사이클링 계정과 루프 클로저
 
-### VPFI Token Transparency
-
-active chain의 on-chain VPFI accounting:
-
-- total supply, ERC-20에서 직접 읽음.
-- circulating supply — total supply minus protocol-held balances(treasury,
-  reward pools, in-flight bridge packets).
-- 남은 mintable cap — canonical chain에서만 meaningful합니다. Mirror chains는
-  cap에 대해 "n/a"를 report합니다. 그곳의 mints는 cap이 아니라 bridge-driven
-  이기 때문입니다.
-
-Cross-chain invariant: 모든 mirror chains에 걸친 mirror supplies의 sum은
-canonical adapter의 locked balance와 같습니다. watcher가 이를 monitor하고
-drift에 alert합니다.
+리사이클링 계정(`/metrics/recycling`)은 프로그램의 각 날짜별
+풀, 그 재원, 인출액을 프로그램 고유의 일 번호로 보여줍니다. 확정되지
+않은 날은 풀 없이, 활성화되지 않은 날은 추정치로 표시됩니다. 루프
+클로저(`/metrics/loop-closure`)는 UTC 날짜별로 클레임이 지급한 양,
+볼트에 남은 양, 흡수된 양을 기록이 도달한 시점과 함께 보여줍니다.
+표시 정밀도보다 작은 양수 금액은 그렇다고 표시하고, 비율은 내림하며,
+알 수 없는 수치는 절대 0으로 표시하지 않습니다.
 
 <a id="public-dashboard.transparency"></a>
 
-### Transparency & Source
+### 투명성과 출처
 
-각 metric에 대해 page가 list하는 것:
+익스플로러 링크가 있는 Diamond 주소, 체인, 인덱서 커서의 블록과
+경과 시간입니다. 인덱서에서 온 모든 수치는 이 커서 시점까지만
+최신입니다. 두 응답을 합칠 때는 더 오래된 커서를 표시합니다.
 
-- snapshot으로 사용된 block number.
-- data freshness(chains 간 최대 지연 시간).
-- protocol address와 view function call.
+<a id="public-dashboard.vpfi-transparency"></a>
 
-이 page의 어떤 number든 RPC + block + protocol address + function name에서
-누구나 re-derive할 수 있습니다 — 그것이 기준입니다.
+### VPFI 토큰
+
+Diamond의 `getVPFISnapshot()`에서 이 체인의 토큰 주소와
+`totalSupply`를 가져옵니다. 정식(canonical) 체인에서는 상한, 여유분
+(`cap − totalSupply`, 아직 발행할 수 있는 양), 민터도 보여줍니다.
+미러 체인의 스냅샷에는 상한도 민터도 없습니다(공급은 CCIP 토큰 풀을
+통해 들어옵니다). 그래서 페이지는 로컬 공급량을 보여주고 상한과
+민터는 정식 체인의 것이라고 밝히며, 0을 표시하지 않습니다. 연결되지
+않은 토큰과 읽을 수 없는 스냅샷은 따로 표시합니다.
+
+<a id="public-dashboard.fees"></a>
+
+### 수수료와 트레저리
+
+`getTreasuryMetrics()`, `getTreasury()`, `getNumeraireSymbol()`
+에서 가져오며, 스냅샷과 같은 Multicall3 집계에서 읽고 하나의 블록에
+고정합니다. 페이지는 그 블록과 경과 시간을 보여줍니다.
+
+- 수수료 장부가 시작된 이후, 그리고 최근 24시간과 7일의 수수료.
+  각 수수료는 기록 시점에 뉴메레르로 평가되며 다시 평가되지
+  않습니다.
+- 기록 시점에 프로토콜이 평가할 수 없었던 수수료는 0으로 기록되고,
+  기간 합계는 최신 장부 항목을 최대 10,000개까지만 훑습니다. 이
+  두 가지는 수치를 적게 보이게만 할 수 있고, 페이지는 이를
+  밝힙니다.
+- 뉴메레르가 바뀌면 이전 항목은 옛 단위로 남으므로, 그 이후의 합계는
+  현재 기호 아래 두 단위의 금액을 더하게 되어 어느 방향으로든 어긋날
+  수 있습니다. 페이지는 이전 수수료가 옛 단위로 계산된다고 밝힙니다.
+- 트레저리 주소. 외부 주소라면 수수료는 징수될 때 빠져나가며 그
+  잔액은 표시하지 않습니다. Diamond 자신이 트레저리라면 보유액을
+  표시하며, 이는 열린 대출에 나타나는 자산만으로 평가하고 트레저리를
+  대신해 다른 곳에 둔 금액을 포함합니다.
+
+실패한 뷰 함수는 "읽을 수 없음"으로 표시되며 다른 항목을 가리지
+않습니다.
 
 ---
+
+<a id="chapter.refinance"></a>
 
 ## Refinance
 
@@ -1432,6 +1473,8 @@ cancel할 수 있습니다.
 새 terms에서 HF가 1.5 미만이면 revert합니다.
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -1484,6 +1527,8 @@ Uniswap V3 → Balancer V2).
 
 ---
 
+<a id="chapter.early-withdrawal-lender"></a>
+
 ## Early Withdrawal (Lender)
 
 이 페이지는 lender 전용입니다 — early withdrawal은 lender가 자신의 loan에서
@@ -1521,6 +1566,8 @@ permission을 가진 keeper에게 delegate할 수도 있습니다. initiate step
 user-only로 남습니다.
 
 ---
+
+<a id="chapter.stuck-token-recovery"></a>
 
 ## 묶인 토큰(Stuck-Token) 복구
 
@@ -1584,3 +1631,162 @@ user-only로 남습니다.
 
 소유권 포기 함수는 현재 직접 컨트랙트 호출을 통해서만 노출되며, Vaipakam 프런트엔드에서는 버튼으로 표시되지 않습니다. 블록 탐색기의 "Write Contract" UI나 컨트랙트 상호작용 도구를 사용하여 호출하십시오.
 
+<a id="chapter.how-vpfi-discounts-work"></a>
+
+## VPFI 할인의 작동 방식
+
+canonical 체인인 Base의 vault에 VPFI를 보유하면, 플랫폼이 운영되는
+모든 체인에서 프로토콜 자체 수수료가 할인됩니다. 더 많이, 더 오래
+보유할수록 tier가 높아지고 할인도 커집니다. tier 목록은 위의
+[Tier ladder](#dashboard.fee-discount-consent)에 있으며, governance가
+바꿀 수 있습니다.
+
+할인이 적용되는 대상:
+
+- **대여자로서**는 벌어들인 이자에서 프로토콜이 떼는 이자 수수료입니다.
+  이자가 settlement될 때마다(예: 상환, preclose, refinance) loan 시작
+  시점이 아니라 그 순간의 tier로 읽습니다.
+- **차입자로서**는 loan이 시작될 때 부과되는 Loan Initiation Fee입니다.
+  accept 시점에 한 번만 읽고 그 loan에 고정됩니다. lending asset이
+  liquid할 때만 적용되며, illiquid loan은 수수료 전액을 냅니다.
+
+할인은 loan 자산으로 수수료 자체에서 차감되며, 이를 위해 vault에서
+VPFI가 빠져나가지 않습니다. 유일한 예외는 VPFI 가격 기준을 설정한
+배포에서의 대여자 할인으로, 이 경우 vault의 VPFI로 정산될 수 있습니다.
+출시 시점에는 설정된 것이 없습니다. 이 장은 이 보유 할인을 다룹니다.
+별도의 유료 수수료 모드인 "Full"은 배포가 켜지 않는 한 꺼져 있습니다.
+
+<a id="vpfi-discounts.turning-on"></a>
+
+### 할인 켜기
+
+할인은 opt-in입니다. 스위치는 VPFI 페이지에 있고, 체인마다 하나씩
+있습니다. 각 체인이 자체 설정을 갖기 때문입니다.
+
+- **수수료가 부과되는 체인에서는** 스위치가 켜져 있어야 합니다. 꺼져
+  있으면 tier와 관계없이 그 체인은 수수료 전액을 부과합니다.
+- **Base에서도** 그곳에서 빌리거나 빌려주지 않더라도 스위치가 켜져
+  있어야 합니다. 꺼져 있는 동안 Base는 다른 모든 체인에 당신의 tier를
+  0으로 보냅니다.
+
+Base에서 할인을 끄면, 다른 모든 체인에서도 적용이 멈추도록 앱이 이어서 tier 업데이트를 보냅니다. 그러면 Base가 그
+체인들에 당신의 tier를 0으로 보냅니다. 이 두 번째 단계가 실패하면 페이지에 표시되며, 다른 체인은 새 tier가 보내질
+때까지 마지막 tier를 유지합니다. 다른 체인에서 끄면 그 체인만 바뀝니다.
+
+VPFI는 프로토콜이 당신의 vault에 기록할 때 인정됩니다. VPFI 페이지를 통해 입금한 VPFI와 프로토콜이 vault로
+전달한 VPFI rewards가 여기에 해당합니다. vault 주소로 직접 보낸 토큰은 프로토콜이 추적하지 않으며 tier를
+올리지 않습니다.
+
+<a id="vpfi-discounts.tier-calculation"></a>
+
+### tier 계산 방식
+
+tier는 세 가지 별도 검사로 정해지며, 세 가지를 모두 통과해야 합니다.
+
+1. **최소 보유 기간.** 현재 보유가 최소 3일 지속될 때까지 tier는 0으로
+   유지됩니다. 보유는 vault 잔액이 0을 넘는 순간 시작되어 다시 0이 될
+   때까지 이어집니다. 추가로 넣어도 시계는 다시 시작되지 않지만, 전부
+   인출하면 다시 시작됩니다. (3일은 기본값이며 governance가 2~14일로
+   설정할 수 있습니다.)
+2. **최근에 가중치를 둔 평균.** 잔액은 최근 30일에 걸쳐 평균되며,
+   마지막 7일은 그 이전 날보다 세 배로 계산됩니다. 평균은 현재 보유가
+   시작되기 전으로는 거슬러 올라가지 않으므로, 새 보유자가 아무것도
+   갖지 않았던 날 때문에 희석되지 않습니다. (기간, 최근 일수, 가중치는
+   governance 설정이며, 기간은 14~30일입니다.)
+3. **지금까지 닿은 가장 낮은 tier.** 평균과는 별도로, tier는 현재 보유
+   기간 중 잔액이 도달한 가장 낮은 tier보다 높을 수 없으며, 최대
+   30일까지 거슬러 봅니다. 각 날의 최저점으로 계산하므로, 같은 날 안에
+   내려갔다가 회복한 경우도 내려간 것으로 봅니다.
+
+실제로는 다음을 뜻합니다.
+
+- loan settlement 직전에 입금해도 tier가 바로 오르지 않습니다. 추가한
+  금액이 먼저 평균에 반영되어야 하고, 닿았던 최저점이 여전히 상한이
+  됩니다.
+- tier 하한 아래로 내려가는 출금은 tier를 즉시 낮춥니다.
+- 30일보다 오래된 하락은 더 이상 상한이 되지 않습니다.
+
+<a id="vpfi-discounts.other-chains"></a>
+
+### 다른 체인에서의 tier
+
+tier는 Base가 계산합니다. 다른 모든 체인은 Base가 Chainlink CCIP로 보내는 사본을 적용합니다. Base는
+Base에서 다음 중 하나가 일어날 때 tier 기록을 갱신합니다. VPFI가 vault에 들어오거나 나갈 때(입금, 출금 또는
+vault로 전달된 rewards), 당신이 대출자나 차입자인 대출이 시작될 때, 대출 단계에서 당신의 VPFI가 묶이거나 풀릴
+때, 또는 tier 갱신 호출을 할 때입니다. 갱신할 때마다 사본 내용이 바뀌는 경우 다른 체인에 새 사본이 보내집니다.
+
+각 체인은 따로 배송됩니다. 닿지 않는 체인이 다른 체인을 붙잡지 않으며,
+**배송을 보낼 수 없어도 당신 자신의 작업은 절대 실패하지 않습니다**.
+Base의 tier는 즉시 최신이 되고, 다른 각 체인에는 도착할 때까지 업데이트가
+미배송 상태로 남습니다.
+
+이 배송 비용은 프로토콜이 부담하지만, 한도가 하나 있습니다.
+
+- **낮아진 tier**는 예산으로 지불할 수 있는 한 즉시 보내집니다. 도착할
+  때까지 그 체인은 이전의 더 높은 tier를 계속 적용합니다.
+- **높아진 tier**나 tier 표 변경은 체인당 하루에 한 번까지만 비용이
+  지불됩니다(governance 설정으로 1시간~7일). 그때까지 그 체인은 이전
+  tier를 유지합니다.
+- 이 대기로 보류된 업데이트나 예산으로 지불하지 못한 업데이트는
+  **대기가 끝나도 저절로 다시 보내지지 않습니다**. Base에서 티어 기록이
+  다음으로 업데이트될 때, 또는 누군가 대신 배송 호출을 할 때 전송됩니다.
+- 이 호출은 누구나 할 수 있습니다. 대기가 끝나고 예산으로 지불할 수
+  있으면 프로토콜이 지불하고, 그 전에는 호출자가 크로스체인 수수료를
+  내고 더 빨리 보낼 수 있습니다. 컨트랙트는 이 호출을 지원하지만 앱은
+  아직 제공하지 않습니다.
+
+다음의 경우 사본은 인정되지 않으며, 그 체인에서는 할인이 없습니다.
+
+- 체인의 최대 경과 기간(기본 60일, 30일 미만 불가)보다 오래된 경우.
+- 그 체인이 현재 알고 있는 tier 표보다 오래된 표로 만들어진 경우.
+
+사본은 그 안의 내용이 바뀔 때만 다시 보내집니다. 즉 tier, 그 할인, 유효 기간, tier 표의 버전 중 하나입니다.
+따라서 tier 표가 바뀐 뒤에는 tier가 같더라도(0이 아니라면) Base에서 tier 기록의 다음 갱신이 모든 체인에 새
+사본을 보냅니다. 이 중 아무것도 바뀌지 않았다면, 사본이 만료된 체인은 무언가 바뀔 때까지 할인을 적용하지 않습니다.
+
+시간만 지나 tier가 올랐다면(보유 기간을 채웠거나 평균이 따라잡은 경우), tier 기록의 다음 갱신 전까지 Base에서는
+아무것도 감지되지 않습니다. tier 갱신 호출로 원할 때 언제든 그 갱신을 할 수 있으며, 앱이 대신 호출하는 것은 할인을 끌
+때뿐입니다.
+
+<a id="vpfi-discounts.operators"></a>
+
+### 운영자용
+
+할인의 크로스체인 부분에는 다음 설정이 필요합니다. 자체 배포를 운영하는
+사람을 위해 여기에 적어 둡니다.
+
+**Base에서:**
+
+- `VPFITokenFacet.setCanonicalVPFIChain(true)`. 이것이 없으면 Base는
+  tier를 계산하지만 어디에도 보내지 않습니다.
+- `VaipakamRewardMessenger`를 가리키는
+  `RewardReporterFacet.setRewardMessenger`, 그리고 다른 모든 체인을 나열한
+  messenger의 `setBroadcastDestinations`.
+- 자금이 있는 broadcast 예산:
+  `ProtocolBroadcastFacet.topUpBroadcastBudget()`(payable). 예산이 비어
+  있어도 아무것도 막지 않습니다. 지불할 수 없는 배송은 미배송으로 남고
+  이유와 함께 `TierPushDeferred`를 내보내며,
+  `getTierPushStatus(user)`는 사용자별로 각 체인의 상태를 보여 줍니다.
+  예산이 부족하면 다른 체인이 오래된 tier를 더 오래 적용하므로, 연기를
+  지켜보고 충전하세요.
+- 유료 인상의 간격 창: `setTierPushSpacingSec`(기본 1일, 1시간~7일).
+
+**다른 각 체인에서:**
+
+- `RewardReporterFacet.setRewardMessenger(addr)`: 그 체인이 tier
+  업데이트를 받아들이는 유일한 발신자.
+- `RewardReporterFacet.setBaseChainId(chainId)`: Base의 EVM 체인 ID
+  (mainnet 8453, Base Sepolia 84532). CCIP chain selector가 아닙니다.
+- `ConfigFacet.setMirrorTierMaxAgeSec(seconds)`: 사본이 인정되는 기간
+  (기본 60일, 30일 미만 값은 거부됨). 낮추면 다음 읽기부터 적용됩니다.
+
+**tier 표 변경:**
+
+- Base의 `setVpfiTierThresholds`와 `setVpfiTierDiscountBps`는 표의
+  버전을 올립니다. 다른 체인은 어느 사용자의 것이든 새 버전을 담은 첫
+  tier 업데이트로 이를 알게 됩니다. 그때부터 예전 표로 만든 사본은 그
+  사용자 자신의 업데이트가 도착할 때까지 할인 없음으로 처리되며, 이
+  업데이트는 인상이므로 간격 창마다 한 번까지만 지불됩니다. 표를 바꾸기
+  전에 예산을 충전하세요.
+- `setTwaMinStakedDays`는 버전을 올리지 않고 최소 보유 기간을 바꿉니다.
+  다음 읽기부터 적용됩니다.

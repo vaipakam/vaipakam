@@ -13,6 +13,8 @@
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -119,6 +121,8 @@ discount कितना बड़ा होगा यह इस पर नि�
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -175,6 +179,8 @@ acceptance के समय protocol borrower की तरफ़ एक सु�
 बदलाव पहले से खुले loan को उसी rate पर छोड़ देता है जिस पर वह शुरू हुआ था।
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -329,6 +335,8 @@ role-specific toggles। पहली offer में इन्हें छो�
 
 ---
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -389,6 +397,8 @@ claim आपके borrower position NFT को consume
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -403,6 +413,8 @@ repayments, claims और liquidations। यह सब सीधे chain स�
 हिसाब से grouped रहते हैं ताकि एक ही click में हुए काम साथ दिखें।
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -448,6 +460,8 @@ discount math lower tier के आधार पर चलने लगती �
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -471,6 +485,8 @@ Rewards VPFI में मिलते हैं, सीधे उसी chain �
 अगले daily window बंद होने के थोड़ी देर बाद live होगा।
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -593,6 +609,8 @@ available नहीं हैं वे greyed out रहेंगे, और to
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -610,6 +628,8 @@ approvals (जो सच में live हैं) ऊपर दिखती ह
 पर भी यही समझदारी है।
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -646,6 +666,8 @@ pings वास्तव में कहाँ पहुँचें। आप 
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -664,6 +686,8 @@ position NFT _ही_ loan से claim करने का अधिकार �
 खराब trade से बचा सकता है।
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -692,53 +716,78 @@ permission है, वह आपकी ओर से early withdrawal शुर�
 
 ---
 
+<a id="chapter.public-analytics-dashboard"></a>
+
 ## Public Analytics Dashboard
 
 <a id="public-dashboard.overview"></a>
 
 ### Public Analytics के बारे में
 
-पूरे protocol का wallet-free, transparent view: कुल locked value,
-loan volumes, default rates, VPFI supply और recent activity। यह
-सब live on-chain data से निकाला जाता है — इस page पर किसी संख्या
-के पीछे private database नहीं है।
+एक नेटवर्क पर प्रोटोकॉल का बिना वॉलेट वाला दृश्य: वह नेटवर्क
+जिसे ऐप पढ़ रहा है। आपको कुछ भी कनेक्ट करने की ज़रूरत नहीं।
+पेज दो सार्वजनिक स्रोतों पर टिका है और हर आँकड़े का स्रोत बताता
+है — सार्वजनिक इंडेक्सर, जिसे कोई भी बिना कुंजी के पूछ सकता है,
+और खुद प्लेटफ़ॉर्म कॉन्ट्रैक्ट — ताकि आपको किसी आँकड़े पर आँख
+मूँदकर भरोसा न करना पड़े।
 
-<a id="public-dashboard.combined"></a>
+<a id="public-dashboard.loans-offers"></a>
 
-### Combined — All Chains
+### लोन और ऑफ़र
 
-protocol-wide totals, सभी supported chains को जोड़कर। छोटी "X
-chains covered, Y unreachable" line बताती है कि page load होते
-समय कोई chain unreachable थी या नहीं — यदि हाँ, तो वही chain
-नीचे per-chain table में flag होती है।
+स्थिति के अनुसार लोन की गिनती (सक्रिय, चुकाए गए, डिफ़ॉल्ट,
+लिक्विडेट आदि) और ऑफ़र की गिनती, सार्वजनिक इंडेक्सर से। जो
+गिनती इंडेक्सर ने नहीं बताई, वह "रिपोर्ट नहीं हुआ" दिखती है,
+शून्य कभी नहीं। यहाँ केवल ऑन-चेन ऑफ़र गिने जाते हैं: बिना गैस
+वाले साइन किए ऑर्डर यहाँ नहीं गिने जाते, हालाँकि वे Offer Book
+में दिखते हैं। ऑफ़र का कुल वे ऑफ़र हैं जो अभी रिकॉर्ड में हैं,
+अब तक की कुल गिनती नहीं।
 
-<a id="public-dashboard.per-chain"></a>
+<a id="public-dashboard.recycling"></a>
 
-### Per-Chain Breakdown
+### रीसाइक्लिंग खाता और लूप क्लोज़र
 
-वही totals, chain-by-chain विभाजित। इससे पता चलता है कि सबसे
-ज़्यादा TVL किस chain पर है, loan volume कहाँ अधिक है, या कौन-सी
-chain उस समय जवाब नहीं दे रही।
-
-<a id="public-dashboard.vpfi-transparency"></a>
-
-### VPFI Token Transparency
-
-इस chain पर VPFI की live state — total supply, circulating supply
-(protocol-held balances घटाने के बाद), और cap के भीतर कितना और
-mintable है। design के अनुसार, सभी chains में कुल supply bounded
-रहती है।
+हर दिन का रिवॉर्ड पूल कहाँ से आया और उसमें से कितना निकाला गया,
+और क्लेम से दिए गए रिवॉर्ड VPFI का कितना हिस्सा प्लेटफ़ॉर्म के
+भीतर रहता है। ये सार्वजनिक इंडेक्सर के बहीखाते के रिकॉर्ड हैं;
+जो आँकड़ा अभी पता नहीं, वह शून्य दिखाने के बजाय यही बताता है।
 
 <a id="public-dashboard.transparency"></a>
 
-### Transparency & Source
+### पारदर्शिता और स्रोत
 
-इस page की हर संख्या blockchain से दोबारा derive की जा सकती है।
-यह card snapshot block, data की freshness, और हर metric किस
-contract address से आया — सब दिखाता है। कोई figure verify करनी
-हो तो शुरुआत यहीं से करें।
+प्लेटफ़ॉर्म कॉन्ट्रैक्ट का पता, ब्लॉक एक्सप्लोरर में खोलने के
+लिंक के साथ, नेटवर्क, इंडेक्सर का पढ़ा हुआ आख़िरी ब्लॉक और वह
+कितनी देर पहले था। इंडेक्सर के आँकड़े उतने ही ताज़ा हैं जितना वह
+ब्लॉक, इसीलिए उसकी उम्र दिखाई जाती है।
+
+<a id="public-dashboard.vpfi-transparency"></a>
+
+### VPFI टोकन
+
+सीधे प्लेटफ़ॉर्म कॉन्ट्रैक्ट से पढ़ा गया, इंडेक्सर से नहीं: VPFI
+टोकन का पता और इस नेटवर्क पर उसकी आपूर्ति। जिस नेटवर्क पर VPFI
+जारी होता है, वहाँ पेज आपूर्ति की सीमा, उसके भीतर अभी और कितना
+मिंट हो सकता है, और मिंट करने की अनुमति वाला एकमात्र पता भी
+दिखाता है। जिस नेटवर्क पर VPFI ब्रिज से पहुँचता है, वहाँ केवल उस
+नेटवर्क की आपूर्ति दिखती है।
+
+<a id="public-dashboard.fees"></a>
+
+### शुल्क और ट्रेज़री
+
+यह भी कॉन्ट्रैक्ट से पढ़ा जाता है: रिकॉर्ड शुरू होने से अब तक,
+पिछले दिन में और पिछले हफ़्ते में प्रोटोकॉल द्वारा दर्ज शुल्क, और
+वह ट्रेज़री पता जहाँ वे जाते हैं। पेज पढ़ा गया ब्लॉक, उस रीडिंग की
+उम्र और बुलाए गए फ़ंक्शन बताता है, और हर वह कारण बताता है जिससे
+शुल्क के आँकड़े वास्तव में वसूली गई राशि से कम हो सकते हैं। संदर्भ
+मुद्रा बदलने के बाद पहले के शुल्क पुरानी इकाई में रहते हैं, जिससे
+कोई योग किसी भी दिशा में खिसक सकता है; पेज यह भी बताता है। जो
+आँकड़ा पढ़ा नहीं जा सका, वह शून्य दिखाने के बजाय यही बताता है।
 
 ---
+
+<a id="chapter.refinance"></a>
 
 ## Refinance
 
@@ -785,6 +834,8 @@ collateral locked रखता है। एक transaction, दो state change
 exposure window नहीं।
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -834,6 +885,8 @@ fresh quote पर फिर कोशिश कर सकते हैं।
 loan आधा-बंद नहीं रहता।
 
 ---
+
+<a id="chapter.early-withdrawal-lender"></a>
 
 ## Early Withdrawal (Lender)
 

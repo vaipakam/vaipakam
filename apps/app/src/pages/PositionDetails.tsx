@@ -49,7 +49,6 @@ import {
   pauseCreditOf,
   readLoanLive,
   readRepaymentDueLive,
-  MIN_SALE_LISTING_SECONDS,
 } from '../contracts/loanLive';
 import { pauseInForceAt } from '@vaipakam/lib/loanClock';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -112,7 +111,14 @@ import { EarlyExitFlow } from '../components/EarlyExitFlow';
 import { loanSaleListingEnabled, LoanSaleFlow } from '../components/LoanSaleFlow';
 import { LoanSalePendingCard } from '../components/LoanSalePendingCard';
 import { LoanKeeperCard } from '../components/LoanKeeperCard';
+import { PeriodicInterestCard } from '../components/PeriodicInterestCard';
 import { LOCK_EARLY_WITHDRAWAL_SALE, useLoanSalePending } from '../data/loanSalePending';
+import { useSaleExitVerdict } from '../data/saleExitVerdict';
+import {
+  saleToolsAvailability,
+  saleToolsMount,
+  type SaleToolsMountInput,
+} from '../data/saleToolsMount';
 import {
   readRefinanceMarker,
   refinanceDiscoveryKey,
@@ -300,7 +306,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const nftOwners = useQuery({
     queryKey: ['positionOwners', readChain.chainId, loan.data?.loanId],
     enabled: Boolean(loan.data) && Boolean(readClient),
-    refetchInterval: tipAware(60_000, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('positionOwners', 60_000, Boolean(readChain.wsUrl)),
     queryFn: async () => {
       const row = loan.data!;
       // Tri-state per side: an address (live owner), 'burned' (the
@@ -441,7 +447,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     queryKey: ['loanLiveStatus', readChain.chainId, loan.data?.loanId],
     enabled: liveStatusEnabled,
     staleTime: 15_000,
-    refetchInterval: tipAware(30_000, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('loanLiveStatus', 30_000, Boolean(readChain.wsUrl)),
     // Returns the STATUS plus the interest mode: the same single
     // getLoanDetails call answers both, and the early-repay chooser
     // needs the mode in Basic mode too (the loanLive strategy read is
@@ -660,6 +666,22 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // `isLenderHolder`, not `role` — a dual-position holder must get
     // this read or the sale-lock verdict never resolves (Codex r18 P2).
     !loanIsRental && Boolean(loan.data) && isLenderHolder,
+  );
+  // #1841 — the contract's own verdict on both sale routes for this
+  // wallet, which is all the lender chooser's availability reads. Enabled
+  // wherever the chooser can mount: the INDEXED row open (the chooser's
+  // reconciled gate only ever narrows it), not a rental, and this wallet
+  // holding the lender position. Not narrowed to a live Active status: a
+  // FallbackPending loan keeps the chooser, and a verdict that never ran
+  // would hold it at "checking" forever, where the read itself answers
+  // `LoanNotActive`.
+  const saleVerdict = useSaleExitVerdict(
+    loanId,
+    address,
+    Number.isFinite(loanId) &&
+      !loanIsRental &&
+      isLenderHolder &&
+      (loan.data?.status === 'active' || loan.data?.status === 'fallback_pending'),
   );
   /** A listing that SUPPRESSES another surface must be verified.
    *
@@ -1014,7 +1036,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     queryKey: ['loanLive', readChain.chainId, loan.data?.loanId],
     enabled: loanLiveEnabled,
     staleTime: 30_000,
-    refetchInterval: tipAware(60_000, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('loanLive', 60_000, Boolean(readChain.wsUrl)),
     queryFn: async () => {
       const [live, calcDue, latestBlock, saleLock] = await Promise.all([
         readLoanLive(readClient!, readChain.diamondAddress, loan.data!.loanId),
@@ -1185,7 +1207,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     queryKey: ['graceBannerTerms', readChain.chainId, loan.data?.loanId],
     enabled: bannerTermsEnabled,
     staleTime: 30_000,
-    refetchInterval: tipAware(60_000, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('graceBannerTerms', 60_000, Boolean(readChain.wsUrl)),
     // chainNow rides along (Codex #1166 r2): the contracts gate on
     // block.timestamp, so the banner must not trust a skewed device
     // clock. fetchedAtLocal lets the countdown advance between
@@ -1405,6 +1427,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const saleHoldResolving =
     row.status === 'active' && saleHold.resolving === true;
   const principal = principalMeta.data;
+  // The loan's interest schedule as the page already knows it, from the
+  // first of its reads that answered (the lender chooser below reads the
+  // same three). `undefined` = not known yet.
+  const pageCadence =
+    loanLive.data?.live.periodicInterestCadence ??
+    liveStatus.data?.periodicInterestCadence ??
+    (bannerTerms.isError ? undefined : bannerTermsData?.live.periodicInterestCadence);
   const collateral = collateralMeta.data;
   const interest = fullTermInterest(
     BigInt(row.principal),
@@ -1501,17 +1530,6 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // point the value is resolved, rather than at each reader.
   // Every healthy live answer, in rank order. Rank decides only when
   // they disagree about a NON-terminal status — see below.
-  /** Has every status query that WILL run finished running?
-   *
-   *  A query is settled when it has succeeded, errored, or is disabled
-   *  and therefore never going to fetch — TanStack leaves a disabled
-   *  query `isPending` with `fetchStatus: 'idle'`, which is why the
-   *  third arm is needed and why `isPending` alone cannot be used.
-   *
-   *  Read ONLY by the chooser's readiness attribute (#1855). Nothing
-   *  rendered depends on it, so a wrong answer here cannot change what a
-   *  lender sees — only whether an external check believes the card has
-   *  finished deciding. */
   /** Has this source stopped, for now?
    *
    *  `fetchStatus === 'idle'` ALONE, and the two arms it replaces were
@@ -1529,46 +1547,6 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
    *  The cost is a brief `pending` on each polling tick, which is
    *  honest: during a refetch the answer genuinely is not settled. */
   const sourceSettled = (q: { fetchStatus: string }) => q.fetchStatus === 'idle';
-  const statusSourcesSettled = [loanLive, liveStatus, bannerTerms].every(sourceSettled);
-  /** The same question for the MATURITY verdict, over its own sources.
-   *
-   *  A SEPARATE LIST, not a reuse of the one above (Codex #1858 r3).
-   *  `maturity` below reconciles `bannerTerms` and `loanLive` only —
-   *  `liveStatus` carries a status enum, not a term — so asking the
-   *  status list here would make a past-due page wait on a query that
-   *  cannot change the answer. What the two share is the settled
-   *  PREDICATE; what differs is which queries the derivation reads, and
-   *  each list is written beside the derivation it belongs to.
-   *
-   *  Needed because `maturity` answers `'unknown'` on DISAGREEMENT. A
-   *  `'past'` from the source that landed first is provisional: an
-   *  in-grace keeper extension moves the due date forward, so the
-   *  second read arriving with a longer term flips the verdict and
-   *  would retract a readiness answer already published as settled. */
-  const maturitySourcesSettled = [loanLive, bannerTerms].every(sourceSettled);
-  /** Did an ENABLED source stop without contributing an answer?
-   *
-   *  Settled and answered are not the same thing (Codex #1858 r4).
-   *  `sourceSettled` counts `isError` as settled, which is right for
-   *  "is anything still in flight" and wrong as a basis for publishing
-   *  a verdict: an errored query keeps its `refetchInterval`, so a
-   *  later poll can succeed and change the answer. A `past` read off
-   *  the one source that landed, with the other errored, can become
-   *  `unknown` on that recovery; an errored status source can come
-   *  back FallbackPending and shut both jumps. Either way a `ready`
-   *  already published retracts, with no chain transition behind it —
-   *  the same defect as round 3, one level further out.
-   *
-   *  Gated on the query's OWN enablement const rather than on a
-   *  restatement of it: a disabled query that errored while it was
-   *  enabled keeps `isError` forever, and reading that flag alone
-   *  would report a Basic-mode page as failed over a query it does not
-   *  consult. */
-  const sourceFailed = (q: { isError: boolean }, enabled: boolean) => enabled && q.isError;
-  const maturitySourcesFailed =
-    sourceFailed(bannerTerms, bannerTermsEnabled) || sourceFailed(loanLive, loanLiveEnabled);
-  const statusSourcesFailed =
-    sourceFailed(liveStatus, liveStatusEnabled) || maturitySourcesFailed;
 
   /** Each status read, WITH whether its source can still speak.
    *
@@ -1585,10 +1563,6 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const statusReads: {
     status: LoanStatus | undefined;
     fresh: boolean;
-    /** Has THIS source stopped? Carried per reading for the same reason
-     *  `fresh` is: a fact about a reading belongs beside it, not in a
-     *  parallel array (Codex #1858 r10). */
-    settled: boolean;
   }[] = [
     {
       status:
@@ -1618,12 +1592,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // list below, where the answers are absorbing and a stale
       // terminal reading is only ever ahead.
       fresh: loanLiveAnsweredWhileEnabled,
-      settled: sourceSettled(loanLive),
     },
     {
       status: liveRead ? (liveRead.status as LoanStatus) : undefined,
       fresh: liveStatusEnabled,
-      settled: sourceSettled(liveStatus),
     },
     {
       status:
@@ -1631,7 +1603,6 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           ? (bannerTermsData.live.status as LoanStatus)
           : undefined,
       fresh: bannerTermsEnabled,
-      settled: sourceSettled(bannerTerms),
     },
   ];
   /** Every reading, fresh or frozen. Correct for ABSORBING answers: a
@@ -1652,17 +1623,6 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const freshStatusCandidates: (LoanStatus | undefined)[] = statusReads.map(
     (r) => (r.fresh ? r.status : undefined),
   );
-  /** Has the source that reported FallbackPending stopped?
-   *
-   *  Narrow on purpose (Codex #1858 r10): the fallback arm is
-   *  conclusive and skips the general status gate, which is right —
-   *  waiting on unrelated sources would restore the timeout that arm
-   *  exists to remove. But a cached FallbackPending whose own poll is
-   *  about to return Active after a cure is not conclusive yet, so the
-   *  arm waits on the read that produced it and on nothing else. */
-  const fallbackSourceSettled = statusReads
-    .filter((r) => r.fresh && r.status === LoanStatus.FallbackPending)
-    .every((r) => r.settled);
 
   /** Whether the optional seller-window call inside `readLoanLive`
    *  answered — `false` when a HEALTHY snapshot carries
@@ -1967,6 +1927,38 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // FallbackPending would otherwise fail closed forever.
     !liveStatusCandidates.some((st) => st !== undefined && isTerminalStatus(st)) &&
     !freshStatusCandidates.some((st) => st === LoanStatus.FallbackPending);
+
+  /** The Advanced sale tools' render gates, in one place (#1841, Codex
+   *  #3024 r5). The tool block renders from `saleToolsMountState` and the
+   *  exit chooser's `saleTools` reads `saleToolsAvailability` over the
+   *  same input, so the rows and the tools they jump to cannot answer
+   *  differently. See `data/saleToolsMount.ts`. */
+  const saleToolsGateInput: SaleToolsMountInput = {
+    shown:
+      isLenderHolder &&
+      !soldThisSession &&
+      !isRental &&
+      !(sanctions.ready && sanctions.flagged),
+    saleAttemptable,
+    principal: { ready: Boolean(principal), failed: principalMeta.isError },
+    sanctionsReady: sanctions.ready,
+    loanLive: {
+      ready: Boolean(loanLive.data) && !loanLive.isError,
+      failed: loanLive.isError,
+    },
+    salePending,
+    // The chain-anchored clock, the same one every other deadline on this
+    // page reads (`loanLiveNowSec`); unknown until `loanLive` answers.
+    matured:
+      loanLive.data && !loanLive.isError && loanLiveNowSec !== undefined
+        ? loanLiveNowSec >= loanEndTimeOf(loanLive.data.live, loanLiveNowSec)
+        : undefined,
+    feeEnt: {
+      ready: !feeEnt.isError && feeEnt.data !== undefined,
+      failed: feeEnt.isError,
+    },
+  };
+  const saleToolsMountState = saleToolsMount(saleToolsGateInput);
 
   // `isError` disqualifies the snapshot here too (Codex r26 P2). This
   // consumer predates the health-check rule and was missed when the
@@ -3487,6 +3479,23 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         </dl>
       </section>
 
+      {/* #2524 — the current interest period of a loan on a schedule:
+          deadline, grace, what is owed, and what can happen once the
+          grace is over. Mounted while the page's cadence is unknown too
+          (the card reads its own and shows nothing for a loan with no
+          schedule), never once a read has said "no schedule". */}
+      {row.status === 'active' && !closedThisSession && !isRental ? (
+        <PeriodicInterestCard
+          loanId={row.loanId}
+          role={role === 'borrower' || role === 'lender' ? role : 'viewer'}
+          principal={principal}
+          enabled={pageCadence !== 0}
+          scheduled={pageCadence !== undefined && pageCadence !== 0}
+          busy={busy}
+          setBusy={setBusy}
+        />
+      ) : null}
+
       {/* #1033 — one-line alerts nudge: deadlines happen while the
           site is closed, and the borrower on an active loan is the
           person who most needs to hear about them. */}
@@ -4555,189 +4564,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               bannerTerms.fetchStatus === 'idle') &&
             (liveStatus.isError || (isAdvanced && loanLive.isError))
           }
-          // Chain-anchored only, same rule as the borrower chooser's
-          // pastDueHint: a device clock or lagging indexer row must
-          // never flip the sale rows to "past due" while the
-          // chain-authoritative cards below still permit a sale.
-          //
-          // Falls back to `bannerTerms` for the same reason as the
-          // cadence above — with only `loanLive` in the chain, Basic
-          // mode always took the `false` branch and a past-due lender
-          // was told both sales were available (Codex r1 P2). This is
-          // the identical fallback the borrower chooser already uses.
-          // Codex r3 P2 — ANCHORED chain time, not the raw poll snapshot.
-          // `chainNow` is captured per refetch, so on a polling-only
-          // deployment a lender sitting on the page across maturity kept
-          // seeing the sale rows until the next successful poll, while
-          // the contract had already begun refusing. `bannerNowSec`
-          // advances that anchor by the local tick between refetches —
-          // the device clock supplies only the DELTA, never the
-          // authority, which is the same rule the grace banner uses
-          // (Codex #1166 r2).
-          //
-          // `termsEndSec` is preferred over `loanLive` here because it
-          // resolves from bannerTerms' LIVE terms when present, which is
-          // what the r2 fix widened the gate to guarantee for lenders;
-          // `loanLive` is fresher but carries no local anchor.
-          //
-          // `>=`, not `>` (Codex r3 P2): the Advanced tool block gates
-          // on a STRICT `<`, so at exactly the maturity second the
-          // tools do not mount while a `>` here still reported the
-          // position as pre-maturity — the rows showed as available
-          // and their jumps had nothing to scroll to. Both contracts
-          // refuse a new exit at that boundary too, so the boundary
-          // second belongs on the past-due side.
-          // THREE-valued (Codex r6 P2). The old `: false` tail was a
-          // verdict from a read that had not answered: `termsEndSec`
-          // and `bannerNowSec` both fall back to the INDEXER row and
-          // the DEVICE clock when `bannerTerms` has no data, and in
-          // Basic mode `loanLive` is disabled outright — so an errored
-          // terms read left the card asserting "not past due" with no
-          // authoritative source behind it, on the one question that
-          // refuses both exits.
-          //
-          // Not a dead end: `bannerTerms` is enabled for exactly this
-          // case (`lenderNeedsLiveTerms`), so unknown clears on the
-          // next refetch rather than persisting the way an un-runnable
-          // query would.
-          //
-          // `!bannerTerms.isError` matters even though `.data` is set
-          // (Codex r8 P2): TanStack RETAINS the last success when a
-          // background refetch fails, and an obligation transfer
-          // re-stamps `startTime`/`durationDays` on the loan
-          // (`PrecloseFacet:1164`), so a cached LATER due date can
-          // outlive the live term. Falling through to `loanLive`, and
-          // to `'unknown'` when it cannot answer either, fails closed
-          // instead of trusting a snapshot the chain has moved past.
-          //
-          // The order here is the REVERSE of `resolvedLoanStatus`'s and
-          // that is intentional — see the note there. This branch needs
-          // an anchored clock, which only `bannerTerms` carries; the
-          // status resolution needs only a fresh enum. Same two
-          // queries, two different questions, two orders.
-          // DISAGREEMENT between two healthy sources resolves to
-          // `'unknown'`, not to the higher-ranked one (Codex r13 P2).
-          //
-          // The terminal-status trick does not transfer here: maturity
-          // is not absorbing. An in-grace keeper extension re-stamps
-          // `startTime`/`durationDays` and moves the due date FORWARD,
-          // so a cached `past` can outlive the live term — and an
-          // obligation transfer re-stamps it too, so a cached date can
-          // equally be LATER than the truth. Neither direction is
-          // safe, and this page tracks no per-query timestamps to
-          // break the tie with.
-          //
-          // So when the two disagree we genuinely do not know which is
-          // current, and the card's own doctrine applies: say so
-          // rather than pick. `'unknown'` already blocks both rows
-          // with an honest line and clears on the next refetch, and
-          // the alternative — asserting `past` on a loan the contracts
-          // would happily sell — is a wrong answer about the one fact
-          // that closes both exits.
-          maturity={(() => {
-            const banner =
-              bannerTermsData && !bannerTerms.isError
-                ? termsEndSec !== null && bannerNowSec >= termsEndSec
-                  ? 'past'
-                  : 'current'
-                : undefined;
-            // A DISABLED QUERY'S CACHE IS NOT A LIVE SOURCE (Codex
-            // #1858 r5). TanStack keeps `loanLive.data` after the query
-            // is disabled, so a lender who visits Advanced and returns
-            // to Basic leaves a frozen snapshot reconciling against the
-            // still-polling banner read. If the two then disagree —
-            // a keeper extension, an obligation transfer — `maturity`
-            // sticks on `'unknown'` forever, because the source that
-            // would resolve it cannot poll. Readiness reported `pending`
-            // indefinitely: the exact hang this attribute exists to
-            // remove, reintroduced by a cache.
-            //
-            // Applied to BOTH reconciling consumers, not the one the
-            // finding named — this branch and `listingWindowTooShort`
-            // below both weigh two sources against each other, and a
-            // rule stated in one of two siblings is this PR's whole
-            // subject. `resolvedLoanStatus` is deliberately untouched:
-            // it is a preference order over an ABSORBING value, where a
-            // cached terminal status stays true.
-            const live =
-              loanLiveEnabled && loanLive.data && !loanLive.isError
-                ? // ADVANCED by local elapsed, exactly as the banner
-                  // path does (Codex r20 P2). `chainNow` is frozen at
-                  // the poll that fetched it, so on a 60-second cycle a
-                  // snapshot taken shortly before maturity kept
-                  // reporting `current` for up to a minute after the
-                  // contracts had begun refusing — the fallback was
-                  // reading a stopped clock.
-                  //
-                  // `dataUpdatedAt` is TanStack's own fetch stamp, so
-                  // this needs no change to `readLoanLive`'s shape —
-                  // which twelve other consumers share and none of them
-                  // needed widening for a maturity question.
-                  //
-                  // Still chain-ANCHORED: the device supplies only the
-                  // elapsed delta, never the absolute time, so a wrong
-                  // device clock shifts the boundary by its drift
-                  // rather than by its absolute error.
-                  (loanLiveNowSec ?? loanLive.data.chainNow) >=
-                  loanEndTimeOf(
-                    loanLive.data.live,
-                    loanLiveNowSec ?? loanLive.data.chainNow,
-                  )
-                  ? 'past'
-                  : 'current'
-                : undefined;
-            if (banner !== undefined && live !== undefined) {
-              return banner === live ? banner : 'unknown';
-            }
-            return banner ?? live ?? 'unknown';
-          })()}
-          // Chain-anchored, and only asserted when a live term is
-          // actually known — an unread term must not claim the window
-          // is too short (Codex r18 P2). Shares the tool's own
-          // constant rather than mirroring it.
-          listingWindowTooShort={(() => {
-            // BOTH healthy sources, not the first one that answers
-            // (Codex r26 P2). The neighbouring maturity branch already
-            // reconciles them and this one did not — a preference
-            // order, which is only sound when the sources cannot
-            // disagree. They can: an obligation transfer SHORTENS the
-            // loan, and these two queries refresh on different
-            // intervals, so one healthy snapshot can be inside the
-            // cutoff while the other is still pre-maturity.
-            //
-            // Where the maturity branch answers `'unknown'` on
-            // disagreement, this one fails CLOSED — either healthy
-            // source inside the cutoff blocks. The asymmetry is
-            // deliberate: `maturity` feeds copy that must not assert a
-            // due date it cannot establish, while this feeds an
-            // availability verdict, and a false block is a row that
-            // reads unavailable and clears on the next poll, against a
-            // false offer that is a form filled in for a transaction
-            // the tool's live preflight then rejects.
-            const verdicts: boolean[] = [];
-            if (bannerTermsData && !bannerTerms.isError) {
-              verdicts.push(
-                termsEndSec !== null &&
-                  termsEndSec > bannerNowSec &&
-                  BigInt(termsEndSec - bannerNowSec) < MIN_SALE_LISTING_SECONDS,
-              );
-            }
-            // Same disabled-cache rule as the maturity branch above.
-            if (loanLiveEnabled && loanLive.data && !loanLive.isError) {
-              // Advanced, not frozen — same clock as the maturity
-              // branch above (Codex r22 P2).
-              const now = loanLiveNowSec ?? loanLive.data.chainNow;
-              const end = loanEndTimeOf(loanLive.data.live, now);
-              verdicts.push(
-                end > now && BigInt(end - now) < MIN_SALE_LISTING_SECONDS,
-              );
-            }
-            // No healthy source: an unread term must not claim the
-            // window is too short (Codex r18 P2). The maturity gate
-            // covers the unknown case on its own.
-            return verdicts.some(Boolean);
-          })()}
           // Sync env read (`VITE_DISABLED_FLOWS`), no query behind it.
+          // The contract's verdict on both sale routes (#1841). Every
+          // refusal the chooser shows — pause, status, maturity, the
+          // listing window and lock, the collateral kind, admission —
+          // comes from here, so none is restated on this page.
+          verdict={saleVerdict.verdict}
+          verdictSettled={saleVerdict.settled}
           listingFlowDisabled={flowDisabled('post-offer')}
           // EVERY prerequisite the anchored tools are gated on, not
           // just the fee read (Codex r6 P2). The Advanced block takes
@@ -4757,91 +4590,22 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // rest becomes knowable on the switch, where the tool block
           // states them itself.
           saleTools={
-            // `isError` FIRST, before the `data === undefined` test
-            // (Codex r16 P2). TanStack keeps the last success through a
-            // failed refetch, so an errored-but-cached entitlement has
-            // `data` defined — and round 14 made `lenderFeeModeFull`
-            // reject exactly that record. Leaving this gate trusting it
-            // meant one consumer distrusting the cache while its
-            // sibling accepted it, on the same query: the rows opened
-            // WITHOUT the Full-plan disclosure, which is the thing this
-            // prerequisite exists to wait for. My own r14 fix created
-            // that asymmetry by fixing one side of it.
-            feeEnt.isError || feeEnt.data === undefined
-              ? feeEnt.isError
-                ? 'failed'
-                : 'checking'
-              : !principal
-                ? // Codex r8 P2 — `principalMeta` exhausting its retry
-                  // leaves `principal` undefined forever, and the
-                  // Advanced block is gated on it too, so neither
-                  // anchor ever mounts. Reporting that as "still
-                  // reading the fee terms" was wrong twice over: wrong
-                  // cause, and a wait that never ends.
-                  // r9 P2 fixed the half I left: the wait was gone,
-                  // the false cause was not — it still blamed a read
-                  // that had SUCCEEDED.
-                  principalMeta.isError
-                  ? 'failed'
-                  : 'checking'
-                : !sanctions.ready
-                  ? 'checking'
-                : // Codex r10 P2 — a THIRD prerequisite, landing in the
-                  // fee-terms sentence exactly as the token read had in
-                  // r8. That is what settled the question: the failure
-                  // states collapsed rather than growing a third name
-                  // to keep straight. See `SaleToolsState`.
-                  // `isError` disqualifies the cached snapshot, it does
-                  // not merely rank below it (Codex r20 P2). TanStack
-                  // retains `loanLive.data` through a failed refetch,
-                  // so this said "ready" on a snapshot that may predate
-                  // a partial repayment or an obligation transfer made
-                  // elsewhere — and `LoanSaleFlow` would then render and
-                  // confirm against obsolete principal and terms while
-                  // its submit path silently re-read the changed values.
-                  // A receipt the lender approved for different numbers
-                  // than the ones that execute.
-                  //
-                  // Same rule the fee-entitlement and sale-lock gates
-                  // already use; this was the third consumer of that
-                  // rule and the one I kept missing.
-                  isAdvanced && (!loanLive.data || loanLive.isError)
-                  ? loanLive.isError
-                    ? 'failed'
-                    : 'checking'
-                  : // A FOURTH prerequisite, and the only one that is
-                    // not a query state (Codex r19 P2). `readLoanLive`
-                    // deliberately returns data with
-                    // `live.lenderForfeitFrom === undefined` when the
-                    // optional seller-window call fails, so `loanLive`
-                    // looks healthy while neither tool can price a
-                    // sale: `EarlyExitFlow` resolves its candidates to
-                    // unavailable and `LoanSaleFlow` disables both
-                    // actions. Without this the chooser advertised two
-                    // exits that cannot be started, and its jumps
-                    // landed on cards offering nothing.
-                    //
-                    // `failed`, not `checking`: the window call has
-                    // already failed and nothing is retrying it, so a
-                    // waiting line would promise an answer that is not
-                    // coming — the trap this card met three times.
-                    //
-                    // ONE hoisted verdict over all three `readLoanLive`
-                    // callers (Codex r25 P2) — see `sellerWindowReadable`
-                    // beside the status resolution. This site grew a
-                    // clause per review round, one source at a time,
-                    // which is the defect the card exists to prevent
-                    // happening inside the card.
-                    //
-                    // `undefined` means no healthy source has answered
-                    // yet, which the earlier arms already cover, so only
-                    // an explicit `false` is a failure here.
-                    sellerWindowReadable === false
-                    ? 'failed'
-                    : 'ready'
+            // The block's own answer (Codex #3024 r2, r4, r5): the rows
+            // open only when the tools they jump to are on the page.
+            // `saleToolsAvailability` reads the same `saleToolsMount` the
+            // block below renders from, so a render gate cannot be added
+            // to one and missed by the other — the status gate, the
+            // listing gate and maturity were each missed once while they
+            // were restated here by hand. The mode asymmetry, the
+            // principal-metadata failure (r8) and the seller window (r19)
+            // are stated there.
+            saleToolsAvailability({
+              ...saleToolsGateInput,
+              isAdvanced,
+              sellerWindowReadable,
+            })
           }
           listingSupportedOnChain={loanSaleListingEnabled(readChain.chainId)}
-          collateralIsNft={collateralIsNft}
           // Wait-row timing only: a partial repay pays the lender that
           // share plus its accrued interest DURING the term, so the
           // at-close wording is false for these loans (Codex r4 P2).
@@ -4861,95 +4625,39 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // local marker, taking the cancel path with it. Verification
           // failure maps to the unverified line, which says we cannot
           // confirm rather than naming a place.
+          // `'unread'` first (Codex #3024 r1): the verdict can report a
+          // listing this device's own read has not shown — in flight,
+          // failed before it answered, or a poll behind the contract —
+          // and then no listing card renders below, so neither "cancel
+          // it below" nor "made elsewhere" is something we know.
           saleCancel={
-            sale.state?.offerIdVerifyFailed === true
+            sale.state?.listed !== true
+              ? 'unread'
+              : sale.state.offerIdVerifyFailed === true
               ? 'no-unverified'
-              : sale.state?.offerId == null
+              : sale.state.offerId == null
                 ? 'no-elsewhere'
                 : sale.state.isHolder === true
                   ? 'yes'
                   : 'no-unverified'
           }
-          // Affirmative FallbackPending only (Codex r8 P2). Both sale
-          // entry points require exactly Active, so the rows go — but
-          // the card STAYS, because the status is not terminal and the
-          // wait row is still the honest answer. An unread status is
-          // not a fallback-pending one, so this never guesses.
-          //
-          // Health-checked on BOTH sources, and the healthy one wins
-          // (Codex r9 P2). I applied this rule to `maturity` in r8 and
-          // not here: a cached FallbackPending retained through a
-          // failed refetch kept blocking both rows after the borrower
-          // had cured the loan, even while the independent live-status
-          // read said Active. A stale blocker is as wrong as a stale
-          // permission — it just fails in the safe-looking direction.
-          // ANY healthy source, not the ranked winner (Codex r21 P2).
-          // The r20 fix made `saleAttemptable` fail closed on an
-          // affirmative non-Active from any source — but left this
-          // prop, and `saleTools`, reading the RANKED resolution. So
-          // when the faster status poll saw FallbackPending while the
-          // slower strategy read still served a cached Active, the
-          // tools unmounted and the rows went on advertising both
-          // exits, complete with the Basic-mode switch and jump
-          // buttons pointing at blocks that were no longer there.
-          //
-          // I fixed the tool side and not the row side of the very
-          // split this card exists to prevent.
-          // FRESH sources only (Codex #1858 r6). FallbackPending cures
-          // back to Active, so a frozen cache asserting it is a claim
-          // that nothing can retract — both sale rows would stay shut
-          // and readiness would publish `ready`/`no` indefinitely, on a
-          // loan the live reads say is Active again.
-          fallbackPending={freshStatusCandidates.some(
-            (st) => st === LoanStatus.FallbackPending,
-          )}
-          // The companion fact `fallbackPending` cannot carry (#1855):
-          // that prop is a `.some(...)`, so `false` means either "not
-          // fallback" or "no read has answered". Only the readiness
-          // attribute consults this; nothing rendered depends on it.
-          //
-          // EVERY enabled source, not any one of them (Codex #1858 r2).
-          // The first version asked whether some candidate was defined,
-          // which proves one query answered and says nothing about the
-          // others — so `bannerTerms` returning Active first published a
-          // settled `ready`/`yes`, and `liveStatus` could then arrive
-          // with FallbackPending and flip it to `ready`/`no`. That is the
-          // same self-unsettling verdict the prop was added to prevent,
-          // reintroduced by measuring the wrong thing.
-          statusSettled={statusSourcesSettled}
-          maturitySettled={maturitySourcesSettled}
-          maturityReadFailed={maturitySourcesFailed}
-          statusReadFailed={statusSourcesFailed}
-          // The lock read's own failure, which `saleLock` cannot
-          // carry: every error there is mapped to `'checking'` so the
-          // rows fail closed, and readiness needs the distinction.
-          saleLockReadFailed={sale.isError}
-          // The lock read's own SETTLEDNESS, which `saleLock` also
-          // cannot carry: TanStack retains `sale.state` through a
-          // background poll, so a cached clear could publish
-          // `ready`/`yes` while the in-flight read was about to
-          // report a listing (Codex #1858 r10).
-          saleLockSettled={sourceSettled(sale)}
-          // The FOURTH prerequisite's settledness, and the one the
-          // wiring had missed (Codex #1858 r11). `saleTools` is derived
-          // from retained data and `isError`, both of which survive a
-          // background refetch, so a cached `'ready'` published a
-          // settled answer that a failed refetch then turned to
-          // `'failed'`.
-          saleToolsSettled={sourceSettled(feeEnt)}
-          fallbackSourceSettled={fallbackSourceSettled}
-          // Tri-state, not a boolean (Codex r1 P2): `sale.state` is
-          // undefined while the listing read is in flight and stays so
-          // if it errors. Collapsing that to `false` showed BOTH sale
-          // exits as available on a position whose lock had never been
-          // checked — and the listing lock refuses both paths.
-          // FOUR states, not three — see `SaleLockState`. The lock query
-          // is gated on a valid lender position token, so with no such
-          // token it never runs and its data is undefined FOREVER.
-          // Folding that into 'checking' would pin both sale rows shut
-          // behind a permanent spinner, which is the same
-          // unknown-presented-as-known defect one door over. Distinguish
-          // "no read is possible" from "the read has not answered".
+          // Settled only when EVERY read `saleTools` is derived from has
+          // stopped (Codex #1858 r11 for the fee read, #3024 r3 for the
+          // rest). Each is derived from retained data and `isError`,
+          // both of which survive a background refetch, so a refresh
+          // still in flight can turn a published `'ready'` into
+          // `'checking'` (a status read reporting FallbackPending, via
+          // `saleAttemptable`, or a listing via `salePending`) or
+          // `'failed'`. The list is the arms of `saleTools` above, read
+          // for read.
+          saleToolsSettled={[
+            feeEnt,
+            principalMeta,
+            loanLive,
+            liveStatus,
+            bannerTerms,
+            sale,
+          ].every(sourceSettled)}
           // Answers "might a buyer still complete", NOT "may I offer
           // the row" — see `listingMayStand`. An affirmative cached
           // listing keeps the COST lines up even when the poll that
@@ -4965,67 +4673,6 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           listingMayStand={
             sale.state?.listed === true &&
             (sale.isError || sale.state.completable !== 'no')
-          }
-          saleLock={
-            !loan.data?.lenderTokenId ||
-            !/^[1-9]\d*$/.test(String(loan.data.lenderTokenId))
-              ? 'unknown'
-              : sale.state === undefined
-                ? // A failed INITIAL read is `'unknown'`, not
-                  // `'checking'` (Codex r13 P2). With no successful
-                  // result to retain, "still checking" describes a
-                  // read that has already given up — the
-                  // permanent-spinner trap, in its third location.
-                  // Reusing `'unknown'` rather than adding a seventh
-                  // state: it already means "no claim, ask the tools",
-                  // which is exactly right, and this card's review
-                  // history is largely the cost of widening unions one
-                  // case at a time.
-                  // ...and `'unknown'` was the WRONG replacement
-                  // (Codex r20 P2): the row builder treats it as
-                  // non-blocking, so an initial failure on a position
-                  // that may already carry a listing offered both rows
-                  // and mounted both forms against submissions the
-                  // contracts would refuse. "No claim" is right for a
-                  // read that is not POSSIBLE and wrong for one that
-                  // failed — the first cannot be retried, the second
-                  // must fail closed. `'checking'` blocks and, unlike
-                  // the spinner case r13 fixed, the query is live and
-                  // retrying, so the wait genuinely does end.
-                  sale.isError
-                  ? 'checking'
-                  : 'checking'
-                : sale.state.listed === true
-                  ? // Codex r10 P2 — this used to say a cached LISTED
-                    // stays authoritative because "the lock clears only
-                    // by cancel or teardown, both actions this device
-                    // would see". The premise is false, and in two
-                    // ways: a cancel can be made from ANOTHER device,
-                    // and the expired-listing teardown is
-                    // PERMISSIONLESS, so anyone at all can clear it.
-                    // Neither reaches this browser, so a failed poll
-                    // can leave `listed: true` cached over a position
-                    // that is already free — blocking both exits,
-                    // keeping the pending card, and naming sale losses
-                    // as still pending.
-                    //
-                    // Symmetric with the cached-CLEAR case below, and
-                    // for the identical reason: through a failed poll
-                    // neither answer is evidence. Back to 'checking' —
-                    // the read CAN answer, so it is a wait, not a dead
-                    // end.
-                    sale.isError
-                    ? 'checking'
-                    : 'listed'
-                  : // A cached CLEAR does not (Codex r9 P2). Another
-                    // device can list inside a failed-poll window, and
-                    // offering both exits on a now-locked position
-                    // sends the lender to a preflight refusal. Back to
-                    // 'checking' — the read CAN answer, so it is a
-                    // wait, not a dead end.
-                    sale.isError
-                    ? 'checking'
-                    : 'clear'
           }
           // Free — the sale rows already wait on `feeEnt`, so reading
           // the stamp here adds no query. Defaults to false while the
@@ -5047,26 +4694,6 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             !feeEnt.isError &&
             feeEnt.data.lenderMode === FEE_MODE_FULL
           }
-          // See the prop's own note: no cheap client read exists for
-          // the held-for-lender balance, so this stays false and the
-          // refusal surfaces in the listing tool instead.
-          heldVpfiUnresolved={false}
-          // KNOWN GAP, deferred (Codex r1 P2). This is always false for
-          // a lender today, and NOT because the enabled flag is set to
-          // `role === 'borrower'` — `useOffsetPending` seeds from a
-          // browser-LOCAL marker written by the borrower's own session,
-          // so a lender's browser has nothing to read no matter how the
-          // flag is set. Surfacing it needs a chain read of the
-          // loan→offset-offer link, which is tracked with the other
-          // deferred pre-checks. Until then the listing tool still
-          // refuses `OffsetActiveOnLoan` correctly; the cost is a
-          // wasted click, not a wrong action.
-          // Passed as a LITERAL, not as `offsetPend.pending`: reading
-          // the hook here would look wired while being structurally
-          // false, which is the exact unknown-presented-as-known shape
-          // this card keeps getting caught by. A literal makes the gap
-          // legible to the next reader.
-          borrowerOffsetPending={false}
           // 'unknown' on purpose — the candidate list comes from
           // `useActiveOffers`, a full page walk this page does not
           // otherwise make. Hoisting it would put that walk on every
@@ -5083,39 +4710,33 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           message goes to the PAGE banner (the role flips to viewer
           as soon as the ownership read refreshes, unmounting this
           block). */}
-      {isAdvanced &&
-      // `isLenderHolder`, not `role` — same reason as the chooser
-      // above, and they MUST use the same test or a dual-position
-      // holder sees rows with no tools behind them.
-      isLenderHolder &&
-      // NOT the raw indexed row — see `saleAttemptable`. The chooser's
-      // rows and this block must agree, or a row is offered with
-      // nothing behind it.
-      saleAttemptable &&
-      !soldThisSession &&
-      !isRental &&
-      principal &&
-      !(sanctions.ready && sanctions.flagged) ? (
+      {isAdvanced && saleToolsMountState.kind !== 'absent' ? (
+        // Rendered from `saleToolsMount`, the one derivation the chooser's
+        // rows also read (see `saleToolsGateInput`). `isLenderHolder`, not
+        // `role`, and `saleAttemptable`, not the raw indexed row, for the
+        // same reasons as the chooser: they must use the same tests or a
+        // row is offered with nothing behind it.
         // Errored cached terms are NOT a basis for the full form —
         // same rule as the readiness verdict above (Codex r20 P2).
-        !loanLive.data || loanLive.isError || !sanctions.ready ? (
+        saleToolsMountState.kind === 'reading' ? (
           <section className="card">
             <h3>{copy.earlyExit.title}</h3>
             <p className="muted">
-              {loanLive.isError
+              {saleToolsMountState.failed
                 ? copy.earlyExit.checkFailed
                 : copy.earlyExit.checking}
             </p>
           </section>
-        ) : salePending ? (
+        ) : saleToolsMountState.kind === 'listing' ? (
           // A live sale listing owns the lender's exit story — the
           // pending card below explains and offers cancel/restore.
           null
-        ) : (loanLiveNowSec ?? loanLive.data.chainNow) <
-          loanEndTimeOf(
-            loanLive.data.live,
-            loanLiveNowSec ?? loanLive.data.chainNow,
-          ) ? (
+        ) : saleToolsMountState.kind === 'matured' || !loanLive.data || !principal ? (
+          // Past the loan's end no sale tool renders. (`loanLive.data` and
+          // `principal` are non-null past `reading`/`absent`; the test
+          // only narrows them for the forms below.)
+          null
+        ) : (
           // `isError` too, not just absence (Codex r19 P2). TanStack
           // retains the last success through a failed refetch, so this
           // branch let both FORMS mount on a cached entitlement the
@@ -5125,7 +4746,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // start" while its destinations stay actionable is the same
           // rows-versus-tools split as r12 and r13, on a third
           // prerequisite.
-          feeEnt.isError || feeEnt.data === undefined ? (
+          saleToolsMountState.kind === 'disclosure' || !feeEnt.data ? (
             // Codex #1412 r4 (P3) — the travels-with-the-NFT note is
             // part of the sale disclosure set for a Full-stamped
             // position, so the sale CTAs hold until the fee-
@@ -5219,7 +4840,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           </section>
           </>
           )
-        ) : null
+        )
       ) : null}
 
       {/* The live sale listing's standing surface — chain-authoritative

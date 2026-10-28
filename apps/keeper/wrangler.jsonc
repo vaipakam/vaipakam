@@ -334,6 +334,10 @@
   //     claim-horizon heartbeat (every reward chain; its entry queue and
   //     cursor are in the keeper's private `vaipakam-keeper-db`). Arm it on a
   //     chain BEFORE `setRewardClaimHorizonDays` (GovernanceRunbook, M7.2).
+  //   - REWARD_ENTRY_SETTLE_ENABLED — 'true' adds the #2984 entry close-out
+  //     to the armed heartbeat: retiring closed entries whose remaining window
+  //     prices to nothing, and sweeping forfeited entries into the recycle
+  //     bucket. Permissionless; no fee, nothing to the keeper. Ships unset.
   //     All three added after the 2026-07-30 readback above, so that
   //     readback says nothing about them.
   //
@@ -360,6 +364,12 @@
   //     (it pays the quote's CCIP fee) and the two lapse terminals. All
   //     permissionless. Ships unset. Needs no on-chain role. Arming it is an
   //     owner decision.
+  //   - REWARD_RETURN_TRANSPORT_ENABLED — 'true' arms the #2984 reward
+  //     return-transport pass: repatriation instructions, executions and
+  //     cancellation ACKs, stranded-compensation returns and a retired
+  //     mirror's surplus return. All permissionless; every send pays its CCIP
+  //     fee. Ships unset. Needs no on-chain role. Arming it is an owner
+  //     decision.
   //
   // (b) GENUINE PLAIN VARS. `keep_vars: true` preserves the ones this config
   //     does NOT declare — it suppresses the delete of bindings absent from
@@ -392,7 +402,9 @@
   //     (per-chain CCIP fee ceiling per send, default 0.002 native; #2627),
   //     REWARD_CLOSE_OUT_WINDOW_DAYS (default 60; #2984),
   //     REWARD_ZEROED_DAY_WINDOW_DAYS (default 60; #2984),
-  //     REWARD_ZEROED_DAY_MAX_FEE_WEI (its CCIP fee ceiling per send; #2984)
+  //     REWARD_ZEROED_DAY_MAX_FEE_WEI (its CCIP fee ceiling per send; #2984),
+  //     REWARD_RETURN_TRANSPORT_MAX_FEE_WEI (its CCIP fee ceiling per send;
+  //     #2984), REWARD_RETURN_MIN_PART (default 1000e18; #2984)
   //     — knobs for (a)'s passes,
   //     but plain vars themselves.
   //

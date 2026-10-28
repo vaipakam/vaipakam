@@ -22,9 +22,9 @@ import { SUPPORTED_LOCALES, type SupportedLocale } from '../i18n/glossary';
  * (e.g. wrap a single page).
  *
  * SEO win: every supported locale now has a distinct, crawlable URL.
- * Combined with the `<HreflangAlternates>` component (rendered once
- * at App-root) search engines can cleanly index each locale and
- * route users to the right one from search results.
+ * Combined with the hreflang alternates `usePageMeta` emits for each
+ * page's indexed copies (#1314), search engines can cleanly index each
+ * locale and route users to the right one from search results.
  */
 interface LocaleResolverProps {
   /** When the route matches the unprefixed root tree, callers pass
@@ -90,6 +90,13 @@ export function stripLocalePrefix(pathname: string): string {
   if (!m) return pathname;
   if (!isSupportedLocale(m[1])) return pathname;
   return m[2] || '/';
+}
+
+/** The locale a path addresses: its supported prefix, or English for an
+ *  unprefixed path. The inverse half of `stripLocalePrefix`. */
+export function localeOfPath(pathname: string): SupportedLocale {
+  const m = pathname.match(/^\/([a-z]{2})(\/.*|$)/);
+  return m && isSupportedLocale(m[1]) ? m[1] : 'en';
 }
 
 /**

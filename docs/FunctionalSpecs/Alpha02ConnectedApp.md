@@ -105,6 +105,31 @@ including people who never will.
   being read and offers a way to open it on a public explorer, so a
   reader can go to the primary source rather than accept the page's
   reading of it.
+- The analytics view also states the VPFI token as the chain itself
+  reports it: the token's address, its supply on the chain being read,
+  and — on the chain where VPFI is issued — the supply cap, how much can
+  still be minted under it, and the one address allowed to mint. On a
+  chain VPFI reaches by bridge it shows that chain's supply only and says
+  the cap and the minter belong to the issuing chain, rather than showing
+  them as zero. A chain with no VPFI token set up says so.
+- It states the fees the protocol has recorded — since recording began,
+  over the last day and over the last week — each valued in the
+  reference currency at the moment it was collected, and names that
+  currency. Every reason these figures can be lower than what was really
+  collected is stated beside them: a fee in an asset that could not be
+  valued at the time counts as zero, the day and week figures add up only
+  a bounded number of recent records, and a change of reference currency
+  leaves earlier fees in the old one.
+- It names where fees go. Where the treasury is an ordinary address, the
+  view names and links it and shows no balance for it. Where the protocol
+  contract keeps its own fees, the view shows what it holds, at current
+  value, and says what that figure leaves out.
+- The token and fee figures are read from the protocol contract's own
+  public view functions, which the view names, all at one block; the view
+  states that block and how old the reading is. A figure that could not
+  be read says so and is never shown as zero, and a failed read of one
+  figure does not hide the others. These figures carry supply and fee
+  flows only — never a price, a return or a scarcity claim.
 - Any total the analytics view reports is the sum of the categories it
   shows beside it. Every state counted toward a total is either named or
   gathered into a stated remainder, so a reader can add up the parts and
@@ -1397,9 +1422,10 @@ The app uses chain reads and indexed reads for different jobs.
   the reader's language. Sanctions screening records are not feed rows (a
   flagged wallet is told by the in-app banner); the funds consequences that are
   the wallet's own (proceeds or rewards held, set aside or forfeited) are rows,
-  in the in-app flagged wording only, with no list or provider named. A setting
-  recorded against the wallet's vault rather than the wallet (the risk-access
-  consents) is not yet shown; that gap is tracked (#2707). (#2703)
+  in the in-app flagged wording only, with no list or provider named. The
+  wallet's own risk-access choices (its risk level, strict mode, and its
+  consents and acknowledgements for asset pairings) are rows on its page: the
+  protocol records each against the account that chose it. (#2703, #2707)
 - An Activity row states the asset and amount its transaction moved or offered
   when the activity record carries them as normalized fields — exact, or as a
   range for an offer that commits one. It never reconstructs an amount the
@@ -1497,6 +1523,18 @@ and a user who typed it would be refused.
 Consent is collected against the terms actually shown. If a material term,
 warning, selected offer, selected listing, or disclosed risk changes after
 consent, consent is cleared and the user is told to review again.
+
+Every review that collects consent follows this one rule, the same way. The
+consent is tied to the values the review shows, not to how they are printed,
+so two different figures that happen to print alike still count as a change.
+The tick clears in the same update that shows the change, and a review that
+changes and then changes back does not get the consent back: the user ticks
+again against what is on screen. When a change the user did not make clears
+a tick they gave, a line beneath the box says so; clearing it themselves, or
+completing the action, shows no such line. A change that only stops signing
+for the moment, without changing anything that would be signed (a Full
+tariff quote that cannot complete right now), leaves the consent in place,
+and signing stays refused while it holds.
 
 Selecting another offer also resets its Full-tariff choice. Offset funding
 figures and a listing's lifecycle, network, or ownership changes invalidate
@@ -2203,6 +2241,21 @@ is the borrower's own money.
   its way; and equally, learning that the record has been cleared elsewhere
   must stop the wait rather than leave it running against a record that no
   longer exists.
+- A surface that returns to a submitted close-out after the page was closed
+  establishes what it can from the chain before it falls back on the lender's
+  word (#2086). A transaction's own receipt is its outcome. When there is no
+  receipt and the wallet has since spent the transaction's place in its queue,
+  something else from that wallet took that place — and the platform cannot
+  tell a sped-up copy of the same close-out, which may have gone through, from
+  a cancel or an unrelated transaction, which moved nothing. The surface says
+  exactly that, rather than claiming either outcome, and shows the position as
+  it stands once it has re-read it; it does not offer the action again until
+  that re-read is in. A surface that cannot read the wallet's queue keeps the
+  existing rule: it says it has lost track and leaves the answer to the
+  wallet.
+- Waiting on a transaction the network no longer reports must not become a
+  steady stream of requests. A surface that keeps asking about one slows its
+  asking the longer it goes unanswered.
 - A conditional sentence whose condition cannot arise on the route being shown
   does not belong on it. The swap-to-repay cancellation note is the case in
   point: that facility covers ordinary-asset loans only, so an overdue rental
@@ -4125,6 +4178,64 @@ Its intended behaviour, as the test oracle for this surface:
   expired stays treated as expired even when the page's fuller check of
   it cannot finish. Loans on a periodic interest schedule carry a visible
   warning that an overdue period blocks completion until settled.
+- An active loan on a periodic interest schedule shows its current
+  period on the loan page, in both interface modes and to anyone viewing
+  it (#2524): the schedule, the period's deadline and the end of its grace,
+  the interest the period expects, what has been paid toward it, and what
+  is still owed. Every figure and date is the platform's own settlement
+  preview, read together with the chain time it was evaluated at, so the
+  page never describes a period as payable when the chain already lets it
+  be settled, and it states the block it read. The expected interest is
+  described as worked out at the loan's current amount and rate, because
+  it falls when part of the loan is repaid during the period. Before the
+  grace ends the page says, in each party's terms, that interest paid
+  during the period counts toward it and that anyone may settle a period
+  still short when its grace ends by selling enough of the borrower's
+  collateral to cover it, the lender being paid up to what is owed. Once
+  the grace is over it says what can happen next, and offers an action
+  only where this page can complete it: a fully paid period may be
+  recorded from the page, which moves no funds and starts the next period,
+  and is re-checked at the moment of signing; a period with something
+  still owed is settled by a collateral sale whose swap route must be
+  quoted when it runs, so the page says anyone, a keeper service included,
+  may settle it and that it cannot run that sale itself, and the borrower
+  is told that paying what is owed first closes the period without a sale.
+  Where the deployment has periodic settlement switched off, the page says
+  so and that no period can be settled, nor collateral sold for one, while
+  that lasts; the existing loan keeps its schedule, so the disclosure
+  replaces any action rather than the period disappearing. It says this in
+  every phase of the period, not only once the grace is over, and while it
+  holds the page does not warn the borrower of a sale that cannot happen,
+  saying only that payments made during the period count toward it. A
+  paused protocol is stated the same way in every phase, beside the rule
+  that applies once settlement resumes, and a setting the page could not
+  read is stated as unread rather than assumed. A loan with no schedule shows
+  nothing, and a schedule the page could not read is said to be unread.
+- The offer form lets the poster choose when the loan's interest is paid
+  (#2524): once, when the loan is repaid, or every month, quarter, six
+  months or year. Which of those an offer may carry is the platform's own
+  rule for the terms being entered, read from the platform as the terms
+  change rather than re-derived by the app, so the form offers only
+  schedules the platform will accept and says, for each one it will not,
+  why: periodic payment switched off on this deployment, an asset the
+  platform cannot price, a loan over a year that must pay at least yearly,
+  a smallest loan below the value finer schedules need (that value and the
+  offer's own being stated, in the platform's reference currency), or a
+  period not shorter than the loan. Where nothing but payment at repayment
+  is open for the whole offer (the switch is off, or an asset cannot be
+  priced), the form says so in one line instead of offering a choice that
+  is not one. Where the platform's answer cannot be had (still reading,
+  the read failed, or the deployment's contracts predate it), the form
+  says which, and only payment at repayment may be chosen, which is what
+  offers carried before the choice existed. A schedule chosen and then
+  closed by a later change to the terms is not silently replaced: the form
+  says it is no longer allowed and will not continue until another is
+  chosen. In the simpler interface mode the choice appears only when one
+  is needed, so a new user is asked only when payment at repayment is not
+  open. The review's consent text states the chosen schedule, payment at
+  repayment included, together with the consequence of a period left
+  unpaid past its grace, since that is a term of the loan the poster is
+  agreeing to.
 - The borrower of an active ERC-20 loan sees, in BOTH interface
   modes, one chooser surface that names every early-repayment path
   the protocol offers — full repayment, partial repayment (marked

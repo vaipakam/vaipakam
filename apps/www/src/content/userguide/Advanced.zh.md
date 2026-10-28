@@ -11,6 +11,8 @@
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -149,6 +151,8 @@ empty-state hint 是刻意保留的 — 如果在 zero 时隐藏 card，新 user
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -231,6 +235,8 @@ creation 时设定，并在 loan 的整个生命周期内 immutable — refinanc
 会创建一笔新 loan，而不是修改现有 loan。
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -565,6 +571,8 @@ GTT 报价，此到期是报价的原始 GTT 到期时间；出借人接受不�
   单独的 UX 跟进排队。
 
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -633,6 +641,8 @@ surplus：如果 liquidation 什么也没剩下，就没有可领取的东西，
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -647,6 +657,8 @@ multi-event transactions (例如同一 block 中确认的 accept + initiate)
 liquidations、NFT mints 和 burns，以及 VPFI vault deposits / withdrawals。
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -695,47 +707,34 @@ open loan。没有让旧 tier 继续适用的 grace window。
 
 <a id="buy-vpfi.cross-chain-tier"></a>
 
-### 您的 VPFI tier 如何跨 chain 传递
+### 您的 VPFI tier 如何在链之间传递
 
-您把 VPFI deposit 到 Base 上的 vault — Base 是持有您 accumulator state
-的 canonical chain。当您在其他 chain 上 action 时 (在 Sepolia borrow、
-在 Arbitrum lend 等)，该 chain 读取的是您 tier 的一份 *cached* 副本。这
-份 cache 由一次 cross-chain push 保持新鲜: 当您在 Base 上的实际 tier 发
-生变化时，您的下一次 Base 侧 action 会向每一条您可能操作的 mirror chain
-broadcast 一条 CCIP message。push 会搭载在每一次常规 Base action 上 —
-并且自 T-087 Sub 4 起，Dashboard 还提供一个"立即把我的 tier push 到
-mirror"按钮 (它调用 `pokeMyTier()`)，让您无需 mutate vault 即可强制
-push。包含 mirror chain 上 local consent 与 local VPFI 要求的完整说明，
-见"How VPFI Discounts Work"一章 — 该章目前仅存在于英文指南中。
+您的 VPFI 存放在 canonical 链 Base 上的 vault 中，由 Base 计算您的
+tier。当您在另一条链上借入或借出时，该链会使用您 tier 的一份副本；
+每当有改变 tier 的存入、取出或其他操作时，Base 都会通过 Chainlink
+CCIP 发送这份副本。
 
-有三点需要了解:
+需要了解三点：
 
-- **tier 成熟需要一次后续 action。** 您的第一次 stake 不会立即
-  broadcast — 您的实际 tier 受最短历史期 (默认 3 天) 限制，因此新的
-  stake 起初会解析为 tier 0，broadcast 被静默跳过。该期限过后，Base 上
-  的 gate 会立即放开，但 mirror 要等到您下一次带 rollup 的 Base action
-  (任何 deposit、withdrawal 或 loan action — 任何会 mutate 您 Base 上
-  vault 的操作) 或 Dashboard 上的"立即把我的 tier push 到 mirror"点击
-  (Sub 4) 触发 push 时才会知道。1 wei 的 top-up 同样有效。
-- **传播时间。** push 一经发出，通常会在几分钟内经由 CCIP 抵达 mirror。
-  在此之前，mirror 仍然沿用您先前的 cached tier — 不会闪回 tier 0。
-- **cache 过期。** cached tier 会一直有效，直到 (a) 新的 push 抵达，
-  (b) governance 把 tier 阈值表升到新 version 且 mirror 追踪的 version
-  随之上升 (这发生在任何一位 user 在 bump 之后的 push 首次抵达该 mirror
-  的那一刻 — 在 Base 上近期没有活动的休眠 user 也会在那一刻失去其旧
-  version 的 cached discount，直到他们自己的下一次 push 追平)，或者
-  (c) cache 超过其最大存活期 backstop (默认 60 天)。如果您很长时间没有
-  在某条 chain 上 action，您在那里的 cache 最终会过期，该 chain 会把您
-  当作 tier 0，直到下一次 push。要刷新它，请做任何会产生新 push tuple
-  的、带 rollup 的 Base action — 改变 tier 的 balance mutation，或在
-  governance 表 version bump 之后的任意 Base action。相同 tuple 的
-  "no-op" rollup 不会重新发送 push — 这是刻意为之，以免把 protocol 的
-  broadcast 预算耗在本已正确的 cache 上。
+- **仅因时间推移而上升的 tier，需要在 Base 上有操作才会传递。** 在没有
+  存入或取出的情况下，持有期满或平均值追上时，Base 上的数值会立即
+  更新；其他链要等到您下一次在 Base 上存入或取出（金额不限）时才会
+  得知。
+- **较低的 tier 先传递。** 协议会立即发送较低的 tier，而较高的 tier
+  每条链每天最多由协议付费一次。之后经 CCIP 送达通常需要几分钟。送达
+  之前，该链继续使用您之前的 tier。
+- **副本可能过期。** 若 60 天（默认值）内没有新副本，或者 tier 表的
+  变更已到达该链，旧副本在该链上就不再提供折扣。只有当您的 tier 改变
+  时才会发送新副本。
 
-如果您想了解 cache 用来检测 staleness 的确切 gate，请参阅
-[Cross-Chain Tier Propagation functional spec](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/CrossChainTierPropagation.md)。
+完整规则（包括除了您所用的链之外、在 Base 上也需要打开的折扣开关）见
+下方"VPFI 折扣如何运作"一章。送达设计见
+[tier 送达设计文档](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/TierPushDeliveryDesign.md)
+（英文）。
 
 ---
+
+<a id="chapter.rewards"></a>
 
 ## Rewards
 
@@ -770,6 +769,8 @@ VPFI 从 vault withdraw 回 wallet。Withdrawn VPFI 会立即退出
 discount accumulator (在每笔 open loan 上 post-balance re-stamp)。
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -992,6 +993,8 @@ diamond 的结算瀑布都原子地在一个块中登陆。交易要么完全成
 
 ---
 
+<a id="chapter.how-liquidation-actually-works"></a>
+
 ## 清算实际运作机制
 
 您在报价时同意的风险披露用两句话概括了最坏情况。本节解释了底层机制——如果您想了解为什么要存在实物退路（in-kind fallback），或者您的贷款实际上会走四个分支中的哪一个，这将非常有用。
@@ -1096,6 +1099,8 @@ diamond 的结算瀑布都原子地在一个块中登陆。交易要么完全成
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -1113,6 +1118,8 @@ allowances，所以典型的 revocation list 很短。
 per-asset allowance，所以这里的 clean list 不会阻止未来 deposits。
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -1151,6 +1158,8 @@ direction 出现 band crossing 时，通过配置的 channels fire 一次。
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -1172,6 +1181,8 @@ position NFT 是 bearer instrument — 在 secondary market 购买前请先
 verify。
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -1214,65 +1225,91 @@ frontend 尚未 reflect 的 on-chain permissions 会得到清晰的
 
 ---
 
+<a id="chapter.public-analytics-dashboard"></a>
+
 ## Public Analytics Dashboard
 
 <a id="public-dashboard.overview"></a>
 
 ### 关于 Public Analytics
 
-一个 wallet-free aggregator，从每条受支持 chain 上的 on-chain
-protocol view calls 实时计算。无 backend，无 database。提供 CSV /
-JSON export；为了 verifiability，会显示 protocol address，以及
-backing 每个 metric 的 view function。
+一个无需钱包的单链页面：它读取应用所指向的链（未连接钱包时为默认
+读取链）。没有跨链汇总，也没有导出；要比较各链，请在每条链上分别
+打开页面。两个来源，在使用处各自标明：
 
-<a id="public-dashboard.combined"></a>
+- 索引器无需密钥、开放 CORS 的读取 API——借贷、报价、回收和闭环
+  数据；
+- 通过公共 RPC 调用 Diamond 自身的视图函数——VPFI 代币与费用
+  数据。
 
-### Combined — 所有 Chains
+任一来源都可以直接查询，以复现页面显示的内容。
 
-Cross-chain rollup。header 会报告覆盖了多少 chains，以及多少 chains
-errored；因此 fetch time 无法到达的 RPC 是 explicit 的。当一条或
-多条 chains errored 时，per-chain table 会标记是哪一条 — TVL totals
-仍会 report，但 gap 会被明确说明。
+<a id="public-dashboard.loans-offers"></a>
 
-<a id="public-dashboard.per-chain"></a>
+### 借贷与报价
 
-### Per-Chain Breakdown
+来自 `/loans/stats` 的按状态借贷计数，包括待结算、内部撮合和其余
+类别，使各部分之和等于总数；ERC-20 与 NFT 租赁的小计，其中资产类型
+尚未读取的活跃借贷会单独列出；以及来自 `/offers/stats` 的报价计数。
+报价仅指 `offers` 表——免 Gas 的签名订单不计入——且已取消的报价会
+从索引中移除，因此报价总数不是累计数字。缺失的计数显示"未报告"，
+不可能的值显示"已报告，但不是可用的计数"；两者都不会显示为 0。
 
-combined metrics 的 per-chain split。可用于发现 TVL concentration、
-mismatched VPFI mirror supplies (mirror supplies 之和应等于 canonical
-adapter 的 locked balance)，或 stalled chains。
+<a id="public-dashboard.recycling"></a>
 
-<a id="public-dashboard.vpfi-transparency"></a>
+### 回收账户与闭环
 
-### VPFI Token Transparency
-
-active chain 上的 on-chain VPFI 会计：
-
-- Total supply，直接从 ERC-20 读取。
-- Circulating supply — Total supply 减去 protocol 持有的 balance
-  (treasury、reward pools、in-flight bridge packets)。
-- 剩余 mintable cap — 仅在 canonical chain 上有意义；mirror
-  chains 对 cap 报告 "n/a"，因为那里的 mint 是 bridge-driven，
-  而非从 cap mint。
-
-Cross-chain invariant：所有 mirror chains 上的 mirror supplies 之和
-应等于 canonical adapter 的 locked balance。watcher 会监控这一点，
-并在出现 drift 时 alert。
+回收账户（`/metrics/recycling`）按计划自己的日序号列出每个计划日的
+奖励池、其资金来源和提取额；未最终确定的日子不显示奖励池，未启用的
+日子标为估算。闭环（`/metrics/loop-closure`）按 UTC 日显示领取支付
+了多少、留在金库中多少、回收吸收了多少，并标明记录所到达的时刻。
+低于显示精度的正数金额会加以标注，比例向下取整，未知数字绝不显示
+为零。
 
 <a id="public-dashboard.transparency"></a>
 
-### Transparency & Source
+### 透明度与来源
 
-对于每个 metric，页面会列出：
+Diamond 地址（附浏览器链接）、链，以及索引器游标的区块和时长。
+每个来自索引器的数字都只新到这个游标为止；合并两个响应时，标明的是
+较旧的游标。
 
-- 用作 snapshot 的 block number。
-- 数据 freshness (跨 chain 的最大延迟)。
-- protocol 地址和 view function 调用。
+<a id="public-dashboard.vpfi-transparency"></a>
 
-任何人都可以从 RPC + block + protocol address + function name 重新
-推导此页面上的任何数字 — 这就是验证标准。
+### VPFI 代币
+
+来自 Diamond 上的 `getVPFISnapshot()`：此链上的代币地址和
+`totalSupply`。在规范链上，还包括上限、余量（`cap − totalSupply`，
+即仍可铸造的数量）和铸造者。在镜像链上，快照不含上限和铸造者——那里
+的供应通过 CCIP 代币池到达——因此页面显示本链供应量，并说明上限和
+铸造者属于规范链，而不是显示零。未绑定的代币与无法读取的快照会分别
+说明。
+
+<a id="public-dashboard.fees"></a>
+
+### 费用与金库
+
+来自 `getTreasuryMetrics()`、`getTreasury()` 和
+`getNumeraireSymbol()`，与快照在同一个 Multicall3 聚合中读取，并固定
+在一个区块上，页面会标明该区块及其时长：
+
+- 自费用账本开始以来，以及过去 24 小时和 7 天的费用，每笔在记录时
+  以计价单位计值，之后不再重新计值；
+- 协议在记录时无法计值的费用记为 0，时间窗口的合计最多只扫描最近
+  10,000 条账本记录——这两者都只会使数字偏低，页面对此加以说
+  明；
+- 计价单位更换后之前的记录仍保留旧单位，因此更换之后的合计会在当前符
+  号下把两种单位的金额相加，可能偏高也可能偏低；页面会说明之前的费用
+  按旧单位计算；
+- 金库地址。如果是外部地址，费用在收取时即转出，页面不显示其余额。
+  如果 Diamond 本身就是金库，则显示其持有额，仅按出现在未结借贷中的
+  资产计值，并包括代表金库存放在其他地方的金额。
+
+失败的视图函数显示"无法读取"，且不会隐藏其他内容。
 
 ---
+
+<a id="chapter.refinance"></a>
 
 ## Refinance
 
@@ -1320,6 +1357,8 @@ Book 中，任何 lender 都可以 accept。acceptance 之前可以 cancel。
 如果新 terms 下 HF 低于 1.5，则 revert。
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -1371,6 +1410,8 @@ Direct path 会消耗 wallet 中的 principal asset liquidity。Offset path
 
 ---
 
+<a id="chapter.early-withdrawal-lender"></a>
+
 ## Early Withdrawal (Lender)
 
 此页面仅限 lender — early withdrawal 由 lender 在自己的 loan 上发起。
@@ -1406,6 +1447,8 @@ complete sale；sale fill 前您可以 cancel。可选地 delegate 给持有
 user-only。
 
 ---
+
+<a id="chapter.stuck-token-recovery"></a>
 
 ## 被困代币找回
 
@@ -1469,3 +1512,134 @@ user-only。
 
 目前 `disown` 函数仅通过直接合约调用公开；Vaipakam 前端尚未提供对应按钮。请使用区块链浏览器的“Write Contract”界面或合约交互工具进行调用。
 
+<a id="chapter.how-vpfi-discounts-work"></a>
+
+## VPFI 折扣如何运作
+
+在 canonical 链 Base 的 vault 中持有 VPFI，可以让您在平台运行的每条链
+上获得协议自身费用的折扣。持有越多、持有越久，tier 越高，折扣越大。
+tier 列表见上方的 [Tier ladder](#dashboard.fee-discount-consent)；
+governance 可以修改它。
+
+折扣适用于：
+
+- **作为 lender**：协议从您所赚利息中收取的收益费。每次结算利息时
+  （例如还款、preclose 或 refinance）都会读取，使用的是当时的 tier，
+  而不是 loan 开始时的 tier。
+- **作为 borrower**：loan 开始时收取的 Loan Initiation Fee。只在 accept
+  时读取一次，并固定在该 loan 上。仅当 lending asset 为 liquid 时适用；
+  illiquid 的 loan 支付全额费用。
+
+折扣直接从费用本身扣减，以 loan 的资产计价，不会为此从您的 vault 中
+转出任何 VPFI。唯一的例外是在配置了 VPFI 价格参考的部署上，lender 的
+折扣可以改为从您的 vault 中以 VPFI 结算；上线时没有配置。本章讨论的是
+这种持有折扣。另一种付费费用模式"Full"保持关闭，除非某个部署将其开启。
+
+<a id="vpfi-discounts.turning-on"></a>
+
+### 开启折扣
+
+折扣需要主动开启（opt-in）。开关位于 VPFI 页面，每条链各有一个，因为
+每条链保存自己的设置：
+
+- **在收取费用的链上**，开关必须打开；否则无论您的 tier 是多少，该链
+  都会收取全额费用。
+- **在 Base 上**，即使您从不在那里借入或借出，开关也必须打开。开关
+  关闭期间，Base 会向所有其他链发送您的 tier 为零。
+
+当您在 Base 上关闭折扣时，应用会紧接着发送一次 tier 更新，让所有其他链也停止使用折扣：Base 会向它们发送您的 tier 为零。如果第二步失败，页面会说明，其他链会保留您最后的 tier，直到有新的 tier 发出。在其他任何链上关闭折扣，只会改变那一条链。
+
+当协议把 VPFI 记录在您的 vault 中时，它才计入：包括您通过 VPFI 页面存入的 VPFI，以及协议发放到您 vault 中的 VPFI rewards。直接发送到您 vault 地址的代币不受协议跟踪，不会提高您的 tier。
+
+<a id="vpfi-discounts.tier-calculation"></a>
+
+### 您的 tier 如何计算
+
+您的 tier 由三项独立的检查决定，三项都必须通过：
+
+1. **最短持有期。** 在您当前的持有持续至少 3 天之前，tier 保持为零。
+   持有从 vault 余额超过零的那一刻开始，一直持续到余额回到零。追加
+   不会重新计时；全部取出则会。（3 天为默认值；governance 可将其设为
+   2 到 14 天。）
+2. **侧重近期的加权平均。** 您的余额按最近 30 天取平均，其中最后 7 天
+   的权重是之前各天的三倍。平均不会追溯到当前持有开始之前，因此新
+   持有者不会被一无所有的日子摊薄。（窗口、近期天数和权重都是
+   governance 设置；窗口可为 14 到 30 天。）
+3. **您触及过的最低 tier。** 与平均值分开，您的 tier 不能高于当前持有
+   期间余额达到过的最低 tier，最多回看 30 天。按每天的最低点计算，
+   因此同一天内下跌后又恢复，仍算作一次下跌。
+
+这在实际中意味着：
+
+- 在 loan 结算前夕存入，不会立刻提高您的 tier。新增金额必须先进入
+  平均值，而您触及过的最低点仍会限制您。
+- 一次让您低于某个 tier 门槛的取出，会立即降低您的 tier。
+- 30 天以前的下跌不再限制您。
+
+<a id="vpfi-discounts.other-chains"></a>
+
+### 您在其他链上的 tier
+
+tier 由 Base 计算。所有其他链都使用 Base 通过 Chainlink CCIP 发送的副本。当 Base 上发生以下任一情况时，Base 会更新您的 tier 记录：VPFI 进入或离开您的 vault（存入、取出，或发放到其中的 rewards）；一笔以您为出借人或借款人的贷款开始；某个贷款步骤冻结或释放您的 VPFI；或您调用 tier 刷新。每次更新时，如果副本内容会变化，Base 会向其他链发送新副本。
+
+每条链单独送达。无法送达的链不会拖住其他链，并且**送达无法发出时，
+绝不会导致您自己的操作失败**：您在 Base 上的 tier 立即更新，其他每条
+链在送达之前都处于"待送达"状态。
+
+这些送达由协议付费，但有一个限制：
+
+- **较低的 tier** 只要预算付得起，就会立即发送。送达之前，该链继续
+  使用您之前较高的 tier。
+- **较高的 tier** 或 tier 表的变更，每条链每天最多付费一次（governance
+  设置，1 小时到 7 天之间）。在此之前，该链保留您之前的 tier。
+- 因这段等待而被搁置的更新，或预算无法支付的更新，**等待结束后不会自动重发**。它会随着您在 Base 上等级记录的下一次更新发出，或在有人为您发起送达调用时发出。
+- 任何人都可以发起该调用。等待结束且预算足以支付时，由协议支付；在此之前，调用者支付跨链费用以提前送达。合约提供这一调用；应用目前尚未提供。
+
+在以下情况下，副本不再计入，该链也就不提供折扣：
+
+- 副本早于该链的最长有效期（默认 60 天，不少于 30 天）；或
+- 副本基于比该链现在所知更旧的 tier 表生成。
+
+只有当副本中的内容会发生变化时，副本才会重新发送：您的 tier、其折扣、有效期限，或 tier 表的版本。因此在 tier 表变更后，即使您的 tier 不变（只要不为零），您在 Base 上的 tier 记录的下一次更新都会向每条链发送一份新副本。如果这些都没有变化，副本已过期的链在有变化之前不会给予折扣。
+
+如果您的 tier 只是因为时间推移而上升（持有期已满或平均值已追上），Base 要到您的 tier 记录下一次更新时才会察觉。tier 刷新调用可以随时进行这次更新；应用只会在您关闭折扣时替您调用。
+
+<a id="vpfi-discounts.operators"></a>
+
+### 面向运营者
+
+折扣的跨链部分需要以下配置。列在这里，供运行自己部署的人参考。
+
+**在 Base 上：**
+
+- `VPFITokenFacet.setCanonicalVPFIChain(true)`。没有它，Base 会计算
+  tier，但不会发送到任何地方。
+- 指向 `VaipakamRewardMessenger` 的
+  `RewardReporterFacet.setRewardMessenger`，以及 messenger 上列出所有
+  其他链的 `setBroadcastDestinations`。
+- 有资金的 broadcast 预算：`ProtocolBroadcastFacet.topUpBroadcastBudget()`
+  （payable）。预算为空不会阻塞任何操作。它付不起的每次送达都保持
+  待送达，并带原因发出 `TierPushDeferred`；`getTierPushStatus(user)`
+  显示某个用户在每条链上的状态。预算不足意味着其他链会更长时间地使用
+  旧 tier，因此请关注延迟并及时补充。
+- 付费上调的间隔窗口：`setTierPushSpacingSec`（默认 1 天，1 小时到
+  7 天）。
+
+**在其他每条链上：**
+
+- `RewardReporterFacet.setRewardMessenger(addr)`：该链唯一接受其 tier
+  更新的发送方。
+- `RewardReporterFacet.setBaseChainId(chainId)`：Base 的 EVM chain id
+  （主网 8453，Base Sepolia 84532），而不是它的 CCIP chain selector。
+- `ConfigFacet.setMirrorTierMaxAgeSec(seconds)`：副本计入的时长（默认
+  60 天；低于 30 天的值会被拒绝）。调低后在下一次读取时生效。
+
+**修改 tier 表：**
+
+- Base 上的 `setVpfiTierThresholds` 和 `setVpfiTierDiscountBps` 会推进
+  表的版本。其他链会从第一条携带新版本的 tier 更新（无论来自哪个用户）
+  得知新版本。从那时起，基于旧表生成的每份副本都按无折扣处理，直到该
+  用户自己的更新送达；而这些更新属于上调，每个间隔窗口最多付费一次。
+  修改表之前请先补充预算。
+- `setTwaMinStakedDays` 修改最短持有期，但不推进版本。在下一次读取时
+  生效。

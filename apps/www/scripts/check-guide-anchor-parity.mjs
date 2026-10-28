@@ -133,14 +133,11 @@ const anchorsIn = (file) =>
  * honest denominator; the sidebar shortfall is its own bug with its
  * own issue (Codex #1594 r3, which I first refuted in error).
  *
- * KNOWN LIMIT: this is a COUNT, so an edition that omits one anchorless
- * chapter and adds a different anchorless one nets to zero and passes
- * here, while the anchor comparison — seeing no anchors either side —
- * also stays silent. Chapters carrying anchors are covered, because the
- * anchor check catches those directly. Closing the residue needs a
- * locale-independent identifier on every chapter heading, i.e. giving
- * each `##` its own `<a id>`; that is a content change across the whole
- * corpus and is tracked in #1597 rather than half-done here.
+ * A count alone cannot tell an edition that omits one chapter and adds
+ * a different one from a faithful one: the numbers net to zero. That
+ * residue is closed by `unanchoredChapters` below (#1597): every chapter
+ * must carry its own `<a id>`, so the symmetric anchor comparison
+ * identifies chapters as well as sections, and the count is a backstop.
  */
 const chapterCount = (file) =>
   fromMarkdown(readGuide(file)).children.filter(
@@ -148,31 +145,42 @@ const chapterCount = (file) =>
   ).length;
 
 /**
+ * Root `##` chapters NOT immediately preceded by their own anchor
+ * marker (#1597).
+ *
+ * A chapter heading's text is translated, so without an anchor nothing
+ * identifies it across editions: an edition could drop one chapter and
+ * gain another while the count and the anchor sets both still agree.
+ * With every chapter anchored (`<a id="chapter.<english-slug>">`, the
+ * same id in all ten editions), the anchor comparison above covers
+ * chapters directly. The marker is a paragraph of inline html only —
+ * `<a>` is inline, so CommonMark never makes it an html block — and
+ * must be the node right before the heading, which is also the only
+ * place the renderer will attach it to that heading.
+ */
+const ANCHOR_ONLY_RE = /^<a id="[^"]+"><\/a>$/;
+const isAnchorMarker = (node) =>
+  node?.type === 'paragraph' &&
+  node.children.length > 0 &&
+  node.children.every((c) => c.type === 'html') &&
+  ANCHOR_ONLY_RE.test(node.children.map((c) => c.value).join('').trim());
+const unanchoredChapters = (file) => {
+  const kids = fromMarkdown(readGuide(file)).children;
+  return kids
+    .filter((node, i) => node.type === 'heading' && node.depth === 2 && !isAnchorMarker(kids[i - 1]))
+    .map((node) => node.children.map((c) => c.value ?? '').join('').trim());
+};
+
+/**
  * Editions known to be short of the English chapter list, per
  * `<doc>:<locale>` → the number of chapters they still lack.
  *
- * Every edition is now short by exactly ONE and the same one:
- * `How VPFI Discounts Work`, ~10.7k characters of English source and
- * ~96k of translated output across the nine, tracked as #1593.
- *
- * `hi`/`ja` were recorded at 3 until their two extra chapters turned
- * out to need no translator at all — the prose was already written and
- * merely indented into a list item, so the fix was to de-indent it.
- * That is the happier half of #1593 and it is done. Recorded here so
- * the count cannot quietly grow. Shrink it; a new shortfall, or one
- * larger than recorded, is a failure.
+ * Empty: every edition carries every English chapter. The last gap,
+ * `How VPFI Discounts Work` in all nine translations, closed with
+ * #1593. A new shortfall is a failure; record one here only with the
+ * issue that will close it.
  */
-const KNOWN_CHAPTER_GAPS = {
-  'Advanced:ar': 1,
-  'Advanced:de': 1,
-  'Advanced:es': 1,
-  'Advanced:fr': 1,
-  'Advanced:hi': 1,
-  'Advanced:ja': 1,
-  'Advanced:ko': 1,
-  'Advanced:ta': 1,
-  'Advanced:zh': 1,
-};
+const KNOWN_CHAPTER_GAPS = {};
 
 /** `Advanced.en.md` → `{ doc: 'Advanced', locale: 'en' }` */
 const parse = (file) => {
@@ -204,6 +212,14 @@ const problems = [];
 const report = (kind, text) => problems.push({ kind, text });
 const seenGaps = new Set();
 const seenChapterGaps = new Set();
+
+for (const locales of byDoc.values()) {
+  for (const file of locales.values()) {
+    for (const title of unanchoredChapters(file)) {
+      report('chapter-unanchored', `${file}: chapter "${title}" has no <a id> marker on the line before it`);
+    }
+  }
+}
 
 for (const [doc, locales] of byDoc) {
   const englishFile = locales.get('en');
@@ -328,6 +344,14 @@ if (problems.length > 0) {
       '\nA translation with MORE chapters than the source has drifted: either\n' +
         'the section belongs in the English original too, or it should not be\n' +
         'there at all. Do not add anything — reconcile the two editions.',
+    );
+  }
+  if (kinds.has('chapter-unanchored')) {
+    console.error(
+      '\nEvery chapter carries its own anchor so it can be matched across\n' +
+        'editions whatever its translated title. Add `<a id="chapter.<slug>"></a>`\n' +
+        'and a blank line before the heading, with the same id (the English\n' +
+        "title's slug) in every edition.",
     );
   }
   if (kinds.has('chapter-stale')) {

@@ -35,6 +35,7 @@ import { usePageMeta } from '../lib/usePageMeta';
 import { useArticleJsonLd } from '../lib/useArticleJsonLd';
 import './UserGuide.css';
 import { useActiveLocale } from '../i18n/useActiveLocale';
+import { resolveBody } from '../lib/indexedLocales';
 
 const OVERVIEW_FILES = import.meta.glob('../content/overview/*.md', {
   eager: true,
@@ -42,30 +43,19 @@ const OVERVIEW_FILES = import.meta.glob('../content/overview/*.md', {
   import: 'default',
 }) as Record<string, string>;
 
-function resolveOverview(locale: string): {
-  text: string;
-  fellBackToEnglish: boolean;
-} {
-  const wanted = `../content/overview/Overview.${locale}.md`;
-  const fallback = `../content/overview/Overview.en.md`;
-  if (OVERVIEW_FILES[wanted]) {
-    return { text: OVERVIEW_FILES[wanted], fellBackToEnglish: false };
-  }
-  return {
-    text: OVERVIEW_FILES[fallback] ?? '',
-    fellBackToEnglish: locale !== 'en',
-  };
-}
-
 export default function Overview() {
   const { i18n } = useTranslation();
   usePageMeta({
     titleKey: 'pageMeta.overview.title',
     descriptionKey: 'pageMeta.overview.description',
+    bodyFiles: OVERVIEW_FILES,
   });
   const location = useLocation();
   const lang = useActiveLocale();
-  const { text, fellBackToEnglish } = useMemo(() => resolveOverview(lang), [lang]);
+  const { text, fellBackToEnglish } = useMemo(
+    () => resolveBody('/help/overview', lang, OVERVIEW_FILES),
+    [lang],
+  );
   useArticleJsonLd({
     titleKey: 'pageMeta.overview.title',
     descriptionKey: 'pageMeta.overview.description',
