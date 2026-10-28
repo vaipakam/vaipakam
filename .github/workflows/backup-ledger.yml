@@ -91,12 +91,29 @@ jobs:
       # without them. Unset while they are unconfirmed; the run summary prints
       # the earliest period present, and the tier reports its coverage as
       # degraded until one is set here.
-      ARCHIVE_FIRST_MONTHLY: ''
+      #
+      # Monthly 2026-09: the bucket was created empty by the archive-to-warm
+      # rename (#1537, merged 2026-08-03), a monthly is cut on the 1st, so
+      # 2026-09 is the first month this bucket could hold; it is also the
+      # earliest monthly the first watcher run found (2026-10-28). Keep it
+      # equal to the Worker's own value in wrangler.jsonc.
+      ARCHIVE_FIRST_MONTHLY: '2026-09'
       ARCHIVE_FIRST_YEARLY: ''
       # Problem keys an operator has investigated, comma-separated. Listing one
       # here, in a reviewed commit, is what stops that page. Empty: everything
       # pages.
-      BACKUP_ACKNOWLEDGED: ''
+      #
+      # Acknowledged by the owner on 2026-10-28 (#3048). None of the three can
+      # be recreated:
+      # - missing:monthly:2026-10 — the 2026-10-01 nightly did not run, so no
+      #   October monthly (nor that night's daily) was written.
+      # - the 2026-10-18 and 2026-10-25 dailies have no manifest beside them.
+      #   The 10-25 manifest PUT hit a B2 500 (the nightly now retries it,
+      #   #3052); the 10-18 cause is inferred to be the same.
+      BACKUP_ACKNOWLEDGED: >-
+        missing:monthly:2026-10,
+        mismatch:4_z188b1455c486cc519bfe0e15_f11164b9180e1bf40_d20261018_m031710_c003_v0312029_t0011_u01792293430874,
+        mismatch:4_z188b1455c486cc519bfe0e15_f1069d826d26e49f6_d20261025_m031710_c003_v0312019_t0009_u01792898230386
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
