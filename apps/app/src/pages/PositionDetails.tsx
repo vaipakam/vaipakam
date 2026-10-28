@@ -32,7 +32,7 @@ import { freshData } from '../lib/freshData';
 import { useLoan } from '../data/hooks';
 import { FEE_MODE_FULL, FEE_MODE_HOLD_ONLY, useFeeEntitlement } from '../data/tariff';
 import { VPFI_DECIMALS } from '../data/vpfi';
-import { useLoanRisk, healthView } from '../data/risk';
+import { useLoanRisk, healthView, liquidationPriceText } from '../data/risk';
 import { formatRemaining, useGraceSeconds } from '../data/grace';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import {
@@ -509,9 +509,29 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
 
   // HF/LTV apply only to active, priced (ERC-20) loans; the hook maps
   // the illiquid-leg revert to `priced: false`.
+  //
+  // #2531 — the page also asks for the liquidation price, which needs the
+  // collateral's decimals to value one whole unit. So the read waits for the
+  // collateral's details to settle (an NFT collateral has none to wait for):
+  // starting without them and re-keying when they land would blank the
+  // health row in between. A details read that FAILED goes ahead without
+  // the price, and the row says the token could not be read.
+  const riskCollateral =
+    !collateralIsNft && collateralMeta.data
+      ? {
+          asset: collateralMeta.data.address as `0x${string}`,
+          decimals: collateralMeta.data.decimals,
+        }
+      : undefined;
   const risk = useLoanRisk(
     loan.data?.loanId,
-    Boolean(loan.data && effectivelyActive && !loanIsRental),
+    Boolean(
+      loan.data &&
+        effectivelyActive &&
+        !loanIsRental &&
+        (collateralIsNft || collateralMeta.data || collateralMeta.isError),
+    ),
+    riskCollateral,
   );
 
   // UX3-009 — the live ceiling for taking collateral back. Only the
@@ -3387,6 +3407,22 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               </dd>
             </div>
           ) : null}
+          {/* #2531 — next to the health factor, so advanced only, like the
+              ratio it is derived from. Shown only from a read whose latest
+              refresh succeeded (`useLoanRisk` drops a stale answer); when
+              the read failed, the health row above says so and no price is
+              stated. */}
+          {!isRental && row.status === 'active' && risk.data && isAdvanced ? (
+            <div className="receipt-row" data-testid="position-liquidation-price">
+              <dt>{copy.positions.details.labels.liquidationPrice}</dt>
+              <dd>
+                {liquidationPriceText(
+                  risk.data,
+                  collateralIsNft ? undefined : collateralMeta.data?.symbol,
+                )}
+              </dd>
+            </div>
+          ) : null}
           {/* UX3-010 — the risk colour reads as a warning, so it stays on
               the "if nothing happens" consequence and on an adverse outcome
               (default, liquidation), and comes off a loan that closed
@@ -4391,6 +4427,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // those facts and must not be dated as if it were.
           resolvedBlock={saleHoldResolving ? undefined : forcedCloseReads.block}
           matchFallback={forcedCloseMatchFallback}
+          internalMatchEnabled={forcedCloseReads.internalMatchEnabled}
           swapToRepayPossible={forcedCloseSwapToRepayPossible}
           confirmOpen={confirmingSurface === 'forced-close'}
           onOpenConfirm={() => setConfirmingSurface('forced-close')}

@@ -1350,6 +1350,7 @@
           "owed": "Debido",
           "terms": "Términos",
           "health": "Salud",
+          "liquidationPrice": "Precio de liquidación",
           "whatNext": "Qué pasa después",
           "ifNothing": "Si no pasa nada",
           "dueMoved": "Vencimiento aplazado"
@@ -2594,7 +2595,14 @@
       "listChecking": "comprobando salud",
       "listCheckingTitle": "La salud de este préstamo aún no se ha leído, así que la insignia queda neutral. La protección de liquidación sigue aplicando on-chain.",
       "advancedDetail": "(Factor de salud {{ratio}} — el valor de la garantía medido contra lo adeudado; por debajo de 1,00 el préstamo puede liquidarse. Loan-to-value {{ltvPct}} — el importe prestado como parte del valor de la garantía.{{dropClause}})",
-      "advancedDetailDrop": " Aproximadamente, la liquidación empieza si el valor de la garantía cae alrededor de {{drop}}."
+      "advancedDetailDrop": " Aproximadamente, la liquidación empieza si el valor de la garantía cae alrededor de {{drop}}.",
+      "liquidationPriceAt": "Unos {{price}} {{unit}} por {{symbol}}. Si el precio de la garantía cae por debajo, el préstamo puede liquidarse. Supone que el precio del activo prestado y el importe adeudado siguen como ahora; los intereses que se acumulan lo suben.",
+      "liquidationPricePassed": "Unos {{price}} {{unit}} por {{symbol}}. El precio de la garantía ya está por debajo, así que el préstamo puede liquidarse ahora.",
+      "liquidationPriceUnitUnknown": "en la moneda de referencia del protocolo",
+      "liquidationPriceNone": "Ninguno con el importe adeudado actual: ningún precio de la garantía lleva este préstamo a la línea de liquidación.",
+      "liquidationPriceNotPriced": "Ninguno: el protocolo no pone precio a los activos de este préstamo, así que ningún movimiento de precio desencadena una liquidación.",
+      "liquidationPriceUnknown": "Desconocido: no se pudo leer el precio de la garantía en este momento, así que no se muestra ninguna cifra.",
+      "liquidationPriceTokenUnknown": "Desconocido: no se pudieron leer los datos del token de la garantía, así que no se muestra ninguna cifra."
     },
     "notFound": {
       "title": "Esta página no existe",
@@ -2949,6 +2957,7 @@
       "readyInternalMatch": "El periodo de gracia ha pasado, así que ya se puede actuar sobre este préstamo. El protocolo tiene una posición opuesta contra la que puede liquidarlo, de modo que en lugar de vender la garantía se te devuelve el activo que prestaste, al precio del oráculo cuando se ejecute la transacción. Esa posición opuesta puede no ser lo bastante grande para cubrir todo el préstamo: si no lo es, solo se liquida una parte y el resto sigue abierto para que lo cierres más adelante.",
       "readyRental": "El período de gracia ha terminado, así que ya puedes finalizar este alquiler. Tu NFT permanece donde está y se retira el acceso del arrendatario. Lo que queda reclamable es el alquiler pagado por adelantado, menos las comisiones — lo reclamas en la página de Reclamaciones.",
       "matchMayAppear": "Una cosa puede cambiar esto. El protocolo busca una posición opuesta contra la que liquidar en el momento en que se ejecuta la transacción, no cuando se cargó esta página: así que si ha aparecido alguna desde entonces, el préstamo se liquida por esa vía — se te devuelve el activo que prestaste, y posiblemente solo en parte.",
+      "matchingSwitchedOff": "El emparejamiento interno está desactivado en este despliegue, según el bloque en que se leyó esta tarjeta. Por eso el protocolo no liquidará este préstamo contra una posición opuesta, y lo que se describe arriba es lo que ocurre. Solo un cambio de ese ajuste que se aplique antes de que se ejecute tu transacción lo alteraría.",
       "raceFallbackFails": "Puede que otra persona liquide antes contra esa posición opuesta. Si ocurre, este cierre no se detiene sin más: continúa por la ruta que el protocolo encuentre a continuación. Aquí esa ruta no puede completarse, así que el intento fallaría y solo te costaría la comisión de red. El préstamo sigue abierto y puedes volver a intentarlo.",
       "raceFallbackSale": "Puede que otra persona liquide antes contra esa posición opuesta. Si ocurre, este cierre no se detiene sin más: continúa por la ruta que el protocolo encuentre a continuación, y aquí esa ruta es una venta de la garantía en un exchange. Al confirmar, la app pide un precio a los exchanges y envía esas rutas con tu cierre, así que en ese caso el cierre termina en una venta, comprobada con la fuente de precios del protocolo como cualquier otra. Si en ese momento fallan todas esas rutas, el cierre se realiza igualmente, pero la venta no: el préstamo pasa al mecanismo de respaldo del protocolo, donde puedes reclamar la garantía en lugar del producto de la venta, y hasta que lo hagas el prestatario aún puede pagar o añadir garantía. Si la app no encuentra ninguna ruta al confirmar, envía el cierre sin ella, y en ese caso el intento fallaría y solo te costaría la comisión de red. Una venta no paga incentivo de emparejamiento; en su lugar, quien envió la transacción puede recibir un incentivo de lo obtenido en la venta, según lo cerca que quede la venta del precio del protocolo y posiblemente nada, y nunca se paga a una billetera marcada por el oráculo de sanciones.",
       "raceFallbackInKind": "Puede que otra persona liquide antes contra esa posición opuesta. Si ocurre, este cierre no se detiene sin más: continúa por la ruta que el protocolo encuentre a continuación. Aquí esa ruta te entrega la garantía del prestatario tal como está, en lugar del activo que prestaste. El cierre sí se completa: simplemente recuperarías algo distinto de lo que describe esta tarjeta más arriba.",

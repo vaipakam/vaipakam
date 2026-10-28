@@ -1350,6 +1350,7 @@
           "owed": "Dû",
           "terms": "Conditions",
           "health": "Santé",
+          "liquidationPrice": "Prix de liquidation",
           "whatNext": "Ce qui se passe ensuite",
           "ifNothing": "Si rien ne se passe",
           "dueMoved": "Échéance reportée"
@@ -2594,7 +2595,14 @@
       "listChecking": "vérification de la santé",
       "listCheckingTitle": "La santé de ce prêt n'a pas encore été lue, le badge reste donc neutre. La protection contre la liquidation s'applique toujours on-chain.",
       "advancedDetail": "(Facteur de santé {{ratio}} — la valeur de la garantie mesurée face au montant dû ; sous 1,00, le prêt peut être liquidé. Loan-to-value {{ltvPct}} — le montant emprunté comme part de la valeur de la garantie.{{dropClause}})",
-      "advancedDetailDrop": " En gros, la liquidation commence si la valeur de la garantie chute d’environ {{drop}}."
+      "advancedDetailDrop": " En gros, la liquidation commence si la valeur de la garantie chute d’environ {{drop}}.",
+      "liquidationPriceAt": "Environ {{price}} {{unit}} par {{symbol}}. Si le prix de la garantie passe en dessous, le prêt peut être liquidé. Cela suppose le prix de l’actif emprunté et le montant dû inchangés ; les intérêts qui courent le font monter.",
+      "liquidationPricePassed": "Environ {{price}} {{unit}} par {{symbol}}. Le prix de la garantie est déjà en dessous, le prêt peut donc être liquidé maintenant.",
+      "liquidationPriceUnitUnknown": "dans la monnaie de référence du protocole",
+      "liquidationPriceNone": "Aucun au montant dû actuel : aucun prix de la garantie n’amène ce prêt au seuil de liquidation.",
+      "liquidationPriceNotPriced": "Aucun : le protocole ne valorise pas les actifs de ce prêt, donc aucune variation de prix ne déclenche de liquidation.",
+      "liquidationPriceUnknown": "Inconnu : le prix de la garantie n’a pas pu être lu pour l’instant, aucun chiffre n’est donc affiché.",
+      "liquidationPriceTokenUnknown": "Inconnu : les informations du jeton de garantie n’ont pas pu être lues, aucun chiffre n’est donc affiché."
     },
     "notFound": {
       "title": "Cette page n'existe pas",
@@ -2949,6 +2957,7 @@
       "readyInternalMatch": "Le délai de grâce est écoulé : ce prêt peut désormais être traité. Le protocole dispose d’une position opposée contre laquelle le régler, si bien qu’au lieu de vendre la garantie on vous rembourse l’actif que vous avez prêté, au prix de l’oracle au moment de l’exécution. Cette position opposée peut ne pas suffire à couvrir tout le prêt : dans ce cas seule une partie est réglée et le reste demeure ouvert, à clôturer plus tard.",
       "readyRental": "Le délai de grâce est écoulé : vous pouvez mettre fin à cette location. Votre NFT reste où il est et l’accès du locataire est retiré. Ce qui devient réclamable est le loyer payé d’avance, moins les frais — vous le réclamez sur la page Réclamations.",
       "matchMayAppear": "Une chose peut changer cela. Le protocole cherche une position opposée au moment où la transaction s’exécute, non au chargement de cette page : si une est apparue depuis, le prêt est réglé de cette manière — on vous rembourse l’actif que vous avez prêté, et peut-être seulement en partie.",
+      "matchingSwitchedOff": "L’appariement interne est désactivé sur ce déploiement, à la date du bloc auquel cette carte a été lue. Le protocole ne réglera donc pas ce prêt contre une position opposée, et ce qui est décrit ci-dessus est ce qui se produit. Seule une modification de ce réglage intervenant avant l’exécution de votre transaction changerait cela.",
       "raceFallbackFails": "Quelqu’un d’autre peut régler en premier contre cette position opposée. Dans ce cas, cette clôture ne s’arrête pas : elle se poursuit par la voie que le protocole trouve ensuite. Ici cette voie ne peut pas aboutir : la tentative échouerait et ne vous coûterait que les frais de réseau. Le prêt reste ouvert et vous pouvez réessayer.",
       "raceFallbackSale": "Quelqu’un d’autre peut régler en premier contre cette position opposée. Dans ce cas, cette clôture ne s’arrête pas : elle se poursuit par la voie que le protocole trouve ensuite, et ici cette voie est une vente de la garantie sur une plateforme d’échange. Lorsque vous confirmez, l’application demande un prix aux plateformes d’échange et envoie ces routes avec votre clôture : si ce règlement vous échappe, la clôture se termine donc par une vente, vérifiée par rapport à la source de prix du protocole comme toute autre. Si toutes ces routes échouent à ce moment-là, la clôture aboutit quand même, mais pas la vente : le prêt passe dans le mécanisme de repli du protocole, où vous pouvez réclamer la garantie au lieu du produit de la vente, et tant que vous ne l’avez pas fait, l’emprunteur peut encore rembourser ou ajouter de la garantie. Si l’application ne trouve aucune route lorsque vous confirmez, elle envoie la clôture sans route, et si ce règlement vous échappe, la tentative échouerait alors et ne vous coûterait que les frais de réseau. Une vente ne verse aucune prime d’appariement ; la personne qui a soumis la transaction peut en revanche recevoir une incitation prélevée sur le produit de la vente, selon la proximité de la vente avec le prix du protocole et éventuellement nulle, et jamais versée à un portefeuille signalé par l’oracle de sanctions.",
       "raceFallbackInKind": "Quelqu’un d’autre peut régler en premier contre cette position opposée. Dans ce cas, cette clôture ne s’arrête pas : elle se poursuit par la voie que le protocole trouve ensuite. Ici cette voie vous remet la garantie de l’emprunteur telle quelle, au lieu de l’actif que vous avez prêté. La clôture réussit tout de même — vous récupéreriez simplement autre chose que ce que décrit cette carte ci-dessus.",

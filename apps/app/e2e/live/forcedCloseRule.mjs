@@ -74,6 +74,7 @@ export function forcedCloseReadPlan(input) {
     { key: 'sequencer', contract: { ...d, functionName: 'sequencerHealthy' } },
     { key: 'paused', contract: { ...d, functionName: 'paused' } },
     { key: 'match', contract: { ...d, functionName: 'hasInternalMatchCandidate', args: [input.loanId] } },
+    { key: 'matchConfig', contract: { ...d, functionName: 'getInternalMatchConfigBundle' } },
   ];
   if (input.collateralAsset !== undefined) {
     plan.push({
@@ -102,6 +103,12 @@ export const FORCED_CLOSE_FACTS = Object.freeze([
   'ltvCollapsed',
 ]);
 
+/** Facts the page reads for a DISCLOSURE, not for the decision (#2082):
+ *  `internalMatchEnabled` picks the card's match-race sentence and never
+ *  moves the state, so it is mapped here and kept out of the rule's inputs
+ *  (and out of `statesReachable`'s enumeration). */
+export const DISCLOSURE_FACTS = Object.freeze(['internalMatchEnabled']);
+
 /**
  * `forcedCloseReads.forcedCloseFacts`: each multicall slot to a fact,
  * `undefined` where the slot failed or did not decode. No block, no facts,
@@ -120,11 +127,15 @@ export function forcedCloseFacts(plan, slots) {
   });
   const blockRaw = ok.get('block');
   if (typeof blockRaw !== 'bigint') {
-    return { block: undefined, ...Object.fromEntries(FORCED_CLOSE_FACTS.map((k) => [k, undefined])) };
+    return {
+      block: undefined,
+      ...Object.fromEntries([...FORCED_CLOSE_FACTS, ...DISCLOSURE_FACTS].map((k) => [k, undefined])),
+    };
   }
   const bool = (key) => (ok.has(key) ? Boolean(ok.get(key)) : undefined);
   const loanRaw = ok.get('loan');
   const matchRaw = ok.get('match');
+  const matchConfigRaw = ok.get('matchConfig');
   const liquidityRaw = ok.get('liquidity');
   const ltvRaw = ok.get('ltv');
   const riskRaw = ok.get('risk');
@@ -150,6 +161,8 @@ export function forcedCloseFacts(plan, slots) {
     sequencerHealthy: bool('sequencer'),
     paused: bool('paused'),
     internalMatchCandidate: Array.isArray(matchRaw) ? Boolean(matchRaw[0]) : undefined,
+    internalMatchEnabled:
+      Array.isArray(matchConfigRaw) && typeof matchConfigRaw[0] === 'boolean' ? matchConfigRaw[0] : undefined,
     collateralIlliquid:
       liquidityRaw === undefined || !liquidityAboutThisLoan ? undefined : Number(liquidityRaw) !== LIQUIDITY_LIQUID,
     ltvCollapsed:

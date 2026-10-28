@@ -144,6 +144,7 @@ export function ForcedCloseCard({
   loanId,
   readiness,
   matchFallback,
+  internalMatchEnabled,
   swapToRepayPossible,
   confirmOpen,
   onOpenConfirm,
@@ -181,6 +182,14 @@ export function ForcedCloseCard({
    *  `ready-internal-match`. Resolved on the page by
    *  `forcedCloseWithoutMatch` — like `readiness`, never derived here. */
   matchFallback: ForcedCloseReadiness;
+  /** Whether this deployment has internal matching switched on, read in
+   *  the same aggregate as `readiness` (#2082). `false` replaces the
+   *  "a match may appear" disclosure with the statement that matching is
+   *  off here, since a possibility the configuration forecloses is not
+   *  one to describe; `undefined` (unread, or a Diamond without the
+   *  getter) keeps the possibility, which is the claim that stays true
+   *  whichever way the switch is set. Never derived here. */
+  internalMatchEnabled: boolean | undefined;
   /** Whether this loan's shape can carry a swap-to-repay intent at all.
    *
    *  `SwapToRepayIntentFacet` reverts `UnsupportedLoanShape` unless BOTH
@@ -1627,8 +1636,16 @@ export function ForcedCloseCard({
    *  the wallet by itself, which a match makes untrue for the submitter.
    *  Withheld exactly where the row's own incentive is, for the same
    *  reason: no button, so no submitter to describe. */
+  /** Whether a match can still take this close-out over (#2082). The
+   *  row's `matchRace` says the route COULD be overtaken; a deployment
+   *  that has internal matching switched off says it cannot, short of a
+   *  configuration change landing first — which the switched-off copy
+   *  names rather than hides. */
+  const matchOff = view.matchRace && internalMatchEnabled === false;
   const matchRaceIncentiveNote =
-    !view.matchRace || (readiness === 'ready-needs-route' && routeAvailability !== 'available')
+    !view.matchRace ||
+    matchOff ||
+    (readiness === 'ready-needs-route' && routeAvailability !== 'available')
       ? null
       : !sanctions.ready
         ? copy.forcedClose.matchRaceIncentiveUnknown
@@ -1857,9 +1874,15 @@ export function ForcedCloseCard({
           rental, and its row says `matchRace: false` — which is the
           entire statement, and the sentence stops there. */}
       {view.matchRace && !holdingAfterSubmit ? (
-        <p className="muted" data-testid="forced-close-match-may-appear">
-          {copy.forcedClose.matchMayAppear}
-        </p>
+        matchOff ? (
+          <p className="muted" data-testid="forced-close-matching-off">
+            {copy.forcedClose.matchingSwitchedOff}
+          </p>
+        ) : (
+          <p className="muted" data-testid="forced-close-match-may-appear">
+            {copy.forcedClose.matchMayAppear}
+          </p>
+        )
       ) : null}
 
       {/* Shown on every actionable state — a lender who cannot submit

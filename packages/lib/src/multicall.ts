@@ -134,3 +134,76 @@ export async function batchCalls<T>(
   }
   return out;
 }
+
+/** One read in an {@link aggregateReads} call — the shape viem's own
+ *  `readContract` takes, without its generics. */
+export interface AggregateRead {
+  address: Address;
+  abi: Abi | readonly unknown[];
+  functionName: string;
+  args?: readonly unknown[];
+}
+
+/** One read's answer. `failure` means the CHAIN refused that call (it
+ *  reverted, or answered nothing the ABI can decode); it never stands for a
+ *  provider failure, which rejects the whole {@link aggregateReads} call. */
+export type AggregateSlot =
+  | { status: 'success'; result: unknown }
+  | { status: 'failure'; error: unknown };
+
+/**
+ * Evaluate `reads` in ONE Multicall3 `aggregate3` — one `eth_call`, so one
+ * block — and decode each answer against its own ABI.
+ *
+ * This exists because viem's `multicall({ allowFailure: true })` cannot
+ * keep the two facts its callers need. It splits the calls into chunks by
+ * calldata size and sends each chunk as its own request, so a plan is not
+ * guaranteed to be read at one block; and when a chunk's request REJECTS —
+ * an RPC outage, a timeout, a rate limit — it copies that error into every
+ * slot of the chunk as `status: 'failure'`, the same status an on-chain
+ * revert gets. A caller that reads a failed slot as "the protocol refused
+ * this call" then states a verdict from a provider outage.
+ *
+ * Here a request that does not complete rejects, and only a call the chain
+ * itself refused comes back as a `failure` slot.
+ */
+export async function aggregateReads(
+  publicClient: Pick<PublicClient, 'readContract'>,
+  multicall3: Address,
+  reads: readonly AggregateRead[],
+): Promise<AggregateSlot[]> {
+  if (reads.length === 0) return [];
+  const calls = reads.map((r) => ({
+    target: r.address,
+    allowFailure: true,
+    callData: encodeFunctionData({
+      abi: r.abi as Abi,
+      functionName: r.functionName,
+      args: r.args,
+    } as never),
+  }));
+  const results = (await publicClient.readContract({
+    address: multicall3,
+    abi: MULTICALL3_ABI,
+    functionName: 'aggregate3',
+    args: [calls],
+  })) as readonly { success: boolean; returnData: `0x${string}` }[];
+  if (results.length !== reads.length) {
+    throw new Error(`aggregate3 answered ${results.length} result(s) for ${reads.length} call(s)`);
+  }
+  return results.map((r, i): AggregateSlot => {
+    if (!r.success) return { status: 'failure', error: r.returnData };
+    try {
+      return {
+        status: 'success',
+        result: decodeFunctionResult({
+          abi: reads[i].abi as Abi,
+          functionName: reads[i].functionName,
+          data: r.returnData,
+        } as never),
+      };
+    } catch (error) {
+      return { status: 'failure', error };
+    }
+  });
+}

@@ -54,7 +54,6 @@ import { useTranslation } from 'react-i18next';
 import { copy } from '../content/copy';
 import { SlidersHorizontal, RefreshCw, ExternalLink, AlertTriangle } from 'lucide-react';
 import { usePublicClient } from 'wagmi';
-import { hexToString, type Hex } from 'viem';
 import {
   fetchProtocolKnobs,
   CLOCK_SKEW_ALLOWANCE_SEC,
@@ -74,6 +73,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { exactAmountString, formatExactSpan, localeDecimalString, localeNumber } from '../lib/format';
 import { VPFI_DECIMALS } from '../data/vpfi';
 import { useNowSec } from '../hooks/useNowSec';
+import { numeraireOf } from '../data/numeraire';
 import { idleAware } from '../lib/idle';
 import { isProtocolConsolePublic } from '../lib/protocolConsoleVisibility';
 
@@ -205,30 +205,6 @@ function makeFormatters(locale: string | undefined) {
   }
 
   return { bps, exactDecimal, rowValue };
-}
-
-/** The empty word's meaning, as the contracts and the canonical parameter
- *  reference both state it: a deployment where governance never set the
- *  numeraire runs on USD. */
-const DEFAULT_NUMERAIRE = 'USD';
-
-/**
- * The active reference currency from its packed 32-byte symbol (Codex #2683
- * r1). The empty word is not "unset" in the sense of "none": the protocol
- * reads it as its USD default, so the page says USD and that it is the
- * default. A word that is not printable text is returned as null, and the
- * caller shows the raw word rather than invent a name for it.
- */
-function numeraireOf(word: string): { symbol: string; isDefault: boolean } | null {
-  if (!/^0x[0-9a-fA-F]{64}$/.test(word)) return null;
-  if (/^0x0{64}$/.test(word)) return { symbol: DEFAULT_NUMERAIRE, isDefault: true };
-  try {
-    // With a size, viem trims the trailing zero bytes itself.
-    const text = hexToString(word as Hex, { size: 32 });
-    return /^[\x20-\x7e]+$/.test(text) ? { symbol: text.toUpperCase(), isDefault: false } : null;
-  } catch {
-    return null;
-  }
 }
 
 /** Why the page read the chain instead of the snapshot, in the reader's words. */

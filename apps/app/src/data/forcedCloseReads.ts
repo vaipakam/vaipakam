@@ -58,6 +58,7 @@ export type ForcedCloseReadKey =
   | 'sequencer'
   | 'paused'
   | 'match'
+  | 'matchConfig'
   | 'liquidity'
   | 'ltv'
   | 'risk';
@@ -74,7 +75,7 @@ export interface ForcedCloseReadEntry {
   };
 }
 
-/** What `multicall({ allowFailure: true })` hands back, per call. */
+/** What `readAggregate` hands back, per call. */
 export interface MulticallSlot {
   status: 'success' | 'failure';
   result?: unknown;
@@ -112,6 +113,17 @@ export interface ForcedCloseFacts {
   sequencerHealthy: boolean | undefined;
   paused: boolean | undefined;
   internalMatchCandidate: boolean | undefined;
+  /** `ConfigFacet.getInternalMatchConfigBundle().enabled` — whether this
+   *  deployment has internal matching switched on at all (#2082).
+   *
+   *  NOT an input to the decision: `hasInternalMatchCandidate` already
+   *  answers `false` while the switch is off, so the route is right
+   *  either way. It is read because that `false` cannot say WHY, and the
+   *  card owes the lender the difference — "no opposing position right
+   *  now" leaves a match possible by the time the transaction runs,
+   *  "switched off on this deployment" does not. `undefined` = unread,
+   *  including on a Diamond that predates the getter. */
+  internalMatchEnabled: boolean | undefined;
   collateralIlliquid: boolean | undefined;
   ltvCollapsed: boolean | undefined;
 }
@@ -155,6 +167,9 @@ export function forcedCloseReadPlan(input: {
     { key: 'sequencer', contract: { ...d, functionName: 'sequencerHealthy' } },
     { key: 'paused', contract: { ...d, functionName: 'paused' } },
     { key: 'match', contract: { ...d, functionName: 'hasInternalMatchCandidate', args: [input.loanId] } },
+    // The switch behind the candidate answer, read in the same execution
+    // so "switched off" and "no candidate" are dated by one block.
+    { key: 'matchConfig', contract: { ...d, functionName: 'getInternalMatchConfigBundle' } },
   ];
   if (input.collateralAsset !== undefined) {
     plan.push({
@@ -218,6 +233,7 @@ export function forcedCloseFacts(
       sequencerHealthy: undefined,
       paused: undefined,
       internalMatchCandidate: undefined,
+      internalMatchEnabled: undefined,
       collateralIlliquid: undefined,
       ltvCollapsed: undefined,
     };
@@ -227,6 +243,7 @@ export function forcedCloseFacts(
 
   const loanRaw = ok.get('loan');
   const matchRaw = ok.get('match');
+  const matchConfigRaw = ok.get('matchConfig');
   const liquidityRaw = ok.get('liquidity');
   const ltvRaw = ok.get('ltv');
   const riskRaw = ok.get('risk');
@@ -289,6 +306,13 @@ export function forcedCloseFacts(
     paused: bool('paused'),
     // `hasInternalMatchCandidate` returns `[found, loanId]`.
     internalMatchCandidate: Array.isArray(matchRaw) ? Boolean(matchRaw[0]) : undefined,
+    // `getInternalMatchConfigBundle` returns `[enabled, windowBps,
+    // incentiveBps]`. Anything but a boolean first field is unread, not
+    // "off": the card says less, never something false.
+    internalMatchEnabled:
+      Array.isArray(matchConfigRaw) && typeof matchConfigRaw[0] === 'boolean'
+        ? matchConfigRaw[0]
+        : undefined,
     collateralIlliquid:
       liquidityRaw === undefined || !liquidityAboutThisLoan
         ? undefined

@@ -2062,6 +2062,18 @@ is the borrower's own money.
   receives, so choosing one of them on an unread answer is a claim, and
   the wrong one whenever the protocol settles the position against an
   opposing one instead.
+- Settling against an opposing position is a capability each deployment can
+  switch off (#2082). "No opposing position right now" and "this deployment
+  does not settle against opposing positions" are different statements, and
+  the surface keeps them apart: it reads the deployment's setting alongside
+  the other facts behind the card, as of the same block. Where the surface
+  would otherwise warn that an opposing position may appear before the
+  transaction runs, and the setting is off, it says instead that internal
+  matching is switched off on this deployment, so the outcome it describes is
+  the one that happens unless that setting changes first — and it does not
+  offer the matcher incentive, which only a settlement against an opposing
+  position pays. Where the setting cannot be read, the surface keeps the
+  warning, which is true whichever way the setting stands.
 - Where that opposing position exists, the surface must not describe the
   consequence of losing it as a single outcome. Another party may settle
   against the same position first, and what happens then is decided by the
@@ -4617,7 +4629,18 @@ Its intended behaviour, as the test oracle for this surface:
   factor and loan-to-value, roughly how far the collateral's value
   can fall before liquidation begins — explicitly framed as
   approximate (it is derived from the health factor, not a price
-  feed, and assumes the loan side holds still). Where a holder
+  feed, and assumes the loan side holds still). Beside them it states
+  the liquidation price (#2531): the collateral price, in the protocol's
+  reference currency per whole collateral token, at which the health
+  factor reaches 1.00. The price and the health factor it is derived
+  from are read together, as of one block. It says what it assumes —
+  the borrowed asset's price and the amount owed held where they are,
+  with accruing interest moving it up — and it is rounded so it never
+  shows a line below the real one. It never shows a zero price: a loan
+  the protocol does not price says there is no liquidation price and
+  why, a loan whose collateral price or token details could not be read
+  says the figure is unknown, and a loan whose debt is too small to
+  reach the line says no price brings it there. Where a holder
   address has an ENS name on Ethereum mainnet, surfaces may show it
   alongside the address as display sugar — never as part of any
   verdict or check.

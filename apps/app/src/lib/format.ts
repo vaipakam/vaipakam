@@ -39,14 +39,46 @@ export function formatTokenAmountDown(
   decimals: number,
   maxFraction = 4,
 ): string {
-  if (raw < 0n) return `-${formatTokenAmountDown(-raw, decimals, maxFraction)}`;
+  return formatTokenAmountDirected(raw, decimals, maxFraction, 'down');
+}
+
+/** A LOWER BOUND for display (#2531) — rounded up at the shown precision,
+ *  so the figure shown is never below the true one. The mirror of
+ *  `formatTokenAmountDown`, for a line a reader must not think is further
+ *  away than it is: a liquidation price `formatTokenAmount` rounded down
+ *  would tell a borrower they have more room than they do. */
+export function formatTokenAmountUp(
+  raw: bigint,
+  decimals: number,
+  maxFraction = 4,
+): string {
+  return formatTokenAmountDirected(raw, decimals, maxFraction, 'up');
+}
+
+/** The one rule behind both bounds: keep `formatTokenAmount`'s precision,
+ *  then move toward the bound instead of to nearest. A negative amount's
+ *  bound in one direction is the magnitude's bound in the other. */
+function formatTokenAmountDirected(
+  raw: bigint,
+  decimals: number,
+  maxFraction: number,
+  toward: 'down' | 'up',
+): string {
+  if (raw < 0n) {
+    return `-${formatTokenAmountDirected(-raw, decimals, maxFraction, toward === 'up' ? 'down' : 'up')}`;
+  }
   const [int, frac = ''] = formatUnits(raw, decimals).split('.');
   const keep =
     int === '0' && raw !== 0n
       ? frac.search(/[1-9]/) + 4 // four significant digits below one
       : maxFraction;
-  const f = frac.slice(0, keep).replace(/0+$/, '');
-  const intText = BigInt(int).toLocaleString('en-US');
+  // The kept digits as one integer scaled by 10^keep, so a carry out of
+  // the fraction (0.99995 up → 1) lands in the integer part by itself.
+  let kept = BigInt(int + frac.slice(0, keep).padEnd(keep, '0'));
+  if (toward === 'up' && /[1-9]/.test(frac.slice(keep))) kept += 1n;
+  const digits = kept.toString().padStart(keep + 1, '0');
+  const intText = BigInt(digits.slice(0, digits.length - keep)).toLocaleString('en-US');
+  const f = digits.slice(digits.length - keep).replace(/0+$/, '');
   return f ? `${intText}.${f}` : intText;
 }
 

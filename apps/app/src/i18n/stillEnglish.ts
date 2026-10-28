@@ -169,7 +169,11 @@ export const stillEnglish = (source: string, candidate: unknown): boolean => {
   // `Type de NFT`, `1 an`, and `{{noun}} n°{{id}} — {{what}}`, the
   // value defended one round earlier AS localization. Telling those
   // from a real English rewrite needs a language identifier, not a set
-  // operation; #1611 carries it.
+  // operation. #1611 weighed one and the gap was ACCEPTED (owner
+  // decision, 2026-10-28): identifiers are weakest on one-to-three-word
+  // UI labels, which are most of this catalog, so human translation
+  // review remains the guard for English that adds a word. This check
+  // does not claim to catch it.
   //
   // The asymmetry is deliberate: a candidate with a word THIS SOURCE
   // does not have is treated as a translation someone started, because
