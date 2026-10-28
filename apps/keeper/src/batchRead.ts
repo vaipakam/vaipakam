@@ -260,7 +260,13 @@ export async function settleBy<T>(work: Promise<T>, deadline: number, onCut: () 
 }
 
 /** A read refused because the pass's run deadline has passed (#2497 re-cut). */
-export class PastRunDeadline extends Error {}
+export class PastRunDeadline extends Error {
+  /** What `callErrors.shortErr` reports: the message, which names the read
+   *  and the cutoff it missed, so an unread line says why. */
+  get shortMessage(): string {
+    return this.message;
+  }
+}
 
 /** The client READ methods a pass uses, each refused past the deadline. */
 const DEADLINE_GUARDED = new Set(['readContract', 'multicall', 'simulateContract', 'call', 'getLogs', 'getCode', 'getBytecode', 'getStorageAt']);

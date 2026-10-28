@@ -16,6 +16,7 @@ import {
 import { encodePos, type EventLedger, type LedgerPos, type LedgerRow } from '../src/eventLedger';
 import { finalizedBlockOnce, memoryScanCursors } from '../src/scanCursors';
 import { StepSender } from '../src/stepSender';
+import { SEND_RESERVE_MS, STAGE_RESERVE_MS } from '../src/runWindow';
 import type { KeeperContext } from '../src/keeper';
 
 const CHAIN = 84532;
@@ -201,7 +202,7 @@ describe('the tier-push retry', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  const run = () => {
+  const run = (sendDeadline = Number.POSITIVE_INFINITY) => {
     const sender = new StepSender(
       {
         pass: 'protocolUpkeep',
@@ -213,11 +214,11 @@ describe('the tier-push retry', () => {
         describe: (s) => String(s),
         spends: 'the gas',
       },
-      { context: () => d.ctx(), sendDeadline: Number.POSITIVE_INFINITY },
+      { context: () => d.ctx(), sendDeadline },
     );
     return retryTierPushes(CHAIN, DIAMOND, sender, {
       readClient: d.client(),
-      sendDeadline: Number.POSITIVE_INFINITY,
+      sendDeadline,
       visit: 0,
       cursors,
       ledger,
@@ -243,6 +244,17 @@ describe('the tier-push retry', () => {
     expect(report.delivered).toEqual([`${U1}: lanes 10; still owed 42 (spacing)`]);
     expect(d.budget).toBe(10_000n - 300n);
     expect(describeTierPush(report).join(' ')).toContain('tier-push-delivered=');
+  });
+
+  it('reports a gate past its stage cutoff as not worked, never as disarmed', async () => {
+    d.users.set(U1, push(3n, [[10, { ...owedNow }]]));
+    ledger.add(U1, 10, 3n);
+    // The status stage's cutoff is 2 s away; the gate's passed 3 s ago.
+    const { report, sender } = await run(Date.now() + SEND_RESERVE_MS + STAGE_RESERVE_MS + 2_000);
+    expect(d.sent).toEqual([]);
+    expect(report.off).toContain('could not be read');
+    expect(describeTierPush(report).join(' ')).not.toContain('not armed');
+    expect(String(sender.unread.get('tier-push'))).toMatch(/deadline|cutoff/);
   });
 
   it('sends nothing for a user whose every owed lane is still spaced', async () => {

@@ -39,7 +39,7 @@
 
 import { decodeEventLog, type Abi, type Address, type Hex, type PublicClient } from 'viem';
 import { ProtocolBroadcastFacetABI, RewardReporterFacetABI, VaipakamRewardMessengerABI } from '@vaipakam/contracts/abis';
-import { deadlineClient, PastRunDeadline, settledChunkedRead, settledRead } from './batchRead';
+import { deadlineClient, settledChunkedRead, settledRead } from './batchRead';
 import { shortErr } from './callErrors';
 import type { EventLedger } from './eventLedger';
 import { readLedgerRotation } from './ledgerRotation';
@@ -170,7 +170,9 @@ export function deferralDone(k: Deferral, st: PushStatus | undefined): boolean {
 
 const userKey = (a: string) => a.toLowerCase();
 
-/** One chain's step. Throws `PastRunDeadline` only from its gate reads. */
+/** One chain's step. It never throws for running out of time: a stage that
+ *  reaches its cutoff is reported unread in the step's own report, so an armed
+ *  step always says what it read and what it did not. */
 export async function retryTierPushes(chainId: number, diamond: Address, sender: StepSender, deps: TierPushDeps): Promise<TierPushReport> {
   const out = emptyTierPushReport();
   // Each read stage stops early enough to leave the stages after it their
@@ -250,7 +252,6 @@ export async function retryTierPushes(chainId: number, diamond: Address, sender:
     ]);
     [budget, messenger, now] = [b, cfg[0], block.timestamp];
   } catch (err) {
-    if (err instanceof PastRunDeadline) throw err;
     sender.noteUnread('tier-push', `the broadcast budget, messenger or clock (${shortErr(err)})`);
     out.off = 'the broadcast budget, messenger or clock could not be read';
     return out;

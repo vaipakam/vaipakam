@@ -49,7 +49,7 @@
 
 import { decodeEventLog, type Abi, type Address, type Hex, type PublicClient } from 'viem';
 import { NFTPrepayListingFacetABI, OfferParallelSaleFacetABI, ProfileFacetABI } from '@vaipakam/contracts/abis';
-import { deadlineClient, PastRunDeadline, settledChunkedRead } from './batchRead';
+import { deadlineClient, settledChunkedRead } from './batchRead';
 import { boundedCall } from './passReader';
 import { shortErr } from './callErrors';
 import { readActiveWindow, type ScanWindow } from './activeLoanWindow';
@@ -142,8 +142,7 @@ interface Listing {
 }
 
 const label = (l: Pick<Listing, 'kind' | 'id'>) => `${l.kind} ${l.id}`;
-/** Why a read came back empty: its stage ran out of time, or the RPC said. */
-const whyUnread = (err: unknown) => (err instanceof PastRunDeadline ? 'not read by its stage cutoff' : shortErr(err));
+
 
 /** One chain's step. It never throws for running out of time: a stage that
  *  reaches its cutoff is reported unread in the step's own report, so an armed
@@ -166,7 +165,7 @@ export async function syncSaleListings(chainId: number, diamond: Address, sender
       scanClient.readContract({ address: diamond, abi: SALES_ABI, functionName: 'getSanctionsOracle' }),
     )) as Address;
   } catch (err) {
-    sender.noteUnread('sales', `the sanctions oracle setting (${whyUnread(err)})`);
+    sender.noteUnread('sales', `the sanctions oracle setting (${shortErr(err)})`);
     out.off = 'the sanctions oracle setting could not be read';
     return out;
   }
@@ -207,7 +206,7 @@ export async function syncSaleListings(chainId: number, diamond: Address, sender
     }
     if (unread > 0) sender.noteUnread('sales:loans', `the listing of ${unread} loan(s) in the window`);
   } catch (err) {
-    sender.noteUnread('sales:loans', `the active-loan window (${whyUnread(err)})`);
+    sender.noteUnread('sales:loans', `the active-loan window (${shortErr(err)})`);
   }
   out.loanListings = listings.length;
 
@@ -222,7 +221,7 @@ export async function syncSaleListings(chainId: number, diamond: Address, sender
     // Unfinished by the cutoff, the floor stays where it is.
     await boundedCall(listingCutoff, 'the offer floor', offers.liftFloor).catch(() => undefined);
   } catch (err) {
-    sender.noteUnread('sales:offers', `the offer listings (${whyUnread(err)})`);
+    sender.noteUnread('sales:offers', `the offer listings (${shortErr(err)})`);
   }
   out.offerListings = listings.length - out.loanListings;
 
