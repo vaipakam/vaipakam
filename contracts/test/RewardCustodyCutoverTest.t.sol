@@ -212,7 +212,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     }
 
     /// @dev A budget delivery for day 1 as the receiver presents it, on the
-    ///      rooted (d6) wire, the only budget shape the receiver accepts; the
+    ///      d8 wire, the only budget shape the receiver accepts; the
     ///      tokens are already at the Diamond. On an ACTIVATED custody the split
     ///      must be whole and the whole delivery lands in `Unclassified` under
     ///      its transport epoch, attested from the wire. Before activation the
@@ -230,12 +230,24 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         internal
         returns (bytes32 h)
     {
+        h = _deliverStampedOn(1, amount, fresh, recycled, remitId, id);
+    }
+
+    /// @dev {_deliverStamped} for day `dayId`.
+    function _deliverStampedOn(
+        uint256 dayId,
+        uint256 amount,
+        uint256 fresh,
+        uint256 recycled,
+        uint256 remitId,
+        bytes32 id
+    ) internal returns (bytes32 h) {
         h = LibD8Delivery.deliver(
             address(diamond),
             LibD8Delivery.Delivery({
                 token: address(vpfi),
                 amount: amount,
-                dayId: 1,
+                dayId: dayId,
                 sourceChainId: CHAIN_BASE,
                 remitId: remitId,
                 remitter: REMITTER,
@@ -1208,7 +1220,8 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     /// MIGRATION MODE (design §5c): under the manual pause the receive
     /// ingresses still land — a delivery and a quarantine both reach the
     /// holder — while every consumer is refused; after the unpause the claim
-    /// pays from the holder. The delivery's epoch lists no indexed day, so the
+    /// pays from the holder. The delivery funds a day the claim does not
+    /// cover (its epoch is indexed under that day at ingress, #2828), so the
     /// live funding the claim pays from is stood in after the unpause.
     function test_MigrationMode_PausedIngressLands_AndPausedConsumersRefuse() public {
         _becomeMirror();
@@ -1217,7 +1230,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _seedDiamond(2 * expected + 20e18);
         _admin().pause();
 
-        _deliverStamped(expected + 3e18, expected + 1e18, 2e18, 21, keccak256("paused-1"));
+        _deliverStampedOn(7, expected + 3e18, expected + 1e18, 2e18, 21, keccak256("paused-1"));
         assertEq(_unclassified(), expected + 3e18, "landed under the pause");
         assertEq(_live(), 0);
         _deliverCompensation(4e18, 22, 0, keccak256("paused-2"));

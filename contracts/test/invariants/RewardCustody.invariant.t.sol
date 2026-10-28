@@ -214,6 +214,11 @@ contract RewardCustodyInvariant is SetupTest {
     /// what hid the falsity — which is why `test_Handler_ReleaseAndClassify
     /// ReachesTheDebit` below pins the liveness rather than trusting it.
     ///
+    /// Since #2828 the ingress indexes each epoch under its day, so the
+    /// handler's claims draw from it and the leg terms are live; before, no
+    /// handler action indexed an epoch before its release, and the identity
+    /// also asserted the legs were zero.
+    ///
     /// It also pins the rule the ingress relies on: on an activated custody a
     /// budget delivery credits no shared ledger, and its whole amount is what
     /// the batch is admitted with, so no component can sit in an epoch as
@@ -234,7 +239,6 @@ contract RewardCustodyInvariant is SetupTest {
                 admitted,
                 "transport epoch conserves"
             );
-            assertEq(legFresh + legRecycled, 0, "no draw exists until PR 3b-ii");
         }
     }
 

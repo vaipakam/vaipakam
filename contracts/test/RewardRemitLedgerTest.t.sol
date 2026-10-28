@@ -274,15 +274,13 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(rlens.getRemitAckedTotal(CHAIN_ARB), 0, "acked 0");
         assertEq(rlens.getDayClosedByRemitId(CHAIN_ARB, 1), 1, "day closed by 1");
 
-        // The rooted payload carries the echo remitId (3d-2: the day list is
-        // committed to, not carried; its extent is one day).
-        (, , uint256 pn, , uint256 pt, uint256 prid, , , ) = abi.decode(
-            ccip.sentPayload(0),
-            (uint256, bytes32, uint256, uint256, uint256, uint256, address, uint256, uint256)
-        );
-        assertEq(pn, 1, "payload extent: one day");
-        assertEq(pt, total, "payload total");
-        assertEq(prid, 1, "payload remitId");
+        // The d8 payload carries the echo remitId and names its one funded
+        // day inline (#2828).
+        (uint256 tag, RemitWire.D8 memory w) = abi.decode(ccip.sentPayload(0), (uint256, RemitWire.D8));
+        assertEq(tag, RemitWire.REMIT_WIRE_TAG_D8, "the d8 wire");
+        assertEq(w.dayId, 1, "payload day: the one funded day");
+        assertEq(w.total, total, "payload total");
+        assertEq(w.remitId, 1, "payload remitId");
     }
 
     function test_Ack_FinalizesReservation_Idempotently() public {

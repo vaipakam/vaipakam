@@ -248,10 +248,8 @@ contract RewardRemittanceFacetTest is SetupTest {
         assertEq(agg.getChainCustodyEraReported(CHAIN_OP), 0, "a pre-B4 report records none");
         remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), CAP);
         bytes memory wire = ccip.sentPayload(ccip.sentCount() - 1);
-        (, , , , , , , , uint256 intendedEra) = abi.decode(
-            wire, (uint256, bytes32, uint256, uint256, uint256, uint256, address, uint256, uint256)
-        );
-        assertEq(intendedEra, 3, "stamped with the destination's era");
+        (, RemitWire.D8 memory w) = abi.decode(wire, (uint256, RemitWire.D8));
+        assertEq(w.intendedEra, 3, "stamped with the destination's era");
         rewardMessenger.deliverChainReport(CHAIN_BASE, 2, 10e18, 5e18);
         rewardMessenger.deliverChainReportB4(CHAIN_ARB, 2, 20e18, 10e18, 2); // an older era, delivered late
         assertEq(agg.getChainCustodyEraReported(CHAIN_ARB), 3, "an older report never lowers it");
