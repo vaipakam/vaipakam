@@ -47,6 +47,14 @@ const read = (functionName: string, blockNumber: bigint) =>
   pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI_VIEM, functionName, blockNumber });
 
 test('every contract figure is its view at the block the page states', async ({ page }) => {
+  // The visitor's clock agrees with the chain's, as it does on a live
+  // chain. This Anvil chain is shared and earlier specs warp its clock
+  // forward, so without this the block would be stamped hours ahead of the
+  // browser and the page would rightly call its age unknown (a stamp from
+  // the future is never shown as fresh), which is not the case this test
+  // is about. Timers keep running; only the date the page reads is set.
+  const { timestamp: chainNow } = await pub.getBlock({ blockTag: 'latest' });
+  await page.clock.setFixedTime(new Date(Number(chainNow) * 1000));
   const blockNumber = await openFigures(page);
   expect(blockNumber, 'a real block').toBeGreaterThan(0n);
   expect(blockNumber).toBeLessThanOrEqual(await pub.getBlockNumber());
