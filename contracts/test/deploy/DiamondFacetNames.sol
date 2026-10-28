@@ -273,9 +273,10 @@ abstract contract DiamondFacetNames {
             // setters + readers + the LoanFacet.initiateLoan hook
             // that auto-populates per-loan refinance caps when the
             // borrower has `autoOptInOnNewLoan` enabled. Phase 2/3
-            // follow-ups (#500/#501) wire the caps into
-            // `RefinanceFacet.refinanceLoan` and add the
-            // `extendLoanInPlace` executor.
+            // follow-ups (#500/#501) wire the caps into the refinance
+            // completion (since #3042 only the atomic accept route,
+            // `refinanceLoanFromAccept` / `refinanceLoanFromMatch`) and
+            // add the `extendLoanInPlace` executor.
             "AutoLifecycleFacet",
             // #407 PR 2 (2026-06-12) — thin cross-facet entry for
             // the encumbrance sub-ledger's mutate surface. Created

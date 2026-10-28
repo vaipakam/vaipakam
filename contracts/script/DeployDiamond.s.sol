@@ -2540,18 +2540,20 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getRefinanceSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
-        s[0] = RefinanceFacet.refinanceLoan.selector;
+        s = new bytes4[](4);
         // T-092-H (#549) — atomic accept-and-refinance internal entries.
         // Cut here so the diamond fallback routes the cross-facet calls
         // from OfferAcceptFacet / OfferMatchFacet into RefinanceFacet.
         // #2349 — one entry per route (lender accept vs matcher fill), so
         // the route is stated rather than inferred from msg.sender.
-        s[1] = RefinanceFacet.refinanceLoanFromAccept.selector;
-        s[2] = RefinanceFacet.refinanceLoanFromMatch.selector;
+        // #3042 — these are the ONLY completions: the standalone
+        // `refinanceLoan` is retired, so every refinance settles in the
+        // transaction that accepts its offer.
+        s[0] = RefinanceFacet.refinanceLoanFromAccept.selector;
+        s[1] = RefinanceFacet.refinanceLoanFromMatch.selector;
         // #2407 — the loan → refinance-request record's view.
-        s[3] = RefinanceFacet.getRefinanceRequest.selector;
-        s[4] = RefinanceFacet.checkRefinanceRequest.selector;
+        s[2] = RefinanceFacet.getRefinanceRequest.selector;
+        s[3] = RefinanceFacet.checkRefinanceRequest.selector;
     }
 
     function _getVpfiTokenSelectors() internal pure returns (bytes4[] memory s) {

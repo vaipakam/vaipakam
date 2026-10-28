@@ -1209,9 +1209,9 @@ interface IVaipakamErrors {
     ///         settler must retry with a fresh quote / different venues.
     error PeriodicSettleSwapFailed(uint256 loanId);
 
-    /// @notice `refinanceLoan` called while the old loan's current
+    /// @notice A refinance reached the old loan while its current
     ///         periodic-interest period is overdue past its grace
-    ///         window. Caller must first run `settlePeriodicInterest`
+    ///         window (the accept reverts). Someone must first run `settlePeriodicInterest`
     ///         on the old loan so the original lender is made whole
     ///         BEFORE the refinance overwrites the loan's state.
     /// @param oldLoanId The loan being refinanced.

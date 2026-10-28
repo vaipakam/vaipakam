@@ -602,7 +602,7 @@
       "liquidityChecking": "Wir prüfen, wie diese Assets vom Protokoll bepreist werden…",
       "liquidityCheckFailed": "Wir konnten nicht prüfen, wie diese Assets bepreist werden, und diese Prüfung entscheidet über einen wichtigen Warnhinweis — das Signieren bleibt pausiert, bis sie gelingt.",
       "linkedLoanCheckFailed": "Wir konnten nicht prüfen, ob dieses Angebot der Positionsverkauf eines laufenden Kredits ist, und diese Prüfung entscheidet über eine wichtige Offenlegung — das Signieren bleibt pausiert, bis sie gelingt.",
-      "refinanceRequestBanner": "Dies ist eine Refinanzierungsanfrage für Kredit #{{loanId}}. Die Annahme eröffnet Ihren Kredit und tilgt und schließt in derselben Transaktion Kredit #{{loanId}}. Wie bei jedem Kredit geht der von Ihnen verliehene Betrag, abzüglich der Kreditvergabegebühr des Kreditnehmers, an die Wallet des Kreditnehmers. Die Tilgung an den aktuellen Kreditgeber jenes Kredits wird danach aus der Wallet des Kreditnehmers entnommen, sodass Ihr Kredit sie ganz oder teilweise finanzieren kann; eine Differenz deckt der Kreditnehmer. Was Ihnen geschuldet wird, bestimmen die Bedingungen und Sicherheiten Ihres neuen Kredits.",
+      "refinanceRequestBanner": "Dies ist eine Refinanzierungsanfrage für Kredit #{{loanId}}. Die Annahme eröffnet Ihren Kredit und tilgt und schließt in derselben Transaktion Kredit #{{loanId}}. Der von Ihnen verliehene Betrag geht abzüglich der Kreditvergabegebühr des Kreditnehmers direkt als Teil der Tilgung an den aktuellen Kreditgeber jenes Kredits, nicht an die Wallet des Kreditnehmers; den Rest zahlt die Wallet des Kreditnehmers. Was Ihnen geschuldet wird, bestimmen die Bedingungen und Sicherheiten Ihres neuen Kredits.",
       "refinanceRequestChecking": "Wir prüfen, ob diese Anfrage einen laufenden Kredit refinanziert — die Prüfung muss das anzeigen, bevor Sie unterschreiben können.",
       "refinanceRequestCheckFailed": "Wir konnten nicht prüfen, ob diese Anfrage einen laufenden Kredit refinanziert, und das ändert, was die Annahme bewirkt — das Unterschreiben bleibt pausiert, bis die Prüfung gelingt.",
       "refinanceRequestUnavailable": "Diese Anfrage möchte Kredit #{{loanId}} refinanzieren, kann aber gerade nicht angenommen werden. {{reason}} Eine Annahme würde fehlschlagen, daher gibt es nichts zu unterschreiben.",
@@ -748,7 +748,7 @@
         "offsetCost": "Sie stellen jetzt neues Geld zum Verleihen bereit — und bei Abschluss zahlt Ihre Wallet außerdem diesen Kredit vollständig ab: seinen Kreditbetrag, die bis jetzt angefallenen Zinsen und einen etwaigen Zinsausgleich für Ihren jetzigen Kreditgeber. Planen Sie mit zwei Beträgen in Kredithöhe, nicht mit einem.",
         "refinance": "Zu einem neuen Kreditgeber umschulden",
         "refinanceDesc": "Veröffentlichen Sie eine Anfrage für einen neuen Kredit zu besseren Konditionen. Nimmt ein Kreditgeber an, wird der alte Kredit abgelöst und Ihre Sicherheit wandert automatisch mit.",
-        "refinanceCost": "Die Ablösesumme besteht aus dem Kreditbetrag plus den Zinsen der restlichen Laufzeit und wird aus Ihrer Wallet abgebucht, sobald ein Kreditgeber annimmt.",
+        "refinanceCost": "Die Ablösesumme besteht aus dem Kreditbetrag plus den Zinsen der restlichen Laufzeit. Sobald ein Kreditgeber annimmt, begleicht das Geld des neuen Kredits abzüglich seiner Vergabegebühr diesen Teil direkt; Ihre Wallet zahlt nur den Rest.",
         "refinanceTransferredUnavailable": "Für diese Position nicht verfügbar — die Umschuldung bleibt bei der Wallet, die den Kredit ursprünglich aufgenommen hat."
       },
       "checkingInterlocks": "Verknüpfte Anfragen zu diesem Kredit werden geprüft…",
@@ -829,7 +829,7 @@
     },
     "refinance": {
       "postedButUnconfirmed": "Deine Anfrage wurde gesendet, aber wir konnten nicht bestätigen, ob sie durchgegangen ist. Prüfe deine offenen Anfragen, bevor du es erneut versuchst — falls sie angekommen ist, würde eine zweite Anfrage ein Duplikat erzeugen. Die Ausgabe-Freigabe wurde bewusst beibehalten, weil ein Kreditgeber, der die Anfrage annimmt, sie zum Einzug der Ablösung benötigt.",
-      "receiptYouMayOwe": "~{{payoff}} zur Ablösung dieses Kredits, automatisch gezogen, wenn ein Kreditgeber akzeptiert.",
+      "receiptYouMayOwe": "~{{payoff}} zur Ablösung dieses Kredits, automatisch beglichen, wenn ein Kreditgeber akzeptiert. Das Geld des neuen Kredits geht abzüglich seiner Initialisierungsgebühr direkt an Ihren bisherigen Kreditgeber; nur der Rest kommt aus Ihrer Wallet.",
       "feesTreasuryNote": "Der {{cut}}-Anteil des Protokolls an den Payoff-Zinsen wird im Payoff abgerechnet.",
       "whenEndsComposed": "Wenn ein Kreditgeber Ihre Anfrage akzeptiert, wenn Sie sie stornieren, oder {{branch}}.",
       "expiresAfterDays": "wenn sie {{days}} Tage nach Veröffentlichung abläuft",
@@ -844,7 +844,7 @@
       "action": "Refinanzierungsanfrage prüfen",
       "confirm": "Bestätigen — Refinanzierungsanfrage veröffentlichen",
       "payoffNote": "Die Ablösesumme des alten Kredits ist immer der Kreditbetrag plus die Zinsen der gesamten restlichen Laufzeit — auch wenn die Zinsen dieses Kredits normalerweise Tag für Tag wachsen. Das ist der feste Anspruch des ausscheidenden Kreditgebers bei einem vorzeitigen Ausstieg.",
-      "walletNote": "Der Payoff wird automatisch aus Ihrer Wallet gezogen, sobald ein Kreditgeber akzeptiert. Das Geld des neuen Kredits kommt in derselben Transaktion an, halten Sie also etwa {{topUp}} frei in Ihrer Wallet (den Zinsanteil plus die Initialisierungsgebühr des neuen Kredits), solange die Anfrage offen ist.",
+      "walletNote": "Wenn ein Kreditgeber akzeptiert, zahlt Ihre Wallet nur, was das Geld des neuen Kredits nicht abdeckt: etwa {{topUp}} (den Zinsanteil plus die Initialisierungsgebühr des neuen Kredits). Halten Sie so viel in Ihrer Wallet, solange die Anfrage offen ist. Die Ausgabefreigabe, die Sie erteilen, ist auf diesen Teil bemessen, nicht auf den ganzen Payoff.",
       "shortIsSafe": "Reicht Ihr Wallet-Guthaben nicht aus, wenn ein Kreditgeber annehmen will, schlägt die Annahme einfach fehl — es wird nichts entnommen, und Ihr aktueller Kredit läuft unverändert weiter.",
       "noGuarantee": "Eine Refinanzierungsanfrage ist keine Garantie, dass ein Kreditgeber sie annimmt. Bis jemand annimmt, behält dieser Kredit sein Fälligkeitsdatum und seine Nachfrist; nimmt niemand rechtzeitig an, kann der Kredit wie jeder andere ausfallen. Seien Sie bereit, ihn selbst zurückzuzahlen, falls die Anfrage nicht angenommen wird.",
       "autoMatchOff": "Das automatische Matching von Refinanzierungsanfragen ist in diesem Deployment ausgeschaltet, daher wird der Order-Matcher deine Anfrage nicht ausführen. Diese Einstellung hindert keinen Kreditgeber daran, sie direkt anzunehmen.",
@@ -1111,8 +1111,8 @@
     },
     "keepers": {
       "title": "Keeper-Berechtigungen",
-      "blurb": "Keeper sind Drittanbieter-Dienste (oder Ihr eigener Bot), denen Sie erlauben können, bestimmte Kreditaktionen FÜR Sie auszuführen — ein vorzeitiges Schließen starten, eine von Ihnen aufgesetzte Refinanzierung abschließen, eine Position zum Verkauf inserieren. Alles hier ist aus, bis Sie es einschalten, und drei Schalter müssen gemeinsam an sein, bevor ein Keeper handeln darf: der Hauptschalter, die Aktion beim jeweiligen Keeper und ein Schalter pro Kredit auf dessen Seite.",
-      "safetyNote": "Ein Keeper kann nie Ihr Geld erhalten — Auszahlungen gehen immer an den Halter der Position. Sie können jeden Keeper jederzeit widerrufen (oder den Hauptschalter ausschalten), das Protokoll kann alle Keeper auf einmal pausieren, und Refinanzierungen sind zusätzlich durch die Leitplanken begrenzt, die Sie pro Kredit setzen. Wechselt eine Position den Besitzer, gelten diese Berechtigungen nach den Einstellungen des neuen Halters, nicht nach Ihren.",
+      "blurb": "Keeper sind Drittanbieter-Dienste (oder Ihr eigener Bot), denen Sie erlauben können, bestimmte Kreditaktionen FÜR Sie auszuführen — ein vorzeitiges Schließen starten, einen Kredit verlängern, eine Position zum Verkauf inserieren. Alles hier ist aus, bis Sie es einschalten, und drei Schalter müssen gemeinsam an sein, bevor ein Keeper handeln darf: der Hauptschalter, die Aktion beim jeweiligen Keeper und ein Schalter pro Kredit auf dessen Seite.",
+      "safetyNote": "Ein Keeper kann nie Ihr Geld erhalten — Auszahlungen gehen immer an den Halter der Position. Sie können jeden Keeper jederzeit widerrufen (oder den Hauptschalter ausschalten), und das Protokoll kann alle Keeper auf einmal pausieren. Wechselt eine Position den Besitzer, gelten diese Berechtigungen nach den Einstellungen des neuen Halters, nicht nach Ihren.",
       "masterLabel": "Meinen freigegebenen Keepern das Handeln erlauben (Hauptschalter — solange er aus ist, läuft nichts)",
       "addressPlaceholder": "0x… keeper Adresse",
       "actions": {
@@ -1120,11 +1120,6 @@
           "label": "Für mich das vorzeitige Schließen eines Kredits starten",
           "side": "wirkt auf Kredite, bei denen Sie Kreditnehmer sind",
           "blurb": "Startet jeden Weg zum vorzeitigen Schließen bei einem Kredit, bei dem Sie Kreditnehmer sind. Die Ablösesumme kommt weiterhin aus Ihrer Wallet im Rahmen Ihrer bestehenden Freigaben."
-        },
-        "refinance": {
-          "label": "Eine Refinanzierung für mich abschließen",
-          "side": "wirkt auf Kredite, bei denen Sie Kreditnehmer sind",
-          "blurb": "Schließt eine von Ihnen aufgesetzte Refinanzierung ab, begrenzt durch die von Ihnen genehmigten Leitplanken (Zins-Obergrenze, Enddatum) — und den Keeper-Notausschalter des Protokolls."
         },
         "completeOffset": {
           "label": "Einen Offset-Abschluss für mich fertigstellen",
@@ -3082,7 +3077,7 @@
       "lenderIntentFillsHint": "Ob registrierte Kredit-Intents ausgeführt werden können. Aus stoppt ihre Ausführung; Kreditgeber können weiterhin Intents registrieren.",
       "minIntentFill": "Kleinste Intent-Ausführung",
       "minIntentFillHint": "Der Mindestwert, den die kleinste Ausführung eines stehenden Intents bei seiner Registrierung haben muss. Beide Assets müssen außerdem bepreist sein. Ein vor einer Änderung registrierter Intent behält seine Bedingungen, bis er neu gesetzt wird.",
-      "autoRefinanceHint": "Aus hindert Keeper und den Order-Matcher daran, Refinanzierungen abzuschließen. Ein Kreditnehmer, der seinen eigenen Kredit refinanziert, oder ein Kreditgeber, der eine Refinanzierungsanfrage direkt annimmt, kommt weiterhin durch.",
+      "autoRefinanceHint": "Aus hindert den Order-Matcher daran, Refinanzierungen abzuschließen. Ein Kreditgeber, der eine Refinanzierungsanfrage direkt annimmt, kommt weiterhin durch.",
       "autoExtendHint": "Aus blockiert jede Verlängerung eines Kredits an Ort und Stelle, auch eine, die der Kreditnehmer direkt anfordert.",
       "numeraireFeed": "ETH-Preisfeed in der Referenzwährung",
       "numeraireFeedHint": "Der Chainlink-Feed, der ETH in der Referenzwährung bewertet. Er ändert sich zusammen mit der Referenzwährung.",

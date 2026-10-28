@@ -405,10 +405,11 @@ contract ProfileFacetTest is Test {
         // #393 v1-d.2 filled the original uint8 bitmask (KEEPER_ACTION_ALL =
         // 0xFF, AUTO_ROLL = 0x80 the last bit). #1221 widened the container to
         // uint16 so bits 8–15 are physically available for future actions, but
-        // KEEPER_ACTION_ALL is still 0xFF until a bit-8+ action is DEFINED —
-        // so the validator (`_requireValidKeeperActions`) must still reject any
-        // undefined high bit. This is the regression guard for the widening:
-        // an undefined action can never be granted just because the type grew.
+        // KEEPER_ACTION_ALL covers only DEFINED bits — 0xEF since #3042 retired
+        // bit 4 (0x10, the old REFINANCE delegation) — so the validator
+        // (`_requireValidKeeperActions`) must reject any undefined bit, high or
+        // retired. This is the regression guard for the widening and for the
+        // retirement: an undefined action can never be granted.
         address k = makeAddr("keeperA");
         // 0x80 (AUTO_ROLL) — a defined bit — is accepted.
         vm.prank(user1);
@@ -431,6 +432,17 @@ contract ProfileFacetTest is Test {
         vm.prank(user1);
         vm.expectRevert(IVaipakamErrors.InvalidKeeperActions.selector);
         ProfileFacet(address(diamond)).approveKeeper(k3, 0x100);
+        // #3042 — the retired REFINANCE bit (0x10) is undefined now and must be
+        // rejected, alone or mixed with a defined bit: a refinance is accepted
+        // by a lender on the borrower's own offer, never driven by a keeper.
+        address k5 = makeAddr("keeperE");
+        vm.prank(user1);
+        vm.expectRevert(IVaipakamErrors.InvalidKeeperActions.selector);
+        ProfileFacet(address(diamond)).approveKeeper(k5, 0x10);
+        vm.prank(user1);
+        vm.expectRevert(IVaipakamErrors.InvalidKeeperActions.selector);
+        ProfileFacet(address(diamond)).approveKeeper(k5, LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE | 0x10);
+        assertEq(LibVaipakam.KEEPER_ACTION_ALL, 0xEF, "ALL is every defined bit, 0x10 excluded");
         // A mix of a defined low bit and an undefined high bit is also rejected
         // (partial-validity must not slip through).
         address k4 = makeAddr("keeperD");
@@ -438,7 +450,7 @@ contract ProfileFacetTest is Test {
         vm.expectRevert(IVaipakamErrors.InvalidKeeperActions.selector);
         ProfileFacet(address(diamond)).approveKeeper(
             k4,
-            LibVaipakam.KEEPER_ACTION_REFINANCE | 0x200
+            LibVaipakam.KEEPER_ACTION_EXTEND | 0x200
         );
     }
 
@@ -448,13 +460,13 @@ contract ProfileFacetTest is Test {
         ProfileFacet(address(diamond)).approveKeeper(
             k,
             LibVaipakam.KEEPER_ACTION_COMPLETE_LOAN_SALE |
-                LibVaipakam.KEEPER_ACTION_REFINANCE
+                LibVaipakam.KEEPER_ACTION_EXTEND
         );
         uint16 actions = ProfileFacet(address(diamond)).getKeeperActions(user1, k);
         assertEq(
             actions,
             LibVaipakam.KEEPER_ACTION_COMPLETE_LOAN_SALE |
-                LibVaipakam.KEEPER_ACTION_REFINANCE,
+                LibVaipakam.KEEPER_ACTION_EXTEND,
             "bitmask must match what was supplied to approveKeeper"
         );
         assertTrue(ProfileFacet(address(diamond)).isApprovedKeeper(user1, k));
@@ -466,7 +478,7 @@ contract ProfileFacetTest is Test {
         ProfileFacet(address(diamond)).approveKeeper(k, LibVaipakam.KEEPER_ACTION_ALL);
         vm.prank(user1);
         vm.expectRevert(IVaipakamErrors.KeeperAlreadyApproved.selector);
-        ProfileFacet(address(diamond)).approveKeeper(k, LibVaipakam.KEEPER_ACTION_REFINANCE);
+        ProfileFacet(address(diamond)).approveKeeper(k, LibVaipakam.KEEPER_ACTION_EXTEND);
     }
 
     function testSetKeeperActionsUpdatesBitmask() public {
@@ -479,11 +491,11 @@ contract ProfileFacetTest is Test {
         vm.prank(user1);
         ProfileFacet(address(diamond)).setKeeperActions(
             k,
-            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE | LibVaipakam.KEEPER_ACTION_REFINANCE
+            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE | LibVaipakam.KEEPER_ACTION_EXTEND
         );
         assertEq(
             ProfileFacet(address(diamond)).getKeeperActions(user1, k),
-            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE | LibVaipakam.KEEPER_ACTION_REFINANCE,
+            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE | LibVaipakam.KEEPER_ACTION_EXTEND,
             "bitmask replaced, not OR-ed"
         );
     }

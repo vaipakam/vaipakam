@@ -5,8 +5,9 @@
  *  the refinance CARD RENDERS in the grace window. A rendering
  *  assertion passes just as happily against a flow whose submit
  *  reverts, and refinance settles two loans in one transaction — the
- *  old one is paid off from the borrower's wallet while the new one
- *  opens against the SAME collateral, which never unlocks in between.
+ *  old one is paid off by the new loan's net principal plus the rest
+ *  from the borrower's wallet (#3042) while the new one opens against
+ *  the SAME collateral, which never unlocks in between.
  *
  *  What makes this worth a spec rather than a form-fill check is the
  *  carry-over: the contract's predicate compares the offer creator to
@@ -44,6 +45,7 @@ import { pub, DIAMOND, DIAMOND_ABI_VIEM, ERC20_MIN_ABI } from '../lib/chain';
 interface LoanShape {
   borrower: `0x${string}`;
   lender: `0x${string}`;
+  principalAsset: `0x${string}`;
   principal: bigint;
   interestRateBps: bigint;
   durationDays: bigint;
@@ -149,7 +151,7 @@ test('refinance request completes: old loan closes, new loan carries the collate
   const pending = page.getByText(/refinance request #\d+ is live/i);
   await expect(pending).toBeVisible({ timeout: 120_000 });
   // The standing request carries the same disclosure: it can still be
-  // accepted directly, just not filled by the matcher or a keeper.
+  // accepted directly, just not filled by the matcher.
   const pendingCard = page
     .locator('section.card')
     .filter({ has: pending });
@@ -241,9 +243,63 @@ test('refinance request completes: old loan closes, new loan carries the collate
   await expect(browsing.page.getByText(/They lock \d/)).toHaveCount(0);
   await browsing.ctx.close();
 
+  // #3042 — the borrower's standing approval covers only the wallet's
+  // share of the payoff (the interest and the new loan's initiation fee);
+  // the new loan's net principal pays the old lender inside the Diamond.
+  // So the approval the form granted is far below the principal, and the
+  // accept below succeeding on it is the end-to-end proof of the netting:
+  // a whole-payoff pull would exceed it and revert.
+  const principalHeld = async (): Promise<bigint> =>
+    (await pub.readContract({
+      address: before.principalAsset,
+      abi: ERC20_MIN_ABI,
+      functionName: 'balanceOf',
+      args: [before.borrower],
+    })) as bigint;
+  const approved = (await pub.readContract({
+    address: before.principalAsset,
+    abi: ERC20_MIN_ABI,
+    functionName: 'allowance',
+    args: [before.borrower, DIAMOND],
+  })) as bigint;
+  expect(approved, 'the approval covers only the wallet\u2019s share of the payoff').toBeLessThan(
+    before.principal,
+  );
+  const walletBefore = await principalHeld();
+  const acceptFrom = await pub.getBlockNumber();
+
   // A different lender accepts it — one transaction that opens the new
   // loan, pays off the old lender and closes the old loan.
   const newLoanId = await acceptOfferDirect('newLender', requestId);
+
+  // The settlement statement names each leg, and the borrower's wallet
+  // paid exactly the two legs it is named for — nothing arrived in it and
+  // went back out.
+  const settled = await pub.getContractEvents({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    eventName: 'RefinancePayoffSettled',
+    args: { oldLoanId },
+    fromBlock: acceptFrom,
+  });
+  expect(settled, 'one settlement statement for the refinance').toHaveLength(1);
+  const legs = settled[0].args as {
+    newLoanId: bigint;
+    newLenderToOldLender: bigint;
+    borrowerToOldLender: bigint;
+    borrowerToTreasury: bigint;
+  };
+  expect(legs.newLoanId).toBe(newLoanId);
+  expect(legs.newLenderToOldLender, 'the net principal pays the old lender').toBeGreaterThan(0n);
+  expect(legs.newLenderToOldLender).toBeLessThan(before.principal);
+  expect(
+    walletBefore - (await principalHeld()),
+    'the borrower\u2019s wallet paid only its named legs',
+  ).toBe(legs.borrowerToOldLender + legs.borrowerToTreasury);
+  expect(
+    legs.borrowerToOldLender + legs.borrowerToTreasury,
+    'the wallet\u2019s share fits inside the approval it granted',
+  ).toBeLessThanOrEqual(approved);
   expect(newLoanId, 'refinance must open a DIFFERENT loan').not.toBe(oldLoanId);
 
   const oldAfter = await loanOf(oldLoanId);

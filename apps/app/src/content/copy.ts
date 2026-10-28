@@ -1357,7 +1357,7 @@ const copySource = {
     // #2421 — a borrow request tagged with a running loan: accepting it is
     // also the payoff and close of that loan, in the same transaction.
     refinanceRequestBanner: tmpl(
-      `This is a refinance request for loan #{{loanId}}. Accepting it opens your loan and, in the same transaction, pays off and closes loan #{{loanId}}. As with any loan, the amount you lend, less the borrower’s loan-initiation fee, goes to the borrower’s wallet. The payoff to that loan’s current lender is then drawn from the borrower’s wallet, so your loan can fund part or all of it, with the borrower covering any difference. What you are owed is set by your new loan’s terms and collateral.`,
+      `This is a refinance request for loan #{{loanId}}. Accepting it opens your loan and, in the same transaction, pays off and closes loan #{{loanId}}. The amount you lend, less the borrower’s loan-initiation fee, goes straight to that loan’s current lender as part of its payoff, not to the borrower’s wallet; the borrower’s wallet pays the rest. What you are owed is set by your new loan’s terms and collateral.`,
       ['loanId'],
     ),
     refinanceRequestChecking:
@@ -1622,7 +1622,7 @@ const copySource = {
       refinanceDesc:
         'Post a request for a new loan on better terms. When a lender accepts, the old loan is paid off and your collateral moves over automatically.',
       refinanceCost:
-        'The payoff is the loan amount plus the remaining term’s interest, pulled from your wallet when a lender accepts.',
+        'The payoff is the loan amount plus the remaining term’s interest. When a lender accepts, the new loan’s money, less its initiation fee, pays that much of it directly; your wallet pays only the rest.',
       refinanceTransferredUnavailable:
         'Not available for this position — refinancing stays with the wallet that originally took the loan.',
     },
@@ -1798,7 +1798,7 @@ const copySource = {
     // refs (payoffNote, walletNote, guardrailNote, …) stay composed at
     // the call site.
     receiptYouMayOwe: tmpl(
-      '~{{payoff}} to pay off this loan, pulled automatically when a lender accepts.',
+      '~{{payoff}} to pay off this loan, settled automatically when a lender accepts. The new loan’s money, less its initiation fee, goes straight to your current lender; only the rest comes from your wallet.',
       ['payoff'],
     ),
     feesTreasuryNote: tmpl(
@@ -1829,7 +1829,7 @@ const copySource = {
     payoffNote:
       'The old loan’s payoff is always the loan amount plus the full remaining term’s interest — even if interest on the loan normally builds up day by day. That is the exiting lender’s fixed entitlement on an early exit.',
     walletNote: tmpl(
-      `The payoff is pulled from your wallet automatically at the moment a lender accepts. The new loan’s money arrives in the same transaction, so keep about {{topUp}} spare in your wallet (the interest portion plus the new loan’s initiation fee) while the request is open.`,
+      `When a lender accepts, your wallet pays only what the new loan’s money does not cover: about {{topUp}} (the interest portion plus the new loan’s initiation fee). Keep that much in your wallet while the request is open. The spending approval you grant is sized to that part, not to the whole payoff.`,
       ['topUp'],
     ),
     shortIsSafe:
@@ -2584,9 +2584,9 @@ const copySource = {
   keepers: {
     title: 'Keeper permissions',
     blurb:
-      'Keepers are third-party services (or your own bot) you can allow to run specific loan actions FOR you — start an early close, finish a refinance you set up, list a position for sale. Everything here is off until you turn it on, and three switches must all agree before a keeper can act: the master switch, the action on that keeper, and a per-loan switch on each loan’s page.',
+      'Keepers are third-party services (or your own bot) you can allow to run specific loan actions FOR you — start an early close, extend a loan, list a position for sale. Everything here is off until you turn it on, and three switches must all agree before a keeper can act: the master switch, the action on that keeper, and a per-loan switch on each loan’s page.',
     safetyNote:
-      'A keeper can never receive your money — payouts always go to whoever holds the position. You can revoke any keeper (or flip the master switch off) at any time, the protocol can pause all keepers at once, and refinances are additionally bounded by the guardrails you set per loan. If a position changes hands, these permissions apply to the new holder’s settings, not yours.',
+      'A keeper can never receive your money — payouts always go to whoever holds the position. You can revoke any keeper (or flip the master switch off) at any time, and the protocol can pause all keepers at once. If a position changes hands, these permissions apply to the new holder’s settings, not yours.',
     masterLabel:
       'Allow my approved keepers to act (master switch — nothing runs while this is off)',
     addressPlaceholder: '0x… keeper address',
@@ -2598,12 +2598,6 @@ const copySource = {
         side: 'acts on loans you borrowed',
         blurb:
           'Begin any early-close path on a loan where you are the borrower. The payoff still comes from your wallet under your standing approvals.',
-      },
-      refinance: {
-        label: 'Complete a refinance for me',
-        side: 'acts on loans you borrowed',
-        blurb:
-          'Finish a refinance you set up, bounded by the guardrails (rate ceiling, end date) you approved — and the protocol’s own keeper kill switch.',
       },
       completeOffset: {
         label: 'Finish an offset close for me',
@@ -6888,7 +6882,7 @@ const copySource = {
       'The least a standing intent’s smallest fill must be worth when it is registered. Both of its assets must also be priced. An intent registered before a change keeps its terms until it is set again.',
     autoRefinance: 'Auto-refinance',
     autoRefinanceHint:
-      'Off stops keepers and the order matcher from completing refinances. A borrower refinancing their own loan, or a lender accepting a refinance request directly, still goes through.',
+      'Off stops the order matcher from completing refinances. A lender accepting a refinance request directly still goes through.',
     autoExtend: 'Auto-extend',
     autoExtendHint: 'Off blocks every in-place loan extension, including one the borrower asks for directly.',
     keepers: 'Keepers',

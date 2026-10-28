@@ -143,9 +143,18 @@ contract PauseGatingTest is SetupTest {
 
     // ── RefinanceFacet ──────────────────────────────────────────────────────
 
-    function test_pause_refinanceLoan() public {
+    /// @dev #3042 — the two atomic completions are the only refinance entries.
+    ///      Each is Diamond-internal, so the pause is checked as the Diamond.
+    function test_pause_refinanceLoanFromAccept() public {
+        vm.prank(address(diamond));
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(0, 0);
+        RefinanceFacet(address(diamond)).refinanceLoanFromAccept(0, 0);
+    }
+
+    function test_pause_refinanceLoanFromMatch() public {
+        vm.prank(address(diamond));
+        vm.expectRevert(LibPausable.EnforcedPause.selector);
+        RefinanceFacet(address(diamond)).refinanceLoanFromMatch(0, 0);
     }
 
     // ── EarlyWithdrawalFacet ────────────────────────────────────────────────

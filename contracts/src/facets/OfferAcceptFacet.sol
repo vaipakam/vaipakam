@@ -33,6 +33,7 @@ import {LibFeeEntitlement} from "../libraries/LibFeeEntitlement.sol";
 import {LibUserVault} from "../libraries/LibUserVault.sol";
 import {OfferAcceptFeeFacet} from "./OfferAcceptFeeFacet.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
+import {LibRefinanceNetting} from "../libraries/LibRefinanceNetting.sol";
 
 /**
  * @title OfferAcceptFacet
@@ -116,8 +117,8 @@ contract OfferAcceptFacet is
     ///      which facet emits.
 
     /// @dev Emitted by `OfferFacet.matchOffers` (and the
-    ///      `acceptOffer` / `PrecloseFacet.transferObligationViaOffer` /
-    ///      `RefinanceFacet.refinanceLoan` wrappers around the shared
+    ///      `acceptOffer` / `PrecloseFacet.transferObligationViaOffer`
+    ///      wrappers around the shared
     ///      matching core, once Range Orders Phase 1 PR3 lands). Single
     ///      source-of-truth event for the matched terms — both midpoints
     ///      are emitted so downstream alt-rule analytics can reconstruct
@@ -1628,10 +1629,9 @@ contract OfferAcceptFacet is
             // `refinanceLoanFromMatch` (kill-switch gated); a plain
             // lender accept chains into `refinanceLoanFromAccept`
             // (never gated by it).
-            if (
-                offer.refinanceTargetLoanId != 0 &&
-                offer.offerType == LibVaipakam.OfferType.Borrower
-            ) {
+            // #3042 — the same predicate the net-principal delivery parked
+            // on, so a parked net principal is always consumed here.
+            if (LibRefinanceNetting.isRefinanceAccept(offer)) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         s.matchOverride.active

@@ -53,13 +53,11 @@
  *   7. Soft per-tick cap so one rogue chain can't burn the keeper's
  *      gas budget.
  *
- * Auto-refinance is NOT in this v1 pass — it requires running the
- * matcher against refinance-tagged offers + driving the create →
- * accept → refinanceLoan triplet, and the existing `runMatcher`
- * already exercises the matchOffers half of that loop. A future
- * follow-up will compose the two; until then auto-refinance happens
- * via the existing matcher path when a borrower has posted a
- * refinance-tagged offer and a compatible lender offer exists.
+ * Auto-refinance is NOT in this pass, and needs no pass of its own: a
+ * refinance completes inside the accept or the match that fills the
+ * borrower's refinance-tagged request (#3042 retired the separate
+ * `refinanceLoan` step), so the existing `runMatcher` already drives it
+ * whenever a compatible lender offer exists.
  *
  * Gating: the keeper-level gate only (no pass flag of its own) — same as the
  * matcher / liquidator. Goes through `passIsArmed`, so the skip line now names

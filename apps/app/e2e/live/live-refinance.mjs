@@ -176,12 +176,14 @@
 // as "oracle unavailable". Principal amounts print with the principal
 // token's own decimals().
 //
-// APPROVALS COVER THE PULL (#2422 r4). The borrower's payoff approval must
-// lie between the payoff the app itself computes for the request's last
-// fillable moment (loanLive.ts `refinanceApprovalOf`, mirrored in
-// refinanceExpected.mjs — it reproduces loan 22's real approval to the wei)
-// and the payoff at the grace end; the lender's must be exactly the
-// principal. Time-stamped fields (request expiry, caps window, accept
+// APPROVALS COVER THE PULL (#2422 r4, resized by #3042). The borrower's
+// approval covers only the wallet's share of the payoff — the payoff less
+// the new loan's net principal, which pays the old lender inside the
+// Diamond. It must lie between that share as the app itself computes it for
+// the request's last fillable moment (loanLive.ts `refinanceApprovalOf`,
+// mirrored in refinanceExpected.mjs — it reproduces loan 22's pre-#3042
+// approval to the wei once the net principal is added back) and the share at
+// the grace end; the lender's must be exactly the principal. Time-stamped fields (request expiry, caps window, accept
 // deadline) are judged against the CHAIN time read when each submit flow
 // starts, not the local clock (see `afterAnchor`).
 //
@@ -736,7 +738,7 @@ const MANIFEST = createManifest({
       id: 'allowanceAfter',
       claim: 'no payoff allowance to the Diamond is left standing once the refinance completes',
       reason:
-        'not asserted — the app approves the payoff at the request\u2019s last fillable moment (late-fee headroom included), so an accept before that leaves the difference approved; loan 22\u2019s run left 0.0000764 WETH',
+        'not asserted — the app approves the wallet\u2019s share of the payoff at the request\u2019s last fillable moment (late-fee headroom included), so an accept before that leaves the difference approved; loan 22\u2019s run left 0.0000764 WETH',
       coveredBy: null,
     },
   ],
@@ -1698,8 +1700,9 @@ const PDEC = Number(pre.principalDecimals);
 const fmtP = (v) => formatUnits(v, PDEC);
 want('lender holds the principal', pre.l.principal >= loan.principal, `${fmtP(pre.l.principal)} ≥ ${fmtP(loan.principal)}`);
 // What the borrower must hold SPARE when the lender accepts: the payoff's
-// interest share plus the new loan's initiation fee (the new principal
-// arrives in the same transaction). The payoff is the LIVE remaining-term
+// interest share plus the new loan's initiation fee (the new loan's net
+// principal pays the rest straight to the old lender inside the Diamond,
+// #3042). The payoff is the LIVE remaining-term
 // figure (#2422 r8, `borrowerReserve`): the larger of the contract's payoff
 // view at the pinned head and the app's payoff formula — which reads
 // `interestAccrualStart` / `interestRemainingDays` — at the latest moment
@@ -1810,6 +1813,9 @@ PLAN = createWritePlan(
     days: DAYS_N,
     riskTermsHash: pre.riskTermsHash,
     graceSeconds: GRACE_SECONDS,
+    // #3042 — the borrower approves only the wallet's share of the payoff,
+    // which depends on the live initiation-fee rate.
+    lifBps: pre.lifBps,
     borrowerAnchor: () => BORROWER_ANCHOR,
     lenderAnchor: () => LENDER_ANCHOR,
     requestId: () => REQUEST_ID,

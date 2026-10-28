@@ -602,7 +602,7 @@
       "liquidityChecking": "Vérification de la manière dont ces actifs sont valorisés par le protocole…",
       "liquidityCheckFailed": "Impossible de vérifier la valorisation de ces actifs, et cette vérification détermine un avertissement important — la signature reste en pause jusqu'à réussite.",
       "linkedLoanCheckFailed": "Impossible de vérifier si cette offre est une vente de position d'un prêt en cours, et cette vérification détermine une information importante — la signature reste en pause jusqu'à réussite.",
-      "refinanceRequestBanner": "Il s’agit d’une demande de refinancement du prêt #{{loanId}}. L’accepter ouvre votre prêt et, dans la même transaction, rembourse et clôture le prêt #{{loanId}}. Comme pour tout prêt, le montant que vous prêtez, déduction faite des frais de mise en place de l’emprunteur, va au portefeuille de l’emprunteur. Le remboursement au prêteur actuel de ce prêt est ensuite prélevé sur ce portefeuille, de sorte que votre prêt peut le financer en tout ou en partie, l’emprunteur couvrant toute différence. Ce qui vous est dû est fixé par les conditions et la garantie de votre nouveau prêt.",
+      "refinanceRequestBanner": "Il s’agit d’une demande de refinancement du prêt #{{loanId}}. L’accepter ouvre votre prêt et, dans la même transaction, rembourse et clôture le prêt #{{loanId}}. Le montant que vous prêtez, déduction faite des frais de mise en place de l’emprunteur, va directement au prêteur actuel de ce prêt au titre de son remboursement, et non au portefeuille de l’emprunteur ; le portefeuille de l’emprunteur paie le reste. Ce qui vous est dû est fixé par les conditions et la garantie de votre nouveau prêt.",
       "refinanceRequestChecking": "Vérification que cette demande refinance un prêt en cours — l’examen doit l’indiquer avant que vous puissiez signer.",
       "refinanceRequestCheckFailed": "Nous n’avons pas pu vérifier si cette demande refinance un prêt en cours, ce qui change l’effet de son acceptation — la signature reste en pause jusqu’à ce que la vérification réussisse.",
       "refinanceRequestUnavailable": "Cette demande vise à refinancer le prêt #{{loanId}}, mais elle ne peut pas être acceptée pour le moment. {{reason}} L’accepter échouerait, il n’y a donc rien à signer.",
@@ -748,7 +748,7 @@
         "offsetCost": "Vous apportez maintenant de l’argent frais à prêter — et, à la finalisation, votre portefeuille rembourse aussi ce prêt en totalité : son montant, les intérêts accumulés jusqu’ici et tout complément de taux dû à votre prêteur actuel. Prévoyez deux sommes de la taille du prêt, pas une seule.",
         "refinance": "Refinancer auprès d'un nouveau prêteur",
         "refinanceDesc": "Publiez une demande de nouveau prêt à de meilleures conditions. Quand un prêteur accepte, l'ancien prêt est soldé et votre garantie est transférée automatiquement.",
-        "refinanceCost": "Le solde à payer correspond au montant du prêt plus les intérêts de la durée restante, prélevés sur votre portefeuille lorsqu’un prêteur accepte.",
+        "refinanceCost": "Le solde à payer correspond au montant du prêt plus les intérêts de la durée restante. Lorsqu’un prêteur accepte, l’argent du nouveau prêt, déduction faite de ses frais de mise en place, en règle directement cette part ; votre portefeuille ne paie que le reste.",
         "refinanceTransferredUnavailable": "Indisponible pour cette position — le refinancement reste attaché au portefeuille qui a contracté le prêt à l'origine."
       },
       "checkingInterlocks": "Vérification des demandes liées à ce prêt…",
@@ -829,7 +829,7 @@
     },
     "refinance": {
       "postedButUnconfirmed": "Votre demande a été envoyée, mais nous n’avons pas pu confirmer si elle a abouti. Vérifiez vos demandes ouvertes avant de réessayer : si elle est bien passée, une seconde demande créerait un doublon. L’autorisation de dépense a été laissée en place, car un prêteur qui accepte la demande en a besoin pour encaisser le remboursement.",
-      "receiptYouMayOwe": "~{{payoff}} pour rembourser ce prêt, prélevé automatiquement quand un prêteur accepte.",
+      "receiptYouMayOwe": "~{{payoff}} pour rembourser ce prêt, réglé automatiquement quand un prêteur accepte. L’argent du nouveau prêt, moins ses frais d’initialisation, va directement à votre prêteur actuel ; seul le reste est prélevé sur votre wallet.",
       "feesTreasuryNote": "La part {{cut}} du protocole sur les intérêts de remboursement est réglée dans le remboursement final.",
       "whenEndsComposed": "Quand un prêteur accepte votre demande, quand vous l’annulez, ou {{branch}}.",
       "expiresAfterDays": "lorsqu’elle expire {{days}} jours après publication",
@@ -844,7 +844,7 @@
       "action": "Examiner la demande de refinancement",
       "confirm": "Confirmer — publier la demande de refinancement",
       "payoffNote": "Le solde de l’ancien prêt correspond toujours au montant du prêt plus la totalité des intérêts de la durée restante — même si les intérêts de ce prêt augmentent normalement jour après jour. C’est ce à quoi le prêteur sortant a droit, de façon fixe, en cas de sortie anticipée.",
-      "walletNote": "Le remboursement final est prélevé automatiquement depuis votre wallet au moment où un prêteur accepte. L’argent du nouveau prêt arrive dans la même transaction ; gardez donc environ {{topUp}} disponibles dans votre wallet (la partie intérêts plus les frais d’initialisation du nouveau prêt) tant que la demande est ouverte.",
+      "walletNote": "Quand un prêteur accepte, votre wallet ne paie que ce que l’argent du nouveau prêt ne couvre pas : environ {{topUp}} (la partie intérêts plus les frais d’initialisation du nouveau prêt). Gardez ce montant dans votre wallet tant que la demande est ouverte. L’autorisation de dépense que vous accordez est calibrée sur cette part, pas sur tout le remboursement.",
       "shortIsSafe": "Si votre portefeuille est insuffisant lorsqu'un prêteur tente d'accepter, l'acceptation échoue simplement — rien n'est pris et votre prêt actuel continue inchangé.",
       "noGuarantee": "Une demande de refinancement ne garantit pas qu’un prêteur l’acceptera. Tant que personne ne l’accepte, ce prêt garde sa date d’échéance et son délai de grâce ; si personne ne l’accepte à temps, le prêt peut toujours tomber en défaut comme n’importe quel autre. Soyez prêt à le rembourser vous-même si la demande n’est pas acceptée.",
       "autoMatchOff": "L’appariement automatique des demandes de refinancement est désactivé sur ce déploiement : l’apparieur d’ordres n’exécutera donc pas votre demande. Ce réglage n’empêche pas un prêteur de l’accepter directement.",
@@ -1111,8 +1111,8 @@
     },
     "keepers": {
       "title": "Permissions de keepers",
-      "blurb": "Les keepers sont des services tiers (ou votre propre bot) que vous pouvez autoriser à exécuter certaines actions de prêt POUR vous — démarrer une clôture anticipée, terminer un refinancement configuré, lister une position à vendre. Tout est désactivé tant que vous ne l'activez pas, et trois interrupteurs doivent être d'accord avant qu'un keeper puisse agir : l'interrupteur principal, l'action sur ce keeper et un interrupteur par prêt sur chaque page de prêt.",
-      "safetyNote": "Un keeper ne peut jamais recevoir votre argent — les paiements vont toujours au détenteur de la position. Vous pouvez révoquer n'importe quel keeper (ou couper l'interrupteur principal) à tout moment, le protocole peut mettre tous les keepers en pause d'un coup, et les refinancements sont aussi bornés par les garde-fous que vous définissez par prêt. Si une position change de mains, ces permissions s'appliquent aux paramètres du nouveau détenteur, pas aux vôtres.",
+      "blurb": "Les keepers sont des services tiers (ou votre propre bot) que vous pouvez autoriser à exécuter certaines actions de prêt POUR vous — démarrer une clôture anticipée, prolonger un prêt, lister une position à vendre. Tout est désactivé tant que vous ne l'activez pas, et trois interrupteurs doivent être d'accord avant qu'un keeper puisse agir : l'interrupteur principal, l'action sur ce keeper et un interrupteur par prêt sur chaque page de prêt.",
+      "safetyNote": "Un keeper ne peut jamais recevoir votre argent — les paiements vont toujours au détenteur de la position. Vous pouvez révoquer n'importe quel keeper (ou couper l'interrupteur principal) à tout moment, et le protocole peut mettre tous les keepers en pause d'un coup. Si une position change de mains, ces permissions s'appliquent aux paramètres du nouveau détenteur, pas aux vôtres.",
       "masterLabel": "Autoriser mes keepers approuvés à agir (interrupteur principal — rien ne s'exécute lorsqu'il est désactivé)",
       "addressPlaceholder": "0x… adresse du keeper",
       "actions": {
@@ -1120,11 +1120,6 @@
           "label": "Démarrer une clôture anticipée de prêt pour moi",
           "side": "agit sur les prêts que vous avez empruntés",
           "blurb": "Démarre tout chemin de clôture anticipée sur un prêt dont vous êtes l'emprunteur. Le payoff vient toujours de votre portefeuille selon vos approbations permanentes."
-        },
-        "refinance": {
-          "label": "Terminer un refinancement pour moi",
-          "side": "agit sur les prêts que vous avez empruntés",
-          "blurb": "Termine un refinancement que vous avez configuré, borné par les garde-fous (plafond de taux, date de fin) que vous avez approuvés — et par le kill switch keeper du protocole."
         },
         "completeOffset": {
           "label": "Terminer une clôture par offset pour moi",
@@ -3082,7 +3077,7 @@
       "lenderIntentFillsHint": "Si les intentions de prêt enregistrées peuvent être exécutées. Désactivé arrête leur exécution ; les prêteurs peuvent toujours enregistrer des intentions.",
       "minIntentFill": "Plus petite exécution d’intention",
       "minIntentFillHint": "Le minimum que doit valoir la plus petite exécution d’une intention permanente lors de son enregistrement. Ses deux actifs doivent aussi avoir un prix. Une intention enregistrée avant un changement garde ses conditions jusqu’à ce qu’elle soit redéfinie.",
-      "autoRefinanceHint": "Désactivé empêche les keepers et l’apparieur d’ordres de finaliser des refinancements. Un emprunteur qui refinance son propre prêt, ou un prêteur qui accepte directement une demande de refinancement, passe toujours.",
+      "autoRefinanceHint": "Désactivé empêche l’apparieur d’ordres de finaliser des refinancements. Un prêteur qui accepte directement une demande de refinancement passe toujours.",
       "autoExtendHint": "Désactivé bloque toute prolongation de prêt sur place, y compris celle que l’emprunteur demande directement.",
       "numeraireFeed": "Flux de prix ETH dans la devise de référence",
       "numeraireFeedHint": "Le flux Chainlink qui cote l’ETH dans la devise de référence. Il change en même temps que la devise de référence.",

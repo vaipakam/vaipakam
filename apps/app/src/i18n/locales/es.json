@@ -602,7 +602,7 @@
       "liquidityChecking": "Comprobando cómo valora el protocolo estos activos…",
       "liquidityCheckFailed": "No pudimos comprobar cómo se valoran estos activos, y esa revisión decide una advertencia importante — la firma queda pausada hasta que tenga éxito.",
       "linkedLoanCheckFailed": "No pudimos comprobar si esta oferta es una venta de posición de un préstamo activo, y esa revisión decide un aviso importante — la firma queda pausada hasta que tenga éxito.",
-      "refinanceRequestBanner": "Esta es una solicitud de refinanciación del préstamo #{{loanId}}. Aceptarla abre tu préstamo y, en la misma transacción, liquida y cierra el préstamo #{{loanId}}. Como en cualquier préstamo, el importe que prestas, menos la comisión de originación del prestatario, va a la billetera del prestatario. Después, el pago al prestamista actual de ese préstamo se toma de la billetera del prestatario, así que tu préstamo puede financiarlo en parte o por completo, y el prestatario cubre cualquier diferencia. Lo que se te debe lo fijan los términos y la garantía de tu nuevo préstamo.",
+      "refinanceRequestBanner": "Esta es una solicitud de refinanciación del préstamo #{{loanId}}. Aceptarla abre tu préstamo y, en la misma transacción, liquida y cierra el préstamo #{{loanId}}. El importe que prestas, menos la comisión de originación del prestatario, va directamente al prestamista actual de ese préstamo como parte de su pago, no a la billetera del prestatario; la billetera del prestatario paga el resto. Lo que se te debe lo fijan los términos y la garantía de tu nuevo préstamo.",
       "refinanceRequestChecking": "Comprobando si esta solicitud refinancia un préstamo en curso — la revisión debe indicarlo antes de que puedas firmar.",
       "refinanceRequestCheckFailed": "No pudimos comprobar si esta solicitud refinancia un préstamo en curso, y eso cambia lo que hace aceptarla — la firma queda en pausa hasta que la comprobación funcione.",
       "refinanceRequestUnavailable": "Esta solicitud pide refinanciar el préstamo #{{loanId}}, pero ahora mismo no se puede aceptar. {{reason}} Aceptarla fallaría, así que no hay nada que firmar.",
@@ -748,7 +748,7 @@
         "offsetCost": "Pones dinero nuevo para prestar ahora — y, al completarse, tu billetera además liquida este préstamo por completo: su importe, los intereses sumados hasta ahora y cualquier compensación por diferencia de tasa para tu prestamista actual. Cuenta con dos importes del tamaño de un préstamo, no con uno.",
         "refinance": "Refinanciar con un nuevo prestamista",
         "refinanceDesc": "Publica una solicitud de préstamo nuevo en mejores condiciones. Cuando un prestamista la acepte, el préstamo antiguo se cancela y tu garantía se traslada automáticamente.",
-        "refinanceCost": "El pago para cerrarlo es el importe del préstamo más los intereses del plazo restante, que se retiran de tu billetera cuando un prestamista acepte.",
+        "refinanceCost": "El pago para cerrarlo es el importe del préstamo más los intereses del plazo restante. Cuando un prestamista acepta, el dinero del nuevo préstamo, menos su comisión de originación, paga directamente esa parte; tu billetera paga solo el resto.",
         "refinanceTransferredUnavailable": "No disponible para esta posición: la refinanciación queda con la billetera que tomó el préstamo originalmente."
       },
       "checkingInterlocks": "Comprobando solicitudes vinculadas a este préstamo…",
@@ -829,7 +829,7 @@
     },
     "refinance": {
       "postedButUnconfirmed": "Tu solicitud se envió, pero no pudimos confirmar si se completó. Revisa tus solicitudes abiertas antes de volver a intentarlo: si sí llegó, solicitarlo otra vez crearía un duplicado. La aprobación de gasto se dejó activa, porque un prestamista que acepte la solicitud la necesita para cobrar la liquidación.",
-      "receiptYouMayOwe": "~{{payoff}} para liquidar este préstamo, tomado automáticamente cuando un prestamista acepta.",
+      "receiptYouMayOwe": "~{{payoff}} para liquidar este préstamo, que se salda automáticamente cuando un prestamista acepta. El dinero del nuevo préstamo, menos su comisión de iniciación, va directamente a tu prestamista actual; solo el resto sale de tu wallet.",
       "feesTreasuryNote": "La parte {{cut}} del protocolo de los intereses de payoff se liquida dentro del payoff.",
       "whenEndsComposed": "Cuando un prestamista acepta tu solicitud, cuando la cancelas, o {{branch}}.",
       "expiresAfterDays": "cuando expira {{days}} días después de publicar",
@@ -844,7 +844,7 @@
       "action": "Revisar solicitud de refinanciación",
       "confirm": "Confirmar — publicar solicitud de refinanciación",
       "payoffNote": "El pago para cerrar el préstamo anterior siempre es el importe del préstamo más los intereses de todo el plazo restante — aunque los intereses del préstamo normalmente se vayan sumando día a día. Eso es lo que le corresponde de forma fija al prestamista que sale cuando la salida es anticipada.",
-      "walletNote": "El payoff se toma automáticamente de tu wallet en el momento en que un prestamista acepta. El dinero del nuevo préstamo llega en la misma transacción, así que mantén unos {{topUp}} libres en tu wallet (la parte de intereses más la comisión de iniciación del nuevo préstamo) mientras la solicitud esté abierta.",
+      "walletNote": "Cuando un prestamista acepta, tu wallet paga solo lo que el dinero del nuevo préstamo no cubre: unos {{topUp}} (la parte de intereses más la comisión de iniciación del nuevo préstamo). Mantén esa cantidad en tu wallet mientras la solicitud esté abierta. La aprobación de gasto que concedes se calcula para esa parte, no para todo el payoff.",
       "shortIsSafe": "Si tu billetera no tiene suficiente cuando un prestamista intenta aceptar, la aceptación simplemente falla — no se toma nada y tu préstamo actual continúa sin cambios.",
       "noGuarantee": "Una solicitud de refinanciación no garantiza que un prestamista la acepte. Hasta que alguien la acepte, este préstamo mantiene su fecha de vencimiento y su período de gracia; si nadie la acepta a tiempo, el préstamo puede entrar en impago como cualquier otro. Prepárate para devolverlo tú mismo si la solicitud no se acepta.",
       "autoMatchOff": "La coincidencia automática de solicitudes de refinanciación está desactivada en este despliegue, así que el emparejador de órdenes no completará tu solicitud. Esta configuración no impide que un prestamista la acepte directamente.",
@@ -1111,8 +1111,8 @@
     },
     "keepers": {
       "title": "Permisos de keepers",
-      "blurb": "Los keepers son servicios de terceros (o tu propio bot) a los que puedes permitir ejecutar acciones específicas de préstamo POR ti — iniciar un cierre anticipado, finalizar una refinanciación que configuraste, listar una posición para venta. Todo aquí está apagado hasta que lo actives, y tres interruptores deben coincidir antes de que un keeper pueda actuar: el interruptor maestro, la acción en ese keeper y un interruptor por préstamo en la página de cada préstamo.",
-      "safetyNote": "Un keeper nunca puede recibir tu dinero — los pagos siempre van a quien posee la posición. Puedes revocar cualquier keeper (o apagar el interruptor maestro) en cualquier momento, el protocolo puede pausar todos los keepers a la vez, y las refinanciaciones además están limitadas por los guardrails que fijas por préstamo. Si una posición cambia de manos, estos permisos aplican a la configuración del nuevo titular, no a la tuya.",
+      "blurb": "Los keepers son servicios de terceros (o tu propio bot) a los que puedes permitir ejecutar acciones específicas de préstamo POR ti — iniciar un cierre anticipado, extender un préstamo, listar una posición para venta. Todo aquí está apagado hasta que lo actives, y tres interruptores deben coincidir antes de que un keeper pueda actuar: el interruptor maestro, la acción en ese keeper y un interruptor por préstamo en la página de cada préstamo.",
+      "safetyNote": "Un keeper nunca puede recibir tu dinero — los pagos siempre van a quien posee la posición. Puedes revocar cualquier keeper (o apagar el interruptor maestro) en cualquier momento y el protocolo puede pausar todos los keepers a la vez. Si una posición cambia de manos, estos permisos aplican a la configuración del nuevo titular, no a la tuya.",
       "masterLabel": "Permitir que mis keepers aprobados actúen (interruptor maestro — nada se ejecuta mientras esté apagado)",
       "addressPlaceholder": "0x… dirección del keeper",
       "actions": {
@@ -1120,11 +1120,6 @@
           "label": "Iniciar el cierre anticipado de un préstamo por mí",
           "side": "actúa en préstamos que pediste",
           "blurb": "Inicia cualquier ruta de cierre anticipado en un préstamo donde eres el prestatario. El pago de salida sigue saliendo de tu billetera bajo tus aprobaciones permanentes."
-        },
-        "refinance": {
-          "label": "Completar una refinanciación por mí",
-          "side": "actúa en préstamos que pediste",
-          "blurb": "Finaliza una refinanciación que configuraste, limitada por los guardrails (techo de tasa, fecha final) que aprobaste — y por el kill switch de keepers propio del protocolo."
         },
         "completeOffset": {
           "label": "Finalizar un cierre por compensación por mí",
@@ -3082,7 +3077,7 @@
       "lenderIntentFillsHint": "Si las intenciones de préstamo registradas pueden ejecutarse. Desactivado detiene su ejecución; los prestamistas aún pueden registrar intenciones.",
       "minIntentFill": "Ejecución mínima de intención",
       "minIntentFillHint": "Lo mínimo que debe valer la ejecución más pequeña de una intención permanente al registrarla. Sus dos activos también deben tener precio. Una intención registrada antes de un cambio conserva sus términos hasta que se vuelva a configurar.",
-      "autoRefinanceHint": "Desactivado impide que los keepers y el emparejador de órdenes completen refinanciaciones. Un prestatario que refinancia su propio préstamo, o un prestamista que acepta directamente una solicitud de refinanciación, sigue adelante.",
+      "autoRefinanceHint": "Desactivado impide que el emparejador de órdenes complete refinanciaciones. Un prestamista que acepta directamente una solicitud de refinanciación sigue adelante.",
       "autoExtendHint": "Desactivado bloquea toda extensión de préstamo en el sitio, incluida la que pide directamente el prestatario.",
       "numeraireFeed": "Feed de precio de ETH en la moneda de referencia",
       "numeraireFeedHint": "El feed de Chainlink que cotiza ETH en la moneda de referencia. Cambia junto con la moneda de referencia.",

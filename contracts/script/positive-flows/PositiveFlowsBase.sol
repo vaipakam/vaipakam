@@ -71,7 +71,8 @@ import {RehearsalChain} from "../lib/RehearsalChain.sol";
  *             4  PF-160         10 PF-092        15 PF-095      N10+N14 PF-250
  *             5  PF-045         11 PF-093        N1 PF-053      N11 PF-008
  *             6  PF-046         12 PF-140        N3 PF-114      N12 PF-300
- *             N4  PF-214        N5  PF-211       N6 PF-212      N15 PF-230
+ *             N4  (retired #3042: standalone refinance)
+ *             N5  PF-211       N6 PF-212      N15 PF-230
  *             N18 PF-323        N19 PF-322       N20 PF-329     N22 PF-324
  *             N25 PF-230-floor  N26 PF-231
  *

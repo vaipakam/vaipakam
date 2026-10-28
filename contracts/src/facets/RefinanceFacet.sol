@@ -8,8 +8,6 @@ import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
-import {LibAuth} from "../libraries/LibAuth.sol";
-import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
@@ -18,9 +16,6 @@ import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibInitRiskGate} from "../libraries/LibInitRiskGate.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
@@ -31,6 +26,7 @@ import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
+import {LibRefinanceNetting} from "../libraries/LibRefinanceNetting.sol";
 
 /**
  * @title RefinanceFacet
@@ -41,31 +37,43 @@ import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
  *      ERC-20 loans only (NFT rental refinance not supported — would require
  *      NFT custody transfer between vaults).
  *
- *      Two-step flow:
- *        1. Borrower creates a Borrower Offer; a new lender accepts it
- *           (creating a new loan). Principal from the new lender flows to
- *           the borrower.
- *        2. Borrower calls {refinanceLoan}: repays the old lender
- *           (principal + full-term interest — early repayment
- *           economics per README; #411 fix 2026-06-12 dropped the
- *           rate-shortfall top-up that over-compensated the exiting
- *           lender), releases old collateral,
- *           verifies post-refinance HF ≥ 1.5 and LTV ≤ loanInitMaxLtvBps on the new
- *           loan, and transitions the old loan to Repaid.
+ *      One atomic flow (#3042 — every refinance completes in the
+ *      transaction that accepts its offer):
+ *        1. The borrower-position holder posts a refinance-TAGGED Borrower
+ *           offer naming the loan it refinances.
+ *        2. A lender accepts it (`OfferAcceptFacet.acceptOffer`), or the
+ *           matcher fills it (`OfferMatchFacet.matchOffers`). The accept
+ *           creates the replacement loan, charges the borrower's initiation
+ *           fee from the new lender's funded principal, and leaves the net
+ *           principal in the new lender's vault ({LibRefinanceNetting}). In
+ *           the same transaction it chains into {refinanceLoanFromAccept} or
+ *           {refinanceLoanFromMatch}, which pays the old lender (principal +
+ *           the mode-aware interest; #411 dropped the rate-shortfall top-up
+ *           that over-compensated the exiting lender) from that net
+ *           principal, pulls only the rest of the old lender's due and the
+ *           treasury fee from the holder's wallet, carries or returns the old
+ *           collateral, checks the replacement's risk gates and closes the
+ *           old loan as Repaid. Any failure reverts the accept too.
+ *
+ *      The net principal never exceeds the old lender's due: the replacement
+ *      principal is the tagged offer's amount, which may not exceed the old
+ *      loan's outstanding principal ({_refinanceLoanLogic}'s range check and
+ *      `LibAutoRefinanceCheck.validate`), and the due is that principal plus
+ *      interest. So a refinance has no surplus to pay out; {_settlePayoff}
+ *      refuses one rather than leave it in the new lender's vault.
+ *
+ *      There is no after-the-fact completion. A refinance that could be
+ *      finished later would need the net principal in the borrower's wallet
+ *      first, and the payoff pulled back out of it — the round trip #3042
+ *      removed.
  */
-contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors {
-    using SafeERC20 for IERC20;
-
+contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
     /// @notice Emitted when a loan is refinanced to a new lender.
     /// @param oldLoanId The ID of the original loan.
     /// @param newLoanId The ID of the new refinanced loan.
     /// @param borrower The borrower's address.
     /// @param oldLender The original lender's address.
     /// @param newLender The new lender's address.
-    /// @param shortfallPaid Always 0 post-#411 fix (2026-06-12); previously
-    ///                      held the rate-shortfall top-up paid to the
-    ///                      exiting old lender. Retained at 0 to keep the
-    ///                      event signature byte-identical for indexers.
     /// @param oldLoanNewStatus The original loan's `LoanStatus` after the
     ///        refinance — always `Repaid` (1). Carried explicitly so an
     ///        indexer flips status from the payload rather than inferring
@@ -77,21 +85,52 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         address indexed borrower,
         address oldLender,
         address newLender,
-        uint256 shortfallPaid,
         uint8 oldLoanNewStatus
+    );
+
+    /// @notice #3042 — how a refinance's payoff was paid, leg by leg, in the
+    ///         replacement loan's principal asset. All of the new lender's
+    ///         net principal (principal minus the borrower's initiation fee)
+    ///         goes to the old lender; the borrower pays only the rest of the
+    ///         old lender's due and the treasury fee. The three legs sum to
+    ///         the old lender's due plus the treasury fee.
+    /// @param oldLoanId            The loan refinanced (now Repaid).
+    /// @param newLoanId            The replacement loan.
+    /// @param asset                The principal asset every leg moved.
+    /// @param newLenderToOldLender From the new lender's vault to the old
+    ///        lender's vault: the whole net principal.
+    /// @param borrowerToOldLender  From the borrower's wallet to the old
+    ///        lender's vault: the part of the old lender's due the net
+    ///        principal did not cover.
+    /// @param borrowerToTreasury   From the borrower's wallet to the
+    ///        treasury: the treasury fee on the old loan's interest.
+    ///        A settlement breakdown like `RepayFacet`'s: the state change
+    ///        itself is `LoanRefinanced` in the same transaction.
+    /// @custom:event-category informational/settlement
+    event RefinancePayoffSettled(
+        uint256 indexed oldLoanId,
+        uint256 indexed newLoanId,
+        address indexed asset,
+        uint256 newLenderToOldLender,
+        uint256 borrowerToOldLender,
+        uint256 borrowerToTreasury
     );
 
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
     error InvalidRefinanceOffer();
     error OfferNotAccepted();
+    /// @notice #3042 — the new lender's net principal exceeds what the old
+    ///         lender is owed. The admission rules make this impossible (the
+    ///         replacement principal never exceeds the old principal); it is
+    ///         refused rather than leave the excess in the new lender's vault
+    ///         on a loan that records it as delivered.
+    error RefinanceNetPrincipalExceedsPayoff(uint256 netPrincipal, uint256 lenderDue);
     /// @notice T-092 #508 / #2349 — the auto-refinance kill switch
     ///         (`cfgAutoRefinanceEnabled`) is off, and this refinance is
-    ///         being completed by a route the switch governs: a delegated
-    ///         keeper calling {refinanceLoan}, or the range-order matcher
-    ///         filling a refinance-tagged offer. The borrower-NFT holder
-    ///         calling {refinanceLoan} themselves, and a lender directly
-    ///         accepting the borrower's refinance-tagged offer, are never
-    ///         blocked by it.
+    ///         being completed by the route the switch governs: the
+    ///         range-order matcher filling a refinance-tagged offer. A lender
+    ///         directly accepting the borrower's refinance-tagged offer is
+    ///         never blocked by it.
     error AutoRefinanceDisabled();
 
     /// @notice #2349 — which door a refinance completion came through.
@@ -102,9 +141,6 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     ///         completion was treated as keeper-driven and blocked while the
     ///         switch was off).
     enum RefinanceRoute {
-        /// {refinanceLoan}: the borrower-NFT holder, or a keeper holding
-        /// the holder's `KEEPER_ACTION_REFINANCE` delegation.
-        Direct,
         /// {refinanceLoanFromAccept}: a lender accepted the holder's
         /// refinance-tagged offer directly (`OfferAcceptFacet.acceptOffer`).
         LenderAccept,
@@ -113,33 +149,11 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         MatchedFill
     }
 
-    /**
-     * @notice Completes refinancing after alice's Borrower Offer has been accepted by Lender B.
-     * @dev Per README Section "Allow Borrower to Choose New Lender with Better Offer":
-     *      1. alice creates a Borrower Offer (separate tx via OfferFacet.createOffer).
-     *      2. Lender B accepts alice's offer (separate tx via OfferFacet.acceptOffer),
-     *         creating a new loan. Principal from Lender B is sent to alice.
-     *      3. alice calls this function to close the old loan:
-     *         - Verifies the Borrower Offer was accepted and a new loan exists.
-     *         - Repays old lender (principal + full-term interest;
-     *           see LibEntitlement.fullTermInterest — matches README early
-     *           repayment economics). #411 fix (2026-06-12) — the
-     *           previous code also added a rate-shortfall top-up, but
-     *           full-term IS the lender's maximum entitlement on this
-     *           loan, so paying additional shortfall over-compensated
-     *           the exiting lender at borrower expense (see
-     *           docs/DesignsAndPlans/RefinanceOldLenderOverpayFix.md).
-     *         - Releases old collateral back to alice.
-     *         - Checks post-refinance HF and LTV on new loan.
-     *         - Updates old loan NFTs and marks old loan Repaid.
-     * @param oldLoanId The current loan ID to refinance.
-     * @param borrowerOfferId The Borrower Offer ID that alice created and Lender B accepted.
-     */
+
     /// @notice T-092-H (#549) — `msg.sender == address(this)` gate.
-    ///         Used by {refinanceLoanFromAccept} so the atomic chain
-    ///         from `OfferAcceptFacet` + `OfferMatchFacet` is the
-    ///         ONLY way to reach the internal entry; an external EOA
-    ///         cannot call it directly.
+    ///         Used by both refinance entries so the atomic chain from
+    ///         `OfferAcceptFacet` + `OfferMatchFacet` is the ONLY way to
+    ///         reach them; an external EOA cannot call either directly.
     error OnlyDiamondInternal();
     /// @dev Extracted modifier body — same shape as VaultFactoryFacet's
     ///      `_checkDiamondInternal`. Keeps the modifier a thin wrapper
@@ -150,18 +164,6 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     modifier onlyDiamondInternal() {
         _checkDiamondInternal();
         _;
-    }
-
-    /// @notice External entry — preserves the existing public API +
-    ///         reentrancy guard for external callers (keeper EOAs,
-    ///         borrower-direct path). Delegates to the shared private
-    ///         logic.
-    function refinanceLoan(
-        uint256 oldLoanId,
-        uint256 borrowerOfferId
-    ) external nonReentrant whenNotPaused {
-        _authorizeRefinance(oldLoanId, borrowerOfferId, RefinanceRoute.Direct);
-        _refinanceLoanLogic(oldLoanId, borrowerOfferId);
     }
 
     /// @notice T-092-H (#549) — atomic accept-and-refinance entry for a
@@ -194,16 +196,8 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // refinance and an offset each close the loan, so they never both
         // proceed. A revert here unwinds the whole acceptance, so nothing is
         // stranded.
-        // The standalone {refinanceLoan} deliberately does not check it: it
-        // only ever completes an offer ALREADY accepted — post-#2407 every
-        // acceptance runs this check — and by then the replacement loan
-        // exists, so refusing would strand both loans (see the payoff body).
         LibRefinanceRequest.assertTakeable(oldLoanId, borrowerOfferId);
-        _authorizeRefinance(
-            oldLoanId,
-            borrowerOfferId,
-            RefinanceRoute.LenderAccept
-        );
+        _authorizeRefinance(oldLoanId, RefinanceRoute.LenderAccept);
         _refinanceLoanLogic(oldLoanId, borrowerOfferId);
     }
 
@@ -228,11 +222,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     ) external onlyDiamondInternal whenNotPaused {
         // #2407 — see {refinanceLoanFromAccept}.
         LibRefinanceRequest.assertTakeable(oldLoanId, borrowerOfferId);
-        _authorizeRefinance(
-            oldLoanId,
-            borrowerOfferId,
-            RefinanceRoute.MatchedFill
-        );
+        _authorizeRefinance(oldLoanId, RefinanceRoute.MatchedFill);
         _refinanceLoanLogic(oldLoanId, borrowerOfferId);
     }
 
@@ -242,84 +232,46 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     ///      entries pass `route` as a compile-time constant, and passing it
     ///      into the long payoff body let the optimizer specialize a copy of
     ///      that body per route (measured: +~1.7 KB per entry). Only this
-    ///      small prelude sees `route` now. Check order is unchanged from
-    ///      before #2349 with one exception: the fail-closed frozen-holder
+    ///      small prelude sees `route` now. The fail-closed frozen-holder
     ///      block (`mustFreezeParty`) runs at the top of {_refinanceLoanLogic},
     ///      beside the payout it guards (S10 Invariant B), so a frozen holder on
-    ///      a gated route now reverts on the route rule first. Either way the
+    ///      the gated route reverts on the route rule first. Either way the
     ///      call reverts before any state changes.
     ///
-    ///      Route rule — "the holder is acting directly" holds ONLY on the
-    ///      external route with the holder as caller; on both atomic routes
-    ///      `msg.sender` is the Diamond, so it can never equal the holder. On
-    ///      every OTHER route:
-    ///        - the holder is still the fund source (the payoff pulls from
-    ///          their wallet allowance), so they are sanctions-screened;
-    ///        - the auto-refinance kill switch applies to the AUTOMATED routes
-    ///          only — a delegated keeper, and the matcher. A lender's direct
-    ///          accept is not automation and is never blocked by it;
-    ///        - the offer must be refinance-TAGGED (T-092 Phase 2b round-3
-    ///          P2) — otherwise a keeper could complete through any compatible
-    ///          borrower offer the holder posted for a fresh loan, bypassing
-    ///          every cap check in `LibAutoRefinanceCheck`, which fires only
-    ///          on tagged offers. The atomic routes only ever arrive with a
-    ///          tagged offer (their callers chain on the tag), so this binds
-    ///          them too as a backstop.
-    ///      #1219 (S-4) -- not `view`: when a delegated keeper is the actor, the
-    ///      authority check is where that identity is established, so the
-    ///      keeper's one-action capacity charge lives here with it.
+    ///      Both routes arrive from the Diamond itself, inside an accept that
+    ///      already screened its own caller (the lender, or the matcher). What
+    ///      is screened here is the borrower-position holder, who receives the
+    ///      old collateral and pays what the net principal does not cover. The
+    ///      auto-refinance kill switch applies to the matcher route only: a
+    ///      lender's direct accept is not automation and is never blocked by
+    ///      it. (#3042 retired the after-the-fact completion, and with it the
+    ///      holder-or-keeper authority check that route needed: on both atomic
+    ///      routes the caller is the Diamond.)
     function _authorizeRefinance(
         uint256 oldLoanId,
-        uint256 borrowerOfferId,
         RefinanceRoute route
-    ) private {
+    ) private view {
         // T-090 v1.1 (#389) §5.8 — refinance withdraws old
         // collateral from `loan.borrower`'s vault before flipping
         // the old loan to Repaid; block while a v1.1 commit is live.
         LibVaipakam.assertNoLiveIntentCommit(oldLoanId);
-        // Tier-1 sanctions gate — refinance routes funds + creates
-        // new loan state for msg.sender; sanctioned wallet blocked.
-        LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage oldLoan = s.loans[oldLoanId];
-        // Phase 6: borrower-entitled strategic flow. Authority binds to the
-        // current borrower-NFT owner OR a keeper with the Refinance action
-        // bit.
-        if (LibAuth.requireKeeperFor(
-            LibVaipakam.KEEPER_ACTION_REFINANCE,
-            oldLoan,
-            /* lenderSide */ false
-        )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
         if (oldLoan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
-        // T-092 Phase 2a (#505) — resolve the current borrower-NFT
-        // owner once at the top + Tier-1 sanctions check it. A
-        // keeper-driven path admitted by requireKeeperFor uses
-        // currentBorrowerNftOwner as the actual fund source, so
-        // their sanctions status must be screened too. Without this
-        // gate, a sanctioned borrower could use an unsanctioned
-        // keeper to complete refinance — bypassing OFAC screening
-        // on the fund-receiving wallet.
-        address currentBorrowerNftOwner =
-            LibERC721.ownerOf(oldLoan.borrowerTokenId);
+        // T-092 Phase 2a (#505) — the current borrower-NFT holder is the
+        // party the refinance pays and draws from, so screen them (Tier-1).
+        LibVaipakam._assertNotSanctioned(
+            LibERC721.ownerOf(oldLoan.borrowerTokenId)
+        );
         if (
-            route == RefinanceRoute.Direct &&
-            currentBorrowerNftOwner == msg.sender
-        ) return;
-        LibVaipakam._assertNotSanctioned(currentBorrowerNftOwner);
-        if (
-            route != RefinanceRoute.LenderAccept &&
+            route == RefinanceRoute.MatchedFill &&
             !s.protocolCfg.cfgAutoRefinanceEnabled
         ) revert AutoRefinanceDisabled();
-        if (s.offers[borrowerOfferId].refinanceTargetLoanId == 0)
-            revert InvalidRefinanceOffer();
     }
 
-    /// @dev Shared payoff body for all three external entries, run only after
-    ///      {_authorizeRefinance} passed. Was the body of `refinanceLoan`
-    ///      pre-T-092-H; extracted into a private so the external
-    ///      `nonReentrant` entry and the two `onlyDiamondInternal` atomic
-    ///      entries (no `nonReentrant`) can share it. Takes no route — see
+    /// @dev Shared payoff body for both atomic entries, run only after
+    ///      {_authorizeRefinance} passed. Takes no route — see
     ///      {_authorizeRefinance} for why.
     function _refinanceLoanLogic(
         uint256 oldLoanId,
@@ -370,7 +322,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // consolidated separately, gated to the NON-carry-over branch below
         // (Codex #690 round-2 P2): on carry-over the borrower stays and its
         // collateral is re-tagged into the new loan (no close-out), but on the
-        // legacy path the old collateral is returned and the old loan closes
+        // fresh-pledge path the old collateral is returned and the old loan closes
         // for the borrower too — so the borrower's position effects must follow
         // the current holder there. Size-tight facet → few-byte cross-facet
         // entry (Tier2 skip-not-block).
@@ -410,27 +362,19 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // Validate: must be a Borrower offer created by the current
         // borrower-NFT owner, already accepted. T-092 Phase 2a — the
         // creator check binds to the current NFT holder, not
-        // msg.sender, so a keeper-driven invocation succeeds when
-        // the borrower (NFT owner) created the offer.
+        // msg.sender (which is the Diamond on both atomic routes).
         LibVaipakam.Offer storage offer = s.offers[borrowerOfferId];
         if (
             offer.offerType != LibVaipakam.OfferType.Borrower ||
             offer.creator != currentBorrowerNftOwner
         ) revert InvalidRefinanceOffer();
-        // T-092 Phase 2b (Codex round-1 P1) — when the offer was
-        // created with a refinance target, that target MUST match
-        // the `oldLoanId` being refinanced. Otherwise a keeper could
-        // accept an offer tagged for loan A and then call
-        // `refinanceLoan(B, offerA)`, bypassing the cap-check that
-        // was tied to loan A at accept time. Untagged offers
-        // (`refinanceTargetLoanId == 0`) still work — those are the
-        // legacy / borrower-direct path where caps don't apply.
-        if (
-            offer.refinanceTargetLoanId != 0 &&
-            offer.refinanceTargetLoanId != oldLoanId
-        ) revert InvalidRefinanceOffer();
-        // (The "non-holder routes need a TAGGED offer" rule lives in
-        // {_authorizeRefinance} with the other route-dependent checks.)
+        // T-092 Phase 2b (Codex round-1 P1) — the offer must be TAGGED for
+        // exactly the loan being refinanced: the accept's cap checks
+        // (`LibAutoRefinanceCheck`) were run against that target. The atomic
+        // callers only chain on a tagged offer and pass its own target, so
+        // this is the backstop that keeps it so.
+        if (offer.refinanceTargetLoanId != oldLoanId)
+            revert InvalidRefinanceOffer();
         if (!offer.accepted) revert OfferNotAccepted();
         // Range-aware amount check: legacy single-value offers satisfy
         // `amount == amountMax`; range offers satisfy
@@ -451,32 +395,22 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         if (!LibOfferMatch.assertAssetContinuity(oldLoan, offer))
             revert InvalidRefinanceOffer();
 
-        // Find the new loan created when Lender B accepted alice's offer
+        // The replacement loan this accept just created
         uint256 newLoanId = s.offerIdToLoanId[borrowerOfferId];
         if (newLoanId == 0) revert InvalidRefinanceOffer();
         LibVaipakam.Loan storage newLoan = s.loans[newLoanId];
         address newLender = newLoan.lender;
 
-        // Pass-2 A1/D5 (#1189, Codex #1233 r2+r3) — NO execution-level post-grace
-        // revert here. By the time this runs the replacement loan ALWAYS exists
-        // (`acceptOffer` created + funded it and paid alice — the offer must be
-        // accepted, checked above), so any revert here would STRAND alice with
-        // BOTH loans active and the old one no longer refinanceable. Instead:
-        //   • a FRESH post-grace refinance is blocked at ADMISSION — the
-        //     refinance-tagged offer can't be created/accepted/matched against a
-        //     past-grace target (`LibAutoRefinanceCheck.validate` /
-        //     `matchAdmissible` revert `RefinanceTargetPastGrace`), which covers
-        //     the atomic accept-and-refinance path (always tagged);
-        //   • an already-committed MANUAL completion (incl. legacy UNTAGGED
-        //     offers, which admission can't see) proceeds and settles the old
-        //     lender IN FULL plus the grace late fee computed below — strictly
-        //     lender-favourable versus a default recovery, mirroring
-        //     `repayLoan`'s post-grace FallbackPending cure exemption.
-        // (`precloseDirect` keeps its strict post-grace block: it is a single
-        // atomic tx with nothing pre-created, so blocking it can't strand.)
+        // Pass-2 A1/D5 (#1189, Codex #1233 r2+r3) — no execution-level
+        // post-grace block here: a post-grace refinance is refused at ADMISSION
+        // (the refinance-tagged offer can't be created, accepted or matched
+        // against a past-grace target — `LibAutoRefinanceCheck.validate` /
+        // `matchAdmissible` revert `RefinanceTargetPastGrace`), and this body
+        // runs only inside that same accept. A refinance landing in the grace
+        // window settles the old lender in full plus the grace late fee
+        // computed below.
 
-        // ── Repay old lender ──────────────────────────────────────────────
-        // alice already received new principal from Lender B (via acceptOffer).
+        // ── Pay off the old loan ──────────────────────────────────────────
         // #1003 (S7) — settle the exiting lender's interest MODE-AWARE, through
         // the SAME `settlementInterestNet` the preclose path uses, instead of an
         // unconditional full-term charge. The two "early close" doors
@@ -489,75 +423,18 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         //     who OPTED INTO pro-rata must not be punished with full-term just
         //     because they refinance rather than repay directly.
         // `...Net` also credits any periodic `interestSettled` (paid once).
-        // #411 fix — the rate-shortfall top-up is gone; the event field stays
-        // at 0 so `LoanRefinanced` decodes unchanged (see {_exitingLenderDue}).
-        uint256 shortfall = 0;
+        // #411 fix — the rate-shortfall top-up is gone (see {_exitingLenderDue}).
         (uint256 treasuryFee, uint256 lenderDue) = _exitingLenderDue(oldLoan, oldLoanId);
-
-        // T-037 — pay each party directly from the borrower without
-        // the Diamond holding the asset between transfers. The
-        // borrower's prior `approve()` to the Diamond covers the
-        // total; two `safeTransferFrom` calls (one to treasury, one
-        // to the old lender's vault) replace the prior pull-and-
-        // split pattern. Treasury share skipped entirely if the
-        // VPFI-discount path satisfied it.
-        // T-092 Phase 2a — fund-source is the CURRENT borrower-NFT
-        // owner (not msg.sender) so a keeper-driven invocation
-        // doesn't debit the keeper's wallet for the borrower's
-        // old-payoff. Requires the borrower (NFT holder) to have
-        // approved the diamond for `oldLoan.principalAsset` —
-        // standard prerequisite for a refinance, surfaced by the
-        // dapp as part of the consent flow.
-        //
-        // T-092-A (#530) — operational loan netting is preserved
-        // via the existing wallet-pull path: `OfferAcceptFacet`
-        // routes the new lender's principal to the borrower's
-        // WALLET on accept (line 840 in OfferAcceptFacet), and the
-        // refinance immediately pulls from the same wallet to pay
-        // the old loan. The standing approval set at consent time
-        // means no Metamask popup at refinance time — the keeper-
-        // driven path works fully automatically. A vault-first
-        // optimisation was attempted in this PR but reverted (PR
-        // #538 round-1 Codex P2): `protocolTrackedVaultBalance` is
-        // an aggregate counter that includes funds locked in active
-        // lender offers (deposited via `OfferCreateFacet.
-        // _pullCreatorAssetsClassic`), so a vault-first netting
-        // could double-spend committed funds. True vault-first
-        // requires an invariant-preserving locked-balance tracking
-        // shape that's out of scope here.
-        // #1281-011 — the one payer -> treasury pull (refuses a short arrival).
-        LibFacet.transferFromPayerToTreasury(currentBorrowerNftOwner, oldLoan.principalAsset, treasuryFee);
-
-        // Route lender's share to old lender's vault via the cross-
-        // payer chokepoint so the protocolTrackedVaultBalance
-        // counter ticks under the old lender (the vault owner)
-        // while the current borrower-NFT owner remains the payer.
-        //
-        // #998 S10 (#1006) F2 — the old lender is being CLOSED OUT (their loan is
-        // repaid by the refinance); their proceeds must be PARKED, never brick the
-        // (clean) borrower's refinance, even when the old lender-of-record is a
-        // sanctions-flagged current holder (#831 freeze-not-seize). Pin the
-        // receive-side vault exemption to `oldLoan.lender` so the deposit resolves
-        // that party's EXISTING vault instead of reverting the whole refinance
-        // under `getOrCreateUserVault`'s Tier-1 gate. Without this a flagged old
-        // lender-holder would brick every refinance of their loan — and the
-        // frozen-claimant marker below (which keys the fail-closed release) would
-        // be unreachable. `end` clears the pin and emits the parked-proceeds audit
-        // event when that vault owner is flagged; the lock itself is enforced by
-        // the claim-side stored-owner screen + the marker.
-        LibSanctionedLock.begin(s, oldLoan.lender);
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultDepositERC20From.selector,
-                currentBorrowerNftOwner, // payer — current borrower NFT holder
-                oldLoan.lender,          // user — old lender's vault
-                oldLoan.principalAsset,
-                lenderDue
-            ),
-            VaultDepositFailed.selector
-        );
-        LibSanctionedLock.end(
-            s, oldLoan.lender, oldLoanId, oldLoan.principalAsset, lenderDue
+        // #3042 — the new lender's net principal pays the old lender inside
+        // the Diamond; the holder's wallet pays only the rest of the due and
+        // the treasury fee.
+        _settlePayoff(
+            oldLoanId,
+            newLoanId,
+            borrowerOfferId,
+            currentBorrowerNftOwner,
+            treasuryFee,
+            lenderDue
         );
 
         // Record lender's claimable. heldForLender handled by ClaimFacet.
@@ -612,7 +489,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // Codex round-1 P1 fix on PR #317.
         LibPrepayCleanup.clearActiveListing(oldLoan, oldLoanId);
 
-        // ── Collateral handling — carry-over vs legacy ──
+        // ── Collateral handling — carry-over vs fresh pledge ──
         // #576 — a CARRY-OVER refinance (tagged + NON-transferred +
         // single-value, per `LibAutoRefinanceCheck.isCarryOver`) reuses the OLD
         // loan's collateral IN PLACE: OfferCreateFacet skipped the fresh deposit
@@ -623,12 +500,12 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // (= offer.creator) already equals `oldLoan.borrower`, so the loan was
         // born correct — no post-init pin, no event/index/reward divergence.
         //
-        // Everything else — untagged (legacy direct), TRANSFERRED tagged, or
-        // RANGED tagged — pledged a fresh collateral batch at create and carries
-        // its own fresh lien, so it takes the legacy path: release the old lien
-        // and return the old collateral to the current borrower-position holder.
+        // Everything else — a TRANSFERRED or RANGED tagged offer — pledged a
+        // fresh collateral batch at create and carries its own fresh lien, so
+        // it takes the fresh-pledge path: release the old lien and return the
+        // old collateral to the current borrower-position holder.
         // Reads the PERSISTED create-time decision on the offer — the same
-        // flag the deposit/lien skips keyed off, so retag-vs-legacy can't
+        // flag the deposit/lien skips keyed off, so retag-vs-return can't
         // disagree with whether a fresh batch was actually deposited.
         LibVaipakam.Offer storage bOffer = s.offers[borrowerOfferId];
         if (bOffer.refinanceCarryOver) {
@@ -802,18 +679,88 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // explanatory comment at the new call site.
 
         // T-092 Phase 2a (Codex round-1 P2) — emit the current
-        // borrower-NFT owner as the borrower (not msg.sender) so
-        // keeper-driven refinances attribute the row to the actual
-        // borrower in indexers / activity feeds, matching the fund-
-        // flow change above.
+        // borrower-NFT owner as the borrower (msg.sender is the Diamond
+        // on both atomic routes) so indexers / activity feeds attribute
+        // the row to the actual borrower, matching the fund flow above.
         emit LoanRefinanced(
             oldLoanId,
             newLoanId,
             currentBorrowerNftOwner,
             oldLoan.lender,
             newLender,
-            shortfall,
             uint8(oldLoan.status)
+        );
+    }
+
+    /// @dev #3042 — the payoff legs, in the old loan's principal asset (the
+    ///      replacement's too: asset continuity was checked). `net` is the new
+    ///      lender's net principal the accept left in their vault
+    ///      ({LibRefinanceNetting}); all of it goes to the old lender, who is
+    ///      made whole before anyone else. The holder's wallet pays only the
+    ///      rest of the old lender's due and the treasury fee, so their
+    ///      approval need cover only that. `net` never exceeds the due (see
+    ///      the contract header); a surplus is refused, never kept. Every leg
+    ///      is voluntary and refused unless delivered in full.
+    ///
+    ///      #998 S10 (#1006) F2 — both legs into the old lender's vault land
+    ///      behind the receive-side pin on `oldLoan.lender`: the old lender is
+    ///      being CLOSED OUT, so a sanctions-flagged lender-of-record's proceeds
+    ///      are parked in their EXISTING vault (#831 freeze-not-seize) instead
+    ///      of bricking the borrower's refinance; `end` emits the audit event
+    ///      for a flagged owner. Its own frame because {_refinanceLoanLogic} is
+    ///      at the viaIR stack budget.
+    function _settlePayoff(
+        uint256 oldLoanId,
+        uint256 newLoanId,
+        uint256 borrowerOfferId,
+        address holder,
+        uint256 treasuryFee,
+        uint256 lenderDue
+    ) private {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage oldLoan = s.loans[oldLoanId];
+        address newLender = s.loans[newLoanId].lender;
+        address asset = oldLoan.principalAsset;
+        uint256 net = LibRefinanceNetting.take(borrowerOfferId, newLender, asset);
+        if (net > lenderDue) revert RefinanceNetPrincipalExceedsPayoff(net, lenderDue);
+        uint256 borrowerToOldLender = lenderDue - net;
+
+        LibSanctionedLock.begin(s, oldLoan.lender);
+        // The net principal moves vault to vault: it never leaves the Diamond's
+        // custody model, and the old lender's tracked balance ticks with it.
+        LibFacet.vaultWithdrawExact(
+            newLender,
+            asset,
+            LibFacet.getOrCreateVault(oldLoan.lender),
+            net,
+            VaultWithdrawFailed.selector
+        );
+        LibVaipakam.recordVaultDeposit(oldLoan.lender, asset, net);
+        if (borrowerToOldLender > 0) {
+            // The cross-payer chokepoint ticks the old lender's tracked
+            // balance while the holder pays.
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    VaultFactoryFacet.vaultDepositERC20From.selector,
+                    holder,
+                    oldLoan.lender,
+                    asset,
+                    borrowerToOldLender
+                ),
+                VaultDepositFailed.selector
+            );
+        }
+        LibSanctionedLock.end(s, oldLoan.lender, oldLoanId, asset, lenderDue);
+
+        // #1281-011 — the one payer -> treasury pull (refuses a short arrival).
+        LibFacet.transferFromPayerToTreasury(holder, asset, treasuryFee);
+        emit RefinancePayoffSettled(
+            oldLoanId,
+            newLoanId,
+            asset,
+            net,
+            borrowerToOldLender,
+            treasuryFee
         );
     }
 
@@ -858,10 +805,6 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // Design doc:
         // `docs/DesignsAndPlans/RefinanceOldLenderOverpayFix.md`
         // (Option 1 selected 2026-06-07).
-        //
-        // The `shortfall` local is retained at 0 to keep the
-        // `LoanRefinanced` event signature byte-identical — indexers
-        // continue to decode the field, just always read 0 post-fix.
 
         // Treasury fee on the interest portion, at the old loan's
         // snapshotted rate.
@@ -938,10 +881,10 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     }
 
     /// @dev #407 PR 4 (T-407-B) — release the OLD loan's collateral lien
-    ///      before the legacy refinance return-withdraw of the same
+    ///      before the fresh-pledge refinance return-withdraw of the same
     ///      collateral (the chokepoint guard would otherwise block it).
-    ///      Used only on the UNTAGGED (legacy) refinance path; the tagged
-    ///      carry-over path retags the lien instead (#576). Extracted to
+    ///      Used only on the fresh-pledge path; the carry-over path retags
+    ///      the lien instead (#576). Extracted to
     ///      keep the cross-facet call's transient locals in their own stack
     ///      frame.
     function _releaseOldLienAtRefinance(uint256 oldLoanId) private {
@@ -1003,10 +946,9 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // loan's SNAPSHOTTED admission init-LTV cap (acceptOffer stored it when
         // it admitted `newLoan`; the snapshot already encodes the tiered
         // `min(assetCap, tierCap)` vs non-tiered `assetCap` branch), NOT a
-        // freshly-recomputed live asset/tier cap. Re-deriving live would make a
-        // governance / tier-cache tightening between accept and `refinanceLoan`
-        // retroactive, stranding an accepted replacement loan the borrower can't
-        // close into — exactly the race the HF gate below also closes.
+        // freshly-recomputed live asset/tier cap, so refinance tests exactly the
+        // gate the replacement was admitted under (the HF gate below reads its
+        // snapshot for the same reason).
         uint256 cap = LibVaipakam.effectiveLoanInitLtvCapBps(
             newLoan.initLtvCapBpsAtInit,
             LibVaipakam.assetInitLtvCeilingBps(oldCollateralAsset)
@@ -1031,12 +973,9 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // #394 Lever A (Codex #647 round-2 P2) — `acceptOffer` already created
         // and ADMITTED `newLoan`, snapshotting the (branch-aware) floor it was
         // gated at onto `newLoan.minHealthFactorAtInit`. Compare against THAT
-        // snapshot, not the live `minHealthFactor()` knob: re-reading the live
-        // knob here would make a governance retune between accept and
-        // `refinanceLoan` retroactive — a replacement loan accepted at HF ≥ 1.5
-        // could revert if the floor were raised to 1.8 first, stranding the
-        // borrower with an accepted replacement they cannot close into. The
-        // snapshot already encodes the tiered (1e18) vs non-tiered branch.
+        // snapshot, not the live `minHealthFactor()` knob, so refinance tests
+        // exactly the floor the replacement was admitted at. The snapshot
+        // already encodes the tiered (1e18) vs non-tiered branch.
         uint256 hfFloor =
             LibVaipakam.effectiveLoanMinHealthFactor(newLoan.minHealthFactorAtInit);
         if (newHf < hfFloor) revert HealthFactorTooLow();

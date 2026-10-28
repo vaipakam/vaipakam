@@ -16,9 +16,9 @@
  * The banner never promises that a lender's direct accept will SUCCEED —
  * other things (a per-asset pause, an overdue period, a short allowance)
  * can stop it, and none of them is read here. It says only that these
- * switches do not stop it. Keepers are not mentioned: the keeper route
- * (`refinanceLoan`) needs an already-accepted offer, so it cannot fill a
- * live request.
+ * switches do not stop it. Keepers are not mentioned: since #3042 a
+ * refinance completes only inside the accept or the match that fills the
+ * request, so there is no keeper route to disclose.
  *
  * Every read state maps to a STATED posture — there is no "show nothing"
  * value (#2355 r5).

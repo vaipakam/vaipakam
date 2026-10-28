@@ -4846,11 +4846,12 @@ library LibVaipakam {
         // pre-approved terms. Auto-lend is dapp-side only (this
         // flag is an opt-in marker; no contract enforcement).
         //
-        // Auto-refinance is already keeper-callable today via
-        // KEEPER_ACTION_REFINANCE; the gap this card closes is the
-        // SAFETY BOUNDS — without per-loan caps, a keeper with the
-        // refinance bit could route the borrower into a worse rate
-        // or longer obligation than they agreed to.
+        // The per-loan caps are the SAFETY BOUNDS on an automated
+        // refinance: every refinance-tagged offer is checked against
+        // them when it is created and when it is accepted or matched
+        // (`LibAutoRefinanceCheck`), so neither the matcher nor anyone
+        // else can route the borrower into a worse rate or longer
+        // obligation than they agreed to.
 
         /// @notice Per-user auto-lend opt-in marker. No contract
         ///         enforcement — the dapp reads it to decide whether
@@ -4872,12 +4873,11 @@ library LibVaipakam {
         mapping(address => AutoRefinanceCaps) defaultAutoRefinanceCaps;
 
         /// @notice Per-loan refinance caps (borrower-side consent).
-        ///         When `enabled = true`, the keeper-driven
-        ///         `refinanceLoan` path enforces the new offer's
-        ///         rate ≤ maxRateBps and expiry ≤ maxNewExpiry.
-        ///         When the call is by the borrower-NFT-owner
-        ///         directly (not via a keeper), caps DO NOT apply —
-        ///         the user is acting in their own interest.
+        ///         A refinance-tagged offer against the loan needs
+        ///         `enabled = true` (set by the current borrower-NFT
+        ///         owner), and its rate ≤ maxRateBps and expiry ≤
+        ///         maxNewExpiry, at create and at accept or match
+        ///         (`LibAutoRefinanceCheck`).
         mapping(uint256 => AutoRefinanceCaps) autoRefinanceCaps;
 
         /// @notice Per-loan extend caps (lender + borrower
@@ -4895,7 +4895,7 @@ library LibVaipakam {
         // / Amount / TokenId / Quantity / AssetType`; released on every
         // terminal that frees the collateral (`RepayFacet.repayLoan`,
         // `PrecloseFacet.precloseDirect`, `ClaimFacet`,
-        // `DefaultedFacet.triggerDefault`, `RefinanceFacet.refinanceLoan`).
+        // `DefaultedFacet.triggerDefault`, the `RefinanceFacet` payoff).
         // On obligation-transfer / refinance: the loan's collateral
         // identity may change; the lien must be re-keyed to the new
         // collateral fields.
@@ -9940,7 +9940,7 @@ library LibVaipakam {
     // ─── Phase 6: Keeper action bitmask constants ────────────────────────────
     // Each keeper carries a `uint16` bitmask of actions they're authorised to
     // drive for a given NFT holder. Bits are OR'd together; up to 16 actions
-    // (8 defined today, bits 8–15 spare). The constants are `uint16` to match
+    // (7 defined today; bit 4 retired by #3042, bits 8–15 spare). The constants are `uint16` to match
     // the `approvedKeeperActions[user][keeper]` storage type. The container was
     // widened from `uint8` in #1221 (E-4/E-10 prereq): the original 8 bits
     // filled the byte, so adding a 9th action would otherwise force a storage +
@@ -9953,7 +9953,11 @@ library LibVaipakam {
     uint16 internal constant KEEPER_ACTION_COMPLETE_OFFSET = 1 << 1; // 0x02
     uint16 internal constant KEEPER_ACTION_INIT_EARLY_WITHDRAW = 1 << 2; // 0x04
     uint16 internal constant KEEPER_ACTION_INIT_PRECLOSE = 1 << 3; // 0x08
-    uint16 internal constant KEEPER_ACTION_REFINANCE = 1 << 4; // 0x10
+    // Bit 4 (0x10) was `KEEPER_ACTION_REFINANCE`, the delegation a keeper
+    // needed to complete a refinance after the fact. #3042 retired that
+    // completion: every refinance now completes inside the accept of its
+    // tagged offer, where the caller is the Diamond itself, so the bit had no
+    // reader left. It is outside `KEEPER_ACTION_ALL`, so granting it reverts.
     /// @dev T-092 — auto in-place loan extension (no NFT churn).
     ///      Gated by BOTH the borrower's and lender's per-loan
     ///      `autoExtendConsent` caps in `AutoLifecycleFacet`. The
@@ -9985,10 +9989,10 @@ library LibVaipakam {
     ///      widened this from 0x1F to 0x3F at the same time the
     ///      `extendLoanInPlace` executor landed; #393 v1-c widened it 0x3F →
     ///      0x7F with SIGNED_FILL; #393 v1-d.2 widened it 0x7F → 0xFF with
-    ///      AUTO_ROLL. The container is now uint16 (#1221); this value stays
-    ///      0xFF until a bit 8–15 action is defined, at which point the new
-    ///      bit is OR'd in here.
-    uint16 internal constant KEEPER_ACTION_ALL = 0xFF;
+    ///      AUTO_ROLL. #3042 then retired bit 4 (REFINANCE), leaving 0xEF. The
+    ///      container is now uint16 (#1221); a bit 8–15 action, when defined,
+    ///      is OR'd in here.
+    uint16 internal constant KEEPER_ACTION_ALL = 0xEF;
 
     /**
      * @notice Retrieves the Vaipakam storage slot.
@@ -12284,7 +12288,8 @@ library LibVaipakam {
     ///   - `EarlyWithdrawalFacet.createLoanSaleOffer` /
     ///     `EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer` (lender exits early)
     ///   - `PrecloseFacet.transferObligationViaOffer` (funds + state)
-    ///   - `RefinanceFacet.refinanceLoan` (funds + new loan state)
+    ///   - a refinance (funds + new loan state), screened through the
+    ///     accept of its tagged offer and `RefinanceFacet`'s holder screen
     ///
     /// **Tier 2 — ALLOW** even when `msg.sender` is sanctioned. Each
     /// entry point either CLOSES exposure to the sanctioned party or

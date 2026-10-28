@@ -942,8 +942,10 @@ disadvantaging the original lender. NFT rentals are not eligible.
   single-purpose: they must preserve the original loan's principal, payment, and collateral asset types, and
   offer-consumption paths that cannot safely chain into the refinance must reject them. When a new lender accepts a
   valid tagged offer, acceptance chains into the old-loan payoff in the same transaction — the replacement loan and
-  the old-loan close either both succeed or both revert. A standalone `refinanceLoan(oldLoanId, borrowerOfferId)` path
-  remains for borrower-direct or keeper-orchestrated flows. If the old loan is on a periodic-interest cadence with an
+  the old-loan close either both succeed or both revert. This is the only way a refinance completes: there is no
+  separate, later refinance step. Inside that transaction the new lender's principal, less the borrower's initiation
+  fee, goes straight to the old lender; the borrower's wallet pays only the rest of the old lender's due and the
+  treasury's cut of the old loan's interest, and one event records each of those three legs. If the old loan is on a periodic-interest cadence with an
   overdue period, that period must be settled first; the refinance reverts until the original lender is made whole for
   it.
 - **Original lender settlement.** The exiting lender is repaid principal plus **full-term interest on the loan's
@@ -1279,7 +1281,7 @@ blanket permission. Consent is logged and auditable at three levels: user defaul
   cancel-cooldown rules delay zero-fill offer cancellations briefly after creation to reduce cancel-front-run risk
   against in-flight matches.
 - **Per-action keeper permission bits.** Keeper authority is a bitmask of narrow per-action grants (`KEEPER_ACTION_*`
-  — including `KEEPER_ACTION_INIT_PRECLOSE`, `KEEPER_ACTION_REFINANCE`, `KEEPER_ACTION_INIT_EARLY_WITHDRAW`,
+  — including `KEEPER_ACTION_INIT_PRECLOSE`, `KEEPER_ACTION_INIT_EARLY_WITHDRAW`,
   `KEEPER_ACTION_COMPLETE_LOAN_SALE`, `KEEPER_ACTION_COMPLETE_OFFSET`, `KEEPER_ACTION_EXTEND`,
   `KEEPER_ACTION_SIGNED_FILL`, `KEEPER_ACTION_AUTO_ROLL`), checked on-chain per call, alongside the per-user keeper
   whitelist, per-party caps, and the governance kill-switches — including a global delegated-keeper pause that freezes
@@ -1314,7 +1316,7 @@ The protocol classifies execution rights at the function level — `permissionle
 | --- | --- | --- |
 | Permissionless | `triggerLiquidation`, `triggerDefault`, `repayLoan` (full repayment of **ERC-20 loans** — NFT-rental close-out stays borrower-only because it settles from the borrower's vaulted prepayment), `autoDeductDaily`, `matchOffers` (when the matching switch is enabled) | Open to any caller because the action is a protocol-safety function or a deterministic action with no caller discretion; full repayment by a third party never transfers collateral or claim rights. |
 | Party-only | `createOffer`, `acceptOffer`, `cancelOffer`, `addCollateral`, `repayPartial`, `claimAsLender`, `claimAsBorrower`; all admin, treasury, NFT-ownership, vault-upgrade, pause, oracle-admin, and role-management functions | Executable only by the entitled party (or the appropriate role-gated authority); never keeper-executable. |
-| Keeper-initiation (per-action opt-in) | `precloseDirect`, `transferObligationViaOffer` (including the offset variant it settles), `refinanceLoan`, `createLoanSaleOffer` (sale-listing initiation) | A whitelisted keeper may initiate on the consenting party's behalf only when that party has granted the matching narrow `KEEPER_ACTION_*` permission bit — one bit per flow, never a blanket grant. Without the bit, each function behaves as party-only. `addCollateral` deliberately stays party-only and is not keeper-initiable. |
+| Keeper-initiation (per-action opt-in) | `precloseDirect`, `transferObligationViaOffer` (including the offset variant it settles), `createLoanSaleOffer` (sale-listing initiation) | A whitelisted keeper may initiate on the consenting party's behalf only when that party has granted the matching narrow `KEEPER_ACTION_*` permission bit — one bit per flow, never a blanket grant. Without the bit, each function behaves as party-only. `addCollateral` deliberately stays party-only and is not keeper-initiable. |
 | Keeper-optional (completion) | `completeLoanSale`, `completeOffset`, `extendLoanInPlace` (only when auto-extend is enabled and both current position-NFT holders have active, non-stale caps permitting the proposed terms) | Deterministic, already-authorized, non-discretionary completion steps. Any future keeper-enabled function must be explicitly documented as meeting that bar before joining this list. |
 
 Cross-cutting invariants:

@@ -11,10 +11,8 @@ import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
-import {RiskFacet} from "../src/facets/RiskFacet.sol";
-import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
-import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
+import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
@@ -376,7 +374,16 @@ contract FeeEntitlementFacetTest is SetupTest {
     }
 
     /// @dev #1955 — complete ONE refinance of `oldLoanId` onto `borrowerOfferId`
-    ///      and return the lending-asset treasury cut it paid.
+    ///      and return the lending-asset treasury inflow it produced and what
+    ///      reached the stored lender's vault.
+    ///
+    ///      Since #3042 a refinance is ONE transaction: accepting the tagged
+    ///      borrower offer opens the new loan AND settles the old one, the new
+    ///      lender's net principal paying the old lender inside the Diamond. So
+    ///      the treasury inflow measured here is the accept's LIF share PLUS the
+    ///      refinance's interest cut. The LIF share is borrower-side and
+    ///      identical in every run (no run stakes the borrower), so differences
+    ///      between runs are differences in the interest cut alone.
     function _refinanceTreasuryCut(
         uint256 oldLoanId,
         uint256 borrowerOfferId,
@@ -384,22 +391,15 @@ contract FeeEntitlementFacetTest is SetupTest {
         uint256 newLenderPk,
         address treasuryEoa
     ) private returns (uint256 cut, uint256 toLender) {
-        // Codex #1957 r1 P2 — `vm.revertToState` does NOT clear mocks, so on
-        // runs 2 and 3 the acceptance below would execute with run 1's mocks
-        // still installed (the `vaultWithdrawERC20` prefix mock intercepts
-        // `OfferAcceptFeeFacet`'s fee + delivery withdrawals; the HF and LTV
-        // mocks alter acceptance checks). Run 1 would accept in a clean world
-        // and the others in a mocked one, so the treasury cuts being compared
-        // would come from different worlds. Clear first, then re-install
-        // everything this run needs — including the consolidation decline,
-        // which must hold for all three.
+        // Codex #1957 r1 P2 — `vm.revertToState` does NOT clear mocks, so each
+        // run starts from a cleared set and re-installs exactly what it needs,
+        // including the consolidation decline, which must hold for all three.
         vm.clearMockedCalls();
         // `clearMockedCalls` is GLOBAL — it also removes the oracle liquidity and
-        // price mocks `SetupTest` installs (`SetupTest:1001-1009`). Without them
-        // both ERC-20 legs read ILLIQUID, and `LoanFacet._maybeRunInitialRiskGates`
-        // takes its mutual-illiquid-consent early return instead of the liquid
-        // LTV/HF admission path — so the replays would compare illiquid
-        // replacement loans (Codex #1957 r3 P2). Restore the baseline first.
+        // price mocks `SetupTest` installs. Without them both ERC-20 legs read
+        // ILLIQUID, and `LoanFacet._maybeRunInitialRiskGates` takes its
+        // mutual-illiquid-consent early return instead of the liquid LTV/HF
+        // admission path (Codex #1957 r3 P2). Restore the baseline first.
         mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockOraclePrice(mockERC20, 1e8, 8);
@@ -409,39 +409,28 @@ contract FeeEntitlementFacetTest is SetupTest {
             abi.encodeWithSelector(ConsolidationFacet.eagerConsolidateToHolder.selector),
             abi.encode());
 
-        _fundActorVault(newLenderAddr, mockERC20, PRINCIPAL);
-        _signAndAcceptOffer(newLenderAddr, newLenderPk, borrowerOfferId, true, 0);
-
-        vm.mockCall(address(diamond),
-            abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector),
-            abi.encode(PRINCIPAL + 10 ether));
-        MockVaultWithdraw.deliversAll(address(diamond));
-        vm.mockCall(address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
-            abi.encode(uint256(2e18)));
-        vm.mockCall(address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateLTV.selector),
-            abi.encode(uint256(5000)));
-        vm.mockCall(address(diamond),
-            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-        ERC20Mock(mockERC20).mint(address(diamond), PRINCIPAL * 2);
+        // The accept draws the new lender's principal from their wallet
+        // (funded and approved by the caller), so no vault pre-funding.
 
         // The saving must REACH the lender (Codex #1957 r6 P2): removing
         // `lenderInterest += lenderExtra` in `RefinanceFacet` would shrink the
         // treasury fee while the discount simply vanished. The recipient is
-        // `oldLoan.lender`'s VAULT — refinance deposits `lenderDue` there
-        // (`RefinanceFacet:505-530`). Note the discount is keyed on the HOLDER
-        // while the payment goes to the STORED lender; that split is the
+        // `oldLoan.lender`'s VAULT — the payoff lands there, net principal and
+        // borrower top-up alike. Note the discount is keyed on the HOLDER while
+        // the payment goes to the STORED lender; that split is the
         // pre-existing #1124 gap and is deliberately not asserted away here.
         address storedLender =
             LoanFacet(address(diamond)).getLoanDetails(oldLoanId).lender;
-        address lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(storedLender);
-        uint256 lBefore = lv == address(0) ? 0 : IERC20(mockERC20).balanceOf(lv);
+        address lv = _vault(storedLender);
+        uint256 lBefore = IERC20(mockERC20).balanceOf(lv);
         uint256 before = IERC20(mockERC20).balanceOf(treasuryEoa);
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(oldLoanId, borrowerOfferId);
+        _signAndAcceptOffer(newLenderAddr, newLenderPk, borrowerOfferId, true, 0);
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(oldLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "the accept itself completed the refinance"
+        );
         cut = IERC20(mockERC20).balanceOf(treasuryEoa) - before;
-        lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(storedLender);
         toLender = IERC20(mockERC20).balanceOf(lv) - lBefore;
     }
 
@@ -485,7 +474,7 @@ contract FeeEntitlementFacetTest is SetupTest {
 
         uint256 oldOffer = _createLenderErc20Offer();
         uint256 oldLoanId = _signAndAcceptOffer(borrower, borrowerPk, oldOffer, true, 0);
-        uint256 borrowerOfferId = _createBorrowerErc20Offer();
+        uint256 borrowerOfferId = _createTaggedBorrowerErc20Offer(oldLoanId);
 
         LibVaipakam.Loan memory ol = LoanFacet(address(diamond)).getLoanDetails(oldLoanId);
         vm.prank(lender);
@@ -849,6 +838,22 @@ contract FeeEntitlementFacetTest is SetupTest {
     ///      `PRINCIPAL` and the tariff prices the same `C*` as every direct-
     ///      accept test in this file.
     function _createBorrowerErc20Offer() internal returns (uint256) {
+        return _createBorrowerErc20OfferTargeting(0);
+    }
+
+    /// @dev #3042 — the borrower's refinance request for `oldLoanId`: the same
+    ///      offer, tagged with its target and all-or-nothing, after the borrower
+    ///      has set the auto-refinance caps a tagged offer is checked against.
+    ///      Accepting it completes the refinance in the same transaction.
+    function _createTaggedBorrowerErc20Offer(uint256 oldLoanId) internal returns (uint256) {
+        vm.prank(borrower);
+        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
+            oldLoanId, true, 600, uint64(block.timestamp + 365 days)
+        );
+        return _createBorrowerErc20OfferTargeting(oldLoanId);
+    }
+
+    function _createBorrowerErc20OfferTargeting(uint256 target) internal returns (uint256) {
         ERC20Mock(mockCollateralERC20).mint(borrower, PRINCIPAL * 2);
         vm.prank(borrower);
         return OfferCreateFacet(address(diamond)).createOffer(
@@ -876,8 +881,8 @@ contract FeeEntitlementFacetTest is SetupTest {
                 collateralAmountMax: PRINCIPAL * 2,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0,
+                fillMode: target != 0 ? LibVaipakam.FillMode.Aon : LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: target,
                 useFullTermInterest: false
             })
         );
@@ -1495,7 +1500,7 @@ contract FeeEntitlementFacetTest is SetupTest {
     ///      `RefinanceFacet` is the one settlement path that calls
     ///      `LibVPFIDiscount` directly instead of through `VPFIDiscountFacet`,
     ///      so it emits its OWN `VPFIYieldFeeDiscountApplied` passthrough and
-    ///      has to carry the settling lender to it (RefinanceFacet:885-896).
+    ///      has to carry the settling lender to it.
     ///      That emit is guarded by `if (yieldVpfiDeducted > 0)`, and
     ///      `yieldVpfiDeducted` is non-zero ONLY when `_feeAssetWeiToVpfi` can
     ///      quote — which needs BOTH `vpfiDiscountWeiPerVpfi` and
@@ -1508,12 +1513,10 @@ contract FeeEntitlementFacetTest is SetupTest {
     ///      debit to the PREVIOUS lender. This replay arms the peg so both the
     ///      debit and the emit are exercised.
     ///
-    ///      Note on what is asserted: `_refinanceTreasuryCut` mocks
-    ///      `vaultWithdrawERC20` wholesale, and that is the very call
-    ///      `tryApplyYieldFee` uses to move the VPFI, so no token actually
-    ///      leaves the holder's vault here and a BALANCE check would be
-    ///      vacuous. `vm.expectCall` on the withdrawal's debited party pins the
-    ///      same attribution property and is immune to the mock.
+    ///      Since #3042 `_refinanceTreasuryCut` runs the real atomic refinance
+    ///      with no vault mocks, so the VPFI really leaves the holder's vault and
+    ///      the balance check below is live. `vm.expectCall` on the withdrawal's
+    ///      debited party pins the same attribution property from the call side.
     function test_1955_refinance_pegged_vpfiDebitAttributedToHolder() public {
         address treasuryEoa = makeAddr("treasuryEoaFor1955Peg");
         AdminFacet(address(diamond)).setTreasury(treasuryEoa);
@@ -1532,7 +1535,7 @@ contract FeeEntitlementFacetTest is SetupTest {
 
         uint256 oldOffer = _createLenderErc20Offer();
         uint256 oldLoanId = _signAndAcceptOffer(borrower, borrowerPk, oldOffer, true, 0);
-        uint256 borrowerOfferId = _createBorrowerErc20Offer();
+        uint256 borrowerOfferId = _createTaggedBorrowerErc20Offer(oldLoanId);
 
         LibVaipakam.Loan memory ol = LoanFacet(address(diamond)).getLoanDetails(oldLoanId);
         vm.prank(ol.lender);
@@ -1569,8 +1572,11 @@ contract FeeEntitlementFacetTest is SetupTest {
             )
         );
 
+        uint256 holderVpfiBefore = vpfiToken.balanceOf(_vault(holder));
         vm.recordLogs();
         _refinanceTreasuryCut(oldLoanId, borrowerOfferId, newLender, newLenderPk, treasuryEoa);
+        assertLt(vpfiToken.balanceOf(_vault(holder)), holderVpfiBefore,
+            "the yield-fee VPFI left the HOLDER's vault");
 
         // The passthrough emit must name the holder. Finding it at all also
         // proves `yieldVpfiDeducted > 0`, i.e. that the VPFI-paid branch really
