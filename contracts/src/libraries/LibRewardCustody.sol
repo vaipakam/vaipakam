@@ -4284,7 +4284,10 @@ library LibRewardCustody {
     ///         fold, both sweeps, staging, the legacy window, the commitment
     ///         delta) already prices a zero half at nothing, and the delivery
     ///         gate already holds no side whose fresh half is zero. The figures
-    ///         given up are in {DayDeliveryConflictSkipped}.
+    ///         given up are in {DayDeliveryConflictSkipped}, and are KEPT on
+    ///         the day's parts record (`skipped*`) as what Base sent, which a
+    ///         replayed broadcast is still compared against (Codex #2990 r2):
+    ///         a skip changes what this chain prices, never what Base said.
     ///
     ///         Refusals, each named:
     ///           - not a Mirror (`OnlyMirrorRewardChain`);
@@ -4333,6 +4336,10 @@ library LibRewardCustody {
             recycleConsume
         );
         dp.skippedAt = uint64(block.timestamp);
+        dp.skippedFreshLenderHalf = f.freshLenderHalf;
+        dp.skippedFreshBorrowerHalf = f.freshBorrowerHalf;
+        dp.skippedLenderHalfEquiv = f.lenderHalfEquiv;
+        dp.skippedBorrowerHalfEquiv = f.borrowerHalfEquiv;
         f.freshLenderHalf = 0;
         f.freshBorrowerHalf = 0;
         f.lenderHalfEquiv = 0;

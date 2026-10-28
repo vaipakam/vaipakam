@@ -8320,6 +8320,15 @@ library LibVaipakam {
         ///      conflicted day closed unpaid, its funding record zeroed and
         ///      its landed value released to the recycle bucket. Set once.
         uint64 skippedAt;
+        /// @dev #2961 (Codex #2990 r2) — the four halves Base's broadcast
+        ///      stamped for the day, kept as they arrived when the skip zeroed
+        ///      the funding record. The funding record then holds what this
+        ///      chain prices the day at; these hold what Base sent, which is
+        ///      what a replayed broadcast must still match.
+        uint256 skippedFreshLenderHalf;
+        uint256 skippedFreshBorrowerHalf;
+        uint256 skippedLenderHalfEquiv;
+        uint256 skippedBorrowerHalfEquiv;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with

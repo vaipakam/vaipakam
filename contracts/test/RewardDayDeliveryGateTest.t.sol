@@ -650,6 +650,34 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
     }
 
     /**
+     * @notice Cell 2961-c (Codex #2990 r2) -- a skip changes what this chain
+     *         prices, never what Base said: the figures Base broadcast are
+     *         kept, so an IDENTICAL replay of the day's broadcast after the
+     *         skip is still accepted (a duplicate delivery, or the post-arm
+     *         replay that installs `D*`), and a DIFFERENT one is still refused.
+     * @dev    Mutation: compare the replay against the zeroed funding record
+     *         and the identical replay reverts `KnownGlobalAlreadySet`.
+     */
+    function test_2961_c_AReplayAfterTheSkip_StillMatchesWhatBaseSent() public {
+        _conflictedDay1ThenOwedDay2();
+        vm.warp(block.timestamp + 1 days);
+        _epoch().skipConflictedDay(1);
+        LibVaipakam.DayDeliveryParts memory dp = _parts(1);
+        RewardBroadcastV2 memory same = _armedPacket(1);
+        assertEq(dp.skippedFreshLenderHalf, same.freshLenderHalf, "stored: Base's lender fresh half, kept");
+        assertEq(dp.skippedLenderHalfEquiv, same.recycledLenderHalfEquiv, "stored: Base's lender recycled half, kept");
+
+        _broadcastV2(same);
+        assertFalse(_awaits(0, 1), "the identical replay is a no-op: the day stays skipped");
+
+        RewardBroadcastV2 memory other = _armedPacket(1);
+        other.freshLenderHalf += 1;
+        _rep().setRewardMessenger(address(messenger));
+        vm.expectRevert(KnownGlobalAlreadySet.selector);
+        messenger.deliverBroadcastV2(other);
+    }
+
+    /**
      * @notice Cell 2961-b -- the value that landed for a skipped day moves to
      *         this mirror's recycle bucket, by anyone, repeatably: on an
      *         activated mirror it leaves the day's epochs and lands in the
