@@ -235,8 +235,10 @@ export interface CloseOutReport {
   /** Reconciliation queues that held pending takes: the walks that landed,
    *  and the pending figure read before the first and after the last. The
    *  change between the two is net: another caller's outflow can add takes,
-   *  and anyone may walk the queue, between the reads (Codex #3010). */
-  queues: { side: string; walks: number; before: bigint; after: bigint }[];
+   *  and anyone may walk the queue, between the reads (Codex #3010). `after`
+   *  is null when the read after the last landed walk failed: the figure was
+   *  not observed, so none is reported. */
+  queues: { side: string; walks: number; before: bigint; after: bigint | null }[];
   refused: Map<string, string>;
   unread: Map<string, string>;
   stopped: string | null;
@@ -296,7 +298,7 @@ export function describeReport(r: CloseOutReport): string {
     `pruned=${r.pruned.join(',') || 'none'}`,
     ...(r.released.length > 0 ? [`released=${r.released.map((x) => `chain ${x.chain} days ${x.from}..${x.to - 1} (${x.to >= x.bound ? 'done' : `${x.bound - x.to} left`})`).join(',')}`] : []),
     ...(r.releaseWaiting.length > 0 ? [`release-waiting=${r.releaseWaiting.join('; ')}`] : []),
-    ...r.queues.map((q) => `queue-${q.side}=${q.walks} walk(s), pending ${q.before} before, ${q.after} after (net of other callers)`),
+    ...r.queues.map((q) => `queue-${q.side}=${q.walks} walk(s), pending ${q.before} before, ${q.after === null ? 'unread' : q.after} after (net of other callers)`),
     ...(r.refused.size > 0 ? [`refused=${[...r.refused].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.unread.size > 0 ? [`unread=${[...r.unread].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.stopped ? [`stopped=${r.stopped}`] : []),
@@ -1025,6 +1027,7 @@ async function advanceQueues(r: Reader, sender: StepSender, report: CloseOutRepo
     if (pos.pending === 0n) continue;
     const before = pos.pending;
     let walks = 0;
+    let observed = true;
     while (pos.pending > 0n) {
       // eslint-disable-next-line no-await-in-loop
       const res = await sender.call('queue', q.name, 'advanceReconciliationQueue', [q.side, BigInt(QUEUE_STEPS)]);
@@ -1037,6 +1040,7 @@ async function advanceQueues(r: Reader, sender: StepSender, report: CloseOutRepo
       } catch (err) {
         if (err instanceof PastRunDeadline) throw err;
         sender.noteUnread(`queue:${q.name}`, `the ${q.name} reconciliation queue after a walk (${shortErr(err)})`);
+        observed = false;
         break;
       }
       const moved = after.pending < pos.pending || after.frontiers.some((f, i) => f > pos.frontiers[i]);
@@ -1046,6 +1050,6 @@ async function advanceQueues(r: Reader, sender: StepSender, report: CloseOutRepo
         break;
       }
     }
-    report.queues.push({ side: q.name, walks, before, after: pos.pending });
+    report.queues.push({ side: q.name, walks, before, after: observed ? pos.pending : null });
   }
 }
