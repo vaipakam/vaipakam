@@ -629,43 +629,54 @@ edit ticks；如果想完全移除某个 keeper，就把它从列表中删除。
 
 ### 关于 Public Analytics
 
-整个 protocol 的 wallet-free、透明视图：total value locked、
-loan volumes、default rates、VPFI supply、recent activity。一切都
-从 on-chain data 实时计算 — 这个页面上的任何数字背后都没有 private
-database。
+一个无需钱包、针对单个网络的协议视图：也就是应用正在读取的网络。
+你无需连接任何东西。页面基于两个公开来源，并标明每个数字来自哪一个
+——任何人无需密钥即可查询的公共索引器，以及平台合约本身——所以你
+永远不必凭信任接受一个数字。
 
-<a id="public-dashboard.combined"></a>
+<a id="public-dashboard.loans-offers"></a>
 
-### Combined — 所有 Chains
+### 借贷与报价
 
-汇总所有受支持 chains 后得到的 protocol-wide totals。小字
-"X chains covered, Y unreachable" 会告诉您页面加载时是否有某条
-chain 的 network 离线 — 如果有，对应 chain 会在下面的 per-chain
-table 中被标记。
+按状态统计的借贷笔数（活跃、已还款、违约、已清算等）和按状态统计
+的报价笔数，来自公共索引器。索引器未报告的笔数显示为"未报告"，绝不
+显示为零。这里只统计链上报价：免 Gas 的签名订单不计入此处，尽管它们
+会出现在 Offer Book 中。报价总数是当前记录在册的报价，不是累计数。
 
-<a id="public-dashboard.per-chain"></a>
+<a id="public-dashboard.recycling"></a>
 
-### Per-Chain Breakdown
+### 回收账户与闭环
 
-相同的 totals，按 chain 拆分。可以用来查看哪条 chain 拥有最高 TVL、
-大多数 loans 发生在哪里，或发现某条 chain 是否停滞。
-
-<a id="public-dashboard.vpfi-transparency"></a>
-
-### VPFI Token Transparency
-
-VPFI 在这条 chain 上的 live state — 总量有多少、实际 circulating
-有多少 (扣除 protocol-held balances 后)，以及 cap 下还剩多少可以
-mint。按设计，所有 chains 上的 supply 都是 bounded。
+每天的奖励池从哪里来、其中提取了多少，以及通过领取支付的奖励 VPFI
+中有多少留在平台内部。这些是来自公共索引器的记账记录；尚不清楚的
+数字会如实说明，而不是显示为零。
 
 <a id="public-dashboard.transparency"></a>
 
-### Transparency & Source
+### 透明度与来源
 
-这个页面上的每个数字都可以直接从 blockchain 重新推导出来。这张卡
-会列出 snapshot block、data 最近一次 fetch 的时间，以及每个
-metric 来自哪个 contract address。如果有人想 verify 某个数字，这
-就是起点。
+平台合约地址（附在区块浏览器中打开的链接）、网络、索引器读取的
+最后一个区块以及距今多久。索引器的数字只新到那个区块为止，所以会
+显示它的时长。
+
+<a id="public-dashboard.vpfi-transparency"></a>
+
+### VPFI 代币
+
+直接从平台合约读取，而不是从索引器：VPFI 代币的地址及其在此网络
+上的供应量。在发行 VPFI 的网络上，页面还会显示供应上限、上限内仍可
+铸造的数量，以及唯一获准铸造的地址。在 VPFI 通过跨链桥到达的网络
+上，只显示该网络的供应量。
+
+<a id="public-dashboard.fees"></a>
+
+### 费用与金库
+
+同样从合约读取：协议自记录开始以来、过去一天和过去一周记录的费用，
+以及费用流向的金库地址。页面会标明读取的区块、此次读取的时长和调用
+的函数，并说明费用数字可能低于实际收取金额的每一个原因。更换参考货
+币后，之前的费用仍保留旧单位，可能使合计偏高也可能偏低，页面也会说
+明这一点。无法读取的数字会如实说明，而不是显示为零。
 
 ---
 

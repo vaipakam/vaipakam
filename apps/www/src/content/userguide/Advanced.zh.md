@@ -1233,57 +1233,79 @@ frontend 尚未 reflect 的 on-chain permissions 会得到清晰的
 
 ### 关于 Public Analytics
 
-一个 wallet-free aggregator，从每条受支持 chain 上的 on-chain
-protocol view calls 实时计算。无 backend，无 database。提供 CSV /
-JSON export；为了 verifiability，会显示 protocol address，以及
-backing 每个 metric 的 view function。
+一个无需钱包的单链页面：它读取应用所指向的链（未连接钱包时为默认
+读取链）。没有跨链汇总，也没有导出；要比较各链，请在每条链上分别
+打开页面。两个来源，在使用处各自标明：
 
-<a id="public-dashboard.combined"></a>
+- 索引器无需密钥、开放 CORS 的读取 API——借贷、报价、回收和闭环
+  数据；
+- 通过公共 RPC 调用 Diamond 自身的视图函数——VPFI 代币与费用
+  数据。
 
-### Combined — 所有 Chains
+任一来源都可以直接查询，以复现页面显示的内容。
 
-Cross-chain rollup。header 会报告覆盖了多少 chains，以及多少 chains
-errored；因此 fetch time 无法到达的 RPC 是 explicit 的。当一条或
-多条 chains errored 时，per-chain table 会标记是哪一条 — TVL totals
-仍会 report，但 gap 会被明确说明。
+<a id="public-dashboard.loans-offers"></a>
 
-<a id="public-dashboard.per-chain"></a>
+### 借贷与报价
 
-### Per-Chain Breakdown
+来自 `/loans/stats` 的按状态借贷计数，包括待结算、内部撮合和其余
+类别，使各部分之和等于总数；ERC-20 与 NFT 租赁的小计，其中资产类型
+尚未读取的活跃借贷会单独列出；以及来自 `/offers/stats` 的报价计数。
+报价仅指 `offers` 表——免 Gas 的签名订单不计入——且已取消的报价会
+从索引中移除，因此报价总数不是累计数字。缺失的计数显示"未报告"，
+不可能的值显示"已报告，但不是可用的计数"；两者都不会显示为 0。
 
-combined metrics 的 per-chain split。可用于发现 TVL concentration、
-mismatched VPFI mirror supplies (mirror supplies 之和应等于 canonical
-adapter 的 locked balance)，或 stalled chains。
+<a id="public-dashboard.recycling"></a>
 
-<a id="public-dashboard.vpfi-transparency"></a>
+### 回收账户与闭环
 
-### VPFI Token Transparency
-
-active chain 上的 on-chain VPFI 会计：
-
-- Total supply，直接从 ERC-20 读取。
-- Circulating supply — Total supply 减去 protocol 持有的 balance
-  (treasury、reward pools、in-flight bridge packets)。
-- 剩余 mintable cap — 仅在 canonical chain 上有意义；mirror
-  chains 对 cap 报告 "n/a"，因为那里的 mint 是 bridge-driven，
-  而非从 cap mint。
-
-Cross-chain invariant：所有 mirror chains 上的 mirror supplies 之和
-应等于 canonical adapter 的 locked balance。watcher 会监控这一点，
-并在出现 drift 时 alert。
+回收账户（`/metrics/recycling`）按计划自己的日序号列出每个计划日的
+奖励池、其资金来源和提取额；未最终确定的日子不显示奖励池，未启用的
+日子标为估算。闭环（`/metrics/loop-closure`）按 UTC 日显示领取支付
+了多少、留在金库中多少、回收吸收了多少，并标明记录所到达的时刻。
+低于显示精度的正数金额会加以标注，比例向下取整，未知数字绝不显示
+为零。
 
 <a id="public-dashboard.transparency"></a>
 
-### Transparency & Source
+### 透明度与来源
 
-对于每个 metric，页面会列出：
+Diamond 地址（附浏览器链接）、链，以及索引器游标的区块和时长。
+每个来自索引器的数字都只新到这个游标为止；合并两个响应时，标明的是
+较旧的游标。
 
-- 用作 snapshot 的 block number。
-- 数据 freshness (跨 chain 的最大延迟)。
-- protocol 地址和 view function 调用。
+<a id="public-dashboard.vpfi-transparency"></a>
 
-任何人都可以从 RPC + block + protocol address + function name 重新
-推导此页面上的任何数字 — 这就是验证标准。
+### VPFI 代币
+
+来自 Diamond 上的 `getVPFISnapshot()`：此链上的代币地址和
+`totalSupply`。在规范链上，还包括上限、余量（`cap − totalSupply`，
+即仍可铸造的数量）和铸造者。在镜像链上，快照不含上限和铸造者——那里
+的供应通过 CCIP 代币池到达——因此页面显示本链供应量，并说明上限和
+铸造者属于规范链，而不是显示零。未绑定的代币与无法读取的快照会分别
+说明。
+
+<a id="public-dashboard.fees"></a>
+
+### 费用与金库
+
+来自 `getTreasuryMetrics()`、`getTreasury()` 和
+`getNumeraireSymbol()`，与快照在同一个 Multicall3 聚合中读取，并固定
+在一个区块上，页面会标明该区块及其时长：
+
+- 自费用账本开始以来，以及过去 24 小时和 7 天的费用，每笔在记录时
+  以计价单位计值，之后不再重新计值；
+- 协议在记录时无法计值的费用记为 0，时间窗口的合计最多只扫描最近
+  10,000 条账本记录——这两者都只会使数字偏低，页面对此加以说
+  明；
+- 计价单位更换后之前的记录仍保留旧单位，因此更换之后的合计会在当前符
+  号下把两种单位的金额相加，可能偏高也可能偏低；页面会说明之前的费用
+  按旧单位计算；
+- 金库地址。如果是外部地址，费用在收取时即转出，页面不显示其余额。
+  如果 Diamond 本身就是金库，则显示其持有额，仅按出现在未结借贷中的
+  资产计值，并包括代表金库存放在其他地方的金额。
+
+失败的视图函数显示"无法读取"，且不会隐藏其他内容。
 
 ---
 
