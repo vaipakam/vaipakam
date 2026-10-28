@@ -44,19 +44,16 @@ import {
   RiskFacetABI,
   RiskSplitLiquidationFacetABI,
 } from '@vaipakam/contracts/abis';
-import { attemptCloseOut, surfaceSkipReason } from './closeOut';
+import { attemptCloseOut } from './closeOut';
 import { parseLiquidationLoan } from './liquidationLoan';
 import { tryMatchLiquidation } from './matchLiquidation';
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { inTermOnLoanClock } from './loanClockReads';
 import {
   FORCED_SALE_KIND,
-  encodeTriggerLiquidation,
   forcedSaleQuoteAmount,
   readForcedSalePlan,
-  readForcedSaleSurface,
   type ForcedSalePlan,
-  type ForcedSaleSurface,
 } from '@vaipakam/lib/routeBuilder';
 import type { ChainConfig, Env } from './env';
 import {
@@ -203,17 +200,6 @@ export function liquidationSaleSizes(
   const splitTotal = forcedSaleQuoteAmount(splitPlan);
   const halfAmount = (splitTotal ?? 0n) / 2n;
   return { fullAmount, splitTotal, halfAmount, otherHalf: (splitTotal ?? 0n) - halfAmount };
-}
-
-/** {@link liquidationSaleSizes} on a pre-#2796 Diamond, which has no plan:
- *  the full sale is the whole collateral and no split is sized. Null when
- *  there is no collateral to sell. Deleted with the whole-collateral surface
- *  (`ForcedSaleSurface` in @vaipakam/lib/routeBuilder). */
-export function wholeCollateralSaleSizes(
-  collateralAmount: bigint,
-): { fullAmount: bigint; splitTotal: bigint | null; halfAmount: bigint; otherHalf: bigint } | null {
-  if (collateralAmount === 0n) return null;
-  return { fullAmount: collateralAmount, splitTotal: null, halfAmount: 0n, otherHalf: 0n };
 }
 
 /** The least a split-liquidation leg selling `legInput` must deliver (#2724):
@@ -567,27 +553,8 @@ export async function maybeAutonomousLiquidate(
     // kind because its legs bear their own charges; its legs' amounts sum
     // into its range. A partial liquidation is sized by its fraction, not by
     // these. No sale due by the contract's reckoning ends the attempt.
-    //
-    // A Diamond deployed before #2796 (the live testnets, until the
-    // all-waves fresh deploy) has no plan: its `triggerLiquidation` sells
-    // the whole collateral and returns the surplus to the borrower. There
-    // the full sale is quoted for the whole collateral and no split is
-    // tried, since its legs would be sized by a plan it does not have. The
-    // surface is one loupe read; a Diamond routing part of each surface makes
-    // the call revert at its gas estimate, before broadcast, and one whose
-    // routing could not be read is sent nothing.
     const planBlock = await publicClient.getBlockNumber({ cacheTime: 0 });
-    let surface: ForcedSaleSurface;
-    try {
-      surface = await readForcedSaleSurface({ client: publicClient, diamond: ctx.diamond, blockNumber: planBlock });
-    } catch (err) {
-      console.log(`[keeper] loan=${loanId} chain=${chain.name} skip: ${surfaceSkipReason(err)}`);
-      return false;
-    }
-    if (surface === 'whole') {
-      console.log(`[keeper] loan=${loanId} chain=${chain.name} surface=whole: a pre-#2796 Diamond, so the whole collateral is quoted and sold`);
-    }
-    const [fullPlan, splitPlan] = surface === 'whole' ? [null, null] : await Promise.all([
+    const [fullPlan, splitPlan] = await Promise.all([
       readForcedSalePlan({
         client: publicClient,
         diamond: ctx.diamond,
@@ -603,10 +570,7 @@ export async function maybeAutonomousLiquidate(
         blockNumber: planBlock,
       }),
     ]);
-    const sizes =
-      fullPlan === null || splitPlan === null
-        ? wholeCollateralSaleSizes(loan.collateralAmount)
-        : liquidationSaleSizes(fullPlan, splitPlan);
+    const sizes = liquidationSaleSizes(fullPlan, splitPlan);
     if (sizes === null) {
       console.log(`[keeper] loan=${loanId} chain=${chain.name} skip: no liquidation sale due (previewForcedSale sells nothing)`);
       return false;
@@ -811,7 +775,7 @@ export async function maybeAutonomousLiquidate(
     // independently OK at quote time, each clearing its share.
     const minImprovementBps = parsePosIntEnv(env.SPLIT_MIN_IMPROVEMENT_BPS, 100);
     const split =
-      halfQuotes && splitTotal !== null && splitPlan !== null
+      halfQuotes && splitTotal !== null
         ? pickSplitLegs(halfQuotes, quotes, minImprovementBps, { split: splitTotal, full: fullAmount, legs: [halfAmount, otherHalf], splitPlan })
         : null;
     if (split) {
@@ -853,9 +817,11 @@ export async function maybeAutonomousLiquidate(
     }
 
     // Default path: failover via `triggerLiquidation` — unchanged.
-    const hash = await ctx.wallet.sendTransaction({
-      to: ctx.diamond,
-      data: encodeTriggerLiquidation(surface, loanIdBig, fullAmount, quotes.calls),
+    const hash = await ctx.wallet.writeContract({
+      address: ctx.diamond,
+      abi: TRIGGER_ABI,
+      functionName: 'triggerLiquidation',
+      args: [loanIdBig, fullAmount, quotes.calls],
       account,
       chain: ctx.wallet.chain,
     });
