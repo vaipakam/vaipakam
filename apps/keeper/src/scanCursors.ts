@@ -12,6 +12,7 @@
 // reading), and one that cannot be written is said in the log and costs the
 // next run the same.
 
+import { shortErr } from './callErrors';
 import { getWorkItems, putWork } from './db';
 import type { KeeperD1 } from './env';
 
@@ -29,7 +30,7 @@ export function d1ScanCursors(db: KeeperD1, chainId: number, diamond: string, pa
         const rows = await getWorkItems<{ value: string }>(db, chainId, diamond, 'scan_cursor', items);
         return new Map([...rows].flatMap(([k, v]) => (typeof v.payload?.value === 'string' ? [[k, v.payload.value] as const] : [])));
       } catch (err) {
-        console.warn(`[keeper] ${pass} chain=${chainId}: its scan cursors could not be read, so it reads from the start (${String(err)})`);
+        console.warn(`[keeper] ${pass} chain=${chainId}: its scan cursors could not be read, so it reads from the start (${shortErr(err)})`);
         return new Map();
       }
     },
@@ -37,7 +38,7 @@ export function d1ScanCursors(db: KeeperD1, chainId: number, diamond: string, pa
       try {
         await putWork(db, chainId, diamond, 'scan_cursor', { item, block: 0, payload: { value } });
       } catch (err) {
-        console.warn(`[keeper] ${pass} chain=${chainId}: scan cursor ${item} could not be recorded, so the next run reads it again (${String(err)})`);
+        console.warn(`[keeper] ${pass} chain=${chainId}: scan cursor ${item} could not be recorded, so the next run reads it again (${shortErr(err)})`);
       }
     },
   };
