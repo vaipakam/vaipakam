@@ -789,6 +789,7 @@ function readForcedCloseCopy() {
       unknown: need(fc.unknown, 'unknown'),
       'not-yet': need(fc.notYet, 'notYet'),
       'blocked-paused': need(fc.blockedPaused, 'blockedPaused'),
+      'blocked-kyc': need(fc.blockedKyc, 'blockedKyc'),
       'blocked-sequencer': need(fc.blockedSequencer, 'blockedSequencer'),
       'blocked-no-consent': need(fc.blockedNoConsent, 'blockedNoConsent'),
       'ready-in-kind': need(fc.readyInKind, 'readyInKind'),
@@ -881,7 +882,7 @@ function readForcedCloseCopy() {
     // nothing, and `readyNeedsRoute` is a claim about the app's ability
     // to route rather than about the protocol's answer — a close-out
     // that simulates with empty calldata does not make either of those
-    // a false statement. Only these four say the close-out is refused,
+    // a false statement. Only these five say the close-out is refused,
     // and only they can be contradicted by the protocol accepting it.
     // ROUND 67 P2 — the two HEADINGS, so a heading contradicting the body
     // can be seen. `ForcedCloseCard` picks between them on `view.overdue`
@@ -893,6 +894,7 @@ function readForcedCloseCopy() {
     refusalStateCopy: [
       need(fc.notYet, 'notYet'),
       need(fc.blockedPaused, 'blockedPaused'),
+      need(fc.blockedKyc, 'blockedKyc'),
       need(fc.blockedSequencer, 'blockedSequencer'),
       need(fc.blockedNoConsent, 'blockedNoConsent'),
     ],

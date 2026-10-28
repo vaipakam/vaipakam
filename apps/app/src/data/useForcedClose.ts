@@ -65,6 +65,8 @@ export interface ForcedCloseReads {
   defaultable: boolean | undefined;
   sequencerHealthy: boolean | undefined;
   paused: boolean | undefined;
+  /** The lender passes `triggerDefault`'s KYC gate (#2083). */
+  lenderKycAdmitted: boolean | undefined;
   consentFromBoth: boolean | undefined;
   internalMatchCandidate: boolean | undefined;
   /** Whether internal matching is switched on for this deployment, from
@@ -169,6 +171,7 @@ export function useForcedCloseReads(opts: {
     defaultable: facts?.defaultable,
     sequencerHealthy: facts?.sequencerHealthy,
     paused: facts?.paused,
+    lenderKycAdmitted: facts?.lenderKycAdmitted,
     consentFromBoth: facts?.consentFromBoth,
     internalMatchCandidate: facts?.internalMatchCandidate,
     internalMatchEnabled: facts?.internalMatchEnabled,
