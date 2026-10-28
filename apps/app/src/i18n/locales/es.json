@@ -3421,6 +3421,42 @@
       "refinanceOf": "Aceptar también liquida y cierra el préstamo n.º {{id}}.",
       "linkedLabel": "Préstamo vinculado",
       "linkedTo": "Aceptar también se liquida contra el préstamo n.º {{id}}, como se describe arriba."
+    },
+    "batchSale": {
+      "title": "Tus posiciones de prestamista de la oferta #{{offerId}}",
+      "lede": "Los préstamos {{ids}} vienen de la misma oferta. Puedes ponerlos todos a la venta a la vez, con un mismo tipo y una misma ventana de publicación, en una sola transacción. Primero se comprueba cada préstamo por separado, y el que no pueda publicarse se omite mientras los demás siguen adelante.",
+      "windowNote": "Cada publicación caduca por sí sola: al final de la ventana o en la fecha de vencimiento de ese préstamo, lo que llegue antes. Cuando una publicación termina sin venta, ese préstamo no puede volver a publicarse durante un día. Si un prestatario paga parte de un préstamo mientras su publicación está activa, se rechazan los intentos de compra de esa publicación; cancélala y vuelve a publicarla.",
+      "listAll": "Revisar la publicación de todos",
+      "checking": "Comprobando cada préstamo y leyendo su mínimo…",
+      "phase": {
+        "checking": "Comprobando de nuevo cada préstamo…",
+        "submitting": "Confirma la transacción en tu billetera…"
+      },
+      "review": "Poner estas posiciones a la venta",
+      "loanFloor": "Préstamo #{{id}}: si un comprador lo toma en cualquier momento antes de que termine su publicación, recibes al menos {{amount}}. La publicación registra este mínimo.",
+      "loanHeld": "{{amount}} ya reservados para el prestamista en este préstamo pasan al comprador junto con la posición, no a ti.",
+      "loanSettlementNow": "La liquidación que llevaría ahora el pago de un comprador: ~{{amount}}.",
+      "leftOut": "El préstamo #{{id}} queda fuera: {{reason}}",
+      "noneReady": "Ahora mismo ninguna de estas posiciones puede publicarse en conjunto. Abre cada préstamo para ver sus opciones.",
+      "consentLabel": "Entiendo el bloqueo de cada posición publicada y la liquidación que se descuenta del pago de cada comprador, y los acepto para cada préstamo indicado arriba.",
+      "confirm": "Confirmar — publicar estas posiciones",
+      "cancel": "Cancelar",
+      "dismiss": "Listo",
+      "lockWarning": "Publicar bloquea el NFT de cada posición de prestamista publicada: no puede transferirse hasta que se complete esa venta o termine esa publicación (cancelar lo desbloquea en un paso, desde la página del préstamo; tras la caducidad, lo hace una transacción de limpieza que cualquiera puede enviar). Tus derechos de cobro no cambian.",
+      "receiveEach": "Por cada préstamo publicado, al menos el mínimo indicado arriba una vez descontada la liquidación, si un comprador lo toma antes de que termine su publicación. Cada publicación registra su propio mínimo y se omite en lugar de crearse si registraría menos.",
+      "lockEach": "El NFT de posición de prestamista de cada préstamo publicado, hasta que se complete su venta o termine su publicación. Nada más.",
+      "youMayOwe": "Nada de tu billetera y ninguna aprobación. Cuando un comprador acepta una publicación, la liquidación se descuenta de su pago antes de que el resto te llegue: el MAYOR entre los intereses acumulados hasta entonces y la diferencia de tipo para el plazo restante, nunca ambos. Arriba se muestra la cifra actual de cada préstamo.",
+      "endsEach": "Cada publicación termina cuando un comprador la acepta, cuando la cancelas desde la página del préstamo o cuando caduca. Una transacción publica hasta 30 préstamos; el préstamo cuya publicación falle se omite, y los resultados dicen por qué.",
+      "listed": "Préstamo #{{id}}: publicado como oferta de venta #{{offerId}}. Su página muestra la publicación y te permite cancelarla.",
+      "notListed": "Préstamo #{{id}}: no publicado. {{reason}}",
+      "changedOtherwise": "Préstamo #{{id}}: no publicado. El préstamo ya no está activo; ábrelo para ver en qué estado está.",
+      "unknown": "Préstamo #{{id}}: no pudimos leer si se publicó. Abre el préstamo para comprobarlo.",
+      "pending": "Préstamo #{{id}}: la transacción se envió pero aún no se ha confirmado. Todavía puede publicar este préstamo, así que revísalo en unos minutos.",
+      "notSentPending": "No enviado, porque una transacción anterior de este lote aún no se ha confirmado. Publícalo desde su propia página cuando se resuelva.",
+      "skippedRetry": "La transacción se ejecutó, pero esta publicación se omitió. Ahora puede publicarse desde la página del propio préstamo.",
+      "reviewAgain": "Vuelve a revisar la publicación para ver las cifras actuales.",
+      "changedSinceReview": "Lo que implica esta publicación cambió después de tu revisión. Publícalo desde su propia página, que muestra las condiciones actuales.",
+      "ownPageShape": "Solo pueden ponerse a la venta los préstamos con principal en tokens y garantía en tokens."
     }
   },
   "contractError": {

@@ -1893,7 +1893,51 @@ Thin-market honesty rules apply.
   cannot be read, the page says that instead.
 - The batch card stays on the page with its results until the borrower
   dismisses it, even when the batch leaves the offer with fewer than two
-  open loans.
+  open loans, and even while the positions lists cannot be read.
+
+### Listing several lender positions from one offer for sale at once (#126)
+
+- When one of the lender's offers filled into two or more loans whose lender
+  positions the connected wallet still holds, the positions page offers, in
+  Advanced mode and on the networks where listing a position is available, to
+  list them all for sale together, at one rate and for one listing window.
+  Only the wallet's own lender positions are grouped. Rentals are not grouped.
+- Each loan passes the same live checks its own page's listing form runs before
+  it is listed, and the two must never disagree. A loan the platform would
+  refuse to list (already listed, an offset open on it, matured or too close to
+  its due date, in its relisting pause, a paused asset, collateral that is not a
+  token) is left out and named with the reason. A loan whose checks or figures
+  could not be read is left out with that reason too, never included on a
+  guess.
+- Before anything is signed the lender sees, for every loan to be listed, the
+  minimum they are guaranteed if a buyer takes the listing before it ends, any
+  money already set aside for the lender that goes to the buyer with the
+  position, and the settlement a buyer's payment would carry today; and under
+  each loan what its own page states before a listing: that a Full fee mode
+  travels to the buyer with the position, and that a rate above the loan's own
+  costs the lender the difference. Every loan left out is named with the reason.
+  The review is the same six-row review every other write shows, it says that
+  each listed position is locked until its sale completes or its listing ends,
+  and the lender must agree to the lock and the settlement before confirming.
+  The agreement covers exactly what the review shows and is withdrawn if any of
+  it changes.
+- Each listing is bound to the figures the lender reviewed: if, by the time it
+  runs, it would guarantee the lender less, or pass more already set aside to
+  the buyer, it is not made. Listing draws nothing from the wallet and asks for
+  no approval.
+- The batch is one transaction for up to 30 loans. Each listing runs as the
+  lender, with its own checks, and a listing that fails when the transaction
+  runs is skipped while the others are made. Immediately before each
+  transaction is sent every loan in it is checked again in full against the
+  reviewed figures; a loan that no longer passes, or whose statements changed
+  since the review, is left out and named.
+- Which loans were listed is established from the chain, never assumed: a loan
+  is reported listed, with its sale offer, only when that transaction itself
+  listed it. Otherwise it is reported not listed with the reason, no longer
+  active, left out, not confirmed yet (when the transaction was sent but has not
+  confirmed, in which case nothing more is sent behind it), or could not be
+  read. Each listed loan's own page then shows its listing and lets the lender
+  cancel it.
 
 ### Taking back extra collateral
 

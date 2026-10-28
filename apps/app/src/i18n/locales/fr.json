@@ -3421,6 +3421,42 @@
       "refinanceOf": "Accepter rembourse et clôture aussi le prêt n° {{id}}.",
       "linkedLabel": "Prêt lié",
       "linkedTo": "Accepter règle aussi le prêt n° {{id}}, comme décrit ci-dessus."
+    },
+    "batchSale": {
+      "title": "Vos positions de prêteur issues de l’offre #{{offerId}}",
+      "lede": "Les prêts {{ids}} viennent de la même offre. Vous pouvez tous les mettre en vente en même temps, à un même taux et pour une même durée d’annonce, en une seule transaction. Chaque prêt est d’abord vérifié séparément, et un prêt qui ne peut pas être mis en vente est ignoré tandis que les autres passent.",
+      "windowNote": "Chaque annonce expire d’elle-même : à la fin de la durée choisie ou à l’échéance de ce prêt, selon ce qui arrive en premier. Lorsqu’une annonce se termine sans vente, ce prêt ne peut pas être remis en vente pendant un jour. Si un emprunteur rembourse une partie d’un prêt pendant que son annonce est active, les tentatives d’achat sur cette annonce sont refusées ; annulez-la et remettez-la en vente.",
+      "listAll": "Examiner la mise en vente de tous",
+      "checking": "Vérification de chaque prêt et lecture de son minimum…",
+      "phase": {
+        "checking": "Nouvelle vérification de chaque prêt…",
+        "submitting": "Confirmez la transaction dans votre portefeuille…"
+      },
+      "review": "Mettre ces positions en vente",
+      "loanFloor": "Prêt #{{id}} : si un acheteur le prend à tout moment avant la fin de son annonce, vous recevez au moins {{amount}}. L’annonce enregistre ce minimum.",
+      "loanHeld": "{{amount}} déjà mis de côté pour le prêteur sur ce prêt reviennent à l’acheteur avec la position, pas à vous.",
+      "loanSettlementNow": "Le règlement que porterait maintenant le paiement d’un acheteur : ~{{amount}}.",
+      "leftOut": "Le prêt #{{id}} est exclu : {{reason}}",
+      "noneReady": "Aucune de ces positions ne peut être mise en vente ensemble pour le moment. Ouvrez chaque prêt pour voir ses options.",
+      "consentLabel": "Je comprends le blocage de chaque position mise en vente et le règlement prélevé sur le paiement de chaque acheteur, et je les accepte pour chaque prêt indiqué ci-dessus.",
+      "confirm": "Confirmer — mettre ces positions en vente",
+      "cancel": "Annuler",
+      "dismiss": "Terminé",
+      "lockWarning": "La mise en vente bloque le NFT de chaque position de prêteur mise en vente : il ne peut pas être transféré tant que cette vente n’est pas finalisée ou que cette annonce n’est pas terminée (l’annulation le débloque en une étape, depuis la page du prêt ; après expiration, une transaction de nettoyage que n’importe qui peut envoyer le fait). Vos droits de réclamation ne changent pas.",
+      "receiveEach": "Pour chaque prêt mis en vente, au moins le minimum indiqué ci-dessus une fois le règlement prélevé, si un acheteur le prend avant la fin de son annonce. Chaque annonce enregistre son propre minimum, et elle est ignorée plutôt que créée si elle enregistrait moins.",
+      "lockEach": "Le NFT de position de prêteur de chaque prêt mis en vente, jusqu’à la finalisation de sa vente ou la fin de son annonce. Rien d’autre.",
+      "youMayOwe": "Rien depuis votre portefeuille, et aucune approbation. Lorsqu’un acheteur accepte une annonce, le règlement est prélevé sur son paiement avant que le reste ne vous parvienne : le PLUS ÉLEVÉ entre les intérêts accumulés d’ici là et l’écart de taux pour la durée restante, jamais les deux. Le montant actuel de chaque prêt est indiqué ci-dessus.",
+      "endsEach": "Chaque annonce se termine lorsqu’un acheteur l’accepte, lorsque vous l’annulez depuis la page du prêt, ou lorsqu’elle expire. Une transaction met en vente jusqu’à 30 prêts ; un prêt dont la mise en vente échoue est ignoré, et les résultats indiquent pourquoi.",
+      "listed": "Prêt #{{id}} : mis en vente comme offre de vente #{{offerId}}. Sa page affiche l’annonce et vous permet de l’annuler.",
+      "notListed": "Prêt #{{id}} : non mis en vente. {{reason}}",
+      "changedOtherwise": "Prêt #{{id}} : non mis en vente. Le prêt n’est plus actif ; ouvrez-le pour voir où il en est.",
+      "unknown": "Prêt #{{id}} : impossible de savoir s’il a été mis en vente. Ouvrez le prêt pour vérifier.",
+      "pending": "Prêt #{{id}} : la transaction a été envoyée mais n’est pas encore confirmée. Elle peut encore mettre ce prêt en vente ; vérifiez-le dans quelques minutes.",
+      "notSentPending": "Non envoyé, car une transaction précédente de ce lot n’est pas encore confirmée. Mettez-le en vente depuis sa propre page une fois celle-ci réglée.",
+      "skippedRetry": "La transaction s’est exécutée, mais cette mise en vente a été ignorée. Elle peut maintenant être faite depuis la page du prêt.",
+      "reviewAgain": "Examinez de nouveau l’annonce pour voir les montants actuels.",
+      "changedSinceReview": "Ce qu’implique cette annonce a changé après votre examen. Mettez-le en vente depuis sa propre page, qui affiche les conditions actuelles.",
+      "ownPageShape": "Seuls les prêts dont le principal et la garantie sont des tokens peuvent être mis en vente."
     }
   },
   "contractError": {

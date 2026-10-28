@@ -9,6 +9,8 @@ import type { PublicClient } from 'viem';
 import { TxNotSettledError } from '../contracts/ownReceipt';
 import {
   borrowerOfferGroups,
+  groupKey,
+  lenderOfferGroups,
   pullTotals,
   settleFailedSend,
   withHeldGroups,
@@ -87,14 +89,43 @@ describe('pullTotals', () => {
   });
 });
 
+describe('lenderOfferGroups', () => {
+  it('groups the lender side only, with the same exclusions', () => {
+    const groups = lenderOfferGroups([
+      row(1, 2, { role: 'lender' }),
+      row(3, 2, { role: 'lender' }),
+      row(4, 2),
+      row(5, 2, { role: 'lender', status: 'repaid' }),
+      row(6, 7, { role: 'lender', assetType: AssetType.ERC721 }),
+      row(8, 7, { role: 'lender' }),
+    ]);
+    expect(groups).toEqual([
+      { offerId: 2, role: 'lender', loans: [row(1, 2, { role: 'lender' }), row(3, 2, { role: 'lender' })] },
+    ]);
+  });
+});
+
 describe('withHeldGroups', () => {
   it('keeps a held group after it leaves the live list, and the held copy wins', () => {
     const live = borrowerOfferGroups([row(1, 2), row(3, 2), row(5, 9), row(6, 9)]);
-    const heldFour = { offerId: 4, loans: [row(7, 4), row(8, 4)] };
-    const heldNine = { offerId: 9, loans: [row(5, 9)] };
-    const shown = withHeldGroups(live, new Map([[4, heldFour], [9, heldNine]]));
+    const heldFour = { offerId: 4, role: 'borrower' as const, loans: [row(7, 4), row(8, 4)] };
+    const heldNine = { offerId: 9, role: 'borrower' as const, loans: [row(5, 9)] };
+    const shown = withHeldGroups(
+      live,
+      new Map([
+        [groupKey(heldFour), heldFour],
+        [groupKey(heldNine), heldNine],
+      ]),
+    );
     expect(shown.map((g) => g.offerId)).toEqual([2, 4, 9]);
     expect(shown[2]).toBe(heldNine);
+  });
+
+  it('keeps one card per side of the same offer', () => {
+    const live = borrowerOfferGroups([row(1, 2), row(3, 2)]);
+    const heldLender = { offerId: 2, role: 'lender' as const, loans: [row(5, 2, { role: 'lender' })] };
+    const shown = withHeldGroups(live, new Map([[groupKey(heldLender), heldLender]]));
+    expect(shown.map(groupKey)).toEqual(['borrower:2', 'lender:2']);
   });
 
   it('is the live list when nothing is held', () => {
@@ -123,8 +154,9 @@ describe('settleFailedSend', () => {
   });
 
   it('reads a mined hash back at its block, and a reverted one as a failure', async () => {
-    const mined = client(async () => ({ status: 'success', blockNumber: 42n }));
-    expect(await settleFailedSend(mined, HASH, new Error('timed out'))).toEqual({ block: 42n });
+    const logs = [{ logIndex: 0 }];
+    const mined = client(async () => ({ status: 'success', blockNumber: 42n, logs }));
+    expect(await settleFailedSend(mined, HASH, new Error('timed out'))).toEqual({ block: 42n, logs });
     const reverted = client(async () => ({ status: 'reverted', blockNumber: 42n }));
     expect(await settleFailedSend(reverted, HASH, new Error('timed out'))).toHaveProperty('failure');
   });

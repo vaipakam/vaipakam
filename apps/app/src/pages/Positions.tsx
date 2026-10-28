@@ -27,7 +27,16 @@ import { WindowedRowList } from '../lib/visibleWindow';
 import { assertRowActionStillValid } from '../contracts/preflights';
 import type { IndexedOffer } from '../data/indexer';
 import { BatchCloseOutCard } from '../components/BatchCloseOutCard';
-import { borrowerOfferGroups, withHeldGroups, type OfferGroup } from '../data/batchCloseOut';
+import { BatchSaleListingCard } from '../components/BatchSaleListingCard';
+import { loanSaleListingEnabled } from '../components/LoanSaleFlow';
+import { useMode } from '../app/ModeContext';
+import {
+  borrowerOfferGroups,
+  groupKey,
+  lenderOfferGroups,
+  withHeldGroups,
+  type OfferGroup,
+} from '../data/batchCloseOut';
 import type { PositionLoan } from '../data/hooks';
 
 function OfferRow({ offer }: { offer: IndexedOffer }) {
@@ -167,19 +176,21 @@ export function Positions() {
   // Scoped to the list key: a wallet or chain switch drops them.
   const [heldBatches, setHeldBatches] = useState<{
     key: string;
-    groups: ReadonlyMap<number, OfferGroup<PositionLoan>>;
+    groups: ReadonlyMap<string, OfferGroup<PositionLoan>>;
   }>({ key: listKey, groups: new Map() });
   const holdBatch = useCallback(
     (group: OfferGroup<PositionLoan>, held: boolean) =>
       setHeldBatches((prev) => {
         const groups = new Map(prev.key === listKey ? prev.groups : []);
-        if (held) groups.set(group.offerId, group);
-        else groups.delete(group.offerId);
+        if (held) groups.set(groupKey(group), group);
+        else groups.delete(groupKey(group));
         return { key: listKey, groups };
       }),
     [listKey],
   );
-  const heldGroups = heldBatches.key === listKey ? heldBatches.groups : new Map();
+  const heldGroups: ReadonlyMap<string, OfferGroup<PositionLoan>> =
+    heldBatches.key === listKey ? heldBatches.groups : new Map();
+  const { isAdvanced } = useMode();
   const { setOpen } = useModal();
   const loans = useMyLoansFull();
   const offers = useMyOffersFull();
@@ -200,14 +211,21 @@ export function Positions() {
   // outcomes (and the approval figure) of transactions that may have run
   // gone. While the lists are not both readable only the held cards
   // render, since the live groups are not known then.
+  //
+  // #126 slice 2 — listing a position for sale is an Advanced-mode tool on
+  // the loan page, and only on the networks where the listing route is
+  // live; the lender's batch follows both.
   const listsReadable = loans.data != null && offers.data != null;
+  const groupRows = listsReadable
+    ? loans.data!.rows.filter((l) => !claimKeys.has(`${l.loanId}-${l.role}`))
+    : [];
+  const saleBatchOffered = isAdvanced && loanSaleListingEnabled(readChain.chainId);
   const batchGroups = isConnected
     ? withHeldGroups(
-        borrowerOfferGroups(
-          listsReadable
-            ? loans.data!.rows.filter((l) => !claimKeys.has(`${l.loanId}-${l.role}`))
-            : [],
-        ),
+        [
+          ...borrowerOfferGroups(groupRows),
+          ...(saleBatchOffered ? lenderOfferGroups(groupRows) : []),
+        ],
         heldGroups,
       )
     : [];
@@ -229,15 +247,24 @@ export function Positions() {
       <p className="page-lede">{copy.positions.lede}</p>
 
       {/* #126 — the borrower's loans from one offer can be repaid or
-          closed early together. Outside the branches below on purpose
-          (see `batchGroups`). */}
-      {batchGroups.map((g) => (
-        <BatchCloseOutCard
-          key={`${listKey}|offer-${g.offerId}`}
-          group={g}
-          onHeldChange={holdBatch}
-        />
-      ))}
+          closed early together, and the lender's listed for sale
+          together. Outside the branches below on purpose (see
+          `batchGroups`). */}
+      {batchGroups.map((g) =>
+        g.role === 'borrower' ? (
+          <BatchCloseOutCard
+            key={`${listKey}|${groupKey(g)}`}
+            group={g}
+            onHeldChange={holdBatch}
+          />
+        ) : (
+          <BatchSaleListingCard
+            key={`${listKey}|${groupKey(g)}`}
+            group={g}
+            onHeldChange={holdBatch}
+          />
+        ),
+      )}
 
       {!isConnected ? (
         <EmptyState
