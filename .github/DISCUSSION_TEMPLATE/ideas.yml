@@ -1,0 +1,29 @@
+# Form for the Ideas discussion category (#131). GitHub matches this file to
+# the category by its slug, `ideas`.
+title: "[Idea] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Propose something that is not yet ready to be an Issue. An idea the
+        maintainers take up is moved to an Issue on the project board.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Who is affected and what they cannot do today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What you would change. Say what it means for funds, fees or a position's status, if it touches any of them.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false

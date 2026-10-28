@@ -258,9 +258,10 @@ PYEOF
 
 echo "  → $FRONTEND_OUT_FILE"
 
-# Provenance stamp — same shape as `_source.json` written by
-# exportFrontendAbis.sh so a frontend bundle can be correlated to a
-# specific contracts state across both surfaces.
+# Provenance stamp, so a frontend bundle's deployments can be correlated to
+# a specific contracts state. (The ABI export's `_source.json` no longer
+# carries a commit — #2343 — because the pre-deploy gate compares every
+# committed ABI with the build; a deployment record has no such check.)
 # HEAD moved between the snapshot and the stamp — the pair would be
 # inconsistent, so say so rather than publish a confident wrong answer.
 if [ "$(git -C "$CONTRACTS_DIR" rev-parse HEAD 2>/dev/null || echo 'unknown')" \

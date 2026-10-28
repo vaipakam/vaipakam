@@ -9,3 +9,6 @@ contact_links:
   - name: Documentation question
     url: https://vaipakam.com/userguide
     about: User-guide answers most operational questions. File an Issue only if the docs are wrong or missing.
+  - name: Ask a question or propose an idea
+    url: https://github.com/vaipakam/vaipakam/discussions
+    about: How-to questions go in Discussions → Q&A, early proposals in Discussions → Ideas. Issues are for bugs and accepted work.

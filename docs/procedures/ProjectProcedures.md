@@ -1271,7 +1271,7 @@ the parent of both repos).
 
 ```bash
 cd contracts
-nice -n -10 ionice -c 2 -n 0 forge build   # always before exporting
+nice -n -10 ionice -c 2 -n 0 forge build --skip test   # always before exporting
 
 # Frontend / Workers — writes to packages/contracts/src/abis/
 bash script/exportFrontendAbis.sh
@@ -1280,8 +1280,11 @@ bash script/exportFrontendAbis.sh
 KEEPER_BOT_DIR=../../vaipakam-keeper-bot bash script/exportAbis.sh
 ```
 
-Both write `_source.json` with the upstream commit hash so the
-correlation is recorded.
+The keeper-bot export writes `_source.json` with the upstream commit
+hash, so a bot release can be correlated with a contracts state. The
+frontend export's `_source.json` lists the exported facets only (#2343):
+in this repository the commit that last changed the bundle is its
+provenance.
 
 ### 9.6 Deploy scripts
 
