@@ -1,7 +1,0 @@
-## Thread — Two read views bounded by the rows they read (PR #2932)
-
-Two views could grow past what a node will serve in one call (#2751). The per-pair offer ranking the Rate Desk reads returned the whole bucket for a pair, so enough cheap offers in one pair could push the read past an RPC's gas or payload limit and blank the book. It now takes an offset and a limit, and still reports the bucket's full size in the same call. The Rate Desk reads one page up to its existing 600-offer cap and falls back to the indexer when the bucket is larger, as before; it no longer needs a separate size probe that the bucket could outgrow between the two reads.
-
-The match-eligible loan view, which the internal-match keeper pages through, stopped only once it had filled a page. With a band few loans fall in, one call walked the whole active-loan list with an oracle-backed loan-to-value read per row. Its page size now bounds the rows it reads, so a page can come back empty with the scan unfinished; the end is when the returned cursor stops advancing. The reference keeper bot is updated to stop on that, not on an empty page.
-
-Both views compare before they add, so a caller asking for "everything" with the largest possible limit reads to the end instead of failing. The other filtered views that skip an offset of matching rows by walking the list (by asset, by status, the dashboard pages) have the same shape and are tracked in #2930; the id-range loan views are #1832. Closes #2751.

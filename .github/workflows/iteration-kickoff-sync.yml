@@ -3,7 +3,7 @@
 # Why this exists:
 # - Discipline rules learned mid-iteration get saved to agent memory
 #   (`~/.claude/projects/.../memory/`) but don't automatically reach
-#   `docs/internal/ProjectProcedures.md` — the public-facing handbook
+#   `docs/procedures/ProjectProcedures.md` — the public-facing handbook
 #   contributors / auditors read.
 # - The sync ritual closes that gap. To avoid relying on maintainer
 #   memory ("did I do the sync this Monday?"), this workflow files the
@@ -129,9 +129,9 @@ jobs:
 
             ## Checklist
 
-            - [ ] Walk the agent-memory files modified since the previous iteration's sync. The ritual + sentinel-file convention is documented in [`ProjectProcedures.md §5.7`](https://github.com/vaipakam/vaipakam/blob/main/docs/internal/ProjectProcedures.md#57-iteration-kickoff-sync--fold-rules-into-the-handbook).
+            - [ ] Walk the agent-memory files modified since the previous iteration's sync. The ritual + sentinel-file convention is documented in [`ProjectProcedures.md §5.7`](https://github.com/vaipakam/vaipakam/blob/main/docs/procedures/ProjectProcedures.md#57-iteration-kickoff-sync--fold-rules-into-the-handbook).
             - [ ] Classify each modified memory note:
-              - **Project rule** (operator / contributor / auditor needs to know it) → fold into the appropriate `docs/internal/ProjectProcedures.md` section.
+              - **Project rule** (operator / contributor / auditor needs to know it) → fold into the appropriate `docs/procedures/ProjectProcedures.md` section.
               - **Agent-specific personal discipline** (e.g. "I tend to forget X") → stays in memory only.
               - **Already covered in ProjectProcedures.md** → no action.
             - [ ] Land the sync as a single docs PR with title pattern: `docs(handbook): iteration close-out sync — fold rules from <date> through <date>`.
@@ -141,7 +141,7 @@ jobs:
 
             ## References
 
-            - Discipline: [`ProjectProcedures.md §5.7`](https://github.com/vaipakam/vaipakam/blob/main/docs/internal/ProjectProcedures.md)
+            - Discipline: [`ProjectProcedures.md §5.7`](https://github.com/vaipakam/vaipakam/blob/main/docs/procedures/ProjectProcedures.md)
             - Original Issue: [#107](https://github.com/vaipakam/vaipakam/issues/107)
             - Memory directory (machine-local): `~/.claude/projects/-home-pranav-Codes-Vaipakam-vaipakam/memory/`
 
@@ -422,7 +422,7 @@ jobs:
               '>' \
               "> - [Project iteration settings](https://github.com/users/${GITHUB_REPOSITORY_OWNER}/projects/1/settings) → pick the relevant field → **+ Add iteration**." \
               '>' \
-              "> The runway target per [\`ProjectProcedures.md\` §5.7](https://github.com/${GITHUB_REPOSITORY}/blob/main/docs/internal/ProjectProcedures.md#57-iteration-kickoff-sync--fold-rules-into-the-handbook) is **~6 future iterations** (Iteration cadence) / **~4 future sprints** (Sprint cadence) — top this up while you're here so the next several Monday runs don't trip the same warning." \
+              "> The runway target per [\`ProjectProcedures.md\` §5.7](https://github.com/${GITHUB_REPOSITORY}/blob/main/docs/procedures/ProjectProcedures.md#57-iteration-kickoff-sync--fold-rules-into-the-handbook) is **~6 future iterations** (Iteration cadence) / **~4 future sprints** (Sprint cadence) — top this up while you're here so the next several Monday runs don't trip the same warning." \
               '>' \
               "> Auto-creating iterations from this workflow is intentionally NOT done: the public GraphQL surface (\`updateProjectV2Field\`) does a destructive replace that orphans every card's iteration assignment, and the internal \"memex\" REST endpoint the UI uses for the safe ID-keyed merge is not exposed to API clients." \
               '>' \

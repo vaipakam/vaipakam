@@ -3411,7 +3411,7 @@ The required functional safeguards are:
 #### Positive-flow coverage map
 
 Implementation-specific test inventories, commands, and historical verification
-results are preserved in the [internal implementation notes](../internal/FunctionalSpecImplementationNotes.md).
+results are preserved in the [implementation notes](../procedures/FunctionalSpecImplementationNotes.md).
 The behavior in this specification remains the test oracle; the inventory is
 not evidence that every requirement has been verified on a live deployment.
 

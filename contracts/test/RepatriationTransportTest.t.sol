@@ -377,6 +377,33 @@ contract RepatriationTransportTest is SetupTest {
         _repat().authorizeRepatriation(CHAIN_ARB, 60 ether);
     }
 
+    /// @notice #2960 — the lens reads BOTH ends of a lane by the same rule
+    ///         the bounds enforce: the inbound view is the bucket this chain
+    ///         RECEIVES from a chain (a mirror's view of Base's sends), the
+    ///         outbound one what it SENDS there. A lane the pool does not
+    ///         carry is unreadable on both, never "unlimited".
+    function test_2960_LensReadsBothLaneEnds() public {
+        pool.setInbound(SEL_ARB, true, 30 ether);
+        pool.setOutbound(SEL_ARB, true, 70 ether);
+        (bool rIn, bool lIn, uint256 tIn, uint256 cIn) = _rlens().getRemitInboundLaneBucket(CHAIN_ARB);
+        assertTrue(rIn && lIn, "inbound readable and limited");
+        assertEq(tIn, 30 ether, "inbound tokens");
+        assertEq(cIn, 30 ether, "inbound capacity");
+        (bool rOut, bool lOut, uint256 tOut, uint256 cOut) = _rlens().getRemitLaneBucket(CHAIN_ARB);
+        assertTrue(rOut && lOut, "outbound readable and limited");
+        assertEq(tOut, 70 ether, "outbound tokens: the other bucket");
+        assertEq(cOut, 70 ether);
+
+        pool.setSupported(SEL_ARB, false);
+        (rIn, lIn, tIn, cIn) = _rlens().getRemitInboundLaneBucket(CHAIN_ARB);
+        assertFalse(rIn || lIn, "an unsupported lane is unreadable, not unlimited");
+        assertEq(tIn + cIn, 0);
+        _repat().setRepatriationTokenAdminRegistry(address(0));
+        pool.setSupported(SEL_ARB, true);
+        (rIn, , , ) = _rlens().getRemitInboundLaneBucket(CHAIN_ARB);
+        assertFalse(rIn, "no registry: unreadable");
+    }
+
     function test_Authorize_LaneBoundIsPerDestination() public {
         // Codex #1618 r2 — capacities may diverge per lane; the bound
         // read must be the DESTINATION lane's, not any global figure.

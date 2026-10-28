@@ -8,7 +8,7 @@
 # the library's own audit + CI already covers, and the findings don't
 # reach any Vaipakam-deployed surface.
 #
-# See `docs/internal/ProjectProcedures.md` §7 for the wider
+# See `docs/procedures/ProjectProcedures.md` §7 for the wider
 # static-analysis suppression convention.
 
 paths-ignore:

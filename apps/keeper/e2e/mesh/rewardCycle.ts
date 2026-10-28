@@ -102,7 +102,7 @@ function onlyEvent(events: DecodedEvent[], name: string): DecodedEvent {
 
 /** Steps 1–6 of the header. Throws, naming the step, when one does not land. */
 export async function remitOneDayToMirror(m: MeshScenario, k: KeeperHarness): Promise<RemittedDelivery> {
-  const { base, mirror, relay } = m;
+  const { base, mirror } = m;
 
   // 1. Interest on the mirror.
   await openLoan(mirror, { lender: 'lender', borrower: 'borrower', principalWeth: '1', collateralTliq: '5', rateBps: 1000, days: 30 });
@@ -114,6 +114,20 @@ export async function remitOneDayToMirror(m: MeshScenario, k: KeeperHarness): Pr
     if (today !== 2) throw new Error(`chain ${sc.chain.id} is on reward day ${today}, not 2`);
   }
 
+  // 3–4. The keeper's day-close pass closes, finalizes and broadcasts them.
+  const dayCloseRuns = await closeAndFinalizeDays(m, k);
+
+  return deliverDayOne(m, k, dayCloseRuns);
+}
+
+/**
+ * Steps 3–4 of the header, on a mesh whose chains are both on reward day 2:
+ * the keeper's day-close pass closes days 0 and 1 on both chains, finalizes
+ * them on Base, broadcasts each, and confirms them on the mirror. Throws,
+ * naming the step, when one does not land.
+ */
+export async function closeAndFinalizeDays(m: MeshScenario, k: KeeperHarness): Promise<DayCloseRuns> {
+  const { base, mirror, relay } = m;
   // 3. The keeper's day-close pass closes days 0 and 1 on both chains: the
   // mirror's reports go to Base over the lane; Base records its own and, with
   // the mirror's not yet in, finalizes nothing.
@@ -171,7 +185,12 @@ export async function remitOneDayToMirror(m: MeshScenario, k: KeeperHarness): Pr
     broadcastsRelayed: broadcasts.length,
     mirrorKnows,
   };
+  return dayCloseRuns;
+}
 
+/** Steps 5–6 of the header: the keeper remits day 1 and the relay lands it. */
+async function deliverDayOne(m: MeshScenario, k: KeeperHarness, dayCloseRuns: DayCloseRuns): Promise<RemittedDelivery> {
+  const { base, mirror, relay } = m;
   // 5. The keeper's remit pass, as the scheduler runs it.
   await m.syncClock();
   const baseVpfi = m.fixture.vpfiToken;

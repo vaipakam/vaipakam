@@ -3,6 +3,15 @@ src = "src"
 out = "out"
 libs = ["lib"]
 solc_version = '0.8.29'
+# #2973 — pin the EVM target. Unpinned, forge passes ITS OWN default to solc
+# (1.5.1 -> prague, 1.8.3 -> osaka, `stable` -> whatever is current), so the
+# bytecode, its metadata hash and the CREATE2 address of LaunchGate depended on
+# which forge built it rather than on the commit. Prague is the newest fork that
+# EVERY deploy chain runs (Ethereum, Base, Optimism, Arbitrum, Polygon, BNB and
+# their testnets); solc 0.8.29 emits no osaka-only opcode, so nothing is lost.
+# Raise it only once every chain in the deploy set has activated the newer fork.
+# Restated in every profile below that restates solc_version.
+evm_version = 'prague'
 viaIR = true
 optimizer = true
 optimizer_runs = 200
@@ -87,6 +96,7 @@ src = "src"
 out = "out"
 libs = ["lib"]
 solc_version = '0.8.29'
+evm_version = 'prague' # #2973 — same pin as [profile.default]
 viaIR = true
 optimizer = true
 optimizer_runs = 200
@@ -160,7 +170,7 @@ fs_permissions = [
 #   - test/token/** (1 token-specific test)
 #
 # Behavioural parity: all compile settings (viaIR, optimizer, optimizer_runs,
-# solc_version) are identical to `[profile.default]` so the bytecode this
+# solc_version, evm_version) are identical to `[profile.default]` so the bytecode this
 # profile produces is bit-identical to what the operator runs locally.
 # Only the file-skip list differs.
 [profile.cifast]
@@ -168,6 +178,7 @@ src = "src"
 out = "out"
 libs = ["lib"]
 solc_version = '0.8.29'
+evm_version = 'prague' # #2973 — same pin as [profile.default]
 viaIR = true
 optimizer = true
 optimizer_runs = 200

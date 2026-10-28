@@ -207,6 +207,8 @@ contract RewardRemitDestinationRemovalTest is SetupTest {
         assertEq(bound, 5, "today included");
         assertEq(cursor, 4, "walked to the first unfinalized day");
 
+        assertEq(rlens.getRemitOpenDays(CHAIN_ARB).length, 0, "#2960: an abandoned day is no longer owed a part");
+        assertEq(rlens.getRemitOpenDays(CHAIN_OP).length, 1, "#2960: Optimism's partly sent day stays listed");
         assertEq(uint8(_status(CHAIN_ARB, 1)), uint8(LibRemitDayLedger.RemitDayStatus.Abandoned), "abandoned");
         assertEq(uint8(_status(CHAIN_OP, 1)), uint8(LibRemitDayLedger.RemitDayStatus.Closeable), "Optimism unchanged");
         vm.expectRevert();

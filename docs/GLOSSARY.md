@@ -195,7 +195,7 @@ or upgrade. Every cross-chain contract carries this lever.
 
 ## H
 
-**Handbook** — `docs/internal/ProjectProcedures.md`. The operator
+**Handbook** — `docs/procedures/ProjectProcedures.md`. The operator
 handbook covering repository topology, git procedures, PR workflow,
 post-merge sweep, etc.
 
