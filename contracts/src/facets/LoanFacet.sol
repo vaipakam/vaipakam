@@ -21,6 +21,8 @@ import {LibERC721} from "../libraries/LibERC721.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
+import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
+import {LibCadenceAdmission} from "../libraries/LibCadenceAdmission.sol";
 
 
 /**
@@ -507,6 +509,19 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             ctx.lendingAssetLiquidity,
             ctx.collateralLiquidity
         );
+
+        // #3025 — the loan being opened must be one the cadence rule admits
+        // NOW, not only when its offer was posted. The switch, the threshold
+        // and either leg's liquidity can all have moved since, so an offer the
+        // rule admitted then (a multi-year `None` offer posted while periodic
+        // interest was off, a `Monthly` offer whose collateral has since lost
+        // its liquidity) is refused here with the rule's own error until its
+        // creator re-posts it. Every origination from an offer (accept, every
+        // match path, intent fills, refinance and offset acceptances) reaches
+        // this point, so this one call covers them all. The lender-sale
+        // vehicle is exempt, as at create: it carries the live loan's cadence
+        // and opens no new position.
+        if (!ctx.isLenderSaleVehicle) _requireCadenceAdmitted(s.loans[ctx.loanId]);
 
         // Reverse-index the loan for both counterparties. Indexers and
         // frontends rely on these arrays to enumerate a user's loans
@@ -1072,6 +1087,27 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         }
     }
 
+    /// @dev #3025 — re-admits the new loan's cadence by the one rule offer
+    ///      creation and mutation apply ({LibCadenceAdmission}, through the
+    ///      same self-call to its single copy on OfferPreviewFacet), on the
+    ///      loan's own terms as just written: the funded principal, the
+    ///      liquidity classes read in this transaction, the live switch and
+    ///      threshold. A refusal reverts the origination unchanged.
+    function _requireCadenceAdmitted(LibVaipakam.Loan storage loan) private view {
+        OfferPreviewFacet(address(this)).requireCadenceAdmitted(
+            LibCadenceAdmission.Terms({
+                lendingAsset: loan.principalAsset,
+                amount: loan.principal,
+                durationDays: uint256(loan.durationDays),
+                cadence: loan.periodicInterestCadence,
+                assetType: loan.assetType,
+                collateralAssetType: loan.collateralAssetType,
+                principalLiquidity: loan.principalLiquidity,
+                collateralLiquidity: loan.collateralLiquidity
+            })
+        );
+    }
+
     function _copyAssetFields(
         LibVaipakam.Loan storage loan,
         LibVaipakam.Offer storage offer,
@@ -1122,10 +1158,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // on `postPrepayListing` for the loan.
         loan.allowsPrepayListing = offer.allowsPrepayListing;
         // T-034 — snapshot the lender's chosen Periodic Interest Payment
-        // cadence onto the loan. Offer-level validation in
-        // `OfferFacet._validatePeriodicCadence` already gated illegal
-        // values (Filters 0/1/2 + master kill-switch); we inherit
-        // verbatim so the loan's terms are immutable for its lifetime.
+        // cadence onto the loan, verbatim, so the loan's terms are immutable
+        // for its lifetime. The cadence rule admitted it when the offer was
+        // posted, and `_finalizeLoanCreation` re-admits it on the loan's own
+        // terms before the loan is indexed (#3025).
         // `lastPeriodicInterestSettledAt` initialised to the loan's
         // start time so the first checkpoint lands exactly
         // `intervalDays(cadence)` later.
