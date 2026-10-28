@@ -1,4 +1,4 @@
-## Thread — The lender exit chooser asks the contract (PR #<n>)
+## Thread — The lender exit chooser asks the contract (PR #3024)
 
 The lender's "your options" card in the app now takes its answer from the
 contract's own sale verdict (PR #3008) instead of working it out. Each sale row
