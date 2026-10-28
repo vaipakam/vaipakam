@@ -24,7 +24,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { CircleCheck, LoaderCircle, Search } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { encodeFunctionData, type Address } from 'viem';
@@ -113,7 +113,7 @@ import {
   captureTxError,
 } from '../lib/errors';
 import { copy } from '../content/copy';
-import { ConsentLabel } from './ConsentLabel';
+import { FlowDoneCard, ReviewFooter } from './FlowFinish';
 import { LifecycleTermsList } from './LifecycleTermsList';
 import { TokenScreenBanner } from './TokenScreenBanner';
 import {
@@ -159,10 +159,9 @@ import { Checklist, allChecksPass, type CheckItem } from './Checklist';
 import { ReviewReceipt, type ReceiptData } from './ReviewReceipt';
 import { EmptyState } from './EmptyState';
 import { ConnectButton } from './ConnectButton';
-import { StepNav } from './StepNav';
+import { StepNav, type StepDef } from './StepNav';
 import { consentCheck, useEligibility } from './useEligibility';
 import { useReviewConsent } from '../hooks/useReviewConsent';
-import { ConsentWithdrawnNote } from './ConsentWithdrawnNote';
 import { idleAware } from '../lib/idle';
 
 type Side = 'lender' | 'borrower';
@@ -896,33 +895,23 @@ export function OfferFlow({ side }: { side: Side }) {
   }
 
   // ---- Step plumbing ----------------------------------------------------
-  const stepLabels =
+  // The steps this mode walks, each with its label. `terms` is post-only:
+  // an accept goes from the chosen offer straight to its review.
+  const flowSteps: readonly StepDef<FlowStep>[] =
     mode === 'post'
-      ? ([
-          copy.offerFlow.steps.details,
-          copy.offerFlow.steps.offers,
-          copy.offerFlow.steps.terms,
-          copy.offerFlow.steps.review,
-          copy.offerFlow.steps.done,
-        ] as const)
-      : ([
-          copy.offerFlow.steps.details,
-          copy.offerFlow.steps.offers,
-          copy.offerFlow.steps.review,
-          copy.offerFlow.steps.done,
-        ] as const);
-  const stepIndex =
-    step === 'details'
-      ? 0
-      : step === 'choose'
-        ? 1
-        : step === 'terms'
-          ? 2
-          : step === 'review'
-            ? mode === 'post'
-              ? 3
-              : 2
-            : stepLabels.length - 1;
+      ? [
+          { id: 'details', label: copy.offerFlow.steps.details },
+          { id: 'choose', label: copy.offerFlow.steps.offers },
+          { id: 'terms', label: copy.offerFlow.steps.terms },
+          { id: 'review', label: copy.offerFlow.steps.review },
+          { id: 'done', label: copy.offerFlow.steps.done },
+        ]
+      : [
+          { id: 'details', label: copy.offerFlow.steps.details },
+          { id: 'choose', label: copy.offerFlow.steps.offers },
+          { id: 'review', label: copy.offerFlow.steps.review },
+          { id: 'done', label: copy.offerFlow.steps.done },
+        ];
 
   // Strict decimal gating — Number('1e18') > 0 and Number('abc') < 0
   // checks let inputs through that the exact parse / BigInt later refuse.
@@ -2427,7 +2416,7 @@ export function OfferFlow({ side }: { side: Side }) {
     <div>
       <h1 className="page-title">{text.title}</h1>
       <p className="page-lede">{text.lede}</p>
-      <StepNav steps={stepLabels} current={stepIndex} />
+      <StepNav steps={flowSteps} current={step} />
 
       {deepLinkNotice && step === 'details' ? (
         <div className="banner banner-warn" role="alert">
@@ -3052,82 +3041,37 @@ export function OfferFlow({ side }: { side: Side }) {
                 }}
               />
             ) : null}
-            <label
-              className="cluster"
-              style={{ marginTop: 16, fontSize: '0.9rem', alignItems: 'flex-start' }}
-            >
-              <input
-                type="checkbox"
-                checked={consent.given}
-                onChange={(e) => consent.set(e.target.checked)}
-                style={{ marginTop: 3 }}
-              />
-              <ConsentLabel />
-            </label>
-            <ConsentWithdrawnNote consent={consent} />
-            {submitError ? (
-              <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
-                <span className="banner-body">{submitError}</span>
-              </div>
-            ) : null}
-            <div className="cluster" style={{ marginTop: 16 }}>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setStep(mode === 'post' ? 'terms' : 'choose')}
-                disabled={submitting}
-              >
-                {copy.offerFlow.back}
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                style={{ flex: 1 }}
-                disabled={!canSign}
-                onClick={() => void submit()}
-              >
-                {submitting ? (
-                  <LoaderCircle className="spin" aria-hidden size={18} />
-                ) : null}
-                {progress !== null
-                  ? progress.current === 0
-                    ? copy.offerFlow.waitingForWallet
-                    : progress.kind === 'sign'
-                      ? copy.signing.phaseSign(progress.current, progress.total)
-                      : progress.kind === 'permit'
-                        ? copy.signing.phasePermit(progress.current, progress.total)
-                        : progress.kind === 'approve'
-                          ? copy.signing.phaseApprove(progress.current, progress.total)
-                          : copy.signing.phaseSend(progress.current, progress.total)
-                  : mode === 'accept'
-                    ? text.acceptSubmitLabel
-                    : text.submitLabel}
-              </button>
-            </div>
+            <ReviewFooter
+              consent={consent}
+              error={submitError}
+              backLabel={copy.offerFlow.back}
+              onBack={() => setStep(mode === 'post' ? 'terms' : 'choose')}
+              busy={submitting}
+              canSign={canSign}
+              onSubmit={() => void submit()}
+              progress={progress}
+              submitLabel={
+                mode === 'accept' ? text.acceptSubmitLabel : text.submitLabel
+              }
+              waitingLabel={copy.offerFlow.waitingForWallet}
+            />
           </div>
         </div>
       ) : null}
 
       {step === 'done' ? (
-        <div className="card" style={{ textAlign: 'center' }}>
-          <CircleCheck
-            aria-hidden
-            size={40}
-            style={{ color: 'var(--ok)', marginBottom: 8 }}
-          />
-          <h2>{doneTitle}</h2>
-          <p className="muted">{doneBody}</p>
-          {txHash && walletChain ? (
-            <p className="muted">
-              <a
-                href={`${walletChain.blockExplorer}/tx/${txHash}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {copy.offerFlow.viewTransaction}
-              </a>
-            </p>
-          ) : null}
+        <FlowDoneCard
+          title={doneTitle}
+          body={doneBody}
+          tx={
+            txHash && walletChain
+              ? {
+                  href: `${walletChain.blockExplorer}/tx/${txHash}`,
+                  label: copy.offerFlow.viewTransaction,
+                }
+              : null
+          }
+        >
           <div
             className="cluster"
             style={{ justifyContent: 'center', marginTop: 4 }}
@@ -3167,7 +3111,7 @@ export function OfferFlow({ side }: { side: Side }) {
               </button>
             ) : null}
           </div>
-        </div>
+        </FlowDoneCard>
       ) : null}
     </div>
   );
