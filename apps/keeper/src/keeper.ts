@@ -898,7 +898,8 @@ export type PassArmingFlag =
   | 'REWARD_CLOSE_OUT_ENABLED'
   | 'REWARD_ZEROED_DAY_ENABLED'
   | 'REWARD_RETURN_TRANSPORT_ENABLED'
-  | 'REWARD_ENTRY_SETTLE_ENABLED';
+  | 'REWARD_ENTRY_SETTLE_ENABLED'
+  | 'PROTOCOL_UPKEEP_ENABLED';
 
 /**
  * Describe a rejected flag value WITHOUT echoing it.

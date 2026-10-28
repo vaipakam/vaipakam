@@ -404,7 +404,8 @@ journalctl -u vaipakam-keeper -f
    `REWARD_DAY_CLOSE_ENABLED` (`rewardDayClose`, every 15 minutes from :10),
    `REWARD_CLOSE_OUT_ENABLED` (`rewardCloseOut`, every 15 minutes from :00),
    `REWARD_ZEROED_DAY_ENABLED` (`rewardZeroedDay`, every 15 minutes from :09),
-   `REWARD_RETURN_TRANSPORT_ENABLED` (`rewardReturnTransport`, hourly at :29), and
+   `REWARD_RETURN_TRANSPORT_ENABLED` (`rewardReturnTransport`, hourly at :29),
+   `PROTOCOL_UPKEEP_ENABLED` (`protocolUpkeep`, hourly at :59), and
    `DISCOUNT_PATH_CHAIN_IDS` (a list of chain ids, not `true`: the flash-loan
    branch of the liquidator, armed per chain by
    [`FlashLoanLiquidatorRollout.md`](FlashLoanLiquidatorRollout.md) only; the
