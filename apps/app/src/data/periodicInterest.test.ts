@@ -130,6 +130,20 @@ describe('periodicView', () => {
     expect(periodicView(facts({ ...due, paused: 'fail' }))).toMatchObject({ route: 'unknown' });
   });
 
+  it('states whether settlement runs in every phase, not only once due (Codex #3030 r1)', () => {
+    for (const time of [END - 1, END]) {
+      expect(periodicView(facts({ time }))).toMatchObject({ settlement: 'live', route: undefined });
+      expect(periodicView(facts({ time, enabled: false }))).toMatchObject({
+        settlement: 'off',
+        route: undefined,
+      });
+      expect(periodicView(facts({ time, paused: true }))).toMatchObject({ settlement: 'paused' });
+      expect(periodicView(facts({ time, enabled: 'fail' }))).toMatchObject({
+        settlement: 'unknown',
+      });
+    }
+  });
+
   it('carries the contract’s figures through unchanged', () => {
     const v = periodicView(facts());
     expect(v).toMatchObject({

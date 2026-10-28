@@ -34,6 +34,7 @@ import {
   subscribeRailHealth,
 } from './railHealth';
 import { PATCHED_ROOTS } from './receiptSync';
+import { TIP_ROOTS } from './tipRoots';
 import { bumpClaimVerdictEpoch } from '../data/claimVerdictCache';
 import {
   scopeInvalidationRoots,
@@ -235,28 +236,13 @@ export const STRETCHED_ROOTS: readonly string[] = [
   'deskAmendSource',
   // tipAware roots (indexer rail + chain WS gated) — refetched here on
   // focus too; they mount only on their detail/desk surfaces, so the
-  // `refetchType: 'active'` predicate keeps the cost page-bounded.
-  'offer',
-  'loan',
-  // Borrower listing-hold probe (#1511 r2) — tipAware-stretched on the
-  // detail page, so a returning tab must refetch it here or an expiry
-  // / cancel / cleanup that happened while hidden stays stale for up
-  // to the stretched interval.
-  'saleListingHold',
-  'loanLive',
-  'loanLiveStatus',
-  'loanRisk',
-  'positionOwners',
-  'offerLinkedLoan',
-  'loanSalePending',
-  'refinancePending',
-  'deskPreviewMatch',
-  'graceBannerTerms',
-  // The strip query re-runs on invalidation even when its cursor-
-  // snapshot key is unchanged — a hidden tab missed its block nudges,
-  // so the return path must force one scan or a ghost row can outlive
-  // the focus refetch of activeOffers (Codex #1228 r3).
-  'bookGhostStrip',
+  // `refetchType: 'active'` predicate keeps the cost page-bounded. Taken
+  // whole from `TIP_ROOTS`, the one list `tipAware` accepts, so a
+  // stretched root cannot be missed here (a hidden tab missed its block
+  // nudges; the return path must force one read). That includes the
+  // shared-book ghost strip, which re-runs on invalidation even when its
+  // cursor-snapshot key is unchanged (Codex #1228 r3).
+  ...TIP_ROOTS,
 ];
 
 const NUDGE_DEBOUNCE_MS = 300;

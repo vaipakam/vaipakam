@@ -1238,6 +1238,7 @@
       "payHintBorrower": "Interest you pay on this loan during the period counts toward it. If anything is still owed when the grace ends, anyone may settle the period by selling enough of your collateral to cover it.",
       "payHintLender": "If anything is still owed when the grace ends, anyone may settle the period by selling enough of the borrower’s collateral to cover it. You are paid up to what is owed; whatever a sale cannot cover stays owed on the loan.",
       "payHintViewer": "If anything is still owed when the grace ends, anyone may settle the period by selling enough of the borrower’s collateral to cover it.",
+      "payCountsBorrower": "Interest you pay on this loan during the period counts toward it.",
       "routeRecord": "This period is fully paid. Recording it starts the next period. It moves no funds, and anyone may record it, so a keeper service may do it first.",
       "recordButton": "Record this period",
       "recording": "Recording…",

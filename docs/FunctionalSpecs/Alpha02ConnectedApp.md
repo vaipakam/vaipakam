@@ -4150,9 +4150,13 @@ Its intended behaviour, as the test oracle for this surface:
   Where the deployment has periodic settlement switched off, the page says
   so and that no period can be settled, nor collateral sold for one, while
   that lasts; the existing loan keeps its schedule, so the disclosure
-  replaces any action rather than the period disappearing. A paused
-  protocol is stated the same way, and a setting the page could not read
-  is stated as unread rather than assumed. A loan with no schedule shows
+  replaces any action rather than the period disappearing. It says this in
+  every phase of the period, not only once the grace is over, and while it
+  holds the page does not warn the borrower of a sale that cannot happen,
+  saying only that payments made during the period count toward it. A
+  paused protocol is stated the same way in every phase, beside the rule
+  that applies once settlement resumes, and a setting the page could not
+  read is stated as unread rather than assumed. A loan with no schedule shows
   nothing, and a schedule the page could not read is said to be unread.
 - The offer form lets the poster choose when the loan's interest is paid
   (#2524): once, when the loan is repaid, or every month, quarter, six

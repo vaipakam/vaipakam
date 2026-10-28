@@ -301,7 +301,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const nftOwners = useQuery({
     queryKey: ['positionOwners', readChain.chainId, loan.data?.loanId],
     enabled: Boolean(loan.data) && Boolean(readClient),
-    refetchInterval: tipAware(60_000, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('positionOwners', 60_000, Boolean(readChain.wsUrl)),
     queryFn: async () => {
       const row = loan.data!;
       // Tri-state per side: an address (live owner), 'burned' (the
@@ -442,7 +442,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     queryKey: ['loanLiveStatus', readChain.chainId, loan.data?.loanId],
     enabled: liveStatusEnabled,
     staleTime: 15_000,
-    refetchInterval: tipAware(30_000, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('loanLiveStatus', 30_000, Boolean(readChain.wsUrl)),
     // Returns the STATUS plus the interest mode: the same single
     // getLoanDetails call answers both, and the early-repay chooser
     // needs the mode in Basic mode too (the loanLive strategy read is
@@ -1015,7 +1015,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     queryKey: ['loanLive', readChain.chainId, loan.data?.loanId],
     enabled: loanLiveEnabled,
     staleTime: 30_000,
-    refetchInterval: tipAware(60_000, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('loanLive', 60_000, Boolean(readChain.wsUrl)),
     queryFn: async () => {
       const [live, calcDue, latestBlock, saleLock] = await Promise.all([
         readLoanLive(readClient!, readChain.diamondAddress, loan.data!.loanId),
@@ -1186,7 +1186,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     queryKey: ['graceBannerTerms', readChain.chainId, loan.data?.loanId],
     enabled: bannerTermsEnabled,
     staleTime: 30_000,
-    refetchInterval: tipAware(60_000, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('graceBannerTerms', 60_000, Boolean(readChain.wsUrl)),
     // chainNow rides along (Codex #1166 r2): the contracts gate on
     // block.timestamp, so the banner must not trust a skewed device
     // clock. fetchedAtLocal lets the countdown advance between

@@ -117,7 +117,7 @@ export function useMaxWithdrawable(args: {
     enabled: args.enabled && Boolean(publicClient) && args.loanId !== undefined && Boolean(args.collateralAsset),
     // Collateral and debt prices move; keep the ceiling fresh while the
     // page is open rather than letting a borrower act on an old figure.
-    refetchInterval: tipAware(30_000, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('maxWithdrawable', 30_000, Boolean(readChain.wsUrl)),
     queryFn: async (): Promise<MaxWithdrawableRead> =>
       readMaxWithdrawable({
         publicClient: publicClient!,

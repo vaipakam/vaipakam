@@ -1190,6 +1190,7 @@
       "payHintBorrower": "Los intereses que pagues en este préstamo durante el periodo cuentan para él. Si aún queda algo pendiente cuando termine la gracia, cualquiera puede liquidar el periodo vendiendo suficiente de tu garantía para cubrirlo.",
       "payHintLender": "Si aún queda algo pendiente cuando termine la gracia, cualquiera puede liquidar el periodo vendiendo suficiente garantía del prestatario para cubrirlo. Recibes hasta lo que se debe; lo que una venta no cubra sigue debiéndose en el préstamo.",
       "payHintViewer": "Si aún queda algo pendiente cuando termine la gracia, cualquiera puede liquidar el periodo vendiendo suficiente garantía del prestatario para cubrirlo.",
+      "payCountsBorrower": "Los intereses que pagues en este préstamo durante el periodo cuentan para él.",
       "routeRecord": "Este periodo está pagado por completo. Registrarlo inicia el siguiente periodo. No mueve fondos y cualquiera puede registrarlo, así que un servicio keeper puede hacerlo antes.",
       "recordButton": "Registrar este periodo",
       "recording": "Registrando…",

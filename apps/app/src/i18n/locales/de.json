@@ -1190,6 +1190,7 @@
       "payHintBorrower": "Zinsen, die Sie während der Periode auf diesen Kredit zahlen, werden ihr angerechnet. Ist bei Ende der Nachfrist noch etwas offen, kann jeder die Periode abrechnen, indem er so viel Ihrer Sicherheit verkauft, dass es gedeckt ist.",
       "payHintLender": "Ist bei Ende der Nachfrist noch etwas offen, kann jeder die Periode abrechnen, indem er so viel der Sicherheit des Kreditnehmers verkauft, dass es gedeckt ist. Sie erhalten höchstens den offenen Betrag; was ein Verkauf nicht deckt, bleibt auf dem Kredit offen.",
       "payHintViewer": "Ist bei Ende der Nachfrist noch etwas offen, kann jeder die Periode abrechnen, indem er so viel der Sicherheit des Kreditnehmers verkauft, dass es gedeckt ist.",
+      "payCountsBorrower": "Zinsen, die Sie während der Periode auf diesen Kredit zahlen, werden ihr angerechnet.",
       "routeRecord": "Diese Periode ist vollständig bezahlt. Wird sie verbucht, beginnt die nächste Periode. Dabei werden keine Mittel bewegt, und jeder darf sie verbuchen, ein Keeper-Dienst kann es also zuerst tun.",
       "recordButton": "Diese Periode verbuchen",
       "recording": "Wird verbucht…",

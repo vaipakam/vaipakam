@@ -61,7 +61,7 @@ export function usePeriodicInterest(opts: {
   const q = useQuery({
     queryKey: periodicInterestKey(readChain.chainId, opts.loanId ?? ''),
     enabled: on,
-    refetchInterval: tipAware(REFETCH_MS, Boolean(readChain.wsUrl)),
+    refetchInterval: tipAware('periodicInterest', REFETCH_MS, Boolean(readChain.wsUrl)),
     // `null` (not `undefined`) for an answer that could not be described,
     // so TanStack keeps it as data and the card can say it is unread.
     queryFn: async () => (await readPeriodicView(publicClient!, diamond, opts.loanId!)) ?? null,

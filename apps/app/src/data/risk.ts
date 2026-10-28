@@ -69,7 +69,7 @@ export function useLoanRisk(
     refetchInterval: (query) =>
       query.state.data?.priced === false
         ? false
-        : tipAware(60_000, Boolean(readChain.wsUrl))(),
+        : tipAware('loanRisk', 60_000, Boolean(readChain.wsUrl))(),
     queryFn: async (): Promise<LoanRisk> => {
       const plan = loanRiskReadPlan({
         diamond: readChain.diamondAddress as `0x${string}`,

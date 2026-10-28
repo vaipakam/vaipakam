@@ -4,17 +4,20 @@
  *  A Monthly-cadence loan is opened between the fixture wallets, then the
  *  chain clock is moved through its first two periods:
  *
- *  1. Open: the card names the schedule, the period's deadline and grace
- *     end as the chain states them, and says what happens if the period
- *     is still short when the grace ends, in each party's terms. No
- *     button.
+ *  1. Open, with the deployment's periodic-interest switch OFF (the
+ *     posture the e2e chain ships with): the card names the schedule and
+ *     the period, and says settling is switched off before the period is
+ *     due, so it does not warn of a collateral sale that cannot happen.
+ *     No button (Codex #3030 r1).
  *  2. Fully paid, past grace, with the deployment's periodic-interest
  *     switch OFF: the card says settling is switched off on this
  *     deployment and offers nothing. This is the posture the e2e chain
  *     ships with, and the one the card most needs to disclose.
  *  3. The same period with the switch ON: the card offers to record it,
  *     the borrower records it from the page, and the chain's own preview
- *     moves to the next period with nothing paid toward it.
+ *     moves to the next period with nothing paid toward it. That period is
+ *     open with settlement running, so the card now says what happens if
+ *     it is still short when the grace ends, in each party's terms.
  *  4. The next period left unpaid past its grace: the card says anyone
  *     may now settle it by selling collateral, in the borrower's and the
  *     lender's own terms, and offers no button: the sale needs a swap
@@ -126,16 +129,23 @@ test('the interest card follows a period from open to recorded, and the next one
   await expect(bCard).toBeVisible({ timeout: 60_000 });
   await expect(bCard.getByText('Every month')).toBeVisible({ timeout: 60_000 });
   await expect(bCard.getByText('This period is open.')).toBeVisible();
-  await expect(bCard.getByText(/selling enough of your collateral/i)).toBeVisible();
+  // Switched off: said before the period is due, and no sale is warned of.
+  await expect(bCard.getByTestId('periodic-interest-settlement')).toContainText(
+    /switched off on this deployment/i,
+  );
+  await expect(bCard.getByText(/counts toward it/i)).toBeVisible();
+  await expect(bCard.getByText(/selling enough of your collateral/i)).toHaveCount(0);
   await expect(bCard.getByRole('button')).toHaveCount(0);
 
   const lender = await launchWallet('lender');
   const lPage = lender.page;
   const lCard = lPage.getByTestId('periodic-interest-card');
   await lPage.goto(`/positions/${loanId}`, { waitUntil: 'domcontentloaded' });
-  await expect(lCard.getByText(/you are paid up to what is owed/i)).toBeVisible({
-    timeout: 60_000,
-  });
+  await expect(lCard.getByTestId('periodic-interest-settlement')).toContainText(
+    /switched off on this deployment/i,
+    { timeout: 60_000 },
+  );
+  await expect(lCard.getByText(/you are paid up to what is owed/i)).toHaveCount(0);
 
   // ── 2. Fully paid, past grace, switch off ──────────────────────────────
   // Pay a fifth of the principal an hour before the deadline: the
@@ -176,6 +186,18 @@ test('the interest card follows a period from open to recorded, and the next one
       first.periodEndAt + 30n * 86_400n,
     );
     expect(second.paid, 'the new period starts with nothing paid').toBe(0n);
+
+    // The next period is open with settlement running: the sale rule is
+    // now said, in each party's terms, and the switched-off line is gone.
+    await bPage.reload({ waitUntil: 'domcontentloaded' });
+    await expect(bCard.getByText(/selling enough of your collateral/i)).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(bCard.getByTestId('periodic-interest-settlement')).toHaveCount(0);
+    await lPage.reload({ waitUntil: 'domcontentloaded' });
+    await expect(lCard.getByText(/you are paid up to what is owed/i)).toBeVisible({
+      timeout: 60_000,
+    });
 
     // ── 4. The next period, unpaid past its grace ────────────────────────
     await warpTo(second.graceEndsAt + 60n);

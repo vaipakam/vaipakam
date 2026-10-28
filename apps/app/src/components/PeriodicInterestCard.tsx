@@ -13,6 +13,10 @@
  * swap route has to be quoted at the moment it runs; this page does not
  * build one, so it says who can rather than offering a button that would
  * fail.
+ *
+ * Whether settlement runs at all (the deployment's switch, the pause) is
+ * stated in every phase, so the warning that a short period may be settled
+ * by a sale is never shown as unconditional while settlement is off.
  */
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -175,13 +179,37 @@ export function PeriodicInterestCard({
         {view.phase === 'open' ? t.phaseOpen : view.phase === 'grace' ? t.phaseGrace : t.phaseDue}
       </p>
       {view.phase !== 'due' ? (
-        <p className="muted">
-          {role === 'borrower'
-            ? t.payHintBorrower
-            : role === 'lender'
-              ? t.payHintLender
-              : t.payHintViewer}
-        </p>
+        <>
+          {/* Whether settlement runs is stated before the period is due
+              too (Codex #3030 r1): the sale warning below holds only while
+              it does. */}
+          {view.settlement !== 'live' ? (
+            <div
+              className="banner banner-info"
+              role="status"
+              data-testid="periodic-interest-settlement"
+            >
+              <span className="banner-body">{periodicRouteText(view.settlement, role)}</span>
+            </div>
+          ) : null}
+          {view.settlement === 'off' ? (
+            // Switched off, no sale can follow a short period, so only the
+            // part that still holds is said.
+            role === 'borrower' ? (
+              <p className="muted">{t.payCountsBorrower}</p>
+            ) : null
+          ) : (
+            // Paused or unread: the sale rule is the one that applies once
+            // settlement runs, and the line above says it may not yet.
+            <p className="muted">
+              {role === 'borrower'
+                ? t.payHintBorrower
+                : role === 'lender'
+                  ? t.payHintLender
+                  : t.payHintViewer}
+            </p>
+          )}
+        </>
       ) : view.route !== undefined ? (
         <div
           className={`banner ${view.route === 'sale' ? 'banner-warn' : 'banner-info'}`}

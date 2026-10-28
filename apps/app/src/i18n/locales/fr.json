@@ -1190,6 +1190,7 @@
       "payHintBorrower": "Les intérêts que vous payez sur ce prêt pendant la période sont comptés pour elle. S’il reste un montant dû à la fin du délai de grâce, n’importe qui peut régler la période en vendant assez de votre garantie pour le couvrir.",
       "payHintLender": "S’il reste un montant dû à la fin du délai de grâce, n’importe qui peut régler la période en vendant assez de la garantie de l’emprunteur pour le couvrir. Vous êtes payé à hauteur de ce qui est dû ; ce qu’une vente ne couvre pas reste dû sur le prêt.",
       "payHintViewer": "S’il reste un montant dû à la fin du délai de grâce, n’importe qui peut régler la période en vendant assez de la garantie de l’emprunteur pour le couvrir.",
+      "payCountsBorrower": "Les intérêts que vous payez sur ce prêt pendant la période sont comptés pour elle.",
       "routeRecord": "Cette période est entièrement payée. L’enregistrer ouvre la période suivante. Cela ne déplace aucun fonds, et n’importe qui peut l’enregistrer : un service keeper peut donc le faire avant vous.",
       "recordButton": "Enregistrer cette période",
       "recording": "Enregistrement…",

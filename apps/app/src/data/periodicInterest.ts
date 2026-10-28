@@ -19,7 +19,9 @@
  * decides whether a due period can actually be settled: the deployment's
  * periodic-interest switch (`getPeriodicInterestEnabled`, off ⇒ the
  * settlement reverts) and the protocol pause (`paused`, the settlement is
- * `whenNotPaused`). Either one unread is stated as unread, never assumed.
+ * `whenNotPaused`). Either one unread is stated as unread, never assumed,
+ * and both are stated in every phase: the warning that a short period may
+ * be settled by a sale holds only while settlement runs.
  *
  * ## Why the block and its time come from inside the aggregate
  *
@@ -201,12 +203,24 @@ export type PeriodicPhase = 'open' | 'grace' | 'due';
  * - `sale`   — something is still owed. Settling sells enough collateral to
  *   cover it, through a swap route the caller supplies; this page cannot
  *   build that route, so it says who can.
- * - `off`    — the deployment's periodic-interest switch is off, so no
+ * - `off` / `paused` / `unknown` — settlement itself is not available
+ *   (see `PeriodicSettlement`).
+ */
+export type PeriodicSettleRoute = 'record' | 'sale' | Exclude<PeriodicSettlement, 'live'>;
+
+/**
+ * Whether ANY period of this loan could be settled right now, whatever
+ * phase the current one is in (Codex #3030 r1). Stated in every phase, not
+ * only once a period is due: the page's warning that a short period may be
+ * settled by a collateral sale is true only while settlement runs.
+ *
+ * - `live`    — the switch is on and the protocol is not paused.
+ * - `off`     — the deployment's periodic-interest switch is off, so no
  *   period can be settled at all.
- * - `paused` — the protocol is paused; settlement waits for the unpause.
+ * - `paused`  — the protocol is paused; settlement waits for the unpause.
  * - `unknown` — the switch or the pause did not answer.
  */
-export type PeriodicSettleRoute = 'record' | 'sale' | 'off' | 'paused' | 'unknown';
+export type PeriodicSettlement = 'live' | 'off' | 'paused' | 'unknown';
 
 export type PeriodicView =
   /** The loan has no interest schedule: nothing to show. */
@@ -224,6 +238,8 @@ export type PeriodicView =
       expected: bigint;
       paid: bigint;
       shortfall: bigint;
+      /** Whether settlement runs at all right now, in every phase. */
+      settlement: PeriodicSettlement;
       /** Present only when `phase === 'due'`. */
       route: PeriodicSettleRoute | undefined;
       block: bigint;
@@ -241,6 +257,7 @@ export function periodicView(facts: PeriodicFacts): PeriodicView {
         ? 'grace'
         : undefined;
   if (phase === undefined) return { kind: 'inactive' };
+  const settlement = settlementOf(facts);
   return {
     kind: 'period',
     cadence: p.cadence,
@@ -250,17 +267,25 @@ export function periodicView(facts: PeriodicFacts): PeriodicView {
     expected: p.expected,
     paid: p.paid,
     shortfall: p.shortfall,
-    route: phase === 'due' ? settleRoute(facts) : undefined,
+    settlement,
+    route: phase === 'due' ? settleRoute(settlement, p.shortfall) : undefined,
     block: facts.block,
     chainTime: facts.chainTime,
   };
 }
 
-/** The route for a due period. The switch is asked first: while it is off
+/** Whether settlement runs. The switch is asked first: while it is off
  *  nothing settles, paused or not. */
-function settleRoute(facts: PeriodicFacts): PeriodicSettleRoute {
+function settlementOf(facts: PeriodicFacts): PeriodicSettlement {
   if (facts.enabled === false) return 'off';
   if (facts.enabled === undefined || facts.paused === undefined) return 'unknown';
   if (facts.paused) return 'paused';
-  return facts.preview.shortfall === 0n ? 'record' : 'sale';
+  return 'live';
+}
+
+/** The route for a due period: the settlement's own state while it does
+ *  not run, otherwise recording or a sale by what is still owed. */
+function settleRoute(settlement: PeriodicSettlement, shortfall: bigint): PeriodicSettleRoute {
+  if (settlement !== 'live') return settlement;
+  return shortfall === 0n ? 'record' : 'sale';
 }

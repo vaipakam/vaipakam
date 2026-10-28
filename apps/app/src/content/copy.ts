@@ -2699,6 +2699,9 @@ const copySource = {
       'If anything is still owed when the grace ends, anyone may settle the period by selling enough of the borrower’s collateral to cover it. You are paid up to what is owed; whatever a sale cannot cover stays owed on the loan.',
     payHintViewer:
       'If anything is still owed when the grace ends, anyone may settle the period by selling enough of the borrower’s collateral to cover it.',
+    // Said instead of the borrower's hint while settling periods is
+    // switched off: payments still count, but no sale can follow.
+    payCountsBorrower: 'Interest you pay on this loan during the period counts toward it.',
     routeRecord:
       'This period is fully paid. Recording it starts the next period. It moves no funds, and anyone may record it, so a keeper service may do it first.',
     recordButton: 'Record this period',
