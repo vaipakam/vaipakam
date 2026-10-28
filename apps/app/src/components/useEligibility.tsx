@@ -155,13 +155,14 @@ export function useEligibility(inputs: EligibilityInputs): CheckItem[] {
     });
   }
 
-  if (inputs.consent !== undefined) {
-    items.push({
-      id: 'consent',
-      label: copy.checks.consent,
-      state: inputs.consent ? 'pass' : 'fail',
-    });
-  }
+  if (inputs.consent !== undefined) items.push(consentCheck(inputs.consent));
 
   return items;
+}
+
+/** The risk-and-terms consent as a checklist item — for a flow that reads
+ *  its consent after the other checks are built (`OfferFlow`, whose consent
+ *  is keyed on the finished review, #1696). */
+export function consentCheck(given: boolean): CheckItem {
+  return { id: 'consent', label: copy.checks.consent, state: given ? 'pass' : 'fail' };
 }

@@ -1524,6 +1524,18 @@ Consent is collected against the terms actually shown. If a material term,
 warning, selected offer, selected listing, or disclosed risk changes after
 consent, consent is cleared and the user is told to review again.
 
+Every review that collects consent follows this one rule, the same way. The
+consent is tied to the values the review shows, not to how they are printed,
+so two different figures that happen to print alike still count as a change.
+The tick clears in the same update that shows the change, and a review that
+changes and then changes back does not get the consent back: the user ticks
+again against what is on screen. When a change the user did not make clears
+a tick they gave, a line beneath the box says so; clearing it themselves, or
+completing the action, shows no such line. A change that only stops signing
+for the moment, without changing anything that would be signed (a Full
+tariff quote that cannot complete right now), leaves the consent in place,
+and signing stays refused while it holds.
+
 Selecting another offer also resets its Full-tariff choice. Offset funding
 figures and a listing's lifecycle, network, or ownership changes invalidate
 their acknowledgements in the same update as the displayed change. If an
@@ -2229,6 +2241,21 @@ is the borrower's own money.
   its way; and equally, learning that the record has been cleared elsewhere
   must stop the wait rather than leave it running against a record that no
   longer exists.
+- A surface that returns to a submitted close-out after the page was closed
+  establishes what it can from the chain before it falls back on the lender's
+  word (#2086). A transaction's own receipt is its outcome. When there is no
+  receipt and the wallet has since spent the transaction's place in its queue,
+  something else from that wallet took that place — and the platform cannot
+  tell a sped-up copy of the same close-out, which may have gone through, from
+  a cancel or an unrelated transaction, which moved nothing. The surface says
+  exactly that, rather than claiming either outcome, and shows the position as
+  it stands once it has re-read it; it does not offer the action again until
+  that re-read is in. A surface that cannot read the wallet's queue keeps the
+  existing rule: it says it has lost track and leaves the answer to the
+  wallet.
+- Waiting on a transaction the network no longer reports must not become a
+  steady stream of requests. A surface that keeps asking about one slows its
+  asking the longer it goes unanswered.
 - A conditional sentence whose condition cannot arise on the route being shown
   does not belong on it. The swap-to-repay cancellation note is the case in
   point: that facility covers ordinary-asset loans only, so an overdue rental

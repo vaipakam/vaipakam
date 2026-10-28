@@ -1175,6 +1175,9 @@ const copySource = {
     mid: ' and ',
     terms: 'Vaipakam Terms',
     suffix: '.',
+    // #1696 — beneath the box when a change to the review unticked it.
+    withdrawn:
+      'What you are reviewing changed after you ticked this, so the acknowledgement cleared. Check the review again and tick it to confirm against what is shown now.',
   },
 
   // #2725 — the lifecycle terms every accept signature binds, shown on every
@@ -2959,6 +2962,13 @@ const copySource = {
       'You cancelled this close-out from your wallet before it went through, so nothing moved and the loan is exactly as it was. You can start again whenever you like.',
     outcomeReplaced:
       'Another transaction from your wallet took this one’s place before it went through, so the close-out never ran and nothing moved. You can start again whenever you like.',
+    /* #2086 — after a reload, the nonce this close-out was sent with has
+       been spent by a transaction we cannot identify: a Speed Up of the
+       close-out itself, a cancel, or something else. Only the first ran
+       the close-out, so the copy says it MAY have, and points at the
+       position, which the card refreshes before re-offering anything. */
+    outcomeSuperseded:
+      'While this page was closed, another transaction from your wallet took this close-out’s place in the queue, and we cannot tell which one. If your wallet sped the close-out up, it may have gone through; if it was a cancel or a different transaction, nothing moved. What you see here now is the loan as it actually stands.',
     /* Round 54 P2 — shown when this browser REFUSED to store the record
        of a close-out (private mode, storage disabled, quota). The hold
        still works on this page; what does not survive is a reload, which

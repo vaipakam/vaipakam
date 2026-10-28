@@ -1432,60 +1432,94 @@ loans で即時です — waiting period はありません。
 
 ### Public Analytics について
 
-wallet-free aggregator です。supported chains それぞれで on-chain
-protocol view calls から live に calculate されます。backend なし、
-database なし。CSV / JSON export が available です。verifiability
-のため、各 metric の背後にある protocol address と view function
-が表示されます。
+ウォレット不要の単一チェーンのページです。アプリが向いている
+チェーン(ウォレット未接続時は既定の読み取りチェーン)を読み取り
+ます。チェーン横断の集計やエクスポートはありません。チェーンを
+比べるには、それぞれのチェーンでページを開いてください。情報源は
+2つで、使われる箇所に明記しています。
 
-<a id="public-dashboard.combined"></a>
+- インデクサーのキー不要・CORS 開放の読み取り API — ローン、
+  オファー、リサイクル、ループクロージャーの数値
+- 公開 RPC 経由の Diamond 自身のビュー関数 — VPFI トークンと
+  手数料の数値
 
-### Combined — All Chains
+どちらも直接照会して、ページの表示を再現できます。
 
-Cross-chain rollup です。header は何 chains が covered され、何
-chains が errored かを report するため、fetch 時に unreachable な
-RPC が明示されます。1 つ以上の chains が errored の場合、per-chain
-table が該当 chain を flag します — TVL totals は引き続き report
-されますが、gap は acknowledge されます。
+<a id="public-dashboard.loans-offers"></a>
 
-<a id="public-dashboard.per-chain"></a>
+### ローンとオファー
 
-### Per-Chain Breakdown
+`/loans/stats` からの状態別ローンカウンター(決済保留、内部
+マッチ、その他の区分を含み、内訳の合計が総数になります)、ERC-20
+と NFT レンタルの小計(資産種別がまだ読み取られていないアクティブ
+なローンは別に明示)、そして `/offers/stats` からのオファー
+カウンターです。オファーは `offers` テーブルのみで、ガス不要の
+署名済み注文は数えません。またキャンセルされたオファーはインデックス
+から外れるため、オファー合計は累計ではありません。欠けている
+カウンターは「報告なし」、ありえない値は「報告されたが使える件数
+ではない」と表示し、いずれも 0 とは表示しません。
 
-Combined metrics の per-chain split です。TVL concentration、
-mismatched VPFI mirror supplies (mirror supplies の sum は
-canonical adapter の locked balance と等しいはず)、または stalled
-chains を spot するのに有用です。
+<a id="public-dashboard.recycling"></a>
 
-<a id="public-dashboard.vpfi-transparency"></a>
+### リサイクル勘定とループクロージャー
 
-### VPFI Token Transparency
-
-active chain 上の on-chain VPFI accounting:
-
-- total supply、ERC-20 から直接読み取ります。
-- circulating supply — total supply minus protocol-held balances
-  (treasury、reward pools、in-flight bridge packets)。
-- 残りの mintable cap — canonical chain でのみ meaningful です。
-  mirror chains は cap について "n/a" を report します。そこでの
-  mints は bridge-driven であり、cap に基づくものではないためです。
-
-Cross-chain invariant: すべての mirror chains における mirror
-supplies の sum は、canonical adapter の locked balance と等しく
-なります。watcher がこれを monitor し、drift で alert します。
+リサイクル勘定(`/metrics/recycling`)はプログラムの各日の
+プール、その原資、引き出し額を、プログラム独自の日番号で表示
+します。未確定の日はプールなし、未アームの日は見積もりとして
+示されます。ループクロージャー(`/metrics/loop-closure`)は UTC
+日ごとに、クレームの支払額、ボールトに残った額、吸収された額を、
+記録が到達している時点とあわせて示します。表示精度未満の正の額は
+その旨を表示し、比率は切り捨て、不明な数値はゼロとして表示しま
+せん。
 
 <a id="public-dashboard.transparency"></a>
 
-### Transparency & Source
+### 透明性と情報源
 
-各 metric について page が list するもの:
+Diamond のアドレス(エクスプローラーへのリンク付き)、チェーン、
+インデクサーのカーソルのブロックと経過時間です。インデクサー由来の
+数値はすべて、このカーソル時点までのものです。2つの応答を組み
+合わせる場合は、古い方のカーソルを示します。
 
-- snapshot として使われた block number。
-- data freshness (chains 間の最大 age/staleness)。
-- protocol address と view function call。
+<a id="public-dashboard.vpfi-transparency"></a>
 
-この page のどの number も、RPC + block + protocol address +
-function name から誰でも re-derive できます — それが基準です。
+### VPFI トークン
+
+Diamond の `getVPFISnapshot()` から、このチェーン上のトークン
+アドレスと `totalSupply` を取得します。カノニカルチェーンでは上限、
+余地(`cap − totalSupply`、まだミントできる量)、ミンターも表示
+します。ミラーチェーンのスナップショットには上限もミンターもあり
+ません(供給は CCIP のトークンプール経由で届きます)。そのため
+ページはローカルの供給量を示し、上限とミンターはカノニカル
+チェーンのものだと明記し、ゼロは表示しません。トークン未設定と
+スナップショット読み取り不可は区別して示します。
+
+<a id="public-dashboard.fees"></a>
+
+### 手数料とトレジャリー
+
+`getTreasuryMetrics()`、`getTreasury()`、`getNumeraireSymbol()`
+から取得します。スナップショットと同じ Multicall3 集約で読み取り、
+1つのブロックに固定し、ページはそのブロックと経過時間を示します。
+
+- 手数料台帳の開始以降、および過去24時間と7日間の手数料。各手数料
+  は記録時にニュメレールで評価され、再評価されません。
+- 記録時にプロトコルが評価できなかった手数料は 0 として記録され、
+  期間の合計は最新の台帳エントリーを最大10,000件までしか走査し
+  ません。この2つは数値を少なく見せる方向にしか働かず、ページはその
+  ことを明記します。
+- ニュメレールが変更されると以前のエントリーは旧単位のまま残るため、
+  変更後の合計は現在の記号のもとで2つの単位の金額を足し合わせ、多く
+  も少なくもずれる可能性があります。ページは以前の手数料が旧単位で数
+  えられていることを明記します。
+- トレジャリーのアドレス。外部アドレスの場合、手数料は徴収時に
+  送られ、その残高は表示しません。Diamond 自身がトレジャリーの
+  場合は保有額を表示します。これはオープン中のローンに現れる資産
+  のみで評価し、トレジャリーに代わって別の場所に置いた額を含み
+  ます。
+
+失敗したビュー関数は「読み取れませんでした」と表示し、ほかの表示は
+隠しません。
 
 ---
 

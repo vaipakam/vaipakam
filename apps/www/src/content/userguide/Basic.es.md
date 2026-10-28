@@ -736,51 +736,72 @@ elimínalo de la lista.
 
 <a id="public-dashboard.overview"></a>
 
-### Sobre la analítica pública
+### Acerca de Public Analytics
 
-Una vista del protocolo entero, transparente y sin necesidad de
-billetera: total value locked, volúmenes de préstamos, tasas de
-default, suministro de VPFI, actividad reciente. Todo se calcula en
-vivo a partir de datos on-chain —no hay base de datos privada
-detrás de ningún número de esta página.
+Una vista sin wallet del protocolo en una red: la que la app está
+leyendo. No necesitas conectar nada. La página se apoya en dos
+fuentes públicas y dice de cuál viene cada cifra — el indexador
+público, que cualquiera puede consultar sin clave, y el propio
+contrato de la plataforma —, así que nunca tienes que fiarte de un
+número sin más.
 
-<a id="public-dashboard.combined"></a>
+<a id="public-dashboard.loans-offers"></a>
 
-### Combinado — Todas las cadenas
+### Préstamos y ofertas
 
-Los totales del protocolo, sumados a través de todas las cadenas
-soportadas. La pequeña línea "X cadenas cubiertas, Y inalcanzables"
-te dice si la red de alguna cadena estaba caída en el momento en
-que se cargó la página —si es así, esa cadena específica se marca
-en la tabla por-cadena de abajo.
+Recuentos de préstamos por estado (activos, reembolsados, en
+impago, liquidados, etc.) y de ofertas por estado, del indexador
+público. Un recuento que el indexador no informó aparece como «no
+informado», nunca como cero. Solo se cuentan ofertas on-chain: las
+órdenes firmadas sin gas no se cuentan aquí, aunque sí aparecen en
+el Offer Book. El total de ofertas son las que hay registradas
+ahora, no un recuento histórico.
 
-<a id="public-dashboard.per-chain"></a>
+<a id="public-dashboard.recycling"></a>
 
-### Desglose por cadena
+### Cuenta de reciclaje y cierre del ciclo
 
-Los mismos totales, separados por cadena. Útil para ver qué cadena
-tiene el mayor TVL, dónde están ocurriendo más préstamos, o para
-detectar cuándo una cadena se ha estancado.
-
-<a id="public-dashboard.vpfi-transparency"></a>
-
-### Transparencia del token VPFI
-
-El estado en vivo de VPFI en esta cadena —cuánto existe en total,
-cuánto está realmente circulando (después de restar los saldos en
-poder del protocolo), y cuánto sigue siendo minteable bajo el tope.
-Entre todas las cadenas, el suministro se mantiene acotado por
-diseño.
+De dónde salió el fondo de recompensas de cada día y cuánto se
+retiró, y cuánto del VPFI de recompensa pagado por los reclamos se
+queda dentro de la plataforma. Son registros contables del
+indexador público; una cifra que aún no se conoce lo dice en lugar
+de mostrar cero.
 
 <a id="public-dashboard.transparency"></a>
 
 ### Transparencia y fuente
 
-Cada número de esta página puede re-derivarse directamente desde la
-blockchain. Esta tarjeta lista el bloque del snapshot, qué tan
-reciente fue obtenida la data, y la dirección del contrato de la
-que vino cada métrica. Si alguien quiere verificar un número, aquí
-es donde empieza.
+La dirección del contrato de la plataforma, con un enlace para
+abrirla en un explorador de bloques, la red, el último bloque que
+leyó el indexador y hace cuánto fue. Las cifras del indexador solo
+están tan al día como ese bloque, por eso se muestra su
+antigüedad.
+
+<a id="public-dashboard.vpfi-transparency"></a>
+
+### Token VPFI
+
+Leído directamente del contrato de la plataforma, no del
+indexador: la dirección del token VPFI y su suministro en esta red.
+En la red donde se emite VPFI muestra además el tope de
+suministro, cuánto se puede acuñar aún bajo él y la única
+dirección autorizada para acuñar. En una red a la que VPFI llega
+por puente muestra solo el suministro de esa red.
+
+<a id="public-dashboard.fees"></a>
+
+### Comisiones y tesorería
+
+También leído del contrato: las comisiones que el protocolo ha
+registrado desde que empezó el registro, en el último día y en la
+última semana, y la dirección de tesorería a la que van. La página
+indica el bloque leído, la antigüedad de esa lectura y las
+funciones llamadas, y expone cada motivo por el que las cifras de
+comisiones pueden ser menores que lo realmente cobrado. Tras un
+cambio de moneda de referencia, las comisiones anteriores quedan
+en la unidad antigua, lo que puede mover un total en cualquier
+sentido; la página también lo dice. Una cifra que no se pudo leer
+lo dice en lugar de mostrar cero.
 
 ---
 
