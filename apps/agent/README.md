@@ -12,7 +12,7 @@ The **proactive-notifications + public-Frame + operator-services Worker**. Stage
 <!-- #1651: a "Cross-chain monitoring — buy-watchdog reconciliation across the CCIP buy flow" bullet stood here. #687-A removed that surface and its watchdog, and this Worker has no other cross-chain-monitoring concern, so the responsibility is gone rather than renamed. -->
 - **Public Farcaster Frame** — `/frames/active-loans` GET + POST + image rendering.
 - **Operator services** — the server-side 1inch quote proxy at `/quote/1inch`, the 1inch order-book post at `/intent/fusion/post`, and the `/opensea/*` proxies; all spend operator-held keys (see "Key-spending routes" below). (#1651: a Blockaid scan proxy at `/scan/blockaid` was listed here; ET-001 dropped it — `index.ts` documents that no transaction-scan proxy exists and the pre-sign preview is a frontend `eth_call`. #2755 removed `/quote/0x`, which had no caller.)
-- **Frontend-facing endpoints** — Telegram-bot webhook `/tg/webhook`; diagnostics record capture `/diag/record`; settings endpoints `/thresholds PUT` + `/link/telegram POST`; support-ticket capture `/support/ticket POST` (#1040 phase 1 — D1 row + ops-Telegram notify via `TG_OPS_BOT_TOKEN`/`TG_OPS_CHAT_ID`, plain `wrangler secret put` secrets; while unset the notify skips and tickets still land in D1).
+- **Frontend-facing endpoints** — Telegram-bot webhook `/tg/webhook`; diagnostics record capture `/diag/record`; settings endpoints `/thresholds PUT` + `/link/telegram POST`; support-ticket capture `/support/ticket POST` (#1040 phase 1 — D1 row + ops-Telegram notify via `TG_OPS_BOT_TOKEN`/`TG_OPS_CHAT_ID`, the two per-Worker `wrangler secret put` secrets; while unset the notify skips and tickets still land in D1).
 
 **This Worker holds no ON-CHAIN transaction key.** The Stage 3 architectural-rebalance moved `KEEPER_PRIVATE_KEY` (and the daily oracle snapshot signer it powered) to `apps/keeper`, so this Worker **can't move funds directly** — that part of the staging plan §2 contract holds. Note the qualifier: it is not fund-safe. Via the shared database-scoped D1 binding it can corrupt state the signing Worker acts on (#1722), so the absence of its own transaction key establishes only the *direct* case.
 
@@ -102,16 +102,18 @@ Worker `wrangler.jsonc:vars`:
 - `FRONTEND_ORIGIN`, `TG_BOT_USERNAME`, `DIAG_*` knobs.
 - `PUSH_CHANNEL_ADDRESS` (optional, #1456) — the Push channel the signer posts for. Unset, the channel is the signer's own address; set, `PUSH_CHANNEL_PK` signs as that channel's delegate. `GET /push/status` reports the channel the rail will use, and the app's subscribe link reads it from there. Since #2667 it also covers the keeper's rail, as the keeper last published it to the shared `push_rail_status` row: `scope: 'service'` while that row is under 15 minutes old (both rails must be able to send, on the same channel), `scope: 'agent'` otherwise. Every answer also carries `billedChainIds` (#2723), the chains on which this service charges the paid-Push notification fee. It is a constant in code, not a setting, and it is empty because no sender here calls `markNotifBilled`. The app offers the on-chain agreement to pay only on a listed chain, and withdrawing that agreement everywhere.
 
-Worker secrets (via `wrangler secret put`):
+Credentials. Most are **account-level Secrets Store** bindings (store `vaipakam-credentials`, declared under `secrets_store_secrets` in `wrangler.jsonc`), set with `wrangler secrets-store secret update`. Two are plain **per-Worker** secrets, set with `wrangler secret put`. The two commands are not interchangeable: `wrangler secret put` on a Secrets Store name succeeds and creates a separate per-Worker value that this Worker never reads, so the binding stays empty or stale (#1725). Rotation for each is in [`docs/ops/AdminKeysAndPause.md`](../../docs/ops/AdminKeysAndPause.md).
 
-| Secret | Purpose |
-|---|---|
-| `RPC_*` | Per-chain RPC URLs (carry API keys). |
-| `TG_BOT_TOKEN` | Telegram bot credential (user-facing bot). |
-| `TG_OPS_BOT_TOKEN` | Ops-internal bot credential — instant new-support-ticket alert (#1040 phase 1). While unset the alert skips (warn-logged) and tickets still land in D1; the nightly ops report's open-ticket count is the backstop. |
-| `TG_OPS_CHAT_ID` | Operator chat the ops bot posts to. Same skip-while-unset behaviour. |
-| `PUSH_CHANNEL_PK` | Push channel signing key — **an Ethereum private key**, loaded as an ethers `Wallet` by the shared Push rail (`packages/push`). This row used to say "not a chain key — a push protocol identity"; it is a real key, which is not the same thing. It carries no **protocol** authority (no Diamond role, no fund movement), but it is not authority-free: the channel-owner wallet holds the 50 PUSH staking deposit and ~$50 of native gas (`docs/ops/AdminKeysAndPause.md`). A revision of this row said "no on-chain authority", which tells a responder there is nothing on-chain at stake — there is. |
-| `ONEINCH_API_KEY` | 1inch credential for `/quote/1inch` and `/intent/fusion/post`. The agent holds no 0x key since #2755 (the keeper has its own). |
+| Secret | Kind | Purpose |
+|---|---|---|
+| `RPC_*` | Secrets Store | Per-chain RPC URLs (carry API keys). The bound set is the `RPC_*` entries in `wrangler.jsonc`. |
+| `TG_BOT_TOKEN` | Secrets Store | Telegram bot credential (user-facing bot). |
+| `PUSH_CHANNEL_PK` | Secrets Store | Push channel signing key — **an Ethereum private key**, loaded as an ethers `Wallet` by the shared Push rail (`packages/push`). This row used to say "not a chain key — a push protocol identity"; it is a real key, which is not the same thing. It carries no **protocol** authority (no Diamond role, no fund movement), but it is not authority-free: the channel-owner wallet holds the 50 PUSH staking deposit and ~$50 of native gas (`docs/ops/AdminKeysAndPause.md`). A revision of this row said "no on-chain authority", which tells a responder there is nothing on-chain at stake — there is. |
+| `ONEINCH_API_KEY` | Secrets Store | 1inch credential for `/quote/1inch` and `/intent/fusion/post`. The agent holds no 0x key since #2755 (the keeper has its own). |
+| `OPENSEA_API_KEY` | Secrets Store | OpenSea credential for `POST /opensea/listing`. Unset, listing publication has no upstream credential. |
+| `DIAG_WALLET_HMAC_KEY` | Secrets Store | Keys the per-wallet hash diagnostics records are stored under, so a wallet can have them erased (T-075). Unset, a record from a connected wallet is not written (rather than written as one nobody can erase), and the erasure routes answer `503 erasure_not_configured`. |
+| `TG_OPS_BOT_TOKEN` | per-Worker | Ops-internal bot credential — instant new-support-ticket alert (#1040 phase 1). While unset the alert skips (warn-logged) and tickets still land in D1; the nightly ops report's open-ticket count is the backstop. |
+| `TG_OPS_CHAT_ID` | per-Worker | Operator chat the ops bot posts to. Same skip-while-unset behaviour. |
 
 No `KEEPER_PRIVATE_KEY` here — that's `apps/keeper` exclusively.
 
@@ -119,7 +121,7 @@ No `KEEPER_PRIVATE_KEY` here — that's `apps/keeper` exclusively.
 
 The `DB` binding in `wrangler.jsonc` points at the **`vaipakam-warm`** D1 database (id `e5e927cf-56c3-42c7-9820-179a235cc84f`), the **staging** database the Cloudflare staging deploy uses — see [`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](../../docs/DesignsAndPlans/CloudflareStagingDeployPlan.md) §3 for the staging-vs-primary split. The same db is **shared** with `apps/indexer` and `apps/keeper`.
 
-Agent writes: `user_thresholds`, `notify_state`, `telegram_links`, `loans`, `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`, `support_tickets` (#1040 phase 1 — `POST /support/ticket`).
+Agent writes: `user_thresholds` (`PUT /thresholds`), `telegram_links` (issue, consume and the expired-code sweep), `loans` (only the periodic pre-notify pass's `period_pre_notified_at` mark), `prenotify_pass` (that pass's lap record), `indexer_cursor` (one row only: the pre-notify rotation start, under a sentinel id that names no chain), `signed_request_use` (replay guard for signed requests), `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`, `support_tickets` (#1040 phase 1 — `POST /support/ticket`). It does **not** write `notify_state`: the keeper owns that table, and `src/db.ts`'s `getNotifyState` / `putNotifyState` have no caller here (#1725).
 Agent reads-only: `push_rail_status` (#2667 — the keeper's published Push rail readiness, read by `GET /push/status` and the `PUT /thresholds` opt-in check; the keeper writes it).
 
 **There is no `apps/agent/migrations/` directory by design.** The canonical schema for every table this Worker touches lives in [`apps/indexer/migrations/`](../indexer/migrations/) — the indexer owns the schema, the other two Workers share the database. Schema changes for tables only agent writes still land as a new `apps/indexer/migrations/NNNN_*.sql` file; applying it via `wrangler d1 migrations apply vaipakam-warm --remote` from inside `apps/indexer/` updates the live staging db for all three consumers.

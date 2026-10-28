@@ -1619,7 +1619,7 @@ principal plus interest であり、残り時間にわたる liquidation risk
 
 <a id="early-withdrawal.initiate-sale"></a>
 
-販売を開始する
+### 販売を開始する
 
 あなたの asking price で、protocol 経由で position NFT を sale
 listing します。buyer が sale を complete します。sale fill

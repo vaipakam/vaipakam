@@ -90,32 +90,52 @@ export function anchorIdOf(node: Node): string | null {
   return null;
 }
 
+/**
+ * Move every top-level anchor marker onto the heading it names, in place,
+ * and return the ids that found NO heading (#382).
+ *
+ * An anchor is placed on the next sibling that is a heading, skipping only
+ * other anchor markers. If anything else comes first (a paragraph, a list),
+ * the marker is still removed, so the deep link resolves to nothing and the
+ * reader lands at the top of the page. That failure is silent on the page, so
+ * the guide checks (`scripts/check-guide-toc-coverage.ts`) call this same
+ * function on every guide file and refuse any id it returns.
+ */
+export function attachAnchors(children: Node[]): string[] {
+  const unplaced: string[] = [];
+  let i = 0;
+  while (i < children.length) {
+    const id = anchorIdOf(children[i]);
+    if (id) {
+      // Walk forward looking for the heading this id should land on.
+      // Skip any back-to-back anchor-paragraphs (rare but tolerated).
+      let placed = false;
+      for (let j = i + 1; j < children.length; j++) {
+        const next = children[j];
+        if (next.type === 'heading') {
+          next.data = next.data ?? {};
+          next.data.hProperties = next.data.hProperties ?? {};
+          next.data.hProperties.id = id;
+          placed = true;
+          break;
+        }
+        if (anchorIdOf(next) === null) break;
+      }
+      if (!placed) unplaced.push(id);
+      // Drop the anchor node from the tree and re-check at the same
+      // index since splice shifts everything left.
+      children.splice(i, 1);
+      continue;
+    }
+    i++;
+  }
+  return unplaced;
+}
+
 export function remarkInlineAnchorToId() {
   return (tree: { children: unknown[] }) => {
     const children = tree.children as Node[];
     if (!Array.isArray(children)) return;
-    let i = 0;
-    while (i < children.length) {
-      const id = anchorIdOf(children[i]);
-      if (id) {
-        // Walk forward looking for the heading this id should land on.
-        // Skip any back-to-back anchor-paragraphs (rare but tolerated).
-        for (let j = i + 1; j < children.length; j++) {
-          const next = children[j];
-          if (next.type === 'heading') {
-            next.data = next.data ?? {};
-            next.data.hProperties = next.data.hProperties ?? {};
-            next.data.hProperties.id = id;
-            break;
-          }
-          if (anchorIdOf(next) === null) break;
-        }
-        // Drop the anchor node from the tree and re-check at the same
-        // index since splice shifts everything left.
-        children.splice(i, 1);
-        continue;
-      }
-      i++;
-    }
+    attachAnchors(children);
   };
 }

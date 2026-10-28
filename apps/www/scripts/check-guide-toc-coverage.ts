@@ -1,6 +1,7 @@
 /**
  * Guardrail (#1599): every chapter a guide file declares must be
- * reachable from that guide's contents list.
+ * reachable from that guide's contents list, and (#382) every
+ * `<a id>` anchor must sit directly before the heading it names.
  *
  *     pnpm --filter @vaipakam/www exec tsx scripts/check-guide-toc-coverage.ts
  *
@@ -34,6 +35,7 @@ import { fileURLToPath } from 'node:url';
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { toString } from 'mdast-util-to-string';
 import { extractToc } from '../src/lib/guideToc';
+import { attachAnchors } from '../src/lib/remarkInlineAnchorToId';
 
 const GUIDE_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -65,6 +67,7 @@ function offeredTitles(raw: string): Set<string> {
 }
 
 const problems: string[] = [];
+const anchorProblems: string[] = [];
 const files = fs
   .readdirSync(GUIDE_DIR)
   .filter((f) => f.endsWith('.md'))
@@ -73,6 +76,14 @@ const files = fs
 for (const file of files) {
   const raw = fs.readFileSync(path.join(GUIDE_DIR, file), 'utf8');
   const offered = offeredTitles(raw);
+  // An anchor with no heading after it is removed by the renderer and its
+  // deep link lands nowhere (#382). Same function the page renders with.
+  for (const id of attachAnchors(fromMarkdown(raw).children as never)) {
+    anchorProblems.push(
+      `${file}: anchor #${id} is not followed by a heading, so the page drops ` +
+        'it and a link to it lands at the top of the page',
+    );
+  }
   for (const chapter of declaredChapters(raw)) {
     if (!offered.has(chapter)) {
       problems.push(
@@ -83,8 +94,19 @@ for (const file of files) {
   }
 }
 
-if (problems.length > 0) {
+if (anchorProblems.length > 0) {
   console.error('[check-guide-toc-coverage] FAILED\n');
+  for (const problem of anchorProblems) console.error(`  ${problem}`);
+  console.error(
+    '\nPut the heading the anchor names on the next line after it (a blank\n' +
+      'line between is fine), as the English edition does.',
+  );
+  if (problems.length === 0) process.exit(1);
+  console.error('');
+}
+
+if (problems.length > 0) {
+  if (anchorProblems.length === 0) console.error('[check-guide-toc-coverage] FAILED\n');
   for (const problem of problems) console.error(`  ${problem}`);
   console.error(
     '\nA chapter that is not in the contents list is, for most readers, not\n' +
@@ -97,5 +119,5 @@ if (problems.length > 0) {
 
 console.log(
   `[check-guide-toc-coverage] OK — every chapter in ${files.length} guide ` +
-    'file(s) is reachable from its contents list',
+    'file(s) is reachable from its contents list, and every anchor lands on a heading',
 );

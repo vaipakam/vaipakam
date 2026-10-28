@@ -1435,8 +1435,8 @@ finer-than-Annual on multi-year). Stored in numeraire-units
 ### Pre-notify lead time in days (preNotifyDays)
 
 Single shared knob: how many days before each periodic-interest
-checkpoint AND each loan-maturity deadline the off-chain hf-watcher
-fires push notifications to subscribers. Default 3 days.
+checkpoint AND each loan-maturity deadline the off-chain agent
+(`apps/agent`) fires push notifications to subscribers. Default 3 days.
 
 > **Range bounds.** Values outside `[1, 14]` revert
 > `ParameterOutOfRange`. Floor (1) ensures at least a day's notice;
