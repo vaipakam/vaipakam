@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "typecheck": "tsc -b --noEmit && eslint . && node scripts/check-hardcoded-strings.mjs && node scripts/check-accept-errors.mjs && tsx scripts/check-locale-coverage.ts",
+    "typecheck": "tsc -b --noEmit && eslint . && node scripts/check-hardcoded-strings.mjs && node scripts/check-accept-errors.mjs && tsx scripts/check-locale-coverage.ts && tsx scripts/check-coverage-matrix.ts",
     "i18n:check": "node scripts/check-hardcoded-strings.mjs",
     "prebuild": "node scripts/generate-seo.mjs",
     "build": "tsc -b tsconfig.build.json && vite build",
@@ -19,7 +19,7 @@
     "e2e:typecheck": "tsc -p e2e/tsconfig.json --noEmit",
     "i18n:template": "tsx scripts/export-i18n-template.ts",
     "test": "vitest run",
-    "i18n:coverage": "tsx scripts/check-locale-coverage.ts",
+    "i18n:coverage": "tsx scripts/check-locale-coverage.ts && tsx scripts/check-coverage-matrix.ts",
     "lint": "eslint ."
   },
   "dependencies": {
