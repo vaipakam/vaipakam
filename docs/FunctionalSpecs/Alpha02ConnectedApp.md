@@ -7,7 +7,7 @@ destinations and flipped the cutover switch; the `/recover` guide links
 alone stay on the legacy host, held by same-origin recovery state rather
 than by any missing route). It is the app-specific functional
 spec consolidated against the release notes from 2026-08-13 through
-2026-10-22, inclusive, while retaining later recorded intent decisions. It is intentionally
+2026-10-27, inclusive, while retaining later recorded intent decisions. It is intentionally
 written without implementation snippets. (The app was called `alpha02` and
 served `alpha02.vaipakam.com` until #1854 renamed it; this file keeps the old
 name only in its filename.)
@@ -1553,6 +1553,23 @@ fetch before it can warn.
 
 Risk Disclosure and Terms links are real links and must not destroy the flow in
 progress.
+
+### Acceptance covers the disclosed deal
+
+- Every acceptance review states the lifecycle terms as well as amounts and
+  rate: interest mode, payment cadence, partial-repay permission, collateral
+  sale permissions, any live listing, and any linked loan or refinance target.
+  The signature binds the reviewed terms. A changed term or token-screening
+  verdict clears consent and holds signing for a fresh review.
+- A rental is secured by its payment-token prepayment and the rented NFT
+  remaining in the lender's vault; it carries no collateral. A listing naming
+  collateral in either the indexed record or the current chain read is refused
+  with that explanation, including at submission. The renter acknowledges the
+  disclosed rented-NFT model, never an unused collateral asset.
+- Direct, rental, and signed-offer acceptances recheck the required token-
+  security verdicts for ERC-20 legs outside the curated list before the wallet
+  prompt. A warning is accepted only when that exact warning was reviewed; a blocked or unreadable verdict holds
+  signing. Listing a signed offer in the book is not evidence it was screened.
 
 ## Wallet Prompt Transparency
 

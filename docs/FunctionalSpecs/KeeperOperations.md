@@ -2,7 +2,8 @@
 
 This document describes the intended behavior of the protocol-operated keeper.
 It consolidates the operational decisions in the release notes from August 13
-through October 22, 2026. The deployment destination incorporates the owner's
+through October 27, 2026, while retaining later recorded intent decisions.
+The deployment destination incorporates the owner's
 October 27 direction: a dedicated Cloudflare database and a separate always-on
 keeper VM in Oracle Cloud. This is the required deployment arrangement, not
 evidence that the migration has completed.
@@ -71,6 +72,14 @@ evidence that the migration has completed.
   settings, and the installed release uses its matching service settings.
   A hung stop requires operator action; it is not killed on a timer between
   sending a transaction and recording it.
+- The VM installs a release built by CI from the main branch; it does not
+  build the keeper itself. Installation requires verified provenance for the
+  exact downloaded bundle, this repository's approved build workflow, and
+  matching source on main. An uploaded asset alone is not authority to run it.
+  Missing verification tools, an invalid attestation, a failed load check, or
+  an unavailable bundle leaves the running release intact and states why.
+  A merge that leaves the keeper's build source unchanged requires no new
+  bundle or restart. The installed service settings belong to that release.
 
 ## Fresh decisions, bounded work, and transaction outcomes
 
@@ -114,6 +123,9 @@ evidence that the migration has completed.
   silently reset liquidation thresholds, confidence windows, or arming
   choices. Signing keys and settings whose presence enables transactions
   are treated as secrets.
+- Error reports, stored failure reasons, and operator alerts remove provider
+  addresses and credentials before becoming text. They retain useful refusal
+  names and identifiers, so redaction does not hide why an action was skipped.
 
 ## Liquidation, default, and standing intents
 
@@ -136,25 +148,103 @@ evidence that the migration has completed.
   for capacity. It grants no exemption from offer bounds, collateral safety,
   sanctions, or another authorization requirement. If the deployment cannot
   answer whether a credit unlocks the fill, the keeper sends no such fill.
+- A partial liquidation is sized from the liquidation threshold recorded on
+  that loan. An unreadable loan is left alone. A refused slice is resized
+  within the known lower and upper bounds rather than retried unchanged on
+  every tick. A slice must cover accrued interest in full; a short slice is
+  increased using the refusal's stated repayment and interest due. The keeper
+  moves to a split or full close only when no permitted partial slice remains.
+- Each split-sale leg must independently clear its proportional oracle floor,
+  rounded up, as well as the combined floor. The keeper chooses the best
+  qualifying pair only when its improvement justifies splitting. No qualifying
+  split means a single-route attempt; a later on-chain refusal can still occur
+  because prices move before inclusion.
+- The discounted flash-loan route requires the operator's selected-chain
+  enablement, a deployed receiver and provider, and the protocol's own switch.
+  An empty chain selection arms nothing. Start-up and skipped-loan reports
+  disclose missing enablement or infrastructure. The route respects the same
+  internal-match priority window as every external liquidation route.
+- A discounted run uses the protocol's debt and seizure preview, sells only
+  that seizure through a registered, enabled swap venue, and simulates the
+  exact call with its real flash-loan fee. The required profit covers the
+  keeper's whole transaction fee in principal-token units. An unpriceable fee,
+  a refused preview, an unprofitable simulation, or a short token arrival
+  prevents the run. Prior profit or collateral cannot subsidize a losing run.
+- Offer matching considers each live offer once per run and each eligible
+  pair at most once. A maker's own opposite-side offers are skipped together.
+  Standing-intent sizing searches upward after a minimum-size refusal and
+  downward after a capacity, collateral, or risk refusal; a dust refusal is
+  not proof that every larger fill would fail.
+- Auto-roll is reserved for proceeds worth at least one hundred times the
+  complete transaction fee, using protocol prices and every fee component
+  the chain charges. An unreadable fee component is not zero. VPFI-principal
+  loans, transferred positions, reserved or held proceeds, and other loans
+  requiring the ordinary claim are left to their owners and counted as such,
+  rather than reported as failed fee estimates.
+
+### Periodic settlement and in-place extension
+
+- Periodic-interest settlement has its own fifteen-minute duty and ships
+  disabled independently of the master keeper switch. It advances a fully
+  paid checkpoint without a sale, or quotes exactly the collateral the
+  protocol sizes for the unpaid interest. It leaves an unhealthy loan to
+  liquidation and a loan past maturity grace to default handling.
+- Immediately before sending, it rechecks those conditions and the sale size
+  at one fresh block, and simulates the exact settlement. A changed size or
+  failed simulation holds the send. A price change before inclusion can
+  still cause a revert and cost gas; a preview is not a completion guarantee.
+- An in-place extension is considered only inside the protocol's window:
+  from three days before effective maturity, never during the first day of
+  the term, through the effective grace end. Its new maturity plus grace
+  cannot precede the current grace end. An unreadable window holds the loan.
+  On older testnets without this read, the keeper applies the same window
+  and grace protections itself until the fresh deployment replaces them.
+
+### Compatibility with older deployments
+
+- The intended forced-sale behavior is the sized, sell-only-what-is-needed
+  rule in the platform spec. Until the older testnets are replaced, the
+  keeper checks which sale form the deployed protocol supports and previews
+  or simulates that exact form before sending. Older whole-collateral sales
+  still return the surplus; they are disclosed as compatibility behavior,
+  not described as sized sales. A failed routing read holds the attempt.
+- A default checks the sale form again at its final gate. An unsupported
+  exact call never reaches broadcast. Split sales and the periodic settler
+  are not attempted on deployments without the sized-sale plan. These
+  temporary paths are removed when the served testnets are freshly deployed.
+
+### Liquidity-confidence relay
+
+- Promotion to the deepest liquidity tier requires evidence that the asset
+  is enabled as collateral with positive loan-to-value on an Aave v3 or
+  Compound v3 market meeting the configured chain-local liquidity minimum.
+  Market capitalization or trading volume must support that evidence; they
+  cannot replace it. Supply-only or permissionlessly listed markets do not
+  establish this qualification. Turning the collateral-evidence check off
+  permits no such promotion.
 
 ## Reward delivery proofs and acknowledgements
 
-- Each mirror's delivered budgets are discovered from fully indexed history
-  and retained as open work. Flat day lists are indexed or proven as their
-  delivery requires; rooted lists are rebuilt from the canonical reservation
-  and the days actually funded for that mirror. Both recorded roots must
-  agree before anything is sent.
+- Each mirror's current rooted budget deliveries are discovered from fully
+  indexed history and retained as open work. The committed days are rebuilt
+  from the canonical reservation and the days actually funded for that mirror.
+  Both recorded roots must agree before anything is sent. Retired flat-list
+  deliveries are not queued as work.
 - A packet's reservation is read at the source deployment the packet names,
-  rather than whichever source is configured today. A delivery awaiting
-  admission is admitted before indexing; it must not be treated as having no
-  epoch and discarded.
+  rather than whichever source is configured today. Proven chunks are indexed
+  into the delivery's epoch, or proven without an epoch when the delivery
+  arrived before dedicated reward custody was activated. Absence of an epoch
+  is not grounds to discard a current rooted delivery.
 - Calls are simulated first. Sends are ordered and their results checked.
   A delivery is complete only when a fresh read shows its required indexing
   or proofs complete, not merely because an admission or proof transaction
   succeeded. Independently provable chunks can progress despite another
   chunk's refusal.
-- Per-mirror operations alerts identify deliveries still incomplete more
-  than ten minutes after arrival, oldest first. Partial discovery or reads
+- Per-mirror operations alerts identify deliveries left incomplete by both
+  the scan that discovered them and the following full scan, oldest first.
+  The allowance starts on the keeper's discovery clock, not at chain arrival,
+  so settled-block lag does not consume its working time. Alerts name both
+  arrival and discovery. Partial discovery or reads
   can raise an alert but cannot clear it; counts are qualified as "at least"
   when completeness is unknown. Every affected delivery remains in the log
   even if the chat message cannot hold them all.
@@ -182,6 +272,28 @@ evidence that the migration has completed.
 - Recovery is an operator decision. Recording an old route does not make
   that route a trusted current peer. Remittance automation stays off while
   an operator temporarily restores an old route to recover a delivery.
+- A released remittance is finished only when a current read shows no
+  stranded amount and no compensation gate. A missing figure stays unknown.
+  Alerts close once current chain evidence establishes completion, without
+  requiring a reconstruction or stamping of retired remittance history.
+
+## Sending reward budgets
+
+- Each send funds at most one reward day; days that only close and move no
+  value may accompany it. A day's budget may travel in several parts, under
+  the source-split, whole-day reservation and delivery rules in
+  [the tokenomics spec](TokenomicsTechSpec.md#4-platform-interaction-rewards).
+  The keeper sends at most one part per mirror per run, respects configured
+  limits and live lane capacity, and continues days already partly sent.
+- A day remains owed until all of its parts are accounted for. A send is not
+  described as covering the day merely because one part arrived. Part sizing
+  also follows the current tokenomics requirements for both lane ends and
+  avoiding uneconomic small parts; unread capacity does not become infinite.
+- For each day, the protocol's own verdict distinguishes already sent or
+  closed, nothing owed, manual-funding-only, awaiting commitments, short of
+  backing, partly sent, and ready. Only outstanding obligations are reported
+  as blocked work, with their actual reason. An older deployment without that
+  verdict retains a qualified warning rather than an invented explanation.
 
 ## Closing, finalizing, and broadcasting reward days
 
@@ -198,11 +310,21 @@ evidence that the migration has completed.
   in the same run. Base must be confirmed canonical. Expected sources must
   be readable, nonempty, and include Base; the keeper assesses coverage
   chain by chain rather than assuming a report count proves coverage.
-- A mirror pays the messenger's quoted reporting fee. An older report shape
-  is not sent when Base has finalized, could finalize, or cannot be read.
-  A mirror absent from the expected-source list is reported explicitly.
-  These are keeper checks: a route or configuration change between checking
-  and execution remains a race and must not be described as impossible.
+- Fresh deployments use the single current day-report format. A mirror's
+  close checks its destination against the Base the protocol names at execution;
+  incompatible reward clocks do not count toward Base's daily figures.
+  Authenticated chain-wide accounting still applies to a late or mismatched
+  report. A report received before Base's clock is set remains retryable.
+- Until fresh deployment replaces older testnets, the keeper may quote their
+  older B4 report only when the mirror's sender, its reporting route,
+  and Base's receiver are confirmed compatible. An unreadable or unsupported
+  channel holds every close and names the broken link. The new contracts
+  themselves retain no older-format fallback.
+- Every report or broadcast pays at most its configured per-chain send-fee
+  ceiling, defaulting to 0.002 native token. An excessive quote holds the send
+  and names both amounts; malformed fee settings hold all affected sends.
+  Fee-free finalization can proceed while a broadcast is held. A mirror absent
+  from the expected-source list is reported explicitly.
 - Finalized days are broadcast to every destination owed them, including
   destinations with standing in the day beyond today's lists. Served
   mirrors are read to confirm receipt. A missing receipt is flagged after
@@ -452,10 +574,34 @@ evidence that the migration has completed.
   or forfeited from the transaction's own evidence. A transaction-wide
   recycle credit is not presented as an additional wallet-specific payment
   when figures overlap.
+- Sanctions-hold conditions are delivered as one operator digest per chain,
+  with chain-wide conditions first and wallets grouped by reason. Omitted
+  chat lines are counted, and every line remains in the journal. A condition
+  repeats every six hours while it persists. A failed message records no
+  delivery, and a failed read cannot clear the condition.
 - A restarted observation chain is reported with its new beginning. An exact
   preceding gap is stated only when observed; an already-lapsed chain reports
   only what is known. Notices are best-effort and cover the claimants touched
   by that run, not every claimant on the network.
+
+## User risk and pre-grace warnings
+
+- The keeper and payment-reminder service use the same Push channel identity.
+  The keeper publishes its sending readiness without publishing its key.
+  Whole-service Push is available only when both senders can send on the same
+  channel. A missing or unreadable keeper record, or one older than fifteen
+  minutes, proves nothing about its rail; a payment-only answer states that
+  limitation. Skipped sends and failures are counted separately from delivery.
+- A withdrawal of a nonexistent indexed loan clears only health-band memory
+  learned before that withdrawal under the same deployment. It prevents a
+  pending obsolete warning from being posted, but preserves observations of a
+  real loan later given the same number. An earlier deployment's withdrawal
+  cannot clear the current loan's warning history.
+- An auto-refinance borrower inside the day before effective maturity is
+  warned even when the order book contains a seemingly suitable lender offer.
+  An unfilled offer never proves a refinance will happen. Existing throttles
+  still apply, and an active protocol pause holds a warning whose date is
+  still moving. An unreadable pause record holds the warning and says why.
 
 ## Protocol upkeep outside the reward system
 
@@ -544,6 +690,7 @@ evidence that the migration has completed.
 ## Activation and operator visibility
 
 The master keeper switch and each duty's own arming choice are separate.
+The periodic-interest settler has its own disabled-by-default activation.
 Delivery proofs, late acknowledgements, sanctions observation, reward-day
 automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep and its prepay-sale sanctions sync must each
 disclose whether they are armed on the selected deployment. Reward-day
@@ -575,3 +722,14 @@ dependency is never turned into an empty queue or a successful run.
   reward heartbeat, and sanctions settlement notices.
 - [October 21](../ReleaseNotes/ReleaseNotes-2026-10-21.md): remittance routes,
   reward-day automation, and retirement of shared keeper state.
+- [October 22](../ReleaseNotes/ReleaseNotes-2026-10-22.md): send-fee ceilings,
+  finalization evidence, and sanctions-hold digests.
+- [October 23](../ReleaseNotes/ReleaseNotes-2026-10-23.md) and
+  [October 24](../ReleaseNotes/ReleaseNotes-2026-10-24.md): Push readiness,
+  withdrawal-safe warning memory, and verified release installation.
+- [October 25](../ReleaseNotes/ReleaseNotes-2026-10-25.md): partial sizing,
+  periodic settlement, collateral evidence, bounded matching, and loan clocks.
+- [October 26](../ReleaseNotes/ReleaseNotes-2026-10-26.md): split-leg floors,
+  extension windows, credential-safe errors, and older-testnet compatibility.
+- [October 27](../ReleaseNotes/ReleaseNotes-2026-10-27.md): partial-day reward
+  remittances and VPFI loans left to their owners' ordinary claims.
