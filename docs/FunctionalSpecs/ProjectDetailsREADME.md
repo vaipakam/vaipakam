@@ -1383,6 +1383,11 @@ sale proceeds, without weakening the lender's default rights.
   recipient flagged *and* never synced within one uninterrupted outage — is the
   same accepted window as the rest of the S10 registry (seeded operationally by
   the sync and the permissionless refresh).
+  For each surface the platform also offers a read of the listing the sync
+  would act on: whether a listing is live, and the exact set of recipients
+  the sync would screen for it, built by the same rule the sync uses. So an
+  operator or keeper deciding whether a sync is due works from the set the
+  sync itself would read, never from a reconstruction of it.
 - Listings may support fixed-price, Dutch-decay, or OpenSea-offer
   assisted English-style discovery. In every mode, the on-chain
   settlement floor remains authoritative and the borrower-facing ask

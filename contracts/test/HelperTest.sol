@@ -612,11 +612,13 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = OfferParallelSaleFacet.postParallelSaleListing.selector;
         selectors[1] = OfferParallelSaleFacet.releaseParallelSaleLock.selector;
         // #1144 (S10 Invariant B) — offer-keyed prepay-sale sanctions sync.
         selectors[2] = OfferParallelSaleFacet.syncPrepaySaleOffer.selector;
+        // #2984 — the sync's own party set (keeper backstop read).
+        selectors[3] = OfferParallelSaleFacet.prepaySaleOfferParties.selector;
         return selectors;
     }
 
@@ -3172,7 +3174,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](11);
         selectors[0] = NFTPrepayListingFacet.postPrepayListing.selector;
         selectors[1] = NFTPrepayListingFacet.updatePrepayListing.selector;
         selectors[2] = NFTPrepayListingFacet.cancelPrepayListing.selector;
@@ -3187,6 +3189,8 @@ contract HelperTest {
         selectors[8] = NFTPrepayListingFacet.getPrepayListingAutoListOptedOut.selector;
         // #1144 (S10 Invariant B) — loan-keyed prepay-sale sanctions sync.
         selectors[9] = NFTPrepayListingFacet.syncPrepaySaleListing.selector;
+        // #2984 — the sync's own party set (keeper backstop read).
+        selectors[10] = NFTPrepayListingFacet.prepaySaleListingParties.selector;
         return selectors;
     }
 

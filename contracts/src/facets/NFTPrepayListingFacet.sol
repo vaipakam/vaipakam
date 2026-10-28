@@ -1088,23 +1088,12 @@ contract NFTPrepayListingFacet is
             revert PrepayListingNotFound(loanId);
         }
 
-        // The live borrower-position holder, whom the fill screens.
-        // `_ownerOfRaw` (raw SLOAD → address(0) for a burned token) keeps the sync
-        // non-reverting even on a terminalized loan whose NFTs are gone.
-        bool flaggedFound =
-            _syncRecipientFlag(LibERC721._ownerOfRaw(loan.borrowerTokenId));
-
-        // The recorded fee-leg recipients (the executor persisted them at post
-        // time; the zone callback re-screens the live set, which this pre-registers).
-        address pinnedExecutor = s.prepayListingExecutor[loanId];
-        if (pinnedExecutor != address(0)) {
-            FeeLeg[] memory legs =
-                IListingExecutorRecorder(pinnedExecutor).orderFeeLegs(orderHash);
-            for (uint256 i = 0; i < legs.length; ) {
-                flaggedFound = _syncRecipientFlag(legs[i].recipient) || flaggedFound;
-                unchecked {
-                    ++i;
-                }
+        address[] memory parties = _listingParties(s, loan, loanId, orderHash);
+        bool flaggedFound = false;
+        for (uint256 i = 0; i < parties.length; ) {
+            flaggedFound = _syncRecipientFlag(parties[i]) || flaggedFound;
+            unchecked {
+                ++i;
             }
         }
 
@@ -1112,6 +1101,57 @@ contract NFTPrepayListingFacet is
             _cancel(s, loan, loanId, orderHash, CancelReason.SanctionsSync);
         }
         emit PrepaySaleListingSynced(loanId, msg.sender, flaggedFound);
+    }
+
+    /// @notice The live loan-keyed prepay-sale listing for `loanId` and the
+    ///         parties {syncPrepaySaleListing} screens for it: `orderHash` is
+    ///         `bytes32(0)` (and `parties` empty) when no listing is live.
+    /// @dev    Read side of the sync, built by the SAME party rule
+    ///         (`_listingParties`), so an off-chain caller (the keeper's
+    ///         sanctions backstop, #2984) decides whether a sync is due from
+    ///         exactly the set the sync would screen, never from indexed event
+    ///         data that can drift from it. A party may be `address(0)` (a
+    ///         burned position NFT) or repeated; the sync skips the first and
+    ///         screens the second once per entry.
+    function prepaySaleListingParties(uint256 loanId)
+        external
+        view
+        returns (bytes32 orderHash, address[] memory parties)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        orderHash = s.prepayListingOrderHash[loanId];
+        if (orderHash != bytes32(0)) {
+            parties = _listingParties(s, s.loans[loanId], loanId, orderHash);
+        }
+    }
+
+    /// @dev The parties the fill of `loanId`'s listing pays, which the sync
+    ///      screens: the live borrower-position holder first (the sale is that
+    ///      side's own dealing; `_ownerOfRaw` returns address(0) for a burned
+    ///      token, so this stays non-reverting on a terminalized loan), then the
+    ///      fee-leg recipients the pinned executor recorded at post time (the
+    ///      zone callback re-screens the live set, which this pre-registers).
+    ///      The lender-position holder is not a party: the sale books the
+    ///      lender's share to a claim row screened at the claim (#2876).
+    function _listingParties(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.Loan storage loan,
+        uint256 loanId,
+        bytes32 orderHash
+    ) private view returns (address[] memory parties) {
+        FeeLeg[] memory legs;
+        address pinnedExecutor = s.prepayListingExecutor[loanId];
+        if (pinnedExecutor != address(0)) {
+            legs = IListingExecutorRecorder(pinnedExecutor).orderFeeLegs(orderHash);
+        }
+        parties = new address[](1 + legs.length);
+        parties[0] = LibERC721._ownerOfRaw(loan.borrowerTokenId);
+        for (uint256 i = 0; i < legs.length; ) {
+            parties[i + 1] = legs[i].recipient;
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     /// @dev Register `who`'s live sanctions status into the committed registry
