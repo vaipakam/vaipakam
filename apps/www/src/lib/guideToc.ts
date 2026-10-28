@@ -55,8 +55,9 @@ export interface TocSection {
  * was to scroll past everything above it (#1599). Its two cards have no
  * anchors, and they cannot simply be given some — every anchor the
  * English guide carries that the nine translations lack is an
- * anchor-parity failure, and that chapter is untranslated (#1593). The
- * durable fix is here anyway: the NEXT unanchored chapter stays
+ * anchor-parity failure, and until #1593 that chapter was untranslated
+ * (anchoring all ten editions together is #1597). The durable fix is
+ * here anyway: the NEXT unanchored chapter stays
  * reachable instead of vanishing silently.
  *
  * The id used is the heading's slug, which is what `headingComponents`

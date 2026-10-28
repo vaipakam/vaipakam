@@ -921,60 +921,37 @@ noch gilt.
 
 <a id="buy-vpfi.cross-chain-tier"></a>
 
-### Wie dein VPFI-Tier zwischen Chains wandert
+### Wie dein VPFI-Tier zwischen Chains reist
 
-Du zahlst VPFI in deinen Vault auf Base ein — Base ist die kanonische
-Chain, die deinen Akkumulator-Stand besitzt. Wenn du auf einer anderen
-Chain handelst (Borrow auf Sepolia, Lend auf Arbitrum usw.), liest
-diese Chain eine *gecachte* Kopie deines Tiers. Der Cache wird durch
-einen Cross-Chain-Push frisch gehalten: Sobald sich dein effektives
-Tier auf Base ändert, sendet deine NÄCHSTE Base-Aktion eine
-CCIP-Nachricht an jede Mirror-Chain, auf der du handeln könntest. Der
-Push reitet auf jeder regulären Base-Aktion mit — und seit T-087 Sub 4
-bietet das Dashboard zusätzlich einen Button "Mein Tier jetzt an die
-Mirrors pushen" (der `pokeMyTier()` aufruft), damit du den Push ohne
-Vault-Mutation erzwingen kannst. Die vollständige Erklärung inklusive
-lokaler Zustimmung und lokaler VPFI-Anforderungen auf Mirror-Chains
-steht im Kapitel "How VPFI Discounts Work" — das derzeit nur im
-englischen Guide vorhanden ist.
+Du hältst VPFI in deinem Vault auf Base, der kanonischen Chain, und
+Base berechnet dein Tier. Wenn du auf einer anderen Chain leihst oder
+verleihst, wendet diese Chain eine Kopie deines Tiers an, die Base über
+Chainlink CCIP nach jeder Einzahlung, Auszahlung oder anderen Aktion
+schickt, die es ändert.
 
 Drei Dinge, die du wissen solltest:
 
-- **Tier-Reifung braucht eine Folgeaktion.** Dein erster Stake sendet
-  NICHT sofort — dein effektives Tier ist durch eine
-  Mindesthistorien-Frist gedeckelt (standardmäßig 3 Tage), sodass ein
-  frischer Stake zunächst als Tier 0 auflöst und der Broadcast still
-  übersprungen wird. Nach Ablauf der Frist öffnet sich das Gate auf
-  Base sofort, aber die Mirrors erfahren es erst, wenn deine NÄCHSTE
-  rollup-tragende Base-Aktion (jede Einzahlung, Auszahlung oder
-  Loan-Aktion — alles, was deinen Vault auf Base verändert) ODER ein
-  Klick auf "Mein Tier jetzt an die Mirrors pushen" im Dashboard
-  (Sub 4) einen Push auslöst. Ein Top-up von 1 Wei genügt ebenfalls.
-- **Propagationszeit.** Ist ein Push einmal abgeschickt, landet er über
-  CCIP typischerweise innerhalb von Minuten auf dem Mirror. Bis dahin
-  respektiert der Mirror weiterhin dein zuvor gecachtes Tier — es gibt
-  kein Flackern auf Tier 0.
-- **Cache-Ablauf.** Ein gecachtes Tier bleibt gültig, bis entweder
-  (a) ein frischer Push eintrifft, (b) die Governance die
-  Tier-Schwellentabelle auf eine neue Version hebt und die vom Mirror
-  verfolgte Version steigt (das passiert, sobald der erste Push
-  IRGENDEINES Nutzers nach dem Bump auf diesem Mirror landet — auch
-  ruhende Nutzer ohne jüngste Base-Aktivität verlieren in diesem Moment
-  ihren gecachten Rabatt der alten Version, bis ihr eigener nächster
-  Push nachzieht), oder (c) der Cache seine Maximalalter-Grenze
-  überschreitet (standardmäßig 60 Tage). Handelst du auf einer Chain
-  lange nicht, läuft dein Cache dort irgendwann ab und die Chain
-  behandelt dich bis zum nächsten Push als Tier 0. Zum Auffrischen
-  genügt jede rollup-tragende Base-Aktion, die ein neues Push-Tupel
-  erzeugt — eine tier-verändernde Saldo-Mutation ODER IRGENDEINE
-  Base-Aktion nach einem Versionssprung der Governance-Tabelle. Ein
-  "No-op"-Rollup mit demselben Tupel sendet KEINEN neuen Push — das ist
-  Absicht, damit das Broadcast-Budget des Protokolls nicht für bereits
-  korrekte Caches verbraucht wird.
+- **Ein Tier, das allein mit der Zeit steigt, braucht eine Aktion auf
+  Base, um zu reisen.** Wenn deine Haltedauer erreicht ist oder dein
+  Durchschnitt aufholt, ohne Einzahlung oder Auszahlung, ist der Wert
+  auf Base sofort aktuell. Die anderen Chains erfahren ihn mit deiner
+  nächsten Einzahlung oder Auszahlung auf Base, egal in welcher Höhe.
+- **Ein niedrigeres Tier reist zuerst.** Das Protokoll schickt ein
+  niedrigeres Tier sofort und bezahlt ein höheres höchstens einmal pro
+  Tag und Chain. Die Zustellung über CCIP dauert danach meist einige
+  Minuten. Bis sie ankommt, wendet die Chain weiter dein vorheriges
+  Tier an.
+- **Eine Kopie kann veralten.** Nach 60 Tagen ohne neue Kopie (der
+  Standardwert) oder sobald eine Änderung der Tier-Tabelle diese Chain
+  erreicht, gibt die alte Kopie dort keinen Rabatt mehr. Eine neue
+  Kopie wird nur geschickt, wenn sich dein Tier ändert.
 
-Wenn dich die genauen Gates interessieren, mit denen der Cache
-Veraltung erkennt, siehe die
-[Functional Spec zur Cross-Chain-Tier-Propagation](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/CrossChainTierPropagation.md).
+Die vollständigen Regeln, einschließlich des Rabatt-Schalters, den du
+auf Base ebenso wie auf der genutzten Chain brauchst, stehen im
+Kapitel „Wie VPFI-Rabatte funktionieren“ weiter unten. Das Design der
+Zustellung steht im
+[Design-Dokument zur Tier-Zustellung](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/TierPushDeliveryDesign.md)
+(auf Englisch).
 
 ---
 
@@ -1817,3 +1794,195 @@ Zwei Ergebnisse sind möglich:
 Wenn du einen öffentlichen On-Chain-Nachweis möchtest, dass ein bestimmter Token-Saldo in deinem Vault NICHT dir gehört, bietet das Protokoll eine `disown(token)`-Funktion an. Sie emittiert ein Event (`TokenDisowned`) und ändert sonst nichts — die Token bleiben wie zuvor im Vault. Dies ist nützlich bei Compliance-Streitigkeiten, falls eine CEX oder eine Regulierungsbehörde fragt: "Haben Sie diese Mittel erhalten?". Du kannst dann auf das On-Chain-Event verweisen.
 
 Die Disown-Funktion ist derzeit nur über direkten Vertragsaufruf zugänglich; das Vaipakam-Frontend bietet dafür keinen Button an. Nutze die "Write Contract"-Oberfläche eines Block-Explorers oder ein Tool zur Interaktion mit Smart Contracts, um sie aufzurufen.
+
+## Wie VPFI-Rabatte funktionieren
+
+VPFI in deinem Vault auf Base, der kanonischen Chain, bringt dir einen
+Rabatt auf die eigenen Gebühren des Protokolls, auf jeder Chain, auf
+der die Plattform läuft. Je mehr du hältst und je länger du es hältst,
+desto höher dein Tier und desto größer der Rabatt. Die Tiers stehen in
+der [Tier-Leiter](#dashboard.fee-discount-consent) weiter oben; die
+Governance kann sie ändern.
+
+Worauf der Rabatt wirkt:
+
+- **Als Lender** auf die Yield-Gebühr, die das Protokoll von deinen
+  Zinsen einbehält. Sie wird bei jedem Settlement von Zinsen gelesen,
+  etwa bei Rückzahlung, Preclose oder Refinanzierung, mit deinem Tier
+  in diesem Moment, nicht mit dem Tier bei Kreditbeginn.
+- **Als Borrower** auf die Loan Initiation Fee, die bei Kreditbeginn
+  berechnet wird. Sie wird einmal gelesen, bei der Annahme, und bleibt
+  für diesen Kredit fest. Sie gilt nur, wenn das Lending-Asset liquide
+  ist; ein illiquider Kredit zahlt die volle Gebühr.
+
+Der Rabatt wird von der Gebühr selbst abgezogen, im Asset des Kredits,
+und dafür verlässt kein VPFI deinen Vault. Die einzige Ausnahme ist der
+Lender-Rabatt auf einem Deployment, das eine VPFI-Preisreferenz
+konfiguriert: Dort kann er stattdessen in VPFI aus deinem Vault
+beglichen werden. Zum Start ist keine konfiguriert. Dieses Kapitel
+behandelt diesen Halte-Rabatt. Ein separater bezahlter Gebührenmodus,
+„Full“, bleibt ausgeschaltet, solange ein Deployment ihn nicht
+einschaltet.
+
+### Den Rabatt einschalten
+
+Der Rabatt ist Opt-in. Der Schalter liegt auf der VPFI-Seite, und es
+gibt einen pro Chain, weil jede Chain ihre eigene Einstellung hat:
+
+- **Auf der Chain, auf der die Gebühr anfällt**, muss der Schalter an
+  sein, sonst berechnet diese Chain die volle Gebühr, egal welches Tier
+  du hast.
+- **Auf Base** muss der Schalter ebenfalls an sein, auch wenn du dort
+  nie leihst oder verleihst. Solange er aus ist, schickt Base allen
+  anderen Chains für dich Tier null.
+
+Wenn du den Rabatt auf Base ausschaltest, schickt die App direkt danach
+ein Tier-Update, damit auch alle anderen Chains ihn nicht mehr anwenden:
+Base schickt ihnen dann für dich Tier null. Schlägt dieser zweite
+Schritt fehl, sagt die Seite das, und die anderen Chains behalten dein
+letztes Tier, bis etwas ein neues schickt. Schaltest du ihn auf einer
+anderen Chain aus, ändert sich nur diese Chain.
+
+VPFI zählt, wenn das Protokoll es in deinem Vault erfasst: was du über
+die VPFI-Seite einzahlst, und VPFI-Rewards, die das Protokoll in deinen
+Vault liefert. Token, die direkt an die Adresse deines Vaults geschickt
+werden, verfolgt das Protokoll nicht, und sie erhöhen dein Tier nicht.
+
+### Wie dein Tier berechnet wird
+
+Dein Tier ergibt sich aus drei getrennten Prüfungen, und alle drei
+müssen bestanden sein:
+
+1. **Eine Mindesthaltedauer.** Dein Tier bleibt null, bis dein
+   aktueller Bestand mindestens 3 Tage gehalten wurde. Ein Bestand
+   beginnt, sobald dein Vault-Guthaben über null steigt, und dauert,
+   bis es wieder auf null fällt. Nachlegen startet die Uhr nicht neu;
+   alles abheben schon. (3 Tage ist der Standard; die Governance kann
+   2 bis 14 festlegen.)
+2. **Ein Durchschnitt mit Gewicht auf den letzten Tagen.** Dein
+   Guthaben wird über die letzten 30 Tage gemittelt, wobei die letzten
+   7 Tage dreifach zählen. Der Durchschnitt reicht nie vor den Beginn
+   deines aktuellen Bestands zurück, sodass ein neuer Halter nicht
+   durch Tage verwässert wird, an denen er nichts hielt. (Fenster,
+   jüngste Tage und Gewicht sind Governance-Einstellungen; das Fenster
+   kann 14 bis 30 Tage lang sein.)
+3. **Das niedrigste Tier, das du berührt hast.** Unabhängig vom
+   Durchschnitt kann dein Tier nicht höher sein als das niedrigste
+   Tier, das dein Guthaben während des aktuellen Bestands erreicht hat,
+   mit einem Rückblick von höchstens 30 Tagen. Es zählt der
+   Tiefststand jedes Tages, ein Absinken und Erholen am selben Tag
+   zählt also trotzdem als Absinken.
+
+Was das praktisch heißt:
+
+- Eine Einzahlung kurz vor dem Settlement eines Kredits hebt dein Tier
+  nicht sofort an. Der zusätzliche Betrag muss erst in den Durchschnitt
+  einfließen, und dein Tiefststand begrenzt dich weiterhin.
+- Eine Auszahlung, die dich unter die Schwelle eines Tiers bringt,
+  senkt dein Tier sofort.
+- Ein Absinken, das mehr als 30 Tage zurückliegt, begrenzt dich nicht
+  mehr.
+
+### Dein Tier auf anderen Chains
+
+Base berechnet dein Tier. Alle anderen Chains wenden eine Kopie an, die
+Base über Chainlink CCIP schickt. Base aktualisiert deinen Tier-Eintrag,
+wenn auf Base eines davon passiert: VPFI kommt in deinen Vault oder
+verlässt ihn (eine Einzahlung, eine Auszahlung oder ein Reward, der in
+ihn geliefert wird); ein Kredit beginnt mit dir als Verleiher oder
+Kreditnehmer; ein Kreditschritt hält VPFI von dir fest oder gibt es
+frei; oder du machst den Aufruf zum Auffrischen des Tiers. Jede
+Aktualisierung schickt den anderen Chains eine neue Kopie, wenn sich die
+Kopie ändern würde.
+
+Jede Chain wird für sich beliefert. Eine nicht erreichbare Chain hält
+die anderen nicht auf, und **eine Zustellung, die nicht rausgehen kann,
+lässt deine eigene Aktion nie fehlschlagen**: Dein Tier auf Base ist
+sofort aktuell, und jeder anderen Chain wird das Update geschuldet, bis
+es ankommt.
+
+Das Protokoll bezahlt diese Zustellungen, mit einer Grenze:
+
+- **Ein niedrigeres Tier** wird sofort geschickt, solange das Budget
+  es bezahlen kann. Bis es ankommt, wendet die Chain weiter dein
+  vorheriges, höheres Tier an.
+- **Ein höheres Tier** oder eine Änderung der Tier-Tabelle wird
+  höchstens einmal pro Tag und Chain bezahlt (eine
+  Governance-Einstellung zwischen 1 Stunde und 7 Tagen). Bis dahin
+  behält die Chain dein vorheriges Tier.
+- Ein Update, das durch diese Wartezeit zurückgehalten wird oder das
+  das Budget nicht bezahlen konnte, **wird nach Ablauf der Wartezeit nicht
+  von selbst erneut gesendet**. Es geht mit der nächsten Aktualisierung
+  Ihres Tier-Eintrags auf Base hinaus, oder wenn jemand den Zustellaufruf
+  für Sie ausführt.
+- Diesen Aufruf kann jeder ausführen. Ist die Wartezeit vorbei und kann
+  das Budget zahlen, zahlt das Protokoll; vorher zahlt der Aufrufer die
+  Cross-Chain-Gebühr, um früher zuzustellen. Die Contracts bieten diesen
+  Aufruf an; die App bietet ihn noch nicht an.
+
+Eine Kopie zählt nicht mehr, und die Chain gibt dann keinen Rabatt,
+wenn:
+
+- sie älter ist als das Höchstalter der Chain (standardmäßig 60 Tage,
+  nie weniger als 30); oder
+- sie mit einer älteren Tier-Tabelle erstellt wurde als der, die die
+  Chain inzwischen kennt.
+
+Eine Kopie wird nur erneut geschickt, wenn sich etwas darin ändern
+würde: dein Tier, sein Rabatt, wie lange sie gültig bleibt oder die
+Version der Tier-Tabelle. Nach einer Änderung der Tier-Tabelle schickt
+die nächste Aktualisierung deines Tier-Eintrags auf Base also jeder
+Chain eine frische Kopie, auch wenn dein Tier gleich bleibt, außer es
+ist null. Hat sich nichts davon geändert, gibt eine Chain mit veralteter
+Kopie keinen Rabatt, bis sich etwas ändert.
+
+Steigt dein Tier nur, weil Zeit vergangen ist — die Haltedauer ist
+erreicht oder der Durchschnitt hat aufgeholt —, bemerkt Base das erst
+bei der nächsten Aktualisierung deines Tier-Eintrags. Der Aufruf zum
+Auffrischen des Tiers macht diese Aktualisierung, wann immer du willst;
+die App macht ihn für dich nur, wenn du den Rabatt ausschaltest.
+
+### Für Betreiber
+
+Der Cross-Chain-Teil des Rabatts braucht diese Konfiguration. Sie
+steht hier für alle, die ein eigenes Deployment betreiben.
+
+**Auf Base:**
+
+- `VPFITokenFacet.setCanonicalVPFIChain(true)`. Ohne das berechnet
+  Base Tiers, schickt sie aber nirgendwohin.
+- `RewardReporterFacet.setRewardMessenger` mit Verweis auf den
+  `VaipakamRewardMessenger`, und `setBroadcastDestinations` des
+  Messengers mit allen anderen Chains.
+- Ein gedecktes Broadcast-Budget:
+  `ProtocolBroadcastFacet.topUpBroadcastBudget()` (payable). Ein leeres
+  Budget blockiert nichts. Jede Zustellung, die es nicht bezahlen
+  kann, bleibt geschuldet und emittiert `TierPushDeferred` mit dem
+  Grund, und `getTierPushStatus(user)` zeigt den Stand jeder Chain für
+  einen Nutzer. Ein knappes Budget bedeutet, dass andere Chains länger
+  alte Tiers anwenden; beobachte die Aufschübe und lade nach.
+- Das Abstandsfenster für bezahlte Erhöhungen:
+  `setTierPushSpacingSec` (Standard 1 Tag, 1 Stunde bis 7 Tage).
+
+**Auf jeder anderen Chain:**
+
+- `RewardReporterFacet.setRewardMessenger(addr)`: der einzige Absender,
+  dessen Tier-Updates die Chain annimmt.
+- `RewardReporterFacet.setBaseChainId(chainId)`: die EVM-Chain-ID von
+  Base (8453 auf Mainnet, 84532 auf Base Sepolia), nicht ihr
+  CCIP-Chain-Selektor.
+- `ConfigFacet.setMirrorTierMaxAgeSec(seconds)`: wie lange eine Kopie
+  zählt (Standard 60 Tage; Werte unter 30 Tagen werden abgelehnt). Eine
+  Senkung wirkt beim nächsten Lesen.
+
+**Die Tier-Tabelle ändern:**
+
+- `setVpfiTierThresholds` und `setVpfiTierDiscountBps` auf Base
+  erhöhen die Version der Tabelle. Eine andere Chain erfährt die neue
+  Version durch das erste Tier-Update, das sie trägt, egal von welchem
+  Nutzer. Ab dann gilt jede mit der alten Tabelle erstellte Kopie als
+  kein Rabatt, bis das eigene Update dieses Nutzers ankommt, und diese
+  Updates sind Erhöhungen, die höchstens einmal pro Abstandsfenster
+  bezahlt werden. Lade das Budget auf, bevor du die Tabelle änderst.
+- `setTwaMinStakedDays` ändert die Mindesthaltedauer, ohne die Version
+  zu erhöhen. Die Änderung wirkt beim nächsten Lesen.
