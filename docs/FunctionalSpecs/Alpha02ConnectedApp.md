@@ -1843,6 +1843,58 @@ Thin-market honesty rules apply.
 - Position rows should offer the next relevant action where one exists. A row
   with a payout waiting says what that payout is and offers to collect it.
 
+### Closing several loans from one offer at once (#126)
+
+- When one of the borrower's offers filled into two or more loans that are
+  still open, the positions page offers to repay them all together, and in
+  Advanced mode to close them all early. Only the connected wallet's own
+  borrower positions are grouped; another borrower's loan from the same
+  offer is never included. Rentals are not grouped.
+- Each loan in the group passes the same live checks its own page runs
+  before it is offered, and the two must never disagree. A loan with
+  anything the borrower should see before closing it (an accepted sale
+  waiting to complete, an open refinance request, an open offset offer, a
+  loan in its fallback period) is left out of the batch and named, with
+  the reason and a pointer to its own page. A loan whose checks could not
+  be read is left out with that reason too, never included on a guess.
+- Before anything is signed the borrower sees every loan's amount due now,
+  every loan left out and why, the total, and the approval the batch will
+  ask for, stated as covering a small allowance for the amount rising
+  before the transaction runs. The pad is never taken: each loan pays
+  only what it owes when it runs. The review is the same six-row review
+  every other write shows, and under each loan it repeats what that
+  loan's own page states before the same action: for an early close, the
+  loan's interest rule (whole term or built up so far), the late fee when
+  it is past due, and that a paid Full tariff is not refunded. A loan
+  whose tariff record cannot be read is left out, as its own page holds
+  its early close until that record is known.
+- The batch is one token approval and then one transaction for up to 30
+  loans. Each loan's close runs as the borrower, with its own checks, and
+  a loan that fails when the transaction runs is skipped while the others
+  still close. One failed loan never undoes the others.
+- Every loan's outcome is read back from the chain after the transaction,
+  never assumed from it: repaid (or closed early), still open with the
+  reason, changed another way (for example defaulted meanwhile, which is
+  never reported as this batch's close), left out, or could not be read.
+  A transaction that was sent but has not confirmed when the app stops
+  waiting is reported as not confirmed yet, never as failed; nothing more
+  is sent behind it, and the loans it would have carried are named as
+  not sent.
+- Immediately before each transaction is sent, every loan in it is
+  checked again in full, as at review, since the wallet may have waited on
+  the approval or an earlier transaction meanwhile. A loan that no longer
+  passes (its position has moved to another wallet, a sale was accepted, a
+  request or offset was posted) is left out and named.
+- The approval is set back to what it was before only when it is
+  established that no loan closed; an outcome that could not be read
+  counts as a possible close. Either way, the approval that remains is
+  read from the chain afterwards and stated, with where to lower it, and
+  never described as restored on the strength of the attempt. If it
+  cannot be read, the page says that instead.
+- The batch card stays on the page with its results until the borrower
+  dismisses it, even when the batch leaves the offer with fewer than two
+  open loans.
+
 ### Taking back extra collateral
 
 The platform lets a borrower withdraw collateral from an open loan as long as
