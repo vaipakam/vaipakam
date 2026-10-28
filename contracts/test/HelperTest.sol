@@ -84,6 +84,7 @@ import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
+import {RewardRemitDestinationFacet} from "../src/facets/RewardRemitDestinationFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
@@ -2795,6 +2796,18 @@ contract HelperTest {
         selectors[1] = RewardForfeitWalkFacet.epochRetireZeroPricedRemainder.selector; // 3b-ii-B (B-6)
     }
 
+    /// #2963 — a remit destination taken off Base's list. Mirrors
+    /// `DeployDiamond._getRewardRemitDestinationSelectors`.
+    function getRewardRemitDestinationFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](2);
+        selectors[0] = RewardRemitDestinationFacet.onExpectedSourceListChange.selector;
+        selectors[1] = RewardRemitDestinationFacet.continueRemitDestinationRelease.selector;
+    }
+
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors
     /// `DeployDiamond._getRewardRemittanceLensSelectors` (SelectorCoverageTest
     /// asserts the match).
@@ -2803,7 +2816,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](43);
+        selectors = new bytes4[](44);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2865,6 +2878,7 @@ contract HelperTest {
         selectors[40] = RewardRemittanceLensFacet.getDayDeliveryParts.selector;
         selectors[41] = RewardRemittanceLensFacet.getRemitLaneBucket.selector;
         selectors[42] = RewardRemittanceLensFacet.getRemitDayFreshReserved.selector;
+        selectors[43] = RewardRemittanceLensFacet.getRemitDestinationRelease.selector; // #2963
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.

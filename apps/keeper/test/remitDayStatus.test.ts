@@ -32,7 +32,8 @@ describe('#2760 remit day statuses', () => {
     expect(remitDayStatusName(0)).toBe('NotFinalized');
     expect(remitDayStatusName(8n)).toBe('Closeable');
     expect(remitDayStatusName(9)).toBe('Partial');
-    expect(remitDayStatusName(10)).toBeUndefined();
+    expect(remitDayStatusName(10)).toBe('Abandoned');
+    expect(remitDayStatusName(11)).toBeUndefined();
     expect(remitDayStatusName('x')).toBeUndefined();
   });
 
@@ -58,6 +59,10 @@ describe('#2760 remit day statuses', () => {
 
   it('a Partial day is acted on, not blocked (#918)', () => {
     expect(owedButBlocked([1n], ['Partial'])).toEqual([]);
+  });
+
+  it('an Abandoned day is settled as lost, never reported as owed (#2963)', () => {
+    expect(owedButBlocked([1n], ['Abandoned'])).toEqual([]);
   });
 
   it('a day that owed this mirror nothing is never reported', () => {

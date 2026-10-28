@@ -83,6 +83,7 @@ import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
+import {RewardRemitDestinationFacet} from "../src/facets/RewardRemitDestinationFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
@@ -393,6 +394,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         RewardAggregatorFacet rewardAggregatorFacet = RewardAggregatorFacet(ArtifactDeploy.deploy(type(RewardAggregatorFacet).name));
         RewardRemittanceFacet rewardRemittanceFacet = RewardRemittanceFacet(ArtifactDeploy.deploy(type(RewardRemittanceFacet).name));
         RewardRemittanceLensFacet rewardRemittanceLensFacet = RewardRemittanceLensFacet(ArtifactDeploy.deploy(type(RewardRemittanceLensFacet).name));
+        RewardRemitDestinationFacet rewardRemitDestinationFacet = RewardRemitDestinationFacet(ArtifactDeploy.deploy(type(RewardRemitDestinationFacet).name));
         // #1566 slice 4 PR A — custody lifecycle and ledger views.
         RewardCustodyFacet rewardCustodyFacet = RewardCustodyFacet(ArtifactDeploy.deploy(type(RewardCustodyFacet).name));
         // #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch.
@@ -481,7 +483,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](101);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](102);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -577,6 +579,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[98] = _buildCut(address(forcedSaleFacet), _getForcedSaleSelectors());
         cuts[99] = _buildCut(address(rateModelFacet), _getRateModelSelectors());
         cuts[100] = _buildCut(address(nftMetadataFacet), _getNftMetadataSelectors());
+        // #2963 — what Base does when a remit destination leaves its
+        // expected-source list (the list setter self-calls its hook).
+        cuts[101] = _buildCut(address(rewardRemitDestinationFacet), _getRewardRemitDestinationSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1196,6 +1201,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("rewardAggregatorFacet",   address(rewardAggregatorFacet));
         Deployments.writeFacet("rewardRemittanceFacet",   address(rewardRemittanceFacet));
         Deployments.writeFacet("rewardRemittanceLensFacet", address(rewardRemittanceLensFacet));
+        Deployments.writeFacet("rewardRemitDestinationFacet", address(rewardRemitDestinationFacet));
         Deployments.writeFacet("rewardCompensationDispatchFacet", address(rewardCompensationDispatchFacet));
         Deployments.writeFacet("rewardCommitmentFacet",   address(rewardCommitmentFacet));
         Deployments.writeFacet("rewardCustodyFacet",      address(rewardCustodyFacet));
@@ -3619,12 +3625,25 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split).
+    /// #2963 — a destination taken off Base's list: the list change's hook
+    /// (Diamond self-call from `RewardAggregatorFacet.setExpectedSourceChainIds`)
+    /// and the permissionless continuation of its release walk.
+    function _getRewardRemitDestinationSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](2);
+        s[0] = RewardRemitDestinationFacet.onExpectedSourceListChange.selector;
+        s[1] = RewardRemitDestinationFacet.continueRemitDestinationRelease.selector;
+    }
+
     function _getRewardRemittanceLensSelectors()
         internal
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](43);
+        s = new bytes4[](44);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -3688,6 +3707,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[40] = RewardRemittanceLensFacet.getDayDeliveryParts.selector;
         s[41] = RewardRemittanceLensFacet.getRemitLaneBucket.selector;
         s[42] = RewardRemittanceLensFacet.getRemitDayFreshReserved.selector;
+        s[43] = RewardRemittanceLensFacet.getRemitDestinationRelease.selector; // #2963
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {

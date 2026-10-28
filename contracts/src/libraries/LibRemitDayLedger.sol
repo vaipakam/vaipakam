@@ -105,8 +105,10 @@ library LibRemitDayLedger {
     ///         `Closeable`: this batch would complete the day, possibly moving
     ///         zero. `Partial` (#918, appended): this batch moves a part of the
     ///         day under the caller's part cap and the day stays OPEN, owing the
-    ///         rest. The zero value is not `Closeable`, so a status left unset
-    ///         can never read as one.
+    ///         rest. `Abandoned` (#2963, appended): the destination was taken
+    ///         off Base's expected-source list after this day, so the day is
+    ///         never sent to it again; settled, as lost. The zero value is not
+    ///         `Closeable`, so a status left unset can never read as one.
     enum RemitDayStatus {
         NotFinalized,
         Repeated,
@@ -117,7 +119,8 @@ library LibRemitDayLedger {
         AwaitingCommitment,
         Unbacked,
         Closeable,
-        Partial
+        Partial,
+        Abandoned
     }
 
     /// @notice One day's plan for one send: the day's whole, and the part this
@@ -195,6 +198,62 @@ library LibRemitDayLedger {
         uint256 sentRecycled
     );
 
+    /// @notice #2963 — `dstChainId` was taken off Base's expected-source list:
+    ///         every day of it before `abandonedBefore` is abandoned (never
+    ///         sent to it again), and the release walk below frees what Base
+    ///         held for those days. The walk has released every day before
+    ///         `releaseCursor`.
+    /// @custom:event-category informational/reward-transport
+    event RemitDestinationRemoved(
+        uint32 indexed dstChainId,
+        uint256 abandonedBefore,
+        uint256 releaseCursor
+    );
+
+    /// @notice #2963 — one abandoned day's hold toward `dstChainId` released.
+    ///         The day is never sent, so the destination's users lose it.
+    /// @param locked         A part of the day had been sent (the day carries a
+    ///                       ledger); otherwise no part ever went.
+    /// @param heldFresh      The day's unsent fresh, freed from the pool hold
+    ///                       (`remitDayFreshReserved`); a locked day only.
+    /// @param commitFresh    The armed fresh commitment freed
+    ///                       (`outstandingCommitFresh`); an unlocked day only
+    ///                       (a locked day's became its hold at its first part).
+    /// @param commitRecycled The armed recycled commitment freed
+    ///                       (`outstandingCommitRecycled`): the unsent rest,
+    ///                       with the clamp residual when no live part retired it.
+    /// @custom:event-category informational/reward-transport
+    event RemitAbandonedDayReleased(
+        uint32 indexed dstChainId,
+        uint256 indexed dayId,
+        bool locked,
+        uint256 heldFresh,
+        uint256 commitFresh,
+        uint256 commitRecycled
+    );
+
+    /// @notice #2963 — one run of the release walk toward `dstChainId`: it
+    ///         has released every day before `releaseCursor`, and the release
+    ///         is done once that reaches `abandonedBefore`.
+    /// @custom:event-category informational/reward-transport
+    event RemitDestinationReleaseWalked(
+        uint32 indexed dstChainId,
+        uint256 releaseCursor,
+        uint256 abandonedBefore
+    );
+
+    /// @notice #2963 — a released part belonged to a day the walk had already
+    ///         released: the recycled commitment the part retired at its send
+    ///         is NOT restored, because the day is never sent and nothing
+    ///         would ever retire it again.
+    /// @custom:event-category informational/reward-transport
+    event RemitAbandonedPartReleased(
+        uint32 indexed dstChainId,
+        uint256 indexed dayId,
+        uint256 indexed remitId,
+        uint256 recycledNotRestored
+    );
+
     // ─── Plan ────────────────────────────────────────────────────────────
 
     /**
@@ -239,6 +298,16 @@ library LibRemitDayLedger {
             p.status = RemitDayStatus.Closed;
             return p;
         }
+        // #2963 — a day of a destination Base has taken off its list is never
+        // sent to it again, locked or not; what it held is released by
+        // {walkAbandoned}. This is the one deliberate break of the LOCKSTEP
+        // below: the mirror's gate keeps holding such a day, waiting for a
+        // whole that never comes, because the chain's users lose those days
+        // (owner decision 2026-10-27, "On removal").
+        if (isAbandoned(s, dstChainId, dayId)) {
+            p.status = RemitDayStatus.Abandoned;
+            return p;
+        }
         LibVaipakam.RemitDayLedger storage l = s.remitDayLedger[dstChainId][dayId];
         if (l.locked) {
             p.armed = l.armed;
@@ -262,14 +331,12 @@ library LibRemitDayLedger {
             p.status = RemitDayStatus.Ineligible;
             return p;
         }
-        LibInteractionRewards.ChainDayBudget memory b = LibInteractionRewards
-            .chainRewardBudgetSideSplitForDay(s, dstChainId, dayId);
-        uint256 grossRecycled = b.recycledLender + b.recycledBorrower;
-        uint256 localBacking =
-            s.chainDayRecycledFunding[dayId][dstChainId].recycleConsume;
-        if (localBacking > grossRecycled) localBacking = grossRecycled;
-        uint256 sliceFresh = b.freshLender + b.freshBorrower;
-        uint256 sliceRecycled = grossRecycled - localBacking;
+        (
+            LibInteractionRewards.ChainDayBudget memory b,
+            uint256 sliceFresh,
+            uint256 sliceRecycled,
+            uint256 localBacking
+        ) = _slice(s, dstChainId, dayId);
         if (sliceFresh + sliceRecycled == 0 && localBacking == 0) {
             p.status = RemitDayStatus.NothingOwed;
             return p;
@@ -311,6 +378,33 @@ library LibRemitDayLedger {
         // Unlocked: nothing of the day is held yet, so all of it is uncovered,
         // and this part is the one that locks the day.
         _part(p, 0, 0, p.wholeFresh, true, true, partCap);
+    }
+
+    /// @dev The day's slice toward `dstChainId` before any clamp: the fresh, the
+    ///      recycled net of the chain's own local backing, and that backing.
+    ///      On an armed day the two slices are what the day COMMITTED toward
+    ///      this chain at finalization (a whole send retires exactly them), so
+    ///      {planDay} and the abandoned-day release read one figure.
+    function _slice(
+        LibVaipakam.Storage storage s,
+        uint32 dstChainId,
+        uint256 dayId
+    )
+        private
+        view
+        returns (
+            LibInteractionRewards.ChainDayBudget memory b,
+            uint256 sliceFresh,
+            uint256 sliceRecycled,
+            uint256 localBacking
+        )
+    {
+        b = LibInteractionRewards.chainRewardBudgetSideSplitForDay(s, dstChainId, dayId);
+        uint256 grossRecycled = b.recycledLender + b.recycledBorrower;
+        localBacking = s.chainDayRecycledFunding[dayId][dstChainId].recycleConsume;
+        if (localBacking > grossRecycled) localBacking = grossRecycled;
+        sliceFresh = b.freshLender + b.freshBorrower;
+        sliceRecycled = grossRecycled - localBacking;
     }
 
     /// @dev The part of `p`'s whole one send moves, given what the day's live
@@ -493,8 +587,21 @@ library LibRemitDayLedger {
      *         (`restoreReleasedRemit`) from the reservation. It restores no
      *         fresh commitment: an armed day's was converted into the hold at
      *         its first part, for good.
+     *
+     *         #2963 — on a day the abandoned-day walk has already released,
+     *         the caller must restore none of THIS day's recycled commitment
+     *         either: the walk freed what the day still held, the day is never
+     *         sent again, so a restored commitment would hold pool room that
+     *         nothing ever retires. `notRestored` is that amount: the part's
+     *         own recycled, plus the clamp residual when this part retired it
+     *         — exactly what the send retired for this day under this
+     *         reservation (zero on an unarmed day, which retires none). A day
+     *         the walk has not reached yet restores as usual; the walk then
+     *         counts it.
      * @param fresh / recycled This reservation's part of THIS day (zero for a
      *                         close-only day that rode along).
+     * @return notRestored The recycled commitment of this day the caller must
+     *                     leave retired.
      */
     function releasePart(
         LibVaipakam.Storage storage s,
@@ -503,8 +610,17 @@ library LibRemitDayLedger {
         uint256 remitId,
         uint256 fresh,
         uint256 recycled
-    ) internal {
+    ) internal returns (uint256 notRestored) {
         LibVaipakam.RemitDayLedger storage l = s.remitDayLedger[dstChainId][dayId];
+        if (l.armed && dayId < s.remitReleaseCursor[dstChainId]) {
+            notRestored = recycled;
+            if (l.residualRemitId == remitId) {
+                notRestored += uint256(l.armedWholeRecycled) - l.wholeRecycled;
+            }
+            if (notRestored != 0) {
+                emit RemitAbandonedPartReleased(dstChainId, dayId, remitId, notRestored);
+            }
+        }
         uint256 sentFresh = uint256(l.sentFresh) - fresh;
         uint256 sentRecycled = uint256(l.sentRecycled) - recycled;
         l.sentFresh = uint128(sentFresh);
@@ -553,6 +669,151 @@ library LibRemitDayLedger {
         }
         if (count > 1) revert IVaipakamErrors.RemitReleaseFanoutUnsupported(remitId, count);
         funded = count == 1;
+    }
+
+    // ─── Abandon (#2963) ─────────────────────────────────────────────────
+
+    /// @notice Whether day `dayId` of `dstChainId` is abandoned: below the
+    ///         bound the destination's last removal set. Never sent again.
+    function isAbandoned(
+        LibVaipakam.Storage storage s,
+        uint32 dstChainId,
+        uint256 dayId
+    ) internal view returns (bool) {
+        return dayId < s.remitAbandonedBefore[dstChainId];
+    }
+
+    /// @notice Whether `dstChainId`'s release is unfinished: some abandoned
+    ///         day has not been walked yet. The chain cannot be re-listed
+    ///         meanwhile, because an abandoned day finalizing with the chain
+    ///         listed would book a commitment toward it that nothing retires.
+    function releasePending(
+        LibVaipakam.Storage storage s,
+        uint32 dstChainId
+    ) internal view returns (bool) {
+        return s.remitReleaseCursor[dstChainId] < s.remitAbandonedBefore[dstChainId];
+    }
+
+    /**
+     * @notice `dstChainId` has just been taken off Base's expected-source
+     *         list: abandon every day of it up to and including today.
+     * @dev    Owner decision 2026-10-27 ("On removal", #2963): removing a chain
+     *         releases the pool room Base holds for its unsent remit days, in
+     *         the same write, and the chain's users lose those days. Today is
+     *         included because it finalizes after the removal, without the
+     *         chain, so it would owe the chain nothing anyway; a later day is
+     *         not abandoned, so a chain listed again is paid from then on. The
+     *         bound only rises. Before the reward schedule starts there are no
+     *         days, and nothing is abandoned.
+     */
+    function abandonDestination(LibVaipakam.Storage storage s, uint32 dstChainId) internal {
+        (uint256 today, bool active) = LibInteractionRewards.currentDayOrZero();
+        uint256 bound = s.remitAbandonedBefore[dstChainId];
+        if (active && today + 1 > bound) {
+            bound = today + 1;
+            s.remitAbandonedBefore[dstChainId] = bound;
+        }
+        emit RemitDestinationRemoved(dstChainId, bound, s.remitReleaseCursor[dstChainId]);
+    }
+
+    /**
+     * @notice Release, day by day from the cursor, what Base still holds for
+     *         `dstChainId`'s abandoned days, walking at most `maxDays` days.
+     * @dev    Stops at the bound and at the first unfinalized day: an
+     *         unfinalized day's figures do not exist yet (it finalizes later,
+     *         and with the chain off the list it gives the chain nothing).
+     *         Each walked day releases exactly what a whole send of the rest
+     *         would have retired, without sending ({_releaseDay}); days that
+     *         are settled or held nothing release nothing. A day once walked
+     *         is never walked again (the cursor only rises), and a release of
+     *         a part on a walked day restores none of its commitment
+     *         ({releasePart}), so nothing is released twice.
+     * @return cursor The first day not yet released.
+     * @return bound  The abandoned bound.
+     */
+    function walkAbandoned(
+        LibVaipakam.Storage storage s,
+        uint32 dstChainId,
+        uint256 maxDays
+    ) internal returns (uint256 cursor, uint256 bound) {
+        bound = s.remitAbandonedBefore[dstChainId];
+        cursor = s.remitReleaseCursor[dstChainId];
+        if (cursor >= bound) return (cursor, bound);
+        uint256 end = bound - cursor > maxDays ? cursor + maxDays : bound;
+        uint256 armedFrom = s.governorCommitArmedFromDay;
+        while (cursor < end && s.dailyGlobalFinalized[cursor]) {
+            _releaseDay(s, dstChainId, cursor, armedFrom);
+            unchecked {
+                ++cursor;
+            }
+        }
+        s.remitReleaseCursor[dstChainId] = cursor;
+        emit RemitDestinationReleaseWalked(dstChainId, cursor, bound);
+    }
+
+    /**
+     * @dev Release one finalized abandoned day. What Base holds for it toward
+     *      `dstChainId`, by the day's state:
+     *        - whole or closed: nothing.
+     *        - locked (a part went): its unsent fresh in the pool hold
+     *          (owed less what is uncovered), and on an armed day its
+     *          outstanding recycled commitment: the unsent rest, plus the clamp
+     *          residual when no live part retired it. The day's
+     *          `freshUncovered` is set to what it still owes, so the ledger
+     *          reads as holding nothing.
+     *        - unlocked and armed: the commitment finalization booked toward
+     *          the chain, {_slice}'s fresh and recycled, which a whole send
+     *          would have retired at its first part. A remit-ineligible day
+     *          booked none (the chain was out of the denominator).
+     *        - unlocked and unarmed: nothing (an unarmed day holds nothing
+     *          until its first part).
+     *      Fresh commitments retire floored, as every retirement does.
+     */
+    function _releaseDay(
+        LibVaipakam.Storage storage s,
+        uint32 dstChainId,
+        uint256 dayId,
+        uint256 armedFrom
+    ) private {
+        if (
+            s.rewardBudgetRemitted[dstChainId][dayId] != 0
+                || s.dayClosedByRemitId[dstChainId][dayId] != 0
+        ) return;
+        LibVaipakam.RemitDayLedger storage l = s.remitDayLedger[dstChainId][dayId];
+        bool locked = l.locked;
+        uint256 heldFresh;
+        uint256 commitFresh;
+        uint256 commitRecycled;
+        if (locked) {
+            uint256 owedFresh = uint256(l.wholeFresh) - l.sentFresh;
+            heldFresh = owedFresh - l.freshUncovered;
+            if (heldFresh != 0) {
+                s.remitDayFreshReserved -= heldFresh;
+                // Bounded by the whole, so the narrowing cannot truncate.
+                l.freshUncovered = uint128(owedFresh);
+            }
+            if (l.armed) {
+                commitRecycled = uint256(l.wholeRecycled) - l.sentRecycled;
+                if (l.residualRemitId == 0) {
+                    commitRecycled += uint256(l.armedWholeRecycled) - l.wholeRecycled;
+                }
+            }
+        } else {
+            if (armedFrom == 0 || dayId < armedFrom) return;
+            if (s.chainDayCommitments[dayId][dstChainId].remitIneligible) return;
+            (, commitFresh, commitRecycled, ) = _slice(s, dstChainId, dayId);
+            LibInteractionRewards.consumeArmedFresh(commitFresh);
+        }
+        if (commitRecycled != 0) {
+            LibVpfiRecycle.releaseCommitment(
+                LibVpfiRecycle.RecycleSource.RemitDestinationRemoved, dayId, commitRecycled
+            );
+        }
+        if (heldFresh != 0 || commitFresh != 0 || commitRecycled != 0) {
+            emit RemitAbandonedDayReleased(
+                dstChainId, dayId, locked, heldFresh, commitFresh, commitRecycled
+            );
+        }
     }
 
     /// @dev The day is whole: every component sent, and the clamp residual

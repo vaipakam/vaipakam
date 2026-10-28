@@ -5,6 +5,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
+import {RewardRemitDestinationFacet} from "../src/facets/RewardRemitDestinationFacet.sol";
 import {RewardBroadcastFacet} from "../src/facets/RewardBroadcastFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
@@ -545,7 +546,12 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         assertTrue(_agg().isChainReported(1, CHAIN_OP), "the off-list report landed");
         assertFalse(_agg().isChainIncluded(1, CHAIN_OP), "and was not counted");
 
-        // A later list edit leaves the day's record as it was.
+        // A later list edit leaves the day's record as it was. Optimism was
+        // dropped by the narrow list above, so it can be listed again only
+        // once Base has walked its abandoned days (#2963): today, day 0, has
+        // to finalize first.
+        _agg().forceFinalizeDay(0);
+        RewardRemitDestinationFacet(address(diamond)).continueRemitDestinationRelease(CHAIN_OP, 10);
         uint32[] memory wider = new uint32[](3);
         wider[0] = CHAIN_BASE;
         wider[1] = CHAIN_ARB;

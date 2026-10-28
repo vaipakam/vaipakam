@@ -211,6 +211,41 @@ Functional consolidation through 2026-07-12:
   cross-chain lane smaller than the largest fresh day slice the schedule can
   owe, and the launch-readiness report says so when a lane is below it, but a
   day larger than what the lane holds at the moment is still sent, in parts.
+- **Taking a chain off the expected-source set ends its unsent days (#2963,
+  owner decision 2026-10-27, "On removal").** When the canonical chain's
+  operator removes a mirror from the expected-source set, every day of that
+  mirror up to and including the day of the removal is ABANDONED: no part of
+  it is sent to that mirror again, by the ordinary remittance or by the
+  manual-budget path, and **that mirror's users lose those days**. In the
+  same write, the canonical chain releases what it was holding for them in
+  the 69M pool: for a day already partly sent, the rest of its fresh hold
+  and, under the commitment regime, the unsent rest of its recycled
+  commitment (with any clamped-away amount no part had yet retired); for a
+  day under the commitment regime of which nothing was sent, the fresh and
+  recycled commitments its finalization booked toward that mirror, exactly
+  what a whole send would have retired. A day already whole, a day before the
+  commitment regime of which nothing was sent, and a day the mirror was
+  zeroed out of hold nothing, and release nothing. Each day that releases
+  anything is announced with its figures, and the abandoned range and how
+  far the release has got are public. Only the canonical chain releases:
+  nothing is sent to the mirror, and a part that already reached it stays
+  there; the mirror never opens the day, because the whole will not arrive.
+  What was already sent stays counted against the pool. The release walks the
+  days in order and stops at the first day not yet finalized, since that
+  day's figures do not exist yet (with the mirror off the set it will owe the
+  mirror nothing); one removal walks a bounded number of days, and anyone may
+  continue the walk afterwards, which moves no tokens and decides nothing. A
+  remittance to that mirror still pending when its day is released, and
+  released later as undeliverable, restores none of the commitment it retired:
+  the day is never sent again, so nothing would ever retire it. One released
+  before the walk reaches its day restores as usual, and the walk then
+  releases it with the rest. The removal is irreversible for those days. The
+  mirror may be put back on the set, but only once the release of its
+  abandoned days is complete (so no abandoned day can finalize with the mirror
+  counted, which would book a commitment no send would ever retire), and it
+  is then paid from the day after the removal only. A day that never
+  finalizes on its own (no listed chain ever reported it) holds the walk at
+  that day until the operator force-finalizes it.
 - **A backlog must not be the thing that stops the backlog being worked.**
   The automation that acknowledges delivered remittances examines a bounded
   window each pass, and how much it finds waiting in that window is a

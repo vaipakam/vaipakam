@@ -1462,6 +1462,34 @@ interface IVaipakamErrors {
     ///         the reservation a per-day split first.
     error RemitReleaseFanoutUnsupported(uint256 remitId, uint256 fundedDays);
 
+    /// @notice #2963 — the (chain, day) is ABANDONED: Base took the chain off
+    ///         its expected-source list after this day, and a day below that
+    ///         removal's bound is never sent to the chain again, by any path.
+    error RemitDayAbandoned(uint256 dayId, uint32 chainId);
+
+    /// @notice #2963 — the chain cannot be put back on Base's expected-source
+    ///         list yet: its last removal's release is unfinished (the walk has
+    ///         released every day before `releaseCursor`, of the days before
+    ///         `abandonedBefore`). Finish it with
+    ///         `RewardRemitDestinationFacet.continueRemitDestinationRelease` once the
+    ///         remaining days are finalized.
+    error RemitDestinationReleasePending(
+        uint32 chainId, uint256 releaseCursor, uint256 abandonedBefore
+    );
+
+    /// @notice #2963 — nothing to walk: the chain's release is already done.
+    error RemitDestinationReleaseDone(uint32 chainId);
+
+    /// @notice #2963 — the expected-source list change hook is a Diamond
+    ///         self-call only (from `setExpectedSourceChainIds`).
+    error RemitDestinationOnlyDiamondInternal(address caller);
+
+    /// @notice #2963 — the expected-source list change's release self-call
+    ///         failed WITHOUT returndata (with returndata the inner revert is
+    ///         rethrown verbatim). On a properly cut Diamond it marks deploy
+    ///         drift: the host facet unrouted.
+    error RemitDestinationReleaseFailed();
+
     /// @notice #1780 — the lender-sale errors are shared by BOTH early-
     ///         withdrawal routes. The direct route ({EarlyWithdrawalDirectFacet})
     ///         and the listed route ({EarlyWithdrawalFacet}) were one facet

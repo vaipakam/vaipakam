@@ -831,6 +831,15 @@ contract RewardCompensationDispatchFacet is
         uint256 borrowerAmount18,
         LibRewardCustody.TransportSource source
     ) private returns (bytes32 messageId) {
+        // #2963 — a day of a chain Base took off its expected-source list is
+        // never sent to it again: the chain's users lose it, and nothing of
+        // the 69M pool is spent on it. Refused HERE, at the one sender of the
+        // compensation wire, so the manual dispatch, the supplemental top-up
+        // and their recovery-funded variants all share the rule (the
+        // ordinary wire refuses the day in `LibRemitDayLedger.planDay`).
+        if (LibRemitDayLedger.isAbandoned(s, dstChainId, dayId)) {
+            revert RemitDayAbandoned(dayId, dstChainId);
+        }
         LibVaipakam.DayLapseClock storage c = s.dayLapseClock[dayId];
         // Codex #1634 r1 — ALL FOUR frozen clock words ride the wire, not
         // just the timestamp + version number: w1 chose inline schedule
@@ -932,6 +941,9 @@ contract RewardCompensationDispatchFacet is
         // days carry a ledger. Its armed days' fresh commitments became their
         // pool hold at their first part, so none is restored below.
         bool ledgerRemit;
+        // #2963 — the recycled commitment this reservation retired on days the
+        // abandoned-day walk had already released: it stays retired.
+        uint256 notRestored;
         for (uint256 i; i < n; ) {
             uint256 d = closed[i];
             if (LibRemitDayLedger.hasLedger(s, dst, d)) {
@@ -940,7 +952,7 @@ contract RewardCompensationDispatchFacet is
                 // day's close markers go whenever it is no longer whole,
                 // whichever part set them.
                 bool own = funded && i == fundedAt;
-                LibRemitDayLedger.releasePart(
+                notRestored += LibRemitDayLedger.releasePart(
                     s, dst, d, remitId, own ? r.fresh : 0, own ? r.recycled : 0
                 );
             } else if (s.dayClosedByRemitId[dst][d] == remitId) {
@@ -1001,7 +1013,11 @@ contract RewardCompensationDispatchFacet is
         // commitment as well would hold the same fresh twice, with nothing
         // left to retire it (#918, Codex #2959 r3).
         if (!ledgerRemit) LibInteractionRewards.restoreArmedFresh(r.armedFreshFull);
-        r.strandedRecycled = LibVpfiRecycle.restoreReleasedRemit(r.recycledFull, r.recycled, remitId);
+        // The take reversal (`r.recycled`) is about the tokens and runs in
+        // full; only the commitment restore leaves out the walked days.
+        r.strandedRecycled = LibVpfiRecycle.restoreReleasedRemit(
+            r.recycledFull - notRestored, r.recycled, remitId
+        );
         emit RemitReservationReleased(
             remitId, dst, r.total, r.fresh, r.recycled
         );

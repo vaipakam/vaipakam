@@ -149,6 +149,7 @@ import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensF
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
+import {RewardRemitDestinationFacet} from "../src/facets/RewardRemitDestinationFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
@@ -373,6 +374,7 @@ contract SetupTest is Test {
     RewardAggregatorFacet rewardAggregatorFacet;
     RewardRemittanceFacet rewardRemittanceFacet;
     RewardRemittanceLensFacet rewardRemittanceLensFacet;
+    RewardRemitDestinationFacet rewardRemitDestinationFacet;
     RewardCustodyFacet rewardCustodyFacet;
     RewardReconciliationFacet rewardReconciliationFacet;
     RewardIngressFacet rewardIngressFacet;
@@ -526,6 +528,7 @@ contract SetupTest is Test {
         rewardAggregatorFacet = RewardAggregatorFacet(ArtifactDeploy.deploy(type(RewardAggregatorFacet).name));
         rewardRemittanceFacet = RewardRemittanceFacet(ArtifactDeploy.deploy(type(RewardRemittanceFacet).name));
         rewardRemittanceLensFacet = RewardRemittanceLensFacet(ArtifactDeploy.deploy(type(RewardRemittanceLensFacet).name));
+        rewardRemitDestinationFacet = RewardRemitDestinationFacet(ArtifactDeploy.deploy(type(RewardRemitDestinationFacet).name));
         rewardCustodyFacet = RewardCustodyFacet(ArtifactDeploy.deploy(type(RewardCustodyFacet).name));
         rewardReconciliationFacet = RewardReconciliationFacet(ArtifactDeploy.deploy(type(RewardReconciliationFacet).name));
         rewardIngressFacet = RewardIngressFacet(ArtifactDeploy.deploy(type(RewardIngressFacet).name));
@@ -581,7 +584,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](102);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](103);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -995,6 +998,12 @@ contract SetupTest is Test {
             facetAddress: address(nftMetadataFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVaipakamNFTMetadataFacetSelectors()
+        });
+        // #2963 — a remit destination taken off Base's list.
+        cuts[102] = IDiamondCut.FacetCut({
+            facetAddress: address(rewardRemitDestinationFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRewardRemitDestinationFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

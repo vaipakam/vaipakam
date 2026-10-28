@@ -97,7 +97,9 @@ abstract contract DiamondFacetNames {
     ///      100 → 101 with `VaipakamNFTMetadataFacet` (#2957 — the position
     ///      NFT's tokenURI, contractURI and their configuration, moved off
     ///      VaipakamNFTFacet).
-    function cutFacetNames() internal pure returns (string[101] memory) {
+    ///      101 → 102 with `RewardRemitDestinationFacet` (#2963 — what Base
+    ///      does when a remit destination leaves its expected-source list).
+    function cutFacetNames() internal pure returns (string[102] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -180,6 +182,8 @@ abstract contract DiamondFacetNames {
             "RewardRemittanceFacet",
             // #1434 P2-w4 — the remittance read surface (lens split).
             "RewardRemittanceLensFacet",
+            // #2963 — a remit destination taken off Base's list.
+            "RewardRemitDestinationFacet",
             "RewardCompensationDispatchFacet",
             "RewardCommitmentFacet",
             // #1566 slice 4 PR A — custody lifecycle + paid-side rebase.

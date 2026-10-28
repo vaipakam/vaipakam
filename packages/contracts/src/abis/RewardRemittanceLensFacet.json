@@ -945,6 +945,30 @@
   },
   {
     "type": "function",
+    "name": "getRemitDestinationRelease",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "abandonedBefore",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "releaseCursor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRemitIdByMessageId",
     "inputs": [
       {
