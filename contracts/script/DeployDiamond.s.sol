@@ -1468,7 +1468,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](31);
+        s = new bytes4[](32);
         s[0] = ProfileFacet.updateKYCStatus.selector;
         s[1] = ProfileFacet.getUserCountry.selector;
         s[2] = ProfileFacet.isKYCVerified.selector;
@@ -1509,6 +1509,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[29] = ProfileFacet.isRecipientBarred.selector;
         // #1347 — per-offer creator Full VPFI tariff opt-in.
         s[30] = ProfileFacet.setOfferCreatorFullTariff.selector;
+        // #2984 — the three-way sanctions read (the keeper's sale-sync screen).
+        s[31] = ProfileFacet.sanctionsStatus.selector;
     }
 
     function _getOracleSelectors() internal pure returns (bytes4[] memory s) {

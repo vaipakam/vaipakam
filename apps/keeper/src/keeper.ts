@@ -45,6 +45,7 @@ import {
   RiskSplitLiquidationFacetABI,
 } from '@vaipakam/contracts/abis';
 import { attemptCloseOut, surfaceSkipReason } from './closeOut';
+import { readCutoffMs } from './runWindow';
 import { parseLiquidationLoan } from './liquidationLoan';
 import { tryMatchLiquidation } from './matchLiquidation';
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
@@ -390,6 +391,7 @@ export async function tryInKindCloseOut(
       diamond: ctx.diamond,
       chainId: chain.id,
       notAfterMs: ctx.notAfterMs,
+      readCutoff: readCutoffMs(ctx.notAfterMs),
       // The in-kind role sends an empty list and never builds a route.
       buildRoute: () => Promise.reject(new Error('in-kind close-out builds no route')),
     },
@@ -899,7 +901,9 @@ export type PassArmingFlag =
   | 'REWARD_RETURN_TRANSPORT_ENABLED'
   | 'REWARD_ENTRY_SETTLE_ENABLED'
   | 'PROTOCOL_UPKEEP_ENABLED'
-  | 'PREPAY_AUTO_LIST_ENABLED';
+  | 'PREPAY_AUTO_LIST_ENABLED'
+  | 'PREPAY_SALE_SANCTIONS_SYNC_ENABLED'
+  | 'TIER_PUSH_RETRY_ENABLED';
 
 /**
  * Describe a rejected flag value WITHOUT echoing it.

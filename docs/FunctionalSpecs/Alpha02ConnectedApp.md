@@ -7,7 +7,7 @@ destinations and flipped the cutover switch; the `/recover` guide links
 alone stay on the legacy host, held by same-origin recovery state rather
 than by any missing route). It is the app-specific functional
 spec consolidated against the release notes from 2026-08-13 through
-2026-10-22, inclusive, while retaining later recorded intent decisions. It is intentionally
+2026-10-27, inclusive, while retaining later recorded intent decisions. It is intentionally
 written without implementation snippets. (The app was called `alpha02` and
 served `alpha02.vaipakam.com` until #1854 renamed it; this file keeps the old
 name only in its filename.)
@@ -1554,6 +1554,23 @@ fetch before it can warn.
 Risk Disclosure and Terms links are real links and must not destroy the flow in
 progress.
 
+### Acceptance covers the disclosed deal
+
+- Every acceptance review states the lifecycle terms as well as amounts and
+  rate: interest mode, payment cadence, partial-repay permission, collateral
+  sale permissions, any live listing, and any linked loan or refinance target.
+  The signature binds the reviewed terms. A changed term or token-screening
+  verdict clears consent and holds signing for a fresh review.
+- A rental is secured by its payment-token prepayment and the rented NFT
+  remaining in the lender's vault; it carries no collateral. A listing naming
+  collateral in either the indexed record or the current chain read is refused
+  with that explanation, including at submission. The renter acknowledges the
+  disclosed rented-NFT model, never an unused collateral asset.
+- Direct, rental, and signed-offer acceptances recheck the required token-
+  security verdicts for ERC-20 legs outside the curated list before the wallet
+  prompt. A warning is accepted only when that exact warning was reviewed; a blocked or unreadable verdict holds
+  signing. Listing a signed offer in the book is not evidence it was screened.
+
 ## Wallet Prompt Transparency
 
 - Offer creation, offer acceptance, rental listing, rental acceptance, loan
@@ -1842,6 +1859,167 @@ Thin-market honesty rules apply.
 - Health and risk labels escalate when collateral health is poor.
 - Position rows should offer the next relevant action where one exists. A row
   with a payout waiting says what that payout is and offers to collect it.
+
+### Closing several loans from one offer at once (#126)
+
+- When one of the borrower's offers filled into two or more loans that are
+  still open, the positions page offers to repay them all together, and in
+  Advanced mode to close them all early. Only the connected wallet's own
+  borrower positions are grouped; another borrower's loan from the same
+  offer is never included. Rentals are not grouped.
+- Each loan in the group passes the same live checks its own page runs
+  before it is offered, and the two must never disagree. A loan with
+  anything the borrower should see before closing it (an accepted sale
+  waiting to complete, an open refinance request, an open offset offer, a
+  loan in its fallback period) is left out of the batch and named, with
+  the reason and a pointer to its own page. A loan whose checks could not
+  be read is left out with that reason too, never included on a guess.
+- Before anything is signed the borrower sees every loan's amount due now,
+  every loan left out and why, the total, and the approval the batch will
+  ask for, stated as covering a small allowance for the amount rising
+  before the transaction runs. The pad is never taken: each loan pays
+  only what it owes when it runs. The review is the same six-row review
+  every other write shows, and under each loan it repeats what that
+  loan's own page states before the same action: for an early close, the
+  loan's interest rule (whole term or built up so far), the late fee when
+  it is past due, and that a paid Full tariff is not refunded. A loan
+  whose tariff record cannot be read is left out, as its own page holds
+  its early close until that record is known.
+- The batch is one token approval and then one transaction for up to 30
+  loans. Each loan's close runs as the borrower, with its own checks, and
+  a loan that fails when the transaction runs is skipped while the others
+  still close. One failed loan never undoes the others.
+- Every loan's outcome is read back from the chain after the transaction,
+  never assumed from it: repaid (or closed early), still open with the
+  reason, changed another way (for example defaulted meanwhile, which is
+  never reported as this batch's close), left out, or could not be read.
+  A transaction that was sent but has not confirmed when the app stops
+  waiting is reported as not confirmed yet, never as failed; nothing more
+  is sent behind it, and the loans it would have carried are named as
+  not sent.
+- Immediately before each transaction is sent, every loan in it is
+  checked again in full, as at review, since the wallet may have waited on
+  the approval or an earlier transaction meanwhile. A loan that no longer
+  passes (its position has moved to another wallet, a sale was accepted, a
+  request or offset was posted) is left out and named.
+- The approval is set back to what it was before only when it is
+  established that no loan closed; an outcome that could not be read
+  counts as a possible close. Either way, the approval that remains is
+  read from the chain afterwards and stated, with where to lower it, and
+  never described as restored on the strength of the attempt. If it
+  cannot be read, the page says that instead.
+- The batch card stays on the page with its results until the borrower
+  dismisses it, even when the batch leaves the offer with fewer than two
+  open loans, and even while the positions lists cannot be read.
+
+### Listing several lender positions from one offer for sale at once (#126)
+
+- When one of the lender's offers filled into two or more loans whose lender
+  positions the connected wallet still holds, the positions page offers, in
+  Advanced mode, to list them all for sale together, at one rate and for one
+  listing window. Only the wallet's own lender positions are grouped. Rentals
+  are not grouped. On a network where listing a position is not available,
+  the group still shows and says that listing is not available on this
+  network, rather than leaving the lender to guess why there is no option.
+- Each loan passes the same live checks its own page's listing form runs before
+  it is listed, and the two must never disagree. A loan the platform would
+  refuse to list (already listed, an offset open on it, matured or too close to
+  its due date, in its relisting pause, a paused asset, collateral that is not a
+  token) is left out and named with the reason. A loan whose checks or figures
+  could not be read is left out with that reason too, never included on a
+  guess.
+- Before anything is signed the lender sees, for every loan to be listed, the
+  minimum they are guaranteed if a buyer takes the listing before it ends, any
+  money already set aside for the lender that goes to the buyer with the
+  position, and the settlement a buyer's payment would carry today; and under
+  each loan what its own page states before a listing: that a Full fee mode
+  travels to the buyer with the position, and that a rate above the loan's own
+  costs the lender the difference. Every loan left out is named with the reason.
+  The review is the same six-row review every other write shows, it says that
+  each listed position is locked until its sale completes or its listing ends,
+  and the lender must agree to the lock and the settlement before confirming.
+  The agreement covers exactly what the review shows and is withdrawn if any of
+  it changes.
+- Each listing is bound to the figures the lender reviewed: if, by the time it
+  runs, it would guarantee the lender less, or pass more already set aside to
+  the buyer, it is not made. Listing draws nothing from the wallet and asks for
+  no approval.
+- The batch is one transaction for up to 30 loans. Each listing runs as the
+  lender, with its own checks, and a listing that fails when the transaction
+  runs is skipped while the others are made. Immediately before each
+  transaction is sent every loan in it is checked again in full against the
+  reviewed figures; a loan that no longer passes, or whose statements changed
+  since the review, is left out and named.
+- Which loans were listed is established from the chain, never assumed: a loan
+  is reported listed, with its sale offer, only when that transaction itself
+  listed it. Otherwise it is reported not listed with the reason, no longer
+  active, left out, not confirmed yet (when the transaction was sent but has not
+  confirmed, in which case nothing more is sent behind it), or could not be
+  read. Every loan in a transaction that has not confirmed is reported not
+  confirmed yet, even one no longer active: a listing does not change the
+  loan's status, so that loan may have been listed before it closed. Each listed loan's own page then shows its listing and lets the lender
+  cancel it.
+
+### Refinancing several loans from one offer at once (#126)
+
+- On the borrower's card for an offer that filled into two or more open
+  loans, the positions page offers, in Advanced mode like the loan page's own
+  refinance form, to post a refinance request for every loan in it, at one
+  highest rate and one duration. Only one of the card's actions runs at a time.
+- Each loan passes the same live checks its own page's refinance form runs
+  before a request is posted, and the two must never disagree: the wallet is
+  not sanctioned, still holds the borrower position and is the loan's original
+  borrower, the loan is active and not past its grace window, neither asset is
+  paused, the fee terms are the ones the review quoted, and no request is
+  already on record for the loan (open, or expired and never cancelled). A
+  rental, a loan with an accepted sale waiting to complete, a loan with an open
+  offset, a loan in its fallback period, and any loan the platform would
+  refuse are left out and named with the reason. A loan whose checks could not
+  be read is left out too, never included on a guess.
+- Before anything is signed the borrower sees, for every loan: today's payoff;
+  how much more the payoff can grow if a lender accepts after the due date;
+  what the wallet must hold spare when a lender accepts (the payoff's interest
+  and the new loan's initiation fee, since the new principal arrives in the
+  same transaction); and what that loan's own page states before a request
+  (the late fee when it is past due; when the loan pays on a schedule, that
+  an overdue payment period makes an acceptance fail until it is settled, so
+  payments must stay current while the request is open, and that scheduled
+  interest ends with this loan; and when the request expires). The loan page
+  and the batch draw these statements from one source, so neither can make
+  one the other omits. The review states the rate ceiling and duration every
+  request asks for, since the inputs are no longer on screen. It also states the spare amount for all the loans together, which the wallet
+  must hold now or nothing is sent, and the single approval it will grant: the
+  sum of every request's largest possible payoff. It says that this one
+  approval also serves any other refinance request the borrower has open on
+  the same token, so one acceptance can leave another request short. The
+  borrower agrees to the payoff and balance terms for every listed loan before
+  confirming; the agreement covers exactly what the review shows and is
+  withdrawn if any of it changes.
+- Each request is exactly the one the loan page would post: its own hard
+  expiry, the reviewed rate ceiling and duration, and the loan's collateral
+  carried over. Where a loan's on-chain guardrails do not already cover the
+  request, they are written in the same transaction, immediately before it; a
+  request is never posted without the guardrails it needs. A guardrail written
+  for a request that then fails can stay, and it only limits what a request
+  on that loan can complete at.
+- One approval for the sum comes first, then one transaction for up to 15
+  loans. Each request runs as the borrower, with its own checks, and a request
+  that fails is skipped while the others are posted. Immediately before each
+  transaction every loan in it is checked again in full; a loan whose largest
+  possible payoff grew, whose spare amount grew (in the grace window it grows
+  with each day's late fee), or whose statements changed, since the review is
+  left out and named. So every request sent needs no more than the balance
+  that was checked and the approval that was granted.
+- Which loans got a request is established from the chain, never assumed: a
+  loan is reported as having a request, with its offer number, only when that
+  transaction itself posted it. Otherwise it is reported as no request with the
+  reason, no longer active, left out, not confirmed yet (every loan in a
+  transaction that has not confirmed is reported so, and nothing more is sent
+  behind it), or could not be read. The approval is set back to what it was
+  only when it is established that no request was posted; otherwise the
+  approval left standing is read from the chain and stated, with the reminder
+  that open requests draw on it. Each loan's own page then shows its request
+  and lets the borrower cancel it.
 
 ### Taking back extra collateral
 
