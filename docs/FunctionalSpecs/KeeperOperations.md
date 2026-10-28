@@ -386,6 +386,21 @@ evidence that the migration has completed.
   an owner who could not claim from touches that should have advanced the
   clock. The capacity limit of 300 entries per hour per chain, approximately
   3,600 per twelve-hour round, is disclosed when a backlog exceeds coverage.
+- The heartbeat also closes out the entries it reads, behind its own switch.
+  A closed entry whose remaining window is worth nothing payable is retired,
+  which moves no value and only releases the commitments it still carried;
+  an entry that retires a day at a time is retired again until it is done.
+  The loan of a forfeited entry is swept once for all its entries, sending
+  the forfeited reward to the recycle bucket, again until nothing more moves.
+  A forfeited entry stays in the heartbeat's queue until that sweep has
+  processed it, whether or not the switch is on, so turning the switch on
+  later reaches every forfeited entry already found. Nothing is sent when
+  the call would move nothing. The run states how many entries were retired
+  and the commitments released, and how much each sweep moved, as reported
+  just before each call was sent. A refused call is alerted for each entry
+  it covers, naming the call and the reason, until the entry runs clean or
+  settles. Every one of these calls is open to anyone, and none moves value
+  to the keeper.
 - The sanctions-hold pass observes held claimants and advances settlements
   only under the protocol's final verdict. Notices state amounts held, paid,
   or forfeited from the transaction's own evidence. A transaction-wide
@@ -400,9 +415,9 @@ evidence that the migration has completed.
 
 The master keeper switch and each duty's own arming choice are separate.
 Delivery proofs, late acknowledgements, sanctions observation, reward-day
-automation, reward-day close-out, zeroed-day recovery, the return transport, and the reward heartbeat must each
+automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out must each
 disclose whether they are armed on the selected deployment. Reward-day
-automation, close-out, zeroed-day recovery, the return transport and the heartbeat ship disabled and require
+automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out ship disabled and require
 deliberate activation. Deploying their software does not prove they run, that rewards have launched, or that custody or the
 expiry horizon has been activated. The mirror's day-delivery protection is
 required by its reward role, as stated in the current tokenomics spec; it is

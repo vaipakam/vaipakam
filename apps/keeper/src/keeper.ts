@@ -897,7 +897,8 @@ export type PassArmingFlag =
   | 'PERIODIC_SETTLE_ENABLED'
   | 'REWARD_CLOSE_OUT_ENABLED'
   | 'REWARD_ZEROED_DAY_ENABLED'
-  | 'REWARD_RETURN_TRANSPORT_ENABLED';
+  | 'REWARD_RETURN_TRANSPORT_ENABLED'
+  | 'REWARD_ENTRY_SETTLE_ENABLED';
 
 /**
  * Describe a rejected flag value WITHOUT echoing it.
@@ -1090,6 +1091,18 @@ export function passIsArmed(
   }
   console.log(`[keeper] ${pass} start`);
   return true;
+}
+
+/**
+ * Whether a SUB-STEP flag inside an already armed pass is on: the same
+ * accepted spellings as {@link passIsArmed} (`true` or `1`, case-sensitive),
+ * read without logging, because the pass's own start line already reported
+ * the gates. A sub-step flag arms one more step of a running pass, never the
+ * pass itself.
+ */
+export function armingFlagOn(env: Env, flag: PassArmingFlag): boolean {
+  const raw = env[flag];
+  return raw === 'true' || raw === '1';
 }
 
 /** What a pass states when it builds its signing context (#2572). */

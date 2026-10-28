@@ -30,8 +30,9 @@
 //      least recently tried first, so entries that keep failing rotate to the
 //      back instead of holding the slice: the entry itself and the contract's removal
 //      estimate (`getRewardEntryExpiry`). A settled entry (claimed, expired,
-//      forfeited) leaves the queue. The pass decides nothing about
-//      executability: that is the sweep's own gate, re-run on every touch.
+//      swept) leaves the queue; a forfeited one stays until its loan is swept.
+//      The pass decides nothing about executability: that is the sweep's own
+//      gate, re-run on every touch.
 //   3. TOUCH — sweep the due entries in batches. A touch on an entry that
 //      cannot advance is a cheap no-op on chain, so every live entry is
 //      touched each heartbeat while the horizon is armed; while it is dark,
@@ -56,17 +57,32 @@
 // notice and the removal rows from `RewardEntryExpiryArmed` /
 // `RewardEntryExpiryBegun`, which these touches are what emit.
 //
-// Every call here is permissionless and moves value only into the protocol's
-// recycle bucket (an expired reward), never to the keeper.
+//   5. CLOSE OUT (#2984, only with REWARD_ENTRY_SETTLE_ENABLED) — two
+//      permissionless steps nobody else calls, on the entries this run read:
+//      a CLOSED entry whose remaining window prices to nothing payable is
+//      retired (`retireZeroPricedRemainders`: no value moves, its capped-off
+//      commitments retire; repeated while the call still moves something,
+//      since a capped entry retires a day at a time), and a FORFEITED entry's
+//      loan is swept (`sweepForfeitedInteractionRewards`: the forfeited reward
+//      goes to the recycle bucket; repeated while it still sweeps). A
+//      forfeited entry stays queued until it is processed whatever the flag
+//      says (idle while it is off), so arming it later reaches every one
+//      already discovered. Either call left
+//      with nothing to do costs one simulation, never a transaction. A
+//      refusal is alerted per entry or loan, like a touch's.
 //
-// Gated by KEEPER_ENABLED + REWARD_HORIZON_HEARTBEAT_ENABLED.
+// Every call here is permissionless and moves value only into the protocol's
+// recycle bucket (an expired or forfeited reward), never to the keeper.
+//
+// Gated by KEEPER_ENABLED + REWARD_HORIZON_HEARTBEAT_ENABLED; step 5 also by
+// REWARD_ENTRY_SETTLE_ENABLED.
 
-import { BaseError, ContractFunctionRevertedError, createPublicClient, http, type Abi, type Address, type Hex, type PublicClient } from 'viem';
-import { AdminFacetABI, ConfigFacetABI, InteractionRewardsLensFacetABI, RewardHorizonSweepFacetABI } from '@vaipakam/contracts/abis';
+import { BaseError, ContractFunctionRevertedError, createPublicClient, formatUnits, http, type Abi, type Address, type Hex, type PublicClient } from 'viem';
+import { AdminFacetABI, ConfigFacetABI, InteractionRewardsFacetABI, InteractionRewardsLensFacetABI, RewardHorizonSweepFacetABI } from '@vaipakam/contracts/abis';
 import { summarizeFailure } from '@vaipakam/lib/errorDescription';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
-import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
+import { armingFlagOn, buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { reportSendError } from './submissionQueue';
 import type { PassTick } from './passSchedule';
 import { boundedRead, deadlineClient, PastRunDeadline } from './batchRead';
@@ -91,6 +107,7 @@ import { resolveOpsAlert, sendOpsAlert } from './opsAlert';
 const ABI = [
   ...(AdminFacetABI as Abi),
   ...(ConfigFacetABI as Abi),
+  ...(InteractionRewardsFacetABI as Abi),
   ...(InteractionRewardsLensFacetABI as Abi),
   ...(RewardHorizonSweepFacetABI as Abi),
 ] as Abi;
@@ -135,6 +152,9 @@ export const SWEEP_BATCH = 10;
 /** Sweep transactions one run may send per chain. Each waits for its receipt
  *  before the next, so this bounds the run's wall time as well as its gas. */
 export const MAX_WRITES_PER_RUN = 30;
+/** Close-out transactions (step 5) one run may send per chain, on top of the
+ *  touches': its own budget, so the touches keep theirs. */
+export const SETTLE_WRITES_PER_RUN = 10;
 const RECEIPT_TIMEOUT_MS = 30_000;
 /** What the run keeps for its alerts after the last send. */
 export const PASS_ALERT_WINDOW_MS = 5 * 60_000;
@@ -180,10 +200,14 @@ export function isUnallocated(e: RewardEntryView): boolean {
   return e.user.toLowerCase() === ZERO && e.endDay === 0 && e.perDayNumeraire18 === 0n;
 }
 
-/** Settled for good: claimed or expired (`processed`), or forfeited — the
- *  forfeit sweep owns a forfeited entry and the horizon never expires it. Pure. */
+/** Settled for good: claimed, expired or swept (`processed`). A forfeited
+ *  entry is NOT settled until its loan's forfeit sweep has processed it: the
+ *  horizon never expires it, but step 5 is that sweep's caller, so it stays
+ *  queued (idle while the close-out is off). The queue's membership is the
+ *  same whatever the flags say, so arming the close-out later finds every
+ *  forfeited entry already queued. Pure. */
 export function isSettled(e: RewardEntryView): boolean {
-  return e.processed || e.forfeited;
+  return e.processed;
 }
 
 /** Whether this heartbeat sends a touch for a live entry. While the horizon is
@@ -191,7 +215,7 @@ export function isSettled(e: RewardEntryView): boolean {
  *  removal has begun: its settlement must still be finished, and the sweep
  *  finishes it whatever the knob says. Pure. */
 export function isTouchable(e: RewardEntryView, horizonDays: number): boolean {
-  return !isSettled(e) && (horizonDays > 0 || e.expiryBegun);
+  return !e.processed && !e.forfeited && (horizonDays > 0 || e.expiryBegun);
 }
 
 /**
@@ -235,6 +259,12 @@ export interface HeartbeatPlan {
   touch: { entryId: number; expiresAt: number; pausedRuns: number }[];
   /** Not read this run: kept due, read next run. */
   unread: number[];
+  /** Close-out (step 5): closed, live entries whose remainder may price to
+   *  nothing (a subset of `touch` and `idle`). Empty with the close-out off. */
+  retire: number[];
+  /** Close-out (step 5): forfeited entries not yet processed, with their loan.
+   *  Neither touched nor idle. Empty with the close-out off. */
+  forfeit: { entryId: number; loanId: bigint }[];
 }
 
 export function planHeartbeat(
@@ -242,16 +272,26 @@ export function planHeartbeat(
   reads: ReadonlyMap<number, { entry: RewardEntryView; expiry: EntryExpiry } | null>,
   horizonDays: number,
   nowSec: number,
+  settleRemainders = false,
 ): HeartbeatPlan {
-  const plan: HeartbeatPlan = { settled: [], idle: [], touch: [], unread: [] };
+  const plan: HeartbeatPlan = { settled: [], idle: [], touch: [], unread: [], retire: [], forfeit: [] };
   for (const row of rows) {
     const r = reads.get(row.entryId);
     if (!r) {
       plan.unread.push(row.entryId);
       continue;
     }
-    if (isSettled(r.entry)) plan.settled.push(row.entryId);
-    else if (!isTouchable(r.entry, horizonDays)) plan.idle.push(row.entryId);
+    if (isSettled(r.entry)) {
+      plan.settled.push(row.entryId);
+      continue;
+    }
+    if (r.entry.forfeited) {
+      if (settleRemainders) plan.forfeit.push({ entryId: row.entryId, loanId: r.entry.loanId });
+      else plan.idle.push(row.entryId);
+      continue;
+    }
+    if (settleRemainders && r.entry.closed) plan.retire.push(row.entryId);
+    if (!isTouchable(r.entry, horizonDays)) plan.idle.push(row.entryId);
     else plan.touch.push({ entryId: row.entryId, expiresAt: r.expiry.expiresAt, pausedRuns: pausedRunsAfter(row, r.expiry, nowSec) });
   }
   return plan;
@@ -286,6 +326,7 @@ async function heartbeatChain(env: Env, chain: ChainConfig, sendDeadline: number
     context: () => buildKeeperContext(env, chain, client, { notAfterMs: sendDeadline }),
     sendDeadline,
     runDeadline,
+    settleRemainders: armingFlagOn(env, 'REWARD_ENTRY_SETTLE_ENABLED'),
   });
 }
 
@@ -300,6 +341,8 @@ export interface HeartbeatDeps {
   context: () => KeeperContext | null;
   sendDeadline: number;
   runDeadline: number;
+  /** Step 5, the entry close-out (REWARD_ENTRY_SETTLE_ENABLED). Off when absent. */
+  settleRemainders?: boolean;
 }
 
 /** One chain's run. Exported for tests. */
@@ -313,34 +356,53 @@ export async function heartbeatOnce(env: Env, chainId: number, diamond: Address,
   );
   const pausedAtStart = Boolean(await client.readContract({ address: diamond, abi: ABI, functionName: 'paused' }));
 
+  const settleRemainders = deps.settleRemainders === true;
   const discovery = await discover(env, chainId, client, diamond, nowSec);
 
   const dueBefore = nowSec - DUE_AFTER_SEC;
   const rows = await listDueHorizonEntries(env.KEEPER_DB, chainId, diamond, dueBefore, DUE_SLICE);
   const dueTotal = rows.length < DUE_SLICE ? rows.length : await countDueHorizonEntries(env.KEEPER_DB, chainId, diamond, dueBefore);
   const reads = await readEntries(deps.readClient, diamond, rows.map((r) => r.entryId), deps.sendDeadline, chainId);
-  const plan = planHeartbeat(rows, reads, horizonDays, nowSec);
+  const plan = planHeartbeat(rows, reads, horizonDays, nowSec, settleRemainders);
 
   await markHorizonTried(env.KEEPER_DB, chainId, diamond, rows.map((r) => r.entryId), nowSec);
   await finishHorizonEntries(env.KEEPER_DB, chainId, diamond, plan.settled);
   await checkHorizonEntries(env.KEEPER_DB, chainId, diamond, plan.idle, nowSec);
 
-  const ctx = plan.touch.length > 0 && !pausedAtStart ? deps.context() : null;
-  if (plan.touch.length > 0 && !pausedAtStart && !ctx) {
-    console.log(`[keeper] rewardHorizonHeartbeat ${where}: no signing key — ${plan.touch.length} due touch(es) not sent`);
+  const wantsSends = plan.touch.length + plan.retire.length + plan.forfeit.length > 0;
+  const ctx = wantsSends && !pausedAtStart ? deps.context() : null;
+  if (wantsSends && !pausedAtStart && !ctx) {
+    console.log(
+      `[keeper] rewardHorizonHeartbeat ${where}: no signing key — ${plan.touch.length} due touch(es)` +
+        (settleRemainders ? `, ${plan.retire.length} retire candidate(s) and ${plan.forfeit.length} forfeited entr(ies)` : '') +
+        ' not sent',
+    );
   }
   const outcome: TouchOutcome = ctx
     ? await touchAll(ctx, plan.touch.map((t) => t.entryId))
     : { landed: new Set(), reverted: new Map(), refused: null, attempted: false };
-  const protocolPaused = pausedAtStart || outcome.refused === PAUSED_REFUSAL;
   const landedTouches = plan.touch.filter((t) => outcome.landed.has(t.entryId));
   await recordHorizonTouches(env.KEEPER_DB, chainId, diamond, landedTouches, Math.floor(Date.now() / 1000));
+
+  // Step 5 — after the touches, on its own budget; never while a chain-wide
+  // refusal stopped them (it would refuse these calls too).
+  const settle: SettleOutcome =
+    ctx && outcome.refused === null ? await settleEntries(ctx, plan) : { ...emptySettle(), refused: outcome.refused };
+  // A forfeited entry the run reached is finished with for this heartbeat,
+  // swept or not: what is left waits on the contract, and the run line says so.
+  await checkHorizonEntries(env.KEEPER_DB, chainId, diamond, settle.reachedForfeits, Math.floor(Date.now() / 1000));
+  const protocolPaused = pausedAtStart || outcome.refused === PAUSED_REFUSAL || settle.refused === PAUSED_REFUSAL;
 
   console.log(
     `[keeper] rewardHorizonHeartbeat ${where} horizonDays=${horizonDays} discovered=${discovery.queued} ` +
       `discovery=${discovery.caughtUp ? 'caught-up' : `behind (next id ${discovery.next})`} due=${dueTotal} read=${rows.length - plan.unread.length}/${rows.length} ` +
       `settled=${plan.settled.length} idle=${plan.idle.length} touch=${plan.touch.length} landed=${outcome.landed.size} reverted=${outcome.reverted.size}` +
       (outcome.refused ? ` refused=${outcome.refused}` : '') +
+      (settleRemainders
+        ? ` retire=${plan.retire.length} retired=${settle.retired} in ${settle.retireCalls} call(s) (commitments released ${vpfi(settle.retireReleased)})` +
+          ` forfeit=${plan.forfeit.length} swept=${vpfi(settle.swept)} in ${settle.sweepCalls} call(s), as each call's simulation reported just before it was sent` +
+          (settle.refused && !outcome.refused ? ` settle-refused=${settle.refused}` : '')
+        : '') +
       (pausedAtStart ? ' (protocol paused: nothing sent)' : '') +
       (horizonDays === 0 ? ' (horizon dark: only entries whose removal has begun are touched)' : ''),
   );
@@ -349,8 +411,10 @@ export async function heartbeatOnce(env: Env, chainId: number, diamond: Address,
     horizonDays,
     reverted: outcome.reverted,
     clearedIds: new Set([...outcome.landed, ...plan.settled]),
+    settleReverted: settle.reverted,
+    settleCleared: new Set([...settle.cleared, ...plan.settled]),
     protocolPaused,
-    refused: outcome.attempted ? outcome.refused : 'unmeasured',
+    refused: outcome.attempted ? outcome.refused : settle.attempted ? settle.refused : 'unmeasured',
     nowSec,
     deadline: deps.runDeadline,
   });
@@ -495,22 +559,25 @@ async function touchAll(ctx: KeeperContext, ids: readonly number[]): Promise<Tou
   return out;
 }
 
-/** 'ok', 'deadline', or the reason the sweep would revert (the decoded error
- *  name where the ABI has it). */
-async function simulate(ctx: KeeperContext, ids: readonly number[]): Promise<string> {
+/** A simulation's outcome: what the call would return, 'deadline' (refused
+ *  past the send window, so nothing was observed), or the reason it would
+ *  revert (the decoded error name where the ABI has it). */
+type Simulated = { ok: true; result: unknown } | 'deadline' | string;
+
+async function simulateCall(ctx: KeeperContext, functionName: string, args: readonly unknown[]): Promise<Simulated> {
   try {
-    await ctx.client.simulateContract({
-      address: ctx.diamond,
-      abi: ABI,
-      functionName: 'sweepExpiredInteractionRewards',
-      args: [ids.map((id) => BigInt(id))],
-      account: ctx.wallet.account!,
-    });
-    return 'ok';
+    const { result } = await ctx.client.simulateContract({ address: ctx.diamond, abi: ABI, functionName, args, account: ctx.wallet.account! });
+    return { ok: true, result };
   } catch (err) {
     if (err instanceof PastRunDeadline) return 'deadline';
     return revertName(err) ?? summarizeFailure(err);
   }
+}
+
+/** The touch's simulation: 'ok', 'deadline', or why it would revert. */
+async function simulate(ctx: KeeperContext, ids: readonly number[]): Promise<string> {
+  const sim = await simulateCall(ctx, 'sweepExpiredInteractionRewards', [ids.map((id) => BigInt(id))]);
+  return typeof sim === 'string' ? sim : 'ok';
 }
 
 /** A send's outcome: landed, reverted on chain (with why), or `stop` — not
@@ -518,14 +585,18 @@ async function simulate(ctx: KeeperContext, ids: readonly number[]): Promise<str
 type SendResult = { kind: 'landed' } | { kind: 'reverted'; reason: string } | { kind: 'stop' };
 
 async function send(ctx: KeeperContext, ids: readonly number[]): Promise<SendResult> {
-  const label = `[keeper] rewardHorizonHeartbeat chain=${ctx.chainId} entries=${ids.join(',')}`;
+  return sendCall(ctx, `entries=${ids.join(',')}`, 'sweepExpiredInteractionRewards', [ids.map((id) => BigInt(id))]);
+}
+
+async function sendCall(ctx: KeeperContext, subject: string, functionName: string, args: readonly unknown[]): Promise<SendResult> {
+  const label = `[keeper] rewardHorizonHeartbeat chain=${ctx.chainId} ${functionName} ${subject}`;
   let hash: Hex;
   try {
     hash = (await ctx.wallet.writeContract({
       address: ctx.diamond,
       abi: ABI,
-      functionName: 'sweepExpiredInteractionRewards',
-      args: [ids.map((id) => BigInt(id))],
+      functionName,
+      args,
       chain: undefined,
       account: ctx.wallet.account ?? null,
     } as never)) as Hex;
@@ -550,6 +621,139 @@ async function send(ctx: KeeperContext, ids: readonly number[]): Promise<SendRes
   }
 }
 
+// ─── 5. Close-out ──────────────────────────────────────────────────────────
+
+/** What step 5 did. Amounts are what each call's simulation reported just
+ *  before it was sent, summed over the calls that landed. */
+interface SettleOutcome {
+  /** Entries retired (a capped entry counts once per day it retired). */
+  retired: number;
+  retireCalls: number;
+  /** The commitments those retirements released. */
+  retireReleased: bigint;
+  /** VPFI the forfeit sweeps moved to the recycle bucket. */
+  swept: bigint;
+  sweepCalls: number;
+  /** Entries a close-out call refused, with what was refused and why. */
+  reverted: Map<number, string>;
+  /** Entries whose earlier refusal this run disproves (a simulation that ran clean). */
+  cleared: Set<number>;
+  /** Forfeited entries whose loan the run simulated: finished with for this heartbeat. */
+  reachedForfeits: number[];
+  refused: string | null;
+  attempted: boolean;
+}
+
+function emptySettle(): SettleOutcome {
+  return { retired: 0, retireCalls: 0, retireReleased: 0n, swept: 0n, sweepCalls: 0, reverted: new Map(), cleared: new Set(), reachedForfeits: [], refused: null, attempted: false };
+}
+
+const vpfi = (x: bigint): string => `${formatUnits(x, 18)} VPFI`;
+
+/**
+ * Step 5 on the entries this run read: retire the closed ones whose
+ * remainder prices to nothing, then sweep the loans of the forfeited ones.
+ * Each call is simulated first and sent only when the simulation says it
+ * moves something; it is repeated while it still does (a capped entry
+ * retires a day at a time, a forfeit sweep is chunked), within
+ * {@link SETTLE_WRITES_PER_RUN}. A retire group that would revert is halved
+ * like a touch group, down to the one entry it names.
+ */
+async function settleEntries(ctx: KeeperContext, plan: Pick<HeartbeatPlan, 'retire' | 'forfeit'>): Promise<SettleOutcome> {
+  const out = emptySettle();
+  let writes = SETTLE_WRITES_PER_RUN;
+  // Returns false when the run must stop sending (deadline, chain-wide refusal, failed send).
+  // `ids` are the entries the call stands for. A simulated refusal is pinned on
+  // them when `pin` says the call is theirs alone (one entry's retirement, a
+  // loan's sweep); a retire group's refusal is halved instead.
+  const step = async (
+    ids: readonly number[],
+    pin: boolean,
+    what: string,
+    functionName: string,
+    args: readonly unknown[],
+    moved: (result: unknown) => bigint,
+    onLanded: (result: unknown) => void,
+  ): Promise<'moved' | 'nothing' | 'would-revert' | 'reverted' | 'stop'> => {
+    if (Date.now() >= ctx.notAfterMs) return 'stop';
+    const sim = await simulateCall(ctx, functionName, args);
+    if (sim === 'deadline') return 'stop';
+    out.attempted = true;
+    if (typeof sim === 'string') {
+      if (CHAIN_WIDE_REFUSALS.has(sim)) {
+        out.refused = sim;
+        return 'stop';
+      }
+      if (pin) for (const id of ids) out.reverted.set(id, `${what} would revert (${sim})`);
+      return 'would-revert';
+    }
+    for (const id of ids) out.cleared.add(id);
+    if (moved(sim.result) === 0n) return 'nothing';
+    if (writes <= 0) return 'stop';
+    writes -= 1;
+    const sent = await sendCall(ctx, `entries=${ids.join(',')}`, functionName, args);
+    if (sent.kind === 'landed') {
+      onLanded(sim.result);
+      return 'moved';
+    }
+    if (sent.kind === 'reverted') for (const id of ids) out.reverted.set(id, `${what} ${sent.reason}`);
+    return sent.kind === 'reverted' ? 'reverted' : 'stop';
+  };
+
+  const pending: number[][] = [];
+  for (let i = 0; i < plan.retire.length; i += SWEEP_BATCH) pending.push(plan.retire.slice(i, i + SWEEP_BATCH));
+  while (pending.length > 0) {
+    const group = pending[0];
+    // eslint-disable-next-line no-await-in-loop
+    const r = await step(
+      group,
+      group.length === 1,
+      'retiring its zero-priced remainder (`retireZeroPricedRemainders`)',
+      'retireZeroPricedRemainders',
+      [group.map((id) => BigInt(id))],
+      (x) => (x as readonly [bigint, bigint])[0],
+      (x) => {
+        const [count, released] = x as readonly [bigint, bigint];
+        out.retired += Number(count);
+        out.retireCalls += 1;
+        out.retireReleased += released;
+      },
+    );
+    if (r === 'stop') return out;
+    if (r === 'moved') continue; // the same group again, while it still retires
+    pending.shift();
+    if (r === 'would-revert' && group.length > 1) {
+      const mid = Math.ceil(group.length / 2);
+      pending.unshift(group.slice(0, mid), group.slice(mid));
+    }
+  }
+
+  const byLoan = new Map<bigint, number[]>();
+  for (const f of plan.forfeit) byLoan.set(f.loanId, [...(byLoan.get(f.loanId) ?? []), f.entryId]);
+  for (const [loanId, entryIds] of byLoan) {
+    let r: Awaited<ReturnType<typeof step>>;
+    do {
+      // eslint-disable-next-line no-await-in-loop
+      r = await step(
+        entryIds,
+        true,
+        `sweeping its loan ${loanId}'s forfeited reward (\`sweepForfeitedInteractionRewards\`)`,
+        'sweepForfeitedInteractionRewards',
+        [loanId],
+        (x) => x as bigint,
+        (x) => {
+          out.swept += x as bigint;
+          out.sweepCalls += 1;
+        },
+      );
+    } while (r === 'moved');
+    // Stopped mid-loan, the loan stays due and the next run takes it again.
+    if (r === 'stop') return out;
+    out.reachedForfeits.push(...entryIds);
+  }
+  return out;
+}
+
 /** What a run measured, for its alerts. */
 export interface HeartbeatAlertInput {
   horizonDays: number;
@@ -557,6 +761,11 @@ export interface HeartbeatAlertInput {
   reverted: ReadonlyMap<number, string>;
   /** Entries whose earlier revert alert this run disproves (landed or settled). */
   clearedIds: ReadonlySet<number>;
+  /** Entries a close-out call (step 5) refused this run, with what and why. */
+  settleReverted?: ReadonlyMap<number, string>;
+  /** Entries whose earlier close-out alert this run disproves (a clean
+   *  simulation, or settled). */
+  settleCleared?: ReadonlySet<number>;
   /** The protocol is paused: no queue-wide report (refused, overdue, paused
    *  clock) is raised or cleared this run. */
   protocolPaused: boolean;
@@ -595,6 +804,20 @@ export async function raiseHeartbeatAlerts(env: Env, chainId: number, diamond: s
     const id = Number(key.slice(prefix.length));
     // eslint-disable-next-line no-await-in-loop
     if (m.clearedIds.has(id)) await toggle(key, false, () => '');
+  }
+
+  const settlePrefix = `horizon-settle:${chainId}:`;
+  for (const [id, why] of m.settleReverted ?? new Map<number, string>()) {
+    // eslint-disable-next-line no-await-in-loop
+    await toggle(`${settlePrefix}${id}`, true, () =>
+      `${tag}: closing out reward entry ${id}: ${why}. Nothing is lost while this stands (a zero-priced remainder moves no value; a forfeited reward stays in custody until it is swept), but the entry stays open and its commitments stay counted.`,
+    );
+  }
+  for (const key of open) {
+    if (!key.startsWith(settlePrefix)) continue;
+    const id = Number(key.slice(settlePrefix.length));
+    // eslint-disable-next-line no-await-in-loop
+    if (m.settleCleared?.has(id)) await toggle(key, false, () => '');
   }
 
   // A deliberate pause stops every touch and every clock, so nothing below is
