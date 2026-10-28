@@ -196,7 +196,7 @@ class FakeDiamond {
   releases = new Map<number, { bound: number; cursor: number }>();
   globalFinalized = new Set<number>();
   /** The reconciliation queues; a walk writes `perWalk` of what is pending. */
-  queues: Record<'fresh' | 'recycled', { pending: bigint; frontier: bigint; perWalk: bigint }> = {
+  queues: Record<'fresh' | 'recycled', { pending: bigint; frontier: bigint; perWalk: bigint; addedAfterWalk?: bigint }> = {
     fresh: { pending: 0n, frontier: 0n, perWalk: 50n },
     recycled: { pending: 0n, frontier: 0n, perWalk: 50n },
   };
@@ -379,6 +379,8 @@ class FakeDiamond {
           const take = q.pending < q.perWalk ? q.pending : q.perWalk;
           q.pending -= take;
           if (take > 0n) q.frontier += 1n;
+          // Another caller's outflow, between this walk and the next read.
+          q.pending += q.addedAfterWalk ?? 0n;
         };
       }
       case 'startDayClosure': {
@@ -528,8 +530,8 @@ class FakeLedger implements EventLedger {
   fail = false;
   pages: (LedgerPos | null)[] = [];
 
-  add(dstChainId: unknown): void {
-    const n = this.rows.length + 1;
+  add(dstChainId: unknown, block?: number): void {
+    const n = block ?? this.rows.length + 1;
     this.rows.push({ kind: 'RemitDestinationRemoved', args: { dstChainId, bound: 0, cursor: 0 }, blockAt: n, block: n, log: 0 });
   }
 
@@ -1032,6 +1034,21 @@ describe('a run', () => {
       expect(cursors.rows.has(RELEASE_FLOOR_ITEM), 'no finalized block, no floor move').toBe(false);
     });
 
+    it('moves its floor past a removal only once the removal itself is finalized', async () => {
+      // Removed and released at the head, in a block above the finalized one:
+      // the finalized record is empty, which must not read as a finished
+      // release (Codex #3010).
+      ledger.add(DST, Number(d.finalNumber) + 5);
+      d.releases.set(DST, { bound: 10, cursor: 10 });
+      d.final = { closed: new Set(), eras: d.eras, releases: new Map() };
+      await run();
+      expect(cursors.rows.has(RELEASE_FLOOR_ITEM)).toBe(false);
+      ledger.rows[0] = { ...ledger.rows[0], block: Number(d.finalNumber), blockAt: Number(d.finalNumber) };
+      d.final = { closed: new Set(), eras: d.eras, releases: new Map([[DST, { bound: 10, cursor: 10 }]]) };
+      await run();
+      expect(cursors.rows.get(RELEASE_FLOOR_ITEM)).toBe(encodePos(ledger.rows[0]));
+    });
+
     it('passes a row that names no chain, and says so when the ledger cannot be read', async () => {
       ledger.add('not a chain');
       await run();
@@ -1067,8 +1084,18 @@ describe('a run', () => {
       expect(fns()).toEqual(['advanceReconciliationQueue', 'advanceReconciliationQueue', 'advanceReconciliationQueue']);
       expect(d.sent[0].args).toEqual([0, BigInt(QUEUE_STEPS)]);
       expect(d.queues.fresh.pending).toBe(0n);
-      expect(r.queues).toEqual([{ side: 'fresh', wrote: 120n, left: 0n }]);
-      expect(describeReport(r)).toContain('queue-fresh=wrote 120, 0 left');
+      expect(r.queues).toEqual([{ side: 'fresh', walks: 3, before: 120n, after: 0n }]);
+      expect(describeReport(r)).toContain('queue-fresh=3 walk(s), pending 120 before, 0 after (net of other callers)');
+    });
+
+    it('reports the walks that landed and the pending figures it read, never their difference as its own writes', async () => {
+      // Other outflows add more than each walk writes: the backlog grows
+      // while every walk lands and moves the frontier.
+      d.queues.fresh.pending = 120n;
+      d.queues.fresh.addedAfterWalk = 100n;
+      const r = await run();
+      expect(r.queues).toEqual([{ side: 'fresh', walks: MAX_SENDS_PER_RUN, before: 120n, after: 120n + BigInt(MAX_SENDS_PER_RUN) * 50n }]);
+      expect(r.refused.has('queue:fresh'), 'a walk that moved the frontier is progress').toBe(false);
     });
 
     it('stops on a walk that moves nothing, and works while the protocol is paused', async () => {
@@ -1079,7 +1106,7 @@ describe('a run', () => {
       expect(fns()).toEqual(['advanceReconciliationQueue']);
       expect(d.sent[0].args).toEqual([1, BigInt(QUEUE_STEPS)]);
       expect(r.refused.get('queue:recycled')).toMatch(/moved neither/);
-      expect(r.queues).toEqual([{ side: 'recycled', wrote: 0n, left: 30n }]);
+      expect(r.queues).toEqual([{ side: 'recycled', walks: 1, before: 30n, after: 30n }]);
     });
 
     it(`shares the run's ${MAX_SENDS_PER_RUN} sends`, async () => {

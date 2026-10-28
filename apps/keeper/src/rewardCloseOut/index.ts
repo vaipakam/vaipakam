@@ -94,7 +94,7 @@ import { buildKeeperContext, passIsArmed, resolveKeeperAccount, type KeeperConte
 import type { PassTick } from '../passSchedule';
 import { deadlineClient, PastRunDeadline, settledRead, type BatchResult } from '../batchRead';
 import { shortErr } from '../callErrors';
-import { d1EventLedger, decodePos, encodePos, posAfter, type EventLedger } from '../eventLedger';
+import { d1EventLedger, decodePos, encodePos, posAfter, rowFinalized, type EventLedger } from '../eventLedger';
 import { decodeEntryFloor, encodeEntryFloor, ENTRY_PAGE, scanEntries, type EntryRow } from '../rewardEntries';
 import { advanceFloor, d1ScanCursors, decodeIndex, finalFloor, finalizedBlockOnce, rotatingWindow, type FinalBlock, type ScanCursors } from '../scanCursors';
 import { StepSender } from '../stepSender';
@@ -232,8 +232,11 @@ export interface CloseOutReport {
   released: { chain: number; from: number; to: number; bound: number }[];
   /** Releases waiting on an abandoned day's finalization. */
   releaseWaiting: string[];
-  /** Reconciliation queues that held pending takes: what was written, what is left. */
-  queues: { side: string; wrote: bigint; left: bigint }[];
+  /** Reconciliation queues that held pending takes: the walks that landed,
+   *  and the pending figure read before the first and after the last. The
+   *  change between the two is net: another caller's outflow can add takes,
+   *  and anyone may walk the queue, between the reads (Codex #3010). */
+  queues: { side: string; walks: number; before: bigint; after: bigint }[];
   refused: Map<string, string>;
   unread: Map<string, string>;
   stopped: string | null;
@@ -293,7 +296,7 @@ export function describeReport(r: CloseOutReport): string {
     `pruned=${r.pruned.join(',') || 'none'}`,
     ...(r.released.length > 0 ? [`released=${r.released.map((x) => `chain ${x.chain} days ${x.from}..${x.to - 1} (${x.to >= x.bound ? 'done' : `${x.bound - x.to} left`})`).join(',')}`] : []),
     ...(r.releaseWaiting.length > 0 ? [`release-waiting=${r.releaseWaiting.join('; ')}`] : []),
-    ...r.queues.map((q) => `queue-${q.side}=wrote ${q.wrote}, ${q.left} left`),
+    ...r.queues.map((q) => `queue-${q.side}=${q.walks} walk(s), pending ${q.before} before, ${q.after} after (net of other callers)`),
     ...(r.refused.size > 0 ? [`refused=${[...r.refused].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.unread.size > 0 ? [`unread=${[...r.unread].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.stopped ? [`stopped=${r.stopped}`] : []),
@@ -609,17 +612,21 @@ async function releaseDestinations(r: Reader, sender: StepSender, report: CloseO
   }
   // On a page read from the floor, the floor moves past the leading rows whose
   // chain's release is done, at the head AND at the finalized block: a walk a
-  // reorg undoes leaves its row above the floor, to be walked again.
+  // reorg undoes leaves its row above the floor, to be walked again. At the
+  // finalized block a row counts only when its removal is itself finalized
+  // (Codex #3010): below the removal the record is empty, or an earlier
+  // removal's finished one, and either reads as done.
   if (start !== floor) return;
   const positions = page.rows.map((_, i) => i);
   const n = await finalFloor(0, positions, (i) => rows[i] === null || done.has(rows[i]!), r.finalized, async (passed, block) => {
-    const named = [...new Set(passed.flatMap((i) => (rows[i] === null ? [] : [rows[i]!])))];
+    const live = passed.filter((i) => rows[i] === null || rowFinalized(page.rows[i], block));
+    const named = [...new Set(live.flatMap((i) => (rows[i] === null ? [] : [rows[i]!])))];
     const at = await readRelease(named, 'releases-final', block.number);
     const finished = new Set(named.filter((_, j) => {
       const st = at[j] as readonly [bigint, bigint] | undefined;
       return st !== undefined && st[1] >= st[0];
     }));
-    return new Set(passed.filter((i) => rows[i] === null || finished.has(rows[i]!)));
+    return new Set(live.filter((i) => rows[i] === null || finished.has(rows[i]!)));
   });
   if (n > 0) await cursors.put(RELEASE_FLOOR_ITEM, encodePos(page.rows[n - 1]));
 }
@@ -1016,11 +1023,13 @@ async function advanceQueues(r: Reader, sender: StepSender, report: CloseOutRepo
       continue;
     }
     if (pos.pending === 0n) continue;
-    const had = pos.pending;
+    const before = pos.pending;
+    let walks = 0;
     while (pos.pending > 0n) {
       // eslint-disable-next-line no-await-in-loop
       const res = await sender.call('queue', q.name, 'advanceReconciliationQueue', [q.side, BigInt(QUEUE_STEPS)]);
       if (res !== 'landed') break;
+      walks++;
       let after: QueuePosition;
       try {
         // eslint-disable-next-line no-await-in-loop
@@ -1037,6 +1046,6 @@ async function advanceQueues(r: Reader, sender: StepSender, report: CloseOutRepo
         break;
       }
     }
-    report.queues.push({ side: q.name, wrote: had - pos.pending, left: pos.pending });
+    report.queues.push({ side: q.name, walks, before, after: pos.pending });
   }
 }

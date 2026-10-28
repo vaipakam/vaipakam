@@ -244,12 +244,17 @@ evidence that the migration has completed.
   indexer's record of removals, but decides from the chain's own record of
   each release. A release that is waiting for an abandoned day to finalize
   costs nothing: the keeper sends only a call that would move the release
-  forward, and the run's report names what it is waiting on.
+  forward, and the run's report names what it is waiting on. A removal is
+  treated as finished for good only once the removal itself, and not just its
+  release, is in the chain's finalized block.
 - It writes each reward reconciliation queue's pending takes into their
   records while any remain, because the administrator's corrections on that
   side refuse until they are written. This moves no value and changes no
   total. It uses only what the run's send budget leaves after the other
-  steps.
+  steps. The run's report states how many of its calls landed and the
+  pending figure it read before and after them. It does not present the
+  difference as its own work, since other payouts can add pending takes, and
+  anyone can write them, between its reads.
 - How long the chain's history grows never stops the duty, and no day, era
   or epoch is ever left out for good. Its work per run is bounded, and each
   bounded read resumes where the previous run stopped, wrapping round, above

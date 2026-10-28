@@ -65,7 +65,7 @@ import type { PassTick } from '../passSchedule';
 import { deadlineClient, PastRunDeadline, settledRead, type BatchResult } from '../batchRead';
 import { shortErr } from '../callErrors';
 import { finishWork, getWorkItems, putWork } from '../db';
-import { d1EventLedger, decodePos, encodePos, posAfter, type EventLedger, type LedgerPos, type LedgerRow } from '../eventLedger';
+import { d1EventLedger, decodePos, encodePos, posAfter, rowFinalized, type EventLedger, type LedgerPos, type LedgerRow } from '../eventLedger';
 import { feeCeiling } from '../feeCeiling';
 import { sendOpsAlert } from '../opsAlert';
 import { d1ScanCursors, decodeIndex, finalFloor, finalizedBlockOnce, rotatingWindow, type FinalBlock, type ScanCursors } from '../scanCursors';
@@ -751,7 +751,7 @@ async function strandedReturns(mirror: ChainState, states: ReadonlyMap<number, C
     const positions = ledger.rows.map((_, i) => i);
     const doneAtHead = (i: number) => rowKey[i] === null || returned.has(rowKey[i]!);
     const n = await finalFloor(0, positions, doneAtHead, mirror.r.finalized, async (passed, block) => {
-      const named = passed.filter((i) => rowKey[i] !== null && ledger.rows[i].block <= Number(block.number));
+      const named = passed.filter((i) => rowKey[i] !== null && rowFinalized(ledger.rows[i], block));
       const at = await mirror.r.many(named.map((i) => ({ functionName: 'getStrandedRecovery', args: [keys.get(rowKey[i]!)!.remitter, keys.get(rowKey[i]!)!.remitId] })), 'stranded-final', block.number);
       const done = new Set(passed.filter((i) => rowKey[i] === null));
       named.forEach((i, j) => {
