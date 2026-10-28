@@ -19,6 +19,7 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -78,7 +79,7 @@ contract VaultFactoryFacetTest is Test {
         TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](10);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](11);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(vaultFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -122,6 +123,14 @@ contract VaultFactoryFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(NumeraireValueFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNumeraireValueFacetSelectors()
+        });
+        // #3009 - offer creation and mutation admit a periodic-interest
+        // cadence through a self-call to OfferPreviewFacet's one copy of the
+        // rule, so a hand-built Diamond that cuts OfferCreateFacet must cut it.
+        cuts[10] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(OfferPreviewFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferPreviewFacetSelectors()
         });
         cuts[3] = IDiamondCut.FacetCut({
             facetAddress: address(accessControlFacet),

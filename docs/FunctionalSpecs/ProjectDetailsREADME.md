@@ -1823,7 +1823,7 @@ acknowledged it in a reviewed change; the check never quietly forgets one.
 
 ### Periodic Interest Payments
 
-Periodic interest payment is a dormant Phase 1 feature controlled by `periodicInterestEnabled`. When disabled, offer creation must reject non-`None` cadences, settlement entry points must not execute, and the frontend should hide cadence-related controls.
+Periodic interest payment is a dormant Phase 1 feature controlled by `periodicInterestEnabled`. When disabled, offer creation must reject non-`None` cadences and accept `None` on any duration (no mandatory annual checkpoint applies while the feature is off), settlement entry points must not execute, and the frontend should hide cadence-related controls.
 
 Purpose:
 
@@ -1842,6 +1842,8 @@ Cadence rules:
 - supported cadence enum: `None`, `Monthly`, `Quarterly`, `SemiAnnual`, `Annual`
 - loans longer than 365 days must use at least `Annual` cadence when the feature is enabled and both legs are liquid
 - lenders may choose finer cadence for large-principal loans when principal value meets the configured threshold
+- one admission rule decides every cadence question: offer creation applies it, and so does a change to an open offer's amount, which is re-admitted against the liquidity classes the offer recorded, the current feature switch and the current threshold, so an open offer never holds a cadence a fresh offer on the same terms would be refused
+- a read-only cadence preview reports, for proposed offer terms, every cadence with whether creation would admit it and, when it would not, the exact refusal creation would give, together with what the rule read: the feature switch, both legs' liquidity classes, whether the annual floor binds, the principal value and the threshold it is compared with
 - the principal threshold is denominated in the active protocol numeraire, USD by default
 - an atomic numeraire change covering its ETH feed, price denominator, symbol, optional cross-check, finer-cadence threshold, notification fee, and KYC thresholds must update the oracle-side numeraire inputs and all numeraire-denominated stored values atomically; within-numeraire tuning uses the per-knob setters
 - cross-numeraire changes are additionally gated by `numeraireSwapEnabled`, default `false`

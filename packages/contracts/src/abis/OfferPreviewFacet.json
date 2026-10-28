@@ -56,6 +56,211 @@
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "previewCadenceAdmission",
+    "inputs": [
+      {
+        "name": "lendingAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "assetType",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.AssetType"
+      },
+      {
+        "name": "collateralAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "collateralAssetType",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.AssetType"
+      },
+      {
+        "name": "durationDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "preview",
+        "type": "tuple",
+        "internalType": "struct OfferPreviewFacet.CadenceAdmissionPreview",
+        "components": [
+          {
+            "name": "periodicInterestEnabled",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "principalLiquidity",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.LiquidityStatus"
+          },
+          {
+            "name": "collateralLiquidity",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.LiquidityStatus"
+          },
+          {
+            "name": "bothLegsQualify",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "annualFloorApplies",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "principalNumeraire",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "threshold",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "cadences",
+            "type": "tuple[]",
+            "internalType": "struct OfferPreviewFacet.CadenceAdmission[]",
+            "components": [
+              {
+                "name": "cadence",
+                "type": "uint8",
+                "internalType": "enum LibVaipakam.PeriodicInterestCadence"
+              },
+              {
+                "name": "admitted",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "refusal",
+                "type": "bytes",
+                "internalType": "bytes"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "requireCadenceAdmitted",
+    "inputs": [
+      {
+        "name": "terms",
+        "type": "tuple",
+        "internalType": "struct LibCadenceAdmission.Terms",
+        "components": [
+          {
+            "name": "lendingAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "durationDays",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "cadence",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.PeriodicInterestCadence"
+          },
+          {
+            "name": "assetType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "collateralAssetType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "principalLiquidity",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.LiquidityStatus"
+          },
+          {
+            "name": "collateralLiquidity",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.LiquidityStatus"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "view"
+  },
+  {
+    "type": "error",
+    "name": "CadenceNotAllowed",
+    "inputs": [
+      {
+        "name": "cadence",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "duration",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "principalNumeraire",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "threshold",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CadenceNotAllowedForIlliquid",
+    "inputs": [
+      {
+        "name": "principalLiquidity",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "collateralLiquidity",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "cadence",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
     "type": "error",
     "name": "ERC721NonexistentToken",
     "inputs": [
@@ -69,6 +274,11 @@
   {
     "type": "error",
     "name": "InvalidOffer",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PeriodicInterestDisabled",
     "inputs": []
   }
 ]

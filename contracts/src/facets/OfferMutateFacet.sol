@@ -6,11 +6,12 @@ import {LibOfferBounds} from "../libraries/LibOfferBounds.sol";
 import {LibOfferShape} from "../libraries/LibOfferShape.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
-import {LibNumeraireValueRead} from "../libraries/LibNumeraireValueRead.sol";
+import {LibCadenceAdmission} from "../libraries/LibCadenceAdmission.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
+import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
@@ -819,86 +820,41 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         }
     }
 
-    /// @dev Codex round-3 P2 — re-run the T-034 periodic-interest-cadence
-    ///      threshold check against the post-mutation `amount`. Mirrors
-    ///      the subset of `OfferCreateFacet._validatePeriodicCadence`
-    ///      that depends on `amount` (Filter 2 — principal-vs-threshold);
-    ///      Filter 0 (both-liquid + ERC-20/ERC-20) is latched at create
-    ///      and immutable through modify, and Filter 1 (cadence interval
-    ///      < duration) depends only on the immutable `durationDays`, so
-    ///      neither needs re-checking here.
-    ///
-    ///      Without this, a creator could open an offer above the
-    ///      `minPrincipalForFinerCadence` threshold with a finer cadence
-    ///      (e.g. Monthly), then shrink `amount` via `setOfferAmount` or
-    ///      `modifyOffer` below the threshold while keeping Monthly —
-    ///      a state `createOffer` rejects with `CadenceNotAllowed`.
+    /// @dev Codex round-3 P2 — re-admit the offer's periodic-interest cadence
+    ///      against the post-mutation `amount`. Without this, a creator could
+    ///      open an offer above the `minPrincipalForFinerCadence` threshold
+    ///      with a finer cadence (e.g. Monthly), then shrink `amount` via
+    ///      `setOfferAmount` or `modifyOffer` below the threshold while
+    ///      keeping Monthly — a state `createOffer` rejects with
+    ///      `CadenceNotAllowed`. #3009 — the check is the shared rule
+    ///      ({LibCadenceAdmission}) read whole, not a copy of its threshold
+    ///      rows: with the switch off a non-`None` cadence is refused here as
+    ///      at create (`PeriodicInterestDisabled`), and a multi-year `None`
+    ///      offer passes wherever the `Annual` floor does not bind.
     function _revalidatePeriodicCadenceForAmount(
         LibVaipakam.Offer storage offer,
         uint256 newAmount
     ) private view {
-        LibVaipakam.PeriodicInterestCadence cadence = offer.periodicInterestCadence;
-        bool isMultiYear = uint256(offer.durationDays) > 365;
-        // None cadence on a non-multi-year offer is unconditionally
-        // valid under createOffer's matrix — short-circuit so we don't
-        // pay for the oracle lookup. Multi-year offers with cadence
-        // None are already rejected at create (Row 3/4 require Annual),
-        // so reaching this state would be a defensive impossibility;
-        // we still run the threshold check in that case so a future
-        // code path that bypassed create-time enforcement gets caught.
-        if (cadence == LibVaipakam.PeriodicInterestCadence.None && !isMultiYear) {
-            return;
-        }
-
-        LibVaipakam.ProtocolConfig storage cfgT034 =
-            LibVaipakam.storageSlot().protocolCfg;
-        uint256 threshold = cfgT034.minPrincipalForFinerCadence == 0
-            ? LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_DEFAULT
-            : cfgT034.minPrincipalForFinerCadence;
-
-        // The same best-effort read `createOffer` takes (#2419), so create
-        // and modify see one "is this above the cadence threshold?" answer.
-        uint256 principalNumeraire =
-            LibNumeraireValueRead.valueOrZero(offer.lendingAsset, newAmount);
-        bool aboveThreshold = principalNumeraire >= threshold;
-
-        if (isMultiYear) {
-            if (cadence == LibVaipakam.PeriodicInterestCadence.None) {
-                // Row 3 / Row 4 — multi-year requires at least Annual.
-                revert IVaipakamErrors.CadenceNotAllowed(
-                    uint8(cadence),
-                    uint256(offer.durationDays),
-                    principalNumeraire,
-                    threshold
-                );
-            }
-            if (
-                !aboveThreshold &&
-                cadence != LibVaipakam.PeriodicInterestCadence.Annual
-            ) {
-                // Row 3 — only Annual allowed below threshold on multi-year.
-                revert IVaipakamErrors.CadenceNotAllowed(
-                    uint8(cadence),
-                    uint256(offer.durationDays),
-                    principalNumeraire,
-                    threshold
-                );
-            }
-        } else {
-            // ≤365d. Row 1 — None only below threshold; Row 2 — opt-in
-            // to finer cadences allowed only at-or-above threshold.
-            if (
-                cadence != LibVaipakam.PeriodicInterestCadence.None &&
-                !aboveThreshold
-            ) {
-                revert IVaipakamErrors.CadenceNotAllowed(
-                    uint8(cadence),
-                    uint256(offer.durationDays),
-                    principalNumeraire,
-                    threshold
-                );
-            }
-        }
+        // #3009 — the new amount is re-admitted by the one rule offer
+        // creation applies ({LibCadenceAdmission}, through the same self-call
+        // to OfferPreviewFacet), against the liquidity
+        // classes the offer recorded at creation. Only the amount moves, so
+        // only the threshold rows can change their answer while the switch
+        // and the legs stand as they were; but the rule is read whole, so a
+        // mutation can never admit what a create on the same terms would
+        // refuse.
+        OfferPreviewFacet(address(this)).requireCadenceAdmitted(
+            LibCadenceAdmission.Terms({
+                lendingAsset: offer.lendingAsset,
+                amount: newAmount,
+                durationDays: uint256(offer.durationDays),
+                cadence: offer.periodicInterestCadence,
+                assetType: offer.assetType,
+                collateralAssetType: offer.collateralAssetType,
+                principalLiquidity: offer.principalLiquidity,
+                collateralLiquidity: offer.collateralLiquidity
+            })
+        );
     }
 
     /// @dev Rental prepay total = amount × days + (amount × days ×

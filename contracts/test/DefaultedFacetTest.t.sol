@@ -59,6 +59,7 @@ import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {defaultAdapterCalls, emptyAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
@@ -226,7 +227,7 @@ contract DefaultedFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](26);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](27);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -387,6 +388,14 @@ contract DefaultedFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(NumeraireValueFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNumeraireValueFacetSelectors()
+        });
+        // #3009 - offer creation and mutation admit a periodic-interest
+        // cadence through a self-call to OfferPreviewFacet's one copy of the
+        // rule, so a hand-built Diamond that cuts OfferCreateFacet must cut it.
+        cuts[26] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(OfferPreviewFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferPreviewFacetSelectors()
         });
         // #2795 / #2796 - every forced sale (the periodic settlement, the HF
         // liquidation and the time-based default) runs through a self-call
