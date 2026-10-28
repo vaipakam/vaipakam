@@ -56,6 +56,7 @@
  */
 
 import { useActiveLocale } from '../i18n/useActiveLocale';
+import { resolveBody } from '../lib/indexedLocales';
 import {
   createContext,
   useContext,
@@ -106,16 +107,9 @@ function resolveGuide(
   mode: 'Basic' | 'Advanced',
   locale: string,
 ): { text: string; usedLocale: string; fellBackToEnglish: boolean } {
-  const wanted = `../content/userguide/${mode}.${locale}.md`;
-  const fallback = `../content/userguide/${mode}.en.md`;
-  if (GUIDE_FILES[wanted]) {
-    return { text: GUIDE_FILES[wanted], usedLocale: locale, fellBackToEnglish: false };
-  }
-  return {
-    text: GUIDE_FILES[fallback] ?? '',
-    usedLocale: 'en',
-    fellBackToEnglish: locale !== 'en',
-  };
+  // The same rule that decides which copies are indexed (#1314).
+  const body = resolveBody(`/help/${mode.toLowerCase()}`, locale, GUIDE_FILES);
+  return { text: body.text, usedLocale: body.locale, fellBackToEnglish: body.fellBackToEnglish };
 }
 
 type Role = 'lender' | 'borrower';
@@ -371,6 +365,7 @@ export default function UserGuide({ variant }: UserGuideProps) {
     descriptionKey: variant === 'basic'
       ? 'pageMeta.userGuideBasic.description'
       : 'pageMeta.userGuideAdvanced.description',
+    bodyFiles: GUIDE_FILES,
   });
   const mode: 'Basic' | 'Advanced' = variant === 'advanced' ? 'Advanced' : 'Basic';
   const lang = useActiveLocale();

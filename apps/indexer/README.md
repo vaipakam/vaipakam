@@ -56,6 +56,14 @@ The read API stays open (T-041). What a caller can make this Worker DO is bounde
 - **`GET /ws/chain/:chainId`** admits only an `Origin` listed in `FRONTEND_ORIGIN` (403 otherwise; a WebSocket upgrade is not subject to CORS, so this is the only thing stopping another site's page from holding sockets through its visitors), then takes a per-IP slot from `WS_SUBSCRIBE_RATELIMIT` (30 a minute). The chain's ingest DO then holds at most `MAX_SUBSCRIBERS_PER_CHAIN` (1,000) sockets, and `MAX_SUBSCRIBERS_PER_IP` (8) per client IP, counted from hibernation tags so hibernated sockets count too. A refused subscribe is an ordinary HTTP answer and the app keeps polling. A script can forge `Origin`; the per-IP budget and the DO caps are what bound it.
 - `FRONTEND_ORIGIN` must list the same hosts as the agent's; `test/wsSubscribe.test.ts` fails if the two `wrangler.jsonc` values differ. A local `wrangler dev` session needs its own origin in `.dev.vars` to subscribe.
 
+### The loan-status check (#2337)
+
+The platform lets a loan's status move only along the diagram in [`ProjectDetailsREADME.md` §6](../../docs/FunctionalSpecs/ProjectDetailsREADME.md), and the contracts announce every move with `LoanStatusChanged(loanId, from, to)`. [`src/loanLifecycleGuard.ts`](src/loanLifecycleGuard.ts) reads those announcements (and each `LoanInitiated`) during the scan and records any that disagree with the diagram: a move the diagram does not allow, a move that does not start from the status last announced, or an initiation of a loan already being tracked. A recorded violation means a contract defect or an indexer that has drifted from the contracts.
+
+- It keeps its own two tables (migration 0080) and never corrects the `loans` projection, because healing is what would hide the drift it reports.
+- A loan first seen part-way through its life (initiated before this indexer's records begin) has its first announcement checked against the diagram only; every later one is checked fully. `GET /health/ingest` reports, per chain, how many loans are tracked, how many from initiation, every violation counted and the oldest 50 by name.
+- `.github/workflows/ingest-health.yml` pages on any violation not listed in its `LIFECYCLE_ACKNOWLEDGED` (`chainId:txHash:logIndex`, added in a reviewed commit once investigated). This replaced the reference subgraph's drift counter, which nothing paged on.
+
 ## Configuration
 
 Worker secrets:

@@ -130,6 +130,7 @@ jobs:
           # verification every signed endpoint now routes through. Being
           # outside this detector meant an agent-only PR did not even
           # TRIGGER the workflow, so the gap was two-layered.
+          # apps/rpc-proxy joined with the Worker itself (#1724).
           # `packages/ui` was in this list until #1963 retired the package
           # (orphaned by the #1854 apps/defi deletion). No path can match
           # a package that no longer exists.
@@ -147,7 +148,7 @@ jobs:
           # matching the config filename costs nothing and cannot miss one.
           # A companion unconditional job in ci.yml runs the same invariant
           # with no filter; this one additionally brings in the richer suite.
-          DEFI_RE='^(apps/(app|indexer|keeper|agent)/|.*wrangler[^/]*\.(jsonc|json|toml)$|packages/(lib|contracts|i18n|push)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/app-vitest\.yml$)'
+          DEFI_RE='^(apps/(app|indexer|keeper|agent|rpc-proxy)/|.*wrangler[^/]*\.(jsonc|json|toml)$|packages/(lib|contracts|i18n|push)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/app-vitest\.yml$)'
           if echo "$CHANGED" | grep -Eq "$DEFI_RE"; then
             echo "defi=true" >> "$GITHUB_OUTPUT"
           else
@@ -236,3 +237,11 @@ jobs:
       # nothing about any of them.
       - name: Run @vaipakam/agent vitest
         run: pnpm --filter @vaipakam/agent test
+
+      # apps/rpc-proxy (#1724) holds every chain's provider key for the
+      # connected app. Its suite pins what a typecheck cannot: that a
+      # refused method or log range is never forwarded, that an upstream
+      # failure or error message never carries the key, and that an
+      # upstream answering for another chain is refused.
+      - name: Run @vaipakam/rpc-proxy vitest
+        run: pnpm --filter @vaipakam/rpc-proxy test

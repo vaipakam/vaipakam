@@ -676,6 +676,44 @@ contract RiskPreviewFacet {
         );
     }
 
+    /**
+     * @notice #2672 — the figures a standing sale listing on `loanId`
+     *         recorded for the seller, so the app can state them (and the
+     *         buyer side can see a listing that has stopped being buyable)
+     *         instead of leaving the seller to find out from a refused fill.
+     * @dev    A read of what {LibSaleListing.recordSellerBounds} stored, plus
+     *         the live held balance the ceiling is compared with. Settlement
+     *         (`EarlyWithdrawalFacet.completeLoanSaleInternal`) refuses a fill
+     *         while `recorded` and the time is at or before `expiry` if the
+     *         seller would net less than `minSellerNet` (`SaleBelowSellerFloor`)
+     *         or `heldNow` exceeds `maxHeld` (`SaleAboveHeldCeiling`). The
+     *         ceiling half can be judged from these outputs alone; the floor
+     *         half depends on the fill's own proceeds and accrual, so it is not
+     *         predicted here.
+     * @return recorded     Whether the listing recorded bounds (false: none,
+     *                      or the listing is gone).
+     * @return minSellerNet The least the seller agreed to come out with.
+     * @return maxHeld      The most of the lender's held funds that may move
+     *                      with the position.
+     * @return expiry       The listing expiry the floor was computed for; past
+     *                      it the bounds are not enforced.
+     * @return heldNow      Funds held for the lender on this loan right now.
+     */
+    function getSaleListingBounds(uint256 loanId)
+        external
+        view
+        returns (bool recorded, uint256 minSellerNet, uint256 maxHeld, uint256 expiry, uint256 heldNow)
+    {
+        LibVaipakam.Storage storage st = LibVaipakam.storageSlot();
+        return (
+            st.saleListingBoundsRecorded[loanId],
+            st.saleListingMinSellerNet[loanId],
+            st.saleListingMaxHeldTransfer[loanId],
+            st.saleListingBoundsExpiry[loanId],
+            st.heldForLender[loanId]
+        );
+    }
+
     function saleAdmission(uint256 loanId)
         external
         view

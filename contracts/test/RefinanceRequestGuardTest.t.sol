@@ -205,6 +205,8 @@ contract RefinanceRequestGuardTest is SetupTest {
     function test_cancellingTheRequestLiftsTheGuardAndFreesTheSlot() public {
         uint256 loanId = _activeLoan();
         uint256 offerId = _request(loanId, 0);
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(borrower);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         assertEq(_live(loanId), 0);
@@ -293,6 +295,8 @@ contract RefinanceRequestGuardTest is SetupTest {
             _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0)
         );
         assertEq(_recorded(loanId), r2, "a former holder's request is displaced");
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         OfferCancelFacet(address(diamond)).cancelOffer(r2);
         IERC721(address(diamond)).transferFrom(holderB, borrower, tokenId);
         vm.stopPrank();
@@ -371,6 +375,8 @@ contract RefinanceRequestGuardTest is SetupTest {
             _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0)
         );
         // Once the offset is withdrawn, the request may be posted.
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         OfferCancelFacet(address(diamond)).cancelOffer(offsetOfferId);
         uint256 r = OfferCreateFacet(address(diamond)).createOffer(
             _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0)
@@ -497,6 +503,8 @@ contract RefinanceRequestGuardTest is SetupTest {
         vm.expectRevert(LibAutoRefinanceCheck.RefinanceCapsRequired.selector);
         RefinanceFacet(address(diamond)).checkRefinanceRequest(loanId, r1);
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(borrower);
         OfferCancelFacet(address(diamond)).cancelOffer(r1);
         assertEq(_live(loanId), 0, "cancelling lifts it");
@@ -533,6 +541,8 @@ contract RefinanceRequestGuardTest is SetupTest {
         vm.expectRevert(LibAutoRefinanceCheck.RefinanceCapsRequired.selector);
         RefinanceFacet(address(diamond)).checkRefinanceRequest(loanId, r1);
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(borrower);
         OfferCancelFacet(address(diamond)).cancelOffer(r1);
         vm.expectRevert(

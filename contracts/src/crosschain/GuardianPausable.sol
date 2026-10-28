@@ -13,8 +13,8 @@ import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/Pau
  *
  *         This is the provider-neutral pause base for every cross-chain
  *         contract in `contracts/src/crosschain/` (the CCIP messenger,
- *         the VPFI mirror token, the pool rate governor, the buy
- *         adapter/receiver, the reward messenger). Pause semantics are a
+ *         the VPFI mirror token, the pool rate governor, the reward
+ *         messenger, the remittance receivers and senders). Pause semantics are a
  *         cross-chain concern, not a transport-layer one — naming the base
  *         after the transport (as the deleted pre-T-068 `LZGuardianPausable`
  *         did) tied an emergency lever to a vendor that the protocol no

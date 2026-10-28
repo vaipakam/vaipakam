@@ -67,6 +67,9 @@ describe('readIngestHealth', () => {
         },
       ],
       configured: { chains: [], basis: expect.stringMatching(/not resolved/) },
+      // This DDL has no lifecycle tables (migration 0080), so the check is
+      // reported as not readable rather than as zero violations (#2337).
+      lifecycle: null,
     });
   });
 

@@ -325,7 +325,7 @@ Deux voies :
 
 Vaipakam tourne comme un déploiement indépendant sur chaque chaîne
 supportée : **Ethereum**, **Base**, **Arbitrum**, **Optimism**,
-**Polygon zkEVM**, **BNB Chain**.
+**Polygon**.
 
 Un prêt ouvert sur Base se règle sur Base. Un prêt ouvert sur
 Arbitrum se règle sur Arbitrum. Il n'y a pas de dette inter-chaîne. La seule

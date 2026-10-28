@@ -202,6 +202,15 @@ runs half of it on old code:
   instead of paying it (never lost, but a silent change of route), so
   refresh PrepayListingFacet with ForcedSaleFacet too.
 
+- **SaleExitVerdictFacet + EarlyWithdrawalFacet + EarlyWithdrawalDirectFacet
+  (#1841).** Both lender-exit entries run their opening checks through one
+  self-call, `requireSaleExitOpen`, and carry no copy of those checks. An entry
+  refreshed without the host reverts `FunctionDoesNotExist` on every sale (a
+  hard revert, never an unchecked sale); a host refreshed without the entries
+  leaves the old entries running their own checks beside a verdict that may
+  disagree with them. `RefreshAllFacetsInPlace` and `RedeployFacets` both carry
+  all three.
+
 - **VaultFactoryFacet + every facet that withdraws from a vault (#2440).**
   `vaultWithdrawERC20` now returns what the recipient received, and every
   caller compiled against it decodes that return, including the plain
@@ -289,6 +298,19 @@ runs half of it on old code:
   operator's manual pause, already in force
   (`PerRentalRowsCrossingNeedsManualPause` otherwise).
 
+- **OfferPreviewFacet + OfferCreateFacet + OfferMutateFacet — the cadence
+  admission rule (#3009).** Whether an offer may carry a periodic-interest
+  cadence is decided by one library, `LibCadenceAdmission`, whose one runtime
+  copy is `OfferPreviewFacet.requireCadenceAdmitted`. Creation and the amount
+  re-check on mutation self-call it, and `previewCadenceAdmission` collects
+  its refusals. A creator or mutator refreshed without the host reverts
+  `FunctionDoesNotExist` on every create (or amount change) a sale vehicle
+  does not exempt: a hard revert, never a second rule. A host refreshed
+  without them leaves the old copies in the callers, which can answer the
+  multi-year question differently from the preview. `RefreshAllFacetsInPlace`
+  carries all three; `ReplaceStaleFacets` carries creation and the preview but
+  not OfferMutateFacet, so it cannot refresh this family whole.
+
 - **Every facet that reads a loan deadline (#668 / #935, owner decision
   D2).** A loan's due date and grace end are read only through
   `LibLoanClock`, which adds the paused time since the loan started (from the
@@ -354,6 +376,7 @@ true on a settlement path, and it cost real time in #1503.
 | **RefinanceFacet**         | Move a borrower onto better terms — `refinanceLoan`, `refinanceLoanFromAccept`. NOT an in-place edit: the replacement loan is a **separate record** (`s.offerIdToLoanId[borrowerOfferId]` → a new `loanId`) created when the new lender accepted the offer, and the old loan is terminalized **Active → Repaid**. So a completed refinance leaves **two loan records and FOUR position NFTs**: every loan carries both a `lenderTokenId` and a `borrowerTokenId`, and the old pair is *status-updated* to `LoanRepaid` — **not burned** — so `ownerOf` still resolves and the old borrower NFT stays a redeemable receipt on the original position. Load-bearing for indexer state and the terminal-path invariants: an indexer that assumes one NFT per loan, or that a terminal loan's NFTs are gone, is wrong on both counts |
 | **EarlyWithdrawalFacet**   | Lender exit, LISTED route only: `createLoanSaleOffer` (carries a MANDATORY finite expiry) → completion. Completion mirrors the offset route's shape: `completeLoanSale` (external) plus `completeLoanSaleInternal`, the `address(this)`-gated entry `_acceptOffer` invokes automatically after a buyer accepts the linked sale offer. **`sellLoanViaBuyOffer` is NOT here** — #1780 moved it to `EarlyWithdrawalDirectFacet` below, so a grep of this facet for the direct sale comes back empty |
 | **EarlyWithdrawalDirectFacet** | Lender exit, DIRECT route: `sellLoanViaBuyOffer` — instant sale into a standing lender ("buy") offer in one transaction. Split out of `EarlyWithdrawalFacet` in #1780, which had reached 30 bytes under EIP-170 — less than one cross-facet call, so every queued fix to either route was undeployable. Same storage, same Diamond, same call surface for callers; only the runtime bytecode is separate. **The two must be refreshed together** — the redeploy scripts carry both, and refreshing one alone leaves the other on pre-split code. Both are sale hosts that reach `RiskPreviewFacet.saleAdmission` through `LibSaleSolvency`, so a curated refresh script touching either must also route that selector (#1649) |
+| **SaleExitVerdictFacet** | The ONE rule for whether a lender may exit by sale now (#1841): `saleExitVerdict(loanId, caller)` returns, per route (direct sale, listing), every refusal as the ABI-encoded custom error the entry raises plus the earliest time it can lift (`reopensAt`, 0 = needs a decision or never). Both entries open with a self-call to `requireSaleExitOpen`, which reverts with the first refusal, so the app's exit chooser and the entries cannot drift. It covers the loan- and caller-level checks only, not the buy offer a direct sale consumes, the listing's inputs or a keeper's capacity. **Refreshed together with both early-withdrawal facets** (see the family below) |
 | **SwapToRepayFacet** / **SwapToRepayPartialFacet** | Borrower swap-to-repay: collateral swapped into the principal asset and applied to the loan in one transaction. `SwapToRepayFacet` hosts the FULL close-out (`swapToRepayFull`) and its sizing preview (`previewSwapToRepayFull`). `swapToRepayPartial` is **NOT here** — #2416 moved it to `SwapToRepayPartialFacet`, so a grep of the first facet for the partial route comes back empty. Split because `SwapToRepayFacet` had reached 73 bytes under EIP-170, less than any guard costs, so every queued change to either route was undeployable (the #1780 / #1835 condition again). Same storage, same Diamond, same selector and call surface; only the runtime bytecode is separate. **The two must be refreshed together** — `RefreshAllFacetsInPlace` carries both, and refreshing one alone leaves the other route on pre-split code |
 | **PartialWithdrawalFacet** | Release surplus collateral while a loan is open — `calculateMaxWithdrawable`, `partialWithdrawCollateral` |
 | **TreasuryFacet**          | Treasury operations (56 functions — claims, buyback intents, remittance absorption, asset conversion). Custody is **deployment-mode dependent**: `LibFacet.recordTreasuryAccrual` only credits `treasuryBalances` when `s.treasury == address(this)`, so on the documented mainnet topology (`TREASURY_ADDRESS` = an external multisig) fees leave immediately and the claim / conversion paths have nothing at the Diamond to act on. Those paths are for Diamond-as-treasury deployments |
@@ -1154,7 +1177,11 @@ alongside the contracts change.
 **What still lives operator-side** — items that are NOT deployment
 artifacts and stay in their respective env / config:
 
-- Frontend `.env.local`: per-chain RPC URLs (with API key),
+- Frontend `.env.local`: `VITE_RPC_PROXY_ORIGIN` (the read-only RPC
+  proxy, `apps/rpc-proxy`, #1724), or, on a testnet build without it,
+  per-chain RPC URLs. A `VITE_*` value ships in the bundle, so a
+  provider key there is public: a proxied build refuses per-chain URLs
+  and a mainnet build refuses to build without the proxy. Then the
   WalletConnect project ID, default chain ID, log-chunk tuning,
   feature flags, push channel address, plus `VITE_INDEXER_ORIGIN`
   - `VITE_AGENT_ORIGIN` (the two Worker URLs the connected app
@@ -1168,7 +1195,7 @@ artifacts and stay in their respective env / config:
   `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`,
   `REWARD_DELIVERY_PROOF_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`,
   `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
-  `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`, `RPC_*`,
+  `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`, `RPC_*`,
   `TG_BOT_TOKEN`,
   `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID` (operator alerts — see "Two
   Telegram bots" below), `PUSH_CHANNEL_PK`, `ZEROEX_API_KEY`,
@@ -1181,7 +1208,10 @@ artifacts and stay in their respective env / config:
   `REWARD_SANCTIONS_KEEPER_ENABLED`, `deliveryProof` (#1944) on
   `REWARD_DELIVERY_PROOF_ENABLED`, `rewardHorizonHeartbeat` (#2517) on
   `REWARD_HORIZON_HEARTBEAT_ENABLED`, `rewardDayClose` (#2612) on
-  `REWARD_DAY_CLOSE_ENABLED`, `graceDefault` (#2483) on
+  `REWARD_DAY_CLOSE_ENABLED`, `rewardCloseOut` (#2984) on
+  `REWARD_CLOSE_OUT_ENABLED`, `rewardZeroedDay` (#2984) on
+  `REWARD_ZEROED_DAY_ENABLED`, `rewardReturnTransport` (#2984) on
+  `REWARD_RETURN_TRANSPORT_ENABLED`, `graceDefault` (#2483) on
   `GRACE_DEFAULT_ENABLED` and `periodicSettle` on
   `PERIODIC_SETTLE_ENABLED`, all added after it. `rewardDayClose` makes the
   daily `closeDay` / `finalizeDay` / `broadcastGlobal` calls and pays their
@@ -1708,6 +1738,15 @@ Otherwise review the `workers.dev` URL `pnpm run deploy` prints. Do not
 review `alpha02.vaipakam.com` as a stand-in — it serves the frozen
 `vaipakam-alpha02` Worker, not the `vaipakam-app` one the deploy
 publishes, so a green review there says nothing about what shipped.
+**A deploy that never happens is no longer silent** (#2242): every package
+`deploy` script records the commit it was built from on the Worker version
+(`packages/lib/bin/wrangler-deploy.mjs`), and the hourly
+`.github/workflows/deploy-lag.yml` compares each Worker's live deployment with
+`main`, opening a "Workers behind main" issue once a merged change has waited
+six hours. Deploy through the package script, never a bare `wrangler deploy`:
+an unstamped deployment can only be placed by its upload time, and the check
+marks it INFERRED. A Worker whose lag is deliberate goes in that workflow's
+`DEPLOY_LAG_HELD` with its reason, in a reviewed commit.
 Then — drive the actual
 feature end-to-end with the dev test wallets (the scratchpad Playwright
 driver), and confirm the observable behaviour, not just preview builds,
@@ -1798,7 +1837,11 @@ Three profiles live in `contracts/foundry.toml`:
   predates a Foundry fix for stale cached bytecode behind
   `type(X).runtimeCode`, which the full regression's
   `test/helpers/LibOneTx*Fill` use, so the release gate and the e2e jobs
-  stay on `stable`.
+  are on a different pin: v1.8.6, which has that fix and ran the last green
+  sharded full regression. No CI job floats on `stable` any more (owner
+  decision 2026-10-28, #1984): a toolchain bump is a reviewed commit, and
+  the release gate and the three e2e workflows move together. The docs
+  jobs stay on v1.7.1 for `forge doc --build`.
 - **`quick`** — fast inner-loop iteration. Compiles `src/` + `lib/`
   only (skips project `test/` and `script/`); viaIR + optimizer still
   ON (some src/ facets, e.g. `VaultFactoryFacet.sol:631`,
@@ -2469,7 +2512,10 @@ work and never lag behind a merge.
 
 - **Every behaviour-changing PR carries its own fragment** in its diff:
   a file `docs/ReleaseNotes/unreleased/<TASK-ID>-<slug>.md`, written in
-  plain English (no code), describing what changed and why. Copy
+  plain English (no code), describing what changed and why in at most
+  about six short paragraphs. Reasoning that needs more room goes in a
+  design doc the fragment links, and `Closes #<n>` is written only when
+  the PR closes an issue (owner decision 2026-10-28, #1799). Copy
   `docs/ReleaseNotes/unreleased/_TEMPLATE.md` as the starting point.
   This is part of the PR — not a post-merge step.
 - **After the day's PRs merge**, fold the fragments into the dated file:

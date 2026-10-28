@@ -17,6 +17,7 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
@@ -36,6 +37,7 @@ import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
@@ -182,7 +184,7 @@ contract WorkflowComplianceAndRejection is Test {
         TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](27);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](29);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[19] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -264,6 +266,23 @@ contract WorkflowComplianceAndRejection is Test {
             facetAddress: ArtifactDeploy.deploy(type(NumeraireValueFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNumeraireValueFacetSelectors()
+        });
+        // #3009 - offer creation and mutation admit a periodic-interest
+        // cadence through a self-call to OfferPreviewFacet's one copy of the
+        // rule, so a hand-built Diamond that cuts OfferCreateFacet must cut it.
+        cuts[28] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(OfferPreviewFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferPreviewFacetSelectors()
+        });
+
+        // #1841 - both lender-exit entries gate on SaleExitVerdictFacet by
+        // self-call (`requireSaleExitOpen`), so a hand-built Diamond that cuts
+        // either entry must cut this host too.
+        cuts[27] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSaleExitVerdictFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

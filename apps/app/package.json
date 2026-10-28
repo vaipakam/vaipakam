@@ -14,7 +14,7 @@
     "prebuild": "node scripts/generate-seo.mjs",
     "build": "tsc -b tsconfig.build.json && vite build",
     "preview": "vite preview",
-    "deploy": "REQUIRE_INDEXER_ORIGIN=1 pnpm run build && wrangler deploy",
+    "deploy": "REQUIRE_INDEXER_ORIGIN=1 pnpm run build && node ../../packages/lib/bin/wrangler-deploy.mjs",
     "e2e": "playwright test",
     "e2e:typecheck": "tsc -p e2e/tsconfig.json --noEmit",
     "i18n:template": "tsx scripts/export-i18n-template.ts",

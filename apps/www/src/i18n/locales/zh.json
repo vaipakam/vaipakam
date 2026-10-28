@@ -409,14 +409,14 @@
         "a1": "通过 Diamond 查询出借方的 <s>Vaipakam 保管包装层</s>，而不是底层 NFT。对于在同一 <c>(nftContract, tokenId)</c> 上存在多个并发租户的 ERC-1155 租赁，<c2>vaultGetNFTQuantity</c2> 返回<em>有效汇总</em>数量，<c3>vaultGetNFTUserExpires</c3> 返回最小的有效到期时间。",
         "a2": "即使底层 NFT <s>未</s>实现 ERC-4907，包装层也会维护权威的租赁状态，从而让集成方在所有出租资产上获得统一接口。"
       },
-      "integrator-subgraph": {
+      "integrator-events": {
         "q": "可以索引哪些贷款生命周期事件？",
-        "a1": "Diamond 会发出一组稳定的生命周期事件，参考 subgraph 已对其进行索引。可直接订阅，也可查询 subgraph：",
-        "li1": "<c>LoanInitiated</c> — 贷款建立，条款冻结",
-        "li2": "<c>LoanRepaid</c> — 全额或部分还款已记账",
-        "li3": "<c>LoanDefaulted</c> — 宽限期已过，申领路径解锁",
-        "li4": "<c>LoanLiquidated</c> — 由 HF 触发的 DEX 清算已执行",
-        "li5": "<c>LiquidationFallback</c> — DEX 路径被阻断；已支付抵押等值资产 + 溢价"
+        "a1": "贷款状态的每一次变化都由一个事件公布,该事件由状态变化本身发出,因此只订阅这一个事件就能跟踪每一笔贷款。其他事件提供具体步骤的细节:",
+        "li1": "<c>LoanStatusChanged</c> — 每一次状态变化,注明贷款、原状态和新状态",
+        "li2": "<c>LoanInitiated</c> — 贷款创建,条款确定",
+        "li3": "<c>LoanRepaid</c> — 贷款已全额偿还(部分还款发出 <c>PartialRepaid</c>)",
+        "li4": "<c>LoanDefaulted</c> — 贷款以违约结束",
+        "li5": "<c>LiquidationFallback</c> — 所有兑换路径均未成功;抵押品留在借款人的金库中,为出借人的索赔锁定,借款人仍可补救该贷款"
       }
     }
   },

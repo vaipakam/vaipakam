@@ -39,12 +39,20 @@ export type RowFormat =
   | 'wad'
   /** An 18-decimal amount in the protocol's numeraire. */
   | 'numeraireAmount'
+  /** An 18-decimal VPFI amount. */
+  | 'vpfiAmount'
+  /** A health factor in basis points of the HF scale (10000 = 1.0). */
+  | 'hfBps'
+  /** A short lowercase symbol packed into 32 bytes, shown as its text. */
+  | 'symbolText'
   /** A unix time from which something may happen (#2843): said as now
    *  once it has passed, as the time and how long until it otherwise. Zero
    *  means the row's own `zeroMeans`. */
   | 'notBefore';
 
-export type ConsoleValueKey = Exclude<keyof ProtocolKnobValues, 'tierThresholds' | 'tierDiscountBps'>;
+/** The values with a row of their own; the tier table and the grace
+ *  schedule are lists, rendered on their own after the sections. */
+export type ConsoleValueKey = Exclude<keyof ProtocolKnobValues, 'tierThresholds' | 'tierDiscountBps' | 'graceBuckets'>;
 
 export interface ConsoleRow {
   key: ConsoleValueKey;
@@ -54,7 +62,9 @@ export interface ConsoleRow {
   /** For `secondsOrDefault`: the documented default that applies while the
    *  setting is unset, in seconds. */
   documentedDefaultSeconds?: number;
-  /** For `notBefore`: what a zero time means on this row, in words. */
+  /** What a zero value means on this row, in words, when it means more
+   *  than "not set": for `notBefore` a zero time, for `address`,
+   *  `numeraireAmount` and `symbolText` the zero value. */
   zeroMeans?: ConsoleCopyKey;
 }
 
@@ -76,6 +86,50 @@ export interface ConsoleSection {
  */
 export const REWARD_GRACE_DOCUMENTED_DEFAULT_SECONDS = 4 * 3600;
 
+/** One row of the loan-default grace schedule: loans shorter than
+ *  `maxDurationDays` (0 marks the catch-all last row) get `graceSeconds`. */
+export interface GraceScheduleRow {
+  maxDurationDays: number;
+  graceSeconds: number;
+}
+
+/**
+ * #2680 — the grace schedule that applies while governance never set one.
+ * Source: the parameter reference (`docs/ops/AdminConfigurableKnobsAndSwitches.md`,
+ * "Loan-default grace buckets", "Default schedule"). The getter answers an
+ * empty list in that case, not the schedule in force, so the page states the
+ * documented one and marks it as the default. A test holds this against the
+ * document's table.
+ */
+export const GRACE_DOCUMENTED_DEFAULT_SCHEDULE: readonly GraceScheduleRow[] = [
+  { maxDurationDays: 7, graceSeconds: 3600 },
+  { maxDurationDays: 30, graceSeconds: 86_400 },
+  { maxDurationDays: 90, graceSeconds: 3 * 86_400 },
+  { maxDurationDays: 180, graceSeconds: 7 * 86_400 },
+  { maxDurationDays: 365, graceSeconds: 14 * 86_400 },
+  { maxDurationDays: 0, graceSeconds: 30 * 86_400 },
+];
+
+/** The grace schedule a source published: `unset` for the empty list
+ *  (the documented default applies), `null` when it is absent or not the
+ *  shape the reader publishes, which the page shows as not reported. */
+export function readGraceSchedule(v: unknown): readonly GraceScheduleRow[] | 'unset' | null {
+  if (!Array.isArray(v)) return null;
+  if (v.length === 0) return 'unset';
+  const rows: GraceScheduleRow[] = [];
+  for (const r of v as unknown[]) {
+    if (typeof r !== 'object' || r === null) return null;
+    const { maxDurationDays, graceSeconds } = r as Record<string, unknown>;
+    if (typeof maxDurationDays !== 'string' || typeof graceSeconds !== 'string') return null;
+    if (!/^\d+$/.test(maxDurationDays) || !/^\d+$/.test(graceSeconds)) return null;
+    const d = Number(maxDurationDays);
+    const g = Number(graceSeconds);
+    if (!Number.isSafeInteger(d) || !Number.isSafeInteger(g)) return null;
+    rows.push({ maxDurationDays: d, graceSeconds: g });
+  }
+  return rows;
+}
+
 export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
   {
     id: 'pc-fees',
@@ -85,6 +139,7 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
       { key: 'loanInitiationFeeBps', label: 'loanInitiationFee', hint: 'loanInitiationFeeHint', format: 'bps' },
       { key: 'liquidationHandlingFeeBps', label: 'liquidationHandlingFee', format: 'bps' },
       { key: 'lifMatcherFeeBps', label: 'matcherFee', format: 'bps' },
+      { key: 'notificationFeeVpfi', label: 'notificationFee', hint: 'notificationFeeHint', format: 'vpfiAmount' },
     ],
   },
   {
@@ -104,6 +159,27 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
     ],
   },
   {
+    // #2680 — graduated partial-liquidation sizing (#395) and the
+    // liquidator discount per liquidity tier, each read as one part of a
+    // multi-part answer.
+    id: 'pc-liquidation',
+    heading: 'liquidationHeading',
+    rows: [
+      { key: 'partialLiqTargetHfCeilingBps', label: 'partialLiqCeiling', hint: 'partialLiqCeilingHint', format: 'hfBps' },
+      { key: 'partialLiqDeepUnderwaterHfBps', label: 'partialLiqDeep', hint: 'partialLiqDeepHint', format: 'hfBps' },
+      {
+        key: 'partialLiqDustFloorNumeraire',
+        label: 'partialLiqDustFloor',
+        hint: 'partialLiqDustFloorHint',
+        format: 'numeraireAmount',
+        zeroMeans: 'partialLiqDustFloorOff',
+      },
+      { key: 'tier1LiqDiscountBps', label: 'liqDiscountTier1', hint: 'liqDiscountHint', format: 'bps' },
+      { key: 'tier2LiqDiscountBps', label: 'liqDiscountTier2', format: 'bps' },
+      { key: 'tier3LiqDiscountBps', label: 'liqDiscountTier3', format: 'bps' },
+    ],
+  },
+  {
     id: 'pc-oracles',
     heading: 'oraclesHeading',
     rows: [
@@ -115,6 +191,11 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
       { key: 'pythCrossCheckMaxDeviationBps', label: 'pythMaxDeviation', format: 'bps' },
       { key: 'pythConfidenceMaxBps', label: 'pythConfidenceMax', format: 'bps' },
       { key: 'sequencerUptimeFeed', label: 'sequencerUptimeFeed', hint: 'sequencerUptimeFeedHint', format: 'address' },
+      // #2680 — the registry and the keys the oracle asks it under.
+      { key: 'feedRegistry', label: 'feedRegistry', hint: 'feedRegistryHint', format: 'address' },
+      { key: 'feedRegistryPrimaryKey', label: 'feedRegistryPrimaryKey', hint: 'feedRegistryPrimaryKeyHint', format: 'address' },
+      { key: 'feedRegistryEthKey', label: 'feedRegistryEthKey', hint: 'feedRegistryEthKeyHint', format: 'address' },
+      { key: 'wethContract', label: 'wethContract', hint: 'wethContractHint', format: 'address' },
     ],
   },
   {
@@ -151,9 +232,32 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
       { key: 'periodicInterestEnabled', label: 'periodicInterest', format: 'flag' },
       { key: 'minPrincipalForFinerCadence', label: 'finerCadenceMinPrincipal', hint: 'finerCadenceMinPrincipalHint', format: 'numeraireAmount' },
       { key: 'preNotifyDays', label: 'preNotifyDays', hint: 'preNotifyDaysHint', format: 'days' },
+    ],
+  },
+  {
+    // #2680 — the reference currency moved here from the periodic section,
+    // beside the pricing anchor it is converted from.
+    id: 'pc-numeraire',
+    heading: 'numeraireHeading',
+    rows: [
       { key: 'numeraireSymbol', label: 'numeraire', format: 'symbol' },
       { key: 'ethNumeraireFeed', label: 'numeraireFeed', hint: 'numeraireFeedHint', format: 'address' },
       { key: 'numeraireSwapEnabled', label: 'numeraireRotation', hint: 'numeraireRotationHint', format: 'flag' },
+      {
+        key: 'predominantDenominator',
+        label: 'padDenominator',
+        hint: 'padDenominatorHint',
+        format: 'address',
+        zeroMeans: 'padDenominatorUnset',
+      },
+      {
+        key: 'predominantDenominatorSymbol',
+        label: 'padSymbol',
+        hint: 'padSymbolHint',
+        format: 'symbolText',
+      },
+      { key: 'ethPadFeed', label: 'padEthFeed', hint: 'padEthFeedHint', format: 'address' },
+      { key: 'padNumeraireRateFeed', label: 'padRateFeed', hint: 'padRateFeedHint', format: 'address' },
     ],
   },
   {
@@ -184,17 +288,29 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
     ],
   },
   {
+    // #2680 — the swap venues with a protocol-wide switch. The 0x proxy and
+    // the Uniswap V3 factory have no read, so they are not here.
+    id: 'pc-venues',
+    heading: 'venuesHeading',
+    rows: [
+      { key: 'pancakeswapV3Factory', label: 'pancakeswapV3Factory', format: 'address', zeroMeans: 'venueOff' },
+      { key: 'sushiswapV3Factory', label: 'sushiswapV3Factory', format: 'address', zeroMeans: 'venueOff' },
+    ],
+  },
+  {
     id: 'pc-treasury',
     heading: 'treasuryHeading',
     rows: [{ key: 'treasury', label: 'treasuryAddress', format: 'address' }],
   },
 ];
 
-/** Every value key the page renders, the tier table's included. */
+/** Every value key the page renders, the tier table and the grace
+ *  schedule included. */
 export const RENDERED_KEYS: ReadonlySet<keyof ProtocolKnobValues> = new Set<keyof ProtocolKnobValues>([
   ...CONSOLE_SECTIONS.flatMap((s) => s.rows.map((r) => r.key)),
   'tierThresholds',
   'tierDiscountBps',
+  'graceBuckets',
 ]);
 
 /**

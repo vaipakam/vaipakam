@@ -21,6 +21,12 @@
 #     Analytics, if added, loads through the consent pipeline
 #     (`src/lib/consent.ts`) and is added here as a deliberate entry; its
 #     inline consent defaults are then hashed like any other boot script.
+#   - Cloudflare Web Analytics' beacon (static.cloudflareinsights.com). The
+#     edge can inject it outside this repository; the account's Web
+#     Analytics site for vaipakam.com is set to Disable (owner, 2026-10-28,
+#     #1592), so nothing is injected. Do not add its host to silence a
+#     console error: an error means the injection was turned on again, and
+#     analytics goes through the consent pipeline above, not a CSP edit.
 #   - Google Fonts. The site loads no web fonts; it uses the device's own.
 #   - The WalletConnect verify iframe and WebSockets. This site connects no
 #     wallet; it embeds no frame at all (`frame-src 'none'`).

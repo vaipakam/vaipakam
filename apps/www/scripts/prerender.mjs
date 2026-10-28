@@ -52,11 +52,44 @@ import { resolve, dirname, join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { policyScriptSources, uncoveredScripts } from '@vaipakam/lib/cspScriptHashes';
-import { LOCALES, ROUTES, EN_ONLY_ROUTES, localizedPath } from './seo-routes.mjs';
+import {
+  LOCALES,
+  ROUTES,
+  hasBodyFile,
+  indexedLocales,
+  localizedPath,
+} from './seo-routes.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DIST = resolve(__dirname, '..', 'dist');
 const CONCURRENCY = 4;
+
+/** The apex every page declares (`CANONICAL_ORIGIN` in usePageMeta.ts). */
+const CANONICAL_ORIGIN = 'https://vaipakam.com';
+
+/**
+ * What a snapshot's head must say about indexing (#1314): the page reads
+ * `src/content/bodySources.json` against its own bundled body files, the
+ * sitemap reads it against the filesystem, and this compares the two on
+ * every page the deploy ships. An indexed copy canonicalises to itself and
+ * names every indexed copy (plus `x-default`) when there is more than one;
+ * a copy whose body fell back to English canonicalises to English and
+ * names none.
+ */
+function expectedIndexing(route, locale) {
+  const indexed = indexedLocales(route);
+  const self = indexed.includes(locale);
+  return {
+    canonical: `${CANONICAL_ORIGIN}${self ? localizedPath(route, locale) : route}`,
+    alternates:
+      self && indexed.length > 1
+        ? [
+            ...indexed.map((l) => `${l} ${CANONICAL_ORIGIN}${localizedPath(route, l)}`),
+            `x-default ${CANONICAL_ORIGIN}${route}`,
+          ].sort()
+        : [],
+  };
+}
 
 if (!existsSync(join(DIST, 'index.html'))) {
   console.error('[prerender] dist/index.html not found — run the build first.');
@@ -178,6 +211,53 @@ async function snapshot(context, route, locale) {
     );
     await page.waitForTimeout(100);
 
+    const head = await page.evaluate(() => ({
+      canonical: document.querySelector('link[rel="canonical"]')?.href ?? null,
+      alternates: [...document.querySelectorAll('link[rel="alternate"][hreflang]')]
+        .map((l) => `${l.hreflang} ${l.href}`)
+        .sort(),
+      // The article body's own language, as the page declares it in its
+      // structured data (`inLanguage`, set from the body actually
+      // rendered). `null` on a page with no article.
+      bodyLanguage:
+        [...document.querySelectorAll('script[type="application/ld+json"]')]
+          .flatMap((s) => {
+            try {
+              const d = JSON.parse(s.textContent ?? '');
+              return Array.isArray(d['@graph']) ? d['@graph'] : [d];
+            } catch {
+              return [];
+            }
+          })
+          .find((n) => n && n['@type'] === 'TechArticle')?.inLanguage ?? null,
+    }));
+    const want = expectedIndexing(route, locale);
+    if (
+      head.canonical !== want.canonical ||
+      JSON.stringify(head.alternates) !== JSON.stringify(want.alternates)
+    ) {
+      throw new Error(
+        `indexing disagrees with seo-routes.mjs: canonical ${head.canonical} ` +
+          `(want ${want.canonical}), hreflang [${head.alternates.join(', ')}] ` +
+          `(want [${want.alternates.join(', ')}])`,
+      );
+    }
+
+    // Indexing is decided from file presence; the body is chosen by the
+    // page. Check they agree on what was actually rendered, so a body file
+    // the page does not serve can never be advertised as a translation
+    // (Codex #3036 r1). An indexed copy's article must be in its own
+    // language; any other copy's must be English.
+    if (hasBodyFile(route) && head.bodyLanguage !== null) {
+      const wantLang = indexedLocales(route).includes(locale) ? locale : 'en';
+      if (head.bodyLanguage !== wantLang) {
+        throw new Error(
+          `rendered body language ${head.bodyLanguage} disagrees with indexing ` +
+            `(want ${wantLang}): the page does not serve the body seo-routes.mjs indexed`,
+        );
+      }
+    }
+
     let html = await page.evaluate(() => {
       // Un-pin the prerender machine's theme; the inline bootstrap
       // re-derives it per visitor before first paint.
@@ -221,11 +301,6 @@ for (const route of ROUTES) {
   for (const locale of LOCALES) {
     jobs.push({ route, locale });
   }
-}
-// English-only routes (no localized content — see seo-routes.mjs):
-// snapshot the root URL only, matching the sitemap's advertisement.
-for (const route of EN_ONLY_ROUTES) {
-  jobs.push({ route, locale: 'en' });
 }
 
 const results = [];
@@ -300,7 +375,6 @@ const CACHE_LINE = '  Cache-Control: public, max-age=0, must-revalidate';
 const rulePaths = [
   ...LOCALES.filter((l) => l !== 'en').flatMap((l) => [`/${l}`, `/${l}/*`]),
   ...ROUTES.filter((r) => r !== '/'),
-  ...EN_ONLY_ROUTES,
 ];
 let headersBody = '';
 try {

@@ -49,6 +49,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { applyRetiredDeployment, readRetiredDeploymentsFile, retiredDeploymentsFromManifest } from './lib/retiredDeploymentSeed.mjs';
+import { deployStamp, wranglerDeploy } from '@vaipakam/lib/deployStamp';
 
 /** apps/indexer — where wrangler.jsonc lives and every wrangler call runs. */
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -198,8 +199,17 @@ function main() {
   // deploy of the merged tree seeds what the repository records.
   if (gate.mode === 'apply') seedRetiredDeployments();
 
-  console.log('[deploy] publishing');
-  const d = sh('wrangler', ['deploy', '--keep-vars'], { stdio: 'inherit' });
+  // The commit this build came from, recorded on the deployment so the
+  // deploy-lag check reads it back instead of inferring it (#2242).
+  // The publish runs in the CALLER's directory, never ROOT: the agent and the
+  // keeper run this script from apps/agent and apps/keeper (`verify`), and
+  // each publishes its own Worker from its own wrangler config. ROOT is the
+  // indexer's, and only the migration and seed steps above belong to it.
+  const stamp = deployStamp();
+  console.log(`[deploy] publishing — ${'reason' in stamp ? `commit NOT recorded: ${stamp.reason}` : stamp.message}`);
+  // Wrangler's own entry, without a shell, so the stamp's message stays one
+  // argument on Windows too (wranglerDeploy).
+  const d = wranglerDeploy(['--keep-vars'], { stamp });
   if (d.status !== 0) process.exit(d.status ?? 1);
 }
 

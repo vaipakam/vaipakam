@@ -164,6 +164,94 @@ library LibCloseoutFreeze {
     }
 
     /**
+     * @notice Whether a loan in `status` is one the LENDER may claim on:
+     *         Repaid, Defaulted, FallbackPending (the lender's claim runs the
+     *         one-shot retry) or InternalMatched (#585).
+     * @dev    #941 — the ONE status rule for a lender claim, read by
+     *         `ClaimFacet.claimAsLender` (which refuses any other status) and by
+     *         the dashboard's claimables view, so the view never lists a claim
+     *         the claim call would refuse.
+     */
+    function lenderClaimableStatus(LibVaipakam.LoanStatus status) internal pure returns (bool) {
+        return status == LibVaipakam.LoanStatus.Repaid ||
+            status == LibVaipakam.LoanStatus.Defaulted ||
+            status == LibVaipakam.LoanStatus.FallbackPending ||
+            status == LibVaipakam.LoanStatus.InternalMatched;
+    }
+
+    /**
+     * @notice Whether a loan in `status` is one the BORROWER may claim on:
+     *         Repaid, Defaulted or InternalMatched (#577). FallbackPending is
+     *         not: the lender's claim resolves the fallback first.
+     * @dev    #941 — the ONE status rule for a borrower claim, read by
+     *         `ClaimFacet.claimAsBorrower` and by the dashboard's claimables view.
+     */
+    function borrowerClaimableStatus(LibVaipakam.LoanStatus status) internal pure returns (bool) {
+        return status == LibVaipakam.LoanStatus.Repaid ||
+            status == LibVaipakam.LoanStatus.Defaulted ||
+            status == LibVaipakam.LoanStatus.InternalMatched;
+    }
+
+    /**
+     * @notice Whether the lender side of `loanId` still has a claim to run: a
+     *         claim a close-out recorded (keyed on its asset, so a forced
+     *         close-out that received nothing still leaves one), funds held for
+     *         the lender, an NFT rental to return, or an NFT collateral claim.
+     * @dev    #2440 — the lender's claim refuses with `NothingToClaim` when this
+     *         is false, and the borrower's claim settles the loan only once it
+     *         is false or the lender has claimed, so both sides read one rule
+     *         and a lender whose close-out received nothing can still close the
+     *         position. It does not look at `claimed` or at the loan's status:
+     *         {lenderClaimPending} adds both. (Moved here from `ClaimFacet` in
+     *         #941 so the dashboard reads the same rule.)
+     */
+    function lenderSideOpen(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        LibVaipakam.Loan storage loan
+    ) internal view returns (bool) {
+        LibVaipakam.ClaimInfo storage claim = s.lenderClaims[loanId];
+        return claim.asset != address(0) ||
+            claim.amount > 0 ||
+            s.heldForLender[loanId] > 0 ||
+            loan.assetType != LibVaipakam.AssetType.ERC20 ||
+            claim.assetType != LibVaipakam.AssetType.ERC20;
+    }
+
+    /**
+     * @notice Whether `claimAsLender` would find something to pay on `loanId`
+     *         right now: a lender-claimable status, an unclaimed row, and an
+     *         open lender side.
+     * @dev    #941 — what the dashboard's claimables view lists. It does not
+     *         check who holds the lender position or any sanctions state; the
+     *         claim call does.
+     */
+    function lenderClaimPending(
+        LibVaipakam.Storage storage s,
+        uint256 loanId
+    ) internal view returns (bool) {
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        return lenderClaimableStatus(loan.status) &&
+            !s.lenderClaims[loanId].claimed &&
+            lenderSideOpen(s, loanId, loan);
+    }
+
+    /**
+     * @notice Whether `claimAsBorrower` would find something to pay on `loanId`
+     *         right now: a borrower-claimable status and an open borrower side
+     *         (collateral row or surplus row).
+     * @dev    #941 — what the dashboard's claimables view lists; an NFT
+     *         collateral return counts although its row carries amount 0.
+     */
+    function borrowerClaimPending(
+        LibVaipakam.Storage storage s,
+        uint256 loanId
+    ) internal view returns (bool) {
+        return borrowerClaimableStatus(s.loans[loanId].status) &&
+            borrowerSideOpen(s, loanId);
+    }
+
+    /**
      * @notice Whether the borrower side of `loanId` still has something to
      *         claim: an unclaimed collateral row that names an amount or an
      *         NFT, or an unclaimed surplus row with an amount. (A third lane,

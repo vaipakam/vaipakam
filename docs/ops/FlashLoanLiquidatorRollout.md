@@ -141,14 +141,15 @@ What it does:
 - Reads `KEEPER_BOT_OWNER` + `BASE_AAVE_V3_POOL` +
   `BASE_BALANCER_V2_VAULT` from env.
 - Reads the diamond address from
-  `contracts/deployments/base/addresses.json` (must already
-  exist — this is the live Vaipakam deploy on Base).
+  `contracts/deployments/<slug>/addresses.json` with slug `base`
+  (must already exist — this is the live Vaipakam deploy on Base;
+  the mainnet deploy writes it).
 - Constructor enforces `owner != 0`, `diamond != 0`,
   at-least-one-provider — the script reverts at deploy-time if
   env is misconfigured.
 - Deploys one new `FlashLoanLiquidator` contract.
-- Writes the deployed address back into
-  `contracts/deployments/base/addresses.json` under the new
+- Writes the deployed address back into that same
+  `contracts/deployments/<slug>/addresses.json` under the new
   `flashLoanLiquidator` field, via
   `Deployments.writeFlashLoanLiquidator`.
 

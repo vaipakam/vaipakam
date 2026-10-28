@@ -52,6 +52,21 @@ const BLOCKING_CORE = {
   'no-self-compare': 'error',
   'no-unsafe-negation': 'error',
   'no-unreachable': 'error',
+  // viem's `multicall({ allowFailure: true })` fails every slot of a
+  // request that did not complete with the same status a revert gets, and
+  // may split one plan across requests (so across blocks). #2996 found a
+  // provider outage read as "the protocol doesn't price this loan" that
+  // way. A slot read as the chain's answer goes through
+  // `contracts/aggregate.ts` (`readAggregate`) instead. Clean at zero.
+  'no-restricted-syntax': [
+    'error',
+    {
+      selector:
+        "CallExpression[callee.property.name='multicall'] Property[key.name='allowFailure'][value.value=true]",
+      message:
+        'Read a failure-tolerant aggregate with readAggregate (src/contracts/aggregate.ts): viem multicall reports a provider failure as every call failing.',
+    },
+  ],
 }
 
 /** Kept separate because a rule may only be configured in a block that

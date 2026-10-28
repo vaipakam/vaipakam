@@ -178,4 +178,22 @@ contract AdminFacetTest is Test {
         AdminFacet(address(diamond)).setTreasury(addr);
         assertEq(AdminFacet(address(diamond)).getTreasury(), addr);
     }
+
+    // ─── #1637 kill-switch getters ────────────────────────────────────────────
+
+    /// @notice Each kill switch reads back what its setter just wrote.
+    function testKillSwitchGettersReadBackTheirSetters() public {
+        AdminFacet a = AdminFacet(address(diamond));
+        assertFalse(a.aggregatorAdaptersPaused());
+        assertFalse(a.peerLtvReadsPaused());
+
+        a.setAggregatorAdaptersPaused(true);
+        a.setPeerLtvReadsPaused(true);
+        assertTrue(a.aggregatorAdaptersPaused());
+        assertTrue(a.peerLtvReadsPaused());
+
+        a.setAggregatorAdaptersPaused(false);
+        assertFalse(a.aggregatorAdaptersPaused());
+        assertTrue(a.peerLtvReadsPaused(), "the two switches are independent");
+    }
 }

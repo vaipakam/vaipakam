@@ -106,6 +106,8 @@ contract RentalBufferSnapshotTest is SetupTest {
         // Cancel must refund exactly the vaulted 5% prepay. Pre-#1193 the refund
         // was re-derived at the live 20% (60e) against a vault holding 52.5e →
         // vault shortfall revert (cancel bricked).
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(borrower);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         assertEq(

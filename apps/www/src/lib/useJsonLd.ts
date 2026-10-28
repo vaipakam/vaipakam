@@ -3,8 +3,8 @@
  * `<script type="application/ld+json">` into `document.head` for the
  * duration of the mount.
  *
- * Same zero-dependency direct-DOM pattern as `usePageMeta` /
- * `HreflangAlternates` (keeping the SEO machinery one-shape). Each
+ * Same zero-dependency direct-DOM pattern as `usePageMeta`
+ * (keeping the SEO machinery one-shape). Each
  * call site passes a stable `id` so remounts and language changes
  * replace their own script instead of stacking duplicates.
  *

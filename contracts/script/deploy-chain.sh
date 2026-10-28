@@ -501,9 +501,9 @@ echo "  chain-slug:    $CHAIN_SLUG"
 echo "  chain-id:      $CHAIN_ID"
 echo "  ccip router:   ${CCIP_ROUTER:-(skipped — --skip-vpfi)}"
 if [ "$IS_CANONICAL" = "1" ]; then
-  echo "  crosschain:    CANONICAL  (lock/release VPFI pool + buy receiver)"
+  echo "  crosschain:    CANONICAL  (lock/release VPFI pool + reward/remittance receivers)"
 else
-  echo "  crosschain:    MIRROR     (mirror VPFI + burn/mint pool + buy adapter)"
+  echo "  crosschain:    MIRROR     (mirror VPFI + burn/mint pool)"
 fi
 echo "  rpc:           $RPC"
 echo "  skip-vpfi:     $SKIP_VPFI"
@@ -890,8 +890,10 @@ fi
 # `DeployCrosschain.s.sol` deploys the whole T-068 CCIP stack for this
 # one chain in a single run — the CcipMessenger, the VPFI CCIP TokenPool
 # (lock/release on canonical Base, burn/mint on a mirror), the
-# VpfiPoolRateGovernor, the VaipakamRewardMessenger, and the buy receiver
-# (canonical) or the mirror VPFI token + buy adapter (mirror). It picks
+# VpfiPoolRateGovernor, the VaipakamRewardMessenger, and the remittance
+# contracts: the buyback and VPFI-return receivers (canonical), or the
+# mirror VPFI token, the reward-budget receiver and the VPFI-return sender
+# (mirror). It picks
 # canonical-vs-mirror itself from block.chainid — no per-branch env
 # juggling, unlike the retired LayerZero scripts.
 #
@@ -962,8 +964,8 @@ fi
 # `ConfigureLZConfig.s.sol` step has no CCIP analogue.
 #
 # What DOES need wiring — chain selectors, remote messengers, the
-# vpfi-buy / vpfi-reward channel peers, the TokenPool lanes + rate
-# limits, and the TokenAdminRegistry CCT registration — is
+# vpfi-reward / vpfi-buyback / vpfi-reward-budget / vpfi-return channel
+# peers, the TokenPool lanes + rate limits, and the TokenAdminRegistry CCT registration — is
 # `ConfigureCcip.s.sol`. It reads EVERY chain's addresses.json to wire
 # peers, so it cannot run until every chain in the topology has been
 # deployed. The multi-chain orchestrators (deploy-testnet.sh /
@@ -1047,8 +1049,8 @@ else
 fi
 
 # ── 5d. Post-deploy health check ──────────────────────────────────────
-# Reads sentinel state from the deployed Diamond + (where applicable)
-# the BuyAdapter rate limits. Logs a clear PASS/FAIL line per check
+# Reads sentinel state from the deployed Diamond (the shared list in
+# lib/sentinel-reads.sh). Logs a clear PASS/FAIL line per check
 # so a deploy that landed structurally but mis-configured (e.g.
 # default-uint256.max rate limits, missing treasury; a paused diamond is
 # expected here — the launch step is what unpauses it, #945)
@@ -1276,17 +1278,15 @@ else
   echo "    (skipping keeper-bot ABI export — sibling repo not at $KEEPER_BOT_DIR_DEFAULT)"
 fi
 
-# ops/{subgraph,tenderly} exports — best-effort. Each script is a
-# no-op for chains it can't map (Tenderly's per-chain network names,
-# The Graph's network slugs), so testnet rehearsals produce
-# mostly-empty but consistent outputs.
+# ops/tenderly export — best-effort. A no-op for chains it can't map
+# to a network name, so testnet rehearsals produce mostly-empty but
+# consistent outputs.
 #
+# The reference subgraph and its ABI export were REMOVED (#2337): the
+# indexer checks every loan-status move now (loanLifecycleGuard.ts).
 # The lz-watcher secrets emitter was REMOVED with that Worker (#1440):
 # it shelled out to `exportLzWatcherVars.sh`, which no longer exists,
 # and wrote a `wrangler secret put` snippet for a retired Worker.
-if [ -d "$REPO_ROOT/ops/subgraph" ]; then
-  bash "$SCRIPT_DIR/exportSubgraphAbis.sh" "$CHAIN_SLUG"
-fi
 if [ -d "$REPO_ROOT/ops/tenderly" ]; then
   bash "$SCRIPT_DIR/exportTenderlyAlerts.sh" "$CHAIN_SLUG"
 fi
@@ -1588,9 +1588,10 @@ echo "  2. CCIP lane + channel wiring (after EVERY chain in your"
 echo "     topology has had this script run):"
 echo "        CCIP_LANE_CHAIN_IDS=<other chain ids> \\"
 echo "        forge script script/ConfigureCcip.s.sol --rpc-url <rpc> --broadcast"
-echo "     Wires chain selectors, remote messengers, the vpfi-buy /"
-echo "     vpfi-reward channel peers, the TokenPool lanes + rate limits,"
-echo "     and the TokenAdminRegistry CCT registration. Run it once per"
+echo "     Wires chain selectors, remote messengers, the reward, buyback,"
+echo "     reward-budget and VPFI-return channel peers, the TokenPool lanes"
+echo "     + rate limits, and the TokenAdminRegistry CCT registration. Run"
+echo "     it once per"
 echo "     chain. The multi-chain orchestrators do this automatically."
 echo "  3. REQUIRED — the sanctions screen (#946). Until it is set every"
 echo "     wallet reads as unsanctioned; on a testnet it is the admin's"

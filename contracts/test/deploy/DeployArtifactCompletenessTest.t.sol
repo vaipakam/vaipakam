@@ -211,9 +211,9 @@ contract DeployArtifactCompletenessTest is Test {
     ///      `.facets` is the whole search space on purpose, not a convenience.
     ///      `Deployments.writeFacet` is the sanctioned door into that
     ///      namespace, and a facet address recorded anywhere else is a finding
-    ///      rather than an alternative spelling — issue #1800 proposes closing
-    ///      the second door (the generic `writeAddress(".facets.…")`) for the
-    ///      same reason.
+    ///      rather than an alternative spelling. #2263 closed the second door
+    ///      for the same reason: the generic writers now refuse any key inside
+    ///      `.facets` (DeploymentsFacetsNamespaceTest pins it).
     function _recordedAsFacet(string memory artifactJson, address needle)
         internal
         view

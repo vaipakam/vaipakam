@@ -3,10 +3,12 @@
  * reference. Renders
  * `apps/www/src/content/admin/AdminConfigurableKnobsAndSwitches.en.md`
  * (mirrored from `docs/ops/AdminConfigurableKnobsAndSwitches.md` via
- * `contracts/script/sync-admin-knobs-doc.sh`). English-only on
- * purpose — same translation policy as the Whitepaper, since the
- * runbook is auditor-facing technical copy where translation drift
- * would harm more than it would help.
+ * `contracts/script/sync-admin-knobs-doc.sh`). English is the only
+ * edition today — the runbook is auditor-facing technical copy where
+ * translation drift would harm more than it would help. The body and
+ * its indexing follow `bodySources.json` like every help page, so a
+ * translation added later is served, advertised and prerendered
+ * without a code change here or in the SEO scripts (#1314).
  *
  * Each knob's heading uses an H3 with a slug-derived `id` so the
  * defi-side dashboard's info-icons can deep-link directly
@@ -43,6 +45,7 @@ import { HelpToc } from '../components/HelpToc';
 import { HelpTabs } from '../components/HelpTabs';
 import { extractMarkdownToc, markdownComponents } from '../lib/markdownToc';
 import { isProtocolConsolePublic } from '../lib/protocolConsoleVisibility';
+import { resolveBody } from '../lib/indexedLocales';
 import './UserGuide.css';
 import { useActiveLocale } from '../i18n/useActiveLocale';
 
@@ -52,11 +55,6 @@ const ADMIN_DOC_FILES = import.meta.glob('../content/admin/*.md', {
   import: 'default',
 }) as Record<string, string>;
 
-function resolveAdminDoc(): string {
-  return (
-    ADMIN_DOC_FILES['../content/admin/AdminConfigurableKnobsAndSwitches.en.md'] ?? ''
-  );
-}
 
 /**
  * Visibility gate ONLY — deliberately hook-free above the redirect.
@@ -87,20 +85,26 @@ function AdminKnobsDocsInner() {
     titleKey: 'pageMeta.adminKnobs.title',
     descriptionKey: 'pageMeta.adminKnobs.description',
     // English-only content reachable under locale prefixes (HelpTabs
-    // links it per locale): every variant canonicalizes to the one
-    // advertised unprefixed URL instead of self-canonicalizing an
-    // English duplicate per locale (EN_ONLY_ROUTES policy).
-    canonicalPath: '/protocol-console/docs',
+    // links it per locale): with only the `.en.md` body present, every
+    // variant canonicalizes to the unprefixed URL instead of
+    // self-canonicalizing an English duplicate per locale (#1314).
+    bodyFiles: ADMIN_DOC_FILES,
   });
-  const text = useMemo(() => resolveAdminDoc(), []);
+  // Resolved by the same rule that decides which copies are indexed
+  // (`resolveBody`, #1314), so a translation added later is served and
+  // indexed together.
+  const lang = useActiveLocale();
+  const body = useMemo(
+    () => resolveBody('/protocol-console/docs', lang, ADMIN_DOC_FILES),
+    [lang],
+  );
+  const { text, fellBackToEnglish } = body;
   const toc = useMemo(() => extractMarkdownToc(text), [text]);
   const basePath = location.pathname.replace(/\/$/, '');
-  const isNonEnglish = useActiveLocale() !== 'en';
-  // 'en' regardless of the route: resolveAdminDoc() always loads the .en.md source,
-  // so embedded values must format as English even on a
-  // locale-prefixed URL. Using the UI locale here rendered
-  // German grouping inside English prose (#1610 review r5).
-  const headingComps = useMemo(() => markdownComponents('en'), []);
+  // The language of the body actually rendered, not the route's: an
+  // English body on a locale-prefixed URL must format as English
+  // (#1610 review r5).
+  const headingComps = useMemo(() => markdownComponents(body.locale), [body.locale]);
 
   const collapseEnclosingDetails = (e: React.MouseEvent<HTMLAnchorElement>) => {
     const details = e.currentTarget.closest('details');
@@ -127,7 +131,7 @@ function AdminKnobsDocsInner() {
 
           <article className="user-guide-content">
             <HelpTabs />
-            {isNonEnglish && <EnglishOnlyNotice variant="legal" />}
+            {fellBackToEnglish && <EnglishOnlyNotice variant="legal" />}
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={headingComps as never}

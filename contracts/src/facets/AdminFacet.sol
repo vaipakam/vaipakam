@@ -322,6 +322,22 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
         return LibVaipakam.storageSlot().protocolCfg.keepersPaused;
     }
 
+    /// @notice #1637 — whether the #398 aggregator-adapter feature is paused
+    ///         (new-adapter onboarding and adapter-intent fills refused). The
+    ///         read an operator uses to confirm {setAggregatorAdaptersPaused}
+    ///         took effect.
+    function aggregatorAdaptersPaused() external view returns (bool) {
+        return LibVaipakam.cfgAggregatorAdaptersPaused();
+    }
+
+    /// @notice #1637 — whether peer-protocol LTV reads are paused (the
+    ///         depth-tiered LTV then falls back to governance defaults). The
+    ///         read an operator uses to confirm {setPeerLtvReadsPaused} took
+    ///         effect.
+    function peerLtvReadsPaused() external view returns (bool) {
+        return LibVaipakam.cfgPeerLtvReadsPaused();
+    }
+
     /// @notice Pause/unpause optional peer-protocol (Aave/Compound) LTV reads;
     ///         when paused the depth-tiered LTV falls back to governance defaults.
     function setPeerLtvReadsPaused(bool value)

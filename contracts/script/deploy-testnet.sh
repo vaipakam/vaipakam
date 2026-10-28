@@ -49,7 +49,8 @@ __lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #
 #   bash contracts/script/deploy-testnet.sh <chain-slug> --phase ccip-wire
 #       Runs ConfigureCcip.s.sol — wires CCIP chain selectors, remote
-#       messengers, the vpfi-buy / vpfi-reward channel peers, the
+#       messengers, the vpfi-reward / vpfi-buyback / vpfi-reward-budget /
+#       vpfi-return channel peers, the
 #       TokenPool lanes + rate limits, and the TokenAdminRegistry CCT
 #       registration. Reads every chain's addresses.json, so run it
 #       only after `--phase contracts` has landed on EVERY chain in
@@ -1071,8 +1072,10 @@ EOF
   # DeployCrosschain.s.sol deploys the whole T-068 CCIP stack for this
   # chain in one run — CcipMessenger, the VPFI CCIP TokenPool
   # (lock/release on canonical Base, burn/mint on a mirror), the
-  # VpfiPoolRateGovernor, the VaipakamRewardMessenger, and the buy
-  # receiver (canonical) or mirror VPFI + buy adapter (mirror). It
+  # VpfiPoolRateGovernor, the VaipakamRewardMessenger, and the remittance
+  # contracts: the buyback and VPFI-return receivers (canonical), or the
+  # mirror VPFI token, the reward-budget receiver and the VPFI-return
+  # sender (mirror). It
   # selects canonical-vs-mirror from block.chainid. CCIP rate limits
   # are a TokenPool concern set via the governor in the lane-wiring
   # phase — there is no per-adapter setRateLimits step any more.
@@ -1205,7 +1208,8 @@ EOF
 
 # ── Phase: ccip-wire ──────────────────────────────────────────────────
 # Cross-chain CCIP wiring — chain selectors, remote messengers, the
-# vpfi-buy / vpfi-reward channel peers, the TokenPool lanes + rate
+# vpfi-reward / vpfi-buyback / vpfi-reward-budget / vpfi-return channel
+# peers, the TokenPool lanes + rate
 # limits, and the TokenAdminRegistry CCT registration.
 # `ConfigureCcip.s.sol` reads EVERY chain's addresses.json, so run this
 # phase only after the `contracts` phase has landed on every chain in
@@ -1787,15 +1791,12 @@ phase_abi_sync() {
     echo "    (skipping keeper-bot ABI export — sibling repo not at $KEEPER_BOT_DIR_DEFAULT)"
   fi
 
-  # ops/{subgraph,tenderly} exports — best-effort, scoped
-  # to THIS chain. Each is a no-op for chains its target system can't
-  # name. Practising this auto-export step on testnet is part of the
+  # ops/tenderly export — best-effort, scoped to THIS chain. A no-op
+  # for chains its target system can't name. Practising this auto-export step on testnet is part of the
   # "no surprises on mainnet" rehearsal.
   #
-  # The lz-watcher secrets emitter was REMOVED with that Worker (#1440).
-  if [ -d "$REPO_ROOT/ops/subgraph" ]; then
-    bash "$SCRIPT_DIR/exportSubgraphAbis.sh" "$CHAIN_SLUG"
-  fi
+  # The lz-watcher secrets emitter was REMOVED with that Worker (#1440),
+  # and the reference subgraph's ABI export with the subgraph (#2337).
   if [ -d "$REPO_ROOT/ops/tenderly" ]; then
     bash "$SCRIPT_DIR/exportTenderlyAlerts.sh" "$CHAIN_SLUG"
   fi
@@ -1803,7 +1804,7 @@ phase_abi_sync() {
   echo
   echo "Review and commit:"
   echo "  git diff packages/contracts/src/abis/ packages/contracts/src/deployments.json"
-  echo "  git diff ops/subgraph/abis/ ops/subgraph/generated/ ops/tenderly/generated/"
+  echo "  git diff ops/tenderly/generated/"
   if [ -d "$KEEPER_BOT_DIR_DEFAULT" ]; then
     echo "  cd $KEEPER_BOT_DIR_DEFAULT && git diff src/abis/"
   fi

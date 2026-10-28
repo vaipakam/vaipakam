@@ -22,6 +22,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readViteEnv } from './viteEnv.mjs';
+import BODY_SOURCES from '../src/content/bodySources.json' with { type: 'json' };
+
+const CONTENT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'content');
 
 export const LOCALES = [
   'en',
@@ -67,19 +70,15 @@ export const ROUTES = [
   '/terms',
   '/privacy',
   '/data-rights',
+  // The console runbook is env-gated (above). Its body is English today
+  // (`AdminConfigurableKnobsAndSwitches.en.md`, auditor-facing copy), and
+  // it goes through the same loops as every other route: `indexedLocales`
+  // reads its body-source pattern, so it is advertised in English alone
+  // until a translated file exists, and then the translation is advertised
+  // and snapshotted like any other (#1314, Codex #3036 r3). There is no
+  // separate English-only route list for it to be stranded in.
+  ...(PROTOCOL_CONSOLE_PUBLIC ? ['/protocol-console/docs'] : []),
 ];
-
-/** Routes advertised/prerendered in ENGLISH ONLY. The console docs
- *  page renders `AdminConfigurableKnobsAndSwitches.en.md` with no
- *  localized markdown (auditor-facing runbook — translation drift
- *  would harm more than help, per the page header), so emitting
- *  `/es/protocol-console/docs` etc. would advertise English
- *  duplicates as localized pages (Codex #1309 r3). Locale-prefixed
- *  URLs still WORK for a user who navigates there — they're just not
- *  advertised or snapshotted. */
-export const EN_ONLY_ROUTES = PROTOCOL_CONSOLE_PUBLIC
-  ? ['/protocol-console/docs']
-  : [];
 
 /** Compose a localised URL — English at the unprefixed root, every
  *  other locale gets a `/<locale>/` prefix. Mirrors the
@@ -88,4 +87,35 @@ export function localizedPath(route, locale) {
   if (locale === 'en') return route;
   if (route === '/') return `/${locale}`;
   return `/${locale}${route}`;
+}
+
+/**
+ * The locales whose copy of `route` is INDEXED (#1314, owner decision
+ * 2026-10-28) — the build-time reader of `src/content/bodySources.json`,
+ * the same declaration `src/lib/indexedLocales.ts` reads at runtime:
+ *
+ *   - a pattern: a locale is indexed when its body file exists;
+ *   - `null`: the body is English by design, so English alone;
+ *   - no entry: the body is the catalogue, so every translated locale.
+ *
+ * Every locale still gets a prerendered copy, for visitors; a copy that
+ * is not indexed canonicalises to English and is left out of hreflang and
+ * the sitemap. The prerender pass checks each snapshot's canonical and
+ * hreflang against this answer, so the two readers cannot disagree on a
+ * deployed page.
+ */
+export function indexedLocales(route) {
+  if (!Object.hasOwn(BODY_SOURCES, route)) return LOCALES;
+  const pattern = BODY_SOURCES[route];
+  if (pattern === null) return ['en'];
+  return LOCALES.filter((locale) =>
+    existsSync(resolve(CONTENT_DIR, pattern.replace('{locale}', locale))),
+  );
+}
+
+/** Whether `route`'s body is a per-locale FILE (a pattern entry in
+ *  `bodySources.json`). The prerender checks such a page's rendered body
+ *  language, not only its head (Codex #3036 r1). */
+export function hasBodyFile(route) {
+  return typeof BODY_SOURCES[route] === 'string';
 }

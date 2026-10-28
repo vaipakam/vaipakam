@@ -209,6 +209,168 @@ evidence that the migration has completed.
   Deployment or role changes close obsolete alerts with an explanatory
   notice and start work under the new deployment's identity.
 
+## Closing out finished reward days
+
+- Every permissionless step that retires a finished reward day, or releases
+  value the day no longer needs, has a keeper backstop, so nothing waits on
+  someone choosing to make the call. The close-out duty checks every fifteen
+  minutes on every chain it serves.
+- It proves an elapsed day closed only when the day is reached by both
+  interest frontiers and every reward entry covering it has ended. Before
+  opening a proof it checks, from its own reading of the chain, that the
+  covering entries sum exactly to the day's recorded totals; when they do
+  not, it opens nothing and reports the shortfall, because a proof started
+  on an incomplete reading could never finish. A day with an entry still
+  running is counted as waiting, not attempted. Its own unfinished proof
+  for a day is continued rather than replaced.
+- It finalizes a retired custody era once every day of the era's span is
+  proven closed and no staging hold remains on its row, and never touches
+  the live era. On a chain with an active reward role it drains the whole
+  pending surplus into the live baseline. On a detached chain it leaves the
+  pending surplus for the return transport and reports how much waits
+  there.
+- It parks a transport epoch's remainder once every day the epoch lists is
+  proven closed, the epoch's day membership is complete and no staging
+  record references it. Releasing a parked remainder stays the
+  administrator's acknowledgment; the keeper never makes it, and each run's
+  report names every epoch parked.
+- It advances a still-open day's transport cursor past an epoch that is
+  plainly exhausted: nothing left, fully indexed and unreferenced. An epoch
+  exhausted only by its caps is not detected by the keeper; the day's next
+  draw passes it.
+- How long the chain's history grows never stops the duty, and no day, era
+  or epoch is ever left out for good. Its work per run is bounded, and each
+  bounded read resumes where the previous run stopped, wrapping round, above
+  a floor of what is finished for good: the days not yet proven closed are
+  read sixty at a time by default, every provable day is read the same way
+  for parking, the retired eras not yet finalized are read thirty-two at a
+  time, a day's transport epochs are read a page at a time, and its reading
+  of the reward entries starts past the entries that ended before the oldest
+  day still open. A day that stays open therefore does not hold back the
+  days after it. Where the bound keeps something from being reached in one
+  run, the run's report says so.
+- None of these steps pays a fee or moves value to the keeper. A paused
+  protocol, a missing signing key, an unread value or a Diamond that names
+  another chain stops the affected step and is stated in the run's report,
+  never treated as nothing to do.
+
+## Recovering deliberately zeroed reward days
+
+- A mirror chain may report a reward day as deliberately zeroed. That day's
+  users are owed compensation from Base, and if none comes in time, the day
+  is retired as a recorded loss. Each step of that process is permissionless.
+  The keeper has a backstop for each one, so a zeroed day never waits for
+  someone to decide to make the call. The zeroed-day duty runs on mirror
+  chains only and checks every fifteen minutes. It reads sixty elapsed days
+  a run by default, resuming where the previous run stopped and wrapping
+  round above a floor of days already settled, so a zeroed day of any age
+  is reached.
+- **Quoting.** Once the day's own interest close has run and its pool stamp
+  is installed, the keeper builds the day's compensation quote. It submits
+  the covering reward entries page by page, in ascending order, and then
+  dispatches the finished quote toward Base, paying the lane fee. Before it
+  dispatches, the accumulated conservation must equal the day's recorded
+  totals on both sides. A day whose quote comes to nothing on both sides is
+  resolved as zero and needs nothing more. The fee for each send is held to
+  this duty's own ceiling. A send whose quoted fee is above that ceiling is
+  refused and stated, and it is tried again on a later run.
+- **Lapsing.** A day that is never compensated is lapsed once its frozen
+  lapse window has passed. This happens even if no quote was ever sent, and
+  the loss is then recorded as a partial figure. The keeper then keeps
+  accumulating the day's quote to completion, so the recorded loss becomes
+  exact. After a lapse, no quote is dispatched.
+- **Short lapsing.** A day that was compensated below its quote on either
+  side is short-lapsed once its deadline has passed.
+- **Waiting.** A provisional compensation credit waits for its broadcast,
+  and a day with no lapse clock waits for one. In both cases the run's
+  report says what the day is waiting for, and the keeper does not send
+  into a call it knows the chain would refuse.
+- **Wedged sides.** Accumulation is permissionless, so a third party could
+  move a side's cursor past covering entries that were never submitted.
+  When the keeper finds a side whose conserved figure no longer matches the
+  covering entries up to its cursor, it raises an operator alert. Only the
+  administrator's reset can free that side, and the keeper never attempts
+  it.
+- Each lapse or short lapse the chain records, whoever made it, is
+  announced to operators with the loss it recorded, in VPFI, and again once
+  a partial figure becomes exact. A day whose announcement has not gone out
+  is kept in view and announced again until it is delivered. None of the
+  zeroed-day calls refuses on its own while the protocol is paused, so the
+  keeper checks the pause itself and makes none of them while it is set.
+  A paused protocol, a missing signing key, an unread value, a
+  chain without a live reward role, or a Diamond that names another chain
+  stops the affected step, and the run's report says so. None of these
+  conditions is ever treated as nothing to do.
+
+## Returning reward VPFI to Base
+
+- Reward VPFI that a mirror holds for Base, and the messages that let Base
+  release what it reserved, move only when someone makes a permissionless
+  call and pays its cross-chain fee. The keeper has a backstop for each such
+  call, so nothing waits for someone to decide to pay. This duty checks
+  hourly and pays each fee from the keeper's own key, held to the duty's own
+  ceiling.
+- **Repatriation.** Only the administrator issues or cancels a repatriation
+  authorization; the keeper never does either. For each authorization Base
+  holds pending, the keeper sends its instruction to the mirror, executes it
+  on the mirror once the mirror's outbound lane can carry the whole amount,
+  and, for an authorization the administrator cancelled, sends the mirror's
+  cancellation acknowledgement so Base can release the reserved amount.
+- **Each message once.** An instruction or acknowledgement is sent once. One
+  that has not landed within a day is announced to operators instead of
+  being paid for a second time, because a cross-chain message that failed on
+  arrival stays there for manual re-execution. A send whose outcome the
+  keeper did not see counts as sent, since it may still land; only a send
+  that reverted, or that the node refused, is sent again. The keeper stops
+  counting a send as made only once the chain's final state shows the
+  authorization finished, so a finish that a reorg undoes does not lead to a
+  second send. A repatriation the lane can
+  never carry, or one the mirror cannot yet fund, is stated rather than
+  attempted.
+- **One route.** A mirror returns VPFI, and acknowledges cancellations,
+  toward its current Base. When a mirror's current Base is not the Base that
+  issued an authorization, as after the mirror detached and reattached
+  elsewhere, the keeper sends nothing for that authorization and alerts
+  operators. Sending would move the VPFI to the other chain and leave the
+  issuing Base's authorization unsettled.
+- **The right Base Diamond.** Every return names the Base Diamond that is
+  meant to credit it: the Base that issued an authorization, the Base that
+  remitted a quarantined compensation, or the Base a retired mirror detached
+  from. Base credits only a return naming itself. Before sending any return,
+  the keeper checks that it serves that Base chain, that the Diamond it
+  serves there is the one the return names, and that the Base Diamond's
+  return receiver delivers to it. When any of these fails, as after a Base
+  Diamond rotation or a mirror that reattached to another Base, the keeper
+  sends nothing and alerts operators: the VPFI stays on the mirror, where an
+  operator can recover it, instead of travelling to a Base that would refuse
+  it. When the keeper cannot make the check (it does not serve Base, or a read
+  failed), it sends nothing and says so.
+- **Chunked returns.** Compensation a mirror quarantined, and a retired
+  mirror's pending surplus, go home in parts. Each part is bounded by the
+  sending chain's outbound lane and by the receiving chain's inbound
+  capacity where that can be read; where it cannot, the run says the part
+  was sized by the outbound lane alone. A part too small to be worth its fee
+  that would leave something behind waits for the lanes to refill; the last
+  part is always sent.
+- Every send that moves VPFI is announced to operators with its amount and
+  transaction, whoever made it. The announcement comes from the chain's own
+  record of the send, as the indexer recorded it, not from what the keeper
+  saw when it sent: a send whose confirmation the keeper never saw is still
+  announced, once it is recorded. An announcement that does not go out is
+  posted again on later runs until it is delivered, and those after it wait
+  behind it. Base's own authorization count names every authorization, so
+  the keeper reads them from the chain a bounded number a run, resuming where
+  it stopped above a floor of settled ones. Quarantined compensation, which
+  no view lists, comes from the indexer's record of on-chain events, read a
+  page a run in the same way. That covers both events that quarantine
+  value: an arrival quarantined on landing, and a provisional credit demoted
+  by its day's broadcast. No authorization or quarantine is left out for good, however long
+  the history grows. Every decision comes from an on-chain read, and the
+  keeper's own record of what it sent keeps it from repeating a message
+  before the indexer has seen it. A paused protocol, a missing signing key, a
+  fee above the ceiling, an unread value or a Diamond that names another
+  chain stops the affected step and is stated in the run's report.
+
 ## Claim-horizon and sanctions observation
 
 - The reward heartbeat discovers all unsettled reward entries and touches
@@ -238,10 +400,10 @@ evidence that the migration has completed.
 
 The master keeper switch and each duty's own arming choice are separate.
 Delivery proofs, late acknowledgements, sanctions observation, reward-day
-automation, and the reward heartbeat must each disclose whether they are
-armed on the selected deployment. Reward-day automation and the heartbeat
-ship disabled and require deliberate activation. Deploying their software
-does not prove they run, that rewards have launched, or that custody or the
+automation, reward-day close-out, zeroed-day recovery, the return transport, and the reward heartbeat must each
+disclose whether they are armed on the selected deployment. Reward-day
+automation, close-out, zeroed-day recovery, the return transport and the heartbeat ship disabled and require
+deliberate activation. Deploying their software does not prove they run, that rewards have launched, or that custody or the
 expiry horizon has been activated. The mirror's day-delivery protection is
 required by its reward role, as stated in the current tokenomics spec; it is
 not an optional keeper setting.

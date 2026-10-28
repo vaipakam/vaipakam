@@ -74,7 +74,10 @@ jobs:
       - name: Install Foundry (forge + anvil)
         uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
         with:
-          version: stable
+          # PINNED by number, never `stable` (#1984, owner decision
+          # 2026-10-28), in lockstep with mainnet-gate.yml: a toolchain change
+          # lands as a reviewed commit, not as an upstream release. Bump by PR.
+          version: v1.8.6
 
       - name: Snapshot submodule SHAs (for content-based cache key)
         working-directory: contracts

@@ -17,6 +17,7 @@ import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -42,6 +43,7 @@ import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -195,7 +197,7 @@ contract PrecloseFacetTest is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](31);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](33);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -314,6 +316,14 @@ contract PrecloseFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNumeraireValueFacetSelectors()
         });
+        // #3009 - offer creation and mutation admit a periodic-interest
+        // cadence through a self-call to OfferPreviewFacet's one copy of the
+        // rule, so a hand-built Diamond that cuts OfferCreateFacet must cut it.
+        cuts[32] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(OfferPreviewFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferPreviewFacetSelectors()
+        });
         // #2739 - every terminal reward close (preclose, offset completion)
         // and the obligation-transfer reward split run by a BUBBLING self-call
         // into InteractionRewardsFacet: a terminal closes its reward entries in
@@ -324,6 +334,15 @@ contract PrecloseFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(InteractionRewardsFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getInteractionRewardsFacetSelectors()
+        });
+
+        // #1841 - both lender-exit entries gate on SaleExitVerdictFacet by
+        // self-call (`requireSaleExitOpen`), so a hand-built Diamond that cuts
+        // either entry must cut this host too.
+        cuts[31] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSaleExitVerdictFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -1732,6 +1751,8 @@ contract PrecloseFacetTest is Test {
             activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20
         );
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(borrower);
         OfferCancelFacet(address(diamond)).cancelOffer(newOfferId);
 
@@ -1746,10 +1767,12 @@ contract PrecloseFacetTest is Test {
             "borrower made whole on cancel (new-offer principal refunded)"
         );
 
-        // Link cleared → a fresh offset is permitted again.
+        // Link cleared → a fresh offset is permitted again. 29 days: the
+        // cooldown wait moved the clock, and a replacement term may not end
+        // past the original loan's deadline.
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(
-            activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20
+            activeLoanId, 500, 29, mockCollateralERC20, COLLATERAL, true, mockERC20
         );
     }
 

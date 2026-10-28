@@ -121,6 +121,19 @@ contract BackstopFacet is
     );
     /// @notice #638 — the backstop min-secondary-oracle-coverage knob changed.
     event BackstopMinSecondaryOracleCoverageSet(uint8 minCoverage);
+    /// @notice #2685 — the backstop master switch changed.
+    /// @custom:event-category informational/config
+    event BackstopEnabledSet(bool enabled);
+    /// @notice #2685 — the Role A (fill) kill-switch changed.
+    /// @custom:event-category informational/config
+    event BackstopFillEnabledSet(bool enabled);
+    /// @notice #2685 — the Role B (absorb) kill-switch changed.
+    /// @custom:event-category informational/config
+    event BackstopAbsorbEnabledSet(bool enabled);
+    /// @notice #2685 — the minimum delay before an offer's backstop
+    ///         eligibility may fire changed (0 = the protocol default).
+    /// @custom:event-category informational/config
+    event MinBackstopDelaySet(uint64 delaySeconds);
 
     error BackstopTemplateNotSet();
     error BackstopAlreadyInitialized();
@@ -601,6 +614,7 @@ contract BackstopFacet is
         onlyRole(LibAccessControl.VAULT_ADMIN_ROLE)
     {
         LibVaipakam.storageSlot().protocolCfg.backstopEnabled = enabled;
+        emit BackstopEnabledSet(enabled);
     }
 
     function setBackstopFillEnabled(bool enabled)
@@ -608,6 +622,7 @@ contract BackstopFacet is
         onlyRole(LibAccessControl.VAULT_ADMIN_ROLE)
     {
         LibVaipakam.storageSlot().protocolCfg.backstopFillEnabled = enabled;
+        emit BackstopFillEnabledSet(enabled);
     }
 
     /// @notice Role B (liquidator-of-last-resort) kill-switch — independent of
@@ -618,6 +633,7 @@ contract BackstopFacet is
         onlyRole(LibAccessControl.VAULT_ADMIN_ROLE)
     {
         LibVaipakam.storageSlot().protocolCfg.backstopAbsorbEnabled = enabled;
+        emit BackstopAbsorbEnabledSet(enabled);
     }
 
     function setMinBackstopDelay(uint64 delaySeconds)
@@ -625,6 +641,7 @@ contract BackstopFacet is
         onlyRole(LibAccessControl.VAULT_ADMIN_ROLE)
     {
         LibVaipakam.storageSlot().protocolCfg.minBackstopDelay = delaySeconds;
+        emit MinBackstopDelaySet(delaySeconds);
     }
 
     /// @notice #638 — set the minimum number of LIVE secondary oracle feeds

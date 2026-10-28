@@ -4,8 +4,8 @@ pragma solidity 0.8.29;
 /**
  * @title ICrossChainMessenger — Vaipakam's internal cross-chain messaging port
  *
- * T-068 — the modular seam between Vaipakam's domain logic (the VPFI buy
- * flow, the reward accounting) and whatever cross-chain messaging provider
+ * T-068 — the modular seam between Vaipakam's domain logic (the reward
+ * accounting and the remittances) and whatever cross-chain messaging provider
  * sits underneath. Today the provider is Chainlink CCIP (`CcipMessenger`);
  * the LayerZero integration that preceded it was deeply coupled — T-081
  * flagged it as one of only two deeply-integrated dependencies. This
@@ -103,7 +103,7 @@ interface ICrossChainMessenger {
 /**
  * @title ICrossChainMessageRecipient — the inbound half of the port
  *
- * A Vaipakam domain contract (e.g. the VPFI buy receiver, the reward
+ * A Vaipakam domain contract (e.g. a remittance receiver, the reward
  * messenger) implements this and registers with the adapter for a channel.
  * The adapter calls {onCrossChainMessage} when a message for that channel
  * arrives — after the adapter has authenticated the source (provider

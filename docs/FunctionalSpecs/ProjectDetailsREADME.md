@@ -1493,7 +1493,7 @@ Range Orders let users express lender and borrower intent as canonical limit ord
 - **Keeper Auto-Roll Pass:** In the same scheduled worker, after the intent-fill pass, the keeper should auto-roll fully-repaid intent loans: page the on-chain roll-discovery feed and call the roll entry point for each. Because rolling removes a loan from that feed, the worker should collect the full set of repaid loans before rolling any (rolling them by id), so paging-while-rolling never skips one. A loan whose owner has not delegated the auto-roll permission to this keeper is rejected on-chain; the worker should recognise that and skip every other loan with the same owner for the rest of the tick. This pass runs even when there are no open offers (rolling is independent of the order book) and shares the matcher's per-chain wall-time budget and per-tick submission cap carried through from the match and fill passes; it self-gates on the operational keeper-pause, re-read immediately before each roll. Because the keeper pays each roll's gas and a roll earns it nothing back, it should roll a loan only when the amount rolled is worth at least one hundred times the roll's whole transaction fee, both valued by the platform's own pricing rule, with the fee valued through the chain's wrapped native token. The amount rolled is what the roll re-lends, the lender's recorded proceeds (principal plus interest), not the original fill. The fee is everything the chain charges for the transaction, including the separate L1 data fee a rollup charges on top of its gas. It rounds against rolling at the boundary. Where it cannot value the whole fee (an unknown wrapped native token or fee model) or the lent asset, it does not roll and says so. A loan it declines is not stuck: its owner can still roll or claim it themselves.
 - **Symmetric Partial-Fill Semantics:** Lender and borrower offers may both fill over multiple permissionless matches. The protocol tracks filled principal for each side and filled collateral for borrower offers, preserves offer storage for already-created loans, and closes an offer only when the remaining usable capacity falls below that offer's minimum fill. Each match creates its own loan, so borrower rewards, claim rights, and lifecycle accounting remain per loan rather than shared across the parent offer.
 - **Direct-Accept Semantics:** Direct acceptance of a ranged offer is single-fill and role-aware. A borrower accepting a lender's ranged offer receives the lender's upper principal amount at the lender's floor rate. A lender accepting a borrower's ranged offer funds the borrower's lower principal amount at the borrower's ceiling rate. Direct accept should mark the offer terminal without using the progressive fill accumulator, and any borrower collateral above the accepted floor must be returned to the borrower rather than stranded.
-- **Cancel Cooldown and Refunds:** When partial-fill matching is enabled, zero-fill cancellations are delayed briefly after offer creation to reduce cancel-front-run risk against an in-flight match. Once an offer has been partially filled, cancellation must preserve the storage needed by already-created loans and refund only the unfilled principal or borrower collateral that is not backing live loans.
+- **Cancel Cooldown and Refunds:** A zero-fill offer cannot be cancelled during a short cooldown after its creation (five minutes), whatever the partial-fill setting, so a match or accept already in flight against a fresh offer is not front-run by its cancellation. An expired offer may be cancelled at any time. After the cooldown a cancel and an accept are an ordinary race: whichever lands first wins, and the app says so rather than implying the offer is reserved. Once an offer has been partially filled, cancellation must preserve the storage needed by already-created loans and refund only the unfilled principal or borrower collateral that is not backing live loans.
 - **Matching Surface Split:** The matching surface may live in a dedicated facet separate from ordinary create / accept / cancel offer management so the Diamond remains deployable under the EIP-170 runtime bytecode limit while keeping bot-facing matching semantics isolated.
 
 ## 5. Loan Initiation
@@ -1592,6 +1592,44 @@ external projection is not required to mirror transient states, and must not
 treat a move back into an ongoing state as a reason to overwrite what it holds.
 The requirement is that no loan is left presented as ongoing once the platform
 considers it finished.
+
+### The status diagram
+
+A loan is always in exactly one of six statuses, and may move only along the
+moves listed here. Every other move is refused.
+
+- **Active** — the loan is running. It may become **Repaid** (full repayment,
+  preclose, offset or refinance), **Defaulted** (a liquidation or a time-based
+  default that sold the collateral), **Fallback pending** (a liquidation or
+  default whose sale failed, so the collateral is held for the fallback
+  settlement), or **Internally matched** (closed in full against an opposing
+  position).
+- **Fallback pending** — the loan is awaiting its fallback settlement. It may
+  return to **Active** (the borrower cured it by adding collateral), become
+  **Repaid** (the borrower cured it by repaying in full), become **Defaulted**
+  (the lender's claim finalised the fallback), or become **Internally matched**
+  (rescued in full by an internal match).
+- **Repaid**, **Defaulted** and **Internally matched** — the loan has ended.
+  Each may only become **Settled**, once both sides have closed their
+  positions.
+- **Settled** — final. No move leaves it.
+
+A partial repayment, a partial liquidation, a partial internal match, or a
+collateral top-up that does not cure a fallback, changes a loan's figures,
+never its status, and so is not a move in this diagram.
+
+**The diagram is checked from outside the contracts as well.** The contracts
+refuse every move it does not list, and the platform's own off-chain reader
+independently checks every announced move against it: a move the diagram does
+not list, a move that does not start from the status last announced for that
+loan, or a second initiation of a loan already running. Any such observation
+means a contract defect or an off-chain reader that no longer agrees with the
+contracts, and it must reach an operator promptly rather than wait to be read.
+The check states what it cannot see: a loan whose earlier history it never
+observed is checked against the diagram from its first observed move, and the
+count of loans it has watched from initiation is published with its results.
+An observation stays recorded until an operator has investigated it and
+acknowledged it in a reviewed change; the check never quietly forgets one.
 
 ### Repayment Logic
 
@@ -1785,7 +1823,7 @@ considers it finished.
 
 ### Periodic Interest Payments
 
-Periodic interest payment is a dormant Phase 1 feature controlled by `periodicInterestEnabled`. When disabled, offer creation must reject non-`None` cadences, settlement entry points must not execute, and the frontend should hide cadence-related controls.
+Periodic interest payment is a dormant Phase 1 feature controlled by `periodicInterestEnabled`. When disabled, offer creation must reject non-`None` cadences and accept `None` on any duration (no mandatory annual checkpoint applies while the feature is off), settlement entry points must not execute, and the frontend should hide cadence-related controls.
 
 Purpose:
 
@@ -1804,6 +1842,8 @@ Cadence rules:
 - supported cadence enum: `None`, `Monthly`, `Quarterly`, `SemiAnnual`, `Annual`
 - loans longer than 365 days must use at least `Annual` cadence when the feature is enabled and both legs are liquid
 - lenders may choose finer cadence for large-principal loans when principal value meets the configured threshold
+- one admission rule decides every cadence question: offer creation applies it, and so does a change to an open offer's amount, which is re-admitted against the liquidity classes the offer recorded, the current feature switch and the current threshold, so an open offer never holds a cadence a fresh offer on the same terms would be refused
+- a read-only cadence preview reports, for proposed offer terms, every cadence with whether creation would admit it and, when it would not, the exact refusal creation would give, together with what the rule read: the feature switch, both legs' liquidity classes, whether the annual floor binds, the principal value and the threshold it is compared with
 - the principal threshold is denominated in the active protocol numeraire, USD by default
 - an atomic numeraire change covering its ETH feed, price denominator, symbol, optional cross-check, finer-cadence threshold, notification fee, and KYC thresholds must update the oracle-side numeraire inputs and all numeraire-denominated stored values atomically; within-numeraire tuning uses the per-knob setters
 - cross-numeraire changes are additionally gated by `numeraireSwapEnabled`, default `false`
@@ -2333,6 +2373,19 @@ sibling already has.
   before starting the second. This is symmetric — neither route is privileged
   over the other — because the failure it prevents is the same in both
   directions: one position handed to two buyers.
+- **One answer to whether each route is open.** For a given loan and the wallet
+  that would act, the platform answers, for each sale route, whether it would be
+  accepted right now. When it would not, it names every reason, and for each one
+  the earliest moment it can lift by time alone or by a step anyone may take (an
+  expired listing or offset being cleared away), or says that no such moment is
+  known because a decision is needed or the refusal never lifts. The routes refuse
+  for exactly the reasons this answer reports and raise the first of them, so an
+  interface that offers only the routes the answer clears never offers an exit the
+  platform would refuse at submission, and never hides one it would accept. The
+  answer says what it does not cover: anything about the particular buy offer a
+  direct sale would consume, the listing's own inputs (its window, rate and
+  consent), and a keeper's service capacity. Overdue periodic interest does not
+  close either route.
 
 ### Option 1: Sell the Loan to Another Lender
 
@@ -2987,6 +3040,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **Handover Preflight:** The handover phase must verify bytecode exists at the configured Governance Safe, Pauser / Guardian Safe, and Timelock addresses before granting roles or renouncing the deployer. On mainnet, zero bytecode at any privileged recipient is a hard stop because granting admin power to an undeployed address can make recovery impossible after deployer renounce.
 - **CCIP Handover:** Production handover must rotate the full CCIP stack to governance, including the messenger, VPFI token pool, rate-limit governor, reward messenger, mirror token where present, and the Cross-Chain Token administrator entry. The Timelock should own upgrade and lane-configuration authority after handover, while guardian pause remains available for fast incident response.
 - **Cloudflare Surface Separation:** Public hosted infrastructure should keep read-only, read/index, write/act, and ingestion duties separated. The intended split is `vaipakam.com` for the marketing / docs surface with no chain credentials, `app.vaipakam.com` for the connected app surface, `agent.vaipakam.com` for read/index APIs and diagnostics endpoints, `keeper.vaipakam.com` for autonomous write actions with signing and aggregator credentials, and `indexer.vaipakam.com` for chain-to-archive ingestion with database write credentials. This describes the target separation, not necessarily today's bindings: the connected app's hostname is bound and serving, while surfaces with no public entry point (the keeper is cron-only) need no hostname at all — the requirement is the separation of duties and credentials, not that every surface answer on a URL. Shared archive storage such as the `vaipakam-warm` D1 database should be accessed with least-privilege credentials per Worker, and Worker bindings should grant only the read or write capability each surface needs. Deployment scripts should expose per-surface Cloudflare phases (`cf-app`, `cf-www`, `cf-keeper`, `cf-indexer`, `cf-agent`) plus an all-Cloudflare skip alias for rehearsals that do not need hosted-app redeploys.
+- **No Provider Credential in the Browser (#1724):** The connected app reads chain state from the visitor's browser, and anything compiled into its bundle is public. A provider credential must therefore never ship in the bundle of a deployment that serves a mainnet chain. Such a deployment reads every chain through a read-only RPC proxy operated by the platform, which holds each chain's provider credential as a Worker secret dedicated to it (never the keeper's or indexer's credentials, so browser traffic cannot spend the quota a keeper needs to act on a loan in time). The proxy forwards only reads: contract calls, gas estimates, block, transaction, receipt, balance, code, storage, nonce and fee reads, and event-log queries that name the contracts they read and cover a bounded block range. It never forwards a transaction, a signature or a subscription; transactions go through the user's own wallet. It serves only the app's own origins, bounds each caller's request rate, never returns or logs the credential (including inside an upstream error), and refuses an upstream that answers for a different chain than the one requested. When the proxy is unavailable, over budget or refuses a request, the app falls back to the chain's public endpoint rather than failing the read. A proxied build carries no per-chain credential at all, so its build refuses one, and a build serving a mainnet chain without the proxy is refused. The proxy runs on the paid Cloudflare plan, which is a mainnet launch gate. Testnet builds may still read through a configured endpoint until then, which should be restricted to the app's origins in the provider's own settings.
 - **Worker Secret Management:** Shared Worker secrets should be stored in an account-level secret store and bound only into Workers that need them, so provider keys, per-chain RPC URLs, Telegram credentials, swap-aggregator keys, and push-channel signing keys can be rotated centrally. Workers should resolve their bound secrets once at request / scheduled-entry boundaries, fail with operator-visible configuration errors when required secrets are unavailable, and keep non-secret configuration as ordinary Worker config.
 - **Marketing Domain Canonicalization:** `vaipakam.com` is the canonical marketing origin. `www.vaipakam.com` should redirect to the apex while preserving path and query string, and metadata / sitemap / hreflang helpers should emit apex-rooted URLs even if a legacy host is still bound during transition. The source package and Worker should use the `www` naming convention (`apps/www`, `@vaipakam/www`, `vaipakam-www`) for contributor clarity, while the public canonical hostname remains apex.
 - **BNB Testnet Gas Policy:** Deployments use an explicit gas price meeting the network’s accepted minimum (5 gwei in the referenced rehearsal), and provide a controlled replacement for a transaction dropped for insufficient gas price. An estimated price is not proof the network accepted a transaction.
@@ -3394,7 +3448,7 @@ The required functional safeguards are:
 
 - **Off-Chain Data-Flow Audit:** Before mainnet, the project should maintain a catalog of off-chain reads and writes used by the frontend, workers, indexer, keeper, and operator tools. Each entry should identify signer requirements, freshness or time-to-live assumptions, fail-open or fail-closed behavior, plausibility checks, and blast radius. External reads that influence money-moving decisions should have explicit stale-data handling, and keeper writes should remain bounded by on-chain checks.
 
-- **Off-Chain Data Resilience:** Before mainnet, production off-chain data needed for usability and compliance should have an encrypted backup path outside the primary hosting account and billing boundary. The backup set should include indexed offer / loan data, diagnostics needed for support, legal-hold audit records, and legal-document storage. Operators should verify backup readability on a recurring schedule and maintain a documented restore path for a fresh hosting account. Every record users create off chain, such as signed offers, belongs in that backup set, and every off-chain table has a decided restore treatment: it is either restored from the backup or rebuilt from the chain, and where part of a record comes from the chain, that part is rebuilt from the chain rather than trusted from the backup.
+- **Off-Chain Data Resilience:** Before mainnet, production off-chain data needed for usability and compliance should have an encrypted backup path outside the primary hosting account and billing boundary. The backup set should include indexed offer / loan data, diagnostics needed for support, legal-hold audit records, and legal-document storage. Operators should verify backup readability on a recurring schedule and maintain a documented restore path for a fresh hosting account. Every record users create off chain, such as signed offers, belongs in that backup set, and every off-chain table has a decided restore treatment: it is either restored from the backup or rebuilt from the chain, and where part of a record comes from the chain, that part is rebuilt from the chain rather than trusted from the backup. The backup's integrity is watched from outside both the hosting account and the backup job: every archive is recorded, with when it first existed and a digest of its bytes, in an append-only record the backup job cannot write and nobody can rewrite or shorten, and the operator is alerted when an expected archive is missing, a period holds more than one archive, an archive repeats an older one, an archive disagrees with its manifest, an archive disappears before its retention allows, or that record itself shows an addition the watcher did not make.
 
 - **Risk Sign-Off Package:** Before each mainnet launch or material risk-control activation, operators should archive a risk sign-off covering audit posture, parameter sanity, emergency controls, bot and external dependency readiness, chain-specific deployment readbacks, liquidation economics, sequencer and oracle outage behavior, and the exact scope being approved.
 

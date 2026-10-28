@@ -51,6 +51,8 @@ function allGood(plan: readonly ForcedCloseReadEntry[]): MulticallSlot[] {
         return ok(false);
       case 'match':
         return ok([false, 0n]);
+      case 'matchConfig':
+        return ok([true, 0n, 0n]);
       case 'liquidity':
         return ok(BigInt(LIQUIDITY_LIQUID));
       case 'ltv':
@@ -87,6 +89,14 @@ describe('forcedCloseReadPlan', () => {
     expect(byKey.liquidity.args).toEqual([ASSET]);
   });
 
+  // #2082 — the switch behind the candidate answer, read in the same
+  // execution so "off" and "no candidate" carry one block.
+  it('asks the internal-match switch in the same aggregate', () => {
+    const byKey = Object.fromEntries(planWith(ASSET).map((e) => [e.key, e.contract]));
+    expect(byKey.matchConfig.functionName).toBe('getInternalMatchConfigBundle');
+    expect(byKey.matchConfig.args).toBeUndefined();
+  });
+
   // #666 — the card asks the classifier the default routes on, not the
   // creation-time one, because the two differ exactly when a price is
   // distrusted (the settlement classifier then reverts).
@@ -109,6 +119,7 @@ describe('forcedCloseFacts', () => {
       sequencerHealthy: true,
       paused: false,
       internalMatchCandidate: false,
+      internalMatchEnabled: true,
       collateralIlliquid: false,
       ltvCollapsed: false,
     });
@@ -240,6 +251,27 @@ describe('forcedCloseFacts', () => {
     const plan = planWith(ASSET);
     const slots = allGood(plan).map((s, i) => (plan[i].key === 'match' ? ok([true, 42n]) : s));
     expect(forcedCloseFacts(plan, slots).internalMatchCandidate).toBe(true);
+  });
+
+  // #2082 — a `false` candidate cannot say whether the book is empty or
+  // matching is switched off; the switch is its own fact, and only a
+  // well-formed answer counts as one.
+  it('reads the internal-match switch off its own tuple, independently of the candidate', () => {
+    const plan = planWith(ASSET);
+    const withConfig = (slot: MulticallSlot) =>
+      forcedCloseFacts(plan, allGood(plan).map((s, i) => (plan[i].key === 'matchConfig' ? slot : s)));
+    const off = withConfig(ok([false, 500n, 25n]));
+    expect(off.internalMatchEnabled).toBe(false);
+    expect(off.internalMatchCandidate).toBe(false);
+    expect(withConfig(ok([true, 0n, 0n])).internalMatchEnabled).toBe(true);
+    // A Diamond without the getter, or an answer of the wrong shape, is
+    // unread — never "off" — and touches nothing else.
+    const unread = withConfig(fail);
+    expect(unread.internalMatchEnabled).toBeUndefined();
+    expect(unread.defaultable).toBe(true);
+    expect(unread.block).toBe(46_725_021n);
+    expect(withConfig(ok([0n, 0n, 0n])).internalMatchEnabled).toBeUndefined();
+    expect(withConfig(ok(false)).internalMatchEnabled).toBeUndefined();
   });
 
   it('refuses a slot count that does not match the plan rather than mis-assigning fields', () => {

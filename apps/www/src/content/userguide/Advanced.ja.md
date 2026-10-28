@@ -834,53 +834,33 @@ apply される grace window はありません。
 
 <a id="buy-vpfi.cross-chain-tier"></a>
 
-### VPFI tier が chain 間をどう移動するか
+### VPFI tier がチェーン間をどう伝わるか
 
-VPFI は Base 上の vault に deposit します — Base があなたの
-accumulator state を保持する canonical chain です。別の chain で
-action したとき (Sepolia で borrow、Arbitrum で lend など)、その chain
-はあなたの tier の *cached* コピーを読みます。この cache は
-cross-chain push によって最新に保たれます: Base 上の実効 tier が変わる
-と、あなたの次の Base 側 action が、action する可能性のあるすべての
-mirror chain へ CCIP message を broadcast します。push は通常の Base
-action すべてに相乗りします — さらに T-087 Sub 4 以降、Dashboard には
-「今すぐ mirror に tier を push」ボタン (`pokeMyTier()` を呼びます) も
-あり、vault を mutate せずに push を強制できます。mirror chain 上の
-local consent と local VPFI 要件を含む完全な解説は "How VPFI Discounts
-Work" の章にありますが、現時点では英語版ガイドにのみ存在します。
+VPFI は canonical チェーンである Base 上の vault に保有し、tier を
+計算するのは Base です。別のチェーンで借りたり貸したりすると、その
+チェーンは tier のコピーを適用します。このコピーは、tier を変える
+入金・出金・その他の操作のたびに、Base が Chainlink CCIP で送ります。
 
-知っておくべきことが 3 つあります:
+知っておくべき点は 3 つです。
 
-- **tier の成熟には follow-up action が必要です。** 最初の stake は
-  すぐには broadcast しません — 実効 tier は最小履歴期間 (default 3
-  日) で gate されるため、直後の stake はまず tier 0 として解決され、
-  broadcast は静かに skip されます。期間が過ぎると Base 側では gate が
-  即座に開きますが、mirror が知るのは、次の rollup を伴う Base action
-  (deposit、withdrawal、loan action など Base 上の vault を mutate する
-  もの) または Dashboard の「今すぐ mirror に tier を push」クリック
-  (Sub 4) が push を trigger したときです。1 wei の top-up でも動作
-  します。
-- **伝播時間。** push が送出されると、通常は CCIP 経由で数分以内に
-  mirror へ届きます。それまで mirror は以前の cached tier を尊重し続け
-  ます — tier 0 へのちらつきは起きません。
-- **cache の期限切れ。** cached tier は、(a) 新しい push が届く、
-  (b) governance が tier しきい値テーブルを新 version に移し、mirror
-  の追跡 version が上がる (これは、いずれかの user の bump 後の push が
-  その mirror に初めて届いた時点で起こります — Base 上で最近 activity
-  のない休眠 user も、その瞬間に旧 version の cached discount を失い、
-  自分の次の push が追いつくまで戻りません)、(c) cache が最大保持期間の
-  backstop (default 60 日) を超える、のいずれかまで尊重されます。ある
-  chain で長期間 action しないと、そこの cache はいずれ expire し、その
-  chain は次の push まであなたを tier 0 として扱います。更新するには、
-  新しい push tuple を生む rollup を伴う Base action を行ってください —
-  tier が変わる balance の mutation、または governance の table version
-  bump 後の任意の Base action です。同一 tuple の「no-op」rollup は push
-  を再送しません — これは意図的で、すでに正しい cache のために protocol
-  の broadcast 予算を使わないためです。
+- **時間の経過だけで上がった tier は、Base での操作がないと伝わり
+  ません。** 入金も出金もないまま保有期間を満たしたり平均が追い
+  ついたりすると、Base 上の値はすぐに最新になります。他のチェーンが
+  それを知るのは、Base での次の入金または出金（金額は問いません）の
+  ときです。
+- **下がった tier が先に伝わります。** プロトコルは下がった tier を
+  すぐに送り、上がった tier の費用はチェーンごとに 1 日 1 回までしか
+  負担しません。その後の CCIP での配送には通常数分かかります。届く
+  までは、そのチェーンは以前の tier を適用し続けます。
+- **コピーは期限切れになることがあります。** 新しいコピーがないまま
+  60 日（default）が過ぎるか、tier 表の変更がそのチェーンに届くと、
+  古いコピーではそのチェーンで割引が受けられなくなります。新しい
+  コピーは tier が変わったときにしか送られません。
 
-cache が staleness を検出するために適用する正確な gate に興味があれば、
-[Cross-Chain Tier Propagation functional spec](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/CrossChainTierPropagation.md)
-を参照してください。
+利用するチェーンだけでなく Base でも必要な割引スイッチを含め、詳しい
+ルールは下の「VPFI 割引の仕組み」の章にあります。配送の設計は
+[tier 配送の設計文書](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/TierPushDeliveryDesign.md)
+（英語）にあります。
 
 ---
 
@@ -1691,3 +1671,147 @@ Vault 内にある特定のトークン残高が自分のものではないと�
 
 放棄（disown）関数は、現在のところコントラクトの直接呼び出しによってのみ利用可能です。Vaipakam のフロントエンドにはボタンとしては表示されません。ブロックエクスプローラーの "Write Contract" UI や、コントラクト操作ツールを使用して呼び出してください。
 
+## VPFI 割引の仕組み
+
+canonical チェーンである Base 上の vault に VPFI を保有していると、
+プラットフォームが動くすべてのチェーンで、プロトコル自身の手数料が
+割引になります。保有量が多いほど、また長く保有しているほど tier が
+上がり、割引も大きくなります。tier の一覧は上の
+[Tier ladder](#dashboard.fee-discount-consent) にあり、governance が
+変更できます。
+
+割引の対象:
+
+- **貸し手として**は、得た利息からプロトコルが差し引くイールド手数料
+  です。利息が settlement されるたびに（返済、preclose、refinance
+  など）、loan 開始時ではなくその時点の tier で読み取られます。
+- **借り手として**は、loan 開始時に課される Loan Initiation Fee です。
+  accept 時に一度だけ読み取られ、その loan に固定されます。lending
+  asset が liquid な場合にのみ適用され、illiquid な loan は手数料を
+  全額支払います。
+
+割引は loan の資産建てで手数料そのものから差し引かれ、そのために
+vault から VPFI が出ていくことはありません。唯一の例外は、VPFI の
+価格参照を設定したデプロイでの貸し手の割引で、その場合は vault から
+VPFI で決済されることがあります。ローンチ時点では設定されていません。
+この章が扱うのはこの保有割引です。別の有料手数料モード「Full」は、
+デプロイが有効にしない限りオフのままです。
+
+### 割引をオンにする
+
+割引は opt-in です。スイッチは VPFI ページにあり、チェーンごとに
+1 つあります。各チェーンがそれぞれ独自の設定を持つからです。
+
+- **手数料が課されるチェーンでは**、スイッチがオンでなければなり
+  ません。オフなら、tier に関係なくそのチェーンは手数料を全額課し
+  ます。
+- **Base でも**、そこで借りたり貸したりしない場合でも、スイッチを
+  オンにする必要があります。オフの間、Base は他のすべてのチェーンに
+  あなたの tier をゼロとして送ります。
+
+Base で割引をオフにすると、他のすべてのチェーンでも適用が止まるよう、アプリが続けて tier の更新を送ります。Base はそれらのチェーンにあなたの tier をゼロとして送ります。この 2 つ目の手順が失敗した場合はページに表示され、他のチェーンは新しい tier が送られるまで最後の tier を保持します。他のチェーンでオフにした場合は、そのチェーンだけが変わります。
+
+VPFI が数えられるのは、プロトコルが vault 内の残高として記録したときです。VPFI ページから入金した VPFI と、プロトコルが vault に届けた VPFI rewards がこれにあたります。vault のアドレスに直接送られたトークンはプロトコルが追跡しておらず、tier を上げません。
+
+### tier の計算方法
+
+tier は 3 つの別々のチェックで決まり、3 つすべてを満たす必要が
+あります。
+
+1. **最低保有期間。** 現在の保有が少なくとも 3 日続くまで、tier は
+   ゼロのままです。保有は vault 残高がゼロを超えた時点で始まり、
+   ゼロに戻るまで続きます。買い増しても時計はリセットされませんが、
+   全額を引き出すとリセットされます。（3 日は default で、governance
+   は 2〜14 日に設定できます。）
+2. **直近を重視した平均。** 残高は直近 30 日で平均され、最後の 7 日は
+   それ以前の日の 3 倍の重みで数えられます。平均は現在の保有が始まる
+   前までは遡らないため、新しく保有した人が何も持っていなかった日に
+   よって薄められることはありません。（期間、直近の日数、重みは
+   governance の設定で、期間は 14〜30 日の範囲です。）
+3. **これまでに触れた最も低い tier。** 平均とは別に、tier は現在の
+   保有期間中に残高が達した最も低い tier を超えられません。遡るのは
+   最大 30 日です。各日の最低点で数えるため、同じ日のうちに下がって
+   戻った場合も下がったものとして扱われます。
+
+実際には次のようになります。
+
+- loan の settlement 直前に入金しても、tier はすぐには上がりません。
+  追加した分はまず平均に反映される必要があり、触れた最低点による
+  上限も残ります。
+- tier の下限を下回る出金をすると、tier はすぐに下がります。
+- 30 日より前の下落は、もう上限になりません。
+
+### 他のチェーンでの tier
+
+tier を計算するのは Base です。他のすべてのチェーンは、Base が Chainlink CCIP で送るコピーを適用します。Base があなたの tier 記録を更新するのは、Base で次のいずれかが起きたときです。VPFI が vault に入るか出るとき（入金、出金、または vault に届けられた rewards）、あなたが貸し手または借り手であるローンが始まったとき、ローンの手順であなたの VPFI が保留または解放されたとき、または tier 更新の呼び出しを行ったとき。更新のたびに、コピーの中身が変わる場合は他のチェーンに新しいコピーが送られます。
+
+チェーンごとに個別に配送されます。届かないチェーンが他のチェーンを
+足止めすることはなく、**配送が送れなくても、あなた自身の操作が失敗
+することはありません**。Base 上の tier はすぐに最新になり、他の各
+チェーンには届くまで更新が未配送として残ります。
+
+これらの配送費用はプロトコルが負担しますが、上限が 1 つあります。
+
+- **下がった tier** は、予算で支払える限りすぐに送られます。届く
+  までは、そのチェーンは以前のより高い tier を適用し続けます。
+- **上がった tier** や tier 表の変更は、チェーンごとに 1 日 1 回まで
+  しか費用が負担されません（governance 設定で 1 時間〜7 日）。それ
+  までは、そのチェーンは以前の tier を保持します。
+- この待機で保留された更新や、予算で支払えなかった更新は、**待機が終わっても自動では再送されません**。Base 上のティア記録が次に更新されたとき、または誰かがあなたのために配送の呼び出しを行ったときに送られます。
+- この呼び出しは誰でも行えます。待機が終わり予算で支払える場合はプロトコルが支払い、それより前に早く届けたい場合は呼び出した人がクロスチェーン手数料を支払います。コントラクトはこの呼び出しに対応していますが、アプリはまだ提供していません。
+
+次の場合、コピーは数えられなくなり、そのチェーンでは割引がなくなり
+ます。
+
+- チェーンの最大経過期間（default 60 日、30 日未満にはならない）より
+  古い場合。
+- そのチェーンが現在知っている tier 表より古い表で作られた場合。
+
+コピーが再送されるのは、その中身が変わるときだけです。つまり tier、その割引、有効期間、tier 表のバージョンのいずれかです。そのため tier 表が変わった後は、tier が同じでも（ゼロでない限り）、Base での tier 記録の次の更新ですべてのチェーンに新しいコピーが送られます。どれも変わっていなければ、コピーが期限切れになったチェーンは、何かが変わるまで割引を適用しません。
+
+時間の経過だけで tier が上がった場合（保有期間を満たした、または平均が追いついた）、tier 記録の次の更新まで Base では何も検知されません。tier 更新の呼び出しを行えば、いつでもその更新ができます。アプリがあなたの代わりに呼び出すのは割引をオフにしたときだけです。
+
+### 運用者向け
+
+割引のクロスチェーン部分には次の設定が必要です。独自のデプロイを
+運用する人のためにここに記載します。
+
+**Base 上:**
+
+- `VPFITokenFacet.setCanonicalVPFIChain(true)`。これがないと、Base は
+  tier を計算しますがどこにも送りません。
+- `VaipakamRewardMessenger` を指す
+  `RewardReporterFacet.setRewardMessenger`、および他のすべてのチェーン
+  を列挙した messenger の `setBroadcastDestinations`。
+- 資金のある broadcast 予算:
+  `ProtocolBroadcastFacet.topUpBroadcastBudget()`（payable）。予算が
+  空でも何もブロックされません。支払えない配送は未配送のまま残り、
+  理由付きで `TierPushDeferred` を発行します。`getTierPushStatus(user)`
+  はユーザーごとに各チェーンの状態を示します。予算が不足すると他の
+  チェーンが古い tier を長く適用するため、延期を監視して補充して
+  ください。
+- 有料の引き上げの間隔ウィンドウ: `setTierPushSpacingSec`（default
+  1 日、1 時間〜7 日）。
+
+**他の各チェーン上:**
+
+- `RewardReporterFacet.setRewardMessenger(addr)`: そのチェーンが tier
+  の更新を受け付ける唯一の送信者。
+- `RewardReporterFacet.setBaseChainId(chainId)`: Base の EVM チェーン
+  ID（mainnet では 8453、Base Sepolia では 84532）。CCIP の chain
+  selector ではありません。
+- `ConfigFacet.setMirrorTierMaxAgeSec(seconds)`: コピーが数えられる
+  期間（default 60 日。30 日未満の値は拒否されます）。下げた場合は
+  次の読み取りから有効です。
+
+**tier 表の変更:**
+
+- Base 上の `setVpfiTierThresholds` と `setVpfiTierDiscountBps` は表の
+  バージョンを進めます。他のチェーンは、どのユーザーのものであれ、
+  新しいバージョンを持つ最初の tier 更新でそれを知ります。それ以降、
+  古い表で作られたコピーは、そのユーザー自身の更新が届くまで割引
+  なしとして扱われます。これらの更新は引き上げなので、間隔ウィンドウ
+  ごとに 1 回までしか支払われません。表を変更する前に予算を補充して
+  ください。
+- `setTwaMinStakedDays` はバージョンを進めずに最低保有期間を変更
+  します。次の読み取りから有効です。

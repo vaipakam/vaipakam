@@ -21,7 +21,16 @@ contract ERC4907Mock is ERC721, IERC4907 {
         _mint(to, tokenId);
     }
 
+    /// @notice Burn `tokenId`. Only its owner or an approved operator may.
+    /// @dev #2359 — `DeployTestnetMocks` deploys this contract as the public
+    ///      testnet faucet NFTs (vRENT, vART), so an ungated burn let any wallet
+    ///      destroy another user's NFT, including one escrowed for a demo loan.
+    ///      No test burns through it, so the gate costs the test suite nothing.
     function burn(uint256 tokenId) public {
+        require(
+            _isAuthorized(_ownerOf(tokenId), msg.sender, tokenId),
+            "ERC4907Mock: burn caller is not owner nor approved"
+        );
         _burn(tokenId);
     }
 

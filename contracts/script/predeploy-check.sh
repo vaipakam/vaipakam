@@ -439,7 +439,7 @@ else
     f="$SCRIPT_DIR/$s"
     # The dirty variable is the SECOND interpolation in the stamp value.
     # EVERY emission, not just the first (Codex #1495 r7 P2).
-    # `exportSubgraphAbis.sh` already stamps twice — an ABI bundle and a
+    # The retired subgraph export stamped twice — an ABI bundle and a
     # per-chain manifest — so a `head -1` parser validated one pair and let a
     # second, independently-assigned pair bypass every predicate. Scripts that
     # stamp more than once are exactly where a refactor would introduce a late

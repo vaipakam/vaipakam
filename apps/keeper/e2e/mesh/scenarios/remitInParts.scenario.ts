@@ -28,15 +28,14 @@
  *   No operator alert is raised at any point.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { BaseError, ContractFunctionRevertedError, type Address } from 'viem';
-import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { openLoan, repayInFull } from '@vaipakam/anvil-harness/lending';
-import { TOKEN_ABI, type Party } from '@vaipakam/anvil-harness/scenarioChain';
+import type { Party } from '@vaipakam/anvil-harness/scenarioChain';
 import { runDeliveryProof } from '../../../src/deliveryProof';
 import { runRewardBudgetRemit } from '../../../src/rewardBudgetRemit';
 import { keeperEnvFor, tickNow, type KeeperHarness } from '../../harness/keeperEnv';
 import { collectOpsAlerts, type OpsAlertLog } from '../../harness/opsAlerts';
-import { openMeshScenario, type MeshChain, type MeshScenario } from '../mesh';
+import { claimUntilPaid, simulatedClaim } from '../claims';
+import { openMeshScenario, type MeshScenario } from '../mesh';
 import { closeAndFinalizeDays, FIVE_MIN_MS } from '../rewardCycle';
 import { BASE_ID, MIRROR_ID } from '../fixture';
 
@@ -44,8 +43,6 @@ const DAY = 86_400;
 const HOUR = 3_600;
 /** The day whose slice moves: day 0 is never remitted. */
 const DAY_ID = 1n;
-/** `LibVaipakam.RewardDelivery.Wallet`: pay the claim to the caller's wallet. */
-const TO_WALLET = 1;
 const PARTS = 3;
 
 interface DayLedger {
@@ -114,76 +111,6 @@ async function mirrorLanded(): Promise<boolean> {
   return state[3] as boolean;
 }
 
-function balanceOf(sc: MeshChain, token: Address, who: Address): Promise<bigint> {
-  return sc.pub.readContract({ address: token, abi: TOKEN_ABI, functionName: 'balanceOf', args: [who] }) as Promise<bigint>;
-}
-
-/**
- * What `who`'s claim on the mirror would pay to the wallet, by running the
- * claim itself in a frame that always reverts, or null when the claim would
- * revert for a reason of its own (nothing to claim, among them).
- */
-async function simulatedClaim(who: Party): Promise<bigint | null> {
-  const sc = m.mirror;
-  try {
-    await sc.pub.simulateContract({
-      account: sc.address(who),
-      address: sc.diamond,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'simulateClaimInteractionRewards',
-      args: [sc.address(who), TO_WALLET],
-    } as never);
-  } catch (err) {
-    const reverted = err instanceof BaseError ? err.walk((e) => e instanceof ContractFunctionRevertedError) : null;
-    if (reverted instanceof ContractFunctionRevertedError && reverted.data?.errorName === 'InteractionRewardsSimulation') {
-      return BigInt((reverted.data.args as readonly bigint[])[0]);
-    }
-    return null;
-  }
-  throw new Error('simulateClaimInteractionRewards returned instead of reverting');
-}
-
-/**
- * Claim `who`'s rewards on the mirror into the wallet until a claim pays. A
- * claim that defers opens the staging domain of its entry's slice, and that
- * domain is stepped home by its permissionless step, by another account.
- * Returns what the paying claim moved to the wallet.
- */
-async function claimUntilPaid(who: Party): Promise<bigint> {
-  const sc = m.mirror;
-  const vpfi = sc.fixture.artifact.vpfiMirror as Address;
-  for (let round = 0; round < 4; round++) {
-    const simulated = await simulatedClaim(who); // eslint-disable-line no-await-in-loop
-    const before = await balanceOf(sc, vpfi, sc.address(who)); // eslint-disable-line no-await-in-loop
-    const from = await sc.blockNumber(); // eslint-disable-line no-await-in-loop
-    await sc.diamondWrite(who, 'claimInteractionRewardsTo', [TO_WALLET]); // eslint-disable-line no-await-in-loop
-    const paid = (await balanceOf(sc, vpfi, sc.address(who))) - before; // eslint-disable-line no-await-in-loop
-    if (paid > 0n) {
-      expect(paid).toBe(simulated);
-      return paid;
-    }
-    const opened = (await sc.diamondEvents('LegacySliceDomainOpened', from + 1n)).map((e) => BigInt(e.args.entryId as bigint)); // eslint-disable-line no-await-in-loop
-    expect(opened.length, `${who}'s claim paid nothing and opened no staging domain`).toBeGreaterThan(0);
-    for (const entryId of opened) {
-      let consumed = false;
-      for (let step = 0; step < 32 && !consumed; step++) {
-        // eslint-disable-next-line no-await-in-loop
-        const { result } = await sc.pub.simulateContract({
-          account: sc.address('other'),
-          address: sc.diamond,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'stepLegacySlice',
-          args: [entryId],
-        } as never);
-        await sc.diamondWrite('other', 'stepLegacySlice', [entryId]); // eslint-disable-line no-await-in-loop
-        consumed = result as boolean;
-      }
-      expect(consumed, `entry ${entryId}'s staging domain was not consumed`).toBe(true);
-    }
-  }
-  throw new Error(`${who}'s claim on the mirror never paid`);
-}
-
 describe('one day remitted to the mirror in three parts', () => {
   it('closes and finalizes a day whose slice comes from a repaid mirror loan', async () => {
     const loan = await openLoan(m.mirror, { lender: 'lender', borrower: 'borrower', principalWeth: '1', collateralTliq: '5', rateBps: 1000, days: 30 });
@@ -240,7 +167,7 @@ describe('one day remitted to the mirror in three parts', () => {
         expect(parts.landedAt, `the mirror opened the day after part ${part}`).toBe(0n);
         expect(await mirrorLanded()).toBe(false); // eslint-disable-line no-await-in-loop
         for (const who of ['lender', 'borrower'] as Party[]) {
-          const pays = await simulatedClaim(who); // eslint-disable-line no-await-in-loop
+          const pays = await simulatedClaim(m.mirror, who); // eslint-disable-line no-await-in-loop
           expect(pays ?? 0n, `${who}'s claim would pay after part ${part}`).toBe(0n);
         }
       } else {
@@ -270,7 +197,7 @@ describe('one day remitted to the mirror in three parts', () => {
 
   it('pays the lender and the borrower on the mirror out of the delivered day', async () => {
     for (const who of ['lender', 'borrower'] as Party[]) {
-      expect(await claimUntilPaid(who)).toBeGreaterThan(0n); // eslint-disable-line no-await-in-loop
+      expect(await claimUntilPaid(m.mirror, who)).toBeGreaterThan(0n); // eslint-disable-line no-await-in-loop
     }
     expect(alerts.texts).toEqual([]);
   });

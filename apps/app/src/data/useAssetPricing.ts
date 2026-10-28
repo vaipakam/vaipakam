@@ -14,6 +14,7 @@ import { erc20Abi } from 'viem';
 import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
+import { readAggregate } from '../contracts/aggregate';
 import { LIQUIDITY_LIQUID } from '../contracts/preflights';
 import { freshData } from '../lib/freshData';
 import { idleAware } from '../lib/idle';
@@ -40,11 +41,14 @@ export function useAssetPricing(
         erc20: erc20Abi,
       });
       try {
-        const slots = await publicClient!.multicall({
-          allowFailure: true,
-          contracts: plan.flatMap((p) => p.contracts) as never,
-        });
-        return pricingFacts(plan, slots as never, LIQUIDITY_LIQUID);
+        // A provider failure rejects here and reads as "the whole batch
+        // failed" (null) — never as every asset's price or liquidity
+        // check refusing, which viem's `multicall` would report.
+        const slots = await readAggregate(
+          publicClient!,
+          plan.flatMap((p) => p.contracts),
+        );
+        return pricingFacts(plan, slots, LIQUIDITY_LIQUID);
       } catch {
         return null;
       }

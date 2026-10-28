@@ -14,6 +14,7 @@ import {SwapAttemptFacet} from "../../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../../src/facets/NotificationFeeFacet.sol";
+import {SaleExitVerdictFacet} from "../../src/facets/SaleExitVerdictFacet.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
 
 /**
@@ -166,7 +167,7 @@ library FacetSelectors {
     ///         VaipakamNFTMetadataFacet (#2957); `RedeployFacets` refuses a
     ///         Diamond from before that split.
     function vaipakamNFT() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](22);
+        s = new bytes4[](23);
         s[0] = VaipakamNFTFacet.mintNFT.selector;
         s[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         s[2] = VaipakamNFTFacet.burnNFT.selector;
@@ -189,9 +190,10 @@ library FacetSelectors {
         s[19] = bytes4(keccak256("tokenByIndex(uint256)"));
         s[20] = bytes4(keccak256("tokenOfOwnerByIndex(address,uint256)"));
         s[21] = VaipakamNFTFacet.nftStatusOf.selector;
+        s[22] = VaipakamNFTFacet.highestTokenId.selector;
     }
 
-    /// @notice Full external selector surface of {RiskPreviewFacet} (9) —
+    /// @notice Full external selector surface of {RiskPreviewFacet} (11) —
     ///         mirrors `DeployDiamond._getRiskPreviewFacetSelectors`.
     ///
     /// @dev    #1649. This facet is not itself refreshed for its own sake by the
@@ -218,7 +220,7 @@ library FacetSelectors {
     ///         Replace the routed), so it is correct against a pre-#1503 diamond
     ///         and a current one alike.
     function riskPreview() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](10);
+        s = new bytes4[](11);
         s[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         s[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         s[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -235,6 +237,8 @@ library FacetSelectors {
         // #1503 item 4 — listing bounds quote. Same `Replace`-completeness
         // reason as the line above.
         s[9] = RiskPreviewFacet.quoteSellerBounds.selector;
+        // #2672 — the figures a standing listing recorded.
+        s[10] = RiskPreviewFacet.getSaleListingBounds.selector;
     }
 
     /// @notice Full external selector surface of {RepayPeriodicFacet} (4).
@@ -412,7 +416,7 @@ library FacetSelectors {
         );
     }
 
-    /// @notice Full external selector surface of {OfferPreviewFacet} (1).
+    /// @notice Full external selector surface of {OfferPreviewFacet} (3).
     ///
     /// @dev    #1649. Paired with {riskPreview} for the same reason, one step
     ///         milder. `ReplaceStaleFacets` refreshes `OfferAcceptFacet`, which
@@ -422,8 +426,10 @@ library FacetSelectors {
     ///         the preview/accept divergence #1503 exists to remove,
     ///         reintroduced by a partial refresh.
     function offerPreview() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](3);
         s[0] = OfferPreviewFacet.previewAccept.selector;
+        s[1] = OfferPreviewFacet.requireCadenceAdmitted.selector;
+        s[2] = OfferPreviewFacet.previewCadenceAdmission.selector;
     }
 
     /// @notice Full external selector surface of {FallbackCustodyFacet} (4).
@@ -518,6 +524,26 @@ library FacetSelectors {
         s[0] = NotificationFeeFacet.markNotifBilled.selector;
         s[1] = NotificationFeeFacet.setNotificationFeeConsent.selector;
         s[2] = NotificationFeeFacet.getNotificationFeeConsent.selector;
+    }
+
+    /// @notice Full external selector surface of {SaleExitVerdictFacet} (3).
+    ///
+    /// @dev    #1841. The one classifier of a lender sale exit: the chooser's
+    ///         view and the guard `EarlyWithdrawalFacet` and
+    ///         `EarlyWithdrawalDirectFacet` self-call before they move funds.
+    ///         `RedeployFacets` refreshes both sale facets, so it cuts this host
+    ///         in the same cut: a sale facet refreshed without it reverts
+    ///         `FunctionDoesNotExist` on every sale.
+    ///
+    ///         The ONLY copy of the list, as for {notificationFee}:
+    ///         `DeployDiamond` (`_getSaleExitVerdictSelectors`) and `HelperTest`
+    ///         (`getSaleExitVerdictFacetSelectors`) return it, and
+    ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
+    function saleExitVerdict() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = SaleExitVerdictFacet.saleExitVerdict.selector;
+        s[1] = SaleExitVerdictFacet.requireSaleExitOpen.selector;
+        s[2] = SaleExitVerdictFacet.requireSaleAdmission.selector;
     }
 
     /// @notice Full external selector surface of {NumeraireValueFacet} (3).

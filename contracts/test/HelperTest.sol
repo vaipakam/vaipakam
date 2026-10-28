@@ -672,8 +672,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](1);
+        selectors = new bytes4[](3);
         selectors[0] = OfferPreviewFacet.previewAccept.selector;
+        selectors[1] = OfferPreviewFacet.requireCadenceAdmitted.selector;
+        selectors[2] = OfferPreviewFacet.previewCadenceAdmission.selector;
         return selectors;
     }
 
@@ -735,7 +737,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](50);
+        selectors = new bytes4[](52);
         selectors[0] = AdminFacet.setTreasury.selector;
         selectors[1] = AdminFacet.getTreasury.selector;
         selectors[2] = AdminFacet.setZeroExProxy.selector;
@@ -793,6 +795,9 @@ contract HelperTest {
         selectors[47] = AdminFacet.autoPauseCooldownSeconds.selector;
         selectors[48] = AdminFacet.autoPauseAvailableAt.selector;
         selectors[49] = AdminFacet.setAutoPauseCooldownSeconds.selector;
+        // #1637 — reads for the two kill switches.
+        selectors[50] = AdminFacet.aggregatorAdaptersPaused.selector;
+        selectors[51] = AdminFacet.peerLtvReadsPaused.selector;
         return selectors;
     }
 
@@ -889,7 +894,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](18);
+        selectors = new bytes4[](19);
         selectors[0] = VaipakamNFTFacet.mintNFT.selector;
         selectors[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         selectors[2] = VaipakamNFTFacet.burnNFT.selector;
@@ -917,6 +922,7 @@ contract HelperTest {
         selectors[15] = VaipakamNFTFacet.transferFrom.selector;
         selectors[16] = bytes4(keccak256("safeTransferFrom(address,address,uint256)"));
         selectors[17] = bytes4(keccak256("safeTransferFrom(address,address,uint256,bytes)"));
+        selectors[18] = VaipakamNFTFacet.highestTokenId.selector;
         return selectors;
     }
 
@@ -1257,7 +1263,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](11);
         selectors[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         selectors[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         selectors[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -1272,6 +1278,8 @@ contract HelperTest {
         selectors[8] = RiskPreviewFacet.sellerForfeitureWindow.selector;
         // #1503 item 4 — listing bounds quote (see DeployDiamond).
         selectors[9] = RiskPreviewFacet.quoteSellerBounds.selector;
+        // #2672 — the figures a standing listing recorded.
+        selectors[10] = RiskPreviewFacet.getSaleListingBounds.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.
@@ -2692,6 +2700,12 @@ contract HelperTest {
     /// `FacetSelectors.notificationFee()` (the same one `DeployDiamond` cuts).
     function getNotificationFeeFacetSelectors() public pure returns (bytes4[] memory selectors) {
         selectors = FacetSelectors.notificationFee();
+    }
+
+    /// #1841 - the sale-exit verdict. Returns the ONE list in
+    /// `FacetSelectors.saleExitVerdict()` (the same one `DeployDiamond` cuts).
+    function getSaleExitVerdictFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = FacetSelectors.saleExitVerdict();
     }
 
     /// #2795 - the forced-sale host. Returns the ONE list in

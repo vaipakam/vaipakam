@@ -6,6 +6,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibMetricsTypes} from "../libraries/LibMetricsTypes.sol";
 import {LibScanPage} from "../libraries/LibScanPage.sol";
+import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 // #1306 follow-up — previewInteractionRewards moved to the read-only lens.
@@ -447,26 +448,27 @@ contract MetricsDashboardFacet {
             LibVaipakam.ClaimInfo storage ci = borrowerSide
                 ? s.borrowerClaims[lid]
                 : s.lenderClaims[lid];
-            // Skip slots with nothing pending — `claimed` flag is the
-            // canonical "this side is settled" marker; absence of any
-            // claimable amount AND no held funds also counts as nothing.
-            LibVaipakam.ClaimInfo storage emitCi = ci;
-            bool pending = !ci.claimed && ci.amount > 0;
+            // #941 — list exactly what the claim call would pay: the shared
+            // {LibCloseoutFreeze.lenderClaimPending} / {borrowerClaimPending}
+            // rules, which count an NFT return (a row with amount 0), held
+            // lender funds and a recorded zero-amount close-out, and only on a
+            // status the claim accepts.
+            if (
+                borrowerSide
+                    ? !LibCloseoutFreeze.borrowerClaimPending(s, lid)
+                    : !LibCloseoutFreeze.lenderClaimPending(s, lid)
+            ) continue;
             // #954 (§2.3) — a full swap-to-repay that consumed ALL collateral
             // freezes ONLY a principal surplus, leaving the collateral
-            // `borrowerClaims` slot empty. Surface that surplus-only lane so a
-            // delisted self-holder (`l.borrower == user`) still sees the funds
-            // in the dashboard snapshot instead of a zero count. When the
-            // collateral lane IS pending, it takes the row and the surplus stays
-            // discoverable via `ClaimFacet.getBorrowerSurplusClaim`.
-            if (borrowerSide && !pending) {
-                LibVaipakam.ClaimInfo storage sc = s.borrowerSurplusClaims[lid];
-                if (!sc.claimed && sc.amount > 0) {
-                    emitCi = sc;
-                    pending = true;
-                }
-            }
-            if (!pending) continue;
+            // `borrowerClaims` slot empty. When the collateral lane has nothing
+            // to pay, the surplus row takes the entry, so a delisted self-holder
+            // still sees the funds. When the collateral lane IS open, it takes
+            // the row and the surplus stays discoverable via
+            // `ClaimFacet.getBorrowerSurplusClaim`.
+            LibVaipakam.ClaimInfo storage emitCi =
+                (borrowerSide && !LibCloseoutFreeze.collateralLaneOpen(ci))
+                    ? s.borrowerSurplusClaims[lid]
+                    : ci;
             idBuf[written] = lid;
             claimBuf[written] = emitCi;
             written += 1;
@@ -629,19 +631,14 @@ contract MetricsDashboardFacet {
         for (uint256 i = 0; i < total; i++) {
             uint256 lid = userLoans[i];
             LibVaipakam.Loan storage l = s.loans[lid];
-            if (l.lender == user) {
-                LibVaipakam.ClaimInfo storage ci = s.lenderClaims[lid];
-                if (!ci.claimed && ci.amount > 0) lenderCount += 1;
+            // #941 — the same rules the claimables page uses: one count per
+            // loan side the claim call would pay (an NFT return, held lender
+            // funds, the borrower's collateral or surplus lane).
+            if (l.lender == user && LibCloseoutFreeze.lenderClaimPending(s, lid)) {
+                lenderCount += 1;
             }
-            if (l.borrower == user) {
-                LibVaipakam.ClaimInfo storage ci = s.borrowerClaims[lid];
-                // #954 (§2.3) — count the loan once if EITHER the collateral
-                // lane OR the frozen principal-surplus lane is pending, so a
-                // surplus-only close (all collateral consumed) isn't undercounted.
-                LibVaipakam.ClaimInfo storage sc = s.borrowerSurplusClaims[lid];
-                bool colPending = !ci.claimed && ci.amount > 0;
-                bool surPending = !sc.claimed && sc.amount > 0;
-                if (colPending || surPending) borrowerCount += 1;
+            if (l.borrower == user && LibCloseoutFreeze.borrowerClaimPending(s, lid)) {
+                borrowerCount += 1;
             }
         }
     }

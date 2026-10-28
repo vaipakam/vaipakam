@@ -165,6 +165,8 @@ export function LenderExitOptionsCard({
   return (
     <section
       className="card"
+      // The retired app's `/loans/:id/early-withdrawal` lands here (#2076).
+      id="lender-exit-options"
       data-testid="lender-exit-card"
       // A READINESS SIGNAL, not decoration (#1855). From outside this
       // card the absence of the switch below is ambiguous — it is

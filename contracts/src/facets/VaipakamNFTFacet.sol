@@ -120,6 +120,18 @@ contract VaipakamNFTFacet is IERC721, IERC721Enumerable, DiamondReentrancyGuard,
         return LibERC721.tokenOfOwnerByIndex(owner, index);
     }
 
+    /// @notice #2529 — the highest position-NFT id ever allocated (0 before
+    ///         the first). Ids run from 1 and are never reused.
+    /// @dev    Every allocation site (offer creation, loan acceptance, and the
+    ///         lender and borrower position handovers in {LibLoan}) mints the
+    ///         id it takes in the same transaction or reverts, so every id from
+    ///         1 to this value was minted once. An id in that range whose
+    ///         `ownerOf` reverts was therefore burned; an id above it was never
+    ///         minted.
+    function highestTokenId() external view returns (uint256) {
+        return LibVaipakam.storageSlot().nextTokenId;
+    }
+
     // ERC-721 metadata (IERC721Metadata): `name` and `symbol` live here;
     // `tokenURI` is on {VaipakamNFTMetadataFacet} (#2957). The Diamond as a
     // whole implements the interface, and supportsInterface says so.

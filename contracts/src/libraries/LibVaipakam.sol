@@ -427,8 +427,9 @@ library LibVaipakam {
     // ─── Range Orders Phase 1 constants (docs/RangeOffersDesign.md) ─────
     // Cancel cooldown: when an offer has zero matches against it
     // (`amountFilled == 0`), `cancelOffer` reverts until this many seconds
-    // after `Offer.createdAt`. Blunts the cancel-front-run attack on the
-    // matching path (§9.2 of the design). Partial-filled offers can be
+    // after `Offer.createdAt`. Blunts the cancel-front-run attack on both
+    // the matching path (§9.2 of the design) and the direct accept (#664),
+    // whatever `partialFillEnabled` says. Partial-filled offers can be
     // cancelled immediately because the lender has already committed value.
     uint256 constant MIN_OFFER_CANCEL_DELAY = 5 minutes;
     // ── #195 — GTT / offer-expiry horizon cap ────────────────────────────
@@ -11370,6 +11371,7 @@ library LibVaipakam {
     ) internal {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
+        emit UsdChainlinkDenominatorSet(s.numeraireChainlinkDenominator, newUsdChainlinkDenominator);
         s.numeraireChainlinkDenominator = newUsdChainlinkDenominator;
     }
 
@@ -11379,6 +11381,7 @@ library LibVaipakam {
     function setChainlinkRegistry(address newChainlnkRegistry) internal {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
+        emit ChainlinkRegistrySet(s.chainlnkRegistry, newChainlnkRegistry);
         s.chainlnkRegistry = newChainlnkRegistry;
     }
 
@@ -11390,6 +11393,7 @@ library LibVaipakam {
     function setWethContract(address newWethContract) internal {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
+        emit WethContractSet(s.wethContract, newWethContract);
         s.wethContract = newWethContract;
         // #2747 — once a quote list is set, re-pointing WETH at its only
         // other member would leave the new WETH with no tier route. A fresh
@@ -11406,6 +11410,7 @@ library LibVaipakam {
     function setEthUsdFeed(address newEthUsdFeed) internal {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
+        emit EthNumeraireFeedSet(s.ethNumeraireFeed, newEthUsdFeed);
         s.ethNumeraireFeed = newEthUsdFeed;
     }
 
@@ -11421,6 +11426,7 @@ library LibVaipakam {
     ) internal {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
+        emit EthChainlinkDenominatorSet(s.ethChainlinkDenominator, newEthChainlinkDenominator);
         s.ethChainlinkDenominator = newEthChainlinkDenominator;
     }
 
@@ -11449,6 +11455,7 @@ library LibVaipakam {
         uint256 pos = s.stableFeedSymbolPos[key];
         if (feed == address(0)) {
             if (pos == 0) return;
+            emit StableTokenFeedSet(symbol, s.stableFeedBySymbol[key], address(0));
             uint256 lastIdx = s.stableFeedSymbolsList.length - 1;
             uint256 idx = pos - 1;
             if (idx != lastIdx) {
@@ -11461,6 +11468,7 @@ library LibVaipakam {
             delete s.stableFeedBySymbol[key];
             return;
         }
+        emit StableTokenFeedSet(symbol, s.stableFeedBySymbol[key], feed);
         s.stableFeedBySymbol[key] = feed;
         if (pos == 0) {
             s.stableFeedSymbolsList.push(key);
@@ -11475,6 +11483,7 @@ library LibVaipakam {
     function setUniswapV3Factory(address newUniswapV3Factory) internal {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
+        emit UniswapV3FactorySet(s.uniswapV3Factory, newUniswapV3Factory);
         s.uniswapV3Factory = newUniswapV3Factory;
     }
 
@@ -11488,8 +11497,44 @@ library LibVaipakam {
     function setSequencerUptimeFeed(address newFeed) internal {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
+        emit SequencerUptimeFeedSet(s.sequencerUptimeFeed, newFeed);
         s.sequencerUptimeFeed = newFeed;
     }
+
+    // ─── #2685 — every chain-level oracle setting announces its change ──
+    // Each setter above emits the previous and the new value, so off-chain
+    // monitoring and the indexer's config snapshot see a change in the
+    // transaction that made it. Until #2685 these eight wrote silently.
+
+    /// @notice Emitted when the Chainlink Feed Registry address changes.
+    /// @custom:event-category informational/config
+    event ChainlinkRegistrySet(address indexed previous, address indexed next);
+    /// @notice Emitted when the Feed Registry USD denominator changes.
+    /// @custom:event-category informational/config
+    event UsdChainlinkDenominatorSet(address indexed previous, address indexed next);
+    /// @notice Emitted when the Feed Registry ETH denominator changes.
+    /// @custom:event-category informational/config
+    event EthChainlinkDenominatorSet(address indexed previous, address indexed next);
+    /// @notice Emitted when the canonical WETH used for pool-depth quotes changes.
+    /// @custom:event-category informational/config
+    event WethContractSet(address indexed previous, address indexed next);
+    /// @notice Emitted when the direct ETH/numeraire price feed changes through
+    ///         `OracleAdminFacet.setEthUsdFeed` (`setNumeraire` announces its own
+    ///         write of the same slot with `NumeraireUpdated`).
+    /// @custom:event-category informational/config
+    event EthNumeraireFeedSet(address indexed previous, address indexed next);
+    /// @notice Emitted when a peg reference feed is registered, replaced or
+    ///         removed (`next == address(0)`).
+    /// @custom:event-category informational/config
+    event StableTokenFeedSet(string symbol, address indexed previous, address indexed next);
+    /// @notice Emitted when the v3-style AMM factory used for liquidity
+    ///         classification changes.
+    /// @custom:event-category informational/config
+    event UniswapV3FactorySet(address indexed previous, address indexed next);
+    /// @notice Emitted when the L2 sequencer uptime feed changes
+    ///         (`next == address(0)` turns the sequencer check off).
+    /// @custom:event-category informational/config
+    event SequencerUptimeFeedSet(address indexed previous, address indexed next);
 
     /// @notice Emitted whenever a per-feed oracle override is installed or
     ///         cleared. Off-chain monitoring watches this so a governance-
@@ -12598,6 +12643,34 @@ library LibVaipakam {
         if (storageSlot().sanctionsOracle == address(0)) return;
         _assertMovePartyNotSanctioned(from);
         _assertMovePartyNotSanctioned(to);
+    }
+
+    /// @notice Whether `user`'s existing vault is behind the mandatory vault
+    ///         version, so every vault interaction through
+    ///         `VaultFactoryFacet` refuses it with `VaultUpgradeRequired`.
+    ///         False for a user with no vault: one created now is current.
+    /// @dev    The ONE rule `VaultFactoryFacet` enforces (#1841), read on its
+    ///         own by the sale-exit verdict.
+    function vaultUpgradeRequired(address user) internal view returns (bool) {
+        Storage storage s = storageSlot();
+        return s.userVaipakamVaults[user] != address(0) &&
+            s.mandatoryVaultVersion > 0 &&
+            s.vaultVersion[user] < s.mandatoryVaultVersion;
+    }
+
+    /// @notice Whether {assertPositionMoveNotSanctioned} would refuse `party`
+    ///         right now: the oracle is set and `party` is flagged, or the
+    ///         oracle is unavailable and `party` carries a confirmed flag.
+    /// @dev    The read-only half of the fail-closed move gate (#1841): the
+    ///         sale-exit verdict reports the direct sale's holder screen by it.
+    ///         The gate itself also self-heals a stale registry entry on a clean
+    ///         read, which a view cannot do and this does not try to.
+    function positionMovePartyBlocked(address party) internal view returns (bool) {
+        if (party == address(0) || storageSlot().sanctionsOracle == address(0)) return false;
+        SanctionsRead st = sanctionsStatus(party);
+        if (st == SanctionsRead.Flagged) return true;
+        if (st == SanctionsRead.Clean) return false;
+        return storageSlot().sanctionsConfirmedFlagged[party];
     }
 
     function _assertMovePartyNotSanctioned(address party) private {

@@ -1,9 +1,19 @@
 # D1 cutover — `vaipakam-archive` → `vaipakam-warm`
 
-**Status: PARTLY EXECUTED 2026-09-21 — schema and a first data copy are done;
-the switch itself is NOT.** What follows the execution record is the plan as
-written beforehand, kept because its reasoning is still the reasoning — and
-because step 3 below is the part of it that had to be re-learned.
+**Status: COMPLETED — this file is history, not a procedure.** The switch is
+done: every Worker that reads the shared database binds `vaipakam-warm`
+(verified from the account on 2026-10-28), and the owner deleted
+`vaipakam-archive` and the retired backup Worker on 2026-10-28 (#1552,
+#1977), after confirming every support ticket, alert and legal-hold row was
+present in `vaipakam-warm`. No step below can be run any more: there is no
+source database to copy from, reconcile against or roll back into. The
+cutover-era follow-ups (#2275, #2278, #2279, #2287) were closed on that
+basis.
+
+The record below is kept for its reasoning. It was written as **PARTLY
+EXECUTED 2026-09-21** (schema and a first data copy done, the switch not
+yet), and what follows the execution record is the plan as written
+beforehand — step 3 is the part of it that had to be re-learned.
 
 ## Execution record (2026-09-21)
 

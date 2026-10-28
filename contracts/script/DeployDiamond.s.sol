@@ -102,6 +102,7 @@ import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
+import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
@@ -446,6 +447,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #2795 - the forced-sale host: size a forced sale to the debt, sell it,
         // split the proceeds lender first. Self-called by RepayPeriodicFacet.
         ForcedSaleFacet forcedSaleFacet = ForcedSaleFacet(ArtifactDeploy.deploy(type(ForcedSaleFacet).name));
+        // #1841 - the one sale-exit verdict: the lender exit chooser's view and
+        // the guard both sale entries self-call.
+        SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
             RewardCompensationDispatchFacet(ArtifactDeploy.deploy(type(RewardCompensationDispatchFacet).name));
         RewardCommitmentFacet rewardCommitmentFacet = RewardCommitmentFacet(ArtifactDeploy.deploy(type(RewardCommitmentFacet).name));
@@ -483,7 +487,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](102);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](103);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -582,6 +586,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #2963 — what Base does when a remit destination leaves its
         // expected-source list (the list setter self-calls its hook).
         cuts[101] = _buildCut(address(rewardRemitDestinationFacet), _getRewardRemitDestinationSelectors());
+        cuts[102] = _buildCut(address(saleExitVerdictFacet), _getSaleExitVerdictSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1227,6 +1232,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("rateModelFacet", address(rateModelFacet));
         Deployments.writeFacet("vaipakamNFTMetadataFacet", address(nftMetadataFacet));
         Deployments.writeFacet("forcedSaleFacet", address(forcedSaleFacet));
+        Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
@@ -1391,7 +1397,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](50);
+        s = new bytes4[](52);
         s[0] = AdminFacet.setTreasury.selector;
         s[1] = AdminFacet.getTreasury.selector;
         s[2] = AdminFacet.setZeroExProxy.selector;
@@ -1456,6 +1462,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[47] = AdminFacet.autoPauseCooldownSeconds.selector;
         s[48] = AdminFacet.autoPauseAvailableAt.selector;
         s[49] = AdminFacet.setAutoPauseCooldownSeconds.selector;
+        // #1637 — reads for the two kill switches.
+        s[50] = AdminFacet.aggregatorAdaptersPaused.selector;
+        s[51] = AdminFacet.peerLtvReadsPaused.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
@@ -1613,7 +1622,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // returns true for them. The token's metadata (tokenURI, contractURI
         // and their image / external_url configuration) is cut to
         // VaipakamNFTMetadataFacet (#2957), see {_getNftMetadataSelectors}.
-        s = new bytes4[](22);
+        s = new bytes4[](23);
         s[0] = VaipakamNFTFacet.mintNFT.selector;
         s[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         s[2] = VaipakamNFTFacet.burnNFT.selector;
@@ -1639,6 +1648,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[19] = bytes4(keccak256("tokenByIndex(uint256)"));
         s[20] = bytes4(keccak256("tokenOfOwnerByIndex(address,uint256)"));
         s[21] = VaipakamNFTFacet.nftStatusOf.selector;
+        s[22] = VaipakamNFTFacet.highestTokenId.selector;
     }
 
     /// @dev #2957 - the position NFT's public metadata: the token and
@@ -1798,10 +1808,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     /// @dev #980 — `OfferPreviewFacet.previewAccept`, split out of
-    ///      OfferAcceptFacet for EIP-170 headroom. Single view selector.
+    ///      OfferAcceptFacet for EIP-170 headroom. #3009 adds the cadence
+    ///      admission preview and the self-called check it collects from.
     function _getOfferPreviewSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](3);
         s[0] = OfferPreviewFacet.previewAccept.selector;
+        s[1] = OfferPreviewFacet.requireCadenceAdmitted.selector;
+        s[2] = OfferPreviewFacet.previewCadenceAdmission.selector;
     }
 
     /// @dev OfferMatchFacet — Range Orders Phase 1 bot-driven offer
@@ -2094,7 +2107,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      asserts, split off `RiskAccessFacet` into its own `RiskPreviewFacet`
     ///      so both facets keep EIP-170 header room. All are `view`.
     function _getRiskPreviewFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](10);
+        s = new bytes4[](11);
         s[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         s[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         s[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -2114,6 +2127,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // mirrored client-side on purpose: a client copy of the rule drifts from
         // it the moment the rule changes, and this one has changed twice.
         s[9] = RiskPreviewFacet.quoteSellerBounds.selector;
+        // #2672 — the figures a standing listing recorded.
+        s[10] = RiskPreviewFacet.getSaleListingBounds.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.
@@ -3406,6 +3421,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      cuts.
     function _getNotificationFeeSelectors() internal pure returns (bytes4[] memory s) {
         s = FacetSelectors.notificationFee();
+    }
+
+    /// @dev #1841 - the sale-exit verdict. Returns the ONE list in
+    ///      `FacetSelectors.saleExitVerdict()`, which `RedeployFacets` also cuts
+    ///      with the two sale facets that self-call it.
+    function _getSaleExitVerdictSelectors() internal pure returns (bytes4[] memory s) {
+        s = FacetSelectors.saleExitVerdict();
     }
 
     /// @dev #2748 - the quote-time rate model (#400): register, fast-disable,

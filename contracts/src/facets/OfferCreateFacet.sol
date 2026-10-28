@@ -12,6 +12,7 @@ import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {LibNumeraireValueRead} from "../libraries/LibNumeraireValueRead.sol";
 import {LibOfferBounds} from "../libraries/LibOfferBounds.sol";
 import {LibOfferShape} from "../libraries/LibOfferShape.sol";
+import {LibCadenceAdmission} from "../libraries/LibCadenceAdmission.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -21,6 +22,7 @@ import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "./OracleFacet.sol";
+import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
@@ -861,15 +863,14 @@ contract OfferCreateFacet is
             }
         }
 
-        LibVaipakam.LiquidityStatus principalLiq = OracleFacet(address(this))
-            .checkLiquidity(params.lendingAsset);
         // #2949 — a rental carries no collateral leg ({LibOfferShape.
         // assertCollateral} holds every collateral field at zero), so there
         // is no asset to price; it records Illiquid, the class an NFT-lend
-        // offer is already in, and nothing reads a price for it.
-        LibVaipakam.LiquidityStatus collateralLiq = params.assetType == LibVaipakam.AssetType.ERC20
-            ? OracleFacet(address(this)).checkLiquidity(params.collateralAsset)
-            : LibVaipakam.LiquidityStatus.Illiquid;
+        // offer is already in, and nothing reads a price for it. #3009 — the
+        // derivation is the cadence rule's, so its preview classifies the
+        // legs exactly as this create does.
+        (LibVaipakam.LiquidityStatus principalLiq, LibVaipakam.LiquidityStatus collateralLiq) =
+            LibCadenceAdmission.legLiquidity(params.lendingAsset, params.assetType, params.collateralAsset);
         offer.principalLiquidity = principalLiq;
         offer.collateralLiquidity = collateralLiq;
 
@@ -942,9 +943,9 @@ contract OfferCreateFacet is
     }
 
     /// @dev T-034 — extracted to keep `_createOfferSetup` readable. Reverts
-    ///      on any of the four filter violations per §3 of the design doc.
-    ///      Snapshots the lender's chosen cadence onto the Offer struct on
-    ///      success.
+    ///      with the shared admission rule's refusal ({LibCadenceAdmission},
+    ///      #3009) and snapshots the lender's chosen cadence onto the Offer
+    ///      struct on success.
     function _validatePeriodicCadence(
         LibVaipakam.CreateOfferParams calldata params,
         LibVaipakam.Offer storage offer,
@@ -953,8 +954,6 @@ contract OfferCreateFacet is
     ) private {
         LibVaipakam.PeriodicInterestCadence cadence =
             params.periodicInterestCadence;
-        LibVaipakam.ProtocolConfig storage cfgT034 =
-            LibVaipakam.storageSlot().protocolCfg;
 
         // #1503 (design item 23) — a lender-sale VEHICLE stores the live
         // position's cadence verbatim and skips every filter below.
@@ -997,131 +996,26 @@ contract OfferCreateFacet is
             return;
         }
 
-        // Master kill-switch: feature off → only None reachable. Reverts
-        // before any other validation so the disabled state is the loudest
-        // signal.
-        if (
-            cadence != LibVaipakam.PeriodicInterestCadence.None &&
-            !cfgT034.periodicInterestEnabled
-        ) {
-            revert IVaipakamErrors.PeriodicInterestDisabled();
-        }
-
-        // Filter 0 — Periodic Interest Payment requires BOTH legs to be
-        // liquid AND ERC-20. NFT lending / NFT collateral / Illiquid
-        // classifications all force cadence = None because the auto-
-        // liquidate path (PR2) needs DEX-swappable assets. Multi-year
-        // illiquid loans do NOT get the mandatory Annual floor — lender
-        // accepts that trade-off implicitly via the existing illiquid-
-        // asset consent flow.
-        bool bothLiquid =
-            principalLiq == LibVaipakam.LiquidityStatus.Liquid &&
-            collateralLiq == LibVaipakam.LiquidityStatus.Liquid &&
-            params.assetType == LibVaipakam.AssetType.ERC20 &&
-            params.collateralAssetType == LibVaipakam.AssetType.ERC20;
-        if (
-            cadence != LibVaipakam.PeriodicInterestCadence.None &&
-            !bothLiquid
-        ) {
-            revert IVaipakamErrors.CadenceNotAllowedForIlliquid(
-                uint8(principalLiq),
-                uint8(collateralLiq),
-                uint8(cadence)
-            );
-        }
-
-        // Skip Filter 1 + Filter 2 entirely on illiquid-anywhere offers
-        // (cadence is None per Filter 0 above; nothing more to enforce)
-        // OR on short-duration None-cadence offers (today's behaviour
-        // unchanged).
-        bool isMultiYear = params.durationDays > 365;
-        if (
-            cadence == LibVaipakam.PeriodicInterestCadence.None &&
-            !isMultiYear
-        ) {
-            offer.periodicInterestCadence = cadence;
-            return;
-        }
-
-        // From here on we know either:
-        //   (a) cadence != None AND bothLiquid (Filter 0 passed), OR
-        //   (b) durationDays > 365 AND bothLiquid (mandatory floor).
-        // Resolve the threshold + principal comparison in numeraire-units.
-        uint256 threshold = cfgT034.minPrincipalForFinerCadence == 0
-            ? LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_DEFAULT
-            : cfgT034.minPrincipalForFinerCadence;
-
-        // Principal value compared to the threshold uses `params.amount`
-        // (= amountMin under range orders) because it is the strict lower
-        // bound on what the lender will fund — using `amountMax` here
-        // would let a lender qualify for finer cadence with a deceptively
-        // large upper bound while never actually filling above the
-        // threshold.
-        //
-        // The value is the shared rule's (#2419), rounded down, read best-
-        // effort: an unvalued principal reads as 0, i.e. below the
-        // threshold, which forces None on a loan of a year or less and
-        // Annual on a multi-year one. That degrades safely (no cadence finer
-        // than the terminal path already enforces).
-        uint256 principalNumeraire = LibNumeraireValueRead.valueOrZero(
-            params.lendingAsset,
-            params.amount
+        // #3009 — every admission refusal is the one shared rule's
+        // ({LibCadenceAdmission}): the kill-switch, Filter 0, the multi-year
+        // `Annual` floor (which binds only while the feature is on and both
+        // legs are liquid ERC-20), the principal-threshold matrix and the
+        // interval-shorter-than-duration filter. Offer mutation and the
+        // cadence preview read the same rule. It runs through a self-call to
+        // its one copy on OfferPreviewFacet, so its refusal reverts this
+        // create unchanged and this facet (near EIP-170) carries only the call.
+        OfferPreviewFacet(address(this)).requireCadenceAdmitted(
+            LibCadenceAdmission.Terms({
+                lendingAsset: params.lendingAsset,
+                amount: params.amount,
+                durationDays: params.durationDays,
+                cadence: cadence,
+                assetType: params.assetType,
+                collateralAssetType: params.collateralAssetType,
+                principalLiquidity: principalLiq,
+                collateralLiquidity: collateralLiq
+            })
         );
-
-        // Filter 2 first: row 3 (multi-year, below threshold) requires
-        // exactly `Annual`; row 1 (≤1y, below threshold) requires `None`.
-        bool aboveThreshold = principalNumeraire >= threshold;
-        if (isMultiYear) {
-            if (cadence == LibVaipakam.PeriodicInterestCadence.None) {
-                // Row 3 / Row 4 both require at least Annual cadence.
-                revert IVaipakamErrors.CadenceNotAllowed(
-                    uint8(cadence),
-                    params.durationDays,
-                    principalNumeraire,
-                    threshold
-                );
-            }
-            if (
-                !aboveThreshold &&
-                cadence != LibVaipakam.PeriodicInterestCadence.Annual
-            ) {
-                // Row 3 — only Annual allowed below threshold on multi-year.
-                revert IVaipakamErrors.CadenceNotAllowed(
-                    uint8(cadence),
-                    params.durationDays,
-                    principalNumeraire,
-                    threshold
-                );
-            }
-        } else {
-            // ≤365d. Row 1 — None only below threshold; Row 2 — opt-in.
-            if (
-                cadence != LibVaipakam.PeriodicInterestCadence.None &&
-                !aboveThreshold
-            ) {
-                revert IVaipakamErrors.CadenceNotAllowed(
-                    uint8(cadence),
-                    params.durationDays,
-                    principalNumeraire,
-                    threshold
-                );
-            }
-        }
-
-        // Filter 1 — interval must be strictly less than duration. Skipped
-        // for None (interval=0) since 0 < anything-positive trivially holds
-        // and None doesn't have a meaningful interval anyway.
-        if (cadence != LibVaipakam.PeriodicInterestCadence.None) {
-            uint256 cadenceInterval = LibVaipakam.intervalDays(cadence);
-            if (cadenceInterval >= params.durationDays) {
-                revert IVaipakamErrors.CadenceNotAllowed(
-                    uint8(cadence),
-                    params.durationDays,
-                    principalNumeraire,
-                    threshold
-                );
-            }
-        }
 
         offer.periodicInterestCadence = cadence;
     }

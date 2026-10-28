@@ -182,6 +182,8 @@ contract OfferPrincipalLockTest is SetupTest {
         uint256 id = _createLenderOffer(1000 ether, 1000 ether);
         uint256 walletBefore = ERC20Mock(mockERC20).balanceOf(lender);
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(lender);
         OfferCancelFacet(address(diamond)).cancelOffer(id);
 

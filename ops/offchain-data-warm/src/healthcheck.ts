@@ -33,6 +33,7 @@ import {
 } from './tiers';
 import type { B2Config } from './b2';
 import type { Env } from './env';
+import { MAX_ARCHIVE_BYTES, MAX_MANIFEST_BYTES } from './limits';
 
 export interface HealthOutcome {
   ok: boolean;
@@ -65,10 +66,7 @@ export interface HealthReport {
  *  backup path's MAX_ARCHIVE_BYTES. If an archive ever exceeds this,
  *  the check aborts before OOM-ing the Worker; the alert text steers
  *  the operator to the streaming follow-up. */
-const MAX_HEALTHCHECK_BYTES = 100_000_000;
-
-/** A manifest is a few hundred bytes; anything near this is hostile. */
-const MAX_MANIFEST_BYTES = 256_000;
+const MAX_HEALTHCHECK_BYTES = MAX_ARCHIVE_BYTES;
 
 /**
  * Above this, the archive's CONTENT is not parsed.

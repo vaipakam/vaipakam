@@ -130,8 +130,8 @@ including people who never will.
   never by inferring which value belongs to which name from ordering.
 - The console states that it shows a subset rather than implying it is
   complete, and it names what is left out: settings that differ per asset
-  or per chain, the reward and recycling settings, and a few protocol-wide
-  settings not yet shown. A reader is pointed at the full parameter
+  or per chain, the reward and recycling settings, and the few protocol-wide
+  settings the contracts give no way to read. A reader is pointed at the full parameter
   reference rather than left to infer that what is shown is all there is.
   An incomplete view that asserts completeness is worse than an incomplete
   view, because it stops the reader looking further.
@@ -139,13 +139,31 @@ including people who never will.
   for: either the console shows its current value, or the omission has a
   recorded reason (it differs per asset or chain, it is a fixed constant,
   it belongs to the rewards and recycling surfaces, it is off on this
-  deployment, the contracts expose no way to read it, or it is not shown
-  yet). A setting added to the reference without either is a defect the
+  deployment, or the contracts expose no way to read it). A setting added to the reference without either is a defect the
   build catches, so the console cannot silently fall behind the reference.
   Within that, the fees, the risk and price-oracle limits, the periodic
   interest and reference-currency settings, the automation switches and
   the keeper pause, the automatic pause's length and cooldown, the
-  cross-chain reporting window and the treasury address are shown.
+  cross-chain reporting window and the treasury address are shown, and so
+  are the settings that are read only as one part of a larger answer
+  (#2680): the partial-liquidation sizing, the liquidator discount per
+  liquidity tier, the price-feed registry and the keys it is asked under,
+  the wrapped-ether token, the pricing anchor and its feeds, the
+  notification fee, the swap venues with a protocol-wide switch, and the
+  loan-default grace schedule.
+- A value read as one part of a larger answer is shown only when the code
+  that gave the answer is shown to be the code whose part names the app
+  holds, at the same block as the value; otherwise every part of that
+  answer is reported as not reported, never some of them, and never a
+  value under a name it may not carry. A part of such an answer that is
+  not a setting (a running total of fees billed) is never shown as one.
+- A liquidator discount is labelled by the liquidity tier of the
+  collateral's market it applies to, never in a way that reads as a VPFI
+  holding tier. A pricing setting that no price path reads today says so.
+- The loan-default grace schedule is shown row by row, each row saying the
+  loan lengths it covers. When governance never set one, the console says
+  so and shows the documented default schedule, marked as the default,
+  rather than an empty schedule or no grace.
 - Beside the automatic pause's cooldown, the console states when the next
   automatic pause that stops the protocol may start (#2843): the time the
   protocol recorded, and whether that time has passed or how long remains,
@@ -162,7 +180,9 @@ including people who never will.
   documented default, the console names that default and marks it as the
   default, never as a configured value: an unset day-close grace window
   reads as the documented four hours, and a reference currency governance
-  never changed is named and marked as the default.
+  never changed is named and marked as the default. Where an unset value
+  means a feature is off rather than a default, it says that: an unset
+  dust floor turns dust handling off, and an unset swap venue is off.
 - Where a value's meaning depends on another setting, or a switch does less
   than its name suggests, the row says so: the Pyth cross-check runs only
   while both its oracle and its feed id are set, and the keeper pause stops
@@ -1377,9 +1397,10 @@ The app uses chain reads and indexed reads for different jobs.
   the reader's language. Sanctions screening records are not feed rows (a
   flagged wallet is told by the in-app banner); the funds consequences that are
   the wallet's own (proceeds or rewards held, set aside or forfeited) are rows,
-  in the in-app flagged wording only, with no list or provider named. A setting
-  recorded against the wallet's vault rather than the wallet (the risk-access
-  consents) is not yet shown; that gap is tracked (#2707). (#2703)
+  in the in-app flagged wording only, with no list or provider named. The
+  wallet's own risk-access choices (its risk level, strict mode, and its
+  consents and acknowledgements for asset pairings) are rows on its page: the
+  protocol records each against the account that chose it. (#2703, #2707)
 - An Activity row states the asset and amount its transaction moved or offered
   when the activity record carries them as normalized fields — exact, or as a
   range for an offer that commits one. It never reconstructs an amount the
@@ -2062,6 +2083,18 @@ is the borrower's own money.
   receives, so choosing one of them on an unread answer is a claim, and
   the wrong one whenever the protocol settles the position against an
   opposing one instead.
+- Settling against an opposing position is a capability each deployment can
+  switch off (#2082). "No opposing position right now" and "this deployment
+  does not settle against opposing positions" are different statements, and
+  the surface keeps them apart: it reads the deployment's setting alongside
+  the other facts behind the card, as of the same block. Where the surface
+  would otherwise warn that an opposing position may appear before the
+  transaction runs, and the setting is off, it says instead that internal
+  matching is switched off on this deployment, so the outcome it describes is
+  the one that happens unless that setting changes first — and it does not
+  offer the matcher incentive, which only a settlement against an opposing
+  position pays. Where the setting cannot be read, the surface keeps the
+  warning, which is true whichever way the setting stands.
 - Where that opposing position exists, the surface must not describe the
   consequence of losing it as a single outcome. Another party may settle
   against the same position first, and what happens then is decided by the
@@ -3118,6 +3151,28 @@ is the borrower's own money.
   per-user address becoming indexable merely because it was reached by
   an older spelling, and a public page being listed twice under two
   addresses.
+- **Every address the retired deployment served has an answer that does
+  what the address was for.** Keeping old bookmarks working is a claim
+  about every address the old app had, so the set is enumerated from that
+  app rather than patched as visitors report misses. An address whose page
+  became part of another page lands at that part and brings it into view,
+  even when it appears only after the page's data arrives — an old loan
+  action page lands on that loan at the card that lists the same action,
+  says whether it can be taken now and why not, and offers it. That card
+  must be one shown in whichever mode the visitor uses: an action whose own
+  form appears only in the fuller mode, or only while the loan can take it,
+  is reached through the list that names it, never through an anchor that
+  may not exist. An
+  address for a settings page lands on that setting, and is shown even in
+  the simpler mode that normally hides it, because the visitor asked for it
+  by name (one of them holds the way to withdraw a spending permission). An
+  old offer address opens that offer where it is taken; since the old
+  address never said which network the offer was on, and offer numbers
+  repeat across networks, a miss says it looked on the current network and
+  names the other reasons it can miss, rather than calling the offer gone.
+  A feature this app does not have yet is said to be missing, together with
+  what that leaves unseen, rather than answered with a page-not-found. A
+  surface that was removed on purpose stays not-found.
 - **Every address the app asks to have indexed is a single top-level
   page.** That is a deliberate property rather than an accident of the
   current route set: it is what allows the compatibility exclusion above
@@ -4071,6 +4126,64 @@ Its intended behaviour, as the test oracle for this surface:
   expired stays treated as expired even when the page's fuller check of
   it cannot finish. Loans on a periodic interest schedule carry a visible
   warning that an overdue period blocks completion until settled.
+- An active loan on a periodic interest schedule shows its current
+  period on the loan page, in both interface modes and to anyone viewing
+  it (#2524): the schedule, the period's deadline and the end of its grace,
+  the interest the period expects, what has been paid toward it, and what
+  is still owed. Every figure and date is the platform's own settlement
+  preview, read together with the chain time it was evaluated at, so the
+  page never describes a period as payable when the chain already lets it
+  be settled, and it states the block it read. The expected interest is
+  described as worked out at the loan's current amount and rate, because
+  it falls when part of the loan is repaid during the period. Before the
+  grace ends the page says, in each party's terms, that interest paid
+  during the period counts toward it and that anyone may settle a period
+  still short when its grace ends by selling enough of the borrower's
+  collateral to cover it, the lender being paid up to what is owed. Once
+  the grace is over it says what can happen next, and offers an action
+  only where this page can complete it: a fully paid period may be
+  recorded from the page, which moves no funds and starts the next period,
+  and is re-checked at the moment of signing; a period with something
+  still owed is settled by a collateral sale whose swap route must be
+  quoted when it runs, so the page says anyone, a keeper service included,
+  may settle it and that it cannot run that sale itself, and the borrower
+  is told that paying what is owed first closes the period without a sale.
+  Where the deployment has periodic settlement switched off, the page says
+  so and that no period can be settled, nor collateral sold for one, while
+  that lasts; the existing loan keeps its schedule, so the disclosure
+  replaces any action rather than the period disappearing. It says this in
+  every phase of the period, not only once the grace is over, and while it
+  holds the page does not warn the borrower of a sale that cannot happen,
+  saying only that payments made during the period count toward it. A
+  paused protocol is stated the same way in every phase, beside the rule
+  that applies once settlement resumes, and a setting the page could not
+  read is stated as unread rather than assumed. A loan with no schedule shows
+  nothing, and a schedule the page could not read is said to be unread.
+- The offer form lets the poster choose when the loan's interest is paid
+  (#2524): once, when the loan is repaid, or every month, quarter, six
+  months or year. Which of those an offer may carry is the platform's own
+  rule for the terms being entered, read from the platform as the terms
+  change rather than re-derived by the app, so the form offers only
+  schedules the platform will accept and says, for each one it will not,
+  why: periodic payment switched off on this deployment, an asset the
+  platform cannot price, a loan over a year that must pay at least yearly,
+  a smallest loan below the value finer schedules need (that value and the
+  offer's own being stated, in the platform's reference currency), or a
+  period not shorter than the loan. Where nothing but payment at repayment
+  is open for the whole offer (the switch is off, or an asset cannot be
+  priced), the form says so in one line instead of offering a choice that
+  is not one. Where the platform's answer cannot be had (still reading,
+  the read failed, or the deployment's contracts predate it), the form
+  says which, and only payment at repayment may be chosen, which is what
+  offers carried before the choice existed. A schedule chosen and then
+  closed by a later change to the terms is not silently replaced: the form
+  says it is no longer allowed and will not continue until another is
+  chosen. In the simpler interface mode the choice appears only when one
+  is needed, so a new user is asked only when payment at repayment is not
+  open. The review's consent text states the chosen schedule, payment at
+  repayment included, together with the consequence of a period left
+  unpaid past its grace, since that is a term of the loan the poster is
+  agreeing to.
 - The borrower of an active ERC-20 loan sees, in BOTH interface
   modes, one chooser surface that names every early-repayment path
   the protocol offers — full repayment, partial repayment (marked
@@ -4617,7 +4730,18 @@ Its intended behaviour, as the test oracle for this surface:
   factor and loan-to-value, roughly how far the collateral's value
   can fall before liquidation begins — explicitly framed as
   approximate (it is derived from the health factor, not a price
-  feed, and assumes the loan side holds still). Where a holder
+  feed, and assumes the loan side holds still). Beside them it states
+  the liquidation price (#2531): the collateral price, in the protocol's
+  reference currency per whole collateral token, at which the health
+  factor reaches 1.00. The price and the health factor it is derived
+  from are read together, as of one block. It says what it assumes —
+  the borrowed asset's price and the amount owed held where they are,
+  with accruing interest moving it up — and it is rounded so it never
+  shows a line below the real one. It never shows a zero price: a loan
+  the protocol does not price says there is no liquidation price and
+  why, a loan whose collateral price or token details could not be read
+  says the figure is unknown, and a loan whose debt is too small to
+  reach the line says no price brings it there. Where a holder
   address has an ENS name on Ethereum mainnet, surfaces may show it
   alongside the address as display sugar — never as part of any
   verdict or check.

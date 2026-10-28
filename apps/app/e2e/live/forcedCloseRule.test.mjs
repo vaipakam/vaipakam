@@ -92,6 +92,7 @@ describe('the drive mirrors the read plan and its mapping (#2133)', () => {
     sequencer: [true, false],
     paused: [true, false],
     match: [[true, 3n], [false, 0n], 'nope'],
+    matchConfig: [[true, 0n, 0n], [false, 500n, 25n], [0n, 0n, 0n], 'nope'],
     liquidity: [0, 1, 2n],
     ltv: [12_000n, 9_000n, 'x'],
     risk: [[11_000n], ['x'], 'nope'],

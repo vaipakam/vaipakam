@@ -409,14 +409,14 @@
         "a1": "Consultar el <s>envoltorio de custodia de Vaipakam</s> del prestamista — no el NFT subyacente — a través del Diamond. Para alquileres ERC-1155 con varios arrendatarios concurrentes en el mismo <c>(nftContract, tokenId)</c>, <c2>vaultGetNFTQuantity</c2> devuelve la cantidad <em>agregada activa</em> y <c3>vaultGetNFTUserExpires</c3> devuelve el vencimiento mínimo activo.",
         "a2": "El envoltorio mantiene el estado autoritativo de alquiler incluso cuando el NFT subyacente <s>no</s> implementa ERC-4907, de modo que los integradores obtienen una superficie uniforme para todo activo alquilado."
       },
-      "integrator-subgraph": {
+      "integrator-events": {
         "q": "¿Qué eventos del ciclo de vida del préstamo puedo indexar?",
-        "a1": "El Diamond emite un conjunto estable de eventos del ciclo de vida que indexa el subgraph de referencia. Suscríbete a ellos directamente o consulta el subgraph:",
-        "li1": "<c>LoanInitiated</c> — préstamo creado, condiciones congeladas",
-        "li2": "<c>LoanRepaid</c> — repago total o parcial registrado",
-        "li3": "<c>LoanDefaulted</c> — periodo de gracia agotado, vía de reclamación desbloqueada",
-        "li4": "<c>LoanLiquidated</c> — liquidación DEX disparada por HF ejecutada",
-        "li5": "<c>LiquidationFallback</c> — vía DEX bloqueada; equivalente al colateral + prima abonados"
+        "a1": "Cada cambio en el estado de un préstamo se anuncia con un único evento, emitido por el propio cambio de estado, así que suscribirse solo a ese evento basta para seguir todos los préstamos. Los demás aportan los detalles de pasos concretos:",
+        "li1": "<c>LoanStatusChanged</c> — cada cambio de estado, indicando el préstamo, su estado anterior y el nuevo",
+        "li2": "<c>LoanInitiated</c> — préstamo creado, condiciones fijadas",
+        "li3": "<c>LoanRepaid</c> — préstamo reembolsado por completo (un reembolso parcial emite <c>PartialRepaid</c>)",
+        "li4": "<c>LoanDefaulted</c> — el préstamo terminó en impago",
+        "li5": "<c>LiquidationFallback</c> — ninguna ruta de swap funcionó; la garantía permanece en la bóveda del prestatario, bloqueada para la reclamación del prestamista, y el prestatario aún puede subsanar el préstamo"
       }
     }
   },

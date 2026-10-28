@@ -9,14 +9,21 @@
  * incomplete. Both go through {@link readProtocolKnobGetters}, so the two
  * sources can never disagree about which getter backs which name.
  *
- * SINGLE-OUTPUT GETTERS ONLY, BY CONSTRUCTION. Every entry names a
- * no-argument view that returns exactly one value, so the value is the
- * getter's whole answer and there is no position inside a tuple to get
- * wrong. A setting that is only readable as one field of a multi-output
- * getter is not listed here: naming such a field safely needs the
- * capture-time binding `getProtocolConfigBundle` carries (#2073), and the
- * console says the setting is not shown yet rather than borrow a position.
- * The package test pins every entry to that shape in the compiled ABI.
+ * TWO KINDS OF GETTER, EACH NAMED SAFELY.
+ *
+ * - {@link PROTOCOL_KNOB_GETTERS}: a no-argument view that returns exactly
+ *   one value, so the value is the getter's whole answer and there is no
+ *   position inside a tuple to get wrong.
+ * - {@link LABELLED_KNOB_GETTERS} (#2680): a no-argument view whose answer
+ *   has several named parts (a tuple, or a list of structs). A part's name
+ *   is only true of the code it was compiled from, so each one is read with
+ *   the capture-time binding `getProtocolConfigBundle` carries (#2073): the
+ *   Diamond loupe's host for the getter AT THE READ BLOCK must be the host
+ *   the caller's deployment artifact records. When it is not, or cannot be
+ *   shown, every part of that getter is reported as unreported rather than
+ *   named by position.
+ *
+ * The package test pins every entry to its shape in the compiled ABI.
  *
  * SETTINGS AND RECORDED FACTS, NOT LIVE STATE. Each value here changes
  * only in a transaction that announces the change (or, for an `eventless`
@@ -34,6 +41,7 @@
  * Diamond ABI they already compile against.
  */
 import { getAbiItem, toFunctionSelector, type Abi, type Address, type PublicClient } from 'viem';
+import type { DeploymentFacets } from '@vaipakam/contracts/deployments';
 import { MULTICALL3_ADDRESS } from './multicall.js';
 import { describeShapeMismatch, readStaticReturn } from './staticReturn.js';
 
@@ -89,16 +97,17 @@ export const PROTOCOL_KNOB_GETTERS = [
   { key: 'pythMaxStalenessSeconds', getter: 'getPythMaxStalenessSeconds', setterEvents: ['PythMaxStalenessSecondsSet'] },
   { key: 'pythCrossCheckMaxDeviationBps', getter: 'getPythNumeraireMaxDeviationBps', setterEvents: ['PythNumeraireMaxDeviationBpsSet'] },
   { key: 'pythConfidenceMaxBps', getter: 'getPythConfidenceMaxBps', setterEvents: ['PythConfidenceMaxBpsSet'] },
-  { key: 'sequencerUptimeFeed', getter: 'getSequencerUptimeFeed', setterEvents: [], eventless: true },
+  // #2685 — the setter announces the change since the event was added.
+  { key: 'sequencerUptimeFeed', getter: 'getSequencerUptimeFeed', setterEvents: ['SequencerUptimeFeedSet'] },
   // Cross-chain reward reporting
   { key: 'rewardGraceSeconds', getter: 'getRewardGraceSeconds', setterEvents: ['RewardReporterConfigUpdated'] },
   // Periodic interest and the numeraire
   { key: 'periodicInterestEnabled', getter: 'getPeriodicInterestEnabled', setterEvents: ['PeriodicInterestEnabledSet'] },
   { key: 'numeraireSwapEnabled', getter: 'getNumeraireSwapEnabled', setterEvents: ['NumeraireSwapEnabledSet'] },
   { key: 'numeraireSymbol', getter: 'getNumeraireSymbol', setterEvents: ['NumeraireUpdated'] },
-  // Codex #2815 r1 — `setNumeraire` announces it (NumeraireUpdated), but
-  // `OracleAdminFacet.setEthUsdFeed` writes the same slot and emits nothing.
-  { key: 'ethNumeraireFeed', getter: 'getEthNumeraireFeed', setterEvents: ['NumeraireUpdated'], eventless: true },
+  // Two setters write this slot: `setNumeraire` (NumeraireUpdated) and
+  // `OracleAdminFacet.setEthUsdFeed` (EthNumeraireFeedSet, since #2685).
+  { key: 'ethNumeraireFeed', getter: 'getEthNumeraireFeed', setterEvents: ['NumeraireUpdated', 'EthNumeraireFeedSet'] },
   { key: 'minPrincipalForFinerCadence', getter: 'getMinPrincipalForFinerCadence', setterEvents: ['MinPrincipalForFinerCadenceSet', 'NumeraireUpdated'] },
   { key: 'preNotifyDays', getter: 'getPreNotifyDays', setterEvents: ['PreNotifyDaysSet'] },
   // Automation and pauses
@@ -125,6 +134,17 @@ export const PROTOCOL_KNOB_GETTERS = [
   { key: 'minIntentFillNumeraire', getter: 'getMinIntentFillNumeraire', setterEvents: ['MinIntentFillNumeraireSet'] },
   // Treasury
   { key: 'treasury', getter: 'getTreasury', setterEvents: ['TreasurySet'] },
+  // #2680 — the oracle stack's chain wiring, each a single stored address.
+  // The four PAD slots move together in `setPredominantDenominator`.
+  { key: 'predominantDenominator', getter: 'getPredominantDenominator', setterEvents: ['PredominantDenominatorUpdated'] },
+  { key: 'predominantDenominatorSymbol', getter: 'getPredominantDenominatorSymbol', setterEvents: ['PredominantDenominatorUpdated'] },
+  { key: 'ethPadFeed', getter: 'getEthPadFeed', setterEvents: ['PredominantDenominatorUpdated'] },
+  { key: 'padNumeraireRateFeed', getter: 'getPadNumeraireRateFeed', setterEvents: ['PredominantDenominatorUpdated'] },
+  { key: 'wethContract', getter: 'getWethContract', setterEvents: ['WethContractSet'] },
+  // #2680 — the swap venues' factories that have a getter. (The 0x proxy
+  // and the Uniswap V3 factory have none; the console says so.)
+  { key: 'pancakeswapV3Factory', getter: 'getPancakeswapV3Factory', setterEvents: ['PancakeswapV3FactorySet'] },
+  { key: 'sushiswapV3Factory', getter: 'getSushiswapV3Factory', setterEvents: ['SushiswapV3FactorySet'] },
 ] as const satisfies readonly ProtocolKnobGetter[];
 
 /** The settings that can change without announcing it on chain (see
@@ -133,24 +153,140 @@ export const EVENTLESS_PROTOCOL_KNOBS: ReadonlySet<string> = new Set(
   PROTOCOL_KNOB_GETTERS.filter((k): boolean => 'eventless' in k && k.eventless === true).map((k) => k.key),
 );
 
+/**
+ * #2680 — a setting readable only as part of a multi-part answer.
+ *
+ * `host` is the deployment-artifact facet key of the facet that serves the
+ * getter; the read binds the part names to that code (see the module note).
+ */
+export type LabelledKnobGetter =
+  /** A tuple answer. `fields` maps each PUBLISHED output (by its ABI name)
+   *  to the key it is published under. An output left out is not a setting
+   *  and is never published; `notPublished` says why, so leaving it out is
+   *  a decision on record rather than an oversight. */
+  | {
+      readonly kind: 'tuple';
+      readonly getter: string;
+      readonly host: keyof DeploymentFacets;
+      readonly fields: Readonly<Record<string, string>>;
+      readonly notPublished?: Readonly<Record<string, string>>;
+      readonly setterEvents: readonly [string, ...string[]];
+    }
+  /** A single output that is a list of structs, published under `key` as
+   *  a list of objects keyed by the struct's own field names. */
+  | {
+      readonly kind: 'structList';
+      readonly getter: string;
+      readonly host: keyof DeploymentFacets;
+      readonly key: string;
+      readonly setterEvents: readonly [string, ...string[]];
+    };
+
+export const LABELLED_KNOB_GETTERS = [
+  // Graduated partial-liquidation sizing (#395). `setNumeraire` rescales
+  // the dust floor and announces it with the same event.
+  {
+    kind: 'tuple',
+    getter: 'getPartialLiquidationSizing',
+    host: 'adminFacet',
+    fields: {
+      targetHfCeilingBps: 'partialLiqTargetHfCeilingBps',
+      deepUnderwaterHfBps: 'partialLiqDeepUnderwaterHfBps',
+      dustFloorNumeraire: 'partialLiqDustFloorNumeraire',
+    },
+    setterEvents: ['PartialLiquidationSizingSet'],
+  },
+  // The per-tier liquidator discount, effective values.
+  {
+    kind: 'tuple',
+    getter: 'getTierLiqDiscountBps',
+    host: 'configFacet',
+    fields: {
+      tier1Bps: 'tier1LiqDiscountBps',
+      tier2Bps: 'tier2LiqDiscountBps',
+      tier3Bps: 'tier3LiqDiscountBps',
+    },
+    setterEvents: ['TierLiqDiscountBpsSet'],
+  },
+  // The feed registry and the two keys the oracle asks it under. The
+  // primary key is the predominant denominator, or the numeraire's
+  // Chainlink denominator while that is unset, so every event that writes
+  // either one refreshes it.
+  {
+    kind: 'tuple',
+    getter: 'getFeedRegistryLookup',
+    host: 'oracleAdminFacet',
+    fields: {
+      registry: 'feedRegistry',
+      padDenominator: 'feedRegistryPrimaryKey',
+      ethDenominator: 'feedRegistryEthKey',
+    },
+    setterEvents: [
+      'ChainlinkRegistrySet',
+      'UsdChainlinkDenominatorSet',
+      'EthChainlinkDenominatorSet',
+      'PredominantDenominatorUpdated',
+      'NumeraireUpdated',
+    ],
+  },
+  // The notification fee per loan side, effective value. `feesAccrued` is a
+  // running total of fees billed, not a setting: it moves on every bill.
+  {
+    kind: 'tuple',
+    getter: 'getNotificationFeeConfig',
+    host: 'configFacet',
+    fields: { feeVpfi1e18: 'notificationFeeVpfi' },
+    notPublished: { feesAccrued: 'a running total of fees billed, not a setting' },
+    setterEvents: ['NotificationFeeSet'],
+  },
+  // The loan-default grace schedule. An empty list means none is set and
+  // the compile-time default schedule applies.
+  {
+    kind: 'structList',
+    getter: 'getGraceBuckets',
+    host: 'configFacet',
+    key: 'graceBuckets',
+    setterEvents: ['GraceBucketsUpdated'],
+  },
+] as const satisfies readonly LabelledKnobGetter[];
+
+/** Every key a labelled getter publishes. */
+export const LABELLED_KNOB_KEYS: readonly string[] = LABELLED_KNOB_GETTERS.flatMap(
+  (g): readonly string[] => (g.kind === 'tuple' ? Object.values(g.fields) : [g.key]),
+);
+
 /** Codex #2815 r1 — every event that announces a change to a published
  *  value. The indexer's snapshot refreshes on each of these. */
-export const PROTOCOL_KNOB_SETTER_EVENTS: ReadonlySet<string> = new Set(
-  PROTOCOL_KNOB_GETTERS.flatMap((k): readonly string[] => k.setterEvents),
-);
+export const PROTOCOL_KNOB_SETTER_EVENTS: ReadonlySet<string> = new Set([
+  ...PROTOCOL_KNOB_GETTERS.flatMap((k): readonly string[] => k.setterEvents),
+  ...LABELLED_KNOB_GETTERS.flatMap((k): readonly string[] => k.setterEvents),
+]);
+
+type FieldKeys<G> = G extends { readonly fields: infer F } ? F[keyof F] : never;
+type LabelledTupleKey = FieldKeys<(typeof LABELLED_KNOB_GETTERS)[number]>;
+type LabelledListKey = Extract<(typeof LABELLED_KNOB_GETTERS)[number], { kind: 'structList' }>['key'];
 
 /** Every published setting's name, as a type, so a consumer can prove at
  *  compile time that it declares each one. */
-export type ProtocolKnobKey = (typeof PROTOCOL_KNOB_GETTERS)[number]['key'];
+export type ProtocolKnobKey =
+  | (typeof PROTOCOL_KNOB_GETTERS)[number]['key']
+  | LabelledTupleKey
+  | LabelledListKey;
 
 /** A published value: integers as decimal strings (a `uint256` does not
  *  survive a JSON number), flags as booleans, addresses and 32-byte ids as
  *  their hex text. */
 export type ProtocolKnobValue = string | boolean;
 
+/** One struct of a published list (#2680), by its fields' own names. */
+export type ProtocolKnobRecord = Record<string, ProtocolKnobValue>;
+
+/** What a setting is published as: a value, or a list of structs. */
+export type ProtocolKnobPublished = ProtocolKnobValue | ProtocolKnobRecord[];
+
 export interface ProtocolKnobRead {
   /** Every setting the chain answered, by key. */
-  values: Record<string, ProtocolKnobValue>;
+  values: Record<string, ProtocolKnobPublished>;
   /** Every listed setting the chain did NOT answer (a Diamond without that
    *  getter, or a call that reverted). Stated, never left implicit: a key
    *  in neither list means the reader did not ask for it. */
@@ -171,24 +307,45 @@ function toKnobValue(v: unknown): ProtocolKnobValue | null {
  * same block. A setting whose call fails is listed in `unreported`; a
  * failure of the batch itself (the RPC is down) throws, and the caller
  * decides what that means for its own source.
+ *
+ * #2680 — the same batch carries each labelled getter and the loupe's host
+ * for it, so the binding is judged at the very block the parts were read
+ * at. A labelled getter is published only when that host is the one
+ * `facets` (the caller's deployment artifact) records for it; otherwise
+ * every key it would publish is unreported.
  */
 export async function readProtocolKnobGetters(opts: {
   client: PublicClient;
   diamond: Address;
   abi: Abi;
   blockNumber: bigint;
+  /** The caller's deployment-artifact facet addresses, by facet key.
+   *  `undefined` (no artifact for the chain) leaves every labelled getter
+   *  unreported. */
+  facets: DeploymentFacets | undefined;
 }): Promise<ProtocolKnobRead> {
+  const call = (functionName: string, args?: readonly unknown[]) => ({
+    address: opts.diamond,
+    abi: opts.abi,
+    functionName,
+    ...(args ? { args } : {}),
+  });
+  // A labelled getter this build's ABI does not carry cannot be bound or
+  // decoded; it is asked nothing and reported unreported.
+  const labelled = LABELLED_KNOB_GETTERS.map((g) => ({ g, selector: selectorOf(opts.abi, g.getter) }));
+  const contracts = [
+    ...PROTOCOL_KNOB_GETTERS.map((k) => call(k.getter)),
+    ...labelled.flatMap(({ g, selector }) =>
+      selector === null ? [] : [call('facetAddress', [selector]), call(g.getter)],
+    ),
+  ];
   const results = await opts.client.multicall({
-    contracts: PROTOCOL_KNOB_GETTERS.map((k) => ({
-      address: opts.diamond,
-      abi: opts.abi,
-      functionName: k.getter,
-    })),
+    contracts,
     allowFailure: true,
     blockNumber: opts.blockNumber,
     multicallAddress: MULTICALL3_ADDRESS,
   });
-  const values: Record<string, ProtocolKnobValue> = {};
+  const values: Record<string, ProtocolKnobPublished> = {};
   const unreported: string[] = [];
   PROTOCOL_KNOB_GETTERS.forEach((k, i) => {
     const r = results[i];
@@ -196,7 +353,93 @@ export async function readProtocolKnobGetters(opts: {
     if (v === null) unreported.push(k.key);
     else values[k.key] = v;
   });
+  let at = PROTOCOL_KNOB_GETTERS.length;
+  for (const { g, selector } of labelled) {
+    let published: Record<string, ProtocolKnobPublished> | null = null;
+    if (selector !== null) {
+      const host = results[at];
+      const answer = results[at + 1];
+      at += 2;
+      const expected = opts.facets?.[g.host];
+      const bound =
+        typeof expected === 'string' &&
+        host?.status === 'success' &&
+        typeof host.result === 'string' &&
+        host.result.toLowerCase() === expected.toLowerCase();
+      if (bound && answer?.status === 'success') published = publishLabelled(opts.abi, g, answer.result);
+    }
+    if (published === null) unreported.push(...labelledKeys(g));
+    else Object.assign(values, published);
+  }
   return { values, unreported };
+}
+
+function labelledKeys(g: LabelledKnobGetter): readonly string[] {
+  return g.kind === 'tuple' ? Object.values(g.fields) : [g.key];
+}
+
+function selectorOf(abi: Abi, name: string): `0x${string}` | null {
+  try {
+    const item = getAbiItem({ abi, name });
+    return item && item.type === 'function' ? toFunctionSelector(item) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A bound labelled answer as published values, or `null` when any part
+ * cannot be published as its name says: the ABI names a part the registry
+ * maps and the answer does not carry, or a part is of a kind this reader
+ * does not publish. All or nothing, so a getter is never half-reported.
+ */
+function publishLabelled(
+  abi: Abi,
+  g: LabelledKnobGetter,
+  answer: unknown,
+): Record<string, ProtocolKnobPublished> | null {
+  if (g.kind === 'tuple') {
+    const names = abiOutputNames(abi, g.getter);
+    if (names === null || !Array.isArray(answer) || answer.length !== names.length) return null;
+    const out: Record<string, ProtocolKnobPublished> = {};
+    for (const [abiName, key] of Object.entries(g.fields)) {
+      const i = names.indexOf(abiName);
+      const v = i < 0 ? null : toKnobValue(answer[i]);
+      if (v === null) return null;
+      out[key] = v;
+    }
+    return out;
+  }
+  const fields = structListFieldNames(abi, g.getter);
+  if (fields === null || !Array.isArray(answer)) return null;
+  const list: ProtocolKnobRecord[] = [];
+  for (const item of answer) {
+    if (typeof item !== 'object' || item === null) return null;
+    const record: ProtocolKnobRecord = {};
+    for (const f of fields) {
+      const v = toKnobValue((item as Record<string, unknown>)[f]);
+      if (v === null) return null;
+      record[f] = v;
+    }
+    list.push(record);
+  }
+  return { [g.key]: list };
+}
+
+/** The field names of a getter's single list-of-structs output, from the
+ *  compiled ABI, or `null` when the getter is not of that shape. */
+export function structListFieldNames(abi: Abi, functionName: string): readonly string[] | null {
+  const entry = (abi as readonly unknown[]).find(
+    (e): e is { type: string; name: string; outputs?: readonly { type?: string; components?: readonly { name?: string }[] }[] } =>
+      typeof e === 'object' &&
+      e !== null &&
+      (e as { type?: string }).type === 'function' &&
+      (e as { name?: string }).name === functionName,
+  );
+  const out = entry?.outputs;
+  if (!out || out.length !== 1 || out[0].type !== 'tuple[]' || !out[0].components) return null;
+  const names = out[0].components.map((c) => c.name ?? '');
+  return names.length > 0 && names.every((n) => n.length > 0) ? names : null;
 }
 
 /**

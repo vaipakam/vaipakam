@@ -990,6 +990,34 @@ describe('configSnapshot', () => {
       }
     });
 
+    // #2680 — a multi-part setting is stored only when the loupe's host for
+    // its getter, in the same batch, is the facet this build's artifact
+    // records; the others are named unreported.
+    it('stores the parts of a multi-part setting bound to this build, and names the unbound ones', async () => {
+      const h = refreshHarness({
+        multicall: multicallAnswering({ facetAddress: BUILD_CONFIG_FACET, getTierLiqDiscountBps: [770, 600, 500] }),
+      });
+      await refresh(h);
+      const stored = JSON.parse(knobColumn(h)!) as { values: Record<string, unknown>; unreported: string[] };
+      expect(stored.values).toMatchObject({
+        tier1LiqDiscountBps: '770',
+        tier2LiqDiscountBps: '600',
+        tier3LiqDiscountBps: '500',
+      });
+      // Hosted on AdminFacet, whose address the loupe did not answer here.
+      expect(stored.unreported).toContain('partialLiqTargetHfCeilingBps');
+      const other = refreshHarness({
+        multicall: multicallAnswering({
+          facetAddress: '0x00000000000000000000000000000000000000ee',
+          getTierLiqDiscountBps: [770, 600, 500],
+        }),
+      });
+      await refresh(other);
+      const unbound = JSON.parse(knobColumn(other)!) as { values: Record<string, unknown>; unreported: string[] };
+      expect(unbound.values).not.toHaveProperty('tier1LiqDiscountBps');
+      expect(unbound.unreported).toContain('tier1LiqDiscountBps');
+    });
+
     it('stores the settings the chain answered, and names the rest', async () => {
       const h = refreshHarness({
         multicall: multicallAnswering({ getMinHealthFactor: 15n * 10n ** 17n, getAutoLendEnabled: true }),
@@ -1068,6 +1096,18 @@ describe('configSnapshot', () => {
       const body = await serve(JSON.stringify({ values: { minHealthFactor: 15 }, unreported: [] }));
       expect(body.values).not.toHaveProperty('minHealthFactor');
       expect(body).not.toHaveProperty('unreported');
+    });
+
+    // #2680 — a multi-part setting may be a list of records (the grace
+    // schedule); a list holding anything else is the wrong shape.
+    it('serves a stored list of records, and ignores a list of anything else', async () => {
+      const graceBuckets = [{ maxDurationDays: '7', graceSeconds: '3600' }];
+      const ok = await serve(JSON.stringify({ values: { graceBuckets }, unreported: [] }));
+      expect(ok.values?.graceBuckets).toEqual(graceBuckets);
+      const bad = await serve(JSON.stringify({ values: { graceBuckets: [{ maxDurationDays: 7 }] }, unreported: [] }));
+      expect(bad.values).not.toHaveProperty('graceBuckets');
+      const nested = await serve(JSON.stringify({ values: { graceBuckets: [['7']] }, unreported: [] }));
+      expect(nested.values).not.toHaveProperty('graceBuckets');
     });
   });
 });

@@ -87,7 +87,6 @@
 #                        typecheck + vitest run in ci.yml's
 #                        `ops/mesh-watcher` job, not the `workspaces`
 #                        job, precisely because it is not a member here.
-#   - ops/subgraph       drift subgraph; runs on The Graph.
 #   - ops/tenderly       alert presets; deploy via the Tenderly CLI.
 #   - ops/offchain-data-warm  nightly D1 backup Worker.
 #   (ops/lz-watcher, the LayerZero security monitor, is GONE. Its

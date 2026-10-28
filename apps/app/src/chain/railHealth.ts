@@ -33,6 +33,7 @@
  */
 
 import { isIdle } from '../lib/idle';
+import type { TipRoot } from './tipRoots';
 
 /** Stale after cadence × this. 1.5 tolerates one hiccuped scan without
  *  flapping; two missed scans in a row demote to polling. */
@@ -225,8 +226,15 @@ export function signalAware(baseMs: number): () => number {
  *  per-block tip nudge actually fires — on an HTTP-only chain deploy
  *  there is no tip nudge, and a 180s interval would leave an
  *  action-decisive gate stale for minutes (§4.1.1: "HTTP-only deploy
- *  ⇒ intervals restore to today's 30s"). */
-export function tipAware(baseMs: number, wsAvailable: boolean): () => number {
+ *  ⇒ intervals restore to today's 30s"). `root` is the query's root,
+ *  which must be one of `TIP_ROOTS` (`tipRoots.ts`). */
+export function tipAware(
+  // Unused at runtime: requiring a declared root is what keeps every
+  // stretched root on the rails its stretch relies on (see tipRoots.ts).
+  _root: TipRoot,
+  baseMs: number,
+  wsAvailable: boolean,
+): () => number {
   const idleFactor = 4;
   return () => {
     // All three must hold: the indexer rail is healthy, the chain WS

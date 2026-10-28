@@ -201,7 +201,7 @@ then deploy.
    for the record only while they hold rows.
 
    > **#1440** — `vaipakam-lz-alerts-db` is NOT recreated. It belonged to
-   > `ops/lz-watcher`, a monitor for the LayerZero transport the T-068 CCIP
+   > the lz-watcher Worker, a monitor for the LayerZero transport the T-068 CCIP
    > migration retired; the Worker, its binding **and its source tree** are
    > all gone. (Creating the database itself would cost no cron slot —
    > slots are consumed by deploying a Worker with a scheduled trigger,
@@ -549,6 +549,9 @@ then deploy.
       | `REWARD_DELIVERY_PROOF_ENABLED` | delivery pass skips — epoch days stay unindexed (their value funds nothing a claim can find) and the delivery gate (on every mirror, by role) holds every funded day | indexing every mirror delivery's epoch days and proving no-epoch day lists (#1944) |
       | `REWARD_SANCTIONS_KEEPER_ENABLED` | sanctions-hold observer skips — a held reward claimant goes unobserved, so its hold (and the custody-activation block it carries) can run past its window | observing held claimants, the owner settlement and resolving their held staging records (#2450) |
       | `REWARD_DAY_CLOSE_ENABLED` | day-close pass skips — no reward day is reported, finalized or broadcast unless someone makes those calls by hand, so the remit pass has no finalized day to fund and mirror users cannot claim | closing each elapsed reward day on every chain, finalizing it on Base and broadcasting it to the mirrors (#2612) |
+      | `REWARD_CLOSE_OUT_ENABLED` | close-out pass skips — no elapsed day is proven closed, no transport remainder is parked, no retired custody era is finalized and no pending surplus is drained unless someone makes those permissionless calls by hand | proving elapsed reward days closed, finalizing retired custody eras, draining pending surplus on an active chain, parking finished transport remainders for the administrator's release and pruning exhausted transport cursors (#2984) |
+      | `REWARD_ZEROED_DAY_ENABLED` | zeroed-day pass skips — a mirror day its reward reporter deliberately zeroed is not quoted for compensation, so Base never funds it, and it never lapses, so its users neither recover the day nor see it retired | quoting each deliberately zeroed mirror day to Base for compensation, and lapsing a day whose compensation never came or came short once its window closes (#2984) |
+      | `REWARD_RETURN_TRANSPORT_ENABLED` | return-transport pass skips — an issued repatriation is not carried to its mirror or executed there, a cancelled one's ACK is not sent so Base keeps its availability reserved, and quarantined compensation and a retired chain's pending surplus stay on the mirror, unless someone makes those permissionless calls by hand | carrying each repatriation authorization's instruction, execution and cancellation ACK, and returning quarantined compensation and a retired mirror's pending surplus to Base in lane-bounded parts (#2984) |
       | `REWARD_HORIZON_HEARTBEAT_ENABLED` | horizon heartbeat skips — no reward's claim-horizon clock is observed, so an armed horizon expires nothing and files no final notice (the safe direction: nothing is reaped) | touching every live reward entry about every 12 hours so its executable-time clock advances (#2517) |
 
       The keeper's ops alert channel, `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID`, is
@@ -1300,13 +1303,15 @@ The decrypted JSON has the shape produced by `backup.ts`:
 `vaipakam-lz-alerts-db` was removed with the retired LayerZero monitor
 (#1440). The format version stays `1` because nothing else about the shape
 changed — a reader must treat the key as optional rather than select a
-parser on the version marker.
+parser on the version marker. The database itself was deleted on
+2026-10-28 (it held 0 rows by then), so a legacy section always needs the
+hand-made database below.
 
 If you are restoring an archive that HAS the section and you genuinely need
 that data — alert de-duplication state and per-chain block cursors for a
 transport that no longer exists, so almost certainly not — restore it to a
 database you create by hand for the purpose. Do **not** recreate
-`ops/lz-watcher` to hold it: deploying that package would resurrect a
+the lz-watcher package to hold it: deploying it would resurrect a
 retired Worker, and THAT is what would take one of the account's five
 cron-trigger slots. Creating the database costs no slot — slots are consumed
 by deploying a Worker with a scheduled trigger, never by a D1 database — so
@@ -1594,6 +1599,8 @@ DELETE FROM keeper_deployment" )
 wrangler d1 execute vaipakam-warm --remote --command="\
 DELETE FROM activity_events; \
 DELETE FROM loan_participants; \
+DELETE FROM loan_lifecycle_state; \
+DELETE FROM loan_lifecycle_violation; \
 DELETE FROM notifications; \
 DELETE FROM swap_to_repay_intents; \
 DELETE FROM loan_reconcile_quarantine; \
@@ -1936,7 +1943,7 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`,
    `REWARD_SANCTIONS_KEEPER_ENABLED`,
    `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
-   `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
+   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
    file (`sudo -e /etc/vaipakam/keeper.env`), never by assuming what it held.
    Never paste a value from that file anywhere.
 

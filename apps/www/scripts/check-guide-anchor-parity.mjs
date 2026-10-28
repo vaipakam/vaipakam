@@ -151,28 +151,12 @@ const chapterCount = (file) =>
  * Editions known to be short of the English chapter list, per
  * `<doc>:<locale>` → the number of chapters they still lack.
  *
- * Every edition is now short by exactly ONE and the same one:
- * `How VPFI Discounts Work`, ~10.7k characters of English source and
- * ~96k of translated output across the nine, tracked as #1593.
- *
- * `hi`/`ja` were recorded at 3 until their two extra chapters turned
- * out to need no translator at all — the prose was already written and
- * merely indented into a list item, so the fix was to de-indent it.
- * That is the happier half of #1593 and it is done. Recorded here so
- * the count cannot quietly grow. Shrink it; a new shortfall, or one
- * larger than recorded, is a failure.
+ * Empty: every edition carries every English chapter. The last gap,
+ * `How VPFI Discounts Work` in all nine translations, closed with
+ * #1593. A new shortfall is a failure; record one here only with the
+ * issue that will close it.
  */
-const KNOWN_CHAPTER_GAPS = {
-  'Advanced:ar': 1,
-  'Advanced:de': 1,
-  'Advanced:es': 1,
-  'Advanced:fr': 1,
-  'Advanced:hi': 1,
-  'Advanced:ja': 1,
-  'Advanced:ko': 1,
-  'Advanced:ta': 1,
-  'Advanced:zh': 1,
-};
+const KNOWN_CHAPTER_GAPS = {};
 
 /** `Advanced.en.md` → `{ doc: 'Advanced', locale: 'en' }` */
 const parse = (file) => {

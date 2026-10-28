@@ -16,9 +16,11 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
  * Phase-0 fixed rate (1 VPFI = 0.001 ETH = 1e15 wei), debits the
  * keeper reward budget, and transfers VPFI to the keeper.
  *
- * Phase 0 deliberately uses a FIXED rate. Phase 1 wires the VPFI/ETH
- * LP TWAP path with the `cfgKeeperRewardTwapMaxAgeSec` staleness
- * fallback to fixed-rate.
+ * Phase 0 deliberately uses a FIXED rate, and it is the only rate in
+ * the code. A Phase-1 VPFI/ETH TWAP path (with the
+ * `cfgKeeperRewardTwapMaxAgeSec` staleness fallback to the fixed rate)
+ * is planned and NOT built: that knob is settable and stored, and no
+ * reward conversion reads it today.
  *
  * No-revert path: if the kill-switch is off, the budget is exhausted,
  * or the gas is negligible, the function returns 0 without reverting.

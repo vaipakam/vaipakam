@@ -400,7 +400,10 @@ journalctl -u vaipakam-keeper -f
    `REWARD_DELIVERY_PROOF_ENABLED` (`deliveryProof`),
    `REWARD_SANCTIONS_KEEPER_ENABLED` (`rewardSanctionsHold`, hourly) and
    `REWARD_HORIZON_HEARTBEAT_ENABLED` (`rewardHorizonHeartbeat`, hourly at :44) and
-   `REWARD_DAY_CLOSE_ENABLED` (`rewardDayClose`, every 15 minutes from :10), and
+   `REWARD_DAY_CLOSE_ENABLED` (`rewardDayClose`, every 15 minutes from :10),
+   `REWARD_CLOSE_OUT_ENABLED` (`rewardCloseOut`, every 15 minutes from :00),
+   `REWARD_ZEROED_DAY_ENABLED` (`rewardZeroedDay`, every 15 minutes from :09),
+   `REWARD_RETURN_TRANSPORT_ENABLED` (`rewardReturnTransport`, hourly at :29), and
    `DISCOUNT_PATH_CHAIN_IDS` (a list of chain ids, not `true`: the flash-loan
    branch of the liquidator, armed per chain by
    [`FlashLoanLiquidatorRollout.md`](FlashLoanLiquidatorRollout.md) only; the

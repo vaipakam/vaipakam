@@ -476,14 +476,14 @@
         "a1": "Query the lender's <s>Vaipakam Vaults wrapper</s> — not the underlying NFT — through the Diamond. For ERC-1155 rentals with multiple concurrent renters on the same <c>(nftContract, tokenId)</c>, <c2>vaultGetNFTQuantity</c2> returns the <em>active aggregate</em> quantity and <c3>vaultGetNFTUserExpires</c3> returns the minimum active expiry.",
         "a2": "The wrapper maintains authoritative rental state even when the underlying NFT does <s>not</s> implement ERC-4907, so integrators get a uniform surface across every rented asset."
       },
-      "integrator-subgraph": {
+      "integrator-events": {
         "q": "What loan-lifecycle events can I index?",
-        "a1": "The Diamond emits a stable set of lifecycle events that the reference subgraph indexes. Subscribe to these directly, or query the subgraph:",
-        "li1": "<c>LoanInitiated</c> — loan created, terms frozen",
-        "li2": "<c>LoanRepaid</c> — full or partial repayment posted",
-        "li3": "<c>LoanDefaulted</c> — grace period elapsed, claim path unlocked",
-        "li4": "<c>LoanLiquidated</c> — HF-triggered DEX liquidation executed",
-        "li5": "<c>LiquidationFallback</c> — DEX path blocked; collateral-equivalent + premium paid out"
+        "a1": "Every change to a loan's status is announced by one event, emitted by the status change itself, so subscribing to that event alone follows every loan. The others carry the details of particular steps:",
+        "li1": "<c>LoanStatusChanged</c> — every status change, naming the loan, its old status and its new one",
+        "li2": "<c>LoanInitiated</c> — loan created, terms fixed",
+        "li3": "<c>LoanRepaid</c> — loan repaid in full (a partial repayment emits <c>PartialRepaid</c>)",
+        "li4": "<c>LoanDefaulted</c> — loan ended in default",
+        "li5": "<c>LiquidationFallback</c> — no swap route worked; the collateral stays in the borrower's vault, locked for the lender's claim, and the borrower can still cure the loan"
       }
     }
   },

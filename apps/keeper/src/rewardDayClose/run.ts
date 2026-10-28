@@ -43,7 +43,7 @@ import { listsStand, runBase } from './base';
 import { closeDays } from './close';
 import { ABI, LOOKBACK_DAYS, PASS_ALERT_WINDOW_MS, ROLE_CANONICAL, ROLE_MIRROR } from './constants';
 import type { ChainRun, DayCloseDeps, PeerReader } from './deps';
-import { shortErr } from './errors';
+import { shortErr } from '../callErrors';
 import { feeCeiling } from './feeCeiling';
 import { dayFact, known, type PerDay } from './fact';
 import type { RunFindings } from './findings';

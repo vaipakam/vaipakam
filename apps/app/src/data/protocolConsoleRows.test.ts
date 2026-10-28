@@ -4,7 +4,7 @@
  * and a zero time means only what its row says it means.
  */
 import { describe, expect, it } from 'vitest';
-import { CONSOLE_SECTIONS, readNotBefore } from './protocolConsoleRows';
+import { CONSOLE_SECTIONS, readGraceSchedule, readNotBefore } from './protocolConsoleRows';
 
 describe('readNotBefore', () => {
   const NOW = 1_800_000_000;
@@ -34,5 +34,38 @@ describe('notBefore rows', () => {
     const rows = CONSOLE_SECTIONS.flatMap((s) => s.rows).filter((r) => r.format === 'notBefore');
     expect(rows.map((r) => r.key)).toEqual(['autoPauseAvailableAt']);
     for (const r of rows) expect(r.zeroMeans, r.key).toBeDefined();
+  });
+});
+
+/** #2680 — the grace schedule as a source published it. */
+describe('readGraceSchedule', () => {
+  it('reads the published rows, the catch-all included', () => {
+    expect(
+      readGraceSchedule([
+        { maxDurationDays: '7', graceSeconds: '3600' },
+        { maxDurationDays: '0', graceSeconds: '2592000' },
+      ]),
+    ).toEqual([
+      { maxDurationDays: 7, graceSeconds: 3600 },
+      { maxDurationDays: 0, graceSeconds: 2_592_000 },
+    ]);
+  });
+
+  it('reads an empty list as unset, never as "no grace"', () => {
+    expect(readGraceSchedule([])).toBe('unset');
+  });
+
+  it('reports anything else as unreadable rather than guess at it', () => {
+    for (const v of [
+      undefined,
+      '7',
+      [{ maxDurationDays: 7, graceSeconds: 3600 }],
+      [{ maxDurationDays: '7' }],
+      [{ maxDurationDays: '-1', graceSeconds: '3600' }],
+      [{ maxDurationDays: '7', graceSeconds: '9007199254740993' }],
+      [null],
+    ]) {
+      expect(readGraceSchedule(v), JSON.stringify(v)).toBeNull();
+    }
   });
 });

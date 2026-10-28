@@ -11,6 +11,7 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {LibUserVault} from "../src/libraries/LibUserVault.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -136,7 +137,7 @@ contract OfferFacetTest is Test {
         HelperTest helperTest = new HelperTest();
 
         // Prepare cuts for required facets
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](15);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: ArtifactDeploy.deploy(type(OfferCreateFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
@@ -170,6 +171,14 @@ contract OfferFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(NumeraireValueFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNumeraireValueFacetSelectors()
+        });
+        // #3009 - offer creation and mutation admit a periodic-interest
+        // cadence through a self-call to OfferPreviewFacet's one copy of the
+        // rule, so a hand-built Diamond that cuts OfferCreateFacet must cut it.
+        cuts[15] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(OfferPreviewFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferPreviewFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
             facetAddress: ArtifactDeploy.deploy(type(ProfileFacet).name),
@@ -863,6 +872,8 @@ contract OfferFacetTest is Test {
         uint256 balanceBefore = ERC20(mockERC20).balanceOf(user1);
         console.log("User balanceBefore: ", balanceBefore);
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user1);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
@@ -931,6 +942,8 @@ contract OfferFacetTest is Test {
         vm.expectEmit(true, true, false, false, address(diamond));
         emit OfferCancelFacet.OfferCanceled(offerId, user1);
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user1);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
     }
@@ -1494,6 +1507,8 @@ contract OfferFacetTest is Test {
         address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
         assertEq(MockRentableNFT721(mockNft721).ownerOf(1), lenderVault);
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user1);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
@@ -1536,6 +1551,8 @@ contract OfferFacetTest is Test {
             })
         );
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
@@ -1589,6 +1606,8 @@ contract OfferFacetTest is Test {
         address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user2);
         assertEq(collateralNft.ownerOf(42), vault);
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
@@ -1643,6 +1662,8 @@ contract OfferFacetTest is Test {
         assertEq(collateral1155.balanceOf(vault, 7), 10);
         assertEq(collateral1155.balanceOf(user2, 7), 0);
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
@@ -1898,6 +1919,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         vm.expectEmit(true, true, false, false);
         emit OfferCancelFacet.OfferCanceled(offerId, user1);
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
@@ -1955,6 +1978,8 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
@@ -2008,6 +2033,8 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
@@ -2053,6 +2080,8 @@ contract OfferFacetTest is Test {
             "withdraw fail"
         );
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user1);
         vm.expectRevert(bytes("withdraw fail"));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
@@ -2100,6 +2129,8 @@ contract OfferFacetTest is Test {
             "burn fail"
         );
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user1);
         vm.expectRevert(bytes("burn fail"));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
@@ -2201,6 +2232,8 @@ contract OfferFacetTest is Test {
             "unlock fail"
         );
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
         vm.expectRevert(bytes("unlock fail"));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
@@ -2303,6 +2336,8 @@ contract OfferFacetTest is Test {
             "withdraw fail"
         );
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user1);
         vm.expectRevert(bytes("withdraw fail"));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
@@ -2358,6 +2393,8 @@ contract OfferFacetTest is Test {
             "withdraw fail"
         );
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user1);
         vm.expectRevert(bytes("withdraw fail"));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
@@ -2410,6 +2447,8 @@ contract OfferFacetTest is Test {
             "unlock fail"
         );
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
         vm.expectRevert(bytes("unlock fail"));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
@@ -2469,6 +2508,8 @@ contract OfferFacetTest is Test {
             "unlock fail"
         );
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
         vm.expectRevert(bytes("unlock fail"));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
@@ -3356,6 +3397,8 @@ contract OfferFacetTest is Test {
             "unlock fail"
         );
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
         vm.expectRevert(bytes("unlock fail"));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
@@ -3840,6 +3883,8 @@ contract OfferFacetTest is Test {
             "unlock fail"
         );
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
         vm.expectRevert(bytes("unlock fail"));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
@@ -4156,6 +4201,8 @@ contract OfferFacetTest is Test {
         // Cancel: should unlock ERC20 prepay (amount*days + 5% buffer)
         MockVaultWithdraw.deliversAll(address(diamond));
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         // Verify offer deleted
@@ -4207,6 +4254,8 @@ contract OfferFacetTest is Test {
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), abi.encode(true));
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user1);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
@@ -4365,6 +4414,8 @@ contract OfferFacetTest is Test {
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), abi.encode(true));
 
+        // #664 — the cancel cooldown applies to every fresh offer.
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 

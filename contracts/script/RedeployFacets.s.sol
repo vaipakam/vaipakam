@@ -29,6 +29,7 @@ import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
+import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -472,8 +473,11 @@ contract RedeployFacets is Script {
         // (idempotent: nothing is removed on a fresh or migrated Diamond).
         IDiamondCut.FacetCut[] memory sellCuts =
             _forcedSaleEntryCuts(diamond, address(defaultedFacet));
+        // #1841 - both lender-exit entries gate on SaleExitVerdictFacet by
+        // self-call, so the host rides the same cut as the two entries above.
+        IDiamondCut.FacetCut[] memory verdictCuts = _saleExitVerdictCuts(diamond);
 
-        uint256 nExtra = sellCuts.length +
+        uint256 nExtra = sellCuts.length + verdictCuts.length +
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
             (riskToRemove.length > 0 ? 1 : 0) +
             (consToAdd.length > 0 ? 1 : 0) + (consToReplace.length > 0 ? 1 : 0) +
@@ -532,6 +536,9 @@ contract RedeployFacets is Script {
         uint256 idx = 9;
         for (uint256 i = 0; i < sellCuts.length; i++) {
             cuts[idx++] = sellCuts[i];
+        }
+        for (uint256 i = 0; i < verdictCuts.length; i++) {
+            cuts[idx++] = verdictCuts[i];
         }
         if (riskToRemove.length > 0) {
             cuts[idx++] = _remove(riskToRemove);
@@ -739,6 +746,7 @@ contract RedeployFacets is Script {
         console.log("  ForcedSale selectors added:      ", fsToAdd.length);
         console.log("  ForcedSale selectors repl.:      ", fsToReplace.length);
         console.log("  Sell-amount entry cuts (#2796):  ", sellCuts.length);
+        console.log("  Sale-exit verdict cuts (#1841):  ", verdictCuts.length);
     }
 
     /// @dev #1566 S2b - the fallback-custody boundary. From S2b the fallback
@@ -1077,6 +1085,29 @@ contract RedeployFacets is Script {
         if (retiredRouted.length > 0) out[i++] = _remove(retiredRouted);
         if (toReplace.length > 0) out[i++] = _replace(defaultedFacet, toReplace);
         if (toAdd.length > 0) out[i++] = _add(defaultedFacet, toAdd);
+    }
+
+    /// @dev #1841 - the sale-exit verdict host. `EarlyWithdrawalFacet` and
+    ///      `EarlyWithdrawalDirectFacet` both run their opening checks through a
+    ///      self-call to `requireSaleExitOpen`, so refreshing either entry
+    ///      without the host would revert `FunctionDoesNotExist` on every sale.
+    ///      Deploys the host and partitions its selectors by live routing (Add
+    ///      on a pre-#1841 Diamond, Replace on a current one). Kept out of
+    ///      `runWith` so its locals do not join that frame.
+    function _saleExitVerdictCuts(address diamond)
+        internal
+        returns (IDiamondCut.FacetCut[] memory out)
+    {
+        address host = ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name);
+        console.log("SaleExitVerdictFacet: ", host);
+        (bytes4[] memory toAdd, bytes4[] memory toReplace) =
+            _partitionByRouting(diamond, FacetSelectors.saleExitVerdict());
+        out = new IDiamondCut.FacetCut[](
+            (toAdd.length > 0 ? 1 : 0) + (toReplace.length > 0 ? 1 : 0)
+        );
+        uint256 i;
+        if (toReplace.length > 0) out[i++] = _replace(host, toReplace);
+        if (toAdd.length > 0) out[i++] = _add(host, toAdd);
     }
 
     function _loanSelectors() internal pure returns (bytes4[] memory s) {

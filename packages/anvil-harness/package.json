@@ -58,7 +58,8 @@
     "typecheck": "tsc -p . --noEmit"
   },
   "dependencies": {
-    "@vaipakam/contracts": "workspace:*"
+    "@vaipakam/contracts": "workspace:*",
+    "@vaipakam/lib": "workspace:*"
   },
   "peerDependencies": {
     "viem": "^2.0.0"

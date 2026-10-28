@@ -28,6 +28,7 @@
     "NumeraireValueFacet",
     "NotificationFeeFacet",
     "ForcedSaleFacet",
+    "SaleExitVerdictFacet",
     "RateModelFacet",
     "IntentDispatchFacet",
     "AutoLifecycleFacet",
@@ -121,6 +122,8 @@
     "VaipakamFeedRegistry",
     "CcipMessenger",
     "VaipakamRewardMessenger",
-    "VaipakamTimelock"
+    "VaipakamTimelock",
+    "VpfiReturnSender",
+    "VpfiReturnReceiver"
   ]
 }

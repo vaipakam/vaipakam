@@ -35,10 +35,14 @@ library LibFacet {
     ///      withdraw) intentionally do not call this helper; only
     ///      creation paths do.
     function requireAssetNotPaused(address asset) internal view {
-        if (asset == address(0)) return;
-        if (LibVaipakam.storageSlot().assetPaused[asset]) {
-            revert IVaipakamErrors.AssetPaused(asset);
-        }
+        if (isAssetPaused(asset)) revert IVaipakamErrors.AssetPaused(asset);
+    }
+
+    /// @dev The predicate {requireAssetNotPaused} enforces: true iff `asset` is
+    ///      a real asset governance has paused. Read on its own by the sale-exit
+    ///      verdict (#1841) so the view and the creation paths share one rule.
+    function isAssetPaused(address asset) internal view returns (bool) {
+        return asset != address(0) && LibVaipakam.storageSlot().assetPaused[asset];
     }
 
     /// @dev Moves `amount` of `asset` the Diamond holds (a treasury share of

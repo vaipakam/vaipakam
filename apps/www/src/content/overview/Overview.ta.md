@@ -282,8 +282,7 @@ Reward pool முதல் ஆறு மாதங்களில் மிக�
 ## எந்த chains ஆதரிக்கப்படுகின்றன?
 
 Vaipakam ஒவ்வொரு supported chain-லும் independent deployment-ஆக இயங்குகிறது:
-**Ethereum**, **Base**, **Arbitrum**, **Optimism**, **Polygon zkEVM**,
-**BNB Chain**.
+**Ethereum**, **Base**, **Arbitrum**, **Optimism**, **Polygon**.
 
 Base-ல் opened loan Base-லேயே settle ஆகும். Arbitrum-ல் opened loan Arbitrum-லேயே
 settle ஆகும். Cross-chain debt இல்லை. Chains கடக்கும் ஒரே விஷயம் VPFI token மற்றும்

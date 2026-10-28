@@ -46,6 +46,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { useActiveChain } from '../chain/useActiveChain';
+import { multicall3Of, readAggregate } from '../contracts/aggregate';
 import { forcedCloseFacts, forcedCloseReadPlan } from './forcedCloseReads';
 
 /** Poll cadence. The interesting transitions here are slow — a grace
@@ -66,6 +67,10 @@ export interface ForcedCloseReads {
   paused: boolean | undefined;
   consentFromBoth: boolean | undefined;
   internalMatchCandidate: boolean | undefined;
+  /** Whether internal matching is switched on for this deployment, from
+   *  the aggregate (#2082). Not a decision input — the card's disclosure
+   *  only; see `ForcedCloseFacts.internalMatchEnabled`. */
+  internalMatchEnabled: boolean | undefined;
   collateralIlliquid: boolean | undefined;
   ltvCollapsed: boolean | undefined;
   /** The block every fact above was evaluated at — `block.number` of
@@ -130,37 +135,31 @@ export function useForcedCloseReads(opts: {
     enabled: on,
     refetchInterval: REFETCH_MS,
     queryFn: async () => {
-      // Every chain this app supports carries the canonical Multicall3 in
-      // its viem definition. A chain without one is a configuration
-      // error, thrown rather than worked around: a second code path that
-      // silently reads seven times without a block is exactly the kind of
-      // divergence this aggregate was built to remove.
-      const multicall3 = publicClient!.chain?.contracts?.multicall3?.address;
-      if (!multicall3) {
-        throw new Error(`no Multicall3 configured for chain ${readChain.chainId}`);
-      }
       const plan = forcedCloseReadPlan({
         diamond,
-        multicall3,
+        // A chain without Multicall3 throws here: a second code path that
+        // silently reads seven times without a block is exactly the kind
+        // of divergence this aggregate was built to remove.
+        multicall3: multicall3Of(publicClient!),
         loanId: BigInt(loanId!),
         collateralAsset: opts.collateralAsset,
       });
-      const slots = await publicClient!.multicall({
-        allowFailure: true,
-        // The plan's entries are built against the diamond's ABI and the
-        // one Multicall3 fragment above; the loose `contract` type on the
-        // plan is what lets the mapper be tested without viem's generics.
-        contracts: plan.map((e) => e.contract) as never,
-      });
-      return forcedCloseFacts(plan, slots as never);
+      // One `eth_call`, so the block slot dates every fact; a provider
+      // failure rejects (a query error) instead of failing every slot.
+      const slots = await readAggregate(
+        publicClient!,
+        plan.map((e) => e.contract),
+      );
+      return forcedCloseFacts(plan, slots);
     },
   });
 
   // `isError` disqualifies a cached value rather than ranking below it —
   // the house rule from `loanLive` and the sale lock. A stale
   // "defaultable" retained through a failed refetch would keep a submit
-  // button live against a loan whose status may have moved. The whole
-  // aggregate failing is a provider failure, and every fact reads unknown.
+  // button live against a loan whose status may have moved. A provider
+  // failure rejects the aggregate (`readAggregate`), and every fact reads
+  // unknown.
   const facts = reads.isError ? undefined : reads.data;
 
   return {
@@ -172,6 +171,7 @@ export function useForcedCloseReads(opts: {
     paused: facts?.paused,
     consentFromBoth: facts?.consentFromBoth,
     internalMatchCandidate: facts?.internalMatchCandidate,
+    internalMatchEnabled: facts?.internalMatchEnabled,
     collateralIlliquid: facts?.collateralIlliquid,
     ltvCollapsed: facts?.ltvCollapsed,
     block: facts?.block,

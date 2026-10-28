@@ -61,6 +61,8 @@ import NumeraireValueFacetABI from './NumeraireValueFacet.json';
 import NotificationFeeFacetABI from './NotificationFeeFacet.json';
 // #2795 — the forced-sale host (sized to the debt, lender first).
 import ForcedSaleFacetABI from './ForcedSaleFacet.json';
+// #1841 — the sale-exit verdict host (both lender-exit routes, one rule).
+import SaleExitVerdictFacetABI from './SaleExitVerdictFacet.json';
 // #2748 — the rate-model host (model, band, offer-rate clamp).
 import RateModelFacetABI from './RateModelFacet.json';
 import RiskSplitLiquidationFacetABI from './RiskSplitLiquidationFacet.json';
@@ -186,6 +188,10 @@ import CcipMessengerABI from './CcipMessenger.json';
 import VaipakamRewardMessengerABI from './VaipakamRewardMessenger.json';
 // #2650 — the governance timelock (standalone; NOT a diamond facet).
 import VaipakamTimelockABI from './VaipakamTimelock.json';
+import VpfiReturnSenderABI from './VpfiReturnSender.json';
+// #2984 — the Base-side vpfi-return receiver (standalone; NOT a diamond
+// facet): the keeper's return-transport pass reads which Diamond it delivers to.
+import VpfiReturnReceiverABI from './VpfiReturnReceiver.json';
 
 export {
   OfferCreateFacetABI,
@@ -224,6 +230,7 @@ export {
   NumeraireValueFacetABI,
   NotificationFeeFacetABI,
   ForcedSaleFacetABI,
+  SaleExitVerdictFacetABI,
   RateModelFacetABI,
   RiskSplitLiquidationFacetABI,
   ClaimFacetABI,
@@ -305,6 +312,8 @@ export {
   CcipMessengerABI,
   VaipakamRewardMessengerABI,
   VaipakamTimelockABI,
+  VpfiReturnSenderABI,
+  VpfiReturnReceiverABI,
 };
 
 import type { Abi } from 'viem';

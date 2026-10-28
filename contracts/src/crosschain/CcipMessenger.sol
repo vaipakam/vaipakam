@@ -27,8 +27,8 @@ import {ICrossChainMessenger, ICrossChainMessageRecipient} from "./ICrossChainMe
  * T-068. This is the ONE contract in the codebase that is CCIP-aware —
  * the single adapter that implements {ICrossChainMessenger} (the outbound
  * port) and the CCIP {CCIPReceiver} base (the inbound port). Every domain
- * contract — the VPFI buy adapter/receiver, the reward messenger — talks
- * only to {ICrossChainMessenger} and never imports a CCIP library. A
+ * contract — the reward messenger, the remittance receivers and senders —
+ * talks only to {ICrossChainMessenger} and never imports a CCIP library. A
  * future provider swap re-implements this one file (plus the token pools)
  * and the domain contracts are untouched. See
  * `docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md` §4.1.

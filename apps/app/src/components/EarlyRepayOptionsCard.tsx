@@ -204,7 +204,10 @@ export function EarlyRepayOptionsCard({
   const anyAdvancedRow = rows.some((r) => !r.basic);
 
   return (
-    <section className="card">
+    // The retired app's `/loans/:id/preclose` and `/loans/:id/refinance`
+    // land here (#2076): this card renders in Basic mode, where the
+    // refinance card does not, and its row says whether refinance is open.
+    <section className="card" id="early-repay-options">
       <div className="card-title">
         <ListChecks aria-hidden />
         <h3 style={{ margin: 0 }}>{copy.earlyRepay.title}</h3>

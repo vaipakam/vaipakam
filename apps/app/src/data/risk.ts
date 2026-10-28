@@ -1,33 +1,64 @@
 /**
  * Loan risk reads — RiskFacet's `calculateHealthFactor(loanId)` /
- * `calculateLTV(loanId)`. Both REVERT for loans whose legs aren't
- * priceable (illiquid); that's not an error, it's the protocol saying
- * "no automatic liquidation applies here", and the UI copy reflects
- * exactly that instead of showing a spinner forever.
+ * `calculateLTV(loanId)`, and on the position page the collateral price
+ * the liquidation price is derived from (#2531). Both risk reads REVERT for
+ * loans whose legs aren't priceable (illiquid); that's not an error, it's
+ * the protocol saying "no automatic liquidation applies here", and the UI
+ * copy reflects exactly that instead of showing a spinner forever.
+ *
+ * Every read is one Multicall3 aggregate (`loanRiskReads.ts`), so the
+ * health factor, the LTV and the price behind the liquidation price share
+ * one block, and a revert is told from a provider failure by the slot's
+ * own status rather than by error class.
  *
  * HF and LTV are 1e18-scaled ratios.
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
-import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError } from 'viem';
-import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { tipAware } from '../chain/railHealth';
+import { readAggregate } from '../contracts/aggregate';
 import { copy } from '../content/copy';
+import { formatTokenAmountUp } from '../lib/format';
+import { freshData } from '../lib/freshData';
+import {
+  loanRiskFromSlots,
+  loanRiskReadPlan,
+  type LoanRisk,
+  type RiskCollateral,
+} from './loanRiskReads';
 
-export interface LoanRisk {
-  /** False when the reads reverted → illiquid legs, no HF applies. */
-  priced: boolean;
-  healthFactor: bigint;
-  ltv: bigint;
+export type { LiquidationPrice, LoanRisk, RiskCollateral } from './loanRiskReads';
+
+/** What the risk read currently knows. `data` is present only while the
+ *  LATEST read succeeded (`freshData`): a health factor, LTV or
+ *  liquidation price that failed to refresh is unknown, not the last
+ *  figure the app heard, since interest and prices move the line between
+ *  reads. `isError` tells "the read failed" from "still checking". */
+export interface LoanRiskRead {
+  data: LoanRisk | undefined;
+  isError: boolean;
 }
 
-export function useLoanRisk(loanId: number | undefined, enabled: boolean) {
+/** `collateral`, when given, adds the liquidation price to the read. Only
+ *  the position page passes it; list rows read the health factor alone. */
+export function useLoanRisk(
+  loanId: number | undefined,
+  enabled: boolean,
+  collateral?: RiskCollateral,
+): LoanRiskRead {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
 
-  return useQuery({
-    queryKey: ['loanRisk', readChain.chainId, loanId],
+  const query = useQuery({
+    // The collateral is part of the key because it changes the plan.
+    queryKey: [
+      'loanRisk',
+      readChain.chainId,
+      loanId,
+      collateral?.asset.toLowerCase() ?? '',
+      collateral?.decimals ?? '',
+    ],
     enabled: enabled && loanId !== undefined && Boolean(publicClient),
     // Stop polling once a loan is known unpriceable — that
     // classification doesn't change for an open loan. Otherwise the
@@ -38,39 +69,32 @@ export function useLoanRisk(loanId: number | undefined, enabled: boolean) {
     refetchInterval: (query) =>
       query.state.data?.priced === false
         ? false
-        : tipAware(60_000, Boolean(readChain.wsUrl))(),
+        : tipAware('loanRisk', 60_000, Boolean(readChain.wsUrl))(),
     queryFn: async (): Promise<LoanRisk> => {
-      try {
-        const [healthFactor, ltv] = await Promise.all([
-          publicClient!.readContract({
-            address: readChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'calculateHealthFactor',
-            args: [BigInt(loanId!)],
-          }) as Promise<bigint>,
-          publicClient!.readContract({
-            address: readChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'calculateLTV',
-            args: [BigInt(loanId!)],
-          }) as Promise<bigint>,
-        ]);
-        return { priced: true, healthFactor, ltv };
-      } catch (err) {
-        // ONLY an on-chain revert means "illiquid legs — HF doesn't
-        // apply". Anything else (RPC outage, timeout, rate limit) must
-        // surface as a query ERROR, never as priced:false — otherwise
-        // a flaky RPC shows a liquid, possibly liquidatable loan as
-        // "no automatic liquidation applies".
-        const isRevert =
-          err instanceof BaseError &&
-          (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
-            err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
-        if (isRevert) return { priced: false, healthFactor: 0n, ltv: 0n };
-        throw err;
-      }
+      const plan = loanRiskReadPlan({
+        diamond: readChain.diamondAddress as `0x${string}`,
+        loanId: BigInt(loanId!),
+        collateral,
+      });
+      // ONLY an on-chain revert means "illiquid legs — HF doesn't
+      // apply", and inside the aggregate that is exactly a slot whose
+      // status is `failure`. Anything else (RPC outage, timeout, rate
+      // limit) rejects `readAggregate` and surfaces as a query ERROR,
+      // never as priced:false — otherwise a flaky RPC shows a liquid,
+      // possibly liquidatable loan as "no automatic liquidation applies",
+      // and stops polling it. (viem's own `multicall` with `allowFailure`
+      // cannot tell the two apart: it fails every slot of a request that
+      // did not complete.)
+      const slots = await readAggregate(
+        publicClient!,
+        plan.map((e) => e.contract),
+      );
+      return loanRiskFromSlots(plan, slots);
     },
   });
+  // Every consumer reads "no data" as unknown, so the stale answer is
+  // dropped HERE rather than at each of them (#2996 r2).
+  return { data: freshData(query), isError: query.isError };
 }
 
 const WAD = 10n ** 18n;
@@ -118,4 +142,40 @@ export function healthView(risk: LoanRisk): HealthView {
       return pct >= 1 ? `${pct}%` : null;
     })(),
   };
+}
+
+/**
+ * The liquidation-price sentence for the position page (#2531). Every
+ * branch states what it knows or why it has no figure; no branch renders a
+ * zero price.
+ *
+ * `collateralSymbol` is `undefined` when the collateral token's details
+ * could not be read, in which case the read was never asked for the price
+ * and `risk.liquidationPrice` is absent.
+ */
+export function liquidationPriceText(
+  risk: LoanRisk,
+  collateralSymbol: string | undefined,
+): string {
+  if (!risk.priced) return copy.risk.liquidationPriceNotPriced;
+  const lp = risk.liquidationPrice;
+  if (lp === undefined || collateralSymbol === undefined) {
+    return copy.risk.liquidationPriceTokenUnknown;
+  }
+  switch (lp.kind) {
+    case 'none':
+      return copy.risk.liquidationPriceNone;
+    case 'unknown':
+      return copy.risk.liquidationPriceUnknown;
+    case 'priced': {
+      // Rounded UP at the shown precision too: `perUnitWad` is already a
+      // ceiling, and a to-nearest display would undo it (33.3333…34 shown
+      // as 33.3333, below the line).
+      const price = formatTokenAmountUp(lp.perUnitWad, 18);
+      const unit = lp.numeraire?.symbol ?? copy.risk.liquidationPriceUnitUnknown;
+      return risk.healthFactor < WAD
+        ? copy.risk.liquidationPricePassed(price, unit, collateralSymbol)
+        : copy.risk.liquidationPriceAt(price, unit, collateralSymbol);
+    }
+  }
 }
