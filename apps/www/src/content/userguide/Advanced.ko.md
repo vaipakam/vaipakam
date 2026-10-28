@@ -12,6 +12,8 @@
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -178,6 +180,8 @@ program을 알아차리기 어렵습니다.
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -270,6 +274,8 @@ immutable입니다 — refinance는 기존 loan을 변경하지 않고 새 loan�
 만듭니다.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -641,6 +647,8 @@ partial / IOC fill 모드는 단일 오퍼의 담보에 대해 여러 대출을
   후속 작업으로 큐에 있습니다.
 
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -718,6 +726,8 @@ Borrower position NFT는 claim할 때 burn되며 loan이 정리될 때가 아닙
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -732,6 +742,8 @@ multi-event transaction(예: accept + initiate가 같은 block 내에서 발생)
 liquidations, NFT mints / burns, VPFI vault deposits / withdrawals를 표시합니다.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -809,6 +821,8 @@ Base입니다. 다른 체인에서 빌리거나 빌려주면 그 체인은 tier�
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -843,6 +857,8 @@ wallet으로 VPFI를 다시 withdraw합니다. withdraw된 VPFI는 즉시 discou
 accumulator에서 빠집니다(모든 open loan에서 post-balance re-stamp).
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -1083,6 +1099,8 @@ land합니다. 트랜잭션은 완전히 성공하거나 (대출 상환 완료�
 
 ---
 
+<a id="chapter.how-liquidation-actually-works"></a>
+
 ## 청산(Liquidation)의 실제 작동 방식
 
 오퍼 시점에 동의한 Risk Disclosures는 최악의 결과를 두 문장으로 요약하고 있습니다. 이 섹션에서는 그 이면의 메커니즘을 설명합니다. 이는 왜 현물(in-kind) 폴백이 존재하는지, 그리고 대출이 실제로 네 가지 갈래 중 어떤 경로를 따르는지 이해하는 데 도움이 됩니다.
@@ -1187,6 +1205,8 @@ land합니다. 트랜잭션은 완전히 성공하거나 (대출 상환 완료�
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -1205,6 +1225,8 @@ allowance를 우회합니다. 따라서 여기 list가 clean해도 향후 deposi
 막지 않습니다.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -1243,6 +1265,8 @@ channel creation까지 stub 상태입니다.
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -1264,6 +1288,8 @@ position NFT는 bearer instrument입니다 — secondary market에서 매수하�
 verify하세요.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -1303,6 +1329,8 @@ frontend가 아직 reflect하지 않은 on-chain permissions는 명확한
 적용됩니다 — waiting period는 없습니다.
 
 ---
+
+<a id="chapter.public-analytics-dashboard"></a>
 
 ## Public Analytics Dashboard
 
@@ -1364,6 +1392,8 @@ drift에 alert합니다.
 
 ---
 
+<a id="chapter.refinance"></a>
+
 ## Refinance
 
 이 페이지는 borrower 전용입니다 — refinance는 borrower가 자신의 loan에서
@@ -1412,6 +1442,8 @@ cancel할 수 있습니다.
 새 terms에서 HF가 1.5 미만이면 revert합니다.
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -1464,6 +1496,8 @@ Uniswap V3 → Balancer V2).
 
 ---
 
+<a id="chapter.early-withdrawal-lender"></a>
+
 ## Early Withdrawal (Lender)
 
 이 페이지는 lender 전용입니다 — early withdrawal은 lender가 자신의 loan에서
@@ -1501,6 +1535,8 @@ permission을 가진 keeper에게 delegate할 수도 있습니다. initiate step
 user-only로 남습니다.
 
 ---
+
+<a id="chapter.stuck-token-recovery"></a>
 
 ## 묶인 토큰(Stuck-Token) 복구
 
@@ -1564,6 +1600,8 @@ user-only로 남습니다.
 
 소유권 포기 함수는 현재 직접 컨트랙트 호출을 통해서만 노출되며, Vaipakam 프런트엔드에서는 버튼으로 표시되지 않습니다. 블록 탐색기의 "Write Contract" UI나 컨트랙트 상호작용 도구를 사용하여 호출하십시오.
 
+<a id="chapter.how-vpfi-discounts-work"></a>
+
 ## VPFI 할인의 작동 방식
 
 canonical 체인인 Base의 vault에 VPFI를 보유하면, 플랫폼이 운영되는
@@ -1587,6 +1625,8 @@ VPFI가 빠져나가지 않습니다. 유일한 예외는 VPFI 가격 기준을 
 출시 시점에는 설정된 것이 없습니다. 이 장은 이 보유 할인을 다룹니다.
 별도의 유료 수수료 모드인 "Full"은 배포가 켜지 않는 한 꺼져 있습니다.
 
+<a id="vpfi-discounts.turning-on"></a>
+
 ### 할인 켜기
 
 할인은 opt-in입니다. 스위치는 VPFI 페이지에 있고, 체인마다 하나씩
@@ -1605,6 +1645,8 @@ Base에서 할인을 끄면, 다른 모든 체인에서도 적용이 멈추도�
 VPFI는 프로토콜이 당신의 vault에 기록할 때 인정됩니다. VPFI 페이지를 통해 입금한 VPFI와 프로토콜이 vault로
 전달한 VPFI rewards가 여기에 해당합니다. vault 주소로 직접 보낸 토큰은 프로토콜이 추적하지 않으며 tier를
 올리지 않습니다.
+
+<a id="vpfi-discounts.tier-calculation"></a>
 
 ### tier 계산 방식
 
@@ -1632,6 +1674,8 @@ tier는 세 가지 별도 검사로 정해지며, 세 가지를 모두 통과해
   됩니다.
 - tier 하한 아래로 내려가는 출금은 tier를 즉시 낮춥니다.
 - 30일보다 오래된 하락은 더 이상 상한이 되지 않습니다.
+
+<a id="vpfi-discounts.other-chains"></a>
 
 ### 다른 체인에서의 tier
 
@@ -1672,6 +1716,8 @@ Base의 tier는 즉시 최신이 되고, 다른 각 체인에는 도착할 때�
 시간만 지나 tier가 올랐다면(보유 기간을 채웠거나 평균이 따라잡은 경우), tier 기록의 다음 갱신 전까지 Base에서는
 아무것도 감지되지 않습니다. tier 갱신 호출로 원할 때 언제든 그 갱신을 할 수 있으며, 앱이 대신 호출하는 것은 할인을 끌
 때뿐입니다.
+
+<a id="vpfi-discounts.operators"></a>
 
 ### 운영자용
 

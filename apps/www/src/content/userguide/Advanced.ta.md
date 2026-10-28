@@ -14,6 +14,8 @@ App-இல் உள்ள ஒவ்வொரு card-க்கும் து�
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -196,6 +198,8 @@ zero என்ற நிலையிலும். empty-state hint திட்�
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -299,6 +303,8 @@ Initiation-இல் அதே HF ≥ 1.5 gate. நிலையான APR offer 
 தற்போதைய loan-ஐ மாற்றாமல் புதிய loan-ஐ உருவாக்கும்.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -718,6 +724,8 @@ classes:
   separate UX follow-up-ஆக queue-இல் உள்ளது.
 
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -806,6 +814,8 @@ NFT-ஐ அல்ல, claim-ஐப் படியுங்கள்.
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -821,6 +831,8 @@ first. Offers, loans, repayments, claims, liquidations, NFT mints மற்ற�
 burns, VPFI vault deposits / withdrawals ஆகியவை காட்டப்படும்.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -906,6 +918,8 @@ withdrawal அல்லது பிற செயலுக்குப் பி
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -942,6 +956,8 @@ VPFI section-இல் "உங்கள் vault-இலிருந்து VPF
 வெளியேறும் (ஒவ்வொரு open loan-இல் post-balance re-stamp).
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -1213,6 +1229,8 @@ matched price-இல் step in செய்யக்கூடிய **window �
 
 ---
 
+<a id="chapter.how-liquidation-actually-works"></a>
+
 ## Liquidation உண்மையில் எப்படி செயல்படுகிறது
 
 Offer உருவாக்கும் போது நீங்கள் ஒப்புக்கொண்ட Risk Disclosures, மோசமான விளைவை இரண்டு வாக்கியங்களில் விளக்குகின்றன. இந்த பகுதி அதன் பின்னணியில் உள்ள தொழில்நுட்ப முறைகளை விளக்குகிறது — in-kind fallback ஏன் உள்ளது என்பதைப் புரிந்துகொள்ள அல்லது உங்கள் loan நான்கு வழிகளில் எதை எடுக்கும் என்பதை அறிய இது பயனுள்ளதாக இருக்கும்.
@@ -1317,6 +1335,8 @@ Loan A, WETH-இல் விற்று USDC பெற வேண்டும�
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -1336,6 +1356,8 @@ per-asset allowance-ஐத் தாண்டிச் செல்கின்�
 எதிர்கால deposits தடுக்கப்படாது.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -1377,6 +1399,8 @@ channel publishing தற்போது channel creation வரை stub நி�
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -1402,6 +1426,8 @@ Position NFT bearer instrument — secondary market-இல் வாங்கு
 verify செய்யுங்கள்.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -1445,6 +1471,8 @@ Frontend இன்னும் reflect செய்யாத on-chain permission
 loans-களிலும் உடனடி — காத்திருப்புக் காலம் இல்லை.
 
 ---
+
+<a id="chapter.public-analytics-dashboard"></a>
 
 ## Public Analytics Dashboard
 
@@ -1508,6 +1536,8 @@ function name-இல் இருந்து யாரும் re-derive ச�
 
 ---
 
+<a id="chapter.refinance"></a>
+
 ## Refinance
 
 இந்த page borrower-only — Refinance, borrower-இன் loan-இல் borrower-ஆல்
@@ -1560,6 +1590,8 @@ accept செய்யலாம். Acceptance-க்கு முன் cancel 
 புதிய terms-இல் HF 1.5-க்குக் கீழே இருந்தால் revert ஆகிறது.
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -1616,6 +1648,8 @@ Balancer V2) வரம்புக்குள் வைக்கப்படு
 
 ---
 
+<a id="chapter.early-withdrawal-lender"></a>
+
 ## Early Withdrawal (Lender)
 
 இந்த page lender-only — Early withdrawal, lender-இன் loan-இல் lender-ஆல்
@@ -1653,6 +1687,8 @@ cancel செய்யலாம். "Complete loan sale" permission வைத்
 optional-ஆக delegatable; initiate step user-only-ஆகவே இருக்கும்.
 
 ---
+
+<a id="chapter.stuck-token-recovery"></a>
 
 ## சிக்கிய Token-களை மீட்டெடுத்தல் (Stuck-Token Recovery)
 
@@ -1716,6 +1752,8 @@ Tokens இரண்டு வழிகளில் சிக்கிக் க�
 
 Disown வசதி தற்போது நேரடியாக contract call மூலம் மட்டுமே கிடைக்கிறது; Vaipakam frontend-ல் இதற்கான பட்டன் இல்லை. Use a block-explorer "Write Contract" UI or a contract-interaction tool to call it.
 
+<a id="chapter.how-vpfi-discounts-work"></a>
+
 ## VPFI தள்ளுபடிகள் எப்படி வேலை செய்கின்றன
 
 Canonical chain ஆன Base-இல் உள்ள உங்கள் vault-இல் வைத்திருக்கும் VPFI,
@@ -1745,6 +1783,8 @@ VPFI விலை மேற்கோளை அமைத்த deployment-இல�
 "Full" என்ற தனியான கட்டண முறை, ஒரு deployment அதை இயக்காதவரை அணைந்தே
 இருக்கும்.
 
+<a id="vpfi-discounts.turning-on"></a>
+
 ### தள்ளுபடியை இயக்குதல்
 
 தள்ளுபடி opt-in ஆகும். Switch VPFI பக்கத்தில் உள்ளது; ஒவ்வொரு chain-க்கும்
@@ -1769,6 +1809,8 @@ Protocol உங்கள் vault-இல் பதிவுசெய்யும
 vault-க்குள் வழங்கும் VPFI rewards-உம். உங்கள் vault முகவரிக்கு நேரடியாக
 அனுப்பப்படும் token-களை protocol கண்காணிப்பதில்லை; அவை உங்கள் tier-ஐ
 உயர்த்தாது.
+
+<a id="vpfi-discounts.tier-calculation"></a>
 
 ### உங்கள் tier எப்படிக் கணக்கிடப்படுகிறது
 
@@ -1802,6 +1844,8 @@ vault-க்குள் வழங்கும் VPFI rewards-உம். உங
 - ஒரு tier-இன் வரம்புக்குக் கீழே கொண்டுசெல்லும் withdrawal உங்கள்
   tier-ஐ உடனே குறைக்கும்.
 - 30 நாட்களுக்கு முந்தைய இறக்கம் இனி உங்களைக் கட்டுப்படுத்தாது.
+
+<a id="vpfi-discounts.other-chains"></a>
 
 ### மற்ற chain-களில் உங்கள் tier
 
@@ -1858,6 +1902,8 @@ table-இன் பதிப்பு. ஆகவே tier table மாறிய �
 புதுப்பிப்பு வரை Base-இல் எதுவும் அதைக் கவனிக்காது. நீங்கள்
 விரும்பும்போது tier-refresh call அந்தப் புதுப்பிப்பைச் செய்யும்; நீங்கள்
 தள்ளுபடியை அணைக்கும்போது மட்டுமே app அதை உங்களுக்காகச் செய்கிறது.
+
+<a id="vpfi-discounts.operators"></a>
 
 ### Operator-களுக்கு
 

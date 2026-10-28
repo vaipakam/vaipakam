@@ -12,6 +12,8 @@
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -112,6 +114,8 @@ Center의 전체 청구 카드로 바로 이동합니다.
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -163,6 +167,8 @@ borrower에게 가고, lender는 lender-of-record가 되며, 기간 동안 offer
 이 rate는 loan이 생성될 때 고정되므로, 이후 protocol fee가 바뀌어도 이미 열려 있는 loan은 시작할 때의 rate를 유지합니다.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -304,6 +310,8 @@ VPFI fee discount를 사용할지, 몇 가지 role-specific toggles 등이
 
 ---
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -358,6 +366,8 @@ NFT를 약속으로 받아들이지 말고 claim이 무엇이라 말하는지 �
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -371,6 +381,8 @@ central server는 없습니다. 최신 순으로 표시되고 transaction별로 
 한 번의 click으로 한 일은 함께 보입니다.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -414,6 +426,8 @@ tier로 계산됩니다.
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -437,6 +451,8 @@ interaction-pool share는 하루에 한 번 settle되므로, 마지막 settlemen
 됩니다.
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -552,6 +568,8 @@ side의 options를 정리합니다. 지금 사용할 수 없는 buttons는 greye
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -569,6 +587,8 @@ clean한 approvals list를 유지하는 것은 좋은 hygiene입니다 — Unisw
 1inch에서도 마찬가지입니다.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -602,6 +622,8 @@ watcher가 사용하는 danger bands입니다. 더 위험한 band로 들어가�
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -618,6 +640,8 @@ position NFT _자체_ 가 loan에서 claim할 권리입니다. fake이거나 이
 settled된 position을 알아차리면 나쁜 trade를 피할 수 있습니다.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -643,6 +667,8 @@ checks를 수정하세요. keeper를 완전히 없애고 싶다면 list에서 re
 됩니다.
 
 ---
+
+<a id="chapter.public-analytics-dashboard"></a>
 
 ## Public Analytics Dashboard
 
@@ -690,6 +716,8 @@ address를 보여 줍니다. 숫자를 verify하려면 여기서 시작하면 �
 
 ---
 
+<a id="chapter.refinance"></a>
+
 ## Refinance
 
 이 페이지는 borrower 전용입니다 — refinance는 borrower가 자신의 loan에서
@@ -731,6 +759,8 @@ atomically 하게 새 principal로 옛 loan을 갚고, 새 loan을 open하며, �
 exposure window 없음입니다.
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -776,6 +806,8 @@ collateral 일부를 팔고 싶다면 **Offset**을 선택하세요. 어느 path
 loan은 완전히 close됩니다. preclose에서는 half-close가 불가능합니다.
 
 ---
+
+<a id="chapter.early-withdrawal-lender"></a>
 
 ## Early Withdrawal (Lender)
 

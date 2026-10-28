@@ -11,6 +11,8 @@
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -149,6 +151,8 @@ empty-state hint 是刻意保留的 — 如果在 zero 时隐藏 card，新 user
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -231,6 +235,8 @@ creation 时设定，并在 loan 的整个生命周期内 immutable — refinanc
 会创建一笔新 loan，而不是修改现有 loan。
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -565,6 +571,8 @@ GTT 报价，此到期是报价的原始 GTT 到期时间；出借人接受不�
   单独的 UX 跟进排队。
 
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -633,6 +641,8 @@ surplus：如果 liquidation 什么也没剩下，就没有可领取的东西，
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -647,6 +657,8 @@ multi-event transactions (例如同一 block 中确认的 accept + initiate)
 liquidations、NFT mints 和 burns，以及 VPFI vault deposits / withdrawals。
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -722,6 +734,8 @@ CCIP 发送这份副本。
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -755,6 +769,8 @@ VPFI 从 vault withdraw 回 wallet。Withdrawn VPFI 会立即退出
 discount accumulator (在每笔 open loan 上 post-balance re-stamp)。
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -977,6 +993,8 @@ diamond 的结算瀑布都原子地在一个块中登陆。交易要么完全成
 
 ---
 
+<a id="chapter.how-liquidation-actually-works"></a>
+
 ## 清算实际运作机制
 
 您在报价时同意的风险披露用两句话概括了最坏情况。本节解释了底层机制——如果您想了解为什么要存在实物退路（in-kind fallback），或者您的贷款实际上会走四个分支中的哪一个，这将非常有用。
@@ -1081,6 +1099,8 @@ diamond 的结算瀑布都原子地在一个块中登陆。交易要么完全成
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -1098,6 +1118,8 @@ allowances，所以典型的 revocation list 很短。
 per-asset allowance，所以这里的 clean list 不会阻止未来 deposits。
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -1136,6 +1158,8 @@ direction 出现 band crossing 时，通过配置的 channels fire 一次。
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -1157,6 +1181,8 @@ position NFT 是 bearer instrument — 在 secondary market 购买前请先
 verify。
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -1198,6 +1224,8 @@ frontend 尚未 reflect 的 on-chain permissions 会得到清晰的
 — 无等待期。
 
 ---
+
+<a id="chapter.public-analytics-dashboard"></a>
 
 ## Public Analytics Dashboard
 
@@ -1259,6 +1287,8 @@ Cross-chain invariant：所有 mirror chains 上的 mirror supplies 之和
 
 ---
 
+<a id="chapter.refinance"></a>
+
 ## Refinance
 
 此页面仅限 borrower — refinance 由 borrower 在自己的 loan 上发起。
@@ -1305,6 +1335,8 @@ Book 中，任何 lender 都可以 accept。acceptance 之前可以 cancel。
 如果新 terms 下 HF 低于 1.5，则 revert。
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -1356,6 +1388,8 @@ Direct path 会消耗 wallet 中的 principal asset liquidity。Offset path
 
 ---
 
+<a id="chapter.early-withdrawal-lender"></a>
+
 ## Early Withdrawal (Lender)
 
 此页面仅限 lender — early withdrawal 由 lender 在自己的 loan 上发起。
@@ -1391,6 +1425,8 @@ complete sale；sale fill 前您可以 cancel。可选地 delegate 给持有
 user-only。
 
 ---
+
+<a id="chapter.stuck-token-recovery"></a>
 
 ## 被困代币找回
 
@@ -1454,6 +1490,8 @@ user-only。
 
 目前 `disown` 函数仅通过直接合约调用公开；Vaipakam 前端尚未提供对应按钮。请使用区块链浏览器的“Write Contract”界面或合约交互工具进行调用。
 
+<a id="chapter.how-vpfi-discounts-work"></a>
+
 ## VPFI 折扣如何运作
 
 在 canonical 链 Base 的 vault 中持有 VPFI，可以让您在平台运行的每条链
@@ -1475,6 +1513,8 @@ governance 可以修改它。
 折扣可以改为从您的 vault 中以 VPFI 结算；上线时没有配置。本章讨论的是
 这种持有折扣。另一种付费费用模式"Full"保持关闭，除非某个部署将其开启。
 
+<a id="vpfi-discounts.turning-on"></a>
+
 ### 开启折扣
 
 折扣需要主动开启（opt-in）。开关位于 VPFI 页面，每条链各有一个，因为
@@ -1488,6 +1528,8 @@ governance 可以修改它。
 当您在 Base 上关闭折扣时，应用会紧接着发送一次 tier 更新，让所有其他链也停止使用折扣：Base 会向它们发送您的 tier 为零。如果第二步失败，页面会说明，其他链会保留您最后的 tier，直到有新的 tier 发出。在其他任何链上关闭折扣，只会改变那一条链。
 
 当协议把 VPFI 记录在您的 vault 中时，它才计入：包括您通过 VPFI 页面存入的 VPFI，以及协议发放到您 vault 中的 VPFI rewards。直接发送到您 vault 地址的代币不受协议跟踪，不会提高您的 tier。
+
+<a id="vpfi-discounts.tier-calculation"></a>
 
 ### 您的 tier 如何计算
 
@@ -1511,6 +1553,8 @@ governance 可以修改它。
   平均值，而您触及过的最低点仍会限制您。
 - 一次让您低于某个 tier 门槛的取出，会立即降低您的 tier。
 - 30 天以前的下跌不再限制您。
+
+<a id="vpfi-discounts.other-chains"></a>
 
 ### 您在其他链上的 tier
 
@@ -1537,6 +1581,8 @@ tier 由 Base 计算。所有其他链都使用 Base 通过 Chainlink CCIP 发�
 只有当副本中的内容会发生变化时，副本才会重新发送：您的 tier、其折扣、有效期限，或 tier 表的版本。因此在 tier 表变更后，即使您的 tier 不变（只要不为零），您在 Base 上的 tier 记录的下一次更新都会向每条链发送一份新副本。如果这些都没有变化，副本已过期的链在有变化之前不会给予折扣。
 
 如果您的 tier 只是因为时间推移而上升（持有期已满或平均值已追上），Base 要到您的 tier 记录下一次更新时才会察觉。tier 刷新调用可以随时进行这次更新；应用只会在您关闭折扣时替您调用。
+
+<a id="vpfi-discounts.operators"></a>
 
 ### 面向运营者
 

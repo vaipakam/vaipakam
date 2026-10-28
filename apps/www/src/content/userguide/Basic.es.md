@@ -14,6 +14,8 @@ junto al título de una tarjeta.
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -123,6 +125,8 @@ mostrar.
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Libro de ofertas
 
 <a id="offer-book.filters"></a>
@@ -181,6 +185,8 @@ de la comisión del protocolo deja un préstamo ya abierto con la tasa con
 la que empezó.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Crear oferta
 
@@ -335,6 +341,8 @@ específicos por rol. Es seguro saltarse esto en una primera oferta.
 
 ---
 
+<a id="chapter.claim-center"></a>
+
 ## Centro de reclamaciones
 
 <a id="claim-center.claims"></a>
@@ -399,6 +407,8 @@ reclamación en vez de tomar el NFT como una promesa.
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Actividad
 
 <a id="activity.feed"></a>
@@ -413,6 +423,8 @@ caerse. Los más nuevos primero, agrupados por transacción para que
 las cosas que hiciste en un mismo clic se mantengan juntas.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -459,6 +471,8 @@ ese momento en adelante.
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Recompensas
 
 <a id="rewards.overview"></a>
@@ -483,6 +497,8 @@ día, así que si has ganado algo desde la última liquidación, sólo
 entra en vigor poco después de que cierre la próxima ventana diaria.
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Detalles del préstamo
 
@@ -606,6 +622,8 @@ explicando por qué.
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -624,6 +642,8 @@ Una lista de aprobaciones limpia es un hábito de higiene —igual que
 en Uniswap o 1inch.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alertas
 
@@ -660,6 +680,8 @@ no se ajustan por separado.
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## Verificador de NFTs
 
 <a id="nft-verifier.lookup"></a>
@@ -678,6 +700,8 @@ una falsificación —o una posición que ya se liquidó— te ahorra el
 mal trato.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Configuración de keepers
 
@@ -705,6 +729,8 @@ marcas; si quieres que un keeper desaparezca por completo,
 elimínalo de la lista.
 
 ---
+
+<a id="chapter.public-analytics-dashboard"></a>
 
 ## Dashboard de analítica pública
 
@@ -758,6 +784,8 @@ es donde empieza.
 
 ---
 
+<a id="chapter.refinance"></a>
+
 ## Refinanciar
 
 Esta página es sólo para prestatarios —el refinance lo inicia el
@@ -803,6 +831,8 @@ tu colateral bloqueado todo el tiempo. Una transacción, cambio de
 dos estados, sin ventana de exposición.
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Cierre anticipado
 
@@ -855,6 +885,8 @@ salir. Cualquiera de los dos caminos cierra el préstamo en su
 totalidad; no puedes cerrar a medias con preclose.
 
 ---
+
+<a id="chapter.early-withdrawal-lender"></a>
 
 ## Retiro anticipado (prestamista)
 

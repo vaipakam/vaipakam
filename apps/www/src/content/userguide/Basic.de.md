@@ -14,6 +14,8 @@ Karten-Titel.
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -126,6 +128,8 @@ nur keine Historie zu zeigen.
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -183,6 +187,8 @@ Dieser Satz wird bei der Kreditvergabe festgeschrieben; eine spätere
 seinem ursprünglichen Satz.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Offer erstellen
 
@@ -340,6 +346,8 @@ beruhigt überspringen.
 
 ---
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -405,6 +413,8 @@ den NFT als Zusage zu nehmen.
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -420,6 +430,8 @@ gruppiert nach Transaktion, sodass Dinge, die du in einem Klick
 gemacht hast, zusammenbleiben.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -466,6 +478,8 @@ Rabatt-Mathematik ab diesem Moment auf das niedrigere Tier.
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -491,6 +505,8 @@ wird er erst kurz nach Schluss des nächsten Tagesfensters
 scharfgeschaltet.
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -618,6 +634,8 @@ mit einem kleinen Tooltip, das erklärt, warum.
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -636,6 +654,8 @@ Eine saubere Approvals-Liste ist eine Hygienegewohnheit — genau
 wie auf Uniswap oder 1inch.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -674,6 +694,8 @@ Schwellen-Leiter oben — du stellst sie nicht separat ein.
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT-Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -692,6 +714,8 @@ Fälschung — oder eine Position, die bereits gesettled ist — zu
 erkennen, erspart dir den schlechten Trade.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper-Einstellungen
 
@@ -721,6 +745,8 @@ einen Keeper komplett loswerden willst, entferne ihn aus der
 Liste.
 
 ---
+
+<a id="chapter.public-analytics-dashboard"></a>
 
 ## Public Analytics Dashboard
 
@@ -774,6 +800,8 @@ man an.
 
 ---
 
+<a id="chapter.refinance"></a>
+
 ## Refinance
 
 Diese Seite ist nur für Borrower — Refinance wird vom Borrower auf
@@ -820,6 +848,8 @@ Collateral die ganze Zeit gesperrt. Eine Transaktion,
 Zwei-Status-Wechsel, kein Expositionsfenster.
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -874,6 +904,8 @@ schließen den Loan vollständig; mit Preclose kannst du nicht
 halb-schließen.
 
 ---
+
+<a id="chapter.early-withdrawal-lender"></a>
 
 ## Early Withdrawal (Lender)
 

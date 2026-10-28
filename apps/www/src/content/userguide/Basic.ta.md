@@ -15,6 +15,8 @@
 
 ---
 
+<a id="chapter.dashboard"></a>
+
 ## Dashboard
 
 <a id="dashboard.your-vault"></a>
@@ -129,6 +131,8 @@ Claim Center-ல் உள்ள முழு claim அட்டைக்கு 
 
 ---
 
+<a id="chapter.offer-book"></a>
+
 ## Offer Book
 
 <a id="offer-book.filters"></a>
@@ -188,6 +192,8 @@ fee-ல் பிறகு ஏற்படும் மாற்றம், ஏ�
 rate-லேயே விட்டுவிடும்.
 
 ---
+
+<a id="chapter.create-offer"></a>
 
 ## Create Offer
 
@@ -349,6 +355,8 @@ Vaipakam non-custodial. chain-இல் உறுதியாகிவிட்�
 
 ---
 
+<a id="chapter.claim-center"></a>
+
 ## Claim Center
 
 <a id="claim-center.claims"></a>
@@ -416,6 +424,8 @@ liquidation-க்குப் பிறகு NFT எஞ்சியிரு�
 
 ---
 
+<a id="chapter.activity"></a>
+
 ## Activity
 
 <a id="activity.feed"></a>
@@ -431,6 +441,8 @@ claim, ஒவ்வொரு liquidation. இவை அனைத்தும் 
 click-இல் நடந்த செயல்கள் ஒன்றாகத் தெரியும்.
 
 ---
+
+<a id="chapter.vpfi"></a>
 
 ## VPFI
 
@@ -477,6 +489,8 @@ VPFI வெளியெடுத்தால் உங்கள் discount tier
 
 ---
 
+<a id="chapter.rewards"></a>
+
 ## Rewards
 
 <a id="rewards.overview"></a>
@@ -503,6 +517,8 @@ Rewards VPFI-இலேயே வழங்கப்படும்; நீங்�
 பிறகே அது live ஆகும்.
 
 ---
+
+<a id="chapter.loan-details"></a>
 
 ## Loan Details
 
@@ -632,6 +648,8 @@ default உங்கள் முழு collateral-ஐ lender-க்கு trans
 
 ---
 
+<a id="chapter.allowances"></a>
+
 ## Allowances
 
 <a id="allowances.list"></a>
@@ -651,6 +669,8 @@ OFF செய்யவும் அனுமதிக்கிறது. Non-zer
 — Uniswap அல்லது 1inch-இலும் அதே நடைமுறை.
 
 ---
+
+<a id="chapter.alerts"></a>
 
 ## Alerts
 
@@ -690,6 +710,8 @@ pings உண்மையில் எங்கே செல்ல வேண்�
 
 ---
 
+<a id="chapter.nft-verifier"></a>
+
 ## NFT Verifier
 
 <a id="nft-verifier.lookup"></a>
@@ -708,6 +730,8 @@ NFT-ஐ — அல்லது ஏற்கனவே settle ஆன position-ஐ 
 கண்டுபிடிப்பது மோசமான trade-இலிருந்து உங்களைப் பாதுகாக்கும்.
 
 ---
+
+<a id="chapter.keeper-settings"></a>
 
 ## Keeper Settings
 
@@ -736,6 +760,8 @@ ticks-ஐ edit செய்யவும்; keeper-ஐ முழுவதும�
 அவர்களைப் பட்டியலில் இருந்து நீக்கவும்.
 
 ---
+
+<a id="chapter.public-analytics-dashboard"></a>
 
 ## Public Analytics Dashboard
 
@@ -788,6 +814,8 @@ contract address-இலிருந்து வந்தது என்பத�
 
 ---
 
+<a id="chapter.refinance"></a>
+
 ## Refinance
 
 இந்தப் பக்கம் borrower-க்கு மட்டும் — refinance-ஐ borrower தான் தனது
@@ -835,6 +863,8 @@ loan-ஐ open செய்கிறது, முழு நேரமும் �
 window இல்லை.
 
 ---
+
+<a id="chapter.preclose"></a>
 
 ## Preclose
 
@@ -887,6 +917,8 @@ swap step இன்னும் mid-flight-இல் உள்ளது. அத�
 loan-ஐ முழுமையாக மூடும்; preclose மூலம் பாதி மட்டும் மூட முடியாது.
 
 ---
+
+<a id="chapter.early-withdrawal-lender"></a>
 
 ## Early Withdrawal (Lender)
 

@@ -52,13 +52,13 @@ export interface TocSection {
  * rather than being dropped. It used to be dropped, and that was a live
  * defect: `## How VPFI Discounts Work` printed on `/help/advanced` and
  * appeared nowhere in the contents list, so the only way to reach it
- * was to scroll past everything above it (#1599). Its two cards have no
- * anchors, and they cannot simply be given some — every anchor the
- * English guide carries that the nine translations lack is an
- * anchor-parity failure, and until #1593 that chapter was untranslated
- * (anchoring all ten editions together is #1597). The durable fix is
- * here anyway: the NEXT unanchored chapter stays
- * reachable instead of vanishing silently.
+ * was to scroll past everything above it (#1599). Its sections could not
+ * be given anchors while the chapter was untranslated, because an anchor
+ * the English carries and the translations lack is an anchor-parity
+ * failure; #1593 translated it and #1597 anchored its sections in all ten
+ * editions, so it is listed like any other chapter now. The fallback
+ * stays: the NEXT unanchored chapter stays reachable instead of
+ * vanishing silently.
  *
  * The id used is the heading's slug, which is what `headingComponents`
  * installs on every rendered `<h2>`, so the link resolves.
