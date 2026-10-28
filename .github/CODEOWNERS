@@ -88,7 +88,6 @@
 # Docs — living documentation: design, specs, release notes, runbooks
 # ---------------------------------------------------------------------------
 /docs/                                             @Raja4Shekar
-/docs/internal/ProjectProcedures.md                @Raja4Shekar
 /docs/FunctionalSpecs/                             @Raja4Shekar
 /docs/DesignsAndPlans/                             @Raja4Shekar
 /docs/ReleaseNotes/                                @Raja4Shekar
