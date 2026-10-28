@@ -266,24 +266,60 @@ function commitExists(rev) {
 }
 
 /**
- * The changes to the Worker's code that reached main after `base`, newest
- * first, one per INTEGRATION — a commit on main's first-parent line — timed
- * by when it landed on main. A merged branch's own commits keep their
- * authoring times, so timing by them would start the grace period before
- * the change reached main; the integration commit's committer time is when
- * it did (a merge, squash or rebase onto main all stamp it then). A merge is
- * read as what it brought in: its difference from its first parent.
+ * The changes to the Worker's code that reached main after the deployed
+ * commit `base` and are NOT in it, newest first, one per INTEGRATION — a
+ * commit on main's first-parent line — timed by when it landed on main.
+ *
+ * WHAT IS MISSING is decided by CONTENT, never by ancestry: a file is behind
+ * only when main's copy differs from the deployed commit's. A deployment
+ * built from a branch that main later merged therefore owes nothing for
+ * that merge, though the merge commit is not an ancestor of what was
+ * deployed.
+ *
+ * WHEN IT BECAME MISSING. For each differing file, the integrations that
+ * changed it are walked newest first, back to the one whose first parent
+ * still held the deployed copy: that one introduced the difference, and
+ * every later one that changed the file kept it. An integration's time is
+ * its committer time, which is when it landed on main (a merge, squash or
+ * rebase onto main all stamp it then); a merged branch's own commits keep
+ * their authoring times, which would start the grace period before the
+ * change reached main. A merge is read as what it brought in: its
+ * difference from its first parent.
  */
 function pendingSince(base, ref, worker, cwd) {
-  const out = git(['log', '--first-parent', '--diff-merges=first-parent', '--format=%x1e%H%x1f%ct%x1f%s', '--name-only', `${base}..${ref}`], cwd);
-  const pending = [];
-  for (const block of out.split('\x1e').slice(1)) {
+  const isInput = (f) => worker.inputs.some((i) => f === i || f.startsWith(`${i}/`)) && !isNonBundle(f, worker.dir);
+  const differing = git(['diff', '--no-renames', '--name-only', '-z', base, ref], cwd).split('\0').filter(Boolean).filter(isInput);
+  if (differing.length === 0) return [];
+
+  // Main's integrations since the deployed commit's history, newest first,
+  // with the files each changed relative to its first parent.
+  const out = git(['log', '--first-parent', '--diff-merges=first-parent', '--no-renames', '--format=%x1e%H%x1f%ct%x1f%s', '--name-only', `${base}..${ref}`], cwd);
+  const integrations = out.split('\x1e').slice(1).map((block) => {
     const [head, ...rest] = block.split('\n');
     const [sha, ct, subject] = head.split('\x1f');
-    const changed = rest.filter(Boolean).filter((f) => worker.inputs.some((i) => f === i || f.startsWith(`${i}/`)));
-    if (changed.some((f) => !isNonBundle(f, worker.dir))) pending.push({ sha, time: Number(ct), subject });
+    return { sha, time: Number(ct), subject, files: new Set(rest.filter(Boolean)) };
+  });
+
+  // Every blob the walk compares, read in one git call.
+  const queries = [];
+  for (const f of differing) {
+    queries.push(`${base}:${f}`);
+    for (const c of integrations) if (c.files.has(f)) queries.push(`${c.sha}^1:${f}`);
   }
-  return pending;
+  const answers = execFileSync('git', ['cat-file', '--batch-check=%(objectname)'], { cwd, input: `${queries.join('\n')}\n`, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }).split('\n');
+  // A path absent at that revision answers "<query> missing": absent is a state too.
+  const blob = new Map(queries.map((q, i) => [q, / missing$/.test(answers[i] ?? '') ? null : answers[i]]));
+
+  const pending = new Set();
+  for (const f of differing) {
+    const deployed = blob.get(`${base}:${f}`);
+    for (const c of integrations) {
+      if (!c.files.has(f)) continue;
+      pending.add(c.sha);
+      if (blob.get(`${c.sha}^1:${f}`) === deployed) break;
+    }
+  }
+  return integrations.filter((c) => pending.has(c.sha)).map(({ sha, time, subject }) => ({ sha, time, subject }));
 }
 
 async function cloudflare(path, { account, token }) {
@@ -481,6 +517,19 @@ function selftestIntegrationTime(ok) {
     const pending = pendingSince(base, 'HEAD', { dir: 'apps/w', inputs: ['apps/w'] }, repo);
     ok(pending.length === 1 && pending[0].subject === 'merge feature', 'a merged branch is one change, the merge itself');
     ok(pending[0].time === 9500, 'its time is when it reached main, not when the branch was written');
+    // Deployed from the branch before it merged: the merge brings nothing
+    // the deployment lacks, though it is not an ancestor of what was deployed.
+    const featureTip = g(['rev-parse', 'feature'], 9500);
+    ok(pendingSince(featureTip, 'HEAD', { dir: 'apps/w', inputs: ['apps/w'] }, repo).length === 0, 'a deployed branch owes nothing for its own later merge');
+    // A later change on main is missing from that deployment, and only it.
+    put('apps/w/src/a.ts', '3');
+    g(['commit', '-q', '-am', 'later change'], 9800);
+    const later = pendingSince(featureTip, 'HEAD', { dir: 'apps/w', inputs: ['apps/w'] }, repo);
+    ok(later.length === 1 && later[0].subject === 'later change' && later[0].time === 9800, 'a later change on main is pending from when it landed');
+    // A file main changed and then put back is not behind.
+    put('apps/w/src/a.ts', '2');
+    g(['commit', '-q', '-am', 'revert later change'], 9900);
+    ok(pendingSince(featureTip, 'HEAD', { dir: 'apps/w', inputs: ['apps/w'] }, repo).length === 0, 'a change main reverted is not pending');
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
