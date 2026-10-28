@@ -134,13 +134,17 @@ of "still open":
 - **unknown** when the read fails.
 
 If the write throws, what the transaction did is settled before any loan
-is called open. Never signed: a failure. Signed: its hash is looked up.
+is called open (`settleFailedSend`). Never signed: a failure. Settled by
+the receipt wait as not run (reverted, or cancelled or replaced in the
+wallet): a failure. Otherwise its hash is looked up.
 Mined and successful, it is read back at its block like any other; mined
 and reverted, a failure; not found (still pending after the receipt wait
 gave up, or replaced under another hash), every loan it carried that
 still reads Active is **pending**, never open. A pending transaction may
 yet spend the approval, so no further chunk is sent behind it (those loans
-are named as not sent) and the approval is not unwound.
+are named as not sent) and the approval is not unwound. The stop is keyed
+on the send's own state, not on its loans' outcomes, so a pending send
+whose loans could not be read back still stops the batch.
 
 **Approvals.** The approval is set back, through the same unwind as the
 single-loan flow, only when it is established that no loan closed: an

@@ -5,7 +5,15 @@
  */
 import { describe, expect, it } from 'vitest';
 import { AssetType } from '../lib/types';
-import { borrowerOfferGroups, pullTotals, withHeldGroups, type GroupableLoan } from './batchCloseOut';
+import type { PublicClient } from 'viem';
+import { TxNotSettledError } from '../contracts/ownReceipt';
+import {
+  borrowerOfferGroups,
+  pullTotals,
+  settleFailedSend,
+  withHeldGroups,
+  type GroupableLoan,
+} from './batchCloseOut';
 import type { CloseOutPlan } from './closeOutPlan';
 
 const USDC = '0x00000000000000000000000000000000000000a1' as const;
@@ -92,5 +100,39 @@ describe('withHeldGroups', () => {
   it('is the live list when nothing is held', () => {
     const live = borrowerOfferGroups([row(1, 2), row(3, 2)]);
     expect(withHeldGroups(live, new Map())).toEqual(live);
+  });
+});
+
+describe('settleFailedSend', () => {
+  const HASH = `0x${'ab'.repeat(32)}` as const;
+  const client = (receipt: () => Promise<unknown>) =>
+    ({ getTransactionReceipt: receipt }) as unknown as PublicClient;
+  const neverAsked = client(async () => {
+    throw new Error('should not look the hash up');
+  });
+
+  it('is a failure when nothing was signed', async () => {
+    expect(await settleFailedSend(neverAsked, null, new Error('rejected'))).toHaveProperty('failure');
+  });
+
+  it('is a failure when the receipt wait settled the call as not run', async () => {
+    for (const reason of ['cancelled', 'replaced', 'reverted'] as const) {
+      const err = new TxNotSettledError(reason, HASH, 'The multicall transaction');
+      expect(await settleFailedSend(neverAsked, HASH, err)).toHaveProperty('failure');
+    }
+  });
+
+  it('reads a mined hash back at its block, and a reverted one as a failure', async () => {
+    const mined = client(async () => ({ status: 'success', blockNumber: 42n }));
+    expect(await settleFailedSend(mined, HASH, new Error('timed out'))).toEqual({ block: 42n });
+    const reverted = client(async () => ({ status: 'reverted', blockNumber: 42n }));
+    expect(await settleFailedSend(reverted, HASH, new Error('timed out'))).toHaveProperty('failure');
+  });
+
+  it('is pending, never a failure, when the hash has no receipt yet', async () => {
+    const missing = client(async () => {
+      throw new Error('receipt not found');
+    });
+    expect(await settleFailedSend(missing, HASH, new Error('timed out'))).toEqual({ pending: true });
   });
 });

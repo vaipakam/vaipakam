@@ -37,7 +37,13 @@ import {
   type CloseOutPlan,
 } from '../data/closeOutPlan';
 import { ConfirmReceipt } from './ConfirmReceipt';
-import { pullTotals, type BatchOutcome, type OfferGroup } from '../data/batchCloseOut';
+import {
+  pullTotals,
+  settleFailedSend,
+  type BatchOutcome,
+  type Mined,
+  type OfferGroup,
+} from '../data/batchCloseOut';
 import { chunkForMulticall, encodeBestEffort } from '../data/multicall';
 
 type Stage =
@@ -141,10 +147,14 @@ export function BatchCloseOutCard({
       const functionName = action === 'repay' ? 'repayLoan' : 'precloseDirect';
       const outcomes: BatchOutcome[] = [];
       const chunks = chunkForMulticall(readyIds);
+      // Whether an earlier send is unsettled. Kept from the SEND, not from
+      // its loans' outcomes: a pending send whose loans could not be read
+      // back is still pending.
+      let sendPending = false;
       for (const [index, planned] of chunks.entries()) {
         // A transaction still unconfirmed may yet spend the approval, so
         // nothing more is sent behind it; the rest wait for their pages.
-        if (outcomes.some((o) => o.kind === 'pending')) {
+        if (sendPending) {
           for (const id of chunks.slice(index).flat()) {
             leftOut.push({ loanId: id, kind: 'left-out', reason: copy.batchClose.notSentPending });
           }
@@ -177,8 +187,9 @@ export function BatchCloseOutCard({
           );
           mined = { block: receipt.blockNumber };
         } catch (err) {
-          mined = await settleFailedSend(ctx, submitted, captureTxError(err));
+          mined = await settleFailedSend(ctx.publicClient, submitted, err);
         }
+        sendPending = 'pending' in mined;
         outcomes.push(...(await readBack(ctx, ids, functionName, mined)));
       }
       let note: string | null = null;
@@ -404,32 +415,6 @@ async function approvalLeftNote(
     return copy.batchClose.approvalLeft(left.map(amount).join(', '));
   } catch {
     return copy.batchClose.approvalLeftUnread;
-  }
-}
-
-type Mined = { block: bigint } | { failure: string } | { pending: true };
-
-/**
- * What a send that did not come back with a receipt actually did. Never
- * signed: a failure. Signed: the write can throw while its transaction
- * is still on its way (a receipt wait that timed out), so the submitted
- * hash is looked up. Mined and successful: read back at its block, as if
- * the write had returned. Mined and reverted: a failure. Not found (still
- * pending, or replaced under another hash): pending, never a failure —
- * reading its loans as open and unwinding the approval would misreport a
- * batch that may still close them.
- */
-async function settleFailedSend(
-  ctx: CloseOutCtx,
-  submitted: `0x${string}` | null,
-  failure: string,
-): Promise<Mined> {
-  if (!submitted) return { failure };
-  try {
-    const receipt = await ctx.publicClient.getTransactionReceipt({ hash: submitted });
-    return receipt.status === 'success' ? { block: receipt.blockNumber } : { failure };
-  } catch {
-    return { pending: true };
   }
 }
 
