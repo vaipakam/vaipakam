@@ -4456,7 +4456,12 @@ Its intended behaviour, as the test oracle for this surface:
   principal, and cost within the principal), best payout first, with
   any truncation of the list stated rather than silent; while the
   offer search is loading it says so (loading and "no matches" never
-  look the same). The payout math mirrors the protocol's settlement
+  look the same). The lender's exit chooser reads the very same list,
+  never a second judgement of it: in Advanced mode its sell-now option
+  says when no offer matches and offers no jump to an empty picker,
+  waits while the search is still loading, and makes no claim when the
+  search could not be completed. In Basic mode the offer search is not
+  run, so the option makes no claim either way. The payout math mirrors the protocol's settlement
   to the smallest unit (second-precision accrual, remaining term
   reduced by time elapsed). If the quoted figure moves while a
   review is open, the review closes with a visible explanation and

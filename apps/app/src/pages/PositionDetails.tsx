@@ -30,7 +30,11 @@ import { copy } from '../content/copy';
 import { useScrollToFragment } from '../lib/useScrollToFragment';
 import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { freshData } from '../lib/freshData';
-import { useLoan } from '../data/hooks';
+import { useActiveOffers, useLoan } from '../data/hooks';
+import {
+  instantSellCandidatesOf,
+  instantSellVerdict,
+} from '../data/instantSellCandidates';
 import { FEE_MODE_FULL, FEE_MODE_HOLD_ONLY, useFeeEntitlement } from '../data/tariff';
 import { VPFI_DECIMALS } from '../data/vpfi';
 import { useLoanRisk, healthView, liquidationPriceText } from '../data/risk';
@@ -1319,6 +1323,41 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // warm cache could serve a frozen verdict as if it were current.
     enabled: isLenderHolder && effectivelyActive,
   });
+
+  // #1849 — the instant-sale candidates, derived ONCE for both the exit
+  // chooser and the sale tool (`EarlyExitFlow`), from the same live read,
+  // so the chooser can no longer offer a jump to a tool that already knows
+  // the market is empty. Advanced only: in Basic neither the live loan read
+  // nor this page walk runs, and the chooser keeps saying `'unknown'`
+  // rather than putting a full active-offers walk on every lender who
+  // merely opens a position. The walk shares the one `activeOffers` cache
+  // entry, so the tool mounting below adds no second walk.
+  // Enabled on the same two facts that mount the sale tool, so the tool is
+  // never left waiting on a walk this page switched off.
+  const instantSellOffers = useActiveOffers({
+    enabled: isAdvanced && isLenderHolder,
+  });
+  const instantSellCandidates = useMemo(
+    () =>
+      loanLive.data && !loanLive.isError && loan.data
+        ? instantSellCandidatesOf({
+            offers: instantSellOffers.data,
+            offersFailed: instantSellOffers.isError,
+            address,
+            row: loan.data,
+            live: loanLive.data.live,
+            chainNow: loanLive.data.chainNow,
+          })
+        : undefined,
+    [
+      loanLive.data,
+      loanLive.isError,
+      loan.data,
+      instantSellOffers.data,
+      instantSellOffers.isError,
+      address,
+    ],
+  );
 
   if (loan.isLoading) {
     return <EmptyState icon={LoaderCircle} title={copy.positions.details.loadingLoan} />;
@@ -4694,11 +4733,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             !feeEnt.isError &&
             feeEnt.data.lenderMode === FEE_MODE_FULL
           }
-          // 'unknown' on purpose — the candidate list comes from
-          // `useActiveOffers`, a full page walk this page does not
-          // otherwise make. Hoisting it would put that walk on every
-          // lender who merely opens a position.
-          instantSellCandidates="unknown"
+          // #1849 — Advanced reads the SAME list the sale tool below
+          // renders (derived once, above). Basic stays `'unknown'`: the
+          // list there would cost a full active-offers walk on every
+          // lender who merely opens a position, and `'unknown'` makes no
+          // claim, leaving the row to the tool.
+          instantSellCandidates={
+            isAdvanced
+              ? instantSellVerdict(instantSellCandidates)
+              : 'unknown'
+          }
         />
       ) : null}
 
@@ -4778,7 +4822,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           <EarlyExitFlow
             row={row}
             live={loanLive.data.live}
-            chainNow={loanLive.data.chainNow}
+            candidates={instantSellCandidates}
             principalMeta={principal}
             confirmOpen={confirmingSurface === 'early-exit'}
             onOpenConfirm={() => setConfirmingSurface('early-exit')}
