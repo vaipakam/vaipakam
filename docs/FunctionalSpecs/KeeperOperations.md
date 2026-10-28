@@ -209,6 +209,51 @@ evidence that the migration has completed.
   Deployment or role changes close obsolete alerts with an explanatory
   notice and start work under the new deployment's identity.
 
+## Closing out finished reward days
+
+- Every permissionless step that retires a finished reward day, or releases
+  value the day no longer needs, has a keeper backstop, so nothing waits on
+  someone choosing to make the call. The close-out duty checks every fifteen
+  minutes on every chain it serves.
+- It proves an elapsed day closed only when the day is reached by both
+  interest frontiers and every reward entry covering it has ended. Before
+  opening a proof it checks, from its own reading of the chain, that the
+  covering entries sum exactly to the day's recorded totals; when they do
+  not, it opens nothing and reports the shortfall, because a proof started
+  on an incomplete reading could never finish. A day with an entry still
+  running is counted as waiting, not attempted. Its own unfinished proof
+  for a day is continued rather than replaced.
+- It finalizes a retired custody era once every day of the era's span is
+  proven closed and no staging hold remains on its row, and never touches
+  the live era. On a chain with an active reward role it drains the whole
+  pending surplus into the live baseline. On a detached chain it leaves the
+  pending surplus for the return transport and reports how much waits
+  there.
+- It parks a transport epoch's remainder once every day the epoch lists is
+  proven closed, the epoch's day membership is complete and no staging
+  record references it. Releasing a parked remainder stays the
+  administrator's acknowledgment; the keeper never makes it, and each run's
+  report names every epoch parked.
+- It advances a still-open day's transport cursor past an epoch that is
+  plainly exhausted: nothing left, fully indexed and unreferenced. An epoch
+  exhausted only by its caps is not detected by the keeper; the day's next
+  draw passes it.
+- How long the chain's history grows never stops the duty, and no day, era
+  or epoch is ever left out for good. Its work per run is bounded, and each
+  bounded read resumes where the previous run stopped, wrapping round, above
+  a floor of what is finished for good: the days not yet proven closed are
+  read sixty at a time by default, every provable day is read the same way
+  for parking, the retired eras not yet finalized are read thirty-two at a
+  time, a day's transport epochs are read a page at a time, and its reading
+  of the reward entries starts past the entries that ended before the oldest
+  day still open. A day that stays open therefore does not hold back the
+  days after it. Where the bound keeps something from being reached in one
+  run, the run's report says so.
+- None of these steps pays a fee or moves value to the keeper. A paused
+  protocol, a missing signing key, an unread value or a Diamond that names
+  another chain stops the affected step and is stated in the run's report,
+  never treated as nothing to do.
+
 ## Claim-horizon and sanctions observation
 
 - The reward heartbeat discovers all unsettled reward entries and touches
@@ -238,10 +283,10 @@ evidence that the migration has completed.
 
 The master keeper switch and each duty's own arming choice are separate.
 Delivery proofs, late acknowledgements, sanctions observation, reward-day
-automation, and the reward heartbeat must each disclose whether they are
-armed on the selected deployment. Reward-day automation and the heartbeat
-ship disabled and require deliberate activation. Deploying their software
-does not prove they run, that rewards have launched, or that custody or the
+automation, reward-day close-out, and the reward heartbeat must each
+disclose whether they are armed on the selected deployment. Reward-day
+automation, close-out and the heartbeat ship disabled and require
+deliberate activation. Deploying their software does not prove they run, that rewards have launched, or that custody or the
 expiry horizon has been activated. The mirror's day-delivery protection is
 required by its reward role, as stated in the current tokenomics spec; it is
 not an optional keeper setting.

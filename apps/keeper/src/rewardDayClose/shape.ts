@@ -29,7 +29,7 @@ import { getAddress, toFunctionSelector, type Abi, type AbiFunction, type Addres
 import { PastRunDeadline } from '../batchRead';
 import { B4_QUOTE_ABI, B4_REPORTER_SELECTOR, CLOSE_DAY_SELECTOR, LOUPE_ABI, MESSENGER_ABI } from './constants';
 import type { ChainRun } from './deps';
-import { shortErr } from './errors';
+import { shortErr } from '../callErrors';
 import { known, unknown, type Fact } from './fact';
 import { readOne } from './reads';
 

@@ -27,7 +27,7 @@ import type { BaseFindings, Wait } from './findings';
 import { broadcastDays } from './broadcast';
 import { recordZeroed } from './notices';
 import { PastRunDeadline } from '../batchRead';
-import { shortErr } from './errors';
+import { shortErr } from '../callErrors';
 import { planFinalize, topologyOf, type BroadcastPlan } from './plan';
 import { broadcastDestinations, expectedSources, messengerAt, peerSentAt, readDays, readReported } from './reads';
 import type { Sender } from './sender';

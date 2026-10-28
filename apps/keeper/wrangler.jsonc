@@ -350,6 +350,11 @@
   //     period's grace is over and so sells part of the borrower's
   //     collateral when the period's interest is unpaid. Ships unset. Needs
   //     no on-chain role. Arming it is an owner decision.
+  //   - REWARD_CLOSE_OUT_ENABLED — 'true' arms the #2984 reward close-out
+  //     pass: day-closure walks, retired-era finalization, the pending-surplus
+  //     drain, the transport-remainder park and the day-cursor prune. All
+  //     permissionless; it pays no fee and moves nothing to the keeper. Ships
+  //     unset. Needs no on-chain role. Arming it is an owner decision.
   //
   // (b) GENUINE PLAIN VARS. `keep_vars: true` preserves the ones this config
   //     does NOT declare — it suppresses the delete of bindings absent from
@@ -379,7 +384,8 @@
   //     each remitted part, #918), REWARD_REMIT_MIN_PART (wei, default
   //     1000e18; the smallest part that may leave its day owing, #2960),
   //     REWARD_COMMIT_LOOKBACK_DAYS (default 14), REWARD_DAY_CLOSE_MAX_FEE_WEI
-  //     (per-chain CCIP fee ceiling per send, default 0.002 native; #2627)
+  //     (per-chain CCIP fee ceiling per send, default 0.002 native; #2627),
+  //     REWARD_CLOSE_OUT_WINDOW_DAYS (default 60; #2984)
   //     — knobs for (a)'s passes,
   //     but plain vars themselves.
   //

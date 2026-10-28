@@ -32,7 +32,7 @@
 import type { Address } from 'viem';
 import { FRONTIER_SHORT } from './constants';
 import type { ChainRun } from './deps';
-import { shortErr } from './errors';
+import { shortErr } from '../callErrors';
 import { reportFee } from './reads';
 import type { ReportShape } from './shape';
 import { reportSentVia } from './plan';

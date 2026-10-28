@@ -46,7 +46,7 @@ import type { Env } from '../env';
 import { listOpsAlertKeys } from '../db';
 import { resolveOpsAlert, sendOpsAlert, sendOpsNoticeDigest } from '../opsAlert';
 import { ALERT_REPEAT_SEC, BROADCAST_RESEND_AFTER_SEC, SERVES, SERVES_ON_BASE, STATEMENT_REPEAT_SEC } from './constants';
-import { shortErr } from './errors';
+import { shortErr } from '../callErrors';
 import type { RunFindings } from './findings';
 import { topologyFaults } from './plan';
 import { TENURE_PATTERN, tenureWords, type DayStore, type RoleTenure } from './store';
