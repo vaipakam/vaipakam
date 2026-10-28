@@ -336,6 +336,16 @@ async function cloudflare(path, { account, token }) {
   return { status: 200, result: body.result };
 }
 
+// What the Cloudflare API returns reaches the run log, the step summary, the
+// alert issue and the ops chat. Every value from it is therefore checked at
+// this boundary and kept only in a known shape: a version id as a UUID, a
+// time as the ISO string of its parsed value, a tag only when it is a stamp.
+const VERSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isoTime = (value) => {
+  const ms = Date.parse(String(value ?? ''));
+  return Number.isNaN(ms) ? null : new Date(ms).toISOString();
+};
+
 async function gather(worker, { ref, auth }) {
   let deployments;
   try {
@@ -348,11 +358,13 @@ async function gather(worker, { ref, auth }) {
   }
   if (deployments.length === 0) return { ...worker, read: 'none' };
   const latest = [...deployments].sort((a, b) => Date.parse(b.created_on) - Date.parse(a.created_on))[0];
+  const deployedAt = isoTime(latest.created_on);
+  if (!deployedAt) return { ...worker, read: 'error', error: 'the latest deployment carries no readable time' };
   // An unstamped version is placed by when THAT VERSION was uploaded, never
   // by the deployment's time: a rollback deploys an old version today, and
   // placing it at today's main would hide every change it lacks.
   const placedByTime = (uploadedAt) => {
-    if (!uploadedAt || Number.isNaN(Date.parse(uploadedAt))) return null;
+    if (!uploadedAt) return null;
     const sha = git(['rev-list', '-1', '--first-parent', `--before=${uploadedAt}`, ref]).trim();
     return sha || null;
   };
@@ -360,6 +372,9 @@ async function gather(worker, { ref, auth }) {
   // Only versions that take traffic run code anyone reaches; a version kept
   // at 0% is listed but serves nothing.
   for (const v of (latest.versions ?? []).filter((x) => Number(x.percentage) > 0)) {
+    if (!VERSION_ID.test(String(v.version_id))) {
+      return { ...worker, read: 'error', error: 'the latest deployment names a version id of an unknown shape' };
+    }
     let tag = '';
     let uploadedAt = null;
     try {
@@ -368,10 +383,13 @@ async function gather(worker, { ref, auth }) {
       // read, never an unstamped version: only a version actually read may
       // be placed by its upload time.
       if (r.status !== 200) throw new Error(`HTTP ${r.status}`);
-      tag = String(r.result?.annotations?.['workers/tag'] ?? '');
-      uploadedAt = r.result?.metadata?.created_on ?? null;
+      // Kept only in the shapes this check writes or reads: a tag that is not
+      // a stamp is no stamp, and a time is re-written from its parsed value.
+      const rawTag = String(r.result?.annotations?.['workers/tag'] ?? '');
+      tag = STAMP_TAG.test(rawTag) ? rawTag : '';
+      uploadedAt = isoTime(r.result?.metadata?.created_on);
     } catch (err) {
-      return { ...worker, read: 'error', error: `version ${v.version_id}: ${String(err.message).slice(0, 80)}` };
+      return { ...worker, read: 'error', error: `version ${v.version_id}: ${String(err.message).replace(/[\r\n]+/g, ' ').slice(0, 80)}` };
     }
     const stamp = STAMP_TAG.exec(tag);
     let basis = 'time';
@@ -391,7 +409,7 @@ async function gather(worker, { ref, auth }) {
     }
     versions.push({
       id: v.version_id,
-      percentage: v.percentage,
+      percentage: Number(v.percentage),
       tag,
       basis,
       commit,
@@ -402,7 +420,7 @@ async function gather(worker, { ref, auth }) {
     });
   }
   if (versions.length === 0) return { ...worker, read: 'error', error: 'the latest deployment lists no version taking traffic' };
-  return { ...worker, read: 'ok', deployedAt: latest.created_on, versions };
+  return { ...worker, read: 'ok', deployedAt, versions };
 }
 
 // ── selftest ─────────────────────────────────────────────────────────────
