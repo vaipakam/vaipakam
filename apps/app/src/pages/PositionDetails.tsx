@@ -4657,13 +4657,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   ? 'yes'
                   : 'no-unverified'
           }
-          // The FOURTH prerequisite's settledness, and the one the
-          // wiring had missed (Codex #1858 r11). `saleTools` is derived
-          // from retained data and `isError`, both of which survive a
-          // background refetch, so a cached `'ready'` published a
-          // settled answer that a failed refetch then turned to
-          // `'failed'`.
-          saleToolsSettled={sourceSettled(feeEnt)}
+          // Settled only when EVERY read `saleTools` is derived from has
+          // stopped (Codex #1858 r11 for the fee read, #3024 r3 for the
+          // rest). Each is derived from retained data and `isError`,
+          // both of which survive a background refetch, so a refresh
+          // still in flight can turn a published `'ready'` into
+          // `'checking'` (a status read reporting FallbackPending, via
+          // `saleAttemptable`) or `'failed'`. The list is the arms of
+          // `saleTools` above, read for read.
+          saleToolsSettled={[feeEnt, principalMeta, loanLive, liveStatus, bannerTerms].every(
+            sourceSettled,
+          )}
           // Answers "might a buyer still complete", NOT "may I offer
           // the row" — see `listingMayStand`. An affirmative cached
           // listing keeps the COST lines up even when the poll that
