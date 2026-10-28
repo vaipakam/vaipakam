@@ -195,6 +195,8 @@ class FakeDiamond {
    *  finalized (the walk stops at the first that is not). */
   releases = new Map<number, { bound: number; cursor: number }>();
   globalFinalized = new Set<number>();
+  /** Fresh-queue reads that succeed before every later one fails; null, all succeed. */
+  queueReadsLeft: number | null = null;
   /** The reconciliation queues; a walk writes `perWalk` of what is pending. */
   queues: Record<'fresh' | 'recycled', { pending: bigint; frontier: bigint; perWalk: bigint; addedAfterWalk?: bigint }> = {
     fresh: { pending: 0n, frontier: 0n, perWalk: 50n },
@@ -329,6 +331,7 @@ class FakeDiamond {
       }
       case 'getFreshQueueState': {
         if (a[0] !== 0n) throw revert('CustodyEraUnknown', [a[0]]);
+        if (this.queueReadsLeft !== null && this.queueReadsLeft-- <= 0) throw new Error('queue read failed');
         const q = this.queues.fresh;
         return [q.frontier, 0n, 0n, 0n, q.pending, 0n, 0n, 0n, 0n, 0n];
       }
@@ -1096,6 +1099,16 @@ describe('a run', () => {
       const r = await run();
       expect(r.queues).toEqual([{ side: 'fresh', walks: MAX_SENDS_PER_RUN, before: 120n, after: 120n + BigInt(MAX_SENDS_PER_RUN) * 50n }]);
       expect(r.refused.has('queue:fresh'), 'a walk that moved the frontier is progress').toBe(false);
+    });
+
+    it('reports the pending figure after a landed walk as unread when its read fails, not the one before it', async () => {
+      d.queues.fresh.pending = 120n;
+      d.queueReadsLeft = 1;
+      const r = await run();
+      expect(fns()).toEqual(['advanceReconciliationQueue']);
+      expect(r.queues).toEqual([{ side: 'fresh', walks: 1, before: 120n, after: null }]);
+      expect(r.unread.has('queue:fresh')).toBe(true);
+      expect(describeReport(r)).toContain('queue-fresh=1 walk(s), pending 120 before, unread after (net of other callers)');
     });
 
     it('stops on a walk that moves nothing, and works while the protocol is paused', async () => {

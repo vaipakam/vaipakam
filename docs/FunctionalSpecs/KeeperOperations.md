@@ -254,7 +254,9 @@ evidence that the migration has completed.
   steps. The run's report states how many of its calls landed and the
   pending figure it read before and after them. It does not present the
   difference as its own work, since other payouts can add pending takes, and
-  anyone can write them, between its reads.
+  anyone can write them, between its reads. When the read after its last
+  call fails, it reports that figure as unread rather than repeating the
+  earlier one.
 - How long the chain's history grows never stops the duty, and no day, era
   or epoch is ever left out for good. Its work per run is bounded, and each
   bounded read resumes where the previous run stopped, wrapping round, above
