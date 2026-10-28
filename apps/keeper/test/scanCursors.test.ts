@@ -59,5 +59,7 @@ describe('finalFloor', () => {
     expect(await failing()).toBeNull();
     const numberless = finalizedBlockOnce({ getBlock: (async () => ({ timestamp: 90n })) as never });
     expect(await numberless(), 'a block without a number is no finalized block').toBeNull();
+    const throwing = finalizedBlockOnce({ getBlock: (() => { throw new Error('synchronous'); }) as never });
+    expect(await throwing(), 'a client that throws before it returns a promise').toBeNull();
   });
 });

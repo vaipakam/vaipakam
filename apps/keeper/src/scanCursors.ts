@@ -121,8 +121,8 @@ export interface FinalBlock {
 export function finalizedBlockOnce(client: Pick<PublicClient, 'getBlock'>): () => Promise<FinalBlock | null> {
   let read: Promise<FinalBlock | null> | undefined;
   return () =>
-    (read ??= client
-      .getBlock({ blockTag: 'finalized' })
+    (read ??= Promise.resolve()
+      .then(() => client.getBlock({ blockTag: 'finalized' }))
       .then((b) => (typeof b.number === 'bigint' ? { number: b.number, timestamp: b.timestamp } : null))
       .catch(() => null));
 }
