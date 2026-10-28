@@ -144,6 +144,15 @@ const CHECKS = ['match', 'sha-mismatch', 'length-mismatch', 'no-manifest', 'bad-
  * its bytes is claimed.
  */
 export const NOT_DIGESTED = '-';
+
+/**
+ * How long an archive may stay out of the ledger, counted from when the
+ * ledger could first have recorded it (its upload, or the ledger's start for
+ * an older archive), before a failed ledger upload pages: past two days it
+ * has missed at least one more daily run than a single transient failure
+ * explains.
+ */
+export const UNRECORDED_PAGE_MS = 2 * 86_400_000;
 const FORMATS = [LEGACY_FORMAT, 'unknown'];
 
 /**
@@ -419,7 +428,7 @@ const CHECK_TEXT = {
  * nonce in an archive's name is what keeps a leaked write key from replacing
  * it (design §4).
  */
-export function judge({ now, ledger, bucket, lifecycle, baseline, baselineErrors = {}, deferred = [], renewalFailures = [], manifestRechecks = new Map() }) {
+export function judge({ now, ledger, bucket, lifecycle, baseline, baselineErrors = {}, deferred = [], unwritten = [], renewalFailures = [], manifestRechecks = new Map() }) {
   const problems = [];
   const notes = [];
   // A problem carries one or more stable keys: the alert re-notifies when the
@@ -550,6 +559,19 @@ export function judge({ now, ledger, bucket, lifecycle, baseline, baselineErrors
   // An extension B2 refused this run: paged now, not when the year runs out.
   for (const f of renewalFailures) {
     add(`renewal-failed:${f.fileId}`, `Retention not renewed: extending the ledger entry for the ${f.period} yearly archive (${f.fileId}) failed: ${f.error}.`);
+  }
+
+  // An archive whose ledger upload failed this run. It was still judged above
+  // from what the run computed; the next run uploads it once the failed
+  // request has settled. One failure is news for the summary; an archive that
+  // has stayed unrecorded past UNRECORDED_PAGE_MS has missed more than one run
+  // and pages, so a failure that keeps recurring cannot hide as a note.
+  for (const u of unwritten) {
+    if (now - (u.recordableSince ?? u.uploaded) > UNRECORDED_PAGE_MS) {
+      add(`unrecorded:${u.fileId}`, `Not recorded: the ${u.tier} archive for ${u.period} (${u.fileId}) is still missing from the ledger: ${u.error}.`);
+    } else {
+      notes.push(`${u.tier} ${u.period} (${u.fileId}) could not be recorded this run and is left to the next: ${u.error}`);
+    }
   }
 
   // An archive left unrecorded on purpose, waiting for its manifest.

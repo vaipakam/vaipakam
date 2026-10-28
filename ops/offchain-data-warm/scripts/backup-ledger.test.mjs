@@ -381,7 +381,7 @@ function fakeB2({ pageSize = 2 } = {}) {
     },
     async fetch(url, init = {}) {
       const u = new URL(url);
-      const i = b2.faults.findIndex((f) => f.match(u.pathname));
+      const i = b2.faults.findIndex((f) => f.match(u.pathname, init));
       if (i >= 0) {
         const [f] = b2.faults.splice(i, 1);
         if (f.store) await b2.handle(url, init);
@@ -443,7 +443,7 @@ function fakeB2({ pageSize = 2 } = {}) {
           action: 'upload',
           fileName: decodeURIComponent(init.headers['X-Bz-File-Name']),
           fileId,
-          uploadTimestamp: NOW,
+          uploadTimestamp: b2.now ?? NOW,
           contentLength: Buffer.byteLength(init.body),
           contentSha1: createHash('sha1').update(init.body).digest('hex'),
           fileInfo,
@@ -736,43 +736,79 @@ test('every file-info value is fixed in size, so the largest entry fits B2\'s 2,
   assert.deepEqual(entryFileInfo({ ...r, manifest: { versions: [] } }).manifests, '-');
 });
 
-test('a transient B2 failure is retried; an upload that landed despite its error is not uploaded twice', async () => {
-  const isUpload = (p) => p.startsWith('/upload/');
-  // A 500 that stored nothing: retried on a fresh upload URL.
+test('a failed ledger upload is never repeated in the run: judged now, recorded by the next run', async () => {
+  const uploadOf = (id) => (p, init) => p.startsWith('/upload/') && decodeURIComponent(init.headers['X-Bz-File-Name']).includes(id);
+  const ledgerVersions = (b2) => b2.versions('vaipakam-offchain-backup-ledger');
+  // A 500 that stored nothing: one POST only, the archive is still judged,
+  // and the next run records it.
   const b2 = world();
-  nightly(b2, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
-  b2.faults.push({ match: isUpload, status: 500 });
-  assert.deepEqual((await run(b2)).live, []);
-  assert.equal(b2.versions('vaipakam-offchain-backup-ledger').length, 2);
-  // A 500 that DID store: the retry finds this exact upload and stops, so the
-  // name keeps one version and nothing reads as tampering.
+  const id = nightly(b2, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
+  b2.faults.push({ match: uploadOf(id), status: 500 });
+  const first = await run(b2);
+  assert.deepEqual(first.live, []);
+  assert.deepEqual(first.unwritten.map((u) => u.fileId), [id]);
+  assert.ok(first.notes.some((n) => n.includes(id) && n.includes('left to the next')), first.notes.join('\n'));
+  assert.ok(!ledgerVersions(b2).some((v) => v.fileName.endsWith(`/${id}.json`)));
+  const second = await run(b2);
+  assert.deepEqual(second.unwritten, []);
+  assert.equal(ledgerVersions(b2).filter((v) => v.fileName.endsWith(`/${id}.json`)).length, 1);
+  // A 500 that DID store: the run's own listing sees it landed, nothing is
+  // left pending, and no later run uploads it again.
   const b3 = world();
-  nightly(b3, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
-  b3.faults.push({ match: isUpload, status: 500, store: true });
-  assert.deepEqual((await run(b3)).live, []);
-  assert.equal(b3.versions('vaipakam-offchain-backup-ledger').length, 2);
-  assert.deepEqual((await run(b3)).live, []);
-  // Reads are retried too: a listing and a download each fail once.
+  const landed = nightly(b3, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
+  b3.faults.push({ match: uploadOf(landed), status: 500, store: true });
+  const r3 = await run(b3);
+  assert.deepEqual(r3.live, []);
+  assert.deepEqual(r3.unwritten, []);
+  await run(b3);
+  assert.equal(ledgerVersions(b3).filter((v) => v.fileName.endsWith(`/${landed}.json`)).length, 1);
+  // An archive whose upload fails is judged all the same: a mismatch pages.
   const b4 = world();
-  nightly(b4, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
-  b4.faults.push({ match: (p) => p.endsWith('/b2_list_file_versions'), status: 503 });
-  b4.faults.push({ match: (p) => p.endsWith('/b2_download_file_by_id'), status: 500 });
-  assert.deepEqual((await run(b4)).live, []);
-  assert.equal(b4.faults.length, 0);
+  const bad = nightly(b4, 'daily', '2026-10-27', N1, 'night', NOW - DAY, { declared: { sha256: sha('other'), byteLength: 5, encryption: 'AES-256-GCM' } });
+  b4.faults.push({ match: uploadOf(bad), status: 503 });
+  assert.deepEqual((await run(b4)).live.flatMap((p) => p.keys), [`mismatch:${bad}`]);
+  // Reads are retried: a listing and a download each fail once.
+  const b5 = world();
+  nightly(b5, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
+  b5.faults.push({ match: (p) => p.endsWith('/b2_list_file_versions'), status: 503 });
+  b5.faults.push({ match: (p) => p.endsWith('/b2_download_file_by_id'), status: 500 });
+  assert.deepEqual((await run(b5)).live, []);
+  assert.equal(b5.faults.length, 0);
 });
 
-test('a refusal is not retried, and a failure that outlasts every attempt stops the run', async () => {
+test('a refused upload stops the run; an archive that stays unrecorded for days pages', async () => {
+  const uploadOf = (id) => (p, init) => p.startsWith('/upload/') && decodeURIComponent(init.headers['X-Bz-File-Name']).includes(id);
   const b2 = world();
   nightly(b2, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
   b2.faults.push({ match: (p) => p.startsWith('/upload/'), status: 400 });
-  b2.faults.push({ match: (p) => p.startsWith('/upload/'), status: 500 });
   await assert.rejects(run(b2), /upload of .* failed: 400/);
-  assert.equal(b2.faults.length, 1, 'a 400 was retried');
+  // On the ledger's first run an old archive is only news; once the ledger
+  // has been running for days, an archive it still cannot record pages.
   const b3 = world();
+  nightly(b3, 'daily', '2026-10-24', N3, 'night-24', NOW - 4 * DAY);
+  b3.now = NOW - 3 * DAY;
+  await run(b3, { now: b3.now });
+  const old = nightly(b3, 'daily', '2026-10-25', N2, 'night-25', NOW - 3 * DAY + 1000);
+  b3.now = NOW - 3 * DAY + MANIFEST_GRACE_MS + 2000;
+  b3.faults.push({ match: uploadOf(old), status: 503 });
+  const fresh = await run(b3, { now: b3.now });
+  assert.ok(!fresh.live.some((p) => p.keys.some((k) => k.startsWith('unrecorded:'))), JSON.stringify(fresh.live));
+  b3.now = NOW;
   nightly(b3, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
-  for (let i = 0; i < 3; i++) b3.faults.push({ match: (p) => p.startsWith('/upload/'), status: 503 });
-  await assert.rejects(run(b3), /failed after 3 attempts/);
-  assert.equal(b3.versions('vaipakam-offchain-backup-ledger').length, 0);
+  b3.faults.push({ match: uploadOf(old), status: 503 });
+  const r = await run(b3);
+  assert.deepEqual(r.live.flatMap((p) => p.keys), [`unrecorded:${old}`]);
+  // A network error is as indeterminate as a 5xx.
+  const b4 = world();
+  nightly(b4, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
+  const fetchImpl = async (url, init) => {
+    if (new URL(url).pathname.startsWith('/upload/')) throw new TypeError('fetch failed');
+    return b4.fetch(url, init);
+  };
+  const r4 = await runWatcher({ env: ENV, now: NOW, fetchImpl, sleep: noSleep });
+  assert.equal(r4.unwritten.length, 2); // the October monthly and the daily
+  assert.equal(b4.versions('vaipakam-offchain-backup-ledger').length, 0);
+  assert.deepEqual(r4.live, []);
 });
 
 test('the nightly\'s PUT retries a transient B2 failure and gives up on a refusal', async () => {

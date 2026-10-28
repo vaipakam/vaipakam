@@ -278,55 +278,43 @@ export async function bytesById(auth, fileId, { maxBytes = 1 << 20, ...io } = {}
  * refused outright when the bucket has no Object Lock, which is what keeps a
  * misconfigured ledger bucket from being used as if it were locked.
  *
- * A transient failure is retried on a fresh upload URL, as B2 asks. The upload
- * itself is not blindly repeatable: B2 can store a file and still answer with
- * an error, and a second upload would leave a second version, which the
- * watcher reads as tampering. So before each retry the name is listed. A
- * single version there with these exact bytes (by SHA-1) is this upload,
- * landed; anything else there is not accounted for, and the upload stops
- * rather than add to it.
+ * The upload itself is tried ONCE. A failed upload is indeterminate: B2 can
+ * store a file and still answer with an error, and a request cut off in
+ * flight can still commit after the caller has given up on it. A second
+ * upload in the same run could then leave a second compliance-locked version,
+ * which the watcher reads as tampering, and no listing taken now can rule
+ * that out. So a transient failure (a network error, 408, 429 or 5xx) throws
+ * with `transient` set, for the caller to leave to the next run, when the
+ * first request has long settled and the run's own listing says whether it
+ * landed. Anything else is a refusal and throws plainly.
  */
 export async function uploadLocked(auth, bucketId, { fileName, bytes, contentType, fileInfo, retainUntil }, io = {}) {
-  const sleep = io.sleep ?? realSleep;
-  const sha1 = createHash('sha1').update(bytes).digest('hex');
-  const failures = [];
-  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
-    if (attempt > 0) {
-      await sleep(BACKOFF_MS[attempt - 1] ?? BACKOFF_MS.at(-1));
-      const there = (await listAllVersions(auth, bucketId, fileName, io)).filter((v) => v.fileName === fileName);
-      if (there.length === 1 && there[0].action === 'upload' && there[0].contentSha1 === sha1) {
-        return { fileId: there[0].fileId, fileName };
-      }
-      if (there.length > 0) {
-        throw new Error(`upload of ${fileName} failed (${failures.join(' | ')}) and the name now holds a version this run cannot account for`);
-      }
-    }
-    const target = await call(auth, 'b2_get_upload_url', { bucketId }, io);
-    const headers = {
-      Authorization: target.authorizationToken,
-      'X-Bz-File-Name': encodeURIComponent(fileName).replace(/%2F/g, '/'),
-      'Content-Type': contentType,
-      'Content-Length': String(bytes.byteLength),
-      'X-Bz-Content-Sha1': sha1,
-      'X-Bz-File-Retention-Mode': 'compliance',
-      'X-Bz-File-Retention-Retain-Until-Timestamp': String(retainUntil),
-    };
-    for (const [k, v] of Object.entries(fileInfo ?? {})) {
-      headers[`X-Bz-Info-${k}`] = encodeURIComponent(String(v));
-    }
-    let res;
-    try {
-      res = await (io.fetchImpl ?? fetch)(pinned(target.uploadUrl, 'upload URL'), { method: 'POST', headers, body: bytes });
-    } catch (e) {
-      failures.push(`network: ${String(e?.message ?? e).slice(0, 200)}`);
-      continue;
-    }
-    if (res.ok) return res.json();
-    const failure = `${res.status} ${(await res.text()).slice(0, 300)}`;
-    if (!isTransientStatus(res.status)) throw new Error(`upload of ${fileName} failed: ${failure}`);
-    failures.push(failure);
+  const target = await call(auth, 'b2_get_upload_url', { bucketId }, io);
+  const headers = {
+    Authorization: target.authorizationToken,
+    'X-Bz-File-Name': encodeURIComponent(fileName).replace(/%2F/g, '/'),
+    'Content-Type': contentType,
+    'Content-Length': String(bytes.byteLength),
+    'X-Bz-Content-Sha1': createHash('sha1').update(bytes).digest('hex'),
+    'X-Bz-File-Retention-Mode': 'compliance',
+    'X-Bz-File-Retention-Retain-Until-Timestamp': String(retainUntil),
+  };
+  for (const [k, v] of Object.entries(fileInfo ?? {})) {
+    headers[`X-Bz-Info-${k}`] = encodeURIComponent(String(v));
   }
-  throw new Error(`upload of ${fileName} failed after ${ATTEMPTS} attempts: ${failures.join(' | ')}`);
+  const url = pinned(target.uploadUrl, 'upload URL');
+  let res;
+  try {
+    res = await (io.fetchImpl ?? fetch)(url, { method: 'POST', headers, body: bytes });
+  } catch (e) {
+    throw Object.assign(new Error(`upload of ${fileName} failed: network: ${String(e?.message ?? e).slice(0, 200)}`), { transient: true });
+  }
+  if (res.ok) return res.json();
+  // The body is diagnostics only; failing to read it changes nothing.
+  const text = await res.text().catch(() => '<no body>');
+  throw Object.assign(new Error(`upload of ${fileName} failed: ${res.status} ${text.slice(0, 300)}`), {
+    transient: isTransientStatus(res.status),
+  });
 }
 
 /** Lengthen one version's compliance retention. B2 refuses a shortening. */
