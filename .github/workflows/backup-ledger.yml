@@ -1,0 +1,149 @@
+name: Backup ledger
+
+# WHY THIS EXISTS (#1469, #1473; design:
+# docs/DesignsAndPlans/BackupSecurityDesign.md §5). The nightly archive Worker
+# holds a key that can write to the archive bucket, and until slice 2 one that
+# can read it too, so nothing the Worker checks about its own archives can
+# survive the Worker being compromised. This watcher runs on a different
+# credential boundary (GitHub, not Cloudflare), records every archive version
+# in a ledger bucket under Object Lock that the Worker holds no key to, and
+# pages on: a missing period, a period holding more than one archive, a copy of
+# an older archive in a newer period, an archive that disagrees with its
+# manifest (re-checked whenever the manifest changes), a ledger entry with a
+# second version or a hide marker, an archive hidden or deleted before its
+# lifecycle could do it, and a yearly entry whose
+# retention could not be lengthened.
+#
+# The rules and their fixtures live in
+# ops/offchain-data-warm/scripts/lib/ledger-rules.mjs and
+# scripts/backup-ledger.test.mjs; the run itself in scripts/backup-ledger.mjs.
+#
+# HOW THE OPERATOR HEARS OF IT: the shared alert job (alert-issue.yml), as the
+# ingest probe does. One issue, keyed by stable problem names; a run that could
+# not reach a verdict (no keys yet, a key with the wrong authority, B2 down)
+# opens a separate "not running" issue, so the operator is never told a backup
+# is broken when its state is unknown.
+#
+# NOTHING HERE NAMES AN ARCHIVE. The run log, summary and alert issue are
+# public, and the random nonce in each archive's name is what keeps a leaked
+# write key from replacing that archive. The watcher prints tiers, periods and
+# B2 file ids only.
+
+on:
+  schedule:
+    - cron: '17 4 * * *' # daily, an hour after the 03:17 UTC nightly
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Read and judge without writing a ledger entry or a retention'
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - '.github/workflows/backup-ledger.yml'
+      - 'ops/offchain-data-warm/scripts/backup-ledger*.mjs'
+      - 'ops/offchain-data-warm/scripts/lib/**'
+      - 'ops/offchain-data-warm/src/tiers.ts'
+      - 'ops/offchain-data-warm/src/limits.ts'
+
+permissions:
+  contents: read # the alert job adds issues: write for itself
+
+concurrency:
+  group: backup-ledger-${{ github.event_name == 'pull_request' && 'selftest' || 'watch' }}
+  cancel-in-progress: false
+
+jobs:
+  selftest:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - working-directory: ops/offchain-data-warm
+        run: node --experimental-strip-types --test scripts/backup-ledger.test.mjs
+
+  watch:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    # Downloads each new archive once to digest it; a first run reads every
+    # archive in the bucket. Well past that, a run is hung, and the alert job
+    # still runs after it is cancelled.
+    timeout-minutes: 30
+    outputs:
+      verdict: ${{ steps.check.outcome }}
+      problems: ${{ steps.check.outputs.problems }}
+      keys: ${{ steps.check.outputs.keys }}
+    env:
+      B2_ARCHIVE_READ_KEY_ID: ${{ secrets.B2_ARCHIVE_READ_KEY_ID }}
+      B2_ARCHIVE_READ_KEY: ${{ secrets.B2_ARCHIVE_READ_KEY }}
+      B2_LEDGER_KEY_ID: ${{ secrets.B2_LEDGER_KEY_ID }}
+      B2_LEDGER_KEY: ${{ secrets.B2_LEDGER_KEY }}
+      ARCHIVE_BUCKET: vaipakam-offchain-data-warm
+      LEDGER_BUCKET: vaipakam-offchain-backup-ledger
+      # The first monthly and yearly cut this deployment wrote, as committed
+      # facts (design §5.3): a deletion of the oldest period is undetectable
+      # without them. Unset while they are unconfirmed; the run summary prints
+      # the earliest period present, and the tier reports its coverage as
+      # degraded until one is set here.
+      ARCHIVE_FIRST_MONTHLY: ''
+      ARCHIVE_FIRST_YEARLY: ''
+      # Problem keys an operator has investigated, comma-separated. Listing one
+      # here, in a reviewed commit, is what stops that page. Empty: everything
+      # pages.
+      BACKUP_ACKNOWLEDGED: ''
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - id: check
+        working-directory: ops/offchain-data-warm
+        env:
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then set -- --dry-run; fi
+          node --experimental-strip-types scripts/backup-ledger.mjs "$@"
+      - name: Summary
+        if: failure()
+        env:
+          VERDICT: ${{ steps.check.outcome }}
+          PROBLEMS: ${{ steps.check.outputs.problems }}
+        run: |
+          if [ "$VERDICT" = "failure" ] && [ -n "$PROBLEMS" ]; then
+            :
+          else
+            {
+              echo "## The backup watcher failed before it could judge the backups"
+              echo
+              echo "The backups themselves are UNKNOWN (watcher step: ${VERDICT:-not run}). See the log above."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  alert:
+    needs: watch
+    if: always() && github.event_name != 'pull_request'
+    permissions:
+      issues: write
+    uses: ./.github/workflows/alert-issue.yml
+    with:
+      probe-result: ${{ needs.watch.result }}
+      verdict: ${{ needs.watch.outputs.verdict }}
+      problems: ${{ needs.watch.outputs.problems }}
+      keys: ${{ needs.watch.outputs.keys }}
+      assignee: vaipakam
+      unhealthy-title: Backups not healthy
+      unhealthy-intro: 'The backup watcher found a problem with the off-chain archives or their ledger:'
+      unhealthy-headline: The off-chain backups are NOT healthy
+      healthy-comment: The backup watcher finds the archives and their ledger healthy again
+      broken-title: Backup watcher not running
+      broken-body: The backup watcher failed before it could judge the backups. The backups themselves are UNKNOWN, not known to be broken. Until the ledger bucket and its keys exist (the owner steps in docs/DesignsAndPlans/BackupSecurityDesign.md §9) this is the expected state; after that, the run log says what broke.
+      broken-headline: The backup watcher failed before it could judge the backups (state unknown)
+      footer: This issue closes itself on recovery. See .github/workflows/backup-ledger.yml (#1473).
+      marker: backup-ledger-keys
+    secrets:
+      TG_OPS_BOT_TOKEN: ${{ secrets.TG_OPS_BOT_TOKEN }}
+      TG_OPS_CHAT_ID: ${{ secrets.TG_OPS_CHAT_ID }}

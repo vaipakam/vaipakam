@@ -238,7 +238,25 @@ jobs:
             exit 0
           fi
           if [ "$STATE" = "unhealthy" ]; then
-            text=$(printf '%s\n\n%s\n\n%s' "$UNHEALTHY_HEADLINE" "$PROBLEMS" "$RUN_URL")
+            # Telegram refuses a message over 4096 characters, and a probe
+            # with many problems is exactly when the alert must arrive. Whole
+            # lines are kept while they fit a budget that leaves room for the
+            # headline and the run link; the rest are counted, and the issue
+            # and the run summary carry them all. Bash counts bytes here, which
+            # is never fewer than characters, so the budget errs short.
+            kept=""
+            dropped=0
+            while IFS= read -r line; do
+              if [ "$dropped" -eq 0 ] && [ $(( ${#kept} + ${#line} + 1 )) -le 3500 ]; then
+                kept="${kept}${kept:+$'\n'}${line}"
+              else
+                dropped=$((dropped + 1))
+              fi
+            done <<< "$PROBLEMS"
+            if [ "$dropped" -gt 0 ]; then
+              kept="${kept}"$'\n'"… and ${dropped} more, listed in the alert issue."
+            fi
+            text=$(printf '%s\n\n%s\n\n%s' "$UNHEALTHY_HEADLINE" "$kept" "$RUN_URL")
           else
             text=$(printf '%s\n\n%s' "$BROKEN_HEADLINE" "$RUN_URL")
           fi
