@@ -4,4 +4,4 @@ The user guide's Public Analytics chapter, in both the Basic and the Advanced gu
 
 The two retired sections (all-chains total and per-chain breakdown) are gone, and three new ones cover loans and offers, the recycling account and loop closure, and fees and treasury. The anchors are the same in every edition. This follows the owner's decision to rewrite the guide and build the missing contract figures on the page (#2437). Closes #2072.
 
-> Caveat: the guide's VPFI token and fees sections describe the page as of #2437; they are accurate once that change is live.
+> Caveat: the guide's VPFI token and fees sections describe the page as #2437 (merged as PR #3038) builds it; they match the live app from its next deploy.
