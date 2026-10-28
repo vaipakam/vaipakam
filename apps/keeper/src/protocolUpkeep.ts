@@ -51,7 +51,7 @@ import { shortErr } from './callErrors';
 import { d1EventLedger, decodePos, encodePos, posAfter, rowFinalized, type EventLedger } from './eventLedger';
 import { d1ScanCursors, finalFloor, finalizedBlockOnce, type FinalBlock, type ScanCursors } from './scanCursors';
 import { StepSender } from './stepSender';
-import { describeSales, SALE_RACES, SALES_ABI, syncSaleListings, type SalesSyncReport } from './prepaySaleSanctions';
+import { describeSales, emptySalesReport, SALE_RACES, SALES_ABI, syncSaleListings, type SalesSyncReport } from './prepaySaleSanctions';
 import { runIndex } from './runWindow';
 
 export const ABI = [
@@ -206,7 +206,9 @@ export async function upkeepOnce(chainId: number, diamond: Address, deps: Upkeep
     refreshed: null,
     tiersRejected: [],
     refreshIdle: null,
-    sales: null,
+    // An armed step reads as armed from the start: a run that ends before it
+    // is reached says so, never that the step is off.
+    sales: deps.salesSync === true ? { ...emptySalesReport(), off: 'not reached this run' } : null,
     refused: sender.refused,
     unread: sender.unread,
     stopped: null,
