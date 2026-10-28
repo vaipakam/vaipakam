@@ -28,29 +28,37 @@
 //      write nothing, on a chain whose peers give no reading, costs nothing.
 //      The run's line names each tier the refresh rejects, with the
 //      contract's reason. Skipped while peer LTV reads are paused.
+//   3. PREPAY-SALE SANCTIONS SYNC — the two permissionless syncs that commit
+//      a flagged sale recipient to the fail-closed registry and cancel its
+//      listing (`prepaySaleSanctions.ts`). Off unless
+//      PREPAY_SALE_SANCTIONS_SYNC_ENABLED is also set.
 //
 // Every call is simulated on the current state first and waits for its
 // receipt before the next (`stepSender.ts`). None pays a fee, and none moves
 // value to the keeper.
 //
-// Gated by KEEPER_ENABLED + PROTOCOL_UPKEEP_ENABLED. Ships disarmed.
+// Gated by KEEPER_ENABLED + PROTOCOL_UPKEEP_ENABLED (step 3 also by
+// PREPAY_SALE_SANCTIONS_SYNC_ENABLED). Ships disarmed.
 
 import { createPublicClient, decodeEventLog, encodeFunctionData, http, type Abi, type Address, type Hex, type PublicClient } from 'viem';
 import { AdminFacetABI, OracleFacetABI, TreasuryFacetABI, VaipakamDiamondABI } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
-import { buildKeeperContext, passIsArmed, resolveKeeperAccount, type KeeperContext } from './keeper';
+import { buildKeeperContext, passIsArmed, resolveKeeperAccount, subStepArmed, type KeeperContext } from './keeper';
 import type { PassTick } from './passSchedule';
 import { deadlineClient, PastRunDeadline, settledRead, type BatchResult } from './batchRead';
 import { shortErr } from './callErrors';
 import { d1EventLedger, decodePos, encodePos, posAfter, rowFinalized, type EventLedger } from './eventLedger';
 import { d1ScanCursors, finalFloor, finalizedBlockOnce, type FinalBlock, type ScanCursors } from './scanCursors';
 import { StepSender } from './stepSender';
+import { describeSales, emptySalesReport, SALE_RACES, SALES_ABI, syncSaleListings, type SalesSyncReport } from './prepaySaleSanctions';
+import { runIndex } from './runWindow';
 
 export const ABI = [
   ...(AdminFacetABI as Abi),
   ...(OracleFacetABI as Abi),
   ...(TreasuryFacetABI as Abi),
+  ...SALES_ABI,
   ...(VaipakamDiamondABI as Abi).filter((x) => x.type === 'error'),
 ] as Abi;
 
@@ -77,7 +85,7 @@ export const DEFAULT_REFRESH_AFTER_SEC = 7 * 24 * 60 * 60;
 export const TIERS = [1, 2, 3] as const;
 
 /** Refusals that mean another caller got there first. */
-export const RACES = new Set(['BuybackOrderNotPending']);
+export const RACES = new Set(['BuybackOrderNotPending', ...SALE_RACES]);
 export const PAUSED_REFUSAL = 'EnforcedPause';
 
 /** What one chain's run reads and signs with. Injected so a run is testable. */
@@ -93,6 +101,10 @@ export interface UpkeepDeps {
   refreshAfterSec: number;
   cursors: ScanCursors;
   ledger: EventLedger;
+  /** Step 3, the prepay-sale sanctions sync (PREPAY_SALE_SANCTIONS_SYNC_ENABLED). Off when absent. */
+  salesSync?: boolean;
+  /** Which run this is (`runIndex`), for the rotated reads of step 3. */
+  visit?: number;
 }
 
 /** What a run did on one chain: its log line's figures, and what tests read. */
@@ -107,6 +119,8 @@ export interface UpkeepReport {
   tiersRejected: string[];
   /** Why the refresh was not sent, when the preview showed nothing to write. */
   refreshIdle: string | null;
+  /** Step 3's figures; null when the step is off. */
+  sales: SalesSyncReport | null;
   refused: Map<string, string>;
   unread: Map<string, string>;
   stopped: string | null;
@@ -116,6 +130,8 @@ export async function runProtocolUpkeep(env: Env, tick: PassTick): Promise<void>
   if (!passIsArmed(env, 'protocolUpkeep', 'PROTOCOL_UPKEEP_ENABLED')) return;
   const sendDeadline = tick.deadlineMs;
   const refreshAfterSec = readPositive(env.TIER_LTV_REFRESH_AFTER_SEC, DEFAULT_REFRESH_AFTER_SEC);
+  const salesSync = subStepArmed(env, 'protocolUpkeep', 'step 3 (prepay-sale sanctions sync)', 'PREPAY_SALE_SANCTIONS_SYNC_ENABLED');
+  const visit = runIndex(tick, PASS_CADENCE_SEC * 1000);
   const resolved = env.KEEPER_PRIVATE_KEY ? resolveKeeperAccount(env.KEEPER_PRIVATE_KEY) : null;
   const keeper = resolved && 'account' in resolved ? resolved.account.address : null;
   const ledger = d1EventLedger(env.DB);
@@ -135,6 +151,8 @@ export async function runProtocolUpkeep(env: Env, tick: PassTick): Promise<void>
           refreshAfterSec,
           cursors: d1ScanCursors(env.KEEPER_DB, chain.id, chain.diamond as string, 'protocolUpkeep'),
           ledger,
+          salesSync,
+          visit,
         });
         console.log(describeReport(report));
       } catch (err) {
@@ -159,6 +177,7 @@ export function describeReport(r: UpkeepReport): string {
     `tier-ltv-refreshed=${r.refreshed === null ? 'no' : `tiers ${r.refreshed.join(',') || 'none'}`}`,
     ...(r.refreshIdle ? [`tier-ltv-idle=${r.refreshIdle}`] : []),
     ...(r.tiersRejected.length > 0 ? [`tiers-rejected=${r.tiersRejected.join('; ')}`] : []),
+    ...describeSales(r.sales),
     ...(r.refused.size > 0 ? [`refused=${[...r.refused].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.unread.size > 0 ? [`unread=${[...r.unread].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.stopped ? [`stopped=${r.stopped}`] : []),
@@ -187,6 +206,9 @@ export async function upkeepOnce(chainId: number, diamond: Address, deps: Upkeep
     refreshed: null,
     tiersRejected: [],
     refreshIdle: null,
+    // An armed step reads as armed from the start: a run that ends before it
+    // is reached says so, never that the step is off.
+    sales: deps.salesSync === true ? { ...emptySalesReport(), off: 'not reached this run' } : null,
     refused: sender.refused,
     unread: sender.unread,
     stopped: null,
@@ -205,6 +227,16 @@ export async function upkeepOnce(chainId: number, diamond: Address, deps: Upkeep
     if (served !== chainId) return { ...report, skipped: `the RPC configured for chain ${chainId} serves chain ${served}` };
     await expireBuybacks(r, sender, report, chainId, deps);
     await refreshTierLtv(r, sender, report, deps);
+    if (deps.salesSync === true) {
+      report.sales = await syncSaleListings(chainId, diamond, sender, {
+        readClient: deps.readClient,
+        sendDeadline: deps.sendDeadline,
+        visit: deps.visit ?? 0,
+        cursors: deps.cursors,
+        ledger: deps.ledger,
+        finalized: r.finalized,
+      });
+    }
   } catch (err) {
     if (!(err instanceof PastRunDeadline)) throw err;
     sender.noteUnread('run', 'the run deadline passed during its reads');

@@ -555,6 +555,7 @@ then deploy.
       | `REWARD_HORIZON_HEARTBEAT_ENABLED` | horizon heartbeat skips — no reward's claim-horizon clock is observed, so an armed horizon expires nothing and files no final notice (the safe direction: nothing is reaped) | touching every live reward entry about every 12 hours so its executable-time clock advances (#2517) |
       | `REWARD_ENTRY_SETTLE_ENABLED` | the heartbeat's close-out step skips — a closed entry whose remainder prices to nothing stays open with its capped-off commitments still counted, and a forfeited entry's reward stays in custody instead of reaching the recycle bucket, unless someone makes those permissionless calls by hand | retiring zero-priced remainders and sweeping forfeited loans' rewards to the recycle bucket (#2984); needs `REWARD_HORIZON_HEARTBEAT_ENABLED` too |
       | `PROTOCOL_UPKEEP_ENABLED` | upkeep pass skips — an expired buyback intent keeps its unfilled reservation out of the buyback budget, its allowance live and its live-commit slot held, and the tier LTV cache lapses to the governance tier caps 14 days after its last refresh, unless someone makes those permissionless calls by hand | rolling back expired buyback intents and keeping the tier LTV cache refreshed from the peer protocols (#2984) |
+      | `PREPAY_SALE_SANCTIONS_SYNC_ENABLED` | the upkeep pass's sanctions sync step skips — a prepay-sale recipient flagged while its listing is up is not committed to the fail-closed registry, so during an oracle outage the fill could still pay it, and its listing stays up, unless someone makes the permissionless `syncPrepaySaleListing` / `syncPrepaySaleOffer` call by hand | committing flagged prepay-sale recipients to the registry and cancelling their listings (#2984); needs `PROTOCOL_UPKEEP_ENABLED` too |
       | `PREPAY_AUTO_LIST_ENABLED` | grace auto-list pass skips — an NFT-collateral loan in its grace window is not put up for sale at the protocol floor, so the grace window can pass unsold and the lender takes the NFT in kind at default, unless someone makes the permissionless `autoListAtFloorOnGrace` call by hand | listing NFT collateral at the floor during grace (#2984) |
 
       The keeper's ops alert channel, `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID`, is
@@ -1946,7 +1947,7 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`,
    `REWARD_SANCTIONS_KEEPER_ENABLED`,
    `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
-   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
+   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
    file (`sudo -e /etc/vaipakam/keeper.env`), never by assuming what it held.
    Never paste a value from that file anywhere.
 
