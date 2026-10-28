@@ -1,5 +1,0 @@
-## Recycling analytics — Drop the retired recycle-day backfill table (PR #2948)
-
-The second and last step of retiring the pre-cutover recycling day backfill. A new shared-database migration drops the `recycle_day_backfill` table, and the schema gate now requires it. The first step had already removed every reader of the table: the indexer's recycling series, the nightly off-chain backup and the restore import. Nothing has ever written it. The column the same earlier migration added to the per-chain reported-recycling record is still in use and is not touched.
-
-Ordering matters for this one. Apply it only after the first step's off-chain backup Worker is deployed. The backup Worker from before the first step treats the table as required once its creating migration has applied, so it would read the drop as a lost table and abort the nightly. The indexer from before the first step already tolerates the table's absence. A fresh environment creates the table in the earlier migration and drops it in this one. Restore archives written before the first step still carry the table, empty, and the converter keeps skipping it. Closes #2937.

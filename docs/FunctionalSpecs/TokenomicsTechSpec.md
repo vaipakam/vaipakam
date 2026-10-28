@@ -17,7 +17,7 @@
 This specification consolidates the dated release notes from 2026-08-13
 through 2026-10-22, inclusive, and retains later recorded intent decisions.
 Formulas are explained as financial rules; implementation evidence belongs
-in the [internal audit](../internal/FunctionalSpecsCodeVsDocsAudit.md).
+in the [audit](../procedures/FunctionalSpecsCodeVsDocsAudit.md).
 
 ## 1. Token Overview
 
@@ -211,6 +211,18 @@ Functional consolidation through 2026-07-12:
   cross-chain lane smaller than the largest fresh day slice the schedule can
   owe, and the launch-readiness report says so when a lane is below it, but a
   day larger than what the lane holds at the moment is still sent, in parts.
+  The canonical chain keeps a public list of the days it has sent a mirror in
+  part and still owes the rest of, so a sender can continue each of them
+  however old it is: a mirror holds every later day behind a day not yet
+  whole, so such a day must never be forgotten because it fell out of anyone's
+  scan (#2960). A day leaves the list when it becomes whole, or when it is
+  abandoned with its chain. A part's size respects both ends of the lane:
+  what the canonical chain can send now, and the most the mirror's side can
+  ever receive in one transfer, which each chain reports publicly; a part
+  larger than the mirror's side could never be delivered. The platform's
+  sender does not send dust: a part that would leave its day owing waits until
+  it can move a minimum amount, while a part that completes its day is always
+  sent.
 - **Taking a chain off the expected-source set ends its unsent days (#2963,
   owner decision 2026-10-27, "On removal").** When the canonical chain's
   operator removes a mirror from the expected-source set, every day of that
@@ -760,7 +772,7 @@ Lender rules:
   alone do not discharge the live-deployment gate: the compatible order shape
   and settlement must be deployed before a chain is described as ready.
   Earlier implementation and verification findings are retained as history in
-  the [internal implementation notes](../internal/FunctionalSpecImplementationNotes.md#lender-entitlement-implementation-findings).
+  the [implementation notes](../procedures/FunctionalSpecImplementationNotes.md#lender-entitlement-implementation-findings).
   An owner decision about the scope of recovered-interest discounts would
   not remove the separate duty to pay and debit the correct holder.
 
@@ -1688,7 +1700,7 @@ These values should be exposed through public view functions on the treasury / t
   separate always-on Oracle Cloud VM, as directed by the owner.
 
 Implementation and historical test instructions are retained in the
-[internal implementation notes](../internal/FunctionalSpecImplementationNotes.md).
+[implementation notes](../procedures/FunctionalSpecImplementationNotes.md).
 This section states expected outcomes and is independent of that evidence.
 
 ## 13. Notes on Phase Separation

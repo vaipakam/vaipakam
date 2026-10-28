@@ -9,6 +9,7 @@ import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
 import {ICrossChainMessenger} from "../crosschain/ICrossChainMessenger.sol";
 import {LibVpfiLane} from "../libraries/LibVpfiLane.sol";
 import {RateLimiter} from "@chainlink/contracts-ccip/contracts/libraries/RateLimiter.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 /**
  * @title RewardRemittanceLensFacet — the remittance ledger's READ surface.
@@ -23,6 +24,8 @@ import {RateLimiter} from "@chainlink/contracts-ccip/contracts/libraries/RateLim
  *         the mutating facet's private helpers stay behind.
  */
 contract RewardRemittanceLensFacet {
+    using EnumerableSet for EnumerableSet.UintSet;
+
     /// @notice #1434 P2-w2 — a day's compensation state (pools payable at
     ///         w3's repricing; `provisional` = awaiting its V3 broadcast).
     function getDayCompensation(uint256 dayId)
@@ -229,6 +232,53 @@ contract RewardRemittanceLensFacet {
             LibVpfiLane.liveBucket(LibVaipakam.storageSlot(), chainId, false);
         if (status != LibVpfiLane.LaneStatus.Read) return (false, false, 0, 0);
         return (true, b.isEnabled, b.tokens, b.capacity);
+    }
+
+    /// @notice #2960 — the live INBOUND VPFI CCIP lane bucket from `chainId`:
+    ///         how much of a remittance part arriving from there this chain's
+    ///         pool can release right now. Read on a MIRROR with Base's chain
+    ///         id, it is the other end of the lane {getRemitLaneBucket} reads
+    ///         on Base, so a sender can size a part by the smaller of the two:
+    ///         a part above the mirror's inbound bucket cannot execute there,
+    ///         and waits in CCIP for a manual re-execution.
+    /// @dev    Same rule and the same meanings as {getRemitLaneBucket}
+    ///         ({LibVpfiLane.liveBucket}, inbound side).
+    /// @return readable The lane resolved.
+    /// @return limited  The lane's inbound limiter is enabled.
+    /// @return tokens   The bucket's tokens, refilled to this block.
+    /// @return capacity The bucket's capacity.
+    function getRemitInboundLaneBucket(uint32 chainId)
+        external
+        view
+        returns (bool readable, bool limited, uint256 tokens, uint256 capacity)
+    {
+        (LibVpfiLane.LaneStatus status, RateLimiter.TokenBucket memory b) =
+            LibVpfiLane.liveBucket(LibVaipakam.storageSlot(), chainId, true);
+        if (status != LibVpfiLane.LaneStatus.Read) return (false, false, 0, 0);
+        return (true, b.isEnabled, b.tokens, b.capacity);
+    }
+
+    /// @notice #2960 — the days Base has sent `chainId` in part and still
+    ///         owes the rest of (the ledger is locked and not whole), in no
+    ///         particular order. The mirror holds every later day behind
+    ///         such a day, so a sender continues each one whatever its age;
+    ///         this list is how it finds them. Abandoned days (#2963) are
+    ///         never sent again and are left out. Base-only; empty elsewhere.
+    function getRemitOpenDays(uint32 chainId) external view returns (uint256[] memory dayIds) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        EnumerableSet.UintSet storage open = s.remitOpenDays[chainId];
+        uint256 n = open.length();
+        uint256 bound = s.remitAbandonedBefore[chainId];
+        uint256 kept;
+        for (uint256 i; i < n; ++i) {
+            if (open.at(i) >= bound) ++kept;
+        }
+        dayIds = new uint256[](kept);
+        uint256 k;
+        for (uint256 i; i < n; ++i) {
+            uint256 d = open.at(i);
+            if (d >= bound) dayIds[k++] = d;
+        }
     }
 
     /// @notice Mirror-side receipt record for `remitId` (`receivedAt` 0 =

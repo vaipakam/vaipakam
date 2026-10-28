@@ -181,7 +181,7 @@ closes #296):
   CI-scope-worthy (positive-flow scenario, deploy-sanity
   guardrail). The skip-list discipline is named in the
   facet-addition + test-addition rows of the
-  [Project Procedures §7 contracts CI](../internal/ProjectProcedures.md)
+  [Project Procedures §7 contracts CI](../procedures/ProjectProcedures.md)
   guide so it's not a tribal-knowledge convention.
 
 **Risks the decision creates**

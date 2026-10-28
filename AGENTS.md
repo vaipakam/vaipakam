@@ -125,7 +125,7 @@ Equivalent to `review normal` plus:
 - treat conflict between the handbook and the source file as a handbook
   bug — flag it for the doc author, not the source author.
 
-Use this for PRs to `docs/internal/ProjectProcedures.md`, `CONTRIBUTING.md`,
+Use this for PRs to `docs/procedures/ProjectProcedures.md`, `CONTRIBUTING.md`,
 `AGENTS.md` itself, `.github/LABELS.md`, and any other operator-handbook-
 class document.
 

@@ -63,12 +63,19 @@ export function remitDayStatusName(v: unknown): RemitDayStatus | undefined {
   return Number.isInteger(n) ? REMIT_DAY_STATUSES[n] : undefined;
 }
 
+/** Whether a failed read is the Diamond's own answer that it routes no such
+ *  view (`FunctionDoesNotExist()`), as opposed to a revert behind it or a
+ *  transport failure. #2960 reads its newer views through the same rule. */
+export function isUnroutedRead(err: unknown): boolean {
+  return (
+    extractRevertName(err) === 'FunctionDoesNotExist' ||
+    extractRevertSelector(err) === FUNCTION_DOES_NOT_EXIST_SELECTOR
+  );
+}
+
 /** A failed read's verdict: unrouted only on the Diamond's own answer. */
 export function remitStatusReadFailure(err: unknown): RemitStatusRead {
-  const unrouted =
-    extractRevertName(err) === 'FunctionDoesNotExist' ||
-    extractRevertSelector(err) === FUNCTION_DOES_NOT_EXIST_SELECTOR;
-  return unrouted ? { kind: 'unrouted' } : { kind: 'unread', error: summarizeFailure(err) };
+  return isUnroutedRead(err) ? { kind: 'unrouted' } : { kind: 'unread', error: summarizeFailure(err) };
 }
 
 /** The send's own verdict for each of `days`, aligned to the list. */

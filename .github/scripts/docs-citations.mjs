@@ -59,7 +59,6 @@ import { execFileSync } from 'node:child_process';
 const SKIP = [
   'docs/FindingsAndFixes/',
   'docs/OlderDocs/',
-  'docs/internal/RoughNotes.md',
 ];
 const isShippedReleaseNote = (f) =>
   f.startsWith('docs/ReleaseNotes/') && !f.startsWith('docs/ReleaseNotes/unreleased/');

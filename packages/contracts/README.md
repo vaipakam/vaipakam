@@ -40,7 +40,7 @@ CI also exercises this package via every consumer's typecheck — if an ABI shap
 
 ## Architecture
 
-- ABI sync convention: [`CLAUDE.md` § "Frontend ABI sync"](../../CLAUDE.md) + [`docs/internal/ProjectProcedures.md` §9](../../docs/internal/ProjectProcedures.md).
+- ABI sync convention: [`CLAUDE.md` § "Frontend ABI sync"](../../CLAUDE.md) + [`docs/procedures/ProjectProcedures.md` §9](../../docs/procedures/ProjectProcedures.md).
 - Deployments sync convention: [`CLAUDE.md` § "Deployments sync"](../../CLAUDE.md).
 - Type contract: [`src/deployments.ts`](src/deployments.ts) — `Deployment` type marks per-chain optional fields explicitly.
 

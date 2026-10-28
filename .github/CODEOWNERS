@@ -15,7 +15,7 @@
 #   narrowest (catch-all first, specific subsystems below).
 # - Branch-protection on `main` requires the CODEOWNERS reviewer to approve
 #   any PR touching their paths (per `Protect main` ruleset; see
-#   `docs/internal/ProjectProcedures.md` §7).
+#   `docs/procedures/ProjectProcedures.md` §7).
 
 # ---------------------------------------------------------------------------
 # Global owner — everything not matched below
@@ -88,7 +88,7 @@
 # Docs — living documentation: design, specs, release notes, runbooks
 # ---------------------------------------------------------------------------
 /docs/                                             @Raja4Shekar
-/docs/internal/ProjectProcedures.md                @Raja4Shekar
+/docs/procedures/ProjectProcedures.md                @Raja4Shekar
 /docs/FunctionalSpecs/                             @Raja4Shekar
 /docs/DesignsAndPlans/                             @Raja4Shekar
 /docs/ReleaseNotes/                                @Raja4Shekar

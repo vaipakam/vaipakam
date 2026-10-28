@@ -76,7 +76,7 @@ forge snapshot
 forge coverage
 ```
 
-**Compiler:** Solidity 0.8.29 with `viaIR = true`, optimizer at 200 runs. Fuzz: 1000 runs, invariant: 100 runs.
+**Compiler:** Solidity 0.8.29 with `viaIR = true`, optimizer at 200 runs, EVM target `prague` pinned in every profile (#2973: unpinned, the target followed whichever forge built it). Raise the pin only once every deploy chain runs the newer fork. Fuzz: 1000 runs, invariant: 100 runs.
 
 ## Architecture
 
@@ -2201,16 +2201,19 @@ The single live tracker for in-flight and queued work is the GitHub
 Project [`@vaipakam-labs`](https://github.com/users/vaipakam/projects/1).
 Always treat it as the source of truth. The dated
 `docs/internal/PendingTasks-yyyy-mm-dd.md` pattern is **retired**;
-[`docs/internal/PendingTasks-2026-05-14.md`](docs/internal/PendingTasks-2026-05-14.md)
-is frozen as the last one in that series and exists only as a
-historical breadcrumb.
+`docs/internal/PendingTasks-2026-05-14.md` is frozen as the last one in
+that series and exists only as a historical breadcrumb. Like everything
+under `docs/internal/`, it is private since #2764: the folder is
+git-ignored and lives on the owner's machine and in the private project
+files, so a fresh clone does not have it. Public procedure documents
+live in `docs/procedures/`.
 
 **Where each kind of artifact lives:**
 
 | Artifact | Home | Why |
 | --- | --- | --- |
 | Active / queued work, prioritization, sprint assignment | `@vaipakam-labs` Project (Issues + Drafts) | One curated board; status / priority / size / module / iteration fields drive the cadence. |
-| User's free-form thoughts and scratch notes | [`docs/internal/RoughNotes.md`](docs/internal/RoughNotes.md) | Owned by the user, not by me. I do not edit it. |
+| User's free-form thoughts and scratch notes | `docs/internal/RoughNotes.md` (private, git-ignored folder) | Owned by the user, not by me. I do not edit it. |
 | User-facing follow-up list of ideas the user has tossed in | [`docs/ToDo.md`](docs/ToDo.md) | Open ET-### items are promoted to Project Issues; closed ones stay ticked for audit history. |
 | Shipped work + functional narrative | `docs/ReleaseNotes/ReleaseNotes-yyyy-mm-dd.md` | Append per release per [`feedback_doc_convention.md`](/home/pranav/.claude/projects/-home-pranav-Codes-Vaipakam-vaipakam/memory/feedback_doc_convention.md). |
 | Spec / design exploration | `docs/DesignsAndPlans/*.md` | Lives alongside the code; referenced from the Project card. |

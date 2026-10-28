@@ -607,6 +607,6 @@ callable by external liquidators. Full tier breakdown in
   - Master kill-switch is independent — governance can flip
     `depthTieredLtvEnabled` and `discountPathEnabled` on different
     chains / different timelines.
-- [`../internal/PendingTasks-2026-05-14.md`](../internal/PendingTasks-2026-05-14.md)
-  — full inventory of operational follow-ups across both rollouts
+- `docs/internal/PendingTasks-2026-05-14.md` (a private record since
+  #2764) — full inventory of operational follow-ups across both rollouts
   + the older `docs/ToDo.md` backlog.
