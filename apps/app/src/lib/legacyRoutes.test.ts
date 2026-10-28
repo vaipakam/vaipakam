@@ -10,7 +10,7 @@ describe('legacy loan sub-pages (#2076)', () => {
   it('lands each retired sub-page on the card that replaced it', () => {
     expect(legacyLoanTarget('7', 'early-withdrawal')).toBe('/positions/7#lender-exit-options');
     expect(legacyLoanTarget('7', 'preclose')).toBe('/positions/7#early-repay-options');
-    expect(legacyLoanTarget('7', 'refinance')).toBe('/positions/7#refinance-card');
+    expect(legacyLoanTarget('7', 'refinance')).toBe('/positions/7#early-repay-options');
   });
 
   it('matches the sub-page case-insensitively, as the router does', () => {
@@ -35,7 +35,7 @@ describe('legacy loan sub-pages (#2076)', () => {
 describe('legacy create-offer (#2076)', () => {
   it('sends a refinance or offset deep link back to its loan', () => {
     expect(legacyCreateOfferTarget('?from=refinance&loanId=12&offerType=borrower')).toBe(
-      '/positions/12#refinance-card',
+      '/positions/12#early-repay-options',
     );
     expect(legacyCreateOfferTarget('?from=offset&loanId=12')).toBe(
       '/positions/12#early-repay-options',

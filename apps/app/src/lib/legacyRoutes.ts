@@ -17,13 +17,17 @@
  */
 
 /** The old loan sub-pages became cards on the position page. Each maps to
- *  the card's anchor so the bookmark lands on the job it named: the two
- *  exit pages land on the chooser that lists every way out (the retired
- *  pages each hosted several routes), refinance on its own card. */
+ *  the CHOOSER that lists the action, never to the action's own card: the
+ *  exit pages each hosted several routes, and refinance's own card renders
+ *  only in Advanced mode and only while the loan can take a request, so an
+ *  anchor on it would land a Basic-mode borrower nowhere (Codex #3004 r2).
+ *  The borrower's chooser renders in both modes and its refinance row says
+ *  whether refinancing is open now, why not, and offers the switch to
+ *  Advanced, so the bookmark always lands on an account of the action. */
 export const LEGACY_LOAN_SUBPAGE_ANCHORS: Readonly<Record<string, string>> = Object.freeze({
   'early-withdrawal': 'lender-exit-options',
   preclose: 'early-repay-options',
-  refinance: 'refinance-card',
+  refinance: 'early-repay-options',
 });
 
 /** `/loans/:loanId/:subpage` → the position, at the named card when the

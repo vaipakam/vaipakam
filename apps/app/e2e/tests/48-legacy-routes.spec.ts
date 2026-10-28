@@ -11,7 +11,9 @@
  *  1. `/offers/:id` opens the flow that takes that offer, with its chain.
  *  2. `/loans/:id/early-withdrawal` and `/loans/:id/preclose` land on the
  *     position, at the lender's and the borrower's exit chooser, scrolled
- *     into view.
+ *     into view. `/loans/:id/refinance` lands on the borrower's chooser
+ *     too, in BASIC mode, where the refinance form itself is not shown:
+ *     the chooser names refinance and offers the switch to Advanced.
  *  3. `/allowances` reaches the approvals card in BASIC mode, where that
  *     card is otherwise not shown.
  *  4. `/create-offer` goes to the form its side names.
@@ -47,6 +49,16 @@ test('retired app links land on the page that does what they were for', async ({
   await page.goto(`/loans/${loanId}/preclose`, { waitUntil: 'domcontentloaded' });
   await expect(page).toHaveURL(new RegExp(`/positions/${loanId}#early-repay-options$`));
   await expect(page.locator('#early-repay-options')).toBeInViewport({ timeout: 60_000 });
+
+  // 2, refinance — lands on the same chooser in Basic mode, which names
+  // refinance and offers the mode switch (the refinance form is not shown).
+  await page.goto(`/loans/${loanId}/refinance`, { waitUntil: 'domcontentloaded' });
+  await expect(page).toHaveURL(new RegExp(`/positions/${loanId}#early-repay-options$`));
+  const chooser = page.locator('#early-repay-options');
+  await expect(chooser).toBeInViewport({ timeout: 60_000 });
+  await expect(chooser.getByText(copy.earlyRepay.options.refinance, { exact: true })).toBeVisible();
+  await expect(chooser.getByRole('button', { name: copy.earlyRepay.switchToAdvanced })).toBeVisible();
+  await expect(page.locator('#refinance-card')).toHaveCount(0);
 
   // 3 — the old allowances page reaches the approvals card in Basic mode.
   await page.goto('/allowances', { waitUntil: 'domcontentloaded' });

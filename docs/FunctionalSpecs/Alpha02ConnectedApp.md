@@ -3136,7 +3136,12 @@ is the borrower's own money.
   app rather than patched as visitors report misses. An address whose page
   became part of another page lands at that part and brings it into view,
   even when it appears only after the page's data arrives — an old loan
-  action page lands on that loan at the card offering the same action. An
+  action page lands on that loan at the card that lists the same action,
+  says whether it can be taken now and why not, and offers it. That card
+  must be one shown in whichever mode the visitor uses: an action whose own
+  form appears only in the fuller mode, or only while the loan can take it,
+  is reached through the list that names it, never through an anchor that
+  may not exist. An
   address for a settings page lands on that setting, and is shown even in
   the simpler mode that normally hides it, because the visitor asked for it
   by name (one of them holds the way to withdraw a spending permission). An
