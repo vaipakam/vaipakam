@@ -1632,10 +1632,14 @@ l'instantané et figés sur un bloc, que la page indique avec son
   dernières 24 heures et 7 jours, chacun évalué dans le numéraire
   à l'enregistrement et jamais réévalué ;
 - un frais que le protocole n'a pas pu évaluer à l'enregistrement
-  est inscrit à 0, les sommes de fenêtre parcourent au plus les
-  10 000 dernières entrées, et un changement de numéraire laisse
-  les entrées antérieures dans l'ancienne unité — les trois ne
-  peuvent que sous-estimer, et la page le dit ;
+  est inscrit à 0, et les sommes de fenêtre parcourent au plus les
+  10 000 dernières entrées — les deux ne peuvent que sous-estimer,
+  et la page le dit ;
+- un changement de numéraire laisse les entrées antérieures dans
+  l'ancienne unité, si bien qu'ensuite les totaux additionnent des
+  montants en deux unités sous le symbole actuel et peuvent
+  s'écarter dans un sens comme dans l'autre ; la page dit que les
+  frais antérieurs sont comptés dans l'ancienne unité ;
 - l'adresse de trésorerie. Si c'est une adresse externe, les frais
   partent à la perception et aucun solde n'est affiché pour elle.
   Si le Diamond est sa propre trésorerie, le montant détenu est

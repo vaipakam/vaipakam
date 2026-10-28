@@ -808,14 +808,16 @@ per Bridge erreicht, zeigt sie nur die Menge dieses Netzwerks.
 
 ### Gebühren und Treasury
 
-Ebenfalls aus dem Vertrag gelesen: die Gebühren, die das
-Protokoll seit Beginn der Aufzeichnung, am letzten Tag und in der
-letzten Woche erfasst hat, und die Treasury-Adresse, an die sie
-gehen. Die Seite nennt den gelesenen Block, das Alter dieser
-Ablesung und die aufgerufenen Funktionen, und sie nennt jeden
-Grund, warum die Gebührenzahlen niedriger sein können als das
-tatsächlich Eingenommene. Eine Zahl, die nicht gelesen werden
-konnte, sagt das, statt null zu zeigen.
+Ebenfalls aus dem Vertrag gelesen: die Gebühren, die das Protokoll
+seit Beginn der Aufzeichnung, am letzten Tag und in der letzten
+Woche erfasst hat, und die Treasury-Adresse, an die sie gehen. Die
+Seite nennt den gelesenen Block, das Alter dieser Ablesung und die
+aufgerufenen Funktionen, und sie nennt jeden Grund, warum die
+Gebührenzahlen niedriger sein können als das tatsächlich
+Eingenommene. Nach einem Wechsel der Referenzwährung bleiben
+frühere Gebühren in der alten Einheit, was eine Summe in beide
+Richtungen verschieben kann; auch das sagt die Seite. Eine Zahl,
+die nicht gelesen werden konnte, sagt das, statt null zu zeigen.
 
 ---
 

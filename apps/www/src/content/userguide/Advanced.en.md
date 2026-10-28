@@ -1765,10 +1765,13 @@ its age:
 - fees since the fee ledger began, and over the last 24 hours and
   7 days, each valued in the numeraire at accrual and never
   revalued;
-- a fee the protocol could not value at accrual is logged as 0,
-  the window sums scan at most the latest 10,000 ledger entries,
-  and a numeraire rotation leaves earlier entries in the old unit
-  — all three can only understate, and the page says so;
+- a fee the protocol could not value at accrual is logged as 0, and
+  the window sums scan at most the latest 10,000 ledger entries;
+  both can only understate, and the page says so;
+- a numeraire rotation leaves earlier entries in the old unit, so
+  after one the totals add amounts in two units under the current
+  symbol and can be off in either direction; the page says earlier
+  fees are counted in the old unit;
 - the treasury address. When it is an external address, fees
   leave on collection and no balance is shown for it. When the
   Diamond is its own treasury, the held figure is shown, priced

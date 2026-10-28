@@ -1623,10 +1623,14 @@ antigüedad:
   últimas 24 horas y 7 días, cada una valorada en el numerario al
   registrarse y nunca revalorada;
 - una comisión que el protocolo no pudo valorar al registrarse
-  consta como 0, las sumas de ventana recorren como mucho las
-  últimas 10.000 entradas y un cambio de numerario deja las
-  entradas anteriores en la unidad antigua — las tres solo pueden
-  quedarse cortas, y la página lo dice;
+  consta como 0, y las sumas de ventana recorren como mucho las
+  últimas 10.000 entradas — ambas solo pueden quedarse cortas, y la
+  página lo dice;
+- un cambio de numerario deja las entradas anteriores en la unidad
+  antigua, así que después los totales suman importes en dos
+  unidades bajo el símbolo actual y pueden desviarse en cualquier
+  sentido; la página dice que las comisiones anteriores se cuentan
+  en la unidad antigua;
 - la dirección de tesorería. Si es una dirección externa, las
   comisiones salen al cobrarse y no se muestra saldo para ella. Si
   el Diamond es su propia tesorería, se muestra lo que tiene,

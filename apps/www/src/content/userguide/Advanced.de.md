@@ -1629,10 +1629,14 @@ seinem Alter nennt:
   24 Stunden und 7 Tage, jeweils bei Erfassung im Numeraire
   bewertet und nie neu bewertet;
 - eine Gebühr, die das Protokoll bei Erfassung nicht bewerten
-  konnte, wird mit 0 gebucht, die Fenstersummen lesen höchstens
-  die letzten 10.000 Einträge, und ein Wechsel des Numeraires
-  lässt frühere Einträge in der alten Einheit — alle drei können
-  nur unterzeichnen, und die Seite sagt das;
+  konnte, wird mit 0 gebucht, und die Fenstersummen lesen höchstens
+  die letzten 10.000 Einträge — beides kann nur unterzeichnen, und
+  die Seite sagt das;
+- ein Wechsel des Numeraires lässt frühere Einträge in der alten
+  Einheit, sodass die Summen danach Beträge in zwei Einheiten unter
+  dem aktuellen Symbol addieren und in beide Richtungen abweichen
+  können; die Seite sagt, dass frühere Gebühren in der alten Einheit
+  gezählt sind;
 - die Treasury-Adresse. Ist es eine externe Adresse, verlassen
   Gebühren den Vertrag bei Erhebung, und es wird kein Saldo dafür
   gezeigt. Ist der Diamond seine eigene Treasury, wird der

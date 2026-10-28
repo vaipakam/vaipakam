@@ -763,8 +763,10 @@ since recording began, over the last day and over the last week,
 and the treasury address they go to. The page names the block it
 read at, how old that reading is and the functions it called, and
 it states every reason the fee figures can be lower than what was
-really collected. A figure that could not be read says so instead
-of showing zero.
+really collected. After a change of reference currency, earlier
+fees stay in the old unit, which can push a total either way; the
+page says that too. A figure that could not be read says so
+instead of showing zero.
 
 ---
 

@@ -797,8 +797,11 @@ registrado desde que empezó el registro, en el último día y en la
 última semana, y la dirección de tesorería a la que van. La página
 indica el bloque leído, la antigüedad de esa lectura y las
 funciones llamadas, y expone cada motivo por el que las cifras de
-comisiones pueden ser menores que lo realmente cobrado. Una cifra
-que no se pudo leer lo dice en lugar de mostrar cero.
+comisiones pueden ser menores que lo realmente cobrado. Tras un
+cambio de moneda de referencia, las comisiones anteriores quedan
+en la unidad antigua, lo que puede mover un total en cualquier
+sentido; la página también lo dice. Una cifra que no se pudo leer
+lo dice en lugar de mostrar cero.
 
 ---
 

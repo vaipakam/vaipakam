@@ -813,8 +813,10 @@ et sur la dernière semaine, et l'adresse de trésorerie où ils
 vont. La page indique le bloc lu, l'âge de cette lecture et les
 fonctions appelées, et énonce chaque raison pour laquelle les
 chiffres des frais peuvent être inférieurs à ce qui a réellement
-été perçu. Un chiffre qui n'a pas pu être lu le dit au lieu
-d'afficher zéro.
+été perçu. Après un changement de devise de référence, les frais
+antérieurs restent dans l'ancienne unité, ce qui peut écarter un
+total dans un sens comme dans l'autre ; la page le dit aussi. Un
+chiffre qui n'a pas pu être lu le dit au lieu d'afficher zéro.
 
 ---
 
