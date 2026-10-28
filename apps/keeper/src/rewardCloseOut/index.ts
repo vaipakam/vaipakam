@@ -26,12 +26,14 @@
 //      `RemitDestinationRemoved` nominates the chains; a walk is sent only when
 //      its simulation moves the release cursor.
 //   4. CLOSURE — prove elapsed days closed (`RewardClosureFacet`): for each
-//      day of its closure window not yet proven, oldest first, the pass scans
+//      day of its closure window not yet proven, oldest first, the pass reads
 //      the chain's reward-entry sequence (`getRewardEntriesRange`) for the
 //      entries covering it, checks that they sum to exactly the day's folded totals
 //      and that every one has terminated (`isEntryTerminatedOn`), and only
 //      then opens a walk (`startDayClosure`) and pages the ids in
-//      (`proveDayClosurePage`). A day with an entry still open is left; it is
+//      (`proveDayClosurePage`). Each of those reads resumes across runs
+//      (`../rewardEntries`, #3014), so a day covered by more entries than
+//      one run reads is proven over several. A day with an entry still open is left; it is
 //      counted on the run's line, not sent. A day with nothing on either side
 //      closes at the start. The keeper's unfinished walk for the day is
 //      continued rather than replaced: its nonce is kept per day, since the
@@ -59,8 +61,9 @@
 // reads is bounded while nothing is left out for good: retired eras 32 a run
 // above a floor of finalized ones; closure days `REWARD_CLOSE_OUT_WINDOW_DAYS`
 // a run above a floor of proven-closed ones; park days as many a run over
-// every provable day; each closed day's epochs 50 a run; the entry scan from a
-// floor below which every entry ended; removal rows 200 a run above a floor of
+// every provable day; each closed day's epochs 50 a run; the entry reads 20
+// pages a run, from a floor below which every entry ended, each resuming
+// where the last run stopped; removal rows 200 a run above a floor of
 // rows whose chain's release is done. The floors and cursors are rows of the
 // keeper's private database (`scanCursors.ts`), and only say where to start
 // reading: every decision is still an on-chain read. The era, closure and
@@ -95,20 +98,33 @@ import type { PassTick } from '../passSchedule';
 import { deadlineClient, PastRunDeadline, settledRead, type BatchResult } from '../batchRead';
 import { shortErr } from '../callErrors';
 import { d1EventLedger, decodePos, encodePos, posAfter, rowFinalized, type EventLedger } from '../eventLedger';
-import { decodeEntryFloor, encodeEntryFloor, ENTRY_PAGE, scanEntries, type EntryRow } from '../rewardEntries';
+import {
+  advanceEntryFloor,
+  continueDaySums,
+  daySumsGap,
+  decodeDaySums,
+  decodeEntryFloor,
+  decodeFeedMark,
+  encodeDaySums,
+  encodeEntryFloor,
+  encodeFeedMark,
+  feedFrom,
+  EntryPages,
+  floorFor,
+  readCovering,
+  readFeed,
+  type EntryRow,
+} from '../rewardEntries';
 import { advanceFloor, d1ScanCursors, decodeIndex, finalFloor, finalizedBlockOnce, rotatingWindow, type FinalBlock, type ScanCursors } from '../scanCursors';
 import { StepSender } from '../stepSender';
 import {
   provableThrough,
-  conservationGap,
-  coveringEntries,
   epochPrunable,
   eraReadiness,
   pagesAfter,
   SIDE_BORROWER,
   SIDE_LENDER,
   type EraRecord,
-  type ScannedEntry,
   type Side,
 } from './plan';
 
@@ -141,10 +157,13 @@ export const RECEIPT_TIMEOUT_MS = 30_000;
 export const DEFAULT_WINDOW_DAYS = 60;
 /** Entry ids per `proveDayClosurePage`. */
 export const PAGE_IDS = 100;
-/** Entry pages one run may read, from the scan's stored floor. A day whose
- *  entries the pages do not reach is not walked this run, and the line says
- *  so: a walk on a partial scan cannot close. */
+/** Entry pages one run may read, shared by every read of the closure step.
+ *  Each read resumes where the last run stopped (#3014), so this bounds a
+ *  run's reads and never which day can be closed; a day whose reads continue
+ *  next run is named on the run's line. */
 export const MAX_ENTRY_PAGES = 20;
+/** Of those, the pages a run may spend moving the entry floor forward. */
+export const FLOOR_PAGES = 4;
 /** Retired eras looked at per run, rotating over every era not yet known
  *  finalized (`scanCursors.rotatingWindow`). */
 export const MAX_ERAS = 32;
@@ -160,6 +179,12 @@ export const CLOSURE_NEXT_ITEM = 'closure-next';
 export const PARK_NEXT_ITEM = 'park-next';
 export const parkCursorItem = (day: number) => `park:${day}`;
 export const walkCursorItem = (day: number) => `walk:${day}`;
+/** A day's running conservation sum (`rewardEntries.DaySums`). */
+export const daySumsItem = (day: number) => `day-scan:${day}`;
+/** The first covering id of a day not yet seen terminated before its walk opens. */
+export const dayTermItem = (day: number) => `day-term:${day}`;
+/** How far a day's walk has been fed (`rewardEntries.FeedMark`). */
+export const dayFeedItem = (day: number) => `day-feed:${day}`;
 /** Park pages one batch may take in a run. */
 export const MAX_PARK_PAGES = 8;
 /** Days one `continueRemitDestinationRelease` walks: the removal's own write
@@ -226,6 +251,9 @@ export interface CloseOutReport {
   daysWaitingOnEntries: number[];
   /** Days whose scanned entries did not account for their totals. */
   daysScanGap: number[];
+  /** Days whose entry reads ran out of this run's pages; the next run reads
+   *  on from where this one stopped. */
+  daysScanPending: number[];
   /** Batches whose park walk landed this run: `amount` once a read shows the
    *  remainder parked, `parking` while the read shows it unfinished, `unread`
    *  when the read after the last landed page failed (`afterLanding`). */
@@ -308,6 +336,7 @@ export function describeReport(r: CloseOutReport): string {
     `days-closed=${r.daysClosed.join(',') || 'none'}`,
     ...(r.daysWaitingOnEntries.length > 0 ? [`days-waiting-on-open-entries=${summarizeDays(r.daysWaitingOnEntries)}`] : []),
     ...(r.daysScanGap.length > 0 ? [`days-scan-short=${r.daysScanGap.join(',')}`] : []),
+    ...(r.daysScanPending.length > 0 ? [`days-reading-on=${summarizeDays(r.daysScanPending)} (entry reads continue next run)`] : []),
     `parked=${r.parked.map(describePark).join(',') || 'none'}${r.parked.some((p) => p.state === 'parked') ? ' (release is the administrator\'s acknowledgment)' : ''}`,
     `pruned=${r.pruned.join(',') || 'none'}`,
     ...(r.released.length > 0 ? [`released=${r.released.map(describeRelease).join(',')}`] : []),
@@ -348,6 +377,7 @@ export async function closeOutOnce(chainId: number, diamond: Address, deps: Clos
     daysClosed: [],
     daysWaitingOnEntries: [],
     daysScanGap: [],
+    daysScanPending: [],
     parked: [],
     pruned: [],
     released: [],
@@ -758,7 +788,7 @@ async function proveDays(
   r: Reader,
   sender: StepSender,
   report: CloseOutReport,
-  allOpen: readonly number[],
+  open: readonly number[],
   scanFrom: number,
   keeper: Address | null,
   cursors: ScanCursors,
@@ -767,34 +797,27 @@ async function proveDays(
     sender.noteUnread('closure', 'no signing key, so no walk can be started');
     return;
   }
-  // The scan starts at its stored floor: entries below it all end before the
-  // oldest open day, so what a run reads is the entries live across the open
-  // days, not every entry the chain has made (Codex #2993 r1).
-  const stored = (await cursors.get([ENTRY_FLOOR_ITEM])).get(ENTRY_FLOOR_ITEM);
-  const scan = await scanEntries(
-    (from, n) => r.one<readonly EntryRow[]>('getRewardEntriesRange', [from, n]),
-    scanFrom,
-    allOpen[allOpen.length - 1],
-    MAX_ENTRY_PAGES,
-    decodeEntryFloor(stored),
-  );
-  const floor = encodeEntryFloor(scan.floor);
-  if (floor !== stored) await cursors.put(ENTRY_FLOOR_ITEM, floor);
-  const open = allOpen.filter((d) => d <= scan.completeThrough);
-  const beyond = allOpen.filter((d) => d > scan.completeThrough);
-  if (beyond.length > 0) {
-    sender.noteUnread(
-      'closure',
-      `the reward-entry scan reads at most ${MAX_ENTRY_PAGES} pages of ${ENTRY_PAGE} a run from its stored floor and reached only the entries starting by day ${scan.completeThrough}; days ${summarizeDays(beyond)} are not walked this run (a walk on a partial scan cannot close)`,
-    );
-  }
-  if (open.length === 0) return;
-  const entries = scan.entries;
+  // Every entry read below shares one page budget, and every read resumes
+  // where the last run stopped (#3014): the floor, each day's conservation
+  // sum, each day's termination check, and each walk (from its own cursor on
+  // chain). A day covered by more entries than one run can read is finished
+  // over several runs instead of never.
+  const pages = new EntryPages((from, n) => r.one<readonly EntryRow[]>('getRewardEntriesRange', [from, n]), MAX_ENTRY_PAGES);
+  const items = [ENTRY_FLOOR_ITEM, ...open.flatMap((d) => [walkCursorItem(d), daySumsItem(d), dayTermItem(d), dayFeedItem(d)])];
+  const stored = await cursors.get(items);
+  const put = async (item: string, value: string) => {
+    if (stored.get(item) !== value) await cursors.put(item, value);
+  };
+  // Entries below the floor all end before the oldest open day, so what a
+  // run reads is the entries live across the open days, not every entry the
+  // chain has made (Codex #2993 r1).
+  const floor = await advanceEntryFloor(pages, decodeEntryFloor(stored.get(ENTRY_FLOOR_ITEM)), scanFrom, FLOOR_PAGES);
+  await put(ENTRY_FLOOR_ITEM, encodeEntryFloor(floor));
+  const start = floorFor(floor, scanFrom);
   const totals = await r.many(open.map((d) => ({ functionName: 'getInteractionDayEntry', args: [BigInt(d), zeroAddress] })), 'day-totals');
   // Each day's walk nonce is kept per day, so a walk left unfinished is found
   // and continued however many walks on other days the keeper opened since
   // (Codex #2993 r3): the keeper's latest nonce names only its newest walk.
-  const walkNonces = await cursors.get(open.map(walkCursorItem));
   let lastNonce: bigint;
   try {
     lastNonce = await r.one<bigint>('getClosureWalkNonce', [keeper]);
@@ -810,46 +833,91 @@ async function proveDays(
       sender.noteUnread(`closure:${day}`, 'the day\'s folded totals');
       continue;
     }
-    const cover = coveringEntries(entries, day);
-    const gap = conservationGap(cover, { lender: t[2], borrower: t[3] });
+    // eslint-disable-next-line no-await-in-loop
+    const sums = await continueDaySums(pages, day, decodeDaySums(stored.get(daySumsItem(day))), start);
+    if (!sums.complete) {
+      report.daysScanPending.push(day);
+      // eslint-disable-next-line no-await-in-loop
+      await put(daySumsItem(day), encodeDaySums(sums));
+      continue;
+    }
+    const gap = daySumsGap(sums, { lender: t[2], borrower: t[3] });
     if (gap !== null) {
+      // A finished sum that misses the totals is read again from the start:
+      // the next run's figure is a fresh one, not this one repeated.
       report.daysScanGap.push(day);
       sender.noteUnread(`closure:${day}`, gap);
-      continue;
-    }
-    const ids = [...cover.lender, ...cover.borrower].map((e) => e.id);
-    // eslint-disable-next-line no-await-in-loop
-    const term = await r.many(ids.map((id) => ({ functionName: 'isEntryTerminatedOn', args: [id, BigInt(day)] })), `terminated ${day}`);
-    if (term.some((x) => x === undefined)) {
-      sender.noteUnread(`closure:${day}`, 'whether each covering entry has terminated');
-      continue;
-    }
-    if (term.some((x) => x === false)) {
-      report.daysWaitingOnEntries.push(day);
+      // eslint-disable-next-line no-await-in-loop
+      await put(daySumsItem(day), '');
       continue;
     }
     // eslint-disable-next-line no-await-in-loop
-    const stored = walkNonces.get(walkCursorItem(day));
-    const candidates = [...new Set([...(stored !== undefined && /^\d+$/.test(stored) ? [BigInt(stored)] : []), lastNonce])];
+    await put(daySumsItem(day), encodeDaySums(sums));
+    const walkStored = stored.get(walkCursorItem(day));
+    const candidates = [...new Set([...(walkStored !== undefined && /^\d+$/.test(walkStored) ? [BigInt(walkStored)] : []), lastNonce])];
     // eslint-disable-next-line no-await-in-loop
-    const outcome = await walkDay(r, sender, day, keeper, candidates, cover);
+    const outcome = await walkDay(r, sender, { pages, start }, day, keeper, candidates, stored.get(dayTermItem(day)), stored.get(dayFeedItem(day)));
     if (outcome.nonce > lastNonce) lastNonce = outcome.nonce;
     // eslint-disable-next-line no-await-in-loop
-    if (outcome.nonce > 0n && String(outcome.nonce) !== stored) await cursors.put(walkCursorItem(day), String(outcome.nonce));
-    if (outcome.closed) report.daysClosed.push(day);
+    if (outcome.nonce > 0n) await put(walkCursorItem(day), String(outcome.nonce));
+    // eslint-disable-next-line no-await-in-loop
+    if (outcome.term !== undefined) await put(dayTermItem(day), String(outcome.term));
+    // eslint-disable-next-line no-await-in-loop
+    if (outcome.mark !== undefined) await put(dayFeedItem(day), outcome.mark);
+    if (outcome.state === 'closed') report.daysClosed.push(day);
+    else if (outcome.state === 'waiting') report.daysWaitingOnEntries.push(day);
+    else if (outcome.state === 'pending') report.daysScanPending.push(day);
   }
 }
 
-/** Continue the keeper's unfinished walk for `day` under the first of
- *  `nonces` that holds one, or open one, and page every remaining id in. */
+/** How a day's walk stands after this run. */
+type WalkState = 'closed' | 'waiting' | 'pending' | 'stopped';
+
+interface EntryReads {
+  pages: EntryPages;
+  /** Where a read for any open day may start (the floor). */
+  start: bigint;
+}
+
+/** The ids of `ids` until the first that has not terminated on `day`; null
+ *  when that could not be read. */
+async function terminatedPrefix(r: Reader, sender: StepSender, day: number, ids: readonly bigint[]): Promise<{ prefix: bigint[]; open: bigint | null } | null> {
+  if (ids.length === 0) return { prefix: [], open: null };
+  const term = await r.many(ids.map((id) => ({ functionName: 'isEntryTerminatedOn', args: [id, BigInt(day)] })), `terminated ${day}`);
+  const prefix: bigint[] = [];
+  for (let i = 0; i < ids.length; i++) {
+    if (term[i] === undefined) {
+      sender.noteUnread(`closure:${day}`, 'whether each covering entry has terminated');
+      return null;
+    }
+    if (term[i] === false) return { prefix, open: ids[i] };
+    prefix.push(ids[i]);
+  }
+  return { prefix, open: null };
+}
+
+/**
+ * Continue the keeper's unfinished walk for `day` under the first of
+ * `nonces` that holds one, or open one, and page the remaining ids in.
+ *
+ * A walk is opened only once every covering entry has been seen terminated,
+ * read on from `term` (the first id not yet seen terminated, kept across
+ * runs). Each page is checked again just before it is sent, and only the ids
+ * up to the first that has not terminated go: an entry can be held open again
+ * after it was seen terminated (a staging record), and a page carrying it
+ * would revert. The ids come from the walk's own cursors (`readFeed`), so a
+ * run that runs out of pages loses nothing.
+ */
 async function walkDay(
   r: Reader,
   sender: StepSender,
+  reads: EntryReads,
   day: number,
   keeper: Address,
   nonces: readonly bigint[],
-  cover: { lender: readonly ScannedEntry[]; borrower: readonly ScannedEntry[] },
-): Promise<{ closed: boolean; nonce: bigint }> {
+  termStored: string | undefined,
+  markStored: string | undefined,
+): Promise<{ state: WalkState; nonce: bigint; term?: bigint; mark?: string }> {
   const subject = `day ${day}`;
   let nonce = 0n;
   let walk: WalkRecord | null = null;
@@ -863,27 +931,49 @@ async function walkDay(
       break;
     }
   }
+  let term: bigint | undefined;
   if (walk === null) {
+    const from = termStored !== undefined && /^\d+$/.test(termStored) && BigInt(termStored) > reads.start ? BigInt(termStored) : reads.start;
+    const read = await readCovering(reads.pages, day, from);
+    const seen = await terminatedPrefix(r, sender, day, read.entries.map((e) => e.id));
+    if (seen === null) return { state: 'stopped', nonce };
+    if (seen.open !== null) return { state: 'waiting', nonce, term: seen.open };
+    if (!read.exhausted) return { state: 'pending', nonce, term: read.next };
+    term = read.next;
     const res = await sender.call('start', subject, 'startDayClosure', [BigInt(day)]);
-    if (res !== 'landed') return { closed: false, nonce };
+    if (res !== 'landed') return { state: 'stopped', nonce, term };
     nonce = await r.one<bigint>('getClosureWalkNonce', [keeper]);
     walk = await r.one<WalkRecord>('getClosureWalk', [BigInt(day), keeper, nonce]);
-    if (walk.completed) return { closed: true, nonce };
+    if (walk.completed) return { state: 'closed', nonce, term };
   }
-  const sides: { side: Side; done: boolean; cursor: bigint; ids: bigint[] }[] = [
-    { side: SIDE_LENDER, done: walk.lenderComplete, cursor: walk.lenderCursor, ids: cover.lender.map((e) => e.id) },
-    { side: SIDE_BORROWER, done: walk.borrowerComplete, cursor: walk.borrowerCursor, ids: cover.borrower.map((e) => e.id) },
+  const done = { [SIDE_LENDER]: walk.lenderComplete, [SIDE_BORROWER]: walk.borrowerComplete };
+  const cursor = { lender: walk.lenderCursor, borrower: walk.borrowerCursor };
+  const feed = await readFeed(reads.pages, day, cursor, feedFrom(decodeFeedMark(markStored), nonce, cursor, reads.start));
+  const sides: { side: Side; ids: bigint[] }[] = [
+    { side: SIDE_LENDER, ids: done[SIDE_LENDER] ? [] : feed.lender.map((e) => e.id) },
+    { side: SIDE_BORROWER, ids: done[SIDE_BORROWER] ? [] : feed.borrower.map((e) => e.id) },
   ];
   for (const s of sides) {
-    if (s.done) continue;
-    for (const page of pagesAfter(s.ids, s.cursor, PAGE_IDS)) {
+    for (const ids of pagesAfter(s.ids, 0n, PAGE_IDS)) {
       // eslint-disable-next-line no-await-in-loop
-      const res = await sender.call(s.side === SIDE_LENDER ? 'prove-lender' : 'prove-borrower', subject, 'proveDayClosurePage', [BigInt(day), nonce, s.side, page]);
-      if (res !== 'landed') return { closed: false, nonce };
+      const seen = await terminatedPrefix(r, sender, day, ids);
+      if (seen === null) return { state: 'stopped', nonce, term };
+      if (seen.prefix.length > 0) {
+        // eslint-disable-next-line no-await-in-loop
+        const res = await sender.call(s.side === SIDE_LENDER ? 'prove-lender' : 'prove-borrower', subject, 'proveDayClosurePage', [BigInt(day), nonce, s.side, seen.prefix]);
+        if (res !== 'landed') return { state: 'stopped', nonce, term };
+        const last = seen.prefix[seen.prefix.length - 1];
+        if (s.side === SIDE_LENDER) cursor.lender = last;
+        else cursor.borrower = last;
+      }
+      if (seen.open !== null) return { state: 'waiting', nonce, term: seen.open };
     }
   }
+  // Everything read up to `feed.next` is in the walk now.
+  const mark = encodeFeedMark({ walk: nonce, next: feed.next, lender: cursor.lender, borrower: cursor.borrower });
+  if (!feed.exhausted) return { state: 'pending', nonce, term, mark };
   const closed = await r.one<boolean>('isDayObligationsClosed', [BigInt(day)]);
-  return { closed, nonce };
+  return { state: closed ? 'closed' : 'stopped', nonce, term, mark };
 }
 
 // ─── 5. Park ─────────────────────────────────────────────────────────────────
