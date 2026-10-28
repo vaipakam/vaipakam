@@ -222,14 +222,19 @@ const decoded = (tok) => {
 /**
  * The repository path a whole site claims, or null when it claims none.
  * Returns `{ path, dir }`: `dir` when it was cited with a trailing slash.
+ *
+ * `src` is the site as written. A code span is tested for pattern characters
+ * there, not in `tok`: normalisation reads `?` as the start of a URL query and
+ * drops it with everything after, so `contracts/src/Live?.sol` would reach
+ * this rule as the literal `contracts/src/Live` and be accused of not existing.
  */
-function claimedPath(tok, file, link) {
+function claimedPath(tok, src, file, link) {
   if (HAS_SCHEME.test(tok) || tok.startsWith('/')) return null; // (5)
   // A code span may name a part of a file (`wrangler.jsonc:vars`), as it may
   // name a line; the part is not in the path.
   const raw = link ? decoded(tok) : tok.replace(/:[A-Za-z_][\w.-]*$/, '');
   if (!link) {
-    if (NOT_A_NAME.test(raw)) return null;
+    if (NOT_A_NAME.test(raw) || NOT_A_NAME.test(src)) return null;
     // (3), narrowed for accusing. `./x` and `../x` in a code span are
     // relative to a working directory the text names in prose, if at all
     // (`./tickets.sql` from `apps/indexer/`), so they have no base this rule
@@ -286,14 +291,14 @@ function committedIgnored(paths) {
 const findings = [];
 const missing = [];
 for (const file of scopedDocs(GATED)) {
-  for (const { tok, n, line, link, whole } of citations(file)) {
+  for (const { tok, src, n, line, link, whole } of citations(file)) {
     const removed = removedDirHit(tok, file, link);
     if (removed) {
       findings.push({ file, n, tok, line, why: removed[1] });
       continue;
     }
     if (!whole) continue;
-    const claim = claimedPath(tok, file, link);
+    const claim = claimedPath(tok, src, file, link);
     if (claim && !exists(claim)) missing.push({ file, n, tok, line, claim });
   }
 }

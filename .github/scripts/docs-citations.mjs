@@ -131,8 +131,10 @@ function* pathWords(text) {
  * guesses by design (see `pathWords`). Those carry `whole: false`, and only
  * the closed-world rule may read them.
  *
- * @returns {Array<{tok: string, n: number, line: string, link: boolean, whole: boolean}>} —
+ * @returns {Array<{tok: string, src: string, n: number, line: string, link: boolean, whole: boolean}>} —
  *          `tok` normalised (query, fragment and a trailing `:LINE` removed),
+ *          `src` the site as written, before that normalisation (in a code
+ *          span `?` is a glob, not a query, so only `src` still shows it),
  *          `n` 1-based, `link` true for markdown destinations — the one form
  *          that renders relative to its document (#1467 r13) — and `whole`
  *          true when `tok` is an entire destination or code span rather than
@@ -151,7 +153,7 @@ export function citations(file) {
     const key = `${tok}\u0000${n}\u0000${link}\u0000${whole}`;
     if (seen.has(key)) return;
     seen.add(key);
-    out.push({ tok, n, line: lines[n - 1] ?? '', link, whole });
+    out.push({ tok, src: raw, n, line: lines[n - 1] ?? '', link, whole });
   };
 
   for (const { kind, value, line } of markdownCitations(lines.join('\n'))) {

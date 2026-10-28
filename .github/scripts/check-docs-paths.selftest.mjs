@@ -66,6 +66,11 @@ const CASES = [
   // Code spans that are words, placeholders or working-directory paths.
   { name: 'a code span that is not anchored at a top-level entry', md: '`read/write`, `owner/repo`, `Gone.md`', finds: [] },
   { name: 'placeholders and patterns', md: '`contracts/<slug>/x.json` `contracts/*.sol` `apps/{a,b}` `$HOME/x` `~/x`', finds: [] },
+  // #3023 r1: `?` is a glob in a code span; normalisation used to cut the span
+  // there and accuse the literal prefix. A link's `?` is still a query.
+  { name: 'a question-mark glob in a code span', md: '`contracts/src/Live?.sol` and `contracts/src/Gone?.sol`', finds: [] },
+  { name: 'a query on a link to a missing file', md: '[x](gone.md?plain=1)', finds: ['gone.md'] },
+  { name: 'a query on a link to a live file', md: '[x](exists.md?plain=1)', finds: [] },
   { name: 'a code span relative to a working directory', md: '`./tickets.sql` from `apps/keeper/`, or `../sibling-repo`', finds: [] },
   { name: 'a line and a part of a file', md: '`contracts/src/Live.sol:12` `apps/keeper/wrangler.jsonc:vars`', finds: [] },
   // (2) trailing slashes and gitlinks.
