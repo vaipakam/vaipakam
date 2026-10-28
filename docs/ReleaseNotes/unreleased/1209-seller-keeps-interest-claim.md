@@ -1,4 +1,4 @@
-## Thread — a lender who sells keeps the interest they earned (PR #<n>)
+## Thread — a lender who sells keeps the interest they earned (PR #3068)
 
 A lender who sold their position used to forfeit all the interest they had
 earned and not yet been paid, and that interest went to the treasury. Now the
