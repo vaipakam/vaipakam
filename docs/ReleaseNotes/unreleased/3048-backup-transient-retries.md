@@ -1,4 +1,4 @@
-## Off-chain backups — transient storage faults are retried (PR #<n>)
+## Off-chain backups — transient storage faults are retried (PR #3052)
 
 The backup watcher's first runs found three gaps in the nightly backups: no
 backup at all on October 1 (so no October monthly either), and two Sunday
