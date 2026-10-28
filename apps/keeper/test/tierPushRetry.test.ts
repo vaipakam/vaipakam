@@ -67,6 +67,10 @@ class FakeDiamond {
   /** Another caller delivers every lane between the keeper's read and its
    *  send. */
   deliveredFirst = false;
+  /** What the messenger refunds of each send's fee. */
+  refund = 0n;
+  /** The finalized block never answers. */
+  hangFinal = false;
   lastLogs: ReturnType<typeof logOf>[] = [];
   reads: string[] = [];
 
@@ -133,9 +137,10 @@ class FakeDiamond {
           this.lastLogs.push(logOf('TierPushDeferred', { user: a[0], destChainId: dst, nonce: u.nonce, reason: REASON.Budget }));
           continue;
         }
-        this.budget -= fee;
+        const cost = fee - this.refund;
+        this.budget -= cost;
         l.owed = false;
-        this.lastLogs.push(logOf('ProtocolTierBroadcastSent', { user: a[0], destChainId: dst, effectiveTier: u.tier, effectiveBps: 500, nonce: u.nonce, feePaid: fee, callerFunded: false }));
+        this.lastLogs.push(logOf('ProtocolTierBroadcastSent', { user: a[0], destChainId: dst, effectiveTier: u.tier, effectiveBps: 500, nonce: u.nonce, feePaid: cost, callerFunded: false }));
       }
     };
   }
@@ -146,7 +151,10 @@ class FakeDiamond {
   };
 
   getBlockNumber = async () => 120n;
-  getBlock = async ({ blockTag }: { blockTag?: string } = {}) => (blockTag === 'finalized' ? { number: 100n, timestamp: NOW - 100n } : { number: 120n, timestamp: NOW });
+  getBlock = async ({ blockTag }: { blockTag?: string } = {}) => {
+    if (blockTag === 'finalized' && this.hangFinal) return new Promise<never>(() => {});
+    return blockTag === 'finalized' ? { number: 100n, timestamp: NOW - 100n } : { number: 120n, timestamp: NOW };
+  };
   getTransactionCount = async () => 7;
   waitForTransactionReceipt = async () => ({ status: 'success', logs: this.lastLogs, blockNumber: 1n });
 
@@ -307,9 +315,40 @@ describe('the tier-push retry', () => {
     ledger.add(U2, 10, 1n);
     const { report } = await run();
     expect(fns()).toEqual([`deliverTierPush(${U1})`, `deliverTierPush(${U2})`]);
-    expect(report.deliveredNone).toEqual([U1]);
+    expect(report.deliveredNone).toEqual([`${U1}: 42 (budget)`]);
     expect(report.delivered).toEqual([`${U2}: lanes 10`]);
   });
+
+  it('draws the budget down by what a sent lane actually paid, not by its quote', async () => {
+    d.budget = 500n;
+    d.refund = 300n; // the lane quoted 400 costs 100
+    d.users.set(U1, push(3n, [[42, { ...owedNow }]]));
+    d.users.set(U2, push(1n, [[10, { ...owedNow }]])); // quoted 300
+    d.fee.set(10n, 300n + 300n); // its cost after the refund is 300
+    ledger.add(U1, 42, 3n);
+    ledger.add(U2, 10, 1n);
+    d.budget = 700n;
+    const { report } = await run();
+    // 700 - 100 = 600 left after U1, which covers U2's 600 quote.
+    expect(fns()).toEqual([`deliverTierPush(${U1})`, `deliverTierPush(${U2})`]);
+    expect(report.waiting).toEqual([]);
+  });
+
+  it('leaves the floor and still delivers when the finalized block does not answer by the status cutoff', async () => {
+    d.hangFinal = true;
+    d.users.set(U2, push(1n, [[10, { ...settled }]])); // finished at the head
+    d.users.set(U1, push(3n, [[10, { ...owedNow }]]));
+    ledger.add(U2, 10, 1n, 5);
+    ledger.add(U1, 10, 3n, 6);
+    const started = Date.now();
+    // The gate's cutoff is 500 ms away and the status cutoff a stage reserve
+    // after it; the finalized block is waited on only until the latter.
+    const deadline = started + SEND_RESERVE_MS + 2 * STAGE_RESERVE_MS + 500;
+    await run(deadline);
+    expect(fns()).toEqual([`deliverTierPush(${U1})`]);
+    expect(floor()).toBeUndefined();
+    expect(Date.now()).toBeLessThan(deadline);
+  }, 20_000);
 
   it('starts each run at a different user', async () => {
     d.budget = 500n;
@@ -349,7 +388,8 @@ describe('the tier-push retry', () => {
     ledger.add(U1, 10, 3n);
     const { report } = await run();
     expect(fns()).toEqual([`deliverTierPush(${U1})`]);
-    expect(report.deliveredNone).toEqual([U1]);
+    expect(report.deliveredNone).toEqual([`${U1}: 10 (budget)`]);
+    expect(describeTierPush(report).join(' ')).toContain(`tier-push-delivered-none=${U1}: 10 (budget)`);
   });
 
   it('moves the floor past a delivered lane only once the finalized block shows it delivered', async () => {

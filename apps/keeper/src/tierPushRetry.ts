@@ -45,7 +45,7 @@ import { decodeEventLog, type Abi, type Address, type Hex, type PublicClient } f
 import { ProtocolBroadcastFacetABI, RewardReporterFacetABI, VaipakamRewardMessengerABI } from '@vaipakam/contracts/abis';
 import { deadlineClient, PastRunDeadline, settledChunkedRead, settledRead } from './batchRead';
 import { shortErr } from './callErrors';
-import { boundedCall } from './passReader';
+import { boundedCall, finalizedBy } from './passReader';
 import type { EventLedger } from './eventLedger';
 import { readLedgerRotation, type LedgerRotation } from './ledgerRotation';
 import { priorStageCutoffMs, readCutoffMs } from './runWindow';
@@ -96,7 +96,8 @@ export interface TierPushReport {
   /** Deliveries that landed: `user: lanes 10,42; still owed 7 (budget)`. */
   delivered: string[];
   /** Deliveries that landed and left every lane owed, each deferred by the
-   *  contract (its own read differed from the keeper's price). */
+   *  contract (its own read differed from the keeper's price), with each
+   *  lane's reason: `user: 42 (send)`. */
   deliveredNone: string[];
   /** Deliveries that landed with no lane sent, settled or deferred: every
    *  lane was already delivered when it ran (another caller got there
@@ -120,7 +121,7 @@ export function describeTierPush(r: TierPushReport | null): string[] {
     `tier-push-delivered=${list(r.delivered)}`,
     ...(r.waiting.length > 0 ? [`tier-push-waiting=${r.waiting.join('; ')}`] : []),
     ...(r.lanesUnknown.length > 0 ? [`tier-push-lanes-unknown=${list(r.lanesUnknown)} (the status listed no lane: the messenger's destination list could not be read, or none is configured)`] : []),
-    ...(r.deliveredNone.length > 0 ? [`tier-push-delivered-none=${list(r.deliveredNone)} (the contract left every lane owed)`] : []),
+    ...(r.deliveredNone.length > 0 ? [`tier-push-delivered-none=${r.deliveredNone.join('; ')} (the contract left every lane owed)`] : []),
     ...(r.nothingOwed.length > 0 ? [`tier-push-nothing-owed=${list(r.nothingOwed)} (every lane was already delivered when the call ran)`] : []),
     ...(r.landedUnread.length > 0 ? [`tier-push-event-unread=${list(r.landedUnread)}`] : []),
   ];
@@ -259,7 +260,7 @@ export async function retryTierPushes(chainId: number, diamond: Address, sender:
     return m;
   };
   const lift = (head: ReadonlyMap<string, PushStatus>) =>
-    page.liftFloor(deps.finalized, (k) => deferralDone(k, head.get(userKey(k.user))), async (ks, block) => {
+    page.liftFloor(finalizedBy(statusCutoff, deps.finalized), (k) => deferralDone(k, head.get(userKey(k.user))), async (ks, block) => {
       const at = await statusAt([...new Map(ks.map((k) => [userKey(k.user), k.user])).values()], block.number);
       return (k) => deferralDone(k, at.get(userKey(k.user)));
     });
@@ -345,8 +346,8 @@ export async function retryTierPushes(chainId: number, diamond: Address, sender:
   }
 
   // 4. The contract decides. Users go in an order that moves each run, so a
-  // user whose delivery keeps failing does not always come first; and a fee
-  // counts against the budget only once a receipt shows its lane sent, so a
+  // user whose delivery keeps failing does not always come first; and the
+  // budget is drawn down only by what a receipt shows a lane paid, so a
   // delivery that spends nothing leaves the budget to the users after it.
   let left = budget;
   const start = priced.length === 0 ? 0 : deps.visit % priced.length;
@@ -376,12 +377,11 @@ export async function retryTierPushes(chainId: number, diamond: Address, sender:
       continue;
     }
     const got = pushEvents(diamond, user, sender.receipt.logs);
-    for (const dst of got.sent) {
-      const fee = lanes.find((l) => l.dst === dst)?.fee;
-      if (fee !== null && fee !== undefined) left = fee > left ? 0n : left - fee;
-    }
+    // What each sent lane actually drew from the budget, as its own event
+    // records it (the keeper attaches no value, so none is caller-funded).
+    for (const paidFee of got.budgetPaid) left = paidFee > left ? 0n : left - paidFee;
     if (got.sent.length === 0 && got.settled.length === 0) {
-      if (got.deferred.length > 0) out.deliveredNone.push(user);
+      if (got.deferred.length > 0) out.deliveredNone.push(`${user}: ${got.deferred.map(([dst, why]) => `${dst} (${why})`).join(', ')}`);
       else out.nothingOwed.push(user);
       continue;
     }
@@ -396,15 +396,15 @@ export async function retryTierPushes(chainId: number, diamond: Address, sender:
   return out;
 }
 
-/** The lanes a landed delivery sent, those it settled without a send (the
- *  lane already carried the push's effect) and those it left owed, from its
- *  own events. Exported for tests. */
+/** The lanes a landed delivery sent (and what each drew from the protocol
+ *  budget), those it settled without a send (the lane already carried the
+ *  push's effect) and those it left owed, from its own events. Exported for tests. */
 export function pushEvents(
   diamond: Address,
   user: Address,
   logs: readonly { address: Address; data: Hex; topics: readonly Hex[] }[],
-): { sent: bigint[]; settled: bigint[]; deferred: [bigint, string][] } {
-  const out = { sent: [] as bigint[], settled: [] as bigint[], deferred: [] as [bigint, string][] };
+): { sent: bigint[]; budgetPaid: bigint[]; settled: bigint[]; deferred: [bigint, string][] } {
+  const out = { sent: [] as bigint[], budgetPaid: [] as bigint[], settled: [] as bigint[], deferred: [] as [bigint, string][] };
   for (const log of logs) {
     if (log.address.toLowerCase() !== diamond.toLowerCase()) continue;
     let ev;
@@ -415,7 +415,10 @@ export function pushEvents(
     }
     const a = ev.args as unknown as Record<string, unknown>;
     if (String(a.user ?? '').toLowerCase() !== user.toLowerCase()) continue;
-    if (ev.eventName === 'ProtocolTierBroadcastSent') out.sent.push(BigInt(a.destChainId as bigint));
+    if (ev.eventName === 'ProtocolTierBroadcastSent') {
+      out.sent.push(BigInt(a.destChainId as bigint));
+      if (a.callerFunded !== true) out.budgetPaid.push(BigInt(a.feePaid as bigint));
+    }
     else if (ev.eventName === 'TierPushLaneSettled') out.settled.push(BigInt(a.destChainId as bigint));
     else if (ev.eventName === 'TierPushDeferred') out.deferred.push([BigInt(a.destChainId as bigint), DEFERRAL_REASONS[Number(a.reason)] ?? `reason ${a.reason}`]);
   }
