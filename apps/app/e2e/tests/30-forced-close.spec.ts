@@ -59,7 +59,7 @@ import {
 } from '../lib/flows';
 import { toFunctionSelector } from 'viem';
 import { anvilRpc, increaseTime, mine, setBalance } from '../lib/anvil';
-import { ethCallMatching, failRpcCalls } from '../lib/rpcFault';
+import { callDataMatching, failRpcCalls } from '../lib/rpcFault';
 import { pub, DIAMOND, DIAMOND_ABI_VIEM, MOCKS, WETH } from '../lib/chain';
 
 /** The read the page uses to ask whether this deployment has bounded sale
@@ -251,7 +251,7 @@ test('the close-out card tracks the grace boundary for the lender', async ({
   // every other fact behind the card still answers.
   const saleHoldFault = await failRpcCalls(
     afterWarp.page,
-    ethCallMatching(FACET_ADDRESS_SELECTOR, [BOUNDED_LISTING_SELECTOR.slice(2)]),
+    callDataMatching(FACET_ADDRESS_SELECTOR, [BOUNDED_LISTING_SELECTOR.slice(2)]),
   );
   await afterWarp.page.goto(`/positions/${loanId}`, {
     waitUntil: 'domcontentloaded',
