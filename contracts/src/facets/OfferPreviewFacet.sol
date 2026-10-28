@@ -9,6 +9,8 @@ import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
+import {LibCadenceAdmission} from "../libraries/LibCadenceAdmission.sol";
+import {LibNumeraireValueRead} from "../libraries/LibNumeraireValueRead.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
@@ -479,5 +481,124 @@ contract OfferPreviewFacet {
         // folding it in is a possible follow-up.)
 
         // Happy path: errorCode stays `None`.
+    }
+
+    // ─── #3009 — periodic-interest cadence admission ─────────────────────
+
+    /// @notice One cadence's admission verdict.
+    /// @param cadence  The cadence.
+    /// @param admitted Offer creation admits the cadence on these terms.
+    /// @param refusal  When not admitted, the exact revert data creation
+    ///                 raises (`PeriodicInterestDisabled`,
+    ///                 `CadenceNotAllowedForIlliquid` or `CadenceNotAllowed`),
+    ///                 decodable with the Diamond ABI. Empty with `admitted`
+    ///                 false means the rule could not be evaluated (the check
+    ///                 reverted without data), which is not an admission.
+    struct CadenceAdmission {
+        LibVaipakam.PeriodicInterestCadence cadence;
+        bool admitted;
+        bytes refusal;
+    }
+
+    /// @notice What the cadence rule reads for a set of offer terms, and its
+    ///         verdict for every cadence.
+    /// @param periodicInterestEnabled The protocol switch. While off only
+    ///                                `None` is admitted.
+    /// @param principalLiquidity      The lending asset's class, as creation
+    ///                                records it.
+    /// @param collateralLiquidity     The collateral's class, as creation
+    ///                                records it (Illiquid for a rental, which
+    ///                                carries no collateral leg).
+    /// @param bothLegsQualify         Both legs liquid AND ERC-20, which
+    ///                                periodic interest needs.
+    /// @param annualFloorApplies      The loan is longer than 365 days, the
+    ///                                switch is on and both legs qualify, so
+    ///                                `None` is refused and at least `Annual`
+    ///                                is required.
+    /// @param principalNumeraire      The principal's value the threshold is
+    ///                                compared with (1e18 numeraire units,
+    ///                                rounded down; 0 when it cannot be
+    ///                                valued, which reads as below the
+    ///                                threshold).
+    /// @param threshold               The finer-cadence threshold in effect.
+    /// @param cadences                One verdict per cadence, `None` first.
+    struct CadenceAdmissionPreview {
+        bool periodicInterestEnabled;
+        LibVaipakam.LiquidityStatus principalLiquidity;
+        LibVaipakam.LiquidityStatus collateralLiquidity;
+        bool bothLegsQualify;
+        bool annualFloorApplies;
+        uint256 principalNumeraire;
+        uint256 threshold;
+        CadenceAdmission[] cadences;
+    }
+
+    /**
+     * @notice Reverts with the refusal offer creation raises for a cadence on
+     *         these terms, or returns when it is admitted. The rule is
+     *         {LibCadenceAdmission}'s, the one creation and offer mutation
+     *         enforce; this entry exists so {previewCadenceAdmission} can
+     *         collect each refusal's exact revert data.
+     */
+    function requireCadenceAdmitted(LibCadenceAdmission.Terms calldata terms) external view {
+        LibCadenceAdmission.enforce(terms);
+    }
+
+    /**
+     * @notice The periodic-interest cadences an offer on these terms may
+     *         carry, with the reason for each one it may not, so a create form
+     *         offers only what creation will accept and says why the rest are
+     *         closed.
+     * @dev Liquidity is classified live, exactly as creation classifies it,
+     *      so the answer can change with the oracle, the switch or the
+     *      threshold before the offer is sent. It covers the cadence rule
+     *      only: an offer refused for another reason (its duration, its
+     *      amounts) is refused by creation whatever this says. A lender-sale
+     *      vehicle is created by the protocol and is exempt from the rule, so
+     *      this does not describe one.
+     * @param lendingAsset        The principal asset.
+     * @param amount              The offer's `amount` (the lower bound under a
+     *                            range), which the threshold rows value.
+     * @param assetType           The lending asset's type.
+     * @param collateralAsset     The collateral asset.
+     * @param collateralAssetType The collateral asset's type.
+     * @param durationDays        The loan duration in days.
+     */
+    function previewCadenceAdmission(
+        address lendingAsset,
+        uint256 amount,
+        LibVaipakam.AssetType assetType,
+        address collateralAsset,
+        LibVaipakam.AssetType collateralAssetType,
+        uint256 durationDays
+    ) external view returns (CadenceAdmissionPreview memory preview) {
+        LibCadenceAdmission.Terms memory terms;
+        terms.lendingAsset = lendingAsset;
+        terms.amount = amount;
+        terms.durationDays = durationDays;
+        terms.assetType = assetType;
+        terms.collateralAssetType = collateralAssetType;
+        (terms.principalLiquidity, terms.collateralLiquidity) =
+            LibCadenceAdmission.legLiquidity(lendingAsset, assetType, collateralAsset);
+
+        preview.periodicInterestEnabled = LibVaipakam.storageSlot().protocolCfg.periodicInterestEnabled;
+        preview.principalLiquidity = terms.principalLiquidity;
+        preview.collateralLiquidity = terms.collateralLiquidity;
+        preview.bothLegsQualify = LibCadenceAdmission.bothLiquid(terms);
+        preview.annualFloorApplies = LibCadenceAdmission.annualFloorApplies(terms);
+        preview.principalNumeraire = LibNumeraireValueRead.valueOrZero(lendingAsset, amount);
+        preview.threshold = LibCadenceAdmission.threshold();
+
+        uint256 count = uint256(type(LibVaipakam.PeriodicInterestCadence).max) + 1;
+        preview.cadences = new CadenceAdmission[](count);
+        for (uint256 i; i < count; ++i) {
+            terms.cadence = LibVaipakam.PeriodicInterestCadence(i);
+            preview.cadences[i].cadence = terms.cadence;
+            try OfferPreviewFacet(address(this)).requireCadenceAdmitted(terms) {
+                preview.cadences[i].admitted = true;
+            } catch (bytes memory reason) {
+                preview.cadences[i].refusal = reason;
+            }
+        }
     }
 }

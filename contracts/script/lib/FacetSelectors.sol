@@ -416,7 +416,7 @@ library FacetSelectors {
         );
     }
 
-    /// @notice Full external selector surface of {OfferPreviewFacet} (1).
+    /// @notice Full external selector surface of {OfferPreviewFacet} (3).
     ///
     /// @dev    #1649. Paired with {riskPreview} for the same reason, one step
     ///         milder. `ReplaceStaleFacets` refreshes `OfferAcceptFacet`, which
@@ -426,8 +426,10 @@ library FacetSelectors {
     ///         the preview/accept divergence #1503 exists to remove,
     ///         reintroduced by a partial refresh.
     function offerPreview() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](3);
         s[0] = OfferPreviewFacet.previewAccept.selector;
+        s[1] = OfferPreviewFacet.requireCadenceAdmitted.selector;
+        s[2] = OfferPreviewFacet.previewCadenceAdmission.selector;
     }
 
     /// @notice Full external selector surface of {FallbackCustodyFacet} (4).

@@ -1808,10 +1808,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     /// @dev #980 — `OfferPreviewFacet.previewAccept`, split out of
-    ///      OfferAcceptFacet for EIP-170 headroom. Single view selector.
+    ///      OfferAcceptFacet for EIP-170 headroom. #3009 adds the cadence
+    ///      admission preview and the self-called check it collects from.
     function _getOfferPreviewSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](3);
         s[0] = OfferPreviewFacet.previewAccept.selector;
+        s[1] = OfferPreviewFacet.requireCadenceAdmitted.selector;
+        s[2] = OfferPreviewFacet.previewCadenceAdmission.selector;
     }
 
     /// @dev OfferMatchFacet — Range Orders Phase 1 bot-driven offer

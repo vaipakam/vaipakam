@@ -298,6 +298,19 @@ runs half of it on old code:
   operator's manual pause, already in force
   (`PerRentalRowsCrossingNeedsManualPause` otherwise).
 
+- **OfferPreviewFacet + OfferCreateFacet + OfferMutateFacet — the cadence
+  admission rule (#3009).** Whether an offer may carry a periodic-interest
+  cadence is decided by one library, `LibCadenceAdmission`, whose one runtime
+  copy is `OfferPreviewFacet.requireCadenceAdmitted`. Creation and the amount
+  re-check on mutation self-call it, and `previewCadenceAdmission` collects
+  its refusals. A creator or mutator refreshed without the host reverts
+  `FunctionDoesNotExist` on every create (or amount change) a sale vehicle
+  does not exempt: a hard revert, never a second rule. A host refreshed
+  without them leaves the old copies in the callers, which can answer the
+  multi-year question differently from the preview. `RefreshAllFacetsInPlace`
+  carries all three; `ReplaceStaleFacets` carries creation and the preview but
+  not OfferMutateFacet, so it cannot refresh this family whole.
+
 - **Every facet that reads a loan deadline (#668 / #935, owner decision
   D2).** A loan's due date and grace end are read only through
   `LibLoanClock`, which adds the paused time since the loan started (from the

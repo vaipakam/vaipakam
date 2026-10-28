@@ -8,6 +8,8 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
+import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
@@ -455,5 +457,155 @@ contract PeriodicInterestCadenceTest is SetupTest {
         vm.prank(makeAddr("attacker"));
         vm.expectRevert();
         NumeraireConfigFacet(address(diamond)).setPreNotifyDays(5);
+    }
+
+    // ─── #3009 — the multi-year floor binds only when periodic interest can run ──
+
+    function _allowTwoYears() internal {
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setMaxOfferDurationDays(2 * 365);
+    }
+
+    /// @dev Switch off: `Annual` is refused too, so a floor would leave a
+    ///      multi-year loan no cadence at all. `None` is admitted.
+    function testMultiYear_FeatureOff_NoneAdmitted() public {
+        _allowTwoYears();
+        _create(_baseLenderParams(1000 ether, 730, NONE_C));
+        vm.expectRevert(IVaipakamErrors.PeriodicInterestDisabled.selector);
+        _create(_baseLenderParams(1000 ether, 730, ANNUAL));
+    }
+
+    /// @dev An illiquid leg may only carry `None`, so the floor cannot bind it.
+    function testMultiYear_IlliquidCollateral_NoneAdmitted() public {
+        _enableFeature();
+        _allowTwoYears();
+        LibVaipakam.CreateOfferParams memory p = _baseLenderParams(1000 ether, 730, NONE_C);
+        p.collateralAsset = mockIlliquidERC20;
+        _create(p);
+        p.periodicInterestCadence = ANNUAL;
+        vm.expectPartialRevert(IVaipakamErrors.CadenceNotAllowedForIlliquid.selector);
+        _create(p);
+    }
+
+    /// @dev Mutation re-admits by the same rule: a multi-year `None` offer the
+    ///      floor does not bind keeps its amount changes.
+    function testMultiYear_FeatureOff_NoneOfferAmountMutable() public {
+        _allowTwoYears();
+        uint256 offerId = _create(_baseLenderParams(1000 ether, 730, NONE_C));
+        vm.prank(lender);
+        OfferMutateFacet(address(diamond)).setOfferAmount(offerId, 900 ether, 1000 ether);
+    }
+
+    /// @dev Mutation reads the whole rule: with the switch turned off after
+    ///      creation, a finer cadence is refused on an amount change exactly as
+    ///      creation would refuse it.
+    function testMutate_FeatureTurnedOff_FinerCadenceRefused() public {
+        _enableFeature();
+        _priceBothLegs1000();
+        uint256 offerId = _create(_baseLenderParams(1000 ether, 180, MONTHLY));
+        vm.prank(owner);
+        NumeraireConfigFacet(address(diamond)).setPeriodicInterestEnabled(false);
+        vm.prank(lender);
+        vm.expectRevert(IVaipakamErrors.PeriodicInterestDisabled.selector);
+        OfferMutateFacet(address(diamond)).setOfferAmount(offerId, 900 ether, 1000 ether);
+    }
+
+    // ─── #3009 — the cadence-admission preview ───────────────────────────────
+
+    function _preview(uint256 amount, uint256 duration, address collateral)
+        internal
+        view
+        returns (OfferPreviewFacet.CadenceAdmissionPreview memory)
+    {
+        return OfferPreviewFacet(address(diamond)).previewCadenceAdmission(
+            mockERC20, amount, LibVaipakam.AssetType.ERC20, collateral, LibVaipakam.AssetType.ERC20, duration
+        );
+    }
+
+    /// @dev The preview's refusal for each cadence is the revert data creation
+    ///      raises on the same terms, and an admitted cadence creates.
+    function _assertPreviewMatchesCreate(uint256 amount, uint256 duration) internal {
+        OfferPreviewFacet.CadenceAdmissionPreview memory pv = _preview(amount, duration, mockCollateralERC20);
+        assertEq(pv.cadences.length, 5, "one verdict per cadence");
+        for (uint256 i; i < pv.cadences.length; ++i) {
+            assertEq(uint8(pv.cadences[i].cadence), i, "None first, in enum order");
+            uint256 snap = vm.snapshotState();
+            vm.prank(lender);
+            try OfferCreateFacet(address(diamond)).createOffer(
+                _baseLenderParams(amount, duration, pv.cadences[i].cadence)
+            ) {
+                assertTrue(pv.cadences[i].admitted, "create admitted what the preview refused");
+            } catch (bytes memory reason) {
+                assertFalse(pv.cadences[i].admitted, "the preview admitted what create refused");
+                assertEq(pv.cadences[i].refusal, reason, "the refusal is create's revert data");
+            }
+            vm.revertToState(snap);
+        }
+    }
+
+    function testPreview_FeatureOff_OnlyNone() public {
+        OfferPreviewFacet.CadenceAdmissionPreview memory pv = _preview(1000 ether, 180, mockCollateralERC20);
+        assertFalse(pv.periodicInterestEnabled);
+        assertTrue(pv.bothLegsQualify);
+        assertFalse(pv.annualFloorApplies);
+        assertTrue(pv.cadences[0].admitted, "None is always open with the switch off");
+        for (uint256 i = 1; i < 5; ++i) {
+            assertFalse(pv.cadences[i].admitted);
+            assertEq(
+                pv.cadences[i].refusal, abi.encodeWithSelector(IVaipakamErrors.PeriodicInterestDisabled.selector)
+            );
+        }
+        _assertPreviewMatchesCreate(1000 ether, 180);
+    }
+
+    function testPreview_MultiYearBelowThreshold_OnlyAnnual() public {
+        _enableFeature();
+        _allowTwoYears();
+        OfferPreviewFacet.CadenceAdmissionPreview memory pv = _preview(1000 ether, 730, mockCollateralERC20);
+        assertTrue(pv.annualFloorApplies);
+        assertLt(pv.principalNumeraire, pv.threshold, "the principal sits below the threshold");
+        for (uint256 i; i < 5; ++i) {
+            assertEq(pv.cadences[i].admitted, i == uint256(uint8(ANNUAL)), "only Annual below the threshold");
+        }
+        assertEq(
+            pv.cadences[0].refusal,
+            abi.encodeWithSelector(
+                IVaipakamErrors.CadenceNotAllowed.selector, uint8(NONE_C), 730, pv.principalNumeraire, pv.threshold
+            )
+        );
+        _assertPreviewMatchesCreate(1000 ether, 730);
+    }
+
+    function testPreview_AboveThreshold_IntervalFilter() public {
+        _enableFeature();
+        _priceBothLegs1000();
+        // 120 days: Monthly and Quarterly fit; SemiAnnual and Annual do not.
+        OfferPreviewFacet.CadenceAdmissionPreview memory pv = _preview(1000 ether, 120, mockCollateralERC20);
+        assertGe(pv.principalNumeraire, pv.threshold);
+        assertTrue(pv.cadences[0].admitted && pv.cadences[1].admitted && pv.cadences[2].admitted);
+        assertFalse(pv.cadences[3].admitted || pv.cadences[4].admitted);
+        _assertPreviewMatchesCreate(1000 ether, 120);
+    }
+
+    function testPreview_IlliquidLeg_OnlyNoneAndNoFloor() public {
+        _enableFeature();
+        _allowTwoYears();
+        OfferPreviewFacet.CadenceAdmissionPreview memory pv = _preview(1000 ether, 730, mockIlliquidERC20);
+        assertEq(uint8(pv.collateralLiquidity), uint8(LibVaipakam.LiquidityStatus.Illiquid));
+        assertFalse(pv.bothLegsQualify);
+        assertFalse(pv.annualFloorApplies, "an illiquid loan has no mandatory Annual checkpoint");
+        assertTrue(pv.cadences[0].admitted);
+        for (uint256 i = 1; i < 5; ++i) {
+            assertFalse(pv.cadences[i].admitted);
+            assertEq(
+                pv.cadences[i].refusal,
+                abi.encodeWithSelector(
+                    IVaipakamErrors.CadenceNotAllowedForIlliquid.selector,
+                    uint8(pv.principalLiquidity),
+                    uint8(pv.collateralLiquidity),
+                    uint8(i)
+                )
+            );
+        }
     }
 }
