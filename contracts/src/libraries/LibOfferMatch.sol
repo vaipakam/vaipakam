@@ -80,7 +80,17 @@ library LibOfferMatch {
         // only a pair that offered the same ones. `matchOffers` reverts
         // `LifecycleTermsMismatch`. Appended last to keep every prior ordinal
         // ABI-stable.
-        LifecycleTermsMismatch
+        LifecycleTermsMismatch,
+        // #3025 — loan creation would refuse the cadence on the matched loan
+        // (the borrower offer's terms at the matched amount): the switch, the
+        // threshold or a leg's liquidity has moved since the offers were
+        // posted. Reported only by `OfferMatchFacet.previewMatch`, after the
+        // capacity check, because loan creation runs after the match core and
+        // the charge. The exact refusal is
+        // `OfferPreviewFacet.requireOriginationCadenceAdmitted`'s revert for
+        // the borrower offer and `matchAmount`. Appended last to keep every
+        // prior ordinal ABI-stable.
+        CadenceNotAdmitted
     }
 
     /// @notice Structured return from `previewMatch`. Bots check

@@ -63,6 +63,7 @@ export const ACCEPT_ERROR_NAMES = [
   'VaultUpgradeRequired',
   'SelfTrade',
   'RefinanceRequestUntakeable',
+  'CadenceNotAdmitted',
 ] as const;
 
 export type AcceptErrorName = (typeof ACCEPT_ERROR_NAMES)[number];
@@ -112,6 +113,7 @@ const ACCEPT_ERROR_COPY_KEY: Record<AcceptErrorName, AcceptBlockedKey | null> = 
   VaultUpgradeRequired: 'vaultUpgradeRequired',
   SelfTrade: 'selfTrade',
   RefinanceRequestUntakeable: 'refinanceUntakeable',
+  CadenceNotAdmitted: 'cadenceNotAdmitted',
 };
 
 /**

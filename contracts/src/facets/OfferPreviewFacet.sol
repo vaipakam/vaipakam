@@ -460,6 +460,20 @@ contract OfferPreviewFacet {
             }
         }
 
+        // #3025 — loan creation re-admits the offer's cadence on the loan it
+        // opens (inside `initiateLoan`, after every check above and before the
+        // refinance hook below), so a cadence the rule no longer admits is
+        // reported here rather than discovered at signing. The lender-sale
+        // vehicle is exempt there, so it is here.
+        if (_saleLoanId == 0) {
+            try OfferPreviewFacet(address(this)).requireOriginationCadenceAdmitted(
+                offerId, preview.effectivePrincipal
+            ) {} catch {
+                preview.errorCode = OfferAcceptFacet.AcceptError.CadenceNotAdmitted;
+                return preview;
+            }
+        }
+
         // #2407 — a refinance-tagged offer completes only if it is its target
         // loan's recorded request and no offset is open on that loan;
         // otherwise the refinance hook, which runs after every check above,
@@ -542,6 +556,26 @@ contract OfferPreviewFacet {
      */
     function requireCadenceAdmitted(LibCadenceAdmission.Terms calldata terms) external view {
         LibCadenceAdmission.enforce(terms);
+    }
+
+    /**
+     * @notice #3025 — reverts with the rule's refusal when a loan opened now
+     *         from `offerId` with `principal` funded may not carry the offer's
+     *         cadence; returns when it may. Loan creation calls it for every
+     *         origination from an offer, and the accept and match previews
+     *         call it to report the same refusal before anyone signs.
+     * @dev The terms are {LibCadenceAdmission.originationTerms}: the offer's
+     *      own terms, the funded principal and both legs' liquidity read now,
+     *      against the live switch and threshold. A lender-sale vehicle is
+     *      exempt from the rule; its callers do not ask.
+     * @param offerId   The offer the loan opens from (the borrower offer on a
+     *                  match).
+     * @param principal The principal the loan funds.
+     */
+    function requireOriginationCadenceAdmitted(uint256 offerId, uint256 principal) external view {
+        LibCadenceAdmission.enforce(
+            LibCadenceAdmission.originationTerms(LibVaipakam.storageSlot().offers[offerId], principal)
+        );
     }
 
     /**

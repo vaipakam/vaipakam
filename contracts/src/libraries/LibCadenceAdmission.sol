@@ -81,6 +81,27 @@ library LibCadenceAdmission {
             : LibVaipakam.LiquidityStatus.Illiquid;
     }
 
+    /// @notice #3025 — the terms a loan opened from `offer` with `principal`
+    ///         funded is admitted on: the offer's asset, duration and cadence,
+    ///         the principal actually funded, and both legs' liquidity read
+    ///         now, as loan creation reads it. Loan creation and every preview
+    ///         of an origination (accept, match) build their terms here, so
+    ///         the check and its previews cannot disagree on what they test.
+    function originationTerms(LibVaipakam.Offer storage offer, uint256 principal)
+        internal
+        view
+        returns (Terms memory t)
+    {
+        t.lendingAsset = offer.lendingAsset;
+        t.amount = principal;
+        t.durationDays = uint256(offer.durationDays);
+        t.cadence = offer.periodicInterestCadence;
+        t.assetType = offer.assetType;
+        t.collateralAssetType = offer.collateralAssetType;
+        (t.principalLiquidity, t.collateralLiquidity) =
+            legLiquidity(offer.lendingAsset, offer.assetType, offer.collateralAsset);
+    }
+
     /// @notice Whether both legs qualify for periodic interest: liquid AND
     ///         ERC-20 (Filter 0).
     function bothLiquid(Terms memory t) internal pure returns (bool) {

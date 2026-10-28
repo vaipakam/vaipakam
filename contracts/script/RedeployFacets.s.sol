@@ -22,6 +22,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
@@ -98,6 +99,9 @@ contract RedeployFacets is Script {
     /// @notice #2957 - the target Diamond predates the position NFT metadata
     ///         split; see {_requireNftMetadataSplit}.
     error PredatesNftMetadataSplit(address diamond);
+    /// @notice #3009 / #3025 - the target Diamond's OfferPreviewFacet predates
+    ///         the cadence admission host; see {_requireCadenceAdmissionHost}.
+    error PredatesCadenceAdmissionHost(address diamond);
 
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -157,6 +161,9 @@ contract RedeployFacets is Script {
         // #2957 - and one from before the NFT metadata split; see
         // {_requireNftMetadataSplit}.
         _requireNftMetadataSplit(diamond);
+        // #3009 / #3025 - and one whose OfferPreviewFacet cannot answer the
+        // origination cadence check; see {_requireCadenceAdmissionHost}.
+        _requireCadenceAdmissionHost(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -910,6 +917,25 @@ contract RedeployFacets is Script {
             IDiamondLoupe(diamond).facetAddress(VPFIDiscountAccumulatorFacet.syncTierRecord.selector)
                 == address(0)
         ) revert PredatesTierRecordSeam(diamond);
+    }
+
+    /// @dev #3009 / #3025 - refuse a Diamond whose OfferPreviewFacet predates
+    ///      the cadence admission host. LoanFacet re-admits the cadence of
+    ///      every loan it opens, and OfferMatchFacet previews the same answer,
+    ///      through a self-call to `requireOriginationCadenceAdmitted`, a
+    ///      selector only OfferPreviewFacet carries. This curated set refreshes
+    ///      LoanFacet and OfferMatchFacet but not OfferPreviewFacet, so run on
+    ///      an older Diamond it would leave every loan creation reverting
+    ///      `FunctionDoesNotExist`. Crossing the boundary is a fresh deploy,
+    ///      `RefreshAllFacetsInPlace` or `ReplaceStaleFacets` (both carry the
+    ///      host), never this refresh. The marker is the routing of
+    ///      `requireOriginationCadenceAdmitted`, the later of the two
+    ///      selectors. Called before the broadcast starts.
+    function _requireCadenceAdmissionHost(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(OfferPreviewFacet.requireOriginationCadenceAdmitted.selector)
+                == address(0)
+        ) revert PredatesCadenceAdmissionHost(diamond);
     }
 
     function _replace(address facet, bytes4[] memory selectors)

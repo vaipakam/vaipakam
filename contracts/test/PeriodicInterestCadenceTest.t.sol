@@ -10,6 +10,8 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
+import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
@@ -508,6 +510,96 @@ contract PeriodicInterestCadenceTest is SetupTest {
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.PeriodicInterestDisabled.selector);
         OfferMutateFacet(address(diamond)).setOfferAmount(offerId, 900 ether, 1000 ether);
+    }
+
+    // ─── #3025 — the rule runs again when a loan opens ───────────────────────
+
+    /// @dev A multi-year `None` offer posted while periodic interest was off
+    ///      is refused at accept once the switch is on: the `Annual` floor now
+    ///      binds the loan it would open.
+    function testAccept_SwitchTurnedOn_MultiYearNoneRefused() public {
+        _allowTwoYears();
+        uint256 offerId = _create(_baseLenderParams(1000 ether, 730, NONE_C));
+        _enableFeature();
+        vm.expectPartialRevert(IVaipakamErrors.CadenceNotAllowed.selector);
+        this.acceptAsBorrower(offerId);
+    }
+
+    /// @dev While the switch stays off, the same offer opens its loan.
+    function testAccept_SwitchStillOff_MultiYearNoneOpens() public {
+        _allowTwoYears();
+        uint256 offerId = _create(_baseLenderParams(1000 ether, 730, NONE_C));
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(uint8(l.periodicInterestCadence), uint8(NONE_C));
+        assertEq(l.durationDays, 730);
+    }
+
+    /// @dev The reverse flip: a `Monthly` offer posted while the switch was on
+    ///      cannot open a loan after it is turned off.
+    function testAccept_SwitchTurnedOff_FinerCadenceRefused() public {
+        _enableFeature();
+        _priceBothLegs1000();
+        uint256 offerId = _create(_baseLenderParams(1000 ether, 60, MONTHLY));
+        vm.prank(owner);
+        NumeraireConfigFacet(address(diamond)).setPeriodicInterestEnabled(false);
+        vm.expectRevert(IVaipakamErrors.PeriodicInterestDisabled.selector);
+        this.acceptAsBorrower(offerId);
+    }
+
+    /// @dev A leg that loses its liquidity after posting refuses the cadence
+    ///      it can no longer carry (Filter 0), read in the accepting
+    ///      transaction rather than from the offer's record.
+    function testAccept_CollateralTurnedIlliquid_FinerCadenceRefused() public {
+        _enableFeature();
+        _priceBothLegs1000();
+        uint256 offerId = _create(_baseLenderParams(1000 ether, 60, MONTHLY));
+        mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
+        vm.expectPartialRevert(IVaipakamErrors.CadenceNotAllowedForIlliquid.selector);
+        this.acceptAsBorrower(offerId);
+    }
+
+    /// @dev The match path opens its loan through the same point, so it is
+    ///      refused by the same rule.
+    function testMatch_SwitchTurnedOn_MultiYearNoneRefused() public {
+        _allowTwoYears();
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setPartialFillEnabled(true);
+        uint256 lenderOfferId = _create(_baseLenderParams(1000 ether, 730, NONE_C));
+        LibVaipakam.CreateOfferParams memory b = _baseLenderParams(1000 ether, 730, NONE_C);
+        b.offerType = LibVaipakam.OfferType.Borrower;
+        vm.prank(borrower);
+        uint256 borrowerOfferId = OfferCreateFacet(address(diamond)).createOffer(b);
+        _enableFeature();
+        LibOfferMatch.MatchResult memory r = OfferMatchFacet(address(diamond)).previewMatch(
+            lenderOfferId, borrowerOfferId, address(this), address(this)
+        );
+        assertEq(uint8(r.errorCode), uint8(LibOfferMatch.MatchError.CadenceNotAdmitted));
+        vm.expectPartialRevert(IVaipakamErrors.CadenceNotAllowed.selector);
+        OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, borrowerOfferId);
+    }
+
+    /// @dev The accept preview reports what loan creation would refuse,
+    ///      before anyone signs, and clears once the switch is back off.
+    function testPreviewAccept_ReportsCadenceRefusal() public {
+        _allowTwoYears();
+        uint256 offerId = _create(_baseLenderParams(1000 ether, 730, NONE_C));
+        OfferAcceptFacet.AcceptPreview memory pv =
+            OfferPreviewFacet(address(diamond)).previewAccept(offerId, borrower);
+        assertEq(uint8(pv.errorCode), uint8(OfferAcceptFacet.AcceptError.None));
+
+        _enableFeature();
+        pv = OfferPreviewFacet(address(diamond)).previewAccept(offerId, borrower);
+        assertEq(uint8(pv.errorCode), uint8(OfferAcceptFacet.AcceptError.CadenceNotAdmitted));
+        vm.expectPartialRevert(IVaipakamErrors.CadenceNotAllowed.selector);
+        OfferPreviewFacet(address(diamond)).requireOriginationCadenceAdmitted(offerId, pv.effectivePrincipal);
+    }
+
+    /// @dev External hop so `expectRevert` lands on the accept itself rather
+    ///      than on the signing helper's preparatory view calls.
+    function acceptAsBorrower(uint256 offerId) external {
+        require(msg.sender == address(this));
+        _signAndAcceptOffer(borrower, borrowerPk, offerId);
     }
 
     // ─── #3009 — the cadence-admission preview ───────────────────────────────
