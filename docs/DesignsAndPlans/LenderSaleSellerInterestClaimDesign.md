@@ -246,9 +246,13 @@ buyer while the seller's claim still counted them: the same gap again.
 
 ## After the terminal
 
-Interest accrues on the ledger only while the loan is Active. A loan that is
-not Active keeps its checkpoint, so a fallback cured back to Active still
-prices the whole stretch, as the borrower is charged for it. Past a terminal,
+Interest accrues on the ledger while the loan is Active or FallbackPending. A
+cured fallback returns to Active owing the whole stretch, as the borrower is
+charged for it, so the fallback stretch accrues too, and a principal change
+inside it (a partial internal match) checkpoints the stretch at the principal
+it replaces first (Codex #3068 r3; an earlier draft froze the checkpoint while
+the loan was not Active, which priced that stretch at the reduced principal).
+Accrual stops at the terminal. Past a terminal,
 `getInterestLedger` reads zero earned and zero owed: what the lender side is
 owed is its claim row. Open seller claims stay listed until the terminal
 split closes them.

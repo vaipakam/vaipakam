@@ -88,9 +88,7 @@ library LibInterestLedger {
         LibVaipakam.Storage storage s,
         LibVaipakam.Loan storage loan
     ) internal view returns (uint256) {
-        // Interest accrues to the lender side only while the loan is Active.
-        // Past its terminal, what the lender side is owed is its claim row.
-        if (loan.status != LibVaipakam.LoanStatus.Active) return 0;
+        if (!_accrues(loan)) return 0;
         uint256 from = _touchedAt(s.interestLedger[loan.id], loan);
         if (block.timestamp <= from) return 0;
         return (loan.principal * loan.interestRateBps * (block.timestamp - from))
@@ -204,10 +202,9 @@ library LibInterestLedger {
             l.touchedAt = loan.startTime;
             l.principalOwed = loan.principal;
         }
-        // Only an Active loan accrues. A loan that is not Active keeps its
-        // checkpoint, so a fallback cured back to Active still prices the
-        // whole stretch since it, as the borrower is charged for it.
-        if (loan.status == LibVaipakam.LoanStatus.Active && block.timestamp > l.touchedAt) {
+        // Only an open loan accrues ({_accrues}). A terminal loan keeps its
+        // checkpoint and earns nothing more.
+        if (_accrues(loan) && block.timestamp > l.touchedAt) {
             l.holderEarnedGross += (loan.principal * loan.interestRateBps * (block.timestamp - l.touchedAt))
                 / (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
             l.touchedAt = uint64(block.timestamp);
@@ -453,6 +450,20 @@ library LibInterestLedger {
     }
 
     // ─── Internal ──────────────────────────────────────────────────────────
+
+    /// @dev Whether `loan` accrues interest to the lender side: while it is
+    ///      Active, and while it is FallbackPending. A fallback a borrower cures
+    ///      returns to Active owing interest for the whole stretch (the cure
+    ///      leaves the accrual clock where it was), so the stretch is the
+    ///      lender side's, and a principal change during the fallback (a
+    ///      partial internal match) must checkpoint it at the old principal
+    ///      first. A fallback that ends instead goes terminal, where the
+    ///      holder's earned figure is no longer read: what the lender side is
+    ///      owed is its claim row.
+    function _accrues(LibVaipakam.Loan storage loan) private view returns (bool) {
+        return loan.status == LibVaipakam.LoanStatus.Active ||
+            loan.status == LibVaipakam.LoanStatus.FallbackPending;
+    }
 
     function _touchedAt(LibVaipakam.InterestLedger storage l, LibVaipakam.Loan storage loan)
         private

@@ -30,7 +30,9 @@ set-aside money moves to the buyer as before. A seller who is still flagged
 is paid into their own vault, locked until they are clear. If the party the
 loan records as frozen is an earlier holder who is still flagged, the sale is
 refused and the sale verdict names that party. Interest
-accrues on the ledger only while a loan is active, so a closed loan reports
+accrues on the ledger while a loan is active or waiting in a pending fallback,
+and a change of principal during the fallback first settles the stretch at the
+old principal. It stops when the loan ends, so a closed loan reports
 nothing earned and no principal owed there; the lender side's claim on the
 closed loan is what it is owed.
 

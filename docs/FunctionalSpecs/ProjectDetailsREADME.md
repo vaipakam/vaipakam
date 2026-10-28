@@ -2528,9 +2528,12 @@ which Liam forfeited his accrued interest to the treasury at the sale.
   or cannot be shown to be clear after a confirmed flag, the sale is refused,
   and the answer to whether the sale route is open names that party, because
   the set-aside money waits on them whoever holds the position.
-- **Interest accrues only while the loan is active.** Once a loan has ended,
-  the record reports nothing earned and no principal owed by the ledger; what
-  the lender side is owed is its claim on the closed loan.
+- **Interest accrues until the loan ends.** It accrues while the loan is
+  active and while it waits in a pending fallback, because a cured fallback
+  owes the whole stretch; a change of principal during the fallback first
+  settles the stretch at the principal it replaces. Once a loan has ended, the
+  record reports nothing earned and no principal owed by the ledger; what the
+  lender side is owed is its claim on the closed loan.
 - **Anyone can see the record.** The platform reports, per loan, what the
   current holder has earned and not been paid, the principal the lender side is
   owed, and each open seller claim with what it is owed.

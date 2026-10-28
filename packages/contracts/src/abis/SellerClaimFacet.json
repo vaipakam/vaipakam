@@ -292,6 +292,12 @@
         "internalType": "uint256"
       },
       {
+        "name": "credited",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
         "name": "fullyPaid",
         "type": "bool",
         "indexed": false,

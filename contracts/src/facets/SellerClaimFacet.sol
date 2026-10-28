@@ -42,10 +42,12 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
  *         refused, and a share paid to a flagged seller simply waits: the claim
  *         is screened fail-closed.
  *
- *         Every share is paid NET of the fee. Inline, a seller bears the fee
- *         the slice actually paid (its own net-to-gross proportion). At a
- *         terminal the claim row is already net of the loan's snapshot fee, so
- *         a seller is owed their gross less that fee.
+ *         Every share is paid NET of the fee the payment charged. Inline, a
+ *         seller bears the loan's own yield fee when the slice charged one
+ *         (never the holder's discount), and nothing when it charged none
+ *         ({LibInterestLedger.takeForSellers}). At a terminal the claim row is
+ *         already net of the loan's snapshot fee, so a seller is owed their
+ *         gross less that fee.
  *
  *         Terminal ranking (owner decision 2026-10-28, "principal first"):
  *         - A claim in the PRINCIPAL asset ranks by amount.
@@ -86,7 +88,9 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
     /// @param netOwed   What it was owed after the fee, in the principal asset.
     /// @param asset     The asset the recovery was paid in.
     /// @param paid      What left the recovery for this seller, in `asset`.
-    /// @param fullyPaid Whether `paid` covered `netOwed`. When false the
+    /// @param credited  What reached the seller's vault for it (less than
+    ///                  `paid` for a token that charges on transfer).
+    /// @param fullyPaid Whether `credited` covered `netOwed`. When false the
     ///                  shortfall is unpaid and nothing on the loan owes it.
     /// @custom:event-category state-change/claim-mutation
     event SellerInterestClaimClosed(
@@ -96,6 +100,7 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
         uint256 netOwed,
         address asset,
         uint256 paid,
+        uint256 credited,
         bool fullyPaid
     );
 
@@ -265,8 +270,9 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         earned interest and the principal owed. Past its terminal the
     ///         loan owes the lender side its claim row (`getClaimable`), so
     ///         both read 0 here; open seller claims are listed until the
-    ///         terminal split closes them. Interest accrues only while the loan
-    ///         is Active.
+    ///         terminal split closes them. Interest accrues while the loan is
+    ///         Active or FallbackPending (a cure returns it to Active owing
+    ///         the whole stretch) and stops at the terminal.
     function getInterestLedger(uint256 loanId)
         external
         view
@@ -407,18 +413,23 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
         uint256 pay,
         uint256 feeBps
     ) private {
+        uint256 credited;
         if (pay > 0) {
-            uint256 credited = LibSanctionedLock.depositLockedFromVault(
+            credited = LibSanctionedLock.depositLockedFromVault(
                 s, fromUser, claim.seller, loanId, asset, pay
             );
             _setAsideForSeller(s, loanId, claim.seller, asset, credited);
         }
         uint256 netOwed =
             (claim.grossOwed * (LibVaipakam.BASIS_POINTS - feeBps)) / LibVaipakam.BASIS_POINTS;
+        // Judged on what the seller's vault received, not on what left the
+        // recovery: a token that charges on transfer pays the seller less.
         bool fullyPaid = asset == loan.principalAsset
-            ? pay >= netOwed
-            : pay > 0 && _valueCovers(loan, asset, pay, netOwed);
-        emit SellerInterestClaimClosed(loanId, claim.seller, claim.grossOwed, netOwed, asset, pay, fullyPaid);
+            ? credited >= netOwed
+            : credited > 0 && _valueCovers(loan, asset, credited, netOwed);
+        emit SellerInterestClaimClosed(
+            loanId, claim.seller, claim.grossOwed, netOwed, asset, pay, credited, fullyPaid
+        );
     }
 
     /// @dev The terminal ranking: the holder's principal first, then each
