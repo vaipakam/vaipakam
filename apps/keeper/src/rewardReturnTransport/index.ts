@@ -58,7 +58,7 @@ import { shortErr } from '../callErrors';
 import { deploymentFloor, finishWork, getWorkItems, putWork } from '../db';
 import { feeCeiling } from '../feeCeiling';
 import { sendOpsAlert } from '../opsAlert';
-import { advanceFloor, d1ScanCursors, decodeIndex, rotatingWindow, type ScanCursors } from '../scanCursors';
+import { d1ScanCursors, decodeIndex, finalFloor, finalizedBlockOnce, rotatingWindow, type FinalBlock, type ScanCursors } from '../scanCursors';
 import { StepSender, type SendFeeCeiling } from '../stepSender';
 import { AUTH_PENDING, executeBlocked, repatStep, returnChunk, type LaneBucket, type RepatState } from './plan';
 
@@ -337,10 +337,15 @@ export async function returnTransportOnce(deps: ReturnTransportDeps): Promise<Re
 }
 
 class Reader {
+  /** The chain's finalized block, read once a run (`scanCursors.finalFloor`). */
+  readonly finalized: () => Promise<FinalBlock | null>;
+
   constructor(
     readonly deps: ChainDeps,
     readonly deadline: number,
-  ) {}
+  ) {
+    this.finalized = finalizedBlockOnce(deps.client);
+  }
 
   async one<T>(functionName: string, args: readonly unknown[] = [], address: Address = this.deps.diamond, abi: Abi = ABI): Promise<T> {
     return (await this.deps.client.readContract({ address, abi, functionName, args })) as T;
@@ -357,7 +362,8 @@ class Reader {
     }
   }
 
-  async many(calls: readonly { functionName: string; args: readonly unknown[] }[], label: string): Promise<unknown[]> {
+  /** At the head, or at `blockNumber` when one is given. */
+  async many(calls: readonly { functionName: string; args: readonly unknown[] }[], label: string, blockNumber?: bigint): Promise<unknown[]> {
     const out: unknown[] = [];
     for (let i = 0; i < calls.length; i += READ_CHUNK) {
       const part = calls.slice(i, i + READ_CHUNK);
@@ -367,6 +373,7 @@ class Reader {
         part.map((c) => ({ address: this.deps.diamond, abi: ABI, functionName: c.functionName, args: c.args })),
         `rewardReturnTransport ${label}`,
         this.deadline,
+        blockNumber,
       );
       for (const x of res) out.push(x.status === 'success' ? x.result : undefined);
     }
@@ -486,7 +493,15 @@ async function repatriations(base: ChainState, states: ReadonlyMap<number, Chain
     pending.push({ authId, dst: Number(st[1]), amount: st[3] });
   }
   if (settled.length > 0) await deps.records.finish(base.deps.chainId, base.deps.diamond, settled);
-  const newFloor = advanceFloor(floor, nums, (id) => finished.has(id));
+  // The floor moves only on what the finalized block shows (Codex #2993 r4):
+  // an authorization a reorg puts back to pending stays above it.
+  const newFloor = await finalFloor(floor, nums, (id) => finished.has(id), base.r.finalized, async (passed, block) => {
+    const at = await base.r.many(passed.map((id) => ({ functionName: 'getRepatriationAuthorization', args: [BigInt(id)] })), 'authorizations-final', block.number);
+    return new Set(passed.filter((_, i) => {
+      const st = at[i] as readonly [number, ...unknown[]] | undefined;
+      return st !== undefined && Number(st[0]) !== AUTH_PENDING;
+    }));
+  });
   if (newFloor !== floor) await cursors.put(AUTH_FLOOR_ITEM, String(newFloor));
   if (String(win.next) !== stored.get(AUTH_NEXT_ITEM)) await cursors.put(AUTH_NEXT_ITEM, String(win.next));
   if (pending.length === 0) return;
@@ -651,12 +666,23 @@ async function strandedReturns(mirror: ChainState, states: ReadonlyMap<number, C
   }
   const returned = new Set<string>();
   // On a page read from the floor, the floor moves past the leading rows whose
-  // quarantine is returned in full, or which nominate nothing.
+  // quarantine is returned in full, or which nominate nothing, at the head AND
+  // at the finalized block (Codex #2993 r4): a return a reorg undoes leaves
+  // its row above the floor, to be returned again.
   const liftFloor = async () => {
     if (start !== floor) return;
-    let i = 0;
-    while (i < ledger.rows.length && (rowKey[i] === null || returned.has(rowKey[i]!))) i++;
-    if (i > 0) await cursors.put(STRANDED_FLOOR_ITEM, encodePos(ledger.rows[i - 1]));
+    const positions = ledger.rows.map((_, i) => i);
+    const doneAtHead = (i: number) => rowKey[i] === null || returned.has(rowKey[i]!);
+    const n = await finalFloor(0, positions, doneAtHead, mirror.r.finalized, async (passed, block) => {
+      const named = passed.filter((i) => rowKey[i] !== null);
+      const at = await mirror.r.many(named.map((i) => ({ functionName: 'getStrandedRecovery', args: [keys.get(rowKey[i]!)!.remitter, keys.get(rowKey[i]!)!.remitId] })), 'stranded-final', block.number);
+      const done = new Set(passed.filter((i) => rowKey[i] === null));
+      named.forEach((i, j) => {
+        if ((at[j] as StrandedRecord | undefined)?.amount === 0n) done.add(i);
+      });
+      return done;
+    });
+    if (n > 0) await cursors.put(STRANDED_FLOOR_ITEM, encodePos(ledger.rows[n - 1]));
   };
   if (keys.size === 0) {
     await liftFloor();

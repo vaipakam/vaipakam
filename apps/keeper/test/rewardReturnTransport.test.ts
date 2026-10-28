@@ -187,6 +187,10 @@ class FakeChain {
   readonly inbound = new Map<number, LaneBucket>();
   sent: { fn: string; args: readonly unknown[]; value: bigint }[] = [];
   txs = 0;
+  /** The authorizations and quarantines as the finalized block shows them,
+   *  when it lags the head; null reads the head's there too. */
+  final: { auths: Map<bigint, Auth>; stranded: Map<string, { amount: bigint; dayId: bigint }> } | null = null;
+  readonly finalNumber = 100n;
 
   constructor(
     readonly chainId: number,
@@ -197,8 +201,11 @@ class FakeChain {
     this.chainNamed = chainId;
   }
 
-  readContract = async ({ address, functionName, args = [] }: { address: Address; functionName: string; args?: readonly unknown[] }): Promise<unknown> => {
+  readContract = async ({ address, functionName, args = [], blockNumber }: { address: Address; functionName: string; args?: readonly unknown[]; blockNumber?: bigint }): Promise<unknown> => {
     const a = args as readonly any[];
+    if (blockNumber !== undefined && blockNumber !== this.finalNumber) throw new Error(`read at unexpected block ${blockNumber}`);
+    const auths = blockNumber !== undefined && this.final !== null ? this.final.auths : this.auths;
+    const stranded = blockNumber !== undefined && this.final !== null ? this.final.stranded : this.stranded;
     if (address === MESSENGER) {
       if (functionName !== 'quoteSendRepatriationInstruction') throw new Error(`unexpected messenger read ${functionName}`);
       return this.fee;
@@ -217,7 +224,7 @@ class FakeChain {
       case 'getRewardChainRetirement':
         return this.retirement;
       case 'getRepatriationAuthorization': {
-        const x = this.auths.get(a[0] as bigint);
+        const x = auths.get(a[0] as bigint);
         return x === undefined ? [0, 0, 0n, 0n, 0n] : [x.status, x.dst, 0n, x.amount, 0n];
       }
       case 'getRepatriationInstruction': {
@@ -225,7 +232,7 @@ class FakeChain {
         return x === undefined ? [INSTR_NONE, 0n] : [x.state, x.amount];
       }
       case 'getStrandedRecovery': {
-        const x = this.stranded.get(`${(a[0] as string).toLowerCase()}:${a[1]}`) ?? { amount: 0n, dayId: 0n };
+        const x = stranded.get(`${(a[0] as string).toLowerCase()}:${a[1]}`) ?? { amount: 0n, dayId: 0n };
         return { amount: x.amount, dayId: x.dayId, reservedAt: 0n, reason: 0, held: true };
       }
       case 'getRemitLaneBucket':
@@ -241,16 +248,21 @@ class FakeChain {
     }
   };
 
-  multicall = async ({ contracts }: { contracts: { address: Address; functionName: string; args?: readonly unknown[] }[] }) =>
+  multicall = async ({ contracts, blockNumber }: { contracts: { address: Address; functionName: string; args?: readonly unknown[] }[]; blockNumber?: bigint }) =>
     Promise.all(
       contracts.map(async (c) => {
         try {
-          return { status: 'success' as const, result: await this.readContract(c) };
+          return { status: 'success' as const, result: await this.readContract({ ...c, blockNumber }) };
         } catch (error) {
           return { status: 'failure' as const, error };
         }
       }),
     );
+
+  getBlock = async ({ blockTag }: { blockTag?: string } = {}) => {
+    if (blockTag !== 'finalized') throw new Error(`unexpected block read ${blockTag}`);
+    return { number: this.finalNumber, timestamp: 1_000n };
+  };
 
   private drawOutbound(amount: bigint): void {
     const b = this.outbound.get(this.baseChainId === 0 ? this.retirement[1] : this.baseChainId);
@@ -548,6 +560,28 @@ describe('a run', () => {
     r = await run();
     expect(base.sent.map((x) => x.args[0])).toEqual([BigInt(MAX_AUTHS_PER_RUN + 11)]);
     expect(r[0].dispatched).toEqual([String(MAX_AUTHS_PER_RUN + 11)]);
+  });
+
+  it('moves its authorization floor only on what the finalized block shows (Codex #2993 r4)', async () => {
+    for (let i = 1n; i <= 3n; i++) base.auths.set(i, { status: 2, dst: MIRROR_ID, amount: 1n });
+    base.final = { auths: new Map([[1n, { status: 2, dst: MIRROR_ID, amount: 1n }], [2n, { status: AUTH_PENDING, dst: MIRROR_ID, amount: 1n }]]), stranded: new Map() };
+    await run();
+    const c = cursors.get(`${BASE_ID}:${BASE}`)!;
+    expect(c.rows.get(AUTH_FLOOR_ITEM), 'id 2 is settled at the head, still pending at finality').toBe('2');
+    base.final = null;
+    await run();
+    expect(c.rows.get(AUTH_FLOOR_ITEM)).toBe('4');
+  });
+
+  it('moves its quarantine floor only on what the finalized block shows (Codex #2993 r4)', async () => {
+    for (let i = 0; i < 3; i++) ledger.add(MIRROR_ID, 'CompensationQuarantined', { remitter: REMITTER, remitId: String(100 + i) }, NOW - 600);
+    mirror.final = { auths: new Map(), stranded: new Map([[`${REMITTER}:101`, { amount: 5n, dayId: 4n }]]) };
+    await run();
+    const c = cursors.get(`${MIRROR_ID}:${MIRROR}`)!;
+    expect(c.rows.get(STRANDED_FLOOR_ITEM), 'the second row is returned at the head, not yet at finality').toBe('1:0');
+    mirror.final = null;
+    await run();
+    expect(c.rows.get(STRANDED_FLOOR_ITEM)).toBe('3:0');
   });
 
   it('a mirror this keeper does not serve is named, and nothing is sent for it', async () => {
