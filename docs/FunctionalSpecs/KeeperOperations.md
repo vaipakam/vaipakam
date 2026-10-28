@@ -434,13 +434,35 @@ evidence that the migration has completed.
   only what is known. Notices are best-effort and cover the claimants touched
   by that run, not every claimant on the network.
 
+## Protocol upkeep outside the reward system
+
+- Two permissionless housekeeping steps outside the reward system have a
+  keeper backstop, checked every hour on every chain the keeper serves.
+- A buyback intent that has passed its expiry while still pending is rolled
+  back, so the unfilled part of its reservation returns to the spendable
+  buyback budget and its allowance and commitment slot are released. The
+  keeper finds intents from the indexer's record of commitments, but decides
+  each one from the intent's own on-chain record and the chain's own clock.
+  An intent that is still live, filled or already expired is left alone.
+- The per-tier loan-to-value cache is refreshed from the peer protocols
+  before it can lapse; a cached tier stops counting after fourteen days and
+  the governance tier cap applies instead. The keeper first previews the
+  refresh and sends it only when it would write a tier whose value changes,
+  or one cached long enough ago to need renewing, so a chain whose peers give
+  no reading costs nothing. Each tier the refresh rejects is reported with
+  the protocol's own reason. Nothing is refreshed while peer readings are
+  paused.
+- Neither step pays a fee or moves value to the keeper. The keeper works a
+  chain only when its connection answers for that chain, and a value it
+  could not read stops the affected step and is stated in the run's report.
+
 ## Activation and operator visibility
 
 The master keeper switch and each duty's own arming choice are separate.
 Delivery proofs, late acknowledgements, sanctions observation, reward-day
-automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out must each
+automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, and protocol upkeep must each
 disclose whether they are armed on the selected deployment. Reward-day
-automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out ship disabled and require
+automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, and protocol upkeep ship disabled and require
 deliberate activation. Deploying their software does not prove they run, that rewards have launched, or that custody or the
 expiry horizon has been activated. The mirror's day-delivery protection is
 required by its reward role, as stated in the current tokenomics spec; it is
