@@ -235,6 +235,12 @@ evidence that the migration has completed.
   on an incomplete reading could never finish. A day with an entry still
   running is counted as waiting, not attempted. Its own unfinished proof
   for a day is continued rather than replaced.
+- However many reward entries cover a day, its proof is reached. A day
+  covered by more entries than one run can read is checked, and then
+  proven, over several runs: each run carries on from where the last one
+  stopped, keeping the day's running sum and the position its proof has
+  reached, and never starts the reading again. A day whose reading carries
+  on is named on the run's report.
 - It finalizes a retired custody era once every day of the era's span is
   proven closed and no staging hold remains on its row, and never touches
   the live era. On a chain with an active reward role it drains the whole
@@ -302,7 +308,9 @@ evidence that the migration has completed.
   the covering reward entries page by page, in ascending order, and then
   dispatches the finished quote toward Base, paying the lane fee. Before it
   dispatches, the accumulated conservation must equal the day's recorded
-  totals on both sides. A day whose quote comes to nothing on both sides is
+  totals on both sides. A day covered by more entries than one run can
+  read is summed and submitted over several runs, each carrying on from
+  where the last stopped, so no day is out of reach because it was busy. A day whose quote comes to nothing on both sides is
   resolved as zero and needs nothing more. The fee for each send is held to
   this duty's own ceiling. A send whose quoted fee is above that ceiling is
   refused and stated, and it is tried again on a later run.

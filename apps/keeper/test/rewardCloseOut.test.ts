@@ -22,8 +22,6 @@ import {
   provableThrough,
   CLOSURE_FLOOR_ITEM,
   CLOSURE_NEXT_ITEM,
-  conservationGap,
-  coveringEntries,
   covers,
   describeReport,
   epochPrunable,
@@ -42,7 +40,22 @@ import {
 } from '../src/rewardCloseOut';
 import { PastRunDeadline } from '../src/batchRead';
 import { encodePos, type EventLedger, type LedgerPos, type LedgerRow } from '../src/eventLedger';
-import { decodeEntryFloor, encodeEntryFloor, ENTRY_PAGE, scanEntries, type EntryRow } from '../src/rewardEntries';
+import {
+  advanceEntryFloor,
+  continueDaySums,
+  daySumsGap,
+  decodeDaySums,
+  decodeEntryFloor,
+  decodeFeedMark,
+  encodeDaySums,
+  encodeEntryFloor,
+  encodeFeedMark,
+  EntryPages,
+  ENTRY_PAGE,
+  feedFrom,
+  readCovering,
+  type EntryRow,
+} from '../src/rewardEntries';
 import { advanceFloor, memoryScanCursors, rotatingWindow } from '../src/scanCursors';
 import type { KeeperContext } from '../src/keeper';
 
@@ -84,19 +97,11 @@ describe('the pure rules', () => {
     expect([1, 2, 4, 5].map((d) => covers(x, d))).toEqual([false, true, true, false]);
   });
 
-  it('coveringEntries: per side, ascending by id, whatever the scan order', () => {
-    const list = [e(9, SIDE_LENDER, 1, 4, 1n), e(3, SIDE_LENDER, 1, 4, 1n), e(5, SIDE_BORROWER, 1, 4, 1n), e(7, SIDE_LENDER, 5, 9, 1n), e(8, 2, 1, 4, 1n)];
-    const c = coveringEntries(list, 2);
-    expect(c.lender.map((x) => x.id)).toEqual([3n, 9n]);
-    expect(c.borrower.map((x) => x.id)).toEqual([5n]);
-  });
-
-  it('conservationGap: null only when each side sums to its total exactly', () => {
-    const cover = { lender: [e(1, SIDE_LENDER, 1, 3, 4n), e(2, SIDE_LENDER, 1, 3, 6n)], borrower: [e(3, SIDE_BORROWER, 1, 3, 5n)] };
-    expect(conservationGap(cover, { lender: 10n, borrower: 5n })).toBeNull();
-    expect(conservationGap(cover, { lender: 11n, borrower: 5n })).toMatch(/lender entries sum to 10 of a 11 total/);
-    expect(conservationGap(cover, { lender: 10n, borrower: 4n })).toMatch(/borrower entries sum to 5 of a 4 total/);
-    expect(conservationGap({ lender: [], borrower: [] }, { lender: 0n, borrower: 0n })).toBeNull();
+  it('daySumsGap: null only when each side sums to its total exactly', () => {
+    expect(daySumsGap({ lender: 10n, borrower: 5n }, { lender: 10n, borrower: 5n })).toBeNull();
+    expect(daySumsGap({ lender: 10n, borrower: 5n }, { lender: 11n, borrower: 5n })).toMatch(/lender entries sum to 10 of a 11 total/);
+    expect(daySumsGap({ lender: 10n, borrower: 5n }, { lender: 10n, borrower: 4n })).toMatch(/borrower entries sum to 5 of a 4 total/);
+    expect(daySumsGap({ lender: 0n, borrower: 0n }, { lender: 0n, borrower: 0n })).toBeNull();
   });
 
   it('pagesAfter: the ids past the cursor, in pages', () => {
@@ -554,32 +559,69 @@ class FakeLedger implements EventLedger {
   }
 }
 
-describe('scanEntries', () => {
-  const row = (startDay: number, endDay: number): EntryRow => ({ user: OTHER, startDay, endDay, side: SIDE_LENDER, perDayNumeraire18: 1n });
-  const reader = (rows: EntryRow[]) => async (from: bigint, n: bigint) => rows.slice(Number(from) - 1, Number(from) - 1 + Number(n));
+describe('the resumable entry reads (#3014)', () => {
+  const row = (startDay: number, endDay: number, side = SIDE_LENDER, perDay = 1n): EntryRow => ({ user: OTHER, startDay, endDay, side, perDayNumeraire18: perDay });
+  const reader = (rows: EntryRow[], calls: bigint[] = []) => async (from: bigint, n: bigint) => {
+    calls.push(from);
+    return rows.slice(Number(from) - 1, Number(from) - 1 + Number(n));
+  };
+  const P = Number(ENTRY_PAGE);
 
-  it('starts at a floor recorded for the same or an earlier first day, and from id 1 otherwise', async () => {
-    const rows = [row(0, 1), row(0, 2), row(3, 9), row(4, 9)];
-    const fromFloor = await scanEntries(reader(rows), 3, 4, 1, { id: 3n, day: 2 });
-    expect(fromFloor.entries.map((e) => e.id)).toEqual([3n, 4n]);
-    expect(fromFloor.completeThrough).toBe(4);
-    expect(fromFloor.floor).toEqual({ id: 3n, day: 3 });
-    const later = await scanEntries(reader(rows), 1, 4, 1, { id: 3n, day: 2 + 5 });
-    expect(later.entries.map((e) => e.id), 'a floor for a later day is not used').toEqual([2n, 3n, 4n]);
-    expect(later.floor).toEqual({ id: 2n, day: 1 });
+  it('reads aligned pages, each at most once a run and within the budget', async () => {
+    const calls: bigint[] = [];
+    const rows = Array.from({ length: P + 3 }, () => row(1, 9));
+    const pages = new EntryPages(reader(rows, calls), 1);
+    expect((await pages.from(5n))!.rows.length).toBe(P - 4);
+    expect((await pages.from(2n))!.full, 'the same page, from the cache').toBe(true);
+    expect(await pages.from(BigInt(P + 1)), 'the budget is spent').toBeNull();
+    expect(calls).toEqual([1n]);
   });
 
-  it('says which days a page budget still covers whole when it runs out', async () => {
-    const rows = Array.from({ length: Number(ENTRY_PAGE) + 5 }, (_, i) => row(i < Number(ENTRY_PAGE) - 1 ? 2 : 6, 9));
-    const s = await scanEntries(reader(rows), 2, 8, 1, null);
-    expect(s.completeThrough, 'an unread entry may still start on day 6').toBe(5);
-    expect(s.floor).toEqual({ id: 1n, day: 2 });
+  it('readCovering: the covering entries, stopping at the first entry starting after the day', async () => {
+    const rows = [row(0, 2), row(1, 5, SIDE_BORROWER), row(2, 3), row(3, 9), row(4, 9)];
+    const r = await readCovering(new EntryPages(reader(rows), 5), 2, 1n);
+    expect(r.entries.map((e) => e.id)).toEqual([2n, 3n]);
+    expect(r).toMatchObject({ next: 4n, exhausted: true });
   });
 
-  it('round-trips a floor, and reads a malformed one as none', () => {
+  it('advanceEntryFloor: past the entries that ended by the oldest day, never past one still live; a later day\'s floor restarts', async () => {
+    const rows = [row(0, 1), row(0, 2), row(1, 6), row(2, 3), row(3, 9)];
+    expect(await advanceEntryFloor(new EntryPages(reader(rows), 5), null, 2, 4)).toEqual({ id: 3n, day: 2 });
+    expect(await advanceEntryFloor(new EntryPages(reader(rows), 5), { id: 4n, day: 7 }, 1, 4), 'recorded for a later day, it restarts from id 1').toEqual({ id: 2n, day: 1 });
+    const long = Array.from({ length: 2 * P + 1 }, (_, i) => row(0, i < 2 * P ? 1 : 9));
+    const part = await advanceEntryFloor(new EntryPages(reader(long), 1), null, 3, 4);
+    expect(part, 'out of pages, it keeps what it read').toEqual({ id: BigInt(P + 1), day: 3 });
+    expect(await advanceEntryFloor(new EntryPages(reader(long), 5), part, 3, 4)).toEqual({ id: BigInt(2 * P + 1), day: 3 });
+  });
+
+  it(`continueDaySums: a day covered by more entries than one run reads is summed over several runs`, async () => {
+    const rows = Array.from({ length: 2 * P + 7 }, (_, i) => row(1, 9, i % 2 === 0 ? SIDE_LENDER : SIDE_BORROWER, 2n));
+    let sums = await continueDaySums(new EntryPages(reader(rows), 1), 3, null, 1n);
+    expect(sums).toEqual({ next: BigInt(P + 1), lender: BigInt(P), borrower: BigInt(P), complete: false });
+    sums = decodeDaySums(encodeDaySums(sums))!;
+    sums = await continueDaySums(new EntryPages(reader(rows), 1), 3, sums, 1n);
+    sums = await continueDaySums(new EntryPages(reader(rows), 1), 3, sums, 1n);
+    expect(sums.complete).toBe(true);
+    expect(sums.lender + sums.borrower).toBe(BigInt(2 * (2 * P + 7)));
+    expect(await continueDaySums(new EntryPages(reader([]), 0), 3, sums, 1n), 'a complete sum reads nothing').toEqual(sums);
+  });
+
+  it('feedFrom: past both cursors and the floor, and past a mark only for the same walk and cursors', () => {
+    const mark = { walk: 2n, next: 900n, lender: 10n, borrower: 20n };
+    expect(feedFrom(null, 2n, { lender: 10n, borrower: 20n }, 5n)).toBe(11n);
+    expect(feedFrom(null, 2n, { lender: 0n, borrower: 0n }, 5n)).toBe(5n);
+    expect(feedFrom(mark, 2n, { lender: 10n, borrower: 20n }, 5n)).toBe(900n);
+    expect(feedFrom(mark, 3n, { lender: 10n, borrower: 20n }, 5n), 'another walk').toBe(11n);
+    expect(feedFrom(mark, 2n, { lender: 11n, borrower: 20n }, 5n), 'a cursor that moved').toBe(12n);
+    expect(decodeFeedMark(encodeFeedMark(mark))).toEqual(mark);
+    expect(decodeFeedMark('x')).toBeNull();
+  });
+
+  it('round-trips a floor and sums, and reads malformed ones as none', () => {
     expect(decodeEntryFloor(encodeEntryFloor({ id: 12n, day: 4 }))).toEqual({ id: 12n, day: 4 });
     expect(decodeEntryFloor('x')).toBeNull();
     expect(decodeEntryFloor(undefined)).toBeNull();
+    expect(decodeDaySums('')).toBeNull();
   });
 });
 
@@ -623,13 +665,46 @@ describe('a run', () => {
       for (let i = 0; i < history; i++) d.addEntry({ side: SIDE_LENDER, startDay: 0, endDay: 1, perDay: 1n });
       const live = d.addEntry({ side: SIDE_LENDER, startDay: 4, endDay: 6, perDay: 5n });
       let r = await run();
-      expect(r.daysClosed).toEqual([]);
-      expect(r.unread.get('closure')).toMatch(/reached only the entries starting by day 0; days 4 are not walked this run/);
-      expect(cursors.rows.get(ENTRY_FLOOR_ITEM), 'the floor moves past the history read').toBe(`${MAX_ENTRY_PAGES * Number(ENTRY_PAGE) + 1}:4`);
-      r = await run();
+      let runs = 1;
+      while (r.daysClosed.length === 0 && runs < 10) {
+        expect(r.daysScanPending).toEqual([4]);
+        r = await run();
+        runs += 1;
+      }
       expect(r.daysClosed).toEqual([4]);
-      expect(r.unread.has('closure')).toBe(false);
-      expect(cursors.rows.get(ENTRY_FLOOR_ITEM), 'the first entry live on day 4').toBe(`${live}:4`);
+      expect(runs, 'the floor and the day\'s sum both carry what each run read').toBeGreaterThan(1);
+      expect(describeReport(r)).not.toMatch(/days-reading-on/);
+      const floor = decodeEntryFloor(cursors.rows.get(ENTRY_FLOOR_ITEM))!;
+      expect(floor.id > 1n && floor.id <= BigInt(live), 'the floor moves on, never past the live entry').toBe(true);
+    });
+
+    it(`closes a day covered by more entries than one run can read, over several runs (#3014)`, async () => {
+      closeAllButDay(3);
+      const n = MAX_ENTRY_PAGES * Number(ENTRY_PAGE) + 1;
+      for (let i = 0; i < n; i++) d.addEntry({ side: i % 2 === 0 ? SIDE_LENDER : SIDE_BORROWER, startDay: 3, endDay: 4, perDay: 1n });
+      const seen: number[][] = [];
+      let r = await run();
+      for (let runs = 1; r.daysClosed.length === 0 && runs < 40; runs++) {
+        seen.push(r.daysScanPending);
+        r = await run();
+      }
+      expect(r.daysClosed, 'it gets there').toEqual([3]);
+      expect(seen.length).toBeGreaterThan(2);
+      const pages = d.sent.filter((x) => x.fn === 'proveDayClosurePage');
+      expect(pages.reduce((a, x) => a + (x.args[3] as bigint[]).length, 0), 'every covering id once').toBe(n);
+      expect(d.sent.filter((x) => x.fn === 'startDayClosure')).toHaveLength(1);
+    });
+
+    it('feeds a walk past a stretch of entries that cover nothing on its day, across runs (#3014)', async () => {
+      d.today = 6;
+      closeAllButDay(5);
+      d.addEntry({ side: SIDE_LENDER, startDay: 1, endDay: 9, perDay: 3n }); // id 1, live through day 5
+      const gap = MAX_ENTRY_PAGES * Number(ENTRY_PAGE);
+      for (let i = 0; i < gap; i++) d.addEntry({ side: SIDE_LENDER, startDay: 2, endDay: 3, perDay: 1n });
+      d.addEntry({ side: SIDE_LENDER, startDay: 4, endDay: 9, perDay: 7n });
+      let r = await run();
+      for (let runs = 1; r.daysClosed.length === 0 && runs < 40; runs++) r = await run();
+      expect(r.daysClosed).toEqual([5]);
     });
 
     it('proves a day closed once every covering entry has terminated: a start, then a page a side', async () => {
