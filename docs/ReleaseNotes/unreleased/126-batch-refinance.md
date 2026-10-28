@@ -1,4 +1,4 @@
-## Thread — Refinance all on loans from one offer (PR #TBD)
+## Thread — Refinance all on loans from one offer (PR #3067)
 
 A borrower whose offer filled into two or more open loans can now post a
 refinance request for all of them at once from the Positions page. In
