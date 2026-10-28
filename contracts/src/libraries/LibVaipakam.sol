@@ -8303,6 +8303,13 @@ library LibVaipakam {
         uint32 parts;
         bool wholeConflict;
         bytes32 firstPacket;
+        /// @dev #2961 — when the FIRST conflicting part was counted (0 = no
+        ///      conflict). The skip's delay runs from it.
+        uint64 conflictAt;
+        /// @dev #2961 — when the day was SKIPPED (0 = not skipped): a
+        ///      conflicted day closed unpaid, its funding record zeroed and
+        ///      its landed value released to the recycle bucket. Set once.
+        uint64 skippedAt;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with

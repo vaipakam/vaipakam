@@ -650,6 +650,38 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         the front of its index. Permissionless and idempotent — see
     ///         {LibRewardCustody.pruneTransportDayCursor} for the day it
     ///         rescues.
+    /// @notice #2961 (owner decision 2026-10-28) — SKIP a reward day whose
+    ///         delivery parts disagreed on its whole: close it UNPAID on this
+    ///         mirror so every later day's claims and sweeps resume.
+    ///         Permissionless and keeper-backed: the conflict is the chain's
+    ///         own record, and the skip picks no figure. Releases the recycled
+    ///         commitment the broadcast reserved for the day, under
+    ///         `RecycleSource.DeliveryConflictSkipped`. The landed value moves
+    ///         by {recycleSkippedDayValue}.
+    /// @dev    Rule and refusals: {LibRewardCustody.skipConflictedDay}. Not
+    ///         `whenNotPaused`, like the rest of this facet: it pays nobody.
+    function skipConflictedDay(uint256 dayId) external nonReentrant {
+        uint256 commit = LibRewardCustody.skipConflictedDay(LibVaipakam.storageSlot(), dayId);
+        LibVpfiRecycle.releaseCommitment(LibVpfiRecycle.RecycleSource.DeliveryConflictSkipped, dayId, commit);
+    }
+
+    /// @notice #2961 — move what a SKIPPED day's epochs still hold into this
+    ///         mirror's recycle bucket, where it funds later days on this
+    ///         chain (owner decision 2026-10-28, option i). Absorbed exactly
+    ///         like an epoch-funded forfeit, under
+    ///         `RecycleSource.DeliveryConflictSkipped` with the day as refId.
+    ///         Permissionless and repeatable: call until it returns zero.
+    /// @dev    A pre-activation mirror holds no epochs: its fresh share is
+    ///         already headroom in the delivered bound that funds later days,
+    ///         and its recycled share is already in the bucket, so this draws
+    ///         nothing there.
+    /// @return recycled Both legs moved this call.
+    function recycleSkippedDayValue(uint256 dayId) external nonReentrant returns (uint256 recycled) {
+        (uint256 fresh, uint256 rec) = LibRewardCustody.drawSkippedDayRemainder(LibVaipakam.storageSlot(), dayId);
+        recycled = fresh + rec;
+        LibVpfiRecycle.absorbTransportFunded(LibVpfiRecycle.RecycleSource.DeliveryConflictSkipped, dayId, recycled);
+    }
+
     function epochPruneTransportDayCursor(uint256 dayId) external nonReentrant {
         LibRewardCustody.pruneTransportDayCursor(LibVaipakam.storageSlot(), dayId);
     }

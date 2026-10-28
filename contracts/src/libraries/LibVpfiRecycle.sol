@@ -148,7 +148,16 @@ library LibVpfiRecycle {
         ///      it tags {RewardCommitmentReleased}, refId is the DAY id (the
         ///      chain is in `LibRemitDayLedger.RemitAbandonedDayReleased`, emitted with
         ///      it).
-        RemitDestinationRemoved
+        RemitDestinationRemoved,
+        /// @dev #2961 — the value that landed on THIS mirror for a reward day
+        ///      whose delivery parts disagreed on the day's whole and which was
+        ///      then SKIPPED (closed unpaid). Absorbed exactly like an
+        ///      epoch-funded forfeit ({absorbTransportFunded}): the day's
+        ///      entries end unpaid, so the value they would have drawn
+        ///      recycles in place and funds later days on this chain. refId is
+        ///      the DAY id. Also tags the release of that day's recycled
+        ///      commitment.
+        DeliveryConflictSkipped
     }
 
     /// @notice Emitted once per recycle-bucket credit — the on-chain feed

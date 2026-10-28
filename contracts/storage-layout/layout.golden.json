@@ -1273,6 +1273,8 @@
     "L|vaipakam@646[uint256]|2|12|bool|dayDeliveryParts[].wholeConflict",
     "L|vaipakam@646[uint256]|2|8|uint32|dayDeliveryParts[].parts",
     "L|vaipakam@646[uint256]|3|0|bytes32|dayDeliveryParts[].firstPacket",
+    "L|vaipakam@646[uint256]|4|0|uint64|dayDeliveryParts[].conflictAt",
+    "L|vaipakam@646[uint256]|4|8|uint64|dayDeliveryParts[].skippedAt",
     "L|vaipakam@650[uint32]|0|0|uint256|chainRetiredSurplusReturned[]",
     "L|vaipakam@651[uint32]|0|0|uint256|remitAbandonedBefore[]",
     "L|vaipakam@652[uint32]|0|0|uint256|remitReleaseCursor[]",

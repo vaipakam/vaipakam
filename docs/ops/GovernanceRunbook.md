@@ -2229,6 +2229,28 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   only when both sums reach the whole, so prove or index EVERY part, not just
   the first; a day whose parts disagree on the whole before it opened does not
   open and needs investigation on Base (`getRemitDayLedger(dst, dayId)`).
+  Nothing on either chain repairs it: Base re-sends the same locked whole and
+  the conflict flag is permanent. It holds every LATER day on that side of the
+  mirror too, because the cursor cannot pass it.
+  **Skip it (#2961).** One day after the first conflicting part
+  (`conflictAt` in `getDayDeliveryParts`), anyone may call
+  `RewardEpochFacet.skipConflictedDay(dayId)`, and the keeper does. The day
+  closes UNPAID on that mirror: its funding record's four halves are zeroed
+  (the figures given up are in `DayDeliveryConflictSkipped`), and the recycled
+  commitment the broadcast reserved for it is released
+  (`RewardCommitmentReleased`, source `DeliveryConflictSkipped`). Every later
+  day resumes. Then `recycleSkippedDayValue(dayId)`, repeated until it returns
+  zero (anyone, and the keeper), moves what the day's epochs still hold into
+  the mirror's recycle bucket (`DayDeliveryConflictValueRecycled`, then the
+  bucket credit under `DeliveryConflictSkipped`). A pre-activation mirror
+  holds no epochs, so nothing moves there. The skip refuses, by name: a day
+  that opened before the conflict (`DayDeliveryAlreadyOpen`, it pays
+  normally), a day the broadcast has not stamped yet
+  (`DayDeliverySkipAwaitsBroadcast`, wait for it), and a day where a side the
+  gate does NOT hold carries recycled funding (`DayDeliverySkipSideNotHeld`).
+  That last case stays held: its other side may already have paid from the
+  day. Treat it as an incident, find the fault on Base, and consider retiring
+  the mirror (#917).
 - **Keeper reconstruction rule — the funded list is NOT the reservation's day
   list, and it is read from the IMMUTABLE bitmap.** `getRemitReservation(remitId)`
   returns `dayIds` — every day the remit ACTED on (sent a part of, or closed), a

@@ -2551,7 +2551,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](20);
+        selectors = new bytes4[](22);
         selectors[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         selectors[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
         selectors[3] = RewardEpochFacet.getTransportBatch.selector;
@@ -2576,6 +2576,8 @@ contract HelperTest {
         // #1944 consequence 1 — the delivery proofs for packets holding no batch.
         selectors[7] = RewardEpochFacet.proveDeliveryDayChunk.selector;
         selectors[13] = RewardEpochFacet.getTransportDayLateFrom.selector; // #2489 (Codex r2): the late chain, for verified late hints
+        selectors[20] = RewardEpochFacet.skipConflictedDay.selector; // #2961
+        selectors[21] = RewardEpochFacet.recycleSkippedDayValue.selector; // #2961
     }
 
     /// 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads. Mirrors

@@ -595,6 +595,97 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
         _expectHeld(1);
     }
 
+    // ─── #2961 option B — skipping a conflicted day ───
+
+    /// @dev Day 1 owed and CONFLICTED (two parts declaring different wholes);
+    ///      day 2 owed behind it and fully delivered. Returns the two day-1
+    ///      packets.
+    function _conflictedDay1ThenOwedDay2() internal returns (bytes32 hA, bytes32 hB) {
+        _gateBinds();
+        _owedDay1();
+        _closeLocal(2, 1e18, 0);
+        _broadcastV2(_armedPacket(2));
+        _entry(2, 3);
+        hA = _part(5e18, 1, 501, keccak256("skip-a"), 0, 10e18, 0);
+        hB = _part(7e18, 1, 502, keccak256("skip-b"), 0, 12e18, 0);
+        _prove(hA, _one(1));
+        _prove(hB, _one(1));
+        bytes32 h2 = _part(10e18, 2, 503, keccak256("skip-day2"), 0, 10e18, 0);
+        _prove(h2, _one(2));
+        assertTrue(_parts(1).wholeConflict, "fixture: day 1 is conflicted");
+        assertTrue(_gd(2).landed, "fixture: day 2 landed");
+    }
+
+    /**
+     * @notice Cell 2961-a -- a conflicted day holds every later day until it
+     *         is skipped. The skip waits one day from the first conflicting
+     *         part, refuses twice, refuses a day with no conflict, and then
+     *         the day closes UNPAID while the day behind it pays.
+     * @dev    Mutation: skip without zeroing the funding record and day 1
+     *         still holds the cursor (or pays from its stamp).
+     */
+    function test_2961_a_TheSkip_ClosesTheDayUnpaid_AndLaterDaysPay() public {
+        _conflictedDay1ThenOwedDay2();
+        uint64 conflictAt = _parts(1).conflictAt;
+        assertEq(conflictAt, uint64(block.timestamp), "stored: when the conflict was seen");
+        _expectHeld(1);
+
+        uint256 readyAt = uint256(conflictAt) + 1 days;
+        vm.expectRevert(abi.encodeWithSelector(DayDeliverySkipTooEarly.selector, uint256(1), readyAt));
+        _epoch().skipConflictedDay(1);
+        vm.expectRevert(abi.encodeWithSelector(DayDeliveryNotConflicted.selector, uint256(2)));
+        _epoch().skipConflictedDay(2);
+
+        vm.warp(readyAt);
+        vm.prank(makeAddr("gate-stranger"));
+        _epoch().skipConflictedDay(1);
+        assertEq(_parts(1).skippedAt, uint64(readyAt), "stored: skipped, by anyone, at the warp target");
+        assertFalse(_awaits(0, 1), "the gate no longer holds day 1");
+        assertFalse(_awaits(1, 1), "on either side");
+        vm.expectRevert(abi.encodeWithSelector(DayDeliveryAlreadySkipped.selector, uint256(1)));
+        _epoch().skipConflictedDay(1);
+
+        assertEq(_claim(), NEED, "day 2 pays; day 1 gives nothing");
+        assertGt(_cursor(), 1, "the fold walked past the skipped day");
+    }
+
+    /**
+     * @notice Cell 2961-b -- the value that landed for a skipped day moves to
+     *         this mirror's recycle bucket, by anyone, repeatably: on an
+     *         activated mirror it leaves the day's epochs and lands in the
+     *         Recycled row; a second call moves nothing. Before activation the
+     *         day holds no epochs and nothing moves. A day not skipped refuses.
+     * @dev    Mutation: credit the bucket without drawing the epochs (or the
+     *         reverse) and the row assertions fail.
+     */
+    function test_2961_b_ASkippedDaysValue_Recycles_OnlyAfterTheSkip() public {
+        _conflictedDay1ThenOwedDay2();
+        vm.expectRevert(abi.encodeWithSelector(DayDeliveryNotSkipped.selector, uint256(1)));
+        _epoch().recycleSkippedDayValue(1);
+        vm.warp(block.timestamp + 1 days);
+        _epoch().skipConflictedDay(1);
+
+        uint256 recycledBefore = _row(LibVaipakam.RewardCustodyRow.Recycled);
+        uint256 unclassifiedBefore = _row(LibVaipakam.RewardCustodyRow.Unclassified);
+        vm.prank(makeAddr("gate-stranger"));
+        uint256 moved = _epoch().recycleSkippedDayValue(1);
+        if (_custodyActive()) {
+            assertEq(moved, 12e18, "both conflicting parts' value leaves the day");
+            assertEq(
+                _row(LibVaipakam.RewardCustodyRow.Recycled), recycledBefore + moved, "stored: into the Recycled row"
+            );
+            assertEq(
+                _row(LibVaipakam.RewardCustodyRow.Unclassified),
+                unclassifiedBefore - moved,
+                "stored: out of the epochs' Unclassified row"
+            );
+        } else {
+            assertEq(moved, 0, "before activation the day holds no epochs");
+        }
+        assertEq(_epoch().recycleSkippedDayValue(1), 0, "a second call moves nothing");
+        assertEq(_claim(), NEED, "and day 2 still pays in full");
+    }
+
     /**
      * @notice Cell 918-e (#2961) -- a DISPOSED delivery's part never counts
      *         toward its day, on either route: the proof refuses it by name,

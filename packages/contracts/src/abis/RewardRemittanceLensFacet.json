@@ -325,6 +325,16 @@
             "name": "firstPacket",
             "type": "bytes32",
             "internalType": "bytes32"
+          },
+          {
+            "name": "conflictAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "skippedAt",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       }
