@@ -946,14 +946,19 @@
       "inKindLabel": "Default payout",
       "inKindNote": "Linked loan का borrower default करे तो यह claim loan की raw collateral in kind pay करता है — protocol आपके लिए price या sell नहीं करता। यह position खरीदने से पहले actually क्या receive होगा, value करें।",
       "liveNote": "Live का मतलब ठीक यही है: token यहाँ exists करता है और holder linked position control करता है। यह loan health या दूसरे side के behaviour की guarantee नहीं है।",
-      "goneTitle": "Token #{{id}} अभी इस network पर मौजूद नहीं है",
-      "goneBody": "या तो इसका claim complete हुआ और token retired हुआ, या यह यहाँ कभी mint ही नहीं हुआ — network कौन सा record नहीं करता। इस token id को sell या transfer करने का कोई offer इस network पर worthless मानें।",
       "readOnlyTitle": "इस check को कभी आपके wallet की ज़रूरत नहीं",
       "readOnlyBody": "यह सिर्फ़ blockchain पढ़ता है। इस page पर कुछ भी आपसे wallet connect करने, message sign करने या transfer approve करने को नहीं कहता। अगर खुद को Vaipakam verifier बताने वाला कोई page इनमें से कुछ भी माँगे, तो वह हमारा नहीं है: उसे बंद कर दें।",
       "contractLabel": "{{chain}} पर Vaipakam contract",
       "contractWhy": "यही address किसी token को Vaipakam position बनाता है। Token का नाम और तस्वीर कोई भी copy कर सकता है; उसका contract address नहीं।",
       "explorerLink": "{{explorer}} पर token #{{id}} देखें",
-      "explorerNote": "उसी contract का एक स्वतंत्र view, जिसे Vaipakam नहीं बल्कि block explorer चलाता है। यह इस page से कुछ blocks पीछे हो सकता है।"
+      "explorerNote": "उसी contract का एक स्वतंत्र view, जिसे Vaipakam नहीं बल्कि block explorer चलाता है। यह इस page से कुछ blocks पीछे हो सकता है।",
+      "retiredTitle": "टोकन #{{id}} इस नेटवर्क पर रिटायर कर दिया गया",
+      "retiredBody": "यह टोकन यहाँ मौजूद था और तब से प्रोटोकॉल ने इसे रिटायर कर दिया है, इसलिए अब इस पर कोई दावा या भूमिका नहीं है। इसे बेचने या ट्रांसफ़र करने के किसी भी प्रस्ताव को बेकार मानें।",
+      "neverMintedTitle": "टोकन #{{id}} {{chain}} पर कभी मिंट नहीं हुआ",
+      "neverMintedBody": "{{chain}} पर इस id का कोई पोज़िशन NFT नहीं बनाया गया है। अगर पोज़िशन किसी दूसरे नेटवर्क पर खोली गई थी, तो उस नेटवर्क पर जाएँ और फिर से जाँचें।",
+      "goneTitle": "Token #{{id}} अभी इस network पर मौजूद नहीं है",
+      "goneBody": "या तो प्रोटोकॉल ने इसे रिटायर कर दिया, या यह यहाँ कभी मिंट ही नहीं हुआ — इस नेटवर्क के कॉन्ट्रैक्ट यह दर्ज नहीं करते कि कौन-सा। इस नेटवर्क पर इस टोकन id को बेचने या ट्रांसफ़र करने के किसी भी प्रस्ताव को बेकार मानें।",
+      "goneBodyUnchecked": "या तो प्रोटोकॉल ने इसे रिटायर कर दिया, या यह यहाँ कभी मिंट ही नहीं हुआ — हम अभी जाँच नहीं पाए कि कौन-सा; पेज रीलोड करने पर फिर से कोशिश होगी। इस नेटवर्क पर इस टोकन id को बेचने या ट्रांसफ़र करने के किसी भी प्रस्ताव को बेकार मानें।"
     },
     "recover": {
       "title": "फँसे हुए टोकन वापस पाएँ",

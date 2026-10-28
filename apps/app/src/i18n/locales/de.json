@@ -946,14 +946,19 @@
       "inKindLabel": "Ausfallauszahlung",
       "inKindNote": "Fällt der Kreditnehmer des verknüpften Kredits aus, zahlt dieser Anspruch die Sicherheiten des Kredits unverändert in Sachwerten aus — das Protokoll bepreist oder verkauft sie nicht für Sie. Bewerten Sie, was Sie tatsächlich erhalten würden, bevor Sie diese Position kaufen.",
       "liveNote": "„Live“ bedeutet genau das: Der Token existiert hier, und sein Halter kontrolliert die verknüpfte Position. Es bürgt weder für die Gesundheit des Kredits noch für das Verhalten der Gegenseite.",
-      "goneTitle": "Token #{{id}} existiert derzeit nicht auf diesem Netzwerk",
-      "goneBody": "Entweder wurde sein Anspruch erfüllt und der Token stillgelegt, oder er wurde hier nie geprägt — das Netzwerk hält nicht fest, welcher Fall vorliegt. Behandeln Sie jedes Angebot, diese Token-ID zu verkaufen oder zu übertragen, in diesem Netzwerk als wertlos.",
       "readOnlyTitle": "Diese Prüfung braucht nie Ihre Wallet",
       "readOnlyBody": "Sie liest nur die Blockchain. Nichts auf dieser Seite fordert Sie auf, eine Wallet zu verbinden, eine Nachricht zu signieren oder eine Übertragung zu genehmigen. Wenn eine Seite, die sich Vaipakam-Verifizierer nennt, nach einem davon fragt, ist sie nicht unsere: Schließen Sie sie.",
       "contractLabel": "Vaipakam-Vertrag auf {{chain}}",
       "contractWhy": "Diese Adresse macht ein Token zu einer Vaipakam-Position. Name und Bild eines Tokens kann jeder kopieren, seine Vertragsadresse nicht.",
       "explorerLink": "Token #{{id}} auf {{explorer}} ansehen",
-      "explorerNote": "Eine unabhängige Ansicht desselben Vertrags, betrieben vom Block-Explorer statt von Vaipakam. Sie kann einige Blöcke hinter dieser Seite zurückliegen."
+      "explorerNote": "Eine unabhängige Ansicht desselben Vertrags, betrieben vom Block-Explorer statt von Vaipakam. Sie kann einige Blöcke hinter dieser Seite zurückliegen.",
+      "retiredTitle": "Token #{{id}} wurde auf diesem Netzwerk stillgelegt",
+      "retiredBody": "Dieser Token existierte hier und wurde inzwischen vom Protokoll stillgelegt, daher trägt er keinen Anspruch und keine Rolle mehr. Behandeln Sie jedes Angebot, ihn zu verkaufen oder zu übertragen, als wertlos.",
+      "neverMintedTitle": "Token #{{id}} wurde auf {{chain}} nie geprägt",
+      "neverMintedBody": "Auf {{chain}} wurde kein Positions-NFT mit dieser ID erstellt. Wenn die Position auf einem anderen Netzwerk eröffnet wurde, wechseln Sie zu diesem Netzwerk und prüfen Sie erneut.",
+      "goneTitle": "Token #{{id}} existiert derzeit nicht auf diesem Netzwerk",
+      "goneBody": "Entweder wurde er vom Protokoll stillgelegt, oder er wurde hier nie geprägt — die Verträge dieses Netzwerks halten nicht fest, welcher Fall vorliegt. Behandeln Sie jedes Angebot, diese Token-ID zu verkaufen oder zu übertragen, in diesem Netzwerk als wertlos.",
+      "goneBodyUnchecked": "Entweder wurde er vom Protokoll stillgelegt, oder er wurde hier nie geprägt — wir konnten gerade nicht prüfen, welcher Fall vorliegt; ein Neuladen versucht es erneut. Behandeln Sie jedes Angebot, diese Token-ID zu verkaufen oder zu übertragen, in diesem Netzwerk als wertlos."
     },
     "recover": {
       "title": "Feststeckende Tokens zurückholen",

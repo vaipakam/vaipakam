@@ -946,14 +946,19 @@
       "inKindLabel": "违约支付",
       "inKindNote": "如果关联贷款的借款人违约，此领取权会以实物支付贷款的原始抵押品 — 协议不会为您定价或出售。购买此持仓前，请评估您实际会收到什么。",
       "liveNote": "Live 的含义正是：token 在这里存在，其持有者控制关联持仓。它不担保贷款健康或另一方行为。",
-      "goneTitle": "Token #{{id}} 当前不存在于此网络",
-      "goneBody": "要么其领取已完成且 token 已退役，要么它从未在这里铸造 — 网络不会记录是哪一种。请将任何出售或转让此 token id 的报价视为在此网络上无价值。",
       "readOnlyTitle": "此检查从不需要你的钱包",
       "readOnlyBody": "它只读取区块链。本页面不会要求你连接钱包、签署消息或批准转移。如果一个自称 Vaipakam 验证器的页面要求其中任何一项，那它不是我们的：请关闭它。",
       "contractLabel": "{{chain}} 上的 Vaipakam 合约",
       "contractWhy": "正是这个地址让一个 token 成为 Vaipakam 持仓。任何人都能复制 token 的名称和图片，但无法复制它的合约地址。",
       "explorerLink": "在 {{explorer}} 上查看 token #{{id}}",
-      "explorerNote": "由区块浏览器而非 Vaipakam 提供的同一合约的独立视图。它可能比本页面落后几个区块。"
+      "explorerNote": "由区块浏览器而非 Vaipakam 提供的同一合约的独立视图。它可能比本页面落后几个区块。",
+      "retiredTitle": "代币 #{{id}} 已在此网络上被注销",
+      "retiredBody": "此代币曾在这里存在，之后已被协议注销，因此不再附带任何索偿权或角色。任何出售或转让此代币的提议都应视为毫无价值。",
+      "neverMintedTitle": "代币 #{{id}} 从未在 {{chain}} 上铸造",
+      "neverMintedBody": "{{chain}} 上从未创建过此 ID 的头寸 NFT。如果该头寸是在其他网络上开立的，请切换到那个网络后再检查。",
+      "goneTitle": "Token #{{id}} 当前不存在于此网络",
+      "goneBody": "它要么已被协议注销，要么从未在这里铸造过——此网络的合约不记录是哪一种。在此网络上，任何出售或转让此代币 ID 的提议都应视为毫无价值。",
+      "goneBodyUnchecked": "它要么已被协议注销，要么从未在这里铸造过——我们暂时无法核实是哪一种；重新加载会再次尝试。在此网络上，任何出售或转让此代币 ID 的提议都应视为毫无价值。"
     },
     "recover": {
       "title": "取回卡住的代币",

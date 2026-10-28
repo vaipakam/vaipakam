@@ -946,14 +946,19 @@
       "inKindLabel": "Paiement en cas de défaut",
       "inKindNote": "Si l'emprunteur du prêt lié fait défaut, ce retrait paie la garantie brute du prêt en nature — le protocole ne la valorise ni ne la vend pour vous. Évaluez ce que vous recevriez réellement avant d'acheter cette position.",
       "liveNote": "Live signifie exactement ceci : le token existe ici et son détenteur contrôle la position liée. Cela ne garantit pas la santé du prêt ni le comportement de l'autre côté.",
-      "goneTitle": "Le token n°{{id}} n’existe pas actuellement sur ce réseau",
-      "goneBody": "Soit son retrait a été effectué et le token a été retiré, soit il n'a jamais été minté ici — le réseau ne précise pas lequel. Traitez toute offre de vente ou transfert de ce token id comme sans valeur sur ce réseau.",
       "readOnlyTitle": "Cette vérification n’a jamais besoin de votre wallet",
       "readOnlyBody": "Elle ne fait que lire la blockchain. Rien sur cette page ne vous demande de connecter un wallet, de signer un message ou d’approuver un transfert. Si une page se présentant comme un vérificateur Vaipakam vous demande l’un de ces éléments, ce n’est pas la nôtre : fermez-la.",
       "contractLabel": "Contrat Vaipakam sur {{chain}}",
       "contractWhy": "C’est cette adresse qui fait d’un token une position Vaipakam. N’importe qui peut copier le nom et l’image d’un token ; pas son adresse de contrat.",
       "explorerLink": "Voir le token #{{id}} sur {{explorer}}",
-      "explorerNote": "Une vue indépendante du même contrat, tenue par l’explorateur de blocs et non par Vaipakam. Elle peut avoir quelques blocs de retard sur cette page."
+      "explorerNote": "Une vue indépendante du même contrat, tenue par l’explorateur de blocs et non par Vaipakam. Elle peut avoir quelques blocs de retard sur cette page.",
+      "retiredTitle": "Le jeton #{{id}} a été retiré sur ce réseau",
+      "retiredBody": "Ce jeton a existé ici et a depuis été retiré par le protocole ; il ne porte donc plus aucun droit ni rôle. Considérez toute offre de vente ou de transfert de ce jeton comme sans valeur.",
+      "neverMintedTitle": "Le jeton #{{id}} n’a jamais été frappé sur {{chain}}",
+      "neverMintedBody": "Aucun NFT de position portant cet identifiant n’a été créé sur {{chain}}. Si la position a été ouverte sur un autre réseau, passez sur ce réseau et vérifiez à nouveau.",
+      "goneTitle": "Le token n°{{id}} n’existe pas actuellement sur ce réseau",
+      "goneBody": "Soit il a été retiré par le protocole, soit il n’a jamais été frappé ici — les contrats de ce réseau n’enregistrent pas lequel des deux. Considérez toute offre de vente ou de transfert de cet identifiant de jeton comme sans valeur sur ce réseau.",
+      "goneBodyUnchecked": "Soit il a été retiré par le protocole, soit il n’a jamais été frappé ici — nous n’avons pas pu vérifier lequel pour l’instant ; recharger la page relance la vérification. Considérez toute offre de vente ou de transfert de cet identifiant de jeton comme sans valeur sur ce réseau."
     },
     "recover": {
       "title": "Récupérer des tokens bloqués",

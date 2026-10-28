@@ -946,14 +946,19 @@
       "inKindLabel": "Pago por incumplimiento",
       "inKindNote": "Si el prestatario del préstamo vinculado incumple, este reclamo paga la garantía bruta del préstamo en especie — el protocolo no la valora ni la vende por ti. Valora lo que realmente recibirías antes de comprar esta posición.",
       "liveNote": "Activo significa exactamente esto: el token existe aquí y su titular controla la posición vinculada. No avala la salud del préstamo ni el comportamiento de la otra parte.",
-      "goneTitle": "El token #{{id}} no existe actualmente en esta red",
-      "goneBody": "O bien su reclamo se completó y el token fue retirado, o nunca se acuñó aquí — la red no registra cuál. Trata cualquier oferta de vender o transferir este token id como sin valor en esta red.",
       "readOnlyTitle": "Esta comprobación nunca necesita tu wallet",
       "readOnlyBody": "Solo lee la blockchain. Nada en esta página te pide conectar una wallet, firmar un mensaje ni aprobar una transferencia. Si una página que se presenta como verificador de Vaipakam te pide algo de eso, no es nuestra: ciérrala.",
       "contractLabel": "Contrato de Vaipakam en {{chain}}",
       "contractWhy": "Esa dirección es lo que convierte un token en una posición de Vaipakam. Cualquiera puede copiar el nombre y la imagen de un token; su dirección de contrato, no.",
       "explorerLink": "Ver el token #{{id}} en {{explorer}}",
-      "explorerNote": "Una vista independiente del mismo contrato, que gestiona el explorador de bloques y no Vaipakam. Puede ir unos bloques por detrás de esta página."
+      "explorerNote": "Una vista independiente del mismo contrato, que gestiona el explorador de bloques y no Vaipakam. Puede ir unos bloques por detrás de esta página.",
+      "retiredTitle": "El token #{{id}} fue retirado en esta red",
+      "retiredBody": "Este token existió aquí y desde entonces el protocolo lo ha retirado, así que ya no conlleva ningún derecho ni función. Trata como sin valor cualquier oferta para vender o transferir este token.",
+      "neverMintedTitle": "El token #{{id}} nunca se ha acuñado en {{chain}}",
+      "neverMintedBody": "No se ha creado ningún NFT de posición con este id en {{chain}}. Si la posición se abrió en otra red, cambia a esa red y vuelve a comprobarlo.",
+      "goneTitle": "El token #{{id}} no existe actualmente en esta red",
+      "goneBody": "O bien el protocolo lo retiró, o bien nunca se acuñó aquí: los contratos de esta red no registran cuál de las dos. Trata como sin valor en esta red cualquier oferta para vender o transferir este id de token.",
+      "goneBodyUnchecked": "O bien el protocolo lo retiró, o bien nunca se acuñó aquí: no hemos podido comprobar cuál ahora mismo; recargar la página vuelve a intentarlo. Trata como sin valor en esta red cualquier oferta para vender o transferir este id de token."
     },
     "recover": {
       "title": "Recuperar tokens atascados",

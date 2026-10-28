@@ -2080,9 +2080,23 @@ const copySource = {
     explorerLink: tmpl(`See token #{{id}} on {{explorer}}`, ['id', 'explorer']),
     explorerNote:
       'An independent view of the same contract, run by the block explorer rather than by Vaipakam. It can lag a few blocks behind this page.',
+    // #2529 — the three-way verdict. "Retired by the protocol" stays
+    // generic on purpose: a position token stops existing for more than
+    // one reason, and without a history lookup the page must not name one.
+    retiredTitle: tmpl(`Token #{{id}} was retired on this network`, ['id']),
+    retiredBody:
+      'This token existed here and has since been retired by the protocol, so it no longer carries any claim or role. Treat any offer to sell or transfer it as worthless.',
+    neverMintedTitle: tmpl(`Token #{{id}} has never been minted on {{chain}}`, ['id', 'chain']),
+    neverMintedBody: tmpl(
+      'No position NFT with this id has been created on {{chain}}. If the position was opened on another network, switch to that network and check again.',
+      ['chain'],
+    ),
     goneTitle: tmpl(`Token #{{id}} does not currently exist on this network`, ['id']),
+    // This network's contracts predate the view that tells the two apart.
     goneBody:
-      'Either its claim was completed and the token was retired, or it was never minted here at all — the network doesn’t record which. Treat any offer to sell or transfer this token id as worthless on this network.',
+      'Either it was retired by the protocol, or it was never minted here at all — this network’s contracts don’t record which. Treat any offer to sell or transfer this token id as worthless on this network.',
+    goneBodyUnchecked:
+      'Either it was retired by the protocol, or it was never minted here at all — we couldn’t check which just now; reloading retries. Treat any offer to sell or transfer this token id as worthless on this network.',
   },
 
   // T-054 stuck-token recovery — deliberately UNLISTED (no nav or
