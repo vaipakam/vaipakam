@@ -93,11 +93,14 @@ test('the interest card follows a period from open to recorded, and the next one
 }) => {
   const periodicWas = await read<boolean>('getPeriodicInterestEnabled');
   const thresholdWas = await read<bigint>('getMinPrincipalForFinerCadence');
-  let offerId: bigint;
+  let loanId: bigint;
+  // The window stays open through the accept, not only the post: loan
+  // creation re-runs the cadence rule on the loan it opens (#3025), so an
+  // accept after the switch is turned back off would refuse this Monthly offer.
   try {
     await sendAsAdmin('setPeriodicInterestEnabled', [true]);
     await sendAsAdmin('setMinPrincipalForFinerCadence', [CADENCE_THRESHOLD_FLOOR]);
-    offerId = await seedDeskOffer({
+    const offerId = await seedDeskOffer({
       role: 'lender',
       side: 'lend',
       rateBps: 900,
@@ -109,11 +112,11 @@ test('the interest card follows a period from open to recorded, and the next one
       days: 90,
       terms: { allowsPartialRepay: true, periodicInterestCadence: 1 },
     });
+    loanId = await acceptOfferDirect('borrower', offerId);
   } finally {
     await sendAsAdmin('setMinPrincipalForFinerCadence', [thresholdWas]);
     await sendAsAdmin('setPeriodicInterestEnabled', [periodicWas]);
   }
-  const loanId = await acceptOfferDirect('borrower', offerId);
 
   // CONFIRM THE SETUP FROM CHAIN STATE (#2183).
   const first = await previewOf(loanId);
