@@ -23,8 +23,10 @@ import type { KeeperContext } from './keeper';
 import { isDefinitiveRejection, reportSendError } from './submissionQueue';
 
 /** 'landed'; 'skipped' (not sent: budget, deadline, a race, no key, or the
- *  run stopped); or the reason the contract refused the call. */
-export type CallResult = 'landed' | 'skipped' | string;
+ *  run stopped); 'idle' (not sent: the simulation's own result says the call
+ *  would do nothing, as the caller's `worth` judged it); or the reason the
+ *  contract refused the call. */
+export type CallResult = 'landed' | 'skipped' | 'idle' | string;
 
 /** The most one paid send may cost on a chain, or why that is unknown. */
 export type SendFeeCeiling = { wei: bigint; from: string } | { unread: string };
@@ -120,7 +122,21 @@ export class StepSender {
     return 'skipped';
   }
 
-  async call(step: string, subject: number | string, functionName: string, args: readonly unknown[], value: bigint = 0n): Promise<CallResult> {
+  /**
+   * Simulate `functionName` on the current state and, unless that refuses it,
+   * send it and wait for its receipt. `worth`, when given, reads the
+   * simulation's return value and says whether the call would do anything; a
+   * call it judges idle is not sent (an always-succeeding continuation that
+   * would only burn gas).
+   */
+  async call(
+    step: string,
+    subject: number | string,
+    functionName: string,
+    args: readonly unknown[],
+    value: bigint = 0n,
+    worth?: (simulated: unknown) => boolean,
+  ): Promise<CallResult> {
     this.receipt = null;
     if (this.stopped) return 'skipped';
     const { abi, pass, describe } = this.config;
@@ -161,8 +177,9 @@ export class StepSender {
       if (pending !== null) return this.stop(pending, `a transaction of its own is still unmined on this chain (${pending}), so it sent nothing behind it`);
       this.pendingChecked = true;
     }
+    let simulated: unknown;
     try {
-      await ctx.client.simulateContract({ address: ctx.diamond, abi, functionName, args, value, account: ctx.wallet.account! });
+      ({ result: simulated } = await ctx.client.simulateContract({ address: ctx.diamond, abi, functionName, args, value, account: ctx.wallet.account! }));
     } catch (err) {
       if (err instanceof PastRunDeadline) return this.stop('deadline');
       const c = classify(err);
@@ -179,6 +196,7 @@ export class StepSender {
       if (!this.config.unrecorded?.has(reason)) this.refused.set(key, reason);
       return reason;
     }
+    if (worth !== undefined && !worth(simulated)) return 'idle';
     this.sends += 1;
     const label = `[keeper] ${pass} chain=${ctx.chainId} ${functionName}(${subject})`;
     let hash: Hex;
