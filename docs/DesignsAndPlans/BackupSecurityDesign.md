@@ -106,8 +106,14 @@ the two runtimes is less uniform, and nothing here needs the saving.
   dashboard edit.
 - The **private** keys never reach Cloudflare, GitHub or any server. Each is a
   passphrase-encrypted PKCS#8 file in the operator's offline store.
-- **Rotation** is adding the new public key as a recipient, letting one full
-  retention cycle pass, then removing the old one. No archive is re-encrypted.
+- **Rotation changes what new archives are written to, never what old ones
+  need.** It is two appended sets: first the old and new keys together, for a
+  30-day overlap in which the drill (§7.3) proves the new key decrypts, then
+  the new key alone. The old key stops receiving new archives at the end of
+  the overlap. No archive is re-encrypted, so the old **private** key stays in
+  the offline store for as long as any retained archive was written to it.
+  For a daily or monthly archive that ends with the archive's lifecycle; a
+  yearly archive is kept indefinitely, so its key is too.
 - **The recipient set is versioned, not just current.** The directory holds a
   `recipients.json` that lists every set the Worker has ever used, each with
   the date it took effect. A rotation appends a set; it never edits or removes
@@ -293,12 +299,25 @@ open question in #1473). A restore is the moment forged data would reach
 production, so the tool stops and the operator decides with the evidence in
 front of them.
 
-Archives written before the cutover have no ledger entry and use the old
-symmetric format. The tool reads them only with an explicit
-`--pre-ledger-archive` flag and the old AES key, and says plainly that nothing
-vouches for such an archive. That flag and the old format leave the tool once
-the last old-format archive has aged out of the bucket. No old-format code
-stays in the Worker.
+Two questions are kept apart here, because they have different answers for
+the same archive:
+
+- **Which key decrypts it** follows the archive's format. An archive written
+  before slice 2 is in the old symmetric format and decrypts with the old AES
+  key from the offline store; a later one decrypts with a recipient private
+  key. The tool reads both formats, and keeps reading the old one for as long
+  as any old-format archive is retained, which for the yearly tier is
+  indefinitely. No old-format code stays in the Worker.
+- **What vouches for it** follows ledger coverage, whatever the format. Slice 1
+  records every archive already in the bucket on its first run, and every new
+  one from then on, so old-format archives have ledger entries too, and every
+  check above applies to them. One limit is stated with the entry: an archive
+  that was already in the bucket at the first run is recorded as found then,
+  so its entry proves it has not changed since that run, not that it was
+  genuine before it.
+- Only an archive with **no ledger entry at all** (one that slice 1 never saw)
+  needs the `--pre-ledger-archive` flag, and the tool says plainly that nothing
+  vouches for it.
 
 ## 7. Retention, tickets and the drill (#1474)
 
@@ -372,8 +391,9 @@ These need the owner's accounts. Exact commands go in each slice's PR.
 - **Add the watcher's secrets** to the repository. Before slice 1.
 - **Correct the live lifecycle** to the declared 20 + 9 (§7.2). Now.
 - **Delete `BACKUP_ENCRYPTION_KEY` and the two `B2_READ_*` secrets** from the
-  Worker after slice 3, and keep the old AES key offline only until the last
-  old-format archive ages out.
+  Worker after slice 3. Keep a copy of the old AES key in the offline store for
+  as long as any old-format archive is retained, which for the yearly tier is
+  indefinitely.
 - **Move the master B2 key** out of the developer `.env` into the offline
   store, and use scoped keys day to day (#1469's second finding). The ledger
   survives the master key; the archive bucket does not.
@@ -390,5 +410,7 @@ Stated so nobody reads more into it:
 - **Losing every private key** loses every archive. Two recipients and the
   drill make that unlikely; nothing makes it recoverable.
 - The watcher **cannot prove an archive decrypts**. Only the drill does.
-- Archives written before the cutover carry **no ledger entry**. Nothing vouches
-  for them, and the restore tool says so when it is told to use one.
+- An archive already in the bucket when the watcher first ran is vouched for
+  only **from that run on**: its entry proves it has not changed since, not that
+  it was genuine before. An archive the watcher never saw has no entry, and the
+  restore tool says nothing vouches for it.
