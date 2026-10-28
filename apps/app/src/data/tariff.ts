@@ -30,7 +30,7 @@ import {
   ContractFunctionRevertedError,
   ContractFunctionZeroDataError,
 } from 'viem';
-import type { Address } from 'viem';
+import type { Address, PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { signalAware } from '../chain/railHealth';
@@ -207,6 +207,63 @@ export interface FeeEntitlementRecord {
   stamped: boolean;
 }
 
+/**
+ * A loan's stamped fee-entitlement record, read live. Shared by the Loan
+ * Details hook and the batch close-out (#126), so both apply one rule to
+ * what counts as "no record".
+ */
+export async function readFeeEntitlement(
+  publicClient: PublicClient,
+  diamond: Address,
+  loanId: number,
+): Promise<FeeEntitlementRecord> {
+  let fe: {
+    borrowerMode: number;
+    lenderMode: number;
+    openDays: number;
+    borrowerTariffPaid: bigint;
+    lenderTariffPaid: bigint;
+    cStarOpen: bigint;
+  };
+  try {
+    fe = (await publicClient.readContract({
+      address: diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getFeeEntitlement',
+      args: [BigInt(loanId)],
+    })) as typeof fe;
+  } catch (err) {
+    // Codex #1412 r2 — a REVERT / zero-data means the selector is
+    // absent (a dark / pre-M2 Diamond): equivalent to "no tariff
+    // record", so consumers (incl. the preclose disclosure gate)
+    // must not strand on it. A transport failure is NOT knowledge
+    // — rethrow so the gate holds in its checking/failed state.
+    const isRevert =
+      err instanceof BaseError &&
+      (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
+        err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
+    if (!isRevert) throw err;
+    return {
+      borrowerMode: 0,
+      lenderMode: 0,
+      openDays: 0,
+      borrowerTariffPaid: 0n,
+      lenderTariffPaid: 0n,
+      cStarOpen: 0n,
+      stamped: false,
+    };
+  }
+  return {
+    borrowerMode: Number(fe.borrowerMode),
+    lenderMode: Number(fe.lenderMode),
+    openDays: Number(fe.openDays),
+    borrowerTariffPaid: fe.borrowerTariffPaid,
+    lenderTariffPaid: fe.lenderTariffPaid,
+    cStarOpen: fe.cStarOpen,
+    stamped: Number(fe.openDays) >= 1,
+  };
+}
+
 /** A loan's stamped fee-entitlement record (Loan Details display). */
 export function useFeeEntitlement(loanId: number | undefined) {
   const { readChain } = useActiveChain();
@@ -216,52 +273,6 @@ export function useFeeEntitlement(loanId: number | undefined) {
     queryKey: ['feeEntitlement', readChain.chainId, loanId],
     enabled: Boolean(publicClient) && loanId !== undefined,
     staleTime: 60_000,
-    queryFn: async (): Promise<FeeEntitlementRecord> => {
-      let fe: {
-        borrowerMode: number;
-        lenderMode: number;
-        openDays: number;
-        borrowerTariffPaid: bigint;
-        lenderTariffPaid: bigint;
-        cStarOpen: bigint;
-      };
-      try {
-        fe = (await publicClient!.readContract({
-          address: readChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getFeeEntitlement',
-          args: [BigInt(loanId!)],
-        })) as typeof fe;
-      } catch (err) {
-        // Codex #1412 r2 — a REVERT / zero-data means the selector is
-        // absent (a dark / pre-M2 Diamond): equivalent to "no tariff
-        // record", so consumers (incl. the preclose disclosure gate)
-        // must not strand on it. A transport failure is NOT knowledge
-        // — rethrow so the gate holds in its checking/failed state.
-        const isRevert =
-          err instanceof BaseError &&
-          (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
-            err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
-        if (!isRevert) throw err;
-        return {
-          borrowerMode: 0,
-          lenderMode: 0,
-          openDays: 0,
-          borrowerTariffPaid: 0n,
-          lenderTariffPaid: 0n,
-          cStarOpen: 0n,
-          stamped: false,
-        };
-      }
-      return {
-        borrowerMode: Number(fe.borrowerMode),
-        lenderMode: Number(fe.lenderMode),
-        openDays: Number(fe.openDays),
-        borrowerTariffPaid: fe.borrowerTariffPaid,
-        lenderTariffPaid: fe.lenderTariffPaid,
-        cStarOpen: fe.cStarOpen,
-        stamped: Number(fe.openDays) >= 1,
-      };
-    },
+    queryFn: () => readFeeEntitlement(publicClient!, readChain.diamondAddress, loanId!),
   });
 }

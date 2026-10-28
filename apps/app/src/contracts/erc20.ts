@@ -169,25 +169,44 @@ async function confirmAllowanceStillLive(
   want: bigint,
   notBefore: bigint,
 ): Promise<'confirmed' | 'contradicted' | 'unknown'> {
+  const live = await readAllowanceNotBefore(publicClient, token, owner, spender, notBefore);
+  if (live === null) return 'unknown';
+  return live === want ? 'confirmed' : 'contradicted';
+}
+
+/**
+ * The allowance NOW, from a node that has reached `notBefore` — the block
+ * the caller's own last write mined in. The head is checked first and the
+ * read is pinned to that head, so a load-balanced provider routing the
+ * read to a laggard errors rather than answering about an earlier state.
+ * `null` when no node answered at or beyond it: the caller says the
+ * figure is unread rather than stating a stale one.
+ */
+export async function readAllowanceNotBefore(
+  publicClient: PublicClient,
+  token: `0x${string}`,
+  owner: `0x${string}`,
+  spender: `0x${string}`,
+  notBefore: bigint,
+): Promise<bigint | null> {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const head = await publicClient.getBlockNumber();
       if (head >= notBefore) {
-        const live = await publicClient.readContract({
+        return await publicClient.readContract({
           address: token,
           abi: erc20Abi,
           functionName: 'allowance',
           args: [owner, spender],
           blockNumber: head,
         });
-        return live === want ? 'confirmed' : 'contradicted';
       }
     } catch {
       /* fall through to the backoff and ask again */
     }
     await new Promise((r) => setTimeout(r, 250 * 2 ** attempt));
   }
-  return 'unknown';
+  return null;
 }
 
 /**
@@ -258,8 +277,10 @@ export async function ensureAllowance(opts: {
    *  have reverted. The unwind needs both because the revert can be
    *  discovered HERE (correction runs) or LATER by the unwind's own
    *  receipt wait, after this function has already thrown on a timeout
-   *  and can no longer correct anything (#1529 review round 9). */
-  onConfirmed?: (value: bigint, hash: `0x${string}`) => void;
+   *  and can no longer correct anything (#1529 review round 9).
+   *  `blockNumber` is the block it mined in, so a caller that reads the
+   *  allowance afterwards can refuse a node that has not reached it. */
+  onConfirmed?: (value: bigint, hash: `0x${string}`, blockNumber: bigint) => void;
 }): Promise<`0x${string}` | null> {
   const {
     publicClient, walletClient, token, owner, spender, amount,
@@ -353,7 +374,7 @@ export async function ensureAllowance(opts: {
     // that does not honour its own interface, not the primary evidence.
     // When it could not be taken, the receipt stands.
     confirmed = { value, hash: minedHash };
-    onConfirmed?.(value, minedHash);
+    onConfirmed?.(value, minedHash, s.receipt.blockNumber);
     // RPC read-diet PR A (§4.1.4) — approvals go through this helper,
     // not diamond.ts, so they feed the same centralized receipt floor
     // (standingApprovals / funding-watch roots ride push+focus+net
@@ -420,9 +441,13 @@ export async function restoreAllowance(opts: {
    *  revert surfaces here, after it has thrown and can correct nothing
    *  (#1529 review round 9). */
   confirmed?: bigint | null;
+  /** Called with the block each approve THIS function sends mined in, so
+   *  a caller reading the allowance afterwards can refuse a node that has
+   *  not reached it. */
+  onMined?: (blockNumber: bigint) => void;
 }): Promise<`0x${string}` | null> {
   const {
-    publicClient, walletClient, token, owner, spender, previous, wroteTxHash, confirmed,
+    publicClient, walletClient, token, owner, spender, previous, wroteTxHash, confirmed, onMined,
   } = opts;
   let { wrote } = opts;
   // This attempt changed nothing, so it has nothing to put back.
@@ -639,6 +664,7 @@ export async function restoreAllowance(opts: {
       );
     }
     publishReceiptInvalidationGlobal();
+    onMined?.(r.receipt.blockNumber);
     // The MINED hash, and the block to confirm against. On a Speed Up
     // these are the replacement's — the submitted hash never mined, so
     // handing it back would name a transaction that does not exist.
@@ -842,6 +868,13 @@ export function trackApproval() {
   let wrote: bigint | null = null;
   let wroteTx: `0x${string}` | null = null;
   let confirmed: bigint | null = null;
+  // The latest block any approve this attempt sent mined in, the restore
+  // included: an allowance read after the flow must come from a node that
+  // has reached it, or it can answer from before our own writes.
+  let lastBlock: bigint | null = null;
+  const sawBlock = (b: bigint) => {
+    if (lastBlock === null || b > lastBlock) lastBlock = b;
+  };
   return {
     /** Spread into `ensureAllowance`'s options for `t`. */
     hooks(t: `0x${string}`) {
@@ -854,8 +887,9 @@ export function trackApproval() {
           wrote = value;
           wroteTx = hash;
         },
-        onConfirmed: (value: bigint) => {
+        onConfirmed: (value: bigint, _hash: `0x${string}`, blockNumber: bigint) => {
           confirmed = value;
+          sawBlock(blockNumber);
         },
       };
     },
@@ -881,11 +915,17 @@ export function trackApproval() {
           wrote: w,
           wroteTxHash: tx,
           confirmed: c,
+          onMined: sawBlock,
         });
         return true;
       } catch {
         return false;
       }
+    },
+    /** The latest block an approve of this attempt mined in, or null when
+     *  it sent none that confirmed. */
+    lastMinedBlock(): bigint | null {
+      return lastBlock;
     },
   };
 }

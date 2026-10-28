@@ -24,6 +24,7 @@ import {
 } from '../src/protocolUpkeep';
 import { encodePos, type EventLedger, type LedgerPos, type LedgerRow } from '../src/eventLedger';
 import { memoryScanCursors } from '../src/scanCursors';
+import { PastRunDeadline } from '../src/batchRead';
 import type { KeeperContext } from '../src/keeper';
 
 const CHAIN = 84532;
@@ -229,7 +230,7 @@ describe('a run', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  const run = (opts: { keeper?: Address | null; refreshAfterSec?: number } = {}) =>
+  const run = (opts: { keeper?: Address | null; refreshAfterSec?: number; salesSync?: boolean; tierPush?: boolean } = {}) =>
     upkeepOnce(CHAIN, DIAMOND, {
       client: d.client(),
       readClient: d.client(),
@@ -237,6 +238,8 @@ describe('a run', () => {
       keeper: opts.keeper === undefined ? KEEPER : opts.keeper,
       sendDeadline: Number.POSITIVE_INFINITY,
       refreshAfterSec: opts.refreshAfterSec ?? DEFAULT_REFRESH_AFTER_SEC,
+      salesSync: opts.salesSync,
+      tierPush: opts.tierPush,
       cursors,
       ledger,
     });
@@ -299,6 +302,18 @@ describe('a run', () => {
       expect((await run()).unread.get('buyback')).toMatch(/event ledger/);
     });
 
+    it('reports an armed step the run never reached as not worked, never as off', async () => {
+      d.getChainId = async () => {
+        throw new PastRunDeadline('getChainId: past the read cutoff — read next run');
+      };
+      const r = await run({ salesSync: true, tierPush: true });
+      expect(d.sent).toEqual([]);
+      const line = describeReport(r);
+      expect(line).toContain('sale-sanctions-sync=not worked (not reached this run)');
+      expect(line).toContain('tier-push-retry=not worked (not reached this run)');
+      expect(line).not.toContain('not armed');
+    });
+
     it('works nothing when the RPC serves another chain', async () => {
       d.chainServed = 1;
       const r = await run();
@@ -314,6 +329,13 @@ describe('a run', () => {
       expect(r.refreshIdle).toMatch(/unchanged and cached under/);
       expect(r.tiersRejected).toEqual(['tier 3: no-reference-assets']);
       expect(describeReport(r)).toContain('tier-ltv-refreshed=no');
+      // Step 3 ships disarmed: the run says so rather than omitting it.
+      expect(r.sales).toBeNull();
+      expect(describeReport(r)).toContain(
+        'sale-sanctions-sync=off (PREPAY_SALE_SANCTIONS_SYNC_ENABLED not armed)',
+      );
+      expect(r.tierPush).toBeNull();
+      expect(describeReport(r)).toContain('tier-push-retry=off (TIER_PUSH_RETRY_ENABLED not armed)');
     });
 
     it('refreshes when a tier would change, and reports what the receipt wrote', async () => {

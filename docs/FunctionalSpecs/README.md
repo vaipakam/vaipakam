@@ -187,13 +187,23 @@ code at that time. Until a domain's spec exists, its intended behaviour
 is described — less tidily — across the release notes and the
 `DesignsAndPlans/` docs.
 
-## Release-note consolidation: August 13 through October 22, 2026
+## Release-note consolidation: August 13 through October 27, 2026
 
 The following source map accounts for every dated file present in the inclusive
 range. It identifies where functional decisions belong, rather than copying
 change history into the requirements. The dated release notes remain unchanged.
 A historical correction is read with its later superseding decision; later
 owner decisions already recorded in the specs are retained.
+
+The October 22–27 continuation reconciles all six dated reference files. It
+retains newer intent already recorded in the specs, including October 28 keeper
+backstops and reward-part safety requirements. Tooling-only entries, build
+commands, code layout, and test transcripts are not functional requirements.
+Superseded reward-compatibility descriptions are preserved in the
+[implementation reference](../procedures/FunctionalSpecImplementationNotes.md#reward-compatibility-material-retired-in-the-october-2227-consolidation).
+The notification-fee denomination and routing divergence remains an open
+[audit finding](../procedures/FunctionalSpecsCodeVsDocsAudit.md); this
+consolidation does not decide it by rewriting the intended fee model.
 
 In this table, Platform means [ProjectDetailsREADME.md](ProjectDetailsREADME.md),
 App means [Alpha02ConnectedApp.md](Alpha02ConnectedApp.md), Website means
@@ -257,10 +267,18 @@ verification or tooling history, not additional product requirements.
 | [2026-10-19](../ReleaseNotes/ReleaseNotes-2026-10-19.md) | Keeper; tokenomics; platform | Testnet capacity and perk activation, deadlines, published escrow and delisting readiness |
 | [2026-10-20](../ReleaseNotes/ReleaseNotes-2026-10-20.md) | Keeper; platform; tokenomics | Upgrade safety, finalized sanctions evidence, labelled clearance rehearsal and observation alerts |
 | [2026-10-21](../ReleaseNotes/ReleaseNotes-2026-10-21.md) | Keeper; platform; tokenomics | Measured forced sales, remittance route records, reward-day automation and retired shared state |
-| [2026-10-22](../ReleaseNotes/ReleaseNotes-2026-10-22.md) | Platform; app; tokenomics | Measured arrivals, lender-first forced settlement, treasury accrual and zero-valued claims |
+| [2026-10-22](../ReleaseNotes/ReleaseNotes-2026-10-22.md) | Platform; app; tokenomics; keeper | Measured arrivals, lender-first settlement, zero-valued claims, report inclusion, fee ceilings and sanctions digests |
+| [2026-10-23](../ReleaseNotes/ReleaseNotes-2026-10-23.md) | App; platform; website; tokenomics; keeper | Agreed Rate Desk terms, bounded listing consent, tab-safe erasure, wallet-free verification, rooted deliveries, Push readiness and launch safeguards |
+| [2026-10-24](../ReleaseNotes/ReleaseNotes-2026-10-24.md) | Platform; app; tokenomics; keeper | Verified release installation, payer consent and screening, vault-version safety and the corrected BNB perk activation record |
+| [2026-10-25](../ReleaseNotes/ReleaseNotes-2026-10-25.md) | Platform; app; website; tokenomics; keeper | Pause-credit deadlines, sell-to-need closes, periodic settlement, bounded matching and reminders, optional asset ceilings, report clocks and one funded day per send |
+| [2026-10-26](../ReleaseNotes/ReleaseNotes-2026-10-26.md) | Platform; app; website; tokenomics; keeper | Per-leg floors, extension windows, interest credits, collateral evidence, signed alert changes, safe proxy limits, restore ownership and retirement of migration-only states |
+| [2026-10-27](../ReleaseNotes/ReleaseNotes-2026-10-27.md) | Platform; app; website; tokenomics; keeper | Reviewed acceptance terms, matching parity, rental shape, asset-specific metadata, neutral collateral sales, bridged-feed evidence, partial-day funding and retired-mirror returns |
 
 A source release is not a live-deployment guarantee. For example, the October
-19 notes record capacity enabled on three testnets and priority routing priced
-on two; the October 21 and 22 notes explicitly say their settlement changes
-had not yet reached the testnets. Feature defaults, dated activation facts,
-and current chain observations must be described separately.
+19 notes record capacity enabled on three testnets. The October 24 correction
+establishes that priority routing was priced on all three on October 19;
+BNB's usable mock pairs and independent fork check came later. The October
+27 notes still say the contract wave had not reached the testnets. Older
+testnet keeper compatibility is not evidence that those chains implement the
+fresh-deploy requirements. Feature defaults, dated activation facts, and
+current chain observations must be described separately.

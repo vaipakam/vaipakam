@@ -5,7 +5,7 @@
  * cancelled from here (journeys B2/L2's cancellation branch —
  * releases the locked side).
  */
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { ListChecks, LoaderCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useModal } from 'connectkit';
@@ -26,6 +26,18 @@ import { captureTxError } from '../lib/errors';
 import { WindowedRowList } from '../lib/visibleWindow';
 import { assertRowActionStillValid } from '../contracts/preflights';
 import type { IndexedOffer } from '../data/indexer';
+import { BatchCloseOutCard } from '../components/BatchCloseOutCard';
+import { BatchSaleListingCard } from '../components/BatchSaleListingCard';
+import { loanSaleListingEnabled } from '../components/LoanSaleFlow';
+import { useMode } from '../app/ModeContext';
+import {
+  borrowerOfferGroups,
+  groupKey,
+  lenderOfferGroups,
+  withHeldGroups,
+  type OfferGroup,
+} from '../data/batchCloseOut';
+import type { PositionLoan } from '../data/hooks';
 
 function OfferRow({ offer }: { offer: IndexedOffer }) {
   const isRental = offer.assetType !== AssetType.ERC20;
@@ -159,6 +171,26 @@ export function Positions() {
   // #1247 — window identity: a wallet/chain switch on this mounted
   // page must collapse every expanded window (Codex #1265 r1).
   const listKey = `${readChain.chainId}|${address?.toLowerCase() ?? ''}`;
+  // #126 — batch cards that are mid-batch or showing results, held here so
+  // a batch that closes its group's loans does not unmount its own card.
+  // Scoped to the list key: a wallet or chain switch drops them.
+  const [heldBatches, setHeldBatches] = useState<{
+    key: string;
+    groups: ReadonlyMap<string, OfferGroup<PositionLoan>>;
+  }>({ key: listKey, groups: new Map() });
+  const holdBatch = useCallback(
+    (group: OfferGroup<PositionLoan>, held: boolean) =>
+      setHeldBatches((prev) => {
+        const groups = new Map(prev.key === listKey ? prev.groups : []);
+        if (held) groups.set(groupKey(group), group);
+        else groups.delete(groupKey(group));
+        return { key: listKey, groups };
+      }),
+    [listKey],
+  );
+  const heldGroups: ReadonlyMap<string, OfferGroup<PositionLoan>> =
+    heldBatches.key === listKey ? heldBatches.groups : new Map();
+  const { isAdvanced } = useMode();
   const { setOpen } = useModal();
   const loans = useMyLoansFull();
   const offers = useMyOffersFull();
@@ -172,6 +204,34 @@ export function Positions() {
     (claimables.data ?? []).map((c): [string, ClaimableLoan] => [`${c.loanId}-${c.role}`, c]),
   );
   const claimKeys = new Set(claimByKey.keys());
+  // #126 — the batch cards, rendered in ONE slot outside the lists'
+  // availability branches below. A card mid-batch or showing its results
+  // must keep its state through a list-read outage: in a branch, the
+  // outage would unmount it, and it would come back at idle with the
+  // outcomes (and the approval figure) of transactions that may have run
+  // gone. While the lists are not both readable only the held cards
+  // render, since the live groups are not known then.
+  //
+  // #126 slice 2 — listing a position for sale is an Advanced-mode tool on
+  // the loan page; the lender's batch follows that. On a network where the
+  // listing route is not live the card still shows, and says so (the loan
+  // page's chooser does the same), rather than vanishing as if the
+  // positions were not eligible.
+  const listsReadable = loans.data != null && offers.data != null;
+  const groupRows = listsReadable
+    ? loans.data!.rows.filter((l) => !claimKeys.has(`${l.loanId}-${l.role}`))
+    : [];
+  const saleBatchOffered = isAdvanced;
+  const saleListingLive = loanSaleListingEnabled(readChain.chainId);
+  const batchGroups = isConnected
+    ? withHeldGroups(
+        [
+          ...borrowerOfferGroups(groupRows),
+          ...(saleBatchOffered ? lenderOfferGroups(groupRows) : []),
+        ],
+        heldGroups,
+      )
+    : [];
   // Current positions come from the CHAIN (authoritative, fresh this
   // block) with the indexer as the redundancy leg. Either source
   // failing means the list is served single-sourced — say so, never
@@ -188,6 +248,27 @@ export function Positions() {
     <div>
       <h1 className="page-title">{copy.positions.title}</h1>
       <p className="page-lede">{copy.positions.lede}</p>
+
+      {/* #126 — the borrower's loans from one offer can be repaid or
+          closed early together, and the lender's listed for sale
+          together. Outside the branches below on purpose (see
+          `batchGroups`). */}
+      {batchGroups.map((g) =>
+        g.role === 'borrower' ? (
+          <BatchCloseOutCard
+            key={`${listKey}|${groupKey(g)}`}
+            group={g}
+            onHeldChange={holdBatch}
+          />
+        ) : (
+          <BatchSaleListingCard
+            key={`${listKey}|${groupKey(g)}`}
+            group={g}
+            listingLive={saleListingLive}
+            onHeldChange={holdBatch}
+          />
+        ),
+      )}
 
       {!isConnected ? (
         <EmptyState

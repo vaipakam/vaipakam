@@ -375,6 +375,15 @@
   //     refresh. Both permissionless; it pays no fee and moves nothing to the
   //     keeper. Ships unset. Needs no on-chain role. Arming it is an owner
   //     decision.
+  //   - PREPAY_SALE_SANCTIONS_SYNC_ENABLED — 'true' adds the #2984 prepay-sale
+  //     sanctions sync to the armed upkeep pass: syncPrepaySaleListing /
+  //     syncPrepaySaleOffer for a live listing with a flagged party.
+  //     Permissionless; no fee, nothing to the keeper. Ships unset.
+  //   - TIER_PUSH_RETRY_ENABLED — 'true' adds the #2984 tier-push retry to the
+  //     armed upkeep pass: deliverTierPush for a user whose tier push a lane
+  //     is still owed, when the protocol broadcast budget can pay it. The
+  //     lane's CCIP fee comes from that budget; the keeper attaches no value
+  //     and receives none. Ships unset.
   //   - PREPAY_AUTO_LIST_ENABLED — 'true' arms the #2984 grace auto-list
   //     pass: autoListAtFloorOnGrace for NFT-collateral loans in grace, every
   //     minute. Permissionless; it pays only gas and moves nothing to the

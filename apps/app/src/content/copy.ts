@@ -1549,6 +1549,152 @@ const copySource = {
       'VPFI can’t be used as the rental payment asset — pick another token.',
   },
 
+  // #126 — repay, or close early, every loan that came from one offer.
+  batchClose: {
+    title: tmpl('Loans from offer #{{offerId}}', ['offerId']),
+    lede: tmpl(
+      'Loans {{ids}} came from the same offer. You can repay them, or close them early, together: one approval for the total, then one transaction. Each loan is checked on its own first, and a loan that can’t close is skipped while the others go through.',
+      ['ids'],
+    ),
+    repayAll: 'Repay all',
+    closeAllEarly: 'Close all early',
+    checking: 'Checking each loan…',
+    phase: {
+      approving: 'Approve the total in your wallet…',
+      checking: 'Checking each loan again…',
+      submitting: 'Confirm the transaction in your wallet…',
+    },
+    reviewRepay: 'Repay these loans',
+    reviewPreclose: 'Close these loans early',
+    dueNow: tmpl('Loan #{{id}}: {{amount}} due now', ['id', 'amount']),
+    leftOut: tmpl('Loan #{{id}} is left out: {{reason}}', ['id', 'reason']),
+    totalDue: tmpl('Total due now: {{amount}}.', ['amount']),
+    approval: tmpl(
+      'You’ll approve {{amount}}. That adds about two days of interest and one late-fee step, in case a day passes before the transaction runs. Each loan takes only what it owes when it runs, so the extra is never spent.',
+      ['amount'],
+    ),
+    howItRuns:
+      'After the approval, one transaction closes up to 30 loans. The amounts can rise slightly before it runs.',
+    noneReady:
+      'None of these loans can be closed together right now. Open each loan to see its options.',
+    confirm: 'Confirm',
+    cancel: 'Cancel',
+    dismiss: 'Done',
+    receiveEach:
+      'Each closed loan’s collateral back — claimable from that loan right after it settles.',
+    endsEach:
+      'Each loan settles when the transaction runs. A loan that is skipped stays open, and the results say why.',
+    pending: tmpl(
+      'Loan #{{id}}: the transaction was sent but hasn’t confirmed yet. It may still go through, so check the loan in a few minutes.',
+      ['id'],
+    ),
+    notSentPending:
+      'Not sent, because an earlier transaction in this batch hasn’t confirmed yet. Close it from its own page once that settles.',
+    repaid: tmpl('Loan #{{id}}: repaid.', ['id']),
+    closed: tmpl('Loan #{{id}}: closed early.', ['id']),
+    stillOpen: tmpl('Loan #{{id}}: still open. {{reason}}', ['id', 'reason']),
+    unknown: tmpl(
+      'Loan #{{id}}: we couldn’t read whether it closed. Open the loan to check.',
+      ['id'],
+    ),
+    changedOtherwise: tmpl(
+      'Loan #{{id}}: not closed by this batch. Its status changed another way, so open the loan to see where it stands.',
+      ['id'],
+    ),
+    skippedRetry:
+      'The transaction ran, but this loan was skipped. It can be closed now from its own page.',
+    approvalLeft: tmpl(
+      'Your token approval for the protocol now stands at {{amount}}. You can lower it under Standing token approvals in Settings.',
+      ['amount'],
+    ),
+    approvalLeftUnread:
+      'We couldn’t read your token approval after the batch. You can check it under Standing token approvals in Settings.',
+    ownPageRental: 'Rentals are closed from their own page.',
+    ownPageRefinance:
+      'A refinance request is open on this loan. Close it from its own page, which shows what closing does to the request.',
+    ownPageFallback:
+      'This loan is in its fallback period. Repay it from its own page, which explains what that involves.',
+  },
+  // #126 slice 2 — "List all for sale" on a lender's loans from one offer.
+  // Each listing is the loan page's own listing (same checks, same bound
+  // minimum), sent together; the lock is disclosed before the consent.
+  batchSale: {
+    title: tmpl('Your lender positions from offer #{{offerId}}', ['offerId']),
+    lede: tmpl(
+      'Loans {{ids}} came from the same offer. You can list all of them for sale at once, at one rate and for one listing window, in one transaction. Each loan is checked on its own first, and a loan that can’t be listed is skipped while the others go through.',
+      ['ids'],
+    ),
+    // Codex #3066 r2 — the network gate is disclosed, never a silent absence.
+    unavailableNetwork: tmpl(
+      'Loans {{ids}} came from the same offer. Listing them for sale isn’t available on this network yet: the listing tools aren’t published to this deployment.',
+      ['ids'],
+    ),
+    windowNote:
+      'Each listing expires on its own: at the end of the window, or at that loan’s due date, whichever comes first. Once a listing ends without a sale, that loan can’t be listed again for a day. If a borrower repays part of a loan while its listing is live, buyers’ attempts on that listing are refused; cancel it and list again.',
+    listAll: 'Review listing all',
+    checking: 'Checking each loan and reading its minimum…',
+    phase: {
+      checking: 'Checking each loan again…',
+      submitting: 'Confirm the transaction in your wallet…',
+    },
+    review: 'List these positions for sale',
+    loanFloor: tmpl(
+      'Loan #{{id}}: if a buyer takes it at any time before its listing ends, you come out with at least {{amount}}. The listing records this minimum.',
+      ['id', 'amount'],
+    ),
+    loanHeld: tmpl(
+      '{{amount}} already set aside for the lender on this loan goes to the buyer with the position, not to you.',
+      ['amount'],
+    ),
+    loanSettlementNow: tmpl(
+      'The settlement a buyer’s payment would carry right now: ~{{amount}}.',
+      ['amount'],
+    ),
+    leftOut: tmpl('Loan #{{id}} is left out: {{reason}}', ['id', 'reason']),
+    noneReady:
+      'None of these positions can be listed together right now. Open each loan to see its options.',
+    consentLabel:
+      'I understand the lock on each listed position and the settlement taken out of each buyer’s payment, and agree to them for every loan listed above.',
+    confirm: 'Confirm — list these positions',
+    cancel: 'Cancel',
+    dismiss: 'Done',
+    lockWarning:
+      'Listing locks each listed lender position NFT — it can’t be transferred until that sale completes or that listing ends (cancelling unlocks it in one step, from the loan’s page; after expiry, a cleanup transaction anyone can send does). Your claim rights are unaffected.',
+    receiveEach:
+      'For each listed loan, at least the minimum shown above once the settlement is taken, if a buyer takes it before its listing ends. Each listing records its own minimum, and is skipped rather than made if it would record less.',
+    lockEach:
+      'Each listed loan’s lender position NFT, until its sale completes or its listing ends. Nothing else.',
+    youMayOwe:
+      'Nothing from your wallet, and no approval. When a buyer accepts a listing, the settlement is taken out of their payment before the rest reaches you: the LARGER of the interest built up by then or the rate difference for the remaining term — never both. Each loan’s figure right now is shown above.',
+    endsEach:
+      'Each listing ends when a buyer accepts it, when you cancel it from the loan’s page, or when it expires. One transaction lists up to 30 loans; a loan whose listing fails is skipped, and the results say why.',
+    listed: tmpl(
+      'Loan #{{id}}: listed as sale offer #{{offerId}}. Its page shows the listing and lets you cancel it.',
+      ['id', 'offerId'],
+    ),
+    notListed: tmpl('Loan #{{id}}: not listed. {{reason}}', ['id', 'reason']),
+    changedOtherwise: tmpl(
+      'Loan #{{id}}: not listed. The loan is no longer active, so open it to see where it stands.',
+      ['id'],
+    ),
+    unknown: tmpl(
+      'Loan #{{id}}: we couldn’t read whether it was listed. Open the loan to check.',
+      ['id'],
+    ),
+    pending: tmpl(
+      'Loan #{{id}}: the transaction was sent but hasn’t confirmed yet. It may still list this loan, so check the loan in a few minutes.',
+      ['id'],
+    ),
+    notSentPending:
+      'Not sent, because an earlier transaction in this batch hasn’t confirmed yet. List it from its own page once that settles.',
+    skippedRetry:
+      'The transaction ran, but this listing was skipped. It can be listed now from the loan’s own page.',
+    reviewAgain: 'Review the listing again to see the current figures.',
+    changedSinceReview:
+      'What this listing involves changed after your review. List it from its own page, which shows the current terms.',
+    ownPageShape:
+      'Only loans with token principal and token collateral can be listed for sale.',
+  },
   preclose: {
     title: 'Close this loan early',
     blurb:
