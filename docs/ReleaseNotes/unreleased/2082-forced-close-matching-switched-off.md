@@ -1,4 +1,4 @@
-## Thread — Forced close-out says when internal matching is switched off (PR #<n>)
+## Thread — Forced close-out says when internal matching is switched off (PR #2996)
 
 The lender's forced close-out card warns, on every state a match could
 overtake, that the protocol looks for an opposing position at the moment the

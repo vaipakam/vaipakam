@@ -1,4 +1,4 @@
-## Thread — Liquidation price next to the health factor (PR #<n>)
+## Thread — Liquidation price next to the health factor (PR #2996)
 
 The loan page's advanced health detail now states the liquidation price: the
 collateral price at which the health factor reaches 1.00, in the protocol's
