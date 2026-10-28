@@ -213,11 +213,11 @@ export interface LenderExitInput {
   /** See `SaleToolsState` — applies to BOTH sale rows. */
   saleTools: SaleToolsState;
   /** Has every read `saleTools` is derived from stopped (the fee
-   *  entitlement, the principal's token, and the status and term reads
-   *  behind the tools' own mount gate)? `saleTools` is derived from
+   *  entitlement, the principal's token, the status and term reads
+   *  behind the tools' own mount gate, and the listing read)? `saleTools` is derived from
    *  retained data and `isError`, both of which survive a background
    *  refetch, so a settled answer waits for all of them (Codex #1858
-   *  r11, #3024 r3). */
+   *  r11, #3024 r3, r4). */
   saleToolsSettled: boolean;
   instantSellCandidates: InstantSellCandidates;
 }

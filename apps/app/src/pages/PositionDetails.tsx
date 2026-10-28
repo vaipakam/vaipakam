@@ -4528,15 +4528,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // rest becomes knowable on the switch, where the tool block
           // states them itself.
           saleTools={
-            // The tools' own mount gate first (Codex #3024 r2). The
-            // verdict replaced the chooser's status rules, but the
-            // Advanced tools below still mount behind `saleAttemptable`,
-            // so a verdict that has already seen a cure while another
-            // live read still holds FallbackPending would open rows
-            // whose jump targets are not on the page. `saleAttemptable`
-            // fails closed only on an affirmative answer and clears on
-            // the next poll, so this is a wait, not a failure.
-            !saleAttemptable
+            // The tool block's own render gates first (Codex #3024 r2,
+            // r4). The verdict replaced the chooser's status and listing
+            // rules, but the Advanced tools below still mount behind
+            // `saleAttemptable` and render nothing while `salePending`
+            // holds, so a verdict that has already seen a cure, or a
+            // cancelled listing, while another read still holds the old
+            // answer would open rows whose jump targets are not on the
+            // page. Both gates clear on the next poll of their own read,
+            // so this is a wait, not a failure. (When the listing really
+            // stands, the verdict refuses both routes first and this arm
+            // is never reached.)
+            !saleAttemptable || salePending
               ? 'checking'
               : // `isError` FIRST, before the `data === undefined` test
                 // (Codex r16 P2). TanStack keeps the last success through a
@@ -4663,11 +4666,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // both of which survive a background refetch, so a refresh
           // still in flight can turn a published `'ready'` into
           // `'checking'` (a status read reporting FallbackPending, via
-          // `saleAttemptable`) or `'failed'`. The list is the arms of
-          // `saleTools` above, read for read.
-          saleToolsSettled={[feeEnt, principalMeta, loanLive, liveStatus, bannerTerms].every(
-            sourceSettled,
-          )}
+          // `saleAttemptable`, or a listing via `salePending`) or
+          // `'failed'`. The list is the arms of `saleTools` above, read
+          // for read.
+          saleToolsSettled={[
+            feeEnt,
+            principalMeta,
+            loanLive,
+            liveStatus,
+            bannerTerms,
+            sale,
+          ].every(sourceSettled)}
           // Answers "might a buyer still complete", NOT "may I offer
           // the row" — see `listingMayStand`. An affirmative cached
           // listing keeps the COST lines up even when the poll that
