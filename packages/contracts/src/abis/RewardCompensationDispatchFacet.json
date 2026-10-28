@@ -461,6 +461,37 @@
   },
   {
     "type": "event",
+    "name": "RemitAbandonedPartReleased",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledNotRestored",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RemitDayPartReleased",
     "inputs": [
       {
@@ -3252,6 +3283,22 @@
   },
   {
     "type": "error",
+    "name": "RemitDayAbandoned",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RemitDayAlreadyClosed",
     "inputs": [
       {
@@ -3295,6 +3342,54 @@
         "name": "chainId",
         "type": "uint32",
         "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitDestinationOnlyDiamondInternal",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitDestinationReleaseDone",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitDestinationReleaseFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RemitDestinationReleasePending",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "releaseCursor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "abandonedBefore",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

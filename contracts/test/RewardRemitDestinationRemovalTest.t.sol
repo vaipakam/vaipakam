@@ -164,6 +164,9 @@ contract RewardRemitDestinationRemovalTest is SetupTest {
     ///      ledgers with a known baseline (production books them at an armed
     ///      finalize). `liab` is Arbitrum's reported liability per side: at or
     ///      above the slice it leaves the day unclamped.
+    /// @dev Arming marks every day from `d` on as armed, so a cell arming a
+    ///      day finalizes nothing after it: the walk then stops at the first
+    ///      unfinalized day and releases the armed day alone.
     function _armArbDay(uint256 d, uint128 freshHalf, uint256 recycledEquiv, uint256 liab) internal {
         mutator.setGovernorCommitArmedFromDayRaw(d);
         mutator.setDayPoolStampRaw(d, uint128(freshHalf) * 2, 0);
@@ -215,7 +218,7 @@ contract RewardRemitDestinationRemovalTest is SetupTest {
     /// commitment. Removal frees both; the clamp residual the first part
     /// already retired is not freed twice.
     function test_Removal_FreesAnArmedPartlySentDaysRest() public {
-        _finalizeThrough(4);
+        _finalizeThrough(2);
         _armArbDay(1, 100e18, 20e18, 1e30);
         (uint256 whole, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
         remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, _days(1), 10e18);
@@ -244,7 +247,7 @@ contract RewardRemitDestinationRemovalTest is SetupTest {
     /// An armed day no part of which went holds the commitments finalization
     /// booked toward the chain: exactly what a whole send would retire.
     function test_Removal_FreesAnArmedUnsentDaysCommitments() public {
-        _finalizeThrough(4);
+        _finalizeThrough(2);
         _armArbDay(1, 100e18, 20e18, 1e30);
         (uint256 whole, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
         (uint256 f0, uint256 r0) = _outstanding();
@@ -301,7 +304,7 @@ contract RewardRemitDestinationRemovalTest is SetupTest {
     /// the send retired (the day is never sent again, so nothing would ever
     /// retire it), and re-creates no hold.
     function test_Release_AfterTheWalk_RestoresNoCommitment() public {
-        _finalizeThrough(4);
+        _finalizeThrough(2);
         _armArbDay(1, 100e18, 20e18, 1e30);
         remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, _days(1), CAP / 2);
         LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(1);
@@ -434,6 +437,9 @@ contract RewardRemitDestinationRemovalTest is SetupTest {
         assertEq(cursor, 0, "no walk");
         assertEq(uint8(_status(CHAIN_ARB, 1)), uint8(LibRemitDayLedger.RemitDayStatus.Closeable), "still owed");
     }
+
+    /// The test contract is the remitter: a send refunds its fee surplus here.
+    receive() external payable {}
 
     // ─── log reading ──────────────────────────────────────────────────────
 
