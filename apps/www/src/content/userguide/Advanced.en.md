@@ -2087,8 +2087,14 @@ The protocol pays for these deliveries, with one limit:
 - **A higher tier**, or a change to the tier table, is paid for at
   most once a day per chain (a governance setting between 1 hour
   and 7 days). Until then that chain keeps your previous tier.
-- Anyone can pay the cross-chain fee to deliver an owed update
-  sooner. The contracts offer this; the app does not offer it yet.
+- An update held back by that wait, or one the budget could not pay,
+  **is not resent on its own when the wait ends**. It goes out with the
+  next update to your tier record on Base, or when someone makes the
+  delivery call for you.
+- Anyone can make that call. Once the wait has passed and the budget
+  can pay, the protocol pays for it; before then, the caller pays the
+  cross-chain fee to deliver sooner. The contracts offer this call; the
+  app does not offer it yet.
 
 A copy stops counting, and that chain gives no discount, when:
 

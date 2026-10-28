@@ -21,6 +21,11 @@ plainly what the app does not offer yet (paying to deliver a tier sooner, or
 refreshing a tier that rose with time alone), and that a copy whose tier has
 not changed is not resent. The operator notes name today's configuration.
 
+The chapter also says plainly that an update held back by the once-a-day
+limit, or one the budget could not pay, is not resent by itself when the
+wait ends: it goes with the next update to the tier record on Base, or when
+someone makes the delivery call, which the app does not offer yet.
+
 The short "How your VPFI tier travels across chains" section under Buy VPFI,
 which repeated the stale claims, now summarises the chapter in all ten
 languages and points to it. The anchor-parity check no longer records any

@@ -1905,9 +1905,14 @@ El protocolo paga estas entregas, con un límite:
 - **Un tier más alto**, o un cambio de la tabla de tiers, se paga como
   mucho una vez al día por cadena (un parámetro de gobernanza entre 1
   hora y 7 días). Hasta entonces esa cadena conserva tu tier anterior.
-- Cualquiera puede pagar la comisión cross-chain para entregar antes
-  una actualización pendiente. Los contratos lo permiten; la
-  aplicación todavía no lo ofrece.
+- Una actualización retenida por esa espera, o que el presupuesto no
+  pudo pagar, **no se reenvía sola cuando termina la espera**. Sale con
+  la siguiente actualización de su registro de nivel en Base, o cuando
+  alguien hace la llamada de entrega por usted.
+- Cualquiera puede hacer esa llamada. Una vez pasada la espera y si el
+  presupuesto puede pagarla, la paga el protocolo; antes de eso, quien
+  llama paga la comisión cross-chain para entregarla antes. Los contratos
+  ofrecen esta llamada; la aplicación todavía no la ofrece.
 
 Una copia deja de contar, y esa cadena no da descuento, cuando:
 

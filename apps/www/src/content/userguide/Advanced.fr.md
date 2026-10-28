@@ -1918,9 +1918,14 @@ Le protocole paie ces livraisons, avec une limite :
   payé au plus une fois par jour et par chaîne (un paramètre de
   gouvernance entre 1 heure et 7 jours). D'ici là, la chaîne garde ton
   tier précédent.
-- N'importe qui peut payer les frais cross-chain pour livrer plus tôt
-  une mise à jour due. Les contrats le permettent ; l'application ne le
-  propose pas encore.
+- Une mise à jour retenue par cette attente, ou que le budget n'a pas
+  pu payer, **n'est pas renvoyée d'elle-même à la fin de l'attente**. Elle
+  part avec la prochaine mise à jour de votre enregistrement de palier sur
+  Base, ou lorsque quelqu'un effectue l'appel de livraison pour vous.
+- N'importe qui peut effectuer cet appel. Une fois l'attente passée, et
+  si le budget peut payer, le protocole paie ; avant cela, l'appelant paie
+  les frais cross-chain pour livrer plus tôt. Les contrats proposent cet
+  appel ; l'application ne le propose pas encore.
 
 Une copie cesse de compter, et la chaîne ne donne alors aucune remise,
 quand :

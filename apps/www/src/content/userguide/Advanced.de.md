@@ -1910,9 +1910,15 @@ Das Protokoll bezahlt diese Zustellungen, mit einer Grenze:
   höchstens einmal pro Tag und Chain bezahlt (eine
   Governance-Einstellung zwischen 1 Stunde und 7 Tagen). Bis dahin
   behält die Chain dein vorheriges Tier.
-- Jeder kann die Cross-Chain-Gebühr bezahlen, um ein geschuldetes
-  Update früher zuzustellen. Die Contracts bieten das an; die App
-  bietet es noch nicht an.
+- Ein Update, das durch diese Wartezeit zurückgehalten wird oder das
+  das Budget nicht bezahlen konnte, **wird nach Ablauf der Wartezeit nicht
+  von selbst erneut gesendet**. Es geht mit der nächsten Aktualisierung
+  Ihres Tier-Eintrags auf Base hinaus, oder wenn jemand den Zustellaufruf
+  für Sie ausführt.
+- Diesen Aufruf kann jeder ausführen. Ist die Wartezeit vorbei und kann
+  das Budget zahlen, zahlt das Protokoll; vorher zahlt der Aufrufer die
+  Cross-Chain-Gebühr, um früher zuzustellen. Die Contracts bieten diesen
+  Aufruf an; die App bietet ihn noch nicht an.
 
 Eine Kopie zählt nicht mehr, und die Chain gibt dann keinen Rabatt,
 wenn:
