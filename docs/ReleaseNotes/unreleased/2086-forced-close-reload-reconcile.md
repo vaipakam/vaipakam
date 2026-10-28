@@ -17,8 +17,16 @@ loan as it stands. The issue proposed calling this case "replaced", which
 would have told a lender whose sped-up close-out succeeded that nothing
 happened; the new "superseded" outcome avoids that.
 
+This check runs alongside the wait rather than after it, because a wait on
+a hash the node no longer knows does not give up: it keeps watching. While
+the node still has the transaction, the wait's own answer (cancelled, or the
+sped-up copy's outcome) is used instead, since it is the more exact one. A
+second tab open on the same loan picks up the sending account and nonce
+from the shared record, so it can make the same check even when its own
+node no longer has the transaction.
+
 A record written before this change still works, without the nonce check.
-The wait on a hash the node no longer knows now backs off from one second
+The check, and the restart of a wait that failed, back off from one second
 to thirty, instead of asking every second for as long as the page is open.
 
 Closes #2086.

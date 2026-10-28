@@ -440,23 +440,32 @@ describe('isUnaccounted', () => {
  */
 describe('dispositionFromNonce', () => {
   it('takes the receipt as the outcome when our hash has one', () => {
-    expect(dispositionFromNonce({ receipt: 'success', accountNonce: 9, nonce: 4 })).toBe('success');
-    expect(dispositionFromNonce({ receipt: 'reverted', accountNonce: 9, nonce: 4 })).toBe('reverted');
+    expect(dispositionFromNonce({ receipt: 'success', accountNonce: 9, nonce: 4, transaction: 'absent' })).toBe('success');
+    expect(dispositionFromNonce({ receipt: 'reverted', accountNonce: 9, nonce: 4, transaction: 'absent' })).toBe('reverted');
   });
 
   it('reads a spent nonce with no receipt as superseded, never as replaced', () => {
-    expect(dispositionFromNonce({ receipt: 'absent', accountNonce: 5, nonce: 4 })).toBe('superseded');
+    expect(dispositionFromNonce({ receipt: 'absent', accountNonce: 5, nonce: 4, transaction: 'absent' })).toBe('superseded');
   });
 
   it('is not evidence while the nonce has not been passed', () => {
     // Equal: the next nonce IS ours, so it may still be waiting to mine.
-    expect(dispositionFromNonce({ receipt: 'absent', accountNonce: 4, nonce: 4 })).toBe('undetermined');
-    expect(dispositionFromNonce({ receipt: 'absent', accountNonce: 2, nonce: 4 })).toBe('undetermined');
+    expect(dispositionFromNonce({ receipt: 'absent', accountNonce: 4, nonce: 4, transaction: 'absent' })).toBe('undetermined');
+    expect(dispositionFromNonce({ receipt: 'absent', accountNonce: 2, nonce: 4, transaction: 'absent' })).toBe('undetermined');
+  });
+
+  it('yields to the live wait while the node still has our transaction (Codex #3040 r1)', () => {
+    expect(
+      dispositionFromNonce({ receipt: 'absent', accountNonce: 5, nonce: 4, transaction: 'visible' }),
+    ).toBe('undetermined');
+    expect(
+      dispositionFromNonce({ receipt: 'absent', accountNonce: 5, nonce: 4, transaction: 'unknown' }),
+    ).toBe('undetermined');
   });
 
   it('is not evidence when either read failed', () => {
-    expect(dispositionFromNonce({ receipt: 'absent', accountNonce: null, nonce: 4 })).toBe('undetermined');
-    expect(dispositionFromNonce({ receipt: 'unknown', accountNonce: 9, nonce: 4 })).toBe('undetermined');
+    expect(dispositionFromNonce({ receipt: 'absent', accountNonce: null, nonce: 4, transaction: 'absent' })).toBe('undetermined');
+    expect(dispositionFromNonce({ receipt: 'unknown', accountNonce: 9, nonce: 4, transaction: 'absent' })).toBe('undetermined');
   });
 });
 

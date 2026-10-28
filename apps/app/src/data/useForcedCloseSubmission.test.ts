@@ -15,7 +15,11 @@
  */
 import { createElement, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query';
-import { TransactionReceiptNotFoundError, type PublicClient } from 'viem';
+import {
+  TransactionNotFoundError,
+  TransactionReceiptNotFoundError,
+  type PublicClient,
+} from 'viem';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flush, renderHook } from '../test/renderHook';
 import {
@@ -257,15 +261,25 @@ describe('useForcedCloseSubmission', () => {
 
     /** A chain whose wait cannot account for the hash — the reload case:
      *  the live wait that would have seen a cancel or a Speed Up went
-     *  with the page. */
-    function orphanedChain(accountNonce: number) {
-      vi.mocked(settled).mockRejectedValue(new Error('wait gave up'));
+     *  with the page.
+     *
+     *  The wait NEVER SETTLES here, which is what viem's
+     *  `waitForTransactionReceipt` actually does with `timeout: 0` for a
+     *  hash it has never seen: it keeps watching blocks (Codex #3040 r1 —
+     *  an earlier version of this helper made it reject, and so hid that
+     *  a reconciliation run only on failure never ran). `visible` says
+     *  whether the node still has the transaction. */
+    function orphanedChain(accountNonce: number, visible = false) {
+      vi.mocked(settled).mockReturnValue(new Promise(() => {}));
       return {
         getTransactionCount: vi.fn(async () => accountNonce),
         getTransactionReceipt: vi.fn(async ({ hash }: { hash: `0x${string}` }) => {
           throw new TransactionReceiptNotFoundError({ hash });
         }),
-        getTransaction: vi.fn(async () => ({ from: SENDER, nonce: NONCE })),
+        getTransaction: vi.fn(async ({ hash }: { hash: `0x${string}` }) => {
+          if (!visible) throw new TransactionNotFoundError({ hash });
+          return { from: SENDER, nonce: NONCE };
+        }),
       };
     }
 
@@ -293,6 +307,41 @@ describe('useForcedCloseSubmission', () => {
       reads.unsubscribe();
     });
 
+    it('leaves the answer to the live wait while the node still has the transaction', async () => {
+      writeForcedCloseSubmission(CHAIN, LOAN, {
+        hash: HASH,
+        at: Date.now(),
+        sender: SENDER,
+        nonce: NONCE,
+      });
+      const pc = orphanedChain(NONCE + 1, true);
+      const { hook } = await mount(client, vi.fn(), pc as unknown as PublicClient);
+      await flush();
+      expect(pc.getTransactionCount).toHaveBeenCalled();
+      expect(hook.result.current.disposition).toBe('undetermined');
+      expect(hook.result.current.holding).toBe(true);
+    });
+
+    it('takes the sender and nonce another tab stored for the same hash, and reconciles with them', async () => {
+      writeForcedCloseSubmission(CHAIN, LOAN, { hash: HASH, at: Date.now() });
+      // This tab's node no longer has the transaction, so it cannot read
+      // the nonce back itself.
+      const pc = orphanedChain(NONCE + 1);
+      const { hook } = await mount(client, vi.fn(), pc as unknown as PublicClient);
+      await flush();
+      expect(hook.result.current.submitted?.nonce).toBeUndefined();
+      expect(pc.getTransactionCount).not.toHaveBeenCalled();
+      // The other tab enriches the record under the same hash.
+      const at = readForcedCloseSubmission(CHAIN, LOAN)!.at;
+      writeForcedCloseSubmission(CHAIN, LOAN, { hash: HASH, at, sender: SENDER, nonce: NONCE });
+      window.dispatchEvent(new StorageEvent('storage', { key: null }));
+      await flush();
+      expect(hook.result.current.submitted).toMatchObject({ hash: HASH, sender: SENDER, nonce: NONCE });
+      expect(pc.getTransactionCount).toHaveBeenCalledWith({ address: SENDER, blockTag: 'latest' });
+      await flush();
+      expect(hook.result.current.disposition).toBe('superseded');
+    });
+
     it('stays undetermined while the nonce is unspent', async () => {
       writeForcedCloseSubmission(CHAIN, LOAN, {
         hash: HASH,
@@ -309,7 +358,7 @@ describe('useForcedCloseSubmission', () => {
 
     it('reads the sender and nonce back for a record that lacks them, and stores them', async () => {
       writeForcedCloseSubmission(CHAIN, LOAN, { hash: HASH, at: Date.now() });
-      const pc = orphanedChain(NONCE + 1);
+      const pc = orphanedChain(NONCE + 1, true);
       const { hook } = await mount(client, vi.fn(), pc as unknown as PublicClient);
       await flush();
       expect(pc.getTransaction).toHaveBeenCalledWith({ hash: HASH });

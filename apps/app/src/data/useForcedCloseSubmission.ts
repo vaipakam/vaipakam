@@ -25,7 +25,11 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { TransactionReceiptNotFoundError, type PublicClient } from 'viem';
+import {
+  TransactionNotFoundError,
+  TransactionReceiptNotFoundError,
+  type PublicClient,
+} from 'viem';
 import { settled } from '../contracts/ownReceipt';
 import { DEFAULT_NOW_PERIOD_MS, useNowSec } from '../hooks/useNowSec';
 import {
@@ -336,31 +340,27 @@ export function useForcedCloseSubmission({
         // 'reverted' | 'cancelled' | 'replaced'.
         return r.ok ? 'success' : r.reason;
       } catch {
-        // The wait could not account for the hash. That alone says
-        // nothing about the transaction — but when the nonce it was sent
-        // with is known, the chain can still say whether that nonce has
-        // been spent (#2086). This is the case a reload produces: the
-        // live wait that would have seen a cancel or a Speed Up was lost
-        // with the page, and the original has since left the mempool.
-        // `withIdentity` is read when this runs, not when the render that
-        // declared the query did: the options are refreshed every render,
-        // so a nonce read back since the submit is already in it.
-        return reconcileByNonce(withIdentity!);
+        // A read that failed. It says nothing about the transaction, so
+        // it is not allowed to say anything here. (The nonce
+        // reconciliation below is NOT run from here: a hash the node no
+        // longer has does not make this wait fail, it keeps it waiting,
+        // so a catch-only reconciliation never ran in the case it was
+        // for — Codex #3040 r1.)
+        return 'undetermined';
       }
     },
   });
 
-  /** #2086 — the disposition from the sender's nonce, for a submission
-   *  whose wait could not account for its hash. `undetermined` unless the
-   *  nonce is known and the reads give positive evidence; the rule is
-   *  `dispositionFromNonce`. */
+  /** #2086 — the disposition from the sender's nonce. `undetermined`
+   *  unless the nonce is known and the reads give positive evidence; the
+   *  rule is `dispositionFromNonce`. */
   async function reconcileByNonce(
     s: ForcedCloseSubmission,
   ): Promise<ForcedCloseDisposition> {
     if (s.sender === undefined || s.nonce === undefined || !publicClient) {
       return 'undetermined';
     }
-    const [accountNonce, receipt] = await Promise.all([
+    const [accountNonce, receipt, transaction] = await Promise.all([
       publicClient
         .getTransactionCount({ address: s.sender, blockTag: 'latest' })
         .catch(() => null),
@@ -370,8 +370,14 @@ export function useForcedCloseSubmission({
         .catch((err: unknown) =>
           err instanceof TransactionReceiptNotFoundError ? ('absent' as const) : ('unknown' as const),
         ),
+      publicClient
+        .getTransaction({ hash: s.hash })
+        .then(() => 'visible' as const)
+        .catch((err: unknown) =>
+          err instanceof TransactionNotFoundError ? ('absent' as const) : ('unknown' as const),
+        ),
     ]);
-    return dispositionFromNonce({ receipt, accountNonce, nonce: s.nonce });
+    return dispositionFromNonce({ receipt, accountNonce, nonce: s.nonce, transaction });
   }
 
   /** #2086 — the sender and nonce of the submitted transaction, read back
@@ -407,8 +413,6 @@ export function useForcedCloseSubmission({
   });
   const identityData = identity.data ?? null;
 
-  const disposition = watch.data ?? null;
-
   /** The one value that identifies this transaction and cannot change
    *  identity between renders. */
   const submittedHash = submitted?.hash ?? null;
@@ -421,6 +425,45 @@ export function useForcedCloseSubmission({
     submitted !== null && submitted.nonce === undefined && identityData !== null
       ? { ...submitted, ...identityData }
       : submitted;
+
+  /** #2086 — the nonce reconciliation, run ALONGSIDE the live wait rather
+   *  than after it (Codex #3040 r1).
+   *
+   *  It used to run only when the wait failed, and in the case it exists
+   *  for the wait never fails: after a reload, a hash the node no longer
+   *  has leaves viem's `waitForTransactionReceipt` watching blocks for
+   *  good (`timeout: 0`), because with no copy of the original it has
+   *  nothing to classify a replacement against and no reason to give up.
+   *  So the reconciliation polls on its own, backing off like the
+   *  restarts do, until it has an answer or the wait has one.
+   *
+   *  It does not race the wait to a vaguer answer: `dispositionFromNonce`
+   *  answers `superseded` only once the node no longer has our
+   *  transaction, which is when the wait cannot tell a cancel from a
+   *  Speed Up any more. Before that, the wait's own answer stands. */
+  const reconcile = useQuery<ForcedCloseDisposition>({
+    queryKey: ['forcedClose', 'disposition', submissionKey, submitted?.hash, 'nonce'],
+    enabled:
+      withIdentity !== null &&
+      withIdentity.nonce !== undefined &&
+      Boolean(publicClient) &&
+      (watch.data === undefined || watch.data === 'undetermined'),
+    retry: false,
+    refetchInterval: (query) =>
+      query.state.data === undefined || query.state.data === 'undetermined'
+        ? dispositionRetryMs(query.state.dataUpdateCount)
+        : false,
+    // The options are refreshed every render, so this reads the identity
+    // as it stands when the poll runs.
+    queryFn: () => reconcileByNonce(withIdentity!),
+  });
+
+  /** The wait's answer when it has one; otherwise the reconciliation's.
+   *  An `undetermined` from either is not an answer. */
+  const answered = (d: ForcedCloseDisposition | undefined) =>
+    d !== undefined && d !== 'undetermined' ? d : undefined;
+  const disposition: ForcedCloseDisposition | null =
+    answered(watch.data) ?? answered(reconcile.data) ?? watch.data ?? reconcile.data ?? null;
 
   /** Persists the sender and nonce into this submission's device record
    *  (#2086), so a reload can reconcile by nonce. Only onto the record
@@ -861,7 +904,15 @@ export function useForcedCloseSubmission({
           delete next[key];
           return next;
         }
-        if (prev[key]?.hash === persisted.hash) return prev;
+        const held = prev[key];
+        if (held?.hash === persisted.hash) {
+          // The same transaction. Another tab may have read back its
+          // sender and nonce since this tab adopted it (#2086), and this
+          // tab's node may no longer be able to: take them, so this tab
+          // can reconcile by nonce on its own (Codex #3040 r1).
+          if (held.nonce !== undefined || persisted.nonce === undefined) return prev;
+          return { ...prev, [key]: { ...held, sender: persisted.sender, nonce: persisted.nonce } };
+        }
         return { ...prev, [key]: persisted };
       });
     };

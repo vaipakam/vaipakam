@@ -137,6 +137,11 @@ export function mayHaveChangedPosition(disposition: ForcedCloseDisposition | nul
  *   a transaction that executed under our hash would have a receipt.
  *   That is `superseded`, not `replaced`, because the consumer may have
  *   been a Speed Up of our own call (see the disposition).
+ * - The node must also no longer have our transaction. While it does,
+ *   the live wait can still re-read the original and tell a cancel from
+ *   a Speed Up, which is the more exact answer (`replaced`, or the Speed
+ *   Up's own receipt), so this rule yields to it rather than racing it
+ *   to a vaguer one (Codex #3040 r1).
  * - Anything else is not evidence. A nonce not yet passed means ours may
  *   still be pending (or dropped and not yet replaced); a failed read
  *   says nothing about the transaction.
@@ -151,10 +156,18 @@ export function dispositionFromNonce(input: {
   accountNonce: number | null;
   /** The nonce our transaction was sent with. */
   nonce: number;
+  /** Whether the node still has our transaction: `absent` when it
+   *  reports none, `unknown` when the read itself failed. */
+  transaction: 'visible' | 'absent' | 'unknown';
 }): ForcedCloseDisposition {
   if (input.receipt === 'success') return 'success';
   if (input.receipt === 'reverted') return 'reverted';
-  if (input.receipt === 'absent' && input.accountNonce !== null && input.accountNonce > input.nonce) {
+  if (
+    input.receipt === 'absent' &&
+    input.transaction === 'absent' &&
+    input.accountNonce !== null &&
+    input.accountNonce > input.nonce
+  ) {
     return 'superseded';
   }
   return 'undetermined';
