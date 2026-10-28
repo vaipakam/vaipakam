@@ -2290,6 +2290,7 @@
         "vaultUpgradeRequired": "इस trade का एक पक्ष पुराने vault version पर है और trade करने से पहले उसे upgrade करना होगा। कुछ भी send नहीं हुआ।",
         "selfTrade": "यह आपका ही offer है, इसलिए आप इसे नहीं ले सकते। Book से हटाना है तो इसे cancel करें।",
         "refinanceUntakeable": "यह refinance request अभी नहीं लिया जा सकता — या तो यह वह request नहीं है जो protocol ने इस loan के लिए record किया है (पुराना, या borrower द्वारा बदला गया), या borrower का इस loan पर early-close offset खुला है। कुछ भी नहीं भेजा गया।",
+        "cadenceNotAdmitted": "इस offer का interest-payment schedule अब इन शर्तों पर allowed नहीं है: इसके post होने के बाद periodic-interest settings, amount threshold या किसी asset की market status बदल गई। इसके creator को इसे cancel करके फिर से post करना होगा। कुछ भी नहीं भेजा गया।",
         "unknown": "Protocol अभी यह offer स्वीकार नहीं कर रहा। कुछ भी send नहीं हुआ — refresh करके दोबारा कोशिश करें, या थोड़ी देर बाद देखें।"
       },
       "termsNotAccepted": "यह करने से पहले आपको Vaipakam की शर्तें स्वीकार करनी होंगी। होम पेज खोलें और आपसे एक बार पूछा जाएगा — चुकौती, दावा और निकासी दोनों ही स्थितियों में चलती रहती हैं।",

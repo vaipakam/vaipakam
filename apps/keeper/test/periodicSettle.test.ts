@@ -313,7 +313,7 @@ describe('findSettleable', () => {
       kind: 'scanned',
       due: [5n],
       unread: [7n],
-      window: { index: 0, count: 1, total: 4 },
+      window: { index: 0, count: 1, total: 4, round: 0 },
     });
     expect(seen).toEqual([555n, 555n, 555n, 555n]);
   });

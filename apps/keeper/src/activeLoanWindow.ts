@@ -23,11 +23,18 @@ const SCAN_PAGE = 200n;
  *  requests (block, count, pages) before the pass's own per-loan reads. */
 export const SCAN_WINDOW = 400;
 
-/** Where a scan looked: window `index` of `count` over `total` active loans. */
+/** Where a scan looked: window `index` of `count` over `total` active loans,
+ *  on this window's `round`-th visit. */
 export interface ScanWindow {
   index: number;
   count: number;
   total: number;
+  /** How many times this window has been visited before: `visit ÷ count`.
+   *  A pass rotating the window's candidates across visits rotates by this,
+   *  never by the global visit. With `count` windows, the global visit steps
+   *  by `count` between two visits to one window, so rotating by it advances
+   *  a batch `count` steps at a time and can skip candidates for good. */
+  round: number;
 }
 
 /** The ids of window `visit mod count`, the block they were read at, and
@@ -46,7 +53,7 @@ export async function readActiveWindow(
   })) as bigint;
   const count = Math.max(1, Math.ceil(Number(total) / SCAN_WINDOW));
   const index = visit % count;
-  const window: ScanWindow = { index, count, total: Number(total) };
+  const window: ScanWindow = { index, count, total: Number(total), round: Math.floor(visit / count) };
   const from = BigInt(index * SCAN_WINDOW);
   const to = from + BigInt(SCAN_WINDOW) < total ? from + BigInt(SCAN_WINDOW) : total;
 

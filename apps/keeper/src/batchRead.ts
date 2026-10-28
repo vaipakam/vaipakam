@@ -212,13 +212,15 @@ export async function settledChunkedRead<K>(
   label: string,
   cutoff: number,
   run: number,
+  /** Read every chunk at this block rather than the head (see {@link batchedRead}). */
+  blockNumber?: bigint,
 ): Promise<Map<K, BatchResult>> {
   const out = new Map<K, BatchResult>();
   const order = walkFrom(keys, run);
   for (let i = 0; i < order.length; i += chunk) {
     const part = order.slice(i, i + chunk);
     // eslint-disable-next-line no-await-in-loop
-    const res = await settledRead(client, part.map(call), `${label} ${i}/${order.length}`, cutoff);
+    const res = await settledRead(client, part.map(call), `${label} ${i}/${order.length}`, cutoff, blockNumber);
     part.forEach((k, j) => out.set(k, res[j]));
   }
   return out;

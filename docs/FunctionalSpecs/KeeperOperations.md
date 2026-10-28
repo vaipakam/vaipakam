@@ -235,6 +235,12 @@ evidence that the migration has completed.
   on an incomplete reading could never finish. A day with an entry still
   running is counted as waiting, not attempted. Its own unfinished proof
   for a day is continued rather than replaced.
+- However many reward entries cover a day, its proof is reached. A day
+  covered by more entries than one run can read is checked, and then
+  proven, over several runs: each run carries on from where the last one
+  stopped, keeping the day's running sum and the position its proof has
+  reached, and never starts the reading again. A day whose reading carries
+  on is named on the run's report.
 - It finalizes a retired custody era once every day of the era's span is
   proven closed and no staging hold remains on its row, and never touches
   the live era. On a chain with an active reward role it drains the whole
@@ -302,7 +308,9 @@ evidence that the migration has completed.
   the covering reward entries page by page, in ascending order, and then
   dispatches the finished quote toward Base, paying the lane fee. Before it
   dispatches, the accumulated conservation must equal the day's recorded
-  totals on both sides. A day whose quote comes to nothing on both sides is
+  totals on both sides. A day covered by more entries than one run can
+  read is summed and submitted over several runs, each carrying on from
+  where the last stopped, so no day is out of reach because it was busy. A day whose quote comes to nothing on both sides is
   resolved as zero and needs nothing more. The fee for each send is held to
   this duty's own ceiling. A send whose quoted fee is above that ceiling is
   refused and stated, and it is tried again on a later run.
@@ -470,6 +478,33 @@ evidence that the migration has completed.
 - Neither step pays a fee or moves value to the keeper. The keeper works a
   chain only when its connection answers for that chain, and a value it
   could not read stops the affected step and is stated in the run's report.
+
+## Listing NFT collateral during grace
+
+- While a loan backed by an NFT is in its grace window, anyone other than the
+  borrower-position holder may put the collateral up for sale at the protocol
+  floor: the asking price that pays the lender and the treasury what they are
+  owed plus the configured buffer. Without a keeper nobody makes that call,
+  the grace window passes unsold, and the lender takes the NFT in kind at
+  default even when a buyer at the floor existed. The keeper makes it.
+- It checks every minute, on every chain it serves, because the shortest
+  grace window is one hour and every minute of it without a floor listing is
+  a minute a buyer cannot take the NFT.
+- It works only loans whose terms allow a prepay listing, whose collateral is
+  an NFT and whose principal is a token, and whose borrower has not opted out
+  of auto-listing. Whether a loan is in grace comes from the loan's own
+  deadlines, pause credit included, against the chain's clock. With no
+  listing up it posts one at the floor; a listing above the floor, or built on
+  amounts that have since grown, is moved down to it. A listing already at or
+  below the floor on current amounts is left alone.
+- The price is always the protocol's floor at the moment the call lands; the
+  keeper never chooses one. Each listing is reported with its asking price,
+  and each loan the protocol declines is reported with the protocol's own
+  reason and tried again later.
+- Nothing is listed on a chain where prepay listings are switched off or no
+  buffer is configured, and the report says so. The keeper pays only gas and
+  moves no value to itself. It does not withdraw a listing once grace ends;
+  the default that follows is a separate duty.
 
 ## Activation and operator visibility
 

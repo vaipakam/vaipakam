@@ -15,10 +15,11 @@
 // a stored floor of settled days, so no zeroed day is left out for good:
 //
 //   QUOTE — while the day is neither compensated nor past its frozen expiry,
-//     and not yet quoted: scan the chain's reward entries for the ones
+//     and not yet quoted: read the chain's reward entries for the ones
 //     covering the day (`../rewardEntries`), check they sum exactly to the
 //     day's folded totals, page them into the quote's accumulation in
-//     ascending id order (`accumulateCompQuoteBatch`), and once both sides are
+//     ascending id order (`accumulateCompQuoteBatch`), every read resuming
+//     across runs so a busy day is quoted over several (#3014), and once both sides are
 //     complete dispatch the quote toward Base
 //     (`quoteZeroedDayCompensation`), paying the messenger's quoted CCIP fee
 //     under this pass's own ceiling (`REWARD_ZEROED_DAY_MAX_FEE_WEI`). A day
@@ -66,12 +67,30 @@ import { deadlineClient, PastRunDeadline } from '../batchRead';
 import { shortErr } from '../callErrors';
 import { feeCeiling } from '../feeCeiling';
 import { sendOpsAlert, type OpsAlertOutcome } from '../opsAlert';
-import { conservationGap, coveringEntries, decodeEntryFloor, encodeEntryFloor, scanEntries, SIDE_BORROWER, SIDE_LENDER, type EntryRow, type ScannedEntry, type Side } from '../rewardEntries';
+import {
+  advanceEntryFloor,
+  continueDaySums,
+  daySumsGap,
+  decodeDaySums,
+  decodeEntryFloor,
+  decodeFeedMark,
+  encodeDaySums,
+  encodeEntryFloor,
+  encodeFeedMark,
+  feedFrom,
+  EntryPages,
+  floorFor,
+  readFeed,
+  SIDE_BORROWER,
+  SIDE_LENDER,
+  type EntryRow,
+  type Side,
+} from '../rewardEntries';
 import { advanceFloor, d1ScanCursors, decodeIndex, finalFloor, rotatingWindow, type FinalBlock, type ScanCursors } from '../scanCursors';
 import { StepSender, type SendFeeCeiling } from '../stepSender';
 import { PassReader } from '../passReader';
 import { pagesAfter } from '../rewardCloseOut/plan';
-import { accumulationWedge, zeroedDayStep, type ZeroedDayState } from './plan';
+import { zeroedDayStep, type ZeroedDayState } from './plan';
 
 export * from './plan';
 
@@ -97,10 +116,18 @@ export const RECEIPT_TIMEOUT_MS = 30_000;
 export const DEFAULT_WINDOW_DAYS = 60;
 /** Entry ids per `accumulateCompQuoteBatch`. */
 export const PAGE_IDS = 100;
-/** Entry pages one run may read, from the scan's stored floor. */
+/** Entry pages one run may read, shared by every read of the quote step.
+ *  Each read resumes where the last run stopped (#3014), so this bounds a
+ *  run's reads and never which day can be quoted. */
 export const MAX_ENTRY_PAGES = 20;
-/** The scan-cursor item this pass keeps (`scanCursors.ts`). */
+/** Of those, the pages a run may spend moving the entry floor forward. */
+export const FLOOR_PAGES = 4;
+/** The scan-cursor items this pass keeps (`scanCursors.ts`). */
 export const ENTRY_FLOOR_ITEM = 'entry-floor';
+/** A day's running conservation sum (`rewardEntries.DaySums`). */
+export const daySumsItem = (day: number) => `day-scan:${day}`;
+/** How far a day's accumulation has been fed (`rewardEntries.FeedMark`). */
+export const dayFeedItem = (day: number) => `day-feed:${day}`;
 export const DAY_FLOOR_ITEM = 'day-floor';
 export const DAY_NEXT_ITEM = 'day-next';
 export const MAX_FEE_VAR = 'REWARD_ZEROED_DAY_MAX_FEE_WEI';
@@ -152,6 +179,9 @@ export interface ZeroedDayReport {
   waiting: string[];
   wedged: string[];
   scanGap: number[];
+  /** Days whose entry reads ran out of this run's pages; the next run reads
+   *  on from where this one stopped. */
+  scanPending: number[];
   refused: Map<string, string>;
   unread: Map<string, string>;
   stopped: string | null;
@@ -209,6 +239,7 @@ export function describeReport(r: ZeroedDayReport): string {
     ...(r.waiting.length > 0 ? [`waiting=${r.waiting.join('; ')}`] : []),
     ...(r.wedged.length > 0 ? [`wedged=${r.wedged.join('; ')}`] : []),
     ...(r.scanGap.length > 0 ? [`days-scan-short=${list(r.scanGap)}`] : []),
+    ...(r.scanPending.length > 0 ? [`days-reading-on=${list(r.scanPending)} (entry reads continue next run)`] : []),
     ...(r.refused.size > 0 ? [`refused=${[...r.refused].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.unread.size > 0 ? [`unread=${[...r.unread].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.stopped ? [`stopped=${r.stopped}`] : []),
@@ -242,6 +273,7 @@ export async function zeroedDayOnce(chainId: number, diamond: Address, deps: Zer
     waiting: [],
     wedged: [],
     scanGap: [],
+    scanPending: [],
     refused: sender.refused,
     unread: sender.unread,
     stopped: null,
@@ -418,31 +450,25 @@ async function settledAt(r: Reader, days: readonly number[], block: FinalBlock):
 async function workDays(r: Reader, sender: StepSender, report: ZeroedDayReport, messenger: Address, deps: ZeroedDayDeps, scanFrom: number): Promise<number[]> {
   const states = await readStates(r, (d) => sender.noteUnread(`day:${d}`, 'its quote, clock, compensation or loss record'), report.zeroed);
   const now = (await deps.client.getBlock({ blockTag: 'latest' })).timestamp;
-  // One entry scan for every day that needs a walk this run.
   const plans = [...states.values()].map((s) => ({ s, step: zeroedDayStep(s, now) }));
   const walkDays = plans.filter((p) => p.step.kind === 'quote' || p.step.kind === 'refine').map((p) => p.s.day);
-  let entries: ScannedEntry[] = [];
-  let completeThrough = Number.POSITIVE_INFINITY;
+  // Every entry read shares one page budget and resumes where the last run
+  // stopped (#3014): the floor, each day's conservation sum, and each
+  // accumulation (from its own cursor on chain). A day covered by more
+  // entries than one run can read is finished over several runs.
+  let reads: EntryReads | null = null;
   if (walkDays.length > 0) {
+    const pages = new EntryPages((from, n) => r.one<readonly EntryRow[]>('getRewardEntriesRange', [from, n]), MAX_ENTRY_PAGES);
+    const stored = await deps.cursors.get([ENTRY_FLOOR_ITEM, ...walkDays.flatMap((d) => [daySumsItem(d), dayFeedItem(d)])]);
+    const put = async (item: string, value: string) => {
+      if (stored.get(item) !== value) await deps.cursors.put(item, value);
+    };
     // From the stored floor: entries below it ended before the oldest day
     // the pass may still work, so a run reads the entries live across those
-    // days, not the chain's whole history (`rewardEntries.ts`, Codex #2993 r1).
-    const stored = (await deps.cursors.get([ENTRY_FLOOR_ITEM])).get(ENTRY_FLOOR_ITEM);
-    const scan = await scanEntries(
-      (from, n) => r.one<readonly EntryRow[]>('getRewardEntriesRange', [from, n]),
-      scanFrom,
-      walkDays[walkDays.length - 1],
-      MAX_ENTRY_PAGES,
-      decodeEntryFloor(stored),
-    );
-    const floor = encodeEntryFloor(scan.floor);
-    if (floor !== stored) await deps.cursors.put(ENTRY_FLOOR_ITEM, floor);
-    entries = scan.entries;
-    completeThrough = scan.completeThrough;
-    const beyond = walkDays.filter((d) => d > completeThrough);
-    if (beyond.length > 0) {
-      sender.noteUnread('quote', `the reward-entry scan reads at most ${MAX_ENTRY_PAGES} pages a run from its stored floor and reached only the entries starting by day ${completeThrough}, so days ${beyond.join(',')} are not accumulated this run (a quote on a partial scan cannot complete)`);
-    }
+    // days, not the chain's whole history (Codex #2993 r1).
+    const floor = await advanceEntryFloor(pages, decodeEntryFloor(stored.get(ENTRY_FLOOR_ITEM)), scanFrom, FLOOR_PAGES);
+    await put(ENTRY_FLOOR_ITEM, encodeEntryFloor(floor));
+    reads = { pages, start: floorFor(floor, scanFrom), stored, put };
   }
   const terminal = new Set(plans.filter((p) => p.step.kind === 'done').map((p) => p.s.day));
   // Every lapse already on chain is noticed from its record, whoever made it;
@@ -483,13 +509,13 @@ async function workDays(r: Reader, sender: StepSender, report: ZeroedDayReport, 
       }
       case 'quote':
       case 'refine': {
-        if (d > completeThrough) break;
+        if (reads === null) break;
         if (deps.keeper === null && step.kind === 'quote') {
           sender.noteUnread(`quote:${d}`, 'no signing key, so no quote can be dispatched');
           break;
         }
         // eslint-disable-next-line no-await-in-loop
-        const done = await accumulate(r, sender, report, deps, s, entries);
+        const done = await accumulate(sender, report, deps, s, reads);
         if (!done) break;
         if (step.kind === 'refine') {
           report.refined.push(d);
@@ -504,50 +530,83 @@ async function workDays(r: Reader, sender: StepSender, report: ZeroedDayReport, 
   return [...terminal];
 }
 
-/** Page every covering id past each side's cursor into the quote; true once
- *  both sides are complete. */
-async function accumulate(
-  r: Reader,
-  sender: StepSender,
-  report: ZeroedDayReport,
-  deps: ZeroedDayDeps,
-  s: DayState,
-  entries: readonly ScannedEntry[],
-): Promise<boolean> {
+interface EntryReads {
+  pages: EntryPages;
+  /** Where a read for any day the pass works may start (the floor). */
+  start: bigint;
+  stored: Map<string, string>;
+  put: (item: string, value: string) => Promise<void>;
+}
+
+/**
+ * Page every covering id past each side's cursor into the quote; true once
+ * both sides are complete.
+ *
+ * Nothing is sent until the day's covering entries are known to sum to its
+ * folded totals (a running sum kept across runs). The ids sent are read from
+ * the accumulation's own cursor on, so its cursor is the record of what was
+ * submitted. A side the run has read to its end, with every covering id past
+ * its cursor submitted, that still does not conserve its total cannot
+ * complete: its cursor was moved past covering ids that were never submitted
+ * (the accumulator is permissionless), and only the administrator's reset
+ * frees it.
+ */
+async function accumulate(sender: StepSender, report: ZeroedDayReport, deps: ZeroedDayDeps, s: DayState, reads: EntryReads): Promise<boolean> {
   const d = s.day;
-  const cover = coveringEntries(entries, d);
-  const gap = conservationGap(cover, s.totals);
-  if (gap !== null) {
-    report.scanGap.push(d);
-    sender.noteUnread(`quote:${d}`, gap);
+  const sums = await continueDaySums(reads.pages, d, decodeDaySums(reads.stored.get(daySumsItem(d))), reads.start);
+  if (!sums.complete) {
+    report.scanPending.push(d);
+    await reads.put(daySumsItem(d), encodeDaySums(sums));
     return false;
   }
-  const sides: { side: Side; name: string; cover: readonly ScannedEntry[]; cursor: bigint; conserved: bigint; total: bigint }[] = [
-    { side: SIDE_LENDER, name: 'lender', cover: cover.lender, cursor: s.accum.cursorLender, conserved: s.accum.consLender, total: s.totals.lender },
-    { side: SIDE_BORROWER, name: 'borrower', cover: cover.borrower, cursor: s.accum.cursorBorrower, conserved: s.accum.consBorrower, total: s.totals.borrower },
+  const gap = daySumsGap(sums, s.totals);
+  if (gap !== null) {
+    // Read again from the start next run: a finished sum that misses the
+    // totals is not carried forward.
+    report.scanGap.push(d);
+    sender.noteUnread(`quote:${d}`, gap);
+    await reads.put(daySumsItem(d), '');
+    return false;
+  }
+  await reads.put(daySumsItem(d), encodeDaySums(sums));
+  const sides: { side: Side; name: 'lender' | 'borrower'; cursor: bigint; conserved: bigint; total: bigint }[] = [
+    { side: SIDE_LENDER, name: 'lender', cursor: s.accum.cursorLender, conserved: s.accum.consLender, total: s.totals.lender },
+    { side: SIDE_BORROWER, name: 'borrower', cursor: s.accum.cursorBorrower, conserved: s.accum.consBorrower, total: s.totals.borrower },
   ];
+  const open = () => sides.filter((x) => x.conserved !== x.total);
+  if (open().length > 0) {
+    const cursors = { lender: sides[0].cursor, borrower: sides[1].cursor };
+    // The accumulation is one per day, so its mark's walk is 0.
+    const feed = await readFeed(reads.pages, d, cursors, feedFrom(decodeFeedMark(reads.stored.get(dayFeedItem(d))), 0n, cursors, reads.start));
+    for (const side of open()) {
+      for (const page of pagesAfter(feed[side.name].map((e) => e.id), 0n, PAGE_IDS)) {
+        // eslint-disable-next-line no-await-in-loop
+        const res = await sender.call(`accumulate-${side.name}`, d, 'accumulateCompQuoteBatch', [BigInt(d), side.side, page]);
+        if (res !== 'landed') return false;
+        report.pagesLanded += 1;
+        const sent = new Set(page);
+        side.conserved += feed[side.name].filter((e) => sent.has(e.id)).reduce((a, e) => a + e.perDayNumeraire18, 0n);
+        side.cursor = page[page.length - 1];
+      }
+    }
+    // Everything read up to `feed.next` is in the accumulation now.
+    await reads.put(dayFeedItem(d), encodeFeedMark({ walk: 0n, next: feed.next, lender: sides[0].cursor, borrower: sides[1].cursor }));
+    if (!feed.exhausted) {
+      report.scanPending.push(d);
+      return false;
+    }
+  }
   let complete = true;
-  for (const side of sides) {
-    if (side.conserved === side.total) continue;
-    const wedge = accumulationWedge(side.cover, side.cursor, side.conserved);
-    const key = `zeroed-day-wedge:${report.chainId}:${d}:${side.side}`;
-    if (wedge !== null) {
-      report.wedged.push(`${d} ${side.name}: ${wedge}`);
-      // eslint-disable-next-line no-await-in-loop
-      await deps.alert(
-        key,
-        `⚠️ Zeroed reward day ${d} on chain ${report.chainId}: the ${side.name}-side compensation quote cannot complete — ${wedge}. Only the administrator's resetCompQuoteAccumulation(${d}, ${side.side}) frees it; until then the day is not quoted, so Base has no figure to compensate it against before it lapses.`,
-        WEDGE_ALERT_INTERVAL_SEC,
-      );
-      complete = false;
-      continue;
-    }
-    for (const page of pagesAfter(side.cover.map((e) => e.id), side.cursor, PAGE_IDS)) {
-      // eslint-disable-next-line no-await-in-loop
-      const res = await sender.call(`accumulate-${side.name}`, d, 'accumulateCompQuoteBatch', [BigInt(d), side.side, page]);
-      if (res !== 'landed') return false;
-      report.pagesLanded += 1;
-    }
+  for (const side of open()) {
+    complete = false;
+    const wedge = `every entry covering it up to its cursor at entry ${side.cursor} is submitted, with ${side.conserved} conserved of a ${side.total} total`;
+    report.wedged.push(`${d} ${side.name}: ${wedge}`);
+    // eslint-disable-next-line no-await-in-loop
+    await deps.alert(
+      `zeroed-day-wedge:${report.chainId}:${d}:${side.side}`,
+      `⚠️ Zeroed reward day ${d} on chain ${report.chainId}: the ${side.name}-side compensation quote cannot complete — ${wedge}. Only the administrator's resetCompQuoteAccumulation(${d}, ${side.side}) frees it; until then the day is not quoted, so Base has no figure to compensate it against before it lapses.`,
+      WEDGE_ALERT_INTERVAL_SEC,
+    );
   }
   return complete;
 }

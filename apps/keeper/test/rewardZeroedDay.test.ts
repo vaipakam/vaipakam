@@ -14,14 +14,14 @@ import { ContractFunctionRevertedError, encodeErrorResult, type Address, type Pu
 import {
   ABI,
   PAGE_IDS,
-  accumulationWedge,
+  MAX_ENTRY_PAGES,
   describeReport,
   zeroedDayOnce,
   zeroedDayStep,
   DAY_FLOOR_ITEM,
   type ZeroedDayState,
 } from '../src/rewardZeroedDay';
-import { SIDE_BORROWER, SIDE_LENDER, type ScannedEntry } from '../src/rewardEntries';
+import { ENTRY_PAGE, SIDE_BORROWER, SIDE_LENDER } from '../src/rewardEntries';
 import type { SendFeeCeiling } from '../src/stepSender';
 import { memoryScanCursors, type ScanCursors } from '../src/scanCursors';
 import type { KeeperContext } from '../src/keeper';
@@ -92,14 +92,6 @@ describe('the pure rules', () => {
     expect(zeroedDayStep({ ...funded, comp: { ...funded.comp, lenderPool: 10n } }, NOW), 'fully funded').toEqual({ kind: 'done' });
     expect(zeroedDayStep({ ...funded, comp: { ...funded.comp, provisional: true } }, NOW)).toMatchObject({ kind: 'wait', why: /provisional/ });
     expect(zeroedDayStep({ ...funded, clock: { ...funded.clock, finalizedAt: NOW - WINDOW - 1n } }, NOW).kind, 'a compensated day never takes the full lapse').toBe('short-lapse');
-  });
-
-  it('accumulationWedge: a cursor past covering ids never submitted', () => {
-    const cover: ScannedEntry[] = [3, 5, 9].map((id) => ({ id: BigInt(id), side: SIDE_LENDER, first: 1, endDay: 9, perDayNumeraire18: BigInt(id) }));
-    expect(accumulationWedge(cover, 0n, 0n)).toBeNull();
-    expect(accumulationWedge(cover, 5n, 8n)).toBeNull();
-    expect(accumulationWedge(cover, 5n, 5n)).toMatch(/cursor sits at entry 5 with 5 conserved, where the covering entries up to it add up to 8/);
-    expect(accumulationWedge(cover, 9n, 9n), 'a cursor parked past ids 3 and 5').not.toBeNull();
   });
 });
 
@@ -460,6 +452,25 @@ describe('a run', () => {
     expect(m.sent).toEqual([]);
     expect(r.scanGap).toEqual([3]);
     expect(r.unread.get('quote:3')).toMatch(/lender entries sum to 10 of a 11 total/);
+  });
+
+  it('quotes a day covered by more entries than one run can read, over several runs (#3014)', async () => {
+    m.zero(3);
+    const n = MAX_ENTRY_PAGES * Number(ENTRY_PAGE) + 1;
+    for (let i = 0; i < n; i++) m.addEntry(i % 2 === 0 ? SIDE_LENDER : SIDE_BORROWER, 3, 4, 1n);
+    const cursors = memoryScanCursors();
+    let r = await run({ cursors });
+    expect(r.scanPending, 'the first run reads what it can and keeps it').toEqual([3]);
+    let runs = 1;
+    while (r.quoted.length === 0 && runs < 60) {
+      r = await run({ cursors });
+      runs += 1;
+    }
+    expect(r.quoted).toEqual([3]);
+    expect(runs).toBeGreaterThan(2);
+    const pages = m.sent.filter((x) => x.fn === 'accumulateCompQuoteBatch');
+    expect(pages.reduce((a, x) => a + (x.args[2] as bigint[]).length, 0), 'every covering id once').toBe(n);
+    expect(r.wedged).toEqual([]);
   });
 
   it('a cursor parked past covering entries is alerted for the administrator, and that side is not sent into', async () => {

@@ -76,9 +76,10 @@ contract CheckSelectors is Script {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2); // Adjust count
+        selectors = new bytes4[](3); // Adjust count
         selectors[0] = DefaultedFacet.triggerDefault.selector;
         selectors[1] = DefaultedFacet.isLoanDefaultable.selector;
+        selectors[2] = DefaultedFacet.defaultKycAdmission.selector;
     }
 
     // Add similar functions for other facets, e.g., getProfileFacetSelectors() { ... ProfileFacet.setTradeAllowance.selector; ... }

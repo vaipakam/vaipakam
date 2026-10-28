@@ -1,6 +1,30 @@
 [
   {
     "type": "function",
+    "name": "defaultKycAdmission",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "admitted",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "refusal",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isLoanDefaultable",
     "inputs": [
       {

@@ -2290,6 +2290,7 @@
         "vaultUpgradeRequired": "Una de las partes de esta operación usa una versión antigua del vault y necesita actualizarla antes de poder operar. No se ha enviado nada.",
         "selfTrade": "Esta es tu propia oferta, así que no puedes aceptarla. Cancélala si quieres retirarla del libro.",
         "refinanceUntakeable": "Esta solicitud de refinanciación no se puede aceptar ahora: o no es la solicitud que el protocolo tiene registrada para su préstamo (una anterior, o una que el prestatario sustituyó), o el prestatario tiene abierta una oferta de compensación para cierre anticipado del préstamo. No se envió nada.",
+        "cadenceNotAdmitted": "El calendario de pago de intereses de esta oferta ya no está permitido en estas condiciones: la configuración de intereses periódicos, el umbral de importe o el estado de mercado de un activo cambiaron después de publicarla. Su creador debe cancelarla y volver a publicarla. No se envió nada.",
         "unknown": "El protocolo no acepta esta oferta en este momento. No se ha enviado nada: actualiza e inténtalo de nuevo, o vuelve dentro de un rato."
       },
       "termsNotAccepted": "Necesitas aceptar las condiciones de Vaipakam antes de hacer esto. Abre la página de Inicio y se te pedirá una sola vez; devolver, reclamar y retirar siguen funcionando igualmente.",

@@ -22,6 +22,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
@@ -98,6 +99,9 @@ contract RedeployFacets is Script {
     /// @notice #2957 - the target Diamond predates the position NFT metadata
     ///         split; see {_requireNftMetadataSplit}.
     error PredatesNftMetadataSplit(address diamond);
+    /// @notice #3009 / #3025 - the target Diamond's OfferPreviewFacet predates
+    ///         the cadence admission host; see {_requireCadenceAdmissionHost}.
+    error PredatesCadenceAdmissionHost(address diamond);
 
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -157,6 +161,9 @@ contract RedeployFacets is Script {
         // #2957 - and one from before the NFT metadata split; see
         // {_requireNftMetadataSplit}.
         _requireNftMetadataSplit(diamond);
+        // #3009 / #3025 - and one whose OfferPreviewFacet cannot answer the
+        // origination cadence check; see {_requireCadenceAdmissionHost}.
+        _requireCadenceAdmissionHost(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -333,6 +340,12 @@ contract RedeployFacets is Script {
         // new (Add); on a pre-#594 diamond all five would be new (Add).
         (bytes4[] memory consToAdd, bytes4[] memory consToReplace) =
             _partitionByRouting(diamond, _consolidationSelectors());
+        // #2083 — DefaultedFacet gained the `defaultKycAdmission` view, new on
+        // a pre-#2083 diamond (Add) and routed after (Replace). The routed
+        // subset is never empty (`isLoanDefaultable` is routed on every
+        // existing diamond), so the fixed Replace slot below stays valid.
+        (bytes4[] memory dfToAdd, bytes4[] memory dfToReplace) =
+            _partitionByRouting(diamond, _defaultedSelectors());
         // #1810 — EarlyWithdrawalFacet gained `createLoanSaleOfferBound`, so
         // its list is partitioned like the others: on a pre-#1810 diamond the
         // three older selectors are routed (Replace) and the bound entry is
@@ -501,11 +514,12 @@ contract RedeployFacets is Script {
             (tfToAdd.length > 0 ? 1 : 0) + (tfToReplace.length > 0 ? 1 : 0) +
             (nvToAdd.length > 0 ? 1 : 0) + (nvToReplace.length > 0 ? 1 : 0) +
             (nfToAdd.length > 0 ? 1 : 0) + (nfToReplace.length > 0 ? 1 : 0) +
-            (fsToAdd.length > 0 ? 1 : 0) + (fsToReplace.length > 0 ? 1 : 0);
+            (fsToAdd.length > 0 ? 1 : 0) + (fsToReplace.length > 0 ? 1 : 0) +
+            (dfToAdd.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
             new IDiamondCut.FacetCut[](9 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
-        cuts[1] = _replace(address(defaultedFacet), _defaultedSelectors());
+        cuts[1] = _replace(address(defaultedFacet), dfToReplace);
         cuts[2] = _replace(address(loanFacet), _loanSelectors());
         cuts[3] = _replace(address(precloseFacet), _precloseSelectors());
         cuts[4] = _replace(address(earlyWithdrawalFacet), ewToReplace);
@@ -554,6 +568,11 @@ contract RedeployFacets is Script {
         }
         if (consToAdd.length > 0) {
             cuts[idx++] = _add(address(consolidationFacet), consToAdd);
+        }
+        // #2083 — the default-KYC verdict view is an Add on a pre-#2083
+        // diamond; on a current one the subset is empty and no Add is cut.
+        if (dfToAdd.length > 0) {
+            cuts[idx++] = _add(address(defaultedFacet), dfToAdd);
         }
         // #1810 — the quote-bound listing entry is an Add on any pre-#1810
         // diamond (the routed subset went through the fixed Replace above).
@@ -912,6 +931,25 @@ contract RedeployFacets is Script {
         ) revert PredatesTierRecordSeam(diamond);
     }
 
+    /// @dev #3009 / #3025 - refuse a Diamond whose OfferPreviewFacet predates
+    ///      the cadence admission host. LoanFacet re-admits the cadence of
+    ///      every loan it opens, and OfferMatchFacet previews the same answer,
+    ///      through a self-call to `requireOriginationCadenceAdmitted`, a
+    ///      selector only OfferPreviewFacet carries. This curated set refreshes
+    ///      LoanFacet and OfferMatchFacet but not OfferPreviewFacet, so run on
+    ///      an older Diamond it would leave every loan creation reverting
+    ///      `FunctionDoesNotExist`. Crossing the boundary is a fresh deploy,
+    ///      `RefreshAllFacetsInPlace` or `ReplaceStaleFacets` (both carry the
+    ///      host), never this refresh. The marker is the routing of
+    ///      `requireOriginationCadenceAdmitted`, the later of the two
+    ///      selectors. Called before the broadcast starts.
+    function _requireCadenceAdmissionHost(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(OfferPreviewFacet.requireOriginationCadenceAdmitted.selector)
+                == address(0)
+        ) revert PredatesCadenceAdmissionHost(diamond);
+    }
+
     function _replace(address facet, bytes4[] memory selectors)
         internal
         pure
@@ -1049,12 +1087,15 @@ contract RedeployFacets is Script {
         s[0] = RiskSplitLiquidationFacet.triggerLiquidationSplit.selector;
     }
 
-    /// @dev The DefaultedFacet selectors routed on every Diamond this script
-    ///      accepts. #2796's sell-amount `triggerDefault` is cut by
-    ///      {_forcedSaleEntryCuts} instead, because it may be new.
+    /// @dev The DefaultedFacet selectors this script cuts through its routing
+    ///      partition: `isLoanDefaultable`, routed on every Diamond it accepts,
+    ///      and #2083's `defaultKycAdmission`, which may be new. #2796's
+    ///      sell-amount `triggerDefault` is cut by {_forcedSaleEntryCuts}
+    ///      instead.
     function _defaultedSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](2);
         s[0] = DefaultedFacet.isLoanDefaultable.selector;
+        s[1] = DefaultedFacet.defaultKycAdmission.selector;
     }
 
     /// @dev #2796 - the cuts the sell-amount entry points need beyond the

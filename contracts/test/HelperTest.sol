@@ -674,10 +674,11 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = OfferPreviewFacet.previewAccept.selector;
         selectors[1] = OfferPreviewFacet.requireCadenceAdmitted.selector;
         selectors[2] = OfferPreviewFacet.previewCadenceAdmission.selector;
+        selectors[3] = OfferPreviewFacet.requireOriginationCadenceAdmitted.selector;
         return selectors;
     }
 
@@ -1390,9 +1391,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2); // Adjust count
+        selectors = new bytes4[](3); // Adjust count
         selectors[0] = DefaultedFacet.triggerDefault.selector;
         selectors[1] = DefaultedFacet.isLoanDefaultable.selector;
+        selectors[2] = DefaultedFacet.defaultKycAdmission.selector;
     }
 
     function getRiskFacetSelectors()

@@ -5,8 +5,6 @@
 // and no sends: `index.ts` feeds this with what it read and carries out the
 // step it names.
 
-import type { ScannedEntry } from '../rewardEntries';
-
 /** What a run read about one zeroed day. */
 export interface ZeroedDayState {
   day: number;
@@ -74,18 +72,4 @@ function quotable(s: ZeroedDayState, step: ZeroedDayStep): ZeroedDayStep {
   if (s.closeSentAt === 0n) return { kind: 'wait', why: 'its local interest close has not run' };
   if (!s.stamped) return { kind: 'wait', why: 'its pool stamp is not installed' };
   return step;
-}
-
-/**
- * Whether a side's accumulation can still complete by paging the covering ids
- * past its cursor: what it has conserved must be exactly what the covering ids
- * at or below the cursor add up to. Any other figure means the cursor was moved
- * past covering ids that were never submitted (the accumulator is
- * permissionless), and only the administrator's reset frees the side. Null when
- * the side can complete; otherwise what is off.
- */
-export function accumulationWedge(cover: readonly ScannedEntry[], cursor: bigint, conserved: bigint): string | null {
-  const behind = cover.filter((e) => e.id <= cursor).reduce((a, e) => a + e.perDayNumeraire18, 0n);
-  if (behind === conserved) return null;
-  return `its cursor sits at entry ${cursor} with ${conserved} conserved, where the covering entries up to it add up to ${behind}`;
 }

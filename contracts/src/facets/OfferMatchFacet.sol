@@ -13,6 +13,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 import {LibOfferMatchExecute} from "../libraries/LibOfferMatchExecute.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
+import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
 
 /**
  * @title OfferMatchFacet
@@ -109,6 +110,16 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             result.errorCode == LibOfferMatch.MatchError.Ok
                 && !LibServiceCapacity.fillCovered(LibVaipakam.storageSlot(), matcher, initiator)
         ) result.errorCode = LibOfferMatch.MatchError.CapacityExhausted;
+        // #3025 — the loan the match opens is created from the borrower offer
+        // at the matched amount, and creation re-admits its cadence after
+        // every check above. Asked of the same entry creation calls.
+        if (result.errorCode == LibOfferMatch.MatchError.Ok) {
+            try OfferPreviewFacet(address(this)).requireOriginationCadenceAdmitted(
+                borrowerOfferId, result.matchAmount
+            ) {} catch {
+                result.errorCode = LibOfferMatch.MatchError.CadenceNotAdmitted;
+            }
+        }
     }
 
     /// @notice Range Orders Phase 1 — match a lender offer against a
