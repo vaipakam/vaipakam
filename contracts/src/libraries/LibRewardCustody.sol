@@ -4197,12 +4197,21 @@ library LibRewardCustody {
     ///      packet — so a part is counted once, and the sums are commutative,
     ///      so parts may land in any order. The whole comes from the FIRST part
     ///      and stays; a part declaring another sets `wholeConflict`.
+    ///      #2961 — a DISPOSED packet's part does not count: its value left,
+    ///      so it funds no day here. The rule lives in this one writer so the
+    ///      epoch index and the proof cannot disagree about it. The proof
+    ///      refuses such a packet earlier and by name
+    ///      ({_requireProvablePacket}); the index has no such gate, and today
+    ///      cannot meet one (only {releaseUnclassifiedForReturn} disposes, and
+    ///      only of compensation packets, which never open an epoch). This
+    ///      line keeps that true if the call graph ever changes.
     function _noteDayDeliveryPart(
         LibVaipakam.Storage storage s,
         uint256 d,
         bytes32 h,
         LibVaipakam.IngressPacket storage p
     ) private {
+        if (p.disposed != 0) return;
         LibVaipakam.DayDeliveryParts storage dp = s.dayDeliveryParts[d];
         uint128 wholeFresh = p.dayWholeFresh;
         uint128 wholeRecycled = p.dayWholeRecycled;
@@ -4781,8 +4790,8 @@ library LibRewardCustody {
     ///         {unclassifiedQuarantine}, whose two call sites both pass a
     ///         COMPENSATION packet's stamp, and no compensation ever holds an
     ///         epoch: the one opener of a batch,
-    ///         {admitRootedTransportBatch}, is called only by the d6 BUDGET
-    ///         ingress, at the packet's own landing. So the exclusion rests on
+    ///         {admitRootedTransportBatch}, is called only by the BUDGET
+    ///         ingress (the d7 wire since #918), at the packet's own landing. So the exclusion rests on
     ///         that call graph, not on anything this door checks: give a
     ///         compensation an epoch and this door opens silently.
     function releaseUnclassifiedForReturn(

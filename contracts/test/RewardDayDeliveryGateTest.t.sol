@@ -594,6 +594,70 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
         assertFalse(_gd(1).landed, "a conflicted day does not open");
         _expectHeld(1);
     }
+
+    /**
+     * @notice Cell 918-e (#2961) -- a DISPOSED delivery's part never counts
+     *         toward its day, on either route: the proof refuses it by name,
+     *         and the epoch index indexes it but counts no part. One writer
+     *         holds the rule, so the two routes cannot disagree.
+     * @dev    Mutation: drop the disposed line from `_noteDayDeliveryPart`
+     *         and the batched route opens the day on value that left.
+     */
+    function test_918_e_ADisposedPart_NeverCounts_OnEitherRoute() public {
+        _gateBinds();
+        _owedDay1();
+        bytes32 h = _part(10e18, 1, 401, keccak256("disposed-part"), 0, 10e18, 0);
+        _mut().setPacketDisposedRaw(h, 1);
+        if (_gp(h).batched) {
+            _prove(h, _one(1));
+            assertEq(_parts(1).parts, 0, "stored: the index counted no part");
+            assertEq(_parts(1).landedFresh, 0, "stored: and no value");
+        } else {
+            bytes32[] memory leaves = RemitWire.d6Chunks(_one(1));
+            vm.expectRevert(abi.encodeWithSelector(DeliveryPacketDisposed.selector, h, uint256(1)));
+            _proveRooted(h, _one(1), leaves, 0);
+        }
+        assertFalse(_gd(1).landed, "a disposed whole opens nothing");
+        _expectHeld(1);
+    }
+
+    /**
+     * @notice Cell 918-d (#2961, scout case 8) -- a day sent in MORE parts
+     *         than one draw window scans (65 > `TRANSPORT_DRAW_SCAN_CAP` = 64)
+     *         opens on its last part and still pays the claim in full. Each
+     *         part on an activated mirror is its own epoch, so the claim's
+     *         draw crosses the scan cap.
+     * @dev    Mutation: cap the part counter, or stop the draw at 64 epochs,
+     *         and the day never opens or the claim pays short.
+     */
+    function test_918_d_ADayInMoreThan64Parts_OpensOnTheLast_AndPays() public {
+        _gateBinds();
+        _owedDay1();
+        uint256 n = 65;
+        uint256 whole = n * 1e17;
+        bytes32[] memory hs = new bytes32[](n);
+        for (uint256 i; i < n; ++i) {
+            hs[i] = _part(1e17, 1, 3000 + i, keccak256(abi.encode("p65", i)), 0, whole, 0);
+        }
+        for (uint256 i; i + 1 < n; ++i) _prove(hs[i], _one(1));
+        LibVaipakam.DayDeliveryParts memory dp = _parts(1);
+        assertEq(dp.parts, n - 1, "stored: every part but the last counted");
+        assertFalse(_gd(1).landed, "one part short: still held");
+        _expectHeld(1);
+
+        _prove(hs[n - 1], _one(1));
+        dp = _parts(1);
+        assertEq(dp.parts, n, "stored: all 65 parts counted");
+        assertEq(dp.landedFresh, whole, "stored: their sum is the whole");
+        assertTrue(_gd(1).landed, "the 65th part opens the day");
+
+        uint256 paid;
+        for (uint256 i; i < 4 && paid < NEED; ++i) {
+            (bool ok, bytes memory ret) = _tryClaim();
+            if (ok) paid += abi.decode(ret, (uint256));
+        }
+        assertEq(paid, NEED, "the claim pays in full across the scan cap");
+    }
 }
 
 /**
