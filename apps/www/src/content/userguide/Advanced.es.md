@@ -916,59 +916,35 @@ aún aplique el nivel anterior.
 
 <a id="buy-vpfi.cross-chain-tier"></a>
 
-### Cómo viaja tu tier de VPFI entre chains
+### Cómo viaja tu tier de VPFI entre cadenas
 
-Depositas VPFI en tu vault en Base — Base es la chain canónica que
-posee el estado de tu acumulador. Cuando actúas en otra chain (pedir
-prestado en Sepolia, prestar en Arbitrum, etc.), esa chain lee una
-copia *en caché* de tu tier. La caché se mantiene fresca mediante un
-push entre chains: cuando tu tier efectivo cambia en Base, tu
-SIGUIENTE acción en Base difunde un mensaje CCIP a cada chain espejo
-en la que podrías actuar. El push viaja con cada acción normal en
-Base — y desde T-087 Sub 4 el Dashboard también expone un botón
-"Enviar mi tier a los espejos ahora" (que llama a `pokeMyTier()`) para
-que puedas forzar el envío sin mutar el vault. Para el recorrido
-completo, incluidos el consentimiento local y los requisitos de VPFI
-local en las chains espejo, consulta el capítulo "How VPFI Discounts
-Work" — que por ahora solo existe en la guía en inglés.
+Tienes tu VPFI en tu vault en Base, la cadena canónica, y es Base quien
+calcula tu tier. Cuando pides prestado o prestas en otra cadena, esa
+cadena aplica una copia de tu tier, que Base envía por Chainlink CCIP
+después de cada depósito, retiro u otra acción que lo cambie.
 
-Tres cosas que conviene saber:
+Tres cosas que debes saber:
 
-- **La maduración del tier necesita una acción posterior.** Tu primer
-  depósito NO difunde de inmediato: tu tier efectivo está limitado por
-  un periodo mínimo de historial (3 días por defecto), así que un
-  depósito reciente resuelve inicialmente como tier 0 y la difusión se
-  omite en silencio. Una vez transcurrido el periodo, la compuerta se
-  abre en Base al instante, pero los espejos no se enteran hasta que tu
-  SIGUIENTE acción en Base que arrastre el acumulado (cualquier
-  depósito, retiro o acción de préstamo — cualquier cosa que mute tu
-  vault en Base) O un clic en "Enviar mi tier a los espejos ahora" del
-  Dashboard (Sub 4) dispare un push. Un top-up de 1 wei también sirve.
-- **Tiempo de propagación.** Una vez despachado el push, suele llegar
-  al espejo en cuestión de minutos vía CCIP. Hasta entonces, el espejo
-  sigue honrando tu tier en caché anterior — no hay un parpadeo a
-  tier 0.
-- **Caducidad de la caché.** Un tier en caché se sigue honrando hasta
-  que (a) llega un push nuevo, (b) la gobernanza mueve la tabla de
-  umbrales de tier a una versión nueva y sube la versión que el espejo
-  rastrea (lo cual ocurre la primera vez que el push posterior al
-  cambio de CUALQUIER usuario llega a ese espejo — los usuarios
-  inactivos sin actividad reciente en Base también pierden en ese
-  momento su descuento en caché de la versión antigua, hasta que su
-  propio push siguiente los ponga al día), o (c) la caché supera su
-  tope de antigüedad (60 días por defecto). Si pasas mucho tiempo sin
-  actuar en una chain dada, tu caché allí acabará caducando y la chain
-  te tratará como tier 0 hasta el siguiente push. Para refrescarla,
-  haz cualquier acción en Base que arrastre el acumulado y produzca una
-  tupla de push nueva — una mutación de saldo que cambie de tier, O
-  CUALQUIER acción en Base tras un cambio de versión de la tabla de
-  gobernanza. Un acumulado "sin cambios" con la misma tupla NO reenvía
-  el push — es deliberado, para no gastar el presupuesto de difusión
-  del protocolo en cachés que ya son correctas.
+- **Un tier que sube solo con el paso del tiempo necesita una acción
+  en Base para viajar.** Cuando termina tu periodo de tenencia, o tu
+  promedio alcanza a tu saldo, sin depósito ni retiro, la cifra de Base
+  queda al día de inmediato. Las demás cadenas se enteran con tu
+  próximo depósito o retiro en Base, de cualquier importe.
+- **Un tier más bajo viaja primero.** El protocolo envía un tier más
+  bajo de inmediato y paga uno más alto como mucho una vez al día por
+  cadena. La entrega por CCIP suele tardar luego unos minutos. Hasta
+  que llega, esa cadena sigue aplicando tu tier anterior.
+- **Una copia puede caducar.** Tras 60 días sin una copia nueva (el
+  valor por defecto), o en cuanto un cambio de la tabla de tiers llega
+  a esa cadena, la copia antigua deja de dar descuento allí. Solo se
+  envía una copia nueva cuando tu tier cambia.
 
-Si te interesan las compuertas exactas que aplica la caché para
-detectar obsolescencia, consulta la
-[functional spec de propagación de tier entre chains](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/CrossChainTierPropagation.md).
+Las reglas completas, incluido el interruptor de descuento que
+necesitas en Base además de en la cadena que uses, están en el
+capítulo «Cómo funcionan los descuentos VPFI» más abajo. El diseño de
+la entrega está en el
+[documento de diseño de la entrega de tiers](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/TierPushDeliveryDesign.md)
+(en inglés).
 
 ---
 
@@ -1817,3 +1793,175 @@ Dos resultados:
 Si deseas un registro público on-chain que afirme que cierto saldo de tokens en tu vault NO es tuyo, el protocolo proporciona una función `disown(token)`. Emite un evento (`TokenDisowned`) y no cambia nada más — los tokens se quedan en el vault como antes. Útil en disputas de cumplimiento si un CEX o regulador pregunta "¿recibió estos fondos?": puedes señalar el evento on-chain.
 
 La función disown está expuesta solo a través de llamada directa al contrato por ahora; el frontend de Vaipakam no la muestra como un botón. Usa una interfaz "Write Contract" de un explorador de bloques o una herramienta de interacción con contratos para llamarla.
+
+## Cómo funcionan los descuentos VPFI
+
+El VPFI que tienes en tu vault en Base, la cadena canónica, te da un
+descuento en las comisiones propias del protocolo, en todas las
+cadenas donde funciona la plataforma. Cuanto más tengas, y cuanto más
+tiempo lo hayas tenido, más alto es tu tier y mayor el descuento. Los
+tiers están en la [escala de tiers](#dashboard.fee-discount-consent)
+más arriba; la gobernanza puede cambiarlos.
+
+A qué se aplica el descuento:
+
+- **Como prestamista**, a la comisión de rendimiento que el protocolo
+  retiene de los intereses que ganas. Se lee cada vez que se liquidan
+  intereses, por ejemplo en el reembolso, el cierre anticipado o la
+  refinanciación, con tu tier en ese momento, no con el que tenías al
+  empezar el préstamo.
+- **Como prestatario**, a la Loan Initiation Fee que se cobra al
+  empezar el préstamo. Se lee una sola vez, al aceptarse, y queda
+  fijada para ese préstamo. Solo se aplica si el activo prestado es
+  líquido; un préstamo ilíquido paga la comisión completa.
+
+El descuento se resta de la propia comisión, en el activo del
+préstamo, y ningún VPFI sale de tu vault por ello. La única excepción
+es el descuento del prestamista en un despliegue que configure una
+referencia de precio de VPFI: allí puede liquidarse en VPFI desde tu
+vault. No hay ninguna configurada en el lanzamiento. Este capítulo
+trata de ese descuento por tenencia. Un modo de comisión de pago
+distinto, «Full», sigue desactivado salvo que un despliegue lo active.
+
+### Activar el descuento
+
+El descuento es opcional (opt-in). El interruptor está en la página de
+VPFI, y hay uno por cadena, porque cada cadena guarda su propio
+ajuste:
+
+- **En la cadena donde se cobra la comisión**, el interruptor debe
+  estar activado; si no, esa cadena cobra la comisión completa sea
+  cual sea tu tier.
+- **En Base**, el interruptor también debe estar activado, aunque
+  nunca pidas prestado ni prestes allí. Mientras esté desactivado,
+  Base envía a todas las demás cadenas un tier cero para ti.
+
+Cuando desactivas el descuento, la aplicación envía a continuación una
+actualización de tier para que las demás cadenas también dejen de
+aplicarlo. Si ese segundo paso falla, la página lo indica, y las demás
+cadenas conservan tu último tier hasta que algo envíe uno nuevo.
+
+Solo cuenta el VPFI que depositas desde la página de VPFI. Los tokens
+enviados directamente a la dirección de tu vault no los sigue el
+protocolo y no suben tu tier.
+
+### Cómo se calcula tu tier
+
+Tu tier sale de tres comprobaciones distintas, y las tres deben
+cumplirse:
+
+1. **Un periodo mínimo de tenencia.** Tu tier se queda en cero hasta
+   que tu tenencia actual haya durado al menos 3 días. Una tenencia
+   empieza en el momento en que el saldo de tu vault supera cero y dura
+   hasta que vuelve a cero. Añadir VPFI no reinicia el reloj; retirarlo
+   todo, sí. (3 días es el valor por defecto; la gobernanza puede
+   fijarlo entre 2 y 14.)
+2. **Un promedio ponderado hacia lo reciente.** Tu saldo se promedia
+   sobre los últimos 30 días, y los últimos 7 cuentan el triple que los
+   anteriores. El promedio nunca se remonta a antes de que empezara tu
+   tenencia actual, así que un titular nuevo no se ve diluido por días
+   en los que no tenía nada. (La ventana, los días recientes y el peso
+   son parámetros de gobernanza; la ventana puede ir de 14 a 30 días.)
+3. **El tier más bajo que has tocado.** Aparte del promedio, tu tier
+   no puede ser más alto que el tier más bajo que alcanzó tu saldo
+   durante la tenencia actual, mirando como mucho 30 días atrás. Cuenta
+   el punto más bajo de cada día, así que una bajada y una recuperación
+   dentro del mismo día cuentan igualmente como bajada.
+
+Qué significa esto en la práctica:
+
+- Un depósito justo antes de que se liquide un préstamo no sube tu
+  tier de inmediato. La cantidad añadida tiene que entrar en el
+  promedio, y el punto más bajo que tocaste sigue limitándote.
+- Un retiro que te deja por debajo del umbral de un tier baja tu tier
+  al instante.
+- Una bajada de hace más de 30 días ya no te limita.
+
+### Tu tier en otras cadenas
+
+Base calcula tu tier. Todas las demás cadenas aplican una copia que
+Base envía por Chainlink CCIP. Base envía una copia nueva después de
+cualquier depósito, retiro u otra acción que cambie tu tier.
+
+Cada cadena se entrega por separado. Una cadena a la que no se puede
+llegar no retiene a las demás, y **una entrega que no puede salir
+nunca hace fallar tu propia acción**: tu tier en Base queda al día de
+inmediato, y a cada una de las demás cadenas se le debe la
+actualización hasta que llega.
+
+El protocolo paga estas entregas, con un límite:
+
+- **Un tier más bajo** se envía de inmediato, siempre que el
+  presupuesto pueda pagarlo. Hasta que llega, esa cadena sigue
+  aplicando tu tier anterior, más alto.
+- **Un tier más alto**, o un cambio de la tabla de tiers, se paga como
+  mucho una vez al día por cadena (un parámetro de gobernanza entre 1
+  hora y 7 días). Hasta entonces esa cadena conserva tu tier anterior.
+- Cualquiera puede pagar la comisión cross-chain para entregar antes
+  una actualización pendiente. Los contratos lo permiten; la
+  aplicación todavía no lo ofrece.
+
+Una copia deja de contar, y esa cadena no da descuento, cuando:
+
+- es más antigua que la antigüedad máxima de la cadena (60 días por
+  defecto, nunca menos de 30); o
+- se hizo con una tabla de tiers anterior a la que esa cadena conoce
+  ahora.
+
+Una copia solo se renueva cuando tu tier ha cambiado de verdad. Si tu
+tier no ha cambiado y la copia de una cadena ha caducado, nada de lo
+que hagas la reenvía hasta que tu tier vuelva a cambiar.
+
+Si tu tier sube solo porque ha pasado el tiempo —ha terminado el
+periodo de tenencia o el promedio ha alcanzado tu saldo— sin depósito
+ni retiro, nada en Base lo nota hasta tu próximo depósito o retiro. Los
+contratos tienen una llamada para refrescar el tier que puedes hacer
+tú mismo; la aplicación solo la hace por ti cuando desactivas el
+descuento.
+
+### Para operadores
+
+La parte cross-chain del descuento necesita esta configuración. Se
+detalla aquí para quien opere su propio despliegue.
+
+**En Base:**
+
+- `VPFITokenFacet.setCanonicalVPFIChain(true)`. Sin esto, Base calcula
+  los tiers pero no los envía a ninguna parte.
+- `RewardReporterFacet.setRewardMessenger` apuntando al
+  `VaipakamRewardMessenger`, y `setBroadcastDestinations` del
+  messenger con todas las demás cadenas.
+- Un presupuesto de difusión con fondos:
+  `ProtocolBroadcastFacet.topUpBroadcastBudget()` (payable). Un
+  presupuesto vacío no bloquea nada. Cada entrega que no puede pagar
+  queda pendiente y emite `TierPushDeferred` con el motivo, y
+  `getTierPushStatus(user)` muestra el estado de cada cadena para un
+  usuario. Un presupuesto escaso hace que las demás cadenas apliquen
+  tiers antiguos durante más tiempo: vigila los aplazamientos y
+  recarga.
+- La ventana de espaciado de las subidas pagadas:
+  `setTierPushSpacingSec` (1 día por defecto, de 1 hora a 7 días).
+
+**En cada una de las demás cadenas:**
+
+- `RewardReporterFacet.setRewardMessenger(addr)`: el único remitente
+  cuyas actualizaciones de tier acepta la cadena.
+- `RewardReporterFacet.setBaseChainId(chainId)`: el id de cadena EVM de
+  Base (8453 en mainnet, 84532 en Base Sepolia), no su selector de
+  cadena CCIP.
+- `ConfigFacet.setMirrorTierMaxAgeSec(seconds)`: cuánto tiempo cuenta
+  una copia (60 días por defecto; se rechazan valores por debajo de 30
+  días). Bajarlo surte efecto en la siguiente lectura.
+
+**Cambiar la tabla de tiers:**
+
+- `setVpfiTierThresholds` y `setVpfiTierDiscountBps` en Base hacen
+  avanzar la versión de la tabla. Otra cadena conoce la nueva versión
+  por la primera actualización de tier que la lleve, de cualquier
+  usuario. Desde entonces, toda copia hecha con la tabla antigua vale
+  cero descuento hasta que llegue la actualización propia de ese
+  usuario, y esas actualizaciones son subidas pagadas como mucho una
+  vez por ventana de espaciado. Recarga el presupuesto antes de cambiar
+  la tabla.
+- `setTwaMinStakedDays` cambia el periodo mínimo de tenencia sin hacer
+  avanzar la versión. Surte efecto en la siguiente lectura.

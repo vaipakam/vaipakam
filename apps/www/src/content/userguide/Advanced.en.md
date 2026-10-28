@@ -867,57 +867,31 @@ tier still applies.
 
 ### How your VPFI tier travels across chains
 
-You deposit VPFI into your vault on Base — Base is the canonical
-chain that owns your accumulator state. When you act on a different chain
-(borrow on Sepolia, lend on Arbitrum, etc.), that chain reads
-a *cached* copy of your tier. The cache is kept fresh by a
-cross-chain push: when your effective tier on Base changes,
-your NEXT Base-side action broadcasts a CCIP message to every
-mirror chain you might act on. The push rides on every regular
-Base action — and as of T-087 Sub 4 the Dashboard also exposes
-a "Push my tier to mirrors now" button (which calls
-`pokeMyTier()`) so you can force the push without a vault
-mutation. See "How VPFI Discounts Work" below for the full
-walkthrough including local consent + local VPFI requirements
-on mirror chains.
+You hold VPFI in your vault on Base, the canonical chain, and Base
+works out your tier. When you borrow or lend on another chain, that
+chain applies a copy of your tier, which Base sends over Chainlink
+CCIP after any deposit, withdrawal or other action that changes it.
 
 Three things to know:
 
-- **Tier maturation takes a follow-up action.** Your first
-  stake does NOT immediately broadcast — your effective tier
-  is gated by a minimum-history period (3 days by default) so
-  a fresh stake initially resolves to tier 0 and the broadcast
-  silent-skips. Once the period elapses, the gate releases on
-  Base immediately, but mirrors don't learn until your NEXT
-  rollup-bearing Base action (any deposit, withdrawal, loan
-  action — anything that mutates your vault on Base) OR a
-  Dashboard "Push my tier to mirrors now" click (Sub 4) triggers
-  a push. A 1-wei top-up also works.
-- **Propagation time.** Once a push is dispatched, it
-  typically lands on the mirror within minutes via CCIP. Until
-  it does, the mirror still honours your prior cached tier —
-  there is no flicker to tier 0.
-- **Cache expiry.** A cached tier remains honoured until
-  either (a) a fresh push arrives, (b) governance moves the
-  tier-threshold table to a new version and the mirror's
-  tracked version rises (which happens the first time ANY
-  user's post-bump push lands on that mirror — dormant users
-  with no recent activity on Base also lose their old-version
-  cached discount at that moment until their own next push
-  catches up), or (c) the cache passes its max-age backstop
-  (60 days by default). If you don't act for a long time on a
-  given chain, your cache there will eventually expire and the
-  chain will treat you as tier 0 until the next push. To
-  refresh, do any rollup-bearing Base action that produces a
-  new push tuple — a tier-changing balance mutation, OR ANY
-  Base action after a governance table-version bump. A same-
-  tuple "no-op" rollup will NOT re-send a push — this is by
-  design so the protocol's broadcast budget isn't burned on
-  caches that are already correct.
+- **A tier that rises with time alone needs an action on Base to
+  travel.** When your holding period ends, or your average catches
+  up, without a deposit or withdrawal, Base's own figure is current
+  at once. Other chains learn it with your next deposit or
+  withdrawal on Base, of any size.
+- **A lower tier travels first.** The protocol sends a lower tier at
+  once and pays for a higher one at most once a day per chain.
+  Delivery over CCIP then usually takes minutes. Until it lands,
+  that chain keeps applying your previous tier.
+- **A copy can age out.** After 60 days without a new copy (the
+  default), or once a change to the tier table reaches that chain,
+  the old copy gives no discount there. A new copy is sent only when
+  your tier changes.
 
-If you're curious about the exact gates the cache applies to
-detect staleness, see the
-[Cross-Chain Tier Propagation functional spec](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/CrossChainTierPropagation.md).
+The full rules, including the discount switch you need on Base as
+well as on the chain you use, are in "How VPFI Discounts Work"
+below. The delivery design is in the
+[tier push delivery design](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/TierPushDeliveryDesign.md).
 
 ---
 
@@ -2010,326 +1984,164 @@ contract-interaction tool to call it.
 
 ## How VPFI Discounts Work
 
-VPFI is the platform's discount-rights token. Holding VPFI in
-your per-user vault on the canonical chain (Base) entitles
-you to a tiered discount on the protocol's yield-fee charged
-at loan settlement. The bigger your tier, the larger the
-discount.
+VPFI held in your vault on Base, the canonical chain, earns you a
+discount on the protocol's own fees, on every chain the platform
+runs on. The more you hold, and the longer you have held it, the
+higher your tier and the larger the discount. The tiers are in the
+[tier ladder](#dashboard.fee-discount-consent) above; governance can
+change them.
 
-### Tier on Base, application on each chain
+What the discount applies to:
 
-VPFI is staked on Base. The protocol's accumulator lives on
-Base too. Your TIER (the value 0..4) propagates
-automatically to every chain you take loans on — Sepolia,
-Arbitrum, Optimism, BNB, etc. — via Chainlink CCIP.
+- **As a lender**, the yield fee the protocol keeps from the
+  interest you earn. It is read each time interest is settled,
+  for example at repayment, preclose or refinance, at your tier at
+  that moment, not your tier when the loan began.
+- **As a borrower**, the loan initiation fee charged when your loan
+  starts. It is read once, at acceptance, and stays with that loan.
+  It applies only when the lending asset is liquid; an illiquid
+  loan pays the full fee.
 
-But the FEE PATH on each mirror chain still reads the local
-chain's VPFI balance + the local consent flag at settlement
-time. So to actually receive the discount on a mirror loan,
-you need:
+The discount is taken off the fee itself, in the loan's own asset,
+and no VPFI leaves your vault for it. The one exception is the
+lender's discount on a deployment that configures a VPFI price
+reference, where it can be settled in VPFI from your vault instead;
+none is configured at launch. This chapter covers that holding
+discount. A separate paid fee mode, "Full", stays switched off
+unless a deployment turns it on.
 
-- **Cached Base tier** — propagates automatically via CCIP
-  to the mirror's `userTierCache`. You don't trigger this;
-  it happens when you stake / mutate on Base.
-- **Protocol-TRACKED VPFI in the mirror vault** — at least
-  the QUOTED REQUIRED amount, AND it must have been
-  deposited through `depositVPFIToVault` (the proper
-  protocol-tracked path). Direct transfers of VPFI into the
-  vault address bypass the protocol's tracked-balance
-  counter and don't count for the fee path. A user whose
-  RAW vault balance is above the quoted requirement but
-  whose PROTOCOL-TRACKED balance is below it does NOT get
-  the discount — the fall-back is to the full fee, despite
-  the raw balance looking sufficient.
-- **Local consent toggle** — `setVPFIDiscountConsent(true)`
-  must be called on EACH chain you want the discount on;
-  the fee path reads the LOCAL consent flag, not Base's.
+### Turning the discount on
 
-So in practice: stake on Base for the tier, and keep enough
-VPFI in the mirror vault to cover the quoted requirement +
-toggle consent on each chain you actually take loans on.
-The cached BASE tier is what determines the discount BPS;
-the mirror-vault holding needs to clear the quoted floor for
-the discount to engage.
+The discount is opt-in. The switch is on the VPFI page, and it is
+one switch per chain, because each chain keeps its own setting:
 
-### Min-history gate
+- **On the chain where the fee is charged**, the switch must be on,
+  or that chain charges the full fee whatever your tier.
+- **On Base**, the switch must be on as well, even if you never
+  borrow or lend there. While it is off, Base sends every other
+  chain a tier of zero for you.
 
-A brand-new stake doesn't immediately qualify for the
-discount. The protocol requires you to hold qualifying VPFI
-for at least 3 days (the default
-`cfgTwaMinStakedDaysEffective`) before the discount
-activates. Reasoning: prevents a one-block
-"deposit-claim-withdraw" gaming pattern.
+When you switch the discount off, the app follows with a tier
+update so that other chains stop applying it too. If that second
+step fails, the page says so, and the other chains keep your last
+tier until something sends a new one.
 
-During this aging window:
+Only VPFI you deposit through the VPFI page counts. Tokens sent
+straight to your vault address are not tracked by the protocol and
+do not raise your tier.
 
-- Your dashboard shows "Your tier is aging — almost there".
-- Loans that SETTLE before the window passes pay the FULL
-  yield-fee (no discount applies). The discount is read at
-  settlement time from your CURRENT effective BPS — so a
-  loan you open during the aging window but settle AFTER
-  aging completes WILL get the discount it qualifies for at
-  that settlement moment.
-- Once the window passes, the discount activates on the
-  canonical chain (Base) automatically — no transaction
-  needed. BUT cross-chain mirrors are NOT automatically
-  notified just by time passing: the initial deposit's
-  rollup already pushed `(0, 0)` to mirrors (or got de-duped
-  because there was nothing to push). To surface your
-  newly-activated tier on a mirror you either:
-  - Click "Push my tier to mirrors now" in the dashboard
-    (calls `pokeMyTier()`), OR
-  - Make any vault mutation on Base (deposit / withdraw),
-    which triggers a fresh rollup-and-broadcast.
+### How your tier is worked out
 
-### Time-weighted, not snapshot
+Your tier comes from three separate checks, and all three must pass:
 
-Your effective tier is averaged across a rolling window —
-currently 30 days, a governance setting the protocol bounds
-to 14–30 — with the LAST 7 days weighted 3× and the earlier
-days weighted 1× (both of those are settings too, bounded
-1–10 for the weight). The window never reaches back past the
-day your current **continuous holding** began — the day your
-balance first went above zero and stayed there — so a recent
-depositor is not diluted by days they held nothing. Note that
-adding to a holding you already have does NOT move that day:
-the window keeps your pre-top-up days, which is why a top-up
-does not immediately lift your tier. This means:
+1. **A minimum holding period.** Your tier stays at zero until your
+   current holding has lasted at least 3 days. A holding begins the
+   moment your vaulted balance goes above zero and lasts until it
+   returns to zero. Adding to it does not restart the clock;
+   withdrawing everything does. (3 days is the default; governance
+   may set it from 2 to 14.)
+2. **A recency-weighted average.** Your balance is averaged over
+   the last 30 days, with the last 7 days counting three times as
+   much as the days before them. The average never reaches back
+   before your current holding began, so a new holder is not
+   diluted by days they held nothing. (The window, the recent days
+   and the weight are governance settings; the window can be 14 to
+   30 days.)
+3. **The lowest tier you have touched.** Separately from the
+   average, your tier can be no higher than the lowest tier your
+   balance reached during the current holding, looking back at most
+   30 days. It counts each day's lowest point, so a dip and a
+   recovery within the same day still count as a dip.
 
-- The most recent week dominates — recent behaviour matters.
-- A "top-up right before a loan settles" doesn't immediately
-  bump your tier — the topped-up amount only fully counts
-  after time accumulates.
-- A partial unstake that stays WITHIN the current tier
-  doesn't immediately drop your tier — the historical
-  staked-amount is averaged in. A partial unstake that
-  crosses BELOW the current tier's floor DOES drop the
-  effective tier immediately (the accumulator's same-day
-  minimum captures the new lower floor — see "Tier upgrades
-  and unstakes" below).
+What this means in practice:
 
-### Cross-chain tier propagation
+- A deposit just before a loan settles does not lift your tier at
+  once. The added amount has to work its way into the average, and
+  the lowest point you touched still caps you.
+- A withdrawal that takes you below a tier's floor lowers your tier
+  straight away.
+- A dip more than 30 days ago no longer caps you.
 
-When your tier activates (or changes), the protocol
-broadcasts it to every configured mirror chain via Chainlink
-CCIP. Broadcasts are PROTOCOL-FUNDED — you don't pay the
-CCIP fee.
+### Your tier on other chains
 
-For most users, this propagation is invisible. Take a loan
-on a mirror chain → the cached tier applies. Done.
+Base works out your tier. Every other chain applies a copy of it
+that Base sends over Chainlink CCIP. Base sends a new copy after any
+deposit, withdrawal or other action that changes your tier.
 
-For edge cases (governance bumped the tier table, you just
-disabled consent and want to immediately clear), the dapp's
-Dashboard surfaces a "Push my tier to mirrors now" button.
-Clicking it triggers `pokeMyTier()` — permissionless, fires a
-fresh CCIP broadcast at the protocol's cost.
+Each chain is delivered on its own. A chain that cannot be reached
+does not hold back the others, and **a delivery that cannot go out
+never makes your own action fail**: your tier on Base is current at
+once, and each other chain is owed the update until it arrives.
 
-**A cache stale by AGE is not one of those cases.** The push
-only sends when your `(tier, bps, expiry, version)` tuple has
-changed. A version-mismatched cache is covered — that is the
-governance-bump case above, where the version field differs
-and the push does send. But a cache that merely aged out
-while your tier stayed put is skipped, and nothing is
-broadcast. See the staleness threshold below for what does
-restore that one.
+The protocol pays for these deliveries, with one limit:
 
-### Consent toggle
+- **A lower tier** is sent straight away, as long as the budget
+  can pay for it. Until it arrives, that chain keeps applying your
+  previous, higher tier.
+- **A higher tier**, or a change to the tier table, is paid for at
+  most once a day per chain (a governance setting between 1 hour
+  and 7 days). Until then that chain keeps your previous tier.
+- Anyone can pay the cross-chain fee to deliver an owed update
+  sooner. The contracts offer this; the app does not offer it yet.
 
-The discount is OPT-IN. You must call
-`setVPFIDiscountConsent(true)` on EACH chain you want the
-discount on — the fee path reads the LOCAL chain's consent
-flag, not Base's. The dapp surfaces the toggle on the
-Dashboard for whichever chain you're currently connected
-to.
+A copy stops counting, and that chain gives no discount, when:
 
-Without local consent, even with VPFI staked on Base + a
-fresh cached tier on the mirror, the mirror fee path
-charges the full yield-fee.
+- it is older than the chain's maximum age (60 days by default,
+  never less than 30); or
+- it was made under an older tier table than the one that chain
+  now knows.
 
-The canonical chain's flag is ALSO required, even if you
-never settle a loan there. `protocolBroadcastTierUpdate`
-forces the payload to `(0, 0)` whenever Base's
-`vpfiDiscountConsent[user]` is false, so the push that is
-supposed to carry your tier to the mirror carries zero
-instead — and the mirror then applies a tier-0 cache no
-matter what its own local consent says. A mirror-only user
-who enables consent on the mirror alone, deposits on Base,
-waits out the holding period and pushes will still be
-charged in full. Enable it on BOTH: Base to make the
-broadcast carry a real tier, and the settling chain to make
-the fee path apply it.
+A copy is refreshed only when your tier has actually changed. If
+your tier has stayed the same and a chain's copy has aged out,
+nothing you do resends it until your tier changes again.
 
-When you disable consent on the CANONICAL chain (Base),
-mirror caches DON'T automatically clear (anti-drain measure
-— see below). The dapp prompts you to follow the canonical-
-chain consent toggle with a manual `pokeMyTier()` ON THE
-CANONICAL CHAIN — that's the one that pushes (tier, bps) =
-(0, 0) to mirrors. (`pokeMyTier()` called on a mirror is
-useless for cache clearing; only the canonical chain runs
-the broadcast logic.)
+If your tier rises only because time has passed — the holding
+period has ended, or the average has caught up — with no deposit or
+withdrawal, nothing on Base notices until your next deposit or
+withdrawal. The contracts have a tier-refresh call you can make for
+yourself; the app makes it for you only when you switch the discount
+off.
 
-When you disable consent on a MIRROR chain, the mirror's
-local fee path stops applying the discount immediately — no
-broadcast or cache change involved. The cached tier on the
-mirror still says whatever Base last pushed; the mirror just
-ignores it because local consent is off.
+### For operators
 
-### Tier upgrades and unstakes
+The cross-chain part of the discount needs this configuration. It is
+listed here for anyone running their own deployment.
 
-When you stake more VPFI:
+**On Base:**
 
-- The accumulator re-stamps at the post-deposit balance
-  immediately. A broadcast fires only if the resulting
-  `(tier, bps, expiry, version)` tuple differs from the
-  last-pushed snapshot — same-tier top-ups within the same
-  tier and version typically de-dup, so they don't
-  re-broadcast.
-- The TWA shifts toward the new balance over the rolling
-  window.
-- Once the TWA crosses the next tier's threshold (and
-  min-history has elapsed), the higher tier activates on
-  Base — but the cross-tier transition is read at the NEXT
-  rollup, not by time alone. To push the new tier to
-  mirrors you either click "Push my tier to mirrors now"
-  on the dashboard (calls `pokeMyTier()`) or do any vault
-  mutation that triggers a fresh rollup.
+- `VPFITokenFacet.setCanonicalVPFIChain(true)`. Without it Base
+  computes tiers but sends them nowhere.
+- `RewardReporterFacet.setRewardMessenger` pointing at the
+  `VaipakamRewardMessenger`, and the messenger's
+  `setBroadcastDestinations` listing every other chain.
+- A funded broadcast budget: `ProtocolBroadcastFacet.topUpBroadcastBudget()`
+  (payable). An empty budget does not block anything. Each delivery
+  it cannot pay stays owed and emits `TierPushDeferred` with the
+  reason, and `getTierPushStatus(user)` shows every chain's state for
+  a user. A short budget means other chains apply old tiers for
+  longer, so watch for deferrals and top up.
+- The spacing window for paid raises:
+  `setTierPushSpacingSec` (default 1 day, 1 hour to 7 days).
 
-When you unstake:
+**On every other chain:**
 
-- The accumulator re-stamps at the post-withdrawal balance
-  immediately.
-- If the unstake drops your balance BELOW the current
-  tier's floor, the effective tier downgrades IMMEDIATELY
-  on the next read (the accumulator's same-day-minimum
-  clamp captures the new lower floor). The downgrade
-  broadcasts to mirrors automatically via the rollup
-  triggered by the withdrawal itself.
-- A small unstake that stays within the current tier
-  doesn't change the tier; the TWA shifts down gradually.
-
-The mirror's cache has a staleness threshold
-(`cfgMirrorTierMaxAgeSec`, default 60 days; min-floor of
-30 days enforced by the setter). If your tier hasn't been
-pushed in that long, the mirror falls back to "no discount".
-
-**You cannot refresh an unchanged tier on demand.** The push
-button and `pokeMyTier()` only send when your
-`(tier, bps, expiry, version)` tuple has actually changed —
-an unchanged tuple is skipped, and nothing is broadcast. So
-an expired cache on a tier that hasn't moved is not something
-pressing the button fixes, and neither is a same-tier deposit
-or withdrawal — a rollup that produces the same tuple de-dups
-exactly as the button does. Restoring it takes two things, and both are needed:
-
-1. your current `(tier, bps, expiry, version)` must DIFFER
-   from the last tuple you pushed ANYWHERE, and must name an
-   eligible non-zero tier. The de-dup is global per user, not
-   per mirror — so a mirror added after your last push, or one
-   whose delivery reverted, will not receive a replacement:
-   from the sender's side nothing has changed, so no amount of
-   pushing catches it up. (A delivery that arrived and then
-   reverted is a separate matter — CCIP holds it for manual
-   re-execution, which is an operator action rather than
-   something you can trigger.) And a different tuple alone is not enough:
-   dropping below Tier 1 leaves you at `(0, 0)`, which the
-   mirror correctly reads as no discount;
-2. something must then BROADCAST it. Changing the state does
-   not send anything by itself — turning consent EITHER WAY
-   writes the flag and emits, and a governance table bump
-   moves the version, but none of them push. You still need
-   the button or a rollup-bearing Base action to carry the new
-   tuple. (This cuts both ways: disabling consent does not
-   clear a mirror's cached discount until something
-   broadcasts the change either.)
-
-A governance version bump is the case where an unchanged tier
-still works — the version field alone makes the tuple differ,
-so any subsequent push sends.
-
-There is deliberately no supported way to force a refresh
-otherwise. Repeatedly toggling a value to manufacture
-broadcasts would drain the protocol-funded cross-chain
-budget, and once that is exhausted legitimate broadcasts fail
-for everyone.
-
-### Operator runbook — discount system maintenance
-
-These operator actions are required for the cross-chain
-discount surface to work in production. Documented here so
-an external operator forking Vaipakam can stand up the
-system without surprises.
-
-**Canonical chain (Base):**
-
-- `VPFITokenFacet.setCanonicalVPFIChain(true)` — REQUIRED
-  post-deploy on Base. Without this, the accumulator runs
-  but the broadcast facet sees `s.isCanonicalVpfiChain ==
-  false` and silently skips every push. Sub 1.C round-3 P2
-  #2 deferral.
-- Wire the canonical-side messenger and broadcast
-  destination list — `RewardReporterFacet.setRewardMessenger`
-  on Base points the diamond at the
-  `VaipakamRewardMessenger`; the messenger's broadcast
-  destination chain IDs (via its `addBroadcastDestination` /
-  equivalent admin surface) must list every mirror chain.
-  Without these, the canonical-side broadcast call has no
-  message addressee + reverts.
-- Protocol broadcast budget — top up
-  `protocolBroadcastBudget` with ETH via
-  `ProtocolBroadcastFacet.topUpBroadcastBudget()` (payable).
-  Monitor `BroadcastBudgetToppedUp` /
-  `ProtocolTierBroadcastSent` events. When the budget drops
-  below the expected per-month burn rate, top up again —
-  **the protocol fails CLOSED when the budget is exhausted**
-  (`rollupUserDiscount` reverts with `ProtocolBudgetExhausted`
-  when a non-deduped broadcast can't pay the CCIP fee), so
-  a stale budget blocks deposits / withdrawals / settlements
-  that would change a user's tier.
-
-**Mirror chains:**
-
-- `RewardReporterFacet.setRewardMessenger(addr)` — the
-  messenger contract that's authorised to deliver tier
-  updates to this mirror. The MirrorTierReceiverFacet reads
-  `s.rewardMessenger` at delivery time; without this set,
-  every inbound tier push is rejected.
-- `RewardReporterFacet.setBaseChainId(chainId)` — the
-  canonical EVM `block.chainid` of the source chain (Base
-  mainnet: 8453; Base Sepolia: 84532). The CCIP adapter
-  normalises Chainlink selectors through its own table, so
-  use the EVM chain ID here, NOT Base's Chainlink CCIP chain
+- `RewardReporterFacet.setRewardMessenger(addr)`: the only sender
+  whose tier updates the chain accepts.
+- `RewardReporterFacet.setBaseChainId(chainId)`: Base's EVM chain id
+  (8453 on mainnet, 84532 on Base Sepolia), not its CCIP chain
   selector.
-- `ConfigFacet.setMirrorTierMaxAgeSec(seconds)` — cache
-  staleness threshold (default 60 days; setter rejects
-  values below 30 days). Higher = mirror applies stale
-  tiers longer; lower = users need more frequent broadcasts.
+- `ConfigFacet.setMirrorTierMaxAgeSec(seconds)`: how long a copy
+  counts (default 60 days; values under 30 days are refused).
+  Lowering it takes effect on the next read.
 
-**Governance changes:**
+**Changing the tier table:**
 
-- Only `setVpfiTierThresholds` and `setVpfiTierDiscountBps`
-  on the canonical chain bump Base's local `tierTableVersion`
-  + emit `TierTableVersionBumped` LOCALLY. There's no
-  separate cross-chain "VersionBumped" message today;
-  mirrors learn the new version only when a per-user
-  TierUpdated message arrives carrying the new tuple. Until
-  ANY such push reaches a given mirror, old-version caches
-  there continue to apply at the OLD BPS — but the version
-  the receiver raises is mirror-WIDE, so the first
-  post-bump push from any user at all flips it for
-  everyone. From that moment `_mirrorEffectiveTierAndBps`
-  reads every cache still carrying the old version as
-  tier 0, until that user's own push lands. So the
-  old-BPS grace is per-mirror and ends on someone else's
-  message, not per-user. Operators
-  changing tier thresholds / BPS should top up the
-  broadcast budget in advance to absorb the wave of
-  per-user updates that lands on the next mutation by each
-  user.
-- `setTwaMinStakedDays` changes the aging gate WITHOUT
-  bumping `tierTableVersion`; the new value takes effect on
-  the next read.
-- `setMirrorTierMaxAgeSec` is read DIRECTLY by mirror
-  discount reads (`_mirrorEffectiveTierAndBps` calls
-  `cfgMirrorTierMaxAgeSecEffective()`). Lowering the
-  threshold can invalidate cached mirror discounts
-  immediately on next read — no rollup or push needed.
+- `setVpfiTierThresholds` and `setVpfiTierDiscountBps` on Base move
+  the table's version. Another chain learns the new version from
+  the first tier update that carries it, from any user. From then
+  on, every copy made under the old table reads as no discount
+  until that user's own update arrives, and those updates are
+  raises paid at most once per spacing window. Fund the budget
+  before changing the table.
+- `setTwaMinStakedDays` changes the minimum holding period without
+  moving the version. It takes effect on the next read.

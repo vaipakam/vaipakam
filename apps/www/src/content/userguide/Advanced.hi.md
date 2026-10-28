@@ -862,53 +862,35 @@ debit करता है। withdraw fee-discount rate को नए (कम) b
 
 <a id="buy-vpfi.cross-chain-tier"></a>
 
-### आपका VPFI tier chains के बीच कैसे travel करता है
+### आपका VPFI tier chains के बीच कैसे पहुँचता है
 
-आप VPFI को Base पर अपने vault में deposit करते हैं — Base ही canonical
-chain है जो आपकी accumulator state रखती है। जब आप किसी दूसरी chain पर
-action लेते हैं (Sepolia पर borrow, Arbitrum पर lend, आदि), तो वह chain
-आपके tier की एक *cached* copy पढ़ती है। यह cache एक cross-chain push से
-ताज़ा रहती है: जब Base पर आपका effective tier बदलता है, तो आपकी अगली
-Base-side action हर उस mirror chain को CCIP message broadcast करती है
-जहाँ आप action ले सकते हैं। यह push हर सामान्य Base action के साथ चलती
-है — और T-087 Sub 4 से Dashboard पर एक "अभी mirrors पर मेरा tier भेजें"
-button भी है (जो `pokeMyTier()` call करता है), ताकि आप vault mutation के
-बिना push force कर सकें। local consent और mirror chains पर local VPFI
-requirements सहित पूरा walkthrough "How VPFI Discounts Work" chapter में
-है — जो फ़िलहाल सिर्फ़ अंग्रेज़ी guide में मौजूद है।
+आप VPFI को canonical chain, Base, पर अपने vault में रखते हैं, और आपका
+tier Base ही तय करता है। जब आप किसी दूसरी chain पर borrow या lend करते
+हैं, तो वह chain आपके tier की एक copy लागू करती है। यह copy Base हर उस
+deposit, withdrawal या दूसरी action के बाद Chainlink CCIP से भेजता है जो
+आपका tier बदलती है।
 
 तीन बातें जानने योग्य:
 
-- **Tier maturation के लिए एक follow-up action चाहिए।** आपका पहला stake
-  तुरंत broadcast नहीं करता — आपका effective tier एक minimum-history
-  period (default 3 दिन) से gated है, इसलिए नया stake शुरू में tier 0
-  resolve होता है और broadcast चुपचाप skip हो जाता है। period बीतने पर
-  gate Base पर तुरंत खुल जाता है, लेकिन mirrors को तब तक पता नहीं चलता
-  जब तक आपकी अगली rollup-bearing Base action (कोई भी deposit, withdrawal
-  या loan action — कुछ भी जो Base पर आपके vault को mutate करे) या
-  Dashboard का "अभी mirrors पर मेरा tier भेजें" click (Sub 4) push
-  trigger न करे। 1-wei का top-up भी काम करता है।
-- **Propagation time.** push dispatch होने के बाद यह आम तौर पर CCIP से
-  कुछ ही मिनटों में mirror पर पहुँच जाती है। तब तक mirror आपका पिछला
-  cached tier ही honour करता रहता है — tier 0 पर कोई flicker नहीं होता।
-- **Cache expiry.** cached tier तब तक honour होता है जब तक (a) कोई नई
-  push न आए, (b) governance tier-threshold table को नए version पर न ले
-  जाए और mirror का tracked version न बढ़े (यह तब होता है जब किसी भी user
-  की post-bump push पहली बार उस mirror पर पहुँचती है — Base पर हाल में
-  निष्क्रिय रहे users भी उसी क्षण अपना पुराने version वाला cached
-  discount खो देते हैं, जब तक उनकी अपनी अगली push catch up न कर ले), या
-  (c) cache अपने max-age backstop (default 60 दिन) को पार न कर जाए। अगर
-  आप किसी chain पर लंबे समय तक action नहीं लेते, तो वहाँ आपकी cache
-  आख़िरकार expire हो जाएगी और वह chain अगली push तक आपको tier 0 मानेगी।
-  refresh करने के लिए कोई भी rollup-bearing Base action करें जो नया push
-  tuple बनाए — tier बदलने वाला balance mutation, या governance
-  table-version bump के बाद कोई भी Base action। एक ही tuple वाला "no-op"
-  rollup दोबारा push नहीं भेजेगा — यह जानबूझकर है, ताकि protocol का
-  broadcast budget पहले से सही caches पर ख़र्च न हो।
+- **सिर्फ़ समय बीतने से बढ़े tier को पहुँचने के लिए Base पर एक action
+  चाहिए।** बिना deposit या withdrawal के जब आपकी holding अवधि पूरी हो
+  जाती है या आपका औसत बराबर आ जाता है, तो Base का अपना आँकड़ा तुरंत
+  अपडेट हो जाता है। दूसरी chains को यह Base पर आपके अगले deposit या
+  withdrawal से पता चलता है, रकम चाहे जितनी हो।
+- **कम हुआ tier पहले पहुँचता है।** Protocol कम हुआ tier तुरंत भेजता है
+  और बढ़े हुए tier का ख़र्च हर chain पर दिन में ज़्यादा से ज़्यादा एक
+  बार उठाता है। उसके बाद CCIP से पहुँचने में आम तौर पर कुछ मिनट लगते
+  हैं। पहुँचने तक वह chain आपका पिछला tier ही लागू करती रहती है।
+- **Copy पुरानी पड़ सकती है।** 60 दिन (default) तक कोई नई copy न आए,
+  या tier table का कोई बदलाव उस chain तक पहुँच जाए, तो पुरानी copy पर
+  वहाँ कोई discount नहीं मिलता। नई copy तभी भेजी जाती है जब आपका tier
+  बदलता है।
 
-cache staleness पकड़ने के लिए किन gates का इस्तेमाल करती है, यह जानने के
-लिए देखें
-[Cross-Chain Tier Propagation functional spec](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/CrossChainTierPropagation.md)।
+पूरे नियम, जिनमें वह discount switch भी शामिल है जो आपकी इस्तेमाल की
+chain के साथ Base पर भी चालू होना चाहिए, नीचे "VPFI Discount कैसे काम
+करते हैं" chapter में हैं। Delivery का design
+[tier delivery design document](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/TierPushDeliveryDesign.md)
+(अंग्रेज़ी में) में है।
 
 ---
 
@@ -1742,3 +1724,164 @@ permission हो; initiate step खुद user-only ही रहता है�
 
 डिसओन (disown) फ़ंक्शन अभी के लिए केवल सीधे कॉन्ट्रैक्ट कॉल के माध्यम से उपलब्ध है; Vaipakam फ्रंटएंड इसे बटन के रूप में नहीं दिखाता है। इसे कॉल करने के लिए ब्लॉक-एक्सप्लोरर "Write Contract" UI या कॉन्ट्रैक्ट-इंटरैक्शन टूल का उपयोग करें।
 
+## VPFI Discount कैसे काम करते हैं
+
+Canonical chain, Base, पर आपके vault में रखा VPFI आपको protocol की अपनी
+fees पर discount दिलाता है, उन सभी chains पर जहाँ platform चलता है। आप
+जितना ज़्यादा और जितने लंबे समय तक रखते हैं, आपका tier उतना ऊँचा और
+discount उतना बड़ा होता है। Tiers ऊपर दिए
+[Tier ladder](#dashboard.fee-discount-consent) में हैं; governance इन्हें
+बदल सकता है।
+
+Discount किस पर लगता है:
+
+- **Lender के रूप में**, उस yield fee पर जो protocol आपके कमाए ब्याज से
+  रखता है। यह हर बार ब्याज settle होने पर पढ़ा जाता है, जैसे repayment,
+  preclose या refinance पर, उस समय के आपके tier से, न कि loan शुरू होने
+  के समय के tier से।
+- **Borrower के रूप में**, loan शुरू होने पर लगने वाली Loan Initiation
+  Fee पर। यह accept के समय सिर्फ़ एक बार पढ़ा जाता है और उस loan के साथ
+  तय रहता है। यह तभी लागू होता है जब lending asset liquid हो; illiquid
+  loan पूरी fee देता है।
+
+Discount fee में से ही, loan के asset में घटा दिया जाता है, और इसके लिए
+आपके vault से कोई VPFI बाहर नहीं जाता। एकमात्र अपवाद उस deployment पर
+lender का discount है जिसने VPFI का price reference configure किया हो:
+वहाँ इसे आपके vault से VPFI में चुकाया जा सकता है। Launch पर ऐसा कोई
+configure नहीं है। यह chapter इसी holding discount के बारे में है। एक
+अलग paid fee mode, "Full", तब तक बंद रहता है जब तक कोई deployment उसे
+चालू न करे।
+
+### Discount चालू करना
+
+Discount opt-in है। Switch VPFI page पर है, और हर chain का अपना एक switch
+है, क्योंकि हर chain अपनी setting ख़ुद रखती है:
+
+- **जिस chain पर fee लगती है**, वहाँ switch चालू होना चाहिए, वरना वह chain
+  आपके tier से अलग, पूरी fee लेती है।
+- **Base पर** भी switch चालू होना चाहिए, चाहे आप वहाँ कभी borrow या lend
+  न करें। जब तक वह बंद है, Base बाकी सभी chains को आपका tier शून्य
+  भेजता है।
+
+जब आप discount बंद करते हैं, तो app तुरंत एक tier update भेजता है ताकि
+दूसरी chains भी उसे लागू करना बंद कर दें। अगर यह दूसरा कदम विफल हो, तो
+page यह बताता है, और दूसरी chains आपका आख़िरी tier तब तक रखती हैं जब तक
+कोई नया न भेजा जाए।
+
+सिर्फ़ VPFI page के ज़रिए deposit किया गया VPFI गिना जाता है। आपके vault
+के address पर सीधे भेजे गए tokens protocol track नहीं करता, और वे आपका
+tier नहीं बढ़ाते।
+
+### आपका tier कैसे तय होता है
+
+आपका tier तीन अलग-अलग जाँचों से आता है, और तीनों पास होनी चाहिए:
+
+1. **न्यूनतम holding अवधि।** जब तक आपकी मौजूदा holding कम से कम 3 दिन
+   न चल जाए, आपका tier शून्य रहता है। Holding उस पल शुरू होती है जब
+   आपका vault balance शून्य से ऊपर जाता है, और तब तक चलती है जब तक वह
+   फिर शून्य न हो जाए। और जोड़ने से घड़ी दोबारा शुरू नहीं होती; सब
+   निकाल लेने से होती है। (3 दिन default है; governance इसे 2 से 14
+   दिन के बीच रख सकता है।)
+2. **हाल के दिनों को ज़्यादा वज़न देने वाला औसत।** आपके balance का औसत
+   पिछले 30 दिनों पर लिया जाता है, जिसमें आख़िरी 7 दिन पहले के दिनों से
+   तीन गुना गिने जाते हैं। औसत आपकी मौजूदा holding शुरू होने से पहले
+   तक कभी नहीं जाता, इसलिए नए holder का औसत उन दिनों से कम नहीं होता
+   जब उसके पास कुछ नहीं था। (Window, हाल के दिन और वज़न governance
+   settings हैं; window 14 से 30 दिन तक हो सकती है।)
+3. **अब तक छुआ गया सबसे निचला tier।** औसत से अलग, आपका tier उस सबसे
+   निचले tier से ऊपर नहीं हो सकता जिस तक मौजूदा holding के दौरान आपका
+   balance पहुँचा, अधिकतम 30 दिन पीछे देखते हुए। हर दिन का सबसे निचला
+   बिंदु गिना जाता है, इसलिए एक ही दिन में गिरकर वापस आना भी गिरावट ही
+   माना जाता है।
+
+व्यवहार में इसका मतलब:
+
+- Loan settle होने से ठीक पहले deposit करने से आपका tier तुरंत नहीं
+  बढ़ता। जोड़ी गई रकम को पहले औसत में आना होता है, और आपका छुआ हुआ सबसे
+  निचला बिंदु अब भी सीमा रहता है।
+- जो withdrawal आपको किसी tier की सीमा से नीचे ले जाए, वह आपका tier
+  तुरंत घटा देता है।
+- 30 दिन से पुरानी गिरावट अब आपको सीमित नहीं करती।
+
+### दूसरी chains पर आपका tier
+
+आपका tier Base तय करता है। बाकी सभी chains उसकी वह copy लागू करती हैं जो
+Base Chainlink CCIP से भेजता है। Base हर उस deposit, withdrawal या दूसरी
+action के बाद नई copy भेजता है जो आपका tier बदलती है।
+
+हर chain को अलग से भेजा जाता है। जिस chain तक पहुँचा न जा सके, वह
+दूसरों को नहीं रोकती, और **जो delivery निकल न सके, वह आपकी अपनी action
+को कभी विफल नहीं करती**: Base पर आपका tier तुरंत अपडेट होता है, और हर
+दूसरी chain पर update पहुँचने तक बकाया रहता है।
+
+इन deliveries का ख़र्च protocol उठाता है, एक सीमा के साथ:
+
+- **कम हुआ tier** तुरंत भेजा जाता है, जब तक budget उसका ख़र्च उठा सके।
+  पहुँचने तक वह chain आपका पिछला, ऊँचा tier लागू करती रहती है।
+- **बढ़ा हुआ tier**, या tier table में बदलाव, हर chain पर दिन में
+  ज़्यादा से ज़्यादा एक बार भुगतान पाता है (1 घंटे से 7 दिन के बीच की
+  governance setting)। तब तक वह chain आपका पिछला tier रखती है।
+- बकाया update जल्दी पहुँचाने के लिए कोई भी cross-chain fee चुका सकता है।
+  Contracts यह सुविधा देते हैं; app अभी नहीं देता।
+
+कोई copy गिनी जाना बंद हो जाती है, और उस chain पर कोई discount नहीं
+मिलता, जब:
+
+- वह chain की अधिकतम आयु से पुरानी हो (default 60 दिन, कभी 30 से कम
+  नहीं); या
+- वह उस tier table से पुरानी table से बनी हो जो वह chain अब जानती है।
+
+Copy तभी refresh होती है जब आपका tier सच में बदला हो। अगर आपका tier वही
+रहा और किसी chain की copy पुरानी पड़ गई, तो जब तक आपका tier फिर न बदले,
+आपके कुछ भी करने से वह दोबारा नहीं भेजी जाती।
+
+अगर आपका tier सिर्फ़ समय बीतने से बढ़ा है — holding अवधि पूरी हो गई या
+औसत बराबर आ गया — और कोई deposit या withdrawal नहीं हुआ, तो Base को
+आपके अगले deposit या withdrawal तक इसका पता नहीं चलता। Contracts में एक
+tier-refresh call है जिसे आप अपने लिए ख़ुद कर सकते हैं; app इसे आपकी ओर
+से सिर्फ़ तब करता है जब आप discount बंद करते हैं।
+
+### Operators के लिए
+
+Discount के cross-chain हिस्से को यह configuration चाहिए। यह उन लोगों के
+लिए यहाँ दिया गया है जो अपना deployment चलाते हैं।
+
+**Base पर:**
+
+- `VPFITokenFacet.setCanonicalVPFIChain(true)`। इसके बिना Base tier तय
+  करता है लेकिन उन्हें कहीं नहीं भेजता।
+- `VaipakamRewardMessenger` की ओर इशारा करता
+  `RewardReporterFacet.setRewardMessenger`, और messenger का
+  `setBroadcastDestinations` जिसमें बाकी सभी chains हों।
+- Fund किया हुआ broadcast budget:
+  `ProtocolBroadcastFacet.topUpBroadcastBudget()` (payable)। ख़ाली budget
+  कुछ नहीं रोकता। जिस delivery का ख़र्च वह न उठा सके, वह बकाया रहती है
+  और कारण के साथ `TierPushDeferred` emit करती है, और
+  `getTierPushStatus(user)` किसी user के लिए हर chain की स्थिति दिखाता
+  है। कम budget का मतलब है कि दूसरी chains पुराने tiers ज़्यादा देर तक
+  लागू करेंगी, इसलिए deferrals पर नज़र रखें और top up करें।
+- Paid बढ़ोतरी की spacing window: `setTierPushSpacingSec` (default 1 दिन,
+  1 घंटे से 7 दिन)।
+
+**हर दूसरी chain पर:**
+
+- `RewardReporterFacet.setRewardMessenger(addr)`: वह अकेला sender जिसके
+  tier updates वह chain स्वीकार करती है।
+- `RewardReporterFacet.setBaseChainId(chainId)`: Base का EVM chain id
+  (mainnet पर 8453, Base Sepolia पर 84532), उसका CCIP chain selector
+  नहीं।
+- `ConfigFacet.setMirrorTierMaxAgeSec(seconds)`: copy कितनी देर तक गिनी
+  जाती है (default 60 दिन; 30 दिन से कम मान अस्वीकार होते हैं)। इसे घटाना
+  अगली read से लागू होता है।
+
+**Tier table बदलना:**
+
+- Base पर `setVpfiTierThresholds` और `setVpfiTierDiscountBps` table का
+  version आगे बढ़ाते हैं। दूसरी chain को नया version उस पहले tier update
+  से पता चलता है जिसमें वह हो, चाहे वह किसी भी user का हो। तब से पुरानी
+  table से बनी हर copy उस user का अपना update पहुँचने तक बिना discount
+  के मानी जाती है, और ये updates बढ़ोतरी हैं जिनका भुगतान हर spacing
+  window में ज़्यादा से ज़्यादा एक बार होता है। Table बदलने से पहले
+  budget भर दें।
+- `setTwaMinStakedDays` version आगे बढ़ाए बिना न्यूनतम holding अवधि बदलता
+  है। यह अगली read से लागू होता है।
