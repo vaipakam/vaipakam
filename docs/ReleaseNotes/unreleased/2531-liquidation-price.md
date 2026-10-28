@@ -22,7 +22,11 @@ failure-tolerant batched reads (the forced close-out readiness and the Offer
 Book's pricing) now share: the stock multicall reported an unreachable
 provider as every call failing, so a liquid loan could have been shown as one
 the protocol does not price. A provider failure is now an error that says the
-reads failed, and a lint rule keeps the stock form out of the app.
+reads failed, and a lint rule keeps the stock form out of the app. A risk
+read whose latest refresh failed no longer keeps showing its last health
+factor or liquidation price: the loan page says the read failed and the lists
+show the health as unknown, since interest and prices move the line between
+reads.
 The numeraire symbol decoder the protocol console used is now shared. Closes
 #2531.
 

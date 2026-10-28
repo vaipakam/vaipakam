@@ -20,6 +20,7 @@ import { tipAware } from '../chain/railHealth';
 import { readAggregate } from '../contracts/aggregate';
 import { copy } from '../content/copy';
 import { formatTokenAmountUp } from '../lib/format';
+import { freshData } from '../lib/freshData';
 import {
   loanRiskFromSlots,
   loanRiskReadPlan,
@@ -29,17 +30,27 @@ import {
 
 export type { LiquidationPrice, LoanRisk, RiskCollateral } from './loanRiskReads';
 
+/** What the risk read currently knows. `data` is present only while the
+ *  LATEST read succeeded (`freshData`): a health factor, LTV or
+ *  liquidation price that failed to refresh is unknown, not the last
+ *  figure the app heard, since interest and prices move the line between
+ *  reads. `isError` tells "the read failed" from "still checking". */
+export interface LoanRiskRead {
+  data: LoanRisk | undefined;
+  isError: boolean;
+}
+
 /** `collateral`, when given, adds the liquidation price to the read. Only
  *  the position page passes it; list rows read the health factor alone. */
 export function useLoanRisk(
   loanId: number | undefined,
   enabled: boolean,
   collateral?: RiskCollateral,
-) {
+): LoanRiskRead {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
 
-  return useQuery({
+  const query = useQuery({
     // The collateral is part of the key because it changes the plan.
     queryKey: [
       'loanRisk',
@@ -81,6 +92,9 @@ export function useLoanRisk(
       return loanRiskFromSlots(plan, slots);
     },
   });
+  // Every consumer reads "no data" as unknown, so the stale answer is
+  // dropped HERE rather than at each of them (#2996 r2).
+  return { data: freshData(query), isError: query.isError };
 }
 
 const WAD = 10n ** 18n;

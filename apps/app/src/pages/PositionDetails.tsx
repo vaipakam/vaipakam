@@ -3408,7 +3408,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             </div>
           ) : null}
           {/* #2531 — next to the health factor, so advanced only, like the
-              ratio it is derived from. */}
+              ratio it is derived from. Shown only from a read whose latest
+              refresh succeeded (`useLoanRisk` drops a stale answer); when
+              the read failed, the health row above says so and no price is
+              stated. */}
           {!isRental && row.status === 'active' && risk.data && isAdvanced ? (
             <div className="receipt-row" data-testid="position-liquidation-price">
               <dt>{copy.positions.details.labels.liquidationPrice}</dt>
