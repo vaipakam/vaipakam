@@ -5,7 +5,7 @@ Covers #1463, #1469, #1473 and #1474. Owner decision D11 (2026-10-16) said one
 design covers these together, and #1481 (the table classification) has since
 closed on its own, so it is not reopened here.
 
-This document is the design. It changes no code. The build is the four slices
+This document is the design. It changes no code. The build is the three slices
 in §8, each its own PR, and every one of them lands before mainnet.
 
 ## 1. What is wrong today
@@ -225,8 +225,14 @@ Each run lists every version in the archive bucket, records each one it has
 not recorded before, and checks the whole picture. It pages, through one alert
 issue keyed by stable problem names plus the ops chat, on:
 
-- **Missing**: a daily archive for yesterday, a monthly archive for this month
-  after the 1st, or a yearly one after 1 January, is not there.
+- **Missing**: an archive that should exist is not there. The watcher reuses
+  the tier rules the healthcheck runs today
+  (`ops/offchain-data-warm/src/tiers.ts`): every period a tier should still hold, from its declared first period to
+  now and within the tier's retention, is required, not only the newest. So a
+  February monthly that never uploaded is still reported in June. The declared
+  first periods (today the Worker's `ARCHIVE_FIRST_MONTHLY` /
+  `ARCHIVE_FIRST_YEARLY`) move with the check into the watcher, as committed
+  values, because a missed cut leaves nothing for the ledger to record.
 - **Ambiguous period**: a period holds more than one archive, either two
   nonces or a superseded version at one key. The honest nightly writes exactly
   one per period, so any second one is a write nobody planned.
@@ -250,9 +256,10 @@ issue keyed by stable problem names plus the ops chat, on:
   marker (§5.2). The honest watcher never writes either, so this means the
   ledger key was used by someone else.
 - **Deleted early**: an archive the ledger recorded is gone before its
-  lifecycle could have removed it. This replaces the `ARCHIVE_FIRST_MONTHLY` /
-  `ARCHIVE_FIRST_YEARLY` baselines, which existed only because the healthcheck
-  could see nothing but survivors; the ledger remembers what was written.
+  lifecycle could have removed it. This adds to Missing rather than replacing
+  it: Missing knows which periods should exist, and the ledger knows which
+  exact archives did exist, so a deleted archive is caught even when another
+  archive now sits in its period.
 
 ### 5.4 What the ledger proves, and what it cannot
 
@@ -360,7 +367,7 @@ turn (primary and escrow), and records the outcome on the tracking issue. It is
 the only proof that the archives decrypt (§3.4), so the runbook schedules it
 rather than leaving it to an incident.
 
-## 8. The build, in four slices
+## 8. The build, in three slices
 
 Each slice is its own PR, each lands before mainnet, and the order matters.
 
@@ -368,14 +375,18 @@ Each slice is its own PR, each lands before mainnet, and the order matters.
    writing ledger entries for the archives that exist today, and paging on
    §5.3. It also checks the current symmetric format's manifests, so it runs
    usefully before slice 2. Needs the ledger bucket and keys first (§9).
-2. **Public-key encryption.** The Worker encrypts in the §3.1 format to the
-   committed recipients; `decrypt-archive.mjs` arrives with the matching
-   refusals (§6). The watcher learns the header check.
-3. **The Worker loses its reader.** Remove the healthcheck, the read key, the
-   AES key and the `ARCHIVE_FIRST_*` variables from the Worker; stop logging
-   and posting the archive key. After merge, the owner deletes those three
+2. **Public-key encryption, and the Worker loses its reader, in one
+   deploy.** The Worker encrypts in the §3.1 format to the committed
+   recipients, and the same change removes the healthcheck, the read key, the
+   AES key and the `ARCHIVE_FIRST_*` variables, and stops logging and posting
+   the archive key. They cannot ship apart: the healthcheck decrypts the
+   newest archive with the old symmetric key, so a format switch that left it
+   running would report every healthy new archive as a failure. The watcher
+   from slice 1 already carries the online checks, so nothing goes unwatched.
+   `decrypt-archive.mjs` arrives with the matching refusals (§6), and the
+   watcher learns the header check. After merge, the owner deletes the three
    secrets from the Worker (§9).
-4. **Docs.** `OffChainRestore.md` (download by file id, the ledger check, the
+3. **Docs.** `OffChainRestore.md` (download by file id, the ledger check, the
    entry choice, the drill), `OffChainDataResilience.md` §3.3–§3.6, the Worker
    README, and the privacy policy's encryption sentence if its wording needs
    it (it already says Backblaze holds only ciphertext, which stays true).
@@ -391,7 +402,7 @@ These need the owner's accounts. Exact commands go in each slice's PR.
 - **Add the watcher's secrets** to the repository. Before slice 1.
 - **Correct the live lifecycle** to the declared 20 + 9 (§7.2). Now.
 - **Delete `BACKUP_ENCRYPTION_KEY` and the two `B2_READ_*` secrets** from the
-  Worker after slice 3. Keep a copy of the old AES key in the offline store for
+  Worker after slice 2. Keep a copy of the old AES key in the offline store for
   as long as any old-format archive is retained, which for the yearly tier is
   indefinitely.
 - **Move the master B2 key** out of the developer `.env` into the offline
