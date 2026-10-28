@@ -1358,8 +1358,8 @@ to a decision. Listed by category.
 ### 12.2 Files / paths to NOT touch
 
 - **`docs/internal/RoughNotes.md` is user-owned** and, like the whole
-  `docs/internal/` folder, gitignored on purpose — local-only scratch space for ideas / questions /
-  half-formed plans. AI never edits it. The file won't appear in the
+  `docs/internal/` folder, gitignored on purpose — local-only scratch
+  space for ideas / questions / half-formed plans. AI never edits it. The file won't appear in the
   repo on GitHub even though it's referenced in agent context.
 
 - **`docs/internal/PendingTasks-yyyy-mm-dd.md` is retired** (replaced
