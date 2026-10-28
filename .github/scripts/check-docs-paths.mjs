@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Docs gate: no operator runbook cites a directory that no longer exists.
+ * Docs gate: no operator runbook cites a directory that no longer exists, or
+ * links to or shows as code a repository path the tracked tree does not have.
  *
  * WHY THIS EXISTS. The Stage 3 refactor moved the dApp to `apps/app`, but 147
  * references to the removed `frontend/` directory survived across 39 documents
@@ -43,17 +44,20 @@
  * false alarms ONLY through an open-world rule, and five of seven adjudication
  * findings landed on one too.
  *
- * Three open-world rules were built on this branch and deferred, each needing a
+ * Three open-world rules were built on #1467 and deferred, each needing a
  * precise extractor — which means a real parser, not more patches to a loose
  * one:
  *
- *   - does-it-exist against the tracked tree ...................... #1486
+ *   - does-it-exist against the tracked tree ...... #1486, SHIPPED (rule 2)
  *   - non-canonical `/app/…` URL citations ........................ #1479
  *   - secrets reaching a command's argv ........................... #1472
  *
  * Each was deferred separately, on its own judgement call, before anyone
  * noticed they fail the same test. That they fall out of one criterion is the
- * evidence the criterion is real rather than a rationalisation.
+ * evidence the criterion is real rather than a rationalisation. The first
+ * shipped the way the criterion said it would: a CommonMark parser now finds
+ * the links and code spans (`docs-citations.mjs`), and the rule reads only
+ * those whole sites, never the words taken out of command text.
  *
  * ── WHY THIS GATES AT ZERO, WITH NO BASELINE ──────────────────────────────
  *
@@ -79,7 +83,10 @@
  * span or a link. It closes one class completely rather than many partly.
  */
 
-import { dirname, posix } from 'node:path';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, posix } from 'node:path';
 import { citations, scopedDocs, trackedFiles } from './docs-citations.mjs';
 
 /** Documents the gate covers. See "SCOPE IS `docs/ops/`" above. */
@@ -132,8 +139,8 @@ const TRACKED = new Set(trackedFiles());
  * how it renders — but a CODE SPAN is this repo's repository-root citation
  * form, so giving it the document-relative reading would acquit a root-stale
  * `` `frontend/guide.md` `` whenever the citing doc happened to sit next to a
- * same-named live file. Using the tree to ACCUSE would be the open-world rule
- * the admission criterion excludes, and is what #1486 carries.
+ * same-named live file. Using the tree to ACCUSE is the open-world rule, which
+ * runs below as rule 2 and only on whole sites a parser found (#1486).
  */
 const removedDirHit = (tok, file, link) => {
   const bare = tok.replace(/^(\.\.?\/)+/, '');
@@ -148,35 +155,200 @@ const removedDirHit = (tok, file, link) => {
   );
 };
 
-const findings = [];
-for (const file of scopedDocs(GATED)) {
-  for (const { tok, n, line, link } of citations(file)) {
-    const removed = removedDirHit(tok, file, link);
-    if (removed) findings.push({ file, n, tok, line, why: removed[1] });
+// ── RULE 2: THE CITED PATH EXISTS (#1486) ────────────────────────────────
+//
+// The open-world rule the admission criterion kept out while the extractor was
+// a set of regular expressions. It is admitted now because of what it reads,
+// not because it got more careful: only WHOLE sites, as a CommonMark parser
+// found them (`whole: true` in `docs-citations.mjs`), never a shell word. A
+// finding is then "this document links to, or shows as code, a repository path
+// that the tracked tree does not have", which is a defect of the text whatever
+// else the fragment is.
+//
+// Which whole sites are repository-path claims, and how each resolves, are the
+// adjudication rules #1467 established and verified by injection (each
+// numbered below where it is applied):
+//
+//   (1) existence is the TRACKED tree, from `git ls-files -z` — never the
+//       working tree, which holds build output and local files;
+//   (2) a trailing slash resolves only as a directory, and a tracked gitlink
+//       (a submodule) is a directory whose contents this tree cannot see;
+//   (3) a markdown destination resolves against its own document, as it
+//       renders; a code span resolves from the repository root, which is this
+//       repository's citation form. A code span starting `./` or `../` is
+//       relative to a working directory, so it claims nothing this rule can
+//       check (see `claimedPath`);
+//   (4) a path the COMMITTED `.gitignore` files ignore is not a finding (a
+//       runbook tells the operator to create `contracts/.env`) — but a
+//       global `core.excludesFile` or `.git/info/exclude` must not exempt
+//       anything, and a negated pattern is not an exemption;
+//   (5) a URI with a scheme, a protocol-relative `//host/…` and a site-root
+//       `/route` are not repository paths;
+//   (6) a candidate escaping the repository is dropped before the ignore
+//       check, because one such path makes Git fail the whole batch.
+//
+// One rule is new here, because a code span is not only ever a path: a span
+// is a root-relative path claim only when its first segment is a tracked
+// top-level entry (`contracts/…`, `docs/…`, `.github/…`). `read/write`,
+// `owner/repo` and a bare `Foo.md` are words, not citations, and a rule that
+// read them as paths would be the open-world false alarm again. Placeholders
+// and patterns (`<slug>`, `*`, `{a,b}`, `$VAR`, `~`) are skipped for the same
+// reason: they describe paths rather than name one.
+
+/** (2) Every tracked directory, and every gitlink. */
+const GITLINKS = execFileSync('git', ['ls-files', '-s', '-z'], { encoding: 'utf8' })
+  .split('\0')
+  .filter((e) => e.startsWith('160000 '))
+  .map((e) => e.slice(e.indexOf('\t') + 1));
+const DIRS = new Set(GITLINKS);
+for (const f of [...TRACKED, ...GITLINKS]) {
+  for (let d = posix.dirname(f); d !== '.'; d = posix.dirname(d)) DIRS.add(d);
+}
+const TOP = new Set([...TRACKED, ...DIRS].map((p) => p.split('/')[0]));
+const underGitlink = (p) => GITLINKS.some((g) => p === g || p.startsWith(`${g}/`));
+
+const HAS_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/;
+const NOT_A_NAME = /[\s*?{}[\]<>$~|\\"'`]/;
+
+/**
+ * Percent-escapes in a link resolve on GitHub; a malformed one stays as written.
+ * `tok` is already the path alone (query and fragment were split off before
+ * decoding), so every escape is decoded, the reserved ones included: an
+ * escaped `#`, `?` or `+` is part of the file name, and `decodeURI` would
+ * leave it encoded and look for `a%23b.md` instead of `a#b.md`.
+ */
+const decoded = (tok) => {
+  try {
+    return decodeURIComponent(tok);
+  } catch {
+    return tok;
   }
+};
+
+/**
+ * The repository path a whole site claims, or null when it claims none.
+ * Returns `{ path, dir }`: `dir` when it was cited with a trailing slash.
+ *
+ * `src` is the site as written. A code span is tested for pattern characters
+ * there, not in `tok`: normalisation reads `?` as the start of a URL query and
+ * drops it with everything after, so `contracts/src/Live?.sol` would reach
+ * this rule as the literal `contracts/src/Live` and be accused of not existing.
+ */
+function claimedPath(tok, src, file, link) {
+  if (HAS_SCHEME.test(tok) || tok.startsWith('/')) return null; // (5)
+  // A code span may name a part of a file (`wrangler.jsonc:vars`), as it may
+  // name a line; the part is not in the path.
+  const raw = link ? decoded(tok) : tok.replace(/:[A-Za-z_][\w.-]*$/, '');
+  if (!link) {
+    if (NOT_A_NAME.test(raw) || NOT_A_NAME.test(src)) return null;
+    // (3), narrowed for accusing. `./x` and `../x` in a code span are
+    // relative to a working directory the text names in prose, if at all
+    // (`./tickets.sql` from `apps/indexer/`), so they have no base this rule
+    // can resolve. #1467 read them document-relative, which is right for
+    // ACQUITTING a removed-directory hit and wrong for accusing.
+    if (raw.startsWith('./') || raw.startsWith('../')) return null;
+    if (!TOP.has(raw.split('/')[0])) return null;
+  }
+  const joined = link ? posix.join(dirname(file), raw) : raw;
+  const path = posix.normalize(joined).replace(/\/$/, '');
+  if (path === '.' || path === '..' || path.startsWith('../')) return null; // (6)
+  return { path, dir: raw.endsWith('/') };
+}
+
+const exists = ({ path, dir }) =>
+  underGitlink(path) || DIRS.has(path) || (!dir && TRACKED.has(path)); // (1) (2)
+
+/**
+ * (4) The subset of `paths` the committed `.gitignore` files ignore.
+ *
+ * Git consults the user's global excludes file and `.git/info/exclude` as
+ * well as the tree's `.gitignore` files, and neither of those is part of the
+ * repository. So the check runs in a scratch repository holding ONLY the
+ * committed `.gitignore` files, with the global and system configuration
+ * switched off. Without `--verbose`, `check-ignore` lists only paths that end
+ * up ignored, so a path a negated pattern re-includes is not listed.
+ *
+ * The scratch tree holds no directories, so `check-ignore` cannot know that a
+ * path cited without a trailing slash is one, and a directory-only pattern
+ * (`cache/`) would not match `contracts/cache`. Each such path is therefore
+ * also asked in its directory form, and counts as ignored when either form
+ * is: the citation may name either, and this rule acquits rather than
+ * accuses when it cannot tell.
+ */
+function committedIgnored(paths) {
+  if (paths.length === 0) return new Set();
+  const scratch = mkdtempSync(join(tmpdir(), 'docs-paths-'));
+  try {
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+    execFileSync('git', ['init', '-q', '--template=', scratch], { env });
+    for (const g of trackedFiles([':(glob)**/.gitignore'])) {
+      mkdirSync(join(scratch, posix.dirname(g)), { recursive: true });
+      writeFileSync(join(scratch, g), execFileSync('git', ['show', `:${g}`]));
+    }
+    const asked = paths.flatMap((p) => (p.endsWith('/') ? [p] : [p, `${p}/`]));
+    const res = spawnSync(
+      'git',
+      ['-C', scratch, '-c', 'core.excludesFile=/dev/null', 'check-ignore', '--no-index', '--stdin', '-z'],
+      { env, input: asked.join('\0'), encoding: 'utf8' },
+    );
+    // 0: some paths are ignored; 1: none are; anything else is a failure,
+    // never a verdict.
+    if (res.status !== 0 && res.status !== 1) {
+      throw new Error(`git check-ignore failed (${res.status}): ${res.stderr}`);
+    }
+    const hit = new Set(res.stdout.split('\0').filter(Boolean));
+    return new Set(paths.filter((p) => hit.has(p) || hit.has(`${p}/`)));
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+const findings = [];
+const missing = [];
+for (const file of scopedDocs(GATED)) {
+  for (const { tok, src, n, line, link, whole } of citations(file)) {
+    const removed = removedDirHit(tok, file, link);
+    if (removed) {
+      findings.push({ file, n, tok, line, why: removed[1] });
+      continue;
+    }
+    if (!whole) continue;
+    const claim = claimedPath(tok, src, file, link);
+    if (claim && !exists(claim)) missing.push({ file, n, tok, line, claim });
+  }
+}
+const ignored = committedIgnored([...new Set(missing.map(({ claim }) => claim.path + (claim.dir ? '/' : '')))]);
+for (const m of missing) {
+  if (ignored.has(m.claim.path + (m.claim.dir ? '/' : ''))) continue;
+  findings.push({
+    ...m,
+    why:
+      m.claim.path === m.tok
+        ? `\`${m.claim.path}\` is not in the tracked tree${m.claim.dir ? ' as a directory' : ''}`
+        : `resolves to \`${m.claim.path}\`, which is not in the tracked tree${m.claim.dir ? ' as a directory' : ''}`,
+  });
 }
 findings.sort((a, b) => a.file.localeCompare(b.file) || a.n - b.n);
 
 if (findings.length === 0) {
   console.log(
-    `docs path gate: OK — no removed-directory citations in ${GATED.join(', ')}.`,
+    `docs path gate: OK — every cited path exists, and no removed-directory citations, in ${GATED.join(', ')}.`,
   );
   process.exit(0);
 }
 
-console.error(
-  `docs path gate: ${findings.length} citation(s) of a removed directory:\n`,
-);
+console.error(`docs path gate: ${findings.length} citation(s) to fix:\n`);
 for (const f of findings) {
   console.error(`${f.file}:${f.n}  ${f.tok}`);
   if (f.line) console.error(`    ${f.line.trim()}`);
   console.error(`    -> ${f.why}\n`);
 }
 console.error(
-  'Cite the new location. If the target was deleted rather than moved, say so\n' +
-    'in the prose instead of repointing at something that does not exist.\n' +
-    'If a directory legitimately belongs in this list or has left it, edit\n' +
-    'REMOVED_DIRS in .github/scripts/check-docs-paths.mjs — after checking\n' +
+  'Cite the path as it is now. If the target was deleted rather than moved, say\n' +
+    'so in the prose instead of pointing at something that does not exist. If a\n' +
+    'path is one the reader is told to CREATE, it belongs in a committed\n' +
+    '.gitignore. If a directory legitimately belongs in REMOVED_DIRS or has left\n' +
+    'it, edit that list in .github/scripts/check-docs-paths.mjs — after checking\n' +
     '`git ls-files <dir>`.',
 );
 process.exit(1);

@@ -2000,8 +2000,8 @@ The Cloudflare Workers used to be a third. They are not any more: since
 the Stage 3 split, `apps/{keeper,indexer,agent}` import ABIs directly
 from the shared `@vaipakam/contracts/abis` bundle the frontend reads, so
 there is no Worker-specific export step and no separate Worker ABI
-directory to keep in sync. `contracts/script/exportWatcherAbis.sh` was
-deleted with it.
+directory to keep in sync. The old Worker ABI export script was deleted
+with it.
 
 ```bash
 
@@ -2065,8 +2065,8 @@ the production deploy path the sync stays manual on purpose so the
 operator can review each diff before committing.
 
 **Token-icon URL template** (`VITE_TOKEN_ICON_URL_TEMPLATE`) — **dead; do
-not set it.** Its only reader was `packages/ui/src/TokenIcon.tsx`, and
-that package was RETIRED in #1963 (orphaned when #1854 deleted its last
+not set it.** Its only reader was the token-icon component of the shared
+UI package, and that package was RETIRED in #1963 (orphaned when #1854 deleted its last
 consumer). This is no longer "inert pending a consumer" — the code that
 read the variable is gone from the tree, so no build can consult it.
 Historically it selected the icon source (Trust Wallet CDN by default,
@@ -2813,7 +2813,7 @@ describing this; keep them in sync if you change the schema.
 > and [`CloudflareCronSlots.md`](CloudflareCronSlots.md) for whether the
 > budget currently has room for it.
 >
-> **The source tree is GONE** — `ops/lz-watcher/` was removed in #1440.
+> **The source tree is GONE** — the lz-watcher directory was removed in #1440.
 > Review established that no config edit can make a source tree
 > undeployable (the positional `wrangler deploy src/index.ts --triggers
 > ...` form bypasses `main` entirely, and `wrangler secret put` can create
@@ -2826,7 +2826,7 @@ describing this; keep them in sync if you change the schema.
 <details>
 <summary>Historical procedure (retained for reference only)</summary>
 
-The `ops/lz-watcher` Cloudflare Worker is **separate from** the
+The lz-watcher Cloudflare Worker is **separate from** the
 hf-watcher in §8. It is internal-only — it has no public HTTP
 surface, no fetch handler, no user-facing notification rails.
 Its single job is detection + alert into a private ops Telegram
@@ -2923,7 +2923,7 @@ keep the two `TG_BOT_TOKEN` secrets distinct between Workers.
 
 ### 9d. LZ inventory (vars)
 
-Edit `ops/lz-watcher/wrangler.jsonc`'s `vars` block — paste, per
+Edit the lz-watcher's `wrangler.jsonc` `vars` block — paste, per
 chain, the LZ V2 endpoint address, the ULN302 send + receive
 library addresses, and every Vaipakam OApp deployed on that
 chain. Optional vars: `VPFI_TOKEN_BASE` (only needed for the

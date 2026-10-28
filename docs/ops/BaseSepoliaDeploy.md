@@ -381,7 +381,7 @@ cast send $BASE_SEPOLIA_VPFI_TOKEN "setMinter(address)" $BASE_SEPOLIA_DIAMOND_AD
 
 Populate `.env`: `VPFI_BUY_WEI_PER_VPFI=1000000000000000`, `VPFI_BUY_GLOBAL_CAP=2300000000000000000000000`, `VPFI_BUY_PER_WALLET_CAP=30000000000000000000000`, `VPFI_BUY_ENABLED=true`, `BASE_SEPOLIA_VPFI_DISCOUNT_ETH_PRICE_ASSET` (= WETH).
 
-The fixed-rate buy path follows `docs/TokenomicsTechSpec.md` §8 / §8a:
+The fixed-rate buy path follows `docs/FunctionalSpecs/TokenomicsTechSpec.md` §8 / §8a:
 buyers pay ETH, VPFI is delivered to the buyer's wallet, and any
 wallet-to-vault deposit is a separate explicit action. Do not run the
 buy smoke test until §7 has configured `LOCAL_EID=40245`; direct buys
@@ -667,7 +667,7 @@ Emergency actions that **cannot wait 48h** bypass the timelock by design: `Admin
 
 ## 12. Publish addresses
 
-Commit the final `.env` values (addresses only — never private keys) to `docs/deployments/base-sepolia.md` or the equivalent for ops lookups. Include `BASE_SEPOLIA_TIMELOCK_ADDRESS` — integrators verifying the admin surface will check `owner()` against it.
+The deploy scripts write every address to `contracts/deployments/base-sepolia/addresses.json`; commit that file (addresses only — never private keys) for ops lookups. Include `BASE_SEPOLIA_TIMELOCK_ADDRESS` — integrators verifying the admin surface will check `owner()` against it.
 
 Record the block numbers too: `cast block-number --rpc-url $BASE_SEPOLIA_RPC_URL` at the start of each script for a point-in-time audit trail.
 

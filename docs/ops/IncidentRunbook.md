@@ -1226,7 +1226,7 @@ case-sensitivity trap between the two guards.
 <details>
 <summary>Historical SOPs (retired — reference only)</summary>
 
-The `ops/lz-watcher` Cloudflare Worker (separate from the
+The lz-watcher Cloudflare Worker (separate from the
 pre-split `hf-watcher`) fired
 three alert kinds into the internal ops Telegram channel. Each
 has its own SOP. All three are **detection-only** — there is no
@@ -1265,8 +1265,8 @@ cast call $LZ_ENDPOINT \
 ```
 
 Decode the returned bytes with `cast --abi-decode '(uint64,uint8,uint8,uint8,address[],address[])'`.
-Compare to the policy in `contracts/script/ConfigureLZConfig.s.sol`'s
-`_policyForChain`.
+Compare to the policy in the retired `ConfigureLZConfig.s.sol` script's
+`_policyForChain` (gone from the tree; recover it from git history).
 
 **Root-cause buckets:**
 - **A. Accidental misconfiguration.** Someone ran `setConfig`

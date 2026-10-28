@@ -149,6 +149,10 @@
       "types": "./src/cspScriptHashes.d.mts",
       "default": "./src/cspScriptHashes.mjs"
     },
+    "./markdownCitations": {
+      "types": "./src/markdownCitations.d.mts",
+      "default": "./src/markdownCitations.mjs"
+    },
     "./markdownProse": {
       "types": "./src/markdownProse.d.mts",
       "default": "./src/markdownProse.mjs"

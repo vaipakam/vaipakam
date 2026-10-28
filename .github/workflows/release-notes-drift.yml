@@ -10,20 +10,22 @@
 # disciplines, not merge gates.
 #
 # It also runs a BLOCKING docs path gate: no operator runbook may cite a
-# directory that no longer exists. 147 references to the removed `frontend/`
-# survived the Stage 3 refactor across 39 documents (#1462), and nothing tells
-# the author of a rename which prose mentions the old name — so the class is
-# re-checked mechanically rather than by remembering.
+# directory that no longer exists, or link to or show as code a repository
+# path the tracked tree does not have. 147 references to the removed
+# `frontend/` survived the Stage 3 refactor across 39 documents (#1462), and
+# nothing tells the author of a rename which prose mentions the old name — so
+# the class is re-checked mechanically rather than by remembering.
 #
 # It gates at ZERO with no baseline. The operator-facing citations were fixed
-# in the same change that added it, so a failure is always a NEW one. Scope is
-# `docs/ops/`; widening it to the design docs is #1462's completion criterion.
+# in the same change that added each rule, so a failure is always a NEW one.
+# Scope is `docs/ops/`; widening it to the design docs is #1462's completion
+# criterion.
 #
-# Three related rules were built alongside it and DEFERRED, all for one
-# reason — each needs a precise markdown extractor, which means a real parser:
-# does-it-exist against the tracked tree (#1486), non-canonical `/app/…` URL
-# citations (#1479), and secrets reaching a command's argv (#1472). See the
-# admission criterion at the top of .github/scripts/check-docs-paths.mjs.
+# The does-it-exist rule (#1486) waited for a real markdown parser and reads
+# Markdown through micromark now. Two related rules are still DEFERRED:
+# non-canonical `/app/…` URL citations (#1479) and secrets reaching a
+# command's argv (#1472). See the admission criterion at the top of
+# .github/scripts/check-docs-paths.mjs.
 #
 # (Filename kept as release-notes-drift.yml for stable references; the
 # check now covers functional specs and the mechanical check too.)
@@ -123,15 +125,32 @@ jobs:
       # where the cleanup has actually happened. Widening it to the design
       # docs is #1462's completion criterion, not a knob to turn here.
       #
-      # No `setup-node`: `ubuntu-latest` ships a current Node and the scripts
-      # use only ESM + `node:fs`/`node:child_process`. Avoiding the action also
-      # avoids the allowlist hazard — a `uses:` whose exact SHA is not
-      # allowlisted fails the WHOLE workflow at startup, not just the step.
-      - name: Docs path gate (removed-directory citations)
+      # Two rules: a citation of a REMOVED directory (closed-world, may read
+      # the words inside command text) and a cited path that DOES NOT EXIST
+      # (open-world, #1486, reads only whole links and code spans as a
+      # CommonMark parser finds them). The parser is micromark, which lives in
+      # `@vaipakam/lib` with the excision gate's parsers, so this job installs
+      # that one package's dependencies, and nothing else, before either gate.
+      - name: Install pnpm (markdown gate parsers)
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - name: Setup Node.js (markdown gate parsers)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install the markdown gates' parsers
+        run: pnpm install --frozen-lockfile --filter @vaipakam/lib
+
+      - name: Docs path gate (removed directories, cited paths exist)
         run: |
           set -euo pipefail
+          # Fixtures first, as for the other gates: each pins a case #1467's
+          # review found wrong, and a suite that never runs is decoration.
+          node .github/scripts/check-docs-paths.selftest.mjs
           node .github/scripts/check-docs-paths.mjs
-          echo "Docs path gate OK." >> "$GITHUB_STEP_SUMMARY"
+          echo "Docs path gate + selftest OK." >> "$GITHUB_STEP_SUMMARY"
 
       # Cron-slot gate (#1977). Same shape and the same reason as the two
       # gates around it: a fact about live infrastructure gets copied into
@@ -187,20 +206,7 @@ jobs:
       # reasons, so new text presenting it as live is not a style nit.
       #
       # It reads Markdown through micromark and the parse5 tokenizer (#1732,
-      # #1758), which live in `@vaipakam/lib`, so this job installs that one
-      # package's dependencies and nothing else.
-      - name: Install pnpm (excision gate parsers)
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-
-      - name: Setup Node.js (excision gate parsers)
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: '22'
-          cache: 'pnpm'
-
-      - name: Install the excision gate's parsers
-        run: pnpm install --frozen-lockfile --filter @vaipakam/lib
-
+      # #1758), installed with the docs path gate's parsers above.
       - name: Excision residue gate (#687-A VPFI buy surface)
         run: |
           set -euo pipefail
