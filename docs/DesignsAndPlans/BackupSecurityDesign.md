@@ -272,7 +272,11 @@ issue keyed by stable problem names plus the ops chat, on:
   unreadable, and an archive larger than the nightly can store is recorded
   with its B2 length and no digest, without being downloaded: both are
   mismatches, because what the bucket holds is the input under test and must
-  never stop the watcher reaching a verdict on the rest.
+  never stop the watcher reaching a verdict on the rest. For the same reason a
+  ledger entry's B2 file info is fixed in size (lists, such as the manifest
+  versions an entry was checked against, are kept in its body and carried in
+  the file info as a digest), and a manifest name holding more than one
+  version is judged from the listing without downloading any of them.
 - **Ledger tampered**: a ledger name has more than one version or a hide
   marker (§5.2). The honest watcher never writes either, so this means the
   ledger key was used by someone else.

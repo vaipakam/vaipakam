@@ -61,7 +61,7 @@ import {
   entryName,
   judge,
   manifestCheck,
-  manifestIdsField,
+  manifestSetDigest,
   parseAcknowledged,
   parseEntryName,
   readArchiveBucket,
@@ -89,6 +89,22 @@ function need(env, name) {
   const v = env[name];
   if (!v) throw new Error(`${name} is not set; the watcher has no ${name.includes('LEDGER') ? 'ledger' : 'archive'} key yet`);
   return v;
+}
+
+/**
+ * The manifest versions beside one archive, read only when the verdict needs
+ * their bytes. More than one version is `ambiguous-manifest` whatever they
+ * say, so then none is downloaded: a write key that piles versions onto one
+ * manifest name costs the run a listing, never a download each. A single
+ * version is read up to MAX_MANIFEST_BYTES; past it, it is unreadable.
+ */
+async function readManifests(archiveAuth, uploads, io) {
+  if (uploads.length !== 1) {
+    return uploads.map((m) => ({ bytes: null, unread: 'not read: the manifest name holds more than one version', fileId: m.fileId, uploadTimestamp: m.uploadTimestamp }));
+  }
+  const [m] = uploads;
+  const bytes = await bytesById(archiveAuth, m.fileId, { ...io, maxBytes: MAX_MANIFEST_BYTES });
+  return [{ bytes, ...(bytes == null ? { unread: `not read: larger than ${MAX_MANIFEST_BYTES} bytes` } : {}), fileId: m.fileId, uploadTimestamp: m.uploadTimestamp }];
 }
 
 /**
@@ -158,10 +174,7 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
     // large to be one is a bad manifest.
     const oversized = Number.isSafeInteger(a.contentLength) && a.contentLength > MAX_STORED_ARCHIVE_BYTES;
     const digest = oversized ? { sha256: NOT_DIGESTED, length: a.contentLength } : await digestById(archiveAuth, a.fileId, io);
-    const manifests = [];
-    for (const m of manifestUploads) {
-      manifests.push({ bytes: await bytesById(archiveAuth, m.fileId, { ...io, maxBytes: MAX_MANIFEST_BYTES }), fileId: m.fileId, uploadTimestamp: m.uploadTimestamp });
-    }
+    const manifests = await readManifests(archiveAuth, manifestUploads, io);
     const verdict = oversized ? { check: 'oversized', format: 'unknown', declared: null } : manifestCheck(digest, manifests);
     const record = {
       ...a,
@@ -175,7 +188,7 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
           fileId: m.fileId,
           uploadTimestamp: m.uploadTimestamp,
           sha256: m.bytes == null ? null : createHash('sha256').update(m.bytes).digest('hex'),
-          ...(m.bytes == null ? { refused: `larger than ${MAX_MANIFEST_BYTES} bytes` } : {}),
+          ...(m.unread ? { unread: m.unread } : {}),
         })),
         declared: verdict.declared,
       },
@@ -195,7 +208,7 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
         io,
       );
     }
-    written.push({ ...record, uploaded: record.uploadTimestamp, retainUntil, manifests: manifestIdsField(manifests.map((m) => m.fileId)) });
+    written.push({ ...record, uploaded: record.uploadTimestamp, retainUntil, manifests: manifestSetDigest(manifests.map((m) => m.fileId)) });
     log(`${dryRun ? 'would record' : 'recorded'} ${a.tier} ${a.period} (${a.fileId}): ${verdict.check}`);
   }
 
@@ -231,9 +244,8 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
     const a = present.get(r.fileId);
     if (!a || r.sha256 === NOT_DIGESTED) continue;
     const uploads = bucket.manifests.get(a.manifestName)?.uploads ?? [];
-    if (manifestIdsField(uploads.map((m) => m.fileId)) === r.manifests) continue;
-    const manifests = [];
-    for (const m of uploads) manifests.push({ bytes: await bytesById(archiveAuth, m.fileId, { ...io, maxBytes: MAX_MANIFEST_BYTES }) });
+    if (manifestSetDigest(uploads.map((m) => m.fileId)) === r.manifests) continue;
+    const manifests = await readManifests(archiveAuth, uploads, io);
     manifestRechecks.set(r.fileId, manifestCheck({ sha256: r.sha256, length: r.length }, manifests).check);
   }
 

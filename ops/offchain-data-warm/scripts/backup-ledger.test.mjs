@@ -21,10 +21,12 @@ import {
   LEGACY_FORMAT,
   MANIFEST_GRACE_MS,
   YEARLY_RETENTION_DAYS,
+  entryFileInfo,
   entryName,
   isLegacyJanuaryPair,
   judge,
   manifestCheck,
+  manifestSetDigest,
   parseAcknowledged,
   parseArchiveName,
   parseEntryName,
@@ -108,7 +110,7 @@ function entryVersion({ tier = 'daily', period = '2026-10-27', fileId = 'F1', up
     fileName: entryName(tier, period, fileId),
     fileId: `E${++seq}`,
     uploadTimestamp: at,
-    fileInfo: { tier, period, nonce, sha256, length: '10', uploaded: String(uploaded), check, format, manifests: 'M1' },
+    fileInfo: { tier, period, nonce, sha256, length: '10', uploaded: String(uploaded), check, format, manifests: manifestSetDigest(['M1']) },
     fileRetention: retention ?? { isClientAuthorizedToRead: true, value: { mode: 'compliance', retainUntilTimestamp: retentionFor(tier, at) } },
   };
 }
@@ -158,7 +160,7 @@ function archive(tier, period, nonce, fileId, uploadTimestamp) {
 }
 
 function rec(fileId, over = {}) {
-  return { tier: 'daily', period: '2026-10-27', nonce: N1, sha256: sha(fileId), length: 10, uploaded: NOW - DAY, check: 'match', format: LEGACY_FORMAT, fileId, manifests: `${fileId}m`, retainUntil: NOW + 399 * DAY, ...over };
+  return { tier: 'daily', period: '2026-10-27', nonce: N1, sha256: sha(fileId), length: 10, uploaded: NOW - DAY, check: 'match', format: LEGACY_FORMAT, fileId, manifests: manifestSetDigest([`${fileId}m`]), retainUntil: NOW + 399 * DAY, ...over };
 }
 
 // The monthly the October cut wrote, present in every scene that is not about
@@ -418,6 +420,10 @@ function fakeB2({ pageSize = 2 } = {}) {
         if (init.headers['X-Bz-File-Retention-Mode'] && !b.lock) return json({ message: 'file lock is not enabled' }, 400);
         const fileInfo = {};
         for (const [h, v] of Object.entries(init.headers)) if (h.startsWith('X-Bz-Info-')) fileInfo[h.slice(10)] = decodeURIComponent(v);
+        // B2's own limit on an Object Lock bucket: the name and the file info
+        // together, at most 2,048 bytes.
+        const infoBytes = Buffer.byteLength(decodeURIComponent(init.headers['X-Bz-File-Name'])) + Object.entries(fileInfo).reduce((n, [k, v]) => n + Buffer.byteLength(k) + Buffer.byteLength(v), 0);
+        if (b.lock && infoBytes > 2048) return json({ message: `file name and info are ${infoBytes} bytes, over 2048` }, 400);
         const fileId = `4_z${b.id}_f${++ids}`;
         b.versions.push({
           action: 'upload',
@@ -633,7 +639,7 @@ test('a manifest too large to be one is a bad manifest, and the run goes on', as
   assert.equal(entry.fileInfo.check, 'bad-manifest');
   const body = JSON.parse(Buffer.from(await (await b2.fetch(`https://f005.backblazeb2.com/b2api/v3/b2_download_file_by_id?fileId=${entry.fileId}`, { headers: { Authorization: 'ledger' } })).arrayBuffer()).toString());
   assert.equal(body.manifest.versions[0].sha256, null);
-  assert.match(body.manifest.versions[0].refused, /larger than/);
+  assert.match(body.manifest.versions[0].unread, /larger than/);
 });
 
 test('an archive larger than the nightly can write is recorded as such, never downloaded', async () => {
@@ -670,4 +676,46 @@ test('the condition keys reach the alert job bounded, stable, and changed by any
   const kept = out.split(',');
   const more = Number(kept.at(-1).split(':')[1]);
   assert.equal(kept.length - 1 + more, many.length);
+});
+
+test('a manifest name piled with versions is ambiguous, read from the listing alone, and still recorded', async () => {
+  const b2 = world();
+  nightly(b2, 'daily', '2026-10-26', N2, 'night-26', NOW - 2 * DAY);
+  const id = nightly(b2, 'daily', '2026-10-27', N1, 'night', NOW - DAY);
+  const piled = [];
+  for (let i = 0; i < 200; i++) piled.push(b2.put('vaipakam-offchain-data-warm', `manifests/2026-10-27/${N1}.json`, '{}', NOW - DAY + 2000 + i));
+  // The tier rule reads the period as holding more than one cut, too.
+  const expected = ['ambiguous:daily:2026-10-27', `mismatch:${id}`];
+  const r = await run(b2);
+  assert.deepEqual(r.live.flatMap((p) => p.keys).sort(), expected);
+  assert.ok(r.live.some((p) => /more than one version/.test(p.text)));
+  assert.ok(!piled.some((m) => b2.downloads.includes(m)), 'a piled manifest version was downloaded');
+  const entry = dailyEntries(b2).find((e) => e.fileName.endsWith(`/${id}.json`));
+  assert.equal(entry.fileInfo.check, 'ambiguous-manifest');
+  assert.match(entry.fileInfo.manifests, /^[0-9a-f]{64}$/);
+  const body = JSON.parse(Buffer.from(await (await b2.fetch(`https://f005.backblazeb2.com/b2api/v3/b2_download_file_by_id?fileId=${entry.fileId}`, { headers: { Authorization: 'ledger' } })).arrayBuffer()).toString());
+  assert.equal(body.manifest.versions.length, 201);
+  // Unchanged set: no re-check, nothing new. One more version: re-checked, same verdict.
+  assert.deepEqual((await run(b2)).live.flatMap((p) => p.keys).sort(), expected);
+  b2.put('vaipakam-offchain-data-warm', `manifests/2026-10-27/${N1}.json`, '{}', NOW - 1000);
+  assert.deepEqual((await run(b2)).live.flatMap((p) => p.keys).sort(), expected);
+});
+
+test('every file-info value is fixed in size, so the largest entry fits B2\'s 2,048 bytes', () => {
+  const r = {
+    tier: 'monthly',
+    period: '2026-10',
+    nonce: N1,
+    sha256: sha('x'),
+    length: Number.MAX_SAFE_INTEGER,
+    uploadTimestamp: Number.MAX_SAFE_INTEGER,
+    check: 'ambiguous-manifest',
+    format: LEGACY_FORMAT,
+    manifest: { versions: Array.from({ length: 10_000 }, (_, i) => ({ fileId: `4_z${'f'.repeat(80)}${i}` })) },
+  };
+  const info = entryFileInfo(r);
+  const name = entryName('monthly', '2026-10', 'x'.repeat(200));
+  const bytes = Buffer.byteLength(name) + Object.entries(info).reduce((n, [k, v]) => n + Buffer.byteLength(k) + Buffer.byteLength(v), 0);
+  assert.ok(bytes < 1024, String(bytes));
+  assert.deepEqual(entryFileInfo({ ...r, manifest: { versions: [] } }).manifests, '-');
 });

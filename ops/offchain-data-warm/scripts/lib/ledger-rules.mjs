@@ -151,6 +151,12 @@ const FORMATS = [LEGACY_FORMAT, 'unknown'];
  * alone answers the daily checks, without downloading every entry every day.
  * Every value is plain ASCII, so B2's header encoding never changes it. The
  * entry body carries the same facts and more, for a human or a restore.
+ *
+ * Every value is also FIXED in size, whatever the archive bucket holds: B2
+ * refuses an upload to an Object Lock bucket whose name and file info
+ * together pass 2,048 bytes, so a field that grew with bucket content would
+ * let a write key stop the ledger recording anything. Lists live in the body;
+ * the file info carries their digest.
  */
 export function entryFileInfo(r) {
   return {
@@ -162,17 +168,22 @@ export function entryFileInfo(r) {
     uploaded: String(r.uploadTimestamp),
     check: r.check,
     format: r.format,
-    // The manifest versions the check was made against, so a later run can
-    // tell when the manifest beside a recorded archive has changed.
-    manifests: manifestIdsField(r.manifest.versions.map((m) => m.fileId)),
+    // The manifest versions the check was made against, as one digest, so a
+    // later run can tell when the manifest beside a recorded archive has
+    // changed. The ids themselves are in the body.
+    manifests: manifestSetDigest(r.manifest.versions.map((m) => m.fileId)),
   };
 }
 
-const MANIFEST_IDS = /^(-|[A-Za-z0-9_-]{1,200}(\.[A-Za-z0-9_-]{1,200})*)$/;
+const MANIFEST_SET = /^(-|[0-9a-f]{64})$/;
 
-/** Manifest version ids as one ASCII file-info value: dot-joined, `-` for none. */
-export function manifestIdsField(ids) {
-  return ids.length === 0 ? '-' : [...ids].sort().join('.');
+/**
+ * A set of manifest version ids as one fixed-size value: `-` for none,
+ * otherwise the SHA-256 of the sorted ids, dot-joined. Equal sets give equal
+ * values and any change to the set changes it, which is all a reader asks.
+ */
+export function manifestSetDigest(ids) {
+  return ids.length === 0 ? '-' : createHash('sha256').update([...ids].sort().join('.')).digest('hex');
 }
 
 /** The file info of one stored entry version, or null when it is not one the watcher writes. */
@@ -190,7 +201,7 @@ export function readEntryInfo(v, named) {
     !Number.isSafeInteger(uploaded) ||
     !CHECKS.includes(i.check) ||
     !FORMATS.includes(i.format) ||
-    !MANIFEST_IDS.test(i.manifests ?? '')
+    !MANIFEST_SET.test(i.manifests ?? '')
   ) {
     return null;
   }
