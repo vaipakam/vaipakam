@@ -1808,8 +1808,12 @@ protocol track नहीं करता, और वे आपका tier नह
 ### दूसरी chains पर आपका tier
 
 आपका tier Base तय करता है। बाकी सभी chains उसकी वह copy लागू करती हैं जो
-Base Chainlink CCIP से भेजता है। Base हर उस deposit, withdrawal या दूसरी
-action के बाद नई copy भेजता है जो आपका tier बदलती है।
+Base Chainlink CCIP से भेजता है। Base आपका tier record तब update करता है
+जब Base पर इनमें से कुछ होता है: VPFI आपके vault में आता है या उससे
+निकलता है (deposit, withdrawal, या उसमें पहुँचाए गए rewards); कोई loan
+शुरू होता है जिसमें आप lender या borrower हैं; loan का कोई कदम आपका VPFI
+रोकता या छोड़ता है; या आप tier-refresh call करते हैं। हर update के बाद,
+अगर copy बदलती, तो बाकी chains को नई copy भेजी जाती है।
 
 हर chain को अलग से भेजा जाता है। जिस chain तक पहुँचा न जा सके, वह
 दूसरों को नहीं रोकती, और **जो delivery निकल न सके, वह आपकी अपनी action
@@ -1835,16 +1839,15 @@ action के बाद नई copy भेजता है जो आपका t
 
 Copy दोबारा तभी भेजी जाती है जब उसमें कुछ बदलता: आपका tier, उसका
 discount, वह कितने समय तक मान्य रहती है, या tier table का version। इसलिए
-tier table बदलने के बाद, Base पर आपका अगला deposit, withdrawal या tier
-refresh हर chain को नई copy भेजता है, भले ही आपका tier वही हो, जब तक वह
-शून्य न हो। अगर इनमें से कुछ नहीं बदला, तो जिस chain की copy पुरानी पड़
-गई है वह तब तक कोई discount नहीं देती जब तक कुछ न बदले।
+tier table बदलने के बाद, Base पर आपके tier record का अगला update हर
+chain को नई copy भेजता है, भले ही आपका tier वही हो, जब तक वह शून्य न हो।
+अगर इनमें से कुछ नहीं बदला, तो जिस chain की copy पुरानी पड़ गई है वह तब
+तक कोई discount नहीं देती जब तक कुछ न बदले।
 
 अगर आपका tier सिर्फ़ समय बीतने से बढ़ा है — holding अवधि पूरी हो गई या
-औसत बराबर आ गया — और कोई deposit या withdrawal नहीं हुआ, तो Base को
-आपके अगले deposit या withdrawal तक इसका पता नहीं चलता। Contracts में एक
-tier-refresh call है जिसे आप अपने लिए ख़ुद कर सकते हैं; app इसे आपकी ओर
-से सिर्फ़ तब करता है जब आप discount बंद करते हैं।
+औसत बराबर आ गया — तो Base को आपके tier record के अगले update तक इसका पता
+नहीं चलता। Tier-refresh call से आप जब चाहें यह update कर सकते हैं; app
+इसे आपकी ओर से सिर्फ़ तब करता है जब आप discount बंद करते हैं।
 
 ### Operators के लिए
 

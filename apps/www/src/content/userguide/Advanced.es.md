@@ -1882,9 +1882,14 @@ Qué significa esto en la práctica:
 
 ### Tu tier en otras cadenas
 
-Base calcula tu tier. Todas las demás cadenas aplican una copia que
-Base envía por Chainlink CCIP. Base envía una copia nueva después de
-cualquier depósito, retiro u otra acción que cambie tu tier.
+Base calcula tu tier. Todas las demás cadenas aplican una copia que Base
+envía por Chainlink CCIP. Base actualiza tu registro de tier cuando
+ocurre en Base una de estas cosas: entra o sale VPFI de tu vault (un
+depósito, un retiro o una recompensa entregada en él); empieza un
+préstamo en el que eres prestamista o prestatario; un paso de un
+préstamo retiene o libera VPFI tuyo; o haces la llamada para refrescar
+el tier. Cada actualización envía a las demás cadenas una copia nueva
+cuando la copia cambiaría.
 
 Cada cadena se entrega por separado. Una cadena a la que no se puede
 llegar no retiene a las demás, y **una entrega que no puede salir
@@ -1913,18 +1918,17 @@ Una copia deja de contar, y esa cadena no da descuento, cuando:
 
 Una copia solo se reenvía cuando algo en ella cambiaría: tu tier, su
 descuento, cuánto tiempo sigue siendo válida o la versión de la tabla de
-tiers. Así, tras un cambio en la tabla de tiers, tu próximo depósito,
-retiro o refresco de tier en Base envía a cada cadena una copia nueva,
-aunque tu tier sea el mismo, salvo que sea cero. Si nada de esto ha
-cambiado, una cadena cuya copia ha caducado no aplica ningún descuento
-hasta que algo cambie.
+tiers. Así, tras un cambio en la tabla de tiers, la próxima
+actualización de tu registro de tier en Base envía a cada cadena una
+copia nueva, aunque tu tier sea el mismo, salvo que sea cero. Si nada de
+esto ha cambiado, una cadena cuya copia ha caducado no aplica ningún
+descuento hasta que algo cambie.
 
-Si tu tier sube solo porque ha pasado el tiempo —ha terminado el
-periodo de tenencia o el promedio ha alcanzado tu saldo— sin depósito
-ni retiro, nada en Base lo nota hasta tu próximo depósito o retiro. Los
-contratos tienen una llamada para refrescar el tier que puedes hacer
-tú mismo; la aplicación solo la hace por ti cuando desactivas el
-descuento.
+Si tu tier sube solo porque ha pasado el tiempo —ha terminado el periodo
+de tenencia o el promedio ha alcanzado tu saldo—, nada en Base lo nota
+hasta la próxima actualización de tu registro de tier. La llamada para
+refrescar el tier hace esa actualización cuando tú quieras; la
+aplicación solo la hace por ti cuando desactivas el descuento.
 
 ### Para operadores
 

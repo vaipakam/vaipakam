@@ -2066,9 +2066,13 @@ What this means in practice:
 
 ### Your tier on other chains
 
-Base works out your tier. Every other chain applies a copy of it
-that Base sends over Chainlink CCIP. Base sends a new copy after any
-deposit, withdrawal or other action that changes your tier.
+Base works out your tier. Every other chain applies a copy of it that
+Base sends over Chainlink CCIP. Base updates your tier record when one
+of these happens on Base: VPFI enters or leaves your vault (a deposit, a
+withdrawal or a reward delivered into it); a loan starts with you as
+lender or borrower; a loan step holds or releases VPFI of yours; or you
+make the tier-refresh call. Each update sends the other chains a new
+copy when the copy would change.
 
 Each chain is delivered on its own. A chain that cannot be reached
 does not hold back the others, and **a delivery that cannot go out
@@ -2095,17 +2099,16 @@ A copy stops counting, and that chain gives no discount, when:
 
 A copy is resent only when something in it would change: your tier, its
 discount, how long it stays valid, or the version of the tier table. So
-after a tier-table change, your next deposit, withdrawal or tier refresh
-on Base sends every chain a fresh copy, even if your tier is the same,
-unless it is zero. If none of these has changed, a chain whose copy has
-aged out gives no discount until one does.
+after a tier-table change, the next update to your tier record on Base
+sends every chain a fresh copy, even if your tier is the same, unless it
+is zero. If none of these has changed, a chain whose copy has aged out
+gives no discount until one does.
 
-If your tier rises only because time has passed — the holding
-period has ended, or the average has caught up — with no deposit or
-withdrawal, nothing on Base notices until your next deposit or
-withdrawal. The contracts have a tier-refresh call you can make for
-yourself; the app makes it for you only when you switch the discount
-off.
+If your tier rises only because time has passed — the holding period has
+ended, or the average has caught up — nothing on Base notices until the
+next update to your tier record. The tier-refresh call makes that update
+whenever you choose; the app makes it for you only when you switch the
+discount off.
 
 ### For operators
 

@@ -1886,8 +1886,14 @@ Was das praktisch heißt:
 ### Dein Tier auf anderen Chains
 
 Base berechnet dein Tier. Alle anderen Chains wenden eine Kopie an, die
-Base über Chainlink CCIP schickt. Base schickt eine neue Kopie nach
-jeder Einzahlung, Auszahlung oder anderen Aktion, die dein Tier ändert.
+Base über Chainlink CCIP schickt. Base aktualisiert deinen Tier-Eintrag,
+wenn auf Base eines davon passiert: VPFI kommt in deinen Vault oder
+verlässt ihn (eine Einzahlung, eine Auszahlung oder ein Reward, der in
+ihn geliefert wird); ein Kredit beginnt mit dir als Verleiher oder
+Kreditnehmer; ein Kreditschritt hält VPFI von dir fest oder gibt es
+frei; oder du machst den Aufruf zum Auffrischen des Tiers. Jede
+Aktualisierung schickt den anderen Chains eine neue Kopie, wenn sich die
+Kopie ändern würde.
 
 Jede Chain wird für sich beliefert. Eine nicht erreichbare Chain hält
 die anderen nicht auf, und **eine Zustellung, die nicht rausgehen kann,
@@ -1919,17 +1925,16 @@ wenn:
 Eine Kopie wird nur erneut geschickt, wenn sich etwas darin ändern
 würde: dein Tier, sein Rabatt, wie lange sie gültig bleibt oder die
 Version der Tier-Tabelle. Nach einer Änderung der Tier-Tabelle schickt
-deine nächste Einzahlung, Auszahlung oder Tier-Auffrischung auf Base
-also jeder Chain eine frische Kopie, auch wenn dein Tier gleich bleibt,
-außer es ist null. Hat sich nichts davon geändert, gibt eine Chain mit
-veralteter Kopie keinen Rabatt, bis sich etwas ändert.
+die nächste Aktualisierung deines Tier-Eintrags auf Base also jeder
+Chain eine frische Kopie, auch wenn dein Tier gleich bleibt, außer es
+ist null. Hat sich nichts davon geändert, gibt eine Chain mit veralteter
+Kopie keinen Rabatt, bis sich etwas ändert.
 
 Steigt dein Tier nur, weil Zeit vergangen ist — die Haltedauer ist
-erreicht oder der Durchschnitt hat aufgeholt —, ohne Einzahlung oder
-Auszahlung, bemerkt Base das erst bei deiner nächsten Einzahlung oder
-Auszahlung. Die Contracts haben einen Aufruf zum Auffrischen des Tiers,
-den du für dich selbst machen kannst; die App macht ihn für dich nur,
-wenn du den Rabatt ausschaltest.
+erreicht oder der Durchschnitt hat aufgeholt —, bemerkt Base das erst
+bei der nächsten Aktualisierung deines Tier-Eintrags. Der Aufruf zum
+Auffrischen des Tiers macht diese Aktualisierung, wann immer du willst;
+die App macht ihn für dich nur, wenn du den Rabatt ausschaltest.
 
 ### Für Betreiber
 

@@ -1895,8 +1895,13 @@ Ce que cela signifie en pratique :
 ### Ton tier sur les autres chaînes
 
 Base calcule ton tier. Toutes les autres chaînes appliquent une copie
-que Base leur envoie via Chainlink CCIP. Base envoie une nouvelle copie
-après chaque dépôt, retrait ou autre action qui change ton tier.
+que Base leur envoie via Chainlink CCIP. Base met à jour ton
+enregistrement de tier quand l'un de ces événements se produit sur Base
+: des VPFI entrent dans ton vault ou en sortent (un dépôt, un retrait ou
+une récompense versée dedans) ; un prêt démarre avec toi comme prêteur
+ou emprunteur ; une étape d'un prêt bloque ou libère des VPFI à toi ; ou
+tu fais l'appel de rafraîchissement du tier. Chaque mise à jour envoie
+une nouvelle copie aux autres chaînes quand la copie changerait.
 
 Chaque chaîne est livrée séparément. Une chaîne injoignable ne retient
 pas les autres, et **une livraison qui ne peut pas partir ne fait
@@ -1927,18 +1932,18 @@ quand :
 
 Une copie n'est renvoyée que si quelque chose en elle changerait : ton
 tier, sa remise, sa durée de validité ou la version de la table des
-tiers. Après un changement de la table des tiers, ton prochain dépôt,
-retrait ou rafraîchissement de tier sur Base envoie donc une copie neuve
+tiers. Après un changement de la table des tiers, la prochaine mise à
+jour de ton enregistrement de tier sur Base envoie donc une copie neuve
 à chaque chaîne, même si ton tier reste le même, sauf s'il vaut zéro. Si
 rien de tout cela n'a changé, une chaîne dont la copie a expiré
 n'applique aucune remise jusqu'à ce que quelque chose change.
 
-Si ton tier monte uniquement parce que le temps a passé — la période
-de détention est terminée, ou la moyenne a rattrapé ton solde — sans
-dépôt ni retrait, rien sur Base ne s'en aperçoit avant ton prochain
-dépôt ou retrait. Les contrats proposent un appel de rafraîchissement
-du tier que tu peux faire toi-même ; l'application ne le fait pour toi
-que lorsque tu désactives la remise.
+Si ton tier monte uniquement parce que le temps a passé — la période de
+détention est terminée, ou la moyenne a rattrapé ton solde —, rien sur
+Base ne s'en aperçoit avant la prochaine mise à jour de ton
+enregistrement de tier. L'appel de rafraîchissement du tier fait cette
+mise à jour quand tu le veux ; l'application ne le fait pour toi que
+lorsque tu désactives la remise.
 
 ### Pour les opérateurs
 
