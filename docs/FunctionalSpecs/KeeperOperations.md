@@ -238,12 +238,25 @@ evidence that the migration has completed.
   plainly exhausted: nothing left, fully indexed and unreferenced. An epoch
   exhausted only by its caps is not detected by the keeper; the day's next
   draw passes it.
+- On Base, when a remit destination has been taken off the expected-source
+  list and the pool room Base held for its abandoned days is not yet fully
+  released, it continues that release. It finds the removed chains from the
+  indexer's record of removals, but decides from the chain's own record of
+  each release. A release that is waiting for an abandoned day to finalize
+  costs nothing: the keeper sends only a call that would move the release
+  forward, and the run's report names what it is waiting on.
+- It writes each reward reconciliation queue's pending takes into their
+  records while any remain, because the administrator's corrections on that
+  side refuse until they are written. This moves no value and changes no
+  total. It uses only what the run's send budget leaves after the other
+  steps.
 - How long the chain's history grows never stops the duty, and no day, era
   or epoch is ever left out for good. Its work per run is bounded, and each
   bounded read resumes where the previous run stopped, wrapping round, above
   a floor of what is finished for good: the days not yet proven closed are
   read sixty at a time by default, every provable day is read the same way
   for parking, the retired eras not yet finalized are read thirty-two at a
+  time, the recorded removals of remit destinations are read a page at a
   time, a day's transport epochs are read a page at a time, and its reading
   of the reward entries starts past the entries that ended before the oldest
   day still open. A day that stays open therefore does not hold back the

@@ -35,8 +35,12 @@ import {
   MAX_BATCHES_PER_DAY,
   MAX_ENTRY_PAGES,
   parkCursorItem,
+  QUEUE_STEPS,
+  RELEASE_DAYS,
+  RELEASE_FLOOR_ITEM,
   type ScannedEntry,
 } from '../src/rewardCloseOut';
+import { encodePos, type EventLedger, type LedgerPos, type LedgerRow } from '../src/eventLedger';
 import { decodeEntryFloor, encodeEntryFloor, ENTRY_PAGE, scanEntries, type EntryRow } from '../src/rewardEntries';
 import { advanceFloor, memoryScanCursors, rotatingWindow } from '../src/scanCursors';
 import type { KeeperContext } from '../src/keeper';
@@ -187,9 +191,18 @@ class FakeDiamond {
   /** Another caller closes this day after the run reads it, before its send. */
   closedByOtherBeforeSend: number | null = null;
   sent: { fn: string; args: readonly unknown[] }[] = [];
+  /** Base's release record per removed destination, and the days it has
+   *  finalized (the walk stops at the first that is not). */
+  releases = new Map<number, { bound: number; cursor: number }>();
+  globalFinalized = new Set<number>();
+  /** The reconciliation queues; a walk writes `perWalk` of what is pending. */
+  queues: Record<'fresh' | 'recycled', { pending: bigint; frontier: bigint; perWalk: bigint }> = {
+    fresh: { pending: 0n, frontier: 0n, perWalk: 50n },
+    recycled: { pending: 0n, frontier: 0n, perWalk: 50n },
+  };
   /** What the finalized block shows, when it lags the head: null reads the
    *  head's state there too. `finalized: 'none'` is an RPC without the tag. */
-  final: { closed: Set<number>; eras: Era[] } | 'none' | null = null;
+  final: { closed: Set<number>; eras: Era[]; releases?: Map<number, { bound: number; cursor: number }> } | 'none' | null = null;
   readonly finalNumber = 100n;
 
   addEntry(x: Partial<Entry> & { side: number; startDay: number; endDay: number; perDay: bigint }): number {
@@ -238,6 +251,10 @@ class FakeDiamond {
       if (f !== null && f !== 'none') {
         if (functionName === 'isDayObligationsClosed') return f.closed.has(Number(a[0]));
         if (functionName === 'getCustodyEra') return f.eras[Number(a[0])];
+        if (functionName === 'getRemitDestinationRelease') {
+          const x = (f.releases ?? this.releases).get(Number(a[0]));
+          return [BigInt(x?.bound ?? 0), BigInt(x?.cursor ?? 0)];
+        }
         throw new Error(`unexpected finalized read ${functionName}`);
       }
     }
@@ -306,6 +323,19 @@ class FakeDiamond {
         return [0n, 0n, this.batches.get(a[0])?.references ?? 0n];
       case 'getTransportBatchDays':
         return (this.batches.get(a[0])?.days ?? []).map(BigInt);
+      case 'getRemitDestinationRelease': {
+        const x = this.releases.get(Number(a[0]));
+        return [BigInt(x?.bound ?? 0), BigInt(x?.cursor ?? 0)];
+      }
+      case 'getFreshQueueState': {
+        if (a[0] !== 0n) throw revert('CustodyEraUnknown', [a[0]]);
+        const q = this.queues.fresh;
+        return [q.frontier, 0n, 0n, 0n, q.pending, 0n, 0n, 0n, 0n, 0n];
+      }
+      case 'getRecycledQueueState': {
+        const q = this.queues.recycled;
+        return [q.frontier, 0n, 0n, 0n, q.pending, 0n];
+      }
       default:
         throw new Error(`unexpected read ${functionName}`);
     }
@@ -322,9 +352,35 @@ class FakeDiamond {
       }),
     );
 
+  /** Where a release walk from the stored cursor would stop. */
+  private releaseWalk(chain: number, maxDays: number): { bound: number; cursor: number } {
+    const x = this.releases.get(chain)!;
+    const end = Math.min(x.bound, x.cursor + maxDays);
+    let c = x.cursor;
+    while (c < end && this.globalFinalized.has(c)) c += 1;
+    return { bound: x.bound, cursor: c };
+  }
+
   /** The contract's admission rules; throws its refusal, or returns the change. */
   private admit(functionName: string, a: readonly any[]): () => void {
     switch (functionName) {
+      case 'continueRemitDestinationRelease': {
+        if (this.paused) throw revert('EnforcedPause');
+        if (this.role !== ROLE_CANONICAL) throw revert('NotCanonicalRewardChain');
+        const x = this.releases.get(Number(a[0]));
+        if (x === undefined || x.cursor >= x.bound) throw revert('RemitDestinationReleaseDone', [a[0]]);
+        const w = this.releaseWalk(Number(a[0]), Number(a[1]));
+        return () => this.releases.set(Number(a[0]), w);
+      }
+      case 'advanceReconciliationQueue': {
+        const q = a[0] === 0 ? this.queues.fresh : a[0] === 1 ? this.queues.recycled : undefined;
+        if (q === undefined) throw revert('ReconciliationUnknownSide', [a[0]]);
+        return () => {
+          const take = q.pending < q.perWalk ? q.pending : q.perWalk;
+          q.pending -= take;
+          if (take > 0n) q.frontier += 1n;
+        };
+      }
       case 'startDayClosure': {
         const day = Number(a[0]);
         if (this.paused) throw revert('EnforcedPause');
@@ -429,6 +485,10 @@ class FakeDiamond {
   simulateContract = async ({ functionName, args }: { functionName: string; args: readonly unknown[] }) => {
     if (functionName === 'startDayClosure' && this.closedByOtherBeforeSend === Number(args[0] as bigint)) this.closed.add(this.closedByOtherBeforeSend);
     this.admit(functionName, args);
+    if (functionName === 'continueRemitDestinationRelease') {
+      const w = this.releaseWalk(Number(args[0]), Number(args[1]));
+      return { result: [BigInt(w.cursor), BigInt(w.bound)] };
+    }
     return { result: undefined };
   };
 
@@ -459,6 +519,30 @@ class FakeDiamond {
         },
       },
     } as unknown as KeeperContext;
+  }
+}
+
+/** The indexer's ledger of Base's removed destinations. */
+class FakeLedger implements EventLedger {
+  rows: LedgerRow[] = [];
+  fail = false;
+  pages: (LedgerPos | null)[] = [];
+
+  add(dstChainId: unknown): void {
+    const n = this.rows.length + 1;
+    this.rows.push({ kind: 'RemitDestinationRemoved', args: { dstChainId, bound: 0, cursor: 0 }, blockAt: n, block: n, log: 0 });
+  }
+
+  async matching(): Promise<LedgerRow[] | null> {
+    throw new Error('unexpected ledger lookup');
+  }
+
+  async page(_chainId: number, kinds: readonly string[], after: LedgerPos | null, limit: number) {
+    if (this.fail) return null;
+    expect(kinds).toEqual(['RemitDestinationRemoved']);
+    this.pages.push(after);
+    const rest = this.rows.filter((r) => after === null || r.block > after.block || (r.block === after.block && r.log > after.log));
+    return { rows: rest.slice(0, limit), more: rest.length > limit };
   }
 }
 
@@ -495,10 +579,12 @@ describe('a run', () => {
   let d: FakeDiamond;
   let logged: string[];
   let cursors: ReturnType<typeof memoryScanCursors>;
+  let ledger: FakeLedger;
 
   beforeEach(() => {
     d = new FakeDiamond();
     cursors = memoryScanCursors();
+    ledger = new FakeLedger();
     logged = [];
     vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => void logged.push(a.map(String).join(' ')));
     vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => void logged.push('ERR ' + a.map(String).join(' ')));
@@ -514,6 +600,7 @@ describe('a run', () => {
       sendDeadline: Number.POSITIVE_INFINITY,
       windowDays: opts.windowDays ?? DEFAULT_WINDOW_DAYS,
       cursors,
+      ledger,
     });
   const fns = () => d.sent.map((s) => s.fn);
   const closeAllButDay = (day: number) => {
@@ -879,6 +966,127 @@ describe('a run', () => {
       d.sent = [];
       expect((await run()).pruned).toEqual([]);
       expect(d.sent).toEqual([]);
+    });
+  });
+
+  describe('removed destinations (Base)', () => {
+    const DST = 97;
+    beforeEach(() => {
+      d.role = ROLE_CANONICAL;
+      closeAllButDay(-1);
+    });
+    const finalizeThrough = (n: number) => {
+      for (let x = 0; x < n; x++) d.globalFinalized.add(x);
+    };
+
+    it(`continues a removed chain's release ${RELEASE_DAYS} days a call until it is done, and moves the floor past its row`, async () => {
+      ledger.add(DST);
+      d.releases.set(DST, { bound: 300, cursor: 0 });
+      finalizeThrough(300);
+      const r = await run();
+      expect(fns()).toEqual(['continueRemitDestinationRelease', 'continueRemitDestinationRelease', 'continueRemitDestinationRelease']);
+      expect(d.sent[0].args).toEqual([DST, BigInt(RELEASE_DAYS)]);
+      expect(d.releases.get(DST)).toEqual({ bound: 300, cursor: 300 });
+      expect(r.released).toEqual([{ chain: DST, from: 0, to: 300, bound: 300 }]);
+      expect(describeReport(r)).toContain(`released=chain ${DST} days 0..299 (done)`);
+      expect(cursors.rows.get(RELEASE_FLOOR_ITEM), 'every row below the floor is released').toBe(encodePos(ledger.rows[0]));
+      // Nothing is left: the next run sends nothing and reads from the floor.
+      d.sent = [];
+      await run();
+      expect(d.sent).toEqual([]);
+      expect(ledger.pages[ledger.pages.length - 1], 'the next run reads after the floor').toEqual({ block: 1, log: 0 });
+    });
+
+    it('sends nothing while the release waits on a day that is not finalized, and keeps the row above the floor', async () => {
+      ledger.add(DST);
+      d.releases.set(DST, { bound: 40, cursor: 12 });
+      finalizeThrough(12);
+      const r = await run();
+      expect(d.sent).toEqual([]);
+      expect(r.releaseWaiting).toEqual([`${DST}: day 12 of 40 is not finalized yet`]);
+      expect(r.refused.size).toBe(0);
+      expect(cursors.rows.has(RELEASE_FLOOR_ITEM)).toBe(false);
+      // Once the days finalize, the walk goes out.
+      finalizeThrough(40);
+      expect((await run()).released).toEqual([{ chain: DST, from: 12, to: 40, bound: 40 }]);
+    });
+
+    it('moves its floor only on what the finalized block shows', async () => {
+      ledger.add(DST);
+      ledger.add(11155420);
+      d.releases.set(DST, { bound: 10, cursor: 0 });
+      finalizeThrough(10);
+      // The walk landed at the head, but the finalized block still shows the
+      // release unfinished: the floor stays below the row, so a reorg that
+      // drops the walk leaves it to be walked again.
+      d.final = { closed: new Set(), eras: d.eras, releases: new Map([[DST, { bound: 10, cursor: 0 }]]) };
+      const r = await run();
+      expect(r.released).toEqual([{ chain: DST, from: 0, to: 10, bound: 10 }]);
+      expect(cursors.rows.has(RELEASE_FLOOR_ITEM)).toBe(false);
+      d.final = { closed: new Set(), eras: d.eras, releases: new Map([[DST, { bound: 10, cursor: 10 }]]) };
+      await run();
+      expect(cursors.rows.get(RELEASE_FLOOR_ITEM), 'past both rows: the second chain was never removed for real').toBe(encodePos(ledger.rows[1]));
+      d.final = 'none';
+      cursors.rows.delete(RELEASE_FLOOR_ITEM);
+      await run();
+      expect(cursors.rows.has(RELEASE_FLOOR_ITEM), 'no finalized block, no floor move').toBe(false);
+    });
+
+    it('passes a row that names no chain, and says so when the ledger cannot be read', async () => {
+      ledger.add('not a chain');
+      await run();
+      expect(d.sent).toEqual([]);
+      expect(cursors.rows.get(RELEASE_FLOOR_ITEM)).toBe(encodePos(ledger.rows[0]));
+      ledger.fail = true;
+      const r = await run();
+      expect(r.unread.get('release')).toMatch(/event ledger/);
+    });
+
+    it('leaves the release while the protocol is paused, and is Base\'s step only', async () => {
+      ledger.add(DST);
+      d.releases.set(DST, { bound: 5, cursor: 0 });
+      finalizeThrough(5);
+      d.paused = true;
+      let r = await run();
+      expect(d.sent).toEqual([]);
+      expect(r.unread.get(`release:chain ${DST}`)).toMatch(/paused/);
+      d.paused = false;
+      d.role = ROLE_MIRROR;
+      r = await run();
+      expect(d.sent).toEqual([]);
+      expect(ledger.pages, 'a mirror never reads the removals').toHaveLength(1);
+    });
+  });
+
+  describe('reconciliation queues', () => {
+    beforeEach(() => closeAllButDay(-1));
+
+    it(`writes a queue's pending takes ${QUEUE_STEPS} records a call while it holds any, and leaves an empty one alone`, async () => {
+      d.queues.fresh.pending = 120n;
+      const r = await run();
+      expect(fns()).toEqual(['advanceReconciliationQueue', 'advanceReconciliationQueue', 'advanceReconciliationQueue']);
+      expect(d.sent[0].args).toEqual([0, BigInt(QUEUE_STEPS)]);
+      expect(d.queues.fresh.pending).toBe(0n);
+      expect(r.queues).toEqual([{ side: 'fresh', wrote: 120n, left: 0n }]);
+      expect(describeReport(r)).toContain('queue-fresh=wrote 120, 0 left');
+    });
+
+    it('stops on a walk that moves nothing, and works while the protocol is paused', async () => {
+      d.paused = true;
+      d.queues.recycled.pending = 30n;
+      d.queues.recycled.perWalk = 0n;
+      const r = await run();
+      expect(fns()).toEqual(['advanceReconciliationQueue']);
+      expect(d.sent[0].args).toEqual([1, BigInt(QUEUE_STEPS)]);
+      expect(r.refused.get('queue:recycled')).toMatch(/moved neither/);
+      expect(r.queues).toEqual([{ side: 'recycled', wrote: 0n, left: 30n }]);
+    });
+
+    it(`shares the run's ${MAX_SENDS_PER_RUN} sends`, async () => {
+      d.queues.fresh.pending = 10_000n;
+      const r = await run();
+      expect(d.sent).toHaveLength(MAX_SENDS_PER_RUN);
+      expect(r.stopped).toBe('send-budget');
     });
   });
 
