@@ -1,6 +1,6 @@
 # Batch actions on offer-grouped loans (#126)
 
-**Status:** slice 1 in review (sender decided: Diamond multicall). Issue: #126.
+**Status:** slice 1 merged or in review, slice 2 in review (sender decided: Diamond multicall). Issue: #126.
 
 ## Decision
 
@@ -169,12 +169,13 @@ show.
 
 ## Slices
 
-1. **Plan builder + borrower close-outs** (this slice). The plan builder,
+1. **Plan builder + borrower close-outs.** The plan builder,
    the shared multicall encoding (Claim all now uses it too), and on the
    Positions page a card per group with "Repay all" and, in Advanced mode
    like the loan page's own early close, "Close all early".
-2. **Lender: list all for sale.** One `createLoanSaleOffer` per loan with
-   the same terms (each carries its own mandatory expiry).
+2. **Lender: list all for sale.** One bound listing
+   (`createLoanSaleOfferBound`) per loan with the same rate and window
+   (each carries its own mandatory expiry). See below.
 3. **Borrower: refinance all.** One replacement borrower offer per loan
    with the same terms.
 
@@ -182,10 +183,69 @@ Partial repayment across a group needs a rule for splitting one amount
 over several loans; that is a product question, so it is not in these
 slices. Liquidation stays a keeper concern, as the issue says.
 
+## Slice 2: list all for sale
+
+The lender's positions from one offer, listed for sale together at one
+rate and one listing window. It follows the slice-1 rules with three
+differences that come from the listing itself.
+
+**One per-loan listing plan.** The listing form on the loan page
+(`LoanSaleFlow`) ran its pre-sign checks inline: the sanctions screen,
+the lender position still held, both assets unpaused, the loan Active,
+not matured and with at least the minimum listing window left, and a
+simulation of the exact bound listing (which catches the relisting
+pause, an open offset, an existing listing, a position that cannot be
+consolidated, and figures that no longer hold). Those move into
+`apps/app/src/data/saleListingPlan.ts`, which the form and the batch
+both call. The batch planner adds what the review needs: the figures
+quoted for the loan (`readSellerBoundsQuote`, the same read the form
+uses), today's settlement, and the loan's own statements (a Full fee
+mode travels to the buyer; a rate above the loan's own costs the
+seller the difference). The fee record is read for that statement, and
+an unreadable one leaves the loan out, as the loan page holds its sale
+tools until it is read.
+
+**Bound to the reviewed figures, no approval.** Each listing is sent
+bound to the minimum and held ceiling the lender reviewed (#1810), so
+the chain refuses a listing that would record worse ones; a listing
+draws nothing from the wallet and sets no approval (#2674). The late
+re-check before each transaction plans every loan again against the
+REVIEWED figures, not a new quote, and leaves out a loan whose
+statements changed since the review. A loan refused because its
+figures moved is named with that reason.
+
+**Listed is read from the transaction's own logs.** Each listing emits
+`LoanSaleOfferLinked(loanId, saleOfferId)`, and a multicall item that
+reverts has its logs rolled back with it, so the mined transaction's
+logs say exactly which loans it listed. A later read of the position
+lock could not tell this batch's listing from one made elsewhere in
+between. The receipt's logs are therefore carried with a mined send,
+including one recovered by `settleFailedSend`. A loan not in the logs
+is read at the transaction's block (no longer Active, or still Active
+with the simulated reason). Every loan behind a pending send is pending,
+read or not: a listing leaves the loan's status as it was, so a loan no
+longer Active may have been listed by that send before it was repaid or
+liquidated, and only the send's logs can say.
+Each listed loan's offer id is written to the loan page's listing
+marker, so its page can offer cancel straight away.
+
+The card shows only in Advanced mode, the same as the loan page's form.
+On a network where the listing route is not live
+(`loanSaleListingEnabled`) the card still shows for an eligible group and
+says listing is not available on this network, as the loan page's
+chooser does, rather than vanishing as if the positions were not
+eligible. A group is the wallet's lender rows, which are the
+positions it holds. The batch respects the post-offer kill switch and
+the Terms gate, and the consent (recorded on each listing) is one tick
+covering every loan in the review, cleared whenever the review changes.
+
 ## Tests
 
 Unit: the plan builder's refusals one case each, the pad on the live
 term, a failed read becoming that loan's refusal; grouping exclusions and
-per-token totals; the shared multicall encoding and chunking. CI-Anvil (a
+per-token totals; the shared multicall encoding and chunking. Slice 2:
+the listing plan's refusals, the reviewed figures kept on the late
+re-check, a changed statement leaving a loan out, and the read-back
+(listed only from the logs, pending never read as not listed). CI-Anvil (a
 borrower with two loans from one offer closes both with "Repay all") is
 listed as a gap in `apps/app/e2e/COVERAGE.md` and follows in its own PR.

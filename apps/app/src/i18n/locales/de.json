@@ -3421,6 +3421,43 @@
       "refinanceOf": "Die Annahme tilgt und schließt auch Kredit Nr. {{id}}.",
       "linkedLabel": "Verknüpfter Kredit",
       "linkedTo": "Die Annahme wird auch mit Kredit Nr. {{id}} abgerechnet, wie oben beschrieben."
+    },
+    "batchSale": {
+      "title": "Deine Kreditgeber-Positionen aus Angebot #{{offerId}}",
+      "lede": "Die Kredite {{ids}} stammen aus demselben Angebot. Du kannst sie alle auf einmal zum Verkauf anbieten, zu einem Zinssatz und für ein Inseratsfenster, in einer Transaktion. Jeder Kredit wird zuerst einzeln geprüft, und ein Kredit, der nicht inseriert werden kann, wird übersprungen, während die anderen durchgehen.",
+      "windowNote": "Jedes Inserat läuft von selbst ab: am Ende des Fensters oder am Fälligkeitstag dieses Kredits, je nachdem, was zuerst eintritt. Endet ein Inserat ohne Verkauf, kann dieser Kredit einen Tag lang nicht erneut inseriert werden. Zahlt ein Kreditnehmer einen Teil eines Kredits zurück, während sein Inserat aktiv ist, werden Kaufversuche auf dieses Inserat abgelehnt; storniere es und inseriere neu.",
+      "listAll": "Alle inserieren prüfen",
+      "checking": "Jeder Kredit wird geprüft und sein Mindestbetrag gelesen…",
+      "phase": {
+        "checking": "Jeder Kredit wird erneut geprüft…",
+        "submitting": "Bestätige die Transaktion in deinem Wallet…"
+      },
+      "review": "Diese Positionen zum Verkauf anbieten",
+      "loanFloor": "Kredit #{{id}}: Übernimmt ein Käufer ihn zu einem beliebigen Zeitpunkt vor Ende seines Inserats, erhältst du mindestens {{amount}}. Das Inserat hält diesen Mindestbetrag fest.",
+      "loanHeld": "{{amount}}, die auf diesem Kredit bereits für den Kreditgeber zurückgelegt sind, gehen mit der Position an den Käufer, nicht an dich.",
+      "loanSettlementNow": "Die Abrechnung, die die Zahlung eines Käufers jetzt tragen würde: ~{{amount}}.",
+      "leftOut": "Kredit #{{id}} wird ausgelassen: {{reason}}",
+      "noneReady": "Keine dieser Positionen kann gerade gemeinsam inseriert werden. Öffne jeden Kredit, um seine Optionen zu sehen.",
+      "consentLabel": "Ich verstehe die Sperre jeder inserierten Position und die von der Zahlung jedes Käufers abgezogene Abrechnung und stimme ihnen für jeden oben aufgeführten Kredit zu.",
+      "confirm": "Bestätigen — diese Positionen inserieren",
+      "cancel": "Abbrechen",
+      "dismiss": "Fertig",
+      "lockWarning": "Das Inserieren sperrt das NFT jeder inserierten Kreditgeber-Position — es kann nicht übertragen werden, bis dieser Verkauf abgeschlossen ist oder dieses Inserat endet (Stornieren entsperrt es in einem Schritt, auf der Seite des Kredits; nach Ablauf tut es eine Aufräum-Transaktion, die jeder senden kann). Deine Auszahlungsrechte bleiben unberührt.",
+      "receiveEach": "Für jeden inserierten Kredit mindestens den oben gezeigten Mindestbetrag nach Abzug der Abrechnung, wenn ein Käufer ihn vor Ende seines Inserats übernimmt. Jedes Inserat hält seinen eigenen Mindestbetrag fest und wird übersprungen statt erstellt, wenn es weniger festhalten würde.",
+      "lockEach": "Das Kreditgeber-Positions-NFT jedes inserierten Kredits, bis sein Verkauf abgeschlossen ist oder sein Inserat endet. Sonst nichts.",
+      "youMayOwe": "Nichts aus deinem Wallet und keine Freigabe. Nimmt ein Käufer ein Inserat an, wird die Abrechnung von seiner Zahlung abgezogen, bevor der Rest dich erreicht: der HÖHERE Betrag aus den bis dahin aufgelaufenen Zinsen oder der Zinsdifferenz für die Restlaufzeit — nie beides. Der aktuelle Betrag jedes Kredits steht oben.",
+      "endsEach": "Jedes Inserat endet, wenn ein Käufer es annimmt, wenn du es auf der Seite des Kredits stornierst oder wenn es abläuft. Eine Transaktion inseriert bis zu 30 Kredite; ein Kredit, dessen Inserat fehlschlägt, wird übersprungen, und die Ergebnisse sagen, warum.",
+      "listed": "Kredit #{{id}}: inseriert als Verkaufsangebot #{{offerId}}. Seine Seite zeigt das Inserat und lässt dich es stornieren.",
+      "notListed": "Kredit #{{id}}: nicht inseriert. {{reason}}",
+      "changedOtherwise": "Kredit #{{id}}: nicht inseriert. Der Kredit ist nicht mehr aktiv; öffne ihn, um zu sehen, wo er steht.",
+      "unknown": "Kredit #{{id}}: Wir konnten nicht lesen, ob er inseriert wurde. Öffne den Kredit, um es zu prüfen.",
+      "pending": "Kredit #{{id}}: Die Transaktion wurde gesendet, ist aber noch nicht bestätigt. Sie kann diesen Kredit noch inserieren, prüfe ihn also in ein paar Minuten.",
+      "notSentPending": "Nicht gesendet, weil eine frühere Transaktion dieses Stapels noch nicht bestätigt ist. Inseriere ihn auf seiner eigenen Seite, sobald sie abgeschlossen ist.",
+      "skippedRetry": "Die Transaktion lief, aber dieses Inserat wurde übersprungen. Es kann jetzt auf der Seite des Kredits erstellt werden.",
+      "reviewAgain": "Prüfe das Inserat erneut, um die aktuellen Beträge zu sehen.",
+      "changedSinceReview": "Was dieses Inserat umfasst, hat sich nach deiner Prüfung geändert. Inseriere ihn auf seiner eigenen Seite, die die aktuellen Bedingungen zeigt.",
+      "ownPageShape": "Nur Kredite mit Token als Kreditbetrag und Token als Sicherheit können zum Verkauf angeboten werden.",
+      "unavailableNetwork": "Die Kredite {{ids}} stammen aus demselben Angebot. Sie zum Verkauf anzubieten ist in diesem Netzwerk noch nicht verfügbar: Die Verkaufswerkzeuge sind in dieser Bereitstellung nicht veröffentlicht."
     }
   },
   "contractError": {

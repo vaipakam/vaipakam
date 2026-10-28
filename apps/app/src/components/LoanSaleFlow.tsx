@@ -47,62 +47,32 @@ export function loanSaleListingEnabled(chainId: number): boolean {
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import {
-  BaseError,
-  ContractFunctionRevertedError,
-  encodeFunctionData,
-  parseEventLogs,
-} from 'viem';
+import { encodeFunctionData, parseEventLogs } from 'viem';
 import { copy } from '../content/copy';
 import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
-import { TxNotSettledError } from '../contracts/ownReceipt';
-import {
-  assertAssetNotPausedLive,
-  assertPositionNftHeldLive,
-} from '../contracts/preflights';
-import {
-  LOAN_STATUS_ACTIVE,
-  MIN_SALE_LISTING_SECONDS,
-  loanEndTimeOf,
-  readLoanLive,
-  type LoanLive,
-} from '../contracts/loanLive';
+import { loanEndTimeOf, type LoanLive } from '../contracts/loanLive';
 import { saleSettlementNow } from '../data/loanSalePending';
 import {
   readSellerBoundsQuote,
   type SellerBoundsQuote,
 } from '../data/sellerBoundsQuote';
-import { assertWalletNotSanctionedLive } from '../data/sanctions';
+import {
+  boundListingArgs,
+  checkSaleListing,
+  reviewedBoundsMoved,
+} from '../data/saleListingPlan';
 import type { IndexedLoan } from '../data/indexer';
 import { MAX_INTEREST_BPS, percentToBps } from '../lib/offerSchema';
-import { formatDateTime, formatTokenAmountExact } from '../lib/format';
+import { formatTokenAmountExact } from '../lib/format';
 import { ConfirmReceipt } from './ConfirmReceipt';
 import { useReviewConsent } from '../hooks/useReviewConsent';
 import { ConsentWithdrawnNote } from './ConsentWithdrawnNote';
 import { SimulationPreview } from './SimulationPreview';
 import type { TxSimInput } from '../contracts/useTxSimulation';
 import type { TokenMeta } from '../contracts/erc20';
-
-/** The failures that say the figures a seller reviewed no longer hold (#1810):
- *  the listing would record a lower minimum, or more already set aside for
- *  the lender, than they agreed to — or it mined reverted, so which of its
- *  checks moved is unknown. */
-function reviewedBoundsMoved(err: unknown): boolean {
-  // A listing that MINED reverted carries no decoded revert data (the write
-  // reports it as `TxNotSettledError`), so its reason cannot be read here.
-  // Whatever it was, the chain moved between the review and the block, so the
-  // reviewed figures are no longer known to hold: treat it the same way.
-  if (err instanceof TxNotSettledError) return err.reason === 'reverted';
-  if (!(err instanceof BaseError)) return false;
-  const revert = err.walk(
-    (e) => e instanceof ContractFunctionRevertedError,
-  ) as ContractFunctionRevertedError | null;
-  const name = revert?.data?.errorName;
-  return name === 'ListingFloorBelowReviewed' || name === 'ListingHeldAboveReviewed';
-}
 
 export function LoanSaleFlow({
   row,
@@ -231,14 +201,7 @@ export function LoanSaleFlow({
       data: encodeFunctionData({
         abi: DIAMOND_ABI_VIEM,
         functionName: 'createLoanSaleOfferBound',
-        args: [
-          BigInt(row.loanId),
-          rateBps,
-          true,
-          listingSeconds,
-          reviewed.minSellerNet,
-          reviewed.maxHeld,
-        ],
+        args: boundListingArgs(row.loanId, { rateBps, listingSeconds }, reviewed),
       }),
       value: 0n,
     };
@@ -280,7 +243,7 @@ export function LoanSaleFlow({
       return;
     }
     if (!address || !walletChain || !walletClient || !publicClient) return;
-    if (rateBps === null || !reviewed) return;
+    if (rateBps === null || !reviewed || !consent.given) return;
     // #1961 — this flow lives on `/positions/:loanId`, which the Terms gate
     // exempts so a held user can repay; the listing is NOT an exit, so
     // `useDiamondWrite` would refuse it at submission. Say so before the
@@ -297,112 +260,26 @@ export function LoanSaleFlow({
     setBusy(true);
     setError(null);
     try {
-      // Tier-1 — the listing routes the buyer's principal to the
-      // seller; re-screen live.
-      await assertWalletNotSanctionedLive(
-        publicClient,
-        walletChain.diamondAddress,
-        address,
+      // The live checks a listing runs before it is signed, bound to the
+      // figures the seller reviewed — one copy, shared with the batch
+      // listing on Positions (#126).
+      const refusal = await checkSaleListing(
+        { publicClient, diamond: walletChain.diamondAddress, holder: address },
+        row,
+        { rateBps, listingSeconds },
+        reviewed,
       );
-      const [, liveLoan, latestBlock] = await Promise.all([
-        assertPositionNftHeldLive({
-          publicClient,
-          diamondAddress: walletChain.diamondAddress,
-          tokenId: row.lenderTokenId,
-          expectedOwner: address,
-        }),
-        readLoanLive(publicClient, walletChain.diamondAddress, row.loanId),
-        publicClient.getBlock({ blockTag: 'latest' }),
-        assertAssetNotPausedLive({
-          publicClient,
-          diamondAddress: walletChain.diamondAddress,
-          asset: row.lendingAsset as `0x${string}`,
-        }),
-        assertAssetNotPausedLive({
-          publicClient,
-          diamondAddress: walletChain.diamondAddress,
-          asset: row.collateralAsset as `0x${string}`,
-        }),
-      ]);
-      if (liveLoan.status !== LOAN_STATUS_ACTIVE) {
-        setError(copy.errors.loanAlreadySettled);
-        return;
-      }
-      // createLoanSaleOffer reverts at/past maturity, and ALSO when less
-      // than the minimum listing window (1 hour) remains before maturity —
-      // `_boundListingExpiry` clamps every window at maturity and refuses a
-      // clamped window below the minimum. Fail plainly here rather than
-      // send a listing that is certain to be refused (Codex #1505 r2).
-      // The EFFECTIVE maturity (#668 / #935): what `_boundListingExpiry`
-      // clamps at, moved by the paused time since the loan's start.
-      const maturityTs = loanEndTimeOf(liveLoan, latestBlock.timestamp);
-      if (latestBlock.timestamp >= maturityTs) {
-        setError(copy.errors.saleListingMatured);
-        return;
-      }
-      if (maturityTs - latestBlock.timestamp < MIN_SALE_LISTING_SECONDS) {
-        setError(copy.errors.saleListingTooCloseToMaturity);
-        return;
-      }
-      // Codex #1505 r5 — simulate the EXACT listing call before asking
-      // the wallet to sign. It deterministically catches every listing
-      // refusal the explicit checks above can't see (the one-day relist
-      // cooldown, a live offset offer on the loan, a non-consolidatable
-      // position). The cooldown gets dedicated copy carrying WHEN relisting
-      // opens (the contract surfaces it in the error for exactly this).
-      //
-      // #1810 — it is the BOUND listing that is simulated, with the figures
-      // the seller reviewed, so a minimum that has already moved (a partial
-      // repayment, or the review left open past the quote's allowance) is
-      // caught here too, before anything is signed.
-      try {
-        await publicClient.simulateContract({
-          address: walletChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'createLoanSaleOfferBound',
-          args: [
-            BigInt(row.loanId),
-            rateBps,
-            consent.given,
-            listingSeconds,
-            reviewed.minSellerNet,
-            reviewed.maxHeld,
-          ],
-          account: address,
-        });
-      } catch (simErr) {
-        let cooldownUntil: bigint | null = null;
-        if (simErr instanceof BaseError) {
-          const revert = simErr.walk(
-            (e) => e instanceof ContractFunctionRevertedError,
-          ) as ContractFunctionRevertedError | null;
-          if (
-            revert?.data?.errorName === 'SaleRelistCooldownActive' &&
-            typeof revert.data.args?.[0] === 'bigint'
-          ) {
-            cooldownUntil = revert.data.args[0];
-          }
-        }
+      if (refusal) {
         // The reviewed figures no longer hold: close the review so the next
         // one shows the current figures; the error says why.
-        if (reviewedBoundsMoved(simErr)) closeStaleReview();
-        setError(
-          cooldownUntil !== null
-            ? copy.errors.saleRelistCooldownActive(
-                formatDateTime(Number(cooldownUntil)),
-              )
-            : captureTxError(simErr),
-        );
+        if (refusal.boundsMoved) closeStaleReview();
+        setError(refusal.reason);
         return;
       }
-      const { receipt } = await write('createLoanSaleOfferBound', [
-        BigInt(row.loanId),
-        rateBps,
-        consent.given,
-        listingSeconds,
-        reviewed.minSellerNet,
-        reviewed.maxHeld,
-      ]);
+      const { receipt } = await write(
+        'createLoanSaleOfferBound',
+        boundListingArgs(row.loanId, { rateBps, listingSeconds }, reviewed),
+      );
       const linked = parseEventLogs({
         abi: DIAMOND_ABI_VIEM,
         logs: receipt.logs,

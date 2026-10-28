@@ -1,11 +1,12 @@
 /**
- * Batch close-out on offer-grouped loans (#126) — the pure half.
+ * Batch actions on offer-grouped loans (#126) — the pure half.
  *
  * Loans group by the offer they came from. A group is the connected
- * wallet's OWN borrower positions only: one offer can fill into loans
+ * wallet's OWN positions on one side only: one offer can fill into loans
  * with different counterparties, and the contract checks the position
- * holder per call anyway, so offering another borrower's loan would only
- * produce a refusal.
+ * holder per call anyway, so offering another wallet's loan would only
+ * produce a refusal. The borrower's groups carry the close-outs, the
+ * lender's the sale listing (`batchSale.ts`).
  *
  * Each loan is planned through the shared close-out plan
  * (`closeOutPlan.ts`), and the calls go to the Diamond's multicall with
@@ -13,7 +14,7 @@
  * close. Outcomes are read back from the chain, never assumed from the
  * receipt.
  */
-import type { PublicClient } from 'viem';
+import type { Log, PublicClient } from 'viem';
 import { AssetType } from '../lib/types';
 import { captureTxError } from '../lib/errors';
 import { TxNotSettledError } from '../contracts/ownReceipt';
@@ -31,16 +32,27 @@ export interface GroupableLoan {
 
 export interface OfferGroup<T extends GroupableLoan> {
   offerId: number;
+  /** Whose side of the offer's loans the wallet holds. */
+  role: 'lender' | 'borrower';
   loans: T[];
 }
 
-/** The borrower's live ERC-20 loans, grouped by originating offer, for
- *  every offer that filled into two or more of them. Ordered by offer id,
- *  loans by loan id, so the card does not reshuffle on refetch. */
-export function borrowerOfferGroups<T extends GroupableLoan>(rows: readonly T[]): OfferGroup<T>[] {
+/** A group's identity on the page: one offer's loans can be grouped once
+ *  per side, so the offer id alone does not name a card. */
+export function groupKey(g: { role: 'lender' | 'borrower'; offerId: number }): string {
+  return `${g.role}:${g.offerId}`;
+}
+
+/** The wallet's live ERC-20 loans on one side, grouped by originating
+ *  offer, for every offer that filled into two or more of them. Ordered by
+ *  offer id, loans by loan id, so the card does not reshuffle on refetch. */
+function offerGroups<T extends GroupableLoan>(
+  rows: readonly T[],
+  role: 'lender' | 'borrower',
+): OfferGroup<T>[] {
   const byOffer = new Map<number, T[]>();
   for (const r of rows) {
-    if (r.role !== 'borrower' || r.status !== 'active') continue;
+    if (r.role !== role || r.status !== 'active') continue;
     if (r.assetType !== AssetType.ERC20 || r.offerId <= 0) continue;
     const list = byOffer.get(r.offerId) ?? [];
     // The same loan can arrive twice (chain and indexer legs); keep one.
@@ -52,25 +64,43 @@ export function borrowerOfferGroups<T extends GroupableLoan>(rows: readonly T[])
     .sort(([a], [b]) => a - b)
     .map(([offerId, loans]) => ({
       offerId,
+      role,
       loans: [...loans].sort((a, b) => a.loanId - b.loanId),
     }));
 }
 
+/** The borrower's groups: the loans "Repay all" and "Close all early"
+ *  act on. */
+export function borrowerOfferGroups<T extends GroupableLoan>(rows: readonly T[]): OfferGroup<T>[] {
+  return offerGroups(rows, 'borrower');
+}
+
+/** The lender's groups: the positions "List all for sale" acts on. One
+ *  lender offer can fill into loans with different borrowers; the lender
+ *  side of each is this wallet's only while it holds that position, which
+ *  is what a lender row means. */
+export function lenderOfferGroups<T extends GroupableLoan>(rows: readonly T[]): OfferGroup<T>[] {
+  return offerGroups(rows, 'lender');
+}
+
 /**
  * The groups to render: the live ones, plus every group whose card is
- * mid-batch or showing results. A batch that closes loans can leave its
- * offer with fewer than two open loans, which drops the group from the
- * live list; without this the card would unmount and take the outcomes
- * and the approval note with it. A held group renders as it was when its
- * batch started, until it is dismissed.
+ * mid-batch or showing results. A batch can leave its offer with fewer
+ * than two open loans (closes), or take its loans off the live list some
+ * other way, which drops the group from the live list; without this the
+ * card would unmount and take the outcomes with it. A held group renders
+ * as it was when its batch started, until it is dismissed. Keyed by
+ * `groupKey`.
  */
 export function withHeldGroups<T extends GroupableLoan>(
   live: readonly OfferGroup<T>[],
-  held: ReadonlyMap<number, OfferGroup<T>>,
+  held: ReadonlyMap<string, OfferGroup<T>>,
 ): OfferGroup<T>[] {
-  const byOffer = new Map(live.map((g) => [g.offerId, g]));
-  for (const [offerId, g] of held) byOffer.set(offerId, g);
-  return [...byOffer.values()].sort((a, b) => a.offerId - b.offerId);
+  const byKey = new Map(live.map((g) => [groupKey(g), g]));
+  for (const [key, g] of held) byKey.set(key, g);
+  return [...byKey.values()].sort(
+    (a, b) => a.offerId - b.offerId || a.role.localeCompare(b.role),
+  );
 }
 
 /** What the ready loans will take, summed per token. */
@@ -103,8 +133,13 @@ export type BatchOutcome =
   | { loanId: number; kind: 'left-out'; reason: string }
   | { loanId: number; kind: 'unknown' };
 
-/** How one multicall send ended, as far as the chain can say. */
-export type Mined = { block: bigint } | { failure: string } | { pending: true };
+/** How one multicall send ended, as far as the chain can say. A mined
+ *  send carries its receipt's logs: the items that ran emitted them, and
+ *  an item that reverted had its logs rolled back with it. */
+export type Mined =
+  | { block: bigint; logs: readonly Log[] }
+  | { failure: string }
+  | { pending: true };
 
 /**
  * What a send that did not come back with a receipt actually did. Never
@@ -127,7 +162,9 @@ export async function settleFailedSend(
   if (!submitted || err instanceof TxNotSettledError) return { failure };
   try {
     const receipt = await publicClient.getTransactionReceipt({ hash: submitted });
-    return receipt.status === 'success' ? { block: receipt.blockNumber } : { failure };
+    return receipt.status === 'success'
+      ? { block: receipt.blockNumber, logs: receipt.logs }
+      : { failure };
   } catch {
     return { pending: true };
   }

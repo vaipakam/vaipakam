@@ -191,7 +191,7 @@ export function BatchCloseOutCard({
             [encodeBestEffort(ids.map((id) => ({ functionName, args: [BigInt(id)] })))],
             { onSubmitted: (hash) => (submitted = hash) },
           );
-          mined = { block: receipt.blockNumber };
+          mined = { block: receipt.blockNumber, logs: receipt.logs };
         } catch (err) {
           mined = await settleFailedSend(ctx.publicClient, submitted, err);
         }
