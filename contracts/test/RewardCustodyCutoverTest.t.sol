@@ -1144,6 +1144,10 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         uint256 diamondBefore = vpfi.balanceOf(address(diamond));
         uint256 heldBefore = _held();
 
+        // The demotion names the receipt its stranded record is keyed by, so
+        // the record can be found from the event alone (#2984, Codex #3002).
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit RewardIngressFacet.CompensationDemoted(3, REMITTER, 12, 5e18, 2);
         vm.prank(address(diamond)); // the broadcast hook is Diamond-internal
         _ingress().onCompensationDayBroadcastArrived(3, address(0xDD), false); // another era: demote
         assertEq(_row(LibVaipakam.RewardCustodyRow.Provisional), 0, "the hold left its row");

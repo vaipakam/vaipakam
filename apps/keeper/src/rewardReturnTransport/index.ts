@@ -104,6 +104,10 @@ const READ_CHUNK = 100;
 
 const ROLE_CANONICAL = 0;
 const ROLE_MIRROR = 1;
+/** The events that make a stranded-recovery record, each naming its receipt
+ *  (`remitter`, `remitId`): an arrival quarantined on landing, and a
+ *  provisional compensation demoted by its day's broadcast. */
+export const STRANDED_EVENTS = ['CompensationQuarantined', 'CompensationDemoted'] as const;
 
 /** Refusals that mean another caller got there first. */
 export const RACES = new Set([
@@ -568,6 +572,15 @@ async function oneAuthorization(
     base.sender.noteUnread(`auth:${authId}`, `chain ${dst}, which this keeper has no RPC or Diamond for (or whose gate refused it)`);
     return;
   }
+  // The mirror executes and acknowledges toward its CURRENT Base: a mirror
+  // detached and reattached elsewhere would send this authorization's return
+  // or ACK to that other chain, leaving the issuing Base's authorization
+  // unsettled (Codex #3002). Nothing is sent for it; an operator decides.
+  if (mirror.role !== ROLE_MIRROR || mirror.baseChainId !== base.deps.chainId) {
+    const now = mirror.role === ROLE_MIRROR ? `returns to chain ${mirror.baseChainId}` : `has reward role ${mirror.role}, not Mirror`;
+    await stall(base, `auth:${authId}`, `${label}: chain ${dst} now ${now}, not to the issuing Base on chain ${base.deps.chainId}, so the keeper sends no instruction, return or ACK for it; cancelling the authorization is an operator decision`);
+    return;
+  }
   const instr = await mirror.r.tryOne<readonly [number, bigint]>(mirror.sender, `auth:${authId}`, `its instruction record on chain ${dst}`, 'getRepatriationInstruction', [base.deps.diamond, authId]);
   if (instr === undefined) return;
   // The mirror's own record of this id's execution and ACK, asked for by id.
@@ -662,7 +675,8 @@ interface StrandedRecord {
 }
 
 async function strandedReturns(mirror: ChainState, states: ReadonlyMap<number, ChainState>, deps: ReturnTransportDeps): Promise<void> {
-  // No view lists the quarantines, so the ledger nominates them: LEDGER_PAGE
+  // No view lists the stranded records, so the ledger nominates them, from
+  // both events that make one (STRANDED_EVENTS): LEDGER_PAGE
   // rows a run, from where the last run stopped and wrapping round, above a
   // stored floor every row before which has been returned in full. A read of
   // the oldest rows only would never reach a later quarantine (the Codex
@@ -672,7 +686,7 @@ async function strandedReturns(mirror: ChainState, states: ReadonlyMap<number, C
   const floor = decodePos(stored.get(STRANDED_FLOOR_ITEM));
   const next = decodePos(stored.get(STRANDED_NEXT_ITEM));
   const start = next !== null && (floor === null || posAfter(next, floor)) ? next : floor;
-  const ledger = await deps.ledger.page(mirror.deps.chainId, ['CompensationQuarantined'], start, LEDGER_PAGE);
+  const ledger = await deps.ledger.page(mirror.deps.chainId, STRANDED_EVENTS, start, LEDGER_PAGE);
   if (ledger === null) {
     mirror.sender.noteUnread('stranded', 'the event ledger');
     return;

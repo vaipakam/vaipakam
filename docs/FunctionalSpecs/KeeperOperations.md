@@ -324,6 +324,12 @@ evidence that the migration has completed.
   that reverted, or that the node refused, is sent again. A repatriation the lane can
   never carry, or one the mirror cannot yet fund, is stated rather than
   attempted.
+- **One route.** A mirror returns VPFI, and acknowledges cancellations,
+  toward its current Base. When a mirror's current Base is not the Base that
+  issued an authorization, as after the mirror detached and reattached
+  elsewhere, the keeper sends nothing for that authorization and alerts
+  operators. Sending would move the VPFI to the other chain and leave the
+  issuing Base's authorization unsettled.
 - **Chunked returns.** Compensation a mirror quarantined, and a retired
   mirror's pending surplus, go home in parts. Each part is bounded by the
   sending chain's outbound lane and by the receiving chain's inbound
@@ -334,9 +340,11 @@ evidence that the migration has completed.
 - Every send that moves VPFI is announced to operators with its amount and
   transaction. Base's own authorization count names every authorization, so
   the keeper reads them from the chain a bounded number a run, resuming where
-  it stopped above a floor of settled ones; quarantines, which no view lists,
-  come from the indexer's record of on-chain events, read a page a run in the
-  same way. No authorization or quarantine is left out for good, however long
+  it stopped above a floor of settled ones. Quarantined compensation, which
+  no view lists, comes from the indexer's record of on-chain events, read a
+  page a run in the same way. That covers both events that quarantine
+  value: an arrival quarantined on landing, and a provisional credit demoted
+  by its day's broadcast. No authorization or quarantine is left out for good, however long
   the history grows. Every decision comes from an on-chain read, and the
   keeper's own record of what it sent keeps it from repeating a message
   before the indexer has seen it. A paused protocol, a missing signing key, a

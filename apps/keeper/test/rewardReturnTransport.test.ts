@@ -669,6 +669,29 @@ describe('a run', () => {
     expect(c.rows.get(STRANDED_FLOOR_ITEM), 'the floor stops at the quarantine it sent part of, until it reads it at zero').toBe(`${LEDGER_PAGE + 5}:0`);
   });
 
+  it('returns the stranded record a demoted provisional compensation made (Codex #3002)', async () => {
+    // A demotion makes the record without a quarantine event; its own event
+    // names the receipt.
+    mirror.stranded.set(`${REMITTER}:12`, { amount: 300n * E18, dayId: 6n });
+    ledger.add(MIRROR_ID, 'CompensationDemoted', { dayId: '6', remitter: REMITTER, remitId: '12', amount: '1', reason: 2 }, NOW - 600);
+    const r = await run();
+    expect(mirror.sent).toEqual([{ fn: 'sendStrandedReturn', args: [REMITTER, 12n, 300n * E18, KEEPER], value: FEE }]);
+    expect(r[1].stranded).toEqual([`${REMITTER}:12=${300n * E18}`]);
+  });
+
+  it('sends nothing for an authorization whose mirror now returns to another chain, and alerts (Codex #3002)', async () => {
+    authorize(2n, 400n * E18);
+    ledger.add(BASE_ID, 'RepatriationInstructionDispatched', { authId: '2' }, NOW - 600);
+    const moved = new FakeChain(MIRROR_ID, MIRROR, ROLE_MIRROR, 11155111);
+    moved.instr.set(`${BASE}:2`, { state: INSTR_PENDING, amount: 400n * E18 });
+    moved.outbound.set(11155111, bucket());
+    const r = await run({ chains: [base, moved] });
+    expect(base.sent).toEqual([]);
+    expect(moved.sent).toEqual([]);
+    expect(r[0].stalled[0]).toMatch(new RegExp(`authorization 2 to chain ${MIRROR_ID}: chain ${MIRROR_ID} now returns to chain 11155111, not to the issuing Base on chain ${BASE_ID}`));
+    expect(alerts.map((a) => a.key)).toContain(`return-transport-stalled:${BASE_ID}:auth:2`);
+  });
+
   it('waits rather than spend a fee on a dust part', async () => {
     mirror.stranded.set(`${REMITTER}:9`, { amount: 7_000n * E18, dayId: 4n });
     ledger.add(MIRROR_ID, 'CompensationQuarantined', { remitter: REMITTER, remitId: '9' }, NOW - 600);
