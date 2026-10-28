@@ -126,6 +126,26 @@ The deploy records the commit it was built from on the Worker version
 (`packages/lib/bin/wrangler-deploy.mjs`), and the hourly
 `.github/workflows/deploy-lag.yml` check compares it with `main`. A merged
 change to the app that has not been deployed for six hours opens a "Workers
-behind main" issue (#2242). Deploy through `run deploy`, not a bare
-`wrangler deploy`: without the stamp the check can only infer the commit from
-the deploy time, and says so.
+behind main" issue (#2242). A hand deploy goes through `run deploy`, not a
+bare `wrangler deploy`: without the stamp the check can only place the
+deployment by its upload time, and says so.
+
+### How it ships
+
+A merge to `main` that touches `apps/app/`, `packages/` or the lockfile is
+built and deployed by **Cloudflare Workers Builds** (verified from the
+account on 2026-10-28, #2241). The app's operator settings (the indexer and
+agent origins, the RPC URLs, the WalletConnect id and the rest of the
+`VITE_*` set) are held as **build variables in the dashboard**, because
+`apps/app/.env.local` is gitignored and a build from a clone cannot see it.
+Branch builds are off for this Worker, so an unmerged PR never uploads a
+version onto it.
+
+What the dashboard's commands do, stated because the repository cannot pin
+them: the build runs `pnpm run build` and the deploy runs `npx wrangler
+deploy`. That pair skips two things `pnpm run deploy` does. It does not set
+`REQUIRE_INDEXER_ORIGIN=1`, so a build variable removed by mistake would
+ship an app with no indexer feed instead of failing (the #1958 class). It
+also does not stamp the deployment with its commit, so the deploy-lag check
+(#2242) places the deployment by its upload time. A hand deploy from a
+desktop checkout uses `pnpm run deploy`, which does both.
