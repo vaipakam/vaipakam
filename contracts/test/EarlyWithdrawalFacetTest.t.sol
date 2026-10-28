@@ -8097,6 +8097,19 @@ contract EarlyWithdrawalFacetTest is Test {
         _assertEntriesMatchVerdict(activeLoanId, borrower);
     }
 
+    /// @dev The Diamond's own address is exempt only where it always was: the
+    ///      listing's keeper gate admits the self-call, while the direct sale,
+    ///      which settles to its caller, admits nobody but the holder.
+    function test_SaleExitVerdict_DiamondSelfCallAdmittedOnlyOnTheListing() public view {
+        (
+            SaleExitVerdictFacet.SaleRefusal[] memory direct,
+            SaleExitVerdictFacet.SaleRefusal[] memory listing
+        ) = _verdict(activeLoanId, address(diamond));
+        assertEq(direct.length, 1, "the direct sale refuses the Diamond");
+        assertEq(direct[0].reason, abi.encodeWithSelector(IVaipakamErrors.NotNFTOwner.selector));
+        assertEq(listing.length, 0, "the listing's self-call exemption is kept");
+    }
+
     /// @dev A loan with no live lender position is not Active, on both routes,
     ///      and the entries say so rather than failing inside an NFT lookup.
     function test_SaleExitVerdict_NonexistentLoanIsNotActive() public {

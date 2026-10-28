@@ -178,12 +178,15 @@ contract SaleExitVerdictFacet {
         }
 
         // Who may submit. The direct sale settles to its caller, so only the
-        // holder may; the listing admits an authorised keeper for the holder.
-        if (caller != holder && caller != address(this)) {
+        // holder may, with no exception. The listing admits an authorised
+        // keeper for the holder, and the Diamond's own self-call (the rule
+        // `LibAuth.requireKeeperFor` has always applied to that entry).
+        if (caller != holder) {
             if (!listing) {
                 _add(r, abi.encodeWithSelector(IVaipakamErrors.NotNFTOwner.selector), 0);
                 if (_full(r)) return _trim(r);
             } else if (
+                caller != address(this) &&
                 !LibAuth.keeperMayActFor(
                     caller, LibVaipakam.KEEPER_ACTION_INIT_EARLY_WITHDRAW, loanId, holder
                 )
