@@ -892,9 +892,9 @@ export function ForcedCloseCard({
    *  optimistic wording there would present an indefinite disabled
    *  button as an ordinary pause, which is the shape of a hang. */
   /** What happened to the last close-out this card sent, when the chain
-   *  has said it did NOT execute. Null while holding, and null for a
-   *  success — a success changes the position, and the position speaks
-   *  for itself. */
+   *  has said it did NOT execute, or (#2086, `superseded`) cannot say
+   *  whether it did. Null while holding, and null for a success — a
+   *  success changes the position, and the position speaks for itself. */
   const lastOutcome =
     disposition === 'reverted'
       ? copy.forcedClose.outcomeReverted
@@ -902,7 +902,9 @@ export function ForcedCloseCard({
         ? copy.forcedClose.outcomeCancelled
         : disposition === 'replaced'
           ? copy.forcedClose.outcomeReplaced
-          : null;
+          : disposition === 'superseded'
+            ? copy.forcedClose.outcomeSuperseded
+            : null;
 
   const body = !holdingAfterSubmit
     ? view.body

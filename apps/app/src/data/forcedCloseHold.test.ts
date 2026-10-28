@@ -21,10 +21,16 @@
  * ships the other bug, which is exactly how this went round after
  * round.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  dispositionFromNonce,
+  dispositionRetryMs,
+  forcedCloseSubmissionKey,
   isHoldingAfterSubmit,
   isUnaccounted,
+  mayHaveChangedPosition,
+  readForcedCloseSubmission,
+  writeForcedCloseSubmission,
   type ForcedCloseDisposition,
 } from './forcedCloseHold';
 
@@ -258,6 +264,7 @@ describe('isHoldingAfterSubmit — exhaustive over the disposition space', () =>
     reverted: false,
     cancelled: false,
     replaced: false,
+    superseded: false,
     undetermined: true,
   };
 
@@ -282,6 +289,10 @@ describe('isHoldingAfterSubmit — exhaustive over the disposition space', () =>
       reverted: false,
       cancelled: false,
       replaced: false,
+      // #2086: the nonce moved on and the replacement may have been a
+      // Speed Up of this very call, so the position may have changed —
+      // held like `success` until the reads come back.
+      superseded: true,
       undetermined: true,
     };
     for (const [disposition, expected] of Object.entries(staleExpected) as [
@@ -414,5 +425,120 @@ describe('isUnaccounted', () => {
         thresholdMs: THRESHOLD,
       }),
     ).toBe(false);
+  });
+});
+
+/**
+ * #2086 — reconciling a submission from the chain after a reload.
+ *
+ * The page that sent the close-out is gone, so nothing saw a Speed Up
+ * or a cancel. What the chain still says is whether our hash has a
+ * receipt and whether the account's nonce has moved past ours. The
+ * second fact alone cannot name what took the nonce — a Speed Up of
+ * this very call is indistinguishable from a cancel — so it must never
+ * read as "did not execute".
+ */
+describe('dispositionFromNonce', () => {
+  it('takes the receipt as the outcome when our hash has one', () => {
+    expect(dispositionFromNonce({ receipt: 'success', accountNonce: 9, nonce: 4 })).toBe('success');
+    expect(dispositionFromNonce({ receipt: 'reverted', accountNonce: 9, nonce: 4 })).toBe('reverted');
+  });
+
+  it('reads a spent nonce with no receipt as superseded, never as replaced', () => {
+    expect(dispositionFromNonce({ receipt: 'absent', accountNonce: 5, nonce: 4 })).toBe('superseded');
+  });
+
+  it('is not evidence while the nonce has not been passed', () => {
+    // Equal: the next nonce IS ours, so it may still be waiting to mine.
+    expect(dispositionFromNonce({ receipt: 'absent', accountNonce: 4, nonce: 4 })).toBe('undetermined');
+    expect(dispositionFromNonce({ receipt: 'absent', accountNonce: 2, nonce: 4 })).toBe('undetermined');
+  });
+
+  it('is not evidence when either read failed', () => {
+    expect(dispositionFromNonce({ receipt: 'absent', accountNonce: null, nonce: 4 })).toBe('undetermined');
+    expect(dispositionFromNonce({ receipt: 'unknown', accountNonce: 9, nonce: 4 })).toBe('undetermined');
+  });
+});
+
+describe('mayHaveChangedPosition', () => {
+  it('is true only where the close-out may have executed', () => {
+    const expected: Record<ForcedCloseDisposition, boolean> = {
+      success: true,
+      superseded: true,
+      reverted: false,
+      cancelled: false,
+      replaced: false,
+      undetermined: false,
+    };
+    for (const [d, want] of Object.entries(expected) as [ForcedCloseDisposition, boolean][]) {
+      expect(mayHaveChangedPosition(d)).toBe(want);
+    }
+    expect(mayHaveChangedPosition(null)).toBe(false);
+  });
+});
+
+describe('dispositionRetryMs', () => {
+  it('backs off from one second and caps at thirty', () => {
+    expect(dispositionRetryMs(0)).toBe(1_000);
+    expect(dispositionRetryMs(1)).toBe(2_000);
+    expect(dispositionRetryMs(4)).toBe(16_000);
+    expect(dispositionRetryMs(5)).toBe(30_000);
+    expect(dispositionRetryMs(50)).toBe(30_000);
+  });
+});
+
+describe('the device-local submission record', () => {
+  const store = new Map<string, string>();
+  const CHAIN = 84532;
+  const LOAN = '7';
+  const HASH = `0x${'ab'.repeat(32)}` as const;
+  const SENDER = `0x${'cd'.repeat(20)}` as const;
+
+  beforeEach(() => {
+    store.clear();
+    (globalThis as { window?: unknown }).window = {
+      localStorage: {
+        getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+        setItem: (k: string, v: string) => void store.set(k, v),
+        removeItem: (k: string) => void store.delete(k),
+      },
+    };
+  });
+  afterEach(() => {
+    delete (globalThis as { window?: unknown }).window;
+  });
+
+  it('round-trips a record carrying the sender and nonce', () => {
+    expect(
+      writeForcedCloseSubmission(CHAIN, LOAN, { hash: HASH, at: 1_000, sender: SENDER, nonce: 12 }),
+    ).toBe(true);
+    expect(readForcedCloseSubmission(CHAIN, LOAN)).toEqual({
+      hash: HASH,
+      at: 1_000,
+      sender: SENDER,
+      nonce: 12,
+    });
+  });
+
+  it('reads a record written before the nonce was known', () => {
+    writeForcedCloseSubmission(CHAIN, LOAN, { hash: HASH, at: 1_000 });
+    expect(store.get(forcedCloseSubmissionKey(CHAIN, LOAN))).toBe(`${HASH}:1000`);
+    expect(readForcedCloseSubmission(CHAIN, LOAN)).toEqual({ hash: HASH, at: 1_000 });
+  });
+
+  it('keeps the hash when the stored identity is malformed', () => {
+    // Dropping the whole record would re-offer the action over a
+    // transaction that may still be live.
+    store.set(forcedCloseSubmissionKey(CHAIN, LOAN), `${HASH}:1000:0xnotanaddress:12`);
+    expect(readForcedCloseSubmission(CHAIN, LOAN)).toEqual({ hash: HASH, at: 1_000 });
+    store.set(forcedCloseSubmissionKey(CHAIN, LOAN), `${HASH}:1000:${SENDER}:-1`);
+    expect(readForcedCloseSubmission(CHAIN, LOAN)).toEqual({ hash: HASH, at: 1_000 });
+  });
+
+  it('treats any other shape as no record', () => {
+    store.set(forcedCloseSubmissionKey(CHAIN, LOAN), `${HASH}:1000:${SENDER}`);
+    expect(readForcedCloseSubmission(CHAIN, LOAN)).toBeNull();
+    store.set(forcedCloseSubmissionKey(CHAIN, LOAN), `0x12:1000`);
+    expect(readForcedCloseSubmission(CHAIN, LOAN)).toBeNull();
   });
 });

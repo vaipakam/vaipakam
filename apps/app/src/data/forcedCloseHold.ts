@@ -98,7 +98,83 @@ export type ForcedCloseDisposition =
    *  NOT here — a Speed Up carries our own call at a higher gas price,
    *  so it resolves to `success` or `reverted` on its own receipt. */
   | 'replaced'
+  /** #2086 — our transaction's nonce has been spent and our hash has no
+   *  receipt, found by the reconciliation that runs when the live wait
+   *  could not account for the hash (after a reload, typically: the wait
+   *  that would have seen the replacement happen was destroyed with the
+   *  page). Something else from the same wallet took the nonce, and
+   *  WHICH is not known: a cancel or an unrelated transaction means the
+   *  close-out did not run, while a Speed Up carries our own call under
+   *  another hash and may have closed the loan. The live wait tells
+   *  those apart by re-reading the original from the mempool, which is
+   *  exactly what a reload loses.
+   *
+   *  So this is NOT folded into `replaced`, which states that the
+   *  close-out never ran. It is treated like `success` for the hold: the
+   *  chain has moved on, the position MAY have changed, and the action is
+   *  re-offered only once every readiness read reflects the loan as it
+   *  now stands. */
+  | 'superseded'
   | 'undetermined';
+
+/** Whether a disposition may have changed the position, so the hold
+ *  lasts until the readiness reads have refreshed after it (round 28's
+ *  reason). `success` did change it; `superseded` may have. */
+export function mayHaveChangedPosition(disposition: ForcedCloseDisposition | null): boolean {
+  return disposition === 'success' || disposition === 'superseded';
+}
+
+/**
+ * #2086 — what the chain says about a submission whose live wait could
+ * not account for its hash, from the sending account's nonce.
+ *
+ * The rule, and why each arm is sound:
+ *
+ * - A receipt under OUR hash answers the question directly, whatever the
+ *   nonce says: the call executed, and its status is the outcome.
+ * - No receipt under our hash, and the account's mined nonce has moved
+ *   PAST ours: the nonce was consumed by a different transaction, since
+ *   a transaction that executed under our hash would have a receipt.
+ *   That is `superseded`, not `replaced`, because the consumer may have
+ *   been a Speed Up of our own call (see the disposition).
+ * - Anything else is not evidence. A nonce not yet passed means ours may
+ *   still be pending (or dropped and not yet replaced); a failed read
+ *   says nothing about the transaction.
+ */
+export function dispositionFromNonce(input: {
+  /** Our hash's receipt: its status, `absent` when the node has none,
+   *  `unknown` when the read itself failed. */
+  receipt: 'success' | 'reverted' | 'absent' | 'unknown';
+  /** The sender's MINED transaction count (`latest`), or `null` when
+   *  the read failed. It is the next nonce, so a value above ours means
+   *  ours has been consumed. */
+  accountNonce: number | null;
+  /** The nonce our transaction was sent with. */
+  nonce: number;
+}): ForcedCloseDisposition {
+  if (input.receipt === 'success') return 'success';
+  if (input.receipt === 'reverted') return 'reverted';
+  if (input.receipt === 'absent' && input.accountNonce !== null && input.accountNonce > input.nonce) {
+    return 'superseded';
+  }
+  return 'undetermined';
+}
+
+/**
+ * #2086 — how long to wait before restarting a disposition wait that came
+ * back `undetermined`, after `failures` such answers in a row.
+ *
+ * The wait itself is continuous (round 54); this paces only its restart
+ * after it FAILED. A fixed 1-second restart turned an orphaned hash, one
+ * that viem's wait gives up on every time, into a request loop for as
+ * long as the page stayed open. It doubles from one second and stops at
+ * thirty: an RPC drop that recovers is still noticed within half a
+ * minute, and an orphaned hash costs two reads a minute rather than sixty.
+ */
+export function dispositionRetryMs(failures: number): number {
+  const n = Number.isFinite(failures) && failures > 0 ? Math.floor(failures) : 0;
+  return Math.min(1_000 * 2 ** Math.min(n, 5), 30_000);
+}
 
 export interface ForcedCloseHoldInput {
   /** When the close-out was submitted, or `null` if none is
@@ -184,7 +260,10 @@ export function isHoldingAfterSubmit(input: ForcedCloseHoldInput): boolean {
   // readiness verdict on screen was computed from post-close data —
   // round 28's reason, and the only arm this condition belongs to
   // (round 49).
-  if (input.disposition === 'success') {
+  // `superseded` (#2086) joins it: the nonce moved on under a transaction
+  // that may have been our own call sped up, so the position may have
+  // changed and the same refresh decides.
+  if (mayHaveChangedPosition(input.disposition)) {
     return !input.readsRefreshedSinceDisposition;
   }
 
@@ -279,15 +358,25 @@ export function isUnaccounted(input: {
  *  funds-moving action over an unresolved transaction — so `write`
  *  reports whether it landed and the caller is expected to care.
  *
- *  The value is `<hash>:<submittedAtMs>`. Both halves are needed: the
- *  hash is what gets watched, and the timestamp is the fallback anchor
- *  when a disposition arrives without one. */
+ *  The value is `<hash>:<submittedAtMs>`, extended to
+ *  `<hash>:<submittedAtMs>:<sender>:<nonce>` once the card has read the
+ *  transaction's nonce back from the chain (#2086). The hash is what gets
+ *  watched and the timestamp anchors the "lost track" wording; the sender
+ *  and nonce are what let a reloaded page tell that the nonce has since
+ *  been spent, which the hash alone cannot once the transaction has left
+ *  the mempool. A record without them is simply one whose nonce was not
+ *  read before the page went away: it parses, and reconciliation by
+ *  nonce is unavailable for it. */
 
 const submitMarker = makePendingMarkerStore('app.forcedCloseSubmit');
 
 export interface ForcedCloseSubmission {
   hash: `0x${string}`;
   at: number;
+  /** The sending account and the nonce the transaction carries, once
+   *  read back from the chain (#2086). Absent until then. */
+  sender?: `0x${string}`;
+  nonce?: number;
 }
 
 /** The literal storage key a record lives under.
@@ -314,14 +403,32 @@ export function readForcedCloseSubmission(
   // this browser cannot parse is one it cannot act on either, and a
   // parse error here would take down the whole card. Treated as "no
   // record", which is the same posture as storage being unavailable.
-  const at = raw.lastIndexOf(':');
-  if (at <= 0) return null;
-  const hash = raw.slice(0, at);
-  const ts = Number(raw.slice(at + 1));
+  const parts = raw.split(':');
+  if (parts.length !== 2 && parts.length !== 4) return null;
+  const [hash, tsText] = parts;
+  const ts = Number(tsText);
   if (!/^0x[0-9a-fA-F]{64}$/.test(hash) || !Number.isFinite(ts) || ts <= 0) {
     return null;
   }
-  return { hash: hash as `0x${string}`, at: ts };
+  const submission: ForcedCloseSubmission = { hash: hash as `0x${string}`, at: ts };
+  if (parts.length === 4) {
+    const [, , sender, nonceText] = parts;
+    const nonce = Number(nonceText);
+    // A malformed identity is dropped rather than the whole record: the
+    // hash still holds the action, and losing the record would re-offer
+    // it over a transaction that may be live.
+    if (/^0x[0-9a-fA-F]{40}$/.test(sender) && /^\d+$/.test(nonceText) && Number.isSafeInteger(nonce)) {
+      submission.sender = sender as `0x${string}`;
+      submission.nonce = nonce;
+    }
+  }
+  return submission;
+}
+
+function encodeSubmission(s: ForcedCloseSubmission): string {
+  return s.sender !== undefined && s.nonce !== undefined
+    ? `${s.hash}:${s.at}:${s.sender}:${s.nonce}`
+    : `${s.hash}:${s.at}`;
 }
 
 /** @returns false when storage refused the write (private mode, quota,
@@ -335,6 +442,6 @@ export function writeForcedCloseSubmission(
   return submitMarker.write(
     chainId,
     String(loanId),
-    submission === null ? null : `${submission.hash}:${submission.at}`,
+    submission === null ? null : encodeSubmission(submission),
   );
 }
