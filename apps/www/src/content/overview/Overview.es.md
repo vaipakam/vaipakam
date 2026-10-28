@@ -314,7 +314,7 @@ Dos caminos:
 
 Vaipakam funciona como un despliegue independiente en cada cadena
 compatible: **Ethereum**, **Base**, **Arbitrum**, **Optimism**,
-**Polygon zkEVM**, **BNB Chain**.
+**Polygon**.
 
 Un préstamo abierto en Base se liquida en Base. Un préstamo abierto
 en Arbitrum se liquida en Arbitrum. No hay deuda entre cadenas. Lo

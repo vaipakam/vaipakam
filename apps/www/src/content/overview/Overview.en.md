@@ -298,8 +298,7 @@ Two paths:
 ## Which chains?
 
 Vaipakam runs as an independent deployment on each supported chain:
-**Ethereum**, **Base**, **Arbitrum**, **Optimism**, **Polygon zkEVM**,
-**BNB Chain**.
+**Ethereum**, **Base**, **Arbitrum**, **Optimism**, **Polygon**.
 
 A loan opened on Base settles on Base. A loan opened on Arbitrum
 settles on Arbitrum. There's no cross-chain debt. The only thing that
