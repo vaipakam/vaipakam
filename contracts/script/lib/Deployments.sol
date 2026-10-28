@@ -665,12 +665,10 @@ library Deployments {
     /// `.diamond` for the proxy address and may optionally surface
     /// per-facet addresses for explorer links.
     ///
-    /// @dev #2263 — this is the ONLY door into `.facets`. The generic writers
-    ///      refuse every key inside that namespace ({requireOutsideFacetsNamespace}),
-    ///      so every `.facets.*` entry is one this function wrote, under a
-    ///      single-segment key: `facetKey` must be non-empty and carry no `.`,
-    ///      `[` or `]`, which would nest the write below `.facets.<x>` or index
-    ///      into it instead of naming a facet.
+    /// @dev #2263 — this is the ONLY door into `.facets`. Every generic writer
+    ///      accepts one key spelling only and refuses that namespace in it
+    ///      ({requireGenericKey}), so every `.facets.*` entry is one this
+    ///      function wrote, under a single-segment key ({requireFacetKey}).
     function writeFacet(string memory facetKey, address a) internal {
         requireFacetKey(facetKey);
         _writeAddr(string.concat(".facets.", facetKey), a);
@@ -681,39 +679,73 @@ library Deployments {
     ///         through `Deployments.writeFacet(facetKey, impl)` instead.
     error FacetsNamespaceReserved(string jsonKey);
 
-    /// @notice {writeFacet} was handed a key that is not a single path
-    ///         segment: empty, or carrying `.`, `[` or `]` (#2263).
+    /// @notice A generic writer was handed a key outside the one spelling the
+    ///         artifact's writers use: `.` followed by dot-separated segments
+    ///         of letters, digits and `_` (#2263). Forge also reads `$`-rooted,
+    ///         bracketed and wildcard paths, and each can name a key the plain
+    ///         spelling names, so the writers take only the plain one.
+    error JsonKeyNotCanonical(string jsonKey);
+
+    /// @notice {writeFacet} was handed a key that is not one segment of
+    ///         letters, digits and `_` (#2263).
     error FacetKeyMalformed(string facetKey);
 
-    /// @notice TRUE when `jsonKey` addresses `.facets` itself or anything
-    ///         below it, in either key spelling forge accepts (`.facets…` or
-    ///         `$.facets…`). `.facetCount` and other keys that merely start
-    ///         with the same letters are outside the namespace.
-    function isFacetsNamespaceKey(string memory jsonKey) internal pure returns (bool) {
-        bytes memory k = bytes(jsonKey);
-        uint256 i = (k.length != 0 && k[0] == "$") ? 1 : 0;
-        bytes memory ns = bytes(".facets");
-        if (k.length < i + ns.length) return false;
-        for (uint256 j; j < ns.length; ++j) {
-            if (k[i + j] != ns[j]) return false;
-        }
-        uint256 next = i + ns.length;
-        return next == k.length || k[next] == "." || k[next] == "[";
+    /// @notice TRUE when `b` is a letter, a digit or `_`.
+    function _isKeyChar(bytes1 b) private pure returns (bool) {
+        return (b >= "a" && b <= "z") || (b >= "A" && b <= "Z") || (b >= "0" && b <= "9") || b == "_";
     }
 
-    /// @notice Refuse a generic write into `.facets` (#2263). Called by
-    ///         {writeAddress}, {writeUint}, {writeBool} and {writeString}
-    ///         before anything is written.
-    function requireOutsideFacetsNamespace(string memory jsonKey) internal pure {
+    /// @notice TRUE when `jsonKey` is in the one spelling the writers accept:
+    ///         `.seg` or `.seg.seg…`, each segment non-empty letters, digits
+    ///         and `_`. In that spelling every key has exactly one form, so a
+    ///         namespace check on it cannot be sidestepped by another form.
+    function isCanonicalKey(string memory jsonKey) internal pure returns (bool) {
+        bytes memory k = bytes(jsonKey);
+        if (k.length < 2 || k[0] != ".") return false;
+        bool segmentOpen;
+        for (uint256 i = 1; i < k.length; ++i) {
+            if (k[i] == ".") {
+                if (!segmentOpen) return false;
+                segmentOpen = false;
+            } else if (_isKeyChar(k[i])) {
+                segmentOpen = true;
+            } else {
+                return false;
+            }
+        }
+        return segmentOpen;
+    }
+
+    /// @notice TRUE when the canonical `jsonKey` addresses `.facets` itself or
+    ///         anything below it. `.facetCount` and other keys that merely
+    ///         start with the same letters are outside the namespace.
+    function isFacetsNamespaceKey(string memory jsonKey) internal pure returns (bool) {
+        bytes memory k = bytes(jsonKey);
+        bytes memory ns = bytes(".facets");
+        if (k.length < ns.length) return false;
+        for (uint256 j; j < ns.length; ++j) {
+            if (k[j] != ns[j]) return false;
+        }
+        return k.length == ns.length || k[ns.length] == ".";
+    }
+
+    /// @notice The one gate every generic writer passes before writing
+    ///         (#2263): the key must be canonical ({isCanonicalKey}) and
+    ///         outside `.facets` ({isFacetsNamespaceKey}). Called by
+    ///         {writeAddress}, {writeUint}, {writeBool} and {writeString}.
+    function requireGenericKey(string memory jsonKey) internal pure {
+        if (!isCanonicalKey(jsonKey)) revert JsonKeyNotCanonical(jsonKey);
         if (isFacetsNamespaceKey(jsonKey)) revert FacetsNamespaceReserved(jsonKey);
     }
 
-    /// @notice Refuse a {writeFacet} key that is not one path segment.
+    /// @notice Refuse a {writeFacet} key that is not one segment of letters,
+    ///         digits and `_`, so `.facets.<key>` is itself canonical and names
+    ///         one facet.
     function requireFacetKey(string memory facetKey) internal pure {
         bytes memory k = bytes(facetKey);
         if (k.length == 0) revert FacetKeyMalformed(facetKey);
         for (uint256 i; i < k.length; ++i) {
-            if (k[i] == "." || k[i] == "[" || k[i] == "]") revert FacetKeyMalformed(facetKey);
+            if (!_isKeyChar(k[i])) revert FacetKeyMalformed(facetKey);
         }
     }
 
@@ -1026,17 +1058,17 @@ library Deployments {
     // ── Scalar/uint writes ─────────────────────────────────────────────────
 
     function writeUint(string memory jsonKey, uint256 value) internal {
-        requireOutsideFacetsNamespace(jsonKey);
+        requireGenericKey(jsonKey);
         _writeUint(jsonKey, value);
     }
 
     function writeBool(string memory jsonKey, bool value) internal {
-        requireOutsideFacetsNamespace(jsonKey);
+        requireGenericKey(jsonKey);
         _writeBool(jsonKey, value);
     }
 
     function writeString(string memory jsonKey, string memory value) internal {
-        requireOutsideFacetsNamespace(jsonKey);
+        requireGenericKey(jsonKey);
         _writeString(jsonKey, value);
     }
 
@@ -1111,10 +1143,11 @@ library Deployments {
     function writeRewardGraceSeconds(uint64 secs) internal { _writeUint(".rewardGraceSeconds", uint256(secs)); }
     function writeInteractionLaunchTimestamp(uint256 ts) internal { _writeUint(".interactionLaunchTimestamp", ts); }
 
-    /// Generic typed write — keys not in the curated list above. A key inside
-    /// `.facets` is refused: facet addresses go through {writeFacet} (#2263).
+    /// Generic typed write — keys not in the curated list above. The key must be
+    /// canonical and outside `.facets`: facet addresses go through {writeFacet}
+    /// (#2263, {requireGenericKey}).
     function writeAddress(string memory jsonKey, address a) internal {
-        requireOutsideFacetsNamespace(jsonKey);
+        requireGenericKey(jsonKey);
         _writeAddr(jsonKey, a);
     }
 

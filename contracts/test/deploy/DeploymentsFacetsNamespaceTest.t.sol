@@ -9,8 +9,10 @@ import {ArtifactRootBase, ARTIFACT_SCRATCH_PREFIX} from "../../script/lib/Artifa
  * @title DeploymentsFacetsNamespaceTest
  * @notice #2263 — `Deployments.writeFacet` is the only door into the
  *         artifact's `.facets` namespace. The generic writers (`writeAddress`,
- *         `writeUint`, `writeBool`, `writeString`) refuse any key inside it,
- *         and `writeFacet` refuses a key that is not one path segment.
+ *         `writeUint`, `writeBool`, `writeString`) take only the plain key
+ *         spelling (`.seg.seg…`), so no bracketed or `$`-rooted alias of a
+ *         `.facets` key can reach the file, and refuse any key inside the
+ *         namespace; `writeFacet` refuses a key that is not one segment.
  *
  *         The boundary is straddled with REAL writes into a redirected scratch
  *         artifact: `writeFacet` lands its address under `.facets.<key>`, the
@@ -60,16 +62,29 @@ contract DeploymentsFacetsNamespaceTest is Test, ArtifactRootBase {
     function test_NamespacePredicate() public pure {
         assertTrue(Deployments.isFacetsNamespaceKey(".facets"));
         assertTrue(Deployments.isFacetsNamespaceKey(".facets.loanFacet"));
-        assertTrue(Deployments.isFacetsNamespaceKey(".facets[0]"));
-        assertTrue(Deployments.isFacetsNamespaceKey("$.facets"));
-        assertTrue(Deployments.isFacetsNamespaceKey("$.facets.loanFacet"));
         // same letters, different key
         assertFalse(Deployments.isFacetsNamespaceKey(".facetCount"));
         assertFalse(Deployments.isFacetsNamespaceKey(".facetsArchive"));
         assertFalse(Deployments.isFacetsNamespaceKey(".facet"));
         assertFalse(Deployments.isFacetsNamespaceKey(".rewardMessengerImpl"));
         assertFalse(Deployments.isFacetsNamespaceKey(""));
-        assertFalse(Deployments.isFacetsNamespaceKey("$"));
+    }
+
+    function test_CanonicalKeyGrammar() public pure {
+        assertTrue(Deployments.isCanonicalKey(".facetCount"));
+        assertTrue(Deployments.isCanonicalKey(".crosschain.ccipMessenger"));
+        assertTrue(Deployments.isCanonicalKey(".mock_WETH9Feed"));
+        // every other spelling forge reads, any of which can alias a plain key
+        assertFalse(Deployments.isCanonicalKey("$.facets.loanFacet"));
+        assertFalse(Deployments.isCanonicalKey("$['facets']['loanFacet']"));
+        assertFalse(Deployments.isCanonicalKey(".facets['loanFacet']"));
+        assertFalse(Deployments.isCanonicalKey(".facets[0]"));
+        assertFalse(Deployments.isCanonicalKey(".facets.*"));
+        assertFalse(Deployments.isCanonicalKey("..facets"));
+        assertFalse(Deployments.isCanonicalKey(".facets."));
+        assertFalse(Deployments.isCanonicalKey("facets"));
+        assertFalse(Deployments.isCanonicalKey("."));
+        assertFalse(Deployments.isCanonicalKey(""));
     }
 
     // ── the boundary, with real writes ───────────────────────────────────
@@ -95,9 +110,16 @@ contract DeploymentsFacetsNamespaceTest is Test, ArtifactRootBase {
         vm.expectRevert(abi.encodeWithSelector(Deployments.FacetsNamespaceReserved.selector, ".facets"));
         this.writeUint(".facets", 1);
         vm.expectRevert(
-            abi.encodeWithSelector(Deployments.FacetsNamespaceReserved.selector, "$.facets.loanFacet")
+            abi.encodeWithSelector(Deployments.JsonKeyNotCanonical.selector, "$.facets.loanFacet")
         );
         this.writeBool("$.facets.loanFacet", true);
+        // another spelling of the same key is refused before it is read
+        vm.expectRevert(
+            abi.encodeWithSelector(Deployments.JsonKeyNotCanonical.selector, "$['facets']['loanFacet']")
+        );
+        this.writeAddress("$['facets']['loanFacet']", other);
+        vm.expectRevert(abi.encodeWithSelector(Deployments.JsonKeyNotCanonical.selector, "$['facets']"));
+        this.writeUint("$['facets']", 1);
         vm.expectRevert(
             abi.encodeWithSelector(Deployments.FacetsNamespaceReserved.selector, ".facets.loanFacet")
         );
@@ -127,6 +149,8 @@ contract DeploymentsFacetsNamespaceTest is Test, ArtifactRootBase {
         this.writeFacet("loanFacet.impl", impl);
         vm.expectRevert(abi.encodeWithSelector(Deployments.FacetKeyMalformed.selector, "loanFacet[0]"));
         this.writeFacet("loanFacet[0]", impl);
+        vm.expectRevert(abi.encodeWithSelector(Deployments.FacetKeyMalformed.selector, "loan'Facet"));
+        this.writeFacet("loan'Facet", impl);
         // a refused key wrote nothing: the artifact was never even created
         assertFalse(vm.isFile(Deployments.path()));
     }
