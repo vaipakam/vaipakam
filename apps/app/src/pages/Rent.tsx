@@ -20,7 +20,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { CircleCheck, Images, KeyRound, LoaderCircle } from 'lucide-react';
+import { Images, KeyRound } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { encodeFunctionData, type Address } from 'viem';
@@ -30,7 +30,7 @@ import {
   usePermit2Signing,
 } from '../contracts/usePermit2Signing';
 import { AmountPrecisionHint } from '../components/AmountPrecisionHint';
-import { ConsentLabel } from '../components/ConsentLabel';
+import { FlowDoneCard, ReviewFooter } from '../components/FlowFinish';
 import { SelectMenu } from '../components/SelectMenu';
 import { useActiveChain } from '../chain/useActiveChain';
 import { getSupportedChain } from '../chain/chains';
@@ -105,7 +105,6 @@ import { ReviewReceipt, type ReceiptData } from '../components/ReviewReceipt';
 import { StepNav } from '../components/StepNav';
 import { useEligibility } from '../components/useEligibility';
 import { useReviewConsent } from '../hooks/useReviewConsent';
-import { ConsentWithdrawnNote } from '../components/ConsentWithdrawnNote';
 
 type Path = 'own' | 'want' | null;
 
@@ -452,8 +451,12 @@ function ListNftFlow() {
   return (
     <div>
       <StepNav
-        steps={[copy.rent.stepYourNft, copy.rent.stepReview, copy.rent.stepDone]}
-        current={step === 'details' ? 0 : step === 'review' ? 1 : 2}
+        steps={[
+          { id: 'details', label: copy.rent.stepYourNft },
+          { id: 'review', label: copy.rent.stepReview },
+          { id: 'done', label: copy.rent.stepDone },
+        ]}
+        current={step}
       />
 
       {step === 'details' ? (
@@ -621,74 +624,39 @@ function ListNftFlow() {
                 </ol>
               </span>
             </div>
-            <label
-              className="cluster"
-              style={{ marginTop: 16, fontSize: '0.9rem', alignItems: 'flex-start' }}
-            >
-              <input
-                type="checkbox"
-                checked={consent.given}
-                onChange={(e) => consent.set(e.target.checked)}
-                style={{ marginTop: 3 }}
-              />
-              <ConsentLabel />
-            </label>
-            <ConsentWithdrawnNote consent={consent} />
-            {error ? (
-              <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
-                <span className="banner-body">{error}</span>
-              </div>
-            ) : null}
-            <div className="cluster" style={{ marginTop: 16 }}>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setStep('details')}
-                disabled={busy}
-              >
-                {copy.rent.back}
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                style={{ flex: 1 }}
-                disabled={!canSign}
-                onClick={() => void submit()}
-              >
-                {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
-                {progress !== null
-                  ? progress.current === 0
-                    ? copy.rent.waitingForWallet
-                    : progress.kind === 'approve'
-                      ? copy.signing.phaseApprove(progress.current, progress.total)
-                      : copy.signing.phaseSend(progress.current, progress.total)
-                  : copy.rent.postListing}
-              </button>
-            </div>
+            <ReviewFooter
+              consent={consent}
+              error={error}
+              backLabel={copy.rent.back}
+              onBack={() => setStep('details')}
+              busy={busy}
+              canSign={canSign}
+              onSubmit={() => void submit()}
+              progress={progress}
+              submitLabel={copy.rent.postListing}
+              waitingLabel={copy.rent.waitingForWallet}
+            />
           </div>
         </div>
       ) : null}
 
       {step === 'done' ? (
-        <div className="card" style={{ textAlign: 'center' }}>
-          <CircleCheck aria-hidden size={40} style={{ color: 'var(--ok)', marginBottom: 8 }} />
-          <h2>{copy.rent.listingPosted}</h2>
-          <p className="muted">{copy.rent.listingPostedNext}</p>
-          {txHash && walletChain ? (
-            <p className="muted">
-              <a
-                href={`${walletChain.blockExplorer}/tx/${txHash}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {copy.rent.viewTransaction}
-              </a>
-            </p>
-          ) : null}
+        <FlowDoneCard
+          title={copy.rent.listingPosted}
+          body={copy.rent.listingPostedNext}
+          tx={
+            txHash && walletChain
+              ? {
+                  href: `${walletChain.blockExplorer}/tx/${txHash}`,
+                  label: copy.rent.viewTransaction,
+                }
+              : null
+          }
+        >
           <Link to="/positions" className="btn btn-primary">
             {copy.rent.viewPositions}
           </Link>
-        </div>
+        </FlowDoneCard>
       ) : null}
     </div>
   );
@@ -1295,8 +1263,12 @@ function RentNftFlow() {
   return (
     <div>
       <StepNav
-        steps={[copy.rent.stepChooseNft, copy.rent.stepReview, copy.rent.stepDone]}
-        current={step === 'browse' ? 0 : step === 'review' ? 1 : 2}
+        steps={[
+          { id: 'browse', label: copy.rent.stepChooseNft },
+          { id: 'review', label: copy.rent.stepReview },
+          { id: 'done', label: copy.rent.stepDone },
+        ]}
+        current={step}
       />
 
       {step === 'browse' && notice ? (
@@ -1426,81 +1398,42 @@ function RentNftFlow() {
                 </ol>
               </span>
             </div>
-            <label
-              className="cluster"
-              style={{ marginTop: 16, fontSize: '0.9rem', alignItems: 'flex-start' }}
-            >
-              <input
-                type="checkbox"
-                checked={consent.given}
-                onChange={(e) => consent.set(e.target.checked)}
-                style={{ marginTop: 3 }}
-              />
-              <ConsentLabel />
-            </label>
-            <ConsentWithdrawnNote consent={consent} />
-            {error ? (
-              <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
-                <span className="banner-body">{error}</span>
-              </div>
-            ) : null}
-            <div className="cluster" style={{ marginTop: 16 }}>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => {
-                  setSelected(null);
-                  setStep('browse');
-                }}
-                disabled={busy}
-              >
-                {copy.rent.back}
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                style={{ flex: 1 }}
-                disabled={!canSign}
-                onClick={() => void submit()}
-              >
-                {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
-                {progress !== null
-                  ? progress.current === 0
-                    ? copy.rent.waitingForWallet
-                    : progress.kind === 'sign'
-                      ? copy.signing.phaseSign(progress.current, progress.total)
-                      : progress.kind === 'permit'
-                        ? copy.signing.phasePermit(progress.current, progress.total)
-                        : progress.kind === 'approve'
-                          ? copy.signing.phaseApprove(progress.current, progress.total)
-                          : copy.signing.phaseSend(progress.current, progress.total)
-                  : copy.rent.acceptRental}
-              </button>
-            </div>
+            <ReviewFooter
+              consent={consent}
+              error={error}
+              backLabel={copy.rent.back}
+              onBack={() => {
+                setSelected(null);
+                setStep('browse');
+              }}
+              busy={busy}
+              canSign={canSign}
+              onSubmit={() => void submit()}
+              progress={progress}
+              submitLabel={copy.rent.acceptRental}
+              waitingLabel={copy.rent.waitingForWallet}
+            />
           </div>
         </div>
       ) : null}
 
       {step === 'done' ? (
-        <div className="card" style={{ textAlign: 'center' }}>
-          <CircleCheck aria-hidden size={40} style={{ color: 'var(--ok)', marginBottom: 8 }} />
-          <h2>{copy.rent.rentalOpened}</h2>
-          <p className="muted">{copy.rent.rentalOpenedNext}</p>
-          {txHash && walletChain ? (
-            <p className="muted">
-              <a
-                href={`${walletChain.blockExplorer}/tx/${txHash}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {copy.rent.viewTransaction}
-              </a>
-            </p>
-          ) : null}
+        <FlowDoneCard
+          title={copy.rent.rentalOpened}
+          body={copy.rent.rentalOpenedNext}
+          tx={
+            txHash && walletChain
+              ? {
+                  href: `${walletChain.blockExplorer}/tx/${txHash}`,
+                  label: copy.rent.viewTransaction,
+                }
+              : null
+          }
+        >
           <Link to="/positions" className="btn btn-primary">
             {copy.rent.viewPositions}
           </Link>
-        </div>
+        </FlowDoneCard>
       ) : null}
     </div>
   );
