@@ -1749,12 +1749,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      jump-table reservation stays under the "Tag too large" ICE
     ///      ceiling.
     function _getOfferParallelSaleSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = OfferParallelSaleFacet.postParallelSaleListing.selector;
         s[1] = OfferParallelSaleFacet.releaseParallelSaleLock.selector;
         // #1144 (S10 Invariant B) — permissionless offer-keyed prepay-sale
         // sanctions sync (register flagged consideration recipients + cancel).
         s[2] = OfferParallelSaleFacet.syncPrepaySaleOffer.selector;
+        // #2984 — the sync's own party set, read by the keeper's backstop.
+        s[3] = OfferParallelSaleFacet.prepaySaleOfferParties.selector;
     }
 
     function _getOfferAcceptSelectors() internal pure returns (bytes4[] memory s) {
@@ -2467,7 +2469,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      facet's bytecode within solc's jump-table reservation
     ///      budget.
     function _getNFTPrepayListingSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](10);
+        s = new bytes4[](11);
         s[0] = NFTPrepayListingFacet.postPrepayListing.selector;
         s[1] = NFTPrepayListingFacet.updatePrepayListing.selector;
         s[2] = NFTPrepayListingFacet.cancelPrepayListing.selector;
@@ -2491,6 +2493,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // can render the live state without optimistic-retry against
         // the auto-list reverts.
         s[8] = NFTPrepayListingFacet.getPrepayListingAutoListOptedOut.selector;
+        // #2984 — the sync's own party set, read by the keeper's backstop.
+        s[10] = NFTPrepayListingFacet.prepaySaleListingParties.selector;
     }
 
     /// @dev T-086 Round-5 Block B (#309) — `NFTPrepayDutchListingFacet`

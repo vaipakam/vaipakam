@@ -405,51 +405,78 @@ contract OfferParallelSaleFacet is
             revert ParallelSaleListingNotFound(offerId);
         }
 
+        address[] memory parties = _offerListingParties(s, offerId, orderHash);
         bool flaggedFound = false;
-
-        // The seller-signed fee-leg recipients recorded on the executor — value
-        // recipients in BOTH scenarios.
-        address pinnedExecutor = s.offerPrepayListingExecutor[offerId];
-        if (pinnedExecutor != address(0)) {
-            FeeLeg[] memory legs =
-                IListingExecutorRecorder(pinnedExecutor).offerFeeLegs(orderHash);
-            for (uint256 i = 0; i < legs.length; ) {
-                flaggedFound = _syncRecipientFlag(legs[i].recipient) || flaggedFound;
-                unchecked {
-                    ++i;
-                }
+        for (uint256 i = 0; i < parties.length; ) {
+            flaggedFound = _syncRecipientFlag(parties[i]) || flaggedFound;
+            unchecked {
+                ++i;
             }
-        }
-
-        uint256 loanId = s.offerIdToLoanId[uint256(offerId)];
-        if (loanId == 0) {
-            // Scenario A (pre-loan) — the sale routes proceeds to the offer creator
-            // (the borrower/seller); it is the value recipient on that path, screened
-            // at fill by the registry-aware `assertOfferFillNotSanctioned`. Register
-            // it so an outage-time fill is barred. Codex #1146-r2 P2: ONLY on the
-            // pre-loan path — once accepted, the creator is no longer a live recipient
-            // (the settlement pays the CURRENT holders below), so syncing it in
-            // Scenario B would let a stale/original-seller marker cancel a clean
-            // current holder's sale.
-            flaggedFound =
-                _syncRecipientFlag(s.offers[uint256(offerId)].creator) || flaggedFound;
-        } else {
-            // Scenario B — the accepted offer's sale settles through
-            // `PrepayListingFacet._settleLoanFromParallelSale` (the shared
-            // `_settleSale`), which screens the LIVE
-            // borrower-position holder (the lender's share goes to a claim row).
-            // `_ownerOfRaw` (raw SLOAD → address(0) for a burned token) keeps the
-            // sync non-reverting if the loan has since terminalized.
-            LibVaipakam.Loan storage loan = s.loans[loanId];
-            flaggedFound =
-                _syncRecipientFlag(LibERC721._ownerOfRaw(loan.borrowerTokenId)) ||
-                flaggedFound;
         }
 
         if (flaggedFound) {
             LibPrepayCleanup.clearOfferListing(offerId);
         }
         emit PrepaySaleOfferSynced(offerId, msg.sender, flaggedFound);
+    }
+
+    /// @notice The live offer-keyed parallel-sale listing for `offerId` and the
+    ///         parties {syncPrepaySaleOffer} screens for it: `orderHash` is
+    ///         `bytes32(0)` (and `parties` empty) when no listing is live.
+    /// @dev    Read side of the sync, built by the SAME party rule
+    ///         (`_offerListingParties`), so an off-chain caller (the keeper's
+    ///         sanctions backstop, #2984) decides whether a sync is due from
+    ///         exactly the set the sync would screen. A party may be
+    ///         `address(0)` (a burned position NFT) or repeated; the sync skips
+    ///         the first and screens the second once per entry.
+    function prepaySaleOfferParties(uint96 offerId)
+        external
+        view
+        returns (bytes32 orderHash, address[] memory parties)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        orderHash = s.offerPrepayListingOrderHash[offerId];
+        if (orderHash != bytes32(0)) {
+            parties = _offerListingParties(s, offerId, orderHash);
+        }
+    }
+
+    /// @dev The parties the fill of `offerId`'s listing pays, which the sync
+    ///      screens: the seller-signed fee-leg recipients the pinned executor
+    ///      recorded (value recipients in BOTH scenarios), then one party for
+    ///      the sale's proceeds.
+    ///      - Scenario A (pre-loan): the offer creator, the value recipient on
+    ///        that path, screened at fill by the registry-aware
+    ///        `assertOfferFillNotSanctioned`. ONLY pre-loan (Codex #1146-r2 P2):
+    ///        once accepted the creator is no longer a live recipient, so
+    ///        screening it would let a stale original-seller marker cancel a
+    ///        clean current holder's sale.
+    ///      - Scenario B (accepted): the LIVE borrower-position holder, whom
+    ///        `PrepayListingFacet._settleLoanFromParallelSale` screens (the
+    ///        lender's share goes to a claim row, #2876). `_ownerOfRaw` returns
+    ///        address(0) for a burned token, so this stays non-reverting if the
+    ///        loan has since terminalized.
+    function _offerListingParties(
+        LibVaipakam.Storage storage s,
+        uint96 offerId,
+        bytes32 orderHash
+    ) private view returns (address[] memory parties) {
+        FeeLeg[] memory legs;
+        address pinnedExecutor = s.offerPrepayListingExecutor[offerId];
+        if (pinnedExecutor != address(0)) {
+            legs = IListingExecutorRecorder(pinnedExecutor).offerFeeLegs(orderHash);
+        }
+        parties = new address[](legs.length + 1);
+        for (uint256 i = 0; i < legs.length; ) {
+            parties[i] = legs[i].recipient;
+            unchecked {
+                ++i;
+            }
+        }
+        uint256 loanId = s.offerIdToLoanId[uint256(offerId)];
+        parties[legs.length] = loanId == 0
+            ? s.offers[uint256(offerId)].creator
+            : LibERC721._ownerOfRaw(s.loans[loanId].borrowerTokenId);
     }
 
     /// @dev Register `who`'s live sanctions status into the committed registry
