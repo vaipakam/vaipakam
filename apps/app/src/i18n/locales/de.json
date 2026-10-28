@@ -1225,7 +1225,7 @@
           "admissionUnknown": "Derzeit nicht verfügbar – das Protokoll konnte nicht prüfen, ob diese Position den Besitzer wechseln kann.",
           "unrecognised": "Nicht verfügbar – das Protokoll lehnt diesen Verkauf ab ({{name}}).",
           "unnamedError": "ein Grund, den diese App nicht kennt",
-          "reopensEarliest": "Frühestens kann das am {{time}} aufgehoben werden."
+          "reopensEarliest": "Allein durch Zeitablauf wird das frühestens am {{time}} aufgehoben. Ein Schritt, den jemand bewusst unternimmt, etwa das Stornieren eines Verkaufsangebots, kann es früher aufheben."
         }
       },
       "pastDue": "Dieser Kredit ist überfällig – der Kreditnehmer zahlt ihn zurück oder das Ausfallverfahren löst ihn auf. Neue Verkäufe können jetzt nicht mehr gestartet werden.",

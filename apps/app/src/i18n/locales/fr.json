@@ -1225,7 +1225,7 @@
           "admissionUnknown": "Indisponible pour l’instant : le protocole n’a pas pu vérifier si cette position peut changer de mains.",
           "unrecognised": "Indisponible : le protocole refuse cette vente ({{name}}).",
           "unnamedError": "un motif que cette application ne reconnaît pas",
-          "reopensEarliest": "Au plus tôt, cela peut se lever le {{time}}."
+          "reopensEarliest": "Si l’on s’en remet au temps, cela se lève au plus tôt le {{time}}. Une démarche que quelqu’un choisit de faire, comme l’annulation d’une mise en vente, peut le lever plus tôt."
         }
       },
       "pastDue": "Ce prêt a dépassé son échéance : l’emprunteur le rembourse ou la procédure de défaut le résout. Aucune nouvelle vente ne peut être lancée maintenant.",

@@ -1225,7 +1225,7 @@
           "admissionUnknown": "当前不可用——协议无法检查该头寸能否转手。",
           "unrecognised": "不可用——协议拒绝了这次出售（{{name}}）。",
           "unnamedError": "本应用无法识别的原因",
-          "reopensEarliest": "最早可在 {{time}} 解除。"
+          "reopensEarliest": "若仅靠时间推移，最早在 {{time}} 解除。有人主动采取的操作（例如取消挂单）可以更早解除。"
         }
       },
       "pastDue": "这笔贷款已过到期日——由借款人还款，或由违约流程处理。现在无法发起新的出售。",

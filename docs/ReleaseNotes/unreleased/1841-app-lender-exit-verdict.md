@@ -14,13 +14,16 @@ Three states that are not an answer stay distinct and close both sale rows: the
 check is still running, the check failed, or this network's contracts are older
 than the verdict and cannot say. A reason the app has no wording for is still
 shown as a refusal, by name, never as an open exit. Where the contract names the
-earliest moment a refusal can lift, the row says so as an earliest moment, not a
-promise. When the loan is past its due date the row says so ahead of any
+earliest moment a refusal can lift, the row gives it as the earliest by time
+alone, not a promise, and says a step someone chooses to take, such as
+cancelling a listing, can lift it sooner. When the loan is past its due date the row says so ahead of any
 narrower reason, as the spec asks, because nothing else can reopen a sale then.
 
 What the card still decides for itself is only what the contract does not know:
 the wait row, whether this deployment publishes the listing tool or has it
-switched off, and whether the tools on this page have finished loading. The
+switched off, and whether the tools on this page have finished loading and can
+be shown (a row stays closed while another status read still holds the loan in
+its fallback state, since the tools behind the row are not on the page then). The
 canonical spec now states that availability is the protocol's answer, not the
 app's.
 

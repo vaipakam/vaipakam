@@ -3339,10 +3339,14 @@ const copySource = {
           ['name'],
         ),
         unnamedError: 'a reason this app doesn’t recognise',
-        // The contract's own lower bound: by time alone, or by a step
-        // anyone may take (clearing an expired listing). It may lift
-        // later than this, never earlier.
-        reopensEarliest: tmpl('The earliest this can lift is {{time}}.', ['time']),
+        // The contract's lower bound by time alone, or by a step anyone
+        // may take (clearing an expired listing). A decision only some
+        // can make (the lender cancelling a listing) can lift it sooner,
+        // so the time is stated as that bound and no more (Codex #3024 r2).
+        reopensEarliest: tmpl(
+          'Left to time, the earliest this lifts is {{time}}. A step someone chooses to take, such as cancelling a listing, can lift it sooner.',
+          ['time'],
+        ),
       },
     },
     // Past maturity BOTH sale rows flip to this: a fully-elapsed term

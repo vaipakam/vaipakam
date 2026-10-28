@@ -4528,17 +4528,27 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // rest becomes knowable on the switch, where the tool block
           // states them itself.
           saleTools={
-            // `isError` FIRST, before the `data === undefined` test
-            // (Codex r16 P2). TanStack keeps the last success through a
-            // failed refetch, so an errored-but-cached entitlement has
-            // `data` defined — and round 14 made `lenderFeeModeFull`
-            // reject exactly that record. Leaving this gate trusting it
-            // meant one consumer distrusting the cache while its
-            // sibling accepted it, on the same query: the rows opened
-            // WITHOUT the Full-plan disclosure, which is the thing this
-            // prerequisite exists to wait for. My own r14 fix created
-            // that asymmetry by fixing one side of it.
-            feeEnt.isError || feeEnt.data === undefined
+            // The tools' own mount gate first (Codex #3024 r2). The
+            // verdict replaced the chooser's status rules, but the
+            // Advanced tools below still mount behind `saleAttemptable`,
+            // so a verdict that has already seen a cure while another
+            // live read still holds FallbackPending would open rows
+            // whose jump targets are not on the page. `saleAttemptable`
+            // fails closed only on an affirmative answer and clears on
+            // the next poll, so this is a wait, not a failure.
+            !saleAttemptable
+              ? 'checking'
+              : // `isError` FIRST, before the `data === undefined` test
+                // (Codex r16 P2). TanStack keeps the last success through a
+                // failed refetch, so an errored-but-cached entitlement has
+                // `data` defined — and round 14 made `lenderFeeModeFull`
+                // reject exactly that record. Leaving this gate trusting it
+                // meant one consumer distrusting the cache while its
+                // sibling accepted it, on the same query: the rows opened
+                // WITHOUT the Full-plan disclosure, which is the thing this
+                // prerequisite exists to wait for. My own r14 fix created
+                // that asymmetry by fixing one side of it.
+              feeEnt.isError || feeEnt.data === undefined
               ? feeEnt.isError
                 ? 'failed'
                 : 'checking'

@@ -1364,7 +1364,7 @@
           "admissionUnknown": "Not available right now — the protocol couldn’t check whether this position can change hands.",
           "unrecognised": "Not available — the protocol refuses this sale ({{name}}).",
           "unnamedError": "a reason this app doesn’t recognise",
-          "reopensEarliest": "The earliest this can lift is {{time}}."
+          "reopensEarliest": "Left to time, the earliest this lifts is {{time}}. A step someone chooses to take, such as cancelling a listing, can lift it sooner."
         }
       },
       "pastDue": "This loan is past its due date — the borrower repays it or the default process resolves it. New sales can’t be started now.",

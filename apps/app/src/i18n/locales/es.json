@@ -1225,7 +1225,7 @@
           "admissionUnknown": "No disponible ahora mismo: el protocolo no ha podido comprobar si esta posición puede cambiar de manos.",
           "unrecognised": "No disponible: el protocolo rechaza esta venta ({{name}}).",
           "unnamedError": "un motivo que esta app no reconoce",
-          "reopensEarliest": "Lo más pronto que puede levantarse es el {{time}}."
+          "reopensEarliest": "Si se deja al tiempo, lo más pronto que se levanta es el {{time}}. Un paso que alguien decida dar, como cancelar un anuncio de venta, puede levantarlo antes."
         }
       },
       "pastDue": "Este préstamo ha superado su fecha de vencimiento: el prestatario lo paga o lo resuelve el proceso de impago. Ya no se pueden iniciar ventas nuevas.",
