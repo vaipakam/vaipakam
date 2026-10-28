@@ -309,6 +309,37 @@ describe('the prepay-sale sanctions sync', () => {
     }
   });
 
+  it('keeps the offer listing batches it finished when a later batch reaches the cutoff', async () => {
+    // 200 offers make two listing-read batches; the first answers, the second never does.
+    for (let i = 1; i <= 200; i += 1) {
+      ledger.add(BigInt(i), hash(1000 + i));
+      d.offerListings.set(BigInt(i), { hash: hash(1000 + i), parties: [addr(i)] });
+    }
+    d.flagged.add(addr(7));
+    const multicall = d.multicall;
+    let offerBatches = 0;
+    d.multicall = async (req) => {
+      if (req.contracts[0]?.functionName === 'prepaySaleOfferParties' && req.blockNumber === undefined) {
+        offerBatches += 1;
+        if (offerBatches === 2) return new Promise<never>(() => {});
+      }
+      return multicall(req);
+    };
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      const t0 = Date.now();
+      const done = run(t0 + SEND_RESERVE_MS + 2 * STAGE_RESERVE_MS + 200);
+      await vi.advanceTimersByTimeAsync(STAGE_RESERVE_MS + 300);
+      const { report, sender } = await done;
+      expect(report.offerListings).toBe(100);
+      expect(fns()).toEqual(['syncPrepaySaleOffer(7)']);
+      expect(report.cancelled).toEqual(['offer 7']);
+      expect(String(sender.unread.get('sales:offers'))).toMatch(/100 offer/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reports a sync the contract left live when its own read confirms no flag', async () => {
     d.active = [1n];
     d.loanListings.set(1n, { hash: hash(1), parties: [addr(1)] });

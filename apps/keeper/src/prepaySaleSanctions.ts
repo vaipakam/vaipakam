@@ -211,11 +211,12 @@ export async function syncSaleListings(chainId: number, diamond: Address, sender
   out.loanListings = listings.length;
 
   // 2. Offer listings, nominated by the ledger.
-  // The whole stage stops at its cutoff, its ledger and cursor waits included:
-  // offers it could not read are unread this run, and the loan listings
-  // already read are still screened.
+  // Each wait in the stage stops at its cutoff on its own: a storage wait
+  // there leaves the offers unread this run, while the listing reads keep
+  // every batch they finished. The loan listings already read are screened
+  // either way.
   try {
-    const offers = await boundedCall(listingCutoff, 'the offer listings', () => readOfferListings(chainId, diamond, sender, deps, listingCutoff, partiesOf));
+    const offers = await readOfferListings(chainId, diamond, sender, deps, listingCutoff, partiesOf);
     listings.push(...offers.listings);
     // Unfinished by the cutoff, the floor stays where it is.
     await boundedCall(listingCutoff, 'the offer floor', offers.liftFloor).catch(() => undefined);
@@ -282,11 +283,14 @@ async function readOfferListings(
 ): Promise<{ listings: Listing[]; liftFloor: () => Promise<void> }> {
   const listings: Listing[] = [];
   const { cursors } = deps;
-  const stored = await cursors.get([OFFER_FLOOR_ITEM, OFFER_NEXT_ITEM]);
+  // The storage waits are bounded one by one, not with the reads around
+  // them: `settledChunkedRead` stops at the cutoff itself and keeps the
+  // batches it finished, which a bound over the whole stage would discard.
+  const stored = await boundedCall(cutoff, 'the offer cursors', () => cursors.get([OFFER_FLOOR_ITEM, OFFER_NEXT_ITEM]));
   const floor = decodePos(stored.get(OFFER_FLOOR_ITEM));
   const next = decodePos(stored.get(OFFER_NEXT_ITEM));
   const start = next !== null && (floor === null || posAfter(next, floor)) ? next : floor;
-  const page = await deps.ledger.page(chainId, [LISTING_EVENT], start, OFFER_PAGE);
+  const page = await boundedCall(cutoff, 'the listing ledger', () => deps.ledger.page(chainId, [LISTING_EVENT], start, OFFER_PAGE));
   if (page === null) {
     sender.noteUnread('sales:offers', 'the event ledger of parallel-sale listings');
     return { listings, liftFloor: async () => {} };
@@ -294,7 +298,10 @@ async function readOfferListings(
   const last = page.rows[page.rows.length - 1];
   // Past the last page the next run starts at the floor again.
   const nextPos = page.more && last !== undefined ? encodePos(last) : '';
-  if (nextPos !== (stored.get(OFFER_NEXT_ITEM) ?? '')) await cursors.put(OFFER_NEXT_ITEM, nextPos);
+  // Unwritten by the cutoff, the next run reads this page again.
+  if (nextPos !== (stored.get(OFFER_NEXT_ITEM) ?? '')) {
+    await boundedCall(cutoff, 'the offer rotation', () => cursors.put(OFFER_NEXT_ITEM, nextPos)).catch(() => undefined);
+  }
 
   // The listing each row names; a row that names none nominates nothing.
   const rows = page.rows.map((row) => {
