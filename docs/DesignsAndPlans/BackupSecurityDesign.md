@@ -1,0 +1,353 @@
+# Backup security — a write-only archive Worker and a ledger it cannot write
+
+Status: **design, accepted in outline by the owner (2026-10-28), not built.**
+Covers #1463, #1469, #1473 and #1474. Owner decision D11 (2026-10-16) said one
+design covers these together, and #1481 (the table classification) has since
+closed on its own, so it is not reopened here.
+
+This document is the design. It changes no code. The build is the four slices
+in §8, each its own PR, and every one of them lands before mainnet.
+
+## 1. What is wrong today
+
+The nightly archive Worker (`ops/offchain-data-warm`) holds, in one Cloudflare
+environment:
+
+- `BACKUP_ENCRYPTION_KEY`, the symmetric AES-256-GCM key that encrypts every
+  archive and also decrypts every archive;
+- a B2 **write** key (`listBuckets` + `writeFiles`);
+- a B2 **read** key (`listBuckets` + `listFiles` + `readFiles`), used by the
+  Monday healthcheck;
+- `TG_OPS_BOT_TOKEN`, used for the nightly and weekly reports.
+
+Anyone who can edit Workers on the Cloudflare account gets all four. The
+consequences, each already recorded in an issue:
+
+1. **Confidentiality (#1463).** The read key plus the AES key decrypt every
+   archive in the bucket: the legal-hold documents, support tickets, Telegram
+   links and alert thresholds. The backup is a second full copy of the
+   sensitive data, reachable with the same credentials as the live one.
+2. **Overwrite in place (#1469).** The read key lists every object, so the
+   random nonce in each archive's name no longer hides it. The attacker can
+   upload a forged archive at the genuine key. The genuine one survives only as
+   a hidden older version until the lifecycle deletes it.
+3. **No authorship (#1473).** The manifest proves integrity, never who wrote
+   it. A forged archive with a self-consistent manifest passes every check the
+   healthcheck and the restore runbook make. The ops channel is no anchor
+   either: the same environment holds its bot token, and a bot can edit its
+   own messages.
+4. **A squeezed recovery window (#1474).** Because a forged overwrite is
+   possible, the only defence is the time a superseded version survives
+   (`daysFromHidingToDeleting`). The published 30-day promise caps the daily
+   prefixes' whole lifetime, so every day of recovery window costs a day of
+   ordinary restore history. The declared split is 20 days to hide plus
+   9 to delete.
+
+The Worker also logs each archive's full key, nonce included, to Cloudflare's
+persisted Worker logs (`observability` is on), and posts it to the ops
+channel. So even without the read key, the nonce is not secret from someone
+with dashboard access.
+
+## 2. What the design does, in one paragraph
+
+The Worker becomes **write-only in every sense**. It encrypts each archive to
+**offline public keys**, so it cannot decrypt anything it wrote. It loses the
+read key and the healthcheck, so it cannot list, read or find an existing
+archive. It stops writing the nonce anywhere it or Cloudflare keeps. A separate
+job outside Cloudflare, the **backup watcher**, reads the bucket every day,
+checks each new archive, and records what it found in a **ledger** bucket under
+B2 Object Lock in compliance mode, which nobody can rewrite or delete before
+its retention ends, the master key included. A restore must match the archive
+it decrypts to a ledger entry, and refuses an ambiguous one.
+
+## 3. Encryption to offline public keys (#1463)
+
+### 3.1 The format
+
+Each archive gets a fresh random AES-256-GCM data key. The Worker wraps that
+data key with **RSA-OAEP (4096-bit modulus, SHA-256)** once per configured
+recipient public key, then discards it. The archive is:
+
+| Bytes | Content |
+| --- | --- |
+| 7 | magic `VPKARC` + version byte `0x02` |
+| 4 | header length, big-endian |
+| n | header, UTF-8 JSON (below) |
+| rest | AES-256-GCM ciphertext followed by its 16-byte tag |
+
+The header carries the scheme name (`RSA-OAEP-256/A256GCM`), the 12-byte IV,
+the archive's `createdAt` and tier and period, and one entry per recipient:
+the SHA-256 fingerprint of the recipient's public key (SPKI DER) and the data
+key wrapped to it. **The whole header, magic included, is the GCM additional
+authenticated data**, so nobody without the data key can change a genuine
+archive's stated period or recipients without the decryption failing.
+
+That is all the header authentication buys, and it is worth saying what it
+does not: anyone with the public key can build a brand-new archive with any
+header. Authorship is §5's job, not the format's.
+
+### 3.2 Why RSA-OAEP
+
+It is in WebCrypto in both the Worker runtime and Node, so the Worker and the
+offline restore tool use the same standard primitive and no library. Wrapping
+a 32-byte key is all it does, so its size and speed costs are irrelevant here.
+An elliptic-curve scheme would give shorter keys, but the X25519 support in
+the two runtimes is less uniform, and nothing here needs the saving.
+
+### 3.3 Recipients and key custody
+
+- **Two recipients from the start**: a primary key and an escrow key, held
+  apart. Losing every private key makes every archive permanently unreadable;
+  two copies is the minimum that is not a single point of failure.
+- The **public** keys are committed to the repository
+  (`ops/offchain-data-warm/backup-recipients/`), each with its fingerprint, and
+  the Worker reads them from there at build time. Nothing about them is secret,
+  and committing them means a change of recipient is a reviewed commit, not a
+  dashboard edit.
+- The **private** keys never reach Cloudflare, GitHub or any server. Each is a
+  passphrase-encrypted PKCS#8 file in the operator's offline store.
+- **Rotation** is adding the new public key as a recipient, letting one full
+  retention cycle pass, then removing the old one. No archive is re-encrypted.
+
+### 3.4 What it proves and what it cannot
+
+- After this, a Worker compromise yields **no plaintext from past archives**.
+  It still yields everything the Worker reads live (the D1 tables and the
+  legal vault), which no backup design can change; the point is that the backup
+  no longer adds a second copy to that exposure.
+- **Nobody online can check that an archive decrypts.** Today the healthcheck
+  decrypts the newest archive each week. After this it cannot, and neither can
+  the watcher. Decryptability is proven only by an **offline restore drill**
+  (§7.3). The watcher checks the header is well formed and names exactly the
+  configured recipients, which catches a wrong-key or truncated write, but a
+  passing watcher is not proof of a decryptable archive, and its reports say
+  so.
+
+## 4. The Worker loses its reader (#1469)
+
+- **The read key leaves the Worker**, with the Monday healthcheck that was its
+  only user. The Worker then holds the write key only (`listBuckets` +
+  `writeFiles`: no list, no read, no delete).
+- **The nonce stops leaking.** The Worker no longer logs or posts the archive
+  key. Its nightly report names the date, the tier, the size and the archive's
+  SHA-256, which is enough to match it against the watcher's record and is no
+  help in addressing the object.
+- Together these restore what the nonce was meant to give: to overwrite a
+  genuine archive in place, an attacker must now guess a 128-bit value. Any
+  extra object or version that does appear is caught by the watcher (§5.3).
+
+**Object Lock on the archive bucket itself is deliberately not part of this
+design.** It would guard against a key with `deleteFiles`, which only the
+master key has, at the price of a retention-versus-lifecycle interaction under
+a published deletion promise. The ledger already detects a deleted archive
+(§5.3), and the master key's custody is an owner step (§9). If the owner wants
+archive-level immutability anyway, it is a separate decision on top of this
+one, not a change to it.
+
+## 5. The backup watcher and its ledger (#1473)
+
+### 5.1 Where it runs
+
+A **scheduled GitHub Actions workflow**, `backup-ledger.yml`, daily at 04:17
+UTC, an hour after the nightly. GitHub is a different credential boundary from
+Cloudflare, and it already hosts the same shape of job: the ingest probe that
+opens one alert issue and posts to the ops chat.
+
+Its secrets:
+
+- the archive bucket **read** key (moved here from the Worker). After §3 it
+  reads ciphertext only;
+- a **ledger** key, restricted to the ledger bucket, with `listFiles`,
+  `readFiles`, `writeFiles` and `writeFileRetentions`, and **no `deleteFiles`
+  and no `bypassGovernance`**;
+- the ops bot token and chat id, already used by the ingest probe.
+
+A GitHub compromise therefore yields ciphertext and the power to **add** ledger
+entries. It cannot change or remove one, because of §5.2.
+
+### 5.2 The ledger bucket
+
+A separate B2 bucket, created with **Object Lock enabled** (B2 allows that only
+at creation). Each entry the watcher writes carries a **compliance-mode**
+retention: nobody can delete it or shorten its retention before it ends,
+including the account's master key. Entries hold no personal data (keys,
+digests, sizes, timestamps, row counts), so the privacy policy's deletion
+promises do not bind them, and they can outlive the archives they describe.
+
+Retention per entry, as defaults for the owner to confirm:
+
+- an entry for a daily or monthly archive: **400 days**, longer than the
+  12-month life of the longest of them;
+- an entry for a yearly archive: **10 years**, since the archive itself has no
+  deletion rule.
+
+One entry per archive **version**, named by the B2 file id, which is unique per
+upload: `entries/<tier>/<period>/<fileId>.json`. It records the archive key,
+file id, B2's server-side upload time, byte length, SHA-256 (computed by the
+watcher from the bytes it downloaded, never copied from the manifest), the
+manifest's key and SHA-256, the header's recipient fingerprints, and the
+workflow run and commit that wrote it.
+
+### 5.3 What the watcher checks and pages on
+
+Each run lists every version in the archive bucket, records each one it has
+not recorded before, and checks the whole picture. It pages, through one alert
+issue keyed by stable problem names plus the ops chat, on:
+
+- **Missing**: a daily archive for yesterday, a monthly archive for this month
+  after the 1st, or a yearly one after 1 January, is not there.
+- **Ambiguous period**: a period holds more than one archive, either two
+  nonces or a superseded version at one key. The honest nightly writes exactly
+  one per period, so any second one is a write nobody planned.
+- **Replay**: a new archive's SHA-256 equals one already in the ledger. A
+  genuine archive copied into a newer period is the shape this catches; it is
+  what the healthcheck's plaintext date check caught before, and it no longer
+  needs the plaintext.
+- **Mismatch**: the archive's bytes disagree with its manifest's SHA-256 or
+  length, or its header is malformed or names other recipients than the
+  committed set.
+- **Deleted early**: an archive the ledger recorded is gone before its
+  lifecycle could have removed it. This replaces the `ARCHIVE_FIRST_MONTHLY` /
+  `ARCHIVE_FIRST_YEARLY` baselines, which existed only because the healthcheck
+  could see nothing but survivors; the ledger remembers what was written.
+
+### 5.4 What the ledger proves, and what it cannot
+
+It cannot prove authorship, and nothing can: only the Worker sees the data, so
+anything that can sign for the Worker sits where the Worker sits. What it does
+prove is **when each archive first existed, recorded by a party the Worker
+cannot write to, in a record nobody can rewrite**. So:
+
+- An attacker in the Worker can write forged **future** archives. Each gets a
+  ledger entry with its server upload time, and each period that already had a
+  genuine archive turns ambiguous and pages.
+- Archives written **before** a compromise keep their entries, untouched, and
+  are identifiable as the genuine history.
+- An attacker in GitHub can add ledger entries but cannot remove the genuine
+  ones, so a restore sees the conflict instead of being steered by it.
+
+Telling a forged archive from a genuine one inside the compromise window is a
+human judgment about when the compromise began. The restore makes that
+judgment explicit (§6) rather than hiding it.
+
+## 6. The restore consults the ledger
+
+A new offline tool, `decrypt-archive.mjs`, sits in front of the existing
+`restore-from-archive.mjs` (which keeps taking a decrypted archive and is
+otherwise unchanged). It takes the downloaded archive, the private key file and
+the period being restored, and:
+
+1. downloads that period's ledger entries with the read key;
+2. **refuses** unless the archive's B2 file id and its SHA-256, computed
+   locally, equal one entry's;
+3. **refuses** when the period has more than one entry, printing every entry
+   with its server upload time, unless the operator names the entry to use
+   (`--entry <fileId>`). The runbook says to pick the newest entry written
+   before the compromise began, and to stop if that time is unknown;
+4. decrypts, and refuses unless the payload's own `createdAt` agrees with the
+   authenticated header and the ledger's period.
+
+The default on any disagreement is **refuse**, never restore-and-flag (the
+open question in #1473). A restore is the moment forged data would reach
+production, so the tool stops and the operator decides with the evidence in
+front of them.
+
+Archives written before the cutover have no ledger entry and use the old
+symmetric format. The tool reads them only with an explicit
+`--pre-ledger-archive` flag and the old AES key, and says plainly that nothing
+vouches for such an archive. That flag and the old format leave the tool once
+the last old-format archive has aged out of the bucket. No old-format code
+stays in the Worker.
+
+## 7. Retention, tickets and the drill (#1474)
+
+### 7.1 The ticket split is not needed
+
+The 2026-10-27 recommendation the owner accepted proposed moving support
+tickets into their own prefix so that the main archive could keep a longer
+recovery window. Writing this design turned up two reasons that change makes
+nothing better, and the owner dropped it (decision 2026-10-28, "Drop the
+ticket split"):
+
+1. **The cap is not only the ticket promise.** The privacy policy also says
+   plainly that "nightly backup archives are kept 30 days". The daily prefixes
+   hold error records, Telegram links and alert thresholds too, so moving the
+   tickets out leaves the same 30-day ceiling on them.
+2. **The recovery window stops being the defence.** It mattered because an
+   attacker could overwrite the newest archive in place, leaving the genuine one
+   alive only until the lifecycle deleted it. After §4 that overwrite needs a
+   128-bit guess, any extra version pages the same day (§5.3), and the genuine
+   archive's ledger entry outlives the archive.
+
+So the lifecycle can stay as declared (20 days to hide, 9 to delete, within the
+29-day ceiling `lifecycle-policy.mjs` enforces), and #1474 closes on its third
+option, "accept the current split", with this design as the reason.
+
+### 7.2 The live lifecycle
+
+#1474 recorded the live daily prefixes at 30 + 30 days, in breach of the
+published promise, and `apply-bucket-lifecycle.mjs --check` reports that
+drift. Whether it has been corrected since is not recorded anywhere this
+design could check; the `--check` run answers it. Correcting it needs a key with `writeBuckets`, which only the owner
+holds. It is an owner step (§9), independent of the build, and should not wait
+for it.
+
+### 7.3 The restore drill
+
+Once a quarter, and after any change to the recipients, the operator downloads
+the newest daily archive, runs `decrypt-archive.mjs` with each private key in
+turn (primary and escrow), and records the outcome on the tracking issue. It is
+the only proof that the archives decrypt (§3.4), so the runbook schedules it
+rather than leaving it to an incident.
+
+## 8. The build, in four slices
+
+Each slice is its own PR, each lands before mainnet, and the order matters.
+
+1. **Ledger and watcher, read only.** Add `backup-ledger.yml` and its script,
+   writing ledger entries for the archives that exist today, and paging on
+   §5.3. It also checks the current symmetric format's manifests, so it runs
+   usefully before slice 2. Needs the ledger bucket and keys first (§9).
+2. **Public-key encryption.** The Worker encrypts in the §3.1 format to the
+   committed recipients; `decrypt-archive.mjs` arrives with the matching
+   refusals (§6). The watcher learns the header check.
+3. **The Worker loses its reader.** Remove the healthcheck, the read key, the
+   AES key and the `ARCHIVE_FIRST_*` variables from the Worker; stop logging
+   and posting the archive key. After merge, the owner deletes those three
+   secrets from the Worker (§9).
+4. **Docs.** `OffChainRestore.md` (download by file id, the ledger check, the
+   entry choice, the drill), `OffChainDataResilience.md` §3.3–§3.6, the Worker
+   README, and the privacy policy's encryption sentence if its wording needs
+   it (it already says Backblaze holds only ciphertext, which stays true).
+
+## 9. Owner steps
+
+These need the owner's accounts. Exact commands go in each slice's PR.
+
+- **Create the ledger bucket** with Object Lock enabled, and its key with the
+  capabilities in §5.1, restricted to that bucket. Before slice 1.
+- **Generate the two key pairs offline**, store the private keys apart, and
+  hand over the two public keys for slice 2.
+- **Add the watcher's secrets** to the repository. Before slice 1.
+- **Correct the live lifecycle** to the declared 20 + 9 (§7.2). Now.
+- **Delete `BACKUP_ENCRYPTION_KEY` and the two `B2_READ_*` secrets** from the
+  Worker after slice 3, and keep the old AES key offline only until the last
+  old-format archive ages out.
+- **Move the master B2 key** out of the developer `.env` into the offline
+  store, and use scoped keys day to day (#1469's second finding). The ledger
+  survives the master key; the archive bucket does not.
+
+## 10. What this design does not protect
+
+Stated so nobody reads more into it:
+
+- A Worker compromise still exposes the **live** off-chain data the Worker
+  reads. The design stops the backup from adding to that, nothing more.
+- A Worker compromise can still **forge future archives**. The design makes
+  each one visible the day it lands and keeps the genuine history; it cannot
+  make the forged one impossible.
+- **Losing every private key** loses every archive. Two recipients and the
+  drill make that unlikely; nothing makes it recoverable.
+- The watcher **cannot prove an archive decrypts**. Only the drill does.
+- Archives written before the cutover carry **no ledger entry**. Nothing vouches
+  for them, and the restore tool says so when it is told to use one.
