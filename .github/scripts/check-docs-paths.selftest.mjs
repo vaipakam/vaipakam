@@ -31,7 +31,7 @@ const GATE = join(dirname(fileURLToPath(import.meta.url)), 'check-docs-paths.mjs
 /** Tracked files every fixture repository starts with. */
 const TREE = {
   'contracts/src/Live.sol': '',
-  'contracts/.gitignore': '.env\n',
+  'contracts/.gitignore': '.env\ncache/\n',
   '.gitignore': '*.log\n!keep.log\n',
   'apps/keeper/wrangler.jsonc': '{}',
   'docs/ops/a b.md': '',
@@ -54,6 +54,10 @@ const CASES = [
   { name: 'a percent-escaped destination', md: '[x](a%20b.md)', finds: [] },
   // #3023 r3: a destination is exact; its trailing punctuation is the name.
   { name: 'a destination ending in punctuation', md: '[x](guide(v2)) and [y](guide(v3))', finds: ['guide(v3)'] },
+  { name: 'a code span ending in punctuation', md: 'See `docs/ops/guide(v2)`. Not `docs/ops/guide(v3)`.', finds: ['docs/ops/guide(v3)'] },
+  // #3023 r4: the scratch tree has no directories, so a directory-only
+  // pattern must be asked about the directory form of a slashless citation.
+  { name: 'an ignored directory cited without its slash', md: '`contracts/cache` and `contracts/cache/` and `contracts/cache/x.json`', finds: [] },
   // #3023 r2: an escaped reserved character is part of the file name.
   { name: 'percent-escaped reserved characters in a destination', md: '[x](a%23b.md) [y](a%2Bb.md) [z](a%3Fb.md)', finds: ['a%3Fb.md'] },
   { name: 'a titled destination', md: '[x](exists.md "the title")', finds: [] },

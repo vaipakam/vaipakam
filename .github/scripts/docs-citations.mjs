@@ -132,8 +132,9 @@ function* pathWords(text) {
  * the closed-world rule may read them.
  *
  * @returns {Array<{tok: string, src: string, n: number, line: string, link: boolean, whole: boolean}>} —
- *          `tok` normalised (query and fragment removed; for text from code,
- *          trailing punctuation and a `:LINE` suffix as well),
+ *          `tok` normalised (query and fragment removed; for a code span a
+ *          `:LINE` suffix too, and for a word from command text also its
+ *          trailing punctuation),
  *          `src` the site as written, before that normalisation (in a code
  *          span `?` is a glob, not a query, so only `src` still shows it),
  *          `n` 1-based, `link` true for markdown destinations — the one form
@@ -146,16 +147,21 @@ export function citations(file) {
   const out = [];
   const seen = new Set();
   const push = (raw, n, link, whole) => {
-    // A destination is exactly what the parser returned, so the only thing
-    // that is not its path is the query and fragment a renderer drops
-    // (#1467 r1). Trimming trailing punctuation as if it were surrounding
-    // prose would rename a real file: `[x](guide(v2))` names `guide(v2)`
-    // (#3023 r3). Text taken from code keeps the older normalisation:
-    // `path:line` is this repo's ordinary citation form, so the suffix is not
-    // part of the name (#1467 r3), and a shell word can carry punctuation.
+    // Each kind of site is normalised for what it is. Query and fragment are
+    // never part of a path (#1467 r1). A destination and a whole code span are
+    // exactly what the parser returned, so their trailing punctuation is part
+    // of the name: `[x](guide(v2))` and `` `docs/ops/guide(v2)` `` both name
+    // `guide(v2)` (#3023 r3, r4). A code span may also carry the repo's
+    // `path:line` citation form, whose suffix is not part of the name
+    // (#1467 r3). Only a word taken out of command text is trimmed of
+    // trailing punctuation, because the shell split leaves prose around it.
+    const bare = (s) => s.split('?')[0].split('#')[0];
+    const LINE = /:(\d+)(-\d+)?$/;
     const tok = link
-      ? raw.split('?')[0].split('#')[0]
-      : raw.replace(/[.,;:)]+$/, '').split('?')[0].split('#')[0].replace(/:(\d+)(-\d+)?$/, '');
+      ? bare(raw)
+      : whole
+        ? bare(raw).replace(LINE, '')
+        : bare(raw.replace(/[.,;:)]+$/, '')).replace(LINE, '');
     if (!tok) return;
     const key = `${tok}\u0000${n}\u0000${link}\u0000${whole}`;
     if (seen.has(key)) return;

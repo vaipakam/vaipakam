@@ -267,6 +267,13 @@ const exists = ({ path, dir }) =>
  * committed `.gitignore` files, with the global and system configuration
  * switched off. Without `--verbose`, `check-ignore` lists only paths that end
  * up ignored, so a path a negated pattern re-includes is not listed.
+ *
+ * The scratch tree holds no directories, so `check-ignore` cannot know that a
+ * path cited without a trailing slash is one, and a directory-only pattern
+ * (`cache/`) would not match `contracts/cache`. Each such path is therefore
+ * also asked in its directory form, and counts as ignored when either form
+ * is: the citation may name either, and this rule acquits rather than
+ * accuses when it cannot tell.
  */
 function committedIgnored(paths) {
   if (paths.length === 0) return new Set();
@@ -278,17 +285,19 @@ function committedIgnored(paths) {
       mkdirSync(join(scratch, posix.dirname(g)), { recursive: true });
       writeFileSync(join(scratch, g), execFileSync('git', ['show', `:${g}`]));
     }
+    const asked = paths.flatMap((p) => (p.endsWith('/') ? [p] : [p, `${p}/`]));
     const res = spawnSync(
       'git',
       ['-C', scratch, '-c', 'core.excludesFile=/dev/null', 'check-ignore', '--no-index', '--stdin', '-z'],
-      { env, input: paths.join('\0'), encoding: 'utf8' },
+      { env, input: asked.join('\0'), encoding: 'utf8' },
     );
     // 0: some paths are ignored; 1: none are; anything else is a failure,
     // never a verdict.
     if (res.status !== 0 && res.status !== 1) {
       throw new Error(`git check-ignore failed (${res.status}): ${res.stderr}`);
     }
-    return new Set(res.stdout.split('\0').filter(Boolean));
+    const hit = new Set(res.stdout.split('\0').filter(Boolean));
+    return new Set(paths.filter((p) => hit.has(p) || hit.has(`${p}/`)));
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
