@@ -1,4 +1,4 @@
-## Thread — the indexer checks every loan-status change, and the reference subgraph is retired (PR #<n>)
+## Thread — the indexer checks every loan-status change, and the reference subgraph is retired (PR #3003)
 
 The platform lets a loan's status move only along a fixed diagram, and the contracts refuse every other move. An independent check from outside the contracts used to live in a reference subgraph that counted any move outside the diagram. Four of the five events it listened to no longer matched the contracts, its diagram was out of date, and nothing ever paged on its counter. The indexer now does that check itself, from the one event every status change announces.
 
