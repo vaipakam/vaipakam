@@ -1483,6 +1483,34 @@ contract DefaultedFacetTest is Test {
     ///      admitted while enforcement is off, refused with `KYCRequired()`'s
     ///      exact revert data once it is on and the lender falls short of the
     ///      tier, and admitted again when the lender's tier covers the value.
+    /// @dev #2083 — the default values the loan by the KYC thresholds' own
+    ///      rule, principal PLUS collateral: a principal under the tier-0 line
+    ///      whose collateral takes the total over it is refused for a tier-0
+    ///      lender, as the accept that opened it would have been.
+    function testDefaultKycAdmissionCountsCollateral() public {
+        uint256 loanId = createAndAcceptOffer(
+            mockERC20,
+            mockCollateralERC20,
+            LibVaipakam.AssetType.ERC20,
+            600 ether,
+            1200 ether,
+            30,
+            0,
+            0
+        );
+        ProfileFacet(address(diamond)).updateKYCTier(lender, LibVaipakam.KYCTier.Tier0);
+        AdminFacet(address(diamond)).setKYCEnforcement(true);
+
+        (bool admitted, bytes memory refusal) =
+            DefaultedFacet(address(diamond)).defaultKycAdmission(loanId);
+        assertFalse(admitted, "principal + collateral over tier 0: refused");
+        assertEq(refusal, abi.encodeWithSelector(IVaipakamErrors.KYCRequired.selector));
+
+        ProfileFacet(address(diamond)).updateKYCTier(lender, LibVaipakam.KYCTier.Tier1);
+        (admitted,) = DefaultedFacet(address(diamond)).defaultKycAdmission(loanId);
+        assertTrue(admitted, "tier 1 covers the total: admitted");
+    }
+
     function testDefaultKycAdmissionMatchesTriggerDefault() public {
         uint256 loanId = createAndAcceptOffer(
             mockERC20,

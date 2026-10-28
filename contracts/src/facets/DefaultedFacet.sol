@@ -26,6 +26,7 @@ import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
 import {FallbackCustodyFacet} from "./FallbackCustodyFacet.sol";
 import {ForcedSaleFacet} from "./ForcedSaleFacet.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
+import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibDefaultRoute} from "../libraries/LibDefaultRoute.sol";
@@ -688,20 +689,23 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         if (!admitted) refusal = abi.encodeWithSelector(KYCRequired.selector);
     }
 
-    /// @dev The lender-KYC rule a time-based default applies. The loan's value
-    ///      is its principal for an ERC-20 loan, or the prepaid rent for an NFT
-    ///      rental, valued by the one shared rule (#2419,
-    ///      {NumeraireValueFacet.getLiquidNumeraireValue}, rounded down). An
-    ///      illiquid asset has no price and is worth 0, which always passes.
+    /// @dev The lender-KYC rule a time-based default applies (#2083, owner
+    ///      decision 2026-10-28: kept for a deployment that turns KYC on). The
+    ///      loan's value is the one the KYC thresholds name: for an ERC-20 loan
+    ///      its liquid principal plus its liquid collateral as it stands now
+    ///      ({LibCompliance.calculateValueNumeraire}, the rule every other KYC
+    ///      comparison uses), and for an NFT rental the prepaid rent. Each leg
+    ///      is valued by the one shared rule (#2419, rounded down), so an
+    ///      illiquid leg is worth 0, and a loan worth 0 always passes.
     ///      Otherwise the loan's LENDER (not the caller) must meet the tier for
     ///      that value ({ProfileFacet.meetsKYCRequirement}, which admits
     ///      everyone while enforcement is off).
     function _lenderKycAdmitted(LibVaipakam.Loan storage loan) private view returns (bool) {
-        bool isERC20 = loan.assetType == LibVaipakam.AssetType.ERC20;
-        uint256 valueNumeraire = NumeraireValueFacet(address(this)).getLiquidNumeraireValue(
-            isERC20 ? loan.principalAsset : loan.prepayAsset,
-            isERC20 ? loan.principal : loan.prepayAmount
-        );
+        uint256 valueNumeraire = loan.assetType == LibVaipakam.AssetType.ERC20
+            ? LibCompliance.calculateValueNumeraire(
+                address(this), loan.principalAsset, loan.principal, loan.collateralAsset, loan.collateralAmount
+            )
+            : NumeraireValueFacet(address(this)).getLiquidNumeraireValue(loan.prepayAsset, loan.prepayAmount);
         return valueNumeraire == 0
             || ProfileFacet(address(this)).meetsKYCRequirement(loan.lender, valueNumeraire);
     }
