@@ -2,7 +2,7 @@
 
 This document describes the intended behavior of the protocol-operated keeper.
 It consolidates the operational decisions in the release notes from August 13
-through October 27, 2026, while retaining later recorded intent decisions.
+through October 28, 2026, while retaining later recorded intent decisions.
 The deployment destination incorporates the owner's
 October 27 direction: a dedicated Cloudflare database and a separate always-on
 keeper VM in Oracle Cloud. This is the required deployment arrangement, not
@@ -88,7 +88,7 @@ evidence that the migration has completed.
   cannot reserve a transaction number indefinitely; a broadcast whose result
   is unknown must not be replaced as if it had never reached the network.
 - Every transaction the keeper sends carries a gas limit above the node's
-  estimate by the repository's one fixed margin, unless the call names its
+  estimate by the repository's fixed thirty-percent margin, unless the call names its
   own limit. A node estimates against the latest block with no margin, and
   the transaction mines in a later block, so a call whose cost moves with
   time would otherwise run out of gas at the bare estimate. Unused gas is
@@ -114,6 +114,18 @@ evidence that the migration has completed.
   The chain's finalized block, which decides whether a stored floor may
   move, is read under the same rule: when it does not come back in time the
   floor stays where it is until a later run.
+- Once a read attempt is abandoned at its cutoff, a late answer must not
+  start another network request or quote. A send already started is allowed
+  to resolve under its own outcome rules. The active-loan scan has an earlier
+  cutoff than the checks it feeds; timely chunks of eligibility answers are
+  retained even when another chunk times out.
+- Event-ledger duties share one rotation rule: read a bounded page per run,
+  rotate above a stored completed floor, and move that floor only past rows
+  finished both at the head and at the finalized block, with the row's own
+  event finalized. Index reads and progress writes obey the stage cutoff.
+  An unfinished write leaves the same work reachable next run. This applies
+  to buyback expiry, prepay-sale offers, removed destinations, stranded
+  returns, and owed-tier discovery.
 - The daily oracle snapshot has a separate deadline one hour before the end
   of the UTC day being captured. It records the day the mined block actually
   filed, reports a different day explicitly, and records no successful
@@ -196,6 +208,9 @@ evidence that the migration has completed.
   loans, transferred positions, reserved or held proceeds, and other loans
   requiring the ordinary claim are left to their owners and counted as such,
   rather than reported as failed fee estimates.
+- A loan carrying open seller-interest claims is left to the ordinary claim,
+  even if its current owner sold and later bought the position back. Auto-roll
+  must not reinvest interest owed to a previous seller.
 
 ### Periodic settlement and in-place extension
 
@@ -304,6 +319,15 @@ evidence that the migration has completed.
   described as covering the day merely because one part arrived. Part sizing
   also follows the current tokenomics requirements for both lane ends and
   avoiding uneconomic small parts; unread capacity does not become infinite.
+- Each part is bounded by the source's available outbound room and the
+  destination's inbound capacity, rather than the destination's temporary
+  remaining room. A non-final part below the configured minimum waits for
+  refill; the default minimum is 1,000 VPFI and never exceeds lane capacity.
+  The final part is sent even below that minimum. Partly sent days come from
+  the public owed-day list and are continued oldest first regardless of age.
+  On an older deployment without these reads, each run names the missing
+  capability and the limited scan or sizing fallback; it cannot claim that
+  old partly sent days are fully covered.
 - For each day, the protocol's own verdict distinguishes already sent or
   closed, nothing owed, manual-funding-only, awaiting commitments, short of
   backing, partly sent, and ready. Only outstanding obligations are reported
@@ -636,6 +660,9 @@ evidence that the migration has completed.
   no reading costs nothing. Each tier the refresh rejects is reported with
   the protocol's own reason. Nothing is refreshed while peer readings are
   paused.
+- The default renewal age is one week, leaving one week before a cached tier
+  lapses. If the connection cannot simulate the refresh and show what it
+  would write, the result is unread and no refresh is sent.
 - Neither step pays a fee or moves value to the keeper. The keeper works a
   chain only when its connection answers for that chain, and a value it
   could not read stops the affected step and is stated in the run's report.
@@ -735,11 +762,15 @@ evidence that the migration has completed.
   buffer is configured, and the report says so. The keeper pays only gas and
   moves no value to itself. It does not withdraw a listing once grace ends;
   the default that follows is a separate duty.
+- The duty tries at most six loans per chain per run. Active-loan windows
+  rotate, so a busy chain can take several runs to reach a loan; a minute's
+  schedule is not a promise that every eligible NFT is listed that minute.
 
 ## Activation and operator visibility
 
 The master keeper switch and each duty's own arming choice are separate.
-The periodic-interest settler has its own disabled-by-default activation.
+The periodic-interest settler and grace auto-list each have their own
+disabled-by-default activation.
 Delivery proofs, late acknowledgements, sanctions observation, reward-day
 automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync and its tier-push retry must each
 disclose whether they are armed on the selected deployment. Reward-day
@@ -782,3 +813,6 @@ dependency is never turned into an empty queue or a successful run.
   extension windows, credential-safe errors, and older-testnet compatibility.
 - [October 27](../ReleaseNotes/ReleaseNotes-2026-10-27.md): partial-day reward
   remittances and VPFI loans left to their owners' ordinary claims.
+- [October 28](../ReleaseNotes/ReleaseNotes-2026-10-28.md): both lane ends,
+  retained owed days, reward and protocol upkeep, tier-push retries, grace
+  auto-listing, resumable entry reads, bounded stage reads, and gas margins.

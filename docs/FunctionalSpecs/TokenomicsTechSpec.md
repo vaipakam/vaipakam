@@ -15,7 +15,7 @@
 > and overridden by this banner.
 
 This specification consolidates the dated release notes from 2026-08-13
-through 2026-10-27, inclusive, and retains later recorded intent decisions.
+through 2026-10-28, inclusive, and retains later recorded intent decisions.
 Formulas are explained as financial rules; implementation evidence belongs
 in the [audit](../procedures/FunctionalSpecsCodeVsDocsAudit.md).
 
@@ -632,6 +632,16 @@ Testing requirements beyond §9:
 The protocol charges a **Yield Fee** on interest **and late fees** accrued by lenders — both are lender yield economically, so both are in the fee base at settlement. The list rate is `2%` under the frozen package above (legacy `1%`).
 
 This fee is automatically collected and directed to Treasury for protocol sustainability, buybacks, reward distribution, and ecosystem growth.
+
+A lender-position sale itself pays no yield fee to treasury. Earned unpaid
+interest remains the seller's claim on the loan, and later interest pays
+open seller claims oldest first. When that payment carries a yield fee, the
+seller's share pays the loan's ordinary snapshotted rate once; a payment
+without a yield fee pays the seller gross. The current holder's VPFI discount
+applies only to the holder's own interest and never to a seller's share.
+Interaction-reward forfeiture at sale remains a separate rule. Recovery
+priority, sanctions holds, and the four-open-claim limit follow the
+[platform sale specification](ProjectDetailsREADME.md#accrued-interest--the-seller-keeps-a-claim).
 
 ### 5a. Loan Initiation Fee Matcher Share
 
