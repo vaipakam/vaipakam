@@ -211,6 +211,28 @@ runs half of it on old code:
   disagree with them. `RefreshAllFacetsInPlace` and `RedeployFacets` both carry
   all three.
 
+- **SellerClaimFacet + every facet that pays interest to the lender side, both
+  sale facets and ClaimFacet (#1209, #1808).** A sale turns the seller's earned
+  and unpaid interest into a seller claim (`LibInterestLedger.recordSale`,
+  inside `LibLoan.migrateLenderPosition`). Every interest payout then reaches
+  `LibInterestLedger.paySellersFirst`, which self-calls
+  `SellerClaimFacet.paySellersFirst` while a claim is open; the holder's
+  terminal claim (ClaimFacet) and the backstop buyout split through
+  `resolveSellerClaims` / `settleSellerClaimsFrom`. Find the payers again with
+  a grep for `paySellersFirst`, `holderPaid` and `LibInterestLedger.set`, not
+  from this list. A payer refreshed without the host reverts
+  `FunctionDoesNotExist` on the first payout of a sold loan. The ledger opens
+  lazily at the loan's start, so a loan opened under older code would read as
+  unpaid since it began: `RefreshAllFacetsInPlace` and
+  `RefreshChangedFacetsInPlace` refuse the crossing while any ERC-20 loan is
+  Active or FallbackPending (`OpenLoanAcrossInterestLedger`) and need the
+  manual pause, and `RedeployFacets` / `ReplaceStaleFacets` refuse a Diamond
+  that does not already route `getInterestLedger` (`PredatesInterestLedger`).
+  Cross it by fresh deploy. Never assign `loan.principal` or
+  `loan.interestRateBps` outside `LibInterestLedger` (origination in LoanFacet
+  aside); `contracts/script/check-loan-terms-writer.mjs`, pre-deploy step 1d,
+  holds it.
+
 - **VaultFactoryFacet + every facet that withdraws from a vault (#2440).**
   `vaultWithdrawERC20` now returns what the recipient received, and every
   caller compiled against it decodes that return, including the plain

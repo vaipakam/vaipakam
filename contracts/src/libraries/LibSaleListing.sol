@@ -5,7 +5,6 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibERC721} from "./LibERC721.sol";
 import {LibMetricsHooks} from "./LibMetricsHooks.sol";
 import {LibFacet} from "./LibFacet.sol";
-import {LibEntitlement} from "./LibEntitlement.sol";
 import {LibLoanClock} from "./LibLoanClock.sol";
 import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
 
@@ -189,9 +188,8 @@ library LibSaleListing {
     ///         listing IS the bound.
     ///
     ///         What each catches is not the same, and neither is redundant: a
-    ///         park trips both (it enlarges the held balance AND voids the
-    ///         paid-through mark), but a principal change voids the mark while
-    ///         parking nothing, so only the floor sees it.
+    ///         park enlarges the held balance (the ceiling), and a principal
+    ///         change moves the seller's net while parking nothing (the floor).
     /// @param s          The Diamond storage slot.
     /// @param loanId     The loan being listed.
     /// @param saleRateBps The listing's own rate — fixed now, so the shortfall
@@ -232,37 +230,19 @@ library LibSaleListing {
         uint256 expiresAt
     ) internal view returns (uint256 minSellerNet, uint256 maxHeld) {
         uint256 principal = s.loans[loanId].principal;
-        // BOTH ends of the window, not just expiry (Codex #1812 P1). The cost is
-        // `max(forfeited accrual, rate shortfall)`, and those two move in
-        // OPPOSITE directions: accrual grows as the listing stands, while the
-        // shortfall shrinks because it is owed over the REMAINING term. So the
-        // maximum of the two is reached at an endpoint but not always the same
-        // one — a loan listed at a materially higher rate than its own is
-        // costliest to sell IMMEDIATELY, and evaluating only at expiry recorded
-        // a floor above the seller's own instant net. An early fill nothing had
-        // disturbed then reverted `SaleBelowSellerFloor`, refusing the sale the
-        // bound exists to protect.
+        // BOTH ends of the window (Codex #1812 P1). Since #1209 the cost is the
+        // rate shortfall alone, owed over the REMAINING term, so it shrinks as
+        // the listing stands and peaks at the start; both ends are still read so
+        // the bound does not rest on that monotonicity.
         //
-        // Two endpoint evaluations would be exactly tight over the REALS: for an
-        // increasing f and a decreasing g, `max(f, g)` peaks at
-        // `max(f(end), g(start))`. That was the original justification here and
-        // it is not sufficient in integer arithmetic (Codex #1812 round-3 P2).
-        //
-        // The shortfall leg is a difference of two SEPARATELY TRUNCATED interest
-        // figures, `trunc(A) - trunc(B)`. Each truncation loses up to one unit,
-        // so the integer difference is not monotonic even though `A - B` is: it
-        // can sit one unit above the continuous value at an interior second and
-        // one unit below it at the endpoint that bounds the window. Both
-        // endpoints can therefore read 1,440 while some second between them
-        // costs 1,441, and the recorded floor then refuses a fill that changed
-        // nothing.
-        //
-        // Bounding it: with `f(t) = trunc(A) - trunc(B)` and `g = A - B`
-        // decreasing, `f(t) <= g(t) + 1 <= g(start) + 1 <= f(start) + 2`. So two
-        // units of slack covers every interior second, and the direction of the
-        // slack is the safe one — it lowers the floor rather than raising it, so
-        // the bound can never reject a fill the seller's own projection allowed.
-        // The cost is at most two base units of the lending asset.
+        // The shortfall is a difference of two SEPARATELY TRUNCATED interest
+        // figures, `trunc(A) - trunc(B)`, which is not monotonic even though
+        // `A - B` is: an interior second can cost one unit more than either
+        // endpoint (Codex #1812 round-3 P2). With `g = A - B` decreasing,
+        // `f(t) <= g(t) + 1 <= g(start) + 1 <= f(start) + 2`, so two units of
+        // slack cover every interior second. The slack lowers the floor, so the
+        // bound never rejects a fill the seller's own projection allowed; it
+        // costs at most two base units of the lending asset.
         uint256 costAtExpiry = worstCaseSellerCost(s, loanId, saleRateBps, expiresAt);
         uint256 costNow = worstCaseSellerCost(s, loanId, saleRateBps, block.timestamp);
         uint256 cost =
@@ -279,16 +259,10 @@ library LibSaleListing {
     /// @notice #1503 item 4 — what a sale would cost the exiting lender if it
     ///         filled at `at`, using the settlement arithmetic both sale routes
     ///         apply.
-    /// @dev    `max(forfeited accrual, rate shortfall)` — the same ordering the
-    ///         completion paths use, where the forfeiture is applied to the
-    ///         shortfall first and only the excess reaches treasury.
-    ///
-    ///         The forfeiture window's opening point is read through
-    ///         {LibEntitlement.forfeitureAccrualStart} rather than recomputed,
-    ///         so this projection cannot drift from what completion charges.
-    ///         Note it is read AT LISTING: if a later event disqualifies the
-    ///         mark the window opens earlier and the real cost steps past this
-    ///         projection, which is precisely the drift the floor then refuses.
+    /// @dev    #1209 — the RATE SHORTFALL only: the buyer's higher rate over the
+    ///         remaining term. The seller no longer forfeits the interest they
+    ///         earned; it becomes a seller claim on the loan
+    ///         ({LibInterestLedger.recordSale}), so it is not a cost of the sale.
     function worstCaseSellerCost(
         LibVaipakam.Storage storage s,
         uint256 loanId,
@@ -296,21 +270,13 @@ library LibSaleListing {
         uint256 at
     ) internal view returns (uint256) {
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        uint256 accrualStart = LibVaipakam.interestAccrualStartOf(loan);
         // #668 / #935 — the remaining term runs to the pause-moved end.
         uint256 remainingSecs = LibLoanClock.remainingInterestSeconds(loan, at);
-
-        uint256 forfeitFrom = LibEntitlement.forfeitureAccrualStart(loanId, accrualStart);
-        uint256 forfeitSecs = at > forfeitFrom ? at - forfeitFrom : 0;
         uint256 denom = LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS;
-        uint256 accrued = (loan.principal * loan.interestRateBps * forfeitSecs) / denom;
-
         uint256 originalRemaining =
             (loan.principal * loan.interestRateBps * remainingSecs) / denom;
         uint256 saleRemaining = (loan.principal * saleRateBps * remainingSecs) / denom;
-        uint256 shortfall =
-            saleRemaining > originalRemaining ? saleRemaining - originalRemaining : 0;
-        return accrued > shortfall ? accrued : shortfall;
+        return saleRemaining > originalRemaining ? saleRemaining - originalRemaining : 0;
     }
 
     /// @notice #1503 item 4 — clear the bounds with the listing they belong to.

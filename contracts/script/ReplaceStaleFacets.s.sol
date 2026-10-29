@@ -34,6 +34,7 @@ import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
 import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
+import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 
 /**
  * @title ReplaceStaleFacets
@@ -75,6 +76,9 @@ contract ReplaceStaleFacets is DeployDiamond {
     /// @notice #2419 - the target Diamond predates the 1e18 numeraire value
     ///         rule; see {_requireNumeraireValueRule}.
     error PredatesNumeraireValueRule(address diamond);
+    /// @notice #1209 / #1808 - the target Diamond predates the interest ledger;
+    ///         see {_requireInterestLedger}.
+    error PredatesInterestLedger(address diamond);
     /// @notice #668 / #935 - the target Diamond predates the loan clock (the
     ///         global pause credit); see {_requireLoanClock}.
     error PredatesLoanClock(address diamond);
@@ -127,6 +131,9 @@ contract ReplaceStaleFacets is DeployDiamond {
         // #2748 - and one from before the rate-model host; see
         // {_requireRateModelFacet}.
         _requireRateModelFacet(diamond);
+        // #1209 / #1808 - and one from before the interest ledger; see
+        // {_requireInterestLedger}.
+        _requireInterestLedger(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -464,6 +471,22 @@ contract ReplaceStaleFacets is DeployDiamond {
     ///      this refresh. The marker is the routing of
     ///      `getLiquidNumeraireValue`, which #2419 introduced. Called before
     ///      the broadcast starts, so a refused run sends nothing.
+    /// @dev #1209 / #1808 - refuse a Diamond from before the interest ledger.
+    ///      The ledger is one behaviour across every facet that changes a
+    ///      loan's principal or rate or pays the lender side interest, the two
+    ///      sale facets, ClaimFacet and the new SellerClaimFacet host; this
+    ///      curated set carries only some of them, and none of them opens the
+    ///      ledgers of loans the older Diamond originated. Crossing the
+    ///      boundary is a fresh deploy, or the all-facets refresh with no
+    ///      ERC-20 loan open, never this refresh. The marker is the routing of
+    ///      `SellerClaimFacet.getInterestLedger`. Called before the broadcast
+    ///      starts, so a refused run sends nothing.
+    function _requireInterestLedger(address diamond) internal view {
+        if (IDiamondLoupe(diamond).facetAddress(SellerClaimFacet.getInterestLedger.selector) == address(0)) {
+            revert PredatesInterestLedger(diamond);
+        }
+    }
+
     function _requireNumeraireValueRule(address diamond) internal view {
         if (
             IDiamondLoupe(diamond).facetAddress(NumeraireValueFacet.getLiquidNumeraireValue.selector)

@@ -161,7 +161,7 @@ export function LoanSaleFlow({
   //
   // Same guard EarlyExitFlow got in r8; this component is its sibling and I
   // fixed only the one the finding named.
-  const quoteUnavailable = live.lenderForfeitFrom === undefined;
+  const quoteUnavailable = live.sellerClaimOnSale === undefined;
   const nowCost =
     rateBps !== null && !quoteUnavailable
       ? saleSettlementNow(live, BigInt(rateBps))
@@ -423,6 +423,13 @@ export function LoanSaleFlow({
                 copy.loanSale.receiptFloor(formatTokenAmountExact(reviewed.minSellerNet, dec), sym),
                 reviewed.maxHeld > 0n
                   ? copy.loanSale.heldQuote(formatTokenAmountExact(reviewed.maxHeld, dec), sym)
+                  : null,
+                // #1209 — the earned interest the seller keeps as a claim,
+                // as of today (it keeps growing until a buyer takes it).
+                live.sellerClaimOnSale !== undefined
+                  ? copy.sellerClaims.saleNote(
+                      `${formatTokenAmountExact(live.sellerClaimOnSale, dec)} ${sym}`,
+                    )
                   : null,
               ]
                 .filter(Boolean)

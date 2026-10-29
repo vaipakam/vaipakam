@@ -1,10 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { BaseError, ContractFunctionRevertedError, zeroAddress, type Address } from 'viem';
+import { BaseError, ContractFunctionRevertedError, toFunctionSelector, zeroAddress, type Address } from 'viem';
 import { AutoLifecycleFacetABI } from '@vaipakam/contracts/abis';
 import {
   AUTO_EXTEND_WINDOW_SELECTOR,
+  EXTEND_FUNDING_SELECTOR,
   EXTEND_WINDOW_SECONDS,
   contractWindowVerdict,
+  fundingVerdict,
+  readFundingVerdict,
   extendWindowVerdict,
   readContractWindow,
   readExtendWindowSource,
@@ -164,5 +167,44 @@ describe('contract window (#2738)', () => {
   it('leaves the loan for the next run when the view does not read', async () => {
     const client = { readContract: async () => { throw new Error('rpc down'); } };
     expect(await readContractWindow(client as never, DIAMOND, 7n, OPENS)).toMatch(/^window unread — /);
+  });
+});
+
+describe('extension funding (#2814)', () => {
+  const ASSET = '0x00000000000000000000000000000000000000a5' as Address;
+  const HOLDER = '0x00000000000000000000000000000000000000b0' as Address;
+
+  it('asks the loupe about getExtendFunding(uint256,address)', () => {
+    expect(EXTEND_FUNDING_SELECTOR).toBe(toFunctionSelector('getExtendFunding(uint256,address)'));
+  });
+
+  it('passes an extension the reserve and the other free balance cover together', () => {
+    expect(fundingVerdict({ asset: ASSET, reserved: 60n, otherFree: 40n, chargeNow: 100n })).toBeNull();
+    expect(fundingVerdict({ asset: ASSET, reserved: 100n, otherFree: 0n, chargeNow: 100n })).toBeNull();
+    expect(fundingVerdict({ asset: ASSET, reserved: 0n, otherFree: 100n, chargeNow: 100n })).toBeNull();
+  });
+
+  it('names the three figures when the two fall short', () => {
+    expect(fundingVerdict({ asset: ASSET, reserved: 60n, otherFree: 39n, chargeNow: 100n })).toBe(
+      `unfunded: reserve 60 + other free 39 < charge 100 (asset ${ASSET})`,
+    );
+  });
+
+  it('reads the holder\'s funding for the loan from the view', async () => {
+    const client = {
+      readContract: async (req: { functionName: string; args?: readonly unknown[] }) => {
+        expect(req.functionName).toBe('getExtendFunding');
+        expect(req.args).toEqual([7n, HOLDER]);
+        return [ASSET, 10n, 5n, 20n, 30n] as const;
+      },
+    };
+    expect(await readFundingVerdict(client as never, DIAMOND, 7n, HOLDER)).toBe(
+      `unfunded: reserve 10 + other free 5 < charge 20 (asset ${ASSET})`,
+    );
+  });
+
+  it('leaves the loan for the next run when the view does not read', async () => {
+    const client = { readContract: async () => { throw new Error('rpc down'); } };
+    expect(await readFundingVerdict(client as never, DIAMOND, 7n, HOLDER)).toMatch(/^funding unread — /);
   });
 });

@@ -1386,3 +1386,25 @@ no rent. That is a separate divergence on the accept path, tracked in #3044.
 **Status:** resolved for the default. The accept-side rental value is open
 in #3044. Nothing changes on any deployment while enforcement is off, which is
 every deployment today.
+
+## A lender sale no longer forfeits the seller's accrued interest: a spec change made on a recorded owner decision (#1209, #1808, 2026-10-28)
+
+**The decision.** The owner decided on 2026-10-28 (decision card "Seller keeps
+a claim" in the issues-plan thread) that a lender who sells their position
+keeps the interest they earned and were not yet paid, as a claim on the loan.
+Later interest pays open seller claims first, oldest first; on a short
+recovery the buyer's principal is paid first. Claims are recorded gross and
+paid net of the yield fee, and a loan carries at most four open claims.
+
+**What the spec said before.** §9 Option 1 said the seller's accrued interest
+is forfeited to the treasury at the sale, with a long set of rules about the
+point the seller was paid through. The code matched that spec. This is not a
+divergence resolved toward the code: the intent itself changed, by a recorded
+owner decision, and the spec and the code changed together in the same pull
+request.
+
+**Status:** resolved. Spec §9 Option 1 (Accrued Interest, Rate Difference,
+Frontend Warning, Smart Contract Actions and the listing floor) and
+WebsiteReadme's lender-exit disclosure line now state the claim model. The
+superseded design is kept, marked, in
+`docs/DesignsAndPlans/LenderSaleAccruedInterestPricingDesign.md`.

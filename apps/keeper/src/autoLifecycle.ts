@@ -50,7 +50,18 @@
  *      deploy (#2921). Which one applies is read once per chain per run
  *      from the Diamond's loupe.
  *
- *   7. Soft per-tick cap so one rogue chain can't burn the keeper's
+ *   7. Only when the extension is funded (#2814): the borrower-position
+ *      holder's reserve for the loan plus their other free vault balance of
+ *      the principal asset must cover what an extension now would charge
+ *      (`getExtendFunding`). The holder is the borrower-cap setter, which
+ *      the cap's staleness fence guarantees is the current holder. A loan
+ *      that falls short is skipped with the three figures named, rather than
+ *      left to a generic refusal at the gas estimate. A Diamond that predates
+ *      the view (read once per chain per run from its loupe) gets no
+ *      pre-check, which the run log says; the send's estimate still refuses
+ *      an unfunded extension there, so nothing is broadcast either way.
+ *
+ *   8. Soft per-tick cap so one rogue chain can't burn the keeper's
  *      gas budget.
  *
  * Auto-refinance is NOT in this pass, and needs no pass of its own: a
@@ -152,6 +163,64 @@ export const AUTO_EXTEND_WINDOW_SELECTOR = toFunctionSelector(
     (i): i is AbiFunction => i.type === 'function' && i.name === 'getAutoExtendWindow',
   ) as AbiFunction,
 );
+
+/** `AutoLifecycleFacet.getExtendFunding(uint256,address)` (#2814), the
+ *  funding pre-check's selector. */
+export const EXTEND_FUNDING_SELECTOR = toFunctionSelector(
+  (AutoLifecycleFacetABI as readonly { type: string; name?: string }[]).find(
+    (i): i is AbiFunction => i.type === 'function' && i.name === 'getExtendFunding',
+  ) as AbiFunction,
+);
+
+/** What the holder has ready for a loan's next extension, and what it would
+ *  charge now (`getExtendFunding`, #2814), all in `asset`. */
+export interface ExtendFunding {
+  asset: Address;
+  reserved: bigint;
+  otherFree: bigint;
+  chargeNow: bigint;
+}
+
+/** Null when the holder can pay an extension now; otherwise the shortfall,
+ *  with the three figures it was judged on. The reserve is drawn first, then
+ *  the other free balance, as `extendLoanInPlace` draws them. */
+export function fundingVerdict(f: ExtendFunding): string | null {
+  if (f.reserved + f.otherFree >= f.chargeNow) return null;
+  return `unfunded: reserve ${f.reserved} + other free ${f.otherFree} < charge ${f.chargeNow} (asset ${f.asset})`;
+}
+
+/** The funding verdict for `holder`'s extension of `loanId`; a read that
+ *  fails leaves the funding unknown, and the loan waits for the next run. */
+export async function readFundingVerdict(
+  client: Pick<PublicClient, 'readContract'>,
+  diamond: Address,
+  loanId: bigint,
+  holder: Address,
+): Promise<string | null> {
+  let out: readonly [Address, bigint, bigint, bigint, bigint];
+  try {
+    out = (await client.readContract({
+      address: diamond,
+      abi: AUTO_LIFECYCLE_ABI,
+      functionName: 'getExtendFunding',
+      args: [loanId, holder],
+    })) as readonly [Address, bigint, bigint, bigint, bigint];
+  } catch (err) {
+    return `funding unread — ${redactedError(err, { stack: false })}`;
+  }
+  return fundingVerdict({ asset: out[0], reserved: out[1], otherFree: out[2], chargeNow: out[3] });
+}
+
+/** Whether `diamond` routes `selector` (one loupe read). */
+async function routes(client: Pick<PublicClient, 'readContract'>, diamond: Address, selector: `0x${string}`): Promise<boolean> {
+  const host = (await client.readContract({
+    address: diamond,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'facetAddress',
+    args: [selector],
+  })) as Address;
+  return host.toLowerCase() !== zeroAddress;
+}
 
 /**
  * Whether `now` is inside the window the contract published for a loan
@@ -264,6 +333,15 @@ async function processChain(env: Env, chain: ChainConfig, deadlineMs: number, ru
     return;
   }
 
+  // #2814 — whether this Diamond can say if an extension is funded. When the
+  // loupe does not read, the pre-check is simply not run this time: the
+  // send's estimate refuses an unfunded extension either way.
+  const fundingRouted = await routes(publicClient, chain.diamond as Address, EXTEND_FUNDING_SELECTOR).catch(() => null);
+  if (fundingRouted !== true) {
+    const why = fundingRouted === null ? 'the loupe did not read' : 'the Diamond predates getExtendFunding';
+    console.log(`[keeper] autoLifecycle chain=${chain.id} funding pre-check off this run (${why}); the send's gas estimate refuses an unfunded extension`);
+  }
+
   // Read a page, act on it, read the next (#2572 r5): the scan never spends
   // the window before the first extension. The walk starts at a loan that
   // moves each run (`pagedWalk`, #2572 r7), not at a page, so a run the
@@ -296,6 +374,7 @@ async function processChain(env: Env, chain: ChainConfig, deadlineMs: number, ru
         chain.diamond as Address,
         loanIdBig,
         source,
+        fundingRouted === true,
       );
       if (fired) submitted++;
     }
@@ -311,6 +390,7 @@ async function tryExtend(
   diamond: Address,
   loanIdBig: bigint,
   source: ExtendWindowSource,
+  fundingRouted: boolean,
 ): Promise<boolean> {
   // Read both-side caps. Each getter self-applies the staleness
   // fence: if the NFT transferred since the setter wrote the cap,
@@ -366,6 +446,16 @@ async function tryExtend(
     return false;
   }
 
+  // #2814 — only a funded extension. The holder whose vault pays is the
+  // borrower-cap setter: an enabled cap is one the current holder set.
+  if (fundingRouted) {
+    const unfunded = await readFundingVerdict(publicClient, diamond, loanIdBig, borrowerCaps.setter);
+    if (unfunded !== null) {
+      console.log(`[keeper] autoLifecycle loan=${loanIdBig} not extended: ${unfunded}`);
+      return false;
+    }
+  }
+
   // Submit `extendLoanInPlace`. Contract reverts on every safety
   // guard (sub-day-since-start, grace expired, sanctions, a term that
   // does not extend or shortens grace, etc.) — those failures bubble
@@ -404,13 +494,7 @@ export async function readExtendWindowSource(
   client: PublicClient,
   diamond: Address,
 ): Promise<ExtendWindowSource> {
-  const host = (await client.readContract({
-    address: diamond,
-    abi: DIAMOND_ABI_VIEM,
-    functionName: 'facetAddress',
-    args: [AUTO_EXTEND_WINDOW_SELECTOR],
-  })) as Address;
-  if (host.toLowerCase() !== zeroAddress) return { kind: 'contract' };
+  if (await routes(client, diamond, AUTO_EXTEND_WINDOW_SELECTOR)) return { kind: 'contract' };
   const [pauseLog, graceBuckets] = await Promise.all([
     readPauseLog({ client, diamond }),
     client.readContract({

@@ -52,6 +52,10 @@ export const RECEIPT_FLOOR_ROOTS: readonly string[] = [
   'standingApprovals',
   'vpfi',
   'interactionRewards',
+  // A past seller's interest claims (#1209): an own withdrawal empties the
+  // balance, and an own repayment can pay a claim this wallet holds as a
+  // past seller, in every tab.
+  'sellerClaims',
   // The reward claim-horizon countdown (#1956 RL-3): a claim, a settlement or
   // an expiry changes which entry is soonest, and a card showing a deadline
   // for an entry just claimed is a stale claim (Codex #2489 r4). On the

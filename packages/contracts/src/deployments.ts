@@ -145,6 +145,11 @@ export interface DeploymentFacets {
    *  lender-exit entries gate on, readable by the app before it offers
    *  either route. Optional: a chain deployed before it has no such key. */
   saleExitVerdictFacet?: HexAddress;
+  /** #1209 / #1808 - the seller-claim host: pays past sellers of a lender
+   *  position their earned interest first, splits a terminal lender claim,
+   *  and hosts claimAsSeller and the interest ledger view. Optional: a chain
+   *  deployed before it has no such key. */
+  sellerClaimFacet?: HexAddress;
   /** #2748 - the rate-model host: the reference-rate model, its band and
    *  the offer-rate clamp. Optional: a chain deployed before it has no such
    *  key. */

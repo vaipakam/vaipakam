@@ -101,7 +101,9 @@ abstract contract DiamondFacetNames {
     ///      does when a remit destination leaves its expected-source list).
     ///      102 → 103 with `SaleExitVerdictFacet` (#1841 — the one classifier
     ///      of a lender sale exit, self-called by both sale facets).
-    function cutFacetNames() internal pure returns (string[103] memory) {
+    ///      103 → 104 with `SellerClaimFacet` (#1209 / #1808 — the seller-claim
+    ///      host every interest payout and ClaimFacet self-call).
+    function cutFacetNames() internal pure returns (string[104] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -234,6 +236,8 @@ abstract contract DiamondFacetNames {
             "VaipakamNFTMetadataFacet",
             // #1841 - the sale-exit verdict both sale facets self-call.
             "SaleExitVerdictFacet",
+            // #1209 / #1808 - the seller-claim host.
+            "SellerClaimFacet",
             "RiskFacet",
             "RiskMatchLiquidationFacet",
             "RiskSplitLiquidationFacet",

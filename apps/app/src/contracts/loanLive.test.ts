@@ -192,90 +192,40 @@ describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
     pauseLog: [] as LoanLive['pauseLog'],
   } as LoanLive;
 
-  const now = 1_000n + 10n * DAY; // ten days in
   /** Interest over `secs` at the loan's own rate, seconds-precision. */
   const accrue = (secs: bigint) =>
     (saleLive.principal * saleLive.interestRateBps * secs) /
     (365n * DAY * 10_000n);
 
-  it('REFUSES to quote when the window read is unavailable', () => {
-    // This asserted the opposite until #1801 r8, and the correction is the point.
-    // The old fallback quoted from the accrual origin on the reasoning that it is
-    // the conservative answer. It is not always: a valid mark can PRECEDE the
-    // origin (the preclose path re-origins the accrual clock without clearing an
-    // older mark), so the contract could charge from the earlier mark while this
-    // quoted only from the later clock — understating the seller's cost on a
-    // transient RPC failure. An unknown window has no safe substitute.
+  it('REFUSES to quote when the interest ledger read is unavailable', () => {
+    // An unknown ledger has no safe substitute (#1801 r8): a Diamond without it
+    // still charges the retired forfeiture, which this client does not model.
     expect(() => sellerEconomics(saleLive, saleLive.interestRateBps)).toThrow(
       SellerQuoteUnavailableError,
     );
   });
 
-  it('forfeits the whole elapsed stretch when the window IS the accrual origin', () => {
-    // The contract resolves "this lender has never been paid" to the accrual
-    // origin itself, so that arrives as a real value rather than as an absence.
-    const fresh = { ...saleLive, lenderForfeitFrom: saleLive.interestAccrualStart };
-    expect(sellerEconomics(fresh, fresh.interestRateBps).accrued).toBe(
-      accrue(10n * DAY),
-    );
+  it('charges the seller nothing at the loan own rate, and reports the claim (#1209)', () => {
+    const earned = accrue(10n * DAY);
+    const sale = { ...saleLive, sellerClaimOnSale: earned };
+    const econ = sellerEconomics(sale, sale.interestRateBps);
+    expect(econ.cost).toBe(0n);
+    expect(econ.toSeller).toBe(sale.principal);
+    expect(econ.shortfallBinding).toBe(false);
+    expect(econ.claim).toBe(earned);
   });
 
-  it('forfeits only the unpaid stretch the contract resolved', () => {
-    const paid = { ...saleLive, lenderForfeitFrom: now - 6n * DAY };
-    expect(sellerEconomics(paid, paid.interestRateBps).accrued).toBe(
-      accrue(6n * DAY),
-    );
-  });
-
-  it('forfeits nothing when the lender is paid through now', () => {
-    const paid = { ...saleLive, lenderForfeitFrom: now };
-    const econ = sellerEconomics(paid, paid.interestRateBps);
-    expect(econ.accrued).toBe(0n);
-    // A window model cannot over-subtract, so this is a completable sale that
-    // returns the whole principal — not a blocked one.
-    expect(econ.toSeller).toBe(paid.principal);
-  });
-
-  it('keeps the window open across an accrual-clock reset that paid nobody', () => {
-    // What a FROZEN partial repayment leaves behind: the borrower's obligation
-    // clock restarts, but the lender's share was parked in `heldForLender`
-    // rather than delivered — and that balance migrates to the BUYER on a sale.
-    // An earlier revision took the later of the two marks, which let the reset
-    // act as the credit and closed the window over interest the seller never
-    // received. What this pins on the CLIENT is narrower and is the point of the
-    // #1801 rename: the client does not weigh the two clocks at all. It uses the
-    // window the contract resolved and ignores `interestAccrualStart`, so a
-    // change to the contract's rule cannot leave a stale copy here.
-    const reset = {
-      ...saleLive,
-      lenderForfeitFrom: now - 6n * DAY,
-      interestAccrualStart: now - 4n * DAY,
-    };
-    expect(sellerEconomics(reset, reset.interestRateBps).accrued).toBe(
-      accrue(6n * DAY),
-    );
-  });
-
-  it('honours a mark that predates the accrual origin', () => {
-    // Same property from the other side: a resolved window earlier than the
-    // obligation clock is used as given. The contract decides whether such a
-    // window is still honourable — since #1801 it refuses one whose principal
-    // has moved or whose delivery a freeze broke — and the client's job is only
-    // to not second-guess the answer.
-    const stale = { ...saleLive, lenderForfeitFrom: now - 20n * DAY };
-    expect(sellerEconomics(stale, stale.interestRateBps).accrued).toBe(
-      accrue(20n * DAY),
-    );
-  });
-
-  it('measures the loan term from the accrual clock, not the window', () => {
-    // The remaining-term half must NOT move with the mark — it measures the
-    // loan's own progress, which the mark says nothing about. A rate ABOVE the
-    // loan's makes the shortfall the binding cost, exposing that half.
-    const bare = sellerEconomics({ ...saleLive, lenderForfeitFrom: saleLive.interestAccrualStart }, 2_000n);
-    const paid = sellerEconomics({ ...saleLive, lenderForfeitFrom: now - 6n * DAY }, 2_000n);
-    expect(paid.shortfall).toBe(bare.shortfall);
-    expect(paid.shortfallBinding).toBe(true);
+  it('charges only the rate shortfall above the loan own rate', () => {
+    const sale = { ...saleLive, sellerClaimOnSale: accrue(10n * DAY) };
+    const econ = sellerEconomics(sale, 2_000n);
+    const remaining = 20n * DAY;
+    const expected =
+      (sale.principal * 2_000n * remaining) / (365n * DAY * 10_000n) -
+      (sale.principal * sale.interestRateBps * remaining) / (365n * DAY * 10_000n);
+    expect(econ.shortfall).toBe(expected);
+    expect(econ.cost).toBe(expected);
+    expect(econ.toSeller).toBe(sale.principal - expected);
+    expect(econ.shortfallBinding).toBe(true);
   });
 });
 

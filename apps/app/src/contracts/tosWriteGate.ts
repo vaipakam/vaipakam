@@ -86,6 +86,9 @@ export const EXIT_WRITES: ReadonlySet<string> = new Set([
   // Claims — the user's own settled funds.
   'claimAsBorrower',
   'claimAsLender',
+  // A past seller's interest claim (#1209): the interest they earned on a
+  // position they sold, paid into their vault and withdrawn from there.
+  'claimAsSeller',
   'claimInteractionRewards',
   // The held-apart balance alone (#2489 r2) — the same settled funds as the
   // combined claim, taken on their own.

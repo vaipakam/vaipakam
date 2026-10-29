@@ -255,9 +255,10 @@ export async function planSaleListingForBatch(
       // record throws here and leaves the loan out.
       readFeeEntitlement(ctx.publicClient, ctx.diamond, loan.loanId),
     ]);
-    // Today's settlement needs the forfeit term; the page shows the
-    // listing as unavailable without it rather than substitute a figure.
-    if (live.lenderForfeitFrom === undefined) return refused(copy.loanSale.floorUnavailable);
+    // Today's settlement needs the interest ledger (the seller's claim,
+    // #1209); the page shows the listing as unavailable without it rather
+    // than substitute a figure.
+    if (live.sellerClaimOnSale === undefined) return refused(copy.loanSale.floorUnavailable);
     const settlementNow = saleSettlementNow(live, BigInt(terms.rateBps));
     const notes = saleListingNotes({
       fullModeTravels: fe.lenderMode === FEE_MODE_FULL,

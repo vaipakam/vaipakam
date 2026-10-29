@@ -19,6 +19,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
+import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -185,7 +186,7 @@ contract WorkflowComplianceAndRejection is Test {
         TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](29);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](30);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[19] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -284,6 +285,17 @@ contract WorkflowComplianceAndRejection is Test {
             facetAddress: ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSaleExitVerdictFacetSelectors()
+        });
+
+        // #1209 / #1808 - a completed sale leaves the seller a claim on the
+        // loan's later interest, and every interest payout and the holder's
+        // terminal claim settle open seller claims by a self-call into
+        // SellerClaimFacet. A hand-built Diamond that completes a sale must cut
+        // this host too.
+        cuts[29] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(SellerClaimFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSellerClaimFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

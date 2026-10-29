@@ -133,3 +133,7 @@ See the [audit record](../procedures/FunctionalSpecsCodeVsDocsAudit.md#forced-sa
 ## The default's lender-KYC check valued the principal only (#2083, 2026-10-28)
 
 See the [audit record](../procedures/FunctionalSpecsCodeVsDocsAudit.md#the-defaults-lender-kyc-check-valued-the-principal-only-2083-2026-10-28).
+
+## A lender sale no longer forfeits the seller's accrued interest: a spec change made on a recorded owner decision (#1209, #1808, 2026-10-28)
+
+See the [audit record](../procedures/FunctionalSpecsCodeVsDocsAudit.md#a-lender-sale-no-longer-forfeits-the-sellers-accrued-interest-a-spec-change-made-on-a-recorded-owner-decision-1209-1808-2026-10-28).

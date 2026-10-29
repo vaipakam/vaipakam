@@ -15,6 +15,7 @@ import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -215,15 +216,6 @@ contract MeasuredDeliveryTest is SetupTest {
 
     function _lien() internal view returns (uint256 amount) {
         (amount, ) = TestMutatorFacet(address(diamond)).getLoanCollateralLienAmount(LOAN);
-    }
-
-    /// @dev The loan's paid-through mark (`lenderInterestDeliveredThroughAt`),
-    ///      which has no getter: slot 480 of the Diamond's namespace, per
-    ///      `storage-layout/layout.golden.json`. Every cell that reads it first
-    ///      proves the slot by writing a known value through the mutator.
-    function _paidThrough(uint256 loanId) internal view returns (uint256) {
-        bytes32 slot = keccak256(abi.encode(loanId, uint256(LibVaipakam.VANGKI_STORAGE_POSITION) + 480));
-        return uint256(vm.load(address(diamond), slot));
     }
 
     /// @dev The fallback custody fixture: a liquid default whose every swap
@@ -574,15 +566,12 @@ contract MeasuredDeliveryTest is SetupTest {
     ///         refuse: its owner can lower it mid-transfer (a receiving hook
     ///         forwarding the tokens on) and would be paid again if the short
     ///         figure were booked. So a short arrival is refused there, in the
-    ///         forced auto-liquidation too, and the paid-through mark does not
-    ///         move. Kills: reporting what arrived and leaving the rest owed to
-    ///         the same wallet.
+    ///         forced auto-liquidation too. Kills: reporting what arrived and
+    ///         leaving the rest owed to the same wallet.
     function test_ResidentLenderPayout_WalletShortRefused() public {
         _scaffold(true);
         uint256 amount = 100 ether;
         ERC20Mock(mockERC20).mint(address(diamond), amount);
-        TestMutatorFacet(address(diamond)).setLenderPaidThroughWithPrincipalRaw(LOAN, 1, PRINCIPAL);
-        assertEq(_paidThrough(LOAN), 1, "fixture: the slot read is the paid-through mark");
         _chargesFee(mockERC20, address(diamond));
 
         vm.expectRevert(
@@ -592,28 +581,27 @@ contract MeasuredDeliveryTest is SetupTest {
         );
         vm.prank(address(diamond));
         EncumbranceMutateFacet(address(diamond)).freezeOrPayActiveLenderResident(
-            LOAN, mockERC20, amount, block.timestamp + 30 days
+            LOAN, mockERC20, amount, amount, amount
         );
-        assertEq(_paidThrough(LOAN), 1, "the period stays open");
     }
 
     /// @notice The control for the cell above: a payout that arrives in full
-    ///         reports the whole amount and marks the lender paid through.
-    function test_ResidentLenderPayout_FullArrivalMarksPaidThrough() public {
+    ///         reports the whole amount, and the interest ledger is
+    ///         checkpointed at the payout (#1808).
+    function test_ResidentLenderPayout_FullArrivalReportsWhole() public {
         _scaffold(true);
         uint256 amount = 100 ether;
         ERC20Mock(mockERC20).mint(address(diamond), amount);
-        TestMutatorFacet(address(diamond)).setLenderPaidThroughWithPrincipalRaw(LOAN, 1, PRINCIPAL);
-        assertEq(_paidThrough(LOAN), 1, "fixture: the slot read is the paid-through mark");
-        uint256 boundary = block.timestamp + 30 days;
+        vm.warp(block.timestamp + 1 days);
 
         vm.prank(address(diamond));
         uint256 delivered = EncumbranceMutateFacet(address(diamond)).freezeOrPayActiveLenderResident(
-            LOAN, mockERC20, amount, boundary
+            LOAN, mockERC20, amount, amount, amount
         );
 
         assertEq(delivered, amount, "the whole payout arrived");
-        assertEq(_paidThrough(LOAN), boundary, "the lender is paid through the boundary");
+        (,, uint64 touchedAt,) = SellerClaimFacet(address(diamond)).getInterestLedger(LOAN);
+        assertEq(touchedAt, block.timestamp, "the ledger is checkpointed at the payout");
     }
 
     // -- Voluntary flows refuse a short arrival at every hop ----------------

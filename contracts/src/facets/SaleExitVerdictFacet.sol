@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
@@ -213,6 +214,36 @@ contract SaleExitVerdictFacet {
         if (loan.assetType != LibVaipakam.AssetType.ERC20) {
             _add(r, abi.encodeWithSelector(IVaipakamErrors.InvalidSaleOffer.selector), 0);
             if (_full(r)) return _trim(r);
+        }
+        // #1209 — the sale records the holder's earned-unpaid interest as a
+        // seller claim, and a loan carries a bounded number of open claims.
+        // Older claims are paid from the borrower's later interest, so the
+        // refusal lifts as they are paid; it names no reopening time.
+        if (
+            loan.assetType == LibVaipakam.AssetType.ERC20 &&
+            !LibInterestLedger.saleClaimRoom(s, loanId, holder)
+        ) {
+            _add(
+                r,
+                abi.encodeWithSelector(
+                    LibInterestLedger.SellerClaimsFull.selector,
+                    loanId,
+                    s.sellerInterestClaims[loanId].length
+                ),
+                0
+            );
+            if (_full(r)) return _trim(r);
+        }
+        // #1209 — interest parked for a frozen holder is paid to the seller at
+        // the sale; it waits on the recorded frozen claimant, so a different
+        // claimant who is still blocked refuses the sale (one rule, shared
+        // with the settlement).
+        if (loan.assetType == LibVaipakam.AssetType.ERC20) {
+            address blocker = LibInterestLedger.parkedSaleBlocker(s, loanId, holder);
+            if (blocker != address(0)) {
+                _add(r, abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, blocker), 0);
+                if (_full(r)) return _trim(r);
+            }
         }
         // The listing vehicle escrows no collateral, so it needs ERC-20 collateral.
         if (listing && loan.collateralAssetType != LibVaipakam.AssetType.ERC20) {

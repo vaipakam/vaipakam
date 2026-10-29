@@ -110,7 +110,7 @@ beforeEach(() => {
     status: LoanStatus.Active,
     endTime: 130n * DAY,
     interestRateBps: 1_000n,
-    lenderForfeitFrom: 0n,
+    sellerClaimOnSale: 0n,
   };
   reads.sanctioned = false;
   reads.nftHeld = true;
@@ -218,11 +218,11 @@ describe('planSaleListingForBatch', () => {
     expect(reads.quotes).toBe(0);
   });
 
-  it('leaves out a loan whose fee record or forfeit term cannot be read', async () => {
+  it('leaves out a loan whose fee record or interest ledger cannot be read', async () => {
     reads.lenderMode = 'unreadable';
     expect(await planSaleListingForBatch(ctx, LOAN, TERMS)).toMatchObject({ kind: 'refused' });
     reads.lenderMode = 0;
-    reads.live = { ...reads.live, lenderForfeitFrom: undefined };
+    reads.live = { ...reads.live, sellerClaimOnSale: undefined };
     expect(await planSaleListingForBatch(ctx, LOAN, TERMS)).toMatchObject({
       kind: 'refused',
       reason: copy.loanSale.floorUnavailable,

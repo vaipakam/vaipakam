@@ -103,6 +103,7 @@ import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
 import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
+import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
@@ -450,6 +451,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
+        // #1209 / #1808 - the seller-claim host: pays past sellers of a lender
+        // position their earned interest first, splits a terminal claim, and
+        // hosts claimAsSeller and the interest ledger view.
+        SellerClaimFacet sellerClaimFacet = SellerClaimFacet(ArtifactDeploy.deploy(type(SellerClaimFacet).name));
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
             RewardCompensationDispatchFacet(ArtifactDeploy.deploy(type(RewardCompensationDispatchFacet).name));
         RewardCommitmentFacet rewardCommitmentFacet = RewardCommitmentFacet(ArtifactDeploy.deploy(type(RewardCommitmentFacet).name));
@@ -487,7 +492,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](103);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](104);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -587,6 +592,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // expected-source list (the list setter self-calls its hook).
         cuts[101] = _buildCut(address(rewardRemitDestinationFacet), _getRewardRemitDestinationSelectors());
         cuts[102] = _buildCut(address(saleExitVerdictFacet), _getSaleExitVerdictSelectors());
+        cuts[103] = _buildCut(address(sellerClaimFacet), _getSellerClaimSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1233,6 +1239,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("vaipakamNFTMetadataFacet", address(nftMetadataFacet));
         Deployments.writeFacet("forcedSaleFacet", address(forcedSaleFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
+        Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
@@ -1962,7 +1969,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         Setters + readers for auto-lend / auto-opt-in / per-loan
     ///         refinance caps + per-loan + per-side extend caps.
     function _getAutoLifecycleFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](14);
+        s = new bytes4[](17);
         s[0] = AutoLifecycleFacet.setAutoLendConsent.selector;
         s[1] = AutoLifecycleFacet.getAutoLendConsent.selector;
         s[2] = AutoLifecycleFacet.setAutoOptInOnNewLoan.selector;
@@ -1979,6 +1986,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[12] = AutoLifecycleFacet.extendLoanInPlace.selector;
         // #2738 — when a loan may be extended (the keeper reads it).
         s[13] = AutoLifecycleFacet.getAutoExtendWindow.selector;
+        // #2814 — the extension reserve: fund, withdraw, and what is ready.
+        s[14] = AutoLifecycleFacet.fundExtendReserve.selector;
+        s[15] = AutoLifecycleFacet.withdrawExtendReserve.selector;
+        s[16] = AutoLifecycleFacet.getExtendFunding.selector;
     }
 
     /// @notice #407 PR 2 (2026-06-12) — encumbrance mutate facet
@@ -2114,7 +2125,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      asserts, split off `RiskAccessFacet` into its own `RiskPreviewFacet`
     ///      so both facets keep EIP-170 header room. All are `view`.
     function _getRiskPreviewFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](11);
+        s = new bytes4[](10);
         s[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         s[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         s[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -2125,17 +2136,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #1503 PR-E — sale admission classification (live health floor +
         // inherited-risk-terms compatibility), read by LibSaleSolvency.
         s[7] = RiskPreviewFacet.saleAdmission.selector;
-        // #1503 item 28 — the seller's forfeiture window + its value now, so the
-        // client quote can mirror a figure that depends on appended storage with
-        // no field on the loan struct.
-        s[8] = RiskPreviewFacet.sellerForfeitureWindow.selector;
         // #1503 item 4 — the two bounds a listing records, quoted from the same
         // library the sale path enforces them with. On-chain rather than
         // mirrored client-side on purpose: a client copy of the rule drifts from
         // it the moment the rule changes, and this one has changed twice.
-        s[9] = RiskPreviewFacet.quoteSellerBounds.selector;
+        s[8] = RiskPreviewFacet.quoteSellerBounds.selector;
         // #2672 — the figures a standing listing recorded.
-        s[10] = RiskPreviewFacet.getSaleListingBounds.selector;
+        s[9] = RiskPreviewFacet.getSaleListingBounds.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.
@@ -3440,6 +3447,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      with the two sale facets that self-call it.
     function _getSaleExitVerdictSelectors() internal pure returns (bytes4[] memory s) {
         s = FacetSelectors.saleExitVerdict();
+    }
+
+    /// @dev #1209 / #1808 - the seller-claim host. Returns the ONE list in
+    ///      `FacetSelectors.sellerClaim()`.
+    function _getSellerClaimSelectors() internal pure returns (bytes4[] memory s) {
+        s = FacetSelectors.sellerClaim();
     }
 
     /// @dev #2748 - the quote-time rate model (#400): register, fast-disable,

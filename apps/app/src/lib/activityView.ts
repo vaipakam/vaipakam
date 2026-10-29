@@ -133,6 +133,14 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // #2795 — a borrower extra held on an open loan, paid out when the
   // obligation was handed over to a replacement borrower.
   BorrowerHeldExtraPaid: { label: 'Held sale extra paid out', category: 'collateral', priority: 50 },
+  // #1209 — a lender sale's seller keeps a claim on the interest they earned.
+  // Recorded rides the sale (below LoanSold's 80); a payment rides the
+  // repayment that funded it; the withdrawal is the seller's own transaction;
+  // the close rides the terminal claim that settled it.
+  SellerInterestClaimRecorded: { label: 'Seller interest claim recorded', category: 'loan-modify', priority: 70 },
+  SellerInterestPaid: { label: 'Seller interest paid', category: 'loan-repay', priority: 60 },
+  SellerInterestWithdrawn: { label: 'Seller interest withdrawn', category: 'loan-close', priority: 90 },
+  SellerInterestClaimClosed: { label: 'Seller interest claim closed', category: 'loan-close', priority: 50 },
   // Signed offers
   SignedOfferFilled: { label: 'Signed offer filled', category: 'loan-open', priority: 80 },
   SignedOfferMatched: { label: 'Signed offers matched', category: 'loan-open', priority: 80 },
@@ -168,6 +176,13 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // confirmation), so the label states the resulting setting, not a change.
   AutoListOptOutCleared: { label: 'Automatic grace-period listing on', category: 'loan-modify', priority: 40 },
   AutoRefinanceCapsChanged: { label: 'Automatic refinance limits updated', category: 'loan-modify', priority: 40 },
+  // #2814 — the borrower's earmarked top-up for an extension. The draw is
+  // the companion of `LoanExtended` in the same transaction, so it rides
+  // inside that row (below the default of 20) and states where the charge
+  // came from.
+  ExtendReserveFunded: { label: 'Extension reserve funded', category: 'loan-modify', priority: 40 },
+  ExtendReserveWithdrawn: { label: 'Extension reserve withdrawn', category: 'loan-modify', priority: 40 },
+  ExtendChargeDrawn: { label: 'Extension charge paid', category: 'loan-modify', priority: 15 },
   BackstopFilled: { label: 'Funded by the backstop', category: 'loan-open', priority: 60 },
   BackstopLoanClaimed: { label: 'Backstop recovery claimed', category: 'loan-close', priority: 80 },
   // Paid inside the borrower's claim, before its own event: below the claim
