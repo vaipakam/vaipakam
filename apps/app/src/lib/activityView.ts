@@ -173,6 +173,13 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // confirmation), so the label states the resulting setting, not a change.
   AutoListOptOutCleared: { label: 'Automatic grace-period listing on', category: 'loan-modify', priority: 40 },
   AutoRefinanceCapsChanged: { label: 'Automatic refinance limits updated', category: 'loan-modify', priority: 40 },
+  // #2814 — the borrower's earmarked top-up for an extension. The draw is
+  // the companion of `LoanExtended` in the same transaction, so it rides
+  // inside that row (below the default of 20) and states where the charge
+  // came from.
+  ExtendReserveFunded: { label: 'Extension reserve funded', category: 'loan-modify', priority: 40 },
+  ExtendReserveWithdrawn: { label: 'Extension reserve withdrawn', category: 'loan-modify', priority: 40 },
+  ExtendChargeDrawn: { label: 'Extension charge paid', category: 'loan-modify', priority: 15 },
   BackstopFilled: { label: 'Funded by the backstop', category: 'loan-open', priority: 60 },
   BackstopLoanClaimed: { label: 'Backstop recovery claimed', category: 'loan-close', priority: 80 },
   // Paid inside the borrower's claim, before its own event: below the claim

@@ -1,4 +1,4 @@
-## Thread — Auto-extend reserve (PR #TBD)
+## Thread — Auto-extend reserve (PR #3071)
 
 An in-place extension settles the closing window's interest, and any late fee, from the borrower-position holder's vault. Until now, no route let a borrower put free principal asset there, so every extension of a loan with interest owed reverted. The borrower now funds an explicit extension reserve: they deposit the loan's principal asset from their wallet into their own vault, recorded and earmarked for that loan's extensions (owner decision, "add an explicit top-up").
 
