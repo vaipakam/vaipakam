@@ -1,4 +1,4 @@
-## Refinance payoff by single-use permit (PR #TBD)
+## Refinance payoff by single-use permit (PR #3075)
 
 A refinance now pays off the old loan with an exact-amount, single-use Permit2
 signature instead of a standing token approval to the protocol. When the
