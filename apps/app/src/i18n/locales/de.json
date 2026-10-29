@@ -955,7 +955,8 @@
         "pendingLoanClosed": "Dieser Kredit wurde inzwischen anderweitig geschlossen, daher kann die Anfrage nicht mehr abgeschlossen werden. Stornieren Sie sie, um sie zu entfernen.",
         "pendingExpired": "Diese Refinanzierungsanfrage ist am {{date}} abgelaufen — kein Kreditgeber kann sie mehr annehmen, und sie blockiert Ihre übrigen Aktionen hier nicht mehr. Stornieren Sie sie unten, um sie zu entfernen; der Kredit läuft unverändert weiter.",
         "pendingPastGrace": "Dieser Kredit hat Fälligkeitsdatum und Nachfrist überschritten, daher kann kein Kreditgeber diese Anfrage mehr annehmen — sie blockiert Ihre übrigen Aktionen hier nicht mehr. Stornieren Sie sie unten, um sie zu entfernen.",
-        "pendingUntakeable": "Diese Refinanzierungsanfrage kann nie angenommen werden: Sie ist nicht die Anfrage, die das Protokoll für diesen Kredit erfasst hat (eine neuere Anfrage hat sie ersetzt). Sie blockiert den Kredit nicht. Stornieren Sie sie unten, um sie zu entfernen."
+        "pendingUntakeable": "Diese Refinanzierungsanfrage kann nie angenommen werden: Sie ist nicht die Anfrage, die das Protokoll für diesen Kredit erfasst hat (eine neuere Anfrage hat sie ersetzt). Sie blockiert den Kredit nicht. Stornieren Sie sie unten, um sie zu entfernen.",
+        "attachUnconfirmed": "Ihre Refinanzierungsanfrage ist eingestellt und ihre Ablöse-Erlaubnis wurde gesendet, aber ob die Erlaubnis angehängt wurde, ist noch nicht bestätigt. Die Karte der Anfrage zeigt die Erlaubnis, sobald die Chain sie zeigt; signieren Sie nur erneut, wenn die Karte weiterhin meldet, dass sie fehlt."
       }
     },
     "approvals": {
@@ -3537,7 +3538,8 @@
       "permit": {
         "total": "Jede Anfrage erhält ihre eigene Ablöse-Erlaubnis, signiert für ihre größtmögliche Ablösesumme (zusammen {{amount}}). Eine Erlaubnis kann nur einmal verwendet werden, nur für die Ablösesumme ihres eigenen Kredits in dem Moment, in dem ein Kreditgeber annimmt, und sie verfällt, wenn ihre Anfrage endet, sodass nichts für das Protokoll freigegeben bleibt. Deckt die Freigabe Ihrer Wallet für Permit2 (den Permit-Vertrag von Uniswap) diese Summe nicht bereits ab, erteilen Sie sie zuerst; diese Freigabe bewegt ohne eine Ihrer Signaturen nichts.",
         "youMayOwe": "Die oben gezeigte Ablösesumme jedes Kredits, einmalig über die Ablöse-Erlaubnis der jeweiligen Anfrage aus Ihrer Wallet eingezogen, wenn ein Kreditgeber die Anfrage annimmt. Ihre Wallet muss in diesem Moment den frei verfügbaren Betrag dieses Kredits halten.",
-        "postedNoPermit": "Kredit #{{id}}: Anfrage als Angebot #{{offerId}} gestellt, aber ihre Ablöse-Erlaubnis ist nicht angehängt, daher kann noch kein Kreditgeber sie abschließen. Öffnen Sie die Seite des Kredits, um sie zu signieren, oder stornieren Sie die Anfrage dort."
+        "postedNoPermit": "Kredit #{{id}}: Anfrage als Angebot #{{offerId}} gestellt, aber ihre Ablöse-Erlaubnis ist nicht angehängt, daher kann noch kein Kreditgeber sie abschließen. Öffnen Sie die Seite des Kredits, um sie zu signieren, oder stornieren Sie die Anfrage dort.",
+        "postedPermitPending": "Kredit #{{id}}: Anfrage als Angebot #{{offerId}} gestellt. Ihre Ablöse-Erlaubnis wurde gesendet, ist aber noch nicht bestätigt, daher ist noch nicht bekannt, ob ein Kreditgeber die Anfrage abschließen kann. Öffnen Sie die Seite des Kredits, um den Stand zu sehen."
       }
     },
     "sellerClaims": {

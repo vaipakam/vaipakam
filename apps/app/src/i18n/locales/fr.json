@@ -955,7 +955,8 @@
         "pendingLoanClosed": "Ce prêt s’est clôturé autrement depuis, la demande ne peut donc plus aboutir. Annulez-la pour la supprimer.",
         "pendingExpired": "Cette demande de refinancement a expiré le {{date}} — aucun prêteur ne peut plus l’accepter, et elle ne bloque plus vos autres actions ici. Annulez-la ci-dessous pour la supprimer ; le prêt continue inchangé.",
         "pendingPastGrace": "Ce prêt a dépassé son échéance et sa fenêtre de grâce, aucun prêteur ne peut donc plus accepter cette demande — elle ne bloque plus vos autres actions ici. Annulez-la ci-dessous pour la supprimer.",
-        "pendingUntakeable": "Cette demande de refinancement ne pourra jamais être acceptée : ce n’est pas la demande que le protocole a enregistrée pour ce prêt (une demande plus récente l’a remplacée). Elle ne bloque pas le prêt. Annulez-la ci-dessous pour la supprimer."
+        "pendingUntakeable": "Cette demande de refinancement ne pourra jamais être acceptée : ce n’est pas la demande que le protocole a enregistrée pour ce prêt (une demande plus récente l’a remplacée). Elle ne bloque pas le prêt. Annulez-la ci-dessous pour la supprimer.",
+        "attachUnconfirmed": "Votre demande de refinancement est publiée et son autorisation de remboursement a été envoyée, mais il n’est pas encore confirmé que l’autorisation est jointe. La carte de la demande affiche l’autorisation dès que la chaîne l’indique ; ne signez à nouveau que si la carte indique toujours qu’elle manque."
       }
     },
     "approvals": {
@@ -3537,7 +3538,8 @@
       "permit": {
         "total": "Chaque demande reçoit sa propre autorisation de remboursement, signée pour son plus grand remboursement possible ({{amount}} au total). Une autorisation ne peut être utilisée qu’une fois, uniquement pour le remboursement de son propre prêt au moment où un prêteur accepte, et elle devient caduque quand sa demande prend fin ; rien ne reste donc approuvé au profit du protocole. Si l’approbation de Permit2 (le contrat d’autorisation d’Uniswap) par votre portefeuille ne couvre pas déjà ce total, vous l’approuvez d’abord ; cette approbation ne déplace rien sans l’une de vos signatures.",
         "youMayOwe": "Le remboursement de chaque prêt indiqué ci-dessus, prélevé une seule fois sur votre portefeuille, via l’autorisation de remboursement de cette demande, quand un prêteur l’accepte. Votre portefeuille doit alors détenir le montant disponible de ce prêt.",
-        "postedNoPermit": "Prêt n°{{id}} : demande publiée comme offre n°{{offerId}}, mais son autorisation de remboursement n’est pas jointe, donc aucun prêteur ne peut encore la mener à terme. Ouvrez la page du prêt pour la signer, ou annulez-y la demande."
+        "postedNoPermit": "Prêt n°{{id}} : demande publiée comme offre n°{{offerId}}, mais son autorisation de remboursement n’est pas jointe, donc aucun prêteur ne peut encore la mener à terme. Ouvrez la page du prêt pour la signer, ou annulez-y la demande.",
+        "postedPermitPending": "Prêt n°{{id}} : demande publiée comme offre n°{{offerId}}. Son autorisation de remboursement a été envoyée mais n’est pas encore confirmée, donc on ne sait pas encore si un prêteur peut mener la demande à terme. Ouvrez la page du prêt pour voir où elle en est."
       }
     },
     "sellerClaims": {

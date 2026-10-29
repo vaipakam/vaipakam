@@ -8,7 +8,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   concat,
   encodeAbiParameters,
@@ -17,7 +17,12 @@ import {
   toBytes,
   type Hex,
 } from 'viem';
+// The Permit2 approval step is the ERC-20 module's; the attach test drives
+// the steps after it.
+vi.mock('./erc20', () => ({ ensureAllowance: vi.fn(async () => undefined) }));
+
 import {
+  attachRefinancePayoffPermit,
   lastFillableMoment,
   payoffPermitTypedData,
   permitProblem,
@@ -136,5 +141,64 @@ describe('permitProblem', () => {
     expect(check({}, 2_001n)).toBe('expired');
     expect(check({ deadline: 1_999n })).toBe('lapsesEarly');
     expect(check({ maxAmount: 119n })).toBe('short');
+  });
+});
+
+describe('attachRefinancePayoffPermit (#1558)', () => {
+  const base = (write: Parameters<typeof attachRefinancePayoffPermit>[0]['write'], receipt: () => unknown) =>
+    attachRefinancePayoffPermit({
+      publicClient: { getTransactionReceipt: vi.fn(async () => receipt()) } as never,
+      walletClient: { signTypedData: vi.fn(async () => '0x01') } as never,
+      write,
+      chainId: 84532,
+      diamond: DIAMOND,
+      owner: HOLDER,
+      token: TOKEN,
+      maxAmount: 120n,
+      deadline: 2_000n,
+      loanId: 7n,
+      offerId: 42n,
+    });
+  const HASH = `0x${'ab'.repeat(32)}` as const;
+
+  it('is attached when the write returns', async () => {
+    await expect(base(async () => ({}) as never, () => null)).resolves.toBe('attached');
+  });
+
+  it('is unknown, never "missing", when the attach was sent and cannot be settled', async () => {
+    const write = async (_f: string, _a: readonly unknown[], o?: { onSubmitted?: (h: `0x${string}`) => void }) => {
+      o?.onSubmitted?.(HASH);
+      throw new Error('receipt wait timed out');
+    };
+    await expect(
+      base(write, () => {
+        throw new Error('not found');
+      }),
+    ).resolves.toBe('unknown');
+  });
+
+  it('is attached when the sent attach turns out to have mined', async () => {
+    const write = async (_f: string, _a: readonly unknown[], o?: { onSubmitted?: (h: `0x${string}`) => void }) => {
+      o?.onSubmitted?.(HASH);
+      throw new Error('receipt wait timed out');
+    };
+    await expect(
+      base(write, () => ({ status: 'success', blockNumber: 9n, logs: [] })),
+    ).resolves.toBe('attached');
+  });
+
+  it('throws when the attach was never sent, or reverted', async () => {
+    await expect(
+      base(async () => {
+        throw new Error('rejected');
+      }, () => null),
+    ).rejects.toThrow('rejected');
+    const write = async (_f: string, _a: readonly unknown[], o?: { onSubmitted?: (h: `0x${string}`) => void }) => {
+      o?.onSubmitted?.(HASH);
+      throw new Error('reverted');
+    };
+    await expect(base(write, () => ({ status: 'reverted', blockNumber: 9n, logs: [] }))).rejects.toThrow(
+      'reverted',
+    );
   });
 });

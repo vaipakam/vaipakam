@@ -234,7 +234,16 @@ test('refinance request completes: old loan closes, new loan carries the collate
   // request: the borrower's, unspent, expiring at the request's last
   // fillable moment, and covering the payoff at that moment. And the
   // Diamond was granted nothing.
+  // The form posts the request first and attaches the permit after it
+  // (another signature and transaction), so the request being live says
+  // nothing yet about the permit: wait for the chain to carry it.
   const lastFillable = (request.expiresAt as bigint) - 1n;
+  await expect
+    .poll(async () => (await payoffOf(requestId, lastFillable))[3].toLowerCase(), {
+      message: 'the payoff permit reaches the chain',
+      timeout: 90_000,
+    })
+    .toBe(before.borrower.toLowerCase());
   const [, , payoffAtLast, signer, maxAmount, , deadline, nonceSpent] = await payoffOf(
     requestId,
     lastFillable,
@@ -251,7 +260,9 @@ test('refinance request completes: old loan closes, new loan carries the collate
   expect(await diamondAllowance(), 'posting grants the Diamond no allowance').toBe(
     allowanceBefore,
   );
-  await expect(page.getByText(/payoff permit isn’t attached/i)).toHaveCount(0);
+  await expect(page.getByText(/payoff permit isn’t attached/i)).toHaveCount(0, {
+    timeout: 30_000,
+  });
   await adv.ctx.close();
 
   // #2528 — a lender browsing the Offer Book sees the request FOR what it

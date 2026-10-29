@@ -233,7 +233,7 @@ export function RefinancePendingCard({
           graceSeconds: graceSec,
           route: 'permit',
         });
-        await attachRefinancePayoffPermit({
+        const attached = await attachRefinancePayoffPermit({
           publicClient,
           walletClient,
           write,
@@ -246,7 +246,11 @@ export function RefinancePendingCard({
           loanId: BigInt(loanId),
           offerId: BigInt(offerId),
         });
-        setDone(copy.refinance.permit.signed);
+        setDone(
+          attached === 'attached'
+            ? copy.refinance.permit.signed
+            : copy.refinance.permit.attachUnconfirmed,
+        );
         void queryClient.invalidateQueries({ queryKey: ['refinancePending'] });
         return;
       }

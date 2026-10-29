@@ -27,6 +27,10 @@ export type RefinanceBatchOutcome =
    *  not attached, so no lender can complete it until it is signed from
    *  the loan's page. */
   | { loanId: number; kind: 'postedNoPermit'; offerId: string }
+  /** #1558 — posted, and the transaction attaching its payoff permit was
+   *  sent but neither confirmed nor refused: it may still attach, so
+   *  whether a lender can complete the request is not known yet. */
+  | { loanId: number; kind: 'postedPermitPending'; offerId: string }
   /** The loan left Active before its request ran. */
   | { loanId: number; kind: 'changed' }
   /** Sent, and neither confirmed nor refused yet: it may still post. */

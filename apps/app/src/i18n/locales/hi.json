@@ -955,7 +955,8 @@
         "pendingLoanClosed": "यह loan बाद में किसी और तरीके से close हो चुका है, इसलिए request अब complete नहीं हो सकती। इसे हटाने के लिए cancel करें।",
         "pendingExpired": "यह refinance request {{date}} को expire हुई — अब कोई lender इसे accept नहीं कर सकता, और यह यहाँ आपकी अन्य actions नहीं रोकती। इसे हटाने के लिए नीचे cancel करें; loan unchanged चलता रहता है।",
         "pendingPastGrace": "यह loan due date और grace window पार कर चुका है, इसलिए कोई lender अब इस request को accept नहीं कर सकता — यह यहाँ आपकी अन्य actions को नहीं रोकती। इसे हटाने के लिए नीचे cancel करें।",
-        "pendingUntakeable": "यह refinance request कभी accept नहीं हो सकती: यह वह request नहीं है जो protocol ने इस loan के लिए दर्ज की है (किसी नई request ने इसकी जगह ले ली)। यह loan को नहीं रोकती। इसे हटाने के लिए नीचे cancel करें।"
+        "pendingUntakeable": "यह refinance request कभी accept नहीं हो सकती: यह वह request नहीं है जो protocol ने इस loan के लिए दर्ज की है (किसी नई request ने इसकी जगह ले ली)। यह loan को नहीं रोकती। इसे हटाने के लिए नीचे cancel करें।",
+        "attachUnconfirmed": "आपकी refinance request post हो गई है और उसका payoff permit भेज दिया गया है, लेकिन अभी confirm नहीं हुआ कि permit attach हुआ या नहीं। Chain पर दिखते ही request का card permit दिखाएगा; दोबारा sign तभी करें जब card अब भी कहे कि permit missing है।"
       }
     },
     "approvals": {
@@ -3537,7 +3538,8 @@
       "permit": {
         "total": "हर request को उसका अपना payoff permit मिलता है, जो उसके सबसे बड़े संभव payoff के लिए sign होता है (कुल मिलाकर {{amount}})। एक permit सिर्फ़ एक बार इस्तेमाल हो सकता है, सिर्फ़ उसी के अपने loan के payoff के लिए, उस पल जब कोई lender accept करता है, और उसकी request ख़त्म होते ही यह lapse हो जाता है, इसलिए protocol के लिए कुछ भी approved नहीं रहता। अगर Permit2 (Uniswap का permit contract) के लिए आपके wallet का approval पहले से यह total cover नहीं करता, तो आप पहले उसे approve करते हैं; आपके किसी signature के बिना वह approval कुछ भी नहीं हिलाता।",
         "youMayOwe": "ऊपर दिखाया गया हर loan का payoff, जो lender के उसकी request accept करने पर उस request के payoff permit के ज़रिए आपके wallet से एक बार कटता है। उस समय आपके wallet में उस loan की अलग रकम होनी चाहिए।",
-        "postedNoPermit": "Loan #{{id}}: request offer #{{offerId}} के रूप में डाली गई, लेकिन उसका payoff permit attach नहीं है, इसलिए अभी कोई lender इसे complete नहीं कर सकता। उसे sign करने के लिए loan का page खोलें, या वहीं request cancel करें।"
+        "postedNoPermit": "Loan #{{id}}: request offer #{{offerId}} के रूप में डाली गई, लेकिन उसका payoff permit attach नहीं है, इसलिए अभी कोई lender इसे complete नहीं कर सकता। उसे sign करने के लिए loan का page खोलें, या वहीं request cancel करें।",
+        "postedPermitPending": "Loan #{{id}}: request offer #{{offerId}} के रूप में डाली गई। उसका payoff permit भेजा गया है लेकिन अभी confirm नहीं हुआ, इसलिए अभी पता नहीं कि कोई lender इस request को complete कर सकता है या नहीं। स्थिति देखने के लिए loan का page खोलें।"
       }
     },
     "sellerClaims": {

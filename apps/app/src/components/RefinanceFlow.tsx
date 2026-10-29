@@ -497,9 +497,10 @@ export function RefinanceFlow({
         // at the request's last fillable moment. The request is already
         // posted, so a failure here is reported as that, never as a
         // failed post; its card offers to sign again.
+        let attached: 'attached' | 'unknown';
         try {
           if (offerId === undefined) throw new Error(copy.errors.checkRetry);
-          await attachRefinancePayoffPermit({
+          attached = await attachRefinancePayoffPermit({
             publicClient,
             walletClient,
             write,
@@ -518,7 +519,13 @@ export function RefinanceFlow({
           return;
         }
         void queryClient.invalidateQueries({ queryKey: ['refinancePending'] });
-        setDone(copy.refinance.permit.done);
+        // A permit sent but not yet confirmed may still attach: say so,
+        // never "attached" and never "missing" (#1558).
+        setDone(
+          attached === 'attached'
+            ? copy.refinance.permit.done
+            : copy.refinance.permit.attachUnconfirmed,
+        );
       } else {
         setDone(copy.refinance.done);
       }

@@ -1793,6 +1793,10 @@ const copySource = {
         'Loan #{{id}}: request posted as offer #{{offerId}}, but its payoff permit isn’t attached, so no lender can complete it yet. Open the loan’s page to sign it, or cancel the request there.',
         ['id', 'offerId'],
       ),
+      postedPermitPending: tmpl(
+        'Loan #{{id}}: request posted as offer #{{offerId}}. Its payoff permit was sent but isn’t confirmed yet, so whether a lender can complete the request isn’t known yet. Open the loan’s page to see where it stands.',
+        ['id', 'offerId'],
+      ),
     },
   },
   preclose: {
@@ -2265,6 +2269,8 @@ const copySource = {
       },
       sign: 'Sign the payoff permit',
       signed: 'Payoff permit attached — the request can complete.',
+      attachUnconfirmed:
+        'Your refinance request is posted and its payoff permit was sent, but whether the permit attached isn’t confirmed yet. The request’s card shows the permit once the chain does; sign again only if the card still says it is missing.',
       signAborted:
         'This request is no longer completable (accepted, cancelled, or the loan closed), so nothing was signed. Refresh to see the latest state.',
       cancelled:

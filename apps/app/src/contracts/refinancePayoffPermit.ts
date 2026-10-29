@@ -36,6 +36,7 @@
 import { toFunctionSelector, zeroAddress, type PublicClient, type WalletClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from './diamond';
 import { ensureAllowance } from './erc20';
+import { settleFailedSend } from './ownReceipt';
 import {
   loanEndTimeOf,
   refinanceApprovalOf,
@@ -331,13 +332,23 @@ export function setPayoffPermitCall(
  * `maxAmount` (it raises a lower one to exactly that figure, and leaves a
  * larger one alone). Each step is a wallet prompt: the Permit2 approval
  * when needed, the signature, and the attach transaction.
+ *
+ * Throws when the permit is established as NOT attached: a refusal or
+ * failure before the attach transaction was sent, or that transaction
+ * reverted or was cancelled. Resolves `'attached'` once the chain shows
+ * it mined, and `'unknown'` when the transaction was sent but neither
+ * confirmed nor refused (a receipt wait that timed out): it may still
+ * attach, so a caller must not report the permit as missing then.
  */
+export type PermitAttachOutcome = 'attached' | 'unknown';
+
 export async function attachRefinancePayoffPermit(a: {
   publicClient: PublicClient;
   walletClient: WalletClient;
   write: (
     functionName: string,
     args: readonly unknown[],
+    opts?: { onSubmitted?: (hash: `0x${string}`) => void },
   ) => Promise<DiamondWriteResult>;
   chainId: number;
   diamond: `0x${string}`;
@@ -348,13 +359,22 @@ export async function attachRefinancePayoffPermit(a: {
   loanId: bigint;
   offerId: bigint;
   onPrompt?: () => void;
-}): Promise<void> {
+}): Promise<PermitAttachOutcome> {
   await ensurePermit2Approval(a);
   a.onPrompt?.();
   const signed = await signRefinancePayoffPermit(a);
   a.onPrompt?.();
   const call = setPayoffPermitCall(a.offerId, signed);
-  await a.write(call.functionName, call.args);
+  let submitted: `0x${string}` | null = null;
+  try {
+    await a.write(call.functionName, call.args, { onSubmitted: (hash) => (submitted = hash) });
+    return 'attached';
+  } catch (err) {
+    const settled = await settleFailedSend(a.publicClient, submitted, err);
+    if ('block' in settled) return 'attached';
+    if ('pending' in settled) return 'unknown';
+    throw err;
+  }
 }
 
 /** The wallet's ERC-20 approval of Permit2 covers `maxAmount`; raises a

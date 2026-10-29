@@ -955,7 +955,8 @@
         "pendingLoanClosed": "Este préstamo se cerró después por otra vía, así que la solicitud ya no puede completarse. Cancélala para quitarla.",
         "pendingExpired": "Esta solicitud de refinanciación expiró el {{date}} — ningún prestamista puede aceptarla ya, y ya no bloquea tus otras acciones aquí. Cancélala abajo para quitarla; el préstamo continúa sin cambios.",
         "pendingPastGrace": "Este préstamo ya pasó su fecha de vencimiento y su ventana de gracia, así que ningún prestamista puede aceptar ya esta solicitud — ya no bloquea tus otras acciones aquí. Cancélala abajo para quitarla.",
-        "pendingUntakeable": "Esta solicitud de refinanciación nunca podrá aceptarse: no es la solicitud que el protocolo tiene registrada para este préstamo (una solicitud más reciente la sustituyó). No bloquea el préstamo. Cancélala abajo para quitarla."
+        "pendingUntakeable": "Esta solicitud de refinanciación nunca podrá aceptarse: no es la solicitud que el protocolo tiene registrada para este préstamo (una solicitud más reciente la sustituyó). No bloquea el préstamo. Cancélala abajo para quitarla.",
+        "attachUnconfirmed": "Tu solicitud de refinanciación está publicada y su permiso de liquidación se envió, pero aún no está confirmado si el permiso quedó adjunto. La tarjeta de la solicitud muestra el permiso en cuanto la cadena lo refleja; vuelve a firmar solo si la tarjeta sigue diciendo que falta."
       }
     },
     "approvals": {
@@ -3537,7 +3538,8 @@
       "permit": {
         "total": "Cada solicitud recibe su propio permiso de liquidación, firmado por su mayor liquidación posible ({{amount}} en conjunto). Un permiso puede usarse una sola vez, solo para la liquidación de su propio préstamo en el momento en que un prestamista acepta, y caduca cuando termina su solicitud, así que nada queda aprobado a favor del protocolo. Si la aprobación de tu billetera a Permit2 (el contrato de permisos de Uniswap) no cubre ya ese total, primero la otorgas; esa aprobación no mueve nada sin una de tus firmas.",
         "youMayOwe": "La liquidación de cada préstamo indicada arriba, que se cobra de tu billetera una sola vez, mediante el permiso de liquidación de esa solicitud, cuando un prestamista la acepta. En ese momento tu billetera debe tener el importe disponible de ese préstamo.",
-        "postedNoPermit": "Préstamo #{{id}}: solicitud publicada como oferta #{{offerId}}, pero su permiso de liquidación no está adjunto, así que ningún prestamista puede completarla todavía. Abre la página del préstamo para firmarlo, o cancela allí la solicitud."
+        "postedNoPermit": "Préstamo #{{id}}: solicitud publicada como oferta #{{offerId}}, pero su permiso de liquidación no está adjunto, así que ningún prestamista puede completarla todavía. Abre la página del préstamo para firmarlo, o cancela allí la solicitud.",
+        "postedPermitPending": "Préstamo #{{id}}: solicitud publicada como oferta #{{offerId}}. Su permiso de liquidación se envió pero aún no está confirmado, así que todavía no se sabe si un prestamista puede completar la solicitud. Abre la página del préstamo para ver en qué estado está."
       }
     },
     "sellerClaims": {

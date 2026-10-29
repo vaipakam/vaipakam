@@ -245,7 +245,9 @@ export function BatchRefinancePanel({
      * attach them in as few transactions as the multicall allows. A request
      * whose permit was not signed (the wallet refused, or stopped) or did
      * not attach is turned into `postedNoPermit`, so the results name it
-     * and its loan's page offers to sign. Signing stops at the first
+     * and its loan's page offers to sign. One whose attaching transaction
+     * was sent but neither confirmed nor refused is `postedPermitPending`:
+     * it may still attach, so the results say that is not known yet. Signing stops at the first
      * refusal: the wallet said no, and asking again for each remaining
      * request would not be a choice.
      */
@@ -283,6 +285,7 @@ export function BatchRefinancePanel({
         }
       }
       const attached = new Set<string>();
+      const unsure = new Set<string>();
       setStage({ kind: 'sending', step: 'attaching' });
       for (const chunk of chunkForMulticall(signed, MAX_MULTICALL_CALLS)) {
         let submitted: `0x${string}` | null = null;
@@ -301,12 +304,17 @@ export function BatchRefinancePanel({
           for (const id of permitsInLogs(mined.logs, walletChain.diamondAddress, address)) {
             attached.add(id);
           }
+        } else if ('pending' in mined) {
+          // Sent and neither confirmed nor refused: it may still attach
+          // these permits, so "not attached" is not established for them.
+          for (const c of chunk) unsure.add(c.offerId.toString());
         }
       }
       for (const [i, o] of all.entries()) {
-        if (o.kind === 'posted' && !attached.has(o.offerId)) {
-          all[i] = { loanId: o.loanId, kind: 'postedNoPermit', offerId: o.offerId };
-        }
+        if (o.kind !== 'posted' || attached.has(o.offerId)) continue;
+        all[i] = unsure.has(o.offerId)
+          ? { loanId: o.loanId, kind: 'postedPermitPending', offerId: o.offerId }
+          : { loanId: o.loanId, kind: 'postedNoPermit', offerId: o.offerId };
       }
     }
     try {
@@ -662,6 +670,8 @@ function outcomeText(o: RefinanceBatchOutcome): string {
       return copy.batchRefinance.posted(id, o.offerId);
     case 'postedNoPermit':
       return copy.batchRefinance.permit.postedNoPermit(id, o.offerId);
+    case 'postedPermitPending':
+      return copy.batchRefinance.permit.postedPermitPending(id, o.offerId);
     case 'changed':
       return copy.batchRefinance.changedOtherwise(id);
     case 'open':

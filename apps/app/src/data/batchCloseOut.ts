@@ -14,10 +14,8 @@
  * close. Outcomes are read back from the chain, never assumed from the
  * receipt.
  */
-import type { Log, PublicClient } from 'viem';
+import type { PublicClient } from 'viem';
 import { AssetType } from '../lib/types';
-import { captureTxError } from '../lib/errors';
-import { TxNotSettledError } from '../contracts/ownReceipt';
 import { readAllowanceNotBefore } from '../contracts/erc20';
 import type { CloseOutPlan, CloseOutPull } from './closeOutPlan';
 
@@ -134,42 +132,10 @@ export type BatchOutcome =
   | { loanId: number; kind: 'left-out'; reason: string }
   | { loanId: number; kind: 'unknown' };
 
-/** How one multicall send ended, as far as the chain can say. A mined
- *  send carries its receipt's logs: the items that ran emitted them, and
- *  an item that reverted had its logs rolled back with it. */
-export type Mined =
-  | { block: bigint; logs: readonly Log[] }
-  | { failure: string }
-  | { pending: true };
-
-/**
- * What a send that did not come back with a receipt actually did. Never
- * signed: a failure. Settled as not run (`TxNotSettledError`: reverted,
- * or cancelled or replaced in the wallet, which the receipt wait has
- * already established): a failure. Otherwise the write can throw while
- * its transaction is still on its way (a receipt wait that timed out),
- * so the submitted hash is looked up. Mined and successful: read back at
- * its block, as if the write had returned. Mined and reverted: a failure. Not found (still
- * pending, or replaced under another hash): pending, never a failure —
- * reading its loans as open and unwinding the approval would misreport a
- * batch that may still close them.
- */
-export async function settleFailedSend(
-  publicClient: PublicClient,
-  submitted: `0x${string}` | null,
-  err: unknown,
-): Promise<Mined> {
-  const failure = captureTxError(err);
-  if (!submitted || err instanceof TxNotSettledError) return { failure };
-  try {
-    const receipt = await publicClient.getTransactionReceipt({ hash: submitted });
-    return receipt.status === 'success'
-      ? { block: receipt.blockNumber, logs: receipt.logs }
-      : { failure };
-  } catch {
-    return { pending: true };
-  }
-}
+// The settle rule lives with the receipt helpers (contracts/ownReceipt),
+// where the single-request writes reach it too (#1558); re-exported here
+// for the batch flows that import it from this module.
+export { settleFailedSend, type Mined } from '../contracts/ownReceipt';
 
 /**
  * The allowance left standing after a batch, per token, read live from a
