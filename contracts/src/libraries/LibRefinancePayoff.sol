@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibPermit2, ISignatureTransfer} from "./LibPermit2.sol";
+import {LibEntitlement} from "./LibEntitlement.sol";
 
 /**
  * @title  LibRefinancePayoff
@@ -102,6 +103,25 @@ library LibRefinancePayoff {
     error RefinancePayoffAboveSigned(uint256 offerId, uint256 payoff, uint256 maxAmount);
     /// @notice The permit on request `offerId` expired at `deadline`.
     error RefinancePayoffPermitExpired(uint256 offerId, uint256 deadline);
+
+    /// @notice The payoff a refinance of `loanId` pulls at time `at`: the
+    ///         principal, the interest the exiting lender's settlement prices
+    ///         and any late fee. The treasury's fee comes out of this sum, so
+    ///         it is the whole amount the borrower pays, however the yield fee
+    ///         resolves (every branch only moves part of the treasury fee to
+    ///         the lender).
+    /// @dev    `RefinanceFacet`'s settlement distributes exactly this at
+    ///         `block.timestamp`; `RefinancePayoffFacet.getRefinancePayoff`
+    ///         reports it now and at the end of grace.
+    function amountAt(uint256 loanId, LibVaipakam.Loan storage loan, uint256 at)
+        internal
+        view
+        returns (uint256)
+    {
+        return loan.principal
+            + LibEntitlement.settlementInterestNet(loan, at)
+            + LibVaipakam.calculateLateFeeAt(loanId, at);
+    }
 
     /// @notice The witness the permit binds: this loan, through this request.
     function witness(uint256 loanId, uint256 offerId) internal pure returns (bytes32) {

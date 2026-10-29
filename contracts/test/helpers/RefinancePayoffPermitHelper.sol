@@ -5,7 +5,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockPermit2} from "../mocks/MockPermit2.sol";
 import {LibPermit2} from "../../src/libraries/LibPermit2.sol";
-import {RefinanceFacet} from "../../src/facets/RefinanceFacet.sol";
+import {RefinancePayoffFacet} from "../../src/facets/RefinancePayoffFacet.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 
 /// @dev Permit2's EIP-712 domain getter.
@@ -80,7 +80,7 @@ library RefinancePayoffPermitHelper {
         vm.prank(borrower);
         IERC20(asset).approve(LibPermit2.PERMIT2, type(uint256).max);
         vm.prank(borrower);
-        RefinanceFacet(diamond).setRefinancePayoffPermit(
+        RefinancePayoffFacet(diamond).setRefinancePayoffPermit(
             offerId, maxAmount, offerId, type(uint64).max, hex"01"
         );
     }
@@ -132,7 +132,7 @@ library RefinancePayoffPermitHelper {
         vm.prank(borrower);
         IERC20(asset).approve(LibPermit2.PERMIT2, type(uint256).max);
         vm.prank(borrower);
-        RefinanceFacet(diamond).setRefinancePayoffPermit(offerId, maxAmount, nonce, deadline, sig);
+        RefinancePayoffFacet(diamond).setRefinancePayoffPermit(offerId, maxAmount, nonce, deadline, sig);
     }
 
     /// @notice For a live-fork test that runs a chain's DEPLOYED code: when
@@ -150,11 +150,11 @@ library RefinancePayoffPermitHelper {
         uint256 nonce
     ) internal returns (bool) {
         if (
-            IDiamondLoupe(diamond).facetAddress(RefinanceFacet.setRefinancePayoffPermit.selector)
+            IDiamondLoupe(diamond).facetAddress(RefinancePayoffFacet.setRefinancePayoffPermit.selector)
                 == address(0)
         ) return false;
         (, , uint256 atGraceEnd, , , , , ) =
-            RefinanceFacet(diamond).getRefinancePayoff(loanId, offerId);
+            RefinancePayoffFacet(diamond).getRefinancePayoff(loanId, offerId);
         attachSigned(diamond, pk, asset, loanId, offerId, atGraceEnd, nonce, block.timestamp + 1 days);
         return true;
     }

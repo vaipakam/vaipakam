@@ -1666,7 +1666,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](5);
         selectors[0] = RefinanceFacet.refinanceLoan.selector;
         // T-092-H (#549) — atomic accept-and-refinance internal
         // entries; cut so the diamond fallback can route the
@@ -1677,10 +1677,6 @@ contract HelperTest {
         // #2407 — the refinance-request record's view.
         selectors[3] = RefinanceFacet.getRefinanceRequest.selector;
         selectors[4] = RefinanceFacet.checkRefinanceRequest.selector;
-        // #1558 — the payoff permit a refinance request carries, and its view.
-        selectors[5] = RefinanceFacet.setRefinancePayoffPermit.selector;
-        selectors[6] = RefinanceFacet.clearRefinancePayoffPermit.selector;
-        selectors[7] = RefinanceFacet.getRefinancePayoff.selector;
         return selectors;
     }
 
@@ -2718,6 +2714,12 @@ contract HelperTest {
     /// `FacetSelectors.sellerClaim()` (the same one `DeployDiamond` cuts).
     function getSellerClaimFacetSelectors() public pure returns (bytes4[] memory selectors) {
         selectors = FacetSelectors.sellerClaim();
+    }
+
+    /// #1558 - the refinance payoff-permit host. Returns the ONE list in
+    /// `FacetSelectors.refinancePayoff()` (the same one `DeployDiamond` cuts).
+    function getRefinancePayoffFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = FacetSelectors.refinancePayoff();
     }
 
     /// #2795 - the forced-sale host. Returns the ONE list in

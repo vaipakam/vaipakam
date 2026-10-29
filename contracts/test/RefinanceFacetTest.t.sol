@@ -43,6 +43,7 @@ import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {RefinancePayoffPermitHelper} from "./helpers/RefinancePayoffPermitHelper.sol";
+import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
 import {MockPermit2} from "./mocks/MockPermit2.sol";
 import {LibPermit2, ISignatureTransfer} from "../src/libraries/LibPermit2.sol";
 import {LibRefinancePayoff} from "../src/libraries/LibRefinancePayoff.sol";
@@ -133,7 +134,7 @@ contract RefinanceFacetTest is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](27);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](28);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -245,6 +246,13 @@ contract RefinanceFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(OfferPreviewFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferPreviewFacetSelectors()
+        });
+        // #1558 - the borrower attaches the payoff permit a refinance uses
+        // through RefinancePayoffFacet.
+        cuts[27] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(RefinancePayoffFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRefinancePayoffFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -1643,7 +1651,7 @@ contract RefinanceFacetTest is Test {
         returns (uint256 now_, uint256 atGraceEnd, address signer, uint256 maxAmount)
     {
         (, now_, atGraceEnd, signer, maxAmount, , , ) =
-            RefinanceFacet(address(diamond)).getRefinancePayoff(loanId, offerId);
+            RefinancePayoffFacet(address(diamond)).getRefinancePayoff(loanId, offerId);
     }
 
     /// @notice The payoff comes through the request's permit, in one pull of
@@ -1684,7 +1692,7 @@ contract RefinanceFacetTest is Test {
     /// @notice Without a permit the refinance is refused by name.
     function test_1558_refinance_refusedWithoutAPermit() public {
         vm.prank(borrower);
-        RefinanceFacet(address(diamond)).clearRefinancePayoffPermit(borrowerOfferId);
+        RefinancePayoffFacet(address(diamond)).clearRefinancePayoffPermit(borrowerOfferId);
         _acceptBorrowerOffer(borrowerOfferId);
         vm.prank(borrower);
         vm.expectRevert(
@@ -1718,7 +1726,7 @@ contract RefinanceFacetTest is Test {
     function test_1558_refinance_refusedOnAnExpiredPermit() public {
         uint256 deadline = block.timestamp + 1 hours;
         vm.prank(borrower);
-        RefinanceFacet(address(diamond)).setRefinancePayoffPermit(
+        RefinancePayoffFacet(address(diamond)).setRefinancePayoffPermit(
             borrowerOfferId, type(uint256).max, 7, deadline, hex"01"
         );
         _acceptBorrowerOffer(borrowerOfferId);
@@ -1741,20 +1749,20 @@ contract RefinanceFacetTest is Test {
                 LibRefinancePayoff.RefinancePayoffNotRequestCreator.selector, borrowerOfferId
             )
         );
-        RefinanceFacet(address(diamond)).setRefinancePayoffPermit(
+        RefinancePayoffFacet(address(diamond)).setRefinancePayoffPermit(
             borrowerOfferId, 1 ether, 1, block.timestamp + 1, hex"01"
         );
         vm.startPrank(borrower);
         vm.expectRevert(LibRefinancePayoff.RefinancePayoffPermitInvalid.selector);
-        RefinanceFacet(address(diamond)).setRefinancePayoffPermit(
+        RefinancePayoffFacet(address(diamond)).setRefinancePayoffPermit(
             borrowerOfferId, 0, 1, block.timestamp + 1, hex"01"
         );
         vm.expectRevert(LibRefinancePayoff.RefinancePayoffPermitInvalid.selector);
-        RefinanceFacet(address(diamond)).setRefinancePayoffPermit(
+        RefinancePayoffFacet(address(diamond)).setRefinancePayoffPermit(
             borrowerOfferId, 1 ether, 1, block.timestamp - 1, hex"01"
         );
         vm.expectRevert(LibRefinancePayoff.RefinancePayoffPermitInvalid.selector);
-        RefinanceFacet(address(diamond)).setRefinancePayoffPermit(
+        RefinancePayoffFacet(address(diamond)).setRefinancePayoffPermit(
             borrowerOfferId, 1 ether, 1, block.timestamp + 1, ""
         );
         vm.stopPrank();
@@ -1765,7 +1773,7 @@ contract RefinanceFacetTest is Test {
                 LibRefinancePayoff.RefinancePayoffNotRequestCreator.selector, borrowerOfferId
             )
         );
-        RefinanceFacet(address(diamond)).clearRefinancePayoffPermit(borrowerOfferId);
+        RefinancePayoffFacet(address(diamond)).clearRefinancePayoffPermit(borrowerOfferId);
     }
 
     /// @notice Against Uniswap's REAL Permit2: a permit signed the way a
@@ -1779,14 +1787,14 @@ contract RefinanceFacetTest is Test {
         _acceptBorrowerOffer(borrowerOfferId);
         vm.warp(block.timestamp + 5 days);
         (, , uint256 atGraceEnd, , , , , ) =
-            RefinanceFacet(address(diamond)).getRefinancePayoff(activeLoanId, borrowerOfferId);
+            RefinancePayoffFacet(address(diamond)).getRefinancePayoff(activeLoanId, borrowerOfferId);
         uint256 nonce = 0x1558 << 8 | 3;
         RefinancePayoffPermitHelper.attachSigned(
             address(diamond), borrowerPk, mockERC20, activeLoanId, borrowerOfferId,
             atGraceEnd, nonce, block.timestamp + 1 days
         );
         (, , , , , , , bool spentBefore) =
-            RefinanceFacet(address(diamond)).getRefinancePayoff(activeLoanId, borrowerOfferId);
+            RefinancePayoffFacet(address(diamond)).getRefinancePayoff(activeLoanId, borrowerOfferId);
         assertFalse(spentBefore, "the nonce is live while the permit is attached");
 
         vm.prank(borrower);
