@@ -74,6 +74,15 @@ library LibEncumbrance {
         uint256 available
     );
 
+    /// @notice #2814 — raised when a withdrawal or a draw exceeds what
+    ///         `holder` has reserved for `loanId`'s auto-extensions.
+    error ExtendReserveInsufficient(
+        uint256 loanId,
+        address holder,
+        uint256 requested,
+        uint256 available
+    );
+
     /// @notice #2342 — selector of `EncumbranceMutateFacet.syncTierExclusion`,
     ///         the host that re-derives a loan's VPFI fee-tier exclusion from
     ///         this ledger. Spelled from the signature rather than referenced
@@ -366,6 +375,48 @@ library LibEncumbrance {
         if (amount == 0) return 0;
         s.sellerInterestHeld[loanId][seller][asset] = 0;
         _decrementAggregate(seller, asset, 0, amount);
+    }
+
+    // ─── #2814 — the auto-extend reserve, in the depositor's own vault ────
+
+    /// @notice Reserve `amount` of `asset` (the loan's principal asset) that
+    ///         `holder` just deposited into their own vault for `loanId`'s
+    ///         auto-extensions. It is not free balance: no other withdrawal
+    ///         reaches it, and it leaves only through an extension's draw or
+    ///         {unlienExtendReserve} for the depositor's own withdrawal. The
+    ///         tokens are the depositor's own, so this is no fee-tier exclusion.
+    function lienExtendReserve(
+        uint256 loanId,
+        address holder,
+        address asset,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.extendReserve[loanId][holder] += amount;
+        s.encumbered[holder][asset][0] += amount;
+    }
+
+    /// @notice Release `amount` of `holder`'s reserve for `loanId` back to free
+    ///         balance, for the extension's draw or the depositor's withdrawal,
+    ///         which both run straight after. Reverts
+    ///         {ExtendReserveInsufficient} past what is reserved.
+    function unlienExtendReserve(
+        uint256 loanId,
+        address holder,
+        address asset,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 reserved = s.extendReserve[loanId][holder];
+        if (amount > reserved) {
+            revert ExtendReserveInsufficient(loanId, holder, amount, reserved);
+        }
+        unchecked {
+            s.extendReserve[loanId][holder] = reserved - amount;
+        }
+        _decrementAggregate(holder, asset, 0, amount);
     }
 
     // ─── #998 S10 (#1006) Class B — ACTIVE-loan held reservation ─────────────

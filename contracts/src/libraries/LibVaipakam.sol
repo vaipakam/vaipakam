@@ -8172,6 +8172,14 @@ library LibVaipakam {
         ///      under the seller while it waits. Written only by
         ///      `SellerClaimFacet`. Appended — append-only.
         mapping(uint256 => mapping(address => mapping(address => uint256))) sellerInterestHeld;
+        /// @dev #2814 — per loan and depositor: the loan's principal asset the
+        ///      depositor (the borrower-position holder when they deposited)
+        ///      put into their own vault for that loan's auto-extensions.
+        ///      Reserved in `encumbered` under the depositor while it waits; an
+        ///      extension draws it first, and the depositor may withdraw what is
+        ///      left at any time. Written only by `LibEncumbrance`. Appended —
+        ///      append-only.
+        mapping(uint256 => mapping(address => uint256)) extendReserve;
     }
 
     /// @notice #918 — one (destination, day)'s remit ledger on Base. See

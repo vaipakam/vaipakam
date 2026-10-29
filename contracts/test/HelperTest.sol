@@ -1105,7 +1105,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](14);
+        selectors = new bytes4[](17);
         selectors[0] = AutoLifecycleFacet.setAutoLendConsent.selector;
         selectors[1] = AutoLifecycleFacet.getAutoLendConsent.selector;
         selectors[2] = AutoLifecycleFacet.setAutoOptInOnNewLoan.selector;
@@ -1122,6 +1122,10 @@ contract HelperTest {
         selectors[12] = AutoLifecycleFacet.extendLoanInPlace.selector;
         // #2738 — when a loan may be extended (the keeper reads it).
         selectors[13] = AutoLifecycleFacet.getAutoExtendWindow.selector;
+        // #2814 — the extension reserve: fund, withdraw, and what is ready.
+        selectors[14] = AutoLifecycleFacet.fundExtendReserve.selector;
+        selectors[15] = AutoLifecycleFacet.withdrawExtendReserve.selector;
+        selectors[16] = AutoLifecycleFacet.getExtendFunding.selector;
     }
 
     /// @notice #407 PR 2 (2026-06-12) — encumbrance mutate facet
