@@ -4,9 +4,9 @@
 
 Vaipakam is a decentralized peer-to-peer (P2P) lending and borrowing platform built for separate per-network deployments on Base, Polygon, Arbitrum, Optimism, and Ethereum mainnet. It facilitates lending and borrowing of ERC-20 tokens and rentable ERC-721/1155 NFTs, using any ERC-20 or NFT assets as collateral. The platform mints NFTs to represent offers and loans, ensuring transparency and traceability. This document specifies observable platform behavior and funds flows for Phase 1.
 
-## Current Functional Consolidation Through 2026-10-27
+## Current Functional Consolidation Through 2026-10-28
 
-The dated release notes from 2026-08-13 through 2026-10-27, inclusive,
+The dated release notes from 2026-08-13 through 2026-10-28, inclusive,
 are consolidated into the relevant sections below. Later recorded intent
 decisions already present in this specification remain in force. The following
 platform-wide rules apply across the lifecycle:
@@ -186,6 +186,11 @@ platform-wide rules apply across the lifecycle:
   the health calculation.
 - Offer collateral floors and lending ceilings apply consistently at offer
   creation, offer modification, and match materialization.
+- A selling lender retains earned unpaid interest as a claim on the loan.
+  Later lender-side interest pays sellers oldest first, while a short recovery
+  protects the current holder's principal first. Treasury takes no sale-time
+  interest forfeiture; interaction rewards still follow their separate sale
+  forfeiture rule. The detailed sale rules below govern both routes.
 - Fee rates are snapshotted at loan origination. Later governance changes do
   not rewrite the economics of an already-open loan.
 - Sanctioned loan proceeds are frozen, not seized. Must-complete close-outs
@@ -204,7 +209,7 @@ platform-wide rules apply across the lifecycle:
 
 - [Vaipakam DeFi | Decentralized P2P Lending, Borrowing and NFT Rental Platform (Phase 1)](#vaipakam-defi--decentralized-p2p-lending-borrowing-and-nft-rental-platform-phase-1)
   - [Platform Functional Overview](#platform-functional-overview)
-  - [Current Functional Consolidation Through 2026-10-27](#current-functional-consolidation-through-2026-10-27)
+  - [Current Functional Consolidation Through 2026-10-28](#current-functional-consolidation-through-2026-10-28)
   - [Table of Contents](#table-of-contents)
   - [1. Supported Assets and Networks (Phase 1)](#1-supported-assets-and-networks-phase-1)
     - [Lending and Collateral Assets](#lending-and-collateral-assets)
@@ -274,7 +279,7 @@ platform-wide rules apply across the lifecycle:
       - [Purpose](#purpose-2)
       - [Preconditions](#preconditions-2)
       - [Economic Treatment](#economic-treatment)
-        - [Accrued Interest](#accrued-interest)
+        - [Accrued Interest](#accrued-interest--the-seller-keeps-a-claim)
         - [Principal Recovery](#principal-recovery)
         - [Rate Difference / Shortfall Handling](#rate-difference--shortfall-handling)
         - [Frontend Warning](#frontend-warning)
@@ -1644,8 +1649,12 @@ contracts, and it must reach an operator promptly rather than wait to be read.
 The check states what it cannot see: a loan whose earlier history it never
 observed is checked against the diagram from its first observed move, and the
 count of loans it has watched from initiation is published with its results.
-An observation stays recorded until an operator has investigated it and
-acknowledged it in a reviewed change; the check never quietly forgets one.
+Every violation remains recorded. After investigation an operator may
+acknowledge it in a reviewed change to stop that violation's alert; the
+acknowledgement does not erase the evidence. A replayed scan neither reapplies
+state nor records the violation twice. The monitor never corrects served loan
+records to conceal a discrepancy, and a missing health report is itself an
+operator incident.
 
 ### Repayment Logic
 
@@ -1839,7 +1848,7 @@ acknowledged it in a reviewed change; the check never quietly forgets one.
 
 ### Periodic Interest Payments
 
-Periodic interest payment is a dormant Phase 1 feature controlled by `periodicInterestEnabled`. When disabled, offer creation must reject non-`None` cadences and accept `None` on any duration (no mandatory annual checkpoint applies while the feature is off), settlement entry points must not execute, and the frontend should hide cadence-related controls.
+Periodic interest payment is a dormant Phase 1 feature with a deployment-level enablement switch. When disabled, offers may pay interest only at repayment, regardless of duration; no mandatory annual checkpoint applies and periodic settlement cannot run. The form explains that limitation. Existing scheduled loans keep their period information visible, with settlement stated as switched off; hiding the feature must not hide an existing obligation or imply that collateral can be sold while settlement is disabled.
 
 Purpose:
 
@@ -3037,7 +3046,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **Handover Preflight:** The handover phase must verify bytecode exists at the configured Governance Safe, Pauser / Guardian Safe, and Timelock addresses before granting roles or renouncing the deployer. On mainnet, zero bytecode at any privileged recipient is a hard stop because granting admin power to an undeployed address can make recovery impossible after deployer renounce.
 - **CCIP Handover:** Production handover must rotate the full CCIP stack to governance, including the messenger, VPFI token pool, rate-limit governor, reward messenger, mirror token where present, and the Cross-Chain Token administrator entry. The Timelock should own upgrade and lane-configuration authority after handover, while guardian pause remains available for fast incident response.
 - **Cloudflare Surface Separation:** Public hosted infrastructure should keep read-only, read/index, write/act, and ingestion duties separated. The intended split is `vaipakam.com` for the marketing / docs surface with no chain credentials, `app.vaipakam.com` for the connected app surface, `agent.vaipakam.com` for read/index APIs and diagnostics endpoints, `keeper.vaipakam.com` for autonomous write actions with signing and aggregator credentials, and `indexer.vaipakam.com` for chain-to-archive ingestion with database write credentials. This describes the target separation, not necessarily today's bindings: the connected app's hostname is bound and serving, while surfaces with no public entry point (the keeper is cron-only) need no hostname at all — the requirement is the separation of duties and credentials, not that every surface answer on a URL. Shared archive storage such as the `vaipakam-warm` D1 database should be accessed with least-privilege credentials per Worker, and Worker bindings should grant only the read or write capability each surface needs. Deployment scripts should expose per-surface Cloudflare phases (`cf-app`, `cf-www`, `cf-keeper`, `cf-indexer`, `cf-agent`) plus an all-Cloudflare skip alias for rehearsals that do not need hosted-app redeploys.
-- **No Provider Credential in the Browser (#1724):** The connected app reads chain state from the visitor's browser, and anything compiled into its bundle is public. A provider credential must therefore never ship in the bundle of a deployment that serves a mainnet chain. Such a deployment reads every chain through a read-only RPC proxy operated by the platform, which holds each chain's provider credential as a Worker secret dedicated to it (never the keeper's or indexer's credentials, so browser traffic cannot spend the quota a keeper needs to act on a loan in time). The proxy forwards only reads: contract calls, gas estimates, block, transaction, receipt, balance, code, storage, nonce and fee reads, and event-log queries that name the contracts they read and cover a bounded block range. It never forwards a transaction, a signature or a subscription; transactions go through the user's own wallet. It serves only the app's own origins, bounds each caller's request rate, never returns or logs the credential (including inside an upstream error), and refuses an upstream that answers for a different chain than the one requested. When the proxy is unavailable, over budget or refuses a request, the app falls back to the chain's public endpoint rather than failing the read. A proxied build carries no per-chain credential at all, so its build refuses one, and a build serving a mainnet chain without the proxy is refused. The proxy runs on the paid Cloudflare plan, which is a mainnet launch gate. Testnet builds may still read through a configured endpoint until then, which should be restricted to the app's origins in the provider's own settings.
+- **No Provider Credential in the Browser (#1724):** The connected app reads chain state from the visitor's browser, and anything compiled into its bundle is public. A provider credential must therefore never ship in the bundle of a deployment that serves a mainnet chain. Such a deployment reads every chain through a read-only RPC proxy operated by the platform, which holds each chain's provider credential as a Worker secret dedicated to it (never the keeper's or indexer's credentials, so browser traffic cannot spend the quota a keeper needs to act on a loan in time). The proxy forwards only reads: contract calls, gas estimates, block, transaction, receipt, balance, code, storage, nonce and fee reads, and event-log queries that name the contracts they read and cover at most 2,000 blocks. It never forwards a transaction, a signature or a subscription; transactions go through the user's own wallet. It serves only the app's own origins, bounds each caller's request rate, never returns or logs the credential (including inside an upstream error), and refuses an upstream that answers for a different chain than the one requested. When the proxy is unavailable, over budget or refuses a request, the app falls back to the chain's public endpoint rather than failing the read. A proxied build carries no per-chain credential at all, so its build refuses one, and a build serving a mainnet chain without the proxy is refused. The proxy runs on the paid Cloudflare plan, which is a mainnet launch gate. Testnet builds may still read through a configured endpoint until then, which should be restricted to the app's origins in the provider's own settings.
 - **Worker Secret Management:** Shared Worker secrets should be stored in an account-level secret store and bound only into Workers that need them, so provider keys, per-chain RPC URLs, Telegram credentials, swap-aggregator keys, and push-channel signing keys can be rotated centrally. Workers should resolve their bound secrets once at request / scheduled-entry boundaries, fail with operator-visible configuration errors when required secrets are unavailable, and keep non-secret configuration as ordinary Worker config.
 - **Marketing Domain Canonicalization:** `vaipakam.com` is the canonical marketing origin. `www.vaipakam.com` should redirect to the apex while preserving path and query string, and metadata / sitemap / hreflang helpers should emit apex-rooted URLs even if a legacy host is still bound during transition. The source package and Worker should use the `www` naming convention (`apps/www`, `@vaipakam/www`, `vaipakam-www`) for contributor clarity, while the public canonical hostname remains apex.
 - **BNB Testnet Gas Policy:** Deployments use an explicit gas price meeting the network’s accepted minimum (5 gwei in the referenced rehearsal), and provide a controlled replacement for a transaction dropped for insufficient gas price. An estimated price is not proof the network accepted a transaction.
@@ -3422,6 +3431,59 @@ All functions are pure `view` functions (zero gas for callers when invoked via R
 - **The Live Update Channel Is Bounded:** The channel that tells the platform's pages when chain data has changed admits only the platform's own pages, meters new connections per caller under the same rule as every other limit (a missing or failing limiter refuses), and caps how many connections it holds for each chain and for each caller. A page that is refused stays on ordinary refreshing, so a full channel delays an update, never hides one. The channel carries only the signal that something changed; the data itself is always read from the same public read routes as before.
 - **A Failure Is Reported Without The Credentials It Touched:** When an off-chain service reports a failure, in its own log, an operator alert, a stored record or a response, the report never carries a provider address or key. Chain-provider addresses embed the operator's key and the libraries that call them repeat the full address in their errors, so a failure's text is passed through one shared redaction before it is written anywhere: every web address is removed whole, so is a provider host name that carries a per-customer label in front of the provider's domain (a lookup failure names the host alone), and so is any key-, token- or password-shaped value, in full even when it is quoted and holds spaces or separators. What an operator needs to tell failures apart stays: the kind of failure, its message with those values removed, the chain of causes, and where in the code it happened. Shortening a message is not redaction, because the address sits near its start.
 
+### Off-Chain Backup Integrity and Coverage
+
+Production off-chain data needed for usability and compliance requires a
+backup outside the primary hosting account and billing boundary, a recurring
+readability check, and a restore path into a fresh hosting account. Indexed
+offers and loans, signed offers and other user-created records, support
+diagnostics, legal-hold records, and legal-document storage belong in scope.
+Every off-chain record has an explicit restore treatment: restore it from
+backup or rebuild it from the chain; chain-derived fields are rebuilt rather
+than trusted from the archive. Encryption remains a mainnet requirement;
+offline public-key encryption and removal of the backup Worker's read access
+must not be described as completed by these monitoring changes alone.
+
+- A daily integrity watcher runs independently of the backup job and its
+  hosting account. It downloads each new archive version, computes the digest
+  and byte length of the actual bytes, and checks both against its manifest.
+  Changing a manifest requires another check, not acceptance of the new claim.
+- Its immutable observation ledger lives in a separate bucket the backup job
+  cannot write. Compliance retention cannot be shortened: daily and monthly
+  observations are held for 400 days, yearly observations for ten years and
+  extended while the corresponding archive still exists. Unexpected ledger
+  versions or hiding markers are incidents, including failed extensions.
+- Missing expected periods, duplicate archives for a period, reused old
+  archive bytes, manifest disagreement, premature disappearance, and unexpected
+  ledger additions alert operators. Archive names are not exposed in logs or
+  alerts, because their unpredictable component helps protect against
+  replacement using a leaked write credential.
+- An unavailable watcher or incomplete check raises a distinct not-running
+  incident rather than declaring the archives broken or healthy. Separate
+  scoped credentials and the independent bucket must be provisioned before
+  the watcher can establish protection. Initial observations prove integrity
+  only since first observation, never authenticity before it.
+- Nightly uploads and watcher reads retry transient network, throttling, or
+  server faults up to three times with a short pause; a definite refusal
+  stops immediately. The watcher never repeats an indeterminate ledger upload
+  within a run, since it may already have created a locked version. It still
+  judges the archive from the bytes read, reports the deferred record, and on
+  a later run checks whether the first upload landed before writing another.
+  A nightly retry that creates a second archive version is reported as
+  ambiguous, not silently accepted.
+- An archive left unrecorded more than two days after the ledger could first
+  record it alerts operators. An empty ledger has no age clock and protects
+  nothing, so inability to write its first record alerts immediately.
+- Expected monthly coverage starts at September 2026, in both the watcher
+  and backup service healthcheck. It does not move forward merely because the
+  oldest surviving archive was deleted. Yearly coverage starts only with an
+  actual first January archive. A stale deployed baseline is disclosed as
+  degraded coverage until the matching configuration is deployed.
+- The owner acknowledged the missing October 2026 monthly and missing
+  manifests for the October 18 and 25 daily archives. These historical gaps
+  cannot be recreated. Acknowledgement suppresses only those alerts and
+  provides no exemption for later missing archives or manifests.
+
 ### Testing and Auditing
 
 The required functional safeguards are:
@@ -3445,7 +3507,7 @@ The required functional safeguards are:
 
 - **Off-Chain Data-Flow Audit:** Before mainnet, the project should maintain a catalog of off-chain reads and writes used by the frontend, workers, indexer, keeper, and operator tools. Each entry should identify signer requirements, freshness or time-to-live assumptions, fail-open or fail-closed behavior, plausibility checks, and blast radius. External reads that influence money-moving decisions should have explicit stale-data handling, and keeper writes should remain bounded by on-chain checks.
 
-- **Off-Chain Data Resilience:** Before mainnet, production off-chain data needed for usability and compliance should have an encrypted backup path outside the primary hosting account and billing boundary. The backup set should include indexed offer / loan data, diagnostics needed for support, legal-hold audit records, and legal-document storage. Operators should verify backup readability on a recurring schedule and maintain a documented restore path for a fresh hosting account. Every record users create off chain, such as signed offers, belongs in that backup set, and every off-chain table has a decided restore treatment: it is either restored from the backup or rebuilt from the chain, and where part of a record comes from the chain, that part is rebuilt from the chain rather than trusted from the backup. The backup's integrity is watched from outside both the hosting account and the backup job: every archive is recorded, with when it first existed and a digest of its bytes, in an append-only record the backup job cannot write and nobody can rewrite or shorten, and the operator is alerted when an expected archive is missing, a period holds more than one archive, an archive repeats an older one, an archive disagrees with its manifest, an archive disappears before its retention allows, or that record itself shows an addition the watcher did not make. A passing fault at the storage provider is retried rather than allowed to cost a night's archive or its manifest; a retry that leaves a second copy, where the first had in fact landed, is reported rather than passed over; and a record the watcher could not write is left to its next run rather than written twice, with the archive still judged meanwhile and an alert if it stays unrecorded; while the record holds nothing at all, a failure to write to it is alerted at once, since until then it protects nothing.
+- **Off-Chain Data Resilience:** Backup completeness, independent byte-level verification, immutable observations, retry outcomes, and acknowledged coverage gaps follow [Off-Chain Backup Integrity and Coverage](#off-chain-backup-integrity-and-coverage).
 
 - **Risk Sign-Off Package:** Before each mainnet launch or material risk-control activation, operators should archive a risk sign-off covering audit posture, parameter sanity, emergency controls, bot and external dependency readiness, chain-specific deployment readbacks, liquidation economics, sequencer and oracle outage behavior, and the exact scope being approved.
 
@@ -3491,7 +3553,23 @@ not evidence that every requirement has been verified on a live deployment.
 - **Discounted-Liquidation Receiver Deployment:** Chains that use the flash-loan-funded discounted path must deploy `FlashLoanLiquidator` per chain with `KEEPER_BOT_OWNER` matching the keeper Worker signer and at least one configured Aave V3 Pool or Balancer V2 Vault. Deployment must write the receiver address into chain deployment artifacts and refresh the generated deployments bundle before keeper rollout.
 - **Internal-Match Rollout:** Internal liquidation matching should default off after deployment. Operators must verify the default-off state, deploy and fund the keeper-bot path for the selected chain, enable the switch through the governed admin path only after audit sign-off, and monitor internal-match event volume plus matcher wallet balances before widening the priority window.
 - **Per-Chain Flip Discipline:** the enabled depth-tiered LTV setting, the enabled discounted-liquidation setting, and internal-match enablement remain independent manual Timelock / Safe-governed rollouts per chain after audit sign-off. Operators may stage them separately. Emergency controls remain available through per-asset pause, master switch disable, discount-path disable, internal-match disable, keeper-side environment flag removal, and anomaly auto-pause.
-- **Worker D1 Migrations:** Worker deployments should run idempotent D1 migrations as part of testnet and mainnet deploy flows so offer / loan / activity endpoints cannot fail because tables were not created. Already-applied migrations should be skipped by the migration tool rather than treated as errors. Fresh testnet redeploys should also clear rows scoped to the old active chain / Diamond before new indexing begins, including the case where the old deployment artifact was already moved into an archive folder.
+- **Worker Database Compatibility:** Database changes must remain compatible
+  with the previous services while they are still serving. Changes are
+  additive; removing or renaming a table or field, or introducing a required
+  field without a default, requires a documented second release after the
+  deployed services no longer depend on the old shape. Already-applied changes
+  are skipped safely. A new deployment resets only the chain-scoped records
+  belonging to its previous Diamond through the indexer's deployment-epoch
+  adoption; manual row deletion is not the replacement procedure.
+- **Deployment Visibility:** Every hosted service reports the source revision
+  of its installed release, or explicitly says when it cannot. An hourly
+  monitor identifies deployed Workers missing runtime changes merged more
+  than six hours ago, raises one consolidated operator incident, and closes
+  it when nothing is overdue. An unreadable deployment is unknown, never
+  current. A deliberate deployment hold is recorded with its reviewed reason
+  and remains visible without repeatedly paging; an inferred revision is
+  labelled inferred. This monitoring does not establish that the separate
+  keeper VM has installed a release.
 - **RPC Secret Preflight:** Deployment scripts should check for the expected per-chain worker RPC secrets and hard-fail the watcher phase when any active chain's `RPC_<CHAIN>` secret is missing, printing the exact operator command to set it. Scripts must not auto-populate RPC secrets because those values may contain provider API keys, but they also must not silently complete a deploy while an active chain is invisible to the indexer.
 - **Consumer Publication:** Before hosted apps or services are released, their published contract interfaces describe the deployed contracts and carry source provenance. Bots, watchers, and frontends must not decode different shapes for the same deployed state.
 - **Monitoring Publication:** Indexing and monitoring configurations derive from the same confirmed deployment records as the apps. A fresh deployment must not leave watchers or alerts pointed at retired contracts.

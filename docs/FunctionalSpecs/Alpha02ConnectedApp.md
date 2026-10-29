@@ -7,7 +7,7 @@ destinations and flipped the cutover switch; the `/recover` guide links
 alone stay on the legacy host, held by same-origin recovery state rather
 than by any missing route). It is the app-specific functional
 spec consolidated against the release notes from 2026-08-13 through
-2026-10-27, inclusive, while retaining later recorded intent decisions. It is intentionally
+2026-10-28, inclusive, while retaining later recorded intent decisions. It is intentionally
 written without implementation snippets. (The app was called `alpha02` and
 served `alpha02.vaipakam.com` until #1854 renamed it; this file keeps the old
 name only in its filename.)
@@ -221,12 +221,11 @@ including people who never will.
   in-place extension. The layer-2 sequencer guard is described as holding
   prices both while the sequencer is down and for the hour after it
   returns.
-- A setting that can change without announcing it on chain (today the
-  layer-2 sequencer uptime feed, and the ETH reference feed, which one of
-  its two setters changes silently) can lag in the indexer's snapshot until
-  its next scheduled refresh. While the console shows the snapshot, that
-  row says so. Every other published setting names the events that announce
-  its change, and the snapshot refreshes on each of them.
+- Every published mutable setting announces its previous and new value on
+  chain, including chain-level oracle inputs and the backstop switches.
+  The indexer's configuration snapshot refreshes on these announcements.
+  An older deployment without a relevant announcement can lag until its
+  scheduled refresh; the console discloses that limitation beside the value.
 - The console shows the public indexer's snapshot only while that snapshot
   can stand in for the chain: it is dated, recent enough that the indexer's
   regular refresh is still running, not known to be behind a governance
@@ -2853,6 +2852,23 @@ is the borrower's own money.
 
 - A lender position sale review is based on the live loan, not only the listing
   row.
+- Both direct sales and listings explain that the seller keeps earned unpaid
+  interest as a claim on the loan. The buyer pays outstanding principal;
+  a higher buyer rate costs the seller the disclosed rate shortfall, paid
+  to the buyer. Treasury takes nothing at sale. Later lender-side interest
+  pays sellers oldest first, before the current holder's interest, under
+  [the platform's sale rules](ProjectDetailsREADME.md#accrued-interest--the-seller-keeps-a-claim).
+- The review distinguishes this retained interest from interaction rewards,
+  which the selling lender still forfeits. It states that an interest claim
+  depends on later payment and recovery: the current holder's principal
+  ranks first in a short recovery, and an unvalueable in-kind recovery closes
+  seller claims unpaid. The current holder's fee discount applies only to
+  their own interest. A sale that would exceed four open seller claims is
+  refused with that reason, rather than shown as available.
+- Interest already paid but held for the seller is credited to the seller's
+  own vault at sale; the remaining held balance follows the buyer. The
+  review shows these separately and states any sanctions hold. A historical
+  forfeiture description must not be presented as the current sale terms.
 - The buyer sees the current principal, collateral, remaining economics,
   borrower identity, and due date before signing.
 - The buyer signs the same live facts that the protocol enforces.
@@ -3019,6 +3035,9 @@ is the borrower's own money.
   faucet supply alone.
 - Faucet success should offer clear next steps back into borrow, lend, rent, or
   manage flows.
+- Demo rental NFTs may be burned only by their owner or an approved operator;
+  another wallet cannot destroy a token held by a user or escrowed for a loan.
+  These collections are testnet tooling, not production rental assets.
 
 ## Alerts
 
