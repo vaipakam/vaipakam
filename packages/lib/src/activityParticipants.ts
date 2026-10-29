@@ -64,6 +64,11 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['ExtendReserveFunded', ['holder']],
   ['ExtendReserveWithdrawn', ['holder']],
   ['ExtendChargeDrawn', ['holder']],
+  // #1558 — the borrower's single-use payoff permit on a refinance request;
+  // the pull names the borrower who pays, whoever completes the refinance.
+  ['RefinancePayoffPermitSet', ['signer']],
+  ['RefinancePayoffPermitCleared', ['signer']],
+  ['RefinancePayoffPulled', ['payer']],
   ['AutoListOptOutCleared', ['clearedBy']],
   ['LenderBackstopOptInSet', ['lenderNftOwner']],
   ['CollateralAdded', ['borrower']],

@@ -2549,7 +2549,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getRefinanceSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](8);
         s[0] = RefinanceFacet.refinanceLoan.selector;
         // T-092-H (#549) — atomic accept-and-refinance internal entries.
         // Cut here so the diamond fallback routes the cross-facet calls
@@ -2561,6 +2561,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #2407 — the loan → refinance-request record's view.
         s[3] = RefinanceFacet.getRefinanceRequest.selector;
         s[4] = RefinanceFacet.checkRefinanceRequest.selector;
+        // #1558 — the payoff permit a refinance request carries, and its view.
+        s[5] = RefinanceFacet.setRefinancePayoffPermit.selector;
+        s[6] = RefinanceFacet.clearRefinancePayoffPermit.selector;
+        s[7] = RefinanceFacet.getRefinancePayoff.selector;
     }
 
     function _getVpfiTokenSelectors() internal pure returns (bytes4[] memory s) {

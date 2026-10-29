@@ -32,6 +32,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAutoRefinanceCheck} from "../src/libraries/LibAutoRefinanceCheck.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {RefinancePayoffPermitHelper} from "./helpers/RefinancePayoffPermitHelper.sol";
 
 /**
  * @title  T092AutoLifecycleIntegrationTest
@@ -927,10 +928,10 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             LOAN_PRINCIPAL * 4
         );
 
-        // Step 5: borrower needs a standing diamond approval so the
-        // chained refinance can pull the old-payoff from their wallet.
-        // (Mirrors the dapp's consent-time approval set in #520.)
-        _grantStandingApprovalToDiamond(borrower, mockERC20);
+        // Step 5: the borrower attaches a payoff permit to the request so
+        // the chained refinance can pull the old payoff from their wallet
+        // (#1558: a single-use Permit2 permit, no standing allowance).
+        RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, refinanceOfferId);
 
         // Step 6: SINGLE TX — accept fires the chain. `makeAddrAndKey` yields
         // the SAME address `_provisionFundedActorWithVault` derived via
@@ -980,7 +981,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         address newLender = _provisionFundedActorWithVault(
             "carryoverNewLender", mockERC20, LOAN_PRINCIPAL * 4
         );
-        _grantStandingApprovalToDiamond(borrower, mockERC20);
+        RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, refinanceOfferId);
 
         // Pre-state: the OLD loan's collateral is liened exactly once.
         assertEq(
@@ -1192,6 +1193,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(borrower);
         taggedOfferId = OfferCreateFacet(address(diamond))
             .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+        RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, taggedOfferId);
     }
 
     function test_595_matchedCarryOver_admitsRetagsAndRepaysOld() public {
@@ -1393,7 +1395,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             lenderLabel, mockERC20, LOAN_PRINCIPAL * 4
         );
         (, newLenderPk) = makeAddrAndKey(lenderLabel);
-        _grantStandingApprovalToDiamond(borrower, mockERC20);
+        RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, taggedOfferId);
     }
 
     function test_2349_lenderAccept_killSwitchOff_refinanceCompletes() public {

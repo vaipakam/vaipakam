@@ -12,6 +12,7 @@ import {OracleFacet} from "../../src/facets/OracleFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
+import {RefinancePayoffPermitHelper} from "../helpers/RefinancePayoffPermitHelper.sol";
 
 /**
  * @title  RefinanceLenderAcceptLiveForkTest
@@ -83,7 +84,6 @@ contract RefinanceLenderAcceptLiveForkTest is Test {
         (address borrower, uint256 borrowerPk) = makeAddrAndKey("forkRefiBorrower");
         (address lenderA, uint256 lenderAPk) = makeAddrAndKey("forkRefiLenderA");
         (address lenderB, uint256 lenderBPk) = makeAddrAndKey("forkRefiLenderB");
-        borrowerPk; // the borrower creates; only acceptors sign
 
         // 1. Open the loan to be refinanced: the borrower posts a request,
         //    lender A accepts it. Collateral sized at ~3.3x the principal's
@@ -102,7 +102,9 @@ contract RefinanceLenderAcceptLiveForkTest is Test {
 
         // 2. The holder posts the standard refinance request: caps, then a
         //    tagged request for the same principal with the same collateral
-        //    identity (carry-over), and a standing approval for the payoff.
+        //    identity (carry-over), and the payoff authorisation: a signed
+        //    single-use permit where the deployed Diamond takes one (#1558),
+        //    otherwise the wallet approval `_fundWallet` grants.
         vm.prank(borrower);
         AutoLifecycleFacet(diamond).setAutoRefinanceCaps(
             oldLoanId, true, uint16(RATE_BPS), uint64(block.timestamp + 365 days)
@@ -110,6 +112,9 @@ contract RefinanceLenderAcceptLiveForkTest is Test {
         vm.prank(borrower);
         uint256 taggedRequest = OfferCreateFacet(diamond).createOffer(_request(collateralAmount, oldLoanId));
         _fundWallet(borrower, weth, PRINCIPAL * 2);
+        RefinancePayoffPermitHelper.attachSignedIfRouted(
+            diamond, borrowerPk, weth, oldLoanId, taggedRequest, uint256(keccak256("forkRefiPayoff"))
+        );
 
         // 3. The switch OFF — on the fork only. The Diamond owner holds ADMIN.
         vm.prank(OwnershipFacet(diamond).owner());

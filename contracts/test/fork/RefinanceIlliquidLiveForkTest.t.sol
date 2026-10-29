@@ -12,6 +12,7 @@ import {OracleFacet} from "../../src/facets/OracleFacet.sol";
 import {RiskAccessFacet} from "../../src/facets/RiskAccessFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
+import {RefinancePayoffPermitHelper} from "../helpers/RefinancePayoffPermitHelper.sol";
 
 /**
  * @title  RefinanceIlliquidLiveForkTest
@@ -73,7 +74,7 @@ contract RefinanceIlliquidLiveForkTest is Test {
             uint8(LibVaipakam.LiquidityStatus.Illiquid),
             "the faucet's illiquid asset reads Illiquid on the live Diamond"
         );
-        address borrower = makeAddr("forkIlliquidBorrower");
+        (address borrower, uint256 borrowerPk) = makeAddrAndKey("forkIlliquidBorrower");
         (address lenderA, uint256 lenderAPk) = makeAddrAndKey("forkIlliquidLenderA");
         (address lenderB, uint256 lenderBPk) = makeAddrAndKey("forkIlliquidLenderB");
         _armIlliquid(borrower);
@@ -96,7 +97,9 @@ contract RefinanceIlliquidLiveForkTest is Test {
         );
 
         // 2. The holder's refinance request: caps, a tagged carry-over request,
-        //    a standing approval for the payoff.
+        //    and the payoff authorisation: a signed single-use permit where
+        //    the deployed Diamond takes one (#1558), otherwise the wallet
+        //    approval `_fundWallet` grants.
         vm.prank(borrower);
         AutoLifecycleFacet(diamond).setAutoRefinanceCaps(
             oldLoanId, true, uint16(RATE_BPS), uint64(block.timestamp + 365 days)
@@ -104,6 +107,9 @@ contract RefinanceIlliquidLiveForkTest is Test {
         vm.prank(borrower);
         uint256 taggedRequest = OfferCreateFacet(diamond).createOffer(_request(oldLoanId));
         _fundWallet(borrower, weth, PRINCIPAL * 2);
+        RefinancePayoffPermitHelper.attachSignedIfRouted(
+            diamond, borrowerPk, weth, oldLoanId, taggedRequest, uint256(keccak256("forkIlliquidPayoff"))
+        );
 
         // 3. A new lender accepts it directly.
         _fundLender(lenderB, PRINCIPAL * 4);

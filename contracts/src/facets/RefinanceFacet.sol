@@ -31,6 +31,7 @@ import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
+import {LibRefinancePayoff} from "../libraries/LibRefinancePayoff.sol";
 
 /**
  * @title RefinanceFacet
@@ -254,7 +255,8 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     ///      `msg.sender` is the Diamond, so it can never equal the holder. On
     ///      every OTHER route:
     ///        - the holder is still the fund source (the payoff pulls from
-    ///          their wallet allowance), so they are sanctions-screened;
+    ///          their wallet through their payoff permit), so they are
+    ///          sanctions-screened;
     ///        - the auto-refinance kill switch applies to the AUTOMATED routes
     ///          only — a delegated keeper, and the matcher. A lender's direct
     ///          accept is not automation and is never blocked by it;
@@ -494,69 +496,46 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 shortfall = 0;
         (uint256 treasuryFee, uint256 lenderDue) = _exitingLenderDue(oldLoan, oldLoanId);
 
-        // T-037 — pay each party directly from the borrower without
-        // the Diamond holding the asset between transfers. The
-        // borrower's prior `approve()` to the Diamond covers the
-        // total; two `safeTransferFrom` calls (one to treasury, one
-        // to the old lender's vault) replace the prior pull-and-
-        // split pattern. Treasury share skipped entirely if the
-        // VPFI-discount path satisfied it.
-        // T-092 Phase 2a — fund-source is the CURRENT borrower-NFT
-        // owner (not msg.sender) so a keeper-driven invocation
-        // doesn't debit the keeper's wallet for the borrower's
-        // old-payoff. Requires the borrower (NFT holder) to have
-        // approved the diamond for `oldLoan.principalAsset` —
-        // standard prerequisite for a refinance, surfaced by the
-        // dapp as part of the consent flow.
+        // #1558 — the payoff is paid through the borrower's single-use Permit2
+        // permit attached to this request, never a standing allowance: the
+        // whole payoff (the exiting lender's due plus the treasury fee) comes
+        // from the CURRENT borrower-NFT holder's wallet into the Diamond in one
+        // measured pull, and each share is sent on from there. The holder is
+        // the fund source on every route (T-092 Phase 2a), so a keeper, the
+        // matcher or the accepting lender completes the refinance without
+        // debiting their own wallet, and without any approval left standing
+        // afterwards. A missing, expired or too-small permit refuses the
+        // refinance by name (`LibRefinancePayoff`); on the atomic routes that
+        // unwinds the whole acceptance, so nothing is stranded.
         //
-        // T-092-A (#530) — operational loan netting is preserved
-        // via the existing wallet-pull path: `OfferAcceptFacet`
-        // routes the new lender's principal to the borrower's
-        // WALLET on accept (line 840 in OfferAcceptFacet), and the
-        // refinance immediately pulls from the same wallet to pay
-        // the old loan. The standing approval set at consent time
-        // means no Metamask popup at refinance time — the keeper-
-        // driven path works fully automatically. A vault-first
-        // optimisation was attempted in this PR but reverted (PR
-        // #538 round-1 Codex P2): `protocolTrackedVaultBalance` is
-        // an aggregate counter that includes funds locked in active
-        // lender offers (deposited via `OfferCreateFacet.
-        // _pullCreatorAssetsClassic`), so a vault-first netting
-        // could double-spend committed funds. True vault-first
-        // requires an invariant-preserving locked-balance tracking
-        // shape that's out of scope here.
-        // #1281-011 — the one payer -> treasury pull (refuses a short arrival).
-        LibFacet.transferFromPayerToTreasury(currentBorrowerNftOwner, oldLoan.principalAsset, treasuryFee);
+        // T-092-A (#530) — operational loan netting is preserved: the new
+        // lender's principal reaches the borrower's WALLET on accept, and the
+        // payoff is drawn from that same wallet here.
+        LibRefinancePayoff.pull(
+            oldLoanId,
+            borrowerOfferId,
+            currentBorrowerNftOwner,
+            oldLoan.principalAsset,
+            treasuryFee + lenderDue
+        );
+        // The treasury's share, out of what the Diamond now holds (#2440: the
+        // host accrues what the treasury received).
+        LibFacet.transferToTreasury(oldLoan.principalAsset, treasuryFee);
 
-        // Route lender's share to old lender's vault via the cross-
-        // payer chokepoint so the protocolTrackedVaultBalance
-        // counter ticks under the old lender (the vault owner)
-        // while the current borrower-NFT owner remains the payer.
+        // The old lender's share, into the old lender's vault, booked as paid
+        // in full (a voluntary flow: refused unless the vault received all of
+        // it).
         //
         // #998 S10 (#1006) F2 — the old lender is being CLOSED OUT (their loan is
         // repaid by the refinance); their proceeds must be PARKED, never brick the
         // (clean) borrower's refinance, even when the old lender-of-record is a
-        // sanctions-flagged current holder (#831 freeze-not-seize). Pin the
-        // receive-side vault exemption to `oldLoan.lender` so the deposit resolves
-        // that party's EXISTING vault instead of reverting the whole refinance
-        // under `getOrCreateUserVault`'s Tier-1 gate. Without this a flagged old
-        // lender-holder would brick every refinance of their loan — and the
-        // frozen-claimant marker below (which keys the fail-closed release) would
-        // be unreachable. `end` clears the pin and emits the parked-proceeds audit
-        // event when that vault owner is flagged; the lock itself is enforced by
-        // the claim-side stored-owner screen + the marker.
-        LibSanctionedLock.begin(s, oldLoan.lender);
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultDepositERC20From.selector,
-                currentBorrowerNftOwner, // payer — current borrower NFT holder
-                oldLoan.lender,          // user — old lender's vault
-                oldLoan.principalAsset,
-                lenderDue
-            ),
-            VaultDepositFailed.selector
-        );
-        LibSanctionedLock.end(
+        // sanctions-flagged current holder (#831 freeze-not-seize). The deposit
+        // resolves that party's EXISTING vault under the receive-side exemption
+        // instead of reverting the whole refinance under `getOrCreateUserVault`'s
+        // Tier-1 gate, and emits the parked-proceeds audit event when that vault
+        // owner is flagged; the lock itself is enforced by the claim-side
+        // stored-owner screen + the frozen-claimant marker below.
+        LibSanctionedLock.depositLockedInFull(
             s, oldLoan.lender, oldLoanId, oldLoan.principalAsset, lenderDue
         );
 
@@ -1054,7 +1033,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     ///         standing — taken, cancelled, expired, the position handed on, the
     ///         loan closed — it stops holding the loan back, with no write
     ///         anywhere. `live` does NOT say a lender could fill it now: the
-    ///         holder's caps, the payoff approval, an overdue period or the
+    ///         holder's caps, the payoff permit, an overdue period or the
     ///         market can each refuse acceptance, and the remedy for a request
     ///         that can no longer fill is to cancel it.
     ///         {checkRefinanceRequest} reports the acceptance-side reasons it
@@ -1090,5 +1069,117 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     ///         is the RECORDED request, nor the payoff funding or the market.
     function checkRefinanceRequest(uint256 loanId, uint256 offerId) external view {
         LibRefinanceRequest.assertAcceptable(LibVaipakam.storageSlot(), loanId, offerId);
+    }
+
+    // ─── #1558 — the payoff permit ──────────────────────────────────────
+
+    /// @notice Attach a single-use Permit2 permit to your refinance request
+    ///         `offerId`, authorising the refinance to pay off the old loan
+    ///         from your wallet. Replaces any permit already attached.
+    /// @dev    Sign a Permit2 `PermitWitnessTransferFrom` with the Diamond as
+    ///         spender, the old loan's principal asset as the token, `maxAmount`
+    ///         as the amount, and the witness
+    ///         `RefinancePayoff(uint256 loanId,uint256 offerId)` for the loan
+    ///         the request refinances (see `LibRefinancePayoff`). Size
+    ///         `maxAmount` with {getRefinancePayoff}'s `payoffAtGraceEnd`, the
+    ///         most the payoff can reach before the request lapses. Whoever
+    ///         completes the refinance uses the permit once, and only for the
+    ///         payoff at that moment; the rest of `maxAmount` is never pulled
+    ///         and nothing stays approved. Permit2 checks the signature when it
+    ///         is used, so a bad one fails the refinance, not this call.
+    ///         Requires the wallet's one-time ERC-20 approval of Permit2.
+    ///         Tier-1 sanctions-gated: it authorises a payment.
+    /// @param offerId   Your borrower offer (the refinance request).
+    /// @param maxAmount The most the permit allows the refinance to pull.
+    /// @param nonce     The permit's Permit2 nonce.
+    /// @param deadline  When the permit expires.
+    /// @param signature Your signature over the permit.
+    function setRefinancePayoffPermit(
+        uint256 offerId,
+        uint256 maxAmount,
+        uint256 nonce,
+        uint256 deadline,
+        bytes calldata signature
+    ) external nonReentrant whenNotPaused {
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        LibRefinancePayoff.set(offerId, maxAmount, nonce, deadline, signature);
+    }
+
+    /// @notice Remove your payoff permit from request `offerId`, so no
+    ///         refinance can use it. Works after the request is cancelled, and
+    ///         while the protocol is paused, because withdrawing consent must
+    ///         always be possible.
+    function clearRefinancePayoffPermit(uint256 offerId) external nonReentrant {
+        LibRefinancePayoff.clear(offerId);
+    }
+
+    /// @notice What a refinance of `loanId` through request `offerId` would pay
+    ///         off, and the permit it would pay with.
+    /// @return asset            The old loan's principal asset.
+    /// @return payoffNow        The payoff if the refinance completed now: the
+    ///                          principal, the interest the exiting lender is
+    ///                          owed, and any late fee. The treasury's fee
+    ///                          comes out of it.
+    /// @return payoffAtGraceEnd The payoff at the end of the old loan's grace
+    ///                          window, the most it can be while the request
+    ///                          stands. A permit for this much covers any
+    ///                          moment of the request's life.
+    /// @return signer           Who signed the attached permit (0 if none).
+    /// @return maxAmount        The most the permit allows.
+    /// @return nonce            The permit's Permit2 nonce.
+    /// @return deadline         When the permit expires.
+    /// @return nonceSpent       Whether Permit2 has already spent that nonce,
+    ///                          in which case the permit can no longer pay.
+    /// @dev    Both payoffs read 0 unless `loanId` is an Active ERC-20 loan.
+    ///         Informational: whether the request could be accepted at all is
+    ///         {checkRefinanceRequest}'s answer.
+    function getRefinancePayoff(uint256 loanId, uint256 offerId)
+        external
+        view
+        returns (
+            address asset,
+            uint256 payoffNow,
+            uint256 payoffAtGraceEnd,
+            address signer,
+            uint256 maxAmount,
+            uint256 nonce,
+            uint256 deadline,
+            bool nonceSpent
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        asset = loan.principalAsset;
+        if (
+            loan.status == LibVaipakam.LoanStatus.Active &&
+            loan.assetType == LibVaipakam.AssetType.ERC20
+        ) {
+            payoffNow = _payoffAt(loanId, loan, block.timestamp);
+            uint256 graceEnd = LibLoanClock.graceEnd(loan);
+            payoffAtGraceEnd = _payoffAt(
+                loanId, loan, graceEnd > block.timestamp ? graceEnd : block.timestamp
+            );
+        }
+        LibVaipakam.RefinancePayoffPermit storage p = s.refinancePayoffPermit[offerId];
+        signer = p.signer;
+        maxAmount = p.maxAmount;
+        nonce = p.nonce;
+        deadline = p.deadline;
+        nonceSpent = LibRefinancePayoff.nonceSpent(signer, nonce);
+    }
+
+    /// @dev The payoff a refinance pulls at `at`: the principal plus the
+    ///      interest and late fee the exiting lender's settlement prices
+    ///      ({_exitingLenderDue}). Every branch of the yield-fee resolution
+    ///      only moves part of the treasury fee to the lender, so the treasury
+    ///      fee plus the lender's due always sum to this.
+    function _payoffAt(uint256 loanId, LibVaipakam.Loan storage loan, uint256 at)
+        private
+        view
+        returns (uint256)
+    {
+        return loan.principal
+            + LibEntitlement.settlementInterestNet(loan, at)
+            + LibVaipakam.calculateLateFeeAt(loanId, at);
     }
 }
