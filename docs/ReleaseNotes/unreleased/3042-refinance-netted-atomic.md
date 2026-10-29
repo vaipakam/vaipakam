@@ -1,4 +1,4 @@
-## Thread — Every refinance is atomic, and the new principal pays the old lender directly (PR #<n>)
+## Thread — Every refinance is atomic, and the new principal pays the old lender directly (PR #3077)
 
 A refinance used to move money in a round trip through the borrower's wallet: the accept delivered the new lender's principal, less the initiation fee, to the borrower, and the refinance then pulled the whole payoff back out of that wallet. It could also be finished later, in a second transaction, by the borrower or a delegated keeper. Both are gone. A refinance now completes only inside the transaction that accepts, or matches, the borrower's refinance-tagged request, and inside it the new lender's net principal goes straight from the new lender's vault to the old lender's vault.
 
