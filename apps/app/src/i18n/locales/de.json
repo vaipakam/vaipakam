@@ -3510,7 +3510,7 @@
       "owedOpen": "Etwa {{amount}} stehen Ihnen noch zu, vor dem Anteil des Protokolls. Gezahlt wird, während der Kreditnehmer Zinsen zahlt, vor dem aktuellen Kreditgeber.",
       "owedFallback": "Etwa {{amount}} stehen Ihnen noch zu, vor dem Anteil des Protokolls. Der Kredit wartet auf seine Fallback-Abwicklung, und Ihr Anspruch wird abgerechnet, sobald diese abgeschlossen ist.",
       "owedEnded": "Etwa {{amount}} standen Ihnen bei Ende dieses Kredits noch zu, vor dem Anteil des Protokolls. Die Abhebung rechnet dies aus dem ab, was der Kredit erlöst hat: zuerst der Kreditbetrag des aktuellen Kreditgebers, dann die Verkäufer, die ältesten zuerst. Was der Erlös nicht deckt, bleibt unbezahlt, und nichts auf dem Kredit schuldet es.",
-      "nothingYet": "Darauf wurde noch nichts gezahlt.",
+      "nothingYet": "Es wartet noch nichts auf eine Abhebung.",
       "refused": "Eine Abhebung ist gerade nicht möglich: {{reason}}",
       "checkFailed": "Wir konnten gerade nicht prüfen, ob eine Abhebung möglich ist. Versuchen Sie es gleich noch einmal.",
       "withdraw": "In Wallet abheben",
@@ -3518,7 +3518,7 @@
       "withdrawn": "In Ihre Wallet abgehoben.",
       "unavailable": "Wir konnten Zinsen aus verkauften Positionen, die Ihnen zustehen, nicht prüfen, weil der Aktivitätsindex gerade nicht verfügbar ist. Versuchen Sie es gleich noch einmal.",
       "unread": "Ihr Anspruch auf Kredit #{{id}} konnte gerade nicht gelesen werden.",
-      "truncated": "Hier werden nur die Kredite aus Ihren letzten 1.000 Verkäufen geprüft."
+      "truncated": "Hier werden nur die Kredite geprüft, die Ihre jüngsten Verkäuferanspruch-Einträge nennen, daher wird ein Anspruch aus einem älteren Verkauf möglicherweise nicht aufgeführt."
     }
   },
   "contractError": {

@@ -649,9 +649,10 @@ export function fetchActivity(
   chainId: number,
   opts: {
     actor?: string;
-    /** One event kind. With `actor`, exact for a kind the shared actor rule
-     *  (`@vaipakam/lib/activityActor`) files under that wallet. */
-    kind?: string;
+    /** Event kinds, read as one stream in feed order. With `actor`, exact
+     *  for a kind the shared actor rule (`@vaipakam/lib/activityActor`)
+     *  files under that wallet. */
+    kinds?: readonly string[];
     limit?: number;
     before?: string;
     repairObservations?: boolean;
@@ -659,7 +660,7 @@ export function fetchActivity(
 ): Promise<ActivityPage | null> {
   const params = new URLSearchParams({ chainId: String(chainId) });
   if (opts.actor) params.set('actor', opts.actor.toLowerCase());
-  if (opts.kind) params.set('kind', opts.kind);
+  if (opts.kinds?.length) params.set('kind', opts.kinds.join(','));
   if (opts.limit) params.set('limit', String(opts.limit));
   if (opts.before) params.set('before', opts.before);
   // #2643 — opt-in: the merged entries take page slots, so only a caller

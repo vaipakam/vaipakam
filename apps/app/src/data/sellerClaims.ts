@@ -9,7 +9,10 @@
  *
  * - DISCOVERY: the indexer files every seller-claim event under the seller
  *   (the shared actor rule, `@vaipakam/lib/activityActor`), so the loans a
- *   wallet holds a claim on are its `SellerInterestClaimRecorded` rows.
+ *   wallet has anything on are those its claim and payment rows name. Both
+ *   are needed: a sale whose earned interest was all paid at the sale, from
+ *   interest set aside while the seller was frozen, records a payment and no
+ *   claim.
  * - TRUTH: each candidate is read from the chain: the open claims on the
  *   loan's interest ledger, what is waiting in the seller's vault, and a
  *   simulation of the withdrawal, which is the authority on whether it would
@@ -35,6 +38,9 @@ import { fetchActivity } from './indexer';
 import { isRevert } from './liveLoanRow';
 
 const ZERO = '0x0000000000000000000000000000000000000000';
+/** The events that name a loan a seller may have something on: a claim
+ *  recorded, or a payment into their vault. */
+export const SELLER_DISCOVERY_KINDS = ['SellerInterestClaimRecorded', 'SellerInterestPaid'] as const;
 /** Rows per indexer page (its own maximum). */
 const PAGE = 200;
 /** Pages read before the list is cut short and says so. */
@@ -72,12 +78,13 @@ export interface SellerClaims {
   rows: SellerClaimRow[];
   /** Loans found but not read (a failed read), named rather than dropped. */
   unread: number[];
-  /** The seller has more sales than the pages read cover. */
+  /** The seller has more claim records than the pages read cover, so loans
+   *  beyond them were not checked. */
   truncated: boolean;
 }
 
-/** The loans a wallet recorded a seller claim on, newest first, from the
- *  indexer. `null` when the indexer could not answer. */
+/** The loans a wallet has a seller claim or payment on, newest first, from
+ *  the indexer. `null` when the indexer could not answer. */
 export async function sellerClaimLoanIds(
   chainId: number,
   seller: string,
@@ -87,7 +94,7 @@ export async function sellerClaimLoanIds(
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const res = await fetchActivity(chainId, {
       actor: seller,
-      kind: 'SellerInterestClaimRecorded',
+      kinds: SELLER_DISCOVERY_KINDS,
       limit: PAGE,
       before,
     });

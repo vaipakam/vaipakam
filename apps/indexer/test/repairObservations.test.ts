@@ -125,6 +125,27 @@ describe('/activity serves a repaired loan’s ending as an observation, never a
     expect((await page(h, 'kind=LoanRepaid')).repairObservations).toEqual([]);
   });
 
+  it('filters on a list of kinds as one stream, and refuses a malformed or overlong list', async () => {
+    const h = createSqliteD1(migrations());
+    seedEvent(h, 100, 0, 1, 'SellerInterestClaimRecorded');
+    seedEvent(h, 200, 0, 2, 'SellerInterestPaid');
+    seedEvent(h, 300, 0, 3, 'LoanRepaid');
+    const p = await page(h, 'kind=SellerInterestClaimRecorded,SellerInterestPaid&limit=1');
+    expect(p.events.map((e) => e.loanId)).toEqual([2]);
+    const next = await page(h, `kind=SellerInterestClaimRecorded,SellerInterestPaid&limit=1&before=${p.nextBefore}`);
+    expect(next.events.map((e) => e.loanId)).toEqual([1]);
+    const status = async (query: string) =>
+      (
+        await handleActivity(new Request(`https://x/activity?chainId=${CHAIN}&${query}`), {
+          DB: h.d1,
+          RPC_BASE_SEPOLIA: 'http://127.0.0.1:9',
+        } as unknown as Env)
+      ).status;
+    expect(await status('kind=LoanRepaid,')).toBe(400);
+    expect(await status('kind=Loan-Repaid')).toBe(400);
+    expect(await status(`kind=${Array.from({ length: 9 }, () => 'A').join(',')}`)).toBe(400);
+  });
+
   it('is opt-in: a reader that does not ask gets the events-only page it always got', async () => {
     const h = createSqliteD1(migrations());
     seedLoan(h, 7, { status: 'repaid', block: 500, at: null });

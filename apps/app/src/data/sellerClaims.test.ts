@@ -7,13 +7,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BaseError, ContractFunctionRevertedError, type Address, type PublicClient } from 'viem';
 
 const pages = vi.hoisted(() => ({
-  calls: [] as { actor?: string; kind?: string; limit?: number; before?: string }[],
+  calls: [] as { actor?: string; kinds?: readonly string[]; limit?: number; before?: string }[],
   responses: [] as ({ events: { loanId: number | null }[]; nextBefore: string | null } | null)[],
 }));
 
 vi.mock('./indexer', () => ({
   fetchActivity: vi.fn(
-    async (_chainId: number, opts: { actor?: string; kind?: string; limit?: number; before?: string }) => {
+    async (_chainId: number, opts: { actor?: string; kinds?: readonly string[]; limit?: number; before?: string }) => {
       pages.calls.push(opts);
       return pages.responses.shift() ?? null;
     },
@@ -69,14 +69,20 @@ describe('sellerClaimLoanIds', () => {
     pages.responses = [];
   });
 
-  it('asks for this seller’s recorded claims and follows the pages', async () => {
+  it('asks for this seller’s claims and payments and follows the pages', async () => {
     pages.responses = [
       { events: [{ loanId: 9 }, { loanId: 7 }], nextBefore: 'c1' },
       { events: [{ loanId: 7 }, { loanId: null }, { loanId: 3 }], nextBefore: null },
     ];
     const found = await sellerClaimLoanIds(84532, SELLER);
     expect(found).toEqual({ loanIds: [9, 7, 3], truncated: false });
-    expect(pages.calls[0]).toMatchObject({ actor: SELLER, kind: 'SellerInterestClaimRecorded', limit: 200 });
+    // A payment with no recorded claim (interest set aside while the seller
+    // was frozen, all paid at the sale) must still find its loan.
+    expect(pages.calls[0]).toMatchObject({
+      actor: SELLER,
+      kinds: ['SellerInterestClaimRecorded', 'SellerInterestPaid'],
+      limit: 200,
+    });
     expect(pages.calls[0].before).toBeUndefined();
     expect(pages.calls[1].before).toBe('c1');
   });

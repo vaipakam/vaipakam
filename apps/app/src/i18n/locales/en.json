@@ -1879,7 +1879,7 @@
       "owedOpen": "About {{amount}} is still owed to you, before the protocol’s cut. It is paid as the borrower pays interest, ahead of the current lender.",
       "owedFallback": "About {{amount}} is still owed to you, before the protocol’s cut. The loan is waiting on its fallback resolution, and your claim is settled once that resolves.",
       "owedEnded": "About {{amount}} was still owed to you, before the protocol’s cut, when this loan ended. Withdrawing settles it from what the loan recovered: the current lender’s loan amount is paid first, then sellers, oldest first. Whatever the recovery does not cover is unpaid, and nothing on the loan owes it.",
-      "nothingYet": "Nothing has been paid toward it yet.",
+      "nothingYet": "Nothing is waiting to be withdrawn yet.",
       "refused": "It can’t be withdrawn right now: {{reason}}",
       "checkFailed": "We couldn’t check whether it can be withdrawn right now. Try again shortly.",
       "withdraw": "Withdraw to wallet",
@@ -1887,7 +1887,7 @@
       "withdrawn": "Withdrawn to your wallet.",
       "unavailable": "We couldn’t check for interest owed to you from positions you sold, because the activity index is unavailable right now. Try again shortly.",
       "unread": "We couldn’t read your claim on loan #{{id}} right now.",
-      "truncated": "Only the loans from your most recent 1,000 sales are checked here."
+      "truncated": "Only the loans named by your most recent seller-claim records are checked here, so a claim from an older sale may not be listed."
     },
     "claims": {
       "checking": "Checking for claims…",

@@ -588,7 +588,10 @@ export async function handleLoansByCurrentHolder(
   }
 }
 
-/** GET /activity?chainId=8453&actor=0x...&loanId=N&offerId=N&kind=...&limit=50&before=<block:logIndex>&repairObservations=1
+/** Most event kinds one `/activity` request may filter on at once. */
+const MAX_ACTIVITY_KINDS = 8;
+
+/** GET /activity?chainId=8453&actor=0x...&loanId=N&offerId=N&kind=K[,K...]&limit=50&before=<block:logIndex>&repairObservations=1
  *
  *  Cursor format: composite "block:logIndex" (e.g. `12345:6`) so a
  *  cron-deferred block on the boundary doesn't drop rows. When omitted,
@@ -625,9 +628,15 @@ export async function handleActivity(req: Request, env: Env): Promise<Response> 
     binds.push(n);
   }
   if (kind) {
-    if (!/^[A-Za-z]+$/.test(kind)) return jsonResponse({ error: 'bad-kind' }, 400);
-    where.push('kind = ?');
-    binds.push(kind);
+    // One kind, or a comma-separated list of them read as ONE stream in feed
+    // order (#1209: a past seller's loans are those any seller-claim event
+    // names, under one cursor rather than one per kind).
+    const kinds = kind.split(',');
+    if (kinds.length > MAX_ACTIVITY_KINDS || kinds.some((k) => !/^[A-Za-z]+$/.test(k))) {
+      return jsonResponse({ error: 'bad-kind' }, 400);
+    }
+    where.push(`kind IN (${kinds.map(() => '?').join(', ')})`);
+    binds.push(...kinds);
   }
   let before: { block: number; logIndex: number } | undefined;
   if (beforeRaw) {

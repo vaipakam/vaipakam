@@ -3510,7 +3510,7 @@
       "owedOpen": "Environ {{amount}} vous est encore dû, avant la part du protocole. Il est payé au fil des paiements d’intérêts de l’emprunteur, avant le prêteur actuel.",
       "owedFallback": "Environ {{amount}} vous est encore dû, avant la part du protocole. Le prêt attend sa résolution de repli, et votre créance est réglée une fois celle-ci résolue.",
       "owedEnded": "Environ {{amount}} vous était encore dû, avant la part du protocole, à la fin de ce prêt. Le retrait le règle à partir de ce que le prêt a recouvré : d’abord le montant du prêt du prêteur actuel, puis les vendeurs, du plus ancien au plus récent. Ce que le recouvrement ne couvre pas reste impayé, et rien sur le prêt ne le doit.",
-      "nothingYet": "Rien n’a encore été payé dessus.",
+      "nothingYet": "Rien n’attend encore d’être retiré.",
       "refused": "Le retrait est impossible pour le moment : {{reason}}",
       "checkFailed": "Nous n’avons pas pu vérifier si le retrait est possible pour le moment. Réessayez sous peu.",
       "withdraw": "Retirer vers le portefeuille",
@@ -3518,7 +3518,7 @@
       "withdrawn": "Retiré vers votre portefeuille.",
       "unavailable": "Nous n’avons pas pu vérifier les intérêts qui vous sont dus sur des positions vendues, car l’index d’activité est indisponible pour le moment. Réessayez sous peu.",
       "unread": "Nous n’avons pas pu lire votre créance sur le prêt #{{id}} pour le moment.",
-      "truncated": "Seuls les prêts de vos 1 000 ventes les plus récentes sont vérifiés ici."
+      "truncated": "Seuls les prêts nommés par vos enregistrements de créances de vendeur les plus récents sont vérifiés ici ; une créance issue d’une vente plus ancienne peut donc ne pas être listée."
     }
   },
   "contractError": {

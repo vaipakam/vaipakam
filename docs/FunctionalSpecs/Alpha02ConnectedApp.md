@@ -2785,8 +2785,9 @@ is the borrower's own money.
   while it held it (#1209), and the Claims page lists those claims on their own
   card, separate from the claims of positions the wallet holds now. The seller
   holds no position token any more, so the loans are found from the history
-  service's record of the claims the wallet was given, and each one is then
-  read from the chain: what the seller's open claims on the loan are still
+  service's record of the claims the wallet was given and the payments made
+  into its vault (a sale can pay a seller in full without recording a claim),
+  and each one is then read from the chain: what the seller's open claims on the loan are still
   owed (stated before the protocol's cut of interest, and saying it is), and
   what has already reached the seller's vault for them, per asset. A loan on
   which nothing is owed to the seller and nothing waits for them is not listed.
@@ -2806,9 +2807,13 @@ is the borrower's own money.
 - When the history service cannot be read, the card says the seller claims
   could not be checked, rather than showing nothing (which would read as "no
   claims"). A loan that could not be read is named rather than dropped, and a
-  wallet with more sales than the card reads is told the list covers only its
-  most recent ones. The page does not describe the wallet's claims as empty
-  while the seller-claims card lists anything.
+  wallet with more records than the card reads is told the list covers only
+  its most recent ones, even when those hold nothing. The page does not
+  describe the wallet's claims as empty while the seller-claims card lists
+  anything, was cut short, or could not check. Withdrawing a seller claim is
+  a way out, like any claim of settled funds, so it is never held behind the
+  Terms of Service acceptance, and a row whose payment was just withdrawn
+  offers the next one as soon as it arrives.
 - When two or more payouts are ready at once, the user may collect them all in a
   single wallet signature instead of one transaction per claim. The batch spans
   lender and borrower loan proceeds, pending interaction rewards, and free

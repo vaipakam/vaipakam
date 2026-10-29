@@ -4351,7 +4351,7 @@ const copySource = {
       'About {{amount}} was still owed to you, before the protocol’s cut, when this loan ended. Withdrawing settles it from what the loan recovered: the current lender’s loan amount is paid first, then sellers, oldest first. Whatever the recovery does not cover is unpaid, and nothing on the loan owes it.',
       ['amount'],
     ),
-    nothingYet: 'Nothing has been paid toward it yet.',
+    nothingYet: 'Nothing is waiting to be withdrawn yet.',
     refused: tmpl('It can’t be withdrawn right now: {{reason}}', ['reason']),
     checkFailed: 'We couldn’t check whether it can be withdrawn right now. Try again shortly.',
     withdraw: 'Withdraw to wallet',
@@ -4360,7 +4360,8 @@ const copySource = {
     unavailable:
       'We couldn’t check for interest owed to you from positions you sold, because the activity index is unavailable right now. Try again shortly.',
     unread: tmpl('We couldn’t read your claim on loan #{{id}} right now.', ['id']),
-    truncated: 'Only the loans from your most recent 1,000 sales are checked here.',
+    truncated:
+      'Only the loans named by your most recent seller-claim records are checked here, so a claim from an older sale may not be listed.',
   },
 
   claims: {

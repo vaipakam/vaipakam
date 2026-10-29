@@ -3510,7 +3510,7 @@
       "owedOpen": "Aún se te deben unos {{amount}}, antes de la parte del protocolo. Se paga a medida que el prestatario paga intereses, antes que al prestamista actual.",
       "owedFallback": "Aún se te deben unos {{amount}}, antes de la parte del protocolo. El préstamo espera su resolución de respaldo, y tu reclamo se liquida cuando esta se resuelva.",
       "owedEnded": "Cuando terminó este préstamo aún se te debían unos {{amount}}, antes de la parte del protocolo. Retirar lo liquida con lo que el préstamo recuperó: primero el monto del préstamo del prestamista actual, luego los vendedores, del más antiguo al más reciente. Lo que la recuperación no cubra queda sin pagar, y nada en el préstamo lo debe.",
-      "nothingYet": "Aún no se ha pagado nada de él.",
+      "nothingYet": "Aún no hay nada esperando para retirar.",
       "refused": "No se puede retirar ahora mismo: {{reason}}",
       "checkFailed": "No pudimos comprobar si se puede retirar ahora mismo. Inténtalo de nuevo en breve.",
       "withdraw": "Retirar a la billetera",
@@ -3518,7 +3518,7 @@
       "withdrawn": "Retirado a tu billetera.",
       "unavailable": "No pudimos comprobar los intereses que se te deben de posiciones que vendiste, porque el índice de actividad no está disponible ahora mismo. Inténtalo de nuevo en breve.",
       "unread": "No pudimos leer tu reclamo sobre el préstamo #{{id}} ahora mismo.",
-      "truncated": "Aquí solo se revisan los préstamos de tus 1.000 ventas más recientes."
+      "truncated": "Aquí solo se revisan los préstamos que nombran tus registros de reclamos de vendedor más recientes, así que puede que no se liste un reclamo de una venta más antigua."
     }
   },
   "contractError": {

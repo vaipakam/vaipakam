@@ -12,13 +12,16 @@ of the claim when it is paid.
 
 The Claims page has a new card, "Interest from positions you sold". A seller
 holds no position token any more, so the app finds these loans from the
-activity index (every step of a seller claim is now filed under the seller)
+activity index (every step of a seller claim is now filed under the seller,
+and the index's activity route takes a list of event kinds, so claims and
+payments are read as one stream)
 and reads each one from the chain: what is still owed to this seller, and what
 has already reached their vault, per asset. Each loan says where it stands
 (being paid as the borrower pays, waiting on a fallback, or settled at
 withdrawal from what the loan recovered). The withdraw button appears only
 when the protocol's own check says the withdrawal would pay something now,
-and that check runs again just before signing. When the index is down, a loan
+and that check runs again just before signing. Withdrawing is a way out,
+so it is not held behind the Terms of Service acceptance. When the index is down, a loan
 cannot be read, or a wallet has more sales than the card reads, the card says
 so rather than showing nothing.
 

@@ -28,7 +28,7 @@ import { SUPPORTED_LOCALES } from '@vaipakam/i18n/glossary';
 /** Exact paths, and prefixes for the parameterised ones. */
 const EXIT_PREFIXES = [
   '/positions', // list + /positions/:loanId — repay, preclose, close-outs
-  '/claims', // claimAsBorrower / claimAsLender
+  '/claims', // claimAsBorrower / claimAsLender / claimAsSeller
   '/vpfi', // withdrawVPFIFromVault
   '/vault', // the user's own asset vault
   '/recover', // stuck-token recovery: retrieving assets, by definition

@@ -31,6 +31,12 @@ function useAmountText(asset: Address, amount: bigint): string {
   return meta.isError ? copy.claims.row.amountUnreadableInline : copy.claims.row.amountLoadingInline;
 }
 
+/** What the row says is owed and waiting, as one comparable value. */
+function heldKey(row: SellerClaimRow): string {
+  const held = row.held.map((h) => `${h.asset.toLowerCase()}:${h.amount}`).join('|');
+  return `${row.status}/${row.owedGross}/${held}`;
+}
+
 function HeldLine({ asset, amount }: { asset: Address; amount: bigint }) {
   return <>{copy.sellerClaims.held(useAmountText(asset, amount))}</>;
 }
@@ -50,7 +56,13 @@ function SellerClaimItem({ row }: { row: SellerClaimRow }) {
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
+  // What was waiting when this row's withdrawal went through. While the
+  // read still shows that same balance it has not caught up, so the button
+  // stays hidden; once it moves, a later payment can be withdrawn again.
+  const [withdrewFrom, setWithdrewFrom] = useState<string | null>(null);
+  const heldNow = heldKey(row);
+  const staleAfterWithdraw = withdrewFrom !== null && withdrewFrom === heldNow;
+  const showWithdrawn = withdrewFrom !== null && (staleAfterWithdraw || row.withdraw.kind !== 'ready');
 
   async function withdraw() {
     if (!address || !walletChain || !client) return;
@@ -66,7 +78,7 @@ function SellerClaimItem({ row }: { row: SellerClaimRow }) {
       if (live.kind === 'refused') throw new Error(live.reason);
       if (live.kind === 'unknown') throw new Error(copy.sellerClaims.checkFailed);
       await write('claimAsSeller', [BigInt(row.loanId)]);
-      setDone(true);
+      setWithdrewFrom(heldNow);
     } catch (err) {
       setError(captureTxError(err));
     } finally {
@@ -91,7 +103,7 @@ function SellerClaimItem({ row }: { row: SellerClaimRow }) {
             <OwedLine row={row} />
           </span>
         ) : null}
-        {row.withdraw.kind === 'nothing-yet' ? (
+        {staleAfterWithdraw ? null : row.withdraw.kind === 'nothing-yet' ? (
           <span className="row-sub" style={{ display: 'block' }}>
             {copy.sellerClaims.nothingYet}
           </span>
@@ -104,7 +116,7 @@ function SellerClaimItem({ row }: { row: SellerClaimRow }) {
             {copy.sellerClaims.checkFailed}
           </span>
         ) : null}
-        {done ? (
+        {showWithdrawn ? (
           <span className="row-sub" role="status" style={{ display: 'block' }}>
             {copy.sellerClaims.withdrawn}
           </span>
@@ -115,7 +127,7 @@ function SellerClaimItem({ row }: { row: SellerClaimRow }) {
           </span>
         ) : null}
       </span>
-      {row.withdraw.kind === 'ready' && !done ? (
+      {row.withdraw.kind === 'ready' && !staleAfterWithdraw ? (
         <button
           type="button"
           className="btn btn-primary btn-sm"
@@ -145,13 +157,15 @@ export function SellerClaimsCard() {
     );
   }
   const { rows, unread, truncated } = claims.data;
-  if (rows.length === 0 && unread.length === 0) return null;
+  // A cut-short list with nothing in it has not shown there is nothing: the
+  // loans it did not reach may still owe this seller.
+  if (rows.length === 0 && unread.length === 0 && !truncated) return null;
   return (
     <section className="card" style={{ marginBottom: 16 }} data-testid="seller-claims">
       <div className="card-title">
-          <Coins aria-hidden />
-          <h2 style={{ margin: 0 }}>{copy.sellerClaims.title}</h2>
-        </div>
+        <Coins aria-hidden />
+        <h2 style={{ margin: 0 }}>{copy.sellerClaims.title}</h2>
+      </div>
       <p className="muted">{copy.sellerClaims.lede}</p>
       <ul className="row-list" style={{ listStyle: 'none', padding: 0 }}>
         {rows.map((row) => (
@@ -168,9 +182,12 @@ export function SellerClaimsCard() {
   );
 }
 
-/** Whether the card lists anything; the Claims page's "nothing to claim"
- *  must not sit under it. */
+/** Whether the card shows anything. The Claims page's "nothing to claim"
+ *  must not sit under a listed claim, a list that was cut short, or a check
+ *  that could not be made: none of those shows there is nothing. */
 export function useSellerClaimsListed(): boolean {
-  const claims = useMySellerClaims();
-  return Boolean(claims.data && (claims.data.rows.length > 0 || claims.data.unread.length > 0));
+  const d = useMySellerClaims().data;
+  if (d === undefined) return false;
+  if (d === null) return true;
+  return d.rows.length > 0 || d.unread.length > 0 || d.truncated;
 }
