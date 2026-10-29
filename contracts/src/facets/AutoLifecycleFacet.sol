@@ -662,7 +662,8 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     ///                          extension window, the most an extension of
     ///                          the loan's current term can charge.
     /// @dev    Both charges read 0 for a loan that cannot be extended (not
-    ///         Active, not an ERC-20 loan, or on a periodic cadence). An
+    ///         Active, not an ERC-20 loan, or on a periodic cadence), and
+    ///         `otherFree` reads 0 for a loan whose principal is not an ERC-20. An
     ///         extension draws only on the CURRENT borrower-position holder's
     ///         vault, so a reserve held by anyone else pays nothing until they
     ///         withdraw it. The charge is what leaves the holder's vault; the
@@ -682,8 +683,11 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.Loan storage loan = s.loans[loanId];
         asset = loan.principalAsset;
         reserved = s.extendReserve[loanId][holder];
+        // Only an ERC-20 principal has a fungible balance to read: a rental's
+        // principal is the NFT contract, whose `balanceOf` takes a token id.
+        bool erc20 = loan.assetType == LibVaipakam.AssetType.ERC20;
         address vault = s.userVaipakamVaults[holder];
-        if (vault != address(0) && asset != address(0)) {
+        if (erc20 && vault != address(0) && asset != address(0)) {
             uint256 raw = IERC20(asset).balanceOf(vault);
             uint256 tracked = s.protocolTrackedVaultBalance[holder][asset];
             otherFree = LibEncumbrance.freeBalance(holder, asset, 0, tracked < raw ? tracked : raw);
@@ -691,7 +695,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         if (
             loan.startTime != 0 &&
             loan.status == LibVaipakam.LoanStatus.Active &&
-            loan.assetType == LibVaipakam.AssetType.ERC20 &&
+            erc20 &&
             loan.periodicInterestCadence == LibVaipakam.PeriodicInterestCadence.None
         ) {
             (uint256 i, uint256 f) = _extendChargeAt(loanId, loan, block.timestamp);

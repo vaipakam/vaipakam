@@ -14,6 +14,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {ERC1155Mock} from "./mocks/ERC1155Mock.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
@@ -1823,5 +1824,23 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         _f().withdrawExtendReserve(loanId, 1);
         vm.prank(borrower);
         _f().withdrawExtendReserve(loanId, 2 ether);
+    }
+
+    /// @notice #2814 Codex r1 — a rental loan's principal is the NFT contract,
+    ///         so the view must not read an ERC-20 balance of it: it answers
+    ///         with zeros, and funding refuses the loan by name.
+    function test_2814_view_answersForARentalLoan() public {
+        uint256 loanId = _buildActiveLoan();
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        l.assetType = LibVaipakam.AssetType.ERC1155;
+        l.principalAsset = address(new ERC1155Mock());
+        TestMutatorFacet(address(diamond)).setLoan(loanId, l);
+        (address asset, uint256 reserved, uint256 otherFree, uint256 chargeNow, uint256 chargeEnd) =
+            _f().getExtendFunding(loanId, borrower);
+        assertEq(asset, l.principalAsset, "the asset is still stated");
+        assertEq(reserved + otherFree + chargeNow + chargeEnd, 0, "nothing to fund or charge");
+        vm.prank(borrower);
+        vm.expectRevert(AutoLifecycleFacet.UnsupportedAssetTypeForExtend.selector);
+        _f().fundExtendReserve(loanId, 1 ether);
     }
 }
