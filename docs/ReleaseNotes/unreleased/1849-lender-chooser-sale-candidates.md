@@ -1,4 +1,4 @@
-## Thread — The lender's exit chooser reads the sale tool's offer list (PR #<n>)
+## Thread — The lender's exit chooser reads the sale tool's offer list (PR #3046)
 
 A lender holding an open position sees an exit chooser that names each way out, and in Advanced mode a sale tool below it that lists the standing lending offers the position can be sold into right away. The tool already worked out which offers qualify, but the chooser was never told: it kept its "sell now" option open and offered a jump to the tool even when the tool had just found nothing. The lender scrolled down to read that there was no match.
 

@@ -1,4 +1,4 @@
-## Thread — Contracts build for one EVM target, whatever forge builds them (PR #<n>)
+## Thread — Contracts build for one EVM target, whatever forge builds them (PR #2985)
 
 The contracts' build settings named a compiler version but no EVM target, so
 forge chose the target itself, and different forge releases choose different

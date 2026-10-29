@@ -1,4 +1,4 @@
-## Reward remittance — parts sized by both lane ends, no dust parts, no forgotten days (PR #TBD)
+## Reward remittance — parts sized by both lane ends, no dust parts, no forgotten days (PR #2986)
 
 Since #918 a mirror's reward budget for a day can go in several parts. Three gaps in how the keeper sized and continued those parts are closed. First, a part is now sized by both ends of the cross-chain lane: what Base can send right now, and the most the mirror's side can ever receive in one transfer. A part above the mirror's inbound capacity could never be delivered and would sit in the lane until someone re-executed it by hand. Each chain now reports its inbound lane bucket publicly, and the keeper reads the mirror's on the mirror itself. The mirror's end is bounded by its capacity rather than its momentary balance, because that balance is drawn only when a part arrives, after any part still in flight.
 

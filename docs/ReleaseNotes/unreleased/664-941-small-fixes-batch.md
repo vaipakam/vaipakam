@@ -1,4 +1,4 @@
-## Thread — small contract fixes from the open-issues sweep (PR #TBD)
+## Thread — small contract fixes from the open-issues sweep (PR #2994)
 
 A fresh offer can no longer be cancelled during its first five minutes,
 whatever the partial-fill setting says. The cooldown used to apply only

@@ -1,4 +1,4 @@
-## Keeper — the default and periodic-settlement passes stop reading in time (PR #<n>)
+## Keeper — the default and periodic-settlement passes stop reading in time (PR #3070)
 
 The keeper's rule is that every read a pass makes stops at the run's read
 cutoff, which leaves the sends their time. The grace-default pass, the
