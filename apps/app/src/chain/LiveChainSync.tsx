@@ -61,6 +61,9 @@ export const LIVE_KEYS: ReadonlySet<string> = new Set([
   'loanRisk',
   'positionOwners',
   'claimables',
+  // A past seller's interest claims (#1209): a borrower's payment moves them
+  // with no action of the seller's.
+  'sellerClaims',
   'vaultAssets',
   'loanSalePending',
   'refinancePending',
