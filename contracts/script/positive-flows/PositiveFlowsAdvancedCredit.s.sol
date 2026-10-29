@@ -11,7 +11,6 @@ import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../../src/facets/RepayFacet.sol";
-import {RefinanceFacet} from "../../src/facets/RefinanceFacet.sol";
 import {PrecloseFacet} from "../../src/facets/PrecloseFacet.sol";
 import {OfferMatchFacet} from "../../src/facets/OfferMatchFacet.sol";
 import {LibOfferMatch} from "../../src/libraries/LibOfferMatch.sol";
@@ -32,7 +31,7 @@ import {LibOfferMatchExecute} from "../../src/libraries/LibOfferMatchExecute.sol
 /**
  * @title PositiveFlowsAdvancedCredit
  * @notice Advanced credit flows (#848 Phase 1): lender opt-in partial repay,
- *         refinance, range orders with a third-party match and partial fills,
+ *         range orders with a third-party match and partial fills,
  *         borrower preclose by obligation handover and by offset, the lender
  *         exits (direct sale into a buy offer, the sale solvency floor on that
  *         route, and the same floor on the listing-accept route), and the
@@ -50,40 +49,37 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
     }
 
     function scenarios() public pure override returns (Scenario[] memory list) {
-        list = new Scenario[](10);
+        list = new Scenario[](9);
         list[0] = Scenario("PF-114", "Partial repay on a lender-opted-in loan, then full close",
             "PF-114");
-        list[1] = Scenario("PF-214", "Borrower refinances onto a new lender through a borrower offer",
-            "PF-213, PF-214");
-        list[2] = Scenario("PF-053", "Ranged lender offer matched by a third party, partial fill, then dust close",
+        list[1] = Scenario("PF-053", "Ranged lender offer matched by a third party, partial fill, then dust close",
             "PF-053, PF-055, PF-056, PF-057");
-        list[3] = Scenario("PF-211", "Preclose option 2: obligation handed to a replacement borrower",
+        list[2] = Scenario("PF-211", "Preclose option 2: obligation handed to a replacement borrower",
             "PF-211");
-        list[4] = Scenario("PF-212", "Preclose option 3: offset with a new offer, completed by a third party",
+        list[3] = Scenario("PF-212", "Preclose option 3: offset with a new offer, completed by a third party",
             "PF-212");
-        list[5] = Scenario("PF-230", "Lender sells the loan into a standing buy offer; buyer is paid at repay",
+        list[4] = Scenario("PF-230", "Lender sells the loan into a standing buy offer; buyer is paid at repay",
             "PF-230");
-        list[6] = Scenario("PF-230-floor", "Direct sale refused under the solvency floor, then settles once the price recovers",
+        list[5] = Scenario("PF-230-floor", "Direct sale refused under the solvency floor, then settles once the price recovers",
             "PF-230");
-        list[7] = Scenario("PF-231", "Listing accept refused under the solvency floor, then settles once the price recovers",
+        list[6] = Scenario("PF-231", "Listing accept refused under the solvency floor, then settles once the price recovers",
             "PF-231");
-        list[8] = Scenario("PF-098", "A new lender accepts a refinance-tagged borrower offer; the old loan closes in the same transaction",
+        list[7] = Scenario("PF-098", "A new lender accepts a refinance-tagged borrower offer; the old loan closes in the same transaction",
             "PF-098, PF-213, PF-112");
-        list[9] = Scenario("PF-215", "A matcher completes a refinance inside the borrower's caps, once the admin switch is on",
+        list[8] = Scenario("PF-215", "A matcher completes a refinance inside the borrower's caps, once the admin switch is on",
             "PF-215, PF-098, PF-057");
     }
 
     function _runScenario(uint256 index) internal override {
         if (index == 0) _partialRepay();
-        else if (index == 1) _refinance();
-        else if (index == 2) _rangeMatchAndPartialFill();
-        else if (index == 3) _precloseOption2TransferObligation();
-        else if (index == 4) _precloseOption3Offset();
-        else if (index == 5) _sellLoanViaBuyOffer();
-        else if (index == 6) _saleSolvencyFloor();
-        else if (index == 7) _saleAdmissionOnAcceptBranch();
-        else if (index == 8) _acceptAndRefinance();
-        else if (index == 9) _matchedRefinanceWithinCaps();
+        else if (index == 1) _rangeMatchAndPartialFill();
+        else if (index == 2) _precloseOption2TransferObligation();
+        else if (index == 3) _precloseOption3Offset();
+        else if (index == 4) _sellLoanViaBuyOffer();
+        else if (index == 5) _saleSolvencyFloor();
+        else if (index == 6) _saleAdmissionOnAcceptBranch();
+        else if (index == 7) _acceptAndRefinance();
+        else if (index == 8) _matchedRefinanceWithinCaps();
         else revert("PositiveFlowsAdvancedCredit: no scenario at index");
     }
 
@@ -144,74 +140,6 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         _claimBoth(lenderKey, borrowerKey, loanId);
     }
 
-    // ─── PF-214: Refinance ────────────────────────────────────────────────────
-
-    /// @dev alice (borrower) takes loan l1 from Lender A. alice then
-    ///      creates a new Borrower offer at a lower interest rate;
-    ///      Lender B accepts the offer (creating loan l2). alice now
-    ///      holds Lender B's principal in hand. She calls
-    ///      `refinanceLoan(l1, newOfferId)` which uses that principal
-    ///      to repay Lender A and rolls the loan over to Lender B's
-    ///      terms. End state: l1 settled, l2 active, single collateral
-    ///      lock, no net principal movement to alice (she just swapped
-    ///      lenders).
-    ///
-    ///      Naming: `borrower` = alice (the borrower being refinanced),
-    ///              `lender` = Lender A (the original lender),
-    ///              `newLender` = Lender B (the refinancing lender).
-    function _refinance() internal {
-        // alice + Lender A create + accept an offer → loan l1.
-        vm.startBroadcast(lenderKey);
-        usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerL1 = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
-        vm.stopBroadcast();
-
-        LibAcceptTerms.AcceptTerms memory _t2 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), offerL1, true, 0);
-        bytes memory _sig2 = LibAcceptTestSigner.sign(diamond, _t2, borrowerKey);
-        vm.startBroadcast(borrowerKey);
-        weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanL1 = OfferAcceptFacet(diamond).acceptOffer(offerL1, _t2, _sig2);
-        vm.stopBroadcast();
-        console.log("L1 (original loan) initiated:", loanL1);
-
-        // alice creates a NEW borrower offer with a lower rate — same
-        // collateral asset / amount / duration so the asset-continuity
-        // check in refinanceLoan passes. Pulls collateral from her
-        // wallet again (she has 10 WETH per setup, plenty).
-        vm.startBroadcast(borrowerKey);
-        weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 refinanceOfferId = OfferCreateFacet(diamond).createOffer(_borrowerRefinanceOffer());
-        vm.stopBroadcast();
-        console.log("Alice's refinance borrower offer:", refinanceOfferId);
-
-        // Lender B accepts — creates loan l2. alice receives l2's
-        // principal in her wallet.
-        LibAcceptTerms.AcceptTerms memory _t3 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(newLenderKey), refinanceOfferId, true, 0);
-        bytes memory _sig3 = LibAcceptTestSigner.sign(diamond, _t3, newLenderKey);
-        vm.startBroadcast(newLenderKey);
-        usdc.approve(diamond, LOAN_AMOUNT);
-        OfferAcceptFacet(diamond).acceptOffer(refinanceOfferId, _t3, _sig3);
-        vm.stopBroadcast();
-
-        // alice repays Lender A using l2's principal. refinanceLoan is
-        // a single-tx settle of l1 against the new offer — alice signs.
-        vm.startBroadcast(borrowerKey);
-        // Refinance pays the OLD lender principal + full-term interest.
-        // alice approves enough to cover both.
-        usdc.approve(diamond, LOAN_AMOUNT * 2);
-        RefinanceFacet(diamond).refinanceLoan(loanL1, refinanceOfferId);
-        vm.stopBroadcast();
-
-        // Verify l1 is no longer Active (it's been settled by refinance).
-        LibVaipakam.Loan memory l1After = LoanFacet(diamond).getLoanDetails(loanL1);
-        require(
-            l1After.status != LibVaipakam.LoanStatus.Active,
-            "PF-214: L1 should not be Active after refinance"
-        );
-        console.log("L1 status post-refinance:", uint8(l1After.status));
-
-    }
-
     // ─── PF-098: Atomic accept-and-refinance ────────────────────────────────
 
     /// @dev The borrower sets refinance caps on the open loan and posts a
@@ -220,8 +148,12 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
     ///      loan: one transaction leaves the old loan Repaid and the new one
     ///      Active. The tagged offer reuses the old loan's collateral (the
     ///      carry-over), so the borrower's WETH stays locked once, not twice.
-    ///      The old payoff is pulled from the borrower's wallet, so the
-    ///      borrower approves it up front, as the app does at consent time.
+    ///      The new lender's net principal pays the old lender inside the
+    ///      Diamond (#3042), so the borrower approves only the difference:
+    ///      here the old loan's interest, its treasury fee and the new loan's
+    ///      initiation fee, a few USDC. The approval below is a twentieth of
+    ///      the principal, so a payoff still routed through the wallet could
+    ///      not complete.
     function _acceptAndRefinance() internal {
         uint256 offerId = _createLenderOffer(lenderKey);
         uint256 oldLoanId = _acceptAs(borrowerKey, offerId, address(weth), COLLATERAL_AMOUNT);
@@ -239,7 +171,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
             oldLoanId, true, 600, uint64(block.timestamp + 365 days)
         );
         uint256 requestId = OfferCreateFacet(diamond).createOffer(request);
-        usdc.approve(diamond, LOAN_AMOUNT * 2); // old principal plus its interest
+        usdc.approve(diamond, LOAN_AMOUNT / 20); // the difference only (#3042)
         vm.stopBroadcast();
         require(
             OfferCancelFacet(diamond).getOfferDetails(requestId).refinanceCarryOver,
@@ -318,7 +250,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         request.interestRateBpsMax = capRateBps;
         vm.startBroadcast(borrowerKey);
         uint256 requestId = OfferCreateFacet(diamond).createOffer(request);
-        usdc.approve(diamond, LOAN_AMOUNT * 2); // the payoff: old principal plus its interest
+        usdc.approve(diamond, LOAN_AMOUNT / 20); // the difference only: the new principal nets the payoff (#3042)
         vm.stopBroadcast();
         uint256 lenderOfferId = _createLenderOffer(newLenderKey);
         console.log("Refinance request / standing lender offer:", requestId, lenderOfferId);
@@ -1147,36 +1079,4 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         return p;
     }
 
-    function _borrowerRefinanceOffer() internal view returns (LibVaipakam.CreateOfferParams memory) {
-        return LibVaipakam.CreateOfferParams({
-            offerType: LibVaipakam.OfferType.Borrower,
-            lendingAsset: address(usdc),
-            amount: LOAN_AMOUNT,
-            // Lower rate than the original loan — alice is refinancing
-            // because she found a cheaper lender.
-            interestRateBps: INTEREST_BPS / 2,
-            collateralAsset: address(weth),
-            collateralAmount: COLLATERAL_AMOUNT,
-            durationDays: DURATION_DAYS,
-            assetType: LibVaipakam.AssetType.ERC20,
-            tokenId: 0,
-            quantity: 0,
-            creatorRiskAndTermsConsent: true,
-            prepayAsset: address(usdc),
-            collateralAssetType: LibVaipakam.AssetType.ERC20,
-            collateralTokenId: 0,
-            collateralQuantity: 0,
-            allowsPartialRepay: false,
-            allowsPrepayListing: false,
-            allowsParallelSale: false,
-            amountMax: LOAN_AMOUNT,
-            interestRateBpsMax: INTEREST_BPS / 2,
-            collateralAmountMax: COLLATERAL_AMOUNT,
-            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-            expiresAt: 0,
-            fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0,
-                useFullTermInterest: false
-        });
-    }
 }

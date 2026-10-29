@@ -138,8 +138,9 @@ contract RedeployFacets is Script {
         // {run}, so `--sig runWith(...)` cannot skip it; the in-process tests
         // skip it by the library's own rule ({StorageLayoutRecord.active}).
         StorageLayoutRecord.requireAppendOnly("RedeployFacets", diamond);
-        // #2407 — the refinance-request record spans facets this curated set
-        // does not carry; refuse a Diamond that has not had it rolled out.
+        // #2407 / #3042 — the refinance-request record and the netted payoff
+        // span facets this curated set does not carry; refuse a Diamond that
+        // has not had them rolled out.
         RefinanceRecordRollout.assertInstalled(diamond);
         // #1566 S2b - refuse a Diamond from before vault-held fallback
         // custody, before anything is broadcast; see
@@ -369,10 +370,13 @@ contract RedeployFacets is Script {
         (bytes4[] memory ewdToAdd, bytes4[] memory ewdToReplace) =
             _partitionByRouting(diamond, _earlyWithdrawalDirectSelectors());
         // #2349 — RefinanceFacet gained `refinanceLoanFromMatch` (the matcher-
-        // fill route). On a pre-#2349 diamond `refinanceLoan` and
-        // `refinanceLoanFromAccept` are routed (Replace) and the match entry is
-        // new (Add). The routed subset is never empty (`refinanceLoan` is routed
-        // on every existing diamond), so the fixed Replace slot stays valid.
+        // fill route). On a pre-#2349 diamond `refinanceLoanFromAccept` is
+        // routed (Replace) and the match entry is new (Add). The routed subset
+        // is never empty (`refinanceLoanFromAccept` has been routed on every
+        // diamond since T-092-H), so the fixed Replace slot stays valid.
+        // #3042 — the netted payoff needs the refreshed accept delivery
+        // (OfferAcceptFeeFacet) this script does not carry; `runWith` has
+        // already refused a Diamond from before it.
         (bytes4[] memory refiToAdd, bytes4[] memory refiToReplace) =
             _partitionByRouting(diamond, _refinanceSelectors());
         // #1817 r9 — the accumulator's surface, same Add/Replace-by-routing
@@ -1231,17 +1235,20 @@ contract RedeployFacets is Script {
     /// @dev #658 PR-B2 — RefinanceFacet selectors, mirrors
     ///      `DeployDiamond._getRefinanceSelectors` (kept in lockstep).
     function _refinanceSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
-        s[0] = RefinanceFacet.refinanceLoan.selector;
-        s[1] = RefinanceFacet.refinanceLoanFromAccept.selector;
+        s = new bytes4[](4);
+        // #3042 — `refinanceLoan` is retired. No Remove leg is needed here:
+        // `RefinanceRecordRollout.assertInstalled` refuses any Diamond that
+        // still routes it, so on every target this script accepts it is
+        // already gone.
+        s[0] = RefinanceFacet.refinanceLoanFromAccept.selector;
         // #2349 — the matcher-fill route's entry. NEW, so this list is cut via
         // the Add/Replace-by-routing partition (a Replace reverts on an
         // unrouted selector on any pre-#2349 target).
-        s[2] = RefinanceFacet.refinanceLoanFromMatch.selector;
+        s[1] = RefinanceFacet.refinanceLoanFromMatch.selector;
         // #2407 — NEW, so cut through the same Add/Replace-by-routing
         // partition as the #2349 entry above.
-        s[3] = RefinanceFacet.getRefinanceRequest.selector;
-        s[4] = RefinanceFacet.checkRefinanceRequest.selector;
+        s[2] = RefinanceFacet.getRefinanceRequest.selector;
+        s[3] = RefinanceFacet.checkRefinanceRequest.selector;
     }
 
     /// @dev #658 PR-B2 — ClaimFacet selectors, mirrors

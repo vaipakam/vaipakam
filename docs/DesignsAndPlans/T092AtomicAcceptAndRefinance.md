@@ -20,6 +20,15 @@
 > reentrancy analysis and the fund flows in this document are unchanged. §5.3's
 > kill-switch case and §5.4's guardrails are corrected inline below.
 
+> **Superseded in part by #3042 (2026-10-28) — every refinance is atomic.**
+> The standalone `refinanceLoan` and the keeper's `KEEPER_ACTION_REFINANCE`
+> bit are retired, and the payoff is NETTED: the accept no longer delivers
+> the new principal to the borrower's wallet; the new lender's net principal
+> pays the old lender vault-to-vault and the wallet pays only the rest. The
+> fund-flow sections below describe the pre-#3042 round trip and are kept as
+> history. The current design is
+> [`Refinance3042NettedAtomicDesign.md`](Refinance3042NettedAtomicDesign.md).
+
 ## 1. Goal
 
 Make refinance-tagged Borrower offers fire `RefinanceFacet.refinanceLoan` **in the same transaction** as their accept, eliminating the multi-tx race-condition window between Tx 2 (accept, principal lands in borrower wallet) and Tx 3 (refinance, wallet drained to pay old loan).

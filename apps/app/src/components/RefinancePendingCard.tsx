@@ -28,6 +28,7 @@ import {
   refinanceApprovalOf,
 } from '../contracts/loanLive';
 import { readGraceSecondsLive } from '../contracts/preflights';
+import { readLiveProtocolFees } from '../data/fees';
 import type { RefinancePendingState } from '../data/refinancePending';
 import { useAutoRefinancePosture } from '../data/protocol';
 import { AutoMatchPostureBanner } from './AutoMatchPostureBanner';
@@ -166,15 +167,23 @@ export function RefinancePendingCard({
       // is STILL completable before re-granting a payoff-sized
       // approval (an accepted/cancelled request or a settled loan
       // must not get a fresh dangling authorization).
-      const [offer, liveLoan, latestBlock] = await Promise.all([
+      const [offer, liveLoan, latestBlock, liveFees] = await Promise.all([
         publicClient.readContract({
           address: walletChain.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
           functionName: 'getOfferDetails',
           args: [BigInt(offerId)],
-        }) as Promise<{ creator: string; accepted: boolean; expiresAt: bigint }>,
+        }) as Promise<{
+          creator: string;
+          accepted: boolean;
+          expiresAt: bigint;
+          amount: bigint;
+        }>,
         readLoanLive(publicClient, walletChain.diamondAddress, loanId),
         publicClient.getBlock({ blockTag: 'latest' }),
+        // #3042 — the approval is the payoff less the net new principal,
+        // and the net depends on the LIVE initiation-fee rate.
+        readLiveProtocolFees(publicClient, walletChain.diamondAddress),
       ]);
       // Grace bucket read live too: a request whose loan is strictly
       // past its grace window is as unacceptable on-chain as an
@@ -203,12 +212,15 @@ export function RefinancePendingCard({
         token: liveLoan.principalAsset,
         owner: address,
         spender: walletChain.diamondAddress,
-        // The payoff at the request's LAST fillable moment — a later
-        // grace-window accept pulls the late fee too (#1236), and the
-        // restored approval must cover it, not just today's figure.
+        // The wallet's share of the payoff at the request's LAST fillable
+        // moment — a later grace-window accept pulls the late fee too
+        // (#1236), and the restored approval must cover it, not just
+        // today's figure.
         amount: refinanceApprovalOf(liveLoan, {
           expiresAt: offer.expiresAt,
           graceSeconds: graceSec,
+          requestAmount: offer.amount,
+          loanInitiationFeeBps: liveFees.loanInitiationFeeBps,
         }),
       });
       setDone(copy.refinance.reapproved);

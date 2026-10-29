@@ -145,8 +145,8 @@ export function noRequestPosted(outcomes: readonly RefinanceBatchOutcome[]): boo
 }
 
 /** What the ready requests need, summed per token: the approval (each
- *  request's largest possible payoff) and the spare balance (each one's
- *  top-up today). One lending asset per offer, so one entry in practice. */
+ *  request's largest possible wallet share of its payoff, #3042) and the
+ *  spare balance (each one's top-up today). One lending asset per offer, so one entry in practice. */
 export function refinanceTotals(
   plans: readonly RefinanceRequestReady[],
 ): { token: `0x${string}`; approval: bigint; topUp: bigint }[] {

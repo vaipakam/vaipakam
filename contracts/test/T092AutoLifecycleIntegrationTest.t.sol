@@ -48,15 +48,13 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
  *             AutoExtendDisabled).
  *           - Refinance-tagged offer creation enforces
  *             `LibAutoRefinanceCheck.validate` at create-time.
- *           - Keeper-driven refinance rejects untagged offers
- *             (InvalidRefinanceOffer).
+ *           - A refinance completes only inside the accept or match
+ *             of its tagged offer (#3042 retired the standalone completion).
  *           - Extend-in-place rejects when both-side consent is
  *             missing (BothSideAutoExtendRequired).
  *
- *         Happy-path fund-flow assertions are intentionally NOT
- *         covered here — that requires the full multi-step keeper
- *         orchestration (create→accept→refinance) which is exercised
- *         by the existing RefinanceFacetTest fixtures. This file's
+ *         Happy-path fund-flow assertions (the netted payoff, #3042)
+ *         live in RefinanceFacetTest. This file's
  *         scope is the NEW T-092 surface (kill switches + tagged-
  *         offer binding + consent gates) bound to a real loan.
  */
@@ -422,8 +420,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
 
     function test_RefinanceTaggedOffer_AcceptsWithinCaps() public {
         // Caps satisfied → create succeeds; the offer becomes
-        // accessible to a lender accept (and downstream to
-        // refinanceLoan once accepted).
+        // accessible to a lender accept, which completes the
+        // refinance in the same transaction (#3042).
         uint256 loanId = _buildActiveLoan();
         vm.prank(borrower);
         _f().setAutoRefinanceCaps(
@@ -1539,46 +1537,6 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             .getEncumbered(borrower, mockCollateralERC20, 0);
     }
 
-    function test_2349_keeperRefinance_killSwitchOff_reverts() public {
-        // A keeper holding the holder's refinance delegation IS the automated
-        // route the switch exists to stop (spec: admin kill switches control
-        // keeper-driven auto-refinance).
-        (uint256 oldLoanId, uint256 taggedOfferId, , ) =
-            _taggedRefinanceRequest("keeperRouteLender");
-        address keeper = makeAddr("refinanceKeeper");
-        vm.startPrank(borrower);
-        ProfileFacet(address(diamond)).setKeeperAccess(true);
-        ProfileFacet(address(diamond)).approveKeeper(
-            keeper, LibVaipakam.KEEPER_ACTION_REFINANCE
-        );
-        ProfileFacet(address(diamond)).setLoanKeeperEnabled(oldLoanId, keeper, true);
-        vm.stopPrank();
-
-        _admin().setAutoRefinanceEnabled(false);
-        vm.prank(keeper);
-        vm.expectRevert(RefinanceFacet.AutoRefinanceDisabled.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(oldLoanId, taggedOfferId);
-
-        // Switch on: the keeper clears the gate and stops at the NEXT check
-        // (the request has not been accepted yet) — proving the revert above
-        // was the switch and nothing else.
-        _admin().setAutoRefinanceEnabled(true);
-        vm.prank(keeper);
-        vm.expectRevert(RefinanceFacet.OfferNotAccepted.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(oldLoanId, taggedOfferId);
-    }
-
-    function test_2349_holderDirectRefinance_killSwitchOff_notGated() public {
-        // The holder calling refinanceLoan themselves is never gated: with the
-        // switch off they reach the next check, not AutoRefinanceDisabled.
-        (uint256 oldLoanId, uint256 taggedOfferId, , ) =
-            _taggedRefinanceRequest("holderRouteLender");
-        _admin().setAutoRefinanceEnabled(false);
-        vm.prank(borrower);
-        vm.expectRevert(RefinanceFacet.OfferNotAccepted.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(oldLoanId, taggedOfferId);
-    }
-
     function test_2349_atomicEntries_stateTheirRoute() public {
         // The two atomic entries differ ONLY in the route they state. Driven
         // as the Diamond (their sole permitted caller) with the switch off:
@@ -1599,12 +1557,13 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             .refinanceLoanFromAccept(oldLoanId, taggedOfferId);
     }
 
-    function test_2349_frozenHolder_blockedOnUngatedRoutes() public {
-        // The lender-accept route no longer stops at the switch, so the
+    function test_2349_frozenHolder_blockedOnLenderAcceptRoute() public {
+        // The lender-accept route does not stop at the switch, so the
         // fail-closed frozen-holder block is what keeps a registry-confirmed
         // sanctioned holder from receiving the old collateral during an oracle
         // outage — when every fail-open screen reads "clean". Pins S10 #1006
-        // on BOTH ungated routes, with the switch off.
+        // on that ungated route, with the switch off. (#3042 retired the
+        // other ungated route, the standalone completion.)
         (uint256 oldLoanId, uint256 taggedOfferId, , ) =
             _taggedRefinanceRequest("frozenHolderLender");
         _admin().setAutoRefinanceEnabled(false);
@@ -1625,12 +1584,6 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         );
         RefinanceFacet(address(diamond))
             .refinanceLoanFromAccept(oldLoanId, taggedOfferId);
-
-        vm.prank(borrower);
-        vm.expectRevert(
-            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, borrower)
-        );
-        RefinanceFacet(address(diamond)).refinanceLoan(oldLoanId, taggedOfferId);
     }
 
     function test_2349_refinanceLoanFromMatch_rejectsExternalEOA() public {

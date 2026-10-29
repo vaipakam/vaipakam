@@ -14,7 +14,9 @@
  * auto-refinance caps do not already cover it, and the figures the
  * borrower reviews — today's payoff, what the wallet must hold spare at
  * acceptance, and the standing approval the acceptance pulls against,
- * sized to the payoff at the request's LAST fillable moment (#1236).
+ * sized to the wallet's share of the payoff at the request's LAST
+ * fillable moment (#1236, #3042: the new loan's net principal pays the
+ * rest inside the Diamond).
  * Or the reason the loan cannot take a request now.
  *
  * What a plan is NOT: the guardrail write, a balance check or an
@@ -37,6 +39,7 @@ import {
   readLoanLive,
   refinanceApprovalOf,
   refinancePayoffOf,
+  refinanceWalletPullOf,
   type LoanLive,
 } from '../contracts/loanLive';
 import {
@@ -90,12 +93,14 @@ export interface RefinanceRequestReady {
   chainNow: bigint;
   /** Today's payoff to the old lender. */
   payoff: bigint;
-  /** What the wallet must hold spare at acceptance: the payoff's interest
-   *  share plus the new loan's initiation fee (the new principal arrives
-   *  in the same transaction). Judged at today's payoff. */
+  /** What the wallet must hold spare at acceptance, and what the accept
+   *  pulls from it: the payoff less the new loan's net principal, which
+   *  pays the old lender inside the Diamond (#3042) — the interest share
+   *  plus the new loan's initiation fee. Judged at today's payoff. */
   topUp: bigint;
-  /** The standing approval the acceptance pulls against: the payoff at
-   *  the request's last fillable moment. */
+  /** The standing approval the acceptance pulls against: the wallet's
+   *  share at the request's last fillable moment, at the live fee rate
+   *  with no discount (an upper bound; a discount only lowers the pull). */
   approval: bigint;
   /** How much the payoff can still grow before the request's last
    *  fillable moment (late fee and interest); 0 when it cannot. */
@@ -226,12 +231,24 @@ export async function checkRefinanceRequest(
     chainNow + (BigInt(terms.durationDays) + REQUEST_WINDOW_DAYS) * 86_400n;
   const capsCover =
     caps.enabled && Number(caps.maxRateBps) >= terms.rateBps && caps.maxNewExpiry >= neededExpiry;
-  // The approval is sized to the payoff at the request's LAST fillable
-  // moment (its own expiry or the grace end, whichever first): since
-  // #1189 the pull GROWS past maturity by the grace-window late fee.
+  // The approval is sized to the wallet's share of the payoff at the
+  // request's LAST fillable moment (its own expiry or the grace end,
+  // whichever first): since #1189 the pull GROWS past maturity by the
+  // grace-window late fee. The share is the payoff less the new loan's
+  // net principal at the live fee rate (#3042); the request asks for the
+  // old principal (`toRefinanceOfferPayload`).
   const requestExpiry = chainNow + REQUEST_WINDOW_DAYS * 86_400n;
   const payoff = refinancePayoffOf(liveLoan, chainNow);
-  const approval = refinanceApprovalOf(liveLoan, { expiresAt: requestExpiry, graceSeconds });
+  const request = {
+    requestAmount: liveLoan.principal,
+    loanInitiationFeeBps: liveFees.loanInitiationFeeBps,
+  };
+  const topUp = refinanceWalletPullOf(liveLoan, request, chainNow);
+  const approval = refinanceApprovalOf(liveLoan, {
+    expiresAt: requestExpiry,
+    graceSeconds,
+    ...request,
+  });
   // OfferCreateFacet clamps a refinance request's expiry to the grace
   // boundary (graceEnd + 1); when that binds, the request lives until
   // the grace end, not for the full window.
@@ -242,12 +259,9 @@ export async function checkRefinanceRequest(
     liveLoan,
     chainNow,
     payoff,
-    topUp:
-      payoff -
-      liveLoan.principal +
-      (liveLoan.principal * BigInt(liveFees.loanInitiationFeeBps)) / 10_000n,
+    topUp,
     approval,
-    headroom: approval > payoff ? approval - payoff : 0n,
+    headroom: approval > topUp ? approval - topUp : 0n,
     requestExpiry,
     graceEnd,
     expiryGraceClamped: graceEnd + 1n < requestExpiry,

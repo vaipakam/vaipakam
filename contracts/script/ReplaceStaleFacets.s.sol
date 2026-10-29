@@ -114,7 +114,7 @@ contract ReplaceStaleFacets is DeployDiamond {
         // {run}, so `--sig runWith(...)` cannot skip it; the in-process tests
         // skip it by the library's own rule ({StorageLayoutRecord.active}).
         StorageLayoutRecord.requireAppendOnly("ReplaceStaleFacets", diamond);
-        // #2407 — see RefinanceRecordRollout.
+        // #2407 / #3042 — see RefinanceRecordRollout.
         RefinanceRecordRollout.assertInstalled(diamond);
         // #902 - refuse a Diamond from before the per-rental renter rows; see
         // {_requirePerRentalRenterRows}.

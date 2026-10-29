@@ -35,6 +35,12 @@ vi.mock('../contracts/loanLive', () => ({
   loanEndTimeOf: (live: { endTime: bigint }) => live.endTime,
   refinancePayoffOf: () => reads.payoff,
   refinanceApprovalOf: () => reads.approval,
+  // #3042 — the wallet's share: the payoff less the new loan's net
+  // principal, by the real rule over the mocked payoff.
+  refinanceWalletPullOf: (
+    _live: unknown,
+    r: { requestAmount: bigint; loanInitiationFeeBps: number },
+  ) => reads.payoff - (r.requestAmount - (r.requestAmount * BigInt(r.loanInitiationFeeBps)) / 10_000n),
 }));
 vi.mock('../contracts/preflights', () => ({
   assertPositionNftHeldLive: vi.fn(async () => undefined),
@@ -116,7 +122,9 @@ beforeEach(() => {
   reads.fees = { ...FEES };
   reads.grace = 3n * DAY;
   reads.payoff = 1_010_000n;
-  reads.approval = 1_010_000n;
+  // The wallet's share at the last fillable moment (#3042): the payoff
+  // there less the new loan's net principal (1_000_000 − 0.2%).
+  reads.approval = 12_000n;
   reads.sanctioned = false;
   reads.discovery = { kind: 'none' };
   reads.saleBlock = null;
@@ -130,7 +138,8 @@ describe('checkRefinanceRequest', () => {
     expect(plan.kind).toBe('ready');
     expect(plan.payoff).toBe(1_010_000n);
     // The payoff's interest share plus the 0.2% initiation fee on the
-    // new principal, which arrives in the same transaction.
+    // new principal: the new loan's net principal pays the rest inside
+    // the Diamond (#3042).
     expect(plan.topUp).toBe(10_000n + 2_000n);
     expect(plan.headroom).toBe(0n);
     expect(plan.requestExpiry).toBe(reads.now + REQUEST_WINDOW_DAYS * DAY);
@@ -169,7 +178,7 @@ describe('checkRefinanceRequest', () => {
 
   it('states the headroom and a request clamped to the grace end', async () => {
     reads.live = { ...reads.live, endTime: reads.now + 2n * DAY };
-    reads.approval = 1_050_000n;
+    reads.approval = 52_000n;
     const plan = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES)) as RefinanceRequestReady;
     expect(plan.headroom).toBe(40_000n);
     expect(plan.graceEnd).toBe(reads.now + 5n * DAY);
@@ -284,11 +293,11 @@ describe('planRefinanceForBatch', () => {
 
   it('keeps a loan whose bound shrank, and leaves out one whose bound grew', async () => {
     const reviewed = (await planRefinanceForBatch(ctx, LOAN, TERMS, FEES)) as Ready;
-    reads.approval = 1_005_000n;
+    reads.approval = 7_000n;
     expect(await planRefinanceForBatch(ctx, LOAN, TERMS, FEES, reviewed)).toMatchObject({
       kind: 'ready',
     });
-    reads.approval = 1_020_000n;
+    reads.approval = 22_000n;
     expect(await planRefinanceForBatch(ctx, LOAN, TERMS, FEES, reviewed)).toMatchObject({
       kind: 'refused',
       reason: copy.batchRefinance.changedSinceReview,

@@ -110,10 +110,10 @@ export function refinancePayoffAt(l, asOf) {
 }
 
 /**
- * What the borrower must hold SPARE for the accept (#2422 r8): the accept
- * pulls the whole payoff from the borrower's wallet, and the new principal
- * minus its LIF arrives in the same transaction, so the wallet needs
- * `payoff − principal + LIF`.
+ * What the borrower must hold SPARE for the accept (#2422 r8): since #3042
+ * the new principal minus its LIF pays the old lender directly inside the
+ * accept, and only the rest of the payoff is pulled from the borrower's
+ * wallet, so the wallet needs `payoff − principal + LIF`.
  *
  * The payoff is the LIVE remaining-term figure, never `durationDays` of
  * interest: a loan re-anchored by a partial repayment owes interest from
@@ -164,18 +164,28 @@ export function graceSecondsFrom(buckets, durationDays) {
 
 /**
  * The borrower's payoff-approval bounds. The app approves
- * `refinanceApprovalOf` = the payoff at the request's last fillable moment:
- * min(expiresAt − 1, grace end), with expiresAt = its submit-time chain
- * time + REQUEST_WINDOW. Payoff only grows with time, so:
- *   - FLOOR: the payoff at min(anchor − LAG + REQUEST_WINDOW − 1, grace end)
+ * `refinanceApprovalOf` = the WALLET's share of the payoff at the request's
+ * last fillable moment: min(expiresAt − 1, grace end), with expiresAt = its
+ * submit-time chain time + REQUEST_WINDOW. Since #3042 the wallet's share is
+ * the payoff minus the net new principal (the request's amount, which is
+ * the old principal, less its LIF at the live `lifBps`), because that net
+ * principal pays the old lender inside the accept. Payoff only grows with
+ * time, so:
+ *   - FLOOR: the share at min(anchor − LAG + REQUEST_WINDOW − 1, grace end)
  *     — the earliest the app's own clock could have put that moment;
- *   - CAP:   the payoff at the grace end — no request can be filled later.
+ *   - CAP:   the share at the grace end — no request can be filled later.
+ * `lifBps` is required: approving the whole payoff is what #3042 removed,
+ * and a missing rate must not quietly reproduce it.
  */
-export function payoffApprovalBounds(l, graceSeconds, anchor) {
+export function payoffApprovalBounds(l, graceSeconds, anchor, lifBps) {
+  if (lifBps === undefined || lifBps === null) {
+    throw new Error('payoffApprovalBounds: lifBps is required (#3042)');
+  }
   const graceEnd = loanEndOf(l) + graceSeconds;
-  /** The payoff at `t`, clamped to the grace end (the request cannot be
-   *  filled past it). */
-  const payoffBy = (t) => refinancePayoffAt(l, t < graceEnd ? t : graceEnd);
+  const netPrincipal = l.principal - (l.principal * BigInt(lifBps)) / 10_000n;
+  /** The wallet's share of the payoff at `t`, clamped to the grace end (the
+   *  request cannot be filled past it). */
+  const payoffBy = (t) => refinancePayoffAt(l, t < graceEnd ? t : graceEnd) - netPrincipal;
   return {
     floor: () => {
       const a = anchor();
@@ -498,6 +508,7 @@ export function refinancePlanSteps({
   days,
   riskTermsHash,
   graceSeconds,
+  lifBps,
   borrowerAnchor,
   lenderAnchor,
   requestId,
@@ -516,7 +527,7 @@ export function refinancePlanSteps({
     anchor: lenderAnchor,
     pinned,
   });
-  const payoff = payoffApprovalBounds(loan, graceSeconds, borrowerAnchor);
+  const payoff = payoffApprovalBounds(loan, graceSeconds, borrowerAnchor, lifBps);
   const approvePair = (role, who, min, max, why) => [
     {
       id: `${role[0]}-approve-reset`,
@@ -547,7 +558,7 @@ export function refinancePlanSteps({
       purpose: `setAutoRefinanceCaps(${loanId}, on, ${rateBps} bps)`,
       expected: tx(borrower, diamond, expectedCapsCall({ loanId, rateBps, days, anchor: borrowerAnchor })),
     },
-    ...approvePair('borrower', borrower, payoff.floor, payoff.cap, 'the payoff'),
+    ...approvePair('borrower', borrower, payoff.floor, payoff.cap, 'the wallet\u2019s share of the payoff'),
     {
       id: 'b-create',
       role: 'borrower',

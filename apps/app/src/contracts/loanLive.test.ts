@@ -15,6 +15,7 @@ import {
   remainingInterestSecondsOf,
   refinanceApprovalOf,
   refinancePayoffOf,
+  refinanceWalletPullOf,
   SellerQuoteUnavailableError,
   sellerEconomics,
   type LoanLive,
@@ -84,14 +85,55 @@ describe('refinancePayoffOf', () => {
   });
 });
 
+describe('refinanceWalletPullOf', () => {
+  // #3042 — the new principal less its initiation fee pays the old lender
+  // inside the accept, so the wallet pays only the rest of the payoff.
+  const lifBps = 20;
+  const net = (amount: bigint) => amount - (amount * 20n) / 10_000n;
+
+  it('is the payoff minus the net new principal (interest + initiation fee)', () => {
+    const asOf = live.startTime + DAY;
+    expect(
+      refinanceWalletPullOf(
+        live,
+        { requestAmount: live.principal, loanInitiationFeeBps: lifBps },
+        asOf,
+      ),
+    ).toBe(interestFor(30n) + (live.principal * 20n) / 10_000n);
+    expect(
+      refinanceWalletPullOf(
+        live,
+        { requestAmount: live.principal, loanInitiationFeeBps: lifBps },
+        asOf,
+      ),
+    ).toBe(refinancePayoffOf(live, asOf) - net(live.principal));
+  });
+
+  it('grows when the request asks for less than the old principal', () => {
+    const asOf = live.startTime + DAY;
+    const half = live.principal / 2n;
+    expect(
+      refinanceWalletPullOf(
+        live,
+        { requestAmount: half, loanInitiationFeeBps: lifBps },
+        asOf,
+      ),
+    ).toBe(refinancePayoffOf(live, asOf) - net(half));
+  });
+});
+
 describe('refinanceApprovalOf', () => {
   const graceSeconds = 3n * DAY; // 30-day bucket
+  // #3042 — every bound below is the payoff at the last fillable moment
+  // LESS the net new principal the accept pays the old lender with.
+  const req = { requestAmount: live.principal, loanInitiationFeeBps: 20 };
+  const net = live.principal - (live.principal * 20n) / 10_000n;
   const payoffInTerm = live.principal + interestFor(30n);
 
   it('carries no fee headroom when the request expires before maturity', () => {
     expect(
-      refinanceApprovalOf(live, { expiresAt: endTime - DAY, graceSeconds }),
-    ).toBe(payoffInTerm);
+      refinanceApprovalOf(live, { expiresAt: endTime - DAY, graceSeconds, ...req }),
+    ).toBe(payoffInTerm - net);
   });
 
   it('covers grace interest + fee at the grace end when the request outlives it', () => {
@@ -101,9 +143,10 @@ describe('refinanceApprovalOf', () => {
       refinanceApprovalOf(live, {
         expiresAt: endTime + 30n * DAY,
         graceSeconds,
+        ...req,
       }),
     ).toBe(
-      live.principal + interestFor(33n) + (live.principal * 250n) / 10_000n,
+      live.principal + interestFor(33n) + (live.principal * 250n) / 10_000n - net,
     );
   });
 
@@ -112,17 +155,17 @@ describe('refinanceApprovalOf', () => {
     // expiresAt - 1 = endTime + 1d exactly → 31 elapsed days,
     // daysLate = 1 → 1.5%.
     expect(
-      refinanceApprovalOf(live, { expiresAt: endTime + DAY + 1n, graceSeconds }),
+      refinanceApprovalOf(live, { expiresAt: endTime + DAY + 1n, graceSeconds, ...req }),
     ).toBe(
-      live.principal + interestFor(31n) + (live.principal * 150n) / 10_000n,
+      live.principal + interestFor(31n) + (live.principal * 150n) / 10_000n - net,
     );
   });
 
   it('falls back to the grace end for a no-expiry offer', () => {
     expect(
-      refinanceApprovalOf(live, { expiresAt: 0n, graceSeconds }),
+      refinanceApprovalOf(live, { expiresAt: 0n, graceSeconds, ...req }),
     ).toBe(
-      live.principal + interestFor(33n) + (live.principal * 250n) / 10_000n,
+      live.principal + interestFor(33n) + (live.principal * 250n) / 10_000n - net,
     );
   });
 });

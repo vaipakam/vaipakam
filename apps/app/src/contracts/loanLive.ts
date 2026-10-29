@@ -180,20 +180,54 @@ export function refinancePayoffOf(live: LoanLive, asOf: bigint): bigint {
   );
 }
 
-/** The standing-approval target for a refinance request: the payoff
- *  at the LAST moment the request is still fillable — the earlier of
- *  its own expiry and the end of the loan's grace window (a lender
- *  can accept any time up to then, and the accept-time pull includes
- *  the late fee AND the still-accruing grace interest AT THAT TIME,
- *  #1189/#1236). Approving only today's
- *  figure would strand an otherwise-valid request the moment the
- *  loan crosses maturity; approving this bound keeps the approval
- *  exact against the maximum the contract can ever pull for THIS
- *  request. `expiresAt === 0` means no offer-level expiry — the
- *  grace end alone bounds it. */
+/** #3042 — what a refinance accept takes from the holder's WALLET at
+ *  `asOf`. The accept and the payoff are one transaction: the new
+ *  lender's principal, less the borrower's initiation fee, goes straight
+ *  to the old lender, and only the rest of the payoff is pulled from the
+ *  wallet. So the pull is the payoff minus that net principal, which is
+ *  the old loan's interest (and any late fee) plus the new loan's
+ *  initiation fee.
+ *
+ *  The fee is taken at the LIVE `loanInitiationFeeBps` with no discount,
+ *  so this is the MOST the accept can pull: a borrower hold-tier discount
+ *  only lowers the fee, which raises the net principal and lowers the
+ *  pull. A governance raise of the fee rate after posting raises the
+ *  pull above an approval made before it; the pending card recomputes
+ *  this with the live rate and asks for a fresh approval. */
+export function refinanceWalletPullOf(
+  live: LoanLive,
+  opts: { requestAmount: bigint; loanInitiationFeeBps: number },
+  asOf: bigint,
+): bigint {
+  const fee = (opts.requestAmount * BigInt(opts.loanInitiationFeeBps)) / 10_000n;
+  const netPrincipal = opts.requestAmount - fee;
+  const payoff = refinancePayoffOf(live, asOf);
+  // The contract refuses a net principal above the old lender's due, and
+  // the request amount never exceeds the old principal, so this cannot go
+  // negative; clamp anyway rather than approve a negative figure.
+  return payoff > netPrincipal ? payoff - netPrincipal : 0n;
+}
+
+/** The standing-approval target for a refinance request: the wallet
+ *  pull (`refinanceWalletPullOf`) at the LAST moment the request is
+ *  still fillable — the earlier of its own expiry and the end of the
+ *  loan's grace window (a lender can accept any time up to then, and the
+ *  accept-time payoff includes the late fee AND the still-accruing grace
+ *  interest AT THAT TIME, #1189/#1236). Approving only today's figure
+ *  would strand an otherwise-valid request the moment the loan crosses
+ *  maturity; approving this bound covers the most the contract can ever
+ *  pull from the wallet for THIS request, and since #3042 that is only
+ *  the part of the payoff the new principal does not cover.
+ *  `expiresAt === 0` means no offer-level expiry — the grace end alone
+ *  bounds it. */
 export function refinanceApprovalOf(
   live: LoanLive,
-  opts: { expiresAt: bigint; graceSeconds: bigint },
+  opts: {
+    expiresAt: bigint;
+    graceSeconds: bigint;
+    requestAmount: bigint;
+    loanInitiationFeeBps: number;
+  },
 ): bigint {
   // The effective grace end at the snapshot. A pause that begins later moves
   // it, and the contract's pull with it — an intrinsic race this bound cannot
@@ -205,7 +239,7 @@ export function refinanceApprovalOf(
     opts.expiresAt > 0n && opts.expiresAt - 1n < graceEnd
       ? opts.expiresAt - 1n
       : graceEnd;
-  return refinancePayoffOf(live, lastFillable);
+  return refinanceWalletPullOf(live, opts, lastFillable);
 }
 
 /** Mirror LibVaipakam.SECONDS_PER_YEAR / BASIS_POINTS. */

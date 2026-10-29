@@ -43,24 +43,6 @@
   },
   {
     "type": "function",
-    "name": "refinanceLoan",
-    "inputs": [
-      {
-        "name": "oldLoanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrowerOfferId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "refinanceLoanFromAccept",
     "inputs": [
       {
@@ -130,16 +112,53 @@
         "internalType": "address"
       },
       {
-        "name": "shortfallPaid",
+        "name": "oldLoanNewStatus",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RefinancePayoffSettled",
+    "inputs": [
+      {
+        "name": "oldLoanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newLoanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newLenderToOldLender",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "oldLoanNewStatus",
-        "type": "uint8",
+        "name": "borrowerToOldLender",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "uint8"
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerToTreasury",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -2656,11 +2675,6 @@
   },
   {
     "type": "error",
-    "name": "ReentrancyGuardReentrantCall",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "RefinanceBlockedByOffset",
     "inputs": [
       {
@@ -2684,6 +2698,33 @@
     "type": "error",
     "name": "RefinanceExpiryExceedsCap",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RefinanceNetPrincipalExceedsPayoff",
+    "inputs": [
+      {
+        "name": "netPrincipal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lenderDue",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RefinanceNetPrincipalMissing",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

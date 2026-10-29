@@ -169,6 +169,7 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
         days: 30n,
         riskTermsHash: ZERO_HASH,
         graceSeconds: 86_400n,
+        lifBps: 20n,
         borrowerAnchor: () => NOW,
         lenderAnchor: () => NOW,
         requestId: () => requestId,
@@ -226,6 +227,7 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
         chainId: 84532,
         diamond: DIAMOND,
         graceSeconds: 86_400n,
+        lifBps: 20n,
         borrowerAnchor: () => NOW,
         lenderAnchor: () => null,
         requestId: () => null,
@@ -252,6 +254,7 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
       chainId: 84532,
       diamond: DIAMOND,
       graceSeconds: 86_400n,
+      lifBps: 20n,
       borrowerAnchor: () => NOW,
       lenderAnchor: () => NOW,
       requestId: () => null,
@@ -284,20 +287,30 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
   it('bounds the payoff approval with the app\u2019s own formula — loan 22 to the wei', () => {
     // Loan 22 refinanced on 2026-10-05: grace 1 day (no buckets → the default
     // table for 29 days), the borrower's submit anchored at chain time
-    // 1791190252, and the app approved exactly 5116095890410958 wei.
+    // 1791190252, and the app approved exactly 5116095890410958 wei — the
+    // WHOLE payoff, as the app sized it before #3042. Since #3042 the new
+    // loan's net principal (5e15 less the 0.2% initiation fee =
+    // 4990000000000000) pays the old lender inside the Diamond, so the
+    // approval is that payoff less the net principal.
     expect(graceSecondsFrom([], 29n)).toBe(86_400n);
-    const b = payoffApprovalBounds(LOAN, 86_400n, () => 1_791_190_252n);
-    expect(b.floor()).toBe(5_116_095_890_410_958n);
+    const PAYOFF = 5_116_095_890_410_958n;
+    const NET = 4_990_000_000_000_000n;
+    const b = payoffApprovalBounds(LOAN, 86_400n, () => 1_791_190_252n, 20n);
+    expect(b.floor()).toBe(PAYOFF - NET);
     // Loan 22's grace end came before the request's expiry, so both bounds
     // clamp to it and coincide.
-    expect(b.cap()).toBe(5_116_095_890_410_958n);
-    // An undersized approve is refused; the real one passes.
-    const m = approvalBetween(b.floor, b.cap, 'the payoff');
+    expect(b.cap()).toBe(PAYOFF - NET);
+    // An undersized approve is refused; the right one passes, and the
+    // pre-#3042 whole-payoff approval is now refused as oversized.
+    const m = approvalBetween(b.floor, b.cap, 'the wallet\u2019s share of the payoff');
     expect(structMismatches({ amount: m }, { amount: 1n })).toHaveLength(1);
-    expect(structMismatches({ amount: m }, { amount: 5_116_095_890_410_958n })).toEqual([]);
+    expect(structMismatches({ amount: m }, { amount: PAYOFF - NET })).toEqual([]);
+    expect(structMismatches({ amount: m }, { amount: PAYOFF })).toHaveLength(1);
     // No anchor yet → the floor is unknown → refused, never guessed.
     expect(structMismatches({ amount: approvalBetween(() => null, b.cap, 'x') }, { amount: b.cap() })).toHaveLength(1);
-    expect(payoffApprovalBounds(LOAN, 86_400n, () => null).cap()).toBeNull();
+    expect(payoffApprovalBounds(LOAN, 86_400n, () => null, 20n).cap()).toBeNull();
+    // The fee rate is required: a missing one is refused, never defaulted.
+    expect(() => payoffApprovalBounds(LOAN, 86_400n, () => null)).toThrow(/lifBps/);
   });
 
   // #2422 r9: the cap is the payoff at min(anchor + ANCHOR_WINDOW_SEC +
@@ -315,11 +328,12 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
     const graceEnd = growing.startTime + growing.durationDays * DAY + grace;
     const lastFillable = anchor + ANCHOR_WINDOW_SEC + 30n * DAY - 1n;
     expect(lastFillable < graceEnd).toBe(true);
-    const b = payoffApprovalBounds(growing, grace, () => anchor);
-    expect(b.cap()).toBe(refinancePayoffAt(growing, lastFillable));
-    expect(b.cap()).toBeLessThan(refinancePayoffAt(growing, graceEnd));
-    const m = approvalBetween(b.floor, b.cap, 'the payoff');
-    expect(structMismatches({ amount: m }, { amount: refinancePayoffAt(growing, graceEnd) })).toHaveLength(1);
+    const b = payoffApprovalBounds(growing, grace, () => anchor, 20n);
+    const net = growing.principal - (growing.principal * 20n) / 10_000n;
+    expect(b.cap()).toBe(refinancePayoffAt(growing, lastFillable) - net);
+    expect(b.cap()).toBeLessThan(refinancePayoffAt(growing, graceEnd) - net);
+    const m = approvalBetween(b.floor, b.cap, 'the wallet\u2019s share of the payoff');
+    expect(structMismatches({ amount: m }, { amount: refinancePayoffAt(growing, graceEnd) - net })).toHaveLength(1);
     expect(structMismatches({ amount: m }, { amount: b.cap() })).toEqual([]);
     expect(structMismatches({ amount: m }, { amount: b.floor() })).toEqual([]);
   });

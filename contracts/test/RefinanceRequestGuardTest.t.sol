@@ -427,56 +427,6 @@ contract RefinanceRequestGuardTest is SetupTest {
         );
     }
 
-    /// A request accepted under the pre-atomic, step-by-step flow — replacement
-    /// loan created, original still Active, completion pending — completes
-    /// through the standalone `refinanceLoan` with NO record, and even after
-    /// the holder has posted a newer request: the replacement loan already
-    /// exists, so refusing would strand both loans. The state is built by
-    /// muting the refinance hook during the accept, which is exactly what that
-    /// flow left behind.
-    function test_aLegacyAcceptedRequestCompletesWithoutTheRecord() public {
-        uint256 loanId = _activeLoan();
-        uint256 r1 = _request(loanId, 0);
-        bytes32 slot = _indexSlotOf(loanId, r1);
-        (address l, uint256 pk) = _replacementLender("legacyLender");
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(RefinanceFacet.refinanceLoanFromAccept.selector),
-            ""
-        );
-        uint256 newLoanId = _signAndAcceptOffer(l, pk, r1);
-        vm.clearMockedCalls();
-        // (that also cleared the oracle mocks the loan was priced with)
-        mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
-        mockOraclePrice(mockERC20, 1e8, 8);
-        mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
-        mockOraclePrice(mockCollateralERC20, 1e8, 8);
-        assertEq(
-            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
-            uint8(LibVaipakam.LoanStatus.Active),
-            "precondition: the original loan awaits completion"
-        );
-        // Pre-index: nothing recorded — and the holder posts a newer request.
-        vm.store(address(diamond), slot, bytes32(0));
-        vm.prank(borrower);
-        uint256 r2 = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0)
-        );
-        assertEq(_recorded(loanId), r2);
-
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(loanId, r1);
-        assertEq(
-            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
-            uint8(LibVaipakam.LoanStatus.Repaid),
-            "the standalone completion went through"
-        );
-        assertEq(
-            uint8(LoanFacet(address(diamond)).getLoanDetails(newLoanId).status),
-            uint8(LibVaipakam.LoanStatus.Active)
-        );
-    }
-
     // ─── #2424 r10 — a request holds the loan while it STANDS ────────
     //
     // Whether a lender could fill it right now is deliberately not part of the

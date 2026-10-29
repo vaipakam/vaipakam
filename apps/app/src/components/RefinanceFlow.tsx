@@ -54,6 +54,7 @@ import {
   loanEndTimeOf,
   refinanceApprovalOf,
   refinancePayoffOf,
+  refinanceWalletPullOf,
   type LoanLive,
 } from '../contracts/loanLive';
 import { useProtocolFees } from '../data/fees';
@@ -145,11 +146,15 @@ export function RefinanceFlow({
   // #1189/#1236 — the payoff is time-aware: past maturity it carries
   // the grace-window late fee the accept-time pull now includes.
   const payoff = refinancePayoffOf(live, chainNow);
-  const payoffInterest = payoff - live.principal;
-  const lifWei = (live.principal * BigInt(fees.loanInitiationFeeBps)) / 10_000n;
-  // What the wallet must hold SPARE at accept: the payoff is pulled,
-  // but the new principal minus LIF arrives in the same tx.
-  const walletTopUp = payoffInterest + lifWei;
+  // The request asks for the old loan's principal (toRefinanceOfferPayload).
+  const request = {
+    requestAmount: live.principal,
+    loanInitiationFeeBps: fees.loanInitiationFeeBps,
+  };
+  // #3042 — what the wallet must hold at accept: the new principal less
+  // its initiation fee pays the old lender inside the accept, so only the
+  // rest of the payoff (the interest portion plus that fee) is pulled.
+  const walletTopUp = refinanceWalletPullOf(live, request, chainNow);
   // The approval bound: the payoff at the LAST moment this request
   // could be accepted (its own 30-day expiry or the grace end,
   // whichever first) — what the standing approval is sized to, and
@@ -164,12 +169,15 @@ export function RefinanceFlow({
   const approvalBound = refinanceApprovalOf(live, {
     expiresAt: chainNow + REQUEST_WINDOW_DAYS * 86_400n,
     graceSeconds: graceSec,
+    ...request,
   });
   // Disclosed as TOTAL payoff growth, not "late fee" (Codex #1256 r3
   // P3): past maturity the pull grows by the late fee AND the
   // interest that keeps accruing, and the receipt must not label the
-  // interest share as a fee.
-  const payoffHeadroom = approvalBound - payoff;
+  // interest share as a fee. Both are wallet pulls, so their difference
+  // is exactly how much the payoff can grow before the last fillable
+  // moment.
+  const payoffHeadroom = approvalBound - walletTopUp;
   // OfferCreateFacet clamps a refinance request's on-chain expiry to
   // the grace boundary (graceEnd + 1) — when that clamp binds, the
   // honest reviewed lifetime is the grace end, not "30 days after
@@ -343,9 +351,9 @@ export function RefinanceFlow({
       }
       // The approval itself needs no balance, but a wallet that can't
       // even cover the INTEREST portion today should hear it now, not
-      // via a failed accept later. (The principal arrives in the
-      // accept tx itself, so only the top-up is checked — with the
-      // LIVE fee config, at TODAY's payoff; the pending card's
+      // via a failed accept later. (The new loan's net principal pays
+      // the old lender inside the accept, #3042, so only the top-up is
+      // checked — with the LIVE fee config, at TODAY's payoff; the pending card's
       // balance watch tracks the figure as any late fee accrues.)
       await assertErc20BalanceLive({
         publicClient,

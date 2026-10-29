@@ -21,8 +21,8 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
  *      ── Keeper-accessible surface (Phase 6) ────────────────────────────────
  *      Keeper authority is gated per-action via
  *      {requireKeeperFor(action, loan, lenderSide)} against the relevant
- *      NFT holder's `approvedKeeperActions` bitmask. Five actions are
- *      accepted at these seven entry points:
+ *      NFT holder's `approvedKeeperActions` bitmask. Four actions are
+ *      accepted at these six entry points:
  *
  *        EarlyWithdrawalFacet.createLoanSaleOffer    → INIT_EARLY_WITHDRAW
  *        EarlyWithdrawalFacet.completeLoanSale       → COMPLETE_LOAN_SALE
@@ -30,7 +30,9 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
  *        PrecloseFacet.transferObligationViaOffer    → initPreclose
  *        PrecloseFacet.offsetWithNewOffer            → initPreclose
  *        PrecloseFacet.completeOffset                → COMPLETE_OFFSET
- *        RefinanceFacet.refinanceLoan                → REFINANCE
+ *
+ *      (#3042 retired `RefinanceFacet.refinanceLoan` → REFINANCE: a
+ *      refinance now completes only inside the accept of its tagged offer.)
  *
  *      Money-out operations (repay, claim, addCollateral,
  *      partialWithdraw, acceptOffer, liquidate, triggerDefault)

@@ -33,6 +33,7 @@ import {
   readLoanLive,
   refinanceApprovalOf,
   refinancePayoffOf,
+  refinanceWalletPullOf,
 } from '../contracts/loanLive';
 import { readGraceSecondsLive } from '../contracts/preflights';
 import {
@@ -269,6 +270,7 @@ export function useRefinancePending(
             refinanceTargetLoanId: bigint;
             createdAt: bigint;
             expiresAt: bigint;
+            amount: bigint;
           }>,
           readLoanLive(readClient!, diamond, loanId),
           readLiveProtocolFees(readClient!, diamond),
@@ -333,10 +335,14 @@ export function useRefinancePending(
       // Payoff AS OF NOW (what an accept in this block pulls —
       // includes any accrued grace-window late fee, #1189/#1236).
       const payoff = refinancePayoffOf(live, latestBlock.timestamp);
-      const topUp =
-        payoff -
-        live.principal +
-        (live.principal * BigInt(fees.loanInitiationFeeBps)) / 10_000n;
+      // #3042 — the request's OWN amount, less its initiation fee at the
+      // LIVE rate, pays the old lender inside the accept; the wallet pays
+      // only the rest of the payoff.
+      const request = {
+        requestAmount: offer.amount,
+        loanInitiationFeeBps: fees.loanInitiationFeeBps,
+      };
+      const topUp = refinanceWalletPullOf(live, request, latestBlock.timestamp);
       // Strictly past grace the contract's admission gate rejects any
       // accept — the request behaves like an expired one from here.
       const pastGrace =
@@ -348,6 +354,7 @@ export function useRefinancePending(
       const approvalTarget = refinanceApprovalOf(live, {
         expiresAt: offer.expiresAt,
         graceSeconds: graceSec,
+        ...request,
       });
       // Disconnected wallet (address undefined) must not paint the
       // funding warnings red off zero placeholders.

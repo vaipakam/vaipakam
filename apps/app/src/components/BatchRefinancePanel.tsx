@@ -217,7 +217,7 @@ export function BatchRefinancePanel({
     let sent = false;
     try {
       // The wallet must be able to fund every acceptance's spare amount,
-      // and one approval covers every request's largest payoff.
+      // and one approval covers every request's largest wallet share of its payoff (#3042).
       setStage({ kind: 'sending', step: 'approving' });
       for (const [i, t] of totals.entries()) {
         await assertErc20BalanceLive({
