@@ -1,4 +1,4 @@
-## Thread — sellers see and collect their interest claims (PR #<n>)
+## Thread — sellers see and collect their interest claims (PR #3072)
 
 The app now follows the rule that a lender who sells keeps the interest they
 earned. The sell-now and listing screens no longer say the earned interest is
