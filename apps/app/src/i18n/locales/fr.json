@@ -930,11 +930,37 @@
       "ownScanCapped": "Ce portefeuille a publié plus d’offres depuis l’offre de ce prêt que nous ne pouvons en vérifier ici. S’il a publié une demande de refinancement pour ce prêt lorsqu’il détenait la position d’emprunteur, cette page ne peut pas l’afficher. Si elle est encore ouverte, vous pouvez l’annuler sous « Vos offres ouvertes » sur le Bureau des taux (une demande expirée n’y figure pas) ; dans tous les cas, retirez l’approbation de jeton sur laquelle elle reposait sous « Approbations permanentes de tokens » dans les Paramètres (mode avancé) si rien d’autre n’en a besoin.",
       "ownScanFailed": "Nous n’avons pas pu vérifier les offres de ce portefeuille pour l’instant. S’il a publié une demande de refinancement pour ce prêt lorsqu’il détenait la position d’emprunteur, cette page ne peut pas encore l’afficher — réessayez dans un instant. Si elle est encore ouverte, vous pouvez l’annuler sous « Vos offres ouvertes » sur le Bureau des taux (une demande expirée n’y figure pas) ; dans tous les cas, retirez l’approbation de jeton sur laquelle elle reposait sous « Approbations permanentes de tokens » dans les Paramètres (mode avancé) si rien d’autre n’en a besoin.",
       "repayWarnPending": "Une demande de refinancement est encore active pour ce prêt. Le remboursement règle le prêt, après quoi la demande ne pourra jamais se terminer — annulez-la ensuite depuis sa carte (cela supprime aussi son approbation permanente de payoff) ; d'ici là elle reste simplement en place jusqu'à expiration.",
-      "inFallback": "Ce prêt est dans sa période de repli, il ne peut donc pas recevoir de demande de refinancement. Sa propre page explique ses options."
+      "inFallback": "Ce prêt est dans sa période de repli, il ne peut donc pas recevoir de demande de refinancement. Sa propre page explique ses options.",
+      "permit": {
+        "signDisclosure": "Vous signerez une autorisation de remboursement d’au plus {{amount}} : le remboursement dû si un prêteur accepte au dernier moment que permet cette demande. Celui qui finalise le refinancement peut l’utiliser une seule fois, uniquement pour le remboursement de ce prêt à ce moment-là ; le reste n’est donc jamais prélevé. Elle devient caduque quand la demande prend fin, et rien ne reste approuvé au profit du protocole.",
+        "permit2ApprovalNote": "Si votre portefeuille n’a pas approuvé Permit2 (le contrat d’autorisation d’Uniswap) pour ce token à hauteur d’au moins ce montant, vous l’approuvez d’abord. Cette approbation ne déplace rien à elle seule : Permit2 ne paie que contre une signature que vous faites.",
+        "growthDisclosure": "Si un prêteur accepte après l’échéance du prêt, le remboursement augmente (les frais de retard plus les intérêts qui continuent de s’accumuler) jusqu’à ~{{maxGrowth}} de plus pour cette demande. L’autorisation couvre aussi ce montant, afin qu’une acceptation tardive ne puisse pas échouer pour cette raison.",
+        "multiStepNote": "La publication prend jusqu’à cinq étapes dans le portefeuille : les garde-fous, l’approbation de Permit2 si nécessaire, la demande, votre signature de l’autorisation de remboursement, et la transaction qui la joint. Si vous vous arrêtez après la publication de la demande, elle reste ouverte sans autorisation et aucun prêteur ne peut la mener à terme ; signez l’autorisation depuis la carte de la demande, ou annulez la demande.",
+        "done": "Demande de refinancement publiée avec son autorisation de remboursement. Lorsqu’un prêteur l’acceptera, ce prêt se clôturera automatiquement — vous n’avez rien d’autre à faire. Vous pouvez annuler la demande ci-dessous (l’annulation s’ouvre quelques minutes après la publication).",
+        "postedWithoutPermit": "Votre demande de refinancement est publiée, mais son autorisation de remboursement n’est pas jointe, donc aucun prêteur ne peut encore la mener à terme. Signez l’autorisation depuis la carte de la demande ci-dessous, ou annulez la demande.",
+        "postedButUnconfirmed": "Votre demande a été envoyée, mais nous n’avons pas pu confirmer si elle a abouti. Vérifiez vos demandes ouvertes avant de réessayer : si elle est bien passée, une seconde demande créerait un doublon. Si elle est passée, signez son autorisation de remboursement depuis la carte de la demande.",
+        "quoteUnavailable": "Nous n’avons pas pu lire le remboursement de ce prêt auprès du protocole pour le moment, la demande ne peut donc pas encore être examinée. Veuillez réessayer dans un instant.",
+        "issue": {
+          "missing": "Aucune autorisation de remboursement de ce portefeuille n’est jointe à cette demande, donc l’acceptation d’un prêteur échouerait. Signez-en une ci-dessous ou annulez la demande.",
+          "spent": "L’autorisation de remboursement de cette demande a déjà été utilisée, donc l’acceptation d’un prêteur échouerait. Signez-en une nouvelle ci-dessous ou annulez la demande.",
+          "expired": "L’autorisation de remboursement de cette demande a expiré, donc l’acceptation d’un prêteur échouerait. Signez-en une nouvelle ci-dessous ou annulez la demande.",
+          "lapsesEarly": "L’autorisation de remboursement de cette demande expire avant la demande elle-même, donc une acceptation ultérieure échouerait. Signez-en une nouvelle ci-dessous ou annulez la demande.",
+          "short": "L’autorisation de remboursement de cette demande permet moins que ce que le remboursement peut atteindre avant la fin de la demande (une acceptation après l’échéance prélève aussi les frais de retard et les intérêts supplémentaires), donc une acceptation ultérieure pourrait échouer. Signez-en une nouvelle ci-dessous ou annulez la demande.",
+          "permit2Short": "L’approbation de Permit2 par votre portefeuille pour ce token ne couvre plus le remboursement, donc l’acceptation d’un prêteur échouerait. Signez à nouveau l’autorisation de remboursement ci-dessous ; cela augmente d’abord cette approbation."
+        },
+        "sign": "Signer l’autorisation de remboursement",
+        "signed": "Autorisation de remboursement jointe — la demande peut aboutir.",
+        "signAborted": "Cette demande ne peut plus aboutir (acceptée, annulée ou prêt clôturé), donc rien n’a été signé. Actualisez pour voir l’état le plus récent.",
+        "cancelled": "Demande de refinancement annulée — ce prêt continue inchangé. Son autorisation de remboursement désignait cette demande : elle ne pourra donc jamais être utilisée, et rien ne reste approuvé au profit du protocole à son titre.",
+        "pendingLoanClosed": "Ce prêt s’est clôturé autrement depuis, la demande ne peut donc plus aboutir. Annulez-la pour la supprimer.",
+        "pendingExpired": "Cette demande de refinancement a expiré le {{date}} — aucun prêteur ne peut plus l’accepter, et elle ne bloque plus vos autres actions ici. Annulez-la ci-dessous pour la supprimer ; le prêt continue inchangé.",
+        "pendingPastGrace": "Ce prêt a dépassé son échéance et sa fenêtre de grâce, aucun prêteur ne peut donc plus accepter cette demande — elle ne bloque plus vos autres actions ici. Annulez-la ci-dessous pour la supprimer.",
+        "pendingUntakeable": "Cette demande de refinancement ne pourra jamais être acceptée : ce n’est pas la demande que le protocole a enregistrée pour ce prêt (une demande plus récente l’a remplacée). Elle ne bloque pas le prêt. Annulez-la ci-dessous pour la supprimer."
+      }
     },
     "approvals": {
       "title": "Approbations permanentes de tokens",
-      "blurb": "Ce sont les permissions de dépense que votre portefeuille a accordées au contrat Vaipakam pour les tokens touchés par vos prêts et offres. Certains flux les définissent volontairement (par exemple le payoff d'une demande de refinancement) ; tout reste d'une tentative abandonnée peut être supprimé ici.",
+      "blurb": "Ce sont les permissions de dépense que votre portefeuille a accordées au contrat Vaipakam pour les tokens touchés par vos prêts et offres. Certains flux les définissent volontairement (par exemple le règlement d'une annonce de vente) ; tout reste d'une tentative abandonnée peut être supprimé ici.",
       "revokeWarning": "Attention : si une demande active sur l'un de vos prêts dépend de l'approbation d'un token, la révoquer fera échouer ce flux jusqu'à restauration depuis sa carte — la carte vous avertira rapidement.",
       "scopeNote": "Cette liste couvre les tokens vus dans vos prêts et offres Vaipakam sur ce réseau. Les approbations accordées à d'autres apps ou pour d'autres tokens ne sont pas affichées — la vue d'approbations de tokens de votre portefeuille reste la référence complète.",
       "none": "Aucune approbation permanente à Vaipakam trouvée pour vos tokens connus.",
@@ -3477,7 +3503,9 @@
       "phase": {
         "approving": "Approuvez le total dans votre portefeuille…",
         "checking": "Nouvelle vérification de chaque prêt…",
-        "submitting": "Confirmez la transaction dans votre portefeuille…"
+        "submitting": "Confirmez la transaction dans votre portefeuille…",
+        "signing": "Signez dans votre portefeuille l’autorisation de remboursement de chaque demande…",
+        "attaching": "Confirmez la transaction qui joint les autorisations…"
       },
       "reviewTitle": "Publier ces demandes de refinancement",
       "loanPayoff": "Prêt n°{{id}} : ~{{payoff}} pour le rembourser aujourd’hui, prélevés automatiquement quand un prêteur accepte sa demande.",
@@ -3505,7 +3533,12 @@
       "ownPageRental": "Une location ne peut pas recevoir de demande de refinancement ; seuls les prêts en tokens le peuvent.",
       "ownPageOpenRequest": "Une demande de refinancement est déjà ouverte sur ce prêt. Sa propre page l’affiche et vous permet de l’annuler.",
       "approvalLeft": "Votre approbation de tokens pour le protocole s’élève désormais à {{amount}}. Vos demandes de refinancement ouvertes y prélèvent leurs remboursements, donc la réduire peut empêcher une demande d’aboutir.",
-      "terms": "Chaque demande porte sur un nouveau prêt de {{days}} jours à un taux annuel d’au plus {{rate}}."
+      "terms": "Chaque demande porte sur un nouveau prêt de {{days}} jours à un taux annuel d’au plus {{rate}}.",
+      "permit": {
+        "total": "Chaque demande reçoit sa propre autorisation de remboursement, signée pour son plus grand remboursement possible ({{amount}} au total). Une autorisation ne peut être utilisée qu’une fois, uniquement pour le remboursement de son propre prêt au moment où un prêteur accepte, et elle devient caduque quand sa demande prend fin ; rien ne reste donc approuvé au profit du protocole. Si l’approbation de Permit2 (le contrat d’autorisation d’Uniswap) par votre portefeuille ne couvre pas déjà ce total, vous l’approuvez d’abord ; cette approbation ne déplace rien sans l’une de vos signatures.",
+        "youMayOwe": "Le remboursement de chaque prêt indiqué ci-dessus, prélevé une seule fois sur votre portefeuille, via l’autorisation de remboursement de cette demande, quand un prêteur l’accepte. Votre portefeuille doit alors détenir le montant disponible de ce prêt.",
+        "postedNoPermit": "Prêt n°{{id}} : demande publiée comme offre n°{{offerId}}, mais son autorisation de remboursement n’est pas jointe, donc aucun prêteur ne peut encore la mener à terme. Ouvrez la page du prêt pour la signer, ou annulez-y la demande."
+      }
     },
     "sellerClaims": {
       "saleNote": "Les intérêts que vous avez gagnés sur cette position, environ {{claim}} à ce jour avant la part du protocole, ne font pas partie de ce paiement et ne sont pas abandonnés : ils restent à vous sous forme de créance sur le prêt. À chaque paiement d’intérêts de l’emprunteur, les créances de vendeurs ouvertes sont payées en premier, de la plus ancienne à la plus récente, dans votre vault, et vous les retirez depuis Retraits. Si l’emprunteur fait défaut et que le recouvrement est insuffisant, le montant du prêt de l’acheteur est payé en premier, donc votre créance peut être payée en partie ou pas du tout.",

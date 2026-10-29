@@ -1708,6 +1708,8 @@ const copySource = {
       approving: 'Approve the total in your wallet…',
       checking: 'Checking each loan again…',
       submitting: 'Confirm the transaction in your wallet…',
+      signing: 'Sign each request’s payoff permit in your wallet…',
+      attaching: 'Confirm the transaction that attaches the permits…',
     },
     reviewTitle: 'Post these refinance requests',
     terms: tmpl(
@@ -1778,6 +1780,20 @@ const copySource = {
       'Your token approval for the protocol now stands at {{amount}}. Your open refinance requests draw their payoffs from it, so lowering it can leave a request unable to complete.',
       ['amount'],
     ),
+    // #1558 — the batch on a Diamond that pays the payoff through each
+    // request's single-use payoff permit.
+    permit: {
+      total: tmpl(
+        'Each request gets its own payoff permit, signed for its largest possible payoff ({{amount}} together). A permit can be used once, only for its own loan’s payoff at the moment a lender accepts, and lapses when its request ends, so nothing stays approved to the protocol. If your wallet’s approval of Permit2 (Uniswap’s permit contract) doesn’t already cover that total, you approve it first; that approval moves nothing without one of your signatures.',
+        ['amount'],
+      ),
+      youMayOwe:
+        'Each loan’s payoff shown above, pulled from your wallet once, through that request’s payoff permit, when a lender accepts it. Your wallet must hold that loan’s spare amount at that moment.',
+      postedNoPermit: tmpl(
+        'Loan #{{id}}: request posted as offer #{{offerId}}, but its payoff permit isn’t attached, so no lender can complete it yet. Open the loan’s page to sign it, or cancel the request there.',
+        ['id', 'offerId'],
+      ),
+    },
   },
   preclose: {
     title: 'Close this loan early',
@@ -2209,12 +2225,67 @@ const copySource = {
       'We couldn’t check this wallet’s own offers just now. If it posted a refinance request for this loan while it held the borrower position, this page can’t show it yet — try again in a moment. If it is still open, you can cancel it under “Your open offers” on the Rate Desk (an expired request is not listed there); either way, remove the token approval it relied on under “Standing token approvals” in Settings (Advanced mode) if nothing else needs it.',
     repayWarnPending:
       'A refinance request is still live for this loan. Repaying settles the loan, after which the request can never complete — cancel it from its card afterwards (that also removes its standing payoff approval); until then it just sits until it expires.',
+    // #1558 — the payoff is paid through the request's single-use payoff
+    // permit. Used wherever the Diamond has the permit entry; the approval
+    // wording above serves a Diamond deployed before it (#3074).
+    permit: {
+      signDisclosure: tmpl(
+        'You’ll sign a payoff permit for at most {{amount}}: the payoff if a lender accepts at the last moment this request allows. Whoever completes the refinance can use it once, only for this loan’s payoff at that moment, so the rest is never taken. It lapses when the request ends, and nothing stays approved to the protocol.',
+        ['amount'],
+      ),
+      permit2ApprovalNote:
+        'If your wallet hasn’t approved Permit2 (Uniswap’s permit contract) for this token for at least that amount, you approve it first. That approval moves nothing on its own: Permit2 pays only against a signature you make.',
+      growthDisclosure: tmpl(
+        'If a lender accepts after the loan’s due date, the payoff grows (the late fee plus interest that keeps building up) by up to ~{{maxGrowth}} more for this request. The permit covers that too, so a late acceptance can’t fail on it.',
+        ['maxGrowth'],
+      ),
+      multiStepNote:
+        'Posting takes up to five wallet steps: the guardrails, the Permit2 approval if needed, the request, your signature on the payoff permit, and the transaction that attaches it. If you stop after the request is posted, it stays open without a permit and no lender can complete it; sign the permit from the request’s card, or cancel the request.',
+      done:
+        'Refinance request posted with its payoff permit. When a lender accepts it, this loan closes automatically — you don’t need to do anything else. You can cancel the request below (cancellation opens a few minutes after posting).',
+      postedWithoutPermit:
+        'Your refinance request is posted, but its payoff permit isn’t attached, so no lender can complete it yet. Sign the permit from the request’s card below, or cancel the request.',
+      postedButUnconfirmed:
+        'Your request was sent, but we could not confirm whether it went through. Check your open requests before trying again — if it did land, requesting a second time would create a duplicate. If it landed, sign its payoff permit from the request’s card.',
+      quoteUnavailable:
+        'We couldn’t read this loan’s payoff from the protocol just now, so the request can’t be reviewed yet. Please try again in a moment.',
+      issue: {
+        missing:
+          'No payoff permit from this wallet is attached to this request, so a lender’s acceptance would fail. Sign one below or cancel the request.',
+        spent:
+          'This request’s payoff permit has already been used, so a lender’s acceptance would fail. Sign a new one below or cancel the request.',
+        expired:
+          'This request’s payoff permit has expired, so a lender’s acceptance would fail. Sign a new one below or cancel the request.',
+        lapsesEarly:
+          'This request’s payoff permit expires before the request does, so a later acceptance would fail. Sign a new one below or cancel the request.',
+        short:
+          'This request’s payoff permit allows less than the payoff can reach before the request ends (an acceptance after the due date also pulls the late fee and extra interest), so a later acceptance could fail. Sign a new one below or cancel the request.',
+        permit2Short:
+          'Your wallet’s approval of Permit2 for this token no longer covers the payoff, so a lender’s acceptance would fail. Sign the payoff permit again below; it raises that approval first.',
+      },
+      sign: 'Sign the payoff permit',
+      signed: 'Payoff permit attached — the request can complete.',
+      signAborted:
+        'This request is no longer completable (accepted, cancelled, or the loan closed), so nothing was signed. Refresh to see the latest state.',
+      cancelled:
+        'Refinance request cancelled — this loan continues unchanged. Its payoff permit named this request, so it can never be used, and nothing stays approved to the protocol for it.',
+      pendingLoanClosed:
+        'This loan has since closed another way, so the request can no longer complete. Cancel it to remove it.',
+      pendingExpired: tmpl(
+        `This refinance request expired on {{date}} — no lender can accept it any more, and it no longer holds up your other actions here. Cancel it below to remove it; the loan continues unchanged.`,
+        ['date'],
+      ),
+      pendingPastGrace:
+        'This loan has passed its due date and grace window, so no lender can accept this request any more — it no longer holds up your other actions here. Cancel it below to remove it.',
+      pendingUntakeable:
+        'This refinance request can never be accepted: it isn’t the request the protocol has on record for this loan (a newer request replaced it). It does not hold the loan back. Cancel it below to remove it.',
+    },
   },
 
   approvals: {
     title: 'Standing token approvals',
     blurb:
-      'These are the spending permissions your wallet has granted Vaipakam’s contract for tokens your loans and offers touch. Some flows set them on purpose (such as a refinance request’s payoff); anything left over from an abandoned attempt can be removed here.',
+      'These are the spending permissions your wallet has granted Vaipakam’s contract for tokens your loans and offers touch. Some flows set them on purpose (such as a sale listing’s settlement); anything left over from an abandoned attempt can be removed here.',
     revokeWarning:
       'Careful: if a live request on one of your loans depends on a token’s approval, revoking it makes that flow fail until you restore it from its card — the card will warn you within moments.',
     scopeNote:

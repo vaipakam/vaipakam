@@ -930,11 +930,37 @@
       "ownScanCapped": "इस वॉलेट ने इस लोन के ऑफ़र के बाद से इतने ऑफ़र पोस्ट किए हैं जितने हम यहाँ जाँच नहीं सकते। अगर इसने बॉरोअर पोज़िशन रखते समय इस लोन के लिए रीफ़ाइनेंस अनुरोध पोस्ट किया था, तो यह पेज उसे नहीं दिखा सकता। अगर वह अभी भी खुला है, तो आप उसे रेट डेस्क पर “आपके खुले offers” में रद्द कर सकते हैं (समाप्त हो चुका अनुरोध वहाँ नहीं दिखता); हर हाल में, अगर किसी और चीज़ को उसकी ज़रूरत नहीं है तो सेटिंग्स (एडवांस्ड मोड) में “स्थायी token approvals” के तहत वह टोकन मंज़ूरी हटाएँ जिस पर वह निर्भर था।",
       "ownScanFailed": "हम अभी इस वॉलेट के अपने ऑफ़र नहीं जाँच सके। अगर इसने बॉरोअर पोज़िशन रखते समय इस लोन के लिए रीफ़ाइनेंस अनुरोध पोस्ट किया था, तो यह पेज उसे अभी नहीं दिखा सकता — थोड़ी देर में फिर से कोशिश करें। अगर वह अभी भी खुला है, तो आप उसे रेट डेस्क पर “आपके खुले offers” में रद्द कर सकते हैं (समाप्त हो चुका अनुरोध वहाँ नहीं दिखता); हर हाल में, अगर किसी और चीज़ को उसकी ज़रूरत नहीं है तो सेटिंग्स (एडवांस्ड मोड) में “स्थायी token approvals” के तहत वह टोकन मंज़ूरी हटाएँ जिस पर वह निर्भर था।",
       "repayWarnPending": "इस loan के लिए refinance request अभी भी live है। Repaying loan settle करता है, जिसके बाद request कभी complete नहीं हो सकती — बाद में card से cancel करें (standing payoff approval भी हटेगी); तब तक यह expiry तक बैठी रहती है।",
-      "inFallback": "यह loan अपनी fallback अवधि में है, इसलिए इस पर refinance request नहीं डाली जा सकती। इसका अपना page इसके विकल्प बताता है।"
+      "inFallback": "यह loan अपनी fallback अवधि में है, इसलिए इस पर refinance request नहीं डाली जा सकती। इसका अपना page इसके विकल्प बताता है।",
+      "permit": {
+        "signDisclosure": "आप ज़्यादा से ज़्यादा {{amount}} का payoff permit sign करेंगे: अगर lender इस request के अनुमत आख़िरी पल पर accept करे तो उतना payoff। Refinance complete करने वाला इसे सिर्फ़ एक बार, सिर्फ़ उस पल इस loan के payoff के लिए इस्तेमाल कर सकता है, इसलिए बाक़ी रकम कभी नहीं ली जाती। Request ख़त्म होते ही यह lapse हो जाता है, और protocol के लिए कुछ भी approved नहीं रहता।",
+        "permit2ApprovalNote": "अगर आपके wallet ने इस token के लिए Permit2 (Uniswap का permit contract) को कम से कम इतनी रकम approve नहीं की है, तो आप पहले उसे approve करते हैं। वह approval अपने आप कुछ नहीं हिलाता: Permit2 सिर्फ़ आपके किए signature के बदले ही pay करता है।",
+        "growthDisclosure": "अगर lender loan की due date के बाद accept करता है, तो payoff (late fee और लगातार जुड़ता interest) इस request के लिए लगभग ~{{maxGrowth}} तक और बढ़ जाता है। Permit इसे भी cover करता है, इसलिए देर से accept होने पर यह इस वजह से fail नहीं हो सकता।",
+        "multiStepNote": "Posting में wallet के पाँच steps तक लगते हैं: guardrails, ज़रूरत हो तो Permit2 approval, request, payoff permit पर आपका signature, और उसे attach करने वाला transaction। अगर request post होने के बाद आप रुक जाते हैं, तो वह बिना permit के open रहती है और कोई lender उसे complete नहीं कर सकता; request के card से permit sign करें, या request cancel करें।",
+        "done": "Refinance request अपने payoff permit के साथ post हो गई। Lender accept करेगा तो यह loan automatically close होगा — आपको और कुछ नहीं करना। नीचे request cancel कर सकते हैं (posting के कुछ minutes बाद cancellation open होती है)।",
+        "postedWithoutPermit": "आपकी refinance request post हो गई है, लेकिन उसका payoff permit attach नहीं है, इसलिए अभी कोई lender इसे complete नहीं कर सकता। नीचे request के card से permit sign करें, या request cancel करें।",
+        "postedButUnconfirmed": "आपकी request भेजी गई, लेकिन हम confirm नहीं कर सके कि वह पूरी हुई या नहीं। दोबारा कोशिश करने से पहले अपनी open requests देखें — अगर वह पहुँच गई है, तो दूसरी बार request करने से duplicate बन जाएगा। अगर वह पहुँच गई है, तो request के card से उसका payoff permit sign करें।",
+        "quoteUnavailable": "हम अभी protocol से इस loan का payoff नहीं पढ़ सके, इसलिए request का review अभी नहीं हो सकता। कृपया थोड़ी देर में फिर कोशिश करें।",
+        "issue": {
+          "missing": "इस request के साथ इस wallet का कोई payoff permit attach नहीं है, इसलिए lender का accept fail होगा। नीचे एक sign करें या request cancel करें।",
+          "spent": "इस request का payoff permit पहले ही इस्तेमाल हो चुका है, इसलिए lender का accept fail होगा। नीचे नया sign करें या request cancel करें।",
+          "expired": "इस request का payoff permit expire हो चुका है, इसलिए lender का accept fail होगा। नीचे नया sign करें या request cancel करें।",
+          "lapsesEarly": "इस request का payoff permit request से पहले expire हो जाता है, इसलिए बाद का accept fail होगा। नीचे नया sign करें या request cancel करें।",
+          "short": "इस request का payoff permit उससे कम की अनुमति देता है जितना payoff request ख़त्म होने से पहले पहुँच सकता है (due date के बाद accept होने पर late fee और extra interest भी pull होते हैं), इसलिए बाद का accept fail हो सकता है। नीचे नया sign करें या request cancel करें।",
+          "permit2Short": "इस token के लिए Permit2 पर आपके wallet का approval अब payoff cover नहीं करता, इसलिए lender का accept fail होगा। नीचे payoff permit फिर से sign करें; यह पहले उस approval को बढ़ाता है।"
+        },
+        "sign": "Payoff permit sign करें",
+        "signed": "Payoff permit attach हो गया — request complete हो सकती है।",
+        "signAborted": "यह request अब completable नहीं है (accepted, cancelled, या loan closed), इसलिए कुछ sign नहीं हुआ। Latest state देखने के लिए refresh करें।",
+        "cancelled": "Refinance request cancelled — यह loan unchanged जारी है। इसके payoff permit में यही request दर्ज थी, इसलिए वह कभी इस्तेमाल नहीं हो सकता, और इसके लिए protocol को कुछ भी approved नहीं रहता।",
+        "pendingLoanClosed": "यह loan बाद में किसी और तरीके से close हो चुका है, इसलिए request अब complete नहीं हो सकती। इसे हटाने के लिए cancel करें।",
+        "pendingExpired": "यह refinance request {{date}} को expire हुई — अब कोई lender इसे accept नहीं कर सकता, और यह यहाँ आपकी अन्य actions नहीं रोकती। इसे हटाने के लिए नीचे cancel करें; loan unchanged चलता रहता है।",
+        "pendingPastGrace": "यह loan due date और grace window पार कर चुका है, इसलिए कोई lender अब इस request को accept नहीं कर सकता — यह यहाँ आपकी अन्य actions को नहीं रोकती। इसे हटाने के लिए नीचे cancel करें।",
+        "pendingUntakeable": "यह refinance request कभी accept नहीं हो सकती: यह वह request नहीं है जो protocol ने इस loan के लिए दर्ज की है (किसी नई request ने इसकी जगह ले ली)। यह loan को नहीं रोकती। इसे हटाने के लिए नीचे cancel करें।"
+      }
     },
     "approvals": {
       "title": "स्थायी token approvals",
-      "blurb": "ये spending permissions हैं जो आपके wallet ने Vaipakam के contract को उन tokens के लिए दी हैं जिन्हें आपके loans और offers touch करते हैं। कुछ flows इन्हें purposefully set करते हैं (जैसे refinance request का payoff); abandoned attempt से बचा कुछ भी यहाँ remove किया जा सकता है।",
+      "blurb": "ये spending permissions हैं जो आपके wallet ने Vaipakam के contract को उन tokens के लिए दी हैं जिन्हें आपके loans और offers touch करते हैं। कुछ flows इन्हें purposefully set करते हैं (जैसे sale listing का settlement); abandoned attempt से बचा कुछ भी यहाँ remove किया जा सकता है।",
       "revokeWarning": "Careful: अगर आपके किसी loan पर live request किसी token approval पर depend करती है, उसे revoke करने से वह flow fail होगा जब तक card से restore न करें — card moments में warn करेगा।",
       "scopeNote": "यह list इस network पर आपके Vaipakam loans और offers में देखे गए tokens cover करती है। Other apps या other tokens को दी approvals shown नहीं हैं — wallet का अपना token-approvals view complete picture रहता है।",
       "none": "Known tokens के लिए Vaipakam को कोई standing approvals नहीं मिलीं।",
@@ -3477,7 +3503,9 @@
       "phase": {
         "approving": "अपने wallet में कुल रकम approve करें…",
         "checking": "हर loan फिर से जाँचा जा रहा है…",
-        "submitting": "अपने wallet में transaction confirm करें…"
+        "submitting": "अपने wallet में transaction confirm करें…",
+        "signing": "अपने wallet में हर request का payoff permit sign करें…",
+        "attaching": "Permits attach करने वाले transaction को confirm करें…"
       },
       "reviewTitle": "ये refinance requests डालें",
       "loanPayoff": "Loan #{{id}}: आज चुकाने के लिए ~{{payoff}}, जो lender के इसकी request accept करने पर अपने-आप कट जाएगा।",
@@ -3505,7 +3533,12 @@
       "ownPageRental": "Rental पर refinance request नहीं डाली जा सकती; सिर्फ़ token loans पर।",
       "ownPageOpenRequest": "इस loan पर पहले से एक refinance request खुली है। इसका अपना page उसे दिखाता है और आपको उसे cancel करने देता है।",
       "approvalLeft": "प्रोटोकॉल के लिए आपकी token approval अब {{amount}} है। आपकी खुली refinance requests अपना payoff इसी से लेती हैं, इसलिए इसे घटाने से कोई request पूरी न हो पाए, ऐसा हो सकता है।",
-      "terms": "हर अनुरोध {{days}} दिनों के नए ऋण के लिए है, जिसकी वार्षिक दर अधिकतम {{rate}} है।"
+      "terms": "हर अनुरोध {{days}} दिनों के नए ऋण के लिए है, जिसकी वार्षिक दर अधिकतम {{rate}} है।",
+      "permit": {
+        "total": "हर request को उसका अपना payoff permit मिलता है, जो उसके सबसे बड़े संभव payoff के लिए sign होता है (कुल मिलाकर {{amount}})। एक permit सिर्फ़ एक बार इस्तेमाल हो सकता है, सिर्फ़ उसी के अपने loan के payoff के लिए, उस पल जब कोई lender accept करता है, और उसकी request ख़त्म होते ही यह lapse हो जाता है, इसलिए protocol के लिए कुछ भी approved नहीं रहता। अगर Permit2 (Uniswap का permit contract) के लिए आपके wallet का approval पहले से यह total cover नहीं करता, तो आप पहले उसे approve करते हैं; आपके किसी signature के बिना वह approval कुछ भी नहीं हिलाता।",
+        "youMayOwe": "ऊपर दिखाया गया हर loan का payoff, जो lender के उसकी request accept करने पर उस request के payoff permit के ज़रिए आपके wallet से एक बार कटता है। उस समय आपके wallet में उस loan की अलग रकम होनी चाहिए।",
+        "postedNoPermit": "Loan #{{id}}: request offer #{{offerId}} के रूप में डाली गई, लेकिन उसका payoff permit attach नहीं है, इसलिए अभी कोई lender इसे complete नहीं कर सकता। उसे sign करने के लिए loan का page खोलें, या वहीं request cancel करें।"
+      }
     },
     "sellerClaims": {
       "saleNote": "इस position पर आपने जो ब्याज कमाया है, protocol के हिस्से से पहले अब तक लगभग {{claim}}, वह इस payout का हिस्सा नहीं है और छोड़ा नहीं जाता: वह loan पर claim के रूप में आपका रहता है। हर बार जब borrower ब्याज चुकाता है, खुले seller claims पहले चुकाए जाते हैं, सबसे पुराने पहले, आपके vault में, और आप Claims से निकालते हैं। अगर borrower default करता है और recovery कम पड़ती है, तो पहले ख़रीदार की loan राशि चुकाई जाती है, इसलिए आपका claim आंशिक रूप से या बिल्कुल नहीं चुकाया जा सकता है।",

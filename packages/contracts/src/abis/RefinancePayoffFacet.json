@@ -25,6 +25,11 @@
         "name": "offerId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "by",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -39,7 +44,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "payoffAtGraceEnd",
+        "name": "payoffBy",
         "type": "uint256",
         "internalType": "uint256"
       },

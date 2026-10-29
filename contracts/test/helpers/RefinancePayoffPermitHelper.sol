@@ -137,7 +137,8 @@ library RefinancePayoffPermitHelper {
 
     /// @notice For a live-fork test that runs a chain's DEPLOYED code: when
     ///         that Diamond routes the permit entry (#1558), attach a real
-    ///         permit for the payoff at the end of grace and return true. A
+    ///         one-day permit for the most the payoff can reach in that day,
+    ///         and return true. A
     ///         Diamond deployed before #1558 has no such route and still pulls
     ///         the payoff on the wallet approval the test grants, so this
     ///         returns false and attaches nothing.
@@ -153,9 +154,10 @@ library RefinancePayoffPermitHelper {
             IDiamondLoupe(diamond).facetAddress(RefinancePayoffFacet.setRefinancePayoffPermit.selector)
                 == address(0)
         ) return false;
-        (, , uint256 atGraceEnd, , , , , ) =
-            RefinancePayoffFacet(diamond).getRefinancePayoff(loanId, offerId);
-        attachSigned(diamond, pk, asset, loanId, offerId, atGraceEnd, nonce, block.timestamp + 1 days);
+        uint256 deadline = block.timestamp + 1 days;
+        (, , uint256 payoffBy, , , , , ) =
+            RefinancePayoffFacet(diamond).getRefinancePayoff(loanId, offerId, deadline);
+        attachSigned(diamond, pk, asset, loanId, offerId, payoffBy, nonce, deadline);
         return true;
     }
 }

@@ -21,7 +21,9 @@ const reads = vi.hoisted(() => ({
   fees: { treasuryFeeBps: 200, loanInitiationFeeBps: 20, maxOfferDurationDays: 365 },
   grace: 0n,
   payoff: 0n,
-  approval: 0n,
+  bound: 0n,
+  route: 'permit' as 'permit' | 'approval',
+  quoteArgs: [] as Array<Record<string, unknown>>,
   sanctioned: false,
   discovery: { kind: 'none' } as Record<string, unknown>,
   saleBlock: null as string | null,
@@ -33,8 +35,21 @@ vi.mock('../contracts/loanLive', () => ({
   LOAN_STATUS_ACTIVE: 0,
   readLoanLive: vi.fn(async () => reads.live),
   loanEndTimeOf: (live: { endTime: bigint }) => live.endTime,
-  refinancePayoffOf: () => reads.payoff,
-  refinanceApprovalOf: () => reads.approval,
+}));
+// #1558 — the payoff figures and the route come from the contract; the
+// quote reader is stubbed so the plan's use of them is what is pinned.
+vi.mock('../contracts/refinancePayoffPermit', () => ({
+  readPayoffRoute: vi.fn(async () => reads.route),
+  readPayoffQuote: vi.fn(async (a: Record<string, unknown>) => {
+    reads.quoteArgs.push(a);
+    return {
+      route: a.route,
+      payoff: reads.payoff,
+      bound: reads.bound,
+      lastFillable: (a.expiresAt as bigint) - 1n,
+      permit: null,
+    };
+  }),
 }));
 vi.mock('../contracts/preflights', () => ({
   assertPositionNftHeldLive: vi.fn(async () => undefined),
@@ -116,7 +131,9 @@ beforeEach(() => {
   reads.fees = { ...FEES };
   reads.grace = 3n * DAY;
   reads.payoff = 1_010_000n;
-  reads.approval = 1_010_000n;
+  reads.bound = 1_010_000n;
+  reads.route = 'permit';
+  reads.quoteArgs = [];
   reads.sanctioned = false;
   reads.discovery = { kind: 'none' };
   reads.saleBlock = null;
@@ -125,7 +142,7 @@ beforeEach(() => {
 });
 
 describe('checkRefinanceRequest', () => {
-  it('plans the request, its guardrails, the payoff, top-up and approval', async () => {
+  it('plans the request, its guardrails, the payoff, top-up and bound', async () => {
     const plan = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES)) as RefinanceRequestReady;
     expect(plan.kind).toBe('ready');
     expect(plan.payoff).toBe(1_010_000n);
@@ -149,6 +166,25 @@ describe('checkRefinanceRequest', () => {
     expect(plan.expiryGraceClamped).toBe(false);
   });
 
+  it('sizes the payoff from the contract for the request’s own expiry, on the route the Diamond routes', async () => {
+    const plan = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES)) as RefinanceRequestReady;
+    expect(plan.route).toBe('permit');
+    expect(plan.bound).toBe(1_010_000n);
+    // The permit expires with the request: its last fillable moment.
+    expect(plan.permitDeadline).toBe(plan.requestExpiry - 1n);
+    expect(reads.quoteArgs[0]).toMatchObject({
+      loanId: 7n,
+      offerId: 0n,
+      chainNow: reads.now,
+      expiresAt: plan.requestExpiry,
+      graceSeconds: 3n * DAY,
+      route: 'permit',
+    });
+    reads.route = 'approval';
+    const bridge = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES)) as RefinanceRequestReady;
+    expect(bridge.route).toBe('approval');
+  });
+
   it('plans no guardrail write when the caps already cover the request', async () => {
     reads.caps = { enabled: true, maxRateBps: 1_000, maxNewExpiry: 10_000n * DAY };
     const plan = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES)) as RefinanceRequestReady;
@@ -169,7 +205,7 @@ describe('checkRefinanceRequest', () => {
 
   it('states the headroom and a request clamped to the grace end', async () => {
     reads.live = { ...reads.live, endTime: reads.now + 2n * DAY };
-    reads.approval = 1_050_000n;
+    reads.bound = 1_050_000n;
     const plan = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES)) as RefinanceRequestReady;
     expect(plan.headroom).toBe(40_000n);
     expect(plan.graceEnd).toBe(reads.now + 5n * DAY);
@@ -284,11 +320,20 @@ describe('planRefinanceForBatch', () => {
 
   it('keeps a loan whose bound shrank, and leaves out one whose bound grew', async () => {
     const reviewed = (await planRefinanceForBatch(ctx, LOAN, TERMS, FEES)) as Ready;
-    reads.approval = 1_005_000n;
+    reads.bound = 1_005_000n;
     expect(await planRefinanceForBatch(ctx, LOAN, TERMS, FEES, reviewed)).toMatchObject({
       kind: 'ready',
     });
-    reads.approval = 1_020_000n;
+    reads.bound = 1_020_000n;
+    expect(await planRefinanceForBatch(ctx, LOAN, TERMS, FEES, reviewed)).toMatchObject({
+      kind: 'refused',
+      reason: copy.batchRefinance.changedSinceReview,
+    });
+  });
+
+  it('leaves out a loan whose payoff route changed since the review', async () => {
+    const reviewed = (await planRefinanceForBatch(ctx, LOAN, TERMS, FEES)) as Ready;
+    reads.route = 'approval';
     expect(await planRefinanceForBatch(ctx, LOAN, TERMS, FEES, reviewed)).toMatchObject({
       kind: 'refused',
       reason: copy.batchRefinance.changedSinceReview,

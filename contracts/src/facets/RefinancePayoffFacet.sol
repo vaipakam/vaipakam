@@ -38,8 +38,9 @@ contract RefinancePayoffFacet is DiamondReentrancyGuard, DiamondPausable, IVaipa
     ///         as the amount, and the witness
     ///         `RefinancePayoff(uint256 loanId,uint256 offerId)` for the loan
     ///         the request refinances (see `LibRefinancePayoff`). Size
-    ///         `maxAmount` with {getRefinancePayoff}'s `payoffAtGraceEnd`, the
-    ///         most the payoff can reach before the request lapses. Whoever
+    ///         `maxAmount` with {getRefinancePayoff}'s `payoffBy` for the
+    ///         permit's `deadline`: the most the payoff can reach while the
+    ///         permit can still be used. Whoever
     ///         completes the refinance uses the permit once, and only for the
     ///         payoff at that moment; the rest of `maxAmount` is never pulled
     ///         and nothing stays approved. Permit2 checks the signature when it
@@ -71,16 +72,22 @@ contract RefinancePayoffFacet is DiamondReentrancyGuard, DiamondPausable, IVaipa
     }
 
     /// @notice What a refinance of `loanId` through request `offerId` would pay
-    ///         off, and the permit it would pay with.
+    ///         off, now and by time `by`, and the permit it would pay with.
+    /// @param  by               The moment to size the payoff for: pass the
+    ///                          permit's deadline, which is the request's last
+    ///                          fillable moment. Read as no earlier than now and
+    ///                          no later than the end of the old loan's grace
+    ///                          window, after which no refinance can complete;
+    ///                          `type(uint256).max` therefore reads the grace end.
     /// @return asset            The old loan's principal asset.
     /// @return payoffNow        The payoff if the refinance completed now: the
     ///                          principal, the interest the exiting lender is
     ///                          owed, and any late fee. The treasury's fee
     ///                          comes out of it.
-    /// @return payoffAtGraceEnd The payoff at the end of the old loan's grace
-    ///                          window, the most it can be while the request
-    ///                          stands. A permit for this much covers any
-    ///                          moment of the request's life.
+    /// @return payoffBy         The payoff at `by`. The payoff never falls as
+    ///                          time passes, so this is the most it can be up
+    ///                          to then, and a permit for this much covers any
+    ///                          refinance completed by then.
     /// @return signer           Who signed the attached permit (0 if none).
     /// @return maxAmount        The most the permit allows.
     /// @return nonce            The permit's Permit2 nonce.
@@ -88,15 +95,17 @@ contract RefinancePayoffFacet is DiamondReentrancyGuard, DiamondPausable, IVaipa
     /// @return nonceSpent       Whether Permit2 has already spent that nonce,
     ///                          in which case the permit can no longer pay.
     /// @dev    Both payoffs read 0 unless `loanId` is an Active ERC-20 loan.
+    ///         A pause that begins after this read moves the grace end, and the
+    ///         payoff at a given moment with it; the figure is as of this block.
     ///         Informational: whether the request could be accepted at all is
     ///         `RefinanceFacet.checkRefinanceRequest`'s answer.
-    function getRefinancePayoff(uint256 loanId, uint256 offerId)
+    function getRefinancePayoff(uint256 loanId, uint256 offerId, uint256 by)
         external
         view
         returns (
             address asset,
             uint256 payoffNow,
-            uint256 payoffAtGraceEnd,
+            uint256 payoffBy,
             address signer,
             uint256 maxAmount,
             uint256 nonce,
@@ -113,9 +122,10 @@ contract RefinancePayoffFacet is DiamondReentrancyGuard, DiamondPausable, IVaipa
         ) {
             payoffNow = LibRefinancePayoff.amountAt(loanId, loan, block.timestamp);
             uint256 graceEnd = LibLoanClock.graceEnd(loan);
-            payoffAtGraceEnd = LibRefinancePayoff.amountAt(
-                loanId, loan, graceEnd > block.timestamp ? graceEnd : block.timestamp
-            );
+            uint256 at = by < graceEnd ? by : graceEnd;
+            payoffBy = at > block.timestamp
+                ? LibRefinancePayoff.amountAt(loanId, loan, at)
+                : payoffNow;
         }
         LibVaipakam.RefinancePayoffPermit storage p = s.refinancePayoffPermit[offerId];
         signer = p.signer;

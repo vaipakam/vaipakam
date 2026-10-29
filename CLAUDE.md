@@ -380,6 +380,19 @@ runs half of it on old code:
   per-facet tier stamp in new code; write the balance through the two
   writers.
 
+- **RefinancePayoffFacet + RefinanceFacet (#1558).** The borrower attaches
+  the payoff permit through the first; the second's settlement spends it
+  (`LibRefinancePayoff.pull`) on every refinance route. A `RefinanceFacet`
+  refreshed without the host refuses every refinance (`RefinancePayoffPermitMissing`:
+  nothing can attach a permit), and a host without the new settlement stores
+  permits nothing reads while the old code pulls on an allowance. Both are in
+  `RefreshAllFacetsInPlace` and `RedeployFacets`; `RedeployFacets` refuses a
+  Diamond that does not already route `setRefinancePayoffPermit`
+  (`PredatesRefinancePayoffPermit`), so the crossing is the all-facets refresh
+  or a fresh deploy. The app keeps the old approval route only where the
+  Diamond lacks the route, a temporary bridge #3074 removes after the
+  all-waves fresh deploy.
+
 How the #1566 slices reach a chain is settled (owner, 2026-10-07, decision O1 = A): **every
 chain that runs slices 2–3 gets a fresh deploy.** Nothing is upgraded in place
 across this boundary and no pre-slice row is migrated; slices 2–3 make a
@@ -410,6 +423,7 @@ true on a settlement path, and it cost real time in #1503.
 | -------------------------- | --------------------------------------------------------------------------- |
 | **PrecloseFacet**          | Borrower early close-out: `precloseDirect`, obligation handover to a replacement borrower (`transferObligationViaOffer`), and the offset route (`offsetWithNewOffer` → completion). Completion has TWO entries: `completeOffset` (external) and `completeOffsetInternal` — the `address(this)`-gated cross-facet entry `_acceptOffer`'s auto-link block invokes when a third party accepts the offset offer, skipping the outer `nonReentrant` because the accept already holds the diamond guard. Don't assume a manual second step |
 | **RefinanceFacet**         | Move a borrower onto better terms — `refinanceLoan`, `refinanceLoanFromAccept`. NOT an in-place edit: the replacement loan is a **separate record** (`s.offerIdToLoanId[borrowerOfferId]` → a new `loanId`) created when the new lender accepted the offer, and the old loan is terminalized **Active → Repaid**. So a completed refinance leaves **two loan records and FOUR position NFTs**: every loan carries both a `lenderTokenId` and a `borrowerTokenId`, and the old pair is *status-updated* to `LoanRepaid` — **not burned** — so `ownerOf` still resolves and the old borrower NFT stays a redeemable receipt on the original position. Load-bearing for indexer state and the terminal-path invariants: an indexer that assumes one NFT per loan, or that a terminal loan's NFTs are gone, is wrong on both counts |
+| **RefinancePayoffFacet**   | The refinance payoff permit (#1558): `setRefinancePayoffPermit` / `clearRefinancePayoffPermit` (the request's creator attaches or removes an exact-amount, single-use Permit2 witness permit bound to `RefinancePayoff(loanId, offerId)`) and the sizing view `getRefinancePayoff(loanId, offerId, by)`. The PULL is not here: `RefinanceFacet`'s settlement spends the permit through `LibRefinancePayoff.pull`, once, for the whole payoff. Split out because `RefinanceFacet` sits close to EIP-170. **The two must be refreshed together** (see "Refresh-together families"). There is no standing payoff allowance to the Diamond any more; the wallet approves Permit2, which moves nothing without the signature. Design: `docs/DesignsAndPlans/RefinancePayoffPermitDesign.md` |
 | **EarlyWithdrawalFacet**   | Lender exit, LISTED route only: `createLoanSaleOffer` (carries a MANDATORY finite expiry) → completion. Completion mirrors the offset route's shape: `completeLoanSale` (external) plus `completeLoanSaleInternal`, the `address(this)`-gated entry `_acceptOffer` invokes automatically after a buyer accepts the linked sale offer. **`sellLoanViaBuyOffer` is NOT here** — #1780 moved it to `EarlyWithdrawalDirectFacet` below, so a grep of this facet for the direct sale comes back empty |
 | **EarlyWithdrawalDirectFacet** | Lender exit, DIRECT route: `sellLoanViaBuyOffer` — instant sale into a standing lender ("buy") offer in one transaction. Split out of `EarlyWithdrawalFacet` in #1780, which had reached 30 bytes under EIP-170 — less than one cross-facet call, so every queued fix to either route was undeployable. Same storage, same Diamond, same call surface for callers; only the runtime bytecode is separate. **The two must be refreshed together** — the redeploy scripts carry both, and refreshing one alone leaves the other on pre-split code. Both are sale hosts that reach `RiskPreviewFacet.saleAdmission` through `LibSaleSolvency`, so a curated refresh script touching either must also route that selector (#1649) |
 | **SaleExitVerdictFacet** | The ONE rule for whether a lender may exit by sale now (#1841): `saleExitVerdict(loanId, caller)` returns, per route (direct sale, listing), every refusal as the ABI-encoded custom error the entry raises plus the earliest time it can lift (`reopensAt`, 0 = needs a decision or never). Both entries open with a self-call to `requireSaleExitOpen`, which reverts with the first refusal, so the app's exit chooser and the entries cannot drift. It covers the loan- and caller-level checks only, not the buy offer a direct sale consumes, the listing's inputs or a keeper's capacity. **Refreshed together with both early-withdrawal facets** (see the family below) |

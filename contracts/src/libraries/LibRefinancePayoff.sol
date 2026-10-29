@@ -112,7 +112,7 @@ library LibRefinancePayoff {
     ///         the lender).
     /// @dev    `RefinanceFacet`'s settlement distributes exactly this at
     ///         `block.timestamp`; `RefinancePayoffFacet.getRefinancePayoff`
-    ///         reports it now and at the end of grace.
+    ///         reports it now and at a moment the caller names.
     function amountAt(uint256 loanId, LibVaipakam.Loan storage loan, uint256 at)
         internal
         view

@@ -45,6 +45,7 @@ interface LoanShape {
   borrower: `0x${string}`;
   lender: `0x${string}`;
   principal: bigint;
+  principalAsset: `0x${string}`;
   interestRateBps: bigint;
   durationDays: bigint;
   collateralAsset: `0x${string}`;
@@ -95,6 +96,34 @@ test('refinance request completes: old loan closes, new loan carries the collate
       args: [before.borrower],
     })) as bigint;
   const heldBefore = await collateralHeld();
+  // #1558 — the payoff is paid through the request's single-use permit,
+  // so neither posting nor accepting may leave the Diamond a standing
+  // allowance. Compared with the wallet's allowance before the drive
+  // rather than with zero: the role wallets are reused across specs.
+  const diamondAllowance = async (): Promise<bigint> =>
+    (await pub.readContract({
+      address: before.principalAsset,
+      abi: ERC20_MIN_ABI,
+      functionName: 'allowance',
+      args: [before.borrower, DIAMOND],
+    })) as bigint;
+  const allowanceBefore = await diamondAllowance();
+  const payoffOf = async (requestId: bigint, by: bigint) =>
+    (await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getRefinancePayoff',
+      args: [oldLoanId, requestId, by],
+    })) as readonly [
+      `0x${string}`,
+      bigint,
+      bigint,
+      `0x${string}`,
+      bigint,
+      bigint,
+      bigint,
+      boolean,
+    ];
 
   // The borrower posts the refinance request through the real form
   // (advanced-mode surface).
@@ -201,6 +230,28 @@ test('refinance request completes: old loan closes, new loan carries the collate
   await expect(
     page.getByText(new RegExp(`refinance request #${requestId} is live`, 'i')),
   ).toBeVisible({ timeout: 30_000 });
+  // #1558 — the form signed the payoff permit and attached it to this
+  // request: the borrower's, unspent, expiring at the request's last
+  // fillable moment, and covering the payoff at that moment. And the
+  // Diamond was granted nothing.
+  const lastFillable = (request.expiresAt as bigint) - 1n;
+  const [, , payoffAtLast, signer, maxAmount, , deadline, nonceSpent] = await payoffOf(
+    requestId,
+    lastFillable,
+  );
+  expect(signer.toLowerCase(), 'the borrower signed the payoff permit').toBe(
+    before.borrower.toLowerCase(),
+  );
+  expect(nonceSpent, 'the permit is unused while the request is open').toBe(false);
+  expect(deadline, 'the permit lapses with the request').toBe(lastFillable);
+  expect(
+    maxAmount >= payoffAtLast,
+    'the permit covers the payoff at the last moment a lender can accept',
+  ).toBe(true);
+  expect(await diamondAllowance(), 'posting grants the Diamond no allowance').toBe(
+    allowanceBefore,
+  );
+  await expect(page.getByText(/payoff permit isn’t attached/i)).toHaveCount(0);
   await adv.ctx.close();
 
   // #2528 — a lender browsing the Offer Book sees the request FOR what it
@@ -248,6 +299,15 @@ test('refinance request completes: old loan closes, new loan carries the collate
 
   const oldAfter = await loanOf(oldLoanId);
   expect(oldAfter.status, 'the refinanced loan closes as Repaid').toBe(1);
+  // #1558 — the acceptance used the permit (it is gone once used) and
+  // left the Diamond no allowance.
+  expect(
+    (await payoffOf(requestId, 0n))[3],
+    'the acceptance consumed the payoff permit',
+  ).toBe('0x0000000000000000000000000000000000000000');
+  expect(await diamondAllowance(), 'the refinance leaves the Diamond no allowance').toBe(
+    allowanceBefore,
+  );
 
   const fresh = await loanOf(newLoanId);
   expect(fresh.status, 'the replacement loan is Active').toBe(0);

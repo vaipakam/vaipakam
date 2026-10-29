@@ -11,8 +11,8 @@
  * re-tags old→new inside the lender's accept). The moment any lender
  * accepts, one transaction: new loan opens → old lender is paid
  * principal + full-term remaining interest from the borrower's
- * wallet (via the standing approval set here) → old loan closes →
- * collateral moves.
+ * wallet (through the request's payoff permit, #1558) → old loan
+ * closes → collateral moves.
  *
  * CARRY-OVER BINDS TO THE ORIGINAL BORROWER: the contract's
  * carry-over predicate compares the offer creator to the borrower
@@ -23,23 +23,32 @@
  * borrower (parent gate on the indexed row + a live re-check at
  * submit).
  *
- * Three wallet steps behind ONE reviewed confirm:
+ * The wallet steps behind ONE reviewed confirm (#1558, the permit
+ * route):
  *   1. setAutoRefinanceCaps — on-chain guardrails at the reviewed
  *      rate ceiling and end-date window (skipped when already
  *      sufficient; the request's OWN expiry is what bounds its
  *      lifetime, so looser pre-existing caps are harmless).
- *   2. Standing approval on the old principal asset for the payoff
- *      (exact; the pull only shrinks as partials settle interest).
+ *   2. The wallet's ERC-20 approval of Permit2, when it does not
+ *      already cover the bound. It moves nothing without a signature,
+ *      so an abandoned sequence leaves nothing to unwind.
  *   3. createOffer with the refinance tag and a hard `expiresAt` at
  *      the disclosed request lifetime.
- * If the user abandons the sequence after step 2, the allowance is
- * best-effort RESTORED to whatever it was before — a payoff-sized
- * authorization must not linger behind a pristine form with nothing to
- * cancel, and a pre-existing grant another arrangement depends on must
- * not be zeroed either.
+ *   4. The payoff permit: a signature for exactly the reviewed bound,
+ *      bound to this loan through this request and expiring with it,
+ *      then the transaction that attaches it. A request posted without
+ *      it stands but cannot complete; its card offers to sign.
+ *
+ * BRIDGE (#3074): on a Diamond deployed before #1558 the payoff is paid
+ * from a standing approval of the Diamond instead. Step 2 is then that
+ * approval, there is no step 4, and if the user abandons the sequence
+ * after step 2 the allowance is best-effort RESTORED to whatever it was
+ * before — a payoff-sized authorization must not linger behind a
+ * pristine form with nothing to cancel, and a pre-existing grant another
+ * arrangement depends on must not be zeroed either.
  */
 import { useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { parseEventLogs } from 'viem';
 import { copy } from '../content/copy';
@@ -50,12 +59,12 @@ import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '.
 import { ensureAllowance, restoreAllowance } from '../contracts/erc20';
 import { TxNotSettledError } from '../contracts/ownReceipt';
 import { assertErc20BalanceLive } from '../contracts/preflights';
+import { loanEndTimeOf, type LoanLive } from '../contracts/loanLive';
 import {
-  loanEndTimeOf,
-  refinanceApprovalOf,
-  refinancePayoffOf,
-  type LoanLive,
-} from '../contracts/loanLive';
+  attachRefinancePayoffPermit,
+  ensurePermit2Approval,
+  readPayoffQuote,
+} from '../contracts/refinancePayoffPermit';
 import { useProtocolFees } from '../data/fees';
 import {
   REQUEST_WINDOW_DAYS,
@@ -142,34 +151,59 @@ export function RefinanceFlow({
   }
 
   // ---- Derived figures (display; submit re-reads live) -------------
+  // The bound: the payoff at the LAST moment this request could be
+  // accepted (its own 30-day expiry or the grace end, whichever first)
+  // — what the permit is signed for, and what the review disclosure is
+  // derived from whenever the request's window can cross the due date.
+  // While the grace bucket is still unknown the review CANNOT open
+  // (Codex #1256 r1): a zero-grace fallback would quote no headroom while
+  // submit signs for the larger last-fillable bound — an undisclosed
+  // figure must never be signable.
+  const graceReady = graceSeconds !== undefined;
+  const graceSec = graceSeconds ?? 0n;
+  // #1558 — the payoff now and the bound come from the contract
+  // (`getRefinancePayoff`), so the figures reviewed are the figures the
+  // permit is signed for. Kept on screen while a newer block's figures
+  // load, so a refresh does not close an open review.
+  const quoteQuery = useQuery({
+    queryKey: [
+      'refinancePayoffQuote',
+      walletChain?.chainId,
+      row.loanId,
+      String(chainNow),
+      String(graceSec),
+      String(live.readAtTimestamp),
+    ],
+    enabled: Boolean(publicClient && walletChain) && graceReady,
+    placeholderData: keepPreviousData,
+    queryFn: () =>
+      readPayoffQuote({
+        publicClient: publicClient!,
+        diamond: walletChain!.diamondAddress,
+        live,
+        loanId: BigInt(row.loanId),
+        offerId: 0n,
+        chainNow,
+        expiresAt: chainNow + REQUEST_WINDOW_DAYS * 86_400n,
+        graceSeconds: graceSec,
+      }),
+  });
+  const quote = quoteQuery.data;
+  const quoteReady = quote !== undefined;
   // #1189/#1236 — the payoff is time-aware: past maturity it carries
   // the grace-window late fee the accept-time pull now includes.
-  const payoff = refinancePayoffOf(live, chainNow);
-  const payoffInterest = payoff - live.principal;
+  const payoff = quote?.payoff ?? 0n;
+  const payoffBound = quote?.bound ?? 0n;
+  const payoffInterest = payoff > live.principal ? payoff - live.principal : 0n;
   const lifWei = (live.principal * BigInt(fees.loanInitiationFeeBps)) / 10_000n;
   // What the wallet must hold SPARE at accept: the payoff is pulled,
   // but the new principal minus LIF arrives in the same tx.
   const walletTopUp = payoffInterest + lifWei;
-  // The approval bound: the payoff at the LAST moment this request
-  // could be accepted (its own 30-day expiry or the grace end,
-  // whichever first) — what the standing approval is sized to, and
-  // what the review disclosure is derived from whenever the request's
-  // window can cross the due date. While the grace bucket is still
-  // unknown the review CANNOT open (Codex #1256 r1): a zero-grace
-  // fallback would quote no headroom while submit approves the larger
-  // last-fillable bound — an undisclosed figure must never be
-  // signable.
-  const graceReady = graceSeconds !== undefined;
-  const graceSec = graceSeconds ?? 0n;
-  const approvalBound = refinanceApprovalOf(live, {
-    expiresAt: chainNow + REQUEST_WINDOW_DAYS * 86_400n,
-    graceSeconds: graceSec,
-  });
   // Disclosed as TOTAL payoff growth, not "late fee" (Codex #1256 r3
   // P3): past maturity the pull grows by the late fee AND the
   // interest that keeps accruing, and the receipt must not label the
   // interest share as a fee.
-  const payoffHeadroom = approvalBound - payoff;
+  const payoffHeadroom = payoffBound > payoff ? payoffBound - payoff : 0n;
   // OfferCreateFacet clamps a refinance request's on-chain expiry to
   // the grace boundary (graceEnd + 1) — when that clamp binds, the
   // honest reviewed lifetime is the grace end, not "30 days after
@@ -193,6 +227,8 @@ export function RefinanceFlow({
   const payoffStr = `${formatTokenAmountExact(payoff, dec)} ${sym}`;
   const topUpStr = `${formatTokenAmountExact(walletTopUp, dec)} ${sym}`;
   const headroomStr = `${formatTokenAmountExact(payoffHeadroom, dec)} ${sym}`;
+  const boundStr = `${formatTokenAmountExact(payoffBound, dec)} ${sym}`;
+  const permitRoute = quote?.route === 'permit';
 
   // Consent covers exactly what was reviewed (#1696): the terms the user
   // set, and the figures the live-loan prop, the fee config and the grace
@@ -202,7 +238,9 @@ export function RefinanceFlow({
     row.loanId,
     rateBps,
     durationDays,
+    quote?.route,
     payoff,
+    payoffBound,
     walletTopUp,
     payoffHeadroom,
     fees.loanInitiationFeeBps,
@@ -295,6 +333,9 @@ export function RefinanceFlow({
     // whose acceptance cannot collect the payoff (#1529 review round 8).
     let createOfferTx: `0x${string}` | null = null;
     let approvalToken: `0x${string}` | null = null;
+    // The route the plan paid by, once known: it decides what a failure
+    // left behind (a standing approval to unwind, or nothing).
+    let postedOnPermitRoute = false;
     try {
       // The live checks and the request they produce, shared with the
       // "Refinance all" batch on Positions (#126 slice 3): sanctions, the
@@ -320,15 +361,18 @@ export function RefinanceFlow({
         return;
       }
       const { liveLoan } = plan;
-      // The receipt disclosed the approval bound from the RENDER-time
-      // chain clock — a backgrounded tab freezes it, and the plan is
-      // judged at the live block. If the bound GREW (the loan slid toward
-      // or past maturity while the receipt sat open), force a re-review
-      // instead of signing headroom the reviewed figures never showed
-      // (Codex #1256 r3). Shrinkage (a partial settled) is fine — the
-      // pull only gets smaller. Checked before any write.
-      if (plan.approval > approvalBound) {
+      postedOnPermitRoute = plan.route === 'permit';
+      // The receipt disclosed the bound from the RENDER-time chain clock
+      // — a backgrounded tab freezes it, and the plan is judged at the
+      // live block. If the bound GREW (the loan slid toward or past
+      // maturity while the receipt sat open), or the Diamond now pays the
+      // payoff by another route than the one reviewed, force a re-review
+      // instead of signing what the reviewed figures never showed (Codex
+      // #1256 r3). Shrinkage (a partial settled) is fine — the pull only
+      // gets smaller. Checked before any write.
+      if (!quote || plan.route !== quote.route || plan.bound > payoffBound) {
         void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
+        void queryClient.invalidateQueries({ queryKey: ['refinancePayoffQuote'] });
         throw new Error(copy.match.termsChanged);
       }
       // Guardrails at the reviewed rate ceiling and end-date window,
@@ -341,7 +385,7 @@ export function RefinanceFlow({
           plan.caps.maxNewExpiry,
         ]);
       }
-      // The approval itself needs no balance, but a wallet that can't
+      // The authorisation itself needs no balance, but a wallet that can't
       // even cover the INTEREST portion today should hear it now, not
       // via a failed accept later. (The principal arrives in the
       // accept tx itself, so only the top-up is checked — with the
@@ -354,7 +398,8 @@ export function RefinanceFlow({
         amount: plan.topUp,
         symbol: sym,
       });
-      // The standing allowance is what an abandoned step 3 restores. Any
+      // BRIDGE (#3074), approval route only: the standing allowance is
+      // what an abandoned request restores. Any
       // pre-existing grant belongs to some other live arrangement (a
       // prior request, a sale listing, a user-managed approval), so the
       // unwind must put that figure back rather than zero it:
@@ -365,7 +410,7 @@ export function RefinanceFlow({
       // anything moving the allowance in between would leave this stale
       // so the unwind restored a value that was never replaced (#1529
       // review).
-      approvalToken = liveLoan.principalAsset;
+      approvalToken = plan.route === 'approval' ? liveLoan.principalAsset : null;
       // #1961 — refuse BEFORE the allowance, not after. This flow lives
       // on `/positions/:loanId`, which the Terms gate exempts so a held
       // user can repay; its Diamond write is NOT an exit, so
@@ -381,27 +426,42 @@ export function RefinanceFlow({
             : copy.errors.termsNotAccepted,
         );
       }
-      await ensureAllowance({
-        publicClient,
-        walletClient,
-        token: liveLoan.principalAsset,
-        owner: address,
-        spender: walletChain.diamondAddress,
-        amount: plan.approval,
-        onObserved: (value) => {
-          priorAllowance = value;
-        },
-        onWrote: (value, hash) => {
-          wroteAllowance = value;
-          wroteAllowanceTx = hash;
-        },
-        onConfirmed: (value) => {
-          confirmedAllowance = value;
-        },
-      });
+      if (plan.route === 'permit') {
+        // #1558 — the wallet's approval of Permit2 covers the bound. It
+        // moves nothing without the permit signed below, so nothing here
+        // is unwound if the sequence stops.
+        await ensurePermit2Approval({
+          publicClient,
+          walletClient,
+          owner: address,
+          token: liveLoan.principalAsset,
+          maxAmount: plan.bound,
+        });
+      } else {
+        // BRIDGE (#3074): a Diamond deployed before #1558 pulls the payoff
+        // on a standing approval of the Diamond.
+        await ensureAllowance({
+          publicClient,
+          walletClient,
+          token: liveLoan.principalAsset,
+          owner: address,
+          spender: walletChain.diamondAddress,
+          amount: plan.bound,
+          onObserved: (value) => {
+            priorAllowance = value;
+          },
+          onWrote: (value, hash) => {
+            wroteAllowance = value;
+            wroteAllowanceTx = hash;
+          },
+          onConfirmed: (value) => {
+            confirmedAllowance = value;
+          },
+        });
+      }
       // The request itself, with its own hard expiry — what makes the
       // reviewed lifetime true even when looser caps pre-exist, and the
-      // bound the approval above was computed against.
+      // moment the bound above was computed for.
       const payload = plan.payload;
       // LATE re-gate (Codex #1511 r10 P1) — see the entry gate note.
       if (preSubmitBlock) {
@@ -428,10 +488,40 @@ export function RefinanceFlow({
       }) as unknown as Array<{ args: { offerId: bigint } }>;
       const offerId = created[0]?.args.offerId;
       if (offerId !== undefined) onPosted(offerId.toString());
-      setDone(copy.refinance.done);
       consent.clear();
       onCloseConfirm();
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
+      if (plan.route === 'permit') {
+        // #1558 — the payoff permit names the request, so it is signed
+        // once the request exists: exactly the reviewed bound, expiring
+        // at the request's last fillable moment. The request is already
+        // posted, so a failure here is reported as that, never as a
+        // failed post; its card offers to sign again.
+        try {
+          if (offerId === undefined) throw new Error(copy.errors.checkRetry);
+          await attachRefinancePayoffPermit({
+            publicClient,
+            walletClient,
+            write,
+            chainId: walletChain.chainId,
+            diamond: walletChain.diamondAddress,
+            owner: address,
+            token: liveLoan.principalAsset,
+            maxAmount: plan.bound,
+            deadline: plan.permitDeadline,
+            loanId: BigInt(row.loanId),
+            offerId,
+          });
+        } catch (attachErr) {
+          setError(`${copy.refinance.permit.postedWithoutPermit} ${captureTxError(attachErr)}`);
+          void queryClient.invalidateQueries({ queryKey: ['refinancePending'] });
+          return;
+        }
+        void queryClient.invalidateQueries({ queryKey: ['refinancePending'] });
+        setDone(copy.refinance.permit.done);
+      } else {
+        setDone(copy.refinance.done);
+      }
     } catch (err) {
       setError(captureTxError(err));
       // Unwind the payoff approval so a rejected step 3 leaves no
@@ -469,7 +559,11 @@ export function RefinanceFlow({
         }
       })();
       if (offerMayExist) {
-        setError(copy.refinance.postedButUnconfirmed);
+        setError(
+          postedOnPermitRoute
+            ? copy.refinance.permit.postedButUnconfirmed
+            : copy.refinance.postedButUnconfirmed,
+        );
       } else {
         await unwindApproval();
       }
@@ -589,6 +683,11 @@ export function RefinanceFlow({
             accept, only the matcher and keepers, so the posture is
             DISCLOSED here — in every state — rather than disabling the form. */}
         <AutoMatchPostureBanner posture={autoRefinancePosture} />
+        {quoteQuery.isError && !quoteReady ? (
+          <div className="banner banner-warn" role="alert" style={{ marginTop: 12 }}>
+            <span className="banner-body">{copy.refinance.permit.quoteUnavailable}</span>
+          </div>
+        ) : null}
         {/* #1028 — kill switch held up front like every other gated
             flow, not just at the final confirm. */}
         {flowDisabled('post-offer') ? (
@@ -608,6 +707,7 @@ export function RefinanceFlow({
               !durationValid ||
               !fees.ready ||
               !graceReady ||
+              !quoteReady ||
               flowDisabled('post-offer')
             }
             onClick={onOpenConfirm}
@@ -637,6 +737,7 @@ export function RefinanceFlow({
                 !walletReady ||
                 !consent.given ||
                 !graceReady ||
+                !quoteReady ||
                 flowDisabled('post-offer')
               }
               data={{
@@ -644,7 +745,15 @@ export function RefinanceFlow({
                 youLock: copy.refinance.receiptLock,
                 youMayOwe: `${copy.refinance.receiptYouMayOwe(payoffStr)} ${copy.refinance.payoffNote} ${
                   payoffHeadroom > 0n
-                    ? `${copy.refinance.lateFeeDisclosure(headroomStr)} `
+                    ? `${
+                        permitRoute
+                          ? copy.refinance.permit.growthDisclosure(headroomStr)
+                          : copy.refinance.lateFeeDisclosure(headroomStr)
+                      } `
+                    : ''
+                }${
+                  permitRoute
+                    ? `${copy.refinance.permit.signDisclosure(boundStr)} ${copy.refinance.permit.permit2ApprovalNote} `
                     : ''
                 }${copy.refinance.walletNote(topUpStr)}`,
                 youCanLose: `${copy.refinance.noGuarantee} ${copy.refinance.shortIsSafe}`,
@@ -658,7 +767,7 @@ export function RefinanceFlow({
                 </div>
               ) : null}
               <p className="muted" style={{ marginBottom: 12 }}>
-                {copy.refinance.multiStepNote}
+                {permitRoute ? copy.refinance.permit.multiStepNote : copy.refinance.multiStepNote}
               </p>
             </ConfirmReceipt>
           </div>

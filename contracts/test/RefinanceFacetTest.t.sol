@@ -1651,7 +1651,7 @@ contract RefinanceFacetTest is Test {
         returns (uint256 now_, uint256 atGraceEnd, address signer, uint256 maxAmount)
     {
         (, now_, atGraceEnd, signer, maxAmount, , , ) =
-            RefinancePayoffFacet(address(diamond)).getRefinancePayoff(loanId, offerId);
+            RefinancePayoffFacet(address(diamond)).getRefinancePayoff(loanId, offerId, type(uint256).max);
     }
 
     /// @notice The payoff comes through the request's permit, in one pull of
@@ -1787,14 +1787,14 @@ contract RefinanceFacetTest is Test {
         _acceptBorrowerOffer(borrowerOfferId);
         vm.warp(block.timestamp + 5 days);
         (, , uint256 atGraceEnd, , , , , ) =
-            RefinancePayoffFacet(address(diamond)).getRefinancePayoff(activeLoanId, borrowerOfferId);
+            RefinancePayoffFacet(address(diamond)).getRefinancePayoff(activeLoanId, borrowerOfferId, type(uint256).max);
         uint256 nonce = 0x1558 << 8 | 3;
         RefinancePayoffPermitHelper.attachSigned(
             address(diamond), borrowerPk, mockERC20, activeLoanId, borrowerOfferId,
             atGraceEnd, nonce, block.timestamp + 1 days
         );
         (, , , , , , , bool spentBefore) =
-            RefinancePayoffFacet(address(diamond)).getRefinancePayoff(activeLoanId, borrowerOfferId);
+            RefinancePayoffFacet(address(diamond)).getRefinancePayoff(activeLoanId, borrowerOfferId, type(uint256).max);
         assertFalse(spentBefore, "the nonce is live while the permit is attached");
 
         vm.prank(borrower);
@@ -1832,5 +1832,27 @@ contract RefinanceFacetTest is Test {
         vm.warp(graceEnd);
         (uint256 payoffThen, , , ) = _payoff(activeLoanId, borrowerOfferId);
         assertEq(payoffThen, atGraceEnd, "the bound is the payoff at grace end");
+    }
+
+    /// @notice `payoffBy` sizes the payoff for the moment the caller names: a
+    ///         moment inside grace reads what a refinance then pays, a moment
+    ///         already past reads today's payoff, and a moment past the grace
+    ///         end reads the grace end.
+    function test_1558_payoffBy_isThePayoffAtTheNamedMoment() public {
+        (, , , uint256 graceEnd) = LoanFacet(address(diamond)).getLoanDeadlines(activeLoanId);
+        uint256 mid = graceEnd - 1 days;
+        (, uint256 nowPayoff, uint256 byMid, , , , , ) = RefinancePayoffFacet(address(diamond))
+            .getRefinancePayoff(activeLoanId, borrowerOfferId, mid);
+        (, , uint256 byPast, , , , , ) = RefinancePayoffFacet(address(diamond))
+            .getRefinancePayoff(activeLoanId, borrowerOfferId, 0);
+        assertEq(byPast, nowPayoff, "a moment already past reads today's payoff");
+        (, , uint256 byLate, , , , , ) = RefinancePayoffFacet(address(diamond))
+            .getRefinancePayoff(activeLoanId, borrowerOfferId, graceEnd + 30 days);
+        (, uint256 atGraceEnd, , ) = _payoff(activeLoanId, borrowerOfferId);
+        assertEq(byLate, atGraceEnd, "past the grace end reads the grace end");
+        assertGt(atGraceEnd, byMid, "the late fee still grows inside grace");
+        vm.warp(mid);
+        (uint256 payoffThen, , , ) = _payoff(activeLoanId, borrowerOfferId);
+        assertEq(payoffThen, byMid, "the figure is what a refinance at that moment pays");
     }
 }

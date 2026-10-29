@@ -18,9 +18,17 @@
  * without the guardrails it needs, so a failed guardrail write can never
  * leave a request posted on looser ones.
  *
- * Which loans got a request is read from the transaction's own logs
- * (`batchRefinance.ts`). The approval is set back only when it is
- * established that no request was posted.
+ * #1558 — the approval is of Permit2, which moves nothing without a
+ * signature. Once the requests are posted, the borrower signs one payoff
+ * permit per posted request (exactly its bound, expiring with it), and one
+ * more `multicall` attaches them all. A posted request whose permit was
+ * not signed or did not attach is named, so its loan's page can sign it.
+ * BRIDGE (#3074): on a Diamond deployed before #1558 the approval is of
+ * the Diamond itself, no permit is signed, and the approval is set back
+ * only when it is established that no request was posted.
+ *
+ * Which loans got a request, and which got a permit, is read from the
+ * transactions' own logs (`batchRefinance.ts`).
  */
 import { useState, type ReactNode } from 'react';
 import { LoaderCircle } from 'lucide-react';
@@ -30,6 +38,12 @@ import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
 import { ensureAllowance, trackApproval, useTokenMeta } from '../contracts/erc20';
+import {
+  ensurePermit2Approval,
+  setPayoffPermitCall,
+  signRefinancePayoffPermit,
+  type SignedPayoffPermit,
+} from '../contracts/refinancePayoffPermit';
 import { assertErc20BalanceLive } from '../contracts/preflights';
 import { captureTxError, isPositiveDecimal } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
@@ -44,7 +58,7 @@ import {
   type Mined,
   type OfferGroup,
 } from '../data/batchCloseOut';
-import { encodeBestEffort } from '../data/multicall';
+import { MAX_MULTICALL_CALLS, chunkForMulticall, encodeBestEffort } from '../data/multicall';
 import {
   planRefinanceForBatch,
   type RefinanceBatchPlan,
@@ -55,6 +69,7 @@ import {
 import {
   chunkRefinanceLoans,
   noRequestPosted,
+  permitsInLogs,
   readBackRequests,
   refinanceSendCalls,
   refinanceTotals,
@@ -72,7 +87,7 @@ type Stage =
   | { kind: 'idle' }
   | { kind: 'planning' }
   | { kind: 'review'; terms: RefinanceTerms; fees: ReviewedFees; plans: RefinanceBatchPlan[] }
-  | { kind: 'sending'; step: 'approving' | 'checking' | 'submitting' }
+  | { kind: 'sending'; step: 'approving' | 'checking' | 'submitting' | 'signing' | 'attaching' }
   | { kind: 'done'; outcomes: RefinanceBatchOutcome[]; note: string | null };
 
 /** What the consent covers: the terms, the fee config and every figure and
@@ -85,7 +100,7 @@ function reviewFingerprint(stage: Stage): string {
       fees: stage.fees,
       plans: stage.plans.map((p) =>
         p.kind === 'ready'
-          ? [p.loanId, p.payoff, p.topUp, p.approval, p.headroom, p.notes]
+          ? [p.loanId, p.route, p.payoff, p.topUp, p.bound, p.headroom, p.notes]
           : [p.loanId, p.reason],
       ),
     },
@@ -204,7 +219,16 @@ export function BatchRefinancePanel({
     // so every loan sent needs at most what these totals checked and
     // approved.
     const totals = refinanceTotals([...reviewed.values()]);
-    const approvals = totals.map((t) => ({ token: t.token, tracker: trackApproval() }));
+    // One Diamond, one route: every reviewed plan read the same routing.
+    const permitRoute = [...reviewed.values()].some((p) => p.route === 'permit');
+    // BRIDGE (#3074): only a standing approval of the Diamond is tracked
+    // and unwound; an approval of Permit2 moves nothing on its own.
+    const approvals = permitRoute
+      ? []
+      : totals.map((t) => ({ token: t.token, tracker: trackApproval() }));
+    // The late plan each loan was sent on: its permit is signed for that
+    // plan's bound and deadline.
+    const sentPlans = new Map<number, ReadyPlan>();
     const unwindClients = {
       publicClient: ctx.publicClient,
       walletClient,
@@ -215,6 +239,76 @@ export function BatchRefinancePanel({
       (await Promise.all(approvals.map((a) => a.tracker.unwind(unwindClients)))).every(Boolean);
     const outcomes: RefinanceBatchOutcome[] = [];
     let sent = false;
+
+    /**
+     * #1558 — sign a payoff permit for each request this batch posted, then
+     * attach them in as few transactions as the multicall allows. A request
+     * whose permit was not signed (the wallet refused, or stopped) or did
+     * not attach is turned into `postedNoPermit`, so the results name it
+     * and its loan's page offers to sign. Signing stops at the first
+     * refusal: the wallet said no, and asking again for each remaining
+     * request would not be a choice.
+     */
+    async function attachPermits(
+      all: RefinanceBatchOutcome[],
+      plansById: Map<number, ReadyPlan>,
+    ): Promise<void> {
+      if (!ctx || !walletClient || !walletChain || !address) return;
+      const posted = all.filter(
+        (o): o is Extract<RefinanceBatchOutcome, { kind: 'posted' }> => o.kind === 'posted',
+      );
+      if (posted.length === 0) return;
+      setStage({ kind: 'sending', step: 'signing' });
+      const signed: { offerId: bigint; permit: SignedPayoffPermit }[] = [];
+      for (const o of posted) {
+        const p = plansById.get(o.loanId);
+        if (!p) continue;
+        try {
+          signed.push({
+            offerId: BigInt(o.offerId),
+            permit: await signRefinancePayoffPermit({
+              walletClient,
+              chainId: walletChain.chainId,
+              diamond: walletChain.diamondAddress,
+              owner: address,
+              token: p.liveLoan.principalAsset,
+              maxAmount: p.bound,
+              deadline: p.permitDeadline,
+              loanId: BigInt(p.loanId),
+              offerId: BigInt(o.offerId),
+            }),
+          });
+        } catch {
+          break;
+        }
+      }
+      const attached = new Set<string>();
+      setStage({ kind: 'sending', step: 'attaching' });
+      for (const chunk of chunkForMulticall(signed, MAX_MULTICALL_CALLS)) {
+        let submitted: `0x${string}` | null = null;
+        let mined: Mined;
+        try {
+          const { receipt } = await write(
+            'multicall',
+            [encodeBestEffort(chunk.map((c) => setPayoffPermitCall(c.offerId, c.permit)))],
+            { onSubmitted: (hash) => (submitted = hash) },
+          );
+          mined = { block: receipt.blockNumber, logs: receipt.logs };
+        } catch (err) {
+          mined = await settleFailedSend(ctx.publicClient, submitted, err);
+        }
+        if ('block' in mined) {
+          for (const id of permitsInLogs(mined.logs, walletChain.diamondAddress, address)) {
+            attached.add(id);
+          }
+        }
+      }
+      for (const [i, o] of all.entries()) {
+        if (o.kind === 'posted' && !attached.has(o.offerId)) {
+          all[i] = { loanId: o.loanId, kind: 'postedNoPermit', offerId: o.offerId };
+        }
+      }
+    }
     try {
       // The wallet must be able to fund every acceptance's spare amount,
       // and one approval covers every request's largest payoff.
@@ -227,15 +321,25 @@ export function BatchRefinancePanel({
           amount: t.topUp,
           symbol: meta.data?.symbol,
         });
-        await ensureAllowance({
-          publicClient: ctx.publicClient,
-          walletClient,
-          token: t.token,
-          owner: address,
-          spender: walletChain.diamondAddress,
-          amount: t.approval,
-          ...approvals[i].tracker.hooks(t.token),
-        });
+        if (permitRoute) {
+          await ensurePermit2Approval({
+            publicClient: ctx.publicClient,
+            walletClient,
+            owner: address,
+            token: t.token,
+            maxAmount: t.bound,
+          });
+        } else {
+          await ensureAllowance({
+            publicClient: ctx.publicClient,
+            walletClient,
+            token: t.token,
+            owner: address,
+            spender: walletChain.diamondAddress,
+            amount: t.bound,
+            ...approvals[i].tracker.hooks(t.token),
+          });
+        }
       }
       const chunks = chunkRefinanceLoans([...reviewed.keys()]);
       // Kept from the SEND, not from its loans' outcomes.
@@ -265,6 +369,7 @@ export function BatchRefinancePanel({
         }
         const go = late.filter((p): p is ReadyPlan => p.kind === 'ready');
         if (go.length === 0) continue;
+        for (const p of go) sentPlans.set(p.loanId, p);
         setStage({ kind: 'sending', step: 'submitting' });
         let submitted: `0x${string}` | null = null;
         let mined: Mined;
@@ -286,6 +391,9 @@ export function BatchRefinancePanel({
           if (o.kind === 'posted') rememberRefinanceOffer(walletChain.chainId, o.loanId, o.offerId);
         }
         outcomes.push(...read);
+      }
+      if (permitRoute) {
+        await attachPermits(outcomes, sentPlans);
       }
       // Set the approval back only when it is ESTABLISHED that no request
       // was posted: a request a lender may accept needs it. The figure
@@ -460,6 +568,7 @@ function RefinanceReview({
 }) {
   const ready = plans.filter((p): p is ReadyPlan => p.kind === 'ready');
   const totals = refinanceTotals(ready);
+  const permitRoute = ready.some((p) => p.route === 'permit');
   return (
     <>
       <h3 style={{ marginBottom: 8 }}>{copy.batchRefinance.reviewTitle}</h3>
@@ -506,7 +615,9 @@ function RefinanceReview({
           {totals.map((t) => (
             <p key={t.token} style={{ marginBottom: 8 }}>
               {copy.batchRefinance.totals(amount(t.topUp))}{' '}
-              {copy.batchRefinance.approval(amount(t.approval))}
+              {permitRoute
+                ? copy.batchRefinance.permit.total(amount(t.bound))
+                : copy.batchRefinance.approval(amount(t.bound))}
             </p>
           ))}
           <label className="cluster" style={{ marginBottom: 12, alignItems: 'flex-start' }}>
@@ -530,7 +641,9 @@ function RefinanceReview({
             data={{
               youReceive: copy.batchRefinance.receiveEach,
               youLock: copy.refinance.receiptLock,
-              youMayOwe: copy.batchRefinance.youMayOwe,
+              youMayOwe: permitRoute
+                ? copy.batchRefinance.permit.youMayOwe
+                : copy.batchRefinance.youMayOwe,
               youCanLose: `${copy.refinance.noGuarantee} ${copy.refinance.shortIsSafe}`,
               fees: `${copy.fees.borrowerLIF(formatBpsAsPercent(fees.loanInitiationFeeBps))} ${copy.refinance.feesTreasuryNote(formatBpsAsPercent(fees.treasuryFeeBps))}`,
               whenThisEnds: `${copy.batchRefinance.endsEach} ${copy.refinance.guardrailNote}`,
@@ -547,6 +660,8 @@ function outcomeText(o: RefinanceBatchOutcome): string {
   switch (o.kind) {
     case 'posted':
       return copy.batchRefinance.posted(id, o.offerId);
+    case 'postedNoPermit':
+      return copy.batchRefinance.permit.postedNoPermit(id, o.offerId);
     case 'changed':
       return copy.batchRefinance.changedOtherwise(id);
     case 'open':
