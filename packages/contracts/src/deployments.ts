@@ -150,6 +150,10 @@ export interface DeploymentFacets {
    *  and hosts claimAsSeller and the interest ledger view. Optional: a chain
    *  deployed before it has no such key. */
   sellerClaimFacet?: HexAddress;
+  /** #1558 - the borrower's payoff permit on a refinance request, its
+   *  removal and the view that sizes it. Optional: a chain deployed before
+   *  it has no such key. */
+  refinancePayoffFacet?: HexAddress;
   /** #2748 - the rate-model host: the reference-rate model, its band and
    *  the offer-rate clamp. Optional: a chain deployed before it has no such
    *  key. */

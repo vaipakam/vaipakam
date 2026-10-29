@@ -20,8 +20,17 @@ import { refinanceCalls, type RefinanceCtx, type RefinanceRequestReady } from '.
 
 /** A loan's outcome after the batch. */
 export type RefinanceBatchOutcome =
-  /** This batch's transaction posted its request, as offer `offerId`. */
+  /** This batch's transaction posted its request, as offer `offerId`
+   *  (and, on the permit route, attached its payoff permit). */
   | { loanId: number; kind: 'posted'; offerId: string }
+  /** Permit route (#1558): the request is posted, but its payoff permit is
+   *  not attached, so no lender can complete it until it is signed from
+   *  the loan's page. */
+  | { loanId: number; kind: 'postedNoPermit'; offerId: string }
+  /** #1558 — posted, and the transaction attaching its payoff permit was
+   *  sent but neither confirmed nor refused: it may still attach, so
+   *  whether a lender can complete the request is not known yet. */
+  | { loanId: number; kind: 'postedPermitPending'; offerId: string }
   /** The loan left Active before its request ran. */
   | { loanId: number; kind: 'changed' }
   /** Sent, and neither confirmed nor refused yet: it may still post. */
@@ -136,6 +145,29 @@ export async function readBackRequests(
   );
 }
 
+/**
+ * The requests whose payoff permit a mined transaction attached, from its
+ * own logs: `RefinancePayoffPermitSet` by this wallet, on the Diamond. A
+ * multicall item that reverted had its logs rolled back with it.
+ */
+export function permitsInLogs(
+  logs: readonly Log[],
+  diamond: `0x${string}`,
+  signer: `0x${string}`,
+): Set<string> {
+  const ours = logs.filter((l) => l.address.toLowerCase() === diamond.toLowerCase());
+  const set = parseEventLogs({
+    abi: DIAMOND_ABI_VIEM,
+    logs: ours as Log[],
+    eventName: 'RefinancePayoffPermitSet',
+  }) as unknown as Array<{ args: { offerId: bigint; signer: `0x${string}` } }>;
+  const out = new Set<string>();
+  for (const e of set) {
+    if (e.args.signer.toLowerCase() === signer.toLowerCase()) out.add(e.args.offerId.toString());
+  }
+  return out;
+}
+
 /** Set the approval back only when it is ESTABLISHED that no request was
  *  posted: a pending or unreadable outcome may be a request that needs
  *  it, and removing that would leave a lender's acceptance unable to
@@ -144,21 +176,22 @@ export function noRequestPosted(outcomes: readonly RefinanceBatchOutcome[]): boo
   return outcomes.every((o) => o.kind === 'open' || o.kind === 'changed');
 }
 
-/** What the ready requests need, summed per token: the approval (each
- *  request's largest possible payoff) and the spare balance (each one's
- *  top-up today). One lending asset per offer, so one entry in practice. */
+/** What the ready requests need, summed per token: the bound (each
+ *  request's largest possible payoff), which the approval of the Diamond or
+ *  of Permit2 is sized to, and the spare balance (each one's top-up today).
+ *  One lending asset per offer, so one entry in practice. */
 export function refinanceTotals(
   plans: readonly RefinanceRequestReady[],
-): { token: `0x${string}`; approval: bigint; topUp: bigint }[] {
-  const byToken = new Map<string, { token: `0x${string}`; approval: bigint; topUp: bigint }>();
+): { token: `0x${string}`; bound: bigint; topUp: bigint }[] {
+  const byToken = new Map<string, { token: `0x${string}`; bound: bigint; topUp: bigint }>();
   for (const p of plans) {
     const token = p.liveLoan.principalAsset;
     const prev = byToken.get(token.toLowerCase());
     byToken.set(
       token.toLowerCase(),
       prev
-        ? { token: prev.token, approval: prev.approval + p.approval, topUp: prev.topUp + p.topUp }
-        : { token, approval: p.approval, topUp: p.topUp },
+        ? { token: prev.token, bound: prev.bound + p.bound, topUp: prev.topUp + p.topUp }
+        : { token, bound: p.bound, topUp: p.topUp },
     );
   }
   return [...byToken.values()];

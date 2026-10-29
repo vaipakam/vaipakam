@@ -104,6 +104,7 @@ import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
 import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
 import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
+import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
@@ -455,6 +456,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // position their earned interest first, splits a terminal claim, and
         // hosts claimAsSeller and the interest ledger view.
         SellerClaimFacet sellerClaimFacet = SellerClaimFacet(ArtifactDeploy.deploy(type(SellerClaimFacet).name));
+        // #1558 - the borrower's payoff permit on a refinance request, its
+        // removal and the view that sizes it; RefinanceFacet uses the permit.
+        RefinancePayoffFacet refinancePayoffFacet =
+            RefinancePayoffFacet(ArtifactDeploy.deploy(type(RefinancePayoffFacet).name));
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
             RewardCompensationDispatchFacet(ArtifactDeploy.deploy(type(RewardCompensationDispatchFacet).name));
         RewardCommitmentFacet rewardCommitmentFacet = RewardCommitmentFacet(ArtifactDeploy.deploy(type(RewardCommitmentFacet).name));
@@ -492,7 +497,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](104);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](105);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -593,6 +598,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[101] = _buildCut(address(rewardRemitDestinationFacet), _getRewardRemitDestinationSelectors());
         cuts[102] = _buildCut(address(saleExitVerdictFacet), _getSaleExitVerdictSelectors());
         cuts[103] = _buildCut(address(sellerClaimFacet), _getSellerClaimSelectors());
+        cuts[104] = _buildCut(address(refinancePayoffFacet), _getRefinancePayoffSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1240,6 +1246,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("forcedSaleFacet", address(forcedSaleFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
+        Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
@@ -3451,6 +3458,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      `FacetSelectors.sellerClaim()`.
     function _getSellerClaimSelectors() internal pure returns (bytes4[] memory s) {
         s = FacetSelectors.sellerClaim();
+    }
+
+    /// @dev #1558 - the refinance payoff-permit host. Returns the ONE list in
+    ///      `FacetSelectors.refinancePayoff()`.
+    function _getRefinancePayoffSelectors() internal pure returns (bytes4[] memory s) {
+        s = FacetSelectors.refinancePayoff();
     }
 
     /// @dev #2748 - the quote-time rate model (#400): register, fast-disable,

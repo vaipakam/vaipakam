@@ -17,9 +17,17 @@
  * record (cancel DELETES it → zeroed creator self-heals the marker),
  * the LIVE loan (payoff recomputed from chain, never a cached prop),
  * LIVE fees (the top-up figure must track a governance retune), the
- * standing allowance + wallet balance (a sibling repay flow's
- * zero-first approve can strand the request silently), and chain
- * time (the cancel cooldown gate must not trust the device clock).
+ * request's payoff authorisation + wallet balance, and chain time (the
+ * cancel cooldown gate must not trust the device clock).
+ *
+ * #1558 — the payoff authorisation is the request's payoff permit: the
+ * contract reports the payoff now and at the request's last fillable
+ * moment, and the permit attached to the request (who signed it, for how
+ * much, until when, and whether Permit2 has spent it), and the wallet's
+ * approval of Permit2 must cover the payoff too. BRIDGE (#3074): on a
+ * Diamond deployed before #1558 it is the standing approval of the
+ * Diamond, sized by the app-side mirror (a sibling repay flow's
+ * zero-first approve can strand the request silently).
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -31,9 +39,15 @@ import {
   LOAN_STATUS_ACTIVE,
   loanEndTimeOf,
   readLoanLive,
-  refinanceApprovalOf,
-  refinancePayoffOf,
 } from '../contracts/loanLive';
+import {
+  permitProblem,
+  readPayoffQuote,
+  readPayoffRoute,
+  type PayoffRoute,
+  type PermitProblem,
+} from '../contracts/refinancePayoffPermit';
+import { PERMIT2_ADDRESS } from '../contracts/usePermit2Signing';
 import { readGraceSecondsLive } from '../contracts/preflights';
 import {
   discoverRefinanceRequest,
@@ -109,20 +123,31 @@ export interface RefinancePendingState {
   untakeable: boolean;
   /** Chain time says the cancel cooldown has elapsed. */
   cancelUnlocked: boolean;
-  /** Standing approval no longer covers the request's approval
-   *  target (the pull at its LAST fillable moment — an allowance
-   *  covering only today's payoff still strands an in-grace accept). */
+  /** How this Diamond pays the payoff (#1558): the request's permit, or
+   *  (before #1558) a standing approval of the Diamond. */
+  route: PayoffRoute;
+  /** The payoff is not authorised for every acceptance the request still
+   *  allows (the pull at its LAST fillable moment — an authorisation
+   *  covering only today's payoff still strands an in-grace accept). On
+   *  the permit route `permitIssue` says why. */
   allowanceShort: boolean;
+  /** Permit route: why the attached permit cannot pay every acceptance
+   *  the request allows, or that the wallet's approval of Permit2 no
+   *  longer covers the bound (`permit2Short`); null when it can, and on
+   *  the approval route. */
+  permitIssue: PermitProblem | 'permit2Short' | null;
   /** Wallet balance no longer covers the live top-up figure. */
   balanceShort: boolean;
   /** Live payoff (what an accept RIGHT NOW pulls — includes any
    *  accrued grace-window late fee) and spare-balance figure. */
   payoff: bigint;
   topUp: bigint;
-  /** The restore action's approval target: the payoff at the
-   *  request's last fillable moment (covers the late fee any later
-   *  accept could add, #1236). */
-  approvalTarget: bigint;
+  /** The most an acceptance can pull: the payoff at the request's last
+   *  fillable moment (covers the late fee any later accept could add,
+   *  #1236). What a re-signed permit, or a restored approval, is sized to. */
+  bound: bigint;
+  /** The request's last fillable moment: a re-signed permit's deadline. */
+  lastFillable: bigint;
 }
 
 export function useRefinancePending(
@@ -256,7 +281,7 @@ export function useRefinancePending(
     refetchInterval: tipAware('refinancePending', 30_000, Boolean(readChain.wsUrl)),
     queryFn: async (): Promise<RefinancePendingState | 'gone'> => {
       const diamond = readChain.diamondAddress;
-      const [offer, live, fees, latestBlock, allowance, balance, record] =
+      const [offer, live, fees, latestBlock, route, balance, record] =
         await Promise.all([
           readClient!.readContract({
             address: diamond,
@@ -273,14 +298,7 @@ export function useRefinancePending(
           readLoanLive(readClient!, diamond, loanId),
           readLiveProtocolFees(readClient!, diamond),
           readClient!.getBlock({ blockTag: 'latest' }),
-          address
-            ? (readClient!.readContract({
-                address: principalAsset!,
-                abi: erc20Abi,
-                functionName: 'allowance',
-                args: [address, diamond],
-              }) as Promise<bigint>)
-            : Promise.resolve(0n),
+          readPayoffRoute(readClient!, diamond),
           address
             ? (readClient!.readContract({
                 address: principalAsset!,
@@ -317,7 +335,7 @@ export function useRefinancePending(
       // 5-minute-fresh config read already answered. fetchQuery, NOT
       // ensureQueryData: ensure returns a cached entry regardless of
       // age, which would freeze a governance grace change out of the
-      // pastGrace/approvalTarget math indefinitely (Codex #1256 r1);
+      // pastGrace/bound math indefinitely (Codex #1256 r1);
       // fetchQuery enforces the staleTime bound. Bucketed on the
       // LIVE duration (a keeper extend can move the bucket).
       const graceSec = await queryClient.fetchQuery({
@@ -330,9 +348,36 @@ export function useRefinancePending(
           }),
         staleTime: 5 * 60 * 1000,
       });
-      // Payoff AS OF NOW (what an accept in this block pulls —
-      // includes any accrued grace-window late fee, #1189/#1236).
-      const payoff = refinancePayoffOf(live, latestBlock.timestamp);
+      // Payoff AS OF NOW (what an accept in this block pulls — includes
+      // any accrued grace-window late fee, #1189/#1236), and what the
+      // contract could pull at the request's LAST fillable moment — the
+      // authorisation threshold (Codex #1256 r1): one covering only
+      // today's payoff still strands a later in-grace accept, so warn
+      // (and re-sign or restore) against this.
+      const [quote, allowance] = await Promise.all([
+        readPayoffQuote({
+          publicClient: readClient!,
+          diamond,
+          live,
+          loanId: BigInt(loanId),
+          offerId: BigInt(candidateId!),
+          chainNow: latestBlock.timestamp,
+          expiresAt: offer.expiresAt,
+          graceSeconds: graceSec,
+          route,
+        }),
+        // The approval the payoff is pulled through: of Permit2 on the
+        // permit route, of the Diamond on the approval route.
+        address
+          ? (readClient!.readContract({
+              address: principalAsset!,
+              abi: erc20Abi,
+              functionName: 'allowance',
+              args: [address, route === 'permit' ? PERMIT2_ADDRESS : diamond],
+            }) as Promise<bigint>)
+          : Promise.resolve(0n),
+      ]);
+      const { payoff, bound, lastFillable } = quote;
       const topUp =
         payoff -
         live.principal +
@@ -341,14 +386,6 @@ export function useRefinancePending(
       // accept — the request behaves like an expired one from here.
       const pastGrace =
         latestBlock.timestamp > loanEndTimeOf(live, latestBlock.timestamp) + graceSec;
-      // What the contract could pull at the request's LAST fillable
-      // moment — the allowance threshold (Codex #1256 r1): an
-      // allowance covering only today's payoff still strands a
-      // later in-grace accept, so warn (and restore) against this.
-      const approvalTarget = refinanceApprovalOf(live, {
-        expiresAt: offer.expiresAt,
-        graceSeconds: graceSec,
-      });
       // Disconnected wallet (address undefined) must not paint the
       // funding warnings red off zero placeholders.
       const fundingKnown = Boolean(address);
@@ -358,6 +395,16 @@ export function useRefinancePending(
       const expired =
         offer.expiresAt !== 0n && latestBlock.timestamp >= offer.expiresAt;
       const untakeable = isUntakeable(record?.id ?? null, candidateId!);
+      // Permit route: the permit must be the request creator's, unspent,
+      // live until the request's last fillable moment and large enough for
+      // the bound, and the wallet's approval of Permit2 must cover it.
+      const permitIssue =
+        route !== 'permit' || !quote.permit
+          ? null
+          : (permitProblem(quote.permit, offer.creator, latestBlock.timestamp, lastFillable, bound) ??
+            (allowance < bound ? 'permit2Short' : null));
+      const fundable =
+        fundingKnown && !offer.accepted && !expired && !pastGrace && !untakeable;
       return {
         creator: offer.creator,
         loanActive: live.status === LOAN_STATUS_ACTIVE,
@@ -368,25 +415,17 @@ export function useRefinancePending(
         untakeable,
         cancelUnlocked:
           latestBlock.timestamp >= offer.createdAt + CANCEL_COOLDOWN_SECONDS,
+        route,
         // Funding warnings stop past grace too — like expiry, there
         // is nothing left to fund (accepts are rejected on-chain).
         allowanceShort:
-          fundingKnown &&
-          !offer.accepted &&
-          !expired &&
-          !pastGrace &&
-          !untakeable &&
-          allowance < approvalTarget,
-        balanceShort:
-          fundingKnown &&
-          !offer.accepted &&
-          !expired &&
-          !pastGrace &&
-          !untakeable &&
-          balance < topUp,
+          fundable && (route === 'permit' ? permitIssue !== null : allowance < bound),
+        permitIssue: fundable ? permitIssue : null,
+        balanceShort: fundable && balance < topUp,
         payoff,
         topUp,
-        approvalTarget,
+        bound,
+        lastFillable,
       };
     },
   });

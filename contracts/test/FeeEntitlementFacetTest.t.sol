@@ -39,6 +39,7 @@ import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 import {defaultQuote} from "./helpers/ForcedSaleQuote.sol";
+import {RefinancePayoffPermitHelper} from "./helpers/RefinancePayoffPermitHelper.sol";
 
 /**
  * @title  FeeEntitlementFacetTest
@@ -486,6 +487,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         uint256 oldOffer = _createLenderErc20Offer();
         uint256 oldLoanId = _signAndAcceptOffer(borrower, borrowerPk, oldOffer, true, 0);
         uint256 borrowerOfferId = _createBorrowerErc20Offer();
+        RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, borrowerOfferId);
 
         LibVaipakam.Loan memory ol = LoanFacet(address(diamond)).getLoanDetails(oldLoanId);
         vm.prank(lender);
@@ -1533,6 +1535,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         uint256 oldOffer = _createLenderErc20Offer();
         uint256 oldLoanId = _signAndAcceptOffer(borrower, borrowerPk, oldOffer, true, 0);
         uint256 borrowerOfferId = _createBorrowerErc20Offer();
+        RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, borrowerOfferId);
 
         LibVaipakam.Loan memory ol = LoanFacet(address(diamond)).getLoanDetails(oldLoanId);
         vm.prank(ol.lender);
