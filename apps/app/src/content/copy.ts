@@ -1665,7 +1665,7 @@ const copySource = {
     lockEach:
       'Each listed loan’s lender position NFT, until its sale completes or its listing ends. Nothing else.',
     youMayOwe:
-      'Nothing from your wallet, and no approval. When a buyer accepts a listing, the settlement is taken out of their payment before the rest reaches you: the LARGER of the interest built up by then or the rate difference for the remaining term — never both. Each loan’s figure right now is shown above.',
+      'Nothing from your wallet, and no approval. When a buyer accepts a listing, the settlement is taken out of their payment before the rest reaches you: the rate difference for the remaining term, when your rate is above that loan’s own. Each loan’s figure right now is shown above. The interest you earned on each loan stays yours as a claim on that loan, paid as its borrower pays; Claims shows it after the sale.',
     endsEach:
       'Each listing ends when a buyer accepts it, when you cancel it from the loan’s page, or when it expires. One transaction lists up to 30 loans; a loan whose listing fails is skipped, and the results say why.',
     listed: tmpl(
@@ -3446,8 +3446,12 @@ const copySource = {
       sellNow: 'Sell your position now',
       sellNowDesc:
         'Sell this position straight into a standing lending offer that matches it. You’re paid immediately from funds already locked by that lender, and the borrower’s rate and due date don’t change.',
-      // Codex r1 P1 — "the LARGER of X or Y, never both" reads as
-      // EXHAUSTIVE, and it is not: both sale paths also migrate any
+      // #1209 — a sale no longer gives up the seller's earned interest: it
+      // becomes the seller's claim on the loan, and the only cost is the
+      // buyer's rate top-up.
+      //
+      // Codex r1 P1 — a single cost figure reads as EXHAUSTIVE, and it is
+      // not: both sale paths also migrate any
       // held-for-lender balance to the buyer and atomically forfeit the
       // seller's pending interaction-reward entry. The held balance can
       // dwarf the interest figure, so naming only the interest
@@ -3469,7 +3473,7 @@ const copySource = {
       // anywhere yet. Pricing them is follow-up work; claiming a
       // destination that prices them was the defect.
       sellNowCost:
-        'Costs the LARGER of the interest built up so far or the buyer’s rate top-up — never both, and the tool shows that figure. On top of that, any balance already being held for you on this loan transfers to the buyer, and your pending reward entry for this position is given up. Those two are not shown as amounts anywhere yet — check your held balance and rewards before you sell.',
+        'Costs only the buyer’s rate top-up, when their rate is above this loan’s own, and the tool shows that figure. The interest you earned so far is not given up: it stays yours as a claim on the loan, paid as the borrower pays interest. On top of that, any balance already being held for you on this loan transfers to the buyer (apart from interest you earned that is waiting in it, which is paid into your vault), and your pending reward entry for this position is given up. Those two are not shown as amounts anywhere yet — check your held balance and rewards before you sell.',
       // FOURTH loss, and only on a Full-stamped position (Codex r12
       // P2). `FeeEntitlement` is keyed by loanId, NOT by lender, and no
       // sale path resets it — only `repriceFeeEntitlementOnExtension`
@@ -3507,7 +3511,7 @@ const copySource = {
       listDesc:
         'Publish this position at your asking rate and wait for a buyer. The sale settles only when someone accepts.',
       listCost:
-        'Costs the LARGER of the interest built up so far or the buyer’s rate top-up — never both, and the tool shows that figure. On top of that, any balance already being held for you on this loan transfers to the buyer, and your pending reward entry for this position is given up. Those two are not shown as amounts anywhere yet — check your held balance and rewards before you sell.',
+        'Costs only the buyer’s rate top-up, when their rate is above this loan’s own, and the tool shows that figure. The interest you earned so far is not given up: it stays yours as a claim on the loan, paid as the borrower pays interest. On top of that, any balance already being held for you on this loan transfers to the buyer (apart from interest you earned that is waiting in it, which is paid into your vault), and your pending reward entry for this position is given up. Those two are not shown as amounts anywhere yet — check your held balance and rewards before you sell.',
       // Cross-party disclosure: listing does not only lock the seller.
       // Codex r1 P2 ×2 — two corrections to what this used to claim.
       // (a) Partial repayment is NOT held: the borrower surface
@@ -3685,17 +3689,17 @@ const copySource = {
 
   earlyExit: {
     receiptYouReceive: tmpl(
-      '~{{toSeller}}, paid straight to your wallet in the same transaction — selling to offer #{{offerId}} at {{rate}} yearly. Nothing to claim afterwards.',
+      '~{{toSeller}}, paid straight to your wallet in the same transaction — selling to offer #{{offerId}} at {{rate}} yearly.',
       ['toSeller', 'offerId', 'rate'],
     ),
     receiptLockNothing: 'Nothing.',
     receiptOweNothing: 'Nothing — you approve nothing and pay nothing out of pocket.',
-    receiptCanLose: 'The LARGER of the interest built up so far or the rate difference for the remaining term — never both. Already reflected in the figure above; the exact amount is re-read live when you confirm.',
-    receiptFees: 'The protocol’s cut comes out of the forfeited interest — never out of your payout beyond the figure shown.',
+    receiptCanLose: 'Only the rate difference for the remaining term, when this buyer’s rate is above the loan’s own. It is already taken from the figure above, and the exact amount is re-read live when you confirm. Your earned interest is not paid now: as a claim on the loan it carries the borrower’s risk, as it did while you held the position.',
+    receiptFees: 'No fee is taken at the sale. When your claim is paid, the protocol’s usual cut of interest comes out of it, as it would have if you had kept the position.',
     receiptEnds: 'Immediately — your position transfers to the buyer and you’re done with this loan. The borrower’s rate and due date don’t change.',
     title: 'Exit this loan early',
     blurb:
-      'Sell your side of this loan to another lender with a matching open lending offer. You’re paid immediately from their already-locked funds — nothing to approve, nothing to claim afterwards — and the borrower’s terms don’t change at all.',
+      'Sell your side of this loan to another lender with a matching open lending offer. You’re paid immediately from their already-locked funds, with nothing to approve, and the borrower’s terms don’t change at all. The interest you earned while you held the position stays yours as a claim on the loan.',
     pickerLead: 'Open lending offers that can buy you out:',
     none:
       'No matching lending offers right now. An offer must match this loan’s assets, cover its remaining amount, and fit inside its remaining time — check back later.',
@@ -3704,13 +3708,11 @@ const copySource = {
     rowReceive: tmpl(`you’d receive ~{{amount}} now`, ['amount']),
     offerRowLine: tmpl('Offer #{{id}} · {{rate}} yearly · {{duration}}', ['id', 'rate', 'duration']),
     shortfallWarn:
-      'This buyer expects a higher rate than your loan pays, and for this candidate that rate difference (not the interest built up — you pay the larger of the two, never both) is what sets your payout.',
-    forfeitNote:
-      'Exiting early forfeits the interest built up so far: it covers the protocol’s cut and, when the buyer’s rate is higher, helps bridge the difference. The figure shown already accounts for this.',
+      'This buyer expects a higher rate than your loan pays, so the difference for the remaining term is taken from your payout. Your earned interest does not cover it: that stays your claim on the loan.',
     action: 'Review exit',
     confirm: 'Confirm — sell my position',
     done:
-      'Position sold — the payout is already in your wallet, and this loan now belongs to the new lender. Nothing more to do here.',
+      'Position sold — the payout is already in your wallet, and this loan now belongs to the new lender. The interest you earned stays yours as a claim on the loan: Claims shows it, and you withdraw there whatever reaches your vault.',
     loadingOffers: 'Looking for matching lending offers…',
     figureMoved:
       'The payout figure moved with time, so the review closed — open it again to confirm against the current number.',
@@ -3768,17 +3770,17 @@ const copySource = {
     // buyer's payment, so nothing is drawn from the seller's wallet and the
     // listing sets no approval.
     receiptYouMayOwe: tmpl(
-      'Nothing from your wallet. When a buyer accepts, the settlement is taken out of their payment before the rest reaches you: the LARGER of the interest built up by then or the rate difference for the remaining term — never both. Right now that would be ~{{amount}} {{sym}}.',
+      'Nothing from your wallet. When a buyer accepts, the settlement is taken out of their payment before the rest reaches you: the rate difference for the remaining term, when your rate is above the loan’s own. Right now that would be ~{{amount}} {{sym}}.',
       ['amount', 'sym'],
     ),
     consentLabel: 'I understand the lock and the settlement taken out of the buyer’s payment, and agree to them.',
     receiptLock: 'Your lender position NFT, until the sale completes or the listing ends. Cancelling releases it in one step; after the listing expires, a small cleanup transaction (which anyone — you, or a helper bot — can send, even while the protocol is paused) releases it. Nothing else.',
     receiptCanLose: 'Nothing in your wallet is at stake. A buyer’s attempt is refused, and nothing moves, if the settlement would be larger than their payment or a sale would break the figures the listing records; the listing then sits unfillable until you cancel it.',
-    receiptFees: 'The protocol’s cut comes out of the settlement figure — nothing beyond it.',
+    receiptFees: 'No fee is taken at the sale. When your claim on the interest you earned is paid, the protocol’s usual cut of interest comes out of it.',
     receiptEnds: 'When a buyer accepts (everything settles in their transaction), when you cancel the listing, or when it expires — at the end of your chosen window, or at the loan’s due date, whichever comes first. An expired listing can’t be bought any more; your NFT then unlocks with the cancel action or a cleanup transaction anyone can send.',
     title: 'List this position for sale',
     blurb:
-      'Set the yearly rate a buyer would earn for the loan’s remaining time and list your position publicly. When a buyer accepts, you’re paid in that same transaction: the buyer’s payment, less the settlement. (If a matching offer above already pays enough, the instant exit is simpler — listing is for naming your own price and waiting.)',
+      'Set the yearly rate a buyer would earn for the loan’s remaining time and list your position publicly. When a buyer accepts, you’re paid in that same transaction: the buyer’s payment, less the settlement. The interest you earned stays yours as a claim on the loan. (If a matching offer above already pays enough, the instant exit is simpler — listing is for naming your own price and waiting.)',
     rateLabel: 'Yearly rate the buyer earns',
     windowLabel: 'Listing window',
     windowOption: tmpl('{{days}} days', ['days']),
@@ -3791,13 +3793,13 @@ const copySource = {
     // settlement is deducted from the buyer's payment (net settlement, #1659),
     // not pulled from the seller's wallet.
     floorQuote: tmpl(
-      'If a buyer takes this listing at any time before it ends, you come out with at least {{amount}} {{sym}}: what the buyer pays, less the settlement (the larger of the interest you give up and the rate top-up owed to the buyer), which is taken out of that payment before it reaches you. It allows for the time your listing takes to confirm, so it can sit slightly below today’s figure.',
+      'If a buyer takes this listing at any time before it ends, you come out with at least {{amount}} {{sym}}: what the buyer pays, less the settlement (the rate top-up owed to the buyer, when your rate is above the loan’s own), which is taken out of that payment before it reaches you. It allows for the time your listing takes to confirm, so it can sit slightly below today’s figure.',
       ['amount', 'sym'],
     ),
     // #1810 — money already set aside for the lender transfers with the
     // position. Shown only when there is some.
     heldQuote: tmpl(
-      '{{amount}} {{sym}} already set aside for the lender on this loan goes to the buyer with the position, not to you.',
+      '{{amount}} {{sym}} already set aside for the lender on this loan goes to the buyer with the position, apart from any interest you earned that is waiting in it, which is paid into your vault.',
       ['amount', 'sym'],
     ),
     floorLoading: 'Reading the minimum this listing would guarantee you…',
@@ -3855,7 +3857,7 @@ const copySource = {
     loanSettledWhileListed:
       'This loan has settled, so the sale listing can never complete — cancel it to unlock your lender NFT.',
     ended:
-      'Your sale listing is no longer active. If a buyer accepted it, your payout (their payment, less the settlement) is already in your wallet.',
+      'Your sale listing is no longer active. If a buyer accepted it, your payout (their payment, less the settlement) is already in your wallet, and the interest you earned is your claim on the loan, shown in Claims.',
     // Issue #951 — the on-chain listing entry point is broken; the
     // form is feature-gated off until the contract fix lands.
     listingUnavailable:
@@ -4322,6 +4324,44 @@ const copySource = {
     guidedLend: 'Lend step by step',
     enableAdvanced: 'Show the extra tools (Advanced mode)',
     dismiss: 'Got it',
+  },
+
+  // #1209 — interest a wallet earned on lender positions it sold. A sale
+  // keeps it as the seller's claim on the loan; this is where the claim is
+  // stated, at the sale and on the Claims page.
+  sellerClaims: {
+    // The sale reviews' statement of the claim, with today's figure.
+    saleNote: tmpl(
+      'The interest you have earned on this position, about {{claim}} so far before the protocol’s cut, is not part of this payout and is not given up: it stays yours as a claim on the loan. Each time the borrower pays interest, open seller claims are paid first, oldest first, into your vault, and you withdraw from Claims. If the borrower defaults and the recovery falls short, the buyer’s loan amount is paid first, so your claim can be paid in part or not at all.',
+      ['claim'],
+    ),
+    title: 'Interest from positions you sold',
+    lede: 'When you sold a lender position, the interest you had earned on it stayed yours as a claim on the loan. As the borrower pays interest, open claims are paid first, oldest first, into your vault, less the protocol’s usual cut of interest. You withdraw from here to your wallet.',
+    rowTitle: tmpl('Loan #{{id}}', ['id']),
+    held: tmpl('{{amount}} is waiting in your vault for you.', ['amount']),
+    owedOpen: tmpl(
+      'About {{amount}} is still owed to you, before the protocol’s cut. It is paid as the borrower pays interest, ahead of the current lender.',
+      ['amount'],
+    ),
+    owedFallback: tmpl(
+      'About {{amount}} is still owed to you, before the protocol’s cut. The loan is waiting on its fallback resolution, and your claim is settled once that resolves.',
+      ['amount'],
+    ),
+    owedEnded: tmpl(
+      'About {{amount}} was still owed to you, before the protocol’s cut, when this loan ended. Withdrawing settles it from what the loan recovered: the current lender’s loan amount is paid first, then sellers, oldest first. Whatever the recovery does not cover is unpaid, and nothing on the loan owes it.',
+      ['amount'],
+    ),
+    nothingYet: 'Nothing is waiting to be withdrawn yet.',
+    refused: tmpl('It can’t be withdrawn right now: {{reason}}', ['reason']),
+    checkFailed: 'We couldn’t check whether it can be withdrawn right now. Try again shortly.',
+    withdraw: 'Withdraw to wallet',
+    withdrawing: 'Withdrawing…',
+    withdrawn: 'Withdrawn to your wallet.',
+    unavailable:
+      'We couldn’t check for interest owed to you from positions you sold, because the activity index is unavailable right now. Try again shortly.',
+    unread: tmpl('We couldn’t read your claim on loan #{{id}} right now.', ['id']),
+    truncated:
+      'Only the loans named by your most recent seller-claim records are checked here, so a claim from an older sale may not be listed.',
   },
 
   claims: {

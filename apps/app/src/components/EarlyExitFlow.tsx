@@ -417,13 +417,15 @@ export function EarlyExitFlow({
                   data={{
                     // Names the exact offer — an open review must
                     // never be ambiguous about which row it binds.
-                    youReceive: copy.earlyExit.receiptYouReceive(
+                    youReceive: `${copy.earlyExit.receiptYouReceive(
                       toSellerStr,
                       selected.offerId,
                       formatBpsAsPercent(selected.interestRateBps),
-                    ),
+                    )} ${copy.sellerClaims.saleNote(
+                      `${formatTokenAmountExact(selectedEcon.claim, dec)} ${sym}`,
+                    )}`,
                     youLock: copy.earlyExit.receiptLockNothing,
-                    youMayOwe: `${copy.earlyExit.receiptOweNothing} ${copy.earlyExit.forfeitNote}`,
+                    youMayOwe: copy.earlyExit.receiptOweNothing,
                     youCanLose: copy.earlyExit.receiptCanLose,
                     fees: copy.earlyExit.receiptFees,
                     whenThisEnds: copy.earlyExit.receiptEnds,

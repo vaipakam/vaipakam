@@ -2781,6 +2781,39 @@ is the borrower's own money.
   enumeration finds is verified whether or not the indexer suggested it.
 - Frozen sanctioned proceeds remain parked until the recorded frozen claimant is
   proven clean.
+- A wallet that SOLD a lender position keeps a claim on the interest it earned
+  while it held it (#1209), and the Claims page lists those claims on their own
+  card, separate from the claims of positions the wallet holds now. The seller
+  holds no position token any more, so the loans are found from the history
+  service's record of the claims the wallet was given and the payments made
+  into its vault (a sale can pay a seller in full without recording a claim),
+  and each one is then read from the chain: what the seller's open claims on the loan are still
+  owed (stated before the protocol's cut of interest, and saying it is), and
+  what has already reached the seller's vault for them, per asset. A loan on
+  which nothing is owed to the seller and nothing waits for them is not listed.
+- Each seller claim says where the loan stands: still owed and paid as the
+  borrower pays interest, ahead of the current lender; waiting on the loan's
+  fallback resolution; or, once the loan has ended, settled at withdrawal from
+  what the loan recovered, the current lender's principal first and then the
+  sellers oldest first, with any part the recovery does not cover unpaid and
+  owed by nothing on the loan. The card never states a payout the protocol has
+  not settled.
+- Withdrawing a seller claim moves what the seller is owed from their vault to
+  their wallet. It is offered only when the protocol's own check of the
+  withdrawal says it would pay something now, and it is checked again just
+  before signing. A claim with nothing paid toward it yet says so; a
+  withdrawal the protocol would refuse says why; and a check that could not be
+  completed says that, rather than offering a withdrawal that might fail.
+- When the history service cannot be read, the card says the seller claims
+  could not be checked, rather than showing nothing (which would read as "no
+  claims"). A loan that could not be read is named rather than dropped, and a
+  wallet with more records than the card reads is told the list covers only
+  its most recent ones, even when those hold nothing. The page does not
+  describe the wallet's claims as empty while the seller-claims card lists
+  anything, was cut short, or could not check. Withdrawing a seller claim is
+  a way out, like any claim of settled funds, so it is never held behind the
+  Terms of Service acceptance, and a row whose payment was just withdrawn
+  offers the next one as soon as it arrives.
 - When two or more payouts are ready at once, the user may collect them all in a
   single wallet signature instead of one transaction per claim. The batch spans
   lender and borrower loan proceeds, pending interaction rewards, and free
@@ -4673,16 +4706,23 @@ Its intended behaviour, as the test oracle for this surface:
   review is open, the review closes with a visible explanation and
   must be reopened against the current number. The
   review states the payout plainly: the seller receives the
-  principal minus the LARGER of the interest accrued so far or the
-  rate difference for the remaining term (when the buyer expects a
-  higher rate — flagged before review), paid straight to the wallet
-  in the same transaction with nothing to approve and nothing to
-  claim afterwards; the borrower's rate and due date do not change.
+  principal minus only the rate difference for the remaining term
+  (when the buyer expects a higher rate — flagged before review), paid
+  straight to the wallet in the same transaction with nothing to
+  approve; the borrower's rate and due date do not change. The review
+  also states, separately from the payout, the interest the seller has
+  earned so far (before the protocol's cut): it is not paid at the
+  sale and not given up, but stays the seller's claim on the loan,
+  paid into the seller's vault as the borrower pays interest and
+  withdrawn from Claims, and it carries the borrower's risk (a short
+  recovery pays the buyer's principal first) (#1209).
   Because a consumed buy offer can linger as available in off-chain
   data, confirmation always re-verifies the offer live (still open,
   unchanged terms, not expired) and re-reads the payout with chain
-  time, re-reviewing on material drift. The protocol's cut comes out
-  of the forfeited interest, never beyond the shown figure.
+  time, re-reviewing on material drift. No fee is taken at the sale;
+  the protocol's usual cut of interest comes out of the seller's
+  claim when it is paid, as it would have if the seller had kept the
+  position.
 - The lender can instead LIST the position for sale at a rate of
   their choosing and for a listing window of their choosing, picked
   from a small set of preset durations. The form must state that
@@ -4726,13 +4766,17 @@ Its intended behaviour, as the test oracle for this surface:
   released by cancelling or by a cleanup step that anyone may
   trigger after expiry (even while the protocol is paused), and the
   disclosure must say so rather than imply the lock vanishes at the
-  expiry moment; the settlement (the larger
-  of interest accrued by acceptance or the rate difference for the
-  remaining term — never both) is deducted from the buyer's payment
-  inside the buyer's transaction before the rest reaches the seller,
-  so nothing is drawn from the seller's wallet and listing asks for no
-  token approval; and a rate above the loan's own attracts buyers at
-  the seller's cost. An explicit
+  expiry moment; the settlement (the rate difference for the
+  remaining term, when the seller's rate is above the loan's own) is
+  deducted from the buyer's payment inside the buyer's transaction
+  before the rest reaches the seller, so nothing is drawn from the
+  seller's wallet and listing asks for no token approval; a rate above
+  the loan's own attracts buyers at the seller's cost; and the
+  interest the seller earned is not part of the settlement but stays
+  the seller's claim on the loan, shown in Claims after the sale
+  (#1209). Where the loan's lender balance set aside goes to the buyer
+  with the position, the form says that interest the seller earned
+  and waiting in it is paid to the seller's vault instead. An explicit
   risk-and-terms acknowledgement is required before listing and is
   voided by any term change.
   The listing's standing surface is chain-authoritative (the lock on

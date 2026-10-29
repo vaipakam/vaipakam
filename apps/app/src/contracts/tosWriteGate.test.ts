@@ -28,6 +28,8 @@ describe('isExitWrite', () => {
       'precloseDirect',
       'claimAsBorrower',
       'claimAsLender',
+      // #1209 — a past seller's interest claim.
+      'claimAsSeller',
       'withdrawVPFIFromVault',
       'cancelOffer',
       'addCollateral',

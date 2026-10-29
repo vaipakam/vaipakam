@@ -71,12 +71,6 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['LoanRefinanced', ['borrower', 'oldLender', 'newLender']],
   ['LoanSaleCompleted', ['originalLender', 'newLender']],
   ['LoanSold', ['originalLender', 'newLender']],
-  // #1209 — the seller of a lender position keeps a claim on the interest
-  // they earned; each step of that claim concerns the seller.
-  ['SellerInterestClaimRecorded', ['seller']],
-  ['SellerInterestPaid', ['seller']],
-  ['SellerInterestWithdrawn', ['seller']],
-  ['SellerInterestClaimClosed', ['seller']],
   ['OffsetOfferCreated', ['borrower']],
   ['OffsetCompleted', ['borrower']],
   ['LoanFallbackPending', ['lender']],
