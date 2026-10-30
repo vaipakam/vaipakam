@@ -68,6 +68,8 @@ function ExternalRedirect({ url }: { url: string }) {
   }
   return null;
 }
+const Marketplace = lazy(() => import('./pages/Marketplace').then((m) => ({ default: m.Marketplace })));
+
 const Borrow = lazy(() =>
   import('./pages/Borrow').then((m) => ({ default: m.Borrow })),
 );
@@ -230,6 +232,7 @@ export function App() {
         <Route path="/positions/:loanId" element={<PositionDetails />} />
         <Route path="/claims" element={<Claims />} />
         <Route path="/offers" element={<Offers />} />
+        <Route path="/marketplace" element={<Marketplace />} />
         <Route path="/desk" element={<Desk />} />
         <Route path="/vault" element={<Vault />} />
         <Route path="/activity" element={<Activity />} />
