@@ -103,6 +103,7 @@ export function AssetPicker({
   hint,
   value,
   onChange,
+  searchable = false,
 }: {
   id: string;
   label: string;
@@ -110,8 +111,10 @@ export function AssetPicker({
   /** Current token address ('' = none picked). */
   value: string;
   onChange: (address: string) => void;
+  searchable?: boolean;
 }) {
   const tokens = usePickerTokens();
+  const [search, setSearch] = useState('');
   const { readChain } = useActiveChain();
   // Case-insensitive match, but the menu needs the option's EXACT
   // casing — a lowercased address set programmatically (deep links)
@@ -161,10 +164,19 @@ export function AssetPicker({
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
+      {searchable ? (
+        <input className="input" type="search" aria-label={copy.marketplace.tokenSearch}
+          placeholder={copy.marketplace.tokenSearch} value={search}
+          onChange={(event) => setSearch(event.target.value)} />
+      ) : null}
       <SelectMenu
         id={id}
         placeholder={copy.assetPicker.placeholder}
-        options={menuOptions}
+        options={searchable && search.trim()
+          ? menuOptions.filter((option) =>
+              option.value === CUSTOM || option.value === curatedMatch?.address ||
+              (option.label + ' ' + option.value).toLowerCase().includes(search.trim().toLowerCase()))
+          : menuOptions}
         value={showCustom ? CUSTOM : (curatedMatch?.address ?? value)}
         onChange={(next) => {
           if (next === CUSTOM) {
