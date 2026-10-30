@@ -3192,6 +3192,12 @@ const copySource = {
       'Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Which route that is cannot be worked out in advance from what the app has read, so this attempt may either complete with a different recovery or fail costing only the network fee.',
     blockedPaused:
       'The protocol is paused right now, so nothing can be closed out until governance lifts it. Your position and the collateral behind it are unaffected by the pause.',
+    // #2083 — reachable only on a deployment that switched KYC enforcement
+    // on. Names that configuration as the reason, per the standing rule
+    // that a deployment's own config is disclosed where it changes what a
+    // user may do.
+    blockedKyc:
+      "This deployment has identity verification switched on, and the lender recorded on this loan does not meet the verification tier required for a loan of this value. Until it does, the close-out is refused for everyone, not just for you. The tier is judged against the loan's value as it stands, so this can change if that value moves.",
     // Not "the app cannot" — nobody can. Worth saying plainly, because
     // it is the one state on this card where waiting is genuinely
     // pointless and support is the only route.

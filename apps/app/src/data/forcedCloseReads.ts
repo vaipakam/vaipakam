@@ -57,6 +57,7 @@ export type ForcedCloseReadKey =
   | 'defaultable'
   | 'sequencer'
   | 'paused'
+  | 'kyc'
   | 'match'
   | 'matchConfig'
   | 'liquidity'
@@ -112,6 +113,12 @@ export interface ForcedCloseFacts {
   defaultable: boolean | undefined;
   sequencerHealthy: boolean | undefined;
   paused: boolean | undefined;
+  /** `DefaultedFacet.defaultKycAdmission(loanId).admitted` — whether the
+   *  loan's lender passes the KYC gate `triggerDefault` applies (#2083).
+   *  The contract's own rule, asked rather than restated: it values the
+   *  loan the way the gate does and admits everyone while the deployment
+   *  leaves KYC enforcement off. `undefined` = unread. */
+  lenderKycAdmitted: boolean | undefined;
   internalMatchCandidate: boolean | undefined;
   /** `ConfigFacet.getInternalMatchConfigBundle().enabled` — whether this
    *  deployment has internal matching switched on at all (#2082).
@@ -166,6 +173,7 @@ export function forcedCloseReadPlan(input: {
     { key: 'defaultable', contract: { ...d, functionName: 'isLoanDefaultable', args: [input.loanId] } },
     { key: 'sequencer', contract: { ...d, functionName: 'sequencerHealthy' } },
     { key: 'paused', contract: { ...d, functionName: 'paused' } },
+    { key: 'kyc', contract: { ...d, functionName: 'defaultKycAdmission', args: [input.loanId] } },
     { key: 'match', contract: { ...d, functionName: 'hasInternalMatchCandidate', args: [input.loanId] } },
     // The switch behind the candidate answer, read in the same execution
     // so "switched off" and "no candidate" are dated by one block.
@@ -232,6 +240,7 @@ export function forcedCloseFacts(
       defaultable: undefined,
       sequencerHealthy: undefined,
       paused: undefined,
+      lenderKycAdmitted: undefined,
       internalMatchCandidate: undefined,
       internalMatchEnabled: undefined,
       collateralIlliquid: undefined,
@@ -242,6 +251,7 @@ export function forcedCloseFacts(
     ok.has(key) ? Boolean(ok.get(key)) : undefined;
 
   const loanRaw = ok.get('loan');
+  const kycRaw = ok.get('kyc');
   const matchRaw = ok.get('match');
   const matchConfigRaw = ok.get('matchConfig');
   const liquidityRaw = ok.get('liquidity');
@@ -304,6 +314,10 @@ export function forcedCloseFacts(
     defaultable: bool('defaultable'),
     sequencerHealthy: bool('sequencer'),
     paused: bool('paused'),
+    // `defaultKycAdmission` returns `[admitted, refusal]`. Anything but a
+    // boolean first field is unread, never "admitted".
+    lenderKycAdmitted:
+      Array.isArray(kycRaw) && typeof kycRaw[0] === 'boolean' ? kycRaw[0] : undefined,
     // `hasInternalMatchCandidate` returns `[found, loanId]`.
     internalMatchCandidate: Array.isArray(matchRaw) ? Boolean(matchRaw[0]) : undefined,
     // `getInternalMatchConfigBundle` returns `[enabled, windowBps,

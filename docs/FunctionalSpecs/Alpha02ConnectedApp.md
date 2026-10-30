@@ -2465,6 +2465,18 @@ is the borrower's own money.
   merely delayed about a position the borrower may have most of the term left
   to save. Where two gates would each block, the one the protocol reaches first
   is the one the reader is told about.
+- Where a deployment has switched identity verification on, the protocol
+  refuses the close-out of a loan whose lender does not meet the verification
+  tier for that loan's value, for every caller and whether or not the loan is
+  yet due (#2083). The surface asks the protocol for that verdict rather than
+  working out the tier or the loan's value itself, and in its place in the
+  protocol's order: after a pause, before the repayment window. Where the
+  verdict refuses, the surface offers no action and says why: that this
+  deployment's configuration requires it, that it is the lender recorded on
+  the loan who must meet the tier, that the refusal applies to everyone, and
+  that it can change as the loan's value moves. Where the deployment leaves
+  verification off, the verdict always passes and the surface shows nothing
+  about it.
 - A route the protocol may only partly complete is not described as completing.
   Settling against an opposing position moves the smaller of the two, so where
   that position is smaller than this loan only part settles and the remainder

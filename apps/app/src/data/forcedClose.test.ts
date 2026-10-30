@@ -30,6 +30,7 @@ const base: ForcedCloseInput = {
   defaultable: true,
   sequencerHealthy: true,
   paused: false,
+  lenderKycAdmitted: true,
   consentFromBoth: true,
   internalMatchCandidate: false,
   assetType: 'erc20',
@@ -98,6 +99,23 @@ describe('decideForcedClose — gates the contract applies before routing', () =
 
   it('does not guess at an unread pause flag', () => {
     expect(decideForcedClose({ ...base, paused: undefined })).toBe('unknown');
+  });
+
+  it('reports a lender below the KYC tier after the pause and before the window (#2083)', () => {
+    // `triggerDefault` checks the lender's tier right after
+    // `whenNotPaused` and before the repayment window, so a refused lender
+    // is refused even before the loan is due, and a pause still wins.
+    expect(decideForcedClose({ ...base, lenderKycAdmitted: false })).toBe('blocked-kyc');
+    expect(
+      decideForcedClose({ ...base, lenderKycAdmitted: false, defaultable: false }),
+    ).toBe('blocked-kyc');
+    expect(decideForcedClose({ ...base, lenderKycAdmitted: false, paused: true })).toBe(
+      'blocked-paused',
+    );
+  });
+
+  it('does not guess at an unread KYC verdict', () => {
+    expect(decideForcedClose({ ...base, lenderKycAdmitted: undefined })).toBe('unknown');
   });
 
   it('blocks the illiquid in-kind route when consent was never recorded', () => {
@@ -353,6 +371,7 @@ describe('canSubmitFromApp', () => {
       'not-yet',
       'blocked-sequencer',
       'blocked-paused',
+      'blocked-kyc',
       'blocked-no-consent',
       'unknown',
       'not-applicable',
@@ -602,6 +621,7 @@ describe('decideForcedClose — repayment window before sequencer', () => {
 describe('decideForcedClose — an unread active status', () => {
   const base = {
     paused: false,
+    lenderKycAdmitted: true,
     defaultable: true,
     sequencerHealthy: true,
     internalMatchCandidate: false,
