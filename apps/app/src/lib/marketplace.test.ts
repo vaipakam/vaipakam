@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { IndexedLoan, IndexedOffer, RecentLoansPage } from '../data/indexer';
-import { marketplaceOffers, verifiedMarketplaceHistory, type MarketplaceSelection } from './marketplace';
+import { marketplaceOffers, marketplaceRemaining, verifiedMarketplaceHistory, type MarketplaceSelection } from './marketplace';
 
 const selection: MarketplaceSelection = {
   chainId: 1, side: 'lender', lendingAsset: '0xAA', collateralAsset: '0xBB', durationDays: null,
@@ -33,7 +33,7 @@ describe('marketplace offer discovery', () => {
       { chainId: 2 }, { lendingAsset: '0xcc' }, { collateralAsset: '0xcc' },
       { status: 'accepted' }, { assetType: 1 }, { collateralAssetType: 1 },
       { isSaleVehicle: true }, { isOffsetVehicle: true }, { amountFilled: '100' },
-      { amount: 'malformed' },
+      { amountMax: 'malformed' },
     ];
     expect(marketplaceOffers(patches.map((patch, id) => offer(id, patch)), selection, 100)).toEqual([]);
   });
@@ -43,8 +43,26 @@ describe('marketplace offer discovery', () => {
     expect(marketplaceOffers(rows, { ...selection, durationDays: 7 }, 100).map((o) => o.offerId)).toEqual([3]);
   });
   it('uses exact remaining base units for the minimum size', () => {
-    const rows = [offer(1, { amount: '90071992547409930', amountFilled: '1' }), offer(2, { amount: '90071992547409930' })];
+    const rows = [offer(1, { amountMax: '90071992547409930', amountFilled: '1' }), offer(2, { amountMax: '90071992547409930' })];
     expect(marketplaceOffers(rows, { ...selection, minimumAmount: 90071992547409930n }, 100).map((o) => o.offerId)).toEqual([2]);
+  });
+  it('includes an unfilled borrower range when the size filter exceeds its match floor', () => {
+    const row = offer(1, { amount: '100', amountMax: '1000' });
+    expect(marketplaceRemaining(row)).toEqual(1000n);
+    expect(marketplaceOffers([row], { ...selection, minimumAmount: 500n }, 100)).toEqual([row]);
+  });
+  it('keeps borrower liquidity after fills reach the match floor and respects the remaining boundary', () => {
+    const row = offer(1, { amount: '100', amountMax: '1000', amountFilled: '100' });
+    expect(marketplaceRemaining(row)).toEqual(900n);
+    expect(marketplaceOffers([row], { ...selection, minimumAmount: 900n }, 100)).toEqual([row]);
+    expect(marketplaceOffers([row], { ...selection, minimumAmount: 901n }, 100)).toEqual([]);
+    expect(marketplaceOffers([{ ...row, amountFilled: '1000' }], selection, 100)).toEqual([]);
+  });
+  it('uses the same ceiling rule for lender ranges', () => {
+    const row = offer(1, { offerType: 0, amount: '100', amountMax: '1000', amountFilled: '100' });
+    expect(marketplaceRemaining(row)).toEqual(900n);
+    expect(marketplaceOffers([row], { ...selection, side: 'borrower', minimumAmount: 900n }, 100)).toEqual([row]);
+    expect(marketplaceOffers([row], { ...selection, side: 'borrower', minimumAmount: 901n }, 100)).toEqual([]);
   });
 });
 

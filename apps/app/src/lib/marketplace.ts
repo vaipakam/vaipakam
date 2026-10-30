@@ -18,7 +18,9 @@ export function marketplaceRate(offer: IndexedOffer): number {
 
 export function marketplaceRemaining(offer: IndexedOffer): bigint {
   try {
-    return BigInt(offer.offerType === 0 ? offer.amountMax : offer.amount) - BigInt(offer.amountFilled || '0');
+    // Both sides carry total liquidity in amountMax. A borrower's amount
+    // is its per-match floor, so subtracting fills from it hides live ranges.
+    return BigInt(offer.amountMax) - BigInt(offer.amountFilled || '0');
   } catch {
     return 0n;
   }
