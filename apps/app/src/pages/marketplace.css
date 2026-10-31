@@ -1,0 +1,24 @@
+.marketplace-pair, .marketplace-offers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+.marketplace-pair { margin-top: 1.5rem; }
+.marketplace-toolbar, .marketplace-network, .marketplace-offer-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.marketplace-offer-heading strong { font-size: 1.5rem; }
+.marketplace-offer-heading small { font-size: .8rem; font-weight: normal; }
+.marketplace-facts { display: grid; gap: .75rem; }
+.marketplace-facts dt { font-size: .85rem; opacity: .75; }
+.marketplace-facts dd { margin: .25rem 0 0; overflow-wrap: anywhere; }
+.marketplace-offer .btn { width: 100%; }
+.marketplace .banner { margin-top: 1rem; }
+@media (max-width: 640px) {
+  .marketplace-pair, .marketplace-offers { grid-template-columns: minmax(0, 1fr); }
+  .marketplace-toolbar > .btn { width: 100%; }
+}

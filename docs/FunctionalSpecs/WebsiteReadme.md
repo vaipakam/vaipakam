@@ -3,7 +3,7 @@
 ## Purpose
 
 This document defines the website and product experience for Vaipakam.
-It consolidates the release notes from 2026-08-13 through 2026-10-27,
+It consolidates the release notes from 2026-08-13 through 2026-10-28,
 inclusive, while retaining later recorded intent decisions.
 It is separate from the repository root `README.md`, which is a product-facing overview. Protocol and workflow detail lives in `apps/www/src/content/whitepaper/Whitepaper.en.md` and the other `docs/FunctionalSpecs/` documents.
 
@@ -280,7 +280,7 @@ SEO and discoverability requirements:
 - a page indexed in English alone declares no `hreflang` alternates, and a page marked `noindex` declares none either
 - every public marketing route should set a unique localized title, meta description, canonical URL, and locale alternate metadata on page mount
 - canonical and `hreflang` URLs should be rooted at `https://vaipakam.com`, even if a visitor briefly arrives through `www` or a legacy hostname before redirect / routing settles
-- social-preview and prerendering work may be staged separately; JavaScript-rendered metadata plus sitemap discovery is the baseline requirement unless search-console measurements show a remaining indexing gap
+- response metadata, prerendered page content, sitemap membership, and language alternates must agree on the actual body language. A localized navigation shell around English content does not make a translated page. Language-specific addresses remain usable for navigation even while excluded from indexing
 
 PWA requirements:
 
@@ -444,8 +444,8 @@ Current connected-app surface expectations:
 - the primary Create Offer duration control should be a bucketed picker using the standard buckets `7 / 14 / 30 / 60 / 90 / 180 / 365 days`, defaulting to `30 days`; defensive validation should still reject out-of-range or non-bucket values if the form is hydrated from an external source
 - Range Orders should default to the same one-input-per-role experience in Basic and Advanced modes, with advanced panels focused on risk detail, collateral availability, and explicit review copy rather than exposing raw protocol field names. When a chain has not enabled the canonical limit-order surface, the form should fall back to the single-value offer experience and explain that range matching is not active on that chain.
 - Offer Book and accept-review surfaces should resolve ranged offers by role. A borrower accepting a lender's ranged offer should see the lender's maximum principal and floor rate as the direct-accept terms; a lender accepting a borrower's ranged offer should see the borrower's minimum principal and ceiling rate. If the borrower pre-vaulted more collateral than the direct-accept loan locks, the review should show that unused collateral will return to the borrower.
-- Periodic-interest cadence controls should appear only when `periodicInterestEnabled` is true, the user is in Advanced mode, both lending and collateral legs are liquid ERC-20s, and the principal value satisfies the configured finer-cadence threshold where required. When those requirements are not met, the cadence section should be absent rather than shown as a disabled dropdown.
-- The cadence dropdown should support `None`, `Monthly`, `Quarterly`, `Semi-annual`, and `Annual`; loans longer than one year should surface the mandatory annual-minimum rule when applicable. Offer acceptance should show a prominent cadence callout explaining the missed-checkpoint consequence before the user submits.
+- The offer form explains when interest is paid: at repayment, monthly, quarterly, every six months, or yearly. Available choices and each refusal come from the protocol admission preview for the entered terms. When only payment at repayment is available, the form says why. In Basic mode a choice appears only when needed because payment at repayment is unavailable; Advanced mode exposes the available choices. A loading, failed, or unsupported preview is named and permits only payment at repayment. A selected schedule later refused by changed terms blocks continuing until the user chooses again.
+- The review names the selected schedule and missed-checkpoint consequence. A loan over one year requires at least annual payments only while periodic settlement is enabled and both assets are liquid. Every loan opening, including a match, refinance, or offset acceptance, rechecks admission against the principal actually funded and current inputs; a lender-position sale inherits the existing schedule. The Rate Desk order ticket remains payable at repayment until its book can disclose schedules to takers.
 - For borrower ERC-20 offers that are intended to refinance an existing active loan, `Create Offer` should expose an optional refinance-target loan id field. When present, the UI should force all-or-nothing fill mode, explain that per-loan refinance caps must already permit the terms, warn that tagging the offer does not guarantee a timely match, and pass the target loan id through the create-offer payload so the contract can enforce caps at both create and accept time. Standard offers should send an empty / zero target. Review copy should explain that accepting a refinance-tagged offer atomically creates the replacement loan and closes the old loan — every refinance completes that way (#3042).
 - For borrower ERC-20 offers that opt into treasury backstop funding, `Create Offer` should expose the backstop deadline only when the backstop Role-A feature is readable and enabled for the selected market. The review should explain that the deadline must be after the configured minimum wait and before offer expiry, ordinary lenders retain priority until the deadline, and the backstop can fund only governance-approved liquid collateral within live capacity and oracle-coverage requirements.
 - `Loan Details` should be wallet-gated inside the connected app; after connection it should show the live loan state, role-gated actions, a chronological on-chain timeline, claimable-state action bar, and precise event breakdowns for settlement splits, fallback collateral allocations, partial repayments, and swap retries
@@ -466,7 +466,7 @@ Current connected-app surface expectations:
 - when a marketplace listing is no longer fillable because the grace boundary has passed, the UI should show the listing as closed or cleanup-eligible and should not encourage buyers to attempt a stale fill.
 - OpenSea-offer match controls for NFT collateral listings should describe the atomic match behavior: cancel, replacement, and bidder fill happen together or nothing changes. Collection-fee metadata and signed-zone fulfillment data should be treated as loading or unsupported states when unavailable; the app must not send a known-invalid Seaport match transaction merely because an off-chain proxy could not return the required fulfillment data.
 - If a borrower's ordinary repay attempt races a marketplace fill and the loan has already moved to the marketplace-settled state, `Loan Details` should replace the generic transaction failure with a tailored message explaining that the loan was settled by the buyer fill, no repay funds moved, and any borrower remainder is available through claimables.
-- `Loan Details` should show a periodic-interest checkpoint card for cadence-bearing loans, including cadence label, next checkpoint countdown, expected interest, interest paid this period, shortfall, and whether the period is covered, pending, or past grace. Borrowers with a shortfall should get a `Pay now` action that routes to the partial-repay surface.
+- A scheduled-interest loan shows its current period in both modes, with the protocol preview's block, chain time, deadline, grace end, expected interest at the current amount and rate, amount paid, and shortfall. A fully paid elapsed period can be recorded without moving funds. For a short period the page explains the permissionless collateral-sale settlement and that it cannot build that sale itself; paying what is owed first avoids the sale. A paused protocol or disabled settlement is disclosed in every phase without warning of a sale that cannot run, and an unread setting stays unknown. New blocks, returning tabs, repayments in any tab, and interaction after idling refresh the card.
 - `Loan Details` should show an auto-lifecycle caps card when the AutoLifecycle facet is readable and the connected wallet currently holds the borrower or lender position NFT. Borrower-position holders may set refinance-offer posting caps and borrower-side auto-extend caps; lender-position holders may set lender-side auto-extend caps. The card should show cap staleness after NFT transfer, the admin kill-switch state, rate / expiry bounds, and clear copy that keepers can act only within the approved caps and ordinary keeper authorization gates.
 - `Loan Details` auto-lifecycle caps editing should add friction when the user turns on refinance or extend caps: show a best-effort warning that stays visible the whole time a cap is enabled (not only during the enable transition), require deliberate confirmation, and explain that caps do not guarantee a compatible counterparty before grace ends. For NFT collateral, and for ERC-20 collateral known to be illiquid when that read is available, the card should warn that default or liquidation can transfer the full collateral in-kind and that default auto-refinance copying is off; explicit per-loan enablement is required.
 - the auto-lifecycle caps card should also make the keeper kill-switch visible at the point of configuration for auto-extend. (Refinance caps are not keeper-executed: since #3042 a refinance completes only when a lender accepts, or the matcher fills, the borrower's refinance-tagged request, so no keeper switch gates it and the card must not warn that refinance caps are inert for keeper reasons.) Because auto-extend executes against the BORROWER side, the relevant hard gates are the borrower holder's master keeper switch AND the global delegated-keeper pause — when the borrower's switch is off, OR keeper automation is globally paused by governance, the card should warn that an enabled extend cap is inert until keeper automation can run again, since those actions are keeper-executed, so an enabled cap is never mistaken for active protection. The two gates have different audiences: the borrower master-switch case warns only the borrower holder (their switch gates the borrower-side execution of auto-extend), but the global-pause case warns BOTH the borrower and the lender holder — a global pause blocks every keeper call, so a lender's own enabled auto-extend cap is equally inert. The warning should state the full fix path (master switch on, a keeper approved with the right permissions, AND that keeper enabled for this specific loan via the per-loan toggles; and note that a global pause resumes only when governance lifts it), should NOT treat the lender's keeper switch as a blocker (the lender's extend-caps are only their consent surface), and should NOT infer inertness from the approved-keeper count (a non-zero count doesn't prove a capable, loan-enabled keeper). The finer per-keeper action-permission detail is surfaced by the per-keeper toggles on the same page.
@@ -1125,160 +1125,118 @@ Strategic-flow transfer-lock UX requirements:
 
 ## Public Analytics Dashboard
 
-The public website should include a no-wallet-required analytics dashboard focused on transparent, aggregated protocol data for regular users, potential participants, analysts, community members, security researchers, auditors, and public-sector reviewers.
+The public website links to the connected app's public Analytics page. It
+loads without a wallet and reports one selected network at a time. The
+October 28 owner-directed guide update supersedes the retired dashboard's
+all-chain totals, TVL and volume charts, per-chain comparison table, and
+export requirements; these must not be advertised as current capabilities.
 
-Core dashboard principles:
+- The selected network is visible. Changing it refreshes every section for
+  that network and never mixes readings from different deployments.
+- Loan and offer counts, the recycling transparency account, and loop
+  closure come from the public indexer. VPFI token and fee figures come
+  directly from the protocol contract. Each section names its source, block,
+  age, and relevant contract or explorer link. The indexer's database is
+  disclosed; the page must not claim that no database supports its figures.
+- Loan totals reconcile to their visible categories and stated remainder.
+  Fallback-pending loans remain active, and unclassified assets stay in the
+  total without entering a typed subtotal. On-chain offers are distinguished
+  from signed offers that have not been written to the chain.
+- On the issuing chain the token section shows the VPFI address, supply,
+  cap, remaining mintable amount, and authorized minter. On a bridge chain
+  it shows local supply and explains that the cap and minter belong to the
+  issuing chain. An unconfigured token is stated as such.
+- Fee figures cover recording-to-date, the last day, and the last week in
+  the protocol's reference currency. Nearby limitations explain unvalueable
+  fees counted at zero, bounded recent-record windows, and reference-currency
+  changes. These are recorded fee values, never a token price or return claim.
+- The treasury is named and linked. A held balance is shown only when the
+  protocol contract itself keeps the fees, with its exclusions stated;
+  an external treasury address does not imply a measured balance.
+- Direct token and fee readings share one block. A failed component stays
+  unread without hiding successful components. Missing, invalid, stale,
+  genuinely zero, and not-yet-indexed readings have distinct explanations;
+  an unread value is never rendered as zero or included in a derived total.
+- The recycling account and loop-closure display retain the funding,
+  custody, source, and unknown-value rules in the
+  [tokenomics specification](TokenomicsTechSpec.md#9-treasury-recycling-rule).
+- The page uses the product's theme, language, and interface-density choices,
+  remains accessible on phones and large screens, and carries descriptive
+  search and sharing metadata. Analytics is indexable; wallet-specific
+  records remain outside the public aggregate dashboard.
+- Basic and Advanced guides in every published language describe this same
+  page and its two sources. Stable section links identify the same chapter
+  in every edition; an absent translation is disclosed rather than replaced
+  by claims about an older dashboard.
 
-- all dashboard data must be derived from on-chain contract state or raw on-chain events
-- the dashboard must not depend on PII, KYC data, or user-identifying profiles
-- displayed metrics must be privacy-preserving and aggregated
-- each important number should be traceable back to contract view calls, event logs, or explorer links
-- the dashboard should follow the same Vaipakam design language as the rest of the website and connected app, including theme support, responsive behavior, and Basic / Advanced presentation density
+### Shared data freshness and ownership
 
-Phase 1 scope:
+These requirements apply to Analytics and the connected app's other indexed
+read surfaces. They do not make indexed state authoritative for signing.
 
-- use only aggregated metrics derived from the existing protocol facets such as `LoanFacet`, `OfferFacet`, `TreasuryFacet`, `VaultFactoryFacet`, `ProfileFacet`, `OracleFacet`, and `RiskFacet`
-- do not require governance dashboards or off-chain warehousing in Phase 1
-- high-level cross-chain aggregation is in scope for the public analytics dashboard, but it should remain lightweight and read-only
-- prefer lightweight view functions added to an existing facet if direct aggregation from current views/events is too expensive or awkward
-- if a dedicated analytics view surface is eventually needed, it should remain minimal and read-only
-- reuse existing frontend hooks, formatting utilities, and multicall patterns where practical
+- Market, history, and loan analytics prefer the indexer in normal operation
+  and identify their source and freshness. Direct chain reads remain the outage fallback where available;
+  a total that cannot be reconstructed is unknown, never a partial total
+  described as complete. Historical series retain the event and block context
+  needed to substantiate them.
+- Offer, loan, claim, and activity projections from a scan share one atomic
+  indexed frontier for each network and deployment. Only configured active
+  deployments are included. A missing provider credential for an active
+  chain is an operator configuration error, not an empty chain.
+- Sync distance is measured against that chain's safe head. Pagination
+  continues through ordinary active sets; a defensive bound is disclosed
+  rather than silently truncating the list. User views scale with that
+  user's records rather than requiring a scan of every global position.
+- A list known to be behind says it may be delayed instead of declaring
+  nothing available. Unknown freshness is kept unknown. Offer Book totals,
+  tab badges, and filtered counts describe the same rows the visitor sees.
+- New global offers appear within seconds through the existing live-update
+  path without changing the book's fixed sort. Asset-pair filters require
+  both lending and collateral assets, start from that network's defaults,
+  and use the protocol's pair-specific active-offer reading when selected.
+  Hide my offers defaults on and survives navigation and reloads.
+- Your Offers prefers indexed creator and current-holder records, so a
+  transferred offer can still be inspected or managed where permitted.
+  Its pagination resets when the status filter changes. Your Loans and
+  Claim Center prefer current-holder records and fall back to live holder
+  enumeration, then browser history, when indexed discovery is unavailable.
+- Current position-token ownership, including transfers, controls whose
+  loans and claims appear. Origination parties alone do not determine
+  ownership. Indexed candidates may widen claim discovery but never narrow
+  what a live current-holder enumeration would find.
+- Claim amounts, ownership, periodic-settlement previews, and every term
+  signed against are read live before signing. A failed per-loan check is
+  unavailable, not proof of no funds. Periodic-interest and ownership history
+  remain part of the same discoverable activity record.
+- Own confirmed transactions refresh relevant records immediately across
+  tabs. Realtime signals are invalidation hints; while healthy they permit
+  slower safety polling, and on failure ordinary polling resumes. A lost
+  signal cannot leave a money-action gate using an unchecked old answer.
+- Browser caches and shared snapshots are bounded and deployment-scoped.
+  They may improve loading, but cannot authorize a transfer, settle a claim,
+  or replace a fresh protocol decision. The shared-data recovery path keeps
+  direct reads usable when the indexer is unreachable.
+- Large token totals retain exact precision and cannot overflow into false
+  figures. A short-lived shared snapshot may last approximately thirty
+  seconds while retaining its stated age. The app footer offers one link
+  to verify the active deployment on its explorer.
+- A static or independently hosted recovery surface should retain critical
+  direct chain reads when the central API is unavailable, with provider
+  failover and a user-supplied endpoint where permitted by the deployment's
+  credential policy. Read caches remain accelerators, never money authority.
+- Aggregates expose no PII, KYC records, or wallet profiles as a dashboard
+  dimension. Nearby source explanations describe the data actually used;
+  a blanket claim that no user data is collected anywhere is inappropriate.
+  Sanctions and price-source behavior follow the platform and app specs.
+- With a sanctions source configured, offer creation screens the connected
+  wallet and offer acceptance screens both wallet and creator before signing.
+  Warnings identify the external list provider for disputes rather than
+  implying that Vaipakam owns the list. An unconfigured source produces no
+  sanctions banner. Price-safety copy follows the Chainlink-led secondary
+  quorum and offers no separate pull-oracle update transaction.
 
-Required page placement and access:
-
-- the analytics dashboard should exist as a public route and must load without wallet connection
-- the implementation target is the connected app's public analytics page (the `/analytics` route of `apps/app`), which also carries the recycling transparency account and the loop-closure metric
-- the public website navigation should expose the dashboard clearly
-- the connected app shell may also link to the same public dashboard when appropriate, but the page itself should remain usable without connecting a wallet
-
-Required top-level metrics:
-
-- the very top summary row should show protocol-wide combined metrics aggregated from all supported chains at a high level
-- this combined top section is intended only for headline totals and should not replace the per-chain drill-down below
-- `Total Value Locked (TVL)` in the active numeraire, including visible `24h` and `7d` change percentages
-- TVL breakdown covering ERC-20 collateral, NFT collateral, and vault balances where meaningful
-- active loans, shown as both count and total value
-- currently active offers and lifetime offer totals at the combined all-chains level in the global header
-- total volume lent in the active numeraire, lifetime
-- total interest earned by lenders in the active numeraire, lifetime
-- `Total NFTs rented`, shown in the combined all-chains summary
-
-Per-chain analytics section:
-
-- all cards, charts, tables, and drill-down sections below the top summary row should be chain-specific rather than combined
-- the page should provide a visible chain selector that switches the active chain context for those lower sections
-- switching the chain selector should refresh the below-the-fold cards, charts, recent activity, treasury snapshot, and other detailed analytics to the selected chain only
-- the selected-chain state should be obvious in the UI so users can clearly distinguish protocol-wide combined totals from chain-local analytics
-- `Total NFTs rented` should also be shown in the selected chain's detailed breakdown
-- it is acceptable for this selector to also become the app's active read-chain context so that subsequent read surfaces follow the chain the user just chose; if a wallet is connected, the app may additionally request a wallet network switch for consistency
-
-Required charts and visualizations:
-
-- `TVL Over Time` as a line chart with range options such as `24h`, `7d`, `30d`, `90d`, and `All`
-- daily loan volume and interest earned, shown as a combined bar-plus-line chart or similarly readable equivalent
-- active versus completed loans, shown through a composition such as pie plus trend indicator
-- asset distribution covering the main lending assets and collateral categories
-- NFT rental utilization, showing active rentals versus total NFTs currently in vault
-
-Advanced-mode detail sections:
-
-- in `Advanced` mode, the page should expose a recent-activity table covering approximately the latest `50` loans and offers with anonymized key parameters such as amount, rate, duration, and status
-- in `Advanced` mode, the page should expose an asset-wise breakdown table including asset symbol, total locked amount, and share of TVL
-- in `Advanced` mode, the page should expose protocol-health indicators such as average APR, average LTV, and illiquid-asset warning counts
-- even in `Advanced` mode, the page must remain privacy-preserving and must not expose raw user-address identity as a primary dashboard data dimension
-
-Transparency and export block:
-
-- the page should show the current block number used for the displayed snapshot
-- the page should show a clear data-freshness timestamp
-- the page should link to the relevant contract addresses and explorer pages
-- the page should provide full export actions for both `CSV` and `JSON`
-- exported data should include the snapshot timestamp, contract addresses used, and the relevant block number so auditors and researchers can verify the source context
-
-Presentation requirements:
-
-- Analytics uses the same theme, language, and Basic / Advanced choices as
-  the rest of the product and remains usable on phones and large screens.
-- Token labels and market context do not replace authoritative protocol
-  amounts. Important figures retain their source, timestamp, and block.
-- Refreshes may share a short-lived snapshot, approximately thirty seconds,
-  but the page states its age and distinguishes loading, stale, failed, and
-  genuinely empty results.
-
-Data-fetching strategy:
-
-- prefer multicall-based reads for efficiency
-- top-level combined metrics may be assembled by querying each supported chain separately in the frontend and summing the resulting headline values client-side
-- all lower sections should continue to read from one selected chain at a time so the detailed analytics remain attributable to a specific chain
-- when selected-chain dashboard sections need large loan or offer sets, the implementation should prefer worker-indexed aggregate endpoints first and reserve batching / multicall aggregation as an outage fallback
-- derive historical series from worker-bucketed event data when available, with raw event logs or chain-side multicalls kept as fallback paths
-- a shared Cloudflare Worker indexer may maintain D1-backed `offers`, `loans`, and append-only `activity_events` tables for fast first paint across offers, loans, activity, and claimability hints
-- the worker indexer should fan out across configured active chains according to the deployment allow-list; inactive or missing deployment artifacts should be skipped, while an active chain missing its RPC secret should be treated as an operator configuration error before deploy completion rather than silently disappearing from the cache
-- the worker should perform one shared event scan per chain / tick across the full allow-list instead of separate per-domain scans; per-domain handlers then persist offers, loans, and activity rows from that shared scan output
-- a single cursor per chain / Diamond source should advance atomically so offer, loan, claim, and activity views cannot drift onto different indexed block heights
-- frontend hooks such as active offers, active loans, wallet loans, activity, claimables, and offer stats should prefer the indexer when available and return an explicit `indexer` / `fallback` source state
-- analytics hooks should also be indexer-first: loan stats, recent loans, recent offers, and loan time series should come from worker endpoints when reachable, with `useProtocolStats` and other per-loan multicall walks gated behind a confirmed worker failure
-- expected analytics worker endpoints include `/loans/stats`, `/loans/recent`, `/offers/recent`, and `/loans/timeseries?range=24h|7d|30d|90d|All`; BigInt token sums should be kept out of SQLite integer overflow paths and priced client-side over the unique asset set
-- analytics fields such as lender interest earned, recent-offer amounts, recent loans, and CSV / JSON exports should be sourced from the same indexer-backed feeds used to render the page during normal operation. The UI must not depend on disabled chain-multicall stats paths for these fields unless the worker has explicitly failed and the page is in fallback mode.
-- sync-distance labels should compare against the relevant safe head and indexed frontier for the selected chain, and must not display nonsensical large behind counts when the indexer cursor is actually caught up.
-- active-loan and active-offer worker fetches should paginate through the returned cursor rather than reading only the first page; frontend hard caps may bound defensive fetches, but the UI must not silently truncate ordinary active sets at a single default page
-- `Offer Book` should consume indexed active offers first, while keeping the existing browser event watcher so newly created global offers appear within seconds according to the existing non-user-customizable sort
-- OfferBook's displayed totals and tab badges should come from the same indexed list that renders rows when in indexer mode, and `Showing X of Y` copy should reflect post-filter visible rows with an explicit hidden-by-filters suffix where applicable
-- Offer Book, guided matching, rental browsing, and Claim Center should distinguish a genuinely empty result from a stale or stalled indexer snapshot. When the app has positive freshness evidence that the indexer is behind, empty-list copy should say the list may be delayed rather than presenting "nothing available" as final. Unknown freshness should stay quiet rather than alarming users without evidence.
-- OfferBook's lending-asset plus collateral-asset filter should use a contract-side active-offers-by-asset-pair primitive when both legs are selected; the UI should require explicit values for both legs, seeded from a per-chain default, instead of using an `all assets` sentinel for either side
-- the `Hide my offers` setting should default on and persist across navigation / reloads under a Vaipakam-namespaced localStorage key
-- dashboard loan lists may consume indexed loan origination data, but current lender / borrower NFT-holder views should be keyed by current position-NFT owner, maintained from ERC-721 `Transfer` events, and verified by direct chain reads on money-relevant screens so transferred loan NFTs are reflected accurately
-- Dashboard's `Your Offers` card should be indexer-first through the creator endpoint, paginate rows locally, reset pagination on status-filter changes, and fall back to direct reads only when the worker is unavailable; when reading directly from chain, it should prefer the struct-returning per-user offers getter over an id-list plus per-row detail fan-out
-- the dashboard `Your Loans` card and Claim Center should prefer current-holder keyed endpoints so users who received lender / borrower position NFTs through secondary transfer can see the relevant loans and claims without a global walk
-- the dashboard `Your Loans` card may render directly from indexed current-holder loan endpoints after the worker has maintained current position-NFT ownership from ERC-721 `Transfer` events; if the worker is unavailable, it should fall back to the on-chain current-holder view and then the browser-index path
-- Dashboard `Your Offers` should also support current-holder offer lookup so a wallet that received an open offer position NFT can manage or inspect that position when protocol rules allow
-- user-keyed dashboard and analytics views should scale with the connected user's result count by consuming per-user indexes where available rather than walking global active loan / offer sets and filtering client-side
-- Claim Center money-relevant claim payloads should continue to read directly from chain; indexed claimability is only a discovery hint
-- Claim Center should union indexed wallet loans with current position ownership discovered on-chain, so users who acquired lender or borrower positions after origination can discover claimable proceeds even if the indexer never associated them with the original loan parties. A per-loan transport failure should make claimability unavailable rather than present a confidently incomplete list that could hide funds.
-- periodic-interest checkpoint state may be mirrored by the indexer for fast display and reminders, but `previewPeriodicSettle` and transaction review amounts should read the current Diamond state before signing
-- VPFI token-panel scans may remain direct filtered log reads while volume stays low
-- ERC-721 `Transfer` events for Vaipakam position NFTs should enter the shared `activity_events` ledger so ownership history is queryable without maintaining a separate mutable `nft_positions` table
-- frontend live-tail scanning should converge toward one AppLayout-level provider with topic-routed dispatch, page-aware cadence, and cache-invalidation semantics rather than each hook maintaining an independent scanner
-- IndexedDB should be the browser cache layer for user-owned offers / loans and top-N global offers, with versioned schemas, eviction rules, and lazy `getOfferDetails` / `getLoanDetails` fallback only on cache misses
-- the app footer should expose one active-chain `Verify on-chain` affordance that opens the current Diamond on the relevant explorer; repeated per-row verify links are not required
-- the frontend should be capable of an IPFS / static-hosted no-server fallback where critical app reads can go directly to chain RPC when the centralized API / indexer is unreachable; this fallback should use Multicall3 batching, IndexedDB caching, RPC failover, and optional user-supplied RPC URLs where practical
-- Durable Objects, WebSocket, SSE, or webhook push are optional freshness accelerators for this cache layer. When the realtime WebSocket channel is enabled, it should send invalidation signals only and leave polling / live-tail reads as the canonical fallback for disconnects and unsupported clients.
-- for aggregates that are too expensive to reconstruct repeatedly on the client, the protocol may expose lightweight read-only helper functions such as `getProtocolTVL`, `getUserCount`, `getActiveLoansCountAndValue`, and `getTotalInterestEarned`
-- direct contract reads and browser log indexing remain the fallback path whenever the worker is unavailable, times out, or has no configured origin; the cache must never become an oracle for money-moving actions
-
-Quality requirements:
-
-- errors explain the relevant protocol failure in terms the user can act on
-- interactive controls and charts remain accessible, including meaningful labels for assistive technology
-- the public transparency page includes descriptive search and sharing metadata
-
-Dashboard coding and build guidance is preserved in the
+Dashboard implementation guidance is preserved in the
 [implementation notes](../procedures/FunctionalSpecImplementationNotes.md#dashboard-coding-and-build-guidance).
-
-Security, privacy, and compliance requirements:
-
-- no PII, no personal user data, and no KYC data may be shown anywhere on the analytics dashboard
-- all metrics must be aggregated and privacy-preserving
-- selected-chain metrics should include nearby `View on-chain` affordances linking users toward the relevant contract call context, event source, or explorer trail where practical
-- the combined all-chains headline cards do not need chain-specific explorer links, because those values are frontend-aggregated across multiple Diamond deployments rather than sourced from one canonical read target
-- if heavy public queries need protection, lightweight frontend throttling or edge rate-limiting may be used as an implementation safeguard
-- where a sanctions oracle is configured on the active chain, Create Offer should pre-flight the connected wallet and the Offer Book accept modal should pre-flight both the connected wallet and offer creator
-- sanctions warnings should explain that Vaipakam does not maintain its own sanctions list and that list disputes must be handled with the oracle/list provider
-- when no sanctions oracle is configured on a chain, sanctions banners should stay silent
-- frontend oracle safety surfaces should reflect the Chainlink-led secondary quorum model using configured Tellor, API3, and DIA sources; the app should not present any separate pull-oracle price-update transaction as part of the current pricing path
-
-Required dashboard disclaimer text:
-
-- `Vaipakam is a fully decentralized, non-custodial protocol. All displayed data is aggregated from on-chain smart contracts. No personal user data is collected or stored. This dashboard is provided for transparency purposes only.`
-
-Acceptance expectations for the dashboard:
-
-- it must load without wallet connection
-- displayed values must be verifiable against on-chain contract state or event history
-- exports must work and include verifiable metadata
-- the page must match the broader Vaipakam design system
-- the page must be responsive and accessibility-conscious
-- loading, successful, empty, stale, and failed dashboard states must each present an accurate and usable result
 
 ## Troubleshooting And Observability
 

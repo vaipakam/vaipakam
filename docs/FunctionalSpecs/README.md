@@ -187,7 +187,7 @@ code at that time. Until a domain's spec exists, its intended behaviour
 is described — less tidily — across the release notes and the
 `DesignsAndPlans/` docs.
 
-## Release-note consolidation: August 13 through October 27, 2026
+## Release-note consolidation: August 13 through October 28, 2026
 
 The following source map accounts for every dated file present in the inclusive
 range. It identifies where functional decisions belong, rather than copying
@@ -204,6 +204,15 @@ Superseded reward-compatibility descriptions are preserved in the
 The notification-fee denomination and routing divergence remains an open
 [audit finding](../procedures/FunctionalSpecsCodeVsDocsAudit.md); this
 consolidation does not decide it by rewriting the intended fee model.
+
+The October 27–28 continuation includes the unchanged October 27 reference
+and the October 28 release. It reconciles retained seller-interest claims,
+grouped loan actions, contract-led exit and schedule admission, one-network
+analytics with two named sources, actual-body-language indexing, independent
+backup verification, and permissionless keeper backstops. Later October 28
+decisions supersede that day's earlier caveats: schedule admission runs again
+at loan opening, and an independently armed keeper step can retry owed tier
+pushes from the protocol budget. Deployment caveats remain explicit.
 
 In this table, Platform means [ProjectDetailsREADME.md](ProjectDetailsREADME.md),
 App means [Alpha02ConnectedApp.md](Alpha02ConnectedApp.md), Website means
@@ -273,12 +282,13 @@ verification or tooling history, not additional product requirements.
 | [2026-10-25](../ReleaseNotes/ReleaseNotes-2026-10-25.md) | Platform; app; website; tokenomics; keeper | Pause-credit deadlines, sell-to-need closes, periodic settlement, bounded matching and reminders, optional asset ceilings, report clocks and one funded day per send |
 | [2026-10-26](../ReleaseNotes/ReleaseNotes-2026-10-26.md) | Platform; app; website; tokenomics; keeper | Per-leg floors, extension windows, interest credits, collateral evidence, signed alert changes, safe proxy limits, restore ownership and retirement of migration-only states |
 | [2026-10-27](../ReleaseNotes/ReleaseNotes-2026-10-27.md) | Platform; app; website; tokenomics; keeper | Reviewed acceptance terms, matching parity, rental shape, asset-specific metadata, neutral collateral sales, bridged-feed evidence, partial-day funding and retired-mirror returns |
+| [2026-10-28](../ReleaseNotes/ReleaseNotes-2026-10-28.md) | Platform; app; website; tokenomics; keeper | Retained seller-interest claims, grouped actions, live schedule admission, exit verdicts, single-network analytics, locale indexing, independent backups, reward-part recovery, and bounded keeper upkeep |
 
 A source release is not a live-deployment guarantee. For example, the October
 19 notes record capacity enabled on three testnets. The October 24 correction
 establishes that priority routing was priced on all three on October 19;
 BNB's usable mock pairs and independent fork check came later. The October
-27 notes still say the contract wave had not reached the testnets. Older
+27 and 28 notes still say the contract wave had not reached the testnets. Older
 testnet keeper compatibility is not evidence that those chains implement the
 fresh-deploy requirements. Feature defaults, dated activation facts, and
 current chain observations must be described separately.
