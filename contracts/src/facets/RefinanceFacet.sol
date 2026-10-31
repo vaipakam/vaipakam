@@ -93,7 +93,11 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
     ///         net principal (principal minus the borrower's initiation fee)
     ///         goes to the old lender; the borrower pays only the rest of the
     ///         old lender's due and the treasury fee. The three legs sum to
-    ///         the old lender's due plus the treasury fee.
+    ///         the old lender's due plus the treasury fee. They are the
+    ///         payoff's legs only: the replacement loan's initiation fee
+    ///         (treasury and matcher cuts from the new lender's vault) and any
+    ///         VPFI yield-fee discount on the old loan are stated by their own
+    ///         events in the same transaction.
     /// @param oldLoanId            The loan refinanced (now Repaid).
     /// @param newLoanId            The replacement loan.
     /// @param asset                The principal asset every leg moved.

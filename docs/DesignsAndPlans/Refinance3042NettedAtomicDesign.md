@@ -76,6 +76,18 @@ never withdrawn to the Diamond, so no Diamond-held balance is created and the
 #538 concern (spending offer-locked vault funds) does not apply: the amount
 moved is the slice the accept already released for this loan.
 
+While it waits there it is committed, not free. The accept still runs code
+between the park and the take that reads the new lender's free balance: the
+per-party Full VPFI tariff, when VPFI is the lending asset, gates and pulls
+`C*` from it. A read that counted the parked amount would let the tariff spend
+money already promised to the old lender, and the payoff would then come up
+short. So the park also keeps a per-(owner, asset) transient total
+(`parkedOf`), and the one free-balance rule, `LibEncumbrance.freeBalance`,
+subtracts it alongside the owner's liens. Every free-balance reader and the
+vault withdraw guard therefore see the parked amount as held. The take clears
+the total before it moves the funds, so the payoff's own withdrawal passes the
+guard. Outside a refinance accept the total is zero and nothing changes.
+
 ### 3.3 The settlement legs
 
 With `net` parked, `due` the old lender's due and `fee` the treasury fee on the

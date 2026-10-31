@@ -13,9 +13,23 @@ import {LibVaipakam} from "./LibVaipakam.sol";
  *         new lender's net principal to the borrower's wallet on such an accept:
  *         it leaves it in the new lender's vault and PARKS a record of exactly
  *         what it did not deliver. `RefinanceFacet` then TAKES that record and
- *         spends the parked amount on the payoff — old lender first, then the
- *         treasury fee, then any surplus to the borrower — pulling only a
- *         shortfall from the borrower's wallet.
+ *         moves the whole parked amount to the old lender's vault. The
+ *         borrower's wallet pays the rest of the old lender's due and the
+ *         whole treasury fee. A parked amount above the old lender's due is
+ *         refused rather than paid anywhere: a refinance request never asks
+ *         for more than the old loan's outstanding principal, so it cannot
+ *         arise.
+ *
+ *         Parked funds are COMMITTED, not free. Between the park and the take,
+ *         the accept still runs code that reads the new lender's free balance
+ *         (the per-party Full VPFI tariff, when VPFI is the lending asset), and
+ *         a free-balance read that counted the parked amount would let that
+ *         code spend money already promised to the old lender. So the park
+ *         also keeps a per-(owner, asset) total, {parkedOf}, which
+ *         `LibEncumbrance.freeBalance` subtracts alongside the owner's liens:
+ *         every free-balance reader and the vault withdraw guard see the
+ *         parked amount as held. The take clears that total before it moves
+ *         the funds, so the payoff's own withdrawal passes the guard.
  *
  *         One predicate, {isRefinanceAccept}, decides "this accept is a
  *         refinance" for both the park and the chain into `RefinanceFacet`, so
@@ -33,6 +47,11 @@ library LibRefinanceNetting {
     ///      per-offer transient records, outside every storage layout.
     bytes32 internal constant SLOT =
         bytes32(uint256(keccak256("vaipakam.transient.refinanceNetting")) - 1);
+
+    /// @dev `keccak256("vaipakam.transient.refinanceNetting.owner") - 1`: base of
+    ///      the per-(owner, asset) parked totals read by {parkedOf}.
+    bytes32 internal constant OWNER_SLOT =
+        bytes32(uint256(keccak256("vaipakam.transient.refinanceNetting.owner")) - 1);
 
     /// @notice A refinance payoff found no parked net principal for
     ///         `offerId`, or found one for a different lender or asset than the
@@ -69,10 +88,12 @@ library LibRefinanceNetting {
             held := tload(add(base, 2))
         }
         if (held != 0) revert RefinanceNetPrincipalAlreadyParked(offerId);
+        bytes32 ownerKey = _ownerKey(lender, asset);
         assembly ("memory-safe") {
             tstore(base, lender)
             tstore(add(base, 1), asset)
             tstore(add(base, 2), amount)
+            tstore(ownerKey, add(tload(ownerKey), amount))
         }
     }
 
@@ -94,15 +115,38 @@ library LibRefinanceNetting {
         if (amount == 0 || parkedLender != lender || parkedAsset != asset) {
             revert RefinanceNetPrincipalMissing(offerId);
         }
+        // The owner total holds at least `amount`: {park} added it and only
+        // this take, for this record, removes it.
+        bytes32 ownerKey = _ownerKey(lender, asset);
         assembly ("memory-safe") {
             tstore(base, 0)
             tstore(add(base, 1), 0)
             tstore(add(base, 2), 0)
+            tstore(ownerKey, sub(tload(ownerKey), amount))
+        }
+    }
+
+    /// @notice How much of `owner`'s `asset` is parked for a refinance payoff
+    ///         in this transaction: committed to an old lender and therefore
+    ///         not free. Zero outside a refinance accept.
+    function parkedOf(address owner, address asset)
+        internal
+        view
+        returns (uint256 amount)
+    {
+        bytes32 ownerKey = _ownerKey(owner, asset);
+        assembly ("memory-safe") {
+            amount := tload(ownerKey)
         }
     }
 
     /// @dev The first of the three transient words holding `offerId`'s record.
     function _base(uint256 offerId) private pure returns (bytes32) {
         return keccak256(abi.encode(SLOT, offerId));
+    }
+
+    /// @dev The transient word holding `owner`'s parked total in `asset`.
+    function _ownerKey(address owner, address asset) private pure returns (bytes32) {
+        return keccak256(abi.encode(OWNER_SLOT, owner, asset));
     }
 }

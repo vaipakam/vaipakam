@@ -22,6 +22,7 @@ import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
+import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
 import {LibRefinanceNetting} from "../src/libraries/LibRefinanceNetting.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
@@ -83,6 +84,24 @@ contract RefinanceNettingHarness {
 
     function take(uint256 offerId, address lender, address asset) external returns (uint256) {
         return LibRefinanceNetting.take(offerId, lender, asset);
+    }
+
+    /// @dev The owner total and the free balance it hides, read while two
+    ///      records are parked, after one take, and after both.
+    function parkedAndFree(address lender, address asset, uint256 raw)
+        external
+        returns (uint256[6] memory r)
+    {
+        LibRefinanceNetting.park(1, lender, asset, 11);
+        LibRefinanceNetting.park(2, lender, asset, 22);
+        r[0] = LibRefinanceNetting.parkedOf(lender, asset);
+        r[1] = LibEncumbrance.freeBalance(lender, asset, 0, raw);
+        LibRefinanceNetting.take(1, lender, asset);
+        r[2] = LibRefinanceNetting.parkedOf(lender, asset);
+        r[3] = LibEncumbrance.freeBalance(lender, asset, 0, raw);
+        LibRefinanceNetting.take(2, lender, asset);
+        r[4] = LibRefinanceNetting.parkedOf(lender, asset);
+        r[5] = LibEncumbrance.freeBalance(lender, asset, 0, raw);
     }
 }
 
@@ -619,6 +638,25 @@ contract RefinanceFacetTest is SetupTest {
         (uint256 two, uint256 one) = h.parkTwoOffers(a, t);
         assertEq(two, 22, "records are per offer");
         assertEq(one, 11, "records are per offer");
+    }
+
+    /// @dev The parked net is promised to the old lender, so every free-balance
+    ///      read (the withdraw guard, the Full tariff's) treats it as held until
+    ///      the payoff takes it. Without this, a VPFI-principal refinance whose
+    ///      new lender opted into Full could pay `C*` out of the parked net and
+    ///      leave the payoff short.
+    function test_Netting_ParkedAmountIsNotFree() public {
+        RefinanceNettingHarness h = new RefinanceNettingHarness();
+        address a = makeAddr("nettingLender");
+        address t = makeAddr("nettingAsset");
+        uint256[6] memory r = h.parkedAndFree(a, t, 100);
+        assertEq(r[0], 33, "both parks counted");
+        assertEq(r[1], 67, "parked amount hidden from free balance");
+        assertEq(r[2], 22, "a take releases only its own record");
+        assertEq(r[3], 78, "free balance recovers by the amount taken");
+        assertEq(r[4], 0, "nothing parked after both takes");
+        assertEq(r[5], 100, "free balance whole again");
+        assertEq(h.parkedAndFree(a, t, 20)[1], 0, "free balance floors at zero");
     }
 
     function test_Netting_RefusesMissingOrMismatchedRecord() public {
