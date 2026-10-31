@@ -106,6 +106,7 @@ import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
 import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
 import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
+import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
@@ -270,7 +271,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // the seller-first interest payout, the terminal split, claimAsSeller
     // and the interest ledger view; its selectors are new, so they are cut
     // as Adds.
-    uint256 public constant EXPECTED_FACETS = 104;
+    // 104 -> 105: RefinancePayoffFacet (#1558) - the borrower's payoff permit
+    // on a refinance request, its removal and the view that sizes it; its
+    // selectors are new, so they are cut as Adds.
+    uint256 public constant EXPECTED_FACETS = 105;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1300,6 +1304,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[101] = Item("rewardRemitDestinationFacet", ArtifactDeploy.deploy(type(RewardRemitDestinationFacet).name), _getRewardRemitDestinationSelectors());
         items[102] = Item("saleExitVerdictFacet", ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name), _getSaleExitVerdictSelectors());
         items[103] = Item("sellerClaimFacet", ArtifactDeploy.deploy(type(SellerClaimFacet).name), _getSellerClaimSelectors());
+        items[104] = Item("refinancePayoffFacet", ArtifactDeploy.deploy(type(RefinancePayoffFacet).name), _getRefinancePayoffSelectors());
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

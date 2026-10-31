@@ -286,6 +286,8 @@ FACETS=(
   "SaleExitVerdictFacet"
   # #1209 / #1808 -- the seller-claim host (seller-first payout, claimAsSeller).
   "SellerClaimFacet"
+  # #1558 -- the refinance payoff-permit host (attach, remove, size).
+  "RefinancePayoffFacet"
   # #2748 -- the rate-model host (model, band, offer-rate clamp).
   "RateModelFacet"
   "RiskSplitLiquidationFacet"

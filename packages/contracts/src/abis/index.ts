@@ -65,6 +65,8 @@ import ForcedSaleFacetABI from './ForcedSaleFacet.json';
 import SaleExitVerdictFacetABI from './SaleExitVerdictFacet.json';
 // #1209 / #1808 — the seller-claim host (seller-first payout, claimAsSeller).
 import SellerClaimFacetABI from './SellerClaimFacet.json';
+// #1558 — the refinance payoff-permit host (attach, remove, size).
+import RefinancePayoffFacetABI from './RefinancePayoffFacet.json';
 // #2748 — the rate-model host (model, band, offer-rate clamp).
 import RateModelFacetABI from './RateModelFacet.json';
 import RiskSplitLiquidationFacetABI from './RiskSplitLiquidationFacet.json';
@@ -234,6 +236,7 @@ export {
   ForcedSaleFacetABI,
   SaleExitVerdictFacetABI,
   SellerClaimFacetABI,
+  RefinancePayoffFacetABI,
   RateModelFacetABI,
   RiskSplitLiquidationFacetABI,
   ClaimFacetABI,

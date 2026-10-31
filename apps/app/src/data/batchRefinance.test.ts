@@ -42,6 +42,7 @@ import {
   readBackRequests,
   refinanceSendCalls,
   refinanceTotals,
+  permitsInLogs,
   requestsInLogs,
 } from './batchRefinance';
 import type { RefinanceCtx, RefinanceRequestReady } from './refinancePlan';
@@ -61,12 +62,12 @@ const ctx: RefinanceCtx = {
   holder: HOLDER,
 };
 
-const plan = (loanId: number, opts: { caps?: boolean; approval?: bigint; topUp?: bigint } = {}) =>
+const plan = (loanId: number, opts: { caps?: boolean; bound?: bigint; topUp?: bigint } = {}) =>
   ({
     kind: 'ready',
     loanId,
     liveLoan: { principalAsset: TOKEN },
-    approval: opts.approval ?? 100n,
+    bound: opts.bound ?? 100n,
     topUp: opts.topUp ?? 10n,
     caps: opts.caps ? { rateBps: 900, maxNewExpiry: 5n } : null,
     payload: { loanId },
@@ -140,6 +141,43 @@ describe('requestsInLogs', () => {
   });
 });
 
+function permitSetLog(address: `0x${string}`, offerId: bigint, signer: `0x${string}`): Log {
+  return {
+    address,
+    topics: encodeEventTopics({
+      abi: DIAMOND_ABI_VIEM,
+      eventName: 'RefinancePayoffPermitSet',
+      args: { offerId, signer },
+    } as never),
+    data: encodeAbiParameters(
+      [{ type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }],
+      [100n, 1n, 2n],
+    ),
+    blockNumber: 9n,
+    logIndex: 0,
+    transactionIndex: 0,
+    transactionHash: `0x${'cd'.repeat(32)}`,
+    blockHash: `0x${'ef'.repeat(32)}`,
+    removed: false,
+  } as unknown as Log;
+}
+
+describe('permitsInLogs (#1558)', () => {
+  it('names the requests this wallet attached a permit to, from the Diamond’s logs only', () => {
+    const found = permitsInLogs(
+      [
+        permitSetLog(DIAMOND, 40n, HOLDER),
+        permitSetLog(OTHER, 50n, HOLDER),
+        permitSetLog(DIAMOND, 60n, OTHER),
+        permitSetLog(DIAMOND, 80n, HOLDER),
+      ],
+      DIAMOND,
+      HOLDER,
+    );
+    expect([...found]).toEqual(['40', '80']);
+  });
+});
+
 describe('readBackRequests', () => {
   it('reports posted from the logs, and reads the rest at the transaction’s block', async () => {
     reads.status = { 5: LoanStatus.Repaid, 6: LoanStatus.Active };
@@ -210,9 +248,9 @@ describe('packing', () => {
     expect(chunks.map((c) => c.length)).toEqual([15, 15, 1]);
   });
 
-  it('sums the approvals and the spare amounts per token', () => {
+  it('sums the bounds and the spare amounts per token', () => {
     expect(
-      refinanceTotals([plan(1, { approval: 100n, topUp: 7n }), plan(2, { approval: 50n, topUp: 3n })]),
-    ).toEqual([{ token: TOKEN, approval: 150n, topUp: 10n }]);
+      refinanceTotals([plan(1, { bound: 100n, topUp: 7n }), plan(2, { bound: 50n, topUp: 3n })]),
+    ).toEqual([{ token: TOKEN, bound: 150n, topUp: 10n }]);
   });
 });

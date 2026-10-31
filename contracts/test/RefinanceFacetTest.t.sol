@@ -42,6 +42,11 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {RefinancePayoffPermitHelper} from "./helpers/RefinancePayoffPermitHelper.sol";
+import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
+import {MockPermit2} from "./mocks/MockPermit2.sol";
+import {LibPermit2, ISignatureTransfer} from "../src/libraries/LibPermit2.sol";
+import {LibRefinancePayoff} from "../src/libraries/LibRefinancePayoff.sol";
 
 /**
  * @title RefinanceFacetTest
@@ -129,7 +134,7 @@ contract RefinanceFacetTest is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](27);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](28);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -241,6 +246,13 @@ contract RefinanceFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(OfferPreviewFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferPreviewFacetSelectors()
+        });
+        // #1558 - the borrower attaches the payoff permit a refinance uses
+        // through RefinancePayoffFacet.
+        cuts[27] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(RefinancePayoffFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRefinancePayoffFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -362,6 +374,9 @@ contract RefinanceFacetTest is Test {
         );
 
         ERC20Mock(mockERC20).mint(address(diamond), 100000 ether);
+        // #1558 — the refinance pays off the old loan through the payoff
+        // permit attached to the request.
+        RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, borrowerOfferId);
     }
 
     /// @dev Helper to deposit principal into newLender's vault and accept alice's borrower offer.
@@ -879,11 +894,11 @@ contract RefinanceFacetTest is Test {
         _acceptBorrowerOffer(borrowerOfferId);
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL));
-        // T-051 — vault resolution moved inside the chokepoint;
-        // mock the chokepoint selector instead.
+        // #1558 — the old lender's share is sent on from the Diamond into
+        // their vault, resolved through `getOrCreateUserVault`.
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultDepositERC20From.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.getOrCreateUserVault.selector, lender),
             "vault fail"
         );
 
@@ -1381,6 +1396,7 @@ contract RefinanceFacetTest is Test {
             })
         );
 
+        RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, sameRateOfferId);
         _acceptBorrowerOffer(sameRateOfferId);
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL));
@@ -1625,5 +1641,218 @@ contract RefinanceFacetTest is Test {
 
         // suppress unused
         newLenderOfferId;
+    }
+
+    // ─── #1558 — the payoff permit ──────────────────────────────────────
+
+    function _payoff(uint256 loanId, uint256 offerId)
+        internal
+        view
+        returns (uint256 now_, uint256 atGraceEnd, address signer, uint256 maxAmount)
+    {
+        (, now_, atGraceEnd, signer, maxAmount, , , ) =
+            RefinancePayoffFacet(address(diamond)).getRefinancePayoff(loanId, offerId, type(uint256).max);
+    }
+
+    /// @notice The payoff comes through the request's permit, in one pull of
+    ///         exactly the payoff the view states, bound to this loan and this
+    ///         request; the borrower's Diamond allowance is never used, and the
+    ///         permit is gone afterwards.
+    function test_1558_payoff_pullsThroughThePermit_andLeavesNoAllowance() public {
+        vm.prank(borrower);
+        ERC20(mockERC20).approve(address(diamond), 0);
+        _acceptBorrowerOffer(borrowerOfferId);
+        vm.warp(block.timestamp + 5 days);
+        (uint256 payoffNow, , address signer, ) = _payoff(activeLoanId, borrowerOfferId);
+        assertEq(signer, borrower, "the borrower's permit is attached");
+        assertGt(payoffNow, PRINCIPAL, "the payoff carries interest");
+
+        uint256 callsBefore = MockPermit2(LibPermit2.PERMIT2).callCount();
+        vm.prank(borrower);
+        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+
+        MockPermit2 m = MockPermit2(LibPermit2.PERMIT2);
+        assertEq(m.callCount(), callsBefore + 1, "one pull");
+        assertEq(m.lastOwner(), borrower, "from the borrower");
+        (address to, uint256 requested) = m.lastTransferDetails();
+        assertEq(to, address(diamond), "into the Diamond");
+        assertEq(requested, payoffNow, "exactly the payoff the view stated");
+        assertEq(
+            m.lastWitness(),
+            LibRefinancePayoff.witness(activeLoanId, borrowerOfferId),
+            "bound to this loan and this request"
+        );
+        assertEq(m.lastWitnessTypeString(), LibRefinancePayoff.WITNESS_TYPE_STRING, "witness type");
+        assertEq(ERC20(mockERC20).allowance(borrower, address(diamond)), 0, "no Diamond allowance used");
+        (, , address signerAfter, uint256 maxAfter) = _payoff(activeLoanId, borrowerOfferId);
+        assertEq(signerAfter, address(0), "the permit is spent");
+        assertEq(maxAfter, 0, "nothing stays authorised");
+    }
+
+    /// @notice Without a permit the refinance is refused by name.
+    function test_1558_refinance_refusedWithoutAPermit() public {
+        vm.prank(borrower);
+        RefinancePayoffFacet(address(diamond)).clearRefinancePayoffPermit(borrowerOfferId);
+        _acceptBorrowerOffer(borrowerOfferId);
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibRefinancePayoff.RefinancePayoffPermitMissing.selector, borrowerOfferId
+            )
+        );
+        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+    }
+
+    /// @notice A permit below the payoff refuses the refinance by name.
+    function test_1558_refinance_refusedAboveTheSignedAmount() public {
+        _acceptBorrowerOffer(borrowerOfferId);
+        (uint256 payoffNow, , , ) = _payoff(activeLoanId, borrowerOfferId);
+        RefinancePayoffPermitHelper.attachCapped(
+            address(diamond), borrower, mockERC20, borrowerOfferId, payoffNow - 1
+        );
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibRefinancePayoff.RefinancePayoffAboveSigned.selector,
+                borrowerOfferId,
+                payoffNow,
+                payoffNow - 1
+            )
+        );
+        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+    }
+
+    /// @notice An expired permit refuses the refinance by name.
+    function test_1558_refinance_refusedOnAnExpiredPermit() public {
+        uint256 deadline = block.timestamp + 1 hours;
+        vm.prank(borrower);
+        RefinancePayoffFacet(address(diamond)).setRefinancePayoffPermit(
+            borrowerOfferId, type(uint256).max, 7, deadline, hex"01"
+        );
+        _acceptBorrowerOffer(borrowerOfferId);
+        vm.warp(deadline + 1);
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibRefinancePayoff.RefinancePayoffPermitExpired.selector, borrowerOfferId, deadline
+            )
+        );
+        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+    }
+
+    /// @notice Only the creator of a borrower offer may attach a permit, and
+    ///         the permit must carry an amount, a live deadline and a signature.
+    function test_1558_setPermit_refusals() public {
+        vm.prank(newLender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibRefinancePayoff.RefinancePayoffNotRequestCreator.selector, borrowerOfferId
+            )
+        );
+        RefinancePayoffFacet(address(diamond)).setRefinancePayoffPermit(
+            borrowerOfferId, 1 ether, 1, block.timestamp + 1, hex"01"
+        );
+        vm.startPrank(borrower);
+        vm.expectRevert(LibRefinancePayoff.RefinancePayoffPermitInvalid.selector);
+        RefinancePayoffFacet(address(diamond)).setRefinancePayoffPermit(
+            borrowerOfferId, 0, 1, block.timestamp + 1, hex"01"
+        );
+        vm.expectRevert(LibRefinancePayoff.RefinancePayoffPermitInvalid.selector);
+        RefinancePayoffFacet(address(diamond)).setRefinancePayoffPermit(
+            borrowerOfferId, 1 ether, 1, block.timestamp - 1, hex"01"
+        );
+        vm.expectRevert(LibRefinancePayoff.RefinancePayoffPermitInvalid.selector);
+        RefinancePayoffFacet(address(diamond)).setRefinancePayoffPermit(
+            borrowerOfferId, 1 ether, 1, block.timestamp + 1, ""
+        );
+        vm.stopPrank();
+        // Clearing is the signer's alone.
+        vm.prank(newLender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibRefinancePayoff.RefinancePayoffNotRequestCreator.selector, borrowerOfferId
+            )
+        );
+        RefinancePayoffFacet(address(diamond)).clearRefinancePayoffPermit(borrowerOfferId);
+    }
+
+    /// @notice Against Uniswap's REAL Permit2: a permit signed the way a
+    ///         wallet signs it (literal EIP-712 types, not the contract's own
+    ///         strings) pays off the old loan, Permit2 burns its nonce, and
+    ///         the borrower's Diamond allowance is never used.
+    function test_1558_realPermit2_signedPermitPaysOff_andBurnsTheNonce() public {
+        RefinancePayoffPermitHelper.installReal();
+        vm.prank(borrower);
+        ERC20(mockERC20).approve(address(diamond), 0);
+        _acceptBorrowerOffer(borrowerOfferId);
+        vm.warp(block.timestamp + 5 days);
+        (, , uint256 atGraceEnd, , , , , ) =
+            RefinancePayoffFacet(address(diamond)).getRefinancePayoff(activeLoanId, borrowerOfferId, type(uint256).max);
+        uint256 nonce = 0x1558 << 8 | 3;
+        RefinancePayoffPermitHelper.attachSigned(
+            address(diamond), borrowerPk, mockERC20, activeLoanId, borrowerOfferId,
+            atGraceEnd, nonce, block.timestamp + 1 days
+        );
+        (, , , , , , , bool spentBefore) =
+            RefinancePayoffFacet(address(diamond)).getRefinancePayoff(activeLoanId, borrowerOfferId, type(uint256).max);
+        assertFalse(spentBefore, "the nonce is live while the permit is attached");
+
+        vm.prank(borrower);
+        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "the old loan is paid off"
+        );
+        uint256 word = ISignatureTransfer(LibPermit2.PERMIT2).nonceBitmap(borrower, nonce >> 8);
+        assertEq((word >> (nonce & 0xff)) & 1, 1, "Permit2 burned the nonce");
+        assertEq(ERC20(mockERC20).allowance(borrower, address(diamond)), 0, "no Diamond allowance");
+    }
+
+    /// @notice Against the real Permit2, a permit signed for ANOTHER loan
+    ///         cannot pay off this one: the witness is part of the digest.
+    function test_1558_realPermit2_permitForAnotherLoan_isRefused() public {
+        RefinancePayoffPermitHelper.installReal();
+        _acceptBorrowerOffer(borrowerOfferId);
+        RefinancePayoffPermitHelper.attachSigned(
+            address(diamond), borrowerPk, mockERC20, activeLoanId + 1, borrowerOfferId,
+            type(uint256).max, 11, block.timestamp + 1 days
+        );
+        vm.prank(borrower);
+        vm.expectRevert(abi.encodeWithSignature("InvalidSigner()"));
+        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+    }
+
+    /// @notice The view's payoff at the end of grace is what a refinance at
+    ///         that moment pays: one rule for the figure and the pull.
+    function test_1558_payoffAtGraceEnd_isWhatARefinanceThenPays() public {
+        (, uint256 atGraceEnd, , ) = _payoff(activeLoanId, borrowerOfferId);
+        (, , , uint256 graceEnd) = LoanFacet(address(diamond)).getLoanDeadlines(activeLoanId);
+        vm.warp(graceEnd);
+        (uint256 payoffThen, , , ) = _payoff(activeLoanId, borrowerOfferId);
+        assertEq(payoffThen, atGraceEnd, "the bound is the payoff at grace end");
+    }
+
+    /// @notice `payoffBy` sizes the payoff for the moment the caller names: a
+    ///         moment inside grace reads what a refinance then pays, a moment
+    ///         already past reads today's payoff, and a moment past the grace
+    ///         end reads the grace end.
+    function test_1558_payoffBy_isThePayoffAtTheNamedMoment() public {
+        (, , , uint256 graceEnd) = LoanFacet(address(diamond)).getLoanDeadlines(activeLoanId);
+        uint256 mid = graceEnd - 1 days;
+        (, uint256 nowPayoff, uint256 byMid, , , , , ) = RefinancePayoffFacet(address(diamond))
+            .getRefinancePayoff(activeLoanId, borrowerOfferId, mid);
+        (, , uint256 byPast, , , , , ) = RefinancePayoffFacet(address(diamond))
+            .getRefinancePayoff(activeLoanId, borrowerOfferId, 0);
+        assertEq(byPast, nowPayoff, "a moment already past reads today's payoff");
+        (, , uint256 byLate, , , , , ) = RefinancePayoffFacet(address(diamond))
+            .getRefinancePayoff(activeLoanId, borrowerOfferId, graceEnd + 30 days);
+        (, uint256 atGraceEnd, , ) = _payoff(activeLoanId, borrowerOfferId);
+        assertEq(byLate, atGraceEnd, "past the grace end reads the grace end");
+        assertGt(atGraceEnd, byMid, "the late fee still grows inside grace");
+        vm.warp(mid);
+        (uint256 payoffThen, , , ) = _payoff(activeLoanId, borrowerOfferId);
+        assertEq(payoffThen, byMid, "the figure is what a refinance at that moment pays");
     }
 }
