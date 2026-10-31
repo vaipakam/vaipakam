@@ -956,7 +956,9 @@
         "pendingExpired": "Cette demande de refinancement a expiré le {{date}} — aucun prêteur ne peut plus l’accepter, et elle ne bloque plus vos autres actions ici. Annulez-la ci-dessous pour la supprimer ; le prêt continue inchangé.",
         "pendingPastGrace": "Ce prêt a dépassé son échéance et sa fenêtre de grâce, aucun prêteur ne peut donc plus accepter cette demande — elle ne bloque plus vos autres actions ici. Annulez-la ci-dessous pour la supprimer.",
         "pendingUntakeable": "Cette demande de refinancement ne pourra jamais être acceptée : ce n’est pas la demande que le protocole a enregistrée pour ce prêt (une demande plus récente l’a remplacée). Elle ne bloque pas le prêt. Annulez-la ci-dessous pour la supprimer.",
-        "attachUnconfirmed": "Votre demande de refinancement est publiée et son autorisation de remboursement a été envoyée, mais il n’est pas encore confirmé que l’autorisation est jointe. La carte de la demande affiche l’autorisation dès que la chaîne l’indique ; ne signez à nouveau que si la carte indique toujours qu’elle manque."
+        "attachUnconfirmed": "Votre demande de refinancement est publiée et son autorisation de remboursement a été envoyée, mais il n’est pas encore confirmé que l’autorisation est jointe. La carte de la demande affiche l’autorisation dès que la chaîne l’indique ; ne signez à nouveau que si la carte indique toujours qu’elle manque.",
+        "attaching": "Votre demande de refinancement est publiée. Approuvez Permit2 si votre portefeuille le demande, puis signez l’autorisation de remboursement et confirmez la transaction qui la joint. Tant que l’autorisation n’est pas jointe, aucun prêteur ne peut finaliser la demande.",
+        "attachFailed": "L’autorisation de remboursement n’a pas été jointe, donc aucun prêteur ne peut encore finaliser cette demande avec elle ({{reason}}). Signez-la à nouveau ci-dessous ou annulez la demande."
       }
     },
     "approvals": {

@@ -956,7 +956,9 @@
         "pendingExpired": "Diese Refinanzierungsanfrage ist am {{date}} abgelaufen — kein Kreditgeber kann sie mehr annehmen, und sie blockiert Ihre übrigen Aktionen hier nicht mehr. Stornieren Sie sie unten, um sie zu entfernen; der Kredit läuft unverändert weiter.",
         "pendingPastGrace": "Dieser Kredit hat Fälligkeitsdatum und Nachfrist überschritten, daher kann kein Kreditgeber diese Anfrage mehr annehmen — sie blockiert Ihre übrigen Aktionen hier nicht mehr. Stornieren Sie sie unten, um sie zu entfernen.",
         "pendingUntakeable": "Diese Refinanzierungsanfrage kann nie angenommen werden: Sie ist nicht die Anfrage, die das Protokoll für diesen Kredit erfasst hat (eine neuere Anfrage hat sie ersetzt). Sie blockiert den Kredit nicht. Stornieren Sie sie unten, um sie zu entfernen.",
-        "attachUnconfirmed": "Ihre Refinanzierungsanfrage ist eingestellt und ihre Ablöse-Erlaubnis wurde gesendet, aber ob die Erlaubnis angehängt wurde, ist noch nicht bestätigt. Die Karte der Anfrage zeigt die Erlaubnis, sobald die Chain sie zeigt; signieren Sie nur erneut, wenn die Karte weiterhin meldet, dass sie fehlt."
+        "attachUnconfirmed": "Ihre Refinanzierungsanfrage ist eingestellt und ihre Ablöse-Erlaubnis wurde gesendet, aber ob die Erlaubnis angehängt wurde, ist noch nicht bestätigt. Die Karte der Anfrage zeigt die Erlaubnis, sobald die Chain sie zeigt; signieren Sie nur erneut, wenn die Karte weiterhin meldet, dass sie fehlt.",
+        "attaching": "Ihre Refinanzierungsanfrage ist eingestellt. Genehmigen Sie Permit2, falls Ihre Wallet danach fragt, signieren Sie dann die Ablöse-Erlaubnis und bestätigen Sie die Transaktion, die sie anhängt. Solange die Erlaubnis nicht angehängt ist, kann kein Kreditgeber die Anfrage abschließen.",
+        "attachFailed": "Die Ablöse-Erlaubnis wurde nicht angehängt, daher kann noch kein Kreditgeber diese Anfrage damit abschließen ({{reason}}). Signieren Sie sie unten erneut oder stornieren Sie die Anfrage."
       }
     },
     "approvals": {

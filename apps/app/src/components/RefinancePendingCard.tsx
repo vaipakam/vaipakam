@@ -40,7 +40,7 @@ import {
   readPayoffQuote,
 } from '../contracts/refinancePayoffPermit';
 import { readGraceSecondsLive } from '../contracts/preflights';
-import type { RefinancePendingState } from '../data/refinancePending';
+import type { PermitAttachProgress, RefinancePendingState } from '../data/refinancePending';
 import { useAutoRefinancePosture } from '../data/protocol';
 import { AutoMatchPostureBanner } from './AutoMatchPostureBanner';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
@@ -51,6 +51,8 @@ export function RefinancePendingCard({
   loanId,
   offerId,
   state,
+  attachProgress,
+  onPermitAttach,
   principalAsset,
   principalMeta,
   busy,
@@ -63,6 +65,12 @@ export function RefinancePendingCard({
   /** Live-verified state from useRefinancePending; undefined while
    *  the verification reads are loading or failing. */
   state: RefinancePendingState | undefined;
+  /** #1558 review — the payoff permit's signing and attach progress for
+   *  THIS request, held by the page: the request form that posted it has
+   *  unmounted by the time the permit is attached, so this card is where
+   *  the outcome is shown. Null when nothing is in progress or reported. */
+  attachProgress: PermitAttachProgress | null;
+  onPermitAttach: (progress: PermitAttachProgress) => void;
   principalAsset: `0x${string}`;
   principalMeta: TokenMeta | undefined;
   /** The PAGE's shared write lock. */
@@ -98,6 +106,39 @@ export function RefinancePendingCard({
 
   const walletReady =
     onSupportedChain && Boolean(walletClient) && Boolean(publicClient);
+  // #1558 review — what the permit's own progress says, and whether it
+  // stands in for the chain's permit verdict. While signing, the chain
+  // still shows the permit being replaced (or none), so its verdict is not
+  // news. A permit sent but unconfirmed, or one that failed to attach, is
+  // stated instead of the chain's "missing", which would read as if
+  // nothing had happened; any other verdict still shows.
+  const signing = attachProgress?.phase === 'signing';
+  const progressNote: { tone: 'info' | 'danger'; text: string } | null =
+    attachProgress === null
+      ? null
+      : attachProgress.phase === 'signing'
+        ? { tone: 'info', text: copy.refinance.permit.attaching }
+        : attachProgress.phase === 'attached'
+          ? {
+              tone: 'info',
+              text: attachProgress.posted
+                ? copy.refinance.permit.done
+                : copy.refinance.permit.signed,
+            }
+          : attachProgress.phase === 'unknown'
+            ? state?.permitIssue === null
+              ? null // the chain now shows it attached
+              : { tone: 'info', text: copy.refinance.permit.attachUnconfirmed }
+            : {
+                tone: 'danger',
+                text: copy.refinance.permit.attachFailed(attachProgress.reason),
+              };
+  const permitVerdictShown =
+    !signing &&
+    !(
+      state?.permitIssue === 'missing' &&
+      (attachProgress?.phase === 'unknown' || attachProgress?.phase === 'failed')
+    );
   const topUpStr =
     state && principalMeta
       ? `${formatTokenAmountExact(state.topUp, principalMeta.decimals)} ${principalMeta.symbol}`
@@ -233,24 +274,32 @@ export function RefinancePendingCard({
           graceSeconds: graceSec,
           route: 'permit',
         });
-        const attached = await attachRefinancePayoffPermit({
-          publicClient,
-          walletClient,
-          write,
-          chainId: walletChain.chainId,
-          diamond: walletChain.diamondAddress,
-          owner: address,
-          token: liveLoan.principalAsset,
-          maxAmount: quote.bound,
-          deadline: quote.lastFillable,
-          loanId: BigInt(loanId),
-          offerId: BigInt(offerId),
-        });
-        setDone(
-          attached === 'attached'
-            ? copy.refinance.permit.signed
-            : copy.refinance.permit.attachUnconfirmed,
-        );
+        // Progress and outcome go through the page's record, the one the
+        // posting form also reports to, so this card states them by one
+        // rule whichever surface signed.
+        onPermitAttach({ offerId, phase: 'signing' });
+        try {
+          const attached = await attachRefinancePayoffPermit({
+            publicClient,
+            walletClient,
+            write,
+            chainId: walletChain.chainId,
+            diamond: walletChain.diamondAddress,
+            owner: address,
+            token: liveLoan.principalAsset,
+            maxAmount: quote.bound,
+            deadline: quote.lastFillable,
+            loanId: BigInt(loanId),
+            offerId: BigInt(offerId),
+          });
+          onPermitAttach(
+            attached === 'attached'
+              ? { offerId, phase: 'attached', posted: false }
+              : { offerId, phase: 'unknown' },
+          );
+        } catch (attachErr) {
+          onPermitAttach({ offerId, phase: 'failed', reason: captureTxError(attachErr) });
+        }
         void queryClient.invalidateQueries({ queryKey: ['refinancePending'] });
         return;
       }
@@ -342,7 +391,16 @@ export function RefinancePendingCard({
       {!requestTerminal ? (
         <AutoMatchPostureBanner posture={autoRefinancePosture} />
       ) : null}
-      {state?.allowanceShort && state.loanActive ? (
+      {progressNote && state?.route !== 'approval' ? (
+        <div
+          className={`banner ${progressNote.tone === 'danger' ? 'banner-danger' : 'banner-info'}`}
+          role={progressNote.tone === 'danger' ? 'alert' : 'status'}
+          style={{ marginTop: 12 }}
+        >
+          <span className="banner-body">{progressNote.text}</span>
+        </div>
+      ) : null}
+      {state?.allowanceShort && state.loanActive && permitVerdictShown ? (
         <div className="banner banner-danger" role="alert" style={{ marginTop: 12 }}>
           <span className="banner-body">
             {state.route === 'permit' && state.permitIssue
@@ -371,7 +429,7 @@ export function RefinancePendingCard({
           >
             {copy.refinance.cancel}
           </button>
-          {state.allowanceShort && state.loanActive ? (
+          {state.allowanceShort && state.loanActive && !signing ? (
             <button
               type="button"
               className="btn btn-secondary"

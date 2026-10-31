@@ -150,6 +150,21 @@ export interface RefinancePendingState {
   lastFillable: bigint;
 }
 
+/**
+ * #1558 review — where signing and attaching a request's payoff permit
+ * stands, held by the PAGE. The request form unmounts the moment its
+ * request is posted (the pending card takes over), while the permit is
+ * signed and attached after that, so progress kept in the form would be
+ * lost and the card would read the chain's "no permit yet" as missing.
+ * The card renders this instead: signing in progress, attached, sent but
+ * unconfirmed, or failed with the reason.
+ */
+export type PermitAttachProgress =
+  | { offerId: string; phase: 'signing' }
+  | { offerId: string; phase: 'attached'; posted: boolean }
+  | { offerId: string; phase: 'unknown' }
+  | { offerId: string; phase: 'failed'; reason: string };
+
 export function useRefinancePending(
   loanId: number,
   principalAsset: `0x${string}` | undefined,
@@ -238,11 +253,14 @@ export function useRefinancePending(
     markerId,
   });
 
+  const [permitAttach, setPermitAttach] = useState<PermitAttachProgress | null>(null);
+
   const seedKey = `${readChain.chainId}:${loanId}`;
   const [seededFor, setSeededFor] = useState(seedKey);
   if (seededFor !== seedKey) {
     setSeededFor(seedKey);
     setMarkerId(marker.read(readChain.chainId, loanId));
+    setPermitAttach(null);
   }
 
   const remember = useCallback(
@@ -260,6 +278,7 @@ export function useRefinancePending(
   const clear = useCallback(() => {
     marker.write(readChain.chainId, loanId, null);
     setMarkerId(null);
+    setPermitAttach(null);
     // A request found by discovery is cleared by the chain, not the marker:
     // re-scan so a cancelled one stops being named.
     void queryClient.invalidateQueries({
@@ -474,5 +493,9 @@ export function useRefinancePending(
     state: query.data === 'gone' ? undefined : query.data,
     remember,
     clear,
+    /** #1558 — the payoff permit's signing and attach progress for the
+     *  request named, set by whichever surface runs it. */
+    permitAttach,
+    reportPermitAttach: setPermitAttach,
   };
 }

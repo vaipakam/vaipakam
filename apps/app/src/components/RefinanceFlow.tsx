@@ -60,6 +60,7 @@ import { ensureAllowance, restoreAllowance } from '../contracts/erc20';
 import { TxNotSettledError } from '../contracts/ownReceipt';
 import { assertErc20BalanceLive } from '../contracts/preflights';
 import { loanEndTimeOf, type LoanLive } from '../contracts/loanLive';
+import type { PermitAttachProgress } from '../data/refinancePending';
 import {
   attachRefinancePayoffPermit,
   ensurePermit2Approval,
@@ -95,6 +96,7 @@ export function RefinanceFlow({
   onOpenConfirm,
   onCloseConfirm,
   onPosted,
+  onPermitAttach,
   busy,
   setBusy,
 }: {
@@ -118,6 +120,10 @@ export function RefinanceFlow({
   onCloseConfirm: () => void;
   /** Hands the created offer id to the page-owned pending state. */
   onPosted: (offerId: string) => void;
+  /** #1558 review — reports the payoff permit's signing and attach
+   *  progress to the PAGE. Posting the request unmounts this form (the
+   *  pending card takes over), so the outcome is shown there, never here. */
+  onPermitAttach: (progress: PermitAttachProgress) => void;
   /** The PAGE's shared write lock — the posting sequence spans up to
    *  three wallet confirmations, and the sibling repay-family
    *  buttons must not stay live underneath it. */
@@ -496,11 +502,19 @@ export function RefinanceFlow({
         // once the request exists: exactly the reviewed bound, expiring
         // at the request's last fillable moment. The request is already
         // posted, so a failure here is reported as that, never as a
-        // failed post; its card offers to sign again.
-        let attached: 'attached' | 'unknown';
+        // failed post. Posting unmounted this form, so every outcome goes
+        // to the page-owned pending card (#1558 review), which also offers
+        // to sign again.
+        if (offerId === undefined) {
+          // No request id to name, and so no card: this form is still
+          // mounted and says so itself.
+          setError(`${copy.refinance.permit.postedWithoutPermit} ${copy.errors.checkRetry}`);
+          return;
+        }
+        const id = offerId.toString();
+        onPermitAttach({ offerId: id, phase: 'signing' });
         try {
-          if (offerId === undefined) throw new Error(copy.errors.checkRetry);
-          attached = await attachRefinancePayoffPermit({
+          const attached = await attachRefinancePayoffPermit({
             publicClient,
             walletClient,
             write,
@@ -513,19 +527,17 @@ export function RefinanceFlow({
             loanId: BigInt(row.loanId),
             offerId,
           });
+          // A permit sent but not yet confirmed may still attach: the card
+          // says so, never "attached" and never "missing".
+          onPermitAttach(
+            attached === 'attached'
+              ? { offerId: id, phase: 'attached', posted: true }
+              : { offerId: id, phase: 'unknown' },
+          );
         } catch (attachErr) {
-          setError(`${copy.refinance.permit.postedWithoutPermit} ${captureTxError(attachErr)}`);
-          void queryClient.invalidateQueries({ queryKey: ['refinancePending'] });
-          return;
+          onPermitAttach({ offerId: id, phase: 'failed', reason: captureTxError(attachErr) });
         }
         void queryClient.invalidateQueries({ queryKey: ['refinancePending'] });
-        // A permit sent but not yet confirmed may still attach: say so,
-        // never "attached" and never "missing" (#1558).
-        setDone(
-          attached === 'attached'
-            ? copy.refinance.permit.done
-            : copy.refinance.permit.attachUnconfirmed,
-        );
       } else {
         setDone(copy.refinance.done);
       }

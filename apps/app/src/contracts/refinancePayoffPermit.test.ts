@@ -18,11 +18,16 @@ import {
   type Hex,
 } from 'viem';
 // The Permit2 approval step is the ERC-20 module's; the attach test drives
-// the steps after it.
-vi.mock('./erc20', () => ({ ensureAllowance: vi.fn(async () => undefined) }));
+// the steps after it, and the approval test drives the module's callbacks.
+const erc20 = vi.hoisted(() => ({
+  ensureAllowance: vi.fn(async (_o: unknown) => undefined as unknown),
+  restoreAllowance: vi.fn(async (_o: unknown) => null as unknown),
+}));
+vi.mock('./erc20', () => erc20);
 
 import {
   attachRefinancePayoffPermit,
+  ensurePermit2Approval,
   lastFillableMoment,
   payoffPermitTypedData,
   permitProblem,
@@ -200,5 +205,73 @@ describe('attachRefinancePayoffPermit (#1558)', () => {
     await expect(base(write, () => ({ status: 'reverted', blockNumber: 9n, logs: [] }))).rejects.toThrow(
       'reverted',
     );
+  });
+});
+
+describe('ensurePermit2Approval (#1558)', () => {
+  type Hooks = {
+    onObserved?: (v: bigint) => void;
+    onWrote?: (v: bigint | null, h: `0x${string}` | null) => void;
+    onConfirmed?: (v: bigint) => void;
+  };
+  const HASH = `0x${'cd'.repeat(32)}` as const;
+  const run = () =>
+    ensurePermit2Approval({
+      publicClient: {} as never,
+      walletClient: {} as never,
+      owner: HOLDER,
+      token: TOKEN,
+      maxAmount: 1_000n,
+    });
+
+  it('puts a prior approval back when the raise stops after the reset to zero', async () => {
+    erc20.restoreAllowance.mockClear();
+    erc20.ensureAllowance.mockImplementationOnce(async (o: unknown) => {
+      const h = o as Hooks;
+      h.onObserved?.(500n);
+      h.onWrote?.(0n, HASH);
+      h.onConfirmed?.(0n);
+      throw new Error('second prompt rejected');
+    });
+    await expect(run()).rejects.toThrow('second prompt rejected');
+    expect(erc20.restoreAllowance).toHaveBeenCalledTimes(1);
+    expect(erc20.restoreAllowance.mock.calls[0][0]).toMatchObject({
+      spender: PERMIT2_ADDRESS,
+      previous: 500n,
+      wrote: 0n,
+      wroteTxHash: HASH,
+      confirmed: 0n,
+    });
+  });
+
+  it('leaves a raise that landed alone, and restores nothing on success', async () => {
+    erc20.restoreAllowance.mockClear();
+    erc20.ensureAllowance.mockImplementationOnce(async (o: unknown) => {
+      const h = o as Hooks;
+      h.onObserved?.(500n);
+      h.onWrote?.(1_000n, HASH);
+      throw new Error('read-back contradicted');
+    });
+    await expect(run()).rejects.toThrow('read-back contradicted');
+    erc20.ensureAllowance.mockImplementationOnce(async (o: unknown) => {
+      (o as Hooks).onObserved?.(1_000n);
+    });
+    await expect(run()).resolves.toBeUndefined();
+    expect(erc20.restoreAllowance).not.toHaveBeenCalled();
+  });
+
+  it('reports the original failure when the restore itself fails', async () => {
+    erc20.restoreAllowance.mockClear();
+    erc20.restoreAllowance.mockImplementationOnce(async () => {
+      throw new Error('restore rejected');
+    });
+    erc20.ensureAllowance.mockImplementationOnce(async (o: unknown) => {
+      const h = o as Hooks;
+      h.onObserved?.(500n);
+      h.onWrote?.(0n, HASH);
+      throw new Error('second prompt rejected');
+    });
+    await expect(run()).rejects.toThrow('second prompt rejected');
+    expect(erc20.restoreAllowance).toHaveBeenCalledTimes(1);
   });
 });

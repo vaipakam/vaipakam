@@ -260,9 +260,14 @@ test('refinance request completes: old loan closes, new loan carries the collate
   expect(await diamondAllowance(), 'posting grants the Diamond no allowance').toBe(
     allowanceBefore,
   );
-  await expect(page.getByText(/payoff permit isn’t attached/i)).toHaveCount(0, {
+  // The form unmounts when the request posts; the request's card is where
+  // the attach outcome is stated (#1558 review), and it never reads the
+  // permit as missing.
+  await expect(page.getByText(/request posted with its payoff permit/i)).toBeVisible({
     timeout: 30_000,
   });
+  await expect(page.getByText(/no payoff permit from this wallet is attached/i)).toHaveCount(0);
+  await expect(page.getByText(/payoff permit wasn’t attached/i)).toHaveCount(0);
   await adv.ctx.close();
 
   // #2528 — a lender browsing the Offer Book sees the request FOR what it

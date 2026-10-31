@@ -2268,6 +2268,12 @@ const copySource = {
           'Your wallet’s approval of Permit2 for this token no longer covers the payoff, so a lender’s acceptance would fail. Sign the payoff permit again below; it raises that approval first.',
       },
       sign: 'Sign the payoff permit',
+      attaching:
+        'Your refinance request is posted. Approve Permit2 if your wallet asks, then sign the payoff permit and confirm the transaction that attaches it. Until the permit is attached, no lender can complete the request.',
+      attachFailed: tmpl(
+        'The payoff permit wasn’t attached, so no lender can complete this request on it yet ({{reason}}). Sign it again below or cancel the request.',
+        ['reason'],
+      ),
       signed: 'Payoff permit attached — the request can complete.',
       attachUnconfirmed:
         'Your refinance request is posted and its payoff permit was sent, but whether the permit attached isn’t confirmed yet. The request’s card shows the permit once the chain does; sign again only if the card still says it is missing.',

@@ -956,7 +956,9 @@
         "pendingExpired": "Esta solicitud de refinanciación expiró el {{date}} — ningún prestamista puede aceptarla ya, y ya no bloquea tus otras acciones aquí. Cancélala abajo para quitarla; el préstamo continúa sin cambios.",
         "pendingPastGrace": "Este préstamo ya pasó su fecha de vencimiento y su ventana de gracia, así que ningún prestamista puede aceptar ya esta solicitud — ya no bloquea tus otras acciones aquí. Cancélala abajo para quitarla.",
         "pendingUntakeable": "Esta solicitud de refinanciación nunca podrá aceptarse: no es la solicitud que el protocolo tiene registrada para este préstamo (una solicitud más reciente la sustituyó). No bloquea el préstamo. Cancélala abajo para quitarla.",
-        "attachUnconfirmed": "Tu solicitud de refinanciación está publicada y su permiso de liquidación se envió, pero aún no está confirmado si el permiso quedó adjunto. La tarjeta de la solicitud muestra el permiso en cuanto la cadena lo refleja; vuelve a firmar solo si la tarjeta sigue diciendo que falta."
+        "attachUnconfirmed": "Tu solicitud de refinanciación está publicada y su permiso de liquidación se envió, pero aún no está confirmado si el permiso quedó adjunto. La tarjeta de la solicitud muestra el permiso en cuanto la cadena lo refleja; vuelve a firmar solo si la tarjeta sigue diciendo que falta.",
+        "attaching": "Tu solicitud de refinanciación está publicada. Aprueba Permit2 si tu billetera lo pide, luego firma el permiso de liquidación y confirma la transacción que lo adjunta. Hasta que el permiso esté adjunto, ningún prestamista puede completar la solicitud.",
+        "attachFailed": "El permiso de liquidación no se adjuntó, así que ningún prestamista puede completar todavía esta solicitud con él ({{reason}}). Fírmalo de nuevo abajo o cancela la solicitud."
       }
     },
     "approvals": {

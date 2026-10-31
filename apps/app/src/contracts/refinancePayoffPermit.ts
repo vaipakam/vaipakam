@@ -35,7 +35,7 @@
  */
 import { toFunctionSelector, zeroAddress, type PublicClient, type WalletClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from './diamond';
-import { ensureAllowance } from './erc20';
+import { ensureAllowance, restoreAllowance } from './erc20';
 import { settleFailedSend } from './ownReceipt';
 import {
   loanEndTimeOf,
@@ -379,7 +379,17 @@ export async function attachRefinancePayoffPermit(a: {
 
 /** The wallet's ERC-20 approval of Permit2 covers `maxAmount`; raises a
  *  lower one to exactly that figure. A batch calls it once for the sum of
- *  its permits before attaching each. */
+ *  its permits before attaching each.
+ *
+ *  Never leaves the prior approval destroyed (#1558 review). Raising a
+ *  non-zero approval goes through a reset to zero first (some tokens refuse
+ *  a non-zero to non-zero approve), and that prior approval may be what
+ *  another live request's permit draws on. If the raise then stops (the
+ *  wallet prompt rejected, the approve reverted or never confirmed) while
+ *  the reset stands, the prior figure is put back before the error is
+ *  rethrown, through the same guarded restore every other unwind uses: it
+ *  acts only while the allowance still reads what this attempt left. A raise
+ *  that did land is left alone; it covers the prior requests too. */
 export async function ensurePermit2Approval(a: {
   publicClient: PublicClient;
   walletClient: WalletClient;
@@ -388,13 +398,56 @@ export async function ensurePermit2Approval(a: {
   maxAmount: bigint;
   onPrompt?: () => void;
 }): Promise<void> {
-  await ensureAllowance({
-    publicClient: a.publicClient,
-    walletClient: a.walletClient,
-    token: a.token,
-    owner: a.owner,
-    spender: PERMIT2_ADDRESS,
-    amount: a.maxAmount,
-    onPrompt: a.onPrompt,
-  });
+  // One record the callbacks fill, read once the raise has stopped.
+  const seen: {
+    previous: bigint | null;
+    wrote: bigint | null;
+    wroteTxHash: `0x${string}` | null;
+    confirmed: bigint | null;
+  } = { previous: null, wrote: null, wroteTxHash: null, confirmed: null };
+  try {
+    await ensureAllowance({
+      publicClient: a.publicClient,
+      walletClient: a.walletClient,
+      token: a.token,
+      owner: a.owner,
+      spender: PERMIT2_ADDRESS,
+      amount: a.maxAmount,
+      onPrompt: a.onPrompt,
+      onObserved: (value) => {
+        seen.previous = value;
+      },
+      onWrote: (value, hash) => {
+        seen.wrote = value;
+        seen.wroteTxHash = hash;
+      },
+      onConfirmed: (value) => {
+        seen.confirmed = value;
+      },
+    });
+  } catch (err) {
+    const { previous, wrote, wroteTxHash, confirmed } = seen;
+    // Only the reduced case is unwound: what this attempt left on chain is
+    // below what it found.
+    if (previous !== null && wrote !== null && wrote < previous) {
+      try {
+        await restoreAllowance({
+          publicClient: a.publicClient,
+          walletClient: a.walletClient,
+          token: a.token,
+          owner: a.owner,
+          spender: PERMIT2_ADDRESS,
+          previous,
+          wrote,
+          wroteTxHash,
+          confirmed,
+        });
+      } catch {
+        // Best effort: the original failure is what the caller reports, and
+        // the pending card names a Permit2 approval that no longer covers a
+        // request's permit, with the step that raises it again.
+      }
+    }
+    throw err;
+  }
 }

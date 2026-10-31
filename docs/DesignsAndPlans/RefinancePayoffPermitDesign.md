@@ -93,9 +93,15 @@ together, and `RedeployFacets` refuses a Diamond that does not already route
 ## The app
 
 - **Single request.** After the request is posted the app approves Permit2 if
-  needed, asks the borrower to sign, and attaches the permit. A signing refusal
-  leaves a posted request with no permit; the card says so and offers to sign
-  again.
+  needed, asks the borrower to sign, and attaches the permit. Posting replaces
+  the form with the request's card, so the signing progress and its outcome
+  (attached, sent but unconfirmed, or failed with the reason) are held by the
+  page and stated on that card. A signing refusal leaves a posted request with
+  no permit; the card says so and offers to sign again.
+- **Permit2 approval.** Raising an existing approval resets it to zero first
+  (some tokens refuse a non-zero to non-zero approve). If the raise then stops
+  while the reset stands, the app puts the prior approval back, since another
+  live request's permit may draw on it.
 - **Batch.** "Refinance all" posts the requests, then signs one permit per
   posted request and attaches them in one multicall. The outcome per loan says
   whether its permit is attached.
