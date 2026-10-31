@@ -1,4 +1,4 @@
-## Keeper — the extension pass names an unfunded extension (PR #<n>)
+## Keeper — the extension pass names an unfunded extension (PR #3073)
 
 A borrower can now keep a reserve for a loan's automatic extensions (#2814).
 An extension draws that reserve first, then the holder's other free balance
