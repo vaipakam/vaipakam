@@ -1,4 +1,4 @@
-## Internal match refuses a leg that delivers short (PR #TBD)
+## Internal match refuses a leg that delivers short (PR #3082)
 
 An internal match now refuses itself when one of its legs delivers less to
 the receiving lender than it sent. Only a token that charges on transfer,
