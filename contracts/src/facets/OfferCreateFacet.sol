@@ -189,8 +189,8 @@ contract OfferCreateFacet is
     ///      which facet emits.
 
     /// @dev Emitted by `OfferFacet.matchOffers` (and the
-    ///      `acceptOffer` / `PrecloseFacet.transferObligationViaOffer` /
-    ///      `RefinanceFacet.refinanceLoan` wrappers around the shared
+    ///      `acceptOffer` / `PrecloseFacet.transferObligationViaOffer`
+    ///      wrappers around the shared
     ///      matching core, once Range Orders Phase 1 PR3 lands). Single
     ///      source-of-truth event for the matched terms — both midpoints
     ///      are emitted so downstream alt-rule analytics can reconstruct
@@ -785,7 +785,7 @@ contract OfferCreateFacet is
             // Codex round-2 P2 — partial-fill on a refinance-tagged
             // offer would let it bind to multiple replacement loans
             // (each match rewrites `offerIdToLoanId[offerId]`), so
-            // `RefinanceFacet.refinanceLoan` sees only the last
+            // `RefinanceFacet`'s payoff sees only the last
             // match — earlier replacement loans get stranded. Force
             // AON fill so the offer binds exactly once.
             if (params.fillMode != LibVaipakam.FillMode.Aon) {

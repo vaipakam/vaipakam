@@ -649,7 +649,7 @@
       "liquidityChecking": "Protocol इन assets को कैसे price करता है, check कर रहे हैं…",
       "liquidityCheckFailed": "इन assets की pricing check नहीं कर सके, और वही एक important warning तय करती है — success तक signing paused है।",
       "linkedLoanCheckFailed": "यह offer running loan की position sale है या नहीं check नहीं कर सके, और वही important disclosure तय करता है — success तक signing paused है।",
-      "refinanceRequestBanner": "यह ऋण #{{loanId}} के लिए रीफ़ाइनेंस अनुरोध है। इसे स्वीकार करने से आपका ऋण खुलता है और उसी लेनदेन में ऋण #{{loanId}} चुकाकर बंद हो जाता है। किसी भी ऋण की तरह, आप जो राशि उधार देते हैं, उधारकर्ता का ऋण-आरंभ शुल्क घटाकर, वह उधारकर्ता के वॉलेट में जाती है। फिर उस ऋण के मौजूदा ऋणदाता का भुगतान उधारकर्ता के वॉलेट से लिया जाता है, इसलिए आपका ऋण उसका कुछ या पूरा हिस्सा दे सकता है, और कोई अंतर उधारकर्ता पूरा करता है। आपको क्या मिलना है, यह आपके नए ऋण की शर्तें और संपार्श्विक तय करते हैं।",
+      "refinanceRequestBanner": "यह ऋण #{{loanId}} के लिए रीफ़ाइनेंस अनुरोध है। इसे स्वीकार करने से आपका ऋण खुलता है और उसी लेनदेन में ऋण #{{loanId}} चुकाकर बंद हो जाता है। आप जो राशि उधार देते हैं, उधारकर्ता का ऋण-आरंभ शुल्क घटाकर, उससे उस ऋण के मौजूदा ऋणदाता को भुगतान होता है, और बाक़ी रकम उधारकर्ता का वॉलेट चुकाता है। आपको क्या मिलना है, यह आपके नए ऋण की शर्तें और संपार्श्विक तय करते हैं।",
       "refinanceRequestChecking": "जाँच रहे हैं कि क्या यह अनुरोध किसी चालू ऋण को रीफ़ाइनेंस करता है — हस्ताक्षर से पहले समीक्षा में यह बताया जाना ज़रूरी है।",
       "refinanceRequestCheckFailed": "हम जाँच नहीं पाए कि क्या यह अनुरोध किसी चालू ऋण को रीफ़ाइनेंस करता है, और इससे स्वीकार करने का असर बदलता है — जाँच सफल होने तक हस्ताक्षर रुका रहेगा।",
       "refinanceRequestUnavailable": "यह अनुरोध ऋण #{{loanId}} को रीफ़ाइनेंस करना चाहता है, लेकिन अभी इसे स्वीकार नहीं किया जा सकता। {{reason}} स्वीकार करना विफल होगा, इसलिए हस्ताक्षर करने के लिए कुछ नहीं है।",
@@ -833,7 +833,7 @@
         "offsetCost": "आप अभी उधार देने के लिए नई रकम लगाते हैं — और पूरा होने पर आपका वॉलेट यह लोन भी पूरा चुकाता है: इसकी लोन राशि, अब तक जुड़ा ब्याज, और आपके मौजूदा उधार देने वाले के लिए दर का कोई भी अतिरिक्त भुगतान। एक नहीं, लोन जितनी दो रकमों की योजना बनाएँ।",
         "refinance": "नए Lender के पास refinance करें",
         "refinanceDesc": "बेहतर शर्तों पर नए loan की request post करें। जब कोई Lender स्वीकार करता है, पुराना loan चुक जाता है और आपका Collateral अपने आप आगे चला जाता है।",
-        "refinanceCost": "चुकौती की रकम लोन की राशि और बाकी अवधि का ब्याज है, जो किसी उधार देने वाले के स्वीकार करने पर आपके वॉलेट से ली जाती है।",
+        "refinanceCost": "Payoff, loan की रकम और बाक़ी अवधि के ब्याज का जोड़ है। जब कोई lender accept करता है, तो नए loan का पैसा, उसकी initiation fee घटाकर, उसी transaction में payoff का उतना ही हिस्सा cover करता है; बाक़ी आपका wallet cover करता है।",
         "refinanceTransferredUnavailable": "इस position के लिए उपलब्ध नहीं — refinance उसी वॉलेट के पास रहता है जिसने मूल रूप से loan लिया था।"
       },
       "checkingInterlocks": "इस loan से जुड़ी requests जाँची जा रही हैं…",
@@ -914,7 +914,7 @@
     },
     "refinance": {
       "postedButUnconfirmed": "आपका अनुरोध भेज दिया गया, लेकिन हम पुष्टि नहीं कर सके कि वह पूरा हुआ या नहीं। दोबारा कोशिश करने से पहले अपने खुले अनुरोध देखें — अगर वह पहुँच गया था, तो दूसरी बार अनुरोध करने से डुप्लिकेट बन जाएगा। खर्च की स्वीकृति जानबूझकर बनी रहने दी गई है, क्योंकि अनुरोध स्वीकार करने वाले ऋणदाता को भुगतान वसूलने के लिए उसकी ज़रूरत होगी।",
-      "receiptYouMayOwe": "इस loan को pay off करने के लिए ~{{payoff}}, lender accept करे तो automatically pulled।",
+      "receiptYouMayOwe": "इस loan को चुकाने के लिए ~{{payoff}}, जो किसी lender के accept करते ही automatically settle होता है। नए loan का पैसा, उसकी initiation fee घटाकर, इसका ज़्यादातर हिस्सा cover करता है; बाक़ी आपके wallet से आता है।",
       "feesTreasuryNote": "Payoff interest पर protocol का {{cut}} cut payoff के अंदर settle होता है।",
       "whenEndsComposed": "जब lender आपकी request accept करे, जब आप इसे cancel करें, या {{branch}}।",
       "expiresAfterDays": "जब यह posting के {{days}} days बाद expires होता है",
@@ -929,7 +929,7 @@
       "action": "Refinance request review करें",
       "confirm": "Confirm — refinance request post करें",
       "payoffNote": "पुराने लोन की चुकौती हमेशा लोन की राशि और बाकी पूरी अवधि का ब्याज होती है — भले ही इस लोन पर ब्याज सामान्य रूप से दिन-ब-दिन जुड़ता हो। जल्दी बाहर निकलने पर यह बाहर जा रहे उधार देने वाले का तय हक़ है।",
-      "walletNote": "Lender accept करते ही payoff आपके wallet से automatically pulled होता है। New loan का पैसा उसी transaction में आता है, इसलिए request open रहते wallet में लगभग {{topUp}} spare रखें (interest portion plus new loan initiation fee)।",
+      "walletNote": "जब कोई lender accept करता है, तो नए loan का पैसा, उसकी initiation fee घटाकर, उसी transaction में payoff का ज़्यादातर हिस्सा cover करता है, इसलिए request open रहते अपने wallet में लगभग {{topUp}} रखें (ब्याज वाला हिस्सा और नए loan की initiation fee)।",
       "shortIsSafe": "अगर lender accept करते समय आपका wallet short है, acceptance simply fail होगी — कुछ taken नहीं होगा और current loan unchanged रहेगा।",
       "noGuarantee": "रीफ़ाइनेंस अनुरोध इस बात की गारंटी नहीं है कि कोई ऋणदाता इसे स्वीकार करेगा। जब तक कोई स्वीकार नहीं करता, इस ऋण की नियत तिथि और ग्रेस अवधि वही रहती है; अगर समय पर कोई स्वीकार नहीं करता, तो ऋण किसी भी अन्य ऋण की तरह डिफ़ॉल्ट हो सकता है। अनुरोध स्वीकार न होने पर इसे खुद चुकाने के लिए तैयार रहें।",
       "autoMatchOff": "इस डिप्लॉयमेंट पर रीफ़ाइनेंस अनुरोधों की स्वचालित मैचिंग बंद है, इसलिए ऑर्डर मैचर आपका अनुरोध पूरा नहीं करेगा। यह सेटिंग किसी ऋणदाता को इसे सीधे स्वीकार करने से नहीं रोकती।",
@@ -979,7 +979,7 @@
       "repayWarnPending": "इस loan के लिए refinance request अभी भी live है। Repaying loan settle करता है, जिसके बाद request कभी complete नहीं हो सकती — बाद में card से cancel करें (standing payoff approval भी हटेगी); तब तक यह expiry तक बैठी रहती है।",
       "inFallback": "यह loan अपनी fallback अवधि में है, इसलिए इस पर refinance request नहीं डाली जा सकती। इसका अपना page इसके विकल्प बताता है।",
       "permit": {
-        "signDisclosure": "आप ज़्यादा से ज़्यादा {{amount}} का payoff permit sign करेंगे: अगर lender इस request के अनुमत आख़िरी पल पर accept करे तो उतना payoff। Refinance complete करने वाला इसे सिर्फ़ एक बार, सिर्फ़ उस पल इस loan के payoff के लिए इस्तेमाल कर सकता है, इसलिए बाक़ी रकम कभी नहीं ली जाती। Request ख़त्म होते ही यह lapse हो जाता है, और protocol के लिए कुछ भी approved नहीं रहता।",
+        "signDisclosure": "आप ज़्यादा से ज़्यादा {{amount}} का payoff permit sign करेंगे: अगर कोई lender इस request के अनुमत आख़िरी पल पर accept करे, तो payoff में आपके wallet का हिस्सा। नए loan का पैसा, उसकी initiation fee घटाकर, payoff की बाक़ी रकम सीधे आपके मौजूदा lender को चुकाता है। Refinance complete करने वाला इस permit को सिर्फ़ एक बार, सिर्फ़ उस पल आपके हिस्से के लिए इस्तेमाल कर सकता है, इसलिए इसकी बाक़ी रकम कभी नहीं ली जाती। Request ख़त्म होते ही यह lapse हो जाता है, और protocol के लिए कुछ भी approved नहीं रहता।",
         "permit2ApprovalNote": "अगर आपके wallet ने इस token के लिए Permit2 (Uniswap का permit contract) को कम से कम इतनी रकम approve नहीं की है, तो आप पहले उसे approve करते हैं। वह approval अपने आप कुछ नहीं हिलाता: Permit2 सिर्फ़ आपके किए signature के बदले ही pay करता है।",
         "growthDisclosure": "अगर lender loan की due date के बाद accept करता है, तो payoff (late fee और लगातार जुड़ता interest) इस request के लिए लगभग ~{{maxGrowth}} तक और बढ़ जाता है। Permit इसे भी cover करता है, इसलिए देर से accept होने पर यह इस वजह से fail नहीं हो सकता।",
         "multiStepNote": "Posting में wallet के पाँच steps तक लगते हैं: guardrails, ज़रूरत हो तो Permit2 approval, request, payoff permit पर आपका signature, और उसे attach करने वाला transaction। अगर request post होने के बाद आप रुक जाते हैं, तो वह बिना permit के open रहती है और कोई lender उसे complete नहीं कर सकता; request के card से permit sign करें, या request cancel करें।",
@@ -992,11 +992,12 @@
           "spent": "इस request का payoff permit पहले ही इस्तेमाल हो चुका है, इसलिए lender का accept fail होगा। नीचे नया sign करें या request cancel करें।",
           "expired": "इस request का payoff permit expire हो चुका है, इसलिए lender का accept fail होगा। नीचे नया sign करें या request cancel करें।",
           "lapsesEarly": "इस request का payoff permit request से पहले expire हो जाता है, इसलिए बाद का accept fail होगा। नीचे नया sign करें या request cancel करें।",
-          "short": "इस request का payoff permit उससे कम की अनुमति देता है जितना payoff request ख़त्म होने से पहले पहुँच सकता है (due date के बाद accept होने पर late fee और extra interest भी pull होते हैं), इसलिए बाद का accept fail हो सकता है। नीचे नया sign करें या request cancel करें।",
-          "permit2Short": "इस token के लिए Permit2 पर आपके wallet का approval अब payoff cover नहीं करता, इसलिए lender का accept fail होगा। नीचे payoff permit फिर से sign करें; यह पहले उस approval को बढ़ाता है।"
+          "short": "इस request का payoff permit उससे कम की अनुमति देता है जितना request ख़त्म होने से पहले payoff में आपके wallet का हिस्सा पहुँच सकता है (due date के बाद accept होने पर late fee और अतिरिक्त ब्याज भी pull होते हैं, और initiation fee की दर बढ़ने पर यह हिस्सा बढ़ता है), इसलिए बाद का accept fail हो सकता है। नीचे नया permit sign करें या request cancel करें।",
+          "permit2Short": "इस token के लिए Permit2 पर आपके wallet का approval अब payoff में आपके wallet का हिस्सा cover नहीं करता, इसलिए lender का accept fail होगा। नीचे payoff permit फिर से sign करें; यह पहले उस approval को बढ़ाता है।"
         },
         "sign": "Payoff permit sign करें",
         "signed": "Payoff permit attach हो गया — request complete हो सकती है।",
+        "notNeeded": "आपकी refinance request post हो गई है। जब कोई lender इसे accept करेगा, तब आपके wallet को कुछ नहीं देना होगा, इसलिए payoff permit की ज़रूरत नहीं है और request जैसी है वैसी ही complete हो सकती है।",
         "signAborted": "यह request अब completable नहीं है (accepted, cancelled, या loan closed), इसलिए कुछ sign नहीं हुआ। Latest state देखने के लिए refresh करें।",
         "cancelled": "Refinance request cancelled — यह loan unchanged जारी है। इसके payoff permit में यही request दर्ज थी, इसलिए वह कभी इस्तेमाल नहीं हो सकता, और इसके लिए protocol को कुछ भी approved नहीं रहता।",
         "pendingLoanClosed": "यह loan बाद में किसी और तरीके से close हो चुका है, इसलिए request अब complete नहीं हो सकती। इसे हटाने के लिए cancel करें।",
@@ -1226,8 +1227,8 @@
     },
     "keepers": {
       "title": "Keeper अनुमतियाँ",
-      "blurb": "Keepers third-party services (या आपका अपना bot) हैं जिन्हें आप specific loan actions आपके लिए चलाने की अनुमति दे सकते हैं — early close शुरू करना, आपके set up refinance को finish करना, position sale list करना। यहाँ सब off रहता है जब तक आप on न करें, और keeper act करे उससे पहले three switches agree करने चाहिए: master switch, उस keeper पर action, और हर loan page पर per-loan switch।",
-      "safetyNote": "Keeper कभी आपका पैसा receive नहीं कर सकता — payouts हमेशा position holder को जाते हैं। आप कभी भी keeper revoke कर सकते हैं (या master switch off कर सकते हैं), protocol सभी keepers एक साथ pause कर सकता है, और refinances आपके per-loan guardrails से bounded हैं। Position हाथ बदलती है तो ये permissions new holder की settings पर apply होती हैं, आपकी पर नहीं।",
+      "blurb": "Keepers third-party services (या आपका अपना bot) हैं जिन्हें आप specific loan actions आपके लिए चलाने की अनुमति दे सकते हैं — early close शुरू करना, loan extend करना, position sale list करना। यहाँ सब off रहता है जब तक आप on न करें, और keeper act करे उससे पहले three switches agree करने चाहिए: master switch, उस keeper पर action, और हर loan page पर per-loan switch।",
+      "safetyNote": "Keeper कभी आपका पैसा receive नहीं कर सकता — payouts हमेशा position holder को जाते हैं। आप कभी भी keeper revoke कर सकते हैं (या master switch off कर सकते हैं), और protocol सभी keepers एक साथ pause कर सकता है। Position हाथ बदलती है तो ये permissions new holder की settings पर apply होती हैं, आपकी पर नहीं।",
       "masterLabel": "मेरे approved keepers को act करने दें (master switch — यह off है तो कुछ नहीं चलता)",
       "addressPlaceholder": "0x… keeper पता",
       "actions": {
@@ -1235,11 +1236,6 @@
           "label": "मेरे लिए loan early close शुरू करें",
           "side": "आपके borrowed loans पर act करता है",
           "blurb": "उस loan पर any early-close path शुरू करें जहाँ आप borrower हैं। Payoff फिर भी आपके wallet से standing approvals के तहत आता है।"
-        },
-        "refinance": {
-          "label": "मेरे लिए refinance complete करें",
-          "side": "आपके borrowed loans पर act करता है",
-          "blurb": "आपके set up refinance को finish करें, guardrails (rate ceiling, end date) और protocol keeper kill switch से bounded।"
         },
         "completeOffset": {
           "label": "मेरे लिए offset close finish करें",
@@ -2602,6 +2598,7 @@
         "BackstopAbsorbedLoan": "Backstop द्वारा loan absorb हुआ",
         "LoanExtended": "Loan extend हुआ",
         "LoanRefinanced": "Loan refinance हुआ",
+        "RefinancePayoffSettled": "Loan refinance हुआ",
         "LoanPreclosedDirect": "Loan जल्दी close हुआ",
         "LenderFundsClaimed": "Funds claim किए गए",
         "BorrowerFundsClaimed": "Collateral claim किया गया",
@@ -2614,6 +2611,7 @@
         "IntentLoanRolled": "Loan roll over हुआ",
         "CollateralAdded": "Collateral जोड़ा गया",
         "InternalMatchExecuted": "Loan internally match हुआ",
+        "InternalMatchRefusedShortDelivery": "Internal match छोड़ा गया",
         "PrepayListingPosted": "Collateral sale के लिए listed",
         "PrepayListingMatched": "Collateral sale matched",
         "PrepayListingUpdated": "Collateral listing updated",
@@ -3206,7 +3204,7 @@
       "lenderIntentFillsHint": "क्या पंजीकृत ऋण इंटेंट पूरे किए जा सकते हैं। बंद होने पर इंटेंट की पूर्ति रुक जाती है; ऋणदाता अब भी इंटेंट पंजीकृत कर सकते हैं।",
       "minIntentFill": "इंटेंट का सबसे छोटा फ़िल",
       "minIntentFillHint": "किसी स्थायी इंटेंट को दर्ज करते समय उसके सबसे छोटे फ़िल का न्यूनतम मूल्य। उसके दोनों एसेट का मूल्य-निर्धारण भी होना चाहिए। किसी बदलाव से पहले दर्ज इंटेंट अपनी शर्तें तब तक रखता है जब तक उसे फिर से सेट न किया जाए।",
-      "autoRefinanceHint": "बंद होने पर कीपर और ऑर्डर मैचर रीफ़ाइनेंस पूरे नहीं कर सकते। अपने ही ऋण को रीफ़ाइनेंस करने वाला उधारकर्ता, या रीफ़ाइनेंस अनुरोध को सीधे स्वीकार करने वाला ऋणदाता, अब भी आगे बढ़ सकता है।",
+      "autoRefinanceHint": "बंद होने पर ऑर्डर मैचर रीफ़ाइनेंस पूरे नहीं कर सकता। रीफ़ाइनेंस अनुरोध को सीधे स्वीकार करने वाला ऋणदाता अब भी आगे बढ़ सकता है।",
       "autoExtendHint": "बंद होने पर हर इन-प्लेस ऋण विस्तार रुक जाता है, उधारकर्ता द्वारा सीधे माँगा गया विस्तार भी।",
       "numeraireFeed": "संदर्भ मुद्रा में ETH मूल्य फ़ीड",
       "numeraireFeedHint": "वह Chainlink फ़ीड जो संदर्भ मुद्रा में ETH का मूल्य बताती है। यह संदर्भ मुद्रा के साथ ही बदलती है।",
@@ -3558,9 +3556,9 @@
         "attaching": "Permits attach करने वाले transaction को confirm करें…"
       },
       "reviewTitle": "ये refinance requests डालें",
-      "loanPayoff": "Loan #{{id}}: आज चुकाने के लिए ~{{payoff}}, जो lender के इसकी request accept करने पर अपने-आप कट जाएगा।",
+      "loanPayoff": "Loan #{{id}}: आज इसे चुकाने के लिए ~{{payoff}}, जो किसी lender के इसकी request accept करते ही automatically settle होता है। नए loan का पैसा, उसकी initiation fee घटाकर, इसका ज़्यादातर हिस्सा cover करता है; बाक़ी आपके wallet से आता है।",
       "loanGrowth": "अगर कोई lender इस loan की due date के बाद accept करता है, तो request खत्म होने से पहले payoff (late fee और बढ़ता ब्याज) ~{{amount}} तक और बढ़ सकता है।",
-      "loanTopUp": "Lender के accept करते समय आपके wallet में अलग से चाहिए: लगभग {{amount}}। यह payoff का ब्याज और नए loan की initiation fee है; नया principal उसी transaction में आता है।",
+      "loanTopUp": "Lender के accept करते समय आपके wallet में अलग से चाहिए: लगभग {{amount}}। यह payoff का ब्याज और नए loan की initiation fee है; बाक़ी हिस्सा नए loan का पैसा उसी transaction में cover करता है।",
       "leftOut": "Loan #{{id}} बाहर रखा गया: {{reason}}",
       "noneReady": "अभी इनमें से कोई भी loan साथ में refinance request नहीं ले सकता। हर loan खोलकर उसके विकल्प देखें।",
       "totals": "कुल: अगर हर request accept होती है तो wallet में लगभग {{topUp}} अलग से चाहिए। आपके wallet में अभी इतना होना चाहिए, वरना कुछ नहीं भेजा जाएगा।",
@@ -3585,8 +3583,8 @@
       "approvalLeft": "प्रोटोकॉल के लिए आपकी token approval अब {{amount}} है। आपकी खुली refinance requests अपना payoff इसी से लेती हैं, इसलिए इसे घटाने से कोई request पूरी न हो पाए, ऐसा हो सकता है।",
       "terms": "हर अनुरोध {{days}} दिनों के नए ऋण के लिए है, जिसकी वार्षिक दर अधिकतम {{rate}} है।",
       "permit": {
-        "total": "हर request को उसका अपना payoff permit मिलता है, जो उसके सबसे बड़े संभव payoff के लिए sign होता है (कुल मिलाकर {{amount}})। एक permit सिर्फ़ एक बार इस्तेमाल हो सकता है, सिर्फ़ उसी के अपने loan के payoff के लिए, उस पल जब कोई lender accept करता है, और उसकी request ख़त्म होते ही यह lapse हो जाता है, इसलिए protocol के लिए कुछ भी approved नहीं रहता। अगर Permit2 (Uniswap का permit contract) के लिए आपके wallet का approval पहले से यह total cover नहीं करता, तो आप पहले उसे approve करते हैं; आपके किसी signature के बिना वह approval कुछ भी नहीं हिलाता।",
-        "youMayOwe": "ऊपर दिखाया गया हर loan का payoff, जो lender के उसकी request accept करने पर उस request के payoff permit के ज़रिए आपके wallet से एक बार कटता है। उस समय आपके wallet में उस loan की अलग रकम होनी चाहिए।",
+        "total": "हर request को उसका अपना payoff permit मिलता है, जो उसके payoff के उस सबसे बड़े हिस्से के लिए sign होता है जो आपके wallet पर बकाया हो सकता है (कुल मिलाकर {{amount}}); नए loan का पैसा, उसकी initiation fee घटाकर, बाक़ी रकम सीधे पुराने lender को चुकाता है। एक permit सिर्फ़ एक बार इस्तेमाल हो सकता है, सिर्फ़ उसी के अपने loan के payoff के लिए, उस पल जब कोई lender accept करता है, और उसकी request ख़त्म होते ही यह lapse हो जाता है, इसलिए protocol के लिए कुछ भी approved नहीं रहता। अगर Permit2 (Uniswap का permit contract) के लिए आपके wallet का approval पहले से यह total cover नहीं करता, तो आप पहले उसे approve करते हैं; आपके किसी signature के बिना वह approval कुछ भी नहीं हिलाता।",
+        "youMayOwe": "ऊपर दिखाया गया हर loan का payoff, जो किसी lender के उसकी request accept करने पर settle होता है: नए loan का पैसा, उसकी initiation fee घटाकर, इसका ज़्यादातर हिस्सा सीधे पुराने lender को चुकाता है, और बाक़ी रकम उस request के payoff permit के ज़रिए आपके wallet से एक बार pull होती है। उस पल आपके wallet में उस loan की spare रकम होनी चाहिए।",
         "postedNoPermit": "Loan #{{id}}: request offer #{{offerId}} के रूप में डाली गई, लेकिन उसका payoff permit attach नहीं है, इसलिए अभी कोई lender इसे complete नहीं कर सकता। उसे sign करने के लिए loan का page खोलें, या वहीं request cancel करें।",
         "postedPermitPending": "Loan #{{id}}: request offer #{{offerId}} के रूप में डाली गई। उसका payoff permit भेजा गया है लेकिन अभी confirm नहीं हुआ, इसलिए अभी पता नहीं कि कोई lender इस request को complete कर सकता है या नहीं। स्थिति देखने के लिए loan का page खोलें।"
       }

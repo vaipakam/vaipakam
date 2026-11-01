@@ -40,6 +40,7 @@ import { useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamon
 import { ensureAllowance, trackApproval, useTokenMeta } from '../contracts/erc20';
 import {
   ensurePermit2Approval,
+  permitNeeded,
   setPayoffPermitCall,
   signRefinancePayoffPermit,
   type SignedPayoffPermit,
@@ -256,8 +257,15 @@ export function BatchRefinancePanel({
       plansById: Map<number, ReadyPlan>,
     ): Promise<void> {
       if (!ctx || !walletClient || !walletChain || !address) return;
+      // #3042 — a request whose wallet share is zero needs no permit (and
+      // the contract refuses one for zero): it stays plainly `posted`.
+      const needsPermit = (o: RefinanceBatchOutcome): boolean => {
+        const p = plansById.get(o.loanId);
+        return p === undefined || permitNeeded(p.bound);
+      };
       const posted = all.filter(
-        (o): o is Extract<RefinanceBatchOutcome, { kind: 'posted' }> => o.kind === 'posted',
+        (o): o is Extract<RefinanceBatchOutcome, { kind: 'posted' }> =>
+          o.kind === 'posted' && needsPermit(o),
       );
       if (posted.length === 0) return;
       setStage({ kind: 'sending', step: 'signing' });
@@ -311,7 +319,7 @@ export function BatchRefinancePanel({
         }
       }
       for (const [i, o] of all.entries()) {
-        if (o.kind !== 'posted' || attached.has(o.offerId)) continue;
+        if (o.kind !== 'posted' || !needsPermit(o) || attached.has(o.offerId)) continue;
         all[i] = unsure.has(o.offerId)
           ? { loanId: o.loanId, kind: 'postedPermitPending', offerId: o.offerId }
           : { loanId: o.loanId, kind: 'postedNoPermit', offerId: o.offerId };

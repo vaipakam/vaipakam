@@ -49,6 +49,16 @@
         "internalType": "uint256"
       },
       {
+        "name": "walletShareNow",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "walletShareBy",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "signer",
         "type": "address",
         "internalType": "address"

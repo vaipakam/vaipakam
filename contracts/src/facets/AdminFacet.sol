@@ -676,18 +676,14 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
         emit AutoLendEnabledSet(enabled);
     }
 
-    /// @notice Toggle the AUTOMATED refinance completion routes. When
-    ///         `false`, two routes revert `AutoRefinanceDisabled`:
-    ///           - a keeper holding the borrower's refinance delegation
-    ///             calling `RefinanceFacet.refinanceLoan`, and
-    ///           - the range-order matcher filling a refinance-tagged
-    ///             borrower offer (refused at admission, backstopped at
-    ///             execution).
-    ///         Two routes are never blocked by it (#2349): the
-    ///         borrower-NFT holder calling `refinanceLoan` themselves, and
-    ///         a lender directly accepting the holder's refinance-tagged
-    ///         offer — neither involves a keeper or the matcher. Defaults
-    ///         `false` on a fresh deployment.
+    /// @notice Toggle the AUTOMATED refinance completion route. When
+    ///         `false`, the range-order matcher filling a refinance-tagged
+    ///         borrower offer reverts `AutoRefinanceDisabled` (refused at
+    ///         admission, backstopped at execution). A lender directly
+    ///         accepting the holder's refinance-tagged offer is never
+    ///         blocked by it (#2349) — no matcher is involved. (#3042
+    ///         retired the after-the-fact completion a delegated keeper
+    ///         could also drive.) Defaults `false` on a fresh deployment.
     function setAutoRefinanceEnabled(bool enabled)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
@@ -944,7 +940,7 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     //
     // Pausing an asset blocks every CREATION path that would add new
     // exposure through it (createOffer, acceptOffer, addCollateral,
-    // refinanceLoan, offsetWithNewOffer), while leaving every EXIT path
+    // a refinance accept, offsetWithNewOffer), while leaving every EXIT path
     // (repay, triggerLiquidation, triggerDefault, claim, withdraw,
     // stake) fully callable. Use this when an asset must be quietly
     // wound down without freezing users who already hold positions in

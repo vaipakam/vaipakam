@@ -1404,7 +1404,7 @@ const copySource = {
     // #2421 — a borrow request tagged with a running loan: accepting it is
     // also the payoff and close of that loan, in the same transaction.
     refinanceRequestBanner: tmpl(
-      `This is a refinance request for loan #{{loanId}}. Accepting it opens your loan and, in the same transaction, pays off and closes loan #{{loanId}}. As with any loan, the amount you lend, less the borrower’s loan-initiation fee, goes to the borrower’s wallet. The payoff to that loan’s current lender is then drawn from the borrower’s wallet, so your loan can fund part or all of it, with the borrower covering any difference. What you are owed is set by your new loan’s terms and collateral.`,
+      `This is a refinance request for loan #{{loanId}}. Accepting it opens your loan and, in the same transaction, pays off and closes loan #{{loanId}}. The amount you lend, less the borrower’s loan-initiation fee, funds that loan’s payoff to its current lender, and the borrower’s wallet pays the rest. What you are owed is set by your new loan’s terms and collateral.`,
       ['loanId'],
     ),
     refinanceRequestChecking:
@@ -1764,7 +1764,7 @@ const copySource = {
       ['days', 'rate'],
     ),
     loanPayoff: tmpl(
-      'Loan #{{id}}: ~{{payoff}} to pay it off today, pulled automatically when a lender accepts its request.',
+      'Loan #{{id}}: ~{{payoff}} to pay it off today, settled automatically when a lender accepts its request. The new loan’s money, less its initiation fee, covers most of it; the rest comes from your wallet.',
       ['id', 'payoff'],
     ),
     loanGrowth: tmpl(
@@ -1772,7 +1772,7 @@ const copySource = {
       ['amount'],
     ),
     loanTopUp: tmpl(
-      'Spare in your wallet when a lender accepts: about {{amount}}. That is the payoff’s interest and the new loan’s initiation fee; the new principal arrives in the same transaction.',
+      'Spare in your wallet when a lender accepts: about {{amount}}. That is the payoff’s interest and the new loan’s initiation fee; the new loan’s money covers the rest in the same transaction.',
       ['amount'],
     ),
     leftOut: tmpl('Loan #{{id}} is left out: {{reason}}', ['id', 'reason']),
@@ -1831,11 +1831,11 @@ const copySource = {
     // request's single-use payoff permit.
     permit: {
       total: tmpl(
-        'Each request gets its own payoff permit, signed for its largest possible payoff ({{amount}} together). A permit can be used once, only for its own loan’s payoff at the moment a lender accepts, and lapses when its request ends, so nothing stays approved to the protocol. If your wallet’s approval of Permit2 (Uniswap’s permit contract) doesn’t already cover that total, you approve it first; that approval moves nothing without one of your signatures.',
+        'Each request gets its own payoff permit, signed for the largest share of its payoff your wallet can owe ({{amount}} together); the new loan’s money, less its initiation fee, pays the rest straight to the old lender. A permit can be used once, only for its own loan’s payoff at the moment a lender accepts, and lapses when its request ends, so nothing stays approved to the protocol. If your wallet’s approval of Permit2 (Uniswap’s permit contract) doesn’t already cover that total, you approve it first; that approval moves nothing without one of your signatures.',
         ['amount'],
       ),
       youMayOwe:
-        'Each loan’s payoff shown above, pulled from your wallet once, through that request’s payoff permit, when a lender accepts it. Your wallet must hold that loan’s spare amount at that moment.',
+        'Each loan’s payoff shown above, settled when a lender accepts its request: the new loan’s money, less its initiation fee, pays most of it straight to the old lender, and the rest is pulled from your wallet once, through that request’s payoff permit. Your wallet must hold that loan’s spare amount at that moment.',
       postedNoPermit: tmpl(
         'Loan #{{id}}: request posted as offer #{{offerId}}, but its payoff permit isn’t attached, so no lender can complete it yet. Open the loan’s page to sign it, or cancel the request there.',
         ['id', 'offerId'],
@@ -1919,7 +1919,7 @@ const copySource = {
       refinanceDesc:
         'Post a request for a new loan on better terms. When a lender accepts, the old loan is paid off and your collateral moves over automatically.',
       refinanceCost:
-        'The payoff is the loan amount plus the remaining term’s interest, pulled from your wallet when a lender accepts.',
+        'The payoff is the loan amount plus the remaining term’s interest. When a lender accepts, the new loan’s money, less its initiation fee, covers that much of it in the same transaction; your wallet covers the rest.',
       refinanceTransferredUnavailable:
         'Not available for this position — refinancing stays with the wallet that originally took the loan.',
     },
@@ -2099,7 +2099,7 @@ const copySource = {
     // refs (payoffNote, walletNote, guardrailNote, …) stay composed at
     // the call site.
     receiptYouMayOwe: tmpl(
-      '~{{payoff}} to pay off this loan, pulled automatically when a lender accepts.',
+      '~{{payoff}} to pay off this loan, settled automatically when a lender accepts. The new loan’s money, less its initiation fee, covers most of it; the rest comes from your wallet.',
       ['payoff'],
     ),
     feesTreasuryNote: tmpl(
@@ -2130,7 +2130,7 @@ const copySource = {
     payoffNote:
       'The old loan’s payoff is always the loan amount plus the full remaining term’s interest — even if interest on the loan normally builds up day by day. That is the exiting lender’s fixed entitlement on an early exit.',
     walletNote: tmpl(
-      `The payoff is pulled from your wallet automatically at the moment a lender accepts. The new loan’s money arrives in the same transaction, so keep about {{topUp}} spare in your wallet (the interest portion plus the new loan’s initiation fee) while the request is open.`,
+      `When a lender accepts, the new loan’s money, less its initiation fee, covers most of the payoff in the same transaction, so keep about {{topUp}} in your wallet (the interest portion plus the new loan’s initiation fee) while the request is open.`,
       ['topUp'],
     ),
     shortIsSafe:
@@ -2281,7 +2281,7 @@ const copySource = {
     // wording above serves a Diamond deployed before it (#3074).
     permit: {
       signDisclosure: tmpl(
-        'You’ll sign a payoff permit for at most {{amount}}: the payoff if a lender accepts at the last moment this request allows. Whoever completes the refinance can use it once, only for this loan’s payoff at that moment, so the rest is never taken. It lapses when the request ends, and nothing stays approved to the protocol.',
+        'You’ll sign a payoff permit for at most {{amount}}: your wallet’s share of the payoff if a lender accepts at the last moment this request allows. The new loan’s money, less its initiation fee, pays the rest of the payoff straight to your current lender. Whoever completes the refinance can use the permit once, only for your share at that moment, so the rest of it is never taken. It lapses when the request ends, and nothing stays approved to the protocol.',
         ['amount'],
       ),
       permit2ApprovalNote:
@@ -2310,9 +2310,9 @@ const copySource = {
         lapsesEarly:
           'This request’s payoff permit expires before the request does, so a later acceptance would fail. Sign a new one below or cancel the request.',
         short:
-          'This request’s payoff permit allows less than the payoff can reach before the request ends (an acceptance after the due date also pulls the late fee and extra interest), so a later acceptance could fail. Sign a new one below or cancel the request.',
+          'This request’s payoff permit allows less than your wallet’s share of the payoff can reach before the request ends (an acceptance after the due date also pulls the late fee and extra interest, and a raised initiation-fee rate raises the share), so a later acceptance could fail. Sign a new one below or cancel the request.',
         permit2Short:
-          'Your wallet’s approval of Permit2 for this token no longer covers the payoff, so a lender’s acceptance would fail. Sign the payoff permit again below; it raises that approval first.',
+          'Your wallet’s approval of Permit2 for this token no longer covers your wallet’s share of the payoff, so a lender’s acceptance would fail. Sign the payoff permit again below; it raises that approval first.',
       },
       sign: 'Sign the payoff permit',
       attaching:
@@ -2322,6 +2322,10 @@ const copySource = {
         ['reason'],
       ),
       signed: 'Payoff permit attached — the request can complete.',
+      // #3042 — the wallet's share of the payoff is zero (nothing to pay
+      // beyond what the new loan's money covers), so no permit is asked for.
+      notNeeded:
+        'Your refinance request is posted. Your wallet owes nothing when a lender accepts it, so no payoff permit is needed and the request can complete as it is.',
       attachUnconfirmed:
         'Your refinance request is posted and its payoff permit was sent, but whether the permit attached isn’t confirmed yet. The request’s card shows the permit once the chain does; sign again only if the card still says it is missing.',
       signAborted:
@@ -2948,9 +2952,9 @@ const copySource = {
   keepers: {
     title: 'Keeper permissions',
     blurb:
-      'Keepers are third-party services (or your own bot) you can allow to run specific loan actions FOR you — start an early close, finish a refinance you set up, list a position for sale. Everything here is off until you turn it on, and three switches must all agree before a keeper can act: the master switch, the action on that keeper, and a per-loan switch on each loan’s page.',
+      'Keepers are third-party services (or your own bot) you can allow to run specific loan actions FOR you — start an early close, extend a loan, list a position for sale. Everything here is off until you turn it on, and three switches must all agree before a keeper can act: the master switch, the action on that keeper, and a per-loan switch on each loan’s page.',
     safetyNote:
-      'A keeper can never receive your money — payouts always go to whoever holds the position. You can revoke any keeper (or flip the master switch off) at any time, the protocol can pause all keepers at once, and refinances are additionally bounded by the guardrails you set per loan. If a position changes hands, these permissions apply to the new holder’s settings, not yours.',
+      'A keeper can never receive your money — payouts always go to whoever holds the position. You can revoke any keeper (or flip the master switch off) at any time, and the protocol can pause all keepers at once. If a position changes hands, these permissions apply to the new holder’s settings, not yours.',
     masterLabel:
       'Allow my approved keepers to act (master switch — nothing runs while this is off)',
     addressPlaceholder: '0x… keeper address',
@@ -2962,12 +2966,6 @@ const copySource = {
         side: 'acts on loans you borrowed',
         blurb:
           'Begin any early-close path on a loan where you are the borrower. The payoff still comes from your wallet under your standing approvals.',
-      },
-      refinance: {
-        label: 'Complete a refinance for me',
-        side: 'acts on loans you borrowed',
-        blurb:
-          'Finish a refinance you set up, bounded by the guardrails (rate ceiling, end date) you approved — and the protocol’s own keeper kill switch.',
       },
       completeOffset: {
         label: 'Finish an offset close for me',
@@ -6092,6 +6090,7 @@ const copySource = {
       BackstopAbsorbedLoan: 'Loan absorbed by backstop',
       LoanExtended: 'Loan extended',
       LoanRefinanced: 'Loan refinanced',
+      RefinancePayoffSettled: 'Loan refinanced',
       LoanPreclosedDirect: 'Loan closed early',
       LenderFundsClaimed: 'Funds claimed',
       BorrowerFundsClaimed: 'Collateral claimed',
@@ -6104,6 +6103,7 @@ const copySource = {
       IntentLoanRolled: 'Loan rolled over',
       CollateralAdded: 'Collateral added',
       InternalMatchExecuted: 'Loan matched internally',
+      InternalMatchRefusedShortDelivery: 'Internal match skipped',
       PrepayListingPosted: 'Collateral listed for sale',
       PrepayListingMatched: 'Collateral sale matched',
       PrepayListingUpdated: 'Collateral listing updated',
@@ -7302,7 +7302,7 @@ const copySource = {
       'The least a standing intent’s smallest fill must be worth when it is registered. Both of its assets must also be priced. An intent registered before a change keeps its terms until it is set again.',
     autoRefinance: 'Auto-refinance',
     autoRefinanceHint:
-      'Off stops keepers and the order matcher from completing refinances. A borrower refinancing their own loan, or a lender accepting a refinance request directly, still goes through.',
+      'Off stops the order matcher from completing refinances. A lender accepting a refinance request directly still goes through.',
     autoExtend: 'Auto-extend',
     autoExtendHint: 'Off blocks every in-place loan extension, including one the borrower asks for directly.',
     keepers: 'Keepers',

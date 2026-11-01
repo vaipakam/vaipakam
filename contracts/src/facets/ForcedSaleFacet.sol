@@ -274,9 +274,9 @@ contract ForcedSaleFacet is IVaipakamErrors {
 
     /**
      * @notice The discounted liquidation of `loanId` as it would run now
-     *         ({RiskFacet.triggerLiquidationDiscounted}): whether it can, and
-     *         if so the debt the liquidator pays and the collateral it
-     *         receives (#2697).
+     *         ({RiskDiscountedLiquidationFacet.triggerLiquidationDiscounted}):
+     *         whether it can, and if so the debt the liquidator pays and the
+     *         collateral it receives (#2697).
      * @dev    Not a sale through this host: on the discount path the
      *         liquidator buys the collateral with its own funds. It is
      *         previewed here, beside {previewForcedSale}, so a keeper reads

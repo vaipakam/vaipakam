@@ -74,7 +74,8 @@ import {RefinancePayoffPermitHelper} from "../../test/helpers/RefinancePayoffPer
  *             4  PF-160         10 PF-092        15 PF-095      N10+N14 PF-250
  *             5  PF-045         11 PF-093        N1 PF-053      N11 PF-008
  *             6  PF-046         12 PF-140        N3 PF-114      N12 PF-300
- *             N4  PF-214        N5  PF-211       N6 PF-212      N15 PF-230
+ *             N4  (retired #3042: standalone refinance)
+ *             N5  PF-211       N6 PF-212      N15 PF-230
  *             N18 PF-323        N19 PF-322       N20 PF-329     N22 PF-324
  *             N25 PF-230-floor  N26 PF-231
  *
@@ -581,8 +582,9 @@ abstract contract PositiveFlowsBase is Script {
 
     /// @dev #1558 — a refinance pays the old loan off through the payoff
     ///      permit its request carries, never a standing allowance. `key`
-    ///      (the request's creator) approves Permit2 for exactly the payoff
-    ///      `loanId` can reach by the permit's deadline, signs an
+    ///      (the request's creator) approves Permit2 for exactly the wallet's
+    ///      share of the payoff `loanId` can reach by the permit's deadline
+    ///      (#3042: the new lender's net principal pays the rest), signs an
     ///      exact-amount, single-use permit bound to `loanId` through request
     ///      `offerId`, and attaches it. Returns false, attaching nothing, on a
     ///      chain with no Permit2 (a bare Anvil node; `anvil-bootstrap.sh`
@@ -590,7 +592,7 @@ abstract contract PositiveFlowsBase is Script {
     function _attachPayoffPermit(uint256 key, uint256 loanId, uint256 offerId) internal returns (bool) {
         if (LibPermit2.PERMIT2.code.length == 0) return false;
         uint256 deadline = block.timestamp + 1 days;
-        (address asset,, uint256 maxAmount,,,,,) =
+        (address asset,,,, uint256 maxAmount,,,,,) =
             RefinancePayoffFacet(diamond).getRefinancePayoff(loanId, offerId, deadline);
         uint256 nonce = uint256(keccak256(abi.encode("refinance payoff", loanId, offerId, block.timestamp)));
         bytes memory sig =

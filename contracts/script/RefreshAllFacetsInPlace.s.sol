@@ -78,6 +78,7 @@ import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
+import {RiskDiscountedLiquidationFacet} from "../src/facets/RiskDiscountedLiquidationFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
@@ -274,7 +275,12 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // 104 -> 105: RefinancePayoffFacet (#1558) - the borrower's payoff permit
     // on a refinance request, its removal and the view that sizes it; its
     // selectors are new, so they are cut as Adds.
-    uint256 public constant EXPECTED_FACETS = 105;
+    // 105 -> 106: RiskDiscountedLiquidationFacet - the discounted liquidation
+    // route, moved whole off RiskFacet for EIP-170 headroom. Its one selector
+    // is already routed (to RiskFacet), so it is cut as a Replace pointing
+    // here. Until that batch lands the selector stays on the previous
+    // RiskFacet build, which still carries the route unchanged.
+    uint256 public constant EXPECTED_FACETS = 106;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1305,6 +1311,12 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[102] = Item("saleExitVerdictFacet", ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name), _getSaleExitVerdictSelectors());
         items[103] = Item("sellerClaimFacet", ArtifactDeploy.deploy(type(SellerClaimFacet).name), _getSellerClaimSelectors());
         items[104] = Item("refinancePayoffFacet", ArtifactDeploy.deploy(type(RefinancePayoffFacet).name), _getRefinancePayoffSelectors());
+        // The discounted liquidation route, moved off RiskFacet (EIP-170).
+        items[105] = Item(
+            "riskDiscountedLiquidationFacet",
+            ArtifactDeploy.deploy(type(RiskDiscountedLiquidationFacet).name),
+            _getRiskDiscountedLiquidationSelectors()
+        );
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

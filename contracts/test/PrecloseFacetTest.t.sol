@@ -3402,7 +3402,7 @@ contract PrecloseFacetTest is Test {
         }
     }
 
-    /// @dev Keeper with only REFINANCE (wrong action bit) is rejected at
+    /// @dev Keeper with only EXTEND (wrong action bit) is rejected at
     ///      precloseDirect — demonstrates per-action isolation. Also
     ///      validates the new canonical requireKeeperFor gate treats
     ///      action mismatch as KeeperAccessRequired (not a generic auth
@@ -3414,7 +3414,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(borrower);
         ProfileFacet(address(diamond)).approveKeeper(
             keeper,
-            LibVaipakam.KEEPER_ACTION_REFINANCE
+            LibVaipakam.KEEPER_ACTION_EXTEND
         );
         vm.prank(borrower);
         ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);

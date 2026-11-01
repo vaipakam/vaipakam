@@ -163,6 +163,8 @@ export type PermitAttachProgress =
   | { offerId: string; phase: 'signing' }
   | { offerId: string; phase: 'attached'; posted: boolean }
   | { offerId: string; phase: 'unknown' }
+  // #3042 — the wallet's share is zero, so no permit was needed or asked for.
+  | { offerId: string; phase: 'notNeeded' }
   | { offerId: string; phase: 'failed'; reason: string };
 
 export function useRefinancePending(
@@ -313,6 +315,7 @@ export function useRefinancePending(
             refinanceTargetLoanId: bigint;
             createdAt: bigint;
             expiresAt: bigint;
+            amount: bigint;
           }>,
           readLoanLive(readClient!, diamond, loanId),
           readLiveProtocolFees(readClient!, diamond),
@@ -384,6 +387,11 @@ export function useRefinancePending(
           expiresAt: offer.expiresAt,
           graceSeconds: graceSec,
           route,
+          // #3042 — the request's OWN amount, less its initiation fee at
+          // the LIVE rate, is the net principal the wallet's share is
+          // measured against (the approval route's spare balance).
+          requestAmount: offer.amount,
+          loanInitiationFeeBps: fees.loanInitiationFeeBps,
         }),
         // The approval the payoff is pulled through: of Permit2 on the
         // permit route, of the Diamond on the approval route.
@@ -396,11 +404,7 @@ export function useRefinancePending(
             }) as Promise<bigint>)
           : Promise.resolve(0n),
       ]);
-      const { payoff, bound, lastFillable } = quote;
-      const topUp =
-        payoff -
-        live.principal +
-        (live.principal * BigInt(fees.loanInitiationFeeBps)) / 10_000n;
+      const { payoff, bound, lastFillable, topUp } = quote;
       // Strictly past grace the contract's admission gate rejects any
       // accept — the request behaves like an expired one from here.
       const pastGrace =

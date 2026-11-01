@@ -3,21 +3,23 @@
  * signs and attaches it, shared by the loan page's refinance form, the
  * pending request card and the "Refinance all" batch.
  *
- * A refinance pays off the old loan from the borrower's wallet in a
- * transaction the borrower does not send (the new lender's accept, the
- * matcher's fill, a keeper's or the borrower's own completion). The
- * borrower authorises that payment with a single-use Permit2 permit,
- * signed for an exact maximum and bound to THIS loan through THIS request
- * (the `RefinancePayoff(loanId, offerId)` witness), and attached to the
- * request on chain. Whoever completes the refinance uses it once, for the
- * payoff at that moment; Permit2 burns its nonce, and an unused permit
+ * A refinance completes in a transaction the borrower does not send (the
+ * new lender's accept or the matcher's fill). Since #3042 the new loan's
+ * net principal (its principal less the initiation fee) pays the old
+ * lender directly, and the borrower's wallet pays only the rest of the
+ * payoff: the old loan's interest (and any late fee) plus the new loan's
+ * initiation fee. The borrower authorises that share with a single-use
+ * Permit2 permit, signed for an exact maximum and bound to THIS loan
+ * through THIS request (the `RefinancePayoff(loanId, offerId)` witness),
+ * and attached to the request on chain. The acceptance uses it once, for
+ * the share at that moment; Permit2 burns its nonce, and an unused permit
  * lapses at its deadline. The Diamond never holds an allowance for the
  * payoff.
  *
  * The figures come from the contract (`getRefinancePayoff`), never from
  * an app-side mirror of the interest and late-fee rules: the permit's
- * maximum is what the contract says the payoff can reach by the end of
- * the grace window, so a rounding difference can never leave a permit a
+ * maximum is what the contract says the wallet's share can reach by the
+ * permit's deadline, so a rounding difference can never leave a permit a
  * wei short of what the refinance pulls.
  *
  * What the wallet still needs is the one-time ERC-20 approval of Permit2
@@ -28,6 +30,8 @@
  * BRIDGE until the all-waves fresh deploy (owner decision 2026-10-29,
  * "merge now"): a Diamond deployed before #1558 has no permit entry and
  * still pays the payoff from a standing ERC-20 approval of the Diamond.
+ * Such a Diamond also predates #3042, so on that route the new principal
+ * reaches the wallet first and the approval covers the WHOLE payoff.
  * `readPayoffRoute` tells the two apart from the Diamond's own routing,
  * and every refinance surface takes the route it answers. The approval
  * route, and the app-side payoff mirror it sizes with, are removed once
@@ -41,6 +45,7 @@ import {
   loanEndTimeOf,
   refinanceApprovalOf,
   refinancePayoffOf,
+  refinanceWalletPullOf,
   type LoanLive,
 } from './loanLive';
 import { PERMIT2_ADDRESS, randomNonce } from './usePermit2Signing';
@@ -86,9 +91,14 @@ export interface RefinancePayoff {
    *  Active ERC-20 loan). */
   payoffNow: bigint;
   /** The payoff at `by` (read as no earlier than now and no later than the
-   *  old loan's grace end): the most it can reach by then, and what a
-   *  permit with that deadline is signed for. */
+   *  old loan's grace end): the most it can reach by then. */
   payoffBy: bigint;
+  /** #3042 — the most the wallet pays if the request is accepted now: the
+   *  payoff less the request's amount net of the initiation fee at the live
+   *  rate (for `offerId` 0, a request for the outstanding principal). */
+  walletShareNow: bigint;
+  /** The same at `by`: what a permit with that deadline is signed for. */
+  walletShareBy: bigint;
   /** The attached permit, if any (signer is the zero address when none). */
   signer: `0x${string}`;
   maxAmount: bigint;
@@ -117,6 +127,8 @@ export async function readRefinancePayoff(
     `0x${string}`,
     bigint,
     bigint,
+    bigint,
+    bigint,
     `0x${string}`,
     bigint,
     bigint,
@@ -127,29 +139,41 @@ export async function readRefinancePayoff(
     asset: r[0],
     payoffNow: r[1],
     payoffBy: r[2],
-    signer: r[3],
-    maxAmount: r[4],
-    nonce: r[5],
-    deadline: r[6],
-    nonceSpent: r[7],
+    walletShareNow: r[3],
+    walletShareBy: r[4],
+    signer: r[5],
+    maxAmount: r[6],
+    nonce: r[7],
+    deadline: r[8],
+    nonceSpent: r[9],
   };
 }
 
 /**
- * Today's payoff and the most a request's acceptance can pull, on either
- * route. On the permit route both come from the contract; on a Diamond
- * deployed before #1558 they come from the app-side mirror that sized the
- * standing approval (it over-covers a pro-rata loan, never under-covers).
+ * Today's payoff, what the wallet pays, and the most a request's
+ * acceptance can pull from the wallet, on either route. On the permit
+ * route they come from the contract; on a Diamond deployed before #1558
+ * they come from the app-side mirror that sized the standing approval (it
+ * over-covers a pro-rata loan, never under-covers).
  * `expiresAt` is the request's own expiry (posted, or the one about to be
  * posted); `graceSeconds` the loan's grace window.
  */
 export interface PayoffQuote {
   route: PayoffRoute;
-  /** What an acceptance in this block pulls. */
+  /** The whole payoff of an acceptance in this block. */
   payoff: bigint;
-  /** What an acceptance at `lastFillable` pulls: the most it can be. On
-   *  the permit route the permit is signed for exactly this; on the
-   *  approval route it is the approval's size. */
+  /** What the wallet must hold SPARE for an acceptance in this block: the
+   *  payoff less the new loan's net principal. On the permit route that
+   *  is exactly what is pulled (#3042); on the approval route the whole
+   *  payoff is pulled and the net principal arrives first. */
+  topUp: bigint;
+  /** How much the payoff can still grow before `lastFillable` (late fee
+   *  plus interest that keeps building up). */
+  growth: bigint;
+  /** What an acceptance at `lastFillable` pulls from the wallet: the most
+   *  it can be. On the permit route the permit is signed for exactly this
+   *  (the wallet's share); on the approval route it is the approval's size
+   *  (the whole payoff). */
   bound: bigint;
   /** The request's last fillable moment, which is the permit's deadline. */
   lastFillable: bigint;
@@ -169,18 +193,34 @@ export async function readPayoffQuote(a: {
   graceSeconds: bigint;
   /** The route, when the caller has already read it. */
   route?: PayoffRoute;
+  /** The request's amount and the live initiation-fee rate. Required on
+   *  the approval route, where they size the wallet's spare balance; the
+   *  permit route reads the contract's own figure. */
+  requestAmount?: bigint;
+  loanInitiationFeeBps?: number;
 }): Promise<PayoffQuote> {
   const route = a.route ?? (await readPayoffRoute(a.publicClient, a.diamond));
   const graceEnd = loanEndTimeOf(a.live, a.chainNow) + a.graceSeconds;
   const lastFillable = lastFillableMoment(a.expiresAt, graceEnd);
   if (route === 'approval') {
+    if (a.requestAmount === undefined || a.loanInitiationFeeBps === undefined) {
+      throw new Error('readPayoffQuote: the approval route needs the request amount and fee rate');
+    }
+    const payoff = refinancePayoffOf(a.live, a.chainNow);
+    const bound = refinanceApprovalOf(a.live, {
+      expiresAt: a.expiresAt,
+      graceSeconds: a.graceSeconds,
+    });
     return {
       route,
-      payoff: refinancePayoffOf(a.live, a.chainNow),
-      bound: refinanceApprovalOf(a.live, {
-        expiresAt: a.expiresAt,
-        graceSeconds: a.graceSeconds,
-      }),
+      payoff,
+      topUp: refinanceWalletPullOf(
+        a.live,
+        { requestAmount: a.requestAmount, loanInitiationFeeBps: a.loanInitiationFeeBps },
+        a.chainNow,
+      ),
+      growth: bound > payoff ? bound - payoff : 0n,
+      bound,
       lastFillable,
       permit: null,
     };
@@ -189,19 +229,33 @@ export async function readPayoffQuote(a: {
   return {
     route,
     payoff: p.payoffNow,
-    bound: p.payoffBy,
+    topUp: p.walletShareNow,
+    growth: p.payoffBy > p.payoffNow ? p.payoffBy - p.payoffNow : 0n,
+    bound: p.walletShareBy,
     lastFillable,
     permit: a.offerId > 0n ? p : null,
   };
 }
 
+/** Whether a refinance request needs a payoff permit at all: only when
+ *  the wallet's share can be above zero (#3042). A share of zero — no
+ *  interest, late fee or initiation fee to cover, as with a zero-rate loan
+ *  and a zero fee rate or dust-sized amounts — takes nothing from the
+ *  wallet, so the settlement consults no permit (`LibRefinancePayoff.pull`
+ *  only clears one), and the contract refuses to store a permit for zero.
+ *  The ONE rule every signing, attach and verdict path below reads. */
+export function permitNeeded(bound: bigint): boolean {
+  return bound > 0n;
+}
+
 /** Why the permit attached to a request cannot pay every acceptance the
- *  request still allows, or null when it can:
+ *  request still allows, or null when it can (or needs none,
+ *  `permitNeeded`):
  *  - `missing`: none attached, or attached by another wallet;
  *  - `spent`: Permit2 has already used its nonce;
  *  - `expired`: its deadline has passed;
  *  - `lapsesEarly`: it expires before the request's last fillable moment;
- *  - `short`: it allows less than the payoff can reach by then.
+ *  - `short`: it allows less than the wallet's share can reach by then.
  *  `chainNow` is the latest block's time. */
 export type PermitProblem = 'missing' | 'spent' | 'expired' | 'lapsesEarly' | 'short';
 
@@ -212,6 +266,7 @@ export function permitProblem(
   lastFillable: bigint,
   bound: bigint,
 ): PermitProblem | null {
+  if (!permitNeeded(bound)) return null;
   if (p.signer.toLowerCase() === zeroAddress || p.signer.toLowerCase() !== holder.toLowerCase()) {
     return 'missing';
   }
@@ -339,8 +394,10 @@ export function setPayoffPermitCall(
  * it mined, and `'unknown'` when the transaction was sent but neither
  * confirmed nor refused (a receipt wait that timed out): it may still
  * attach, so a caller must not report the permit as missing then.
+ * Resolves `'notNeeded'`, touching nothing, when `maxAmount` is zero
+ * (`permitNeeded`).
  */
-export type PermitAttachOutcome = 'attached' | 'unknown';
+export type PermitAttachOutcome = 'attached' | 'unknown' | 'notNeeded';
 
 export async function attachRefinancePayoffPermit(a: {
   publicClient: PublicClient;
@@ -360,6 +417,9 @@ export async function attachRefinancePayoffPermit(a: {
   offerId: bigint;
   onPrompt?: () => void;
 }): Promise<PermitAttachOutcome> {
+  // A zero share needs no permit, and the contract would refuse one for
+  // zero: nothing is approved, signed or sent.
+  if (!permitNeeded(a.maxAmount)) return 'notNeeded';
   await ensurePermit2Approval(a);
   a.onPrompt?.();
   const signed = await signRefinancePayoffPermit(a);
@@ -398,6 +458,8 @@ export async function ensurePermit2Approval(a: {
   maxAmount: bigint;
   onPrompt?: () => void;
 }): Promise<void> {
+  // Nothing to cover: no approval is asked for (`permitNeeded`).
+  if (!permitNeeded(a.maxAmount)) return;
   // One record the callbacks fill, read once the raise has stopped.
   const seen: {
     previous: bigint | null;
