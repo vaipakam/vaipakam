@@ -1,6 +1,6 @@
 # Release Notes — 2026-10-31
 
-A borrower's refinance now pays the old lender through a single-use permit signed for that one request, instead of a standing token approval to the protocol. The permit is spent once when a lender accepts, and an unused one simply expires with the request, so nothing is left approved. The change reaches the testnets only with the all-waves fresh deploy.
+A borrower's refinance now pays the old lender through a single-use permit signed for that one request, instead of a standing token approval to the protocol. The permit is spent once when the refinance completes, and an unused one simply expires with the request, so nothing is left approved. The change reaches the testnets only with the all-waves fresh deploy.
 
 ## Refinance payoff by single-use permit (PR #3075)
 
