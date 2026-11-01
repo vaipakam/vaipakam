@@ -1,4 +1,4 @@
-## Treasury yield retired (PR #TBD)
+## Treasury yield retired (PR #3081)
 
 The Diamond no longer deploys treasury balances into external yield venues.
 The "productive treasury reserve" let governance supply idle treasury tokens
