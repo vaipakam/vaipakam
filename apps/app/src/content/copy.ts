@@ -2322,6 +2322,10 @@ const copySource = {
         ['reason'],
       ),
       signed: 'Payoff permit attached — the request can complete.',
+      // #3042 — the wallet's share of the payoff is zero (nothing to pay
+      // beyond what the new loan's money covers), so no permit is asked for.
+      notNeeded:
+        'Your refinance request is posted. Your wallet owes nothing when a lender accepts it, so no payoff permit is needed and the request can complete as it is.',
       attachUnconfirmed:
         'Your refinance request is posted and its payoff permit was sent, but whether the permit attached isn’t confirmed yet. The request’s card shows the permit once the chain does; sign again only if the card still says it is missing.',
       signAborted:

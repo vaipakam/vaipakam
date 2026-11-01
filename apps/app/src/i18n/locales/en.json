@@ -1130,6 +1130,7 @@
         "attaching": "Your refinance request is posted. Approve Permit2 if your wallet asks, then sign the payoff permit and confirm the transaction that attaches it. Until the permit is attached, no lender can complete the request.",
         "attachFailed": "The payoff permit wasn’t attached, so no lender can complete this request on it yet ({{reason}}). Sign it again below or cancel the request.",
         "signed": "Payoff permit attached — the request can complete.",
+        "notNeeded": "Your refinance request is posted. Your wallet owes nothing when a lender accepts it, so no payoff permit is needed and the request can complete as it is.",
         "attachUnconfirmed": "Your refinance request is posted and its payoff permit was sent, but whether the permit attached isn’t confirmed yet. The request’s card shows the permit once the chain does; sign again only if the card still says it is missing.",
         "signAborted": "This request is no longer completable (accepted, cancelled, or the loan closed), so nothing was signed. Refresh to see the latest state.",
         "cancelled": "Refinance request cancelled — this loan continues unchanged. Its payoff permit named this request, so it can never be used, and nothing stays approved to the protocol for it.",

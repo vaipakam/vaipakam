@@ -237,8 +237,20 @@ export async function readPayoffQuote(a: {
   };
 }
 
+/** Whether a refinance request needs a payoff permit at all: only when
+ *  the wallet's share can be above zero (#3042). A share of zero — no
+ *  interest, late fee or initiation fee to cover, as with a zero-rate loan
+ *  and a zero fee rate or dust-sized amounts — takes nothing from the
+ *  wallet, so the settlement consults no permit (`LibRefinancePayoff.pull`
+ *  only clears one), and the contract refuses to store a permit for zero.
+ *  The ONE rule every signing, attach and verdict path below reads. */
+export function permitNeeded(bound: bigint): boolean {
+  return bound > 0n;
+}
+
 /** Why the permit attached to a request cannot pay every acceptance the
- *  request still allows, or null when it can:
+ *  request still allows, or null when it can (or needs none,
+ *  `permitNeeded`):
  *  - `missing`: none attached, or attached by another wallet;
  *  - `spent`: Permit2 has already used its nonce;
  *  - `expired`: its deadline has passed;
@@ -254,6 +266,7 @@ export function permitProblem(
   lastFillable: bigint,
   bound: bigint,
 ): PermitProblem | null {
+  if (!permitNeeded(bound)) return null;
   if (p.signer.toLowerCase() === zeroAddress || p.signer.toLowerCase() !== holder.toLowerCase()) {
     return 'missing';
   }
@@ -381,8 +394,10 @@ export function setPayoffPermitCall(
  * it mined, and `'unknown'` when the transaction was sent but neither
  * confirmed nor refused (a receipt wait that timed out): it may still
  * attach, so a caller must not report the permit as missing then.
+ * Resolves `'notNeeded'`, touching nothing, when `maxAmount` is zero
+ * (`permitNeeded`).
  */
-export type PermitAttachOutcome = 'attached' | 'unknown';
+export type PermitAttachOutcome = 'attached' | 'unknown' | 'notNeeded';
 
 export async function attachRefinancePayoffPermit(a: {
   publicClient: PublicClient;
@@ -402,6 +417,9 @@ export async function attachRefinancePayoffPermit(a: {
   offerId: bigint;
   onPrompt?: () => void;
 }): Promise<PermitAttachOutcome> {
+  // A zero share needs no permit, and the contract would refuse one for
+  // zero: nothing is approved, signed or sent.
+  if (!permitNeeded(a.maxAmount)) return 'notNeeded';
   await ensurePermit2Approval(a);
   a.onPrompt?.();
   const signed = await signRefinancePayoffPermit(a);
@@ -440,6 +458,8 @@ export async function ensurePermit2Approval(a: {
   maxAmount: bigint;
   onPrompt?: () => void;
 }): Promise<void> {
+  // Nothing to cover: no approval is asked for (`permitNeeded`).
+  if (!permitNeeded(a.maxAmount)) return;
   // One record the callbacks fill, read once the raise has stopped.
   const seen: {
     previous: bigint | null;

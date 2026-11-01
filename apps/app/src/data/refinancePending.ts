@@ -163,6 +163,8 @@ export type PermitAttachProgress =
   | { offerId: string; phase: 'signing' }
   | { offerId: string; phase: 'attached'; posted: boolean }
   | { offerId: string; phase: 'unknown' }
+  // #3042 — the wallet's share is zero, so no permit was needed or asked for.
+  | { offerId: string; phase: 'notNeeded' }
   | { offerId: string; phase: 'failed'; reason: string };
 
 export function useRefinancePending(

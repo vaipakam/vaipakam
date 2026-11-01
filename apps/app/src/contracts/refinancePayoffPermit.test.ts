@@ -36,6 +36,7 @@ import {
   ensurePermit2Approval,
   lastFillableMoment,
   payoffPermitTypedData,
+  permitNeeded,
   permitProblem,
   readPayoffQuote,
   type RefinancePayoff,
@@ -195,6 +196,20 @@ describe('permitProblem', () => {
     expect(check({})).toBeNull();
   });
 
+  it('asks for no permit when the wallet share is zero (#3042): the settlement consults none', () => {
+    expect(permitNeeded(0n)).toBe(false);
+    expect(permitNeeded(1n)).toBe(true);
+    expect(
+      permitProblem(
+        { ...good, signer: '0x0000000000000000000000000000000000000000', maxAmount: 0n },
+        HOLDER,
+        1_000n,
+        2_000n,
+        0n,
+      ),
+    ).toBeNull();
+  });
+
   it('names each way a permit cannot pay', () => {
     expect(check({ signer: '0x0000000000000000000000000000000000000000' })).toBe('missing');
     expect(check({ signer: '0x00000000000000000000000000000000000000c0' })).toBe('missing');
@@ -221,6 +236,30 @@ describe('attachRefinancePayoffPermit (#1558)', () => {
       offerId: 42n,
     });
   const HASH = `0x${'ab'.repeat(32)}` as const;
+
+  it('needs no permit, and touches nothing, for a zero wallet share (#3042)', async () => {
+    erc20.ensureAllowance.mockClear();
+    const signTypedData = vi.fn(async () => '0x01');
+    const write = vi.fn(async () => ({}) as never);
+    await expect(
+      attachRefinancePayoffPermit({
+        publicClient: {} as never,
+        walletClient: { signTypedData } as never,
+        write,
+        chainId: 84532,
+        diamond: DIAMOND,
+        owner: HOLDER,
+        token: TOKEN,
+        maxAmount: 0n,
+        deadline: 2_000n,
+        loanId: 7n,
+        offerId: 42n,
+      }),
+    ).resolves.toBe('notNeeded');
+    expect(erc20.ensureAllowance).not.toHaveBeenCalled();
+    expect(signTypedData).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+  });
 
   it('is attached when the write returns', async () => {
     await expect(base(async () => ({}) as never, () => null)).resolves.toBe('attached');

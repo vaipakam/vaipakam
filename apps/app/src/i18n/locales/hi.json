@@ -997,6 +997,7 @@
         },
         "sign": "Payoff permit sign करें",
         "signed": "Payoff permit attach हो गया — request complete हो सकती है।",
+        "notNeeded": "आपकी refinance request post हो गई है। जब कोई lender इसे accept करेगा, तब आपके wallet को कुछ नहीं देना होगा, इसलिए payoff permit की ज़रूरत नहीं है और request जैसी है वैसी ही complete हो सकती है।",
         "signAborted": "यह request अब completable नहीं है (accepted, cancelled, या loan closed), इसलिए कुछ sign नहीं हुआ। Latest state देखने के लिए refresh करें।",
         "cancelled": "Refinance request cancelled — यह loan unchanged जारी है। इसके payoff permit में यही request दर्ज थी, इसलिए वह कभी इस्तेमाल नहीं हो सकता, और इसके लिए protocol को कुछ भी approved नहीं रहता।",
         "pendingLoanClosed": "यह loan बाद में किसी और तरीके से close हो चुका है, इसलिए request अब complete नहीं हो सकती। इसे हटाने के लिए cancel करें।",

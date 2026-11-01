@@ -997,6 +997,7 @@
         },
         "sign": "Ablöse-Erlaubnis signieren",
         "signed": "Ablöse-Erlaubnis angehängt — die Anfrage kann abgeschlossen werden.",
+        "notNeeded": "Ihre Refinanzierungsanfrage ist eingestellt. Ihre Wallet schuldet nichts, wenn ein Kreditgeber sie annimmt, daher ist keine Ablöse-Erlaubnis nötig und die Anfrage kann so abgeschlossen werden.",
         "signAborted": "Diese Anfrage lässt sich nicht mehr abschließen (angenommen, storniert oder der Kredit wurde geschlossen), daher wurde nichts signiert. Aktualisieren Sie, um den neuesten Stand zu sehen.",
         "cancelled": "Refinanzierungsanfrage storniert — dieser Kredit läuft unverändert weiter. Ihre Ablöse-Erlaubnis war auf diese Anfrage ausgestellt, daher kann sie nie verwendet werden, und ihretwegen bleibt nichts für das Protokoll freigegeben.",
         "pendingLoanClosed": "Dieser Kredit wurde inzwischen anderweitig geschlossen, daher kann die Anfrage nicht mehr abgeschlossen werden. Stornieren Sie sie, um sie zu entfernen.",

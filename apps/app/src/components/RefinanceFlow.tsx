@@ -64,6 +64,7 @@ import type { PermitAttachProgress } from '../data/refinancePending';
 import {
   attachRefinancePayoffPermit,
   ensurePermit2Approval,
+  permitNeeded,
   readPayoffQuote,
 } from '../contracts/refinancePayoffPermit';
 import { useProtocolFees } from '../data/fees';
@@ -537,7 +538,9 @@ export function RefinanceFlow({
           onPermitAttach(
             attached === 'attached'
               ? { offerId: id, phase: 'attached', posted: true }
-              : { offerId: id, phase: 'unknown' },
+              : attached === 'notNeeded'
+                ? { offerId: id, phase: 'notNeeded' }
+                : { offerId: id, phase: 'unknown' },
           );
         } catch (attachErr) {
           onPermitAttach({ offerId: id, phase: 'failed', reason: captureTxError(attachErr) });
@@ -776,7 +779,8 @@ export function RefinanceFlow({
                       } `
                     : ''
                 }${
-                  permitRoute
+                  // #3042 — a zero share needs no permit, so none is disclosed.
+                  permitRoute && permitNeeded(payoffBound)
                     ? `${copy.refinance.permit.signDisclosure(boundStr)} ${copy.refinance.permit.permit2ApprovalNote} `
                     : ''
                 }${copy.refinance.walletNote(topUpStr)}`,

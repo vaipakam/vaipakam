@@ -997,6 +997,7 @@
         },
         "sign": "Firmar el permiso de liquidación",
         "signed": "Permiso de liquidación adjunto: la solicitud puede completarse.",
+        "notNeeded": "Tu solicitud de refinanciación está publicada. Tu billetera no debe nada cuando un prestamista la acepta, así que no hace falta ningún permiso de liquidación y la solicitud puede completarse tal como está.",
         "signAborted": "Esta solicitud ya no puede completarse (aceptada, cancelada o el préstamo se cerró), así que no se firmó nada. Actualiza para ver el estado más reciente.",
         "cancelled": "Solicitud de refinanciación cancelada — este préstamo continúa sin cambios. Su permiso de liquidación nombraba esta solicitud, así que nunca podrá usarse, y nada queda aprobado a favor del protocolo por ella.",
         "pendingLoanClosed": "Este préstamo se cerró después por otra vía, así que la solicitud ya no puede completarse. Cancélala para quitarla.",

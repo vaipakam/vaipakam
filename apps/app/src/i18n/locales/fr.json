@@ -997,6 +997,7 @@
         },
         "sign": "Signer l’autorisation de remboursement",
         "signed": "Autorisation de remboursement jointe — la demande peut aboutir.",
+        "notNeeded": "Votre demande de refinancement est publiée. Votre portefeuille ne doit rien lorsqu’un prêteur l’accepte, donc aucune autorisation de remboursement n’est nécessaire et la demande peut aboutir telle quelle.",
         "signAborted": "Cette demande ne peut plus aboutir (acceptée, annulée ou prêt clôturé), donc rien n’a été signé. Actualisez pour voir l’état le plus récent.",
         "cancelled": "Demande de refinancement annulée — ce prêt continue inchangé. Son autorisation de remboursement désignait cette demande : elle ne pourra donc jamais être utilisée, et rien ne reste approuvé au profit du protocole à son titre.",
         "pendingLoanClosed": "Ce prêt s’est clôturé autrement depuis, la demande ne peut donc plus aboutir. Annulez-la pour la supprimer.",
