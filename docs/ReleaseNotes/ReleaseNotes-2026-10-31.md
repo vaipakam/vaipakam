@@ -1,3 +1,7 @@
+# Release Notes — 2026-10-31
+
+A borrower's refinance now pays the old lender through a single-use permit signed for that one request, instead of a standing token approval to the protocol. The permit is spent once when a lender accepts, and an unused one simply expires with the request, so nothing is left approved. The change reaches the testnets only with the all-waves fresh deploy.
+
 ## Refinance payoff by single-use permit (PR #3075)
 
 A refinance now pays off the old loan with an exact-amount, single-use Permit2
@@ -41,3 +45,6 @@ temporary bridge; #3074 removes it after the deploy.
 Closes #1558. Design: `docs/DesignsAndPlans/RefinancePayoffPermitDesign.md`.
 
 > Caveat: on a deployment that predates this change the app still sets a payoff approval to the protocol, as before, until #3074 removes that route.
+
+_Committed 2026-10-31 23:52 UTC (b22f6f647)._
+<!-- assembled-fragment: 1558-refinance-payoff-permit.md sha256=99c1377d6ab6f5c712a776f9c7f93bbc021bb69c7953430eed7a8940d96385fb -->
