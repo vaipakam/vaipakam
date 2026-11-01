@@ -381,13 +381,25 @@ library LibInterestLedger {
         uint256 parked,
         bool reserved
     ) internal {
-        if (holderNet == 0 || parked == 0 || loan.assetType != LibVaipakam.AssetType.ERC20) return;
-        LibVaipakam.InterestLedger storage l = s.interestLedger[loan.id];
+        if (holderNet == 0 || loan.assetType != LibVaipakam.AssetType.ERC20) return;
         // A short arrival (a token that charges on transfer) parks less; the
         // interest counts first, at the slice's own net-to-gross proportion.
         uint256 net = holderNet < parked ? holderNet : parked;
+        uint256 arrivedGross = (holderGross * net) / holderNet;
+        // #1832 — this is the one place a payout to the lender side can arrive
+        // short and leave interest OWED (a wallet payout refuses a short
+        // arrival; a seller's short arrival is the seller's, and settles). The
+        // caller credits the loan only with what arrived, so the lifetime
+        // counter, which {paySellersFirst} charged with the whole slice, gives
+        // back the part that did not: it is counted when a later payment
+        // actually settles it.
+        if (arrivedGross < holderGross) {
+            LibMetricsHooks.onInterestUndelivered(loan, holderGross - arrivedGross);
+        }
+        if (net == 0) return;
+        LibVaipakam.InterestLedger storage l = s.interestLedger[loan.id];
         l.parkedInterestNet += net;
-        l.parkedInterestGross += (holderGross * net) / holderNet;
+        l.parkedInterestGross += arrivedGross;
         if (reserved) l.parkedInterestReservedNet += net;
     }
 

@@ -13,7 +13,9 @@ and any late fee, before the treasury's share. Every payment on a loan that
 stays open already passes through one shared step (the one that pays past
 sellers of the lender position first), so it is recorded there once; each
 closing settlement records its own figure where that figure is final. A forced
-sale records what it recovered. A recovery in kind, or through the liquidation
+sale records what it recovered, and a payment that reaches a sanctions-held
+lender short (a token that charges on transfer) records only the interest
+that arrived; the rest is still owed and is recorded when it is paid. A recovery in kind, or through the liquidation
 fallback and its retry, is not counted, because it settles principal, interest
 and any bonus as one amount and no interest figure can be stated for it.
 Rental fees on NFT loans are rent, not interest, and are not counted.

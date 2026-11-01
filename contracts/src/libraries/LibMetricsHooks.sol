@@ -63,6 +63,20 @@ library LibMetricsHooks {
         LibVaipakam.storageSlot().lifetimeInterestPaid[loan.principalAsset] += gross;
     }
 
+    /// @notice #1832 — takes back `gross` that {onInterestPaid} recorded for a
+    ///         payout to the lender side that then arrived short and left that
+    ///         interest owed. The ONE place the counter falls; its only caller
+    ///         is `LibInterestLedger.holderParked`, the ledger's measurement of
+    ///         a parked share's arrival, so the counter states interest the
+    ///         loan has settled, never interest a later payment will settle and
+    ///         record again. Saturates at zero.
+    function onInterestUndelivered(LibVaipakam.Loan storage loan, uint256 gross) internal {
+        if (gross == 0 || loan.assetType != LibVaipakam.AssetType.ERC20) return;
+        mapping(address => uint256) storage paid = LibVaipakam.storageSlot().lifetimeInterestPaid;
+        uint256 cur = paid[loan.principalAsset];
+        paid[loan.principalAsset] = cur > gross ? cur - gross : 0;
+    }
+
     /// @notice Registers a freshly-created loan in every analytics index.
     /// @dev Call from LoanFacet after the loan struct has been fully
     ///      populated (lender, borrower, asset fields, tokenIds). Safe to
