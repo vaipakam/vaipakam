@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 /// @title LibMetricsHooks
 /// @notice Central bookkeeping for the MetricsFacet O(1) counter / active-set
@@ -33,6 +34,8 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 ///      holds live loans/offers, the counters will reflect only NEW activity
 ///      until a one-time backfill runs. Pre-mainnet deployments are unaffected.
 library LibMetricsHooks {
+    using EnumerableSet for EnumerableSet.AddressSet;
+
     /// @notice A sale vehicle was registered without the real loan it carries.
     /// @dev    Guards the one input that makes the mark meaningful: the mark
     ///         IS the real loan id, so zero would both fail to identify the
@@ -52,6 +55,16 @@ library LibMetricsHooks {
         s.activeLoansCount += 1;
         s.totalLoansEverCreated += 1;
         s.interestRateBpsSum += loan.interestRateBps;
+
+        // #1832 — lifetime principal lent, per ERC-20 asset, at the figure the
+        // loan opened with (a later partial repay shrinks `loan.principal`, so
+        // reading it back at any later point would undercount). Read by
+        // `MetricsFacet.getProtocolStats` and `getLifetimeLendingTotals`
+        // without a scan of loan ids.
+        if (loan.assetType == LibVaipakam.AssetType.ERC20) {
+            s.lifetimePrincipalLent[loan.principalAsset] += loan.principal;
+            s.lifetimeLendingAssets.add(loan.principalAsset);
+        }
 
         // Active-set list for O(results) global enumeration.
         s.activeLoanIdsList.push(id);

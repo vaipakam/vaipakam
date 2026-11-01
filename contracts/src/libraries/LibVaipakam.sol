@@ -8176,6 +8176,18 @@ library LibVaipakam {
         ///      it once; nothing else is ever authorised to pull the payoff.
         ///      Written only by `LibRefinancePayoff`. Appended — append-only.
         mapping(uint256 => RefinancePayoffPermit) refinancePayoffPermit;
+        /// @dev #1832 — per ERC-20 lending asset, the principal of every loan
+        ///      ever opened in it, in the asset's own units, recorded once as
+        ///      the loan opens (`LibMetricsHooks.onLoanInitialized`). A
+        ///      refinance opens a new loan and counts again; a lender-sale
+        ///      record is not a loan and never counts. Never decreases.
+        ///      Written only by `LibMetricsHooks`. Appended — append-only.
+        mapping(address => uint256) lifetimePrincipalLent;
+        /// @dev #1832 — every asset a lifetime counter above has recorded,
+        ///      so a reader can value the counters without scanning loans.
+        ///      Only added to. Written only by `LibMetricsHooks`. Appended —
+        ///      append-only.
+        EnumerableSet.AddressSet lifetimeLendingAssets;
     }
 
     /// @notice #1558 — a borrower's signed authorisation to pay off the loan a
