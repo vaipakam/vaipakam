@@ -2614,6 +2614,7 @@
         "IntentLoanRolled": "Loan roll over हुआ",
         "CollateralAdded": "Collateral जोड़ा गया",
         "InternalMatchExecuted": "Loan internally match हुआ",
+        "InternalMatchRefusedShortDelivery": "Internal match छोड़ा गया",
         "PrepayListingPosted": "Collateral sale के लिए listed",
         "PrepayListingMatched": "Collateral sale matched",
         "PrepayListingUpdated": "Collateral listing updated",

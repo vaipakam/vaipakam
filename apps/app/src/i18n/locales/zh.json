@@ -2614,6 +2614,7 @@
         "IntentLoanRolled": "贷款已滚动续期",
         "CollateralAdded": "抵押品已添加",
         "InternalMatchExecuted": "贷款已内部匹配",
+        "InternalMatchRefusedShortDelivery": "已跳过内部匹配",
         "PrepayListingPosted": "抵押品已挂牌出售",
         "PrepayListingMatched": "抵押品出售已匹配",
         "PrepayListingUpdated": "抵押品 listing 已更新",

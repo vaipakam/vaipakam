@@ -2614,6 +2614,7 @@
         "IntentLoanRolled": "Préstamo renovado",
         "CollateralAdded": "Garantía añadida",
         "InternalMatchExecuted": "Préstamo emparejado internamente",
+        "InternalMatchRefusedShortDelivery": "Emparejamiento interno omitido",
         "PrepayListingPosted": "Garantía listada para venta",
         "PrepayListingMatched": "Venta de garantía emparejada",
         "PrepayListingUpdated": "Listado de garantía actualizado",
