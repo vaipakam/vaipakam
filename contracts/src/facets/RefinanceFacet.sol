@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
@@ -857,6 +858,8 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // penalty is never silently dropped on the discounted path.
         uint256 lateFee = LibVaipakam.calculateLateFee(oldLoanId);
         uint256 interestPortion = oldInterest + lateFee;
+        // #1832 — terminal seam of the lifetime interest counter.
+        LibMetricsHooks.onInterestPaid(oldLoan, interestPortion);
         uint256 lenderInterest;
         (treasuryFee, lenderInterest) = LibEntitlement.splitTreasury(
             oldLoan,

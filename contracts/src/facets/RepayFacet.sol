@@ -9,6 +9,7 @@ import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
+import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
@@ -302,6 +303,8 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
                 block.timestamp
             );
             interest = plan.interest;
+            // #1832 — terminal seam of the lifetime interest counter.
+            LibMetricsHooks.onInterestPaid(loan, plan.interest + plan.lateFee);
 
             // Lender Yield Fee discount (Tokenomics §6): when the lender has
             // platform-level VPFI-discount consent AND holds >= the required

@@ -38,12 +38,11 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
  *
  *      The previous MAX_ITER-based silent truncation has been removed —
  *      no view returns a wrong answer because the sequence grew past a
- *      hidden cap. Lifetime aggregators that inherently span every loan
- *      ever created (e.g. `getProtocolStats.totalVolumeLentNumeraire`,
- *      `getTotalInterestEarnedNumeraire`) iterate `[1 .. nextLoanId)` without a
- *      cap; on very large deployments prefer the paginated reverse-index
- *      views (`getAllLoansPaginated`, `getLoansByStatusPaginated`) and
- *      aggregate off-chain.
+ *      hidden cap. Lifetime totals (principal lent, interest paid) are
+ *      per-asset counters written as loans open and as interest is paid
+ *      (#1832), so no view here scans the lifetime loan sequence: each is
+ *      bounded by the number of distinct lending assets and valued when
+ *      read ({getLifetimeLendingTotals}, {getProtocolStats}).
  *
  *      Every `*Numeraire` figure is valued by the protocol's one shared
  *      rule (#2419, `NumeraireValueFacet`, read through `address(this)`):
@@ -57,6 +56,7 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
  */
 contract MetricsFacet {
     using EnumerableSet for EnumerableSet.Bytes32Set;
+    using EnumerableSet for EnumerableSet.AddressSet; // #1832 lifetime lending assets
     using EnumerableSet for EnumerableSet.UintSet; // #625 WI-2c intent-loan registry
 
     uint256 private constant NUMERAIRE_SCALE = 1e18;
@@ -104,14 +104,29 @@ contract MetricsFacet {
 
     /**
      * @notice Protocol-wide aggregate counters and rate summaries.
-     * @dev Counter-backed fields (`totalUniqueUsers`, `activeLoansCount`,
-     *      `activeOffersCount`, `totalLoansEverCreated`, `defaultRateBps`,
-     *      `averageApr`) resolve to single SLOADs — O(1). `totalVolumeLentNumeraire`
-     *      and `totalInterestEarnedNumeraire` are repriced live and require a full
-     *      scan over `[1 .. nextLoanId)`; the numbers are never truncated
-     *      (no silent MAX_ITER cap), and dashboards that need to call this
-     *      on deployments with very large loan histories should aggregate
-     *      off-chain from `getAllLoansPaginated`.
+     * @dev Every field is counter-backed (#1832): nothing here scans the
+     *      lifetime loan sequence. `totalVolumeLentNumeraire` and
+     *      `totalInterestPaidNumeraire` value the per-asset lifetime
+     *      counters ({getLifetimeLendingTotals}) at today's prices, one
+     *      valuation per distinct ERC-20 lending asset, so the cost grows with
+     *      the number of assets ever lent, never with the number of loans.
+     *      Each is the sum over assets of the shared numeraire rule (#2419);
+     *      an asset the rule cannot value today (no feed, stale or distrusted
+     *      price) counts as 0 in the sum, so read the raw per-asset counters
+     *      to see what was left out. NFT rentals are not in either figure.
+     * @return totalUniqueUsers Wallets that have ever lent, borrowed or
+     *         posted an offer.
+     * @return activeLoansCount Loans currently Active or FallbackPending.
+     * @return activeOffersCount Offers still in the book.
+     * @return totalLoansEverCreated Every loan ever opened (sale records
+     *         excluded).
+     * @return totalVolumeLentNumeraire Principal of every ERC-20 loan ever
+     *         opened, valued now.
+     * @return totalInterestPaidNumeraire Gross interest (before the
+     *         treasury's yield fee) borrowers have paid on ERC-20 loans,
+     *         valued now.
+     * @return defaultRateBps Loans that ended badly, in bps of loans opened.
+     * @return averageApr Mean contracted rate of loans opened, in bps.
      */
     function getProtocolStats()
         external
@@ -122,7 +137,7 @@ contract MetricsFacet {
             uint256 activeOffersCount,
             uint256 totalLoansEverCreated,
             uint256 totalVolumeLentNumeraire,
-            uint256 totalInterestEarnedNumeraire,
+            uint256 totalInterestPaidNumeraire,
             uint256 defaultRateBps,
             uint256 averageApr
         )
@@ -137,29 +152,41 @@ contract MetricsFacet {
             : (s.terminalBadOrSettledCount * LibVaipakam.BASIS_POINTS) / totalLoansEverCreated;
         averageApr = totalLoansEverCreated == 0 ? 0 : s.interestRateBpsSum / totalLoansEverCreated;
 
-        // IDs are pre-incremented in LoanFacet (`loanId = ++s.nextLoanId`),
-        // so `nextLoanId` is the highest id ever assigned — iterate inclusive
-        // to cover it. Matches the [1..nextLoanId] pattern used by
-        // {getAllLoansPaginated} and {getLoansByStatusPaginated}.
-        uint256 lEnd = s.nextLoanId;
-        for (uint256 i = 1; i <= lEnd; i++) {
-            LibVaipakam.Loan storage l = s.loans[i];
-            if (l.id == 0) continue;
-            // #1503 item 26 — a sale vehicle mirrors the real loan's principal,
-            // so pricing it into lifetime volume double-counts the SAME money
-            // once per sale, and its rate would feed interest earned that
-            // nobody ever owed.
-            if (LibMetricsHooks.isInternalVehicle(s, i)) continue;
-            if (l.assetType != LibVaipakam.AssetType.ERC20) continue;
-            uint256 pNumeraire = _priceAmount(l.principalAsset, l.principal);
-            totalVolumeLentNumeraire += pNumeraire;
-            if (
-                l.status != LibVaipakam.LoanStatus.Active &&
-                l.status != LibVaipakam.LoanStatus.FallbackPending
-            ) {
-                totalInterestEarnedNumeraire += (pNumeraire * l.interestRateBps) / LibVaipakam.BASIS_POINTS;
-            }
+        uint256 n = s.lifetimeLendingAssets.length();
+        for (uint256 i; i < n; ++i) {
+            address asset = s.lifetimeLendingAssets.at(i);
+            totalVolumeLentNumeraire += _priceAmount(asset, s.lifetimePrincipalLent[asset]);
+            totalInterestPaidNumeraire += _priceAmount(asset, s.lifetimeInterestPaid[asset]);
         }
+    }
+
+    /// @notice Every ERC-20 asset a loan has ever been opened in — the keys
+    ///         of the lifetime counters {getLifetimeLendingTotals} reports.
+    /// @dev    Only ever added to, in the order assets were first lent.
+    ///         Bounded by the number of distinct lending assets, not by loans.
+    function getLifetimeLendingAssets() external view returns (address[] memory) {
+        return LibVaipakam.storageSlot().lifetimeLendingAssets.values();
+    }
+
+    /// @notice The lifetime counters for one ERC-20 lending asset, in the
+    ///         asset's own units — exact, unvalued, and checkable against the
+    ///         loan events that wrote them.
+    /// @dev    #1832. Both only ever increase.
+    /// @return principalLent The principal of every loan ever opened in
+    ///         `asset`, at the figure it opened with. A refinance opens a new
+    ///         loan and so counts again; a lender-sale record is not a loan
+    ///         and never counts.
+    /// @return interestPaid  The gross interest (before the treasury's yield
+    ///         fee) borrowers have paid on loans in `asset`, as each payment
+    ///         was made. Interest still accruing on an open loan is not in it.
+    function getLifetimeLendingTotals(address asset)
+        external
+        view
+        returns (uint256 principalLent, uint256 interestPaid)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        principalLent = s.lifetimePrincipalLent[asset];
+        interestPaid = s.lifetimeInterestPaid[asset];
     }
 
     /// @notice Whether `loanId` is the lender-sale TRANSITIONAL RECORD rather
@@ -209,34 +236,6 @@ contract MetricsFacet {
     ///         or cancelled). Counter-backed — O(1).
     function getActiveOffersCount() external view returns (uint256) {
         return LibVaipakam.storageSlot().activeOffersCount;
-    }
-
-    /**
-     * @notice Cumulative interest earned across all completed loans, priced
-     *         at current Chainlink rates.
-     * @dev Iterates `[1 .. nextLoanId]` with no cap — lifetime scan. On
-     *      deployments with very large histories prefer the paginated
-     *      reverse-index views (`getLoansByStatusPaginated(Repaid|Defaulted|
-     *      Settled, ..)`) and aggregate off-chain with event-time pricing.
-     */
-    function getTotalInterestEarnedNumeraire() external view returns (uint256 total) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 end = s.nextLoanId;
-        for (uint256 i = 1; i <= end; i++) {
-            LibVaipakam.Loan storage l = s.loans[i];
-            if (l.id == 0) continue;
-            // #1503 item 26 — see the twin scan in `getProtocolStats`: a
-            // vehicle is terminal by the time it is scannable, so without this
-            // every completed sale would contribute phantom interest.
-            if (LibMetricsHooks.isInternalVehicle(s, i)) continue;
-            if (l.assetType != LibVaipakam.AssetType.ERC20) continue;
-            if (
-                l.status == LibVaipakam.LoanStatus.Active ||
-                l.status == LibVaipakam.LoanStatus.FallbackPending
-            ) continue;
-            uint256 pNumeraire = _priceAmount(l.principalAsset, l.principal);
-            total += (pNumeraire * l.interestRateBps) / LibVaipakam.BASIS_POINTS;
-        }
     }
 
     // ─── 2. Treasury & Revenue Metrics ──────────────────────────────────────

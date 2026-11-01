@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
+import {LibMetricsHooks} from "./LibMetricsHooks.sol";
 import {SellerClaimFacet} from "../facets/SellerClaimFacet.sol";
 
 /**
@@ -330,6 +331,9 @@ library LibInterestLedger {
         uint256 interestNet
     ) internal returns (uint256 sellersGross, uint256 sellersNet) {
         touch(s, loan);
+        // #1832 — every interest payout on an open loan passes here once, so
+        // this is the lifetime interest counter's mid-life seam.
+        LibMetricsHooks.onInterestPaid(loan, interestGross);
         if (interestGross == 0 || s.sellerInterestClaims[loan.id].length == 0) return (0, 0);
         (sellersGross, sellersNet) = abi.decode(
             LibFacet.crossFacetCallReturn(

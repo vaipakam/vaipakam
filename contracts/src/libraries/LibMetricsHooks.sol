@@ -44,6 +44,25 @@ library LibMetricsHooks {
 
     // ───────────────────────── Loan hooks ─────────────────────────
 
+    /// @notice #1832 — records `gross` of interest paid on `loan`: the
+    ///         interest (late fee included) a settlement charged the borrower,
+    ///         before the treasury's yield fee, keyed by the loan's principal
+    ///         asset. The ONE writer of `lifetimeInterestPaid`.
+    /// @dev    Called exactly once per settlement, at one of two seams: every
+    ///         payout on a loan that stays open (and the offset completion)
+    ///         passes through `LibInterestLedger.paySellersFirst`, which calls
+    ///         this; every other terminal settlement calls it where its
+    ///         interest figure is final. A forced sale records what it
+    ///         recovered, not what was owed. A fallback recovery (in kind, or
+    ///         the claim-time retry) is NOT recorded: it settles principal,
+    ///         interest and the fallback bonus as one figure, so no interest
+    ///         amount can be stated for it. NFT rentals are not loans of an
+    ///         ERC-20 and never record.
+    function onInterestPaid(LibVaipakam.Loan storage loan, uint256 gross) internal {
+        if (gross == 0 || loan.assetType != LibVaipakam.AssetType.ERC20) return;
+        LibVaipakam.storageSlot().lifetimeInterestPaid[loan.principalAsset] += gross;
+    }
+
     /// @notice Registers a freshly-created loan in every analytics index.
     /// @dev Call from LoanFacet after the loan struct has been fully
     ///      populated (lender, borrower, asset fields, tokenIds). Safe to

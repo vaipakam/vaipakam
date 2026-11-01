@@ -2601,7 +2601,9 @@ which Liam forfeited his accrued interest to the treasury at the sale.
   range would keep returning it — the count of positions ever created, the full
   position list, the by-status pages, and the lifetime volume and interest
   totals, where its mirrored principal would price the same money twice and its
-  mirrored rate would invent interest no borrower owed. The record therefore
+  mirrored rate would invent interest no borrower owed. (The lifetime totals
+  are now counters written as loans open and as interest is paid, so the
+  record is kept out of them by never being recorded at all.) The record therefore
   carries a durable indication of what it is, and those surfaces exclude it on
   that basis. Suppressing only the creation-time writes and notifications is
   not sufficient and must not be mistaken for it.
@@ -3288,8 +3290,9 @@ General design requirements:
 Highest priority public metrics should include:
 
 - total protocol value locked in the active numeraire, with separate ERC-20 collateral and NFT collateral breakdowns
-- total unique users, active loan count, active offer count, lifetime loan count, lifetime lending volume in the active numeraire, total interest earned, default rate, and average APR
-- lightweight headline counters for user count, active loans, active offers, and total interest earned
+- total unique users, active loan count, active offer count, lifetime loan count, lifetime lending volume in the active numeraire, total interest paid, default rate, and average APR
+- lightweight headline counters for user count, active loans, active offers, and total interest paid
+- lifetime lending totals per lending asset, kept as counters rather than computed by reading every loan ever made (owner decision 2026-10-28, #1832), so every read costs the same however long the history grows. Principal lent is recorded once as each loan of an ERC-20 opens, at the amount it opened with; a refinance opens a new loan and counts again, and the lender-sale transitional record is not a loan and never counts. Interest paid is recorded as each settlement charges it: the interest and any late fee the borrower paid, before the treasury's share is taken, whether the loan stays open (a partial repayment, a periodic settlement, an extension, an obligation handover, a partial liquidation) or closes (repayment, preclose, refinance, a collateral sale, a liquidation or a time-based default). A forced sale counts the interest it actually recovered, not what was owed. A recovery in kind (a default that hands the lender the collateral, or the liquidation fallback, including its later retry) is not counted as interest, because it settles principal, interest and any fallback bonus as one amount and no interest amount can be stated for it; the view says so rather than estimating one. Interest still accruing on an open loan is not interest paid. Both counters only ever increase, are readable per asset in the asset's own units together with the list of assets they cover, and can be reconciled with the events of the settlements that wrote them. The headline figures value these counters in the active numeraire when read; an asset that cannot be valued at that moment counts as zero in the headline and is still visible in its own counters. NFT rentals are in neither figure.
 
 These functions are intended to support the Vaipakam public analytics dashboard and external TVL / protocol-tracker integrations.
 

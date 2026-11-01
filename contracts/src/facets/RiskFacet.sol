@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
@@ -1383,6 +1384,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // ({LibDiscountedLiquidation.debt}, #2697).
         uint256 totalDebt = LibDiscountedLiquidation.debt(loan);
         uint256 interestPortion = totalDebt - loan.principal;
+        // #1832 — terminal seam of the lifetime interest counter.
+        LibMetricsHooks.onInterestPaid(loan, interestPortion);
 
         // Pull `totalDebt` of principal-asset from msg.sender. The
         // liquidator must have approved the diamond — either by

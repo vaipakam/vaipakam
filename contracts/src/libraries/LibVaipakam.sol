@@ -7164,9 +7164,9 @@ library LibVaipakam {
         ///         itself persists in `loans` and its id was drawn from
         ///         `nextLoanId`. Anything that enumerates by id range —
         ///         `getAllLoansPaginated`, `getLoansByStatusPaginated`, the
-        ///         `getProtocolStats` / `getTotalInterestEarnedNumeraire`
-        ///         lifetime scans, `getGlobalCounts` — would keep finding it
-        ///         and keep pricing its principal into lifetime volume. A
+        ///         lifetime scans `getProtocolStats` ran before #1832 retired
+        ///         them, `getGlobalCounts` — would keep finding it and keep
+        ///         pricing its principal into lifetime volume. A
         ///         durable mark is what lets those surfaces exclude it; a
         ///         transient link cannot, since `saleOfferToLoanId` is
         ///         deleted at completion.
@@ -8183,6 +8183,12 @@ library LibVaipakam {
         ///      record is not a loan and never counts. Never decreases.
         ///      Written only by `LibMetricsHooks`. Appended — append-only.
         mapping(address => uint256) lifetimePrincipalLent;
+        /// @dev #1832 — per ERC-20 lending asset, the gross interest (before
+        ///      the treasury's yield fee) borrowers have paid on loans in it,
+        ///      in the asset's own units, recorded as each payment is made
+        ///      (`LibMetricsHooks.onInterestPaid`). Never decreases.
+        ///      Written only by `LibMetricsHooks`. Appended — append-only.
+        mapping(address => uint256) lifetimeInterestPaid;
         /// @dev #1832 — every asset a lifetime counter above has recorded,
         ///      so a reader can value the counters without scanning loans.
         ///      Only added to. Written only by `LibMetricsHooks`. Appended —

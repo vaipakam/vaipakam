@@ -237,8 +237,11 @@ contract MetricsFacetTest is SetupTest {
         assertEq(offers, 1);
         assertEq(ever, 3);
         assertEq(volUsd, 3500 ether);
-        // interest from loan 3 only (active ones excluded): 500 * 1000 / 10000 = 50
-        assertEq(interestUsd, 50 ether);
+        // #1832 — interest is what settlements actually charged. These loans
+        // were seeded, not settled (loan 3 defaulted without paying), so none
+        // has been paid. The retired scan reported principal × rate for loan 3
+        // here, a figure nobody paid.
+        assertEq(interestUsd, 0);
         // 1 defaulted / 3 loans → 3333 bps
         assertEq(defaultBps, 3333);
         // (500+700+1000)/3 = 733
@@ -315,25 +318,29 @@ contract MetricsFacetTest is SetupTest {
         assertEq(avgLtv, 6666);
     }
 
-    // ── getTotalInterestEarnedNumeraire ──────────────────────────────────────────
+    // ── Lifetime lending totals (#1832) ────────────────────────────────────
 
-    function testGetTotalInterestEarnedUSD_onlyCompleted() public {
-        _seedActiveErc20Loan(1, lender, borrower, 1000 ether, 1500 ether, 500); // active — excluded
-        LibVaipakam.Loan memory l2;
-        l2.id = 2;
-        l2.lender = lender;
-        l2.borrower = borrower;
-        l2.principal = 1000 ether;
-        l2.principalAsset = mockERC20;
-        l2.assetType = LibVaipakam.AssetType.ERC20;
-        l2.collateralAsset = mockERC20;
-        l2.collateralAssetType = LibVaipakam.AssetType.ERC20;
-        l2.interestRateBps = 500;
-        l2.status = LibVaipakam.LoanStatus.Repaid;
-        TestMutatorFacet(address(diamond)).setLoan(2, l2);
-        TestMutatorFacet(address(diamond)).setNextLoanId(3);
+    /// @notice Principal is recorded per asset as each loan opens, and stays
+    ///         recorded whatever happens to the loan afterwards; an NFT rental
+    ///         is not an ERC-20 loan and records nothing.
+    function testLifetimeTotals_principalPerAssetAtOpening() public {
+        _seedActiveErc20Loan(1, lender, borrower, 1000 ether, 1500 ether, 500);
+        _seedActiveErc20Loan(2, lender2, borrower2, 2000 ether, 3000 ether, 700);
+        TestMutatorFacet(address(diamond)).scaffoldLoanStatusChange(
+            2,
+            LibVaipakam.LoanStatus.Active,
+            LibVaipakam.LoanStatus.Repaid
+        );
+        _seedNftRentalLoan(3, lender, borrower, 0, 0);
+        TestMutatorFacet(address(diamond)).setNextLoanId(4);
 
-        assertEq(MetricsFacet(address(diamond)).getTotalInterestEarnedNumeraire(), 50 ether);
+        (uint256 principalLent, uint256 interestPaid) =
+            MetricsFacet(address(diamond)).getLifetimeLendingTotals(mockERC20);
+        assertEq(principalLent, 3000 ether, "both ERC-20 loans, the closed one included");
+        assertEq(interestPaid, 0, "seeded loans paid nothing");
+        address[] memory assets = MetricsFacet(address(diamond)).getLifetimeLendingAssets();
+        assertEq(assets.length, 1, "only the ERC-20 lending asset is listed");
+        assertEq(assets[0], mockERC20);
     }
 
     // ── Treasury / Revenue ─────────────────────────────────────────────────

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibMetricsHooks} from "./LibMetricsHooks.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {LibCloseoutFreeze} from "./LibCloseoutFreeze.sol";
@@ -303,6 +304,8 @@ library LibSwapToRepayIntentSettlement {
         if (actualDelivered < requiredPrincipal) {
             revert IntentDeliveredBelowLiveFloor(actualDelivered, requiredPrincipal);
         }
+        // #1832 — terminal seam of the lifetime interest counter.
+        LibMetricsHooks.onInterestPaid(loan, plan.interest + plan.lateFee);
 
         // #1383 — honor the lender Full/hold discount (§F2 / #1354) via the
         // `VPFIDiscountFacet` host, keyed on the CURRENT lender-NFT holder: the

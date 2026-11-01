@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
@@ -674,6 +675,9 @@ contract ForcedSaleFacet is IVaipakamErrors {
         uint256 lenderNet = sp.lender;
         if (sp.lender > loan.principal) {
             uint256 interestRecovered = sp.lender - loan.principal;
+            // #1832 — terminal seam of the lifetime interest counter: what the
+            // sale recovered, not what was owed.
+            LibMetricsHooks.onInterestPaid(loan, interestRecovered);
             (treasuryInterest, ) = LibEntitlement.splitTreasury(loan, interestRecovered);
             (, treasuryInterest) = LibLenderYieldFeeHost.resolve(
                 loanId, LibERC721.ownerOf(loan.lenderTokenId), interestRecovered, treasuryInterest
