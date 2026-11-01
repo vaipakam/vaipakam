@@ -15,7 +15,10 @@ tries first inside a health-factor liquidation, a time-based default or a
 fallback claim is skipped instead: it runs in its own call, so the refusal
 unwinds the match alone, and a new event reports the skip with the two loans,
 the token and both amounts. The loan then carries on to its own close-out in
-the same transaction. Only that refusal is caught. Any other failure inside
+the same transaction. That includes a loan inside the internal-match priority
+window, which normally holds a loan for an internal match and refuses its
+own liquidation: the window holds a loan only while a match can run, so after
+a refusal the same liquidation goes ahead instead of reverting. Only that refusal is caught. Any other failure inside
 the match still stops the whole call, as before, so a caller cannot turn a
 match into a skip by starving it of gas.
 

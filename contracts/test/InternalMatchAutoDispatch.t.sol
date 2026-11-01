@@ -193,6 +193,43 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         RiskMatchLiquidationFacet(address(diamond)).attemptInternalMatchAutoDispatch(LOAN_A, matcher);
     }
 
+    /// @notice Codex #3082 r1 P1 — inside the internal-match priority window a
+    ///         refused match must not leave the loan stuck: the window holds a
+    ///         loan only while a match can run, so the same `triggerLiquidation`
+    ///         goes on to the loan's own liquidation instead of reverting
+    ///         `InternalMatchOnlyBand`. (Without a candidate the same LTV
+    ///         reverts the band error: `InternalMatchPriorityWindowTest`.)
+    function test_2625_inWindow_refusedMatch_liquidationProceeds() public {
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
+        // A sits inside the band [8500, 8700); B is matchable.
+        _mockLtv(LOAN_A, 8_600);
+        _mockLtv(LOAN_B, 9_000);
+        _chargeTransfersFrom(mockERC20, VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrowerB));
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.sequencerHealthy.selector),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, LOAN_A),
+            abi.encode(uint256(0.9e18))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.checkLiquidityOnActiveNetwork.selector, mockCollateralERC20),
+            abi.encode(uint8(LibVaipakam.LiquidityStatus.Liquid))
+        );
+
+        uint256 sellQuote = liquidationQuote(address(diamond), LOAN_A);
+        // The external sale itself then fails here (no adapter calls), which
+        // rolls the whole call back; what matters is that it was reached: the
+        // call got past the window gate to the swap step.
+        vm.expectRevert(abi.encodeWithSelector(LibSwap.NoEnabledSwapRoute.selector, LOAN_A));
+        RiskFacet(address(diamond)).triggerLiquidation(LOAN_A, sellQuote, new LibSwap.AdapterCall[](0));
+    }
+
     // ─── No-candidate fall-through (returns false) ──────────────────
 
     function test_attemptAutoDispatch_killSwitchOff_returnsFalse() public {

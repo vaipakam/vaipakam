@@ -22,6 +22,7 @@ import {MetricsFacet} from "./MetricsFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {LibRevert} from "../libraries/LibRevert.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
+import {LibInternalMatchPriority} from "../libraries/LibInternalMatchPriority.sol";
 
 /**
  * @title RiskMatchLiquidationFacet
@@ -152,7 +153,9 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         (`TokenDeliveryShort`): in practice a leg whose token charges on
     ///         transfer. Nothing moved: the match was unwound whole, and
     ///         `loanId` continues to its own liquidation, default or claim
-    ///         path in the same transaction, which pays the lender first.
+    ///         path in the same transaction, which pays the lender first —
+    ///         inside the internal-match priority window too, which stops
+    ///         holding the loan for the rest of the transaction.
     /// @param loanId      The loan being liquidated / defaulted / claimed.
     /// @param candidateId The opposing loan the match would have used.
     /// @param asset       The token that delivered short. The two legs of a
@@ -1406,6 +1409,11 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
             }
             (address asset, uint256 requested, uint256 received) = _decodeShortDelivery(reason);
             emit InternalMatchRefusedShortDelivery(loanId, candidateId, asset, requested, received);
+            // No internal match can settle this pair, so the priority window
+            // stops holding the loan for one: inside the band the caller's
+            // own liquidation runs now instead of reverting
+            // `InternalMatchOnlyBand` (Codex #3082 r1 P1).
+            LibInternalMatchPriority.markMatchRefused(loanId);
             return false;
         }
     }
