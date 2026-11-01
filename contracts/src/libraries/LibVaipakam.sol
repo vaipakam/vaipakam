@@ -4842,32 +4842,22 @@ library LibVaipakam {
         uint256 cfgRewardEmissionsTopUpTarget;
         uint256 cfgKeeperRewardTopUpTarget;
 
-        // T-087 Sub 3 add-on #473 — Productive treasury reserve.
-        // Idle treasury balances earn 0% by default; this surface
-        // routes a portion to external yield venues (Aave V3 for
-        // ERC20 supply, Lido for ETH staking). The
-        // `cfgTreasuryExternalYieldMaxBps` ceiling bounds how much
-        // of a token's treasury balance can be deployed externally
-        // — defence-in-depth against external-protocol counterparty
-        // risk.
-        //
-        // Phase 0 (this card): external venues only.
-        // Phase 1 (future card): adds VAIPAKAM_INTERNAL venue once
-        // TVL crosses the operator-decided threshold.
-        mapping(address => uint8) cfgTreasuryYieldVenue;
-        mapping(address => uint256) treasuryDeployedExternal;
-        uint16 cfgTreasuryExternalYieldMaxBps;
-        address cfgAaveV3Pool;
-        address cfgLidoStaking;
-        // T-087 Sub 3 add-on #473 round-2 P1 #1 — count of tokens
-        // with NON-ZERO Aave principal deployed. `setAaveV3Pool`
-        // refuses to rotate the pool address while this is > 0,
-        // because the old pool would still hold the existing
-        // aTokens / principal. Incremented when a token's deployed
-        // amount transitions 0 → >0 via `deployTreasuryYield`;
-        // decremented when it transitions >0 → 0 via
-        // `withdrawTreasuryYield`.
-        uint256 aaveDeployedTokenCount;
+        // RETIRED (#962 #963 #486 #487, owner decision 2026-10-28): the
+        // Diamond's productive treasury reserve (T-087 Sub 3 add-on #473),
+        // which supplied idle treasury balances to Aave V3 (Lido reserved),
+        // is removed while prelive. On the mainnet topology the treasury is
+        // an external multisig, so the Diamond holds no idle treasury to
+        // deploy, and as built the feature took Aave risk for yield it could
+        // not harvest (#962) and could lock its own configuration after a
+        // venue loss (#963). The multisig holds any yield position itself,
+        // outside the protocol. These six slots keep their places and are
+        // no longer written or read; never reuse them.
+        mapping(address => uint8) retiredTreasuryYieldVenue;
+        mapping(address => uint256) retiredTreasuryDeployedExternal;
+        uint16 retiredTreasuryExternalYieldMaxBps;
+        address retiredAaveV3Pool;
+        address retiredLidoStaking;
+        uint256 retiredAaveDeployedTokenCount;
 
         // T-087 Sub 3 add-on #474 — Keeper VPFI rewards.
         // Permissionless housekeeping calls (Sub 2.D sweep/force-
@@ -9593,12 +9583,6 @@ library LibVaipakam {
         AssetType assetType;
         bool released;      // tombstone marker — already released, ignore
     }
-
-    /// @dev T-087 Sub 3 add-on #473 — yield venue discriminator.
-    ///      Stored as uint8 in `cfgTreasuryYieldVenue[token]`.
-    uint8 internal constant TREASURY_YIELD_VENUE_NONE       = 0;
-    uint8 internal constant TREASURY_YIELD_VENUE_AAVE_V3    = 1;
-    uint8 internal constant TREASURY_YIELD_VENUE_LIDO_STETH = 2;
 
     /// @notice T-087 Sub 3.B — per-buyback-order state.
     /// @param token       Source asset being swapped into VPFI.

@@ -712,21 +712,6 @@ contract MockAaveV3Pool is IAaveV3Pool {
         return uint128(premiumBpsLocal);
     }
 
-    // The treasury-reserve half of the shared interface; the
-    // liquidator never calls it.
-    function supply(address, uint256, address, uint16) external pure {
-        revert("unused");
-    }
-
-    function withdraw(address, uint256, address) external pure returns (uint256) {
-        revert("unused");
-    }
-
-    // forge-lint: disable-next-line(mixed-case-function)
-    function ADDRESSES_PROVIDER() external pure returns (address) {
-        return address(0);
-    }
-
     function flashLoanSimple(
         address receiver,
         address asset,
