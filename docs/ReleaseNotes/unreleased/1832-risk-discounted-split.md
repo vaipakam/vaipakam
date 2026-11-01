@@ -1,4 +1,4 @@
-## Thread — The discounted liquidation route moves to its own facet (PR #<n>)
+## Thread — The discounted liquidation route moves to its own facet (PR #3084)
 
 The discounted liquidation route (the liquidator pays the loan's whole debt
 and receives the collateral at a per-tier discount, usually inside a flash
