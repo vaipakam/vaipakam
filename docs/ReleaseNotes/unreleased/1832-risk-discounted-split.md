@@ -3,8 +3,8 @@
 The discounted liquidation route (the liquidator pays the loan's whole debt
 and receives the collateral at a per-tier discount, usually inside a flash
 loan) has moved out of the risk facet into a facet of its own, the
-discounted-liquidation facet. The risk facet was about 350 bytes under the
-24,576-byte contract size limit, and two queued changes would have pushed it
+discounted-liquidation facet. The risk facet was 45 bytes under the
+24,576-byte contract size limit, and the queued lifetime-counters change (#1832) would have pushed it
 over, which would have made every later change to it undeployable. The
 discounted route was already a self-contained entry point, so it moved whole
 rather than having unrelated code trimmed to fit, the same way the split-route
