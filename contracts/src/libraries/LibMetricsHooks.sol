@@ -47,7 +47,7 @@ library LibMetricsHooks {
     /// @notice #1832 — records `gross` of interest paid on `loan`: the
     ///         interest (late fee included) a settlement charged the borrower,
     ///         before the treasury's yield fee, keyed by the loan's principal
-    ///         asset. The ONE writer of `lifetimeInterestPaid`.
+    ///         asset. The ONE place `lifetimeInterestPaid` grows.
     /// @dev    Called exactly once per settlement, at one of two seams: every
     ///         payout on a loan that stays open (and the offset completion)
     ///         passes through `LibInterestLedger.paySellersFirst`, which calls

@@ -8186,7 +8186,10 @@ library LibVaipakam {
         /// @dev #1832 — per ERC-20 lending asset, the gross interest (before
         ///      the treasury's yield fee) borrowers have paid on loans in it,
         ///      in the asset's own units, recorded as each payment is made
-        ///      (`LibMetricsHooks.onInterestPaid`). Never decreases.
+        ///      (`LibMetricsHooks.onInterestPaid`). Never decreases from one
+        ///      transaction to the next: a payment parked short takes back, in
+        ///      the same transaction, only the part of what it just recorded
+        ///      that did not arrive (`onInterestUndelivered`).
         ///      Written only by `LibMetricsHooks`. Appended — append-only.
         mapping(address => uint256) lifetimeInterestPaid;
         /// @dev #1832 — every asset a lifetime counter above has recorded,
