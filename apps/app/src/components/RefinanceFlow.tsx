@@ -64,6 +64,7 @@ import type { PermitAttachProgress } from '../data/refinancePending';
 import {
   attachRefinancePayoffPermit,
   ensurePermit2Approval,
+  permitNeeded,
   readPayoffQuote,
 } from '../contracts/refinancePayoffPermit';
 import { useProtocolFees } from '../data/fees';
@@ -179,6 +180,7 @@ export function RefinanceFlow({
       String(chainNow),
       String(graceSec),
       String(live.readAtTimestamp),
+      fees.loanInitiationFeeBps,
     ],
     enabled: Boolean(publicClient && walletChain) && graceReady,
     placeholderData: keepPreviousData,
@@ -192,6 +194,10 @@ export function RefinanceFlow({
         chainNow,
         expiresAt: chainNow + REQUEST_WINDOW_DAYS * 86_400n,
         graceSeconds: graceSec,
+        // The request asks for the old loan's principal
+        // (toRefinanceOfferPayload).
+        requestAmount: live.principal,
+        loanInitiationFeeBps: fees.loanInitiationFeeBps,
       }),
   });
   const quote = quoteQuery.data;
@@ -200,16 +206,16 @@ export function RefinanceFlow({
   // the grace-window late fee the accept-time pull now includes.
   const payoff = quote?.payoff ?? 0n;
   const payoffBound = quote?.bound ?? 0n;
-  const payoffInterest = payoff > live.principal ? payoff - live.principal : 0n;
-  const lifWei = (live.principal * BigInt(fees.loanInitiationFeeBps)) / 10_000n;
-  // What the wallet must hold SPARE at accept: the payoff is pulled,
-  // but the new principal minus LIF arrives in the same tx.
-  const walletTopUp = payoffInterest + lifWei;
+  // #3042 — what the wallet must hold SPARE at accept: the payoff less
+  // the new loan's net principal (the payoff's interest plus the new
+  // loan's initiation fee). On the permit route this is the contract's
+  // own figure and exactly what is pulled.
+  const walletTopUp = quote?.topUp ?? 0n;
   // Disclosed as TOTAL payoff growth, not "late fee" (Codex #1256 r3
   // P3): past maturity the pull grows by the late fee AND the
   // interest that keeps accruing, and the receipt must not label the
   // interest share as a fee.
-  const payoffHeadroom = payoffBound > payoff ? payoffBound - payoff : 0n;
+  const payoffHeadroom = quote?.growth ?? 0n;
   // OfferCreateFacet clamps a refinance request's on-chain expiry to
   // the grace boundary (graceEnd + 1) — when that clamp binds, the
   // honest reviewed lifetime is the grace end, not "30 days after
@@ -393,9 +399,9 @@ export function RefinanceFlow({
       }
       // The authorisation itself needs no balance, but a wallet that can't
       // even cover the INTEREST portion today should hear it now, not
-      // via a failed accept later. (The principal arrives in the
-      // accept tx itself, so only the top-up is checked — with the
-      // LIVE fee config, at TODAY's payoff; the pending card's
+      // via a failed accept later. (The new loan's net principal pays
+      // the old lender inside the accept, #3042, so only the top-up is
+      // checked — with the LIVE fee config, at TODAY's payoff; the pending card's
       // balance watch tracks the figure as any late fee accrues.)
       await assertErc20BalanceLive({
         publicClient,
@@ -532,7 +538,9 @@ export function RefinanceFlow({
           onPermitAttach(
             attached === 'attached'
               ? { offerId: id, phase: 'attached', posted: true }
-              : { offerId: id, phase: 'unknown' },
+              : attached === 'notNeeded'
+                ? { offerId: id, phase: 'notNeeded' }
+                : { offerId: id, phase: 'unknown' },
           );
         } catch (attachErr) {
           onPermitAttach({ offerId: id, phase: 'failed', reason: captureTxError(attachErr) });
@@ -771,7 +779,8 @@ export function RefinanceFlow({
                       } `
                     : ''
                 }${
-                  permitRoute
+                  // #3042 — a zero share needs no permit, so none is disclosed.
+                  permitRoute && permitNeeded(payoffBound)
                     ? `${copy.refinance.permit.signDisclosure(boundStr)} ${copy.refinance.permit.permit2ApprovalNote} `
                     : ''
                 }${copy.refinance.walletNote(topUpStr)}`,

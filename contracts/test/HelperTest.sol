@@ -1430,16 +1430,20 @@ contract HelperTest {
     ///           - `attemptInternalMatchAutoDispatch` — `onlyDiamondInternal`
     ///             auto-dispatch hook; wired for cross-facet routing,
     ///             not EOA-callable.
+    ///           - `executeAutoDispatchMatch` — `onlyDiamondInternal` match
+    ///             body behind the auto-dispatch's self-call (#2625 item 3).
     function getRiskMatchLiquidationFacetSelectors()
         public
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](3);
         selectors[0] =
             RiskMatchLiquidationFacet.triggerInternalMatchLiquidation.selector;
         selectors[1] =
             RiskMatchLiquidationFacet.attemptInternalMatchAutoDispatch.selector;
+        selectors[2] =
+            RiskMatchLiquidationFacet.executeAutoDispatchMatch.selector;
     }
 
     /// @notice Selectors for `RiskSplitLiquidationFacet` — the split-route
@@ -1668,17 +1672,17 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
-        selectors[0] = RefinanceFacet.refinanceLoan.selector;
+        selectors = new bytes4[](4);
         // T-092-H (#549) — atomic accept-and-refinance internal
         // entries; cut so the diamond fallback can route the
         // OfferAcceptFacet / OfferMatchFacet cross-facet calls.
         // #2349 — lender-accept and matcher-fill routes are separate.
-        selectors[1] = RefinanceFacet.refinanceLoanFromAccept.selector;
-        selectors[2] = RefinanceFacet.refinanceLoanFromMatch.selector;
+        // #3042 — the only completions (`refinanceLoan` is retired).
+        selectors[0] = RefinanceFacet.refinanceLoanFromAccept.selector;
+        selectors[1] = RefinanceFacet.refinanceLoanFromMatch.selector;
         // #2407 — the refinance-request record's view.
-        selectors[3] = RefinanceFacet.getRefinanceRequest.selector;
-        selectors[4] = RefinanceFacet.checkRefinanceRequest.selector;
+        selectors[2] = RefinanceFacet.getRefinanceRequest.selector;
+        selectors[3] = RefinanceFacet.checkRefinanceRequest.selector;
         return selectors;
     }
 

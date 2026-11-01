@@ -24,13 +24,21 @@ const erc20 = vi.hoisted(() => ({
   restoreAllowance: vi.fn(async (_o: unknown) => null as unknown),
 }));
 vi.mock('./erc20', () => erc20);
+// The quote reads the loan's end through the loan mirror; pin it so the
+// quote test states only its own arithmetic.
+vi.mock('./loanLive', async (orig) => ({
+  ...(await orig<typeof import('./loanLive')>()),
+  loanEndTimeOf: () => 10_000n,
+}));
 
 import {
   attachRefinancePayoffPermit,
   ensurePermit2Approval,
   lastFillableMoment,
   payoffPermitTypedData,
+  permitNeeded,
   permitProblem,
+  readPayoffQuote,
   type RefinancePayoff,
 } from './refinancePayoffPermit';
 import { PERMIT2_ADDRESS } from './usePermit2Signing';
@@ -121,11 +129,60 @@ describe('lastFillableMoment', () => {
   });
 });
 
+describe('readPayoffQuote — permit route (#1558, #3042)', () => {
+  const VIEW = [TOKEN, 1_000n, 1_100n, 30n, 130n, HOLDER, 130n, 1n, 2_000n, false] as const;
+  const quote = (offerId: bigint, extra: Record<string, unknown> = {}) => {
+    const readContract = vi.fn(async (_r: { args: readonly unknown[] }) => VIEW);
+    const q = readPayoffQuote({
+      publicClient: { readContract } as never,
+      diamond: DIAMOND,
+      live: {} as never,
+      loanId: 7n,
+      offerId,
+      chainNow: 1_000n,
+      expiresAt: 5_000n,
+      graceSeconds: 3_000n,
+      route: 'permit',
+      ...extra,
+    });
+    return { q, readContract };
+  };
+
+  it('takes every figure from the contract: the wallet share bounds the pull', async () => {
+    const { q, readContract } = quote(0n);
+    await expect(q).resolves.toEqual({
+      route: 'permit',
+      payoff: 1_000n,
+      // Today's share is what the wallet must hold spare; the share at the
+      // last fillable moment is what the permit is signed for.
+      topUp: 30n,
+      bound: 130n,
+      // The payoff's own growth to that moment, as the review states it.
+      growth: 100n,
+      lastFillable: 4_999n,
+      permit: null,
+    });
+    expect(readContract.mock.calls[0][0].args).toEqual([7n, 0n, 4_999n]);
+  });
+
+  it('reports the attached permit only for a posted request', async () => {
+    await expect(quote(42n).q).resolves.toMatchObject({
+      permit: { signer: HOLDER, maxAmount: 130n, walletShareBy: 130n, deadline: 2_000n },
+    });
+  });
+
+  it('refuses the approval route without the request amount and fee rate', async () => {
+    await expect(quote(0n, { route: 'approval' }).q).rejects.toThrow(/request amount and fee rate/);
+  });
+});
+
 describe('permitProblem', () => {
   const good: RefinancePayoff = {
     asset: TOKEN,
     payoffNow: 100n,
     payoffBy: 120n,
+    walletShareNow: 100n,
+    walletShareBy: 120n,
     signer: HOLDER,
     maxAmount: 120n,
     nonce: 1n,
@@ -137,6 +194,20 @@ describe('permitProblem', () => {
 
   it('passes a permit that pays every acceptance the request allows', () => {
     expect(check({})).toBeNull();
+  });
+
+  it('asks for no permit when the wallet share is zero (#3042): the settlement consults none', () => {
+    expect(permitNeeded(0n)).toBe(false);
+    expect(permitNeeded(1n)).toBe(true);
+    expect(
+      permitProblem(
+        { ...good, signer: '0x0000000000000000000000000000000000000000', maxAmount: 0n },
+        HOLDER,
+        1_000n,
+        2_000n,
+        0n,
+      ),
+    ).toBeNull();
   });
 
   it('names each way a permit cannot pay', () => {
@@ -165,6 +236,30 @@ describe('attachRefinancePayoffPermit (#1558)', () => {
       offerId: 42n,
     });
   const HASH = `0x${'ab'.repeat(32)}` as const;
+
+  it('needs no permit, and touches nothing, for a zero wallet share (#3042)', async () => {
+    erc20.ensureAllowance.mockClear();
+    const signTypedData = vi.fn(async () => '0x01');
+    const write = vi.fn(async () => ({}) as never);
+    await expect(
+      attachRefinancePayoffPermit({
+        publicClient: {} as never,
+        walletClient: { signTypedData } as never,
+        write,
+        chainId: 84532,
+        diamond: DIAMOND,
+        owner: HOLDER,
+        token: TOKEN,
+        maxAmount: 0n,
+        deadline: 2_000n,
+        loanId: 7n,
+        offerId: 42n,
+      }),
+    ).resolves.toBe('notNeeded');
+    expect(erc20.ensureAllowance).not.toHaveBeenCalled();
+    expect(signTypedData).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+  });
 
   it('is attached when the write returns', async () => {
     await expect(base(async () => ({}) as never, () => null)).resolves.toBe('attached');

@@ -19,6 +19,7 @@ import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {FeeOnTransferERC20Mock} from "./mocks/FeeOnTransferERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -224,6 +225,32 @@ contract InternalMatchExecutionTest is SetupTest {
         );
         assertEq(IERC20(mockERC20).balanceOf(matcher), 10);
         assertEq(IERC20(mockCollateralERC20).balanceOf(bLenderVault) - bLenderYBefore, 990);
+    }
+
+    /// @notice #2625 item 3 — a leg whose token charges on transfer delivers
+    ///         less to the receiving lender than it sent. The explicit trigger
+    ///         refuses the whole match with `TokenDeliveryShort` instead of
+    ///         clearing the receiving loan's debt by less and leaving the
+    ///         shortfall owed there (owner decision 2026-10-28).
+    function test_2625_shortLeg_explicitTriggerRefused() public {
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+
+        // Leg X moves B's collateral (mockERC20) out of borrowerB's vault;
+        // charge 1% on transfers out of that vault only. Lender share 990,
+        // charge 9, so the lender's vault receives 981.
+        address bBorrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrowerB);
+        vm.etch(mockERC20, address(new FeeOnTransferERC20Mock("FoT", "FOT", 18)).code);
+        FeeOnTransferERC20Mock(mockERC20).setFeeBps(100);
+        FeeOnTransferERC20Mock(mockERC20).setChargedSender(bBorrowerVault);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.TokenDeliveryShort.selector, mockERC20, 990, 981)
+        );
+        vm.prank(matcher);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
     }
 
     /// @notice #691 — the multi-loan internal match EAGERLY CONSOLIDATES a

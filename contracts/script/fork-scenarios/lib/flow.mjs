@@ -111,8 +111,9 @@ export const PERMIT2 = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
  *
  * The payoff is pulled with an exact-amount, single-use Permit2 signature,
  * never a standing Diamond allowance. The borrower approves Permit2 for the
- * token (inert without a signature), reads the payoff at the request's last
- * fillable moment, signs a witness permit bound to (loanId, offerId) with
+ * token (inert without a signature), reads the wallet's share of the payoff
+ * at the request's last fillable moment (#3042: the new lender's net
+ * principal pays the rest), signs a witness permit bound to (loanId, offerId) with
  * the Diamond as spender, and records it on the Diamond.
  *
  * Returns `null` on a Diamond that does not route the permit yet (a fork of
@@ -123,8 +124,10 @@ export async function attachPayoffPermitIfRouted(borrower, loanId, offerId, expi
   const host = await read(ABIS.loupe, 'facetAddress', [selector]);
   if (host === ZERO) return null;
   const deadline = BigInt(expiresAt) - 1n;
-  const [asset, , payoffBy] = await read(ABIS.refinancePayoff, 'getRefinancePayoff', [loanId, offerId, deadline]);
-  await tx(borrower, { address: asset, abi: ERC20, functionName: 'approve', args: [PERMIT2, payoffBy] }, 'approve Permit2');
+  // #3042 — the new lender's net principal pays the old lender directly, so
+  // the permit covers only the wallet's share of the payoff.
+  const [asset, , , , walletShareBy] = await read(ABIS.refinancePayoff, 'getRefinancePayoff', [loanId, offerId, deadline]);
+  await tx(borrower, { address: asset, abi: ERC20, functionName: 'approve', args: [PERMIT2, walletShareBy] }, 'approve Permit2');
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   const nonce = BigInt(`0x${Buffer.from(bytes).toString('hex')}`);
   const signature = await walletFor(borrower).signTypedData({
@@ -148,7 +151,7 @@ export async function attachPayoffPermitIfRouted(borrower, loanId, offerId, expi
     },
     primaryType: 'PermitWitnessTransferFrom',
     message: {
-      permitted: { token: asset, amount: payoffBy },
+      permitted: { token: asset, amount: walletShareBy },
       spender: DIAMOND,
       nonce,
       deadline,
@@ -157,9 +160,9 @@ export async function attachPayoffPermitIfRouted(borrower, loanId, offerId, expi
   });
   const receipt = await tx(borrower, {
     address: DIAMOND, abi: ABIS.refinancePayoff, functionName: 'setRefinancePayoffPermit',
-    args: [offerId, payoffBy, nonce, deadline, signature],
+    args: [offerId, walletShareBy, nonce, deadline, signature],
   }, 'setRefinancePayoffPermit');
-  return { asset, maxAmount: payoffBy, nonce, deadline, gas: receipt.gasUsed };
+  return { asset, maxAmount: walletShareBy, nonce, deadline, gas: receipt.gasUsed };
 }
 
 /** A liquid/liquid lender offer with every range bound pinned to the point value. */

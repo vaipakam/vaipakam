@@ -2503,6 +2503,17 @@
   },
   {
     "type": "error",
+    "name": "RefinanceNetPrincipalAlreadyParked",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RefinanceRequestNotCancelled",
     "inputs": [
       {

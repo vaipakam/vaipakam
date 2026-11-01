@@ -177,8 +177,10 @@ export function noRequestPosted(outcomes: readonly RefinanceBatchOutcome[]): boo
 }
 
 /** What the ready requests need, summed per token: the bound (each
- *  request's largest possible payoff), which the approval of the Diamond or
- *  of Permit2 is sized to, and the spare balance (each one's top-up today).
+ *  request's largest possible pull from the wallet — its share of the
+ *  payoff on the permit route, #3042, or the whole payoff on the approval
+ *  bridge), which the approval of the Diamond or of Permit2 is sized to,
+ *  and the spare balance (each one's top-up today).
  *  One lending asset per offer, so one entry in practice. */
 export function refinanceTotals(
   plans: readonly RefinanceRequestReady[],

@@ -649,7 +649,7 @@
       "liquidityChecking": "Wir prüfen, wie diese Assets vom Protokoll bepreist werden…",
       "liquidityCheckFailed": "Wir konnten nicht prüfen, wie diese Assets bepreist werden, und diese Prüfung entscheidet über einen wichtigen Warnhinweis — das Signieren bleibt pausiert, bis sie gelingt.",
       "linkedLoanCheckFailed": "Wir konnten nicht prüfen, ob dieses Angebot der Positionsverkauf eines laufenden Kredits ist, und diese Prüfung entscheidet über eine wichtige Offenlegung — das Signieren bleibt pausiert, bis sie gelingt.",
-      "refinanceRequestBanner": "Dies ist eine Refinanzierungsanfrage für Kredit #{{loanId}}. Die Annahme eröffnet Ihren Kredit und tilgt und schließt in derselben Transaktion Kredit #{{loanId}}. Wie bei jedem Kredit geht der von Ihnen verliehene Betrag, abzüglich der Kreditvergabegebühr des Kreditnehmers, an die Wallet des Kreditnehmers. Die Tilgung an den aktuellen Kreditgeber jenes Kredits wird danach aus der Wallet des Kreditnehmers entnommen, sodass Ihr Kredit sie ganz oder teilweise finanzieren kann; eine Differenz deckt der Kreditnehmer. Was Ihnen geschuldet wird, bestimmen die Bedingungen und Sicherheiten Ihres neuen Kredits.",
+      "refinanceRequestBanner": "Dies ist eine Refinanzierungsanfrage für Kredit #{{loanId}}. Die Annahme eröffnet Ihren Kredit und tilgt und schließt in derselben Transaktion Kredit #{{loanId}}. Der von Ihnen verliehene Betrag, abzüglich der Kreditvergabegebühr des Kreditnehmers, finanziert die Ablösesumme jenes Kredits an dessen aktuellen Kreditgeber, und den Rest zahlt die Wallet des Kreditnehmers. Was Ihnen geschuldet wird, bestimmen die Bedingungen und Sicherheiten Ihres neuen Kredits.",
       "refinanceRequestChecking": "Wir prüfen, ob diese Anfrage einen laufenden Kredit refinanziert — die Prüfung muss das anzeigen, bevor Sie unterschreiben können.",
       "refinanceRequestCheckFailed": "Wir konnten nicht prüfen, ob diese Anfrage einen laufenden Kredit refinanziert, und das ändert, was die Annahme bewirkt — das Unterschreiben bleibt pausiert, bis die Prüfung gelingt.",
       "refinanceRequestUnavailable": "Diese Anfrage möchte Kredit #{{loanId}} refinanzieren, kann aber gerade nicht angenommen werden. {{reason}} Eine Annahme würde fehlschlagen, daher gibt es nichts zu unterschreiben.",
@@ -833,7 +833,7 @@
         "offsetCost": "Sie stellen jetzt neues Geld zum Verleihen bereit — und bei Abschluss zahlt Ihre Wallet außerdem diesen Kredit vollständig ab: seinen Kreditbetrag, die bis jetzt angefallenen Zinsen und einen etwaigen Zinsausgleich für Ihren jetzigen Kreditgeber. Planen Sie mit zwei Beträgen in Kredithöhe, nicht mit einem.",
         "refinance": "Zu einem neuen Kreditgeber umschulden",
         "refinanceDesc": "Veröffentlichen Sie eine Anfrage für einen neuen Kredit zu besseren Konditionen. Nimmt ein Kreditgeber an, wird der alte Kredit abgelöst und Ihre Sicherheit wandert automatisch mit.",
-        "refinanceCost": "Die Ablösesumme besteht aus dem Kreditbetrag plus den Zinsen der restlichen Laufzeit und wird aus Ihrer Wallet abgebucht, sobald ein Kreditgeber annimmt.",
+        "refinanceCost": "Die Ablösesumme ist der Kreditbetrag plus die Zinsen der Restlaufzeit. Wenn ein Kreditgeber annimmt, deckt das Geld des neuen Kredits, abzüglich seiner Abschlussgebühr, in derselben Transaktion einen ebenso großen Teil davon ab; den Rest deckt Ihre Wallet.",
         "refinanceTransferredUnavailable": "Für diese Position nicht verfügbar — die Umschuldung bleibt bei der Wallet, die den Kredit ursprünglich aufgenommen hat."
       },
       "checkingInterlocks": "Verknüpfte Anfragen zu diesem Kredit werden geprüft…",
@@ -914,7 +914,7 @@
     },
     "refinance": {
       "postedButUnconfirmed": "Deine Anfrage wurde gesendet, aber wir konnten nicht bestätigen, ob sie durchgegangen ist. Prüfe deine offenen Anfragen, bevor du es erneut versuchst — falls sie angekommen ist, würde eine zweite Anfrage ein Duplikat erzeugen. Die Ausgabe-Freigabe wurde bewusst beibehalten, weil ein Kreditgeber, der die Anfrage annimmt, sie zum Einzug der Ablösung benötigt.",
-      "receiptYouMayOwe": "~{{payoff}} zur Ablösung dieses Kredits, automatisch gezogen, wenn ein Kreditgeber akzeptiert.",
+      "receiptYouMayOwe": "~{{payoff}}, um diesen Kredit abzulösen, automatisch beglichen, wenn ein Kreditgeber annimmt. Das Geld des neuen Kredits, abzüglich seiner Abschlussgebühr, deckt den Großteil davon; der Rest kommt aus Ihrer Wallet.",
       "feesTreasuryNote": "Der {{cut}}-Anteil des Protokolls an den Payoff-Zinsen wird im Payoff abgerechnet.",
       "whenEndsComposed": "Wenn ein Kreditgeber Ihre Anfrage akzeptiert, wenn Sie sie stornieren, oder {{branch}}.",
       "expiresAfterDays": "wenn sie {{days}} Tage nach Veröffentlichung abläuft",
@@ -929,7 +929,7 @@
       "action": "Refinanzierungsanfrage prüfen",
       "confirm": "Bestätigen — Refinanzierungsanfrage veröffentlichen",
       "payoffNote": "Die Ablösesumme des alten Kredits ist immer der Kreditbetrag plus die Zinsen der gesamten restlichen Laufzeit — auch wenn die Zinsen dieses Kredits normalerweise Tag für Tag wachsen. Das ist der feste Anspruch des ausscheidenden Kreditgebers bei einem vorzeitigen Ausstieg.",
-      "walletNote": "Der Payoff wird automatisch aus Ihrer Wallet gezogen, sobald ein Kreditgeber akzeptiert. Das Geld des neuen Kredits kommt in derselben Transaktion an, halten Sie also etwa {{topUp}} frei in Ihrer Wallet (den Zinsanteil plus die Initialisierungsgebühr des neuen Kredits), solange die Anfrage offen ist.",
+      "walletNote": "Wenn ein Kreditgeber annimmt, deckt das Geld des neuen Kredits, abzüglich seiner Abschlussgebühr, in derselben Transaktion den Großteil der Ablösesumme ab. Halten Sie daher, solange die Anfrage offen ist, etwa {{topUp}} in Ihrer Wallet bereit (den Zinsanteil plus die Abschlussgebühr des neuen Kredits).",
       "shortIsSafe": "Reicht Ihr Wallet-Guthaben nicht aus, wenn ein Kreditgeber annehmen will, schlägt die Annahme einfach fehl — es wird nichts entnommen, und Ihr aktueller Kredit läuft unverändert weiter.",
       "noGuarantee": "Eine Refinanzierungsanfrage ist keine Garantie, dass ein Kreditgeber sie annimmt. Bis jemand annimmt, behält dieser Kredit sein Fälligkeitsdatum und seine Nachfrist; nimmt niemand rechtzeitig an, kann der Kredit wie jeder andere ausfallen. Seien Sie bereit, ihn selbst zurückzuzahlen, falls die Anfrage nicht angenommen wird.",
       "autoMatchOff": "Das automatische Matching von Refinanzierungsanfragen ist in diesem Deployment ausgeschaltet, daher wird der Order-Matcher deine Anfrage nicht ausführen. Diese Einstellung hindert keinen Kreditgeber daran, sie direkt anzunehmen.",
@@ -979,7 +979,7 @@
       "repayWarnPending": "Für diesen Kredit ist noch eine Refinanzierungsanfrage aktiv. Die Rückzahlung schließt den Kredit ab; danach kann die Anfrage nie mehr abgeschlossen werden — stornieren Sie sie anschließend über ihre Karte (das entfernt auch ihre bestehende Ablöse-Freigabe); bis dahin liegt sie einfach da, bis sie abläuft.",
       "inFallback": "Dieser Kredit befindet sich in seiner Fallback-Phase und kann daher keine Refinanzierungsanfrage erhalten. Seine eigene Seite erklärt die Möglichkeiten.",
       "permit": {
-        "signDisclosure": "Sie signieren eine Ablöse-Erlaubnis über höchstens {{amount}}: die Ablösesumme, falls ein Kreditgeber im letzten Moment annimmt, den diese Anfrage zulässt. Wer die Refinanzierung abschließt, kann sie nur einmal verwenden, nur für die Ablösesumme dieses Kredits in genau diesem Moment, sodass der Rest nie eingezogen wird. Sie verfällt, wenn die Anfrage endet, und nichts bleibt für das Protokoll freigegeben.",
+        "signDisclosure": "Sie signieren eine Ablöse-Erlaubnis über höchstens {{amount}}: den Anteil Ihrer Wallet an der Ablösesumme, falls ein Kreditgeber im letzten Moment annimmt, den diese Anfrage zulässt. Das Geld des neuen Kredits, abzüglich seiner Abschlussgebühr, zahlt den Rest der Ablösesumme direkt an Ihren aktuellen Kreditgeber. Wer die Refinanzierung abschließt, kann die Erlaubnis nur einmal verwenden, nur für Ihren Anteil in genau diesem Moment, sodass der Rest davon nie eingezogen wird. Sie verfällt, wenn die Anfrage endet, und nichts bleibt für das Protokoll freigegeben.",
         "permit2ApprovalNote": "Hat Ihre Wallet Permit2 (den Permit-Vertrag von Uniswap) für diesen Token nicht mindestens in dieser Höhe freigegeben, erteilen Sie diese Freigabe zuerst. Diese Freigabe bewegt für sich allein nichts: Permit2 zahlt nur gegen eine Signatur, die Sie leisten.",
         "growthDisclosure": "Wenn ein Kreditgeber nach dem Fälligkeitsdatum des Kredits annimmt, wächst die Ablösesumme (die Verspätungsgebühr plus weiter auflaufende Zinsen) bei dieser Anfrage um bis zu ~{{maxGrowth}}. Die Erlaubnis deckt auch das ab, sodass eine späte Annahme nicht daran scheitern kann.",
         "multiStepNote": "Das Einstellen erfordert bis zu fünf Wallet-Schritte: die Leitplanken, falls nötig die Permit2-Freigabe, die Anfrage, Ihre Signatur der Ablöse-Erlaubnis und die Transaktion, die sie anhängt. Wenn Sie aufhören, nachdem die Anfrage eingestellt ist, bleibt sie ohne Erlaubnis offen, und kein Kreditgeber kann sie abschließen; signieren Sie die Erlaubnis über die Karte der Anfrage oder stornieren Sie die Anfrage.",
@@ -992,11 +992,12 @@
           "spent": "Die Ablöse-Erlaubnis dieser Anfrage wurde bereits verwendet, daher würde die Annahme durch einen Kreditgeber fehlschlagen. Signieren Sie unten eine neue oder stornieren Sie die Anfrage.",
           "expired": "Die Ablöse-Erlaubnis dieser Anfrage ist abgelaufen, daher würde die Annahme durch einen Kreditgeber fehlschlagen. Signieren Sie unten eine neue oder stornieren Sie die Anfrage.",
           "lapsesEarly": "Die Ablöse-Erlaubnis dieser Anfrage läuft vor der Anfrage selbst ab, daher würde eine spätere Annahme fehlschlagen. Signieren Sie unten eine neue oder stornieren Sie die Anfrage.",
-          "short": "Die Ablöse-Erlaubnis dieser Anfrage erlaubt weniger, als die Ablösesumme bis zum Ende der Anfrage erreichen kann (eine Annahme nach dem Fälligkeitsdatum zieht zusätzlich die Verspätungsgebühr und Mehrzinsen ein), daher könnte eine spätere Annahme fehlschlagen. Signieren Sie unten eine neue oder stornieren Sie die Anfrage.",
-          "permit2Short": "Die Freigabe Ihrer Wallet für Permit2 deckt bei diesem Token die Ablösesumme nicht mehr ab, daher würde die Annahme durch einen Kreditgeber fehlschlagen. Signieren Sie die Ablöse-Erlaubnis unten erneut; dabei wird zuerst diese Freigabe erhöht."
+          "short": "Die Ablöse-Erlaubnis dieser Anfrage erlaubt weniger, als der Anteil Ihrer Wallet an der Ablösesumme vor dem Ende der Anfrage erreichen kann (eine Annahme nach dem Fälligkeitsdatum zieht zusätzlich die Verzugsgebühr und weitere Zinsen ein, und ein erhöhter Satz der Abschlussgebühr erhöht den Anteil), daher könnte eine spätere Annahme fehlschlagen. Signieren Sie unten eine neue oder stornieren Sie die Anfrage.",
+          "permit2Short": "Die Freigabe Ihrer Wallet für Permit2 deckt bei diesem Token den Anteil Ihrer Wallet an der Ablösesumme nicht mehr ab, daher würde die Annahme durch einen Kreditgeber fehlschlagen. Signieren Sie die Ablöse-Erlaubnis unten erneut; dabei wird zuerst diese Freigabe erhöht."
         },
         "sign": "Ablöse-Erlaubnis signieren",
         "signed": "Ablöse-Erlaubnis angehängt — die Anfrage kann abgeschlossen werden.",
+        "notNeeded": "Ihre Refinanzierungsanfrage ist eingestellt. Ihre Wallet schuldet nichts, wenn ein Kreditgeber sie annimmt, daher ist keine Ablöse-Erlaubnis nötig und die Anfrage kann so abgeschlossen werden.",
         "signAborted": "Diese Anfrage lässt sich nicht mehr abschließen (angenommen, storniert oder der Kredit wurde geschlossen), daher wurde nichts signiert. Aktualisieren Sie, um den neuesten Stand zu sehen.",
         "cancelled": "Refinanzierungsanfrage storniert — dieser Kredit läuft unverändert weiter. Ihre Ablöse-Erlaubnis war auf diese Anfrage ausgestellt, daher kann sie nie verwendet werden, und ihretwegen bleibt nichts für das Protokoll freigegeben.",
         "pendingLoanClosed": "Dieser Kredit wurde inzwischen anderweitig geschlossen, daher kann die Anfrage nicht mehr abgeschlossen werden. Stornieren Sie sie, um sie zu entfernen.",
@@ -1226,8 +1227,8 @@
     },
     "keepers": {
       "title": "Keeper-Berechtigungen",
-      "blurb": "Keeper sind Drittanbieter-Dienste (oder Ihr eigener Bot), denen Sie erlauben können, bestimmte Kreditaktionen FÜR Sie auszuführen — ein vorzeitiges Schließen starten, eine von Ihnen aufgesetzte Refinanzierung abschließen, eine Position zum Verkauf inserieren. Alles hier ist aus, bis Sie es einschalten, und drei Schalter müssen gemeinsam an sein, bevor ein Keeper handeln darf: der Hauptschalter, die Aktion beim jeweiligen Keeper und ein Schalter pro Kredit auf dessen Seite.",
-      "safetyNote": "Ein Keeper kann nie Ihr Geld erhalten — Auszahlungen gehen immer an den Halter der Position. Sie können jeden Keeper jederzeit widerrufen (oder den Hauptschalter ausschalten), das Protokoll kann alle Keeper auf einmal pausieren, und Refinanzierungen sind zusätzlich durch die Leitplanken begrenzt, die Sie pro Kredit setzen. Wechselt eine Position den Besitzer, gelten diese Berechtigungen nach den Einstellungen des neuen Halters, nicht nach Ihren.",
+      "blurb": "Keeper sind Drittanbieter-Dienste (oder Ihr eigener Bot), denen Sie erlauben können, bestimmte Kreditaktionen FÜR Sie auszuführen — ein vorzeitiges Schließen starten, einen Kredit verlängern, eine Position zum Verkauf inserieren. Alles hier ist aus, bis Sie es einschalten, und drei Schalter müssen gemeinsam an sein, bevor ein Keeper handeln darf: der Hauptschalter, die Aktion beim jeweiligen Keeper und ein Schalter pro Kredit auf dessen Seite.",
+      "safetyNote": "Ein Keeper kann nie Ihr Geld erhalten — Auszahlungen gehen immer an den Halter der Position. Sie können jeden Keeper jederzeit widerrufen (oder den Hauptschalter ausschalten), und das Protokoll kann alle Keeper auf einmal pausieren. Wechselt eine Position den Besitzer, gelten diese Berechtigungen nach den Einstellungen des neuen Halters, nicht nach Ihren.",
       "masterLabel": "Meinen freigegebenen Keepern das Handeln erlauben (Hauptschalter — solange er aus ist, läuft nichts)",
       "addressPlaceholder": "0x… keeper Adresse",
       "actions": {
@@ -1235,11 +1236,6 @@
           "label": "Für mich das vorzeitige Schließen eines Kredits starten",
           "side": "wirkt auf Kredite, bei denen Sie Kreditnehmer sind",
           "blurb": "Startet jeden Weg zum vorzeitigen Schließen bei einem Kredit, bei dem Sie Kreditnehmer sind. Die Ablösesumme kommt weiterhin aus Ihrer Wallet im Rahmen Ihrer bestehenden Freigaben."
-        },
-        "refinance": {
-          "label": "Eine Refinanzierung für mich abschließen",
-          "side": "wirkt auf Kredite, bei denen Sie Kreditnehmer sind",
-          "blurb": "Schließt eine von Ihnen aufgesetzte Refinanzierung ab, begrenzt durch die von Ihnen genehmigten Leitplanken (Zins-Obergrenze, Enddatum) — und den Keeper-Notausschalter des Protokolls."
         },
         "completeOffset": {
           "label": "Einen Offset-Abschluss für mich fertigstellen",
@@ -2602,6 +2598,7 @@
         "BackstopAbsorbedLoan": "Kredit vom Backstop absorbiert",
         "LoanExtended": "Kredit verlängert",
         "LoanRefinanced": "Kredit refinanziert",
+        "RefinancePayoffSettled": "Kredit refinanziert",
         "LoanPreclosedDirect": "Kredit vorzeitig geschlossen",
         "LenderFundsClaimed": "Mittel beansprucht",
         "BorrowerFundsClaimed": "Sicherheit beansprucht",
@@ -2614,6 +2611,7 @@
         "IntentLoanRolled": "Kredit verlängert",
         "CollateralAdded": "Sicherheit hinzugefügt",
         "InternalMatchExecuted": "Kredit intern gematcht",
+        "InternalMatchRefusedShortDelivery": "Interner Match übersprungen",
         "PrepayListingPosted": "Sicherheit zum Verkauf gelistet",
         "PrepayListingMatched": "Sicherheitenverkauf gematcht",
         "PrepayListingUpdated": "Sicherheitenlisting aktualisiert",
@@ -3206,7 +3204,7 @@
       "lenderIntentFillsHint": "Ob registrierte Kredit-Intents ausgeführt werden können. Aus stoppt ihre Ausführung; Kreditgeber können weiterhin Intents registrieren.",
       "minIntentFill": "Kleinste Intent-Ausführung",
       "minIntentFillHint": "Der Mindestwert, den die kleinste Ausführung eines stehenden Intents bei seiner Registrierung haben muss. Beide Assets müssen außerdem bepreist sein. Ein vor einer Änderung registrierter Intent behält seine Bedingungen, bis er neu gesetzt wird.",
-      "autoRefinanceHint": "Aus hindert Keeper und den Order-Matcher daran, Refinanzierungen abzuschließen. Ein Kreditnehmer, der seinen eigenen Kredit refinanziert, oder ein Kreditgeber, der eine Refinanzierungsanfrage direkt annimmt, kommt weiterhin durch.",
+      "autoRefinanceHint": "Aus hindert den Order-Matcher daran, Refinanzierungen abzuschließen. Ein Kreditgeber, der eine Refinanzierungsanfrage direkt annimmt, kommt weiterhin durch.",
       "autoExtendHint": "Aus blockiert jede Verlängerung eines Kredits an Ort und Stelle, auch eine, die der Kreditnehmer direkt anfordert.",
       "numeraireFeed": "ETH-Preisfeed in der Referenzwährung",
       "numeraireFeedHint": "Der Chainlink-Feed, der ETH in der Referenzwährung bewertet. Er ändert sich zusammen mit der Referenzwährung.",
@@ -3558,9 +3556,9 @@
         "attaching": "Bestätigen Sie die Transaktion, die die Erlaubnisse anhängt…"
       },
       "reviewTitle": "Diese Refinanzierungsanfragen stellen",
-      "loanPayoff": "Kredit #{{id}}: ~{{payoff}}, um ihn heute abzulösen, automatisch eingezogen, wenn ein Kreditgeber seine Anfrage annimmt.",
+      "loanPayoff": "Kredit #{{id}}: ~{{payoff}}, um ihn heute abzulösen, automatisch beglichen, wenn ein Kreditgeber seine Anfrage annimmt. Das Geld des neuen Kredits, abzüglich seiner Abschlussgebühr, deckt den Großteil davon; der Rest kommt aus Ihrer Wallet.",
       "loanGrowth": "Nimmt ein Kreditgeber nach dem Fälligkeitsdatum dieses Kredits an, steigt die Ablösesumme (die Verzugsgebühr plus weiterlaufende Zinsen) bis zum Ende der Anfrage um bis zu ~{{amount}}.",
-      "loanTopUp": "Frei verfügbar in Ihrer Wallet, wenn ein Kreditgeber annimmt: etwa {{amount}}. Das sind die Zinsen der Ablösesumme und die Abschlussgebühr des neuen Kredits; der neue Kreditbetrag kommt in derselben Transaktion an.",
+      "loanTopUp": "Frei verfügbar in Ihrer Wallet, wenn ein Kreditgeber annimmt: etwa {{amount}}. Das sind die Zinsen der Ablösesumme und die Abschlussgebühr des neuen Kredits; den Rest deckt das Geld des neuen Kredits in derselben Transaktion.",
       "leftOut": "Kredit #{{id}} wird ausgelassen: {{reason}}",
       "noneReady": "Keiner dieser Kredite kann gerade zusammen eine Refinanzierungsanfrage erhalten. Öffnen Sie jeden Kredit, um seine Möglichkeiten zu sehen.",
       "totals": "Zusammen: etwa {{topUp}} frei in Ihrer Wallet, wenn jede Anfrage angenommen wird. Ihre Wallet hält das jetzt, sonst wird nichts gesendet.",
@@ -3585,8 +3583,8 @@
       "approvalLeft": "Ihre Token-Freigabe für das Protokoll beträgt jetzt {{amount}}. Ihre offenen Refinanzierungsanfragen ziehen ihre Ablösesummen daraus, daher kann eine Senkung eine Anfrage am Abschluss hindern.",
       "terms": "Jede Anfrage verlangt einen neuen Kredit über {{days}} Tage zu einem Jahreszins von höchstens {{rate}}.",
       "permit": {
-        "total": "Jede Anfrage erhält ihre eigene Ablöse-Erlaubnis, signiert für ihre größtmögliche Ablösesumme (zusammen {{amount}}). Eine Erlaubnis kann nur einmal verwendet werden, nur für die Ablösesumme ihres eigenen Kredits in dem Moment, in dem ein Kreditgeber annimmt, und sie verfällt, wenn ihre Anfrage endet, sodass nichts für das Protokoll freigegeben bleibt. Deckt die Freigabe Ihrer Wallet für Permit2 (den Permit-Vertrag von Uniswap) diese Summe nicht bereits ab, erteilen Sie sie zuerst; diese Freigabe bewegt ohne eine Ihrer Signaturen nichts.",
-        "youMayOwe": "Die oben gezeigte Ablösesumme jedes Kredits, einmalig über die Ablöse-Erlaubnis der jeweiligen Anfrage aus Ihrer Wallet eingezogen, wenn ein Kreditgeber die Anfrage annimmt. Ihre Wallet muss in diesem Moment den frei verfügbaren Betrag dieses Kredits halten.",
+        "total": "Jede Anfrage erhält ihre eigene Ablöse-Erlaubnis, signiert für den größten Anteil ihrer Ablösesumme, den Ihre Wallet schulden kann (zusammen {{amount}}); das Geld des neuen Kredits, abzüglich seiner Abschlussgebühr, zahlt den Rest direkt an den bisherigen Kreditgeber. Eine Erlaubnis kann nur einmal verwendet werden, nur für die Ablösesumme ihres eigenen Kredits in dem Moment, in dem ein Kreditgeber annimmt, und sie verfällt, wenn ihre Anfrage endet, sodass nichts für das Protokoll freigegeben bleibt. Deckt die Freigabe Ihrer Wallet für Permit2 (den Permit-Vertrag von Uniswap) diese Summe nicht bereits ab, erteilen Sie sie zuerst; diese Freigabe bewegt ohne eine Ihrer Signaturen nichts.",
+        "youMayOwe": "Die oben angezeigte Ablösesumme jedes Kredits, beglichen, wenn ein Kreditgeber seine Anfrage annimmt: Das Geld des neuen Kredits, abzüglich seiner Abschlussgebühr, zahlt den Großteil davon direkt an den bisherigen Kreditgeber, und der Rest wird einmalig über die Ablöse-Erlaubnis dieser Anfrage aus Ihrer Wallet gezogen. Ihre Wallet muss in diesem Moment den frei verfügbaren Betrag dieses Kredits halten.",
         "postedNoPermit": "Kredit #{{id}}: Anfrage als Angebot #{{offerId}} gestellt, aber ihre Ablöse-Erlaubnis ist nicht angehängt, daher kann noch kein Kreditgeber sie abschließen. Öffnen Sie die Seite des Kredits, um sie zu signieren, oder stornieren Sie die Anfrage dort.",
         "postedPermitPending": "Kredit #{{id}}: Anfrage als Angebot #{{offerId}} gestellt. Ihre Ablöse-Erlaubnis wurde gesendet, ist aber noch nicht bestätigt, daher ist noch nicht bekannt, ob ein Kreditgeber die Anfrage abschließen kann. Öffnen Sie die Seite des Kredits, um den Stand zu sehen."
       }

@@ -13,9 +13,12 @@
  * hard expiry), the guardrail write it needs first when the loan's
  * auto-refinance caps do not already cover it, and the figures the
  * borrower reviews — today's payoff, what the wallet must hold spare at
- * acceptance, and the most the acceptance can pull: the payoff at the
- * request's LAST fillable moment (#1236), which the payoff permit is
- * signed for (#1558). Or the reason the loan cannot take a request now.
+ * acceptance, and the most the acceptance can pull (`bound`): on the
+ * permit route the wallet's share of the payoff at the request's LAST
+ * fillable moment, which the payoff permit is signed for (#1236, #1558,
+ * #3042: the new loan's net principal pays the rest inside the Diamond);
+ * on the approval bridge the whole payoff at that moment.
+ * Or the reason the loan cannot take a request now.
  *
  * The payoff figures come from the contract (`getRefinancePayoff`). On a
  * Diamond deployed before #1558 the payoff is paid from a standing
@@ -101,13 +104,17 @@ export interface RefinanceRequestReady {
   route: PayoffRoute;
   /** Today's payoff to the old lender. */
   payoff: bigint;
-  /** What the wallet must hold spare at acceptance: the payoff's interest
-   *  share plus the new loan's initiation fee (the new principal arrives
-   *  in the same transaction). Judged at today's payoff. */
+  /** What the wallet must hold spare at acceptance, and what the accept
+   *  pulls from it: the payoff less the new loan's net principal, which
+   *  pays the old lender inside the Diamond (#3042) — the interest share
+   *  plus the new loan's initiation fee. Judged at today's payoff. */
   topUp: bigint;
-  /** The most the acceptance can pull: the payoff at the request's last
-   *  fillable moment. The permit is signed for exactly this; on the
-   *  approval route it is the approval's size. */
+  /** The most the acceptance can pull from the wallet. On the permit
+   *  route: the wallet's share of the payoff at the request's last
+   *  fillable moment, at the live fee rate with no discount (an upper
+   *  bound; a discount only lowers the pull) — the permit is signed for
+   *  exactly this. On the approval bridge: the whole payoff at that
+   *  moment, the approval's size. */
   bound: bigint;
   /** The request's last fillable moment: the permit's deadline, so the
    *  permit lapses with the request. */
@@ -242,9 +249,12 @@ export async function checkRefinanceRequest(
     chainNow + (BigInt(terms.durationDays) + REQUEST_WINDOW_DAYS) * 86_400n;
   const capsCover =
     caps.enabled && Number(caps.maxRateBps) >= terms.rateBps && caps.maxNewExpiry >= neededExpiry;
-  // The bound is the payoff at the request's LAST fillable moment (its
-  // own expiry or the grace end, whichever first): since #1189 the pull
-  // GROWS past maturity by the grace-window late fee.
+  // The bound is sized at the request's LAST fillable moment (its own
+  // expiry or the grace end, whichever first): since #1189 the pull
+  // GROWS past maturity by the grace-window late fee. On the permit route
+  // it is the wallet's share — the payoff less the new loan's net
+  // principal (#3042); the request asks for the old principal
+  // (`toRefinanceOfferPayload`), with the live fee rate as the bound.
   const requestExpiry = chainNow + REQUEST_WINDOW_DAYS * 86_400n;
   const quote = await readPayoffQuote({
     publicClient,
@@ -256,6 +266,8 @@ export async function checkRefinanceRequest(
     expiresAt: requestExpiry,
     graceSeconds,
     route,
+    requestAmount: liveLoan.principal,
+    loanInitiationFeeBps: liveFees.loanInitiationFeeBps,
   });
   const { payoff, bound } = quote;
   // OfferCreateFacet clamps a refinance request's expiry to the grace
@@ -269,13 +281,10 @@ export async function checkRefinanceRequest(
     chainNow,
     route,
     payoff,
-    topUp:
-      payoff -
-      liveLoan.principal +
-      (liveLoan.principal * BigInt(liveFees.loanInitiationFeeBps)) / 10_000n,
+    topUp: quote.topUp,
     bound,
     permitDeadline: quote.lastFillable,
-    headroom: bound > payoff ? bound - payoff : 0n,
+    headroom: quote.growth,
     requestExpiry,
     graceEnd,
     expiryGraceClamped: graceEnd + 1n < requestExpiry,

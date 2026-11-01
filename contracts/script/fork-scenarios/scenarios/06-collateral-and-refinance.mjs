@@ -143,9 +143,9 @@ export async function run() {
     // Permit2 signature attached to the request, never a standing allowance.
     const permit = await attachPayoffPermitIfRouted(borrower, oldLoanId, posted.offerId, tagged.expiresAt);
     if (permit) {
-      const [, , , signer, maxAmount] = await read(ABIS.refinancePayoff, 'getRefinancePayoff',
+      const [, , , , , signer, maxAmount] = await read(ABIS.refinancePayoff, 'getRefinancePayoff',
         [oldLoanId, posted.offerId, permit.deadline]);
-      check('A6.6f', 'the borrower attaches an exact-amount payoff permit to the request, sized to the payoff at its last fillable moment',
+      check('A6.6f', 'the borrower attaches an exact-amount payoff permit to the request, sized to the wallet\'s share of the payoff at its last fillable moment',
         signer.toLowerCase() === borrower.address.toLowerCase() && maxAmount === permit.maxAmount,
         `offerId=${posted.offerId} max=${f18(permit.maxAmount)} deadline=${permit.deadline} gas=${permit.gas}`);
     }
@@ -165,7 +165,7 @@ export async function run() {
       const accepted = await acceptOffer(posted.offerId, posted.offer, outsider, borrower);
       if (!accepted.ok) cannotContinue('A6.7 refinance accept', accepted.reason);
       if (permit) {
-        const [, , , spentSigner] = await read(ABIS.refinancePayoff, 'getRefinancePayoff',
+        const [, , , , , spentSigner] = await read(ABIS.refinancePayoff, 'getRefinancePayoff',
           [oldLoanId, posted.offerId, 0n]);
         check('A6.7a', 'the accept spends the payoff permit — nothing of it remains on the request',
           spentSigner === ZERO, `signer after accept=${spentSigner}`);

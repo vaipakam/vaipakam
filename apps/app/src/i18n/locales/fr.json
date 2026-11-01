@@ -649,7 +649,7 @@
       "liquidityChecking": "Vérification de la manière dont ces actifs sont valorisés par le protocole…",
       "liquidityCheckFailed": "Impossible de vérifier la valorisation de ces actifs, et cette vérification détermine un avertissement important — la signature reste en pause jusqu'à réussite.",
       "linkedLoanCheckFailed": "Impossible de vérifier si cette offre est une vente de position d'un prêt en cours, et cette vérification détermine une information importante — la signature reste en pause jusqu'à réussite.",
-      "refinanceRequestBanner": "Il s’agit d’une demande de refinancement du prêt #{{loanId}}. L’accepter ouvre votre prêt et, dans la même transaction, rembourse et clôture le prêt #{{loanId}}. Comme pour tout prêt, le montant que vous prêtez, déduction faite des frais de mise en place de l’emprunteur, va au portefeuille de l’emprunteur. Le remboursement au prêteur actuel de ce prêt est ensuite prélevé sur ce portefeuille, de sorte que votre prêt peut le financer en tout ou en partie, l’emprunteur couvrant toute différence. Ce qui vous est dû est fixé par les conditions et la garantie de votre nouveau prêt.",
+      "refinanceRequestBanner": "Il s’agit d’une demande de refinancement du prêt #{{loanId}}. L’accepter ouvre votre prêt et, dans la même transaction, rembourse et clôture le prêt #{{loanId}}. Le montant que vous prêtez, déduction faite des frais de mise en place de l’emprunteur, finance le remboursement de ce prêt à son prêteur actuel, et le portefeuille de l’emprunteur paie le reste. Ce qui vous est dû est fixé par les conditions et la garantie de votre nouveau prêt.",
       "refinanceRequestChecking": "Vérification que cette demande refinance un prêt en cours — l’examen doit l’indiquer avant que vous puissiez signer.",
       "refinanceRequestCheckFailed": "Nous n’avons pas pu vérifier si cette demande refinance un prêt en cours, ce qui change l’effet de son acceptation — la signature reste en pause jusqu’à ce que la vérification réussisse.",
       "refinanceRequestUnavailable": "Cette demande vise à refinancer le prêt #{{loanId}}, mais elle ne peut pas être acceptée pour le moment. {{reason}} L’accepter échouerait, il n’y a donc rien à signer.",
@@ -833,7 +833,7 @@
         "offsetCost": "Vous apportez maintenant de l’argent frais à prêter — et, à la finalisation, votre portefeuille rembourse aussi ce prêt en totalité : son montant, les intérêts accumulés jusqu’ici et tout complément de taux dû à votre prêteur actuel. Prévoyez deux sommes de la taille du prêt, pas une seule.",
         "refinance": "Refinancer auprès d'un nouveau prêteur",
         "refinanceDesc": "Publiez une demande de nouveau prêt à de meilleures conditions. Quand un prêteur accepte, l'ancien prêt est soldé et votre garantie est transférée automatiquement.",
-        "refinanceCost": "Le solde à payer correspond au montant du prêt plus les intérêts de la durée restante, prélevés sur votre portefeuille lorsqu’un prêteur accepte.",
+        "refinanceCost": "Le remboursement correspond au montant du prêt plus les intérêts de la durée restante. Quand un prêteur accepte, l’argent du nouveau prêt, déduction faite de ses frais de mise en place, en couvre autant dans la même transaction ; votre portefeuille couvre le reste.",
         "refinanceTransferredUnavailable": "Indisponible pour cette position — le refinancement reste attaché au portefeuille qui a contracté le prêt à l'origine."
       },
       "checkingInterlocks": "Vérification des demandes liées à ce prêt…",
@@ -914,7 +914,7 @@
     },
     "refinance": {
       "postedButUnconfirmed": "Votre demande a été envoyée, mais nous n’avons pas pu confirmer si elle a abouti. Vérifiez vos demandes ouvertes avant de réessayer : si elle est bien passée, une seconde demande créerait un doublon. L’autorisation de dépense a été laissée en place, car un prêteur qui accepte la demande en a besoin pour encaisser le remboursement.",
-      "receiptYouMayOwe": "~{{payoff}} pour rembourser ce prêt, prélevé automatiquement quand un prêteur accepte.",
+      "receiptYouMayOwe": "~{{payoff}} pour rembourser ce prêt, réglé automatiquement quand un prêteur accepte. L’argent du nouveau prêt, déduction faite de ses frais de mise en place, en couvre la majeure partie ; le reste provient de votre portefeuille.",
       "feesTreasuryNote": "La part {{cut}} du protocole sur les intérêts de remboursement est réglée dans le remboursement final.",
       "whenEndsComposed": "Quand un prêteur accepte votre demande, quand vous l’annulez, ou {{branch}}.",
       "expiresAfterDays": "lorsqu’elle expire {{days}} jours après publication",
@@ -929,7 +929,7 @@
       "action": "Examiner la demande de refinancement",
       "confirm": "Confirmer — publier la demande de refinancement",
       "payoffNote": "Le solde de l’ancien prêt correspond toujours au montant du prêt plus la totalité des intérêts de la durée restante — même si les intérêts de ce prêt augmentent normalement jour après jour. C’est ce à quoi le prêteur sortant a droit, de façon fixe, en cas de sortie anticipée.",
-      "walletNote": "Le remboursement final est prélevé automatiquement depuis votre wallet au moment où un prêteur accepte. L’argent du nouveau prêt arrive dans la même transaction ; gardez donc environ {{topUp}} disponibles dans votre wallet (la partie intérêts plus les frais d’initialisation du nouveau prêt) tant que la demande est ouverte.",
+      "walletNote": "Quand un prêteur accepte, l’argent du nouveau prêt, déduction faite de ses frais de mise en place, couvre la majeure partie du remboursement dans la même transaction ; gardez donc environ {{topUp}} dans votre portefeuille (la part d’intérêts plus les frais de mise en place du nouveau prêt) tant que la demande est ouverte.",
       "shortIsSafe": "Si votre portefeuille est insuffisant lorsqu'un prêteur tente d'accepter, l'acceptation échoue simplement — rien n'est pris et votre prêt actuel continue inchangé.",
       "noGuarantee": "Une demande de refinancement ne garantit pas qu’un prêteur l’acceptera. Tant que personne ne l’accepte, ce prêt garde sa date d’échéance et son délai de grâce ; si personne ne l’accepte à temps, le prêt peut toujours tomber en défaut comme n’importe quel autre. Soyez prêt à le rembourser vous-même si la demande n’est pas acceptée.",
       "autoMatchOff": "L’appariement automatique des demandes de refinancement est désactivé sur ce déploiement : l’apparieur d’ordres n’exécutera donc pas votre demande. Ce réglage n’empêche pas un prêteur de l’accepter directement.",
@@ -979,7 +979,7 @@
       "repayWarnPending": "Une demande de refinancement est encore active pour ce prêt. Le remboursement règle le prêt, après quoi la demande ne pourra jamais se terminer — annulez-la ensuite depuis sa carte (cela supprime aussi son approbation permanente de payoff) ; d'ici là elle reste simplement en place jusqu'à expiration.",
       "inFallback": "Ce prêt est dans sa période de repli, il ne peut donc pas recevoir de demande de refinancement. Sa propre page explique ses options.",
       "permit": {
-        "signDisclosure": "Vous signerez une autorisation de remboursement d’au plus {{amount}} : le remboursement dû si un prêteur accepte au dernier moment que permet cette demande. Celui qui finalise le refinancement peut l’utiliser une seule fois, uniquement pour le remboursement de ce prêt à ce moment-là ; le reste n’est donc jamais prélevé. Elle devient caduque quand la demande prend fin, et rien ne reste approuvé au profit du protocole.",
+        "signDisclosure": "Vous signerez une autorisation de remboursement d’au plus {{amount}} : la part du remboursement revenant à votre portefeuille si un prêteur accepte au dernier moment que permet cette demande. L’argent du nouveau prêt, déduction faite de ses frais de mise en place, paie le reste du remboursement directement à votre prêteur actuel. Celui qui finalise le refinancement peut utiliser l’autorisation une seule fois, uniquement pour votre part à ce moment-là ; le reste n’est donc jamais prélevé. Elle devient caduque quand la demande prend fin, et rien ne reste approuvé au profit du protocole.",
         "permit2ApprovalNote": "Si votre portefeuille n’a pas approuvé Permit2 (le contrat d’autorisation d’Uniswap) pour ce token à hauteur d’au moins ce montant, vous l’approuvez d’abord. Cette approbation ne déplace rien à elle seule : Permit2 ne paie que contre une signature que vous faites.",
         "growthDisclosure": "Si un prêteur accepte après l’échéance du prêt, le remboursement augmente (les frais de retard plus les intérêts qui continuent de s’accumuler) jusqu’à ~{{maxGrowth}} de plus pour cette demande. L’autorisation couvre aussi ce montant, afin qu’une acceptation tardive ne puisse pas échouer pour cette raison.",
         "multiStepNote": "La publication prend jusqu’à cinq étapes dans le portefeuille : les garde-fous, l’approbation de Permit2 si nécessaire, la demande, votre signature de l’autorisation de remboursement, et la transaction qui la joint. Si vous vous arrêtez après la publication de la demande, elle reste ouverte sans autorisation et aucun prêteur ne peut la mener à terme ; signez l’autorisation depuis la carte de la demande, ou annulez la demande.",
@@ -992,11 +992,12 @@
           "spent": "L’autorisation de remboursement de cette demande a déjà été utilisée, donc l’acceptation d’un prêteur échouerait. Signez-en une nouvelle ci-dessous ou annulez la demande.",
           "expired": "L’autorisation de remboursement de cette demande a expiré, donc l’acceptation d’un prêteur échouerait. Signez-en une nouvelle ci-dessous ou annulez la demande.",
           "lapsesEarly": "L’autorisation de remboursement de cette demande expire avant la demande elle-même, donc une acceptation ultérieure échouerait. Signez-en une nouvelle ci-dessous ou annulez la demande.",
-          "short": "L’autorisation de remboursement de cette demande permet moins que ce que le remboursement peut atteindre avant la fin de la demande (une acceptation après l’échéance prélève aussi les frais de retard et les intérêts supplémentaires), donc une acceptation ultérieure pourrait échouer. Signez-en une nouvelle ci-dessous ou annulez la demande.",
-          "permit2Short": "L’approbation de Permit2 par votre portefeuille pour ce token ne couvre plus le remboursement, donc l’acceptation d’un prêteur échouerait. Signez à nouveau l’autorisation de remboursement ci-dessous ; cela augmente d’abord cette approbation."
+          "short": "L’autorisation de remboursement de cette demande permet moins que ce que la part du remboursement revenant à votre portefeuille peut atteindre avant la fin de la demande (une acceptation après la date d’échéance prélève aussi les frais de retard et des intérêts supplémentaires, et une hausse du taux des frais de mise en place augmente cette part) ; une acceptation ultérieure pourrait donc échouer. Signez-en une nouvelle ci-dessous ou annulez la demande.",
+          "permit2Short": "L’approbation de Permit2 par votre portefeuille pour ce token ne couvre plus la part du remboursement revenant à votre portefeuille ; l’acceptation d’un prêteur échouerait donc. Signez à nouveau l’autorisation de remboursement ci-dessous ; cela augmente d’abord cette approbation."
         },
         "sign": "Signer l’autorisation de remboursement",
         "signed": "Autorisation de remboursement jointe — la demande peut aboutir.",
+        "notNeeded": "Votre demande de refinancement est publiée. Votre portefeuille ne doit rien lorsqu’un prêteur l’accepte, donc aucune autorisation de remboursement n’est nécessaire et la demande peut aboutir telle quelle.",
         "signAborted": "Cette demande ne peut plus aboutir (acceptée, annulée ou prêt clôturé), donc rien n’a été signé. Actualisez pour voir l’état le plus récent.",
         "cancelled": "Demande de refinancement annulée — ce prêt continue inchangé. Son autorisation de remboursement désignait cette demande : elle ne pourra donc jamais être utilisée, et rien ne reste approuvé au profit du protocole à son titre.",
         "pendingLoanClosed": "Ce prêt s’est clôturé autrement depuis, la demande ne peut donc plus aboutir. Annulez-la pour la supprimer.",
@@ -1226,8 +1227,8 @@
     },
     "keepers": {
       "title": "Permissions de keepers",
-      "blurb": "Les keepers sont des services tiers (ou votre propre bot) que vous pouvez autoriser à exécuter certaines actions de prêt POUR vous — démarrer une clôture anticipée, terminer un refinancement configuré, lister une position à vendre. Tout est désactivé tant que vous ne l'activez pas, et trois interrupteurs doivent être d'accord avant qu'un keeper puisse agir : l'interrupteur principal, l'action sur ce keeper et un interrupteur par prêt sur chaque page de prêt.",
-      "safetyNote": "Un keeper ne peut jamais recevoir votre argent — les paiements vont toujours au détenteur de la position. Vous pouvez révoquer n'importe quel keeper (ou couper l'interrupteur principal) à tout moment, le protocole peut mettre tous les keepers en pause d'un coup, et les refinancements sont aussi bornés par les garde-fous que vous définissez par prêt. Si une position change de mains, ces permissions s'appliquent aux paramètres du nouveau détenteur, pas aux vôtres.",
+      "blurb": "Les keepers sont des services tiers (ou votre propre bot) que vous pouvez autoriser à exécuter certaines actions de prêt POUR vous — démarrer une clôture anticipée, prolonger un prêt, lister une position à vendre. Tout est désactivé tant que vous ne l'activez pas, et trois interrupteurs doivent être d'accord avant qu'un keeper puisse agir : l'interrupteur principal, l'action sur ce keeper et un interrupteur par prêt sur chaque page de prêt.",
+      "safetyNote": "Un keeper ne peut jamais recevoir votre argent — les paiements vont toujours au détenteur de la position. Vous pouvez révoquer n'importe quel keeper (ou couper l'interrupteur principal) à tout moment, et le protocole peut mettre tous les keepers en pause d'un coup. Si une position change de mains, ces permissions s'appliquent aux paramètres du nouveau détenteur, pas aux vôtres.",
       "masterLabel": "Autoriser mes keepers approuvés à agir (interrupteur principal — rien ne s'exécute lorsqu'il est désactivé)",
       "addressPlaceholder": "0x… adresse du keeper",
       "actions": {
@@ -1235,11 +1236,6 @@
           "label": "Démarrer une clôture anticipée de prêt pour moi",
           "side": "agit sur les prêts que vous avez empruntés",
           "blurb": "Démarre tout chemin de clôture anticipée sur un prêt dont vous êtes l'emprunteur. Le payoff vient toujours de votre portefeuille selon vos approbations permanentes."
-        },
-        "refinance": {
-          "label": "Terminer un refinancement pour moi",
-          "side": "agit sur les prêts que vous avez empruntés",
-          "blurb": "Termine un refinancement que vous avez configuré, borné par les garde-fous (plafond de taux, date de fin) que vous avez approuvés — et par le kill switch keeper du protocole."
         },
         "completeOffset": {
           "label": "Terminer une clôture par offset pour moi",
@@ -2602,6 +2598,7 @@
         "BackstopAbsorbedLoan": "Prêt absorbé par le backstop",
         "LoanExtended": "Prêt prolongé",
         "LoanRefinanced": "Prêt refinancé",
+        "RefinancePayoffSettled": "Prêt refinancé",
         "LoanPreclosedDirect": "Prêt clôturé en avance",
         "LenderFundsClaimed": "Fonds réclamés",
         "BorrowerFundsClaimed": "Garantie réclamée",
@@ -2614,6 +2611,7 @@
         "IntentLoanRolled": "Prêt reconduit",
         "CollateralAdded": "Garantie ajoutée",
         "InternalMatchExecuted": "Prêt apparié en interne",
+        "InternalMatchRefusedShortDelivery": "Appariement interne ignoré",
         "PrepayListingPosted": "Garantie mise en vente",
         "PrepayListingMatched": "Vente de garantie appariée",
         "PrepayListingUpdated": "Annonce de garantie mise à jour",
@@ -3206,7 +3204,7 @@
       "lenderIntentFillsHint": "Si les intentions de prêt enregistrées peuvent être exécutées. Désactivé arrête leur exécution ; les prêteurs peuvent toujours enregistrer des intentions.",
       "minIntentFill": "Plus petite exécution d’intention",
       "minIntentFillHint": "Le minimum que doit valoir la plus petite exécution d’une intention permanente lors de son enregistrement. Ses deux actifs doivent aussi avoir un prix. Une intention enregistrée avant un changement garde ses conditions jusqu’à ce qu’elle soit redéfinie.",
-      "autoRefinanceHint": "Désactivé empêche les keepers et l’apparieur d’ordres de finaliser des refinancements. Un emprunteur qui refinance son propre prêt, ou un prêteur qui accepte directement une demande de refinancement, passe toujours.",
+      "autoRefinanceHint": "Désactivé empêche l’apparieur d’ordres de finaliser des refinancements. Un prêteur qui accepte directement une demande de refinancement passe toujours.",
       "autoExtendHint": "Désactivé bloque toute prolongation de prêt sur place, y compris celle que l’emprunteur demande directement.",
       "numeraireFeed": "Flux de prix ETH dans la devise de référence",
       "numeraireFeedHint": "Le flux Chainlink qui cote l’ETH dans la devise de référence. Il change en même temps que la devise de référence.",
@@ -3558,9 +3556,9 @@
         "attaching": "Confirmez la transaction qui joint les autorisations…"
       },
       "reviewTitle": "Publier ces demandes de refinancement",
-      "loanPayoff": "Prêt n°{{id}} : ~{{payoff}} pour le rembourser aujourd’hui, prélevés automatiquement quand un prêteur accepte sa demande.",
+      "loanPayoff": "Prêt #{{id}} : ~{{payoff}} pour le rembourser aujourd’hui, réglé automatiquement quand un prêteur accepte sa demande. L’argent du nouveau prêt, déduction faite de ses frais de mise en place, en couvre la majeure partie ; le reste provient de votre portefeuille.",
       "loanGrowth": "Si un prêteur accepte après l’échéance de ce prêt, le remboursement augmente (les pénalités de retard plus les intérêts qui continuent de courir) jusqu’à ~{{amount}} de plus avant la fin de la demande.",
-      "loanTopUp": "Disponible dans votre portefeuille quand un prêteur accepte : environ {{amount}}. Ce sont les intérêts du remboursement et les frais de mise en place du nouveau prêt ; le nouveau principal arrive dans la même transaction.",
+      "loanTopUp": "Disponible dans votre portefeuille quand un prêteur accepte : environ {{amount}}. Ce sont les intérêts du remboursement et les frais de mise en place du nouveau prêt ; l’argent du nouveau prêt couvre le reste dans la même transaction.",
       "leftOut": "Le prêt n°{{id}} est écarté : {{reason}}",
       "noneReady": "Aucun de ces prêts ne peut recevoir de demande de refinancement ensemble pour le moment. Ouvrez chaque prêt pour voir ses options.",
       "totals": "Au total : environ {{topUp}} disponibles dans votre portefeuille si toutes les demandes sont acceptées. Votre portefeuille en dispose maintenant, sinon rien n’est envoyé.",
@@ -3585,8 +3583,8 @@
       "approvalLeft": "Votre approbation de tokens pour le protocole s’élève désormais à {{amount}}. Vos demandes de refinancement ouvertes y prélèvent leurs remboursements, donc la réduire peut empêcher une demande d’aboutir.",
       "terms": "Chaque demande porte sur un nouveau prêt de {{days}} jours à un taux annuel d’au plus {{rate}}.",
       "permit": {
-        "total": "Chaque demande reçoit sa propre autorisation de remboursement, signée pour son plus grand remboursement possible ({{amount}} au total). Une autorisation ne peut être utilisée qu’une fois, uniquement pour le remboursement de son propre prêt au moment où un prêteur accepte, et elle devient caduque quand sa demande prend fin ; rien ne reste donc approuvé au profit du protocole. Si l’approbation de Permit2 (le contrat d’autorisation d’Uniswap) par votre portefeuille ne couvre pas déjà ce total, vous l’approuvez d’abord ; cette approbation ne déplace rien sans l’une de vos signatures.",
-        "youMayOwe": "Le remboursement de chaque prêt indiqué ci-dessus, prélevé une seule fois sur votre portefeuille, via l’autorisation de remboursement de cette demande, quand un prêteur l’accepte. Votre portefeuille doit alors détenir le montant disponible de ce prêt.",
+        "total": "Chaque demande reçoit sa propre autorisation de remboursement, signée pour la plus grande part de son remboursement que votre portefeuille peut devoir ({{amount}} au total) ; l’argent du nouveau prêt, déduction faite de ses frais de mise en place, paie le reste directement à l’ancien prêteur. Une autorisation ne peut être utilisée qu’une fois, uniquement pour le remboursement de son propre prêt au moment où un prêteur accepte, et elle devient caduque quand sa demande prend fin ; rien ne reste donc approuvé au profit du protocole. Si l’approbation de Permit2 (le contrat d’autorisation d’Uniswap) par votre portefeuille ne couvre pas déjà ce total, vous l’approuvez d’abord ; cette approbation ne déplace rien sans l’une de vos signatures.",
+        "youMayOwe": "Le remboursement de chaque prêt indiqué ci-dessus, réglé quand un prêteur accepte sa demande : l’argent du nouveau prêt, déduction faite de ses frais de mise en place, en paie la majeure partie directement à l’ancien prêteur, et le reste est prélevé une seule fois sur votre portefeuille, via l’autorisation de remboursement de cette demande. Votre portefeuille doit détenir à ce moment-là le montant disponible de ce prêt.",
         "postedNoPermit": "Prêt n°{{id}} : demande publiée comme offre n°{{offerId}}, mais son autorisation de remboursement n’est pas jointe, donc aucun prêteur ne peut encore la mener à terme. Ouvrez la page du prêt pour la signer, ou annulez-y la demande.",
         "postedPermitPending": "Prêt n°{{id}} : demande publiée comme offre n°{{offerId}}. Son autorisation de remboursement a été envoyée mais n’est pas encore confirmée, donc on ne sait pas encore si un prêteur peut mener la demande à terme. Ouvrez la page du prêt pour voir où elle en est."
       }

@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibRevert} from "./LibRevert.sol";
+import {LibRefinanceNetting} from "./LibRefinanceNetting.sol";
 
 /**
  * @title  LibEncumbrance
@@ -908,8 +909,11 @@ library LibEncumbrance {
 
     /// @notice Free balance per the aggregate: caller-supplied raw
     ///         balance minus the active liens on `(user, asset,
-    ///         tokenId)`. Used by `VaultFactoryFacet.vaultWithdrawERC20`'s
-    ///         withdraw guard.
+    ///         tokenId)`, and minus any ERC-20 amount parked for a refinance
+    ///         payoff in this transaction ({LibRefinanceNetting.parkedOf},
+    ///         #3042: promised to an old lender, so not free). Used by
+    ///         `VaultFactoryFacet.vaultWithdrawERC20`'s withdraw guard and by
+    ///         every free-balance read.
     function freeBalance(
         address user,
         address asset,
@@ -917,6 +921,7 @@ library LibEncumbrance {
         uint256 rawBalance
     ) internal view returns (uint256) {
         uint256 enc = LibVaipakam.storageSlot().encumbered[user][asset][tokenId];
+        if (tokenId == 0) enc += LibRefinanceNetting.parkedOf(user, asset);
         return rawBalance > enc ? rawBalance - enc : 0;
     }
 

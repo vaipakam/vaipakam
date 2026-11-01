@@ -33,13 +33,12 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *         This facet holds the SETTER + READER surface for the auto-
  *         lifecycle consent flags. The actual executors live elsewhere:
  *
- *           - Auto-refinance: the existing
- *             `RefinanceFacet.refinanceLoan` path already supports
- *             keeper-driven invocation via `LibAuth.requireKeeperFor`
- *             with `KEEPER_ACTION_REFINANCE`. A follow-up PR (T-092
- *             Phase 2) wires the per-loan caps stored here into
- *             `refinanceLoan` so a keeper can't route the borrower
- *             into a worse rate than they pre-approved.
+ *           - Auto-refinance: a refinance-tagged borrower offer,
+ *             completed atomically by its accept or matched fill
+ *             (`RefinanceFacet`). The per-loan caps stored here bind
+ *             every such offer at create and at accept or match
+ *             (`LibAutoRefinanceCheck`), so no route can take the
+ *             borrower to a worse rate than they pre-approved.
  *
  *           - Auto-extend: `extendLoanInPlace` is the new selector,
  *             introduced in a Phase 3 follow-up. It will read the
@@ -373,11 +372,9 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     /// @notice Set the per-loan refinance caps for a specific loan.
     ///         Only the current borrower-NFT owner may call this.
     /// @dev    Per-loan caps override any defaults set via
-    ///         `setDefaultAutoRefinanceCaps`. The keeper-driven
-    ///         `RefinanceFacet.refinanceLoan` path enforces these caps
-    ///         (Phase 2 wiring). Borrower-NFT-owner direct calls to
-    ///         `refinanceLoan` ignore caps — they're acting in their
-    ///         own interest.
+    ///         `setDefaultAutoRefinanceCaps`. Every refinance-tagged offer
+    ///         against the loan is checked against them at create and at
+    ///         accept or match (`LibAutoRefinanceCheck`).
     function setAutoRefinanceCaps(
         uint256 loanId,
         bool enabled,

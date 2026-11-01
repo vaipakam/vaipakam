@@ -125,6 +125,8 @@ export function RefinancePendingCard({
                 ? copy.refinance.permit.done
                 : copy.refinance.permit.signed,
             }
+          : attachProgress.phase === 'notNeeded'
+            ? { tone: 'info', text: copy.refinance.permit.notNeeded }
           : attachProgress.phase === 'unknown'
             ? state?.permitIssue === null
               ? null // the chain now shows it attached
@@ -295,7 +297,9 @@ export function RefinancePendingCard({
           onPermitAttach(
             attached === 'attached'
               ? { offerId, phase: 'attached', posted: false }
-              : { offerId, phase: 'unknown' },
+              : attached === 'notNeeded'
+                ? { offerId, phase: 'notNeeded' }
+                : { offerId, phase: 'unknown' },
           );
         } catch (attachErr) {
           onPermitAttach({ offerId, phase: 'failed', reason: captureTxError(attachErr) });

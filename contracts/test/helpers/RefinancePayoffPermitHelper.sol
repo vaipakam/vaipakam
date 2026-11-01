@@ -137,7 +137,8 @@ library RefinancePayoffPermitHelper {
 
     /// @notice For a live-fork test that runs a chain's DEPLOYED code: when
     ///         that Diamond routes the permit entry (#1558), attach a real
-    ///         one-day permit for the most the payoff can reach in that day,
+    ///         one-day permit for the most the wallet's share of the payoff can
+    ///         reach in that day,
     ///         and return true. A
     ///         Diamond deployed before #1558 has no such route and still pulls
     ///         the payoff on the wallet approval the test grants, so this
@@ -155,9 +156,9 @@ library RefinancePayoffPermitHelper {
                 == address(0)
         ) return false;
         uint256 deadline = block.timestamp + 1 days;
-        (, , uint256 payoffBy, , , , , ) =
+        (, , , , uint256 walletShareBy, , , , , ) =
             RefinancePayoffFacet(diamond).getRefinancePayoff(loanId, offerId, deadline);
-        attachSigned(diamond, pk, asset, loanId, offerId, payoffBy, nonce, deadline);
+        attachSigned(diamond, pk, asset, loanId, offerId, walletShareBy, nonce, deadline);
         return true;
     }
 }

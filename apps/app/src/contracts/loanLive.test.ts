@@ -15,6 +15,7 @@ import {
   remainingInterestSecondsOf,
   refinanceApprovalOf,
   refinancePayoffOf,
+  refinanceWalletPullOf,
   SellerQuoteUnavailableError,
   sellerEconomics,
   type LoanLive,
@@ -81,6 +82,43 @@ describe('refinancePayoffOf', () => {
     expect(refinancePayoffOf(live, endTime + DAY + 1n)).toBe(
       live.principal + interestFor(31n) + (live.principal * 150n) / 10_000n,
     );
+  });
+});
+
+describe('refinanceWalletPullOf', () => {
+  // #3042 — the new principal less its initiation fee pays the old lender
+  // inside the accept, so the wallet pays only the rest of the payoff.
+  const lifBps = 20;
+  const net = (amount: bigint) => amount - (amount * 20n) / 10_000n;
+
+  it('is the payoff minus the net new principal (interest + initiation fee)', () => {
+    const asOf = live.startTime + DAY;
+    expect(
+      refinanceWalletPullOf(
+        live,
+        { requestAmount: live.principal, loanInitiationFeeBps: lifBps },
+        asOf,
+      ),
+    ).toBe(interestFor(30n) + (live.principal * 20n) / 10_000n);
+    expect(
+      refinanceWalletPullOf(
+        live,
+        { requestAmount: live.principal, loanInitiationFeeBps: lifBps },
+        asOf,
+      ),
+    ).toBe(refinancePayoffOf(live, asOf) - net(live.principal));
+  });
+
+  it('grows when the request asks for less than the old principal', () => {
+    const asOf = live.startTime + DAY;
+    const half = live.principal / 2n;
+    expect(
+      refinanceWalletPullOf(
+        live,
+        { requestAmount: half, loanInitiationFeeBps: lifBps },
+        asOf,
+      ),
+    ).toBe(refinancePayoffOf(live, asOf) - net(half));
   });
 });
 

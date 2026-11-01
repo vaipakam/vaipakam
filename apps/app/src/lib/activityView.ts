@@ -83,6 +83,9 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   BackstopAbsorbedLoan: { label: 'Loan absorbed by backstop', category: 'loan-default', priority: 88 },
   LoanExtended: { label: 'Loan extended', category: 'loan-modify', priority: 75 },
   LoanRefinanced: { label: 'Loan refinanced', category: 'loan-modify', priority: 85 },
+  // #3042 — the refinance's settlement statement (each leg of the old
+  // loan's payoff); low priority so LoanRefinanced represents the tx.
+  RefinancePayoffSettled: { label: 'Loan refinanced', category: 'loan-modify', priority: 10 },
   LoanPreclosedDirect: { label: 'Loan closed early', category: 'loan-close', priority: 85 },
   // A claim is the user's OWN final action and must outrank the
   // LoanSettled (85) the same tx emits (Codex #1171 r2): ClaimFacet
@@ -102,6 +105,10 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   IntentLoanRolled: { label: 'Loan rolled over', category: 'loan-modify', priority: 75 },
   CollateralAdded: { label: 'Collateral added', category: 'collateral', priority: 75 },
   InternalMatchExecuted: { label: 'Loan matched internally', category: 'loan-open', priority: 82 },
+  // #2625 item 3 — the match found for a loan in liquidation, default or a
+  // fallback claim was skipped because a leg delivered short; the loan went
+  // on to its own close-out in the same transaction.
+  InternalMatchRefusedShortDelivery: { label: 'Internal match skipped', category: 'other', priority: 40 },
   // Prepay collateral-sale listings (the borrower's parallel-sale exit).
   PrepayListingPosted: { label: 'Collateral listed for sale', category: 'loan-modify', priority: 55 },
   PrepayListingMatched: { label: 'Collateral sale matched', category: 'loan-modify', priority: 78 },

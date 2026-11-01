@@ -145,8 +145,9 @@ contract RedeployFacets is Script {
         // {run}, so `--sig runWith(...)` cannot skip it; the in-process tests
         // skip it by the library's own rule ({StorageLayoutRecord.active}).
         StorageLayoutRecord.requireAppendOnly("RedeployFacets", diamond);
-        // #2407 — the refinance-request record spans facets this curated set
-        // does not carry; refuse a Diamond that has not had it rolled out.
+        // #2407 / #3042 — the refinance-request record and the netted payoff
+        // span facets this curated set does not carry; refuse a Diamond that
+        // has not had them rolled out.
         RefinanceRecordRollout.assertInstalled(diamond);
         // #1566 S2b - refuse a Diamond from before vault-held fallback
         // custody, before anything is broadcast; see
@@ -390,12 +391,25 @@ contract RedeployFacets is Script {
         (bytes4[] memory ewdToAdd, bytes4[] memory ewdToReplace) =
             _partitionByRouting(diamond, _earlyWithdrawalDirectSelectors());
         // #2349 — RefinanceFacet gained `refinanceLoanFromMatch` (the matcher-
-        // fill route). On a pre-#2349 diamond `refinanceLoan` and
-        // `refinanceLoanFromAccept` are routed (Replace) and the match entry is
-        // new (Add). The routed subset is never empty (`refinanceLoan` is routed
-        // on every existing diamond), so the fixed Replace slot stays valid.
+        // fill route). On a pre-#2349 diamond `refinanceLoanFromAccept` is
+        // routed (Replace) and the match entry is new (Add). The routed subset
+        // is never empty (`refinanceLoanFromAccept` has been routed on every
+        // diamond since T-092-H), so the fixed Replace slot stays valid.
+        // #3042 — the netted payoff needs the refreshed accept delivery
+        // (OfferAcceptFeeFacet) this script does not carry; `runWith` has
+        // already refused a Diamond from before it.
         (bytes4[] memory refiToAdd, bytes4[] memory refiToReplace) =
             _partitionByRouting(diamond, _refinanceSelectors());
+        // #2625 item 3 — RiskMatchLiquidationFacet gained
+        // `executeAutoDispatchMatch`, the match body the auto-dispatch reaches
+        // by self-call. On an older diamond the other two are routed (Replace)
+        // and it is new (Add); left out, every liquidation, default and claim
+        // that finds a match candidate would revert `FunctionDoesNotExist`.
+        // The routed subset is never empty (`triggerInternalMatchLiquidation`
+        // is routed on every existing diamond), so the fixed Replace slot stays
+        // valid.
+        (bytes4[] memory rmToAdd, bytes4[] memory rmToReplace) =
+            _partitionByRouting(diamond, _riskMatchSelectors());
         // #1817 r9 — the accumulator's surface, same Add/Replace-by-routing
         // split. {_requireTierRecordSeam} has already refused a Diamond that
         // does not route `syncTierRecord`, so on every accepted target the
@@ -525,6 +539,7 @@ contract RedeployFacets is Script {
             (ewToAdd.length > 0 ? 1 : 0) +
             (ewdToAdd.length > 0 ? 1 : 0) +
             (refiToAdd.length > 0 ? 1 : 0) +
+            (rmToAdd.length > 0 ? 1 : 0) +
             (accToAdd.length > 0 ? 1 : 0) + (accToReplace.length > 0 ? 1 : 0) +
             (claimToAdd.length > 0 ? 1 : 0) + (claimToReplace.length > 0 ? 1 : 0) +
             (claimToRemove.length > 0 ? 1 : 0) +
@@ -564,8 +579,10 @@ contract RedeployFacets is Script {
         // #691 — RiskMatch selectors are already routed on a current diamond
         // (triggerInternalMatchLiquidation + the cross-facet-only
         // attemptInternalMatchAutoDispatch), so a plain Replace repoints them to
-        // the consolidation-aware bytecode.
-        cuts[7] = _replace(address(riskMatchFacet), _riskMatchSelectors());
+        // the consolidation-aware bytecode. #2625 item 3 — only the ROUTED
+        // subset goes through this Replace; the new self-call entry is Add'ed
+        // below on an older diamond.
+        cuts[7] = _replace(address(riskMatchFacet), rmToReplace);
         // #1780 — `sellLoanViaBuyOffer` is already routed on every existing
         // diamond (it was part of EarlyWithdrawalFacet's surface), so it is a
         // plain Replace that repoints the selector to the new address.
@@ -614,6 +631,11 @@ contract RedeployFacets is Script {
         // Add is cut.
         if (ewdToAdd.length > 0) {
             cuts[idx++] = _add(address(earlyWithdrawalDirectFacet), ewdToAdd);
+        }
+        // #2625 item 3 — the auto-dispatch's self-call entry is an Add on an
+        // older diamond (the routed pair went through the fixed Replace above).
+        if (rmToAdd.length > 0) {
+            cuts[idx++] = _add(address(riskMatchFacet), rmToAdd);
         }
         // #2349 — the matcher-fill refinance entry is an Add on any pre-#2349
         // diamond; on a current one the subset is empty and no Add is cut.
@@ -1289,17 +1311,20 @@ contract RedeployFacets is Script {
     /// @dev #658 PR-B2 — RefinanceFacet selectors, mirrors
     ///      `DeployDiamond._getRefinanceSelectors` (kept in lockstep).
     function _refinanceSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
-        s[0] = RefinanceFacet.refinanceLoan.selector;
-        s[1] = RefinanceFacet.refinanceLoanFromAccept.selector;
+        s = new bytes4[](4);
+        // #3042 — `refinanceLoan` is retired. No Remove leg is needed here:
+        // `RefinanceRecordRollout.assertInstalled` refuses any Diamond that
+        // still routes it, so on every target this script accepts it is
+        // already gone.
+        s[0] = RefinanceFacet.refinanceLoanFromAccept.selector;
         // #2349 — the matcher-fill route's entry. NEW, so this list is cut via
         // the Add/Replace-by-routing partition (a Replace reverts on an
         // unrouted selector on any pre-#2349 target).
-        s[2] = RefinanceFacet.refinanceLoanFromMatch.selector;
+        s[1] = RefinanceFacet.refinanceLoanFromMatch.selector;
         // #2407 — NEW, so cut through the same Add/Replace-by-routing
         // partition as the #2349 entry above.
-        s[3] = RefinanceFacet.getRefinanceRequest.selector;
-        s[4] = RefinanceFacet.checkRefinanceRequest.selector;
+        s[2] = RefinanceFacet.getRefinanceRequest.selector;
+        s[3] = RefinanceFacet.checkRefinanceRequest.selector;
     }
 
     /// @dev #658 PR-B2 — ClaimFacet selectors, mirrors
@@ -1310,9 +1335,10 @@ contract RedeployFacets is Script {
     ///      (`onlyDiamondInternal`) but is routed through the Diamond, so it is
     ///      cut + refreshed like any other selector.
     function _riskMatchSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = RiskMatchLiquidationFacet.triggerInternalMatchLiquidation.selector;
         s[1] = RiskMatchLiquidationFacet.attemptInternalMatchAutoDispatch.selector;
+        s[2] = RiskMatchLiquidationFacet.executeAutoDispatchMatch.selector;
     }
 
     function _claimSelectors() internal pure returns (bytes4[] memory s) {
