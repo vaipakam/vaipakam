@@ -148,7 +148,7 @@ No single tx generates massive market-buy pressure that would impact LP pools; i
 
 - **USD-denominated tranche cap** with oracle: Sub 3 add-on. Currently the cap is per-token raw amounts.
 - **Routing the delivered VPFI to rewards budget / keeper budget**: Sub 3 add-on #472.
-- **Productive treasury reserve** (Aave for WBTC / Lido for ETH): Sub 3 add-on #473.
+- **Productive treasury reserve** (Aave for WBTC / Lido for ETH): Sub 3 add-on #473. Shipped as Phase 0 (Aave only), then **retired while prelive** (owner decision 2026-10-28, #962 #963 #486 #487): on the mainnet topology the treasury is an external multisig, so the Diamond holds no idle treasury to deploy.
 - **Keeper VPFI rewards for catchup tasks**: Sub 3 add-on #474.
 - **VPFI / ETH LP seeding from operational ETH**: tracked under #455.
 - **Live 1inch Fusion testnet integration**: operator-gated. The contract surface + agent submission are wired; the operator opens the 1inch API key + posts the first real order during testnet rehearsal.

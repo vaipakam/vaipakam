@@ -264,6 +264,54 @@
       "from": "dayDeliveryProvedBy",
       "to": "retiredDayDeliveryProvedBy",
       "reason": "#918 (owner decision 2026-10-27, send in parts): a mirror day now opens only when every part of its slice has landed, recorded per component in the appended dayDeliveryParts; the one-packet proof marker is retired, the slot keeps its place and is no longer written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 237,
+      "offset": 0,
+      "from": "cfgTreasuryYieldVenue",
+      "to": "retiredTreasuryYieldVenue",
+      "reason": "#962 #963 #486 #487 (owner decision 2026-10-28, prelive): the Diamond's productive treasury reserve is retired. On the mainnet topology the treasury is an external multisig, so the Diamond holds no idle treasury to deploy, and as built the feature took Aave risk for yield it could not harvest and could lock its configuration after a venue loss. Its entry points, library and views are removed; no chain ever set a pool, so nothing was deployed through it. The field keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 238,
+      "offset": 0,
+      "from": "treasuryDeployedExternal",
+      "to": "retiredTreasuryDeployedExternal",
+      "reason": "#962 #963 #486 #487 (owner decision 2026-10-28, prelive): the Diamond's productive treasury reserve is retired. On the mainnet topology the treasury is an external multisig, so the Diamond holds no idle treasury to deploy, and as built the feature took Aave risk for yield it could not harvest and could lock its configuration after a venue loss. Its entry points, library and views are removed; no chain ever set a pool, so nothing was deployed through it. The field keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 239,
+      "offset": 0,
+      "from": "cfgTreasuryExternalYieldMaxBps",
+      "to": "retiredTreasuryExternalYieldMaxBps",
+      "reason": "#962 #963 #486 #487 (owner decision 2026-10-28, prelive): the Diamond's productive treasury reserve is retired. On the mainnet topology the treasury is an external multisig, so the Diamond holds no idle treasury to deploy, and as built the feature took Aave risk for yield it could not harvest and could lock its configuration after a venue loss. Its entry points, library and views are removed; no chain ever set a pool, so nothing was deployed through it. The field keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 239,
+      "offset": 2,
+      "from": "cfgAaveV3Pool",
+      "to": "retiredAaveV3Pool",
+      "reason": "#962 #963 #486 #487 (owner decision 2026-10-28, prelive): the Diamond's productive treasury reserve is retired. On the mainnet topology the treasury is an external multisig, so the Diamond holds no idle treasury to deploy, and as built the feature took Aave risk for yield it could not harvest and could lock its configuration after a venue loss. Its entry points, library and views are removed; no chain ever set a pool, so nothing was deployed through it. The field keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 240,
+      "offset": 0,
+      "from": "cfgLidoStaking",
+      "to": "retiredLidoStaking",
+      "reason": "#962 #963 #486 #487 (owner decision 2026-10-28, prelive): the Diamond's productive treasury reserve is retired. On the mainnet topology the treasury is an external multisig, so the Diamond holds no idle treasury to deploy, and as built the feature took Aave risk for yield it could not harvest and could lock its configuration after a venue loss. Its entry points, library and views are removed; no chain ever set a pool, so nothing was deployed through it. The field keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 241,
+      "offset": 0,
+      "from": "aaveDeployedTokenCount",
+      "to": "retiredAaveDeployedTokenCount",
+      "reason": "#962 #963 #486 #487 (owner decision 2026-10-28, prelive): the Diamond's productive treasury reserve is retired. On the mainnet topology the treasury is an external multisig, so the Diamond holds no idle treasury to deploy, and as built the feature took Aave risk for yield it could not harvest and could lock its configuration after a venue loss. Its entry points, library and views are removed; no chain ever set a pool, so nothing was deployed through it. The field keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
     }
   ]
 }
