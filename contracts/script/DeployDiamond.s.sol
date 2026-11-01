@@ -3791,13 +3791,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](52);
+        s = new bytes4[](53);
         s[0] = MetricsFacet.getProtocolTVL.selector;
         s[1] = MetricsFacet.getProtocolStats.selector;
         s[2] = MetricsFacet.getUserCount.selector;
         s[3] = MetricsFacet.getActiveLoansCount.selector;
         s[4] = MetricsFacet.getActiveOffersCount.selector;
-        s[5] = MetricsFacet.getTotalInterestEarnedNumeraire.selector;
+        s[5] = MetricsFacet.getLifetimeLendingTotals.selector; // #1832 (replaces the retired full-scan getTotalInterestEarnedNumeraire)
         s[6] = MetricsFacet.getTreasuryMetrics.selector;
         // Legacy overload — disambiguated by full signature now that
         // the per-asset overload (added in §A.2) shares the name.
@@ -3890,6 +3890,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // the `ownerOf`-liveness heuristic.
         s[50] = MetricsFacet.getOfferState.selector;
         s[51] = MetricsFacet.isSaleVehicleLoan.selector; // #1503 item 26
+        s[52] = MetricsFacet.getLifetimeLendingAssets.selector; // #1832
     }
 
     /// AnalyticalGettersDesign §3.1 — per-user dashboard surface. One

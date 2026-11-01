@@ -555,6 +555,8 @@ contract PrepayListingFacet is
             LibCollateralSettlement.salePlan(loanId, block.timestamp);
         uint256 floor = plan.lenderDue + plan.treasuryShare;
         if (proceeds < floor) revert SaleProceedsBelowFloor(loanId, proceeds, floor);
+        // #1832 — terminal seam of the lifetime interest counter.
+        LibMetricsHooks.onInterestPaid(loan, plan.interest + plan.lateFee);
 
         address lender = LibERC721.ownerOf(loan.lenderTokenId);
         address borrower = LibERC721.ownerOf(loan.borrowerTokenId);

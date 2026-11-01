@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 /// @title LibMetricsHooks
 /// @notice Central bookkeeping for the MetricsFacet O(1) counter / active-set
@@ -33,6 +34,8 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 ///      holds live loans/offers, the counters will reflect only NEW activity
 ///      until a one-time backfill runs. Pre-mainnet deployments are unaffected.
 library LibMetricsHooks {
+    using EnumerableSet for EnumerableSet.AddressSet;
+
     /// @notice A sale vehicle was registered without the real loan it carries.
     /// @dev    Guards the one input that makes the mark meaningful: the mark
     ///         IS the real loan id, so zero would both fail to identify the
@@ -40,6 +43,39 @@ library LibMetricsHooks {
     error InternalVehicleNeedsRealLoan();
 
     // ───────────────────────── Loan hooks ─────────────────────────
+
+    /// @notice #1832 — records `gross` of interest paid on `loan`: the
+    ///         interest (late fee included) a settlement charged the borrower,
+    ///         before the treasury's yield fee, keyed by the loan's principal
+    ///         asset. The ONE place `lifetimeInterestPaid` grows.
+    /// @dev    Called exactly once per settlement, at one of two seams: every
+    ///         payout on a loan that stays open (and the offset completion)
+    ///         passes through `LibInterestLedger.paySellersFirst`, which calls
+    ///         this; every other terminal settlement calls it where its
+    ///         interest figure is final. A forced sale records what it
+    ///         recovered, not what was owed. A fallback recovery (in kind, or
+    ///         the claim-time retry) is NOT recorded: it settles principal,
+    ///         interest and the fallback bonus as one figure, so no interest
+    ///         amount can be stated for it. NFT rentals are not loans of an
+    ///         ERC-20 and never record.
+    function onInterestPaid(LibVaipakam.Loan storage loan, uint256 gross) internal {
+        if (gross == 0 || loan.assetType != LibVaipakam.AssetType.ERC20) return;
+        LibVaipakam.storageSlot().lifetimeInterestPaid[loan.principalAsset] += gross;
+    }
+
+    /// @notice #1832 — takes back `gross` that {onInterestPaid} recorded for a
+    ///         payout to the lender side that then arrived short and left that
+    ///         interest owed. The ONE place the counter falls; its only caller
+    ///         is `LibInterestLedger.holderParked`, the ledger's measurement of
+    ///         a parked share's arrival, so the counter states interest the
+    ///         loan has settled, never interest a later payment will settle and
+    ///         record again. Saturates at zero.
+    function onInterestUndelivered(LibVaipakam.Loan storage loan, uint256 gross) internal {
+        if (gross == 0 || loan.assetType != LibVaipakam.AssetType.ERC20) return;
+        mapping(address => uint256) storage paid = LibVaipakam.storageSlot().lifetimeInterestPaid;
+        uint256 cur = paid[loan.principalAsset];
+        paid[loan.principalAsset] = cur > gross ? cur - gross : 0;
+    }
 
     /// @notice Registers a freshly-created loan in every analytics index.
     /// @dev Call from LoanFacet after the loan struct has been fully
@@ -52,6 +88,16 @@ library LibMetricsHooks {
         s.activeLoansCount += 1;
         s.totalLoansEverCreated += 1;
         s.interestRateBpsSum += loan.interestRateBps;
+
+        // #1832 — lifetime principal lent, per ERC-20 asset, at the figure the
+        // loan opened with (a later partial repay shrinks `loan.principal`, so
+        // reading it back at any later point would undercount). Read by
+        // `MetricsFacet.getProtocolStats` and `getLifetimeLendingTotals`
+        // without a scan of loan ids.
+        if (loan.assetType == LibVaipakam.AssetType.ERC20) {
+            s.lifetimePrincipalLent[loan.principalAsset] += loan.principal;
+            s.lifetimeLendingAssets.add(loan.principalAsset);
+        }
 
         // Active-set list for O(results) global enumeration.
         s.activeLoanIdsList.push(id);

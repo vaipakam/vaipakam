@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
@@ -243,6 +244,8 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // ── Build the settlement plan + required-principal target ────
         LibSettlement.ERC20Settlement memory plan = _fullSettlementPlan(loanId, loan, endTime);
         uint256 requiredPrincipal = plan.lenderDue + plan.treasuryShare;
+        // #1832 — terminal seam of the lifetime interest counter.
+        LibMetricsHooks.onInterestPaid(loan, plan.interest + plan.lateFee);
 
         // ── Size the sale to the debt (#2317) + slippage floor ───────
         // `sellAmount` is the least collateral whose slippage-capped

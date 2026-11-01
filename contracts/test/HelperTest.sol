@@ -1717,13 +1717,13 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](52);
+        selectors = new bytes4[](53);
         selectors[0] = MetricsFacet.getProtocolTVL.selector;
         selectors[1] = MetricsFacet.getProtocolStats.selector;
         selectors[2] = MetricsFacet.getUserCount.selector;
         selectors[3] = MetricsFacet.getActiveLoansCount.selector;
         selectors[4] = MetricsFacet.getActiveOffersCount.selector;
-        selectors[5] = MetricsFacet.getTotalInterestEarnedNumeraire.selector;
+        selectors[5] = MetricsFacet.getLifetimeLendingTotals.selector; // #1832 (replaces the retired full-scan getTotalInterestEarnedNumeraire)
         selectors[6] = MetricsFacet.getTreasuryMetrics.selector;
         // Legacy overload — disambiguated by full signature now that
         // the per-asset overload (added in §A.2) shares the name.
@@ -1797,6 +1797,7 @@ contract HelperTest {
         // position through it.
         selectors[50] = MetricsFacet.getUserPositionLoans.selector;
         selectors[51] = MetricsFacet.isSaleVehicleLoan.selector; // #1503 item 26
+        selectors[52] = MetricsFacet.getLifetimeLendingAssets.selector; // #1832
         return selectors;
     }
 

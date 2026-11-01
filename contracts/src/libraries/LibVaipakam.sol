@@ -7164,9 +7164,9 @@ library LibVaipakam {
         ///         itself persists in `loans` and its id was drawn from
         ///         `nextLoanId`. Anything that enumerates by id range —
         ///         `getAllLoansPaginated`, `getLoansByStatusPaginated`, the
-        ///         `getProtocolStats` / `getTotalInterestEarnedNumeraire`
-        ///         lifetime scans, `getGlobalCounts` — would keep finding it
-        ///         and keep pricing its principal into lifetime volume. A
+        ///         lifetime scans `getProtocolStats` ran before #1832 retired
+        ///         them, `getGlobalCounts` — would keep finding it and keep
+        ///         pricing its principal into lifetime volume. A
         ///         durable mark is what lets those surfaces exclude it; a
         ///         transient link cannot, since `saleOfferToLoanId` is
         ///         deleted at completion.
@@ -8176,6 +8176,27 @@ library LibVaipakam {
         ///      it once; nothing else is ever authorised to pull the payoff.
         ///      Written only by `LibRefinancePayoff`. Appended — append-only.
         mapping(uint256 => RefinancePayoffPermit) refinancePayoffPermit;
+        /// @dev #1832 — per ERC-20 lending asset, the principal of every loan
+        ///      ever opened in it, in the asset's own units, recorded once as
+        ///      the loan opens (`LibMetricsHooks.onLoanInitialized`). A
+        ///      refinance opens a new loan and counts again; a lender-sale
+        ///      record is not a loan and never counts. Never decreases.
+        ///      Written only by `LibMetricsHooks`. Appended — append-only.
+        mapping(address => uint256) lifetimePrincipalLent;
+        /// @dev #1832 — per ERC-20 lending asset, the gross interest (before
+        ///      the treasury's yield fee) borrowers have paid on loans in it,
+        ///      in the asset's own units, recorded as each payment is made
+        ///      (`LibMetricsHooks.onInterestPaid`). Never decreases from one
+        ///      transaction to the next: a payment parked short takes back, in
+        ///      the same transaction, only the part of what it just recorded
+        ///      that did not arrive (`onInterestUndelivered`).
+        ///      Written only by `LibMetricsHooks`. Appended — append-only.
+        mapping(address => uint256) lifetimeInterestPaid;
+        /// @dev #1832 — every asset a lifetime counter above has recorded,
+        ///      so a reader can value the counters without scanning loans.
+        ///      Only added to. Written only by `LibMetricsHooks`. Appended —
+        ///      append-only.
+        EnumerableSet.AddressSet lifetimeLendingAssets;
     }
 
     /// @notice #1558 — a borrower's signed authorisation to pay off the loan a

@@ -8,10 +8,12 @@ import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -28,6 +30,7 @@ import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {FeeOnTransferERC20Mock} from "./mocks/FeeOnTransferERC20Mock.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -602,6 +605,52 @@ contract MeasuredDeliveryTest is SetupTest {
         assertEq(delivered, amount, "the whole payout arrived");
         (,, uint64 touchedAt,) = SellerClaimFacet(address(diamond)).getInterestLedger(LOAN);
         assertEq(touchedAt, block.timestamp, "the ledger is checkpointed at the payout");
+    }
+
+    /// @notice #1832 (Codex r1 on #3085) — a frozen holder's share is parked
+    ///         in the stored lender's vault, and a charged token parks less
+    ///         than was sent. The caller credits the loan with what arrived,
+    ///         so the lifetime interest counter must state that figure too:
+    ///         the rest is still owed, and a later payment that settles it
+    ///         records it then. Kills: counting the whole requested slice at
+    ///         the seller-payment seam, which double counts the shortfall.
+    function test_ResidentLenderPayout_FrozenShortCountsOnlyWhatArrived() public {
+        _scaffold(true);
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(lender, true);
+        uint256 amount = 100 ether;
+        ERC20Mock(mockERC20).mint(address(diamond), amount);
+        _chargesFee(mockERC20, address(diamond));
+
+        vm.prank(address(diamond));
+        uint256 delivered = EncumbranceMutateFacet(address(diamond)).freezeOrPayActiveLenderResident(
+            LOAN, mockERC20, amount, amount, amount
+        );
+
+        assertEq(delivered, _less(amount), "the vault received less than was sent");
+        (, uint256 interestPaid) = MetricsFacet(address(diamond)).getLifetimeLendingTotals(mockERC20);
+        assertEq(interestPaid, delivered, "only the interest that arrived is counted");
+    }
+
+    /// @notice The control: the same frozen park arriving in full counts the
+    ///         whole slice.
+    function test_ResidentLenderPayout_FrozenFullCountsWhole() public {
+        _scaffold(true);
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(lender, true);
+        uint256 amount = 100 ether;
+        ERC20Mock(mockERC20).mint(address(diamond), amount);
+
+        vm.prank(address(diamond));
+        uint256 delivered = EncumbranceMutateFacet(address(diamond)).freezeOrPayActiveLenderResident(
+            LOAN, mockERC20, amount, amount, amount
+        );
+
+        assertEq(delivered, amount, "the whole payout arrived");
+        (, uint256 interestPaid) = MetricsFacet(address(diamond)).getLifetimeLendingTotals(mockERC20);
+        assertEq(interestPaid, amount, "the whole slice is counted");
     }
 
     // -- Voluntary flows refuse a short arrival at every hop ----------------

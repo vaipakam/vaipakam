@@ -12,6 +12,7 @@ import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
+import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibDiscountedLiquidation} from "../libraries/LibDiscountedLiquidation.sol";
 import {LibInternalMatchPriority} from "../libraries/LibInternalMatchPriority.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -342,6 +343,8 @@ contract RiskDiscountedLiquidationFacet is
         // ({LibDiscountedLiquidation.debt}, #2697).
         uint256 totalDebt = LibDiscountedLiquidation.debt(loan);
         uint256 interestPortion = totalDebt - loan.principal;
+        // #1832 — terminal seam of the lifetime interest counter.
+        LibMetricsHooks.onInterestPaid(loan, interestPortion);
 
         // Pull `totalDebt` of principal-asset from msg.sender. The
         // liquidator must have approved the diamond — either by

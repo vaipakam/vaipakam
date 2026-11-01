@@ -2868,8 +2868,8 @@ contract EarlyWithdrawalFacetTest is Test {
         (uint256[] memory repaidBeforeIds, ) = MetricsFacet(address(diamond))
             .getLoansByStatusPaginated(LibVaipakam.LoanStatus.Repaid, 0, type(uint256).max);
         uint256 repaidBefore = repaidBeforeIds.length;
-        uint256 interestBefore =
-            MetricsFacet(address(diamond)).getTotalInterestEarnedNumeraire();
+        (,,,, uint256 volumeBefore, uint256 interestBefore,,) =
+            MetricsFacet(address(diamond)).getProtocolStats();
 
         uint256 tempLoanId = _runRealSaleToCompletion("globalSurfaceBuyer");
 
@@ -2900,11 +2900,12 @@ contract EarlyWithdrawalFacetTest is Test {
 
         // The vehicle mirrors the real loan's principal and rate, so a leak
         // here double-counts the SAME money and invents interest nobody owed.
-        assertEq(
-            MetricsFacet(address(diamond)).getTotalInterestEarnedNumeraire(),
-            interestBefore,
-            "a completed vehicle must contribute no interest"
-        );
+        // #1832 — the lifetime counters are written as loans open and as
+        // interest is paid; a sale record is not a loan and pays nothing.
+        (,,,, uint256 volumeAfter, uint256 interestAfter,,) =
+            MetricsFacet(address(diamond)).getProtocolStats();
+        assertEq(volumeAfter, volumeBefore, "a completed vehicle must not add to volume lent");
+        assertEq(interestAfter, interestBefore, "a completed vehicle must contribute no interest");
     }
 
     /// @dev Codex #1825 r2 — paging over a SPARSE visible sequence: a vehicle

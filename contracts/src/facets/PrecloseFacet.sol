@@ -296,6 +296,8 @@ contract PrecloseFacet is
             // lateFee` and folds it into `treasuryShare`/`lenderShare`/`lenderDue`.
             uint256 lateFee = LibVaipakam.calculateLateFee(loanId);
             LibSettlement.ERC20Settlement memory plan = LibSettlement.computePreclose(loan, lateFee);
+            // #1832 — terminal seam of the lifetime interest counter.
+            LibMetricsHooks.onInterestPaid(loan, plan.interest + plan.lateFee);
 
             // Lender Yield Fee discount (Tokenomics §6 / §F2, #1354 / #1383):
             // eligibility is `consent OR lenderMode == Full` (a Full lender
