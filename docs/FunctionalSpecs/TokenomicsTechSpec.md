@@ -1169,16 +1169,11 @@ Keeper reward budget:
 - keeper rewards should use the active governance-approved VPFI price policy; the removed fixed-rate sale must not be treated as an active purchase path
 - keeper reward payment must never block the housekeeping action itself. Disabled rewards, empty budget, missing VPFI configuration, zero gas, or other reward failure states should emit or record a skipped reward outcome and let the housekeeping work complete
 
-Productive treasury reserve:
+Treasury yield (retired, owner decision 2026-10-28, #962 #963 #486 #487):
 
-- governance may deploy idle treasury assets into approved external yield venues, subject to a per-token deploy-time exposure cap
-- Aave V3 is the Phase 0 operational venue; Lido venue configuration is reserved but not usable until the WETH unwrap and withdrawal-queue flow is active
-- the external-yield cap is checked when funds are deployed. It is not a continuously enforced liquidity floor after later treasury debits or conversions
-- external principal and in-diamond treasury balance must remain separately visible so operators can monitor liquid reserve levels and venue exposure
-- routing to a venue is exhaustive: a venue value the platform has no supply or withdraw route for refuses the deployment or withdrawal outright, so the books never record principal as deployed or returned while the tokens stay where they were
-- a supply must take exactly the amount supplied from the treasury, measured from the treasury's own balance, or it refuses
-- a withdrawal credits the treasury with what measurably arrived, never with the amount requested; when a token charges on transfer the shortfall is stated in the withdrawal record rather than booked as if it had arrived. A venue that reports withdrawing a different amount from the one requested is refused
-- the Aave V3 pool may only be set to a contract whose own Aave addresses provider names it back as the market's pool. This catches a mistyped address or a contract that is not an Aave pool; it does not by itself prove a market is genuine, which is why the setting is a governance action that waits out the timelock review window
+- the platform does not deploy treasury assets into external yield venues. The earlier "productive treasury reserve" (Aave V3 supply, with Lido reserved) is removed while the platform is prelive
+- on the intended mainnet setup the treasury is an external multisig: fees leave the protocol as they are collected, so the protocol holds no idle treasury balance to deploy. Any yield position on treasury funds is the multisig's own decision and is held outside the protocol, with none of its risk carried by protocol contracts
+- the protocol therefore takes no external-venue counterparty risk on treasury funds, and its treasury figures never include principal held at another protocol
 
 Treasury management:
 

@@ -1522,7 +1522,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](56);
+        selectors = new bytes4[](45);
         selectors[0] = TreasuryFacet.claimTreasuryFees.selector;
         selectors[1] = TreasuryFacet.getTreasuryBalance.selector;
         selectors[2] = TreasuryFacet.mintVPFI.selector;
@@ -1567,26 +1567,14 @@ contract HelperTest {
         selectors[35] = TreasuryFacet.setKeeperRewardTopUpTarget.selector;
         selectors[36] = TreasuryFacet.getKeeperRewardTopUpTarget.selector;
         selectors[37] = TreasuryFacet.getKeeperRewardBudget.selector;
-        // T-087 Sub 3 add-on #473 — productive treasury reserve.
-        selectors[38] = TreasuryFacet.setTreasuryYieldVenue.selector;
-        selectors[39] = TreasuryFacet.setTreasuryExternalYieldMaxBps.selector;
-        selectors[40] = TreasuryFacet.setAaveV3Pool.selector;
-        selectors[41] = TreasuryFacet.setLidoStaking.selector;
-        selectors[42] = TreasuryFacet.deployTreasuryYield.selector;
-        selectors[43] = TreasuryFacet.withdrawTreasuryYield.selector;
-        selectors[44] = TreasuryFacet.getTreasuryYieldVenue.selector;
-        selectors[45] = TreasuryFacet.getTreasuryDeployedExternal.selector;
-        selectors[46] = TreasuryFacet.getTreasuryExternalYieldMaxBps.selector;
-        selectors[47] = TreasuryFacet.getAaveV3Pool.selector;
-        selectors[48] = TreasuryFacet.getLidoStaking.selector;
         // T-087 Sub 3 add-on #474 — keeper VPFI rewards config.
-        selectors[49] = TreasuryFacet.setKeeperRewardMultBps.selector;
-        selectors[50] = TreasuryFacet.getKeeperRewardMultBps.selector;
-        selectors[51] = TreasuryFacet.setKeeperRewardCashOutSpreadBps.selector;
-        selectors[52] = TreasuryFacet.getKeeperRewardCashOutSpreadBps.selector;
-        selectors[53] = TreasuryFacet.setKeeperRewardEnabled.selector;
-        selectors[54] = TreasuryFacet.getKeeperRewardEnabled.selector;
-        selectors[55] = TreasuryFacet.setKeeperRewardTwapMaxAgeSec.selector;
+        selectors[38] = TreasuryFacet.setKeeperRewardMultBps.selector;
+        selectors[39] = TreasuryFacet.getKeeperRewardMultBps.selector;
+        selectors[40] = TreasuryFacet.setKeeperRewardCashOutSpreadBps.selector;
+        selectors[41] = TreasuryFacet.getKeeperRewardCashOutSpreadBps.selector;
+        selectors[42] = TreasuryFacet.setKeeperRewardEnabled.selector;
+        selectors[43] = TreasuryFacet.getKeeperRewardEnabled.selector;
+        selectors[44] = TreasuryFacet.setKeeperRewardTwapMaxAgeSec.selector;
         // #687-C: former selectors[56] getKeeperRewardTwapMaxAgeSec relocated to [23].
         return selectors;
     }

@@ -246,7 +246,6 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
   // admin
   ...(
     [
-      'AaveV3PoolSet',
       'AdapterImplementationUpgraded',
       'AdapterOperatorBound',
       'AdminTransferred',
@@ -267,7 +266,6 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
       'FeedOverrideSet',
       'FusionLimitOrderProtocolSet',
       'LaunchedThroughGate',
-      'LidoStakingSet',
       'MirrorRewardDeploymentSet',
       'NumeraireUpdated',
       'OwnershipTransferred',
