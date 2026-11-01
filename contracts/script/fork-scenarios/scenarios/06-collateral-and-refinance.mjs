@@ -13,7 +13,7 @@
  *    That is worth observing rather than trusting.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, approveDiamond, acceptOffer, claimAndExpect, createOffer, creationFields, delta, expectPosition, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees, bothNfts, NFT_STATUS } from '../lib/flow.mjs';
+import { ABIS, STATUS, approveDiamond, attachPayoffPermitIfRouted, ZERO, acceptOffer, claimAndExpect, createOffer, creationFields, delta, expectPosition, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees, bothNfts, NFT_STATUS } from '../lib/flow.mjs';
 import { chainNow, f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { cannotContinue, check, expectEq, expectLedger, expectRefusal } from '../lib/report.mjs';
@@ -139,6 +139,16 @@ export async function run() {
       fillMode: 1,
     });
     const tagged = await read(ABIS.offerCancel, 'getOffer', [posted.offerId]);
+    // #1558 — the payoff is pulled through an exact-amount, single-use
+    // Permit2 signature attached to the request, never a standing allowance.
+    const permit = await attachPayoffPermitIfRouted(borrower, oldLoanId, posted.offerId, tagged.expiresAt);
+    if (permit) {
+      const [, , , , , signer, maxAmount] = await read(ABIS.refinancePayoff, 'getRefinancePayoff',
+        [oldLoanId, posted.offerId, permit.deadline]);
+      check('A6.6f', 'the borrower attaches an exact-amount payoff permit to the request, sized to the wallet\'s share of the payoff at its last fillable moment',
+        signer.toLowerCase() === borrower.address.toLowerCase() && maxAmount === permit.maxAmount,
+        `offerId=${posted.offerId} max=${f18(permit.maxAmount)} deadline=${permit.deadline} gas=${permit.gas}`);
+    }
     // A refinance offer CARRIES the loan's existing collateral over, so
     // posting it escrows nothing new.
     expectLedger('A6.6e', 'posting the refinance offer moves no funds — the existing collateral carries over',
@@ -154,6 +164,12 @@ export async function run() {
       const beforeRefi = await snapshot(tokens, refiHolders);
       const accepted = await acceptOffer(posted.offerId, posted.offer, outsider, borrower);
       if (!accepted.ok) cannotContinue('A6.7 refinance accept', accepted.reason);
+      if (permit) {
+        const [, , , , , spentSigner] = await read(ABIS.refinancePayoff, 'getRefinancePayoff',
+          [oldLoanId, posted.offerId, 0n]);
+        check('A6.7a', 'the accept spends the payoff permit — nothing of it remains on the request',
+          spentSigner === ZERO, `signer after accept=${spentSigner}`);
+      }
       const afterRefi = await snapshot(tokens, refiHolders);
       const activeAfter = (await read(ABIS.metrics, 'getUserActiveLoans', [borrower.address])).map(String);
       const opened = activeAfter.filter((id) => !activeBefore.includes(id));

@@ -1404,7 +1404,7 @@ const copySource = {
     // #2421 — a borrow request tagged with a running loan: accepting it is
     // also the payoff and close of that loan, in the same transaction.
     refinanceRequestBanner: tmpl(
-      `This is a refinance request for loan #{{loanId}}. Accepting it opens your loan and, in the same transaction, pays off and closes loan #{{loanId}}. The amount you lend, less the borrower’s loan-initiation fee, goes straight to that loan’s current lender as part of its payoff, not to the borrower’s wallet; the borrower’s wallet pays the rest. What you are owed is set by your new loan’s terms and collateral.`,
+      `This is a refinance request for loan #{{loanId}}. Accepting it opens your loan and, in the same transaction, pays off and closes loan #{{loanId}}. The amount you lend, less the borrower’s loan-initiation fee, funds that loan’s payoff to its current lender, and the borrower’s wallet pays the rest. What you are owed is set by your new loan’s terms and collateral.`,
       ['loanId'],
     ),
     refinanceRequestChecking:
@@ -1755,6 +1755,8 @@ const copySource = {
       approving: 'Approve the total in your wallet…',
       checking: 'Checking each loan again…',
       submitting: 'Confirm the transaction in your wallet…',
+      signing: 'Sign each request’s payoff permit in your wallet…',
+      attaching: 'Confirm the transaction that attaches the permits…',
     },
     reviewTitle: 'Post these refinance requests',
     terms: tmpl(
@@ -1762,7 +1764,7 @@ const copySource = {
       ['days', 'rate'],
     ),
     loanPayoff: tmpl(
-      'Loan #{{id}}: ~{{payoff}} to pay it off today, settled automatically when a lender accepts its request. The new loan’s money, less its initiation fee, goes straight to this loan’s lender; only the rest comes from your wallet.',
+      'Loan #{{id}}: ~{{payoff}} to pay it off today, settled automatically when a lender accepts its request. The new loan’s money, less its initiation fee, covers most of it; the rest comes from your wallet.',
       ['id', 'payoff'],
     ),
     loanGrowth: tmpl(
@@ -1770,7 +1772,7 @@ const copySource = {
       ['amount'],
     ),
     loanTopUp: tmpl(
-      'From your wallet when a lender accepts: about {{amount}}. That is the payoff’s interest and the new loan’s initiation fee; the new loan’s money pays the rest directly.',
+      'Spare in your wallet when a lender accepts: about {{amount}}. That is the payoff’s interest and the new loan’s initiation fee; the new loan’s money covers the rest in the same transaction.',
       ['amount'],
     ),
     leftOut: tmpl('Loan #{{id}} is left out: {{reason}}', ['id', 'reason']),
@@ -1781,7 +1783,7 @@ const copySource = {
       ['topUp'],
     ),
     approval: tmpl(
-      'You’ll approve {{amount}}: the sum of each request’s largest possible share from your wallet. Each share is pulled from this one approval when its request is accepted, and so is the share of any other refinance request you have open on the same token. A lender taking one request can therefore leave too little for another; each loan’s page says when its request’s approval runs short.',
+      'You’ll approve {{amount}}: the sum of each request’s largest possible payoff. Each payoff is pulled from this one approval when its request is accepted, and so is the payoff of any other refinance request you have open on the same token. A lender taking one request can therefore leave too little for another; each loan’s page says when its request’s approval runs short.',
       ['amount'],
     ),
     consentLabel:
@@ -1792,7 +1794,7 @@ const copySource = {
     receiveEach:
       'For each request a lender accepts, a new loan at your terms the moment it is accepted: that loan’s collateral moves to the new loan without ever unlocking, and the old loan closes in the same transaction.',
     youMayOwe:
-      'Each loan’s payoff shown above, settled when a lender accepts its request: the new loan’s money, less its initiation fee, pays most of it directly, and the rest comes from your wallet through the approval below. Your wallet must hold that loan’s spare amount at that moment.',
+      'Each loan’s payoff shown above, pulled from your wallet through the approval below when a lender accepts its request. Your wallet must hold that loan’s spare amount at that moment.',
     endsEach:
       'Each request ends when a lender accepts it, when you cancel it from its loan’s page, or when it expires; each loan’s line above says when. One transaction posts up to 15 requests. A request that fails is skipped, and the results say why; the guardrails written for it can stay set at your rate and end date, and they only limit what a request on that loan can complete at.',
     posted: tmpl(
@@ -1825,6 +1827,24 @@ const copySource = {
       'Your token approval for the protocol now stands at {{amount}}. Your open refinance requests draw their payoffs from it, so lowering it can leave a request unable to complete.',
       ['amount'],
     ),
+    // #1558 — the batch on a Diamond that pays the payoff through each
+    // request's single-use payoff permit.
+    permit: {
+      total: tmpl(
+        'Each request gets its own payoff permit, signed for the largest share of its payoff your wallet can owe ({{amount}} together); the new loan’s money, less its initiation fee, pays the rest straight to the old lender. A permit can be used once, only for its own loan’s payoff at the moment a lender accepts, and lapses when its request ends, so nothing stays approved to the protocol. If your wallet’s approval of Permit2 (Uniswap’s permit contract) doesn’t already cover that total, you approve it first; that approval moves nothing without one of your signatures.',
+        ['amount'],
+      ),
+      youMayOwe:
+        'Each loan’s payoff shown above, settled when a lender accepts its request: the new loan’s money, less its initiation fee, pays most of it straight to the old lender, and the rest is pulled from your wallet once, through that request’s payoff permit. Your wallet must hold that loan’s spare amount at that moment.',
+      postedNoPermit: tmpl(
+        'Loan #{{id}}: request posted as offer #{{offerId}}, but its payoff permit isn’t attached, so no lender can complete it yet. Open the loan’s page to sign it, or cancel the request there.',
+        ['id', 'offerId'],
+      ),
+      postedPermitPending: tmpl(
+        'Loan #{{id}}: request posted as offer #{{offerId}}. Its payoff permit was sent but isn’t confirmed yet, so whether a lender can complete the request isn’t known yet. Open the loan’s page to see where it stands.',
+        ['id', 'offerId'],
+      ),
+    },
   },
   preclose: {
     title: 'Close this loan early',
@@ -1899,7 +1919,7 @@ const copySource = {
       refinanceDesc:
         'Post a request for a new loan on better terms. When a lender accepts, the old loan is paid off and your collateral moves over automatically.',
       refinanceCost:
-        'The payoff is the loan amount plus the remaining term’s interest. When a lender accepts, the new loan’s money, less its initiation fee, pays that much of it directly; your wallet pays only the rest.',
+        'The payoff is the loan amount plus the remaining term’s interest. When a lender accepts, the new loan’s money, less its initiation fee, covers that much of it in the same transaction; your wallet covers the rest.',
       refinanceTransferredUnavailable:
         'Not available for this position — refinancing stays with the wallet that originally took the loan.',
     },
@@ -2079,7 +2099,7 @@ const copySource = {
     // refs (payoffNote, walletNote, guardrailNote, …) stay composed at
     // the call site.
     receiptYouMayOwe: tmpl(
-      '~{{payoff}} to pay off this loan, settled automatically when a lender accepts. The new loan’s money, less its initiation fee, goes straight to your current lender; only the rest comes from your wallet.',
+      '~{{payoff}} to pay off this loan, settled automatically when a lender accepts. The new loan’s money, less its initiation fee, covers most of it; the rest comes from your wallet.',
       ['payoff'],
     ),
     feesTreasuryNote: tmpl(
@@ -2110,7 +2130,7 @@ const copySource = {
     payoffNote:
       'The old loan’s payoff is always the loan amount plus the full remaining term’s interest — even if interest on the loan normally builds up day by day. That is the exiting lender’s fixed entitlement on an early exit.',
     walletNote: tmpl(
-      `When a lender accepts, your wallet pays only what the new loan’s money does not cover: about {{topUp}} (the interest portion plus the new loan’s initiation fee). Keep that much in your wallet while the request is open. The spending approval you grant is sized to that part, not to the whole payoff.`,
+      `When a lender accepts, the new loan’s money, less its initiation fee, covers most of the payoff in the same transaction, so keep about {{topUp}} in your wallet (the interest portion plus the new loan’s initiation fee) while the request is open.`,
       ['topUp'],
     ),
     shortIsSafe:
@@ -2256,12 +2276,75 @@ const copySource = {
       'We couldn’t check this wallet’s own offers just now. If it posted a refinance request for this loan while it held the borrower position, this page can’t show it yet — try again in a moment. If it is still open, you can cancel it under “Your open offers” on the Rate Desk (an expired request is not listed there); either way, remove the token approval it relied on under “Standing token approvals” in Settings (Advanced mode) if nothing else needs it.',
     repayWarnPending:
       'A refinance request is still live for this loan. Repaying settles the loan, after which the request can never complete — cancel it from its card afterwards (that also removes its standing payoff approval); until then it just sits until it expires.',
+    // #1558 — the payoff is paid through the request's single-use payoff
+    // permit. Used wherever the Diamond has the permit entry; the approval
+    // wording above serves a Diamond deployed before it (#3074).
+    permit: {
+      signDisclosure: tmpl(
+        'You’ll sign a payoff permit for at most {{amount}}: your wallet’s share of the payoff if a lender accepts at the last moment this request allows. The new loan’s money, less its initiation fee, pays the rest of the payoff straight to your current lender. Whoever completes the refinance can use the permit once, only for your share at that moment, so the rest of it is never taken. It lapses when the request ends, and nothing stays approved to the protocol.',
+        ['amount'],
+      ),
+      permit2ApprovalNote:
+        'If your wallet hasn’t approved Permit2 (Uniswap’s permit contract) for this token for at least that amount, you approve it first. That approval moves nothing on its own: Permit2 pays only against a signature you make.',
+      growthDisclosure: tmpl(
+        'If a lender accepts after the loan’s due date, the payoff grows (the late fee plus interest that keeps building up) by up to ~{{maxGrowth}} more for this request. The permit covers that too, so a late acceptance can’t fail on it.',
+        ['maxGrowth'],
+      ),
+      multiStepNote:
+        'Posting takes up to five wallet steps: the guardrails, the Permit2 approval if needed, the request, your signature on the payoff permit, and the transaction that attaches it. If you stop after the request is posted, it stays open without a permit and no lender can complete it; sign the permit from the request’s card, or cancel the request.',
+      done:
+        'Refinance request posted with its payoff permit. When a lender accepts it, this loan closes automatically — you don’t need to do anything else. You can cancel the request below (cancellation opens a few minutes after posting).',
+      postedWithoutPermit:
+        'Your refinance request is posted, but its payoff permit isn’t attached, so no lender can complete it yet. Sign the permit from the request’s card below, or cancel the request.',
+      postedButUnconfirmed:
+        'Your request was sent, but we could not confirm whether it went through. Check your open requests before trying again — if it did land, requesting a second time would create a duplicate. If it landed, sign its payoff permit from the request’s card.',
+      quoteUnavailable:
+        'We couldn’t read this loan’s payoff from the protocol just now, so the request can’t be reviewed yet. Please try again in a moment.',
+      issue: {
+        missing:
+          'No payoff permit from this wallet is attached to this request, so a lender’s acceptance would fail. Sign one below or cancel the request.',
+        spent:
+          'This request’s payoff permit has already been used, so a lender’s acceptance would fail. Sign a new one below or cancel the request.',
+        expired:
+          'This request’s payoff permit has expired, so a lender’s acceptance would fail. Sign a new one below or cancel the request.',
+        lapsesEarly:
+          'This request’s payoff permit expires before the request does, so a later acceptance would fail. Sign a new one below or cancel the request.',
+        short:
+          'This request’s payoff permit allows less than your wallet’s share of the payoff can reach before the request ends (an acceptance after the due date also pulls the late fee and extra interest, and a raised initiation-fee rate raises the share), so a later acceptance could fail. Sign a new one below or cancel the request.',
+        permit2Short:
+          'Your wallet’s approval of Permit2 for this token no longer covers your wallet’s share of the payoff, so a lender’s acceptance would fail. Sign the payoff permit again below; it raises that approval first.',
+      },
+      sign: 'Sign the payoff permit',
+      attaching:
+        'Your refinance request is posted. Approve Permit2 if your wallet asks, then sign the payoff permit and confirm the transaction that attaches it. Until the permit is attached, no lender can complete the request.',
+      attachFailed: tmpl(
+        'The payoff permit wasn’t attached, so no lender can complete this request on it yet ({{reason}}). Sign it again below or cancel the request.',
+        ['reason'],
+      ),
+      signed: 'Payoff permit attached — the request can complete.',
+      attachUnconfirmed:
+        'Your refinance request is posted and its payoff permit was sent, but whether the permit attached isn’t confirmed yet. The request’s card shows the permit once the chain does; sign again only if the card still says it is missing.',
+      signAborted:
+        'This request is no longer completable (accepted, cancelled, or the loan closed), so nothing was signed. Refresh to see the latest state.',
+      cancelled:
+        'Refinance request cancelled — this loan continues unchanged. Its payoff permit named this request, so it can never be used, and nothing stays approved to the protocol for it.',
+      pendingLoanClosed:
+        'This loan has since closed another way, so the request can no longer complete. Cancel it to remove it.',
+      pendingExpired: tmpl(
+        `This refinance request expired on {{date}} — no lender can accept it any more, and it no longer holds up your other actions here. Cancel it below to remove it; the loan continues unchanged.`,
+        ['date'],
+      ),
+      pendingPastGrace:
+        'This loan has passed its due date and grace window, so no lender can accept this request any more — it no longer holds up your other actions here. Cancel it below to remove it.',
+      pendingUntakeable:
+        'This refinance request can never be accepted: it isn’t the request the protocol has on record for this loan (a newer request replaced it). It does not hold the loan back. Cancel it below to remove it.',
+    },
   },
 
   approvals: {
     title: 'Standing token approvals',
     blurb:
-      'These are the spending permissions your wallet has granted Vaipakam’s contract for tokens your loans and offers touch. Some flows set them on purpose (such as a refinance request’s payoff); anything left over from an abandoned attempt can be removed here.',
+      'These are the spending permissions your wallet has granted Vaipakam’s contract for tokens your loans and offers touch. Some flows set them on purpose (such as a sale listing’s settlement); anything left over from an abandoned attempt can be removed here.',
     revokeWarning:
       'Careful: if a live request on one of your loans depends on a token’s approval, revoking it makes that flow fail until you restore it from its card — the card will warn you within moments.',
     scopeNote:
@@ -6056,6 +6139,9 @@ const copySource = {
       ExtendReserveFunded: 'Extension reserve funded',
       ExtendReserveWithdrawn: 'Extension reserve withdrawn',
       ExtendChargeDrawn: 'Extension charge paid',
+      RefinancePayoffPermitSet: 'Refinance payoff permit signed',
+      RefinancePayoffPermitCleared: 'Refinance payoff permit removed',
+      RefinancePayoffPulled: 'Refinance payoff paid',
       BackstopFilled: 'Funded by the backstop',
       BackstopLoanClaimed: 'Backstop recovery claimed',
       BorrowerSurplusClaimed: 'Surplus claimed',

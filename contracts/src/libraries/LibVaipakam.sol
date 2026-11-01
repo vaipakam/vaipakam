@@ -8180,6 +8180,28 @@ library LibVaipakam {
         ///      left at any time. Written only by `LibEncumbrance`. Appended —
         ///      append-only.
         mapping(uint256 => mapping(address => uint256)) extendReserve;
+        /// @dev #1558 — per refinance request (a borrower offer, by id): the
+        ///      borrower's single-use Permit2 authorisation to pay off the loan
+        ///      that request refinances. Whoever completes the refinance uses
+        ///      it once; nothing else is ever authorised to pull the payoff.
+        ///      Written only by `LibRefinancePayoff`. Appended — append-only.
+        mapping(uint256 => RefinancePayoffPermit) refinancePayoffPermit;
+    }
+
+    /// @notice #1558 — a borrower's signed authorisation to pay off the loan a
+    ///         refinance request targets. See `Storage.refinancePayoffPermit`.
+    /// @dev `signer` signed a Permit2 `PermitWitnessTransferFrom` for up to
+    ///      `maxAmount` of the loan's principal asset, with the Diamond as
+    ///      spender, Permit2 nonce `nonce`, expiring at `deadline`, and the
+    ///      witness `RefinancePayoff(loanId, offerId)`, so the signature pays
+    ///      off this one loan through this one request and nothing else.
+    ///      Permit2 burns the nonce on first use.
+    struct RefinancePayoffPermit {
+        address signer;
+        uint256 maxAmount;
+        uint256 nonce;
+        uint256 deadline;
+        bytes signature;
     }
 
     /// @notice #918 — one (destination, day)'s remit ledger on Base. See

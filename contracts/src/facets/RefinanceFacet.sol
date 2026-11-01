@@ -27,6 +27,8 @@ import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibRefinanceNetting} from "../libraries/LibRefinanceNetting.sol";
+import {LibRefinancePayoff} from "../libraries/LibRefinancePayoff.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
 
 /**
  * @title RefinanceFacet
@@ -51,7 +53,9 @@ import {LibRefinanceNetting} from "../libraries/LibRefinanceNetting.sol";
  *           the mode-aware interest; #411 dropped the rate-shortfall top-up
  *           that over-compensated the exiting lender) from that net
  *           principal, pulls only the rest of the old lender's due and the
- *           treasury fee from the holder's wallet, carries or returns the old
+ *           treasury fee from the holder's wallet (once, through the
+ *           single-use Permit2 payoff permit attached to the request,
+ *           #1558), carries or returns the old
  *           collateral, checks the replacement's risk gates and closes the
  *           old loan as Repaid. Any failure reverts the accept too.
  *
@@ -245,7 +249,8 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
     ///      Both routes arrive from the Diamond itself, inside an accept that
     ///      already screened its own caller (the lender, or the matcher). What
     ///      is screened here is the borrower-position holder, who receives the
-    ///      old collateral and pays what the net principal does not cover. The
+    ///      old collateral and pays what the net principal does not cover,
+    ///      through the payoff permit attached to the request (#1558). The
     ///      auto-refinance kill switch applies to the matcher route only: a
     ///      lender's direct accept is not automation and is never blocked by
     ///      it. (#3042 retired the after-the-fact completion, and with it the
@@ -431,7 +436,7 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
         (uint256 treasuryFee, uint256 lenderDue) = _exitingLenderDue(oldLoan, oldLoanId);
         // #3042 — the new lender's net principal pays the old lender inside
         // the Diamond; the holder's wallet pays only the rest of the due and
-        // the treasury fee.
+        // the treasury fee, once, through the request's payoff permit (#1558).
         _settlePayoff(
             oldLoanId,
             newLoanId,
@@ -701,10 +706,18 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
     ///      lender's net principal the accept left in their vault
     ///      ({LibRefinanceNetting}); all of it goes to the old lender, who is
     ///      made whole before anyone else. The holder's wallet pays only the
-    ///      rest of the old lender's due and the treasury fee, so their
-    ///      approval need cover only that. `net` never exceeds the due (see
-    ///      the contract header); a surplus is refused, never kept. Every leg
-    ///      is voluntary and refused unless delivered in full.
+    ///      rest of the old lender's due and the treasury fee. `net` never
+    ///      exceeds the due (see the contract header); a surplus is refused,
+    ///      never kept.
+    ///
+    ///      #1558 — the wallet's share arrives in ONE measured pull through the
+    ///      single-use Permit2 permit the holder attached to this request
+    ///      ({LibRefinancePayoff.pull}); no standing allowance is ever read.
+    ///      Each share is then sent on from the Diamond. A missing, expired or
+    ///      too-small permit refuses the refinance by name, which unwinds the
+    ///      whole acceptance.
+    ///
+    ///      Every leg is voluntary and refused unless delivered in full.
     ///
     ///      #998 S10 (#1006) F2 — both legs into the old lender's vault land
     ///      behind the receive-side pin on `oldLoan.lender`: the old lender is
@@ -729,35 +742,41 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
         if (net > lenderDue) revert RefinanceNetPrincipalExceedsPayoff(net, lenderDue);
         uint256 borrowerToOldLender = lenderDue - net;
 
+        // The wallet's whole share, into the Diamond, spending the permit.
+        LibRefinancePayoff.pull(
+            oldLoanId,
+            borrowerOfferId,
+            holder,
+            asset,
+            borrowerToOldLender + treasuryFee
+        );
+
         LibSanctionedLock.begin(s, oldLoan.lender);
+        address oldLenderVault = LibFacet.getOrCreateVault(oldLoan.lender);
         // The net principal moves vault to vault: it never leaves the Diamond's
-        // custody model, and the old lender's tracked balance ticks with it.
+        // custody model.
         LibFacet.vaultWithdrawExact(
             newLender,
             asset,
-            LibFacet.getOrCreateVault(oldLoan.lender),
+            oldLenderVault,
             net,
             VaultWithdrawFailed.selector
         );
-        LibVaipakam.recordVaultDeposit(oldLoan.lender, asset, net);
         if (borrowerToOldLender > 0) {
-            // The cross-payer chokepoint ticks the old lender's tracked
-            // balance while the holder pays.
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultDepositERC20From.selector,
-                    holder,
-                    oldLoan.lender,
-                    asset,
-                    borrowerToOldLender
-                ),
-                VaultDepositFailed.selector
+            LibDelivery.requireFull(
+                asset,
+                borrowerToOldLender,
+                LibDelivery.pushMeasured(asset, oldLenderVault, borrowerToOldLender)
             );
         }
+        // Both legs arrived in full, so the old lender's tracked balance ticks
+        // by the whole due.
+        LibVaipakam.recordVaultDeposit(oldLoan.lender, asset, lenderDue);
         LibSanctionedLock.end(s, oldLoan.lender, oldLoanId, asset, lenderDue);
 
-        // #1281-011 — the one payer -> treasury pull (refuses a short arrival).
-        LibFacet.transferFromPayerToTreasury(holder, asset, treasuryFee);
+        // The treasury's share, out of what the Diamond now holds (#2440: the
+        // host accrues what the treasury received).
+        LibFacet.transferToTreasury(asset, treasuryFee);
         emit RefinancePayoffSettled(
             oldLoanId,
             newLoanId,
@@ -997,7 +1016,7 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
     ///         standing — taken, cancelled, expired, the position handed on, the
     ///         loan closed — it stops holding the loan back, with no write
     ///         anywhere. `live` does NOT say a lender could fill it now: the
-    ///         holder's caps, the payoff approval, an overdue period or the
+    ///         holder's caps, the payoff permit, an overdue period or the
     ///         market can each refuse acceptance, and the remedy for a request
     ///         that can no longer fill is to cancel it.
     ///         {checkRefinanceRequest} reports the acceptance-side reasons it

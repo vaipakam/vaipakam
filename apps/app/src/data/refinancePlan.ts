@@ -13,16 +13,22 @@
  * hard expiry), the guardrail write it needs first when the loan's
  * auto-refinance caps do not already cover it, and the figures the
  * borrower reviews — today's payoff, what the wallet must hold spare at
- * acceptance, and the standing approval the acceptance pulls against,
- * sized to the wallet's share of the payoff at the request's LAST
- * fillable moment (#1236, #3042: the new loan's net principal pays the
- * rest inside the Diamond).
+ * acceptance, and the most the acceptance can pull (`bound`): on the
+ * permit route the wallet's share of the payoff at the request's LAST
+ * fillable moment, which the payoff permit is signed for (#1236, #1558,
+ * #3042: the new loan's net principal pays the rest inside the Diamond);
+ * on the approval bridge the whole payoff at that moment.
  * Or the reason the loan cannot take a request now.
  *
- * What a plan is NOT: the guardrail write, a balance check or an
- * approval. A batch checks the wallet against the SUM of its loans'
- * spare amounts and approves the sum of their bounds once, so all three
- * stay with the caller.
+ * The payoff figures come from the contract (`getRefinancePayoff`). On a
+ * Diamond deployed before #1558 the payoff is paid from a standing
+ * approval instead, sized by the app-side mirror; `route` says which, and
+ * that branch goes with the fresh deploy (#3074).
+ *
+ * What a plan is NOT: the guardrail write, a balance check, an approval
+ * or a signature. A batch checks the wallet against the SUM of its loans'
+ * spare amounts and approves the sum of their bounds once, so all of that
+ * stays with the caller.
  *
  * Read failures THROW, as the inline checks did; a caller that plans many
  * loans turns a throw into that loan's refusal (`planRefinanceForBatch`).
@@ -37,11 +43,13 @@ import {
   LOAN_STATUS_ACTIVE,
   loanEndTimeOf,
   readLoanLive,
-  refinanceApprovalOf,
-  refinancePayoffOf,
-  refinanceWalletPullOf,
   type LoanLive,
 } from '../contracts/loanLive';
+import {
+  readPayoffQuote,
+  readPayoffRoute,
+  type PayoffRoute,
+} from '../contracts/refinancePayoffPermit';
 import {
   assertAssetNotPausedLive,
   assertPositionNftHeldLive,
@@ -91,6 +99,9 @@ export interface RefinanceRequestReady {
   liveLoan: LoanLive;
   /** Chain time of the block the plan was judged at. */
   chainNow: bigint;
+  /** How this Diamond pays the payoff: the request's permit, or (before
+   *  #1558) a standing approval of the Diamond. */
+  route: PayoffRoute;
   /** Today's payoff to the old lender. */
   payoff: bigint;
   /** What the wallet must hold spare at acceptance, and what the accept
@@ -98,10 +109,16 @@ export interface RefinanceRequestReady {
    *  pays the old lender inside the Diamond (#3042) — the interest share
    *  plus the new loan's initiation fee. Judged at today's payoff. */
   topUp: bigint;
-  /** The standing approval the acceptance pulls against: the wallet's
-   *  share at the request's last fillable moment, at the live fee rate
-   *  with no discount (an upper bound; a discount only lowers the pull). */
-  approval: bigint;
+  /** The most the acceptance can pull from the wallet. On the permit
+   *  route: the wallet's share of the payoff at the request's last
+   *  fillable moment, at the live fee rate with no discount (an upper
+   *  bound; a discount only lowers the pull) — the permit is signed for
+   *  exactly this. On the approval bridge: the whole payoff at that
+   *  moment, the approval's size. */
+  bound: bigint;
+  /** The request's last fillable moment: the permit's deadline, so the
+   *  permit lapses with the request. */
+  permitDeadline: bigint;
   /** How much the payoff can still grow before the request's last
    *  fillable moment (late fee and interest); 0 when it cannot. */
   headroom: bigint;
@@ -154,7 +171,7 @@ export async function checkRefinanceRequest(
   // collateral identity VERBATIM — stale values would break carry-over),
   // chain time, the existing guardrails, live fees (the review quoted a
   // cached config), and both legs' pause state.
-  const [, liveLoan, latestBlock, caps, liveFees] = await Promise.all([
+  const [, liveLoan, latestBlock, caps, liveFees, route] = await Promise.all([
     assertPositionNftHeldLive({
       publicClient,
       diamondAddress: diamond,
@@ -170,6 +187,7 @@ export async function checkRefinanceRequest(
       args: [BigInt(loan.loanId)],
     }) as Promise<{ enabled: boolean; maxRateBps: number; maxNewExpiry: bigint }>,
     readLiveProtocolFees(publicClient, diamond),
+    readPayoffRoute(publicClient, diamond),
     assertAssetNotPausedLive({
       publicClient,
       diamondAddress: diamond,
@@ -231,24 +249,27 @@ export async function checkRefinanceRequest(
     chainNow + (BigInt(terms.durationDays) + REQUEST_WINDOW_DAYS) * 86_400n;
   const capsCover =
     caps.enabled && Number(caps.maxRateBps) >= terms.rateBps && caps.maxNewExpiry >= neededExpiry;
-  // The approval is sized to the wallet's share of the payoff at the
-  // request's LAST fillable moment (its own expiry or the grace end,
-  // whichever first): since #1189 the pull GROWS past maturity by the
-  // grace-window late fee. The share is the payoff less the new loan's
-  // net principal at the live fee rate (#3042); the request asks for the
-  // old principal (`toRefinanceOfferPayload`).
+  // The bound is sized at the request's LAST fillable moment (its own
+  // expiry or the grace end, whichever first): since #1189 the pull
+  // GROWS past maturity by the grace-window late fee. On the permit route
+  // it is the wallet's share — the payoff less the new loan's net
+  // principal (#3042); the request asks for the old principal
+  // (`toRefinanceOfferPayload`), with the live fee rate as the bound.
   const requestExpiry = chainNow + REQUEST_WINDOW_DAYS * 86_400n;
-  const payoff = refinancePayoffOf(liveLoan, chainNow);
-  const request = {
-    requestAmount: liveLoan.principal,
-    loanInitiationFeeBps: liveFees.loanInitiationFeeBps,
-  };
-  const topUp = refinanceWalletPullOf(liveLoan, request, chainNow);
-  const approval = refinanceApprovalOf(liveLoan, {
+  const quote = await readPayoffQuote({
+    publicClient,
+    diamond,
+    live: liveLoan,
+    loanId: BigInt(loan.loanId),
+    offerId: 0n,
+    chainNow,
     expiresAt: requestExpiry,
     graceSeconds,
-    ...request,
+    route,
+    requestAmount: liveLoan.principal,
+    loanInitiationFeeBps: liveFees.loanInitiationFeeBps,
   });
+  const { payoff, bound } = quote;
   // OfferCreateFacet clamps a refinance request's expiry to the grace
   // boundary (graceEnd + 1); when that binds, the request lives until
   // the grace end, not for the full window.
@@ -258,10 +279,12 @@ export async function checkRefinanceRequest(
     loanId: loan.loanId,
     liveLoan,
     chainNow,
+    route,
     payoff,
-    topUp,
-    approval,
-    headroom: approval > topUp ? approval - topUp : 0n,
+    topUp: quote.topUp,
+    bound,
+    permitDeadline: quote.lastFillable,
+    headroom: quote.growth,
     requestExpiry,
     graceEnd,
     expiryGraceClamped: graceEnd + 1n < requestExpiry,
@@ -272,8 +295,8 @@ export async function checkRefinanceRequest(
       durationDays: terms.durationDays,
       consent: true,
       // The request's own hard expiry — what makes the reviewed lifetime
-      // true even when looser caps pre-exist, and the bound the approval
-      // was computed against.
+      // true even when looser caps pre-exist, and the moment the bound
+      // was computed for.
       expiresAt: requestExpiry,
     }),
   };
@@ -385,11 +408,12 @@ export type RefinanceBatchPlan = (RefinanceRequestReady & { notes: string[] }) |
  * Every read failure is that loan's refusal, never the batch's.
  *
  * With a `reviewed` plan it is the late re-check before a send: a loan
- * whose approval bound or spare amount grew past the one reviewed, or
+ * whose bound or spare amount grew past the one reviewed, whose payoff
+ * route changed (the Diamond was upgraded), or
  * whose statements changed (it went past due, its request would now end
  * at the grace end), is left out rather than posted on terms the
  * borrower did not see. The reviewed figures are what the balance check
- * and the approval were sized on, so a loan is sent only while its
+ * and the approval of the Diamond or of Permit2 were sized on, so a loan is sent only while its
  * figures are at most those: in grace the spare amount grows with each
  * day's late fee while the bound stays fixed at the grace end, and a
  * request sent on a grown spare amount could be posted already unfunded.
@@ -417,7 +441,8 @@ export async function planRefinanceForBatch(
     if (
       reviewed &&
       (notes.join('\n') !== reviewed.notes.join('\n') ||
-        plan.approval > reviewed.approval ||
+        plan.route !== reviewed.route ||
+        plan.bound > reviewed.bound ||
         plan.topUp > reviewed.topUp)
     ) {
       return refusal(loan.loanId, copy.batchRefinance.changedSinceReview);

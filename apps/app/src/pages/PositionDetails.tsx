@@ -4151,6 +4151,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 setConfirmingSurface((s) => (s === 'refinance' ? null : s))
               }
               onPosted={refi.remember}
+              onPermitAttach={refi.reportPermitAttach}
               busy={busy}
               setBusy={setBusy}
             />
@@ -4777,6 +4778,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           loanId={row.loanId}
           offerId={refi.offerId}
           state={refi.state}
+          attachProgress={
+            refi.permitAttach?.offerId === refi.offerId ? refi.permitAttach : null
+          }
+          onPermitAttach={refi.reportPermitAttach}
           principalAsset={row.lendingAsset as `0x${string}`}
           principalMeta={principal ?? undefined}
           busy={busy}

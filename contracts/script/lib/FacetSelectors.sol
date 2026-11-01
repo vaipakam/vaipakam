@@ -16,6 +16,7 @@ import {NumeraireValueFacet} from "../../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../../src/facets/NotificationFeeFacet.sol";
 import {SaleExitVerdictFacet} from "../../src/facets/SaleExitVerdictFacet.sol";
 import {SellerClaimFacet} from "../../src/facets/SellerClaimFacet.sol";
+import {RefinancePayoffFacet} from "../../src/facets/RefinancePayoffFacet.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
 
 /**
@@ -573,6 +574,24 @@ library FacetSelectors {
         s[5] = SellerClaimFacet.getSellerInterestHeld.selector;
         s[6] = SellerClaimFacet.settleParkedInterestAtSale.selector;
         s[7] = SellerClaimFacet.getSellersShareOfLenderClaim.selector;
+    }
+
+    /// @notice Full external selector surface of {RefinancePayoffFacet} (3):
+    ///         the borrower's payoff permit on a refinance request, its
+    ///         removal, and the view that sizes it (#1558). No curated script
+    ///         cuts it: `RedeployFacets` refuses a Diamond that does not
+    ///         already route it (`PredatesRefinancePayoffPermit`), so it
+    ///         reaches a chain by fresh deploy or the all-facets refresh.
+    ///
+    ///         The ONLY copy of the list: `DeployDiamond`
+    ///         (`_getRefinancePayoffSelectors`) and `HelperTest`
+    ///         (`getRefinancePayoffFacetSelectors`) return it, and
+    ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
+    function refinancePayoff() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = RefinancePayoffFacet.setRefinancePayoffPermit.selector;
+        s[1] = RefinancePayoffFacet.clearRefinancePayoffPermit.selector;
+        s[2] = RefinancePayoffFacet.getRefinancePayoff.selector;
     }
 
     /// @notice Full external selector surface of {NumeraireValueFacet} (3).

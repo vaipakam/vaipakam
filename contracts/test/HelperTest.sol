@@ -2716,6 +2716,12 @@ contract HelperTest {
         selectors = FacetSelectors.sellerClaim();
     }
 
+    /// #1558 - the refinance payoff-permit host. Returns the ONE list in
+    /// `FacetSelectors.refinancePayoff()` (the same one `DeployDiamond` cuts).
+    function getRefinancePayoffFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = FacetSelectors.refinancePayoff();
+    }
+
     /// #2795 - the forced-sale host. Returns the ONE list in
     /// `FacetSelectors.forcedSale()` (the same one `DeployDiamond` cuts).
     function getForcedSaleFacetSelectors() public pure returns (bytes4[] memory selectors) {

@@ -149,11 +149,11 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
     ///      Active. The tagged offer reuses the old loan's collateral (the
     ///      carry-over), so the borrower's WETH stays locked once, not twice.
     ///      The new lender's net principal pays the old lender inside the
-    ///      Diamond (#3042), so the borrower approves only the difference:
-    ///      here the old loan's interest, its treasury fee and the new loan's
-    ///      initiation fee, a few USDC. The approval below is a twentieth of
-    ///      the principal, so a payoff still routed through the wallet could
-    ///      not complete.
+    ///      Diamond (#3042), so the borrower's wallet pays only the
+    ///      difference: here the old loan's interest, its treasury fee and the
+    ///      new loan's initiation fee, a few USDC. It is pulled once through
+    ///      the payoff permit the borrower attaches to the request at
+    ///      posting, signed for that share only, as the app does (#1558).
     function _acceptAndRefinance() internal {
         uint256 offerId = _createLenderOffer(lenderKey);
         uint256 oldLoanId = _acceptAs(borrowerKey, offerId, address(weth), COLLATERAL_AMOUNT);
@@ -171,8 +171,11 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
             oldLoanId, true, 600, uint64(block.timestamp + 365 days)
         );
         uint256 requestId = OfferCreateFacet(diamond).createOffer(request);
-        usdc.approve(diamond, LOAN_AMOUNT / 20); // the difference only (#3042)
         vm.stopBroadcast();
+        // The wallet's share of the payoff, through the request's permit.
+        if (!_attachPayoffPermit(borrowerKey, oldLoanId, requestId)) {
+            return _skip("Permit2 is not deployed on this chain, so a refinance cannot pay its old loan off");
+        }
         require(
             OfferCancelFacet(diamond).getOfferDetails(requestId).refinanceCarryOver,
             "PF-098: the tagged request should carry the old collateral over"
@@ -250,8 +253,11 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         request.interestRateBpsMax = capRateBps;
         vm.startBroadcast(borrowerKey);
         uint256 requestId = OfferCreateFacet(diamond).createOffer(request);
-        usdc.approve(diamond, LOAN_AMOUNT / 20); // the difference only: the new principal nets the payoff (#3042)
         vm.stopBroadcast();
+        // The wallet's share of the payoff, through the request's permit.
+        if (!_attachPayoffPermit(borrowerKey, oldLoanId, requestId)) {
+            return _skip("Permit2 is not deployed on this chain, so a refinance cannot pay its old loan off");
+        }
         uint256 lenderOfferId = _createLenderOffer(newLenderKey);
         console.log("Refinance request / standing lender offer:", requestId, lenderOfferId);
 

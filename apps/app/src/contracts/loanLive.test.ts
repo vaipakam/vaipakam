@@ -124,16 +124,12 @@ describe('refinanceWalletPullOf', () => {
 
 describe('refinanceApprovalOf', () => {
   const graceSeconds = 3n * DAY; // 30-day bucket
-  // #3042 — every bound below is the payoff at the last fillable moment
-  // LESS the net new principal the accept pays the old lender with.
-  const req = { requestAmount: live.principal, loanInitiationFeeBps: 20 };
-  const net = live.principal - (live.principal * 20n) / 10_000n;
   const payoffInTerm = live.principal + interestFor(30n);
 
   it('carries no fee headroom when the request expires before maturity', () => {
     expect(
-      refinanceApprovalOf(live, { expiresAt: endTime - DAY, graceSeconds, ...req }),
-    ).toBe(payoffInTerm - net);
+      refinanceApprovalOf(live, { expiresAt: endTime - DAY, graceSeconds }),
+    ).toBe(payoffInTerm);
   });
 
   it('covers grace interest + fee at the grace end when the request outlives it', () => {
@@ -143,10 +139,9 @@ describe('refinanceApprovalOf', () => {
       refinanceApprovalOf(live, {
         expiresAt: endTime + 30n * DAY,
         graceSeconds,
-        ...req,
       }),
     ).toBe(
-      live.principal + interestFor(33n) + (live.principal * 250n) / 10_000n - net,
+      live.principal + interestFor(33n) + (live.principal * 250n) / 10_000n,
     );
   });
 
@@ -155,17 +150,17 @@ describe('refinanceApprovalOf', () => {
     // expiresAt - 1 = endTime + 1d exactly → 31 elapsed days,
     // daysLate = 1 → 1.5%.
     expect(
-      refinanceApprovalOf(live, { expiresAt: endTime + DAY + 1n, graceSeconds, ...req }),
+      refinanceApprovalOf(live, { expiresAt: endTime + DAY + 1n, graceSeconds }),
     ).toBe(
-      live.principal + interestFor(31n) + (live.principal * 150n) / 10_000n - net,
+      live.principal + interestFor(31n) + (live.principal * 150n) / 10_000n,
     );
   });
 
   it('falls back to the grace end for a no-expiry offer', () => {
     expect(
-      refinanceApprovalOf(live, { expiresAt: 0n, graceSeconds, ...req }),
+      refinanceApprovalOf(live, { expiresAt: 0n, graceSeconds }),
     ).toBe(
-      live.principal + interestFor(33n) + (live.principal * 250n) / 10_000n - net,
+      live.principal + interestFor(33n) + (live.principal * 250n) / 10_000n,
     );
   });
 });

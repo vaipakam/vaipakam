@@ -28,6 +28,9 @@ import {MockPoolPricing} from "../lib/MockPoolPricing.sol";
 import {FixedRateSwapAdapter} from "../mocks/FixedRateSwapAdapter.sol";
 import {RevertProbe} from "../lib/RevertProbe.sol";
 import {RehearsalChain} from "../lib/RehearsalChain.sol";
+import {RefinancePayoffFacet} from "../../src/facets/RefinancePayoffFacet.sol";
+import {LibPermit2} from "../../src/libraries/LibPermit2.sol";
+import {RefinancePayoffPermitHelper} from "../../test/helpers/RefinancePayoffPermitHelper.sol";
 
 /**
  * @title PositiveFlowsBase
@@ -575,6 +578,31 @@ abstract contract PositiveFlowsBase is Script {
         if (approveAmount != 0) ERC20Mock(approveAsset).approve(diamond, approveAmount);
         loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, terms, sig);
         vm.stopBroadcast();
+    }
+
+    /// @dev #1558 — a refinance pays the old loan off through the payoff
+    ///      permit its request carries, never a standing allowance. `key`
+    ///      (the request's creator) approves Permit2 for exactly the wallet's
+    ///      share of the payoff `loanId` can reach by the permit's deadline
+    ///      (#3042: the new lender's net principal pays the rest), signs an
+    ///      exact-amount, single-use permit bound to `loanId` through request
+    ///      `offerId`, and attaches it. Returns false, attaching nothing, on a
+    ///      chain with no Permit2 (a bare Anvil node; `anvil-bootstrap.sh`
+    ///      installs it), where the caller skips its scenario.
+    function _attachPayoffPermit(uint256 key, uint256 loanId, uint256 offerId) internal returns (bool) {
+        if (LibPermit2.PERMIT2.code.length == 0) return false;
+        uint256 deadline = block.timestamp + 1 days;
+        (address asset,,,, uint256 maxAmount,,,,,) =
+            RefinancePayoffFacet(diamond).getRefinancePayoff(loanId, offerId, deadline);
+        uint256 nonce = uint256(keccak256(abi.encode("refinance payoff", loanId, offerId, block.timestamp)));
+        bytes memory sig =
+            RefinancePayoffPermitHelper.sign(key, diamond, asset, maxAmount, nonce, deadline, loanId, offerId);
+        vm.startBroadcast(key);
+        ERC20Mock(asset).approve(LibPermit2.PERMIT2, maxAmount);
+        RefinancePayoffFacet(diamond).setRefinancePayoffPermit(offerId, maxAmount, nonce, deadline, sig);
+        vm.stopBroadcast();
+        console.log("Payoff permit attached to request:", offerId, maxAmount);
+        return true;
     }
 
     /// @dev `key` posts the standard lender offer (`LOAN_AMOUNT` USDC).

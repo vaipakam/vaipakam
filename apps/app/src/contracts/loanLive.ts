@@ -180,13 +180,15 @@ export function refinancePayoffOf(live: LoanLive, asOf: bigint): bigint {
   );
 }
 
-/** #3042 — what a refinance accept takes from the holder's WALLET at
- *  `asOf`. The accept and the payoff are one transaction: the new
- *  lender's principal, less the borrower's initiation fee, goes straight
- *  to the old lender, and only the rest of the payoff is pulled from the
- *  wallet. So the pull is the payoff minus that net principal, which is
- *  the old loan's interest (and any late fee) plus the new loan's
- *  initiation fee.
+/** #3042 — what a refinance accept costs the holder's WALLET at `asOf`:
+ *  the payoff minus the new loan's net principal (its principal less the
+ *  borrower's initiation fee), which is the old loan's interest (and any
+ *  late fee) plus the new loan's initiation fee. On a netting Diamond the
+ *  net principal pays the old lender directly and only this is pulled; on
+ *  a Diamond that predates the netting (the approval route's bridge) the
+ *  net principal reaches the wallet first and the whole payoff is pulled,
+ *  so this is still the wallet's net cost and the spare balance it needs.
+ *  The permit route reads the contract's own figure instead.
  *
  *  The fee is taken at the LIVE `loanInitiationFeeBps` with no discount,
  *  so this is the MOST the accept can pull: a borrower hold-tier discount
@@ -208,26 +210,27 @@ export function refinanceWalletPullOf(
   return payoff > netPrincipal ? payoff - netPrincipal : 0n;
 }
 
-/** The standing-approval target for a refinance request: the wallet
- *  pull (`refinanceWalletPullOf`) at the LAST moment the request is
- *  still fillable — the earlier of its own expiry and the end of the
- *  loan's grace window (a lender can accept any time up to then, and the
- *  accept-time payoff includes the late fee AND the still-accruing grace
- *  interest AT THAT TIME, #1189/#1236). Approving only today's figure
- *  would strand an otherwise-valid request the moment the loan crosses
- *  maturity; approving this bound covers the most the contract can ever
- *  pull from the wallet for THIS request, and since #3042 that is only
- *  the part of the payoff the new principal does not cover.
- *  `expiresAt === 0` means no offer-level expiry — the grace end alone
- *  bounds it. */
+/** The standing-approval target for a refinance request on the APPROVAL
+ *  route only: the payoff at the LAST moment the request is still
+ *  fillable — the earlier of its own expiry and the end of the loan's
+ *  grace window (a lender can accept any time up to then, and the
+ *  accept-time pull includes the late fee AND the still-accruing grace
+ *  interest AT THAT TIME, #1189/#1236). Approving only today's
+ *  figure would strand an otherwise-valid request the moment the
+ *  loan crosses maturity; approving this bound keeps the approval
+ *  exact against the maximum the contract can ever pull for THIS
+ *  request. `expiresAt === 0` means no offer-level expiry — the
+ *  grace end alone bounds it.
+ *
+ *  It is the WHOLE payoff, not the wallet's share, because the approval
+ *  route exists only for a Diamond deployed before #1558 (the bridge
+ *  #3074 removes), and such a Diamond also predates #3042: the new
+ *  principal reaches the borrower's wallet first and the payoff is then
+ *  pulled back out of it in full. The permit route's bound is the
+ *  contract's own `walletShareBy`. */
 export function refinanceApprovalOf(
   live: LoanLive,
-  opts: {
-    expiresAt: bigint;
-    graceSeconds: bigint;
-    requestAmount: bigint;
-    loanInitiationFeeBps: number;
-  },
+  opts: { expiresAt: bigint; graceSeconds: bigint },
 ): bigint {
   // The effective grace end at the snapshot. A pause that begins later moves
   // it, and the contract's pull with it — an intrinsic race this bound cannot
@@ -239,7 +242,7 @@ export function refinanceApprovalOf(
     opts.expiresAt > 0n && opts.expiresAt - 1n < graceEnd
       ? opts.expiresAt - 1n
       : graceEnd;
-  return refinanceWalletPullOf(live, opts, lastFillable);
+  return refinancePayoffOf(live, lastFillable);
 }
 
 /** Mirror LibVaipakam.SECONDS_PER_YEAR / BASIS_POINTS. */

@@ -171,6 +171,7 @@ import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
 import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
+import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
@@ -400,6 +401,7 @@ contract SetupTest is Test {
     ForcedSaleFacet forcedSaleFacet;
     SaleExitVerdictFacet saleExitVerdictFacet;
     SellerClaimFacet sellerClaimFacet;
+    RefinancePayoffFacet refinancePayoffFacet;
     RateModelFacet rateModelFacet;
     VaipakamNFTMetadataFacet nftMetadataFacet;
     RewardCompensationDispatchFacet rewardCompensationDispatchFacet;
@@ -556,6 +558,7 @@ contract SetupTest is Test {
         forcedSaleFacet = ForcedSaleFacet(ArtifactDeploy.deploy(type(ForcedSaleFacet).name));
         saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
         sellerClaimFacet = SellerClaimFacet(ArtifactDeploy.deploy(type(SellerClaimFacet).name));
+        refinancePayoffFacet = RefinancePayoffFacet(ArtifactDeploy.deploy(type(RefinancePayoffFacet).name));
         rateModelFacet = RateModelFacet(ArtifactDeploy.deploy(type(RateModelFacet).name));
         nftMetadataFacet = VaipakamNFTMetadataFacet(ArtifactDeploy.deploy(type(VaipakamNFTMetadataFacet).name));
         rewardCompensationDispatchFacet = RewardCompensationDispatchFacet(ArtifactDeploy.deploy(type(RewardCompensationDispatchFacet).name));
@@ -590,7 +593,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](105);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](106);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1023,6 +1026,12 @@ contract SetupTest is Test {
             facetAddress: address(sellerClaimFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSellerClaimFacetSelectors()
+        });
+        // #1558 — the borrower's payoff permit on a refinance request.
+        cuts[105] = IDiamondCut.FacetCut({
+            facetAddress: address(refinancePayoffFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRefinancePayoffFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

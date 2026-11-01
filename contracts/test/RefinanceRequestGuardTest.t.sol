@@ -28,6 +28,7 @@ import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {RefinancePayoffPermitHelper} from "./helpers/RefinancePayoffPermitHelper.sol";
 
 /**
  * @title RefinanceRequestGuardTest
@@ -249,11 +250,11 @@ contract RefinanceRequestGuardTest is SetupTest {
 
     // ─── #2424 r1 — only the RECORDED request can fill ───────────────
 
-    /// A funded replacement lender, and the borrower's payoff approval.
+    /// A funded replacement lender. A test that completes a refinance also
+    /// attaches the borrower's payoff permit to the request (#1558).
     function _replacementLender(string memory label) internal returns (address l, uint256 pk) {
         l = _provisionFundedActorWithVault(label, mockERC20, LOAN_PRINCIPAL * 4);
         (, pk) = makeAddrAndKey(label);
-        _grantStandingApprovalToDiamond(borrower, mockERC20);
     }
 
     function _acceptExpectingRevert(uint256 offerId, bytes memory err) internal {

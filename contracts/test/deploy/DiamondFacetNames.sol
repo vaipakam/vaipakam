@@ -103,7 +103,9 @@ abstract contract DiamondFacetNames {
     ///      of a lender sale exit, self-called by both sale facets).
     ///      103 → 104 with `SellerClaimFacet` (#1209 / #1808 — the seller-claim
     ///      host every interest payout and ClaimFacet self-call).
-    function cutFacetNames() internal pure returns (string[104] memory) {
+    ///      104 → 105 with `RefinancePayoffFacet` (#1558 — the borrower's
+    ///      payoff permit on a refinance request, which RefinanceFacet uses).
+    function cutFacetNames() internal pure returns (string[105] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -238,6 +240,8 @@ abstract contract DiamondFacetNames {
             "SaleExitVerdictFacet",
             // #1209 / #1808 - the seller-claim host.
             "SellerClaimFacet",
+            // #1558 - the refinance payoff-permit host.
+            "RefinancePayoffFacet",
             "RiskFacet",
             "RiskMatchLiquidationFacet",
             "RiskSplitLiquidationFacet",

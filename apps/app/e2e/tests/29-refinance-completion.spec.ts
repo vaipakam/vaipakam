@@ -45,8 +45,8 @@ import { pub, DIAMOND, DIAMOND_ABI_VIEM, ERC20_MIN_ABI } from '../lib/chain';
 interface LoanShape {
   borrower: `0x${string}`;
   lender: `0x${string}`;
-  principalAsset: `0x${string}`;
   principal: bigint;
+  principalAsset: `0x${string}`;
   interestRateBps: bigint;
   durationDays: bigint;
   collateralAsset: `0x${string}`;
@@ -97,6 +97,36 @@ test('refinance request completes: old loan closes, new loan carries the collate
       args: [before.borrower],
     })) as bigint;
   const heldBefore = await collateralHeld();
+  // #1558 — the payoff is paid through the request's single-use permit,
+  // so neither posting nor accepting may leave the Diamond a standing
+  // allowance. Compared with the wallet's allowance before the drive
+  // rather than with zero: the role wallets are reused across specs.
+  const diamondAllowance = async (): Promise<bigint> =>
+    (await pub.readContract({
+      address: before.principalAsset,
+      abi: ERC20_MIN_ABI,
+      functionName: 'allowance',
+      args: [before.borrower, DIAMOND],
+    })) as bigint;
+  const allowanceBefore = await diamondAllowance();
+  const payoffOf = async (requestId: bigint, by: bigint) =>
+    (await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getRefinancePayoff',
+      args: [oldLoanId, requestId, by],
+    })) as readonly [
+      `0x${string}`, // asset
+      bigint, // payoffNow
+      bigint, // payoffBy
+      bigint, // walletShareNow
+      bigint, // walletShareBy
+      `0x${string}`, // signer
+      bigint, // maxAmount
+      bigint, // nonce
+      bigint, // deadline
+      boolean, // nonceSpent
+    ];
 
   // The borrower posts the refinance request through the real form
   // (advanced-mode surface).
@@ -203,6 +233,51 @@ test('refinance request completes: old loan closes, new loan carries the collate
   await expect(
     page.getByText(new RegExp(`refinance request #${requestId} is live`, 'i')),
   ).toBeVisible({ timeout: 30_000 });
+  // #1558 — the form signed the payoff permit and attached it to this
+  // request: the borrower's, unspent, expiring at the request's last
+  // fillable moment, and covering the payoff at that moment. And the
+  // Diamond was granted nothing.
+  // The form posts the request first and attaches the permit after it
+  // (another signature and transaction), so the request being live says
+  // nothing yet about the permit: wait for the chain to carry it.
+  const lastFillable = (request.expiresAt as bigint) - 1n;
+  await expect
+    .poll(async () => (await payoffOf(requestId, lastFillable))[5].toLowerCase(), {
+      message: 'the payoff permit reaches the chain',
+      timeout: 90_000,
+    })
+    .toBe(before.borrower.toLowerCase());
+  const [, , payoffAtLast, , shareAtLast, signer, maxAmount, , deadline, nonceSpent] =
+    await payoffOf(requestId, lastFillable);
+  expect(signer.toLowerCase(), 'the borrower signed the payoff permit').toBe(
+    before.borrower.toLowerCase(),
+  );
+  expect(nonceSpent, 'the permit is unused while the request is open').toBe(false);
+  expect(deadline, 'the permit lapses with the request').toBe(lastFillable);
+  // #3042 — the permit covers only the wallet's share of the payoff (the
+  // interest and the new loan's initiation fee): the new loan's net
+  // principal pays the old lender inside the Diamond. So the share is far
+  // below the payoff, and the accept below succeeding on a permit capped
+  // there is the end-to-end proof of the netting: a whole-payoff pull
+  // would exceed it and revert.
+  expect(
+    maxAmount >= shareAtLast,
+    'the permit covers the wallet\u2019s share at the last moment a lender can accept',
+  ).toBe(true);
+  expect(shareAtLast, 'the wallet\u2019s share is far below the payoff').toBeLessThan(
+    payoffAtLast - before.principal / 2n,
+  );
+  expect(await diamondAllowance(), 'posting grants the Diamond no allowance').toBe(
+    allowanceBefore,
+  );
+  // The form unmounts when the request posts; the request's card is where
+  // the attach outcome is stated (#1558 review), and it never reads the
+  // permit as missing.
+  await expect(page.getByText(/request posted with its payoff permit/i)).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByText(/no payoff permit from this wallet is attached/i)).toHaveCount(0);
+  await expect(page.getByText(/payoff permit wasn’t attached/i)).toHaveCount(0);
   await adv.ctx.close();
 
   // #2528 — a lender browsing the Offer Book sees the request FOR what it
@@ -243,12 +318,6 @@ test('refinance request completes: old loan closes, new loan carries the collate
   await expect(browsing.page.getByText(/They lock \d/)).toHaveCount(0);
   await browsing.ctx.close();
 
-  // #3042 — the borrower's standing approval covers only the wallet's
-  // share of the payoff (the interest and the new loan's initiation fee);
-  // the new loan's net principal pays the old lender inside the Diamond.
-  // So the approval the form granted is far below the principal, and the
-  // accept below succeeding on it is the end-to-end proof of the netting:
-  // a whole-payoff pull would exceed it and revert.
   const principalHeld = async (): Promise<bigint> =>
     (await pub.readContract({
       address: before.principalAsset,
@@ -256,15 +325,6 @@ test('refinance request completes: old loan closes, new loan carries the collate
       functionName: 'balanceOf',
       args: [before.borrower],
     })) as bigint;
-  const approved = (await pub.readContract({
-    address: before.principalAsset,
-    abi: ERC20_MIN_ABI,
-    functionName: 'allowance',
-    args: [before.borrower, DIAMOND],
-  })) as bigint;
-  expect(approved, 'the approval covers only the wallet\u2019s share of the payoff').toBeLessThan(
-    before.principal,
-  );
   const walletBefore = await principalHeld();
   const acceptFrom = await pub.getBlockNumber();
 
@@ -298,12 +358,21 @@ test('refinance request completes: old loan closes, new loan carries the collate
   ).toBe(legs.borrowerToOldLender + legs.borrowerToTreasury);
   expect(
     legs.borrowerToOldLender + legs.borrowerToTreasury,
-    'the wallet\u2019s share fits inside the approval it granted',
-  ).toBeLessThanOrEqual(approved);
+    'the wallet\u2019s share fits inside the permit it signed',
+  ).toBeLessThanOrEqual(maxAmount);
   expect(newLoanId, 'refinance must open a DIFFERENT loan').not.toBe(oldLoanId);
 
   const oldAfter = await loanOf(oldLoanId);
   expect(oldAfter.status, 'the refinanced loan closes as Repaid').toBe(1);
+  // #1558 — the acceptance used the permit (it is gone once used) and
+  // left the Diamond no allowance.
+  expect(
+    (await payoffOf(requestId, 0n))[5],
+    'the acceptance consumed the payoff permit',
+  ).toBe('0x0000000000000000000000000000000000000000');
+  expect(await diamondAllowance(), 'the refinance leaves the Diamond no allowance').toBe(
+    allowanceBefore,
+  );
 
   const fresh = await loanOf(newLoanId);
   expect(fresh.status, 'the replacement loan is Active').toBe(0);

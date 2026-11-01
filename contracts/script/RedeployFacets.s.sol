@@ -40,6 +40,7 @@ import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
 import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
 import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
+import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
 
 /**
  * @title RedeployFacets
@@ -106,6 +107,9 @@ contract RedeployFacets is Script {
     /// @notice #3009 / #3025 - the target Diamond's OfferPreviewFacet predates
     ///         the cadence admission host; see {_requireCadenceAdmissionHost}.
     error PredatesCadenceAdmissionHost(address diamond);
+    /// @notice #1558 - the target Diamond predates the refinance payoff
+    ///         permit; see {_requireRefinancePayoffPermit}.
+    error PredatesRefinancePayoffPermit(address diamond);
 
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -172,6 +176,9 @@ contract RedeployFacets is Script {
         // #1209 / #1808 - and one from before the interest ledger; see
         // {_requireInterestLedger}.
         _requireInterestLedger(diamond);
+        // #1558 - and one from before the refinance payoff permit; see
+        // {_requireRefinancePayoffPermit}.
+        _requireRefinancePayoffPermit(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -971,6 +978,23 @@ contract RedeployFacets is Script {
             IDiamondLoupe(diamond).facetAddress(OfferPreviewFacet.requireOriginationCadenceAdmitted.selector)
                 == address(0)
         ) revert PredatesCadenceAdmissionHost(diamond);
+    }
+
+    /// @dev #1558 - refuse a Diamond from before the refinance payoff permit.
+    ///      This set refreshes RefinanceFacet, whose settlement pays the old
+    ///      loan off only through the permit attached to the request, but not
+    ///      RefinancePayoffFacet, where the borrower attaches it. Run on an
+    ///      older Diamond it would leave no way to attach a permit, so every
+    ///      refinance would revert `RefinancePayoffPermitMissing`, and the app
+    ///      that signs the permit ships with the same change. Crossing the
+    ///      boundary is a fresh deploy or `RefreshAllFacetsInPlace`, never this
+    ///      refresh. The marker is the routing of `setRefinancePayoffPermit`.
+    ///      Called before the broadcast starts.
+    function _requireRefinancePayoffPermit(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(RefinancePayoffFacet.setRefinancePayoffPermit.selector)
+                == address(0)
+        ) revert PredatesRefinancePayoffPermit(diamond);
     }
 
     function _replace(address facet, bytes4[] memory selectors)

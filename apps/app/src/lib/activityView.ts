@@ -183,6 +183,12 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   ExtendReserveFunded: { label: 'Extension reserve funded', category: 'loan-modify', priority: 40 },
   ExtendReserveWithdrawn: { label: 'Extension reserve withdrawn', category: 'loan-modify', priority: 40 },
   ExtendChargeDrawn: { label: 'Extension charge paid', category: 'loan-modify', priority: 15 },
+  // #1558 — the borrower's signed payoff permit on a refinance request. The
+  // pull is the companion of `LoanRefinanced` in the same transaction, so it
+  // rides inside that row and states where the payoff came from.
+  RefinancePayoffPermitSet: { label: 'Refinance payoff permit signed', category: 'loan-modify', priority: 40 },
+  RefinancePayoffPermitCleared: { label: 'Refinance payoff permit removed', category: 'loan-modify', priority: 40 },
+  RefinancePayoffPulled: { label: 'Refinance payoff paid', category: 'loan-modify', priority: 15 },
   BackstopFilled: { label: 'Funded by the backstop', category: 'loan-open', priority: 60 },
   BackstopLoanClaimed: { label: 'Backstop recovery claimed', category: 'loan-close', priority: 80 },
   // Paid inside the borrower's claim, before its own event: below the claim

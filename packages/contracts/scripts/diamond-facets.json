@@ -30,6 +30,7 @@
     "ForcedSaleFacet",
     "SaleExitVerdictFacet",
     "SellerClaimFacet",
+    "RefinancePayoffFacet",
     "RateModelFacet",
     "IntentDispatchFacet",
     "AutoLifecycleFacet",

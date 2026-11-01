@@ -33,11 +33,13 @@ is one fund path.
   going to the borrower and coming back. After, they show what actually
   happens: new lender to old lender, and the borrower paying only the
   difference.
-- **The borrower's standing approval shrinks to the difference.** Today the
-  borrower must have approved the Diamond for roughly the whole payoff before
-  anyone accepts their offer. After, the approval only needs to cover the
-  difference: the old loan's interest (and any late fee) plus the new loan's
-  initiation fee, plus any principal difference.
+- **The borrower's wallet authorization shrinks to the difference.** Today
+  the borrower must have authorized roughly the whole payoff before anyone
+  accepts their offer. After, it only needs to cover the difference: the old
+  loan's interest (and any late fee) plus the new loan's initiation fee, plus
+  any principal difference. Since #1558 (merged first) that authorization is
+  the request's single-use Permit2 permit, so the permit is signed for this
+  difference, the wallet's share.
 - **The borrower's wallet stops being a waypoint.** A wallet the asset's
   issuer has blocked, or an approval lowered after the offer was posted, no
   longer fails a refinance whose payoff the new principal covers.
@@ -173,11 +175,20 @@ against EIP-170 with the deploy-sanity suite.
 
 ## 5. Off-chain and docs
 
-- App: keeper settings drop the Refinance action. The refinance flow sizes the
-  standing approval to the wallet's share (the payoff at the last fillable
-  moment minus the net principal at the live initiation-fee rate, an upper
-  bound since a fee discount only lowers it), and the copy says the new
-  loan's money pays the old lender directly.
+- Contract view: `getRefinancePayoff` also reports the wallet's share now
+  and at the named moment (`walletShareNow`, `walletShareBy`): the payoff less
+  the request's net principal at the live initiation-fee rate, an upper bound
+  since a fee discount only lowers it. With no request posted yet it assumes a
+  request for the outstanding principal, which is what the app posts.
+  `LibRefinancePayoff.walletShareAt` is the one rule; the settlement pulls the
+  share it actually computes through the permit, and a zero share calls
+  Permit2 not at all.
+- App: keeper settings drop the Refinance action. The refinance flow signs the
+  request's payoff permit for `walletShareBy` and asks the wallet to hold
+  `walletShareNow` spare, and the copy says the new loan's money pays the old
+  lender directly. On a Diamond deployed before #1558, and so before this
+  change, the app keeps the approval bridge (#3074), sized to the WHOLE
+  payoff, because that Diamond still pulls it.
 - Indexer: decodes `LoanRefinanced` from the regenerated ABI, so the dropped
   `shortfallPaid` needs no handler change; the settlement event is
   informational and needs no projection.
