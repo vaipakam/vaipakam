@@ -49,6 +49,7 @@ import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
+import {RiskDiscountedLiquidationFacet} from "../src/facets/RiskDiscountedLiquidationFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
@@ -355,6 +356,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
             RiskMatchLiquidationFacet(ArtifactDeploy.deploy(type(RiskMatchLiquidationFacet).name));
         RiskSplitLiquidationFacet riskSplitLiquidationFacet =
             RiskSplitLiquidationFacet(ArtifactDeploy.deploy(type(RiskSplitLiquidationFacet).name));
+        // The discounted liquidation route, moved off RiskFacet for EIP-170
+        // headroom (same selector).
+        RiskDiscountedLiquidationFacet riskDiscountedLiquidationFacet =
+            RiskDiscountedLiquidationFacet(ArtifactDeploy.deploy(type(RiskDiscountedLiquidationFacet).name));
         ClaimFacet claimFacet = ClaimFacet(ArtifactDeploy.deploy(type(ClaimFacet).name));
         AddCollateralFacet addCollateralFacet = AddCollateralFacet(ArtifactDeploy.deploy(type(AddCollateralFacet).name));
         TreasuryFacet treasuryFacet = TreasuryFacet(ArtifactDeploy.deploy(type(TreasuryFacet).name));
@@ -497,7 +502,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](105);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](106);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -599,6 +604,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[102] = _buildCut(address(saleExitVerdictFacet), _getSaleExitVerdictSelectors());
         cuts[103] = _buildCut(address(sellerClaimFacet), _getSellerClaimSelectors());
         cuts[104] = _buildCut(address(refinancePayoffFacet), _getRefinancePayoffSelectors());
+        // The discounted liquidation route, moved off RiskFacet (EIP-170).
+        cuts[105] = _buildCut(
+            address(riskDiscountedLiquidationFacet),
+            _getRiskDiscountedLiquidationSelectors()
+        );
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1191,6 +1201,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("riskFacet",               address(riskFacet));
         Deployments.writeFacet("riskMatchLiquidationFacet", address(riskMatchLiquidationFacet));
         Deployments.writeFacet("riskSplitLiquidationFacet", address(riskSplitLiquidationFacet));
+        Deployments.writeFacet("riskDiscountedLiquidationFacet", address(riskDiscountedLiquidationFacet));
         Deployments.writeFacet("claimFacet",              address(claimFacet));
         Deployments.writeFacet("addCollateralFacet",      address(addCollateralFacet));
         Deployments.writeFacet("treasuryFacet",           address(treasuryFacet));
@@ -2253,28 +2264,23 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // `RiskSplitLiquidationFacet` (#66 + #633 split — see
         // `_getRiskSplitLiquidationSelectors`) so the `LibSwap.swapWithSplit`
         // inline lands in fresh headroom rather than tipping RiskFacet over
-        // the EIP-170 limit.
-        s = new bytes4[](9);
+        // the EIP-170 limit. `triggerLiquidationDiscounted` was relocated to
+        // `RiskDiscountedLiquidationFacet` for the same reason (see
+        // `_getRiskDiscountedLiquidationSelectors`).
+        s = new bytes4[](8);
         s[0] = RiskFacet.updateRiskParams.selector;
         s[1] = RiskFacet.calculateLTV.selector;
         s[2] = RiskFacet.calculateHealthFactor.selector;
         s[3] = RiskFacet.isCollateralValueCollapsed.selector;
         s[4] = RiskFacet.triggerLiquidation.selector;
         // #394 Lever A — runtime, range-bounded loan-admission HF floor.
-        s[7] = RiskFacet.setMinHealthFactor.selector;
-        s[8] = RiskFacet.getMinHealthFactor.selector;
+        s[6] = RiskFacet.setMinHealthFactor.selector;
+        s[7] = RiskFacet.getMinHealthFactor.selector;
         // Partial HF-restore liquidator (Piece B follow-up — partials).
         // Sweeps only `fractionBps` of remaining collateral, leaves loan
         // Active with reduced size and unchanged maturity. Strict
         // HF-improves + HF>=1 post-mutation gates.
         s[5] = RiskFacet.triggerPartialLiquidation.selector;
-        // FlashLoanLiquidationPath.md — liquidator-buys-at-discount.
-        // Caller pays `totalDebt` in principal-asset; protocol seizes
-        // collateral at per-tier discount and delivers to `recipient`.
-        // Master kill-switch `discountPathEnabled` off by default — the
-        // selector is wired but the entry-point reverts
-        // `DiscountPathDisabled` until governance flips it on per chain.
-        s[6] = RiskFacet.triggerLiquidationDiscounted.selector;
     }
 
     /// @dev Selectors for `RiskMatchLiquidationFacet` — the internal-match
@@ -2312,6 +2318,23 @@ contract DeployDiamond is Script, ArtifactRootBase {
     {
         s = new bytes4[](1);
         s[0] = RiskSplitLiquidationFacet.triggerLiquidationSplit.selector;
+    }
+
+    /// @dev Selectors for `RiskDiscountedLiquidationFacet` — the discounted
+    ///      HF liquidation route (FlashLoanLiquidationPath.md), moved whole
+    ///      off `RiskFacet` for EIP-170 headroom; the selector is unchanged.
+    ///      Caller pays `totalDebt` in principal-asset; protocol seizes
+    ///      collateral at per-tier discount and delivers to `recipient`.
+    ///      Master kill-switch `discountPathEnabled` off by default — the
+    ///      selector is wired but the entry-point reverts
+    ///      `DiscountPathDisabled` until governance flips it on per chain.
+    function _getRiskDiscountedLiquidationSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](1);
+        s[0] = RiskDiscountedLiquidationFacet.triggerLiquidationDiscounted.selector;
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {

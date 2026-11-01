@@ -7,6 +7,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
+import {RiskDiscountedLiquidationFacet} from "../src/facets/RiskDiscountedLiquidationFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
@@ -49,7 +50,9 @@ import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
  *         2% treasury liquidation handling fee — plus RiskSplitLiquidationFacet
  *         and ConsolidationFacet, added in #658 so the liquidation family's
  *         eager-consolidation cross-facet dependency stays internally
- *         consistent on a curated redeploy) and diamond-cuts every selector to
+ *         consistent on a curated redeploy, and RiskDiscountedLiquidationFacet,
+ *         the discounted route moved off RiskFacet for EIP-170 headroom) and
+ *         diamond-cuts every selector to
  *         the new implementation, Replacing routed selectors and Adding new ones.
  *
  * @dev    SCOPE — this is a CURATED INCREMENTAL refresh of a fixed facet set,
@@ -189,6 +192,16 @@ contract RedeployFacets is Script {
         // split path) on a curated redeploy.
         RiskSplitLiquidationFacet riskSplitLiquidationFacet =
             RiskSplitLiquidationFacet(ArtifactDeploy.deploy(type(RiskSplitLiquidationFacet).name));
+        // The discounted liquidation route moved whole off RiskFacet (EIP-170
+        // headroom), so the two are one family: a RiskFacet refresh that left
+        // it behind would keep `triggerLiquidationDiscounted` on the PREVIOUS
+        // RiskFacet build (the route's selector is no longer in RiskFacet's
+        // list, so nothing here would repoint it). Its selector is routed to
+        // RiskFacet on every Diamond cut before the split, so the partition
+        // below makes it a Replace that moves it here; an Add on a Diamond
+        // that never routed it.
+        RiskDiscountedLiquidationFacet riskDiscountedLiquidationFacet =
+            RiskDiscountedLiquidationFacet(ArtifactDeploy.deploy(type(RiskDiscountedLiquidationFacet).name));
         DefaultedFacet defaultedFacet = DefaultedFacet(ArtifactDeploy.deploy(type(DefaultedFacet).name));
         LoanFacet loanFacet = LoanFacet(ArtifactDeploy.deploy(type(LoanFacet).name));
         PrecloseFacet precloseFacet = PrecloseFacet(ArtifactDeploy.deploy(type(PrecloseFacet).name));
@@ -307,6 +320,7 @@ contract RedeployFacets is Script {
 
         console.log("RiskFacet:            ", address(riskFacet));
         console.log("RiskSplitLiquidation: ", address(riskSplitLiquidationFacet));
+        console.log("RiskDiscountedLiq.:   ", address(riskDiscountedLiquidationFacet));
         console.log("DefaultedFacet:       ", address(defaultedFacet));
         console.log("LoanFacet:            ", address(loanFacet));
         console.log("PrecloseFacet:        ", address(precloseFacet));
@@ -489,6 +503,10 @@ contract RedeployFacets is Script {
         // #2795 - the forced-sale host, from the one list the deploy cuts.
         (bytes4[] memory fsToAdd, bytes4[] memory fsToReplace) =
             _partitionByRouting(diamond, FacetSelectors.forcedSale());
+        // The discounted liquidation route's host. Routed (to RiskFacet) on
+        // every Diamond cut before the split: a Replace that moves it here.
+        (bytes4[] memory rdToAdd, bytes4[] memory rdToReplace) =
+            _partitionByRouting(diamond, _riskDiscountedSelectors());
 
         // #2796 - every forced-sale entry point gained the caller's sell
         // amount, so each selector CHANGED: the new ones are Add/Replace by
@@ -525,6 +543,7 @@ contract RedeployFacets is Script {
             (nvToAdd.length > 0 ? 1 : 0) + (nvToReplace.length > 0 ? 1 : 0) +
             (nfToAdd.length > 0 ? 1 : 0) + (nfToReplace.length > 0 ? 1 : 0) +
             (fsToAdd.length > 0 ? 1 : 0) + (fsToReplace.length > 0 ? 1 : 0) +
+            (rdToAdd.length > 0 ? 1 : 0) + (rdToReplace.length > 0 ? 1 : 0) +
             (dfToAdd.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
             new IDiamondCut.FacetCut[](9 + nExtra);
@@ -735,6 +754,13 @@ contract RedeployFacets is Script {
         }
         if (fsToAdd.length > 0) {
             cuts[idx++] = _add(address(forcedSaleFacet), fsToAdd);
+        }
+        // And the discounted liquidation route, in the same cut as RiskFacet.
+        if (rdToReplace.length > 0) {
+            cuts[idx++] = _replace(address(riskDiscountedLiquidationFacet), rdToReplace);
+        }
+        if (rdToAdd.length > 0) {
+            cuts[idx++] = _add(address(riskDiscountedLiquidationFacet), rdToAdd);
         }
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
@@ -1100,12 +1126,13 @@ contract RedeployFacets is Script {
         // (partitioned Add/Replace) instead — see the cut wiring above.
         // #2796 - `triggerLiquidation` gained the sell amount, so its selector
         // is new on an older Diamond and moved to `_riskAddSelectors()`.
-        s = new bytes4[](5);
+        // `triggerLiquidationDiscounted` moved to RiskDiscountedLiquidationFacet
+        // and is cut through `_riskDiscountedSelectors()`.
+        s = new bytes4[](4);
         s[0] = RiskFacet.calculateLTV.selector;
         s[1] = RiskFacet.calculateHealthFactor.selector;
         s[2] = RiskFacet.isCollateralValueCollapsed.selector;
         s[3] = RiskFacet.triggerPartialLiquidation.selector;
-        s[4] = RiskFacet.triggerLiquidationDiscounted.selector;
     }
 
     /// @dev The RiskFacet selectors that may be unrouted on the target, so they
@@ -1128,6 +1155,13 @@ contract RedeployFacets is Script {
     function _riskSplitSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](1);
         s[0] = RiskSplitLiquidationFacet.triggerLiquidationSplit.selector;
+    }
+
+    /// @dev RiskDiscountedLiquidationFacet's single selector, mirrors
+    ///      `DeployDiamond._getRiskDiscountedLiquidationSelectors`.
+    function _riskDiscountedSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = RiskDiscountedLiquidationFacet.triggerLiquidationDiscounted.selector;
     }
 
     /// @dev The DefaultedFacet selectors this script cuts through its routing

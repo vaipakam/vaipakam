@@ -70,6 +70,8 @@ import RefinancePayoffFacetABI from './RefinancePayoffFacet.json';
 // #2748 — the rate-model host (model, band, offer-rate clamp).
 import RateModelFacetABI from './RateModelFacet.json';
 import RiskSplitLiquidationFacetABI from './RiskSplitLiquidationFacet.json';
+// The discounted liquidation route, moved off RiskFacet (EIP-170 headroom).
+import RiskDiscountedLiquidationFacetABI from './RiskDiscountedLiquidationFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
@@ -239,6 +241,7 @@ export {
   RefinancePayoffFacetABI,
   RateModelFacetABI,
   RiskSplitLiquidationFacetABI,
+  RiskDiscountedLiquidationFacetABI,
   ClaimFacetABI,
   OracleFacetABI,
   OracleAdminFacetABI,

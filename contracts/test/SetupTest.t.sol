@@ -36,6 +36,7 @@ import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
+import {RiskDiscountedLiquidationFacet} from "../src/facets/RiskDiscountedLiquidationFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -307,6 +308,7 @@ contract SetupTest is Test {
     RiskFacet riskFacet; // Added
     RiskMatchLiquidationFacet riskMatchLiquidationFacet;
     RiskSplitLiquidationFacet riskSplitLiquidationFacet;
+    RiskDiscountedLiquidationFacet riskDiscountedLiquidationFacet;
     RepayFacet repayFacet;
     RepayPeriodicFacet repayPeriodicFacet;
     SwapToRepayFacet swapToRepayFacet;
@@ -473,6 +475,7 @@ contract SetupTest is Test {
         riskFacet = RiskFacet(ArtifactDeploy.deploy(type(RiskFacet).name));
         riskMatchLiquidationFacet = RiskMatchLiquidationFacet(ArtifactDeploy.deploy(type(RiskMatchLiquidationFacet).name));
         riskSplitLiquidationFacet = RiskSplitLiquidationFacet(ArtifactDeploy.deploy(type(RiskSplitLiquidationFacet).name));
+        riskDiscountedLiquidationFacet = RiskDiscountedLiquidationFacet(ArtifactDeploy.deploy(type(RiskDiscountedLiquidationFacet).name));
         repayFacet = RepayFacet(ArtifactDeploy.deploy(type(RepayFacet).name));
         repayPeriodicFacet = RepayPeriodicFacet(ArtifactDeploy.deploy(type(RepayPeriodicFacet).name));
         swapToRepayFacet = SwapToRepayFacet(ArtifactDeploy.deploy(type(SwapToRepayFacet).name));
@@ -593,7 +596,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](106);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](107);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1032,6 +1035,12 @@ contract SetupTest is Test {
             facetAddress: address(refinancePayoffFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRefinancePayoffFacetSelectors()
+        });
+        // The discounted liquidation route, moved off RiskFacet (EIP-170).
+        cuts[106] = IDiamondCut.FacetCut({
+            facetAddress: address(riskDiscountedLiquidationFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRiskDiscountedLiquidationFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

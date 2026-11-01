@@ -26,6 +26,7 @@ import {NFTPrepayAutoListFacet} from "../src/facets/NFTPrepayAutoListFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
+import {RiskDiscountedLiquidationFacet} from "../src/facets/RiskDiscountedLiquidationFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
@@ -1401,29 +1402,23 @@ contract HelperTest {
         returns (bytes4[] memory selectors)
     {
         // `triggerLiquidationSplit` relocated to RiskSplitLiquidationFacet
-        // (#66 + #633) — see getRiskSplitLiquidationFacetSelectors.
-        selectors = new bytes4[](9);
+        // (#66 + #633) — see getRiskSplitLiquidationFacetSelectors — and
+        // `triggerLiquidationDiscounted` to RiskDiscountedLiquidationFacet —
+        // see getRiskDiscountedLiquidationFacetSelectors.
+        selectors = new bytes4[](8);
         selectors[0] = RiskFacet.updateRiskParams.selector;
         selectors[1] = RiskFacet.calculateLTV.selector;
         selectors[2] = RiskFacet.calculateHealthFactor.selector;
         selectors[3] = RiskFacet.isCollateralValueCollapsed.selector;
         selectors[4] = RiskFacet.triggerLiquidation.selector;
         // #394 Lever A — runtime, range-bounded loan-admission HF floor.
-        selectors[7] = RiskFacet.setMinHealthFactor.selector;
-        selectors[8] = RiskFacet.getMinHealthFactor.selector;
+        selectors[6] = RiskFacet.setMinHealthFactor.selector;
+        selectors[7] = RiskFacet.getMinHealthFactor.selector;
         // Partial HF-restore liquidator (Piece B follow-up — partials).
         // Sweeps only `fractionBps` of remaining collateral, leaves loan
         // Active with reduced size and unchanged maturity. Strict
         // HF-improves + HF>=1 post-mutation gates.
         selectors[5] = RiskFacet.triggerPartialLiquidation.selector;
-        // Flash-loan / liquidator-buys-at-discount path
-        // (`docs/DesignsAndPlans/FlashLoanLiquidationPath.md`). Caller
-        // pays `totalDebt` in principal-asset; protocol seizes
-        // collateral at a per-tier discount and delivers it to
-        // `recipient`. Master kill-switch `discountPathEnabled` is off
-        // by default — the selector is wired but the entry-point
-        // reverts `DiscountPathDisabled` until governance flips it.
-        selectors[6] = RiskFacet.triggerLiquidationDiscounted.selector;
     }
 
     /// @notice Selectors for `RiskMatchLiquidationFacet` — the
@@ -1459,6 +1454,25 @@ contract HelperTest {
         selectors = new bytes4[](1);
         selectors[0] =
             RiskSplitLiquidationFacet.triggerLiquidationSplit.selector;
+    }
+
+    /// @notice Selectors for `RiskDiscountedLiquidationFacet` — the
+    ///         flash-loan / liquidator-buys-at-discount path
+    ///         (`docs/DesignsAndPlans/FlashLoanLiquidationPath.md`), moved
+    ///         whole off `RiskFacet` for EIP-170 headroom (same selector).
+    ///         Caller pays `totalDebt` in principal-asset; protocol seizes
+    ///         collateral at a per-tier discount and delivers it to
+    ///         `recipient`. Master kill-switch `discountPathEnabled` is off
+    ///         by default — the selector is wired but the entry-point
+    ///         reverts `DiscountPathDisabled` until governance flips it.
+    function getRiskDiscountedLiquidationFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
+        selectors[0] =
+            RiskDiscountedLiquidationFacet.triggerLiquidationDiscounted.selector;
     }
 
     function getClaimFacetSelectors()

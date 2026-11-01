@@ -105,7 +105,9 @@ abstract contract DiamondFacetNames {
     ///      host every interest payout and ClaimFacet self-call).
     ///      104 → 105 with `RefinancePayoffFacet` (#1558 — the borrower's
     ///      payoff permit on a refinance request, which RefinanceFacet uses).
-    function cutFacetNames() internal pure returns (string[105] memory) {
+    ///      105 → 106 with `RiskDiscountedLiquidationFacet` (the discounted
+    ///      liquidation route, moved whole off RiskFacet for EIP-170 headroom).
+    function cutFacetNames() internal pure returns (string[106] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -245,6 +247,8 @@ abstract contract DiamondFacetNames {
             "RiskFacet",
             "RiskMatchLiquidationFacet",
             "RiskSplitLiquidationFacet",
+            // The discounted liquidation route, moved off RiskFacet (EIP-170).
+            "RiskDiscountedLiquidationFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

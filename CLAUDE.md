@@ -103,6 +103,7 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 | **RepayFacet**         | Full/partial repayment, NFT daily deductions, late fees                     |
 | **DefaultedFacet**     | Time-based defaults (grace period expired)                                  |
 | **RiskFacet**          | LTV/Health Factor calculation, HF-based liquidation via 0x swap             |
+| **RiskDiscountedLiquidationFacet** | The discounted HF liquidation route, `triggerLiquidationDiscounted` (the liquidator pays the whole debt and receives the collateral at a per-tier discount). Moved whole off `RiskFacet` because RiskFacet had reached the EIP-170 ceiling; the selector, the `LiquidationDiscounted` event and the route's errors are unchanged. **`triggerLiquidationDiscounted` is NOT on RiskFacet any more**, so a grep of RiskFacet for it comes back empty. **The two must be refreshed together** — `RedeployFacets` carries both |
 | **FallbackCustodyFacet** | The ONE host of the liquidation-fallback custody flows (#1566 slice 2, #2141), split out in #1566 step S2a. When every swap adapter the caller listed is tried and fails (an empty or all-disabled try-list reverts `NoEnabledSwapRoute` instead, #1005), RiskFacet's HF liquidation and DefaultedFacet's time-based default both self-call `enterFallback`; before S2a each carried its own copy of `_fullCollateralTransferFallback` — one producer written out twice, in two facets close to EIP-170 (RiskFacet had about 67 bytes of headroom). ClaimFacet self-calls `retryFallbackSwap` (the retry swap and its soft-fail adapter loop) and `disposeFallbackCustody` (the in-kind split of the fallback snapshot); the retry *distribution* (`_distributeRetryProceeds`), the `retryAttempted` stamp and `ClaimRetryExecuted` stay in ClaimFacet. The three mutators are `address(this)`-gated and carry no `nonReentrant` of their own, because every caller already holds the Diamond guard. `LiquidationFallback` / `LiquidationFallbackSplit` / `LiquidationFallbackOracleUnavailable` are re-declared here byte-identical, so their topic hashes are unchanged. **From S2b the custody is vault-held**: `enterFallback` returns the collateral to `loan.borrower`'s vault in the failing transaction, under the loan's collateral lien, and the per-loan row `fallbackVaultCustody` (written only through `LibFallbackCustody`, one `FallbackCustodyMoved` event per row move) records how much of that vault balance is the episode's custody. `getFallbackCustody` reports that row as `vaultHeld`; `legacyDiamondHeld` is non-zero only for a pre-S2b Diamond-held row, which every consumer refuses with `FallbackCustodyNotVaultHeld` (owner decision O1 = A: fresh deploys only, no migration). The backstop absorb also disposes through `disposeFallbackCustody` (lender slice labelled `ToBackstop`). **Refreshed together with its family** — see "Refresh-together families" below this table |
 | **OracleFacet**        | Chainlink price feeds, v3-style concentrated-liquidity AMM liquidity checks |
 | **VaultFactoryFacet** | Per-user UUPS vault proxy deployment                                       |
@@ -168,7 +169,9 @@ runs half of it on old code:
   DefaultedFacet, EarlyWithdrawalFacet, EarlyWithdrawalDirectFacet,
   IntentDispatchFacet (the intent settlement), OfferAcceptFeeFacet,
   ForcedSaleFacet, PrecloseFacet, PrepayListingFacet, RefinanceFacet, RepayFacet,
-  RepayPeriodicFacet, RiskFacet, SwapToRepayFacet and SwapToRepayPartialFacet.
+  RepayPeriodicFacet, RiskFacet, RiskDiscountedLiquidationFacet (the discounted
+  liquidation's treasury cut on interest), SwapToRepayFacet and
+  SwapToRepayPartialFacet.
   Find it again with a grep for those three helpers, not from this list.
   RiskMatchLiquidationFacet and RiskSplitLiquidationFacet left the family
   with #1980: they reached the host only through the VPFI LIF forfeit
@@ -247,8 +250,9 @@ runs half of it on old code:
   `LibFallback.tryOracleRate` reads `getAssetPriceStatus`, a selector only
   OracleFacet carries, to tell a missing price (the lender takes all the
   collateral) from a distrusted one (the close-out refuses). It is inlined into
-  FallbackCustodyFacet (the fallback entry), RiskFacet (the discounted
-  liquidation), ClaimFacet (the backstop par check), and DefaultedFacet and
+  FallbackCustodyFacet (the fallback entry), RiskDiscountedLiquidationFacet
+  (the discounted liquidation, moved off RiskFacet, which no longer reaches
+  it), ClaimFacet (the backstop par check), and DefaultedFacet and
   ForcedSaleFacet through `LibDefaultRoute` (the time-based default's route
   rule, which the default acts on and the sale preview reads, #2419 / #2796);
   find the set again with a grep for `tryOracleRate`, `LibDefaultRoute`,
