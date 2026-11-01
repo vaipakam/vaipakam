@@ -12,6 +12,8 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {FeeOnTransferERC20Mock} from "./mocks/FeeOnTransferERC20Mock.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
@@ -109,6 +111,85 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         // Direct EOA call to the external function should hit
         // `onlyDiamondInternal` and revert.
         vm.expectRevert(RiskMatchLiquidationFacet.OnlyDiamondInternal.selector);
+        RiskMatchLiquidationFacet(address(diamond)).attemptInternalMatchAutoDispatch(LOAN_A, matcher);
+    }
+
+    function test_executeAutoDispatchMatch_eoa_reverts() public {
+        // #2625 item 3 — the self-call match body is Diamond-internal too.
+        vm.expectRevert(RiskMatchLiquidationFacet.OnlyDiamondInternal.selector);
+        RiskMatchLiquidationFacet(address(diamond)).executeAutoDispatchMatch(LOAN_A, LOAN_B, matcher);
+    }
+
+    // ─── #2625 item 3 — a short leg refuses the match, nothing moves ─
+
+    /// @dev Charge 1% on every transfer of `token` out of `from` only.
+    function _chargeTransfersFrom(address token, address from) internal {
+        vm.etch(token, address(new FeeOnTransferERC20Mock("FoT", "FOT", 18)).code);
+        FeeOnTransferERC20Mock(token).setFeeBps(100);
+        FeeOnTransferERC20Mock(token).setChargedSender(from);
+    }
+
+    /// @notice A leg that delivers short is refused: the auto-dispatch reports
+    ///         the refusal, returns false so the caller runs the loan's own
+    ///         liquidation (which pays the lender first), and nothing the
+    ///         match would have moved has moved.
+    function test_2625_autoDispatch_shortLeg_refusedNothingMoves() public {
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+
+        address aLenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        address aBorrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        address bBorrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrowerB);
+        // Leg X moves B's collateral (mockERC20) out of borrowerB's vault:
+        // lender share 990, charge 9, so A's lender would receive 981.
+        _chargeTransfersFrom(mockERC20, bBorrowerVault);
+
+        uint256 aLenderX = IERC20(mockERC20).balanceOf(aLenderVault);
+        uint256 bBorrowerX = IERC20(mockERC20).balanceOf(bBorrowerVault);
+        uint256 aBorrowerY = IERC20(mockCollateralERC20).balanceOf(aBorrowerVault);
+
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit RiskMatchLiquidationFacet.InternalMatchRefusedShortDelivery(
+            LOAN_A, LOAN_B, mockERC20, 990, 981
+        );
+        vm.prank(address(diamond));
+        bool dispatched = RiskMatchLiquidationFacet(address(diamond))
+            .attemptInternalMatchAutoDispatch(LOAN_A, matcher);
+        assertFalse(dispatched, "a short leg refuses the match");
+
+        LibVaipakam.Loan memory aAfter = LoanFacet(address(diamond)).getLoanDetails(LOAN_A);
+        LibVaipakam.Loan memory bAfter = LoanFacet(address(diamond)).getLoanDetails(LOAN_B);
+        assertEq(uint8(aAfter.status), uint8(LibVaipakam.LoanStatus.Active), "A untouched");
+        assertEq(uint8(bAfter.status), uint8(LibVaipakam.LoanStatus.Active), "B untouched");
+        assertEq(aAfter.principal, 1000, "A owes what it owed");
+        assertEq(bAfter.principal, 1000, "B owes what it owed");
+        assertEq(aAfter.collateralAmount, 1000, "A keeps its collateral");
+        assertEq(bAfter.collateralAmount, 1000, "B keeps its collateral");
+        assertEq(IERC20(mockERC20).balanceOf(aLenderVault), aLenderX, "nothing reached A's lender");
+        assertEq(IERC20(mockERC20).balanceOf(bBorrowerVault), bBorrowerX, "nothing left B's vault");
+        assertEq(IERC20(mockCollateralERC20).balanceOf(aBorrowerVault), aBorrowerY, "leg Y unwound too");
+        assertEq(IERC20(mockERC20).balanceOf(matcher), 0, "no incentive paid");
+        assertEq(IERC20(mockCollateralERC20).balanceOf(matcher), 0, "no incentive paid");
+    }
+
+    /// @notice Only the short-delivery refusal is caught. Any other failure
+    ///         inside the match still reverts the caller, as before #2625, so a
+    ///         failure cannot quietly turn into a skipped match.
+    function test_2625_autoDispatch_otherRevertBubbles() public {
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
+            abi.encodeWithSelector(IVaipakamErrors.VaultTransferFailed.selector)
+        );
+
+        vm.expectRevert(IVaipakamErrors.VaultTransferFailed.selector);
+        vm.prank(address(diamond));
         RiskMatchLiquidationFacet(address(diamond)).attemptInternalMatchAutoDispatch(LOAN_A, matcher);
     }
 

@@ -1435,16 +1435,20 @@ contract HelperTest {
     ///           - `attemptInternalMatchAutoDispatch` — `onlyDiamondInternal`
     ///             auto-dispatch hook; wired for cross-facet routing,
     ///             not EOA-callable.
+    ///           - `executeAutoDispatchMatch` — `onlyDiamondInternal` match
+    ///             body behind the auto-dispatch's self-call (#2625 item 3).
     function getRiskMatchLiquidationFacetSelectors()
         public
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](3);
         selectors[0] =
             RiskMatchLiquidationFacet.triggerInternalMatchLiquidation.selector;
         selectors[1] =
             RiskMatchLiquidationFacet.attemptInternalMatchAutoDispatch.selector;
+        selectors[2] =
+            RiskMatchLiquidationFacet.executeAutoDispatchMatch.selector;
     }
 
     /// @notice Selectors for `RiskSplitLiquidationFacet` — the split-route
