@@ -291,6 +291,8 @@ FACETS=(
   # #2748 -- the rate-model host (model, band, offer-rate clamp).
   "RateModelFacet"
   "RiskSplitLiquidationFacet"
+  # The discounted liquidation route, moved off RiskFacet (EIP-170 headroom).
+  "RiskDiscountedLiquidationFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"
@@ -334,7 +336,7 @@ FACETS=(
   "RewardForfeitWalkFacet"
   "RewardSweepWalkFacet"
   # FlashLoanLiquidationPath.md Phase 3 — standalone reference
-  # receiver contract for `RiskFacet.triggerLiquidationDiscounted`.
+  # receiver contract for `RiskDiscountedLiquidationFacet.triggerLiquidationDiscounted`.
   # NOT a diamond facet, so deliberately NOT spread into
   # `DIAMOND_ABI` in the barrel; the keeper bot in `apps/keeper`
   # constructs calls to it directly by named ABI export.

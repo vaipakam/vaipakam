@@ -218,6 +218,9 @@ export interface DeploymentFacets {
   rewardBroadcastFacet?: HexAddress;
   riskMatchLiquidationFacet?: HexAddress;
   riskSplitLiquidationFacet?: HexAddress;
+  /** The discounted liquidation route (`triggerLiquidationDiscounted`),
+   *  moved off riskFacet for EIP-170 headroom; same selector. */
+  riskDiscountedLiquidationFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

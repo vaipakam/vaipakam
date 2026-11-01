@@ -23,6 +23,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
+import {RiskDiscountedLiquidationFacet} from "../src/facets/RiskDiscountedLiquidationFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
@@ -272,7 +273,7 @@ contract RiskFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](29);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](30);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -495,6 +496,13 @@ contract RiskFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(InteractionRewardsFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getInteractionRewardsFacetSelectors()
+        });
+        // The discounted liquidation route, moved off RiskFacet (EIP-170);
+        // this suite carries its tests.
+        cuts[29] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(RiskDiscountedLiquidationFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRiskDiscountedLiquidationFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -4870,8 +4878,8 @@ contract RiskFacetTest is Test {
     ///      verified here by calling with otherwise-valid arguments.
     function testTriggerLiquidationDiscounted_RevertsWhenDisabled() public {
         uint256 loanId = createAndAcceptOffer();
-        vm.expectRevert(RiskFacet.DiscountPathDisabled.selector);
-        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+        vm.expectRevert(RiskDiscountedLiquidationFacet.DiscountPathDisabled.selector);
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(
             loanId,
             address(this),
             ""
@@ -4883,8 +4891,8 @@ contract RiskFacetTest is Test {
     function testTriggerLiquidationDiscounted_RevertsZeroRecipient() public {
         uint256 loanId = createAndAcceptOffer();
         TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);
-        vm.expectRevert(RiskFacet.ZeroRecipient.selector);
-        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+        vm.expectRevert(RiskDiscountedLiquidationFacet.ZeroRecipient.selector);
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(
             loanId,
             address(0),
             ""
@@ -4895,8 +4903,8 @@ contract RiskFacetTest is Test {
     ///      loanId trips the same default-Inactive branch.
     function testTriggerLiquidationDiscounted_RevertsLoanNotActive() public {
         TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);
-        vm.expectRevert(RiskFacet.InvalidLoan.selector);
-        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+        vm.expectRevert(RiskDiscountedLiquidationFacet.InvalidLoan.selector);
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(
             999_999,
             address(this),
             ""
@@ -4921,7 +4929,7 @@ contract RiskFacetTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, flaggedRecipient)
         );
-        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(
             loanId,
             flaggedRecipient,
             ""
@@ -4938,8 +4946,8 @@ contract RiskFacetTest is Test {
             abi.encodeWithSelector(OracleFacet.sequencerHealthy.selector),
             abi.encode(false)
         );
-        vm.expectRevert(RiskFacet.SequencerUnhealthy.selector);
-        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+        vm.expectRevert(RiskDiscountedLiquidationFacet.SequencerUnhealthy.selector);
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(
             loanId,
             address(this),
             ""
@@ -4963,8 +4971,8 @@ contract RiskFacetTest is Test {
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
             abi.encode(uint256(15 * 1e17))
         );
-        vm.expectRevert(RiskFacet.HealthFactorNotLow.selector);
-        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+        vm.expectRevert(RiskDiscountedLiquidationFacet.HealthFactorNotLow.selector);
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(
             loanId,
             address(this),
             ""
@@ -4999,11 +5007,11 @@ contract RiskFacetTest is Test {
         );
         vm.expectRevert(
             abi.encodeWithSelector(
-                RiskFacet.UntierableCollateral.selector,
+                RiskDiscountedLiquidationFacet.UntierableCollateral.selector,
                 mockCollateralERC20
             )
         );
-        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(
             loanId,
             address(this),
             ""
@@ -5035,12 +5043,12 @@ contract RiskFacetTest is Test {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                RiskFacet.OracleStaleForDiscount.selector,
+                RiskDiscountedLiquidationFacet.OracleStaleForDiscount.selector,
                 mockERC20,
                 mockCollateralERC20
             )
         );
-        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(
             loanId,
             address(this),
             ""
@@ -5067,7 +5075,7 @@ contract RiskFacetTest is Test {
         IERC20(mockERC20).approve(address(diamond), 2000 ether);
 
         vm.expectRevert(OracleFacet.OraclePriceDivergence.selector);
-        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(
             loanId,
             address(this),
             ""
@@ -5123,7 +5131,7 @@ contract RiskFacetTest is Test {
         if (stampFull) {
             _expectResolverKeyedOnHolder(loanId);
         }
-        RiskFacet(address(diamond)).triggerLiquidationDiscounted(loanId, address(this), "");
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(loanId, address(this), "");
         toTreasury = IERC20(mockERC20).balanceOf(treasuryEoa) - before;
         lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
         toLender = IERC20(mockERC20).balanceOf(lv) - lBefore;
@@ -5196,7 +5204,7 @@ contract RiskFacetTest is Test {
         // expectEmit would catch first. recordLogs + topic-0 search
         // is robust to interleaved events from cross-facet calls.
         vm.recordLogs();
-        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(
             loanId,
             address(this),
             ""
@@ -5252,10 +5260,10 @@ contract RiskFacetTest is Test {
 
         uint256 before = IERC20(mockERC20).balanceOf(address(this));
         vm.expectEmit(true, true, true, true, address(diamond));
-        emit RiskFacet.LiquidationDiscounted(
+        emit RiskDiscountedLiquidationFacet.LiquidationDiscounted(
             loanId, address(this), address(this), p.tier, p.discountBps, p.debt, p.seized, p.surplus
         );
-        RiskFacet(address(diamond)).triggerLiquidationDiscounted(loanId, address(this), "");
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(loanId, address(this), "");
         assertEq(before - IERC20(mockERC20).balanceOf(address(this)), p.debt, "pulled exactly the previewed debt");
         // The vault withdraw is mocked in this fixture, so the seizure and
         // surplus are read from the liquidation's own event above.

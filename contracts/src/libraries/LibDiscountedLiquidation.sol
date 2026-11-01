@@ -10,7 +10,7 @@ import {OracleFacet} from "../facets/OracleFacet.sol";
 /**
  * @title  LibDiscountedLiquidation
  * @notice The ONE rule for the figures of a discounted liquidation
- *         ({RiskFacet.triggerLiquidationDiscounted}): what the liquidator
+ *         ({RiskDiscountedLiquidationFacet.triggerLiquidationDiscounted}): what the liquidator
  *         pays, and how much collateral it receives for it (#2697).
  * @dev    Two readers, one rule. The liquidation itself charges and seizes
  *         through here, and so does its preview

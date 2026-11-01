@@ -304,7 +304,7 @@ library LibVaipakam {
     // ─── FlashLoanLiquidationPath.md §4 — per-tier liquidation-discount bounds ─
     //
     // The flash-loan / liquidator-buys-at-discount path
-    // (`RiskFacet.triggerLiquidationDiscounted`) settles at
+    // (`RiskDiscountedLiquidationFacet.triggerLiquidationDiscounted`) settles at
     // `debt-plus-discount-VALUE` priced from oracles: the liquidator
     // delivers `totalDebt` of the principal asset and receives the
     // borrower's collateral at a per-tier discount, profiting on the
@@ -1367,7 +1367,7 @@ library LibVaipakam {
         // ── Flash-loan / liquidator-buys-at-discount path ─────────────
         // See docs/DesignsAndPlans/FlashLoanLiquidationPath.md §6.
         // Master kill-switch — default `false` ⇒
-        // `RiskFacet.triggerLiquidationDiscounted` reverts immediately
+        // `RiskDiscountedLiquidationFacet.triggerLiquidationDiscounted` reverts immediately
         // with `DiscountPathDisabled`. Independent of
         // `depthTieredLtvEnabled` so governance can flip each one
         // separately per chain (e.g. enable discount path while
