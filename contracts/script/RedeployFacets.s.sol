@@ -386,6 +386,16 @@ contract RedeployFacets is Script {
         // already refused a Diamond from before it.
         (bytes4[] memory refiToAdd, bytes4[] memory refiToReplace) =
             _partitionByRouting(diamond, _refinanceSelectors());
+        // #2625 item 3 — RiskMatchLiquidationFacet gained
+        // `executeAutoDispatchMatch`, the match body the auto-dispatch reaches
+        // by self-call. On an older diamond the other two are routed (Replace)
+        // and it is new (Add); left out, every liquidation, default and claim
+        // that finds a match candidate would revert `FunctionDoesNotExist`.
+        // The routed subset is never empty (`triggerInternalMatchLiquidation`
+        // is routed on every existing diamond), so the fixed Replace slot stays
+        // valid.
+        (bytes4[] memory rmToAdd, bytes4[] memory rmToReplace) =
+            _partitionByRouting(diamond, _riskMatchSelectors());
         // #1817 r9 — the accumulator's surface, same Add/Replace-by-routing
         // split. {_requireTierRecordSeam} has already refused a Diamond that
         // does not route `syncTierRecord`, so on every accepted target the
@@ -511,6 +521,7 @@ contract RedeployFacets is Script {
             (ewToAdd.length > 0 ? 1 : 0) +
             (ewdToAdd.length > 0 ? 1 : 0) +
             (refiToAdd.length > 0 ? 1 : 0) +
+            (rmToAdd.length > 0 ? 1 : 0) +
             (accToAdd.length > 0 ? 1 : 0) + (accToReplace.length > 0 ? 1 : 0) +
             (claimToAdd.length > 0 ? 1 : 0) + (claimToReplace.length > 0 ? 1 : 0) +
             (claimToRemove.length > 0 ? 1 : 0) +
@@ -549,8 +560,10 @@ contract RedeployFacets is Script {
         // #691 — RiskMatch selectors are already routed on a current diamond
         // (triggerInternalMatchLiquidation + the cross-facet-only
         // attemptInternalMatchAutoDispatch), so a plain Replace repoints them to
-        // the consolidation-aware bytecode.
-        cuts[7] = _replace(address(riskMatchFacet), _riskMatchSelectors());
+        // the consolidation-aware bytecode. #2625 item 3 — only the ROUTED
+        // subset goes through this Replace; the new self-call entry is Add'ed
+        // below on an older diamond.
+        cuts[7] = _replace(address(riskMatchFacet), rmToReplace);
         // #1780 — `sellLoanViaBuyOffer` is already routed on every existing
         // diamond (it was part of EarlyWithdrawalFacet's surface), so it is a
         // plain Replace that repoints the selector to the new address.
@@ -599,6 +612,11 @@ contract RedeployFacets is Script {
         // Add is cut.
         if (ewdToAdd.length > 0) {
             cuts[idx++] = _add(address(earlyWithdrawalDirectFacet), ewdToAdd);
+        }
+        // #2625 item 3 — the auto-dispatch's self-call entry is an Add on an
+        // older diamond (the routed pair went through the fixed Replace above).
+        if (rmToAdd.length > 0) {
+            cuts[idx++] = _add(address(riskMatchFacet), rmToAdd);
         }
         // #2349 — the matcher-fill refinance entry is an Add on any pre-#2349
         // diamond; on a current one the subset is empty and no Add is cut.
@@ -1283,9 +1301,10 @@ contract RedeployFacets is Script {
     ///      (`onlyDiamondInternal`) but is routed through the Diamond, so it is
     ///      cut + refreshed like any other selector.
     function _riskMatchSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = RiskMatchLiquidationFacet.triggerInternalMatchLiquidation.selector;
         s[1] = RiskMatchLiquidationFacet.attemptInternalMatchAutoDispatch.selector;
+        s[2] = RiskMatchLiquidationFacet.executeAutoDispatchMatch.selector;
     }
 
     function _claimSelectors() internal pure returns (bytes4[] memory s) {

@@ -2611,6 +2611,7 @@
         "IntentLoanRolled": "ローンをロールオーバー",
         "CollateralAdded": "担保を追加",
         "InternalMatchExecuted": "ローンを内部マッチ",
+        "InternalMatchRefusedShortDelivery": "内部マッチをスキップ",
         "PrepayListingPosted": "担保を販売掲載",
         "PrepayListingMatched": "担保販売マッチ",
         "PrepayListingUpdated": "担保リスティング更新",

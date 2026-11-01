@@ -2611,6 +2611,7 @@
         "IntentLoanRolled": "Kredit verlängert",
         "CollateralAdded": "Sicherheit hinzugefügt",
         "InternalMatchExecuted": "Kredit intern gematcht",
+        "InternalMatchRefusedShortDelivery": "Interner Match übersprungen",
         "PrepayListingPosted": "Sicherheit zum Verkauf gelistet",
         "PrepayListingMatched": "Sicherheitenverkauf gematcht",
         "PrepayListingUpdated": "Sicherheitenlisting aktualisiert",

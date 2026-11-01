@@ -2611,6 +2611,7 @@
         "IntentLoanRolled": "loan 롤오버됨",
         "CollateralAdded": "collateral 추가됨",
         "InternalMatchExecuted": "loan 내부 match 완료",
+        "InternalMatchRefusedShortDelivery": "내부 match 건너뜀",
         "PrepayListingPosted": "collateral 판매 listing됨",
         "PrepayListingMatched": "담보 매각 매칭됨",
         "PrepayListingUpdated": "담보 매물 업데이트됨",

@@ -2611,6 +2611,7 @@
         "IntentLoanRolled": "கடன் புரட்டப்பட்டது",
         "CollateralAdded": "பிணையம் சேர்க்கப்பட்டது",
         "InternalMatchExecuted": "கடன் உள்ளகமாகப் பொருத்தப்பட்டது",
+        "InternalMatchRefusedShortDelivery": "உள்ளகப் பொருத்தம் தவிர்க்கப்பட்டது",
         "PrepayListingPosted": "பிணையம் விற்பனைக்குப் பட்டியலிடப்பட்டது",
         "PrepayListingMatched": "பிணைய விற்பனை பொருத்தப்பட்டது",
         "PrepayListingUpdated": "பிணையப் பட்டியலிடல் புதுப்பிக்கப்பட்டது",

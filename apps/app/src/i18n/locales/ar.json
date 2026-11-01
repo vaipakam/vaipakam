@@ -2611,6 +2611,7 @@
         "IntentLoanRolled": "تم تدوير loan",
         "CollateralAdded": "تمت إضافة collateral",
         "InternalMatchExecuted": "تمت مطابقة loan داخليا",
+        "InternalMatchRefusedShortDelivery": "تم تخطي المطابقة الداخلية",
         "PrepayListingPosted": "تم إدراج collateral للبيع",
         "PrepayListingMatched": "تمت مطابقة بيع collateral",
         "PrepayListingUpdated": "تم تحديث listing الضمان",

@@ -2289,14 +2289,18 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///          entry points call before falling through to the
     ///          aggregator path. Wired for cross-facet routing; not
     ///          EOA-callable.
+    ///        - `executeAutoDispatchMatch` — `onlyDiamondInternal` match
+    ///          body the auto-dispatch reaches by self-call, so a leg that
+    ///          delivers short unwinds the match alone (#2625 item 3).
     function _getRiskMatchLiquidationSelectors()
         internal
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = RiskMatchLiquidationFacet.triggerInternalMatchLiquidation.selector;
         s[1] = RiskMatchLiquidationFacet.attemptInternalMatchAutoDispatch.selector;
+        s[2] = RiskMatchLiquidationFacet.executeAutoDispatchMatch.selector;
     }
 
     /// @dev Selectors for `RiskSplitLiquidationFacet` — the higher-LTV-aware

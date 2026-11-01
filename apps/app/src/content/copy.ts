@@ -6103,6 +6103,7 @@ const copySource = {
       IntentLoanRolled: 'Loan rolled over',
       CollateralAdded: 'Collateral added',
       InternalMatchExecuted: 'Loan matched internally',
+      InternalMatchRefusedShortDelivery: 'Internal match skipped',
       PrepayListingPosted: 'Collateral listed for sale',
       PrepayListingMatched: 'Collateral sale matched',
       PrepayListingUpdated: 'Collateral listing updated',
