@@ -2,1742 +2,778 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {Test} from "forge-std/Test.sol";
-import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
-import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
-import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
-import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
-import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
-import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
-import {OracleFacet} from "../src/facets/OracleFacet.sol";
-import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
-import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
-import {RiskFacet} from "../src/facets/RiskFacet.sol";
-import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
-import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
-import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
-import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
-import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
-import {LoanFacet} from "../src/facets/LoanFacet.sol";
-import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
-import {RepayFacet} from "../src/facets/RepayFacet.sol";
-import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
-import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
+import {Vm} from "forge-std/Vm.sol";
+import {SetupTest} from "./SetupTest.t.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
-import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
-import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
-import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
-import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
-import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
-import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
-import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
-import {HelperTest} from "./HelperTest.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
+import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {OracleFacet} from "../src/facets/OracleFacet.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
+import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
+import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
+import {LibRefinanceNetting} from "../src/libraries/LibRefinanceNetting.sol";
+import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
-import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
-import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
-import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
-import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
-import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {RefinancePayoffPermitHelper} from "./helpers/RefinancePayoffPermitHelper.sol";
 import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
 import {MockPermit2} from "./mocks/MockPermit2.sol";
 import {LibPermit2, ISignatureTransfer} from "../src/libraries/LibPermit2.sol";
 import {LibRefinancePayoff} from "../src/libraries/LibRefinancePayoff.sol";
 
+/// @dev Drives {LibRefinanceNetting} directly. Each case runs inside ONE call,
+///      because the record is transient: it is meant to live for one
+///      transaction, and forge ≥ 1.8 gives each top-level test call its own.
+contract RefinanceNettingHarness {
+    LibVaipakam.Offer internal offer;
+
+    function isRefinanceAccept(LibVaipakam.OfferType offerType, uint256 target)
+        external
+        returns (bool)
+    {
+        offer.offerType = offerType;
+        offer.refinanceTargetLoanId = target;
+        return LibRefinanceNetting.isRefinanceAccept(offer);
+    }
+
+    function parkThenTake(
+        uint256 offerId,
+        address lender,
+        address asset,
+        uint256 amount,
+        address takeLender,
+        address takeAsset
+    ) external returns (uint256) {
+        LibRefinanceNetting.park(offerId, lender, asset, amount);
+        return LibRefinanceNetting.take(offerId, takeLender, takeAsset);
+    }
+
+    function takeTwice(uint256 offerId, address lender, address asset, uint256 amount)
+        external
+    {
+        LibRefinanceNetting.park(offerId, lender, asset, amount);
+        LibRefinanceNetting.take(offerId, lender, asset);
+        LibRefinanceNetting.take(offerId, lender, asset);
+    }
+
+    function parkTwice(uint256 offerId, address lender, address asset, uint256 amount)
+        external
+    {
+        LibRefinanceNetting.park(offerId, lender, asset, amount);
+        LibRefinanceNetting.park(offerId, lender, asset, amount);
+    }
+
+    function parkTwoOffers(address lender, address asset) external returns (uint256, uint256) {
+        LibRefinanceNetting.park(1, lender, asset, 11);
+        LibRefinanceNetting.park(2, lender, asset, 22);
+        return (
+            LibRefinanceNetting.take(2, lender, asset),
+            LibRefinanceNetting.take(1, lender, asset)
+        );
+    }
+
+    function take(uint256 offerId, address lender, address asset) external returns (uint256) {
+        return LibRefinanceNetting.take(offerId, lender, asset);
+    }
+
+    /// @dev The owner total and the free balance it hides, read while two
+    ///      records are parked, after one take, and after both.
+    function parkedAndFree(address lender, address asset, uint256 raw)
+        external
+        returns (uint256[6] memory r)
+    {
+        LibRefinanceNetting.park(1, lender, asset, 11);
+        LibRefinanceNetting.park(2, lender, asset, 22);
+        r[0] = LibRefinanceNetting.parkedOf(lender, asset);
+        r[1] = LibEncumbrance.freeBalance(lender, asset, 0, raw);
+        LibRefinanceNetting.take(1, lender, asset);
+        r[2] = LibRefinanceNetting.parkedOf(lender, asset);
+        r[3] = LibEncumbrance.freeBalance(lender, asset, 0, raw);
+        LibRefinanceNetting.take(2, lender, asset);
+        r[4] = LibRefinanceNetting.parkedOf(lender, asset);
+        r[5] = LibEncumbrance.freeBalance(lender, asset, 0, raw);
+    }
+}
+
 /**
- * @title RefinanceFacetTest
- * @notice Tests RefinanceFacet: refinanceLoan (two-step: Borrower Offer accepted, then refinance).
+ * @title  RefinanceFacetTest
+ * @notice The refinance flow (#3042): a lender accepts — or the matcher fills —
+ *         the borrower's refinance-tagged offer, and in that one transaction
+ *         the new lender's net principal pays the old lender inside the
+ *         Diamond, the borrower's wallet pays only the difference (the old
+ *         loan's interest and the new loan's initiation fee) through the
+ *         single-use Permit2 payoff permit attached to the request (#1558),
+ *         and the old loan closes as Repaid. Every amount here is measured on real balances:
+ *         no vault call is mocked and the Diamond is never pre-funded, so a
+ *         leg paid from the wrong place shows up as a wrong balance.
  */
-contract RefinanceFacetTest is Test {
-    VaipakamDiamond diamond;
-    address owner;
-    address lender;
-    address newLender;
-    uint256 newLenderPk; // #662 — acceptor key for the AcceptTerms signature
-    address borrower;
-    uint256 borrowerPk; // #662 — acceptor key for the AcceptTerms signature
-    address mockERC20;
-    address mockCollateralERC20;
-    address mockZeroExProxy;
+contract RefinanceFacetTest is SetupTest {
+    uint256 internal constant P = 100 ether;
+    uint256 internal constant COLLATERAL = 1800 ether;
+    uint256 internal constant OLD_RATE_BPS = 500;
+    uint256 internal constant NEW_RATE_BPS = 400;
+    /// @dev The fee constants the fixture loan is born under (#1352 freeze):
+    ///      2% treasury cut on interest, 0.2% initiation fee, of which the
+    ///      matcher (on a direct accept, the accepting lender) takes 1%.
+    uint256 internal constant TREASURY_FEE_BPS = 200;
+    uint256 internal constant LIF_BPS = 20;
+    uint256 internal constant MATCHER_BPS = 100;
 
-    DiamondCutFacet cutFacet;
-    OfferCreateFacet offerCreateFacet;
-    OfferAcceptFacet offerAcceptFacet;
-    OfferCancelFacet offerCancelFacet;
-    ProfileFacet profileFacet;
-    OracleFacet oracleFacet;
-    VaipakamNFTFacet nftFacet;
-    VaultFactoryFacet vaultFacet;
-    LoanFacet loanFacet;
-    RiskFacet riskFacet;
-    RepayFacet repayFacet;
-    DefaultedFacet defaultFacet;
-    AdminFacet adminFacet;
-    ClaimFacet claimFacet;
-    AddCollateralFacet addCollateralFacet;
-    RefinanceFacet refinanceFacet;
-    AccessControlFacet accessControlFacet;
-    TestMutatorFacet testMutatorFacet;
-    HelperTest helperTest;
-
-    uint256 activeLoanId;
-    uint256 borrowerOfferId; // alice's Borrower Offer for refinancing
-    uint256 constant PRINCIPAL  = 1000 ether;
-    uint256 constant COLLATERAL = 1800 ether;
-
-    function mockLiquidity(address asset, LibVaipakam.LiquidityStatus status) internal {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OracleFacet.checkLiquidity.selector, asset), abi.encode(status));
-    }
-    function mockPrice(address asset, uint256 price, uint8 dec) internal {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset), abi.encode(price, dec));
-    }
+    address internal newLender;
+    uint256 internal newLenderPk;
+    uint256 internal oldLoanId;
+    uint256 internal taggedOfferId;
 
     function setUp() public {
-        owner     = address(this);
-        lender    = makeAddr("lender");
-        (newLender, newLenderPk) = makeAddrAndKey("newLender");
-        (borrower, borrowerPk)   = makeAddrAndKey("borrower");
+        setupHelper();
+        mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
+        mockOraclePrice(mockERC20, 1e8, 8);
+        mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
+        mockOraclePrice(mockCollateralERC20, 1e8, 8);
 
-        mockERC20 = address(new ERC20Mock("Token", "TKN", 18));
-        mockCollateralERC20 = address(new ERC20Mock("MockCollateral", "MCK", 18));
-        mockZeroExProxy = makeAddr("zeroEx");
-
-        ERC20Mock(mockERC20).mint(lender,    100000 ether);
-        ERC20Mock(mockERC20).mint(newLender, 100000 ether);
-        ERC20Mock(mockERC20).mint(borrower,  100000 ether);
-        ERC20Mock(mockCollateralERC20).mint(lender,    100000 ether);
-        ERC20Mock(mockCollateralERC20).mint(newLender, 100000 ether);
-        ERC20Mock(mockCollateralERC20).mint(borrower,  100000 ether);
-
-        cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
-        diamond  = new VaipakamDiamond(owner, address(cutFacet));
-        offerCreateFacet = OfferCreateFacet(ArtifactDeploy.deploy(type(OfferCreateFacet).name));
-        offerAcceptFacet = OfferAcceptFacet(ArtifactDeploy.deploy(type(OfferAcceptFacet).name));
-        offerCancelFacet = OfferCancelFacet(ArtifactDeploy.deploy(type(OfferCancelFacet).name));
-        profileFacet = ProfileFacet(ArtifactDeploy.deploy(type(ProfileFacet).name));
-        oracleFacet = OracleFacet(ArtifactDeploy.deploy(type(OracleFacet).name));
-        nftFacet = VaipakamNFTFacet(ArtifactDeploy.deploy(type(VaipakamNFTFacet).name));
-        vaultFacet = VaultFactoryFacet(ArtifactDeploy.deploy(type(VaultFactoryFacet).name));
-        loanFacet = LoanFacet(ArtifactDeploy.deploy(type(LoanFacet).name));
-        riskFacet = RiskFacet(ArtifactDeploy.deploy(type(RiskFacet).name));
-        repayFacet = RepayFacet(ArtifactDeploy.deploy(type(RepayFacet).name));
-        defaultFacet = DefaultedFacet(ArtifactDeploy.deploy(type(DefaultedFacet).name));
-        adminFacet = AdminFacet(ArtifactDeploy.deploy(type(AdminFacet).name));
-        claimFacet = ClaimFacet(ArtifactDeploy.deploy(type(ClaimFacet).name));
-        addCollateralFacet = AddCollateralFacet(ArtifactDeploy.deploy(type(AddCollateralFacet).name));
-        refinanceFacet = RefinanceFacet(ArtifactDeploy.deploy(type(RefinanceFacet).name));
-        accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
-        testMutatorFacet = new TestMutatorFacet();
-        helperTest = new HelperTest();
-
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](28);
-        cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
-        cuts[17] = IDiamondCut.FacetCut({
-            facetAddress: address(offerAcceptFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getOfferAcceptFacetSelectors()
-        });
-        // #1835 — the borrower-LIF charge `_acceptOffer` self-calls, split off
-        // OfferAcceptFacet for EIP-170 headroom. Same selector, its own host:
-        // cut it or every ERC-20 accept reverts FunctionDoesNotExist at the
-        // self-call, with the accept facet itself looking perfectly fine.
-        cuts[20] = IDiamondCut.FacetCut({
-            facetAddress: ArtifactDeploy.deploy(type(OfferAcceptFeeFacet).name),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getOfferAcceptFeeFacetSelectors()
-        });
-        cuts[1]  = IDiamondCut.FacetCut({facetAddress: address(profileFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
-        cuts[2]  = IDiamondCut.FacetCut({facetAddress: address(oracleFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
-        cuts[3]  = IDiamondCut.FacetCut({facetAddress: address(nftFacet),           action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaipakamNFTFacetSelectors()});
-        cuts[4]  = IDiamondCut.FacetCut({facetAddress: address(vaultFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVaultFactoryFacetSelectors()});
-        cuts[5]  = IDiamondCut.FacetCut({facetAddress: address(loanFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getLoanFacetSelectors()});
-        cuts[6]  = IDiamondCut.FacetCut({facetAddress: address(riskFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskFacetSelectors()});
-        cuts[7]  = IDiamondCut.FacetCut({facetAddress: address(repayFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRepayFacetSelectors()});
-        cuts[8]  = IDiamondCut.FacetCut({facetAddress: address(adminFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAdminFacetSelectors()});
-        cuts[9]  = IDiamondCut.FacetCut({facetAddress: address(defaultFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getDefaultedFacetSelectors()});
-        cuts[10] = IDiamondCut.FacetCut({facetAddress: address(claimFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getClaimFacetSelectors()});
-        cuts[11] = IDiamondCut.FacetCut({facetAddress: address(addCollateralFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAddCollateralFacetSelectors()});
-        cuts[12] = IDiamondCut.FacetCut({facetAddress: address(refinanceFacet),     action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRefinanceFacetSelectors()});
-        cuts[13] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
-        cuts[14] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),   action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
-        cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
-        cuts[16] = IDiamondCut.FacetCut({facetAddress: ArtifactDeploy.deploy(type(RiskMatchLiquidationFacet).name), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()});
-        // #407 PR 3 (2026-06-12) — encumbrance mutate facet.
-        EncumbranceMutateFacet encumbranceMutateFacet = EncumbranceMutateFacet(ArtifactDeploy.deploy(type(EncumbranceMutateFacet).name));
-        cuts[18] = IDiamondCut.FacetCut({
-            facetAddress: address(encumbranceMutateFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getEncumbranceMutateFacetSelectors()
-        });
-        // #658 PR-B — eager consolidation cross-facet entry; refinance routes
-        // its #594 lender-side close-out consolidation through this facet.
-        cuts[19] = IDiamondCut.FacetCut({
-            facetAddress: ArtifactDeploy.deploy(type(ConsolidationFacet).name),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getConsolidationFacetSelectors()
-        });
-
-        // #1955 — the recovery/refinance paths resolve the lender yield-fee
-
-        // discount through `VPFIDiscountFacet` (host-routed). Production cuts
-
-        // it; without it a Full-STAMPED loan reverts `FunctionDoesNotExist`
-
-        // here, so this suite could not exercise a stamped settlement at all.
-
-        cuts[21] = IDiamondCut.FacetCut({
-
-            facetAddress: ArtifactDeploy.deploy(type(VPFIDiscountFacet).name),
-
-            action: IDiamondCut.FacetCutAction.Add,
-
-            functionSelectors: helperTest.getVPFIDiscountFacetSelectors()
-
-        });
-
-
-        // #1566 S2a - RiskFacet, DefaultedFacet and ClaimFacet reach the
-        // fallback custody flows (entry, retry swap, in-kind distribution)
-        // through a Diamond self-call into FallbackCustodyFacet, the one host
-        // of those flows. A hand-built Diamond that cuts any of the three must
-        // cut this host too, or a failed-swap liquidation or default and the
-        // fallback claim revert FunctionDoesNotExist at that self-call.
-        cuts[22] = IDiamondCut.FacetCut({
-            facetAddress: ArtifactDeploy.deploy(type(FallbackCustodyFacet).name),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getFallbackCustodyFacetSelectors()
-        });
-        // #2472 - every failover seller (Risk, Defaulted, RepayPeriodic,
-        // Treasury, SwapToRepay, FallbackCustody) runs each swap attempt by a
-        // self-call into SwapAttemptFacet. A hand-built Diamond that cuts any
-        // of them must cut this host too, or every attempt is refused
-        // SwapAttemptHostMissing.
-        cuts[23] = IDiamondCut.FacetCut({
-            facetAddress: ArtifactDeploy.deploy(type(SwapAttemptFacet).name),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getSwapAttemptFacetSelectors()
-        });
-        // #2440 - every fee-charging facet (Repay, Preclose, Refinance,
-        // EarlyWithdrawal, Defaulted, RepayPeriodic, OfferAcceptFee) moves a
-        // fee into the treasury by a self-call into TreasuryFeeFacet. A
-        // hand-built Diamond that cuts any of them must cut this host too, or
-        // the fee reverts FunctionDoesNotExist at that self-call.
-        cuts[24] = IDiamondCut.FacetCut({
-            facetAddress: ArtifactDeploy.deploy(type(TreasuryFeeFacet).name),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
-        });
-        // #2419 - RiskFacet (LTV / HF) and the offer facets value every amount
-        // through NumeraireValueFacet by self-call, so a hand-built Diamond
-        // that cuts any of them must cut this host too.
-        cuts[25] = IDiamondCut.FacetCut({
-            facetAddress: ArtifactDeploy.deploy(type(NumeraireValueFacet).name),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getNumeraireValueFacetSelectors()
-        });
-        // #3009 - offer creation and mutation admit a periodic-interest
-        // cadence through a self-call to OfferPreviewFacet's one copy of the
-        // rule, so a hand-built Diamond that cuts OfferCreateFacet must cut it.
-        cuts[26] = IDiamondCut.FacetCut({
-            facetAddress: ArtifactDeploy.deploy(type(OfferPreviewFacet).name),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getOfferPreviewFacetSelectors()
-        });
-        // #1558 - the borrower attaches the payoff permit a refinance uses
-        // through RefinancePayoffFacet.
-        cuts[27] = IDiamondCut.FacetCut({
-            facetAddress: ArtifactDeploy.deploy(type(RefinancePayoffFacet).name),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getRefinancePayoffFacetSelectors()
-        });
-
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
-
-        AccessControlFacet(address(diamond)).initializeAccessControl();
-        AdminFacet(address(diamond)).unpause();
-        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
-        AdminFacet(address(diamond)).setTreasury(address(diamond));
-        AdminFacet(address(diamond)).setZeroExProxy(mockZeroExProxy);
-        AdminFacet(address(diamond)).setallowanceTarget(mockZeroExProxy);
-
-        vm.prank(lender);    ERC20(mockERC20).approve(address(diamond), type(uint256).max);
-        vm.prank(newLender); ERC20(mockERC20).approve(address(diamond), type(uint256).max);
-        vm.prank(borrower);  ERC20(mockERC20).approve(address(diamond), type(uint256).max);
-        vm.prank(lender);    ERC20(mockCollateralERC20).approve(address(diamond), type(uint256).max);
-        vm.prank(newLender); ERC20(mockCollateralERC20).approve(address(diamond), type(uint256).max);
-        vm.prank(borrower);  ERC20(mockCollateralERC20).approve(address(diamond), type(uint256).max);
-
-        vm.prank(owner);
-        ProfileFacet(address(diamond)).setTradeAllowance("US", "US", true);
-        vm.prank(lender);    ProfileFacet(address(diamond)).setUserCountry("US");
-        vm.prank(newLender); ProfileFacet(address(diamond)).setUserCountry("US");
-        vm.prank(borrower);  ProfileFacet(address(diamond)).setUserCountry("US");
-        vm.prank(owner);
-        ProfileFacet(address(diamond)).updateKYCTier(lender, LibVaipakam.KYCTier.Tier2);
-        vm.prank(owner);
-        ProfileFacet(address(diamond)).updateKYCTier(newLender, LibVaipakam.KYCTier.Tier2);
-        vm.prank(owner);
-        ProfileFacet(address(diamond)).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier2);
-
-        vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 300);
-        vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300);
-        TestMutatorFacet(address(diamond)).setTierLiquidationLtvBpsAllRaw(8500, 8500, 8500);
-
-        mockLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
-        mockPrice(mockERC20, 1e8, 8);
-        mockLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
-        mockPrice(mockCollateralERC20, 1e8, 8);
-
-        address lenderVault   = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
-        address newLenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newLender);
-        address borrowerVault  = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
-        vm.prank(lender);    ERC20(mockERC20).approve(lenderVault, type(uint256).max);
-        vm.prank(newLender); ERC20(mockERC20).approve(newLenderVault, type(uint256).max);
-        vm.prank(borrower);  ERC20(mockERC20).approve(borrowerVault, type(uint256).max);
-        vm.prank(lender);    ERC20(mockCollateralERC20).approve(lenderVault, type(uint256).max);
-        vm.prank(newLender); ERC20(mockCollateralERC20).approve(newLenderVault, type(uint256).max);
-        vm.prank(borrower);  ERC20(mockCollateralERC20).approve(borrowerVault, type(uint256).max);
-
-        // Create active loan: Lender A -> Borrower (alice)
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
         vm.prank(lender);
-        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
-            LibVaipakam.CreateOfferParams({
-                offerType: LibVaipakam.OfferType.Lender,
-                lendingAsset: mockERC20,
-                amount: PRINCIPAL,
-                interestRateBps: 500,
-                collateralAsset: mockCollateralERC20,
-                collateralAmount: COLLATERAL,
-                durationDays: 30,
-                assetType: LibVaipakam.AssetType.ERC20,
-                tokenId: 0,
-                quantity: 0,
-                creatorRiskAndTermsConsent: true,
-                prepayAsset: mockERC20,
-                collateralAssetType: LibVaipakam.AssetType.ERC20,
-                collateralTokenId: 0,
-                collateralQuantity: 0,
-                allowsPartialRepay: false,
-                allowsPrepayListing: false,
-                allowsParallelSale: false,
-                amountMax: PRINCIPAL,
-                interestRateBpsMax: 500,
-                collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0,
-                useFullTermInterest: false
-            })
-        );
-        activeLoanId = LibAcceptTestSigner.signAndAccept(
-            address(diamond), borrower, borrowerPk, offerId
-        );
-
-        // alice creates a Borrower Offer for refinancing (lower rate = better terms)
+        ERC20(mockERC20).approve(lenderVault, type(uint256).max);
         vm.prank(borrower);
-        borrowerOfferId = OfferCreateFacet(address(diamond)).createOffer(
-            LibVaipakam.CreateOfferParams({
-                offerType: LibVaipakam.OfferType.Borrower,
-                lendingAsset: mockERC20,
-                amount: PRINCIPAL,
-                interestRateBps: 400,
-                collateralAsset: mockCollateralERC20,
-                collateralAmount: COLLATERAL,
-                durationDays: 30,
-                assetType: LibVaipakam.AssetType.ERC20,
-                tokenId: 0,
-                quantity: 0,
-                creatorRiskAndTermsConsent: true,
-                prepayAsset: mockERC20,
-                collateralAssetType: LibVaipakam.AssetType.ERC20,
-                collateralTokenId: 0,
-                collateralQuantity: 0,
-                allowsPartialRepay: false,
-                allowsPrepayListing: false,
-                allowsParallelSale: false,
-                amountMax: PRINCIPAL,
-                interestRateBpsMax: 400,
-                collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0,
-                useFullTermInterest: false
-            })
-        );
-
-        ERC20Mock(mockERC20).mint(address(diamond), 100000 ether);
-        // #1558 — the refinance pays off the old loan through the payoff
-        // permit attached to the request.
-        RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, borrowerOfferId);
-    }
-
-    /// @dev Helper to deposit principal into newLender's vault and accept alice's borrower offer.
-    function _acceptBorrowerOffer(uint256 offerId) internal returns (uint256 loanId) {
-        // newLender must deposit principal into their vault before acceptOffer can withdraw it.
-        // T-051 — back the direct transfer with a counter record so the
-        // protocolTrackedVaultBalance tally agrees with the on-chain
-        // balance; without it, the subsequent vaultWithdrawERC20 in
-        // acceptOffer would underflow the counter.
-        address newLenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newLender);
-        vm.prank(newLender);
-        ERC20(mockERC20).transfer(newLenderVault, PRINCIPAL);
-        vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(newLender, mockERC20, PRINCIPAL);
-        loanId = LibAcceptTestSigner.signAndAccept(
-            address(diamond), newLender, newLenderPk, offerId
-        );
-    }
-
-    // ─── refinanceLoan reverts ────────────────────────────────────────────────
-
-    function testRefinanceLoanRevertsNotNFTOwner() public {
-        // Phase 6: refinanceLoan is a borrower-entitled strategic flow.
-        // Non-borrower-NFT callers without keeper auth revert with
-        // KeeperAccessRequired (the unified requireKeeperFor gate).
-        _acceptBorrowerOffer(borrowerOfferId);
+        ERC20(mockCollateralERC20).approve(borrowerVault, type(uint256).max);
 
         vm.prank(lender);
-        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-    }
-
-    function testRefinanceLoanRevertsNonExistentLoan() public {
-        // Non-existent loan has borrowerTokenId = 0 which is not minted;
-        // ownerOf reverts with OZ's ERC721NonexistentToken(0).
-        vm.prank(borrower);
-        vm.expectRevert(
-            abi.encodeWithSignature("ERC721NonexistentToken(uint256)", 0)
+        uint256 lenderOfferId = OfferCreateFacet(address(diamond)).createOffer(
+            _params(LibVaipakam.OfferType.Lender, OLD_RATE_BPS, COLLATERAL, 0)
         );
-        RefinanceFacet(address(diamond)).refinanceLoan(999, borrowerOfferId);
-    }
+        oldLoanId = _signAndAcceptOffer(borrower, borrowerPk, lenderOfferId);
 
-    function testRefinanceLoanRevertsInvalidOffer_LenderType() public {
-        // Create a Lender-type offer (should be rejected — refinance requires Borrower offer)
-        vm.prank(newLender);
-        uint256 badOffer = OfferCreateFacet(address(diamond)).createOffer(
-            LibVaipakam.CreateOfferParams({
-                offerType: LibVaipakam.OfferType.Lender,
-                lendingAsset: mockERC20,
-                amount: PRINCIPAL,
-                interestRateBps: 400,
-                collateralAsset: mockCollateralERC20,
-                collateralAmount: COLLATERAL,
-                durationDays: 30,
-                assetType: LibVaipakam.AssetType.ERC20,
-                tokenId: 0,
-                quantity: 0,
-                creatorRiskAndTermsConsent: true,
-                prepayAsset: mockERC20,
-                collateralAssetType: LibVaipakam.AssetType.ERC20,
-                collateralTokenId: 0,
-                collateralQuantity: 0,
-                allowsPartialRepay: false,
-                allowsPrepayListing: false,
-                allowsParallelSale: false,
-                amountMax: PRINCIPAL,
-                interestRateBpsMax: 400,
-                collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0,
-                useFullTermInterest: false
-            })
+        vm.prank(borrower);
+        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
+            oldLoanId, true, 600, uint64(block.timestamp + 365 days)
         );
-
         vm.prank(borrower);
-        vm.expectRevert(RefinanceFacet.InvalidRefinanceOffer.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, badOffer);
-    }
-
-    function testRefinanceLoanRevertsOfferNotAccepted() public {
-        // Offer exists but not yet accepted
-        vm.prank(borrower);
-        vm.expectRevert(RefinanceFacet.OfferNotAccepted.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-    }
-
-    function testRefinanceLoanRevertsNotOfferCreator() public {
-        // Create a Borrower offer by someone else
-        address otherBorrower = makeAddr("otherBorrower");
-        ERC20Mock(mockERC20).mint(otherBorrower, 100000 ether);
-        ERC20Mock(mockCollateralERC20).mint(otherBorrower, 100000 ether);
-        vm.prank(otherBorrower); ERC20(mockERC20).approve(address(diamond), type(uint256).max);
-        vm.prank(otherBorrower); ERC20(mockCollateralERC20).approve(address(diamond), type(uint256).max);
-        vm.prank(otherBorrower); ProfileFacet(address(diamond)).setUserCountry("US");
-        vm.prank(owner); ProfileFacet(address(diamond)).updateKYCTier(otherBorrower, LibVaipakam.KYCTier.Tier2);
-        address otherVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(otherBorrower);
-        vm.prank(otherBorrower); ERC20(mockERC20).approve(otherVault, type(uint256).max);
-        vm.prank(otherBorrower); ERC20(mockCollateralERC20).approve(otherVault, type(uint256).max);
-
-        vm.prank(otherBorrower);
-        uint256 otherOffer = OfferCreateFacet(address(diamond)).createOffer(
-            LibVaipakam.CreateOfferParams({
-                offerType: LibVaipakam.OfferType.Borrower,
-                lendingAsset: mockERC20,
-                amount: PRINCIPAL,
-                interestRateBps: 400,
-                collateralAsset: mockCollateralERC20,
-                collateralAmount: COLLATERAL,
-                durationDays: 30,
-                assetType: LibVaipakam.AssetType.ERC20,
-                tokenId: 0,
-                quantity: 0,
-                creatorRiskAndTermsConsent: true,
-                prepayAsset: mockERC20,
-                collateralAssetType: LibVaipakam.AssetType.ERC20,
-                collateralTokenId: 0,
-                collateralQuantity: 0,
-                allowsPartialRepay: false,
-                allowsPrepayListing: false,
-                allowsParallelSale: false,
-                amountMax: PRINCIPAL,
-                interestRateBpsMax: 400,
-                collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0,
-                useFullTermInterest: false
-            })
+        taggedOfferId = OfferCreateFacet(address(diamond)).createOffer(
+            _params(LibVaipakam.OfferType.Borrower, NEW_RATE_BPS, COLLATERAL, oldLoanId)
         );
-
-        // Accept it
-        _acceptBorrowerOffer(otherOffer);
-
-        // alice tries to use someone else's offer
-        vm.prank(borrower);
-        vm.expectRevert(RefinanceFacet.InvalidRefinanceOffer.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, otherOffer);
-    }
-
-    // ─── refinanceLoan success ────────────────────────────────────────────────
-
-    function testRefinanceLoanSuccess() public {
-        // Step 1: newLender accepts alice's Borrower Offer → new loan created
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        // Mock the complex cross-facet calls inside refinanceLoan
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL + 10 ether));
-        MockVaultWithdraw.deliversAll(address(diamond));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
-    }
-
-    // ─── Pass-2 A1/D5 (#1189): refinance late-fee parity + post-grace block ───
-
-    /// @dev Pass-2 A1/D5 (#1189, Codex #1233 r2/r3) — a MANUAL refinance always
-    ///      COMPLETES once its replacement offer has been accepted, even if the
-    ///      old loan is (or crosses) past grace before the completion tx. The
-    ///      replacement loan already exists + funded the borrower at acceptance,
-    ///      so any execution-level revert here would STRAND the borrower with
-    ///      BOTH loans active. Completion settles the old lender IN FULL plus the
-    ///      grace late fee (lender-favourable vs a default recovery), and a FRESH
-    ///      post-grace refinance is instead blocked at ADMISSION (tagged offers —
-    ///      see `T092..._RejectsPastGraceTarget`). This covers the legacy UNTAGGED
-    ///      case Codex flagged: acceptance itself past grace still completes, no
-    ///      strand.
-    function testRefinanceLoan_manualCompletesPastGrace_noStrand() public {
-        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        uint256 endTime = uint256(l.startTime) + uint256(l.durationDays) * 1 days;
-        // Old loan crosses grace FIRST, then the untagged replacement is accepted
-        // (newLoan.startTime itself past grace) — the hardest no-strand case.
-        vm.warp(endTime + LibVaipakam.gracePeriod(l.durationDays) + 1);
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL + 10 ether));
-        MockVaultWithdraw.deliversAll(address(diamond));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-
-        assertEq(
-            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
-            uint8(LibVaipakam.LoanStatus.Repaid),
-            "manual refinance completes past grace, never stranded (#1233 r3 P2)"
-        );
-        vm.clearMockedCalls();
-    }
-
-    /// @dev A refinance in the grace window completes and folds the late fee
-    ///      (0 within term) into the exiting lender's interest split — the same
-    ///      `calculateLateFee` + `splitTreasury` fold the preclose path uses,
-    ///      whose exact amount is asserted in
-    ///      `PrecloseFacetTest.testPreclosedDirect_graceWindow_chargesLateFee`.
-    ///      Here we prove the gate ADMITS an in-grace refinance (previously it
-    ///      also admitted post-grace with zero fee — the A1/D5 leak).
-    function testRefinanceLoan_graceWindow_succeeds() public {
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        uint256 endTime = uint256(l.startTime) + uint256(l.durationDays) * 1 days;
-        vm.warp(endTime + 3 days); // 3 days into grace
-
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL + 10 ether));
-        MockVaultWithdraw.deliversAll(address(diamond));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-
-        assertEq(
-            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
-            uint8(LibVaipakam.LoanStatus.Repaid),
-            "grace-window refinance completes with the late fee applied (#1189)"
-        );
-        vm.clearMockedCalls();
-    }
-
-    /// @dev After refinance, the borrower's vault must hold exactly newCol of
-    ///      collateral (not oldCol + newCol). The old deposit is refunded to
-    ///      the borrower's wallet — otherwise it would be permanently stranded
-    ///      since no claim path records it.
-    function testRefinanceRefundsFullOldCollateralToBorrower() public {
-        // Step 1: newLender accepts alice's Borrower Offer → new loan created
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
-
-        // Sanity: at this point the vault holds oldCol + newCol (same collateral token).
-        uint256 vaultBefore = ERC20(mockCollateralERC20).balanceOf(borrowerVault);
-        assertEq(vaultBefore, COLLATERAL * 2, "vault should hold old + new collateral");
-
-        uint256 walletBefore = ERC20(mockCollateralERC20).balanceOf(borrower);
-        uint256 principalWalletBefore = ERC20(mockERC20).balanceOf(borrower);
-
-        // Only mock the risk calls (HF/LTV); let the real vault withdrawal run
-        // so we can verify the balance invariants end-to-end.
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
-
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-
-        // Vault now holds only the new loan's collateral.
-        assertEq(
-            ERC20(mockCollateralERC20).balanceOf(borrowerVault),
-            COLLATERAL,
-            "vault must retain exactly newCol after refinance"
-        );
-
-        // Borrower wallet received the full old collateral back (collateral-side only).
-        uint256 walletAfter = ERC20(mockCollateralERC20).balanceOf(borrower);
-        assertEq(
-            walletAfter,
-            walletBefore + COLLATERAL,
-            "borrower wallet must receive full old collateral refund"
-        );
-        // silence unused variable warning
-        principalWalletBefore;
-
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
-
-        vm.clearMockedCalls();
-    }
-
-    /// @dev #998 S10 (#1006) F2 — refinance terminally closes the OLD loan and
-    ///      parks the old lender's proceeds into their vault. When the current
-    ///      lender-position holder is sanctions-flagged, the refinance must still
-    ///      COMPLETE (freeze-not-brick, #831) via the receive-side exemption, AND
-    ///      record the fail-closed frozen-claimant marker + register the holder in
-    ///      the #1123 movement registry. Runs the real deposit path (only HF/LTV
-    ///      mocked) so the flagged-lender `getOrCreateUserVault` gate + the S10
-    ///      exemption are actually exercised.
-    function testS10_refinanceFlaggedOldLender_parksNotBricks_recordsMarker() public {
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        // Flag the current old-lender-position holder (== `lender`, no transfer)
-        // while the oracle is up, BEFORE the refinance close-out.
-        MockSanctionsList m = new MockSanctionsList();
-        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
-        m.setFlagged(lender, true);
-
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
-
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-
-        // (1) Freeze-not-brick: the refinance completed despite the flagged old
-        //     lender — the deposit resolved their existing vault under the pin
-        //     instead of reverting the whole flow at the Tier-1 gate.
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        assertEq(
-            uint8(loan.status),
-            uint8(LibVaipakam.LoanStatus.Repaid),
-            "refinance completed (not bricked) for a flagged old lender"
-        );
-
-        // (2) F2 marker recorded for the lender side, keyed to the flagged holder.
-        assertEq(
-            TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(activeLoanId, true),
-            lender,
-            "refinance parked the frozen old-lender claimant"
-        );
-
-        // (3) #1123 registry populated by the same authoritative flag.
-        assertTrue(
-            ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(lender),
-            "refinance park registered the flagged holder in the #1123 registry"
-        );
-
-        vm.clearMockedCalls();
-    }
-
-    /// @dev Regression: a refinance with a CLEAN old lender records no marker and
-    ///      registers nothing (an oracle blip can never freeze an honest lender).
-    function testS10_refinanceCleanOldLender_recordsNoMarker() public {
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        MockSanctionsList m = new MockSanctionsList();
-        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
-        // lender NOT flagged.
-
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
-
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-
-        assertEq(
-            TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(activeLoanId, true),
-            address(0),
-            "clean old lender records no frozen-claimant marker"
-        );
-        assertFalse(
-            ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(lender),
-            "clean old lender is not registered"
-        );
-
-        vm.clearMockedCalls();
-    }
-
-    // ─── Additional branch coverage tests ────────────────────────────────────
-
-    /// @dev Covers InvalidRefinanceOffer when refinance offer amount < oldLoan.principal
-    function testRefinanceLoanRevertsInvalidOfferAmountTooLow() public {
-        // Create a new borrower offer with amount < PRINCIPAL
-        vm.prank(borrower);
-        uint256 smallOffer = OfferCreateFacet(address(diamond)).createOffer(
-            LibVaipakam.CreateOfferParams({
-                offerType: LibVaipakam.OfferType.Borrower,
-                lendingAsset: mockERC20,
-                amount: PRINCIPAL / 2,
-                interestRateBps: 400,
-                collateralAsset: mockCollateralERC20,
-                collateralAmount: COLLATERAL / 2,
-                durationDays: 30,
-                assetType: LibVaipakam.AssetType.ERC20,
-                tokenId: 0,
-                quantity: 0,
-                creatorRiskAndTermsConsent: true,
-                prepayAsset: mockERC20,
-                collateralAssetType: LibVaipakam.AssetType.ERC20,
-                collateralTokenId: 0,
-                collateralQuantity: 0,
-                allowsPartialRepay: false,
-                allowsPrepayListing: false,
-                allowsParallelSale: false,
-                amountMax: PRINCIPAL / 2,
-                interestRateBpsMax: 400,
-                collateralAmountMax: COLLATERAL / 2,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0,
-                useFullTermInterest: false
-            })
-        );
-
-        // Accept it (deposit half principal since offer is PRINCIPAL/2).
-        // T-051 — back the direct transfer with a counter record.
-        address nlVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newLender);
-        vm.prank(newLender);
-        ERC20(mockERC20).transfer(nlVault, PRINCIPAL / 2);
-        vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(newLender, mockERC20, PRINCIPAL / 2);
-        LibAcceptTestSigner.signAndAccept(
-            address(diamond), newLender, newLenderPk, smallOffer
-        );
-
-        vm.prank(borrower);
-        vm.expectRevert(RefinanceFacet.InvalidRefinanceOffer.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, smallOffer);
-    }
-
-    /// @dev Covers LoanNotActive in refinanceLoan (loan status != Active — explicitly Repaid)
-    function testRefinanceLoanRevertsLoanStatusRepaid() public {
-        // newLender accepts first
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        loan.status = LibVaipakam.LoanStatus.Repaid;
-        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, loan);
-
-        vm.expectRevert(IVaipakamErrors.LoanNotActive.selector);
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-    }
-
-    /// @dev Covers HealthFactorTooLow in refinanceLoan
-    function testRefinanceLoanRevertsHealthFactorTooLow() public {
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL + 10 ether));
-        MockVaultWithdraw.deliversAll(address(diamond));
-        // Return HF below min
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(uint256(0.5e18)));
-
-        vm.expectRevert(IVaipakamErrors.HealthFactorTooLow.selector);
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-        vm.clearMockedCalls();
-    }
-
-    /// @dev Covers LTVExceeded in refinanceLoan (LTV > loanInitMaxLtvBps)
-    function testRefinanceLoanRevertsLTVExceeded() public {
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL + 10 ether));
-        MockVaultWithdraw.deliversAll(address(diamond));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(uint256(2e18)));
-        // Return LTV above loanInitMaxLtvBps (8000 bps); pass 9000 > 8000
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(9000)));
-
-        vm.expectRevert(IVaipakamErrors.LTVExceeded.selector);
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-        vm.clearMockedCalls();
-    }
-
-    /// @dev Covers shortfall payment branch in refinanceLoan (new interest < old expected)
-    function testRefinanceLoanWithShortfallPaid() public {
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL));
-        MockVaultWithdraw.deliversAll(address(diamond));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(uint256(2e18)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-
-        ERC20Mock(mockERC20).mint(borrower, 10 ether);
-
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
-        vm.clearMockedCalls();
-    }
-
-    /// @dev Covers CrossFacetCallFailed("Collateral refund failed") in refinanceLoan.
-    ///      Refinance always refunds the full old collateral back to the borrower
-    ///      (the new loan's collateral was already deposited by the borrower offer).
-    function testRefinanceLoanCollateralRefundFails() public {
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            "withdraw fail"
-        );
-
-        vm.prank(borrower);
-        vm.expectRevert(bytes("withdraw fail"));
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-        vm.clearMockedCalls();
-    }
-
-    /// @dev Covers CrossFacetCallFailed("Old lender NFT update failed") in refinanceLoan.
-    function testRefinanceLoanNFTUpdateFails() public {
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL));
-        MockVaultWithdraw.deliversAll(address(diamond));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(uint256(2e18)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
-            "nft fail"
-        );
-
-        vm.prank(borrower);
-        vm.expectRevert(bytes("nft fail"));
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-        vm.clearMockedCalls();
-    }
-
-    /// @dev Covers CrossFacetCallFailed("Get lender vault failed") in refinanceLoan.
-    function testRefinanceLoanGetLenderVaultFails() public {
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL));
-        // #1558 — the old lender's share is sent on from the Diamond into
-        // their vault, resolved through `getOrCreateUserVault`.
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.getOrCreateUserVault.selector, lender),
-            "vault fail"
-        );
-
-        vm.prank(borrower);
-        vm.expectRevert();
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-        vm.clearMockedCalls();
-    }
-
-    /// @dev Covers CrossFacetCallFailed("HF calc failed") in refinanceLoan.
-    function testRefinanceLoanHFCalcFails() public {
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL));
-        MockVaultWithdraw.deliversAll(address(diamond));
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
-            "hf fail"
-        );
-
-        vm.prank(borrower);
-        vm.expectRevert(bytes("hf fail"));
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-        vm.clearMockedCalls();
-    }
-
-    /// @dev Covers CrossFacetCallFailed("LTV calc failed") in refinanceLoan.
-    function testRefinanceLoanLTVCalcFails() public {
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL));
-        MockVaultWithdraw.deliversAll(address(diamond));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(uint256(2e18)));
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateLTV.selector),
-            "ltv fail"
-        );
-
-        vm.prank(borrower);
-        vm.expectRevert(bytes("ltv fail"));
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-        vm.clearMockedCalls();
-    }
-
-    /// @dev Helper to set collateralAssetType on both a loan and an offer via TestMutatorFacet.
-    function _setCollateralAssetType(uint256 loanId, uint256 offerId, uint8 assetTypeVal) internal {
-        LibVaipakam.AssetType assetType = LibVaipakam.AssetType(assetTypeVal);
-
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        loan.collateralAssetType = assetType;
-        loan.collateralTokenId = 42;
-        if (assetTypeVal == 2) loan.collateralQuantity = 10;
-        TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
-
-        LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(offerId);
-        offer.collateralAssetType = assetType;
-        TestMutatorFacet(address(diamond)).setOffer(offerId, offer);
-    }
-
-    /// @dev Covers ERC721 collateral refund branch in refinanceLoan.
-    function testRefinanceLoanERC721CollateralRefund() public {
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        _setCollateralAssetType(activeLoanId, borrowerOfferId, 1); // ERC721
-
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), abi.encode(true));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(uint256(2e18)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
-        vm.clearMockedCalls();
-    }
-
-    /// @dev Covers ERC1155 collateral refund branch in refinanceLoan.
-    function testRefinanceLoanERC1155CollateralRefund() public {
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        _setCollateralAssetType(activeLoanId, borrowerOfferId, 2); // ERC1155
-
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), abi.encode(true));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(uint256(2e18)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
-        vm.clearMockedCalls();
-    }
-
-    /// @dev Covers InvalidRefinanceOffer when collateralAssetType doesn't match.
-    function testRefinanceLoanRevertsCollateralAssetTypeMismatch() public {
-        // Force the old loan's collateralAssetType to ERC721; borrowerOfferId still has ERC20.
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        loan.collateralAssetType = LibVaipakam.AssetType.ERC721;
-        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, loan);
-
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        vm.prank(borrower);
-        vm.expectRevert(RefinanceFacet.InvalidRefinanceOffer.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-    }
-
-    // ─── Test E: Non-ERC20 loan reverts InvalidRefinanceOffer ─────────────
-
-    /// @dev Covers assetType != ERC20 branch (line 75-76) in refinanceLoan.
-    function testRefinanceLoanRevertsNonERC20Loan() public {
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        loan.assetType = LibVaipakam.AssetType.ERC721;
-        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, loan);
-
-        vm.prank(borrower);
-        vm.expectRevert(RefinanceFacet.InvalidRefinanceOffer.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-    }
-
-    // ─── Test F: Lending asset mismatch reverts InvalidRefinanceOffer ────
-
-    /// @dev Covers lendingAsset mismatch branch (line 87) in refinanceLoan.
-    function testRefinanceLoanRevertsLendingAssetMismatch() public {
-        // Create a new ERC20 for different lending asset
-        address otherERC20 = address(new ERC20Mock("Other", "OTH", 18));
-        ERC20Mock(otherERC20).mint(borrower, 100000 ether);
-        ERC20Mock(otherERC20).mint(newLender, 100000 ether);
-        vm.prank(borrower); ERC20(otherERC20).approve(address(diamond), type(uint256).max);
-        vm.prank(newLender); ERC20(otherERC20).approve(address(diamond), type(uint256).max);
-        mockLiquidity(otherERC20, LibVaipakam.LiquidityStatus.Liquid);
-        mockPrice(otherERC20, 1e8, 8);
-        vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(otherERC20, 8000, 300);
-        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
-        address nlVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newLender);
-        vm.prank(borrower); ERC20(otherERC20).approve(borrowerVault, type(uint256).max);
-        vm.prank(newLender); ERC20(otherERC20).approve(nlVault, type(uint256).max);
-
-        // Borrower creates offer with different lendingAsset
-        vm.prank(borrower);
-        uint256 badOffer = OfferCreateFacet(address(diamond)).createOffer(
-            LibVaipakam.CreateOfferParams({
-                offerType: LibVaipakam.OfferType.Borrower,
-                lendingAsset: otherERC20,
-                amount: PRINCIPAL,
-                interestRateBps: 400,
-                collateralAsset: mockERC20,
-                collateralAmount: COLLATERAL,
-                durationDays: 30,
-                assetType: LibVaipakam.AssetType.ERC20,
-                tokenId: 0,
-                quantity: 0,
-                creatorRiskAndTermsConsent: true,
-                prepayAsset: mockERC20,
-                collateralAssetType: LibVaipakam.AssetType.ERC20,
-                collateralTokenId: 0,
-                collateralQuantity: 0,
-                allowsPartialRepay: false,
-                allowsPrepayListing: false,
-                allowsParallelSale: false,
-                amountMax: PRINCIPAL,
-                interestRateBpsMax: 400,
-                collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0,
-                useFullTermInterest: false
-            })
-        );
-
-        // Accept the offer.
-        // T-051 — back the direct transfer with a counter record.
-        vm.prank(newLender); ERC20(otherERC20).transfer(nlVault, PRINCIPAL);
-        vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(newLender, otherERC20, PRINCIPAL);
-        LibAcceptTestSigner.signAndAccept(
-            address(diamond), newLender, newLenderPk, badOffer
-        );
-
-        vm.prank(borrower);
-        vm.expectRevert(RefinanceFacet.InvalidRefinanceOffer.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, badOffer);
-    }
-
-    // ─── Test G: Collateral asset mismatch reverts InvalidRefinanceOffer ──
-
-    /// @dev Covers collateralAsset mismatch branch (line 88) in refinanceLoan.
-    function testRefinanceLoanRevertsCollateralAssetMismatch() public {
-        // Create a different ERC20 for collateral
-        address otherERC20 = address(new ERC20Mock("Other", "OTH", 18));
-        ERC20Mock(otherERC20).mint(borrower, 100000 ether);
-        ERC20Mock(otherERC20).mint(newLender, 100000 ether);
-        vm.prank(borrower); ERC20(otherERC20).approve(address(diamond), type(uint256).max);
-        vm.prank(newLender); ERC20(otherERC20).approve(address(diamond), type(uint256).max);
-        mockLiquidity(otherERC20, LibVaipakam.LiquidityStatus.Liquid);
-        mockPrice(otherERC20, 1e8, 8);
-        vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(otherERC20, 8000, 300);
-        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
-        address nlVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newLender);
-        vm.prank(borrower); ERC20(otherERC20).approve(borrowerVault, type(uint256).max);
-        vm.prank(newLender); ERC20(otherERC20).approve(nlVault, type(uint256).max);
-
-        // Borrower creates offer with same lendingAsset but different collateralAsset
-        vm.prank(borrower);
-        uint256 badOffer = OfferCreateFacet(address(diamond)).createOffer(
-            LibVaipakam.CreateOfferParams({
-                offerType: LibVaipakam.OfferType.Borrower,
-                lendingAsset: mockERC20,
-                amount: PRINCIPAL,
-                interestRateBps: 400,
-                collateralAsset: otherERC20,
-                collateralAmount: COLLATERAL,
-                durationDays: 30,
-                assetType: LibVaipakam.AssetType.ERC20,
-                tokenId: 0,
-                quantity: 0,
-                creatorRiskAndTermsConsent: true,
-                prepayAsset: mockERC20,
-                collateralAssetType: LibVaipakam.AssetType.ERC20,
-                collateralTokenId: 0,
-                collateralQuantity: 0,
-                allowsPartialRepay: false,
-                allowsPrepayListing: false,
-                allowsParallelSale: false,
-                amountMax: PRINCIPAL,
-                interestRateBpsMax: 400,
-                collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0,
-                useFullTermInterest: false
-            })
-        );
-
-        vm.prank(newLender); ERC20(mockERC20).transfer(nlVault, PRINCIPAL);
-        // T-051 — back the direct transfer with a counter record.
-        vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(newLender, mockERC20, PRINCIPAL);
-        LibAcceptTestSigner.signAndAccept(
-            address(diamond), newLender, newLenderPk, badOffer
-        );
-
-        vm.prank(borrower);
-        vm.expectRevert(RefinanceFacet.InvalidRefinanceOffer.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, badOffer);
-    }
-
-    // ─── Test H: Prepay asset mismatch reverts InvalidRefinanceOffer ──────
-
-    /// @dev Covers prepayAsset mismatch branch (line 90) in refinanceLoan.
-    function testRefinanceLoanRevertsPrepayAssetMismatch() public {
-        // Create a different ERC20 for prepayAsset
-        address otherERC20 = address(new ERC20Mock("Other", "OTH", 18));
-        ERC20Mock(otherERC20).mint(borrower, 100000 ether);
-        vm.prank(borrower); ERC20(otherERC20).approve(address(diamond), type(uint256).max);
-        mockLiquidity(otherERC20, LibVaipakam.LiquidityStatus.Liquid);
-        mockPrice(otherERC20, 1e8, 8);
-        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
-        address nlVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newLender);
-        vm.prank(borrower); ERC20(otherERC20).approve(borrowerVault, type(uint256).max);
-
-        // Borrower creates offer with different prepayAsset
-        vm.prank(borrower);
-        uint256 badOffer = OfferCreateFacet(address(diamond)).createOffer(
-            LibVaipakam.CreateOfferParams({
-                offerType: LibVaipakam.OfferType.Borrower,
-                lendingAsset: mockERC20,
-                amount: PRINCIPAL,
-                interestRateBps: 400,
-                collateralAsset: mockCollateralERC20,
-                collateralAmount: COLLATERAL,
-                durationDays: 30,
-                assetType: LibVaipakam.AssetType.ERC20,
-                tokenId: 0,
-                quantity: 0,
-                creatorRiskAndTermsConsent: true,
-                prepayAsset: otherERC20,
-                collateralAssetType: LibVaipakam.AssetType.ERC20,
-                collateralTokenId: 0,
-                collateralQuantity: 0,
-                allowsPartialRepay: false,
-                allowsPrepayListing: false,
-                allowsParallelSale: false,
-                amountMax: PRINCIPAL,
-                interestRateBpsMax: 400,
-                collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0,
-                useFullTermInterest: false
-            })
-        );
-
-        vm.prank(newLender); ERC20(mockERC20).transfer(nlVault, PRINCIPAL);
-        // T-051 — back the direct transfer with a counter record.
-        vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(newLender, mockERC20, PRINCIPAL);
-        LibAcceptTestSigner.signAndAccept(
-            address(diamond), newLender, newLenderPk, badOffer
-        );
-
-        vm.prank(borrower);
-        vm.expectRevert(RefinanceFacet.InvalidRefinanceOffer.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, badOffer);
-    }
-
-    // ─── Test I: No linked loan reverts ─────────────────────────────────────
-
-    /// @dev Covers newLoanId == 0 branch (line 94) - accepted offer but no linked loan in offerIdToLoanId.
-    function testRefinanceLoanRevertsNoLinkedLoan() public {
-        // Create a borrower offer and manipulate it to appear accepted without a real loan
-        vm.prank(borrower);
-        uint256 fakeOffer = OfferCreateFacet(address(diamond)).createOffer(
-            LibVaipakam.CreateOfferParams({
-                offerType: LibVaipakam.OfferType.Borrower,
-                lendingAsset: mockERC20,
-                amount: PRINCIPAL,
-                interestRateBps: 400,
-                collateralAsset: mockCollateralERC20,
-                collateralAmount: COLLATERAL,
-                durationDays: 30,
-                assetType: LibVaipakam.AssetType.ERC20,
-                tokenId: 0,
-                quantity: 0,
-                creatorRiskAndTermsConsent: true,
-                prepayAsset: mockERC20,
-                collateralAssetType: LibVaipakam.AssetType.ERC20,
-                collateralTokenId: 0,
-                collateralQuantity: 0,
-                allowsPartialRepay: false,
-                allowsPrepayListing: false,
-                allowsParallelSale: false,
-                amountMax: PRINCIPAL,
-                interestRateBpsMax: 400,
-                collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0,
-                useFullTermInterest: false
-            })
-        );
-
-        // Accept the offer properly, then clear the offerIdToLoanId mapping
-        // to simulate an accepted offer with no linked loan.
-        address nlVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newLender);
-        vm.prank(newLender); ERC20(mockERC20).transfer(nlVault, PRINCIPAL);
-        // T-051 — back the direct transfer with a counter record.
-        vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(newLender, mockERC20, PRINCIPAL);
-        LibAcceptTestSigner.signAndAccept(
-            address(diamond), newLender, newLenderPk, fakeOffer
-        );
-
-        // Clear the offerIdToLoanId mapping via the layout-resilient
-        // mutator so newLoanId lookup returns 0.
-        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(fakeOffer, 0);
-
-        vm.prank(borrower);
-        vm.expectRevert(RefinanceFacet.InvalidRefinanceOffer.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, fakeOffer);
-    }
-
-    // ─── Test J: Borrower NFT status update fails reverts CrossFacetCallFailed ───
-
-    /// @dev Covers CrossFacetCallFailed on the second updateNFTStatus call
-    ///      (borrower-side NFT transition to LoanRepaid) in refinanceLoan.
-    function testRefinanceLoanBorrowerNFTStatusUpdateFails() public {
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(uint256(2e18)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaipakamNFTFacet.updateNFTStatus.selector,
-                loan.borrowerTokenId,
-                activeLoanId,
-                LibVaipakam.LoanPositionStatus.LoanRepaid
-            ),
-            "borrower nft fail"
-        );
-
-        vm.prank(borrower);
-        vm.expectRevert(bytes("borrower nft fail"));
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-        vm.clearMockedCalls();
-    }
-
-    /// @dev Covers ERC721 collateral refund failure branch in refinanceLoan.
-    function testRefinanceLoanERC721CollateralRefundFails() public {
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        _setCollateralAssetType(activeLoanId, borrowerOfferId, 1); // ERC721
-
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector),
-            "withdraw fail"
-        );
-
-        vm.prank(borrower);
-        vm.expectRevert(bytes("withdraw fail"));
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-        vm.clearMockedCalls();
-    }
-
-    /// @dev Covers ERC1155 collateral refund failure branch in refinanceLoan.
-    function testRefinanceLoanERC1155CollateralRefundFails() public {
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        _setCollateralAssetType(activeLoanId, borrowerOfferId, 2); // ERC1155
-
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector),
-            "withdraw fail"
-        );
-
-        vm.prank(borrower);
-        vm.expectRevert(bytes("withdraw fail"));
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-        vm.clearMockedCalls();
-    }
-
-    /// @dev Covers the zero collateral amount path (oldCol == 0) in refinanceLoan.
-    ///      When collateralAmount is 0, no ERC20 collateral transfer is needed.
-    function testRefinanceLoanZeroCollateralAmount() public {
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        LibVaipakam.Loan memory oldLoan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        oldLoan.collateralAmount = 0;
-        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, oldLoan);
-
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(uint256(2e18)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
-        vm.clearMockedCalls();
-    }
-
-    /// @dev Covers newExpectedInterest >= oldExpectedInterest (no shortfall) branch.
-    function testRefinanceLoanNoShortfallHigherNewRate() public {
-        // Create a new borrower offer with same rate as original (no shortfall)
-        vm.prank(borrower);
-        uint256 sameRateOfferId = OfferCreateFacet(address(diamond)).createOffer(
-            LibVaipakam.CreateOfferParams({
-                offerType: LibVaipakam.OfferType.Borrower,
-                lendingAsset: mockERC20,
-                amount: PRINCIPAL,
-                interestRateBps: 500,
-                collateralAsset: mockCollateralERC20,
-                collateralAmount: COLLATERAL,
-                durationDays: 30,
-                assetType: LibVaipakam.AssetType.ERC20,
-                tokenId: 0,
-                quantity: 0,
-                creatorRiskAndTermsConsent: true,
-                prepayAsset: mockERC20,
-                collateralAssetType: LibVaipakam.AssetType.ERC20,
-                collateralTokenId: 0,
-                collateralQuantity: 0,
-                allowsPartialRepay: false,
-                allowsPrepayListing: false,
-                allowsParallelSale: false,
-                amountMax: PRINCIPAL,
-                interestRateBpsMax: 500,
-                collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0,
-                useFullTermInterest: false
-            })
-        );
-
-        RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, sameRateOfferId);
-        _acceptBorrowerOffer(sameRateOfferId);
-
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL));
-        MockVaultWithdraw.deliversAll(address(diamond));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(uint256(2e18)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, sameRateOfferId);
-
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
-        vm.clearMockedCalls();
-    }
-
-    // ─── Depth-tiered LTV — post-refinance HF / LTV gate ───────────
-    //
-    // MarketRateWidgetAndDepthTieredLTV.md §4.2 + commit `<this PR>`:
-    // when `depthTieredLtvEnabled` is true, the post-refinance HF
-    // floor relaxes from `≥ 1.5e18` to `≥ 1e18` and the LTV cap
-    // becomes `min(loanInitMaxLtvBps, effectiveTierMaxInitLtvBps[
-    // getEffectiveLiquidityTier(collateral)])` — exactly mirroring
-    // `LoanFacet._checkInitialLtvAndHf`. These tests pin both regimes
-    // by flipping the kill-switch via TestMutatorFacet (the test
-    // fixture doesn't cut ConfigFacet), mocking the LTV / HF /
-    // effective-tier reads through the diamond, and asserting the
-    // expected revert / accept on a full `refinanceLoan` call.
-
-    /// @dev Switch OFF (default): HF = 1.4e18 < legacy 1.5e18 floor
-    ///      → reverts `HealthFactorTooLow`. Same gate as before this
-    ///      commit; ensures backward compatibility.
-    function testRefinanceLoan_TieredOff_RevertsHFBelowLegacyFloor() public {
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL + 10 ether));
-        MockVaultWithdraw.deliversAll(address(diamond));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(uint256(14 * 1e17)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-
-        vm.prank(borrower);
-        vm.expectRevert(IVaipakamErrors.HealthFactorTooLow.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-        vm.clearMockedCalls();
-    }
-
-    /// @dev Switch ON, Tier 1 (cap 50% per library defaults), post-
-    ///      refinance LTV 52% > cap → reverts `InitLtvAboveTier(52%,
-    ///      50%)`. Same shape as the equivalent init-gate test in
-    ///      LoanFacetTest.
-    /// @dev #394 Lever A (Codex #647 round-4) — a replacement loan ADMITTED
-    ///      non-tiered keeps its non-tiered init-LTV cap (the 8000 snapshot) for
-    ///      the refinance gate. Enabling depth-tiering AFTER admission does NOT
-    ///      retroactively tier-gate it: an LTV (5200) above the live tier-1 cap
-    ///      (5000) but below the admission snapshot (8000) must NOT revert —
-    ///      otherwise a governance/tier change between accept and refinanceLoan
-    ///      could strand an accepted replacement the borrower can't close into.
-    function testRefinanceLoan_AdmittedNonTiered_NoRetroactiveTierGate() public {
-        _acceptBorrowerOffer(borrowerOfferId); // admitted non-tiered → snapshot cap = 8000
-        TestMutatorFacet(address(diamond)).setDepthTieredLtvEnabledRaw(true);
-
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL + 10 ether));
-        MockVaultWithdraw.deliversAll(address(diamond));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
-        // 5200: above the live tier-1 cap (5000), below the 8000 admission snapshot.
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5200)));
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(OracleFacet.getEffectiveLiquidityTier.selector, mockCollateralERC20),
-            abi.encode(uint8(1))
-        );
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-        // No revert — the admission snapshot (8000) governs, not the live tier cap.
-        assertEq(
-            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
-            uint8(LibVaipakam.LoanStatus.Repaid),
-            "non-tiered admission snapshot is not retroactively tier-gated at refinance"
-        );
-        vm.clearMockedCalls();
-    }
-
-    /// @dev Switch ON, Tier 3 (cap 73% per library defaults), HF
-    ///      = 1.2e18 — below the legacy 1.5e18 floor but above the
-    ///      relaxed 1e18 floor → refinance succeeds. Confirms the
-    ///      relaxed HF floor is wired through the post-refinance
-    ///      gate (mirrors LoanFacet's
-    ///      `testDepthTier_initGate_hfFloorRelaxedToOne`).
-    function testRefinanceLoan_TieredOn_HFFloorRelaxedToOne() public {
-        // #394 Lever A (Codex #647 round-4) — the refinance gate now reads the
-        // REPLACEMENT loan's admission SNAPSHOT, not the live config. So enable
-        // tiering + set the tiered mocks BEFORE accepting, so the replacement is
-        // ADMITTED under the tiered regime and snapshots the relaxed 1e18 HF
-        // floor (+ the min(assetCap, tierCap) init-LTV cap). LTV 5000 ≤ the
-        // tier-3 cap clears admission; HF 1.2e18 ≥ the relaxed 1.0 floor.
-        TestMutatorFacet(address(diamond)).setDepthTieredLtvEnabledRaw(true);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(uint256(12 * 1e17)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(OracleFacet.getEffectiveLiquidityTier.selector, mockCollateralERC20),
-            abi.encode(uint8(3))
-        );
-        _acceptBorrowerOffer(borrowerOfferId);
-
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL + 10 ether));
-        MockVaultWithdraw.deliversAll(address(diamond));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
-        vm.clearMockedCalls();
-    }
-
-    /// @dev Switch ON, HF = 0.9e18 — below the relaxed 1e18 floor →
-    ///      still reverts `HealthFactorTooLow`. The relaxed floor is
-    ///      "not born already-liquidatable", not "no floor at all".
-    function testRefinanceLoan_TieredOn_RevertsHfBelowOne() public {
-        _acceptBorrowerOffer(borrowerOfferId);
-        TestMutatorFacet(address(diamond)).setDepthTieredLtvEnabledRaw(true);
-
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector), abi.encode(PRINCIPAL + 10 ether));
-        MockVaultWithdraw.deliversAll(address(diamond));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(uint256(9 * 1e17)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(5000)));
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(OracleFacet.getEffectiveLiquidityTier.selector, mockCollateralERC20),
-            abi.encode(uint8(3))
-        );
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-
-        vm.prank(borrower);
-        vm.expectRevert(IVaipakamErrors.HealthFactorTooLow.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
-        vm.clearMockedCalls();
-    }
-
-    // ─── T-092-A (#530) Operational loan netting via wallet path ──────
-    //
-    // The original #530 proposed a vault-first wallet-fallback fund
-    // source for refinance. Codex review caught a real correctness
-    // issue (PR #538 round-1 P2): `protocolTrackedVaultBalance` is an
-    // aggregate counter that includes funds locked in active lender
-    // offers, so a vault-first netting could double-spend committed
-    // funds. The vault-first path was reverted; the wallet path is
-    // retained as the canonical refinance payment source. Operational
-    // netting is preserved because `OfferAcceptFacet` routes the new
-    // principal to the borrower's WALLET on accept, and the refinance
-    // immediately pulls from the same wallet to pay the old loan.
-
-    function test_T092A_RefinanceWalletPath_StandingApprovalNoPopup() public {
-        // T-092-A — the keeper-driven refinance path works without
-        // any borrower-side action at refinance time, because the
-        // standing diamond approval set at consent time covers the
-        // wallet pull. This test exercises the borrower-direct
-        // refinance happy path + asserts the wallet drains by
-        // approximately the payoff amount (principal + interest +
-        // treasury fee).
-        uint256 newLenderOfferId = _acceptBorrowerOffer(borrowerOfferId);
-
-        uint256 borrowerWalletBefore = ERC20(mockERC20).balanceOf(borrower);
-
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(
-            activeLoanId,
-            borrowerOfferId
-        );
-
-        // Wallet drained by the full payoff (the operational loan
-        // netting at work — new principal landed in wallet via
-        // _acceptBorrowerOffer, then refinance pulled it back out).
-        assertLt(
-            ERC20(mockERC20).balanceOf(borrower),
-            borrowerWalletBefore,
-            "borrower wallet must drain by the refinance payoff"
-        );
-        // suppress unused
-        newLenderOfferId;
-    }
-
-    // ─── #411 — refinance over-pay fix (2026-06-12) ───────────────────
-    //
-    // Verifies the old lender receives EXACTLY principal + full-term
-    // interest with NO rate-shortfall addend, even when the new offer
-    // implies a strictly lower full-term yield than the old loan would
-    // have earned. Pre-#411 the math was
-    //   interestPortion = oldFullTermInterest + (oldFullTerm − newFullTerm)
-    // which over-compensated the exiting lender at borrower expense.
-    // Post-fix: interestPortion = oldFullTermInterest, full stop.
-    //
-    // Setup: old loan = PRINCIPAL @ 500 bps for 30 days.
-    //        borrower offer = PRINCIPAL @ 400 bps for 30 days (= lower
-    //        new full-term interest → would have triggered shortfall).
-
-    function test_411_S1003_RefinanceExitingLenderModeAwareNoShortfall() public {
-        uint256 newLenderOfferId = _acceptBorrowerOffer(borrowerOfferId);
-        // #1003 (S7) — the setUp old loan is `useFullTermInterest = false`
-        // (pro-rata / opt-out), so the exiting lender now settles ACCRUED-ONLY
-        // (pro-rata for elapsed days), NOT the old unconditional full-term.
-        // Warp 15 days into the 30-day term so there is a non-zero pro-rata
-        // amount to assert against. The #411 property still holds: NO shortfall
-        // addend on top — the lender receives exactly principal + settlement
-        // interest (mode-aware), minus the treasury cut.
-        vm.warp(block.timestamp + 15 days);
-        uint256 oldProRataInterest =
-            (PRINCIPAL * 500 * 15) / (10_000 * 365);
-        // Treasury split — the active loan was originated under the rev-8
-        // freeze (#1352), so its snapshotted treasury fee is 2% (200 bps).
-        // splitTreasury rounds down on the treasury side, so:
-        uint256 expectedTreasuryCut = (oldProRataInterest * 200) / 10_000;
-        uint256 expectedLenderInterest =
-            oldProRataInterest - expectedTreasuryCut;
-        uint256 expectedLenderDue = PRINCIPAL + expectedLenderInterest;
-
-        // Snapshot old lender's vault balance before refinance.
-        address oldLenderVault = VaultFactoryFacet(address(diamond))
-            .getOrCreateUserVault(lender);
-        uint256 oldLenderVaultBefore =
-            ERC20(mockERC20).balanceOf(oldLenderVault);
-
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(
-            activeLoanId,
-            borrowerOfferId
-        );
-
-        uint256 oldLenderVaultAfter =
-            ERC20(mockERC20).balanceOf(oldLenderVault);
-        uint256 delta = oldLenderVaultAfter - oldLenderVaultBefore;
-
-        assertEq(
-            delta,
-            expectedLenderDue,
-            "exiting lender receives EXACTLY principal + mode-aware settlement interest (pro-rata for an opt-out loan), no shortfall addend (#411 / S7 #1003)"
-        );
-
-        // suppress unused
-        newLenderOfferId;
-    }
-
-    // ─── #1558 — the payoff permit ──────────────────────────────────────
-
-    function _payoff(uint256 loanId, uint256 offerId)
-        internal
-        view
-        returns (uint256 now_, uint256 atGraceEnd, address signer, uint256 maxAmount)
-    {
-        (, now_, atGraceEnd, signer, maxAmount, , , ) =
-            RefinancePayoffFacet(address(diamond)).getRefinancePayoff(loanId, offerId, type(uint256).max);
-    }
-
-    /// @notice The payoff comes through the request's permit, in one pull of
-    ///         exactly the payoff the view states, bound to this loan and this
-    ///         request; the borrower's Diamond allowance is never used, and the
-    ///         permit is gone afterwards.
-    function test_1558_payoff_pullsThroughThePermit_andLeavesNoAllowance() public {
+        // #1558 — the wallet's share is pulled through the request's payoff
+        // permit, never a Diamond allowance, so the borrower holds none.
         vm.prank(borrower);
         ERC20(mockERC20).approve(address(diamond), 0);
-        _acceptBorrowerOffer(borrowerOfferId);
-        vm.warp(block.timestamp + 5 days);
-        (uint256 payoffNow, , address signer, ) = _payoff(activeLoanId, borrowerOfferId);
-        assertEq(signer, borrower, "the borrower's permit is attached");
-        assertGt(payoffNow, PRINCIPAL, "the payoff carries interest");
+        RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, taggedOfferId);
 
-        uint256 callsBefore = MockPermit2(LibPermit2.PERMIT2).callCount();
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+        // The accept pulls the new lender's principal from their WALLET into
+        // their vault, so the new lender holds exactly P there and nothing in
+        // the vault beforehand — the netting then has nothing to hide behind.
+        (newLender, newLenderPk) = makeAddrAndKey("refiNewLender");
+        ERC20Mock(mockERC20).mint(newLender, P);
+        vm.prank(newLender);
+        ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+    }
+
+    // ─── Fixture helpers ──────────────────────────────────────────────
+
+    function _params(
+        LibVaipakam.OfferType offerType,
+        uint256 rateBps,
+        uint256 collateral,
+        uint256 target
+    ) internal view returns (LibVaipakam.CreateOfferParams memory) {
+        return LibVaipakam.CreateOfferParams({
+            offerType: offerType,
+            lendingAsset: mockERC20,
+            amount: P,
+            interestRateBps: rateBps,
+            collateralAsset: mockCollateralERC20,
+            collateralAmount: collateral,
+            durationDays: 30,
+            assetType: LibVaipakam.AssetType.ERC20,
+            tokenId: 0,
+            quantity: 0,
+            creatorRiskAndTermsConsent: true,
+            prepayAsset: mockERC20,
+            collateralAssetType: LibVaipakam.AssetType.ERC20,
+            collateralTokenId: 0,
+            collateralQuantity: 0,
+            allowsPartialRepay: false,
+            allowsPrepayListing: false,
+            allowsParallelSale: false,
+            amountMax: P,
+            interestRateBpsMax: rateBps,
+            collateralAmountMax: collateral,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+            expiresAt: 0,
+            // A refinance request is all-or-nothing; a plain lender offer here
+            // is partial-fillable so the matcher can fill it.
+            fillMode: target != 0 ? LibVaipakam.FillMode.Aon : LibVaipakam.FillMode.Partial,
+            refinanceTargetLoanId: target,
+            useFullTermInterest: false
+        });
+    }
+
+    function _vault(address user) internal returns (address) {
+        return VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user);
+    }
+
+    function _bal(address who) internal view returns (uint256) {
+        return ERC20(mockERC20).balanceOf(who);
+    }
+
+    function _treasury() internal view returns (uint256) {
+        return TreasuryFacet(address(diamond)).getTreasuryBalance(mockERC20);
+    }
+
+    function _accept() internal returns (uint256) {
+        return _signAndAcceptOffer(newLender, newLenderPk, taggedOfferId);
+    }
+
+    /// @dev The old lender's settlement for an opt-out (pro-rata) loan after
+    ///      `elapsed`, within term: interest accrued, its treasury cut, and
+    ///      what the old lender is owed.
+    function _expectedSettlement(uint256 elapsed)
+        internal
+        pure
+        returns (uint256 interest, uint256 treasuryFee, uint256 lenderDue)
+    {
+        interest = (P * OLD_RATE_BPS * elapsed) / (10_000 * 365 days);
+        treasuryFee = (interest * TREASURY_FEE_BPS) / 10_000;
+        lenderDue = P + interest - treasuryFee;
+    }
+
+    /// @dev Reads the one `RefinancePayoffSettled` the recorded logs carry.
+    function _payoffLegs(Vm.Log[] memory logs)
+        internal
+        pure
+        returns (uint256 newLenderToOldLender, uint256 borrowerToOldLender, uint256 borrowerToTreasury)
+    {
+        bool found;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] != RefinanceFacet.RefinancePayoffSettled.selector) continue;
+            require(!found, "one payoff event per refinance");
+            found = true;
+            (newLenderToOldLender, borrowerToOldLender, borrowerToTreasury) =
+                abi.decode(logs[i].data, (uint256, uint256, uint256));
+        }
+        require(found, "RefinancePayoffSettled not emitted");
+    }
+
+    // ─── The netted payoff ────────────────────────────────────────────
+
+    /// @notice The new lender's net principal goes straight to the old lender's
+    ///         vault; the borrower's wallet pays exactly the old loan's interest
+    ///         plus the new loan's initiation fee, and nothing else moves.
+    function test_NetPrincipalPaysOldLender_BorrowerPaysOnlyTheDifference() public {
+        vm.warp(block.timestamp + 15 days);
+        (uint256 interest, uint256 treasuryFee, uint256 lenderDue) = _expectedSettlement(15 days);
+        uint256 lif = (P * LIF_BPS) / 10_000;
+        uint256 matcherCut = (lif * MATCHER_BPS) / 10_000;
+        uint256 net = P - lif;
+
+        uint256 oldLenderVaultBefore = _bal(_vault(lender));
+        uint256 newLenderVaultBefore = _bal(_vault(newLender));
+        uint256 newLenderWalletBefore = _bal(newLender);
+        uint256 borrowerWalletBefore = _bal(borrower);
+        uint256 diamondBefore = _bal(address(diamond));
+        uint256 treasuryBefore = _treasury();
+
+        vm.recordLogs();
+        uint256 newLoanId = _accept();
+        (uint256 a, uint256 b, uint256 d) = _payoffLegs(vm.getRecordedLogs());
+
+        assertEq(a, net, "leg: the whole net principal goes to the old lender");
+        assertEq(b, lenderDue - net, "leg: the borrower tops up the old lender's due");
+        assertEq(d, treasuryFee, "leg: the borrower pays the treasury fee");
+
+        assertEq(_bal(_vault(lender)) - oldLenderVaultBefore, lenderDue, "old lender's vault receives exactly the due");
+        // The principal passes through the new lender's vault: in from their
+        // wallet, out as LIF + net principal, nothing left behind.
+        assertEq(_bal(_vault(newLender)), newLenderVaultBefore, "new lender's vault holds nothing afterwards");
+        assertEq(
+            newLenderWalletBefore - _bal(newLender),
+            P - matcherCut,
+            "new lender's wallet funds the principal and takes back the matcher share"
+        );
+        assertEq(
+            borrowerWalletBefore - _bal(borrower),
+            interest + lif,
+            "borrower pays only the old interest and the initiation fee"
+        );
+        assertEq(
+            _treasury() - treasuryBefore,
+            treasuryFee + lif - matcherCut,
+            "treasury accrues the interest cut and its share of the initiation fee"
+        );
+        // Treasury is the Diamond in this fixture: the Diamond's balance moves
+        // by the treasury's accrual and nothing else, so no leg left funds
+        // sitting in the Diamond.
+        assertEq(_bal(address(diamond)) - diamondBefore, _treasury() - treasuryBefore, "no Diamond-held residue");
 
         MockPermit2 m = MockPermit2(LibPermit2.PERMIT2);
-        assertEq(m.callCount(), callsBefore + 1, "one pull");
-        assertEq(m.lastOwner(), borrower, "from the borrower");
-        (address to, uint256 requested) = m.lastTransferDetails();
-        assertEq(to, address(diamond), "into the Diamond");
-        assertEq(requested, payoffNow, "exactly the payoff the view stated");
-        assertEq(
-            m.lastWitness(),
-            LibRefinancePayoff.witness(activeLoanId, borrowerOfferId),
-            "bound to this loan and this request"
-        );
-        assertEq(m.lastWitnessTypeString(), LibRefinancePayoff.WITNESS_TYPE_STRING, "witness type");
+        assertEq(m.lastOwner(), borrower, "the wallet's share comes from the borrower");
+        (address pulledTo, uint256 pulled) = m.lastTransferDetails();
+        assertEq(pulledTo, address(diamond), "into the Diamond, through the permit");
+        assertEq(pulled, interest + lif, "one pull of exactly the wallet's share");
         assertEq(ERC20(mockERC20).allowance(borrower, address(diamond)), 0, "no Diamond allowance used");
-        (, , address signerAfter, uint256 maxAfter) = _payoff(activeLoanId, borrowerOfferId);
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(oldLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "old loan Repaid in the same transaction"
+        );
+        LibVaipakam.Loan memory newLoan = LoanFacet(address(diamond)).getLoanDetails(newLoanId);
+        assertEq(uint8(newLoan.status), uint8(LibVaipakam.LoanStatus.Active), "new loan Active");
+        assertEq(newLoan.principal, P, "new loan owes the whole principal");
+        assertEq(newLoan.lender, newLender, "new loan funded by the accepting lender");
+        (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
+        assertEq(claim, lenderDue, "old lender's claim is the due");
+    }
+
+    /// @notice The payoff permit needs to cover only the difference: a permit
+    ///         for exactly the old interest plus the initiation fee completes
+    ///         the refinance, and one wei less refuses the whole accept by
+    ///         name, leaving both loans and every balance untouched.
+    function test_PermitCoversOnlyTheDifference() public {
+        vm.warp(block.timestamp + 15 days);
+        (uint256 interest, , ) = _expectedSettlement(15 days);
+        uint256 difference = interest + (P * LIF_BPS) / 10_000;
+
+        RefinancePayoffPermitHelper.attachCapped(
+            address(diamond), borrower, mockERC20, taggedOfferId, difference - 1
+        );
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildTerms(
+            address(diamond), newLender, taggedOfferId, true, 0
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, newLenderPk);
+        uint256 newLenderVaultBefore = _bal(_vault(newLender));
+        vm.prank(newLender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibRefinancePayoff.RefinancePayoffAboveSigned.selector,
+                taggedOfferId,
+                difference,
+                difference - 1
+            )
+        );
+        OfferAcceptFacet(address(diamond)).acceptOffer(taggedOfferId, t, sig);
+        assertEq(_bal(_vault(newLender)), newLenderVaultBefore, "a refused refinance moves nothing");
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(oldLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "old loan still Active after the refused accept"
+        );
+
+        RefinancePayoffPermitHelper.attachCapped(
+            address(diamond), borrower, mockERC20, taggedOfferId, difference
+        );
+        _accept();
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(oldLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "old loan Repaid"
+        );
+        (, , , , , address signerAfter, uint256 maxAfter, , , ) = RefinancePayoffFacet(address(diamond))
+            .getRefinancePayoff(oldLoanId, taggedOfferId, 0);
         assertEq(signerAfter, address(0), "the permit is spent");
         assertEq(maxAfter, 0, "nothing stays authorised");
     }
 
-    /// @notice Without a permit the refinance is refused by name.
-    function test_1558_refinance_refusedWithoutAPermit() public {
-        vm.prank(borrower);
-        RefinancePayoffFacet(address(diamond)).clearRefinancePayoffPermit(borrowerOfferId);
-        _acceptBorrowerOffer(borrowerOfferId);
-        vm.prank(borrower);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                LibRefinancePayoff.RefinancePayoffPermitMissing.selector, borrowerOfferId
-            )
-        );
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+    /// @notice The old lender claims their due out of their vault afterwards.
+    function test_OldLenderClaimsTheDue() public {
+        vm.warp(block.timestamp + 15 days);
+        (, , uint256 lenderDue) = _expectedSettlement(15 days);
+        _accept();
+        uint256 walletBefore = _bal(lender);
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimAsLender(oldLoanId);
+        assertEq(_bal(lender) - walletBefore, lenderDue, "old lender claims exactly the due");
     }
 
-    /// @notice A permit below the payoff refuses the refinance by name.
-    function test_1558_refinance_refusedAboveTheSignedAmount() public {
-        _acceptBorrowerOffer(borrowerOfferId);
-        (uint256 payoffNow, , , ) = _payoff(activeLoanId, borrowerOfferId);
-        RefinancePayoffPermitHelper.attachCapped(
-            address(diamond), borrower, mockERC20, borrowerOfferId, payoffNow - 1
-        );
-        vm.prank(borrower);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                LibRefinancePayoff.RefinancePayoffAboveSigned.selector,
-                borrowerOfferId,
-                payoffNow,
-                payoffNow - 1
-            )
-        );
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+    /// @notice A refinance in the grace window completes, and the late fee it
+    ///         charges reaches the old lender through the same legs: their
+    ///         vault receives the whole recorded claim and the borrower pays
+    ///         the rest of it beyond the net principal.
+    function test_GraceWindow_CompletesAndPaysTheLateFee() public {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(oldLoanId);
+        vm.warp(uint256(l.startTime) + uint256(l.durationDays) * 1 days + 3 days);
+        uint256 net = P - (P * LIF_BPS) / 10_000;
+        uint256 oldLenderVaultBefore = _bal(_vault(lender));
+
+        vm.recordLogs();
+        _accept();
+        (uint256 a, uint256 b, ) = _payoffLegs(vm.getRecordedLogs());
+
+        (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
+        (, , uint256 inTermDue) = _expectedSettlement(30 days);
+        assertGt(claim, inTermDue, "the grace late fee is part of the due");
+        assertEq(_bal(_vault(lender)) - oldLenderVaultBefore, claim, "old lender's vault receives the whole due");
+        assertEq(a, net, "net principal to the old lender");
+        assertEq(b, claim - net, "borrower pays the rest of the due, late fee included");
     }
 
-    /// @notice An expired permit refuses the refinance by name.
-    function test_1558_refinance_refusedOnAnExpiredPermit() public {
+    // ─── Collateral ───────────────────────────────────────────────────
+
+    /// @notice A carry-over refinance keeps the collateral under one lien.
+    function test_CarryOver_CollateralStaysLockedOnce() public {
+        _accept();
+        assertEq(
+            MetricsFacet(address(diamond)).getEncumbered(borrower, mockCollateralERC20, 0),
+            COLLATERAL,
+            "one lien, carried over"
+        );
+    }
+
+    /// @notice A request that pledges fresh collateral returns the old
+    ///         collateral to the borrower, and the payoff nets the same way.
+    function test_FreshPledge_ReturnsOldCollateral() public {
+        uint256 fresh = COLLATERAL + 1 ether;
+        // The fixture's request is the loan's recorded one; this test needs a
+        // fresh-pledge request instead, so cancel the fixture's first (after
+        // the protocol-wide cancel cooldown).
+        vm.warp(block.timestamp + 5 minutes + 1);
+        vm.prank(borrower);
+        OfferCancelFacet(address(diamond)).cancelOffer(taggedOfferId);
+        vm.prank(borrower);
+        taggedOfferId = OfferCreateFacet(address(diamond)).createOffer(
+            _params(LibVaipakam.OfferType.Borrower, NEW_RATE_BPS, fresh, oldLoanId)
+        );
+        assertFalse(
+            OfferCancelFacet(address(diamond)).getOfferDetails(taggedOfferId).refinanceCarryOver,
+            "fresh-pledge request"
+        );
+        RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, taggedOfferId);
+        uint256 walletBefore = ERC20(mockCollateralERC20).balanceOf(borrower);
+        uint256 oldLenderVaultBefore = _bal(_vault(lender));
+
+        _accept();
+
+        assertEq(
+            ERC20(mockCollateralERC20).balanceOf(borrower) - walletBefore,
+            COLLATERAL,
+            "old collateral returned to the borrower"
+        );
+        assertEq(
+            MetricsFacet(address(diamond)).getEncumbered(borrower, mockCollateralERC20, 0),
+            fresh,
+            "only the fresh pledge stays locked"
+        );
+        (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
+        assertEq(_bal(_vault(lender)) - oldLenderVaultBefore, claim, "old lender paid the due");
+    }
+
+    // ─── Sanctions: the old lender is closed out, never bricks the refinance ──
+
+    /// @notice A flagged old lender's proceeds are parked in their existing
+    ///         vault and the frozen-claimant marker is recorded; the borrower's
+    ///         refinance completes.
+    function test_FlaggedOldLender_ParksNotBricks_RecordsMarker() public {
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        // Resolve the old lender's vault BEFORE flagging: creating or
+        // resolving a vault for a flagged address is itself refused.
+        address oldLenderVault = _vault(lender);
+        uint256 oldLenderVaultBefore = _bal(oldLenderVault);
+        m.setFlagged(lender, true);
+
+        _accept();
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(oldLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "refinance completed for a flagged old lender"
+        );
+        (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
+        assertEq(_bal(oldLenderVault) - oldLenderVaultBefore, claim, "proceeds parked in the old lender's vault");
+        assertEq(
+            TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(oldLoanId, true),
+            lender,
+            "frozen old-lender claimant recorded"
+        );
+        assertTrue(
+            ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(lender),
+            "flagged holder registered"
+        );
+    }
+
+    /// @notice A clean old lender records no marker.
+    function test_CleanOldLender_RecordsNoMarker() public {
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        _accept();
+        assertEq(
+            TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(oldLoanId, true),
+            address(0),
+            "no marker for a clean old lender"
+        );
+        assertFalse(ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(lender), "not registered");
+    }
+
+    // ─── The matcher route nets the same way ──────────────────────────
+
+    /// @notice A matched fill pays the old lender from the standing lender
+    ///         offer's funded principal; the borrower pays only the
+    ///         difference and the matcher takes its initiation-fee share.
+    function test_MatchedFill_NetsThePayoff() public {
+        ConfigFacet(address(diamond)).setPartialFillEnabled(true);
+        AdminFacet(address(diamond)).setAutoRefinanceEnabled(true);
+        vm.warp(block.timestamp + 15 days);
+        (uint256 interest, , uint256 lenderDue) = _expectedSettlement(15 days);
+        uint256 lif = (P * LIF_BPS) / 10_000;
+
+        address standing = _provisionFundedActor("refiStandingLender", mockERC20, P);
+        vm.prank(standing);
+        ERC20(mockERC20).approve(_vault(standing), type(uint256).max);
+        vm.prank(standing);
+        uint256 lenderOfferId = OfferCreateFacet(address(diamond)).createOffer(
+            _params(LibVaipakam.OfferType.Lender, NEW_RATE_BPS, COLLATERAL, 0)
+        );
+
+        uint256 oldLenderVaultBefore = _bal(_vault(lender));
+        uint256 borrowerWalletBefore = _bal(borrower);
+        uint256 matcherBefore = _bal(address(this));
+
+        OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, taggedOfferId);
+
+        assertEq(_bal(_vault(lender)) - oldLenderVaultBefore, lenderDue, "old lender paid the due");
+        assertEq(borrowerWalletBefore - _bal(borrower), interest + lif, "borrower pays only the difference");
+        assertEq(_bal(address(this)) - matcherBefore, (lif * MATCHER_BPS) / 10_000, "matcher share");
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(oldLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "old loan Repaid by the fill"
+        );
+    }
+
+    // ─── Risk gates on the replacement ────────────────────────────────
+
+    /// @notice Tiering off: a replacement whose health factor is under the
+    ///         1.5 floor refuses the whole accept.
+    function test_TieredOff_RefusesHFBelowFloor() public {
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
+            abi.encode(uint256(14e17))
+        );
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildTerms(
+            address(diamond), newLender, taggedOfferId, true, 0
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, newLenderPk);
+        vm.prank(newLender);
+        vm.expectRevert(IVaipakamErrors.HealthFactorTooLow.selector);
+        OfferAcceptFacet(address(diamond)).acceptOffer(taggedOfferId, t, sig);
+        vm.clearMockedCalls();
+    }
+
+    /// @notice Tiering on: the floor relaxes to 1.0, so a 1.2 health factor
+    ///         completes, and 0.9 still refuses.
+    function test_TieredOn_HFFloorRelaxedToOne() public {
+        TestMutatorFacet(address(diamond)).setDepthTieredLtvEnabledRaw(true);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getEffectiveLiquidityTier.selector, mockCollateralERC20),
+            abi.encode(uint8(3))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector),
+            abi.encode(uint256(5000))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
+            abi.encode(uint256(9e17))
+        );
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildTerms(
+            address(diamond), newLender, taggedOfferId, true, 0
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, newLenderPk);
+        vm.prank(newLender);
+        vm.expectRevert(IVaipakamErrors.HealthFactorTooLow.selector);
+        OfferAcceptFacet(address(diamond)).acceptOffer(taggedOfferId, t, sig);
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
+            abi.encode(uint256(12e17))
+        );
+        _accept();
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(oldLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "relaxed floor admits HF 1.2"
+        );
+        vm.clearMockedCalls();
+    }
+
+    // ─── Entry points ─────────────────────────────────────────────────
+
+    /// @notice Both completions are reachable only from inside the Diamond.
+    function test_EntriesRefuseExternalCallers() public {
+        vm.expectRevert(RefinanceFacet.OnlyDiamondInternal.selector);
+        RefinanceFacet(address(diamond)).refinanceLoanFromAccept(oldLoanId, taggedOfferId);
+        vm.expectRevert(RefinanceFacet.OnlyDiamondInternal.selector);
+        RefinanceFacet(address(diamond)).refinanceLoanFromMatch(oldLoanId, taggedOfferId);
+    }
+
+    /// @notice The standalone completion is gone: nothing routes its selector.
+    function test_StandaloneCompletionIsRetired() public {
+        (bool ok, bytes memory ret) = address(diamond).call(
+            abi.encodeWithSignature("refinanceLoan(uint256,uint256)", oldLoanId, taggedOfferId)
+        );
+        assertFalse(ok, "retired selector must not route");
+        assertEq(bytes4(ret), bytes4(keccak256("FunctionDoesNotExist()")), "unrouted");
+    }
+
+    /// @notice An untagged Borrower offer is an ordinary new loan: accepting it
+    ///         delivers the net principal to the borrower and leaves the old
+    ///         loan alone.
+    function test_UntaggedBorrowerOffer_IsAnOrdinaryLoan() public {
+        vm.prank(borrower);
+        uint256 plain = OfferCreateFacet(address(diamond)).createOffer(
+            _params(LibVaipakam.OfferType.Borrower, NEW_RATE_BPS, COLLATERAL, 0)
+        );
+        uint256 walletBefore = _bal(borrower);
+        _signAndAcceptOffer(newLender, newLenderPk, plain);
+        assertEq(_bal(borrower) - walletBefore, P - (P * LIF_BPS) / 10_000, "net principal delivered");
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(oldLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "old loan untouched"
+        );
+    }
+
+    // ─── LibRefinanceNetting ──────────────────────────────────────────
+
+    function test_Netting_PredicateIsTaggedBorrowerOffer() public {
+        RefinanceNettingHarness h = new RefinanceNettingHarness();
+        assertTrue(h.isRefinanceAccept(LibVaipakam.OfferType.Borrower, 7), "tagged borrower offer");
+        assertFalse(h.isRefinanceAccept(LibVaipakam.OfferType.Lender, 7), "tagged lender offer");
+        assertFalse(h.isRefinanceAccept(LibVaipakam.OfferType.Borrower, 0), "untagged borrower offer");
+    }
+
+    function test_Netting_TakeReturnsWhatWasParked() public {
+        RefinanceNettingHarness h = new RefinanceNettingHarness();
+        address a = makeAddr("nettingLender");
+        address t = makeAddr("nettingAsset");
+        assertEq(h.parkThenTake(5, a, t, 42, a, t), 42, "parked amount");
+        (uint256 two, uint256 one) = h.parkTwoOffers(a, t);
+        assertEq(two, 22, "records are per offer");
+        assertEq(one, 11, "records are per offer");
+    }
+
+    /// @dev The parked net is promised to the old lender, so every free-balance
+    ///      read (the withdraw guard, the Full tariff's) treats it as held until
+    ///      the payoff takes it. Without this, a VPFI-principal refinance whose
+    ///      new lender opted into Full could pay `C*` out of the parked net and
+    ///      leave the payoff short.
+    function test_Netting_ParkedAmountIsNotFree() public {
+        RefinanceNettingHarness h = new RefinanceNettingHarness();
+        address a = makeAddr("nettingLender");
+        address t = makeAddr("nettingAsset");
+        uint256[6] memory r = h.parkedAndFree(a, t, 100);
+        assertEq(r[0], 33, "both parks counted");
+        assertEq(r[1], 67, "parked amount hidden from free balance");
+        assertEq(r[2], 22, "a take releases only its own record");
+        assertEq(r[3], 78, "free balance recovers by the amount taken");
+        assertEq(r[4], 0, "nothing parked after both takes");
+        assertEq(r[5], 100, "free balance whole again");
+        assertEq(h.parkedAndFree(a, t, 20)[1], 0, "free balance floors at zero");
+    }
+
+    function test_Netting_RefusesMissingOrMismatchedRecord() public {
+        RefinanceNettingHarness h = new RefinanceNettingHarness();
+        address a = makeAddr("nettingLender");
+        address t = makeAddr("nettingAsset");
+        address other = makeAddr("nettingOther");
+        vm.expectRevert(abi.encodeWithSelector(LibRefinanceNetting.RefinanceNetPrincipalMissing.selector, 5));
+        h.take(5, a, t);
+        vm.expectRevert(abi.encodeWithSelector(LibRefinanceNetting.RefinanceNetPrincipalMissing.selector, 5));
+        h.parkThenTake(5, a, t, 42, other, t);
+        vm.expectRevert(abi.encodeWithSelector(LibRefinanceNetting.RefinanceNetPrincipalMissing.selector, 5));
+        h.parkThenTake(5, a, t, 42, a, other);
+        vm.expectRevert(abi.encodeWithSelector(LibRefinanceNetting.RefinanceNetPrincipalMissing.selector, 5));
+        h.takeTwice(5, a, t, 42);
+        vm.expectRevert(abi.encodeWithSelector(LibRefinanceNetting.RefinanceNetPrincipalAlreadyParked.selector, 5));
+        h.parkTwice(5, a, t, 42);
+    }
+
+    // ─── #1558 — the payoff permit ────────────────────────────────────
+
+    /// @dev The view's figures for the fixture request, sized to the grace end.
+    function _payoff()
+        internal
+        view
+        returns (uint256 payoffNow, uint256 payoffAtGraceEnd, uint256 shareNow, uint256 shareAtGraceEnd)
+    {
+        (, payoffNow, payoffAtGraceEnd, shareNow, shareAtGraceEnd, , , , , ) = RefinancePayoffFacet(address(diamond))
+            .getRefinancePayoff(oldLoanId, taggedOfferId, type(uint256).max);
+    }
+
+    /// @dev The accept the fixture lender would send, expecting `err`.
+    function _acceptExpectingRevert(bytes memory err) internal {
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildTerms(
+            address(diamond), newLender, taggedOfferId, true, 0
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, newLenderPk);
+        vm.prank(newLender);
+        vm.expectRevert(err);
+        OfferAcceptFacet(address(diamond)).acceptOffer(taggedOfferId, t, sig);
+    }
+
+    /// @notice The view states the wallet's share as the payoff less the
+    ///         request's amount net of the initiation fee at the live rate,
+    ///         and the accept pulls exactly that share: one rule for the
+    ///         figure and the pull.
+    function test_1558_walletShare_isThePayoffLessTheNetPrincipal() public {
+        vm.warp(block.timestamp + 15 days);
+        uint256 net = P - (P * LIF_BPS) / 10_000;
+        (uint256 payoffNow, uint256 payoffEnd, uint256 shareNow, uint256 shareEnd) = _payoff();
+        assertEq(shareNow, payoffNow - net, "share now = payoff less the net principal");
+        assertEq(shareEnd, payoffEnd - net, "share at grace end = payoff then less the net principal");
+        assertGt(shareEnd, shareNow, "the share grows with the payoff");
+        // A request about to be posted (no stored offer) is sized as one for
+        // the outstanding principal, which is what the fixture request asks.
+        (, , , uint256 unpostedShare, , , , , , ) = RefinancePayoffFacet(address(diamond))
+            .getRefinancePayoff(oldLoanId, 0, 0);
+        assertEq(unpostedShare, shareNow, "an unposted request is sized for the outstanding principal");
+
+        _accept();
+        (, uint256 pulled) = MockPermit2(LibPermit2.PERMIT2).lastTransferDetails();
+        assertEq(pulled, shareNow, "the accept pulls exactly the share the view stated");
+    }
+
+    /// @notice Without a permit the refinance accept is refused by name.
+    function test_1558_accept_refusedWithoutAPermit() public {
+        vm.prank(borrower);
+        RefinancePayoffFacet(address(diamond)).clearRefinancePayoffPermit(taggedOfferId);
+        _acceptExpectingRevert(
+            abi.encodeWithSelector(LibRefinancePayoff.RefinancePayoffPermitMissing.selector, taggedOfferId)
+        );
+    }
+
+    /// @notice An expired permit refuses the refinance accept by name.
+    function test_1558_accept_refusedOnAnExpiredPermit() public {
         uint256 deadline = block.timestamp + 1 hours;
         vm.prank(borrower);
         RefinancePayoffFacet(address(diamond)).setRefinancePayoffPermit(
-            borrowerOfferId, type(uint256).max, 7, deadline, hex"01"
+            taggedOfferId, type(uint256).max, 7, deadline, hex"01"
         );
-        _acceptBorrowerOffer(borrowerOfferId);
         vm.warp(deadline + 1);
-        vm.prank(borrower);
-        vm.expectRevert(
+        _acceptExpectingRevert(
             abi.encodeWithSelector(
-                LibRefinancePayoff.RefinancePayoffPermitExpired.selector, borrowerOfferId, deadline
+                LibRefinancePayoff.RefinancePayoffPermitExpired.selector, taggedOfferId, deadline
             )
         );
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
     }
 
     /// @notice Only the creator of a borrower offer may attach a permit, and
@@ -1745,63 +781,54 @@ contract RefinanceFacetTest is Test {
     function test_1558_setPermit_refusals() public {
         vm.prank(newLender);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                LibRefinancePayoff.RefinancePayoffNotRequestCreator.selector, borrowerOfferId
-            )
+            abi.encodeWithSelector(LibRefinancePayoff.RefinancePayoffNotRequestCreator.selector, taggedOfferId)
         );
         RefinancePayoffFacet(address(diamond)).setRefinancePayoffPermit(
-            borrowerOfferId, 1 ether, 1, block.timestamp + 1, hex"01"
+            taggedOfferId, 1 ether, 1, block.timestamp + 1, hex"01"
         );
         vm.startPrank(borrower);
         vm.expectRevert(LibRefinancePayoff.RefinancePayoffPermitInvalid.selector);
         RefinancePayoffFacet(address(diamond)).setRefinancePayoffPermit(
-            borrowerOfferId, 0, 1, block.timestamp + 1, hex"01"
+            taggedOfferId, 0, 1, block.timestamp + 1, hex"01"
         );
         vm.expectRevert(LibRefinancePayoff.RefinancePayoffPermitInvalid.selector);
         RefinancePayoffFacet(address(diamond)).setRefinancePayoffPermit(
-            borrowerOfferId, 1 ether, 1, block.timestamp - 1, hex"01"
+            taggedOfferId, 1 ether, 1, block.timestamp - 1, hex"01"
         );
         vm.expectRevert(LibRefinancePayoff.RefinancePayoffPermitInvalid.selector);
         RefinancePayoffFacet(address(diamond)).setRefinancePayoffPermit(
-            borrowerOfferId, 1 ether, 1, block.timestamp + 1, ""
+            taggedOfferId, 1 ether, 1, block.timestamp + 1, ""
         );
         vm.stopPrank();
         // Clearing is the signer's alone.
         vm.prank(newLender);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                LibRefinancePayoff.RefinancePayoffNotRequestCreator.selector, borrowerOfferId
-            )
+            abi.encodeWithSelector(LibRefinancePayoff.RefinancePayoffNotRequestCreator.selector, taggedOfferId)
         );
-        RefinancePayoffFacet(address(diamond)).clearRefinancePayoffPermit(borrowerOfferId);
+        RefinancePayoffFacet(address(diamond)).clearRefinancePayoffPermit(taggedOfferId);
     }
 
     /// @notice Against Uniswap's REAL Permit2: a permit signed the way a
-    ///         wallet signs it (literal EIP-712 types, not the contract's own
-    ///         strings) pays off the old loan, Permit2 burns its nonce, and
-    ///         the borrower's Diamond allowance is never used.
-    function test_1558_realPermit2_signedPermitPaysOff_andBurnsTheNonce() public {
+    ///         wallet signs it, for exactly the wallet's share at grace end,
+    ///         pays the refinance, Permit2 burns its nonce, and the borrower's
+    ///         Diamond allowance is never used.
+    function test_1558_realPermit2_signedPermitPaysTheShare_andBurnsTheNonce() public {
         RefinancePayoffPermitHelper.installReal();
-        vm.prank(borrower);
-        ERC20(mockERC20).approve(address(diamond), 0);
-        _acceptBorrowerOffer(borrowerOfferId);
         vm.warp(block.timestamp + 5 days);
-        (, , uint256 atGraceEnd, , , , , ) =
-            RefinancePayoffFacet(address(diamond)).getRefinancePayoff(activeLoanId, borrowerOfferId, type(uint256).max);
+        (, , , uint256 shareEnd) = _payoff();
         uint256 nonce = 0x1558 << 8 | 3;
         RefinancePayoffPermitHelper.attachSigned(
-            address(diamond), borrowerPk, mockERC20, activeLoanId, borrowerOfferId,
-            atGraceEnd, nonce, block.timestamp + 1 days
+            address(diamond), borrowerPk, mockERC20, oldLoanId, taggedOfferId,
+            shareEnd, nonce, block.timestamp + 1 days
         );
-        (, , , , , , , bool spentBefore) =
-            RefinancePayoffFacet(address(diamond)).getRefinancePayoff(activeLoanId, borrowerOfferId, type(uint256).max);
+        (, , , , , , , , , bool spentBefore) = RefinancePayoffFacet(address(diamond))
+            .getRefinancePayoff(oldLoanId, taggedOfferId, type(uint256).max);
         assertFalse(spentBefore, "the nonce is live while the permit is attached");
 
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+        _accept();
 
         assertEq(
-            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
+            uint8(LoanFacet(address(diamond)).getLoanDetails(oldLoanId).status),
             uint8(LibVaipakam.LoanStatus.Repaid),
             "the old loan is paid off"
         );
@@ -1811,48 +838,46 @@ contract RefinanceFacetTest is Test {
     }
 
     /// @notice Against the real Permit2, a permit signed for ANOTHER loan
-    ///         cannot pay off this one: the witness is part of the digest.
+    ///         cannot pay this refinance: the witness is part of the digest.
     function test_1558_realPermit2_permitForAnotherLoan_isRefused() public {
         RefinancePayoffPermitHelper.installReal();
-        _acceptBorrowerOffer(borrowerOfferId);
         RefinancePayoffPermitHelper.attachSigned(
-            address(diamond), borrowerPk, mockERC20, activeLoanId + 1, borrowerOfferId,
+            address(diamond), borrowerPk, mockERC20, oldLoanId + 1, taggedOfferId,
             type(uint256).max, 11, block.timestamp + 1 days
         );
-        vm.prank(borrower);
-        vm.expectRevert(abi.encodeWithSignature("InvalidSigner()"));
-        RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
+        _acceptExpectingRevert(abi.encodeWithSignature("InvalidSigner()"));
     }
 
-    /// @notice The view's payoff at the end of grace is what a refinance at
-    ///         that moment pays: one rule for the figure and the pull.
-    function test_1558_payoffAtGraceEnd_isWhatARefinanceThenPays() public {
-        (, uint256 atGraceEnd, , ) = _payoff(activeLoanId, borrowerOfferId);
-        (, , , uint256 graceEnd) = LoanFacet(address(diamond)).getLoanDeadlines(activeLoanId);
+    /// @notice The view's figures at the end of grace are what a refinance at
+    ///         that moment pays.
+    function test_1558_figuresAtGraceEnd_areWhatARefinanceThenPays() public {
+        (, uint256 payoffEnd, , uint256 shareEnd) = _payoff();
+        (, , , uint256 graceEnd) = LoanFacet(address(diamond)).getLoanDeadlines(oldLoanId);
         vm.warp(graceEnd);
-        (uint256 payoffThen, , , ) = _payoff(activeLoanId, borrowerOfferId);
-        assertEq(payoffThen, atGraceEnd, "the bound is the payoff at grace end");
+        (uint256 payoffThen, , uint256 shareThen, ) = _payoff();
+        assertEq(payoffThen, payoffEnd, "the payoff bound is the payoff at grace end");
+        assertEq(shareThen, shareEnd, "the share bound is the share at grace end");
     }
 
-    /// @notice `payoffBy` sizes the payoff for the moment the caller names: a
+    /// @notice `by` sizes the figures for the moment the caller names: a
     ///         moment inside grace reads what a refinance then pays, a moment
-    ///         already past reads today's payoff, and a moment past the grace
-    ///         end reads the grace end.
-    function test_1558_payoffBy_isThePayoffAtTheNamedMoment() public {
-        (, , , uint256 graceEnd) = LoanFacet(address(diamond)).getLoanDeadlines(activeLoanId);
+    ///         already past reads today's, and a moment past the grace end
+    ///         reads the grace end.
+    function test_1558_by_isTheNamedMoment() public {
+        (, , , uint256 graceEnd) = LoanFacet(address(diamond)).getLoanDeadlines(oldLoanId);
         uint256 mid = graceEnd - 1 days;
-        (, uint256 nowPayoff, uint256 byMid, , , , , ) = RefinancePayoffFacet(address(diamond))
-            .getRefinancePayoff(activeLoanId, borrowerOfferId, mid);
-        (, , uint256 byPast, , , , , ) = RefinancePayoffFacet(address(diamond))
-            .getRefinancePayoff(activeLoanId, borrowerOfferId, 0);
-        assertEq(byPast, nowPayoff, "a moment already past reads today's payoff");
-        (, , uint256 byLate, , , , , ) = RefinancePayoffFacet(address(diamond))
-            .getRefinancePayoff(activeLoanId, borrowerOfferId, graceEnd + 30 days);
-        (, uint256 atGraceEnd, , ) = _payoff(activeLoanId, borrowerOfferId);
-        assertEq(byLate, atGraceEnd, "past the grace end reads the grace end");
-        assertGt(atGraceEnd, byMid, "the late fee still grows inside grace");
+        (, , , uint256 shareNow_, uint256 shareMid, , , , , ) = RefinancePayoffFacet(address(diamond))
+            .getRefinancePayoff(oldLoanId, taggedOfferId, mid);
+        (, , , , uint256 sharePast, , , , , ) = RefinancePayoffFacet(address(diamond))
+            .getRefinancePayoff(oldLoanId, taggedOfferId, 0);
+        assertEq(sharePast, shareNow_, "a moment already past reads today's share");
+        (, , , , uint256 shareLate, , , , , ) = RefinancePayoffFacet(address(diamond))
+            .getRefinancePayoff(oldLoanId, taggedOfferId, graceEnd + 30 days);
+        (, , , uint256 shareEnd) = _payoff();
+        assertEq(shareLate, shareEnd, "past the grace end reads the grace end");
+        assertGt(shareEnd, shareMid, "the late fee still grows inside grace");
         vm.warp(mid);
-        (uint256 payoffThen, , , ) = _payoff(activeLoanId, borrowerOfferId);
-        assertEq(payoffThen, byMid, "the figure is what a refinance at that moment pays");
+        (, , uint256 shareThen, ) = _payoff();
+        assertEq(shareThen, shareMid, "the figure is what a refinance at that moment pays");
     }
 }

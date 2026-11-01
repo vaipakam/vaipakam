@@ -7,6 +7,7 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibFeeEntitlement} from "../libraries/LibFeeEntitlement.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
+import {LibRefinanceNetting} from "../libraries/LibRefinanceNetting.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 
@@ -71,7 +72,10 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
     ///         HoldOnly-discounted lending-asset LIF (§F3, consent-gated
     ///         hold-tier direct reduction — no VPFI moved), charges it from the
     ///         lender's funded principal split 99/1 treasury/matcher, and
-    ///         delivers `principal − fee` to the borrower. Matcher resolves to
+    ///         delivers `principal − fee` to the borrower — except on a
+    ///         refinance accept, where it parks that amount in the new
+    ///         lender's vault for the payoff instead (#3042,
+    ///         {LibRefinanceNetting}). Matcher resolves to
     ///         the matchOverride bot / injected signed-offer filler /
     ///         msg.sender — read at the ORIGINAL call's context via the stored
     ///         match/signed-offer slots (this method's own `msg.sender` is the
@@ -165,6 +169,21 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
                     VaultWithdrawFailed.selector
                 );
             }
+        }
+
+        // #3042 — a refinance accept does not deliver: the net principal stays
+        // in the new lender's vault and pays the old loan's payoff directly,
+        // in this same transaction (`RefinanceFacet` takes the record parked
+        // here). Same predicate as the chain into `RefinanceFacet`, so a park
+        // is always consumed or the accept reverts.
+        if (LibRefinanceNetting.isRefinanceAccept(offer)) {
+            LibRefinanceNetting.park(
+                offerId,
+                lender,
+                lendingAsset,
+                effectivePrincipal - initiationFee
+            );
+            return;
         }
 
         // Deliver the net principal (principal − fee) to the borrower. #2440 —

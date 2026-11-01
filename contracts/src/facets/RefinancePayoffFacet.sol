@@ -31,18 +31,19 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  */
 contract RefinancePayoffFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors {
     /// @notice Attach a single-use Permit2 permit to your refinance request
-    ///         `offerId`, authorising the refinance to pay off the old loan
-    ///         from your wallet. Replaces any permit already attached.
+    ///         `offerId`, authorising the refinance to pull your wallet's share
+    ///         of the old loan's payoff. Replaces any permit already attached.
     /// @dev    Sign a Permit2 `PermitWitnessTransferFrom` with the Diamond as
     ///         spender, the old loan's principal asset as the token, `maxAmount`
     ///         as the amount, and the witness
     ///         `RefinancePayoff(uint256 loanId,uint256 offerId)` for the loan
     ///         the request refinances (see `LibRefinancePayoff`). Size
-    ///         `maxAmount` with {getRefinancePayoff}'s `payoffBy` for the
-    ///         permit's `deadline`: the most the payoff can reach while the
-    ///         permit can still be used. Whoever
-    ///         completes the refinance uses the permit once, and only for the
-    ///         payoff at that moment; the rest of `maxAmount` is never pulled
+    ///         `maxAmount` with {getRefinancePayoff}'s `walletShareBy` for the
+    ///         permit's `deadline`: the most your wallet's share can reach while
+    ///         the permit can still be used. The new loan's net principal pays
+    ///         the rest of the payoff directly (#3042). The acceptance that
+    ///         completes the refinance uses the permit once, and only for your
+    ///         share at that moment; the rest of `maxAmount` is never pulled
     ///         and nothing stays approved. Permit2 checks the signature when it
     ///         is used, so a bad one fails the refinance, not this call.
     ///         Requires the wallet's one-time ERC-20 approval of Permit2.
@@ -86,8 +87,15 @@ contract RefinancePayoffFacet is DiamondReentrancyGuard, DiamondPausable, IVaipa
     ///                          comes out of it.
     /// @return payoffBy         The payoff at `by`. The payoff never falls as
     ///                          time passes, so this is the most it can be up
-    ///                          to then, and a permit for this much covers any
-    ///                          refinance completed by then.
+    ///                          to then.
+    /// @return walletShareNow   The most the wallet would pay if the request
+    ///                          were accepted now: the payoff less the least
+    ///                          net principal the request delivers to the old
+    ///                          lender (its amount less the initiation fee at
+    ///                          the live rate, before any discount).
+    /// @return walletShareBy    The same at `by`. A permit for this much covers
+    ///                          any acceptance of the request by then, unless
+    ///                          governance raises the initiation-fee rate first.
     /// @return signer           Who signed the attached permit (0 if none).
     /// @return maxAmount        The most the permit allows.
     /// @return nonce            The permit's Permit2 nonce.
@@ -97,6 +105,9 @@ contract RefinancePayoffFacet is DiamondReentrancyGuard, DiamondPausable, IVaipa
     /// @dev    Both payoffs read 0 unless `loanId` is an Active ERC-20 loan.
     ///         A pause that begins after this read moves the grace end, and the
     ///         payoff at a given moment with it; the figure is as of this block.
+    ///         The wallet shares read the request's amount from `offerId`; for
+    ///         an `offerId` with no stored offer (a request about to be
+    ///         posted) they assume a request for the outstanding principal.
     ///         Informational: whether the request could be accepted at all is
     ///         `RefinanceFacet.checkRefinanceRequest`'s answer.
     function getRefinancePayoff(uint256 loanId, uint256 offerId, uint256 by)
@@ -106,6 +117,8 @@ contract RefinancePayoffFacet is DiamondReentrancyGuard, DiamondPausable, IVaipa
             address asset,
             uint256 payoffNow,
             uint256 payoffBy,
+            uint256 walletShareNow,
+            uint256 walletShareBy,
             address signer,
             uint256 maxAmount,
             uint256 nonce,
@@ -120,12 +133,22 @@ contract RefinancePayoffFacet is DiamondReentrancyGuard, DiamondPausable, IVaipa
             loan.status == LibVaipakam.LoanStatus.Active &&
             loan.assetType == LibVaipakam.AssetType.ERC20
         ) {
+            // A request not posted yet (no stored offer) is sized as one
+            // asking for the outstanding principal, which is what a refinance
+            // request asks for.
+            uint256 requestAmount = s.offers[offerId].amount;
+            if (requestAmount == 0) requestAmount = loan.principal;
             payoffNow = LibRefinancePayoff.amountAt(loanId, loan, block.timestamp);
+            walletShareNow = LibRefinancePayoff.walletShareAt(loanId, loan, requestAmount, block.timestamp);
             uint256 graceEnd = LibLoanClock.graceEnd(loan);
             uint256 at = by < graceEnd ? by : graceEnd;
-            payoffBy = at > block.timestamp
-                ? LibRefinancePayoff.amountAt(loanId, loan, at)
-                : payoffNow;
+            if (at > block.timestamp) {
+                payoffBy = LibRefinancePayoff.amountAt(loanId, loan, at);
+                walletShareBy = LibRefinancePayoff.walletShareAt(loanId, loan, requestAmount, at);
+            } else {
+                payoffBy = payoffNow;
+                walletShareBy = walletShareNow;
+            }
         }
         LibVaipakam.RefinancePayoffPermit storage p = s.refinancePayoffPermit[offerId];
         signer = p.signer;

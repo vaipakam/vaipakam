@@ -46,6 +46,13 @@ vi.mock('../contracts/refinancePayoffPermit', () => ({
       route: a.route,
       payoff: reads.payoff,
       bound: reads.bound,
+      // #3042 — the wallet's share today: the payoff less the new loan's
+      // net principal, by the real rule over the mocked payoff.
+      topUp:
+        reads.payoff -
+        ((a.requestAmount as bigint) -
+          ((a.requestAmount as bigint) * BigInt(a.loanInitiationFeeBps as number)) / 10_000n),
+      growth: reads.bound > reads.payoff ? reads.bound - reads.payoff : 0n,
       lastFillable: (a.expiresAt as bigint) - 1n,
       permit: null,
     };
@@ -147,7 +154,8 @@ describe('checkRefinanceRequest', () => {
     expect(plan.kind).toBe('ready');
     expect(plan.payoff).toBe(1_010_000n);
     // The payoff's interest share plus the 0.2% initiation fee on the
-    // new principal, which arrives in the same transaction.
+    // new principal: the new loan's net principal pays the rest inside
+    // the Diamond (#3042).
     expect(plan.topUp).toBe(10_000n + 2_000n);
     expect(plan.headroom).toBe(0n);
     expect(plan.requestExpiry).toBe(reads.now + REQUEST_WINDOW_DAYS * DAY);
@@ -179,6 +187,10 @@ describe('checkRefinanceRequest', () => {
       expiresAt: plan.requestExpiry,
       graceSeconds: 3n * DAY,
       route: 'permit',
+      // #3042 — what sizes the wallet's share: the request asks for the
+      // old principal, at the live fee rate.
+      requestAmount: reads.live.principal,
+      loanInitiationFeeBps: FEES.loanInitiationFeeBps,
     });
     reads.route = 'approval';
     const bridge = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES)) as RefinanceRequestReady;

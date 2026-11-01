@@ -5,8 +5,9 @@
  *  the refinance CARD RENDERS in the grace window. A rendering
  *  assertion passes just as happily against a flow whose submit
  *  reverts, and refinance settles two loans in one transaction — the
- *  old one is paid off from the borrower's wallet while the new one
- *  opens against the SAME collateral, which never unlocks in between.
+ *  old one is paid off by the new loan's net principal plus the rest
+ *  from the borrower's wallet (#3042) while the new one opens against
+ *  the SAME collateral, which never unlocks in between.
  *
  *  What makes this worth a spec rather than a form-fill check is the
  *  carry-over: the contract's predicate compares the offer creator to
@@ -115,14 +116,16 @@ test('refinance request completes: old loan closes, new loan carries the collate
       functionName: 'getRefinancePayoff',
       args: [oldLoanId, requestId, by],
     })) as readonly [
-      `0x${string}`,
-      bigint,
-      bigint,
-      `0x${string}`,
-      bigint,
-      bigint,
-      bigint,
-      boolean,
+      `0x${string}`, // asset
+      bigint, // payoffNow
+      bigint, // payoffBy
+      bigint, // walletShareNow
+      bigint, // walletShareBy
+      `0x${string}`, // signer
+      bigint, // maxAmount
+      bigint, // nonce
+      bigint, // deadline
+      boolean, // nonceSpent
     ];
 
   // The borrower posts the refinance request through the real form
@@ -178,7 +181,7 @@ test('refinance request completes: old loan closes, new loan carries the collate
   const pending = page.getByText(/refinance request #\d+ is live/i);
   await expect(pending).toBeVisible({ timeout: 120_000 });
   // The standing request carries the same disclosure: it can still be
-  // accepted directly, just not filled by the matcher or a keeper.
+  // accepted directly, just not filled by the matcher.
   const pendingCard = page
     .locator('section.card')
     .filter({ has: pending });
@@ -239,24 +242,31 @@ test('refinance request completes: old loan closes, new loan carries the collate
   // nothing yet about the permit: wait for the chain to carry it.
   const lastFillable = (request.expiresAt as bigint) - 1n;
   await expect
-    .poll(async () => (await payoffOf(requestId, lastFillable))[3].toLowerCase(), {
+    .poll(async () => (await payoffOf(requestId, lastFillable))[5].toLowerCase(), {
       message: 'the payoff permit reaches the chain',
       timeout: 90_000,
     })
     .toBe(before.borrower.toLowerCase());
-  const [, , payoffAtLast, signer, maxAmount, , deadline, nonceSpent] = await payoffOf(
-    requestId,
-    lastFillable,
-  );
+  const [, , payoffAtLast, , shareAtLast, signer, maxAmount, , deadline, nonceSpent] =
+    await payoffOf(requestId, lastFillable);
   expect(signer.toLowerCase(), 'the borrower signed the payoff permit').toBe(
     before.borrower.toLowerCase(),
   );
   expect(nonceSpent, 'the permit is unused while the request is open').toBe(false);
   expect(deadline, 'the permit lapses with the request').toBe(lastFillable);
+  // #3042 — the permit covers only the wallet's share of the payoff (the
+  // interest and the new loan's initiation fee): the new loan's net
+  // principal pays the old lender inside the Diamond. So the share is far
+  // below the payoff, and the accept below succeeding on a permit capped
+  // there is the end-to-end proof of the netting: a whole-payoff pull
+  // would exceed it and revert.
   expect(
-    maxAmount >= payoffAtLast,
-    'the permit covers the payoff at the last moment a lender can accept',
+    maxAmount >= shareAtLast,
+    'the permit covers the wallet\u2019s share at the last moment a lender can accept',
   ).toBe(true);
+  expect(shareAtLast, 'the wallet\u2019s share is far below the payoff').toBeLessThan(
+    payoffAtLast - before.principal / 2n,
+  );
   expect(await diamondAllowance(), 'posting grants the Diamond no allowance').toBe(
     allowanceBefore,
   );
@@ -308,9 +318,48 @@ test('refinance request completes: old loan closes, new loan carries the collate
   await expect(browsing.page.getByText(/They lock \d/)).toHaveCount(0);
   await browsing.ctx.close();
 
+  const principalHeld = async (): Promise<bigint> =>
+    (await pub.readContract({
+      address: before.principalAsset,
+      abi: ERC20_MIN_ABI,
+      functionName: 'balanceOf',
+      args: [before.borrower],
+    })) as bigint;
+  const walletBefore = await principalHeld();
+  const acceptFrom = await pub.getBlockNumber();
+
   // A different lender accepts it — one transaction that opens the new
   // loan, pays off the old lender and closes the old loan.
   const newLoanId = await acceptOfferDirect('newLender', requestId);
+
+  // The settlement statement names each leg, and the borrower's wallet
+  // paid exactly the two legs it is named for — nothing arrived in it and
+  // went back out.
+  const settled = await pub.getContractEvents({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    eventName: 'RefinancePayoffSettled',
+    args: { oldLoanId },
+    fromBlock: acceptFrom,
+  });
+  expect(settled, 'one settlement statement for the refinance').toHaveLength(1);
+  const legs = settled[0].args as {
+    newLoanId: bigint;
+    newLenderToOldLender: bigint;
+    borrowerToOldLender: bigint;
+    borrowerToTreasury: bigint;
+  };
+  expect(legs.newLoanId).toBe(newLoanId);
+  expect(legs.newLenderToOldLender, 'the net principal pays the old lender').toBeGreaterThan(0n);
+  expect(legs.newLenderToOldLender).toBeLessThan(before.principal);
+  expect(
+    walletBefore - (await principalHeld()),
+    'the borrower\u2019s wallet paid only its named legs',
+  ).toBe(legs.borrowerToOldLender + legs.borrowerToTreasury);
+  expect(
+    legs.borrowerToOldLender + legs.borrowerToTreasury,
+    'the wallet\u2019s share fits inside the permit it signed',
+  ).toBeLessThanOrEqual(maxAmount);
   expect(newLoanId, 'refinance must open a DIFFERENT loan').not.toBe(oldLoanId);
 
   const oldAfter = await loanOf(oldLoanId);
@@ -318,7 +367,7 @@ test('refinance request completes: old loan closes, new loan carries the collate
   // #1558 — the acceptance used the permit (it is gone once used) and
   // left the Diamond no allowance.
   expect(
-    (await payoffOf(requestId, 0n))[3],
+    (await payoffOf(requestId, 0n))[5],
     'the acceptance consumed the payoff permit',
   ).toBe('0x0000000000000000000000000000000000000000');
   expect(await diamondAllowance(), 'the refinance leaves the Diamond no allowance').toBe(

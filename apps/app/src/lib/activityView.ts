@@ -83,6 +83,9 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   BackstopAbsorbedLoan: { label: 'Loan absorbed by backstop', category: 'loan-default', priority: 88 },
   LoanExtended: { label: 'Loan extended', category: 'loan-modify', priority: 75 },
   LoanRefinanced: { label: 'Loan refinanced', category: 'loan-modify', priority: 85 },
+  // #3042 — the refinance's settlement statement (each leg of the old
+  // loan's payoff); low priority so LoanRefinanced represents the tx.
+  RefinancePayoffSettled: { label: 'Loan refinanced', category: 'loan-modify', priority: 10 },
   LoanPreclosedDirect: { label: 'Loan closed early', category: 'loan-close', priority: 85 },
   // A claim is the user's OWN final action and must outrank the
   // LoanSettled (85) the same tx emits (Codex #1171 r2): ClaimFacet

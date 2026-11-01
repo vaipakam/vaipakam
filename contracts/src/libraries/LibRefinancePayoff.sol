@@ -7,12 +7,13 @@ import {LibEntitlement} from "./LibEntitlement.sol";
 
 /**
  * @title  LibRefinancePayoff
- * @notice #1558: how the borrower pays off the old loan when a refinance
- *         completes. The borrower signs a single-use Permit2 permit for the
- *         payoff and attaches it to their refinance request. Whoever completes
- *         the refinance (the lender who accepts the request, the matcher, a
- *         keeper or the borrower) uses that permit once. The Diamond never holds
- *         a standing allowance for the payoff.
+ * @notice #1558: how the borrower pays their share of the old loan's payoff
+ *         when a refinance completes. The borrower signs a single-use Permit2
+ *         permit for that share and attaches it to their refinance request.
+ *         The acceptance that completes the refinance (a lender accepting the
+ *         request, or the matcher filling it; #3042 retired every other
+ *         route) uses that permit once. The Diamond never holds a standing
+ *         allowance for the payoff.
  * @dev    WHY. The payoff used to be pulled from the borrower's wallet on a
  *         standing ERC-20 allowance granted when the request was posted,
  *         because the pull runs in a transaction the borrower does not send.
@@ -31,10 +32,15 @@ import {LibEntitlement} from "./LibEntitlement.sol";
  *         permit to the Diamond cannot spend it on another of the borrower's
  *         loans or requests.
  *
- *         ONE PULL. The permit is single-use, so the whole payoff (the exiting
- *         lender's due plus the treasury fee) arrives in the Diamond in one
- *         measured pull. The refinance then sends each share on. A short
- *         arrival is refused, as every wallet pull is.
+ *         ONE PULL, OF THE WALLET'S SHARE. Since #3042 the new lender's net
+ *         principal (the new loan's principal less its initiation fee) pays
+ *         the old lender vault to vault, inside the same transaction, and the
+ *         wallet pays only the rest: the payoff minus that net principal,
+ *         which is the old loan's interest (and any late fee) plus the new
+ *         loan's initiation fee. The permit is single-use, so that share
+ *         arrives in the Diamond in one measured pull, and the refinance sends
+ *         the treasury's fee and the rest of the old lender's due on from
+ *         there. A short arrival is refused, as every wallet pull is.
  *
  *         WHO MAY SET IT. Only the request's creator, and the payoff is drawn
  *         only from the current borrower-position holder. A refinance requires
@@ -74,9 +80,10 @@ library LibRefinancePayoff {
     /// @custom:event-category state-change/consent
     event RefinancePayoffPermitCleared(uint256 indexed offerId, address indexed signer);
 
-    /// @notice A refinance used the permit: `amount` of `asset` came from
-    ///         `payer`'s wallet into the Diamond to pay off `loanId`. The
-    ///         permit's nonce is now spent and the stored permit is gone.
+    /// @notice A refinance used the permit: `amount` of `asset`, the wallet's
+    ///         share of the payoff, came from `payer`'s wallet into the Diamond
+    ///         to pay off `loanId`. The permit's nonce is now spent and the
+    ///         stored permit is gone.
     /// @custom:event-category informational/settlement
     event RefinancePayoffPulled(
         uint256 indexed loanId,
@@ -99,20 +106,23 @@ library LibRefinancePayoff {
     /// @notice The permit on request `offerId` was signed by `signer`, but the
     ///         payoff is drawn from the current borrower-position holder.
     error RefinancePayoffSignerNotHolder(uint256 offerId, address signer, address holder);
-    /// @notice The payoff is more than the permit on request `offerId` allows.
-    error RefinancePayoffAboveSigned(uint256 offerId, uint256 payoff, uint256 maxAmount);
+    /// @notice The wallet's share of the payoff (`amount`) is more than the
+    ///         permit on request `offerId` allows.
+    error RefinancePayoffAboveSigned(uint256 offerId, uint256 amount, uint256 maxAmount);
     /// @notice The permit on request `offerId` expired at `deadline`.
     error RefinancePayoffPermitExpired(uint256 offerId, uint256 deadline);
 
-    /// @notice The payoff a refinance of `loanId` pulls at time `at`: the
-    ///         principal, the interest the exiting lender's settlement prices
-    ///         and any late fee. The treasury's fee comes out of this sum, so
-    ///         it is the whole amount the borrower pays, however the yield fee
+    /// @notice The payoff of `loanId` at time `at`: the principal, the
+    ///         interest the exiting lender's settlement prices and any late
+    ///         fee. The treasury's fee comes out of this sum, so it is the
+    ///         whole amount the refinance pays out, however the yield fee
     ///         resolves (every branch only moves part of the treasury fee to
     ///         the lender).
     /// @dev    `RefinanceFacet`'s settlement distributes exactly this at
-    ///         `block.timestamp`; `RefinancePayoffFacet.getRefinancePayoff`
-    ///         reports it now and at a moment the caller names.
+    ///         `block.timestamp`, from the new lender's net principal and the
+    ///         wallet's share ({walletShareAt});
+    ///         `RefinancePayoffFacet.getRefinancePayoff` reports it now and at a
+    ///         moment the caller names.
     function amountAt(uint256 loanId, LibVaipakam.Loan storage loan, uint256 at)
         internal
         view
@@ -121,6 +131,30 @@ library LibRefinancePayoff {
         return loan.principal
             + LibEntitlement.settlementInterestNet(loan, at)
             + LibVaipakam.calculateLateFeeAt(loanId, at);
+    }
+
+    /// @notice The most the wallet can pay when a request asking for
+    ///         `requestAmount` refinances `loanId` at time `at`: the payoff
+    ///         then, minus the least net principal the accept can deliver to
+    ///         the old lender.
+    /// @dev    The least net principal is `requestAmount` less the initiation
+    ///         fee at the LIVE rate with no discount. A filled principal is
+    ///         never below the request's amount, and a borrower discount or
+    ///         Full tariff only lowers the fee, so the real net is at least
+    ///         this and the real wallet share at most the figure returned. A
+    ///         permit sized to it therefore covers every acceptance by `at`
+    ///         unless governance raises the fee rate first. Floored at zero;
+    ///         the settlement refuses a net above the old lender's due.
+    function walletShareAt(
+        uint256 loanId,
+        LibVaipakam.Loan storage loan,
+        uint256 requestAmount,
+        uint256 at
+    ) internal view returns (uint256) {
+        uint256 payoff = amountAt(loanId, loan, at);
+        uint256 minNet = requestAmount
+            - (requestAmount * LibVaipakam.cfgLoanInitiationFeeBps()) / LibVaipakam.BASIS_POINTS;
+        return payoff > minNet ? payoff - minNet : 0;
     }
 
     /// @notice The witness the permit binds: this loan, through this request.
@@ -170,9 +204,13 @@ library LibRefinancePayoff {
         emit RefinancePayoffPermitCleared(offerId, signer);
     }
 
-    /// @notice Pull the payoff of `loanId` through request `offerId`'s permit:
-    ///         `amount` of `asset` from `holder`'s wallet into the Diamond, in
-    ///         full. Spends the permit.
+    /// @notice Pull the wallet's share of `loanId`'s payoff through request
+    ///         `offerId`'s permit: `amount` of `asset` from `holder`'s wallet
+    ///         into the Diamond, in full. Spends the permit.
+    /// @dev    A zero share asks the wallet for nothing, so it needs no permit:
+    ///         any stored one is discarded (its request is being consumed) and
+    ///         Permit2 is not called. That happens only when the net principal
+    ///         equals the old lender's due and the treasury fee is zero.
     function pull(
         uint256 loanId,
         uint256 offerId,
@@ -181,6 +219,10 @@ library LibRefinancePayoff {
         uint256 amount
     ) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (amount == 0) {
+            delete s.refinancePayoffPermit[offerId];
+            return;
+        }
         LibVaipakam.RefinancePayoffPermit storage p = s.refinancePayoffPermit[offerId];
         if (p.signature.length == 0) revert RefinancePayoffPermitMissing(offerId);
         if (p.signer != holder) revert RefinancePayoffSignerNotHolder(offerId, p.signer, holder);

@@ -180,17 +180,54 @@ export function refinancePayoffOf(live: LoanLive, asOf: bigint): bigint {
   );
 }
 
-/** The standing-approval target for a refinance request: the payoff
- *  at the LAST moment the request is still fillable — the earlier of
- *  its own expiry and the end of the loan's grace window (a lender
- *  can accept any time up to then, and the accept-time pull includes
- *  the late fee AND the still-accruing grace interest AT THAT TIME,
- *  #1189/#1236). Approving only today's
+/** #3042 — what a refinance accept costs the holder's WALLET at `asOf`:
+ *  the payoff minus the new loan's net principal (its principal less the
+ *  borrower's initiation fee), which is the old loan's interest (and any
+ *  late fee) plus the new loan's initiation fee. On a netting Diamond the
+ *  net principal pays the old lender directly and only this is pulled; on
+ *  a Diamond that predates the netting (the approval route's bridge) the
+ *  net principal reaches the wallet first and the whole payoff is pulled,
+ *  so this is still the wallet's net cost and the spare balance it needs.
+ *  The permit route reads the contract's own figure instead.
+ *
+ *  The fee is taken at the LIVE `loanInitiationFeeBps` with no discount,
+ *  so this is the MOST the accept can pull: a borrower hold-tier discount
+ *  only lowers the fee, which raises the net principal and lowers the
+ *  pull. A governance raise of the fee rate after posting raises the
+ *  pull above an approval made before it; the pending card recomputes
+ *  this with the live rate and asks for a fresh approval. */
+export function refinanceWalletPullOf(
+  live: LoanLive,
+  opts: { requestAmount: bigint; loanInitiationFeeBps: number },
+  asOf: bigint,
+): bigint {
+  const fee = (opts.requestAmount * BigInt(opts.loanInitiationFeeBps)) / 10_000n;
+  const netPrincipal = opts.requestAmount - fee;
+  const payoff = refinancePayoffOf(live, asOf);
+  // The contract refuses a net principal above the old lender's due, and
+  // the request amount never exceeds the old principal, so this cannot go
+  // negative; clamp anyway rather than approve a negative figure.
+  return payoff > netPrincipal ? payoff - netPrincipal : 0n;
+}
+
+/** The standing-approval target for a refinance request on the APPROVAL
+ *  route only: the payoff at the LAST moment the request is still
+ *  fillable — the earlier of its own expiry and the end of the loan's
+ *  grace window (a lender can accept any time up to then, and the
+ *  accept-time pull includes the late fee AND the still-accruing grace
+ *  interest AT THAT TIME, #1189/#1236). Approving only today's
  *  figure would strand an otherwise-valid request the moment the
  *  loan crosses maturity; approving this bound keeps the approval
  *  exact against the maximum the contract can ever pull for THIS
  *  request. `expiresAt === 0` means no offer-level expiry — the
- *  grace end alone bounds it. */
+ *  grace end alone bounds it.
+ *
+ *  It is the WHOLE payoff, not the wallet's share, because the approval
+ *  route exists only for a Diamond deployed before #1558 (the bridge
+ *  #3074 removes), and such a Diamond also predates #3042: the new
+ *  principal reaches the borrower's wallet first and the payoff is then
+ *  pulled back out of it in full. The permit route's bound is the
+ *  contract's own `walletShareBy`. */
 export function refinanceApprovalOf(
   live: LoanLive,
   opts: { expiresAt: bigint; graceSeconds: bigint },
