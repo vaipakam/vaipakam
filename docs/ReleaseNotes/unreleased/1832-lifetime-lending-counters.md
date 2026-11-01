@@ -1,4 +1,4 @@
-## Lifetime lending totals are counters, not scans (PR #TBD)
+## Lifetime lending totals are counters, not scans (PR #3085)
 
 The protocol-wide totals for principal lent and interest earned used to be
 computed by reading every loan ever made, on every call. That cost grew with
@@ -16,6 +16,7 @@ closing settlement records its own figure where that figure is final. A forced
 sale records what it recovered. A recovery in kind, or through the liquidation
 fallback and its retry, is not counted, because it settles principal, interest
 and any bonus as one amount and no interest figure can be stated for it.
+Rental fees on NFT loans are rent, not interest, and are not counted.
 
 Two new views expose the counters in each asset's own units, exact and
 unvalued: the list of lending assets, and the two totals for one asset. The
