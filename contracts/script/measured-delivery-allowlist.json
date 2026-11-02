@@ -77,11 +77,6 @@
       "reason": "VPFI repatriation of a stranded return. VPFI recycling is outside #2440's scope (owned by the recycling work)."
     },
     {
-      "site": "src/facets/RewardClaimFacet.sol:RewardClaimFacet._deliverFromDiamond",
-      "moves": 1,
-      "reason": "VPFI reward claim paid to the claimant's wallet (a payout of a recorded claim books nobody by what arrives). Reward custody is outside #2440's scope."
-    },
-    {
       "site": "src/facets/VaultFactoryFacet.sol:VaultFactoryFacet.vaultCreditFromDiamondERC20",
       "moves": 1,
       "reason": "Credit of a VPFI reward or rebate into a user's vault. Every caller passes VPFI (LibVPFIDiscount, LibRewardStaging, RewardClaimFacet), the protocol's own token, which charges no transfer fee. VPFI reward paths are outside #2440's scope."
@@ -110,11 +105,6 @@
       "site": "src/libraries/LibRewardCustody.sol:LibRewardCustody.relocateToHolderUncredited",
       "moves": 1,
       "reason": "Reward-custody move from the Diamond into the holder. It reads both balances around the move and books what arrived. Reward custody is outside #2440's scope."
-    },
-    {
-      "site": "src/libraries/LibRewardStaging.sol:LibRewardStaging._payFromDiamond",
-      "moves": 1,
-      "reason": "VPFI reward claim paid to the claimant's wallet (a payout of a recorded claim books nobody by what arrives). Reward custody is outside #2440's scope."
     },
     {
       "site": "src/libraries/LibServiceCapacity.sol:LibServiceCapacity._chargeArmingFee",

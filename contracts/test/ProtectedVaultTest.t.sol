@@ -13,8 +13,12 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
 import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
+import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
+import {LibDepositoryLedger} from "../src/libraries/LibDepositoryLedger.sol";
 import {LibERC721} from "../src/libraries/LibERC721.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -195,6 +199,33 @@ contract ProtectedVaultTest is Test {
         assertEq(_tracked(user, address(multi), 3), 0);
     }
 
+    function testDepositedAssetsAreListedOnceAndStayListed() public {
+        _deposit20(100 ether);
+        vm.startPrank(user);
+        _depo().depositToVault(K721, address(nft), 7, 0);
+        _depo().depositToVault(K1155, address(multi), 3, 4);
+        _depo().withdrawFromVault(user, K20, address(token), 0, 100 ether, user);
+        vm.stopPrank();
+        _deposit20(1 ether); // a second credit of a listed asset adds nothing
+
+        (address[] memory all, uint256 total) = _depo().getDepositoryAssets(user, 0, 10);
+        assertEq(total, 3);
+        assertEq(all.length, 3);
+        assertEq(all[0], address(token));
+        assertEq(all[1], address(nft));
+        assertEq(all[2], address(multi));
+
+        (address[] memory page, uint256 t2) = _depo().getDepositoryAssets(user, 1, 1);
+        assertEq(t2, 3);
+        assertEq(page.length, 1);
+        assertEq(page[0], address(nft));
+        (address[] memory none,) = _depo().getDepositoryAssets(user, 5, 1);
+        assertEq(none.length, 0);
+        (address[] memory empty, uint256 t3) = _depo().getDepositoryAssets(friend, 0, 10);
+        assertEq(t3, 0);
+        assertEq(empty.length, 0);
+    }
+
     function testUntrackedAssetCannotBeWithdrawnUntilAdopted() public {
         token.mint(_vault(user), 50 ether);
         assertEq(_depo().untrackedHolding(user, K20, address(token), 0), 50 ether);
@@ -333,6 +364,92 @@ contract ProtectedVaultTest is Test {
         vm.warp(block.timestamp + DELAY);
         _prot().finalizeAddAllowlisted(user, friend);
         _queue(1 ether, friend);
+    }
+
+    function testAllowlistAdditionExpiresOneDelayAfterItMatures() public {
+        _enable();
+        vm.prank(user);
+        _prot().addAllowlisted(user, friend);
+        uint256 at = _prot().getAllowlistPendingAt(user, friend);
+        vm.warp(at + DELAY + 1);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.ChangeExpired.selector, at + DELAY));
+        _prot().finalizeAddAllowlisted(user, friend);
+    }
+
+    function testLockVoidsPendingAllowlistAndSignerChanges() public {
+        _enable();
+        _addSigner(s1);
+        vm.startPrank(user);
+        _prot().addAllowlisted(user, friend); // say a thief asked for these
+        _prot().addSigner(user, s2);
+        _prot().requestRemoveSigner(user, s1);
+        vm.stopPrank();
+        vm.prank(s2);
+        _prot().acceptSignerRole(user);
+
+        vm.prank(s1);
+        _prot().lockVault(user);
+        // Every one of them now reads as none, and none can be finalized
+        // once the account unlocks, though all would have matured by then.
+        assertEq(_prot().getAllowlistPendingAt(user, friend), 0);
+        assertEq(_prot().getSignerChange(user, s2).addAt, 0);
+        assertEq(_prot().getSignerChange(user, s1).removeAt, 0);
+        vm.prank(user);
+        _prot().requestUnlock(user);
+        vm.warp(block.timestamp + DELAY);
+        _prot().finalizeSettingChanges(user);
+        assertFalse(_prot().getProtectedAccount(user).locked);
+
+        vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
+        _prot().finalizeAddAllowlisted(user, friend);
+        vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
+        _prot().finalizeAddSigner(user, s2);
+        vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
+        _prot().finalizeRemoveSigner(user, s1);
+
+        // They can be asked for again, and then wait a fresh delay.
+        vm.prank(user);
+        _prot().addAllowlisted(user, friend);
+        assertEq(_prot().getAllowlistPendingAt(user, friend), block.timestamp + DELAY);
+        vm.prank(user);
+        _prot().addSigner(user, s2);
+    }
+
+    function testSwitchOffVoidsPendingChangesForALaterReEnable() public {
+        _enable();
+        vm.startPrank(user);
+        _prot().addAllowlisted(user, friend);
+        _prot().addSigner(user, s2);
+        _prot().requestDisableProtectedMode();
+        vm.stopPrank();
+        vm.warp(block.timestamp + DELAY);
+        _prot().finalizeSettingChanges(user);
+        assertFalse(_prot().getProtectedAccount(user).enabled);
+
+        _enable();
+        vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
+        _prot().finalizeAddAllowlisted(user, friend);
+        vm.prank(s2);
+        vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
+        _prot().acceptSignerRole(user);
+    }
+
+    function testWaitingSwitchOffDoesNotHoldBackOtherDueChanges() public {
+        _deposit20(10 ether);
+        _enable();
+        uint256 id = _queue(1 ether, user);
+        vm.startPrank(user);
+        _prot().setProtectNfts(user, false);
+        _prot().requestDisableProtectedMode();
+        vm.stopPrank();
+        vm.warp(block.timestamp + DELAY);
+        // The switch-off waits for the open row; the other due change applies.
+        _prot().finalizeSettingChanges(user);
+        assertFalse(_prot().getProtectedAccount(user).protectNfts);
+        assertTrue(_prot().getProtectedAccount(user).enabled);
+        _pay().releasePayout(id);
+        _prot().finalizeSettingChanges(user);
+        assertFalse(_prot().getProtectedAccount(user).enabled);
     }
 
     function testEarmarkStopsQueueingMoreThanIsFree() public {
@@ -572,5 +689,250 @@ contract ProtectedVaultTest is Test {
         vm.warp(block.timestamp + DELAY);
         _nftFacet().releasePositionTransfer(id);
         assertEq(_nftFacet().ownerOf(1), friend);
+    }
+
+    // ─── The depository ledger ───────────────────────────────────────────
+
+    /// @dev A balance the protocol puts in `who`'s vault for its own purpose
+    ///      (an offer escrow, a rental prepayment, a claim): tracked, never
+    ///      credited to the depository ledger.
+    function _protocolPlaces20(address who, uint256 amount) internal {
+        token.mint(who, amount);
+        vm.prank(who);
+        token.approve(address(diamond), type(uint256).max);
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultDepositERC20(who, address(token), amount);
+    }
+
+    function testProtocolPlacedBalanceIsNotWithdrawable() public {
+        _protocolPlaces20(user, 50 ether);
+        assertEq(_depo().freeHolding(user, K20, address(token), 0), 50 ether);
+        assertEq(_depo().withdrawableNow(user, K20, address(token), 0), 0);
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.AmountExceedsFree.selector, 1, 0));
+        _depo().withdrawFromVault(user, K20, address(token), 0, 1, user);
+
+        _deposit20(10 ether);
+        assertEq(_depo().withdrawableNow(user, K20, address(token), 0), 10 ether);
+        vm.prank(user);
+        _depo().withdrawFromVault(user, K20, address(token), 0, 10 ether, user);
+        assertEq(_depo().getDepositoryHolding(user, address(token), 0), 0);
+        assertEq(_tracked(user, address(token), 0), 50 ether);
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.AmountExceedsFree.selector, 1, 0));
+        _depo().withdrawFromVault(user, K20, address(token), 0, 1, user);
+    }
+
+    function testProtocolPlacedNftIsNotWithdrawable() public {
+        // A lent or pledged NFT the protocol pulled into the vault.
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultDepositERC721(user, user, address(nft), 7);
+        assertEq(_tracked(user, address(nft), 7), 1);
+        assertEq(_depo().withdrawableNow(user, K721, address(nft), 7), 0);
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.AmountExceedsFree.selector, 1, 0));
+        _depo().withdrawFromVault(user, K721, address(nft), 7, 1, user);
+    }
+
+    function testPayoutKeptInLockedVaultBecomesTheOwners() public {
+        _protocolPlaces20(user, 10 ether);
+        _enable();
+        vm.prank(user);
+        _prot().lockVault(user);
+        // A settlement paying the locked owner's wallet stays in the vault ...
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(user, address(token), user, 4 ether);
+        // ... and is theirs to withdraw once unlocked.
+        assertEq(_depo().getDepositoryHolding(user, address(token), 0), 4 ether);
+        vm.prank(user);
+        _prot().requestUnlock(user);
+        vm.warp(block.timestamp + DELAY);
+        _prot().finalizeSettingChanges(user);
+        assertEq(_depo().withdrawableNow(user, K20, address(token), 0), 4 ether);
+    }
+
+    function testCancelledProtocolPayoutIsCreditedToTheOwner() public {
+        _protocolPlaces20(user, 10 ether);
+        _enable();
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(user, address(token), user, 4 ether);
+        uint256 id = _pay().getPendingPayoutIds(user)[0];
+        assertEq(_depo().withdrawableNow(user, K20, address(token), 0), 0);
+        vm.prank(user);
+        _pay().cancelPayout(id);
+        assertEq(_depo().withdrawableNow(user, K20, address(token), 0), 4 ether);
+    }
+
+    function testCancelledOwnWithdrawalIsCreditedBack() public {
+        _deposit20(10 ether);
+        _enable();
+        uint256 id = _queue(6 ether, user);
+        assertEq(_depo().getDepositoryHolding(user, address(token), 0), 4 ether);
+        vm.prank(user);
+        _pay().cancelPayout(id);
+        assertEq(_depo().getDepositoryHolding(user, address(token), 0), 10 ether);
+        assertEq(_depo().withdrawableNow(user, K20, address(token), 0), 10 ether);
+    }
+
+    function testPaymentToProtectedWalletIsCreditedToItsVault() public {
+        _protocolPlaces20(friend, 5 ether);
+        _enable();
+        address userVault = _vault(user);
+        vm.expectEmit(address(diamond));
+        emit LibProtectedAccount.PaymentCreditedToVault(user, address(token), 0, 5 ether, 5 ether);
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(friend, address(token), user, 5 ether);
+        assertEq(token.balanceOf(user), 1_000 ether);
+        assertEq(token.balanceOf(userVault), 5 ether);
+        assertEq(_tracked(friend, address(token), 0), 0);
+        assertEq(_tracked(user, address(token), 0), 5 ether);
+        assertEq(_depo().withdrawableNow(user, K20, address(token), 0), 5 ether);
+    }
+
+    function testNftPaidToProtectedWalletIsCreditedToItsVault() public {
+        nft.mint(friend, 8);
+        vm.prank(friend);
+        nft.setApprovalForAll(address(diamond), true);
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultDepositERC721(friend, friend, address(nft), 8);
+        _enable();
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultWithdrawERC721(friend, address(nft), 8, user);
+        assertEq(nft.ownerOf(8), _vault(user));
+        assertEq(_tracked(user, address(nft), 8), 1);
+        assertEq(_depo().withdrawableNow(user, K721, address(nft), 8), 1);
+    }
+
+    function testVaultAcceptsAnNftFromAnotherVaipakamVaultOnly() public {
+        address mine = _vault(user);
+        address other = _vault(friend);
+        assertEq(_depo().getVaultOwner(other), friend);
+        assertEq(_depo().getVaultOwner(friend), address(0));
+        assertEq(
+            VaipakamVaultImplementation(mine).onERC721Received(other, other, 1, ""),
+            IERC721Receiver.onERC721Received.selector
+        );
+        assertEq(
+            VaipakamVaultImplementation(mine).onERC1155Received(other, other, 1, 5, ""),
+            IERC1155Receiver.onERC1155Received.selector
+        );
+        vm.expectRevert(VaipakamVaultImplementation.UnauthorizedNFTSender.selector);
+        VaipakamVaultImplementation(mine).onERC721Received(friend, friend, 1, "");
+    }
+
+    function testEscapeIsBoundedByTheDepositoryLedger() public {
+        _protocolPlaces20(user, 10 ether);
+        _deposit20(3 ether);
+        AdminFacet(address(diamond)).pause();
+        vm.warp(block.timestamp + LibProtectedAccount.ESCAPE_GRACE);
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.AmountExceedsFree.selector, 10 ether, 3 ether));
+        _pay().escapeWithdraw(K20, address(token), 0, 10 ether);
+        vm.prank(user);
+        _pay().escapeWithdraw(K20, address(token), 0, 3 ether);
+        // The 3 deposited came back; the 10 the protocol placed stayed.
+        assertEq(token.balanceOf(user), 1_000 ether);
+        assertEq(_tracked(user, address(token), 0), 10 ether);
+    }
+
+    function testSpendDrawsTheDepositoryLedgerDownFirst() public {
+        DepositoryLedgerHarness h = new DepositoryLedgerHarness();
+        h.credit(user, address(token), 0, 10);
+        h.spend(user, address(token), 0, 4);
+        assertEq(h.holding(user, address(token), 0), 6);
+        h.spend(user, address(token), 0, 100);
+        assertEq(h.holding(user, address(token), 0), 0);
+        h.spend(user, address(token), 0, 1); // saturating, never reverts
+        assertEq(h.withdrawable(user, address(token), 0, 5), 0);
+        h.credit(user, address(token), 0, 9);
+        assertEq(h.withdrawable(user, address(token), 0, 5), 5);
+        vm.expectRevert(abi.encodeWithSelector(LibDepositoryLedger.DepositoryHoldingExceeded.selector, 10, 9));
+        h.debit(user, address(token), 0, 10);
+    }
+
+    // ─── Round-1 review fixes ────────────────────────────────────────────
+
+    function testRepeatLockByOwnerKeepsTheSignerOrigin() public {
+        _enable();
+        _threeSigners();
+        vm.prank(s1);
+        _prot().lockVault(user);
+        vm.prank(user);
+        _prot().lockVault(user);
+        assertEq(_prot().getProtectedAccount(user).lockedBy, s1);
+        vm.prank(user);
+        vm.expectRevert(LibProtectedAccount.OwnerCannotCancelWhileSignerLock.selector);
+        _prot().proposeReplacement(user, friend);
+    }
+
+    function testApprovalsOfAClearedRoundDoNotCarryOver() public {
+        _enable();
+        _threeSigners();
+        vm.prank(s1);
+        _prot().proposeReplacement(user, nominee);
+        (LibVaipakam.ReplacementProposal memory p,,) = _prot().getReplacement(user);
+        uint32 firstRound = p.round;
+
+        // Switching off clears the account; switching on again starts over.
+        vm.prank(user);
+        _prot().requestDisableProtectedMode();
+        vm.warp(block.timestamp + DELAY);
+        _prot().finalizeSettingChanges(user);
+        _enable();
+        _threeSigners();
+
+        vm.prank(s2);
+        _prot().proposeReplacement(user, friend);
+        (p,,) = _prot().getReplacement(user);
+        assertGt(p.round, firstRound);
+        // s1's approval of the cleared round does not count for this one:
+        // s1 may approve, and only now is the majority reached.
+        vm.prank(s1);
+        _prot().approveReplacement(user);
+        (p,,) = _prot().getReplacement(user);
+        assertTrue(p.readyAt != 0);
+    }
+
+    function testRetiredAccountProtectsPositionNftsEvenIfNotChosen() public {
+        vm.prank(address(diamond));
+        _nftFacet().mintNFT(user, 1, 1, 0, true, LibVaipakam.LoanPositionStatus.OfferCreated);
+        vm.prank(user);
+        _prot().enableProtectedMode(DELAY, false);
+        assertEq(uint8(_nftFacet().positionLock(1)), uint8(LibERC721.LockReason.None));
+        _threeSigners();
+        vm.prank(s1);
+        _prot().proposeReplacement(user, nominee);
+        vm.prank(s2);
+        _prot().approveReplacement(user);
+        vm.warp(block.timestamp + DELAY);
+        _prot().finalizeReplacement(user);
+        // The old wallet still holds the token but can no longer move it.
+        assertEq(uint8(_nftFacet().positionLock(1)), uint8(LibERC721.LockReason.ProtectedOwner));
+        vm.prank(user);
+        vm.expectRevert();
+        _nftFacet().transferFrom(user, thief, 1);
+    }
+}
+
+/// @dev Exposes `LibDepositoryLedger` on its own storage for the unit test.
+contract DepositoryLedgerHarness {
+    function credit(address u, address a, uint256 id, uint256 n) external {
+        LibDepositoryLedger.credit(u, a, id, n);
+    }
+
+    function debit(address u, address a, uint256 id, uint256 n) external {
+        LibDepositoryLedger.debit(u, a, id, n);
+    }
+
+    function spend(address u, address a, uint256 id, uint256 n) external {
+        LibDepositoryLedger.spend(u, a, id, n);
+    }
+
+    function holding(address u, address a, uint256 id) external view returns (uint256) {
+        return LibDepositoryLedger.holding(u, a, id);
+    }
+
+    function withdrawable(address u, address a, uint256 id, uint256 free) external view returns (uint256) {
+        return LibDepositoryLedger.withdrawable(u, a, id, free);
     }
 }

@@ -7,6 +7,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
+import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -87,8 +88,7 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
         address proxy = LibVaipakam.storageSlot().userVaipakamVaults[owner];
         if (proxy == address(0)) revert NoVaultForProtectedAccount(owner);
         received = LibDelivery.pushMeasured(token, proxy, amount);
-        LibVaipakam.recordVaultDeposit(owner, token, received);
-        emit LibProtectedAccount.PaymentCreditedToVault(owner, token, amount, received);
+        LibProtectedAccount.creditPayment(owner, token, 0, amount, received);
     }
 
     /**
@@ -185,9 +185,11 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
      *         queued payouts keep releasing during the same window
      *         ({releasePayout}); its new payouts still queue through
      *         `VaultDepositoryFacet.withdrawFromVault`, which is not
-     *         pause-gated for that reason. Bounded exactly like any payout by
-     *         the tracked ledger minus liens and earmarks; nothing a loan
-     *         holds can leave.
+     *         pause-gated for that reason. Bounded like the depository
+     *         withdraw: by the depository ledger (what the user deposited,
+     *         adopted or was paid into the vault) and by the tracked ledger
+     *         minus liens and earmarks; nothing a loan, offer or claim holds
+     *         can leave.
      * @param kind    `AssetType` as a uint8.
      * @param asset   The token.
      * @param tokenId Zero for an ERC-20.
@@ -196,6 +198,13 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
     function escapeWithdraw(uint8 kind, address asset, uint256 tokenId, uint256 amount) external nonReentrant {
         if (!_escapeOpen()) revert LibProtectedAccount.EscapeClosed();
         if (LibProtectedAccount.isEnabled(msg.sender)) revert EscapeNotForProtected(msg.sender);
+        if (kind == uint8(LibVaipakam.AssetType.ERC20)) tokenId = 0;
+        if (kind == uint8(LibVaipakam.AssetType.ERC721)) amount = 1;
+        // The route below enforces the free holding; this bounds the escape by
+        // what is the user's own.
+        uint256 own = LibDepositoryLedger.holding(msg.sender, asset, tokenId);
+        if (amount > own) revert LibProtectedAccount.AmountExceedsFree(amount, own);
+        LibDepositoryLedger.debit(msg.sender, asset, tokenId, amount);
         LibProtectedAccount.setDepositoryContext(true);
         _pay(kind, msg.sender, asset, tokenId, amount, msg.sender);
         LibProtectedAccount.setDepositoryContext(false);

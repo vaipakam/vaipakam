@@ -2411,7 +2411,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// @dev Selectors for `VaultDepositoryFacet` — the depository vault: deposit, withdraw, adopt, disown and the upgrade pin.
     function _getVaultDepositorySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](14);
+        s = new bytes4[](18);
         s[0] = VaultDepositoryFacet.adoptUntracked.selector;
         s[1] = VaultDepositoryFacet.adoptionAckTextHash.selector;
         s[2] = VaultDepositoryFacet.adoptionDigest.selector;
@@ -2426,6 +2426,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[11] = VaultDepositoryFacet.untrackedHolding.selector;
         s[12] = VaultDepositoryFacet.vaultBannedSource.selector;
         s[13] = VaultDepositoryFacet.withdrawFromVault.selector;
+        s[14] = VaultDepositoryFacet.withdrawableNow.selector;
+        s[15] = VaultDepositoryFacet.getDepositoryHolding.selector;
+        s[16] = VaultDepositoryFacet.getDepositoryAssets.selector;
+        s[17] = VaultDepositoryFacet.getVaultOwner.selector;
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {

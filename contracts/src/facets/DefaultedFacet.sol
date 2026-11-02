@@ -451,6 +451,9 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                         ),
                         VaultWithdrawFailed.selector
                     );
+                    // The lender's claim pays this token out of the lender's
+                    // vault, which is bounded by the tracked ledger.
+                    LibVaipakam.recordVaultDeposit(loan.lender, loan.collateralAsset, loan.collateralTokenId, 1);
                 } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
@@ -462,6 +465,9 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                             lenderVault
                         ),
                         VaultWithdrawFailed.selector
+                    );
+                    LibVaipakam.recordVaultDeposit(
+                        loan.lender, loan.collateralAsset, loan.collateralTokenId, loan.collateralQuantity
                     );
                 }
                 LibSanctionedLock.endMoveOut(s);

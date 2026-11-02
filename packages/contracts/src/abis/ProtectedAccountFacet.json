@@ -522,7 +522,7 @@
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "c",
         "type": "tuple",
         "internalType": "struct LibVaipakam.ProtectedSignerChange",
         "components": [
@@ -538,6 +538,11 @@
           },
           {
             "name": "removeAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "epoch",
             "type": "uint64",
             "internalType": "uint64"
           }

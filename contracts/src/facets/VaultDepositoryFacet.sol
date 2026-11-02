@@ -9,6 +9,7 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
+import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable, LibPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -41,11 +42,14 @@ interface IVaultRoutes {
  *         run protected account mode: deposit, withdraw, adopt an asset that
  *         arrived outside the protocol, disown one, and pin the vault's
  *         implementation.
- * @dev    Every exit is bounded by the one free-holding rule the protocol's
- *         own payouts use: the tracked holding minus every lien
- *         (`encumbered`) minus the protected-mode earmark. Every balance a
- *         loan, an offer, an intent or a reserve holds is a lien in that one
- *         ledger, so nothing purpose-bound can leave through this facet.
+ * @dev    The withdraw is bounded twice: by the depository ledger
+ *         (`LibDepositoryLedger`: what the owner deposited, adopted or was
+ *         paid into the vault, less what they withdrew or spent), and by the
+ *         free-holding rule the protocol's own payouts use (the tracked
+ *         holding minus every lien minus the protected-mode earmark). A
+ *         balance a loan, an offer, a claim or a reserve holds never enters
+ *         the depository ledger, so it cannot leave through this facet
+ *         whether or not it is liened.
  *
  *         Deposits come only from the depositor's own wallet into the
  *         depositor's own vault. An asset that arrives in a vault any other
@@ -178,15 +182,18 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
             revert InvalidAssetKind(kind);
         }
         LibProtectedAccount.setDepositoryContext(false);
+        LibDepositoryLedger.credit(msg.sender, asset, tokenId, amount);
         emit VaultDeposited(msg.sender, asset, kind, tokenId, amount);
     }
 
     /**
-     * @notice Withdraw a FREE asset from `account`'s vault to `recipient`.
+     * @notice Withdraw an asset that is yours from `account`'s vault to
+     *         `recipient`.
      * @dev    Caller: the account's own wallet, or, for a retired protected
-     *         account, its controller. Free = tracked holding minus liens
-     *         minus earmark; anything a loan, offer, intent or reserve holds
-     *         is refused. Without protected mode the asset is paid at once to
+     *         account, its controller. Bounded by {withdrawableNow}: the
+     *         depository holding, never more than the free holding (tracked
+     *         minus liens minus earmark). Anything a loan, offer, claim,
+     *         intent or reserve holds is refused. Without protected mode the asset is paid at once to
      *         any `recipient`. With it, the payout is QUEUED: `recipient`
      *         must be the manager wallet or an allowlisted destination, the
      *         account must not be locked, and the asset leaves after the delay
@@ -216,9 +223,14 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
         if (kind == uint8(LibVaipakam.AssetType.ERC20)) tokenId = 0;
         if (kind == uint8(LibVaipakam.AssetType.ERC721)) amount = 1;
         if (amount == 0) revert AmountZero();
-        if (LibProtectedAccount.isEnabled(account)) {
-            uint256 free = freeHolding(account, kind, asset, tokenId);
+        {
+            uint256 free = withdrawableNow(account, kind, asset, tokenId);
             if (amount > free) revert LibProtectedAccount.AmountExceedsFree(amount, free);
+        }
+        // Debited when asked for, paid or queued: a queued payout that is
+        // later cancelled is credited back (`LibProtectedAccount.cancelPayout`).
+        LibDepositoryLedger.debit(account, asset, tokenId, amount);
+        if (LibProtectedAccount.isEnabled(account)) {
             queuedId = LibProtectedAccount.queuePayout(account, kind, asset, tokenId, amount, recipient);
             emit VaultWithdrawRequested(account, asset, kind, tokenId, amount, recipient, true);
             return queuedId;
@@ -309,6 +321,7 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
             return;
         }
         LibVaipakam.recordVaultDeposit(msg.sender, asset, tokenId, amount);
+        LibDepositoryLedger.credit(msg.sender, asset, tokenId, amount);
         emit UntrackedAdopted(msg.sender, asset, declaredSource, kind, tokenId, amount, nonce);
     }
 
@@ -371,9 +384,56 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
         return LibVaipakam.storageSlot().vaultPinnedImplementation[user];
     }
 
-    /// @notice What of `asset` / `tokenId` in `user`'s vault may leave now:
-    ///         the tracked holding (never more than the vault holds) minus
-    ///         liens minus earmark.
+    /// @notice What of `asset` / `tokenId` in `user`'s vault
+    ///         {withdrawFromVault} may take now: the depository holding, never
+    ///         more than {freeHolding}.
+    function withdrawableNow(address user, uint8 kind, address asset, uint256 tokenId)
+        public
+        view
+        returns (uint256)
+    {
+        if (kind == uint8(LibVaipakam.AssetType.ERC20)) tokenId = 0;
+        return LibDepositoryLedger.withdrawable(user, asset, tokenId, freeHolding(user, kind, asset, tokenId));
+    }
+
+    /// @notice `user`'s depository holding of `asset` / `tokenId`: what they
+    ///         deposited, adopted or were paid into the vault, less what they
+    ///         withdrew or spent from it (see `LibDepositoryLedger`). Part of
+    ///         it may be committed for now (an earmarked payout, a vault-backed
+    ///         offer); {withdrawableNow} is what may leave.
+    function getDepositoryHolding(address user, address asset, uint256 tokenId) external view returns (uint256) {
+        return LibDepositoryLedger.holding(user, asset, tokenId);
+    }
+
+    /// @notice The user `vault` was created for, or zero if `vault` is not a
+    ///         Vaipakam vault. A vault reads it to accept an NFT delivered by
+    ///         another Vaipakam vault (only the Diamond can make a vault move
+    ///         anything, so such a delivery is always a protocol move).
+    function getVaultOwner(address vault) external view returns (address user) {
+        return LibVaipakam.storageSlot().vaultUserOf[vault];
+    }
+
+    /// @notice A page of the asset contracts ever credited to `user`'s
+    ///         depository holding (deposits, adoptions, payments into the
+    ///         vault), in first-credit order, and the list's length. Lets the
+    ///         app find a deposited asset that no loan or offer names. An
+    ///         asset stays listed after its holding returns to zero; read the
+    ///         holding for what is there now. The list names the contract
+    ///         only, not an NFT's token ids.
+    function getDepositoryAssets(address user, uint256 offset, uint256 limit)
+        external
+        view
+        returns (address[] memory page, uint256 total)
+    {
+        return LibDepositoryLedger.assets(user, offset, limit);
+    }
+
+    /// @notice What of `asset` / `tokenId` in `user`'s vault is not held by a
+    ///         lien or an earmark: the tracked holding (never more than the
+    ///         vault holds) minus liens minus earmark. It counts balances the
+    ///         protocol keeps there for a loan, offer or claim without a lien,
+    ///         so it is an upper bound, not what the owner may withdraw (that
+    ///         is {withdrawableNow}).
     function freeHolding(address user, uint8 kind, address asset, uint256 tokenId) public view returns (uint256) {
         uint256 tracked = LibVaipakam.trackedHolding(user, asset, tokenId);
         uint256 held = _chainHolding(user, kind, asset, tokenId);
