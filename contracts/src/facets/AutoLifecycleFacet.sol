@@ -848,11 +848,15 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         if (block.timestamp > graceEndNow) revert ExtensionGraceExpired();
 
         // ── Auth: keeper-side bit + Tier-1 sanctions on all parties ──
-        if (LibAuth.requireKeeperFor(
+        // One verdict for "a keeper acted": it is charged here and rewarded
+        // below. The holder's manager (the holder, or its controller once a
+        // protected-account replacement retired it) is never a keeper.
+        bool keeperActed = LibAuth.requireKeeperFor(
             LibVaipakam.KEEPER_ACTION_EXTEND,
             loan,
             /* lenderSide */ false
-        )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
+        );
+        if (keeperActed) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
         LibVaipakam._assertNotSanctioned(msg.sender);
         address borrowerNftOwner = LibERC721.ownerOf(loan.borrowerTokenId);
         address lenderNftOwner = LibERC721.ownerOf(loan.lenderTokenId);
@@ -1101,8 +1105,9 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // reward exists to compensate THIRD-PARTY housekeeping; a
         // self-extension isn't a keeper service and would otherwise
         // let a borrower drain the 2x gas multiplier in VPFI on every
-        // self-driven extend.
-        if (msg.sender != borrowerNftOwner) {
+        // self-driven extend. The auth verdict above decides it, so the
+        // holder's controller is excluded by the same rule as the holder.
+        if (keeperActed) {
             LibKeeperReward.payVpfiReward(
                 msg.sender,
                 keccak256("extendLoanInPlace"),

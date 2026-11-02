@@ -826,6 +826,26 @@ contract ProtectedVaultTest is Test {
         assertEq(_depo().getVaultPin(user), address(0));
     }
 
+    /// A pin records the implementation the vault runs: a vault behind the
+    /// current template must be upgraded before it can be pinned, and a
+    /// second pin leaves the record as it is.
+    function testPinRecordsTheImplementationTheVaultRuns() public {
+        _deposit20(1 ether);
+        address next = ArtifactDeploy.deploy(type(VaipakamVaultImplementation).name);
+        VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(next);
+        vm.prank(user);
+        vm.expectPartialRevert(VaultDepositoryFacet.VaultNotCurrent.selector);
+        _depo().pinVaultImplementation();
+        vm.prank(user);
+        VaultFactoryFacet(address(diamond)).upgradeUserVault(user);
+        vm.prank(user);
+        _depo().pinVaultImplementation();
+        assertEq(_depo().getVaultPin(user), next, "the pin names the code the vault runs");
+        vm.prank(user);
+        _depo().pinVaultImplementation();
+        assertEq(_depo().getVaultPin(user), next, "a second pin changes nothing");
+    }
+
     function testProtectedPinIsNotClearedByAnUpgrade() public {
         vm.prank(user);
         _depo().pinVaultImplementation();

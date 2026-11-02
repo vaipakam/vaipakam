@@ -993,5 +993,21 @@
     "type": "error",
     "name": "TooManyPendingRows",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultNotCurrent",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "current",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   }
 ]
