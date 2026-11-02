@@ -42,7 +42,15 @@ import {
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import { captureTxError } from '../lib/errors';
-import { ownPayoutRoute, ownWithdrawalVerdict, useProtectedAccount } from '../data/protectedAccount';
+import {
+  ownPayoutRoute,
+  ownWithdrawalVerdict,
+  payoutRoute as routeOf,
+  useProtectedAccount,
+  useProtectedAccounts,
+  type OwnPayoutRoute,
+  type RouteAccount,
+} from '../data/protectedAccount';
 import { payoutRouteText } from '../lib/payoutRouteText';
 import { AssetType } from '../lib/types';
 import {
@@ -72,6 +80,23 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
   // revert the whole batch.
   const protection = useProtectedAccount(address ?? undefined);
   const payoutRoute = ownPayoutRoute(protection.data, protection.isError);
+  // A loan claim pays out of the RECORDED party's vault, so each distinct
+  // other source is read too: its gate catches a payment to its controller.
+  const claimSource = (loan: ClaimableLoan) => (loan.role === 'lender' ? loan.lender : loan.borrower);
+  const otherSources = [
+    ...new Set(
+      loans
+        .map((l) => claimSource(l).toLowerCase())
+        .filter((a) => !address || a !== address.toLowerCase()),
+    ),
+  ] as `0x${string}`[];
+  const sourceReads = useProtectedAccounts(otherSources);
+  const routeFor = (source: string | undefined): OwnPayoutRoute => {
+    const me: RouteAccount = { address: address ?? undefined, snap: protection.data, readFailed: protection.isError };
+    const i = source ? otherSources.indexOf(source.toLowerCase() as `0x${string}`) : -1;
+    if (i < 0) return routeOf(me);
+    return routeOf(me, { address: source, snap: sourceReads[i]?.data, readFailed: Boolean(sourceReads[i]?.isError) });
+  };
   const vpfiWithdrawal = ownWithdrawalVerdict(protection.data, protection.isError);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -138,8 +163,7 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
   const legRouteNotes = new Set<string>();
   for (const i of selectedItems) {
     if (i.kind === 'rewards') continue;
-    const source = i.kind === 'loan-lender' ? i.loan?.lender : i.kind === 'loan-borrower' ? i.loan?.borrower : undefined;
-    const note = payoutRouteText(ownPayoutRoute(protection.data, protection.isError, address ?? undefined, source));
+    const note = payoutRouteText(routeFor(i.loan ? claimSource(i.loan) : undefined));
     if (note) legRouteNotes.add(note);
   }
   if (payoutRoute.kind === 'unread' && selectedItems.length > 0) {

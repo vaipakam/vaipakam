@@ -5,7 +5,7 @@
  * the FIRST thing that would refuse its release.
  */
 import { describe, expect, it } from 'vitest';
-import { additionStatus, ownFundingVerdict, ownPayoutRoute, ownWithdrawalVerdict, MAX_OPEN_ROWS, chainNowOf, hasReplacement, isDue, isManager, payoutStatus, replacementStage, type ProtectedAccountRecord } from './protectedAccount';
+import { additionStatus, ownFundingVerdict, ownPayoutRoute, ownWithdrawalVerdict, payoutRoute, MAX_OPEN_ROWS, chainNowOf, hasReplacement, isDue, isManager, payoutStatus, replacementStage, type ProtectedAccountRecord } from './protectedAccount';
 
 const ACCOUNT = '0x00000000000000000000000000000000000000a1';
 const CONTROLLER = '0x00000000000000000000000000000000000000c2';
@@ -207,12 +207,28 @@ describe('ownPayoutRoute', () => {
   it('queues with protection on, naming the delay and the co-signature', () => {
     expect(ownPayoutRoute(snap({ requireCosign: true }), false)).toEqual({ kind: 'queued', delaySeconds: 172800, cosign: true, to: null });
   });
-  it('is credited to the vault when another account\'s vault pays a protected wallet', () => {
+  describe('a payment out of another account\'s vault', () => {
     const me = '0x00000000000000000000000000000000000000a1';
-    const recordedLender = '0x00000000000000000000000000000000000000b2';
-    expect(ownPayoutRoute(snap({}), false, me, recordedLender).kind).toBe('creditedToVault');
-    expect(ownPayoutRoute(snap({}), false, me, me.toUpperCase().replace('0X', '0x')).kind).toBe('queued');
-    expect(ownPayoutRoute(snap({ enabled: false }), false, me, recordedLender).kind).toBe('wallet');
+    const old = '0x00000000000000000000000000000000000000b2';
+    const off = snap({ enabled: false });
+    it('is credited to a protected recipient\'s vault, queueing nothing', () => {
+      expect(payoutRoute({ address: me, snap: snap({}), readFailed: false }, { address: old, snap: off, readFailed: false }).kind).toBe('creditedToVault');
+      expect(payoutRoute({ address: me, snap: off, readFailed: false }, { address: old, snap: off, readFailed: false }).kind).toBe('wallet');
+    });
+    it('goes through the source account\'s gate when the recipient is its controller', () => {
+      const retired = (over: Partial<ProtectedAccountRecord> = {}) => snap({ retired: true, controller: me, ...over });
+      // Whatever the controller's own protection, the retired account queues it.
+      expect(payoutRoute({ address: me, snap: off, readFailed: false }, { address: old, snap: retired(), readFailed: false })).toEqual({
+        kind: 'queued',
+        delaySeconds: 172800,
+        cosign: false,
+        to: null,
+      });
+      expect(payoutRoute({ address: me, snap: snap({}), readFailed: false }, { address: old, snap: retired({ locked: true }), readFailed: false }).kind).toBe('vault');
+    });
+    it('is unread when the source account is unread', () => {
+      expect(payoutRoute({ address: me, snap: off, readFailed: false }, { address: old, snap: undefined, readFailed: true }).kind).toBe('unread');
+    });
   });
   it('names the controller of a retired account, which the gate pays instead of this wallet', () => {
     const controller = '0x00000000000000000000000000000000000000c0';

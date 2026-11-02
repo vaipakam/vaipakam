@@ -251,8 +251,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // against its source.
   const lenderPayoutRouteNote = payoutRouteText(useOwnPayoutRoute(loan.data?.lender));
   const borrowerPayoutRouteNote = payoutRouteText(useOwnPayoutRoute(loan.data?.borrower));
-  const withPayoutOutcome = (done: string, logs: readonly Log[]) => {
-    const note = payoutOutcomeText(payoutOutcome(logs, payeeAddress), payeeAddress);
+  const withPayoutOutcome = (done: string, logs: readonly Log[], source: string | undefined) => {
+    const note = payoutOutcomeText(payoutOutcome(logs, payeeAddress, source), payeeAddress);
     return note ? `${done} ${note}` : done;
   };
   const queryClient = useQueryClient();
@@ -2264,7 +2264,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         setClaimed((c) => ({ ...c, borrower: true }));
         // Where the payment landed, read from the receipt (protection may
         // have queued it or kept it in the vault), never assumed.
-        setDoneMessage(withPayoutOutcome(copy.claims.claimed, claimReceipt.logs));
+        setDoneMessage(withPayoutOutcome(copy.claims.claimed, claimReceipt.logs, loan.data?.borrower));
       } else {
         await assertWalletNotSanctionedLive(
           publicClient,
@@ -2274,7 +2274,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         setPhase('submitting');
         const { receipt: claimReceipt } = await write('claimAsLender', [BigInt(row.loanId)]);
         setClaimed((c) => ({ ...c, lender: true }));
-        setDoneMessage(withPayoutOutcome(copy.claims.claimed, claimReceipt.logs));
+        setDoneMessage(withPayoutOutcome(copy.claims.claimed, claimReceipt.logs, loan.data?.lender));
       }
       setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
@@ -2524,7 +2524,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       }
       setPhase('submitting');
       const { receipt: releaseReceipt } = await write('partialWithdrawCollateral', [BigInt(row.loanId), wei]);
-      setDoneMessage(withPayoutOutcome(copy.positions.details.done.collateralWithdrawn, releaseReceipt.logs));
+      setDoneMessage(withPayoutOutcome(copy.positions.details.done.collateralWithdrawn, releaseReceipt.logs, loan.data?.borrower));
       setWithdrawInput('');
       setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });

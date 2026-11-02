@@ -16,7 +16,7 @@
  *     an empty queue, because an empty list would hide a payout an attacker
  *     queued.
  */
-import { useQuery } from '@tanstack/react-query';
+import { useQueries, useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { parseEventLogs, type Log } from 'viem';
 import { formatRequestCode } from '@vaipakam/lib/requestCode';
@@ -246,10 +246,19 @@ export type PayoutOutcome =
   | { kind: 'held' }
   | { kind: 'inVault' };
 
-export function payoutOutcome(logs: readonly Log[], account: string | undefined): PayoutOutcome {
+export function payoutOutcome(
+  logs: readonly Log[],
+  account: string | undefined,
+  source?: string,
+): PayoutOutcome {
+  // The gate's events name the PAYING account (`source`, the recipient's own
+  // when omitted); a vault credit names the recipient.
+  const accounts = [account, source].filter((a): a is string => Boolean(a)).map((a) => a.toLowerCase());
   const mine = (eventName: 'PayoutHeldInVault' | 'PayoutQueued' | 'PaymentCreditedToVault') =>
     parseEventLogs({ abi: DIAMOND_ABI_VIEM, eventName, logs: logs as Log[] }).filter(
-      (e) => !account || String((e.args as { account?: string }).account ?? '').toLowerCase() === account.toLowerCase(),
+      (e) =>
+        accounts.length === 0 ||
+        accounts.includes(String((e.args as { account?: string }).account ?? '').toLowerCase()),
     );
   if (mine('PayoutHeldInVault').length > 0) return { kind: 'held' };
   const queued = mine('PayoutQueued');
@@ -279,42 +288,80 @@ export type OwnPayoutRoute =
   // owner withdraws it separately.
   | { kind: 'creditedToVault' };
 
-/**
- * `account` is the wallet being paid and `source` the account whose vault
- * pays it (a loan claim pays from the recorded lender's or borrower's
- * vault). When the two differ, the vault layer credits a protected
- * recipient's vault rather than queueing; when either is unknown the
- * payment is taken as the account's own.
- */
-export function ownPayoutRoute(
-  snap: Pick<ProtectedAccountSnapshot, 'supported' | 'recordFailed' | 'record' | 'payouts' | 'transfers'> | undefined,
-  readFailed: boolean,
-  account?: string,
-  source?: string,
-): OwnPayoutRoute {
+type RouteSnap = Pick<ProtectedAccountSnapshot, 'supported' | 'recordFailed' | 'record' | 'payouts' | 'transfers'>;
+
+/** One account as the route rule reads it: its address and its snapshot. */
+export interface RouteAccount {
+  address?: string;
+  snap: RouteSnap | undefined;
+  readFailed: boolean;
+}
+
+const sameAddress = (a?: string, b?: string) => Boolean(a && b && a.toLowerCase() === b.toLowerCase());
+
+/** The payout gate of `account` for a payment it makes to its own wallet or
+ *  to its controller: wallet (mode off), held in the vault (locked or full),
+ *  or queued, paid to the controller once the account is retired. */
+function gateRoute(account: RouteAccount, recipient: string | undefined): OwnPayoutRoute {
+  const { snap, readFailed } = account;
   if (!snap || readFailed) return { kind: 'unread' };
   if (!snap.supported) return { kind: 'wallet' };
   if (snap.recordFailed || snap.record === null) return { kind: 'unread' };
   const r = snap.record;
   if (!r.enabled) return { kind: 'wallet' };
-  if (account && source && account.toLowerCase() !== source.toLowerCase()) return { kind: 'creditedToVault' };
   if (r.locked) return { kind: 'vault' };
   if (snap.payouts === null || snap.transfers === null) return { kind: 'unread' };
   if (snap.payouts.length + snap.transfers.length >= MAX_OPEN_ROWS) return { kind: 'vault' };
-  return {
-    kind: 'queued',
-    delaySeconds: r.delaySeconds,
-    cosign: r.requireCosign,
-    to: r.retired ? r.controller : null,
-  };
+  const to = r.retired && !sameAddress(r.controller, recipient) ? r.controller : null;
+  return { kind: 'queued', delaySeconds: r.delaySeconds, cosign: r.requireCosign, to };
+}
+
+/**
+ * Where a payment out of `source`'s vault to `recipient`'s wallet lands, in
+ * the contract's order. `source` is the account whose vault pays (a loan
+ * claim pays from the recorded lender's or borrower's vault); omitted, it is
+ * the recipient itself.
+ *  1. The SOURCE account's payout gate catches a payment to its own wallet or
+ *     to its controller (a replacement controller claiming a position the
+ *     retired account still records): wallet, queued in that account, or
+ *     held in its vault.
+ *  2. Otherwise the vault layer credits a protected recipient's own vault,
+ *     queueing nothing.
+ *  3. Otherwise the wallet is paid.
+ */
+export function payoutRoute(recipient: RouteAccount, source?: RouteAccount): OwnPayoutRoute {
+  if (!source || !source.address || !recipient.address || sameAddress(source.address, recipient.address)) {
+    return gateRoute(recipient, recipient.address);
+  }
+  const s = source.snap;
+  if (!s || source.readFailed) return { kind: 'unread' };
+  if (s.supported && (s.recordFailed || s.record === null)) return { kind: 'unread' };
+  if (s.supported && s.record?.enabled && sameAddress(s.record.controller, recipient.address)) {
+    return gateRoute(source, recipient.address);
+  }
+  const r = recipient.snap;
+  if (!r || recipient.readFailed) return { kind: 'unread' };
+  if (!r.supported) return { kind: 'wallet' };
+  if (r.recordFailed || r.record === null) return { kind: 'unread' };
+  return r.record.enabled ? { kind: 'creditedToVault' } : { kind: 'wallet' };
+}
+
+/** A payment out of the account's own vault (or by the protocol) to its own
+ *  wallet. */
+export function ownPayoutRoute(snap: RouteSnap | undefined, readFailed: boolean): OwnPayoutRoute {
+  return gateRoute({ snap, readFailed }, undefined);
 }
 
 /** The connected wallet's payout route, read live, for a payment out of
  *  `source`'s vault (the wallet's own when omitted). */
 export function useOwnPayoutRoute(source?: string): OwnPayoutRoute {
   const { address } = useActiveChain();
-  const q = useProtectedAccount(address ?? undefined);
-  return ownPayoutRoute(q.data, q.isError, address ?? undefined, source);
+  const other = source && !sameAddress(source, address) ? (source as `0x${string}`) : undefined;
+  const [mine, theirs] = useProtectedAccounts([address ?? undefined, other]);
+  return payoutRoute(
+    { address: address ?? undefined, snap: mine.data, readFailed: mine.isError },
+    other ? { address: other, snap: theirs.data, readFailed: theirs.isError } : undefined,
+  );
 }
 
 export function hasReplacement(r: ReplacementState | null): boolean {
@@ -365,12 +412,23 @@ export function replacementStage(
  * Pass another account to act on it as one of its secondary signers.
  */
 export function useProtectedAccount(account?: `0x${string}`) {
-  const { address, walletChain, onSupportedChain } = useActiveChain();
-  const target = account ?? address;
+  const { address } = useActiveChain();
+  const options = useProtectedAccountQueryOptions();
+  return useQuery(options(account ?? address ?? undefined));
+}
+
+/** Several accounts' snapshots at once (one query each, shared cache with
+ *  {useProtectedAccount}), in the order given. */
+export function useProtectedAccounts(accounts: readonly (`0x${string}` | undefined)[]) {
+  const options = useProtectedAccountQueryOptions();
+  return useQueries({ queries: accounts.map((a) => options(a)) });
+}
+
+function useProtectedAccountQueryOptions() {
+  const { walletChain, onSupportedChain } = useActiveChain();
   const chainId = walletChain?.chainId;
   const publicClient = usePublicClient({ chainId });
-
-  return useQuery({
+  return (target: `0x${string}` | undefined) => ({
     queryKey: ['protectedAccount', chainId, target?.toLowerCase()],
     enabled: Boolean(publicClient) && Boolean(target) && onSupportedChain && Boolean(walletChain?.diamondAddress),
     refetchInterval: 30_000,
