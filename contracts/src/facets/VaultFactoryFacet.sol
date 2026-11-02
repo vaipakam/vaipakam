@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
@@ -379,7 +380,9 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      *      Callable by anyone (typically the user themselves via frontend),
      *      except for a vault its owner has pinned
      *      (`VaultDepositoryFacet.pinVaultImplementation`): only the owner
-     *      upgrades a pinned vault, which also clears the pin.
+     *      upgrades a pinned vault, which also clears the pin. A protected
+     *      account's pinned vault is not upgraded here at all: its pin comes
+     *      off only through the delayed unpin, and then anyone may upgrade.
      * @param user The user whose vault to upgrade.
      */
     function upgradeUserVault(address user) external {
@@ -387,7 +390,10 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         address proxy = s.userVaipakamVaults[user];
         if (proxy == address(0)) revert NoVault();
         if (s.vaultPinnedImplementation[user] != address(0)) {
-            if (msg.sender != user) revert VaultPinned(user);
+            // Under protected mode a pin is removed only through the delayed
+            // unpin (`VaultDepositoryFacet.unpinVaultImplementation`), so a
+            // stolen primary key cannot skip that delay with an upgrade.
+            if (msg.sender != user || s.protectedAccount[user].enabled) revert VaultPinned(user);
             delete s.vaultPinnedImplementation[user];
             emit VaultUnpinned(user);
         }
@@ -636,6 +642,10 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         address proxy = _currentVault(s, user);
         IERC20(token).safeTransfer(proxy, amount);
         LibVaipakam.recordVaultDeposit(user, token, amount);
+        // A reward paid into the vault is the owner's, free: it joins the
+        // depository holding, so the owner (or a replacement controller)
+        // can withdraw it like a deposit.
+        LibDepositoryLedger.credit(user, token, 0, amount);
     }
 
     /**
@@ -710,6 +720,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         uint256 amount = fresh + recycled + epoch;
         LibRewardCustody.releaseMeasured(vpfi, holder, proxy, amount);
         LibVaipakam.recordVaultDeposit(user, token, amount);
+        LibDepositoryLedger.credit(user, token, 0, amount);
     }
 
     /// @dev READ-ONLY resolution of an EXISTING vault on a current implementation

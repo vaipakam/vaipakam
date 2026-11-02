@@ -5,6 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
@@ -1241,8 +1242,9 @@ contract RewardCustodyFacet is DiamondAccessControl {
         // anyway, recorded as tracked, and leaves only through the delay.
         if (s.protectedAccount[user].enabled) {
             address proxy = s.userVaipakamVaults[user];
-            LibRewardCustody.releaseMeasured(token, holder, proxy, fresh + recycled + epoch);
-            LibVaipakam.recordVaultDeposit(user, token, fresh + recycled + epoch);
+            uint256 amount = fresh + recycled + epoch;
+            LibRewardCustody.releaseMeasured(token, holder, proxy, amount);
+            LibProtectedAccount.creditPayment(user, token, 0, amount, amount);
             return true;
         }
         LibRewardCustody.releaseMeasured(token, holder, user, fresh + recycled + epoch);

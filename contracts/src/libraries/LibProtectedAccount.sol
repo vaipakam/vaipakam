@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibDepositoryLedger} from "./LibDepositoryLedger.sol";
+import {LibPausable} from "./LibPausable.sol";
 
 /**
  * @title LibProtectedAccount
@@ -243,13 +244,15 @@ library LibProtectedAccount {
     }
 
     /// @notice Whether the escape route is open: the Diamond has launched,
-    ///         is under a manual pause, and has been for `ESCAPE_GRACE`.
-    function escapeOpen(bool manuallyPaused, bool everUnpaused, uint256 pausedSince)
-        internal
-        view
-        returns (bool)
-    {
-        return manuallyPaused && everUnpaused && block.timestamp >= pausedSince + ESCAPE_GRACE;
+    ///         is under a manual pause, and has been paused without a break
+    ///         for `ESCAPE_GRACE`.
+    /// @dev    The one rule every escape-aware route reads. Measured from
+    ///         {LibPausable.manualPauseSince}, which stays put for the whole
+    ///         manual pause, so an auto-pause fired during it cannot restart
+    ///         the grace and hold the escape shut.
+    function escapeOpen() internal view returns (bool) {
+        uint256 since = LibPausable.manualPauseSince();
+        return since != 0 && LibPausable.everUnpaused() && block.timestamp >= since + ESCAPE_GRACE;
     }
 
     // ─── Transient bindings ──────────────────────────────────────────────

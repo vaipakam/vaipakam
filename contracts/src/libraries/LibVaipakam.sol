@@ -8225,13 +8225,28 @@ library LibVaipakam {
         ///      and the change epoch it was requested in. Written only by
         ///      `ProtectedAccountFacet`. Appended — append-only.
         mapping(address => mapping(address => ProtectedAllowlistChange)) protectedAllowlistChange;
-        /// @dev Protected account mode — per owner, the change epoch. A lock
-        ///      and a switch-off each advance it, which voids every pending
-        ///      allowlist addition and signer addition or removal requested
-        ///      before (they are mappings, so they are voided by epoch, not
-        ///      swept). Survives a switch-off. Written only by
-        ///      `ProtectedAccountFacet`. Appended — append-only.
+        /// @dev Protected account mode — per owner, the change epoch. A
+        ///      lock, a primary replacement and a switch-off each advance it,
+        ///      which voids every pending allowlist addition and signer
+        ///      addition or removal requested before (they are mappings, so
+        ///      they are voided by epoch, not swept). Survives a switch-off.
+        ///      Written only by `ProtectedAccountFacet`. Appended —
+        ///      append-only.
         mapping(address => uint64) protectedChangeEpoch;
+        /// @dev Protected account mode — per owner and change epoch, the
+        ///      destinations with a pending allowlist addition (at most
+        ///      `LibProtectedAccount.MAX_ALLOWLIST`), so every pending
+        ///      addition can be listed and cancelled. Keyed by epoch: a new
+        ///      epoch starts from an empty set, so voiding needs no sweep.
+        ///      Written only by `ProtectedAccountFacet`. Appended —
+        ///      append-only.
+        mapping(address => mapping(uint64 => EnumerableSet.AddressSet)) protectedPendingAllowlist;
+        /// @dev Protected account mode — per owner and change epoch, the
+        ///      nominees with a pending signer addition (at most
+        ///      `LibProtectedAccount.MAX_SIGNERS`). Same epoch keying as
+        ///      `protectedPendingAllowlist`. Written only by
+        ///      `ProtectedAccountFacet`. Appended — append-only.
+        mapping(address => mapping(uint64 => EnumerableSet.AddressSet)) protectedPendingSigners;
         /// @dev Protected account mode — every pending payout row by id.
         ///      Written only by `LibProtectedAccount`. Appended — append-only.
         mapping(uint256 => PendingPayout) pendingPayouts;
