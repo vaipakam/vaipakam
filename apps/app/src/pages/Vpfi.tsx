@@ -19,9 +19,11 @@ import { CircleCheck, Coins, LoaderCircle } from 'lucide-react';
 import { useModal } from 'connectkit';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
-import { encodeFunctionData } from 'viem';
+import { encodeFunctionData, parseEventLogs } from 'viem';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { copy } from '../content/copy';
+import { useProtectedAccount } from '../data/protectedAccount';
+import { formatExactSpan } from '../lib/format';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useLatestAttempt } from '../lib/useLatestAttempt';
 import { SUPPORTED_CHAINS } from '../chain/chains';
@@ -68,6 +70,24 @@ export function Vpfi() {
   const { setOpen } = useModal();
   const vpfi = useVpfi();
   const { write } = useDiamondWrite();
+  // Protected account mode decides what a withdrawal does: paid now, or
+  // queued behind the account's delay. It must be READ before a withdrawal
+  // is offered, and a locked or replaced account cannot withdraw here.
+  const protection = useProtectedAccount(address ?? undefined);
+  const protRecord =
+    protection.data && !protection.isError && !protection.data.recordFailed ? protection.data.record : undefined;
+  const protKnown = protRecord !== undefined && protRecord !== null;
+  const protOn = protRecord?.enabled === true;
+  const protBlocked = protOn && (protRecord?.locked === true || protRecord?.retired === true);
+  const withdrawRefusal =
+    !address || protection.isLoading
+      ? null
+      : !protKnown
+        ? copy.vpfi.withdrawProtectionUnknown
+        : protBlocked
+          ? copy.vpfi.withdrawProtectionBlocked
+          : null;
+  const withdrawReady = protKnown && !protBlocked;
   const termsBlocked = useTermsBlockNonExitWrites();
   const permit2 = usePermit2Signing();
   const { data: walletClient } = useWalletClient();
@@ -145,15 +165,20 @@ export function Vpfi() {
         whenThisEnds: copy.vpfi.receiptDeposit.whenThisEnds,
       };
     }
+    if (!withdrawReady) return null;
     return {
-      youReceive: copy.vpfi.withdrawYouReceive(amtStr),
+      youReceive: protOn
+        ? `${copy.vpfi.withdrawQueuedYouReceive(amtStr, formatExactSpan(protRecord?.delaySeconds ?? 0))}${
+            protRecord?.requireCosign ? ` ${copy.vpfi.withdrawQueuedCosign}` : ''
+          }`
+        : copy.vpfi.withdrawYouReceive(amtStr),
       youLock: copy.vpfi.nothing,
       youMayOwe: copy.vpfi.nothing,
       youCanLose: `${copy.vpfi.receiptWithdraw.youCanLoseLead} ${copy.vpfi.withdrawWarning}`,
       fees: copy.vpfi.receiptWithdraw.fees,
       whenThisEnds: copy.vpfi.receiptWithdraw.whenThisEnds,
     };
-  }, [action, amountWei, overMax]);
+  }, [action, amountWei, overMax, withdrawReady, protOn, protRecord]);
 
   // #1028 item 2 — advisory pre-sign dry run of the exact vault
   // action calldata. Deposits approve first, so the zero-allowance
@@ -316,8 +341,13 @@ export function Vpfi() {
         setDone(copy.vpfi.depositDone);
       } else {
         setPhase('submitting');
-        await write('withdrawVPFIFromVault', [amountWei]);
-        setDone(copy.vpfi.withdrawDone);
+        if (!withdrawReady) throw new Error(withdrawRefusal ?? copy.vpfi.withdrawProtectionUnknown);
+        const { receipt: txReceipt } = await write('withdrawVPFIFromVault', [amountWei]);
+        // The receipt says what happened: a queued payout (protection on)
+        // or a payment now; never assume the wallet was paid.
+        const queued =
+          parseEventLogs({ abi: DIAMOND_ABI_VIEM, eventName: 'PayoutQueued', logs: txReceipt.logs }).length > 0;
+        setDone(queued ? copy.vpfi.withdrawQueuedDone : copy.vpfi.withdrawDone);
       }
       setAmount('');
       setReviewing(false);
@@ -775,6 +805,10 @@ export function Vpfi() {
               />
             </div>
 
+            {action === 'withdraw' && withdrawRefusal ? (
+              <p className="muted" role="status">{withdrawRefusal}</p>
+            ) : null}
+
             {reviewing && receipt ? (
               <div style={{ marginTop: 8 }}>
                 <ReviewReceipt data={receipt} />
@@ -805,7 +839,7 @@ export function Vpfi() {
                 type="button"
                 className="btn btn-primary btn-block"
                 style={{ marginTop: 8 }}
-                disabled={!amountWei || overMax}
+                disabled={!amountWei || overMax || (action === 'withdraw' && !withdrawReady)}
                 onClick={() => {
                   setDone(null);
                   setReviewing(true);
@@ -829,7 +863,8 @@ export function Vpfi() {
                   !walletClient ||
                   !publicClient ||
                   !amountWei ||
-                  overMax
+                  overMax ||
+                  (action === 'withdraw' && !withdrawReady)
                 }
                 onClick={() => void runVaultAction()}
               >

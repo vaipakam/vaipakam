@@ -26,7 +26,7 @@ import { useDiamondWrite } from '../contracts/diamond';
 import { DepositoryCard } from '../components/DepositoryCard';
 import { useTokenMeta } from '../contracts/erc20';
 import { captureTxError } from '../lib/errors';
-import { formatDateTime, formatTokenAmount, shortAddress } from '../lib/format';
+import { formatDateTime, formatExactSpan, formatTokenAmount, shortAddress } from '../lib/format';
 import { SECOND_READ_DELAY_MS } from '../chain/receiptSync';
 import { useNowSec } from '../hooks/useNowSec';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
@@ -48,7 +48,9 @@ import {
 const DAY = 86_400;
 
 const when = (at: bigint): string => (at > 0n ? formatDateTime(Number(at)) : copy.protection.unknownWhen);
-const days = (seconds: number): string => copy.protection.delayDays(Math.round(seconds / DAY));
+// The configured delay exactly (the contract accepts any second count in
+// its bounds), never rounded to whole days.
+const days = (seconds: number): string => formatExactSpan(seconds);
 
 /** Shared write runner: busy through the second read, error on failure. */
 function useRunner() {
@@ -151,6 +153,60 @@ function AddressAction({
         {label}
       </button>
       {value !== '' && !valid ? <span className="muted">{copy.protection.invalidAddress}</span> : null}
+    </form>
+  );
+}
+
+/**
+ * Queue a position-NFT transfer out of a protected account. The contract
+ * accepts it only from the account's manager, and for a replaced account
+ * only to that manager (the controller), so the destination is fixed to the
+ * connected wallet there.
+ */
+function QueueTransferAction({
+  fixedTo,
+  disabled,
+  onSubmit,
+}: {
+  fixedTo: `0x${string}` | null;
+  disabled: boolean;
+  onSubmit: (tokenId: bigint, to: `0x${string}`) => void;
+}) {
+  const p = copy.protection;
+  const [tokenId, setTokenId] = useState('');
+  const [to, setTo] = useState('');
+  const idOk = /^[0-9]+$/.test(tokenId.trim());
+  const dest = fixedTo ?? (isAddress(to.trim()) ? (to.trim() as `0x${string}`) : null);
+  return (
+    <form
+      className="cluster"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (idOk && dest) onSubmit(BigInt(tokenId.trim()), dest);
+      }}
+    >
+      <input
+        className="input"
+        inputMode="numeric"
+        value={tokenId}
+        placeholder={p.transferTokenId}
+        aria-label={p.transferTokenId}
+        onChange={(e) => setTokenId(e.target.value)}
+        aria-invalid={tokenId !== '' && !idOk}
+      />
+      {fixedTo ? null : (
+        <input
+          className="input"
+          value={to}
+          placeholder={p.addressPlaceholder}
+          aria-label={p.addressPlaceholder}
+          onChange={(e) => setTo(e.target.value)}
+          aria-invalid={to !== '' && !isAddress(to.trim())}
+        />
+      )}
+      <button type="submit" className="btn btn-secondary" disabled={disabled || !idOk || !dest}>
+        {p.transferQueue}
+      </button>
     </form>
   );
 }
@@ -471,6 +527,16 @@ function AccountView({
               </div>
             ))
           )}
+          {manager && !record.locked && address && (record.protectNfts || record.retired) ? (
+            <>
+              <p>{record.retired ? p.transferQueueRetired : p.transferQueueOwner}</p>
+              <QueueTransferAction
+                fixedTo={record.retired ? address : null}
+                disabled={busy}
+                onSubmit={(id, to) => tx('queuePositionTransfer', [id, to])}
+              />
+            </>
+          ) : null}
         </section>
       ) : null}
 

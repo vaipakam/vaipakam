@@ -45,7 +45,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
 import { ensureAllowance } from '../contracts/erc20';
 import { captureTxError } from '../lib/errors';
-import { formatTokenAmount, parseExactUnits } from '../lib/format';
+import { formatExactSpan, formatTokenAmount, parseExactUnits } from '../lib/format';
 import { ASSET_KIND, useProtectedAccount, type AssetKind } from '../data/protectedAccount';
 
 const NFT_APPROVAL_ABI = [
@@ -369,7 +369,7 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
         </p>
       ) : null}
       {escape ? <p className="banner banner-warn">{d.escapeNote}</p> : null}
-      {protectedOn ? <p>{d.queuedNote(copy.protection.delayDays(Math.round(delaySec / 86_400)))}</p> : null}
+      {protectedOn ? <p>{d.queuedNote(formatExactSpan(delaySec))}</p> : null}
       {protectedOn && record?.requireCosign ? <p>{d.cosignNote}</p> : null}
       {locked ? <p className="banner banner-warn">{d.lockedNote}</p> : null}
       {!protectionKnown && !protection.isLoading ? <p className="muted">{d.protectionUnknown}</p> : null}
