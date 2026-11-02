@@ -80,6 +80,16 @@ export interface SignerEntry {
   removeAt: bigint;
 }
 
+/** A pending allowlist or signer addition, listed by the contract per
+ *  change epoch (a voided one is not listed). It matures at `at` and must be
+ *  applied within one further delay, after which it has expired. */
+export interface PendingAddition {
+  address: `0x${string}`;
+  at: bigint;
+  /** Signer additions only: the nominee accepted from its own key. */
+  accepted?: boolean;
+}
+
 export interface ReplacementState {
   nominee: `0x${string}`;
   proposedBy: `0x${string}`;
@@ -96,6 +106,9 @@ export interface ProtectedAccountSnapshot {
   record: ProtectedAccountRecord | null;
   signers: SignerEntry[] | null;
   allowlist: `0x${string}`[] | null;
+  /** Null when unread: a waiting addition may then be missing. */
+  pendingAllowlist: PendingAddition[] | null;
+  pendingSigners: PendingAddition[] | null;
   payouts: PendingPayoutRow[] | null;
   transfers: PendingTransferRow[] | null;
   replacement: ReplacementState | null;
@@ -136,6 +149,14 @@ export function payoutStatus(
 /** A pending timed change is due once its time has passed (0 = none). */
 export function isDue(at: bigint, chainNow: bigint): boolean {
   return at !== 0n && chainNow >= at;
+}
+
+/** Where a pending addition stands: still waiting, ready to apply, or
+ *  expired (not applied within one further delay after it matured, as the
+ *  contract refuses it then). */
+export function additionStatus(at: bigint, delaySeconds: number, chainNow: bigint): 'waiting' | 'ready' | 'expired' {
+  if (chainNow < at) return 'waiting';
+  return chainNow > at + BigInt(delaySeconds) ? 'expired' : 'ready';
 }
 
 /** Whether `who` is the account's manager: the account itself, or its
@@ -191,6 +212,8 @@ export function useProtectedAccount(account?: `0x${string}`) {
         record: null,
         signers: null,
         allowlist: null,
+        pendingAllowlist: null,
+        pendingSigners: null,
         payouts: null,
         transfers: null,
         replacement: null,
@@ -210,7 +233,8 @@ export function useProtectedAccount(account?: `0x${string}`) {
         return { ...base, recordFailed: true };
       }
 
-      const [signerAddrs, allowlist, payoutIds, transferIds, repl, escapeOpen, vaultPin, bounds] = await Promise.all([
+      const [signerAddrs, allowlist, payoutIds, transferIds, repl, escapeOpen, vaultPin, bounds, pendAllow, pendSign] =
+        await Promise.all([
         soft(read<`0x${string}`[]>('getProtectedSigners', [target])),
         soft(read<`0x${string}`[]>('getAllowlist', [target])),
         soft(read<bigint[]>('getPendingPayoutIds', [target])),
@@ -227,6 +251,13 @@ export function useProtectedAccount(account?: `0x${string}`) {
         soft(read<boolean>('isEscapeOpen')),
         soft(read<`0x${string}`>('getVaultPin', [target])),
         soft(read<readonly [bigint, bigint]>('getProtectedDelayBounds')),
+        soft(read<readonly [readonly `0x${string}`[], readonly bigint[]]>('getPendingAllowlistAdditions', [target])),
+        soft(
+          read<readonly [readonly `0x${string}`[], readonly bigint[], readonly boolean[]]>(
+            'getPendingSignerAdditions',
+            [target],
+          ),
+        ),
       ]);
 
       // A list is known only if EVERY entry under it read: a partial queue
@@ -308,6 +339,10 @@ export function useProtectedAccount(account?: `0x${string}`) {
         },
         signers,
         allowlist,
+        pendingAllowlist: pendAllow ? pendAllow[0].map((address, i) => ({ address, at: BigInt(pendAllow[1][i]) })) : null,
+        pendingSigners: pendSign
+          ? pendSign[0].map((address, i) => ({ address, at: BigInt(pendSign[1][i]), accepted: pendSign[2][i] }))
+          : null,
         payouts: payouts?.sort((a, b) => (a.releaseAt < b.releaseAt ? -1 : 1)) ?? null,
         transfers,
         replacement: repl

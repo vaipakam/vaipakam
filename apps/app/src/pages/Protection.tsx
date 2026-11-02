@@ -32,6 +32,7 @@ import { useNowSec } from '../hooks/useNowSec';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import {
   ASSET_KIND,
+  additionStatus,
   chainNowOf,
   hasReplacement,
   isDue,
@@ -39,6 +40,7 @@ import {
   payoutStatus,
   useProtectedAccount,
   useRetiredAccountOf,
+  type PendingAddition,
   type PendingPayoutRow,
   type ProtectedAccountSnapshot,
 } from '../data/protectedAccount';
@@ -157,6 +159,65 @@ function AddressAction({
  * The account view. `asSigner` renders the signer's actions only; the owner
  * (or the controller of a retired account) gets the manager's.
  */
+/** Every pending allowlist or signer addition, with its deadline and the
+ *  actions the contract allows on it: cancel (while it is still listed,
+ *  expired included) and activate (only between maturing and expiring; a
+ *  signer only once it accepted). */
+function PendingAdditions({
+  rows,
+  delaySeconds,
+  now,
+  busy,
+  canCancel,
+  onCancel,
+  onActivate,
+}: {
+  rows: PendingAddition[] | null;
+  delaySeconds: number;
+  now: bigint;
+  busy: boolean;
+  canCancel: (address: `0x${string}`) => boolean;
+  onCancel: (address: `0x${string}`) => void;
+  onActivate: (address: `0x${string}`) => void;
+}) {
+  const p = copy.protection;
+  if (rows === null) return <p className="banner banner-warn">{p.pendingUnknown}</p>;
+  return (
+    <>
+      {rows.map((r) => {
+        const status = additionStatus(r.at, delaySeconds, now);
+        const waitingOnSigner = r.accepted === false;
+        return (
+          <div key={r.address} className="item-row" data-testid="pending-addition">
+            <span className="row-main">
+              <span className="row-title">{shortAddress(r.address)}</span>
+              <br />
+              <span className="row-sub">
+                {status === 'waiting'
+                  ? p.pendingAddAt(when(r.at))
+                  : status === 'ready'
+                    ? p.pendingAddReady
+                    : p.pendingAddExpired(when(r.at + BigInt(delaySeconds)))}
+                {waitingOnSigner ? ` ${p.signerNotAccepted}` : ''}
+              </span>
+            </span>
+            {canCancel(r.address) ? (
+              <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => onCancel(r.address)}>
+                {p.cancel}
+              </button>
+            ) : null}
+            {status === 'ready' && !waitingOnSigner ? (
+              <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => onActivate(r.address)}>
+                {p.activate}
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 function AccountView({
   account,
   snap,
@@ -213,7 +274,11 @@ function AccountView({
         </h2>
         <p>
           {p.summaryDelay(days(record.delaySeconds))}{' '}
-          {record.protectNfts ? p.summaryNftsOn : p.summaryNftsOff}{' '}
+          {record.retired && !record.protectNfts
+            ? p.summaryNftsRetired
+            : record.protectNfts
+              ? p.summaryNftsOn
+              : p.summaryNftsOff}{' '}
           {record.requireCosign ? p.summaryCosignOn : ''}
         </p>
         {record.retired ? <p className="muted">{p.retiredNote(shortAddress(record.controller))}</p> : null}
@@ -352,7 +417,7 @@ function AccountView({
         <p className="muted">{p.codeHint}</p>
       </section>
 
-      {record.protectNfts || (snap.transfers?.length ?? 0) > 0 || snap.transfers === null ? (
+      {record.protectNfts || record.retired || (snap.transfers?.length ?? 0) > 0 || snap.transfers === null ? (
         <section className="card">
           <h2 className="card-title">{p.transfersTitle}</h2>
           {snap.transfers === null ? (
@@ -429,14 +494,18 @@ function AccountView({
             </button>
           </div>
           <div className="cluster">
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled={busy}
-              onClick={() => tx('setProtectNfts', [account, !record.protectNfts])}
-            >
-              {record.protectNfts ? p.nftsOff : p.nftsOn}
-            </button>
+            {record.retired ? null : (
+              // A replaced account delays position NFT transfers whatever the
+              // setting says, so the toggle is not offered there.
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={busy}
+                onClick={() => tx('setProtectNfts', [account, !record.protectNfts])}
+              >
+                {record.protectNfts ? p.nftsOff : p.nftsOn}
+              </button>
+            )}
             <button
               type="button"
               className="btn btn-secondary"
@@ -484,21 +553,22 @@ function AccountView({
             </div>
           ))
         )}
+        <PendingAdditions
+          rows={snap.pendingAllowlist}
+          delaySeconds={record.delaySeconds}
+          now={now}
+          busy={busy}
+          canCancel={() => canGuard}
+          onCancel={(a) => tx('cancelAddAllowlisted', [account, a])}
+          onActivate={(a) => tx('finalizeAddAllowlisted', [account, a])}
+        />
         {manager ? (
-          <>
-            <AddressAction
-              placeholder={p.addressPlaceholder}
-              label={p.addAddress}
-              disabled={busy}
-              onSubmit={(a) => tx('addAllowlisted', [account, a])}
-            />
-            <AddressAction
-              placeholder={p.addressPlaceholder}
-              label={p.activateAddress}
-              disabled={busy}
-              onSubmit={(a) => tx('finalizeAddAllowlisted', [account, a])}
-            />
-          </>
+          <AddressAction
+            placeholder={p.addressPlaceholder}
+            label={p.addAddress}
+            disabled={busy}
+            onSubmit={(a) => tx('addAllowlisted', [account, a])}
+          />
         ) : null}
       </section>
 
@@ -557,6 +627,16 @@ function AccountView({
             </div>
           ))
         )}
+        <PendingAdditions
+          rows={snap.pendingSigners}
+          delaySeconds={record.delaySeconds}
+          now={now}
+          busy={busy}
+          // The nominee may withdraw its own nomination too.
+          canCancel={(a) => canGuard || address?.toLowerCase() === a.toLowerCase()}
+          onCancel={(a) => tx('cancelAddSigner', [account, a])}
+          onActivate={(a) => tx('finalizeAddSigner', [account, a])}
+        />
         {manager ? (
           <>
             <AddressAction
@@ -564,12 +644,6 @@ function AccountView({
               label={p.inviteSigner}
               disabled={busy}
               onSubmit={(a) => tx('addSigner', [account, a])}
-            />
-            <AddressAction
-              placeholder={p.addressPlaceholder}
-              label={p.activateSigner}
-              disabled={busy}
-              onSubmit={(a) => tx('finalizeAddSigner', [account, a])}
             />
             <p className="muted">{p.signersMinNote}</p>
           </>

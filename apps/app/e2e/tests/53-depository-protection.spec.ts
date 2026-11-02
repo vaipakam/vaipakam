@@ -33,7 +33,7 @@ const read = <T,>(functionName: string, args: readonly unknown[]) =>
 // payouts — the same figure the contract's withdraw is bounded by.
 const freeOf = (who: `0x${string}`) => read<bigint>('withdrawableNow', [who, 0, TLIQ, 0n]);
 
-test('deposit, protect, queue, cancel and lock — all from the app', async ({ launchWallet }) => {
+test('deposit, protect, queue, cancel, list a pending address and lock — all from the app', async ({ launchWallet }) => {
   const owner = await launchWallet('vaultOwner');
   const { page, account } = owner;
   const me = account.address;
@@ -101,6 +101,25 @@ test('deposit, protect, queue, cancel and lock — all from the app', async ({ l
   await expect.poll(() => freeOf(me), { timeout: 120_000 }).toBe(freeProtected);
   const cancelled = await read<{ state: number | bigint }>('getPendingPayout', [ids[0]]);
   expect(Number(cancelled.state), 'the row is Cancelled, not Released').toBe(3);
+
+  // ── 4b. A pending payout address is listed with its deadline ─────────
+  const destination = '0x00000000000000000000000000000000000d0d01';
+  const allowlist = page.locator('section', { has: page.getByRole('heading', { name: /payout addresses/i }) });
+  await allowlist.getByLabel(/0x… address/i).fill(destination);
+  await allowlist.getByRole('button', { name: /^add address$/i }).click();
+  await expect
+    .poll(async () => (await read<readonly [readonly string[], readonly bigint[]]>('getPendingAllowlistAdditions', [me]))[0].length, {
+      timeout: 120_000,
+    })
+    .toBe(1);
+  const pendingRow = allowlist.getByTestId('pending-addition');
+  await expect(pendingRow).toContainText(/waiting until/i, { timeout: 60_000 });
+  await pendingRow.getByRole('button', { name: /^cancel$/i }).click();
+  await expect
+    .poll(async () => (await read<readonly [readonly string[], readonly bigint[]]>('getPendingAllowlistAdditions', [me]))[0].length, {
+      timeout: 120_000,
+    })
+    .toBe(0);
 
   // ── 5. Emergency lock ────────────────────────────────────────────────
   await page.getByRole('button', { name: /lock my vault now/i }).click();

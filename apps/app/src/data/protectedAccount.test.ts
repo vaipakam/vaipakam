@@ -5,7 +5,7 @@
  * the FIRST thing that would refuse its release.
  */
 import { describe, expect, it } from 'vitest';
-import { chainNowOf, hasReplacement, isDue, isManager, payoutStatus, type ProtectedAccountRecord } from './protectedAccount';
+import { additionStatus, chainNowOf, hasReplacement, isDue, isManager, payoutStatus, type ProtectedAccountRecord } from './protectedAccount';
 
 const ACCOUNT = '0x00000000000000000000000000000000000000a1';
 const CONTROLLER = '0x00000000000000000000000000000000000000c2';
@@ -65,6 +65,15 @@ describe('isDue', () => {
   it('is due from the stated time on', () => {
     expect(isDue(100n, 99n)).toBe(false);
     expect(isDue(100n, 100n)).toBe(true);
+  });
+});
+
+describe('additionStatus', () => {
+  it('waits until it matures, is ready for one further delay, then expires', () => {
+    expect(additionStatus(100n, 50, 99n)).toBe('waiting');
+    expect(additionStatus(100n, 50, 100n)).toBe('ready');
+    expect(additionStatus(100n, 50, 150n)).toBe('ready');
+    expect(additionStatus(100n, 50, 151n)).toBe('expired');
   });
 });
 

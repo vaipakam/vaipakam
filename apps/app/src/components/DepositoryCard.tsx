@@ -32,6 +32,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { erc20Abi, isAddress, parseEventLogs } from 'viem';
+import { SECOND_READ_DELAY_MS } from '../chain/receiptSync';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
@@ -161,13 +162,24 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
     setBusy(true);
     setError(null);
     setDone(null);
+    let wrote = false;
     try {
       setDone(await fn());
-      await queryClient.invalidateQueries({ queryKey: ['depository'] });
-      await queryClient.invalidateQueries({ queryKey: ['protectedAccount'] });
-      await queryClient.invalidateQueries({ queryKey: ['vaultAssets'] });
+      wrote = true;
+      // Read again after the receipt-lag window: a public RPC may still
+      // serve the pre-transaction state on the first read, and the controls
+      // stay off (busy) until the second read lands, so a withdrawn balance
+      // is never offered again.
+      for (const pass of [0, 1]) {
+        if (pass === 1) await new Promise((r) => setTimeout(r, SECOND_READ_DELAY_MS));
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['depository'] }),
+          queryClient.invalidateQueries({ queryKey: ['protectedAccount'] }),
+          queryClient.invalidateQueries({ queryKey: ['vaultAssets'] }),
+        ]);
+      }
     } catch (err) {
-      setError(captureTxError(err));
+      if (!wrote) setError(captureTxError(err));
     } finally {
       setBusy(false);
     }
