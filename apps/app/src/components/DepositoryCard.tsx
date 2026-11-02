@@ -37,7 +37,7 @@ import {
   ContractFunctionZeroDataError,
   erc20Abi,
   isAddress,
-  parseEventLogs,
+  type PublicClient,
 } from 'viem';
 import { SECOND_READ_DELAY_MS } from '../chain/receiptSync';
 import { copy } from '../content/copy';
@@ -47,7 +47,8 @@ import { ensureAllowance } from '../contracts/erc20';
 import { captureTxError } from '../lib/errors';
 import { formatExactSpan, formatTokenAmount, parseExactUnits, shortAddress } from '../lib/format';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
-import { ASSET_KIND, ownFundingVerdict, useProtectedAccount, type AssetKind } from '../data/protectedAccount';
+import { assertErc20BalanceLive } from '../contracts/preflights';
+import { ASSET_KIND, ownFundingVerdict, ownWithdrawalVerdict, payoutOutcome, useProtectedAccount, type AssetKind } from '../data/protectedAccount';
 
 const NFT_APPROVAL_ABI = [
   {
@@ -88,6 +89,54 @@ const NFT_APPROVAL_ABI = [
     outputs: [],
   },
 ] as const;
+
+const NFT_HOLDING_ABI = [
+  {
+    type: 'function',
+    name: 'ownerOf',
+    stateMutability: 'view',
+    inputs: [{ name: 'tokenId', type: 'uint256' }],
+    outputs: [{ name: '', type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'balanceOf',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'account', type: 'address' },
+      { name: 'id', type: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+] as const;
+
+/** The wallet holds what it is about to deposit, read live; refuses
+ *  otherwise (and when the read fails), before any approval is asked for. */
+async function assertWalletHolds(
+  publicClient: PublicClient,
+  kind: AssetKind,
+  token: `0x${string}`,
+  id: bigint,
+  wallet: `0x${string}`,
+  amount: bigint,
+): Promise<void> {
+  if (kind === ASSET_KIND.ERC20) {
+    await assertErc20BalanceLive({ publicClient, token, owner: wallet, amount });
+    return;
+  }
+  let held: boolean;
+  try {
+    held =
+      kind === ASSET_KIND.ERC721
+        ? (await publicClient.readContract({ address: token, abi: NFT_HOLDING_ABI, functionName: 'ownerOf', args: [id] })).toLowerCase() ===
+          wallet.toLowerCase()
+        : (await publicClient.readContract({ address: token, abi: NFT_HOLDING_ABI, functionName: 'balanceOf', args: [wallet, id] })) >=
+          amount;
+  } catch {
+    throw new Error(copy.errors.checkRetry);
+  }
+  if (!held) throw new Error(copy.depository.nftNotHeld);
+}
 
 export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
   const { address, walletChain } = useActiveChain();
@@ -202,8 +251,11 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
   // offered, and the card names the wallet that manages the account now.
   const funding = ownFundingVerdict(protection.data, protection.isError);
   const retiredSelf = !managed && funding.kind === 'retired';
+  // The one withdrawal rule (the contract's): a locked or retired account,
+  // or a full queue, is refused, so no such withdrawal is offered.
+  const withdrawal = ownWithdrawalVerdict(protection.data, protection.isError, managed);
   const canWithdraw =
-    ready && protectionKnown && escapeKnown && !locked && !retiredSelf && balanceFresh && amt !== null && amt <= free.data!.free;
+    ready && protectionKnown && escapeKnown && withdrawal.kind === 'open' && balanceFresh && amt !== null && amt <= free.data!.free;
   // A deposit is offered only once protection is read, so the card can say
   // whose the deposited asset becomes.
   const canDeposit = ready && protectionKnown && !retiredSelf;
@@ -248,6 +300,10 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
     // approval, so a refused deposit never leaves an allowance (or an
     // ERC-1155 operator grant) standing.
     await assertWalletNotSanctionedLive(publicClient, diamond, address);
+    // The wallet must hold what it deposits, checked live BEFORE any
+    // approval, so a deposit that cannot succeed never costs an approval
+    // or leaves one standing.
+    await assertWalletHolds(publicClient, kind, tokenAddr, id, address, amt);
     if (kind === ASSET_KIND.ERC20) {
       await ensureAllowance({ publicClient, walletClient, token: tokenAddr, owner: address, spender: diamond, amount: amt });
     } else if (kind === ASSET_KIND.ERC721) {
@@ -306,15 +362,10 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
     // Paid to the connected wallet: the owner, or the controller of a
     // retired account (always an allowed recipient).
     const { receipt } = await write('withdrawFromVault', [owner, kind, tokenAddr, id, amt, address]);
-    // The receipt says what happened: paid now, or queued behind the delay.
-    const [ev] = parseEventLogs({
-      abi: DIAMOND_ABI_VIEM,
-      eventName: 'VaultWithdrawRequested',
-      logs: receipt.logs,
-    });
-    const queued = (ev?.args as { queued?: boolean } | undefined)?.queued;
-    if (queued === undefined) return d.withdrawSent;
-    return queued ? d.withdrawQueued : d.withdrawDone;
+    // The receipt says what happened: paid now, queued behind the delay, or
+    // held in the vault. One reading for every withdrawal surface.
+    const outcome = payoutOutcome(receipt.logs);
+    return outcome === 'held' ? d.withdrawHeld : outcome === 'queued' ? d.withdrawQueued : d.withdrawDone;
   }
 
   const freeText =
@@ -401,6 +452,7 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
       {protectedOn ? <p>{d.queuedNote(formatExactSpan(delaySec))}</p> : null}
       {protectedOn && record?.requireCosign ? <p>{d.cosignNote}</p> : null}
       {locked ? <p className="banner banner-warn">{d.lockedNote}</p> : null}
+      {withdrawal.kind === 'queueFull' ? <p className="banner banner-warn">{d.queueFullNote}</p> : null}
       {!protectionKnown && !protection.isLoading ? <p className="muted">{d.protectionUnknown}</p> : null}
       {protectionKnown && !escapeKnown ? <p className="muted">{d.escapeUnknown}</p> : null}
       <div className="cluster">

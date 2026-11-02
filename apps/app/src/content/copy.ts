@@ -2870,7 +2870,9 @@ const copySource = {
     depositDone: 'Deposited. It can take a moment to show in your vault.',
     withdrawDone: 'Withdrawn to your wallet.',
     withdrawQueued: 'Withdrawal queued. Find it under Vault protection, with its request code.',
-    withdrawSent: 'Withdrawal sent. Check your wallet, or Vault protection, to see where it stands.',
+    withdrawHeld: 'The account is locked or its queue is full, so nothing was paid: the amount stayed in your vault. Withdraw it again once the account can queue a payout.',
+    queueFullNote: 'This account has 16 payouts and transfers waiting, the most it can hold, so no new withdrawal can be queued until one is paid or cancelled.',
+    nftNotHeld: 'This wallet doesn’t hold that token (or not that many), so there is nothing to deposit.',
   },
 
   protection: {
@@ -5611,6 +5613,8 @@ const copySource = {
     ),
     withdrawQueuedCosign: 'It also needs a signer’s co-signature before it can be released.',
     withdrawQueuedDone: 'Withdrawal queued. It is paid to your wallet once the delay passes; follow it on the Protection page.',
+    withdrawHeldDone: 'Nothing was paid: the account is locked or its queue is full, so the VPFI stayed in your vault. Withdraw it again once the account can queue a payout.',
+    withdrawQueueFull: 'This account has 16 payouts and transfers waiting, the most it can hold, so no new withdrawal can be queued until one is paid or cancelled.',
     withdrawProtectionUnknown: 'We couldn’t read this account’s protection settings, so withdrawing is off until we can tell whether it pays now or waits.',
     withdrawProtectionBlocked: 'This account is locked or was moved to a new wallet, so VPFI can’t be withdrawn from here. Manage it on the Protection page.',
     depositProtectionUnknown: 'We couldn’t read this account’s protection settings, so depositing is off until we can tell whether this wallet may fund it.',

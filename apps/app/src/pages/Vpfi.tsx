@@ -19,10 +19,10 @@ import { CircleCheck, Coins, LoaderCircle } from 'lucide-react';
 import { useModal } from 'connectkit';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
-import { encodeFunctionData, parseEventLogs } from 'viem';
+import { encodeFunctionData } from 'viem';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { copy } from '../content/copy';
-import { ownFundingVerdict, useProtectedAccount } from '../data/protectedAccount';
+import { ownFundingVerdict, ownWithdrawalVerdict, payoutOutcome, useProtectedAccount } from '../data/protectedAccount';
 import { formatExactSpan, shortAddress } from '../lib/format';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useLatestAttempt } from '../lib/useLatestAttempt';
@@ -76,18 +76,21 @@ export function Vpfi() {
   const protection = useProtectedAccount(address ?? undefined);
   const protRecord =
     protection.data && !protection.isError && !protection.data.recordFailed ? protection.data.record : undefined;
-  const protKnown = protRecord !== undefined && protRecord !== null;
   const protOn = protRecord?.enabled === true;
-  const protBlocked = protOn && (protRecord?.locked === true || protRecord?.retired === true);
+  // One rule for whether this withdrawal can be sent now (the contract's):
+  // a locked or retired account, or a full queue, is refused before sending.
+  const withdrawal = ownWithdrawalVerdict(protection.data, protection.isError);
   const withdrawRefusal =
     !address || protection.isLoading
       ? null
-      : !protKnown
+      : withdrawal.kind === 'unread'
         ? copy.vpfi.withdrawProtectionUnknown
-        : protBlocked
-          ? copy.vpfi.withdrawProtectionBlocked
-          : null;
-  const withdrawReady = protKnown && !protBlocked;
+        : withdrawal.kind === 'queueFull'
+          ? copy.vpfi.withdrawQueueFull
+          : withdrawal.kind === 'locked' || withdrawal.kind === 'retired'
+            ? copy.vpfi.withdrawProtectionBlocked
+            : null;
+  const withdrawReady = withdrawal.kind === 'open';
   // A deposit reads the same funding rule as the depository card: a wallet
   // whose account was moved to a new wallet cannot fund it (the contract
   // refuses), so neither the deposit nor its approval is offered.
@@ -356,11 +359,16 @@ export function Vpfi() {
         setPhase('submitting');
         if (!withdrawReady) throw new Error(withdrawRefusal ?? copy.vpfi.withdrawProtectionUnknown);
         const { receipt: txReceipt } = await write('withdrawVPFIFromVault', [amountWei]);
-        // The receipt says what happened: a queued payout (protection on)
-        // or a payment now; never assume the wallet was paid.
-        const queued =
-          parseEventLogs({ abi: DIAMOND_ABI_VIEM, eventName: 'PayoutQueued', logs: txReceipt.logs }).length > 0;
-        setDone(queued ? copy.vpfi.withdrawQueuedDone : copy.vpfi.withdrawDone);
+        // The receipt says what happened: paid now, queued behind the delay,
+        // or held in the vault; never assume the wallet was paid.
+        const outcome = payoutOutcome(txReceipt.logs);
+        setDone(
+          outcome === 'held'
+            ? copy.vpfi.withdrawHeldDone
+            : outcome === 'queued'
+              ? copy.vpfi.withdrawQueuedDone
+              : copy.vpfi.withdrawDone,
+        );
       }
       setAmount('');
       setReviewing(false);

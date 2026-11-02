@@ -2247,6 +2247,8 @@
       "withdrawQueuedYouReceive": "{{amt}} mis en file pour votre portefeuille. La protection est active : le paiement intervient après {{delay}}, et vous ou un signataire pouvez l’annuler entre-temps.",
       "withdrawQueuedCosign": "Il faut aussi la cosignature d’un signataire avant qu’il puisse être libéré.",
       "withdrawQueuedDone": "Retrait mis en file. Il est payé à votre portefeuille une fois le délai écoulé ; suivez-le sur la page Protection.",
+      "withdrawHeldDone": "Rien n’a été payé : le compte est verrouillé ou sa file est pleine, les VPFI sont donc restés dans votre coffre. Retirez-les à nouveau dès que le compte peut mettre un paiement en file.",
+      "withdrawQueueFull": "Ce compte a 16 paiements et transferts en attente, le maximum : aucun nouveau retrait ne peut être mis en file tant qu’aucun n’est payé ou annulé.",
       "withdrawProtectionUnknown": "Nous n’avons pas pu lire les réglages de protection de ce compte : le retrait reste désactivé tant que nous ne savons pas s’il paie tout de suite ou s’il attend.",
       "withdrawProtectionBlocked": "Ce compte est verrouillé ou a été transféré vers un nouveau portefeuille : le VPFI ne peut pas être retiré d’ici. Gérez-le sur la page Protection.",
       "depositProtectionUnknown": "Nous n’avons pas pu lire les paramètres de protection de ce compte : le dépôt est désactivé jusqu’à ce que nous sachions si ce portefeuille peut l’alimenter.",
@@ -3694,7 +3696,9 @@
       "depositDone": "Déposé. L’affichage dans votre coffre peut prendre un instant.",
       "withdrawDone": "Retiré vers votre portefeuille.",
       "withdrawQueued": "Retrait mis en file. Vous le trouverez sous Protection du coffre, avec son code de demande.",
-      "withdrawSent": "Retrait envoyé. Consultez votre portefeuille, ou la Protection du coffre, pour voir où il en est."
+      "withdrawHeld": "Le compte est verrouillé ou sa file est pleine : rien n’a été payé, le montant est resté dans votre coffre. Retirez-le à nouveau dès que le compte peut mettre un paiement en file.",
+      "queueFullNote": "Ce compte a 16 paiements et transferts en attente, le maximum : aucun nouveau retrait ne peut être mis en file tant qu’aucun n’est payé ou annulé.",
+      "nftNotHeld": "Ce portefeuille ne détient pas ce jeton (ou pas en cette quantité) : il n’y a rien à déposer."
     },
     "protection": {
       "title": "Protection du coffre",

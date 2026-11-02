@@ -18,6 +18,7 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
+import { parseEventLogs, type Log } from 'viem';
 import { formatRequestCode } from '@vaipakam/lib/requestCode';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -191,6 +192,57 @@ export function ownFundingVerdict(
   if (!snap.supported) return { kind: 'open' };
   if (snap.recordFailed || snap.record === null) return { kind: 'unread' };
   return snap.record.retired ? { kind: 'retired', controller: snap.record.controller } : { kind: 'open' };
+}
+
+/** The contract's cap on an account's open rows (payouts plus position
+ *  transfers); a full queue refuses a new withdrawal. */
+export const MAX_OPEN_ROWS = 16;
+
+/**
+ * Whether a withdrawal from the account, asked for by its manager, can be
+ * sent now, the one rule every withdrawal surface reads (the depository card,
+ * the VPFI withdrawal). It mirrors the contract: a locked account, a full
+ * queue, or (for the old wallet) a retired account is refused, so a refused
+ * withdrawal is never offered. `asController` is true when the connected
+ * wallet manages a retired account it took over.
+ */
+export type OwnWithdrawalVerdict =
+  | { kind: 'unread' }
+  | { kind: 'open'; queued: boolean }
+  | { kind: 'locked' }
+  | { kind: 'retired'; controller: `0x${string}` }
+  | { kind: 'queueFull' };
+
+export function ownWithdrawalVerdict(
+  snap: Pick<ProtectedAccountSnapshot, 'supported' | 'recordFailed' | 'record' | 'payouts' | 'transfers'> | undefined,
+  readFailed: boolean,
+  asController = false,
+): OwnWithdrawalVerdict {
+  if (!snap || readFailed) return { kind: 'unread' };
+  if (!snap.supported) return { kind: 'open', queued: false };
+  if (snap.recordFailed || snap.record === null) return { kind: 'unread' };
+  const r = snap.record;
+  if (!r.enabled) return { kind: 'open', queued: false };
+  if (r.retired && !asController) return { kind: 'retired', controller: r.controller };
+  if (r.locked) return { kind: 'locked' };
+  if (snap.payouts === null || snap.transfers === null) return { kind: 'unread' };
+  if (snap.payouts.length + snap.transfers.length >= MAX_OPEN_ROWS) return { kind: 'queueFull' };
+  return { kind: 'open', queued: true };
+}
+
+/**
+ * What a confirmed withdrawal actually did, read from its receipt and never
+ * assumed: paid now, queued behind the delay, or held in the vault (the
+ * payout gate holds a payment for a locked account or a full queue).
+ */
+export type PayoutOutcome = 'paid' | 'queued' | 'held';
+
+export function payoutOutcome(logs: readonly Log[]): PayoutOutcome {
+  const named = (eventName: 'PayoutHeldInVault' | 'PayoutQueued') =>
+    parseEventLogs({ abi: DIAMOND_ABI_VIEM, eventName, logs: logs as Log[] }).length > 0;
+  if (named('PayoutHeldInVault')) return 'held';
+  if (named('PayoutQueued')) return 'queued';
+  return 'paid';
 }
 
 export function hasReplacement(r: ReplacementState | null): boolean {

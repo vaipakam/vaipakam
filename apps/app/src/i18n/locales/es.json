@@ -2247,6 +2247,8 @@
       "withdrawQueuedYouReceive": "{{amt}} en cola para su billetera. La protección está activa, así que se paga tras {{delay}}, y usted o un firmante pueden cancelarlo mientras tanto.",
       "withdrawQueuedCosign": "También necesita la cofirma de un firmante antes de poder liberarse.",
       "withdrawQueuedDone": "Retiro en cola. Se paga a su billetera cuando pase el plazo; sígalo en la página de Protección.",
+      "withdrawHeldDone": "No se pagó nada: la cuenta está bloqueada o su cola está llena, así que los VPFI se quedaron en tu bóveda. Vuelve a retirarlos cuando la cuenta pueda poner un pago en cola.",
+      "withdrawQueueFull": "Esta cuenta tiene 16 pagos y transferencias en espera, el máximo, así que no se puede poner en cola un nuevo retiro hasta que uno se pague o se cancele.",
       "withdrawProtectionUnknown": "No pudimos leer la configuración de protección de esta cuenta, así que retirar está desactivado hasta saber si se paga ahora o espera.",
       "withdrawProtectionBlocked": "Esta cuenta está bloqueada o se trasladó a una nueva billetera, así que no se puede retirar VPFI desde aquí. Gestiónela en la página de Protección.",
       "depositProtectionUnknown": "No pudimos leer la configuración de protección de esta cuenta, así que los depósitos están desactivados hasta saber si esta billetera puede financiarla.",
@@ -3694,7 +3696,9 @@
       "depositDone": "Depositado. Puede tardar un momento en aparecer en tu bóveda.",
       "withdrawDone": "Retirado a tu billetera.",
       "withdrawQueued": "Retiro en cola. Lo encontrarás en Protección de la bóveda, con su código de solicitud.",
-      "withdrawSent": "Retiro enviado. Revisa tu billetera, o Protección de la bóveda, para ver en qué estado está."
+      "withdrawHeld": "La cuenta está bloqueada o su cola está llena, así que no se pagó nada: el importe se quedó en tu bóveda. Vuelve a retirarlo cuando la cuenta pueda poner un pago en cola.",
+      "queueFullNote": "Esta cuenta tiene 16 pagos y transferencias en espera, el máximo, así que no se puede poner en cola un nuevo retiro hasta que uno se pague o se cancele.",
+      "nftNotHeld": "Esta billetera no tiene ese token (o no esa cantidad), así que no hay nada que depositar."
     },
     "protection": {
       "title": "Protección de la bóveda",

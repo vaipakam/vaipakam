@@ -2247,6 +2247,8 @@
       "withdrawQueuedYouReceive": "{{amt}} 已排队发往您的钱包。保护已开启，将在 {{delay}} 后支付，期间您或签名人可以取消。",
       "withdrawQueuedCosign": "释放前还需要一位签名人的联署。",
       "withdrawQueuedDone": "取款已排队。延迟期过后将支付到您的钱包；可在保护页面跟踪。",
+      "withdrawHeldDone": "未支付任何款项：账户已锁定或其队列已满，因此 VPFI 仍留在你的金库中。待账户可以排队付款后，请再次提取。",
+      "withdrawQueueFull": "该账户有 16 笔待处理的付款和转移，已达上限；在其中一笔被支付或取消之前，无法排入新的提取。",
       "withdrawProtectionUnknown": "无法读取此账户的保护设置，因此在确认是立即支付还是需要等待之前，取款处于关闭状态。",
       "withdrawProtectionBlocked": "此账户已锁定或已转移到新钱包，因此无法在此取出 VPFI。请在保护页面管理。",
       "depositProtectionUnknown": "我们无法读取该账户的保护设置，因此在确认此钱包能否为其注资之前，存入功能已关闭。",
@@ -3694,7 +3696,9 @@
       "depositDone": "已存入。可能需要片刻才会显示在你的金库中。",
       "withdrawDone": "已提取到你的钱包。",
       "withdrawQueued": "提取已排队。你可以在金库保护页面找到它及其请求码。",
-      "withdrawSent": "取款已发送。请在你的钱包或金库保护中查看进度。"
+      "withdrawHeld": "账户已锁定或其队列已满，因此未支付任何款项：金额仍留在你的金库中。待账户可以排队付款后，请再次提取。",
+      "queueFullNote": "该账户有 16 笔待处理的付款和转移，已达上限；在其中一笔被支付或取消之前，无法排入新的提取。",
+      "nftNotHeld": "此钱包未持有该代币（或数量不足），因此没有可存入的内容。"
     },
     "protection": {
       "title": "金库保护",

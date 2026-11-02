@@ -5,7 +5,7 @@
  * the FIRST thing that would refuse its release.
  */
 import { describe, expect, it } from 'vitest';
-import { additionStatus, ownFundingVerdict, chainNowOf, hasReplacement, isDue, isManager, payoutStatus, replacementStage, type ProtectedAccountRecord } from './protectedAccount';
+import { additionStatus, ownFundingVerdict, ownWithdrawalVerdict, MAX_OPEN_ROWS, chainNowOf, hasReplacement, isDue, isManager, payoutStatus, replacementStage, type ProtectedAccountRecord } from './protectedAccount';
 
 const ACCOUNT = '0x00000000000000000000000000000000000000a1';
 const CONTROLLER = '0x00000000000000000000000000000000000000c2';
@@ -164,5 +164,30 @@ describe('ownFundingVerdict', () => {
       controller: '0x00000000000000000000000000000000000000c1',
     });
     expect(ownFundingVerdict({ supported: true, recordFailed: false, record: rec(false) }, false).kind).toBe('open');
+  });
+});
+
+describe('ownWithdrawalVerdict', () => {
+  const snap = (over: Partial<ProtectedAccountRecord>, rows = 0) => ({
+    supported: true,
+    recordFailed: false,
+    record: record({ enabled: true, ...over }),
+    payouts: Array.from({ length: rows }) as never[],
+    transfers: [] as never[],
+  });
+  it('queues for a protected account with room', () => {
+    expect(ownWithdrawalVerdict(snap({}), false)).toEqual({ kind: 'open', queued: true });
+  });
+  it('refuses a full queue, a lock, and the old wallet of a retired account', () => {
+    expect(ownWithdrawalVerdict(snap({}, MAX_OPEN_ROWS), false).kind).toBe('queueFull');
+    expect(ownWithdrawalVerdict(snap({ locked: true }), false).kind).toBe('locked');
+    expect(ownWithdrawalVerdict(snap({ retired: true }), false).kind).toBe('retired');
+  });
+  it('lets the controller of a retired account withdraw', () => {
+    expect(ownWithdrawalVerdict(snap({ retired: true }), false, true).kind).toBe('open');
+  });
+  it('is unread while the queue is unread, and pays now with protection off', () => {
+    expect(ownWithdrawalVerdict({ ...snap({}), payouts: null }, false).kind).toBe('unread');
+    expect(ownWithdrawalVerdict(snap({ enabled: false }), false)).toEqual({ kind: 'open', queued: false });
   });
 });
