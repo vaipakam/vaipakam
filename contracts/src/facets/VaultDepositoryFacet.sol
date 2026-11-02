@@ -216,6 +216,10 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
         ) revert LibPausable.EnforcedPause();
         LibProtectedAccount.requireManager(account);
         LibVaipakam._assertNotSanctioned(msg.sender);
+        // Funds out to a caller-chosen address: the recipient is screened
+        // too, whether it is paid now or queued (a queued payout is
+        // screened again at release).
+        LibVaipakam.assertRecipientNotBarred(recipient);
         if (kind > uint8(LibVaipakam.AssetType.ERC1155)) revert InvalidAssetKind(kind);
         if (kind == uint8(LibVaipakam.AssetType.ERC20)) tokenId = 0;
         if (kind == uint8(LibVaipakam.AssetType.ERC721)) amount = 1;

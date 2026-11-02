@@ -11,6 +11,7 @@ import {ISeaportZone, ZoneParameters, ReceivedItem, SpentItem, ItemType} from ".
 import {IVaipakamPrepayCallbacks} from "./IVaipakamPrepayCallbacks.sol";
 import {IVaipakamPrepayContext} from "./IVaipakamPrepayContext.sol";
 import {IVaipakamSanctionsView} from "./IVaipakamSanctionsView.sol";
+import {IVaipakamListingLegView} from "./IVaipakamListingLegView.sol";
 import {ISeaportOrderHash, ISeaportCancel, OrderComponents} from "./ISeaportOrderHash.sol";
 import {
     FeeLeg,
@@ -380,6 +381,11 @@ contract CollateralListingExecutor is
     /// @notice #825-r3 (P1) — a fill recipient (current borrower holder or a
     ///         recorded fee-leg recipient) is sanctions-flagged at fill time.
     error SanctionedListingRecipient(address recipient);
+    /// @notice The seller's protected-account settings refuse this fill: the
+    ///         account is locked or retired (`recipient == seller`), or a fee
+    ///         leg pays a destination that is neither the seller's own wallet
+    ///         nor on its allowlist. Nothing moves; Seaport reverts the fill.
+    error ProtectedListingLegRefused(address seller, address recipient);
     /// @notice #1279 — a buyer of the collateral is barred by the Diamond's
     ///         sanctions screen at fill time: the account filling the listing
     ///         (Seaport's `fulfiller`), or the account an ERC-721 collateral
@@ -1436,11 +1442,13 @@ contract CollateralListingExecutor is
         // (The diamond-side lender / borrower-remainder settlement screening is
         // tracked under #821's diamond-side recipient handling.)
         {
+            _assertProtectionAllows(ctx.borrowerWallet, ctx.borrowerWallet);
             FeeLeg[] memory offerLegs = _offerFeeLegs[params.orderHash];
             for (uint256 i = 0; i < offerLegs.length; ) {
                 if (_recipientBarred(offerLegs[i].recipient)) {
                     revert SanctionedListingRecipient(offerLegs[i].recipient);
                 }
+                _assertProtectionAllows(ctx.borrowerWallet, offerLegs[i].recipient);
                 unchecked {
                     ++i;
                 }
@@ -1612,11 +1620,17 @@ contract CollateralListingExecutor is
         if (_recipientBarred(pctx.borrowerNftOwner)) {
             revert SanctionedListingRecipient(pctx.borrowerNftOwner);
         }
+        // Protected account mode: the fee legs below are paid outside the
+        // Diamond's payout queue, so the seller's protection settings are
+        // applied to them here, live (a lock, a replacement or an allowlist
+        // removal after posting stops the fill).
+        _assertProtectionAllows(pctx.borrowerNftOwner, pctx.borrowerNftOwner);
         FeeLeg[] memory liveFeeLegs = _orderFeeLegs[params.orderHash];
         for (uint256 i = 0; i < liveFeeLegs.length; ) {
             if (_recipientBarred(liveFeeLegs[i].recipient)) {
                 revert SanctionedListingRecipient(liveFeeLegs[i].recipient);
             }
+            _assertProtectionAllows(pctx.borrowerNftOwner, liveFeeLegs[i].recipient);
             unchecked {
                 ++i;
             }
@@ -1836,6 +1850,16 @@ contract CollateralListingExecutor is
     ///         not gas-critical.
     function _recipientBarred(address who) private view returns (bool) {
         return IVaipakamSanctionsView(vaipakamDiamond).isRecipientBarred(who);
+    }
+
+    /// @dev The Diamond's protected-account listing rule, read live at fill
+    ///      ({IVaipakamListingLegView}). `recipient == seller` refuses a sale
+    ///      by a locked or retired account; any other recipient is a fee leg
+    ///      the seller authored.
+    function _assertProtectionAllows(address seller, address recipient) private view {
+        if (!IVaipakamListingLegView(vaipakamDiamond).isListingLegAllowed(seller, recipient)) {
+            revert ProtectedListingLegRefused(seller, recipient);
+        }
     }
 
     /// @notice #1279 — the BUYER screens. A buyer is a Tier-1 party (it pays

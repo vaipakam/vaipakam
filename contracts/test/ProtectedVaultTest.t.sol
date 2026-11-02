@@ -244,6 +244,14 @@ contract ProtectedVaultTest is Test {
 
     // ─── Adopt and disown ────────────────────────────────────────────────
 
+    function testWithdrawalToASanctionedRecipientIsRefused() public {
+        _deposit20(10 ether);
+        sanctionsList.setFlagged(thief, true);
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, thief));
+        _depo().withdrawFromVault(user, K20, address(token), 0, 1 ether, thief);
+    }
+
     function testAdoptCreditsLedgerAndThenWithdraws() public {
         token.mint(_vault(user), 50 ether);
         uint256 deadline = block.timestamp + 1 hours;
