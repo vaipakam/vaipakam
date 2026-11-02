@@ -68,6 +68,8 @@ export interface PendingTransferRow {
   id: bigint;
   code: string | null;
   state: number;
+  /** A signer co-signed it (needed before release while co-signing is on). */
+  cosigned: boolean;
   releaseAt: bigint;
   to: `0x${string}`;
   tokenId: bigint;
@@ -312,7 +314,7 @@ export function useProtectedAccount(account?: `0x${string}`) {
         ? await all(
             transferIds.map(async (id) => {
               const r = await soft(
-                read<{ from: string; state: number; releaseAt: bigint; to: `0x${string}`; tokenId: bigint }>(
+                read<{ from: string; state: number; cosigned: boolean; releaseAt: bigint; to: `0x${string}`; tokenId: bigint }>(
                   'getPendingPositionTransfer',
                   [id],
                 ),
@@ -322,6 +324,7 @@ export function useProtectedAccount(account?: `0x${string}`) {
                 id,
                 code: await code(id),
                 state: Number(r.state),
+                cosigned: Boolean(r.cosigned),
                 releaseAt: BigInt(r.releaseAt),
                 to: r.to,
                 tokenId: r.tokenId,

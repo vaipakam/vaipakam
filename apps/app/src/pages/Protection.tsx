@@ -291,6 +291,9 @@ function AccountView({
   const record = snap.record!;
   const now = chainNowOf(snap, nowSec);
   const manager = isManager(account, record, address);
+  // A new primary's cool-down: no loosening change (an unlock included) can
+  // be requested until it ends, so none is offered.
+  const cooling = now < record.cooldownUntil;
   const signer = Boolean(
     address && snap.signers?.some((s) => s.signer.toLowerCase() === address.toLowerCase()),
   );
@@ -392,6 +395,9 @@ function AccountView({
         </section>
       ) : null}
 
+      {manager && cooling ? (
+        <p className="banner banner-warn" role="status">{p.cooldownNote(when(record.cooldownUntil))}</p>
+      ) : null}
       {(canGuard && !record.locked) || signerMayLockOver ? (
         <section className="card">
           <h2 className="card-title">{p.lockTitle}</h2>
@@ -406,7 +412,7 @@ function AccountView({
           <button
             type="button"
             className="btn btn-secondary"
-            disabled={busy}
+            disabled={busy || cooling}
             onClick={() => tx('requestUnlock', [account])}
           >
             {p.requestUnlock}
@@ -495,15 +501,21 @@ function AccountView({
                   <br />
                   <span className="row-sub">
                     <strong>{t.code ? p.requestCode(t.code) : p.requestCodeUnknown}</strong> ·{' '}
-                    {record.locked
-                      ? p.statusLockedRow
-                      : now < t.releaseAt
-                        ? p.statusWaiting(when(t.releaseAt))
-                        : p.statusDue}
+                    {(() => {
+                      // The same order the contract checks a release in.
+                      const st = payoutStatus(t, record, now);
+                      return st === 'locked'
+                        ? p.statusLockedRow
+                        : st === 'waiting'
+                          ? p.statusWaiting(when(t.releaseAt))
+                          : st === 'needsCosign'
+                            ? p.statusNeedsCosign
+                            : p.statusDue;
+                    })()}
                   </span>
                 </span>
                 <span className="cluster">
-                  {!record.locked && now >= t.releaseAt ? (
+                  {payoutStatus(t, record, now) === 'due' ? (
                     <button
                       type="button"
                       className="btn btn-primary"
@@ -511,6 +523,16 @@ function AccountView({
                       onClick={() => tx('releasePositionTransfer', [t.id])}
                     >
                       {p.release}
+                    </button>
+                  ) : null}
+                  {signer && record.requireCosign && !t.cosigned ? (
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={busy}
+                      onClick={() => tx('cosignPositionTransfer', [t.id])}
+                    >
+                      {p.cosign}
                     </button>
                   ) : null}
                   {canGuard ? (
@@ -560,7 +582,7 @@ function AccountView({
             <button
               type="button"
               className="btn btn-secondary"
-              disabled={busy || delayChoice * DAY === record.delaySeconds}
+              disabled={busy || delayChoice * DAY === record.delaySeconds || (cooling && delayChoice * DAY < record.delaySeconds)}
               onClick={() => tx('setProtectedDelay', [account, delayChoice * DAY])}
             >
               {p.setDelay}
@@ -573,7 +595,7 @@ function AccountView({
               <button
                 type="button"
                 className="btn btn-secondary"
-                disabled={busy}
+                disabled={busy || (cooling && record.protectNfts)}
                 onClick={() => tx('setProtectNfts', [account, !record.protectNfts])}
               >
                 {record.protectNfts ? p.nftsOff : p.nftsOn}
@@ -582,7 +604,7 @@ function AccountView({
             <button
               type="button"
               className="btn btn-secondary"
-              disabled={busy || (!record.requireCosign && (snap.signers?.length ?? 0) === 0)}
+              disabled={busy || (!record.requireCosign && (snap.signers?.length ?? 0) === 0) || (cooling && record.requireCosign)}
               onClick={() => tx('setRequireCosign', [account, !record.requireCosign])}
             >
               {record.requireCosign ? p.cosignOff : p.cosignOn}
@@ -594,7 +616,7 @@ function AccountView({
               <button
                 type="button"
                 className="btn btn-secondary"
-                disabled={busy}
+                disabled={busy || cooling}
                 onClick={() => tx('requestDisableProtectedMode', [])}
               >
                 {p.disable}
@@ -644,7 +666,7 @@ function AccountView({
           <AddressAction
             placeholder={p.addressPlaceholder}
             label={p.addAddress}
-            disabled={busy}
+            disabled={busy || cooling}
             onSubmit={(a) => tx('addAllowlisted', [account, a])}
           />
         ) : null}
@@ -673,7 +695,7 @@ function AccountView({
                 <button
                   type="button"
                   className="btn btn-secondary"
-                  disabled={busy}
+                  disabled={busy || cooling}
                   onClick={() => tx('requestRemoveSigner', [account, s.signer])}
                 >
                   {p.removeSigner}
@@ -720,7 +742,7 @@ function AccountView({
             <AddressAction
               placeholder={p.addressPlaceholder}
               label={p.inviteSigner}
-              disabled={busy}
+              disabled={busy || cooling}
               onSubmit={(a) => tx('addSigner', [account, a])}
             />
             <p className="muted">{p.signersMinNote}</p>

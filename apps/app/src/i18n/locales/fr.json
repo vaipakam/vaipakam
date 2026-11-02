@@ -3763,6 +3763,7 @@
       "transferQueueOwner": "Déplacez vers une autre adresse un NFT de position détenu par ce compte. Le transfert attend le délai et peut être annulé entre-temps par vous ou un signataire.",
       "transferTokenId": "Identifiant du NFT de position",
       "transferQueue": "Programmer le transfert",
+      "cooldownNote": "Ce portefeuille a repris le compte récemment. Jusqu’au {{at}}, il ne peut demander aucun changement qui assouplit la protection : déverrouillage, délai plus court, cosignature ou protection des NFT désactivée, nouvelle adresse de paiement ou nouveau signataire, retrait d’un signataire, ou désactivation. Chacun attend ensuite le délai habituel.",
       "transfersUnknown": "Nous n’avons pas pu lire la file des transferts pour le moment. Ne supposez pas qu’elle est vide.",
       "transferLine": "NFT de position n° {{tokenId}} vers {{to}}",
       "allowlistTitle": "Adresses de paiement",

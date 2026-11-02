@@ -46,6 +46,7 @@ import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '.
 import { ensureAllowance } from '../contracts/erc20';
 import { captureTxError } from '../lib/errors';
 import { formatExactSpan, formatTokenAmount, parseExactUnits } from '../lib/format';
+import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import { ASSET_KIND, useProtectedAccount, type AssetKind } from '../data/protectedAccount';
 
 const NFT_APPROVAL_ABI = [
@@ -230,6 +231,10 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
       throw new Error(verdict === 'unknown' ? copy.errors.termsCheckUnavailable : copy.errors.termsNotAccepted);
     }
     const diamond = walletChain.diamondAddress;
+    // The deposit refuses a sanctioned wallet; screen it live BEFORE any
+    // approval, so a refused deposit never leaves an allowance (or an
+    // ERC-1155 operator grant) standing.
+    await assertWalletNotSanctionedLive(publicClient, diamond, address);
     if (kind === ASSET_KIND.ERC20) {
       await ensureAllowance({ publicClient, walletClient, token: tokenAddr, owner: address, spender: diamond, amount: amt });
     } else if (kind === ASSET_KIND.ERC721) {

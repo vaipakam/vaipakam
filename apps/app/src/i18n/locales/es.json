@@ -3763,6 +3763,7 @@
       "transferQueueOwner": "Mueva a otra dirección un NFT de posición que tenga esta cuenta. Espera el plazo y usted o un firmante pueden cancelarlo mientras tanto.",
       "transferTokenId": "ID del NFT de posición",
       "transferQueue": "Programar transferencia",
+      "cooldownNote": "Esta billetera tomó la cuenta hace poco. Hasta el {{at}} no puede pedir ningún cambio que relaje la protección: desbloqueo, plazo más corto, desactivar la cofirma o la protección de NFT, nueva dirección de pago o firmante, quitar un firmante o desactivar la protección. Después, cada uno espera el plazo como siempre.",
       "transfersUnknown": "No pudimos leer la cola de transferencias en este momento. No supongas que está vacía.",
       "transferLine": "NFT de posición n.º {{tokenId}} a {{to}}",
       "allowlistTitle": "Direcciones de pago",

@@ -2937,6 +2937,10 @@ const copySource = {
     transferQueueOwner: 'Move a position NFT this account holds to another address. It waits the delay and can be cancelled meanwhile by you or a signer.',
     transferTokenId: 'Position NFT id',
     transferQueue: 'Queue transfer',
+    cooldownNote: tmpl(
+      'This wallet took over the account recently. Until {{at}} it cannot ask for any change that loosens protection: an unlock, a shorter delay, co-signing or NFT protection off, a new payout address or signer, a signer removal, or switching off. Each of those then waits the delay as usual.',
+      ['at'],
+    ),
     transfersUnknown: 'We couldn’t read the transfer queue just now. Don’t assume it is empty.',
     transferLine: tmpl('Position NFT #{{tokenId}} to {{to}}', ['tokenId', 'to']),
     allowlistTitle: 'Payout addresses',

@@ -162,9 +162,13 @@ export const EXIT_WRITES: ReadonlySet<string> = new Set([
   'disownUntracked',
   'releasePayout',
   'releasePositionTransfer',
+  // Queuing a position NFT to an allowed destination is how a protected
+  // account (and a replaced one's controller) takes its own position out.
+  'queuePositionTransfer',
   'cancelPayout',
   'cancelPositionTransfer',
   'cosignPayout',
+  'cosignPositionTransfer',
   'lockVault',
   'requestUnlock',
   'removeAllowlisted',

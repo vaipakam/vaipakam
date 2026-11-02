@@ -3763,6 +3763,7 @@
       "transferQueueOwner": "将此账户持有的仓位 NFT 转到其他地址。转移需等待延迟期，期间您或签名人可以取消。",
       "transferTokenId": "仓位 NFT 编号",
       "transferQueue": "排队转移",
+      "cooldownNote": "此钱包最近接管了该账户。在 {{at}} 之前，它不能申请任何放松保护的更改：解锁、缩短延迟、关闭联署或 NFT 保护、添加付款地址或签名人、移除签名人或关闭保护。之后每项更改照常等待延迟期。",
       "transfersUnknown": "暂时无法读取转移队列。不要认为它是空的。",
       "transferLine": "仓位 NFT #{{tokenId}} 转给 {{to}}",
       "allowlistTitle": "收款地址",
