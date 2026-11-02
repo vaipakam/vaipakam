@@ -23,6 +23,7 @@ import { isAddress } from 'viem';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
+import { DepositoryCard } from '../components/DepositoryCard';
 import { useTokenMeta } from '../contracts/erc20';
 import { captureTxError } from '../lib/errors';
 import { formatDateTime, formatTokenAmount, shortAddress } from '../lib/format';
@@ -530,6 +531,19 @@ function AccountView({
                   {p.removeSigner}
                 </button>
               ) : null}
+              {s.removeAt > 0n && canGuard && address?.toLowerCase() !== s.signer.toLowerCase() ? (
+                // The contract refuses a signer cancelling its own removal,
+                // so the button is offered to the manager and the OTHER
+                // signers only.
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={busy}
+                  onClick={() => tx('cancelRemoveSigner', [account, s.signer])}
+                >
+                  {p.cancel}
+                </button>
+              ) : null}
               {s.removeAt > 0n && isDue(s.removeAt, now) ? (
                 <button
                   type="button"
@@ -564,7 +578,12 @@ function AccountView({
 
       <section className="card">
         <h2 className="card-title">{p.replacementTitle}</h2>
-        {!hasReplacement(repl) ? (
+        {repl === null ? (
+          // The account record read but the proposal did not: a live
+          // takeover proposal may exist, so this is stated as unknown,
+          // never as "no move proposed".
+          <p className="banner banner-warn">{p.replacementUnknown}</p>
+        ) : !hasReplacement(repl) ? (
           <p className="muted">{p.replacementNone}</p>
         ) : (
           <>
@@ -602,7 +621,7 @@ function AccountView({
             ) : null}
           </>
         )}
-        {signer && !hasReplacement(repl) ? (
+        {signer && repl !== null && !hasReplacement(repl) ? (
           <AddressAction
             placeholder={p.nomineePlaceholder}
             label={p.proposeReplacement}
@@ -714,6 +733,9 @@ function RetiredAccountCard({ account }: { account: `0x${string}` }) {
     <section className="card">
       <h2 className="card-title">{p.managedAccountTitle(shortAddress(account))}</h2>
       <AccountView account={account} snap={data} asSigner={false} />
+      {/* The controller withdraws the retired account's assets here: the
+          wallet's own depository card would act on the controller's vault. */}
+      <DepositoryCard account={account} />
     </section>
   );
 }

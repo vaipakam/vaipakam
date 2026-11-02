@@ -3,12 +3,20 @@
  * vault, or withdraw a FREE asset from it, for every asset kind.
  *
  * What the card states, and why:
- *   - the free amount is read from the contract's own `freeHolding`
- *     (tracked minus liens minus queued payouts), never computed here, so
- *     the card cannot offer more than the contract will release;
+ *   - the withdrawable amount is read from the contract's own
+ *     `withdrawableNow` (the owner's depository holding, never more than
+ *     tracked minus liens minus queued payouts), never computed here, so
+ *     the card cannot offer more than the contract will release, and a
+ *     balance the protocol keeps in the vault for a loan, offer or claim is
+ *     never offered;
  *   - with protection on, a withdrawal is QUEUED and the card says so
  *     before the user signs, with the delay, rather than implying the asset
- *     arrives now;
+ *     arrives now. Until the protection state is read the withdraw button
+ *     stays off, and the result line is taken from the receipt (paid now
+ *     or queued), never assumed;
+ *   - for an account the wallet manages after a replacement retired it
+ *     (`account` prop), the card is withdraw-only: it reads that account
+ *     and pays the connected wallet, its controller;
  *   - an asset sent to the vault outside this card is untracked and is not
  *     withdrawable until adopted; the card links the adoption page instead
  *     of pretending the balance is free.
@@ -23,7 +31,7 @@ import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import { erc20Abi, isAddress } from 'viem';
+import { erc20Abi, isAddress, parseEventLogs } from 'viem';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
@@ -72,14 +80,18 @@ const NFT_APPROVAL_ABI = [
   },
 ] as const;
 
-export function DepositoryCard() {
+export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
   const { address, walletChain } = useActiveChain();
+  // The vault the card reads and withdraws from: the wallet's own, or the
+  // retired account it controls. Deposits go only to the wallet's own.
+  const owner = account ?? address;
+  const managed = account !== undefined;
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { data: walletClient } = useWalletClient();
   const { write } = useDiamondWrite();
   const termsBlocked = useTermsBlockNonExitWrites();
   const queryClient = useQueryClient();
-  const protection = useProtectedAccount();
+  const protection = useProtectedAccount(account);
   const d = copy.depository;
 
   const [kind, setKind] = useState<AssetKind>(ASSET_KIND.ERC20);
@@ -106,21 +118,21 @@ export function DepositoryCard() {
   const dec = kind === ASSET_KIND.ERC20 ? decimals.data : 0;
 
   const free = useQuery({
-    queryKey: ['depository', 'free', walletChain?.chainId, address, kind, tokenAddr, id.toString()],
-    enabled: Boolean(publicClient && address && tokenAddr && idOk && walletChain?.diamondAddress),
+    queryKey: ['depository', 'free', walletChain?.chainId, owner, kind, tokenAddr, id.toString()],
+    enabled: Boolean(publicClient && owner && tokenAddr && idOk && walletChain?.diamondAddress),
     queryFn: async () => {
       const [freeAmt, untracked] = await Promise.all([
         publicClient!.readContract({
           address: walletChain!.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
-          functionName: 'freeHolding',
-          args: [address, kind, tokenAddr, id],
+          functionName: 'withdrawableNow',
+          args: [owner, kind, tokenAddr, id],
         }) as Promise<bigint>,
         publicClient!.readContract({
           address: walletChain!.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
           functionName: 'untrackedHolding',
-          args: [address, kind, tokenAddr, id],
+          args: [owner, kind, tokenAddr, id],
         }) as Promise<bigint>,
       ]);
       return { free: freeAmt, untracked };
@@ -134,9 +146,16 @@ export function DepositoryCard() {
         ? 'invalid'
         : parseExactUnits(amount, dec);
   const amt = typeof parsed === 'bigint' && parsed > 0n ? parsed : null;
-  const protectedOn = protection.data?.record?.enabled === true;
-  const delaySec = protection.data?.record?.delaySeconds ?? 0;
+  // Protection must be KNOWN before a withdrawal is offered: while it is
+  // loading or its read failed, the card cannot say whether the withdrawal
+  // pays now or queues behind the delay.
+  const record = protection.data && !protection.isError && !protection.data.recordFailed ? protection.data.record : undefined;
+  const protectionKnown = record !== undefined && record !== null;
+  const protectedOn = record?.enabled === true;
+  const delaySec = record?.delaySeconds ?? 0;
   const ready = Boolean(address && tokenAddr && idOk && amt !== null && !busy);
+  const canWithdraw =
+    ready && protectionKnown && free.data !== undefined && amt !== null && amt <= free.data.free;
 
   async function run(fn: () => Promise<string>) {
     setBusy(true);
@@ -213,9 +232,19 @@ export function DepositoryCard() {
   }
 
   async function withdraw(): Promise<string> {
-    if (!address || !tokenAddr || amt === null) throw new Error(copy.errors.walletConnectFirst);
-    await write('withdrawFromVault', [address, kind, tokenAddr, id, amt, address]);
-    return protectedOn ? d.withdrawQueued : d.withdrawDone;
+    if (!address || !owner || !tokenAddr || amt === null) throw new Error(copy.errors.walletConnectFirst);
+    // Paid to the connected wallet: the owner, or the controller of a
+    // retired account (always an allowed recipient).
+    const { receipt } = await write('withdrawFromVault', [owner, kind, tokenAddr, id, amt, address]);
+    // The receipt says what happened: paid now, or queued behind the delay.
+    const [ev] = parseEventLogs({
+      abi: DIAMOND_ABI_VIEM,
+      eventName: 'VaultWithdrawRequested',
+      logs: receipt.logs,
+    });
+    const queued = (ev?.args as { queued?: boolean } | undefined)?.queued;
+    if (queued === undefined) return d.withdrawSent;
+    return queued ? d.withdrawQueued : d.withdrawDone;
   }
 
   const freeText =
@@ -227,8 +256,8 @@ export function DepositoryCard() {
 
   return (
     <section className="card">
-      <h2 className="card-title">{d.title}</h2>
-      <p>{d.body}</p>
+      <h2 className="card-title">{managed ? d.managedTitle : d.title}</h2>
+      <p>{managed ? d.managedBody : d.body}</p>
       <div className="field">
         <label htmlFor="dep-kind">{d.kindLabel}</label>
         <select
@@ -287,16 +316,14 @@ export function DepositoryCard() {
         </p>
       ) : null}
       {protectedOn ? <p>{d.queuedNote(copy.protection.delayDays(Math.round(delaySec / 86_400)))}</p> : null}
+      {!protectionKnown && !protection.isLoading ? <p className="muted">{d.protectionUnknown}</p> : null}
       <div className="cluster">
-        <button type="button" className="btn btn-primary" disabled={!ready} onClick={() => run(deposit)}>
-          {d.deposit}
-        </button>
-        <button
-          type="button"
-          className="btn btn-secondary"
-          disabled={!ready || (free.data !== undefined && amt !== null && amt > free.data.free)}
-          onClick={() => run(withdraw)}
-        >
+        {!managed ? (
+          <button type="button" className="btn btn-primary" disabled={!ready} onClick={() => run(deposit)}>
+            {d.deposit}
+          </button>
+        ) : null}
+        <button type="button" className="btn btn-secondary" disabled={!canWithdraw} onClick={() => run(withdraw)}>
           {protectedOn ? d.withdrawQueue : d.withdraw}
         </button>
       </div>

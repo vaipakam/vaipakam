@@ -29,7 +29,9 @@ import { pub, DIAMOND, DIAMOND_ABI_VIEM, ERC20_MIN_ABI } from '../lib/chain';
 const read = <T,>(functionName: string, args: readonly unknown[]) =>
   pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI_VIEM, functionName, args: args as unknown[] }) as Promise<T>;
 
-const freeOf = (who: `0x${string}`) => read<bigint>('freeHolding', [who, 0, TLIQ, 0n]);
+// What the card offers: the depository holding, bounded by liens and queued
+// payouts — the same figure the contract's withdraw is bounded by.
+const freeOf = (who: `0x${string}`) => read<bigint>('withdrawableNow', [who, 0, TLIQ, 0n]);
 
 test('deposit, protect, queue, cancel and lock — all from the app', async ({ launchWallet }) => {
   const owner = await launchWallet('vaultOwner');
@@ -44,6 +46,11 @@ test('deposit, protect, queue, cancel and lock — all from the app', async ({ l
   await page.getByRole('button', { name: /^deposit$/i }).click();
   await expect(page.getByText(/deposited\. it can take a moment/i)).toBeVisible({ timeout: 120_000 });
   await expect.poll(() => freeOf(me), { timeout: 60_000 }).toBe(freeBefore + parseUnits('10', 18));
+  await expect(page.getByText(/yours to withdraw now/i)).toBeVisible({ timeout: 60_000 });
+  // The contract lists the deposited asset, so the vault page finds it
+  // after a reload even when no loan or offer names it.
+  const [listed] = await read<readonly [readonly string[], bigint]>('getDepositoryAssets', [me, 0n, 50n]);
+  expect(listed.map((a) => a.toLowerCase()), 'the deposit is listed').toContain(TLIQ.toLowerCase());
 
   // ── 2. Turn protection on ────────────────────────────────────────────
   await page.goto('/vault/protection', { waitUntil: 'domcontentloaded' });

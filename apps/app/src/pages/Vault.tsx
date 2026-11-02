@@ -65,12 +65,17 @@ export function Vault() {
       ) : vault.depsUnavailable || vault.isError || !vault.data ? (
         <UnavailableState body={copy.vault.unavailable} />
       ) : vault.data.vaultAddress === null ? (
-        <EmptyState
-          icon={Landmark}
-          title={copy.vault.noVaultTitle}
-          body={copy.vault.noVaultYet}
-          action={forwardCta}
-        />
+        // A first deposit creates the vault, so the depository card is
+        // offered here too: it is a way IN, not only a view of a vault.
+        <div className="stack">
+          <EmptyState
+            icon={Landmark}
+            title={copy.vault.noVaultTitle}
+            body={copy.vault.noVaultYet}
+            action={forwardCta}
+          />
+          <DepositoryCard />
+        </div>
       ) : (
         <div className="stack">
           <section className="card">
