@@ -64,9 +64,7 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
     }
 
     function _escapeOpen() private view returns (bool) {
-        return LibProtectedAccount.escapeOpen(
-            LibPausable.manuallyPaused(), LibPausable.everUnpaused(), LibPausable.lastPauseBoundaryAt()
-        );
+        return LibProtectedAccount.escapeOpen();
     }
 
     // ─── Vault credit (self-call host for LibDelivery) ───────────────────

@@ -289,6 +289,59 @@
   },
   {
     "type": "function",
+    "name": "getPendingAllowlistAdditions",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "destinations",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "maturesAt",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPendingSignerAdditions",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "nominees",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "maturesAt",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "accepted",
+        "type": "bool[]",
+        "internalType": "bool[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getProtectedAccount",
     "inputs": [
       {

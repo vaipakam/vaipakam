@@ -38,6 +38,8 @@ import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
+import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
@@ -257,7 +259,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // reads to prove a torn-down vehicle drops out of the open-position view.
         MetricsFacet metricsFacet = MetricsFacet(ArtifactDeploy.deploy(type(MetricsFacet).name));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](38);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](39);
         cuts[25] = IDiamondCut.FacetCut({
             facetAddress: address(metricsFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -398,6 +400,13 @@ contract EarlyWithdrawalFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(SellerClaimFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSellerClaimFacetSelectors()
+        });
+        // Protected account mode: a locked buyer is refused on the direct
+        // sale (the handover is a new position for it).
+        cuts[38] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(ProtectedAccountFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getProtectedAccountFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -910,6 +919,24 @@ contract EarlyWithdrawalFacetTest is Test {
         // Loan lender should now be newLender
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
+    }
+
+    /// @dev Protected account mode: a locked buyer opens no new position, and
+    ///      taking over the lender position by a direct sale is one. The
+    ///      refusal is in `LibLoan.migrateLenderPosition`, so it holds on
+    ///      every sale route.
+    function testSellLoanViaBuyOfferRefusesALockedBuyer() public {
+        MockVaultWithdraw.deliversAll(address(diamond));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.startPrank(newLender);
+        ProtectedAccountFacet(address(diamond)).enableProtectedMode(2 days, true);
+        ProtectedAccountFacet(address(diamond)).lockVault(newLender);
+        vm.stopPrank();
+
+        vm.prank(lender);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.ProtectedVaultLocked.selector, newLender));
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev #2440 (Codex r2) — the direct sale is voluntary: the seller's net

@@ -364,9 +364,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Enumerable, DiamondReentrancyGuard,
     function _requireLiveOrEscape() private view {
         if (
             LibPausable.paused()
-                && !LibProtectedAccount.escapeOpen(
-                    LibPausable.manuallyPaused(), LibPausable.everUnpaused(), LibPausable.lastPauseBoundaryAt()
-                )
+                && !LibProtectedAccount.escapeOpen()
         ) revert LibPausable.EnforcedPause();
     }
 

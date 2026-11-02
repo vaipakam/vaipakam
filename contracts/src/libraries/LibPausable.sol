@@ -544,6 +544,24 @@ library LibPausable {
         return tail;
     }
 
+    /// @notice When the continuous pause the manual pause belongs to began:
+    ///         the start of the open paused interval. Zero when no manual
+    ///         pause is in force.
+    /// @dev    Stable for as long as the manual pause lasts. An auto-pause
+    ///         window recorded under it appends no interval and does not move
+    ///         it, unlike {lastPauseBoundaryAt}, which every pause-state
+    ///         change restamps. A manual pause set while an auto-pause window
+    ///         was still running continues that window's interval, so it
+    ///         dates from the window's start: the protocol has been paused
+    ///         without a break since then.
+    function manualPauseSince() internal view returns (uint64) {
+        PausableStorage storage ps = _storage();
+        if (!ps.paused) return 0;
+        (bool found, PauseInterval memory tail) = _unlogged(ps);
+        if (found) return tail.start;
+        return ps.pauseIntervals[ps.pauseIntervals.length - 1].start;
+    }
+
     /// @dev Block-timestamp at which the pause STATE last changed (pause /
     ///      unpause / auto-pause set). Zero when the protocol has never been
     ///      paused. Time-accounting consumers use it to drop any observation

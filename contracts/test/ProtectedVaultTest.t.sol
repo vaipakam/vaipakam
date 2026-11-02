@@ -366,6 +366,49 @@ contract ProtectedVaultTest is Test {
         _queue(1 ether, friend);
     }
 
+    function testPendingAdditionsAreListedUntilAppliedCancelledOrVoided() public {
+        _enable();
+        vm.startPrank(user);
+        _prot().addAllowlisted(user, friend);
+        _prot().addAllowlisted(user, thief);
+        _prot().addSigner(user, s1);
+        vm.stopPrank();
+        (address[] memory dests, uint256[] memory at) = _prot().getPendingAllowlistAdditions(user);
+        assertEq(dests.length, 2);
+        assertEq(at[0], block.timestamp + DELAY);
+        (address[] memory noms,, bool[] memory acc) = _prot().getPendingSignerAdditions(user);
+        assertEq(noms.length, 1);
+        assertEq(noms[0], s1);
+        assertFalse(acc[0]);
+
+        // A cancelled addition drops off the list; an applied one too.
+        vm.prank(user);
+        _prot().cancelAddAllowlisted(user, thief);
+        vm.warp(block.timestamp + DELAY);
+        _prot().finalizeAddAllowlisted(user, friend);
+        (dests,) = _prot().getPendingAllowlistAdditions(user);
+        assertEq(dests.length, 0);
+
+        // A lock voids the rest, and the list says so.
+        vm.prank(user);
+        _prot().lockVault(user);
+        (noms,,) = _prot().getPendingSignerAdditions(user);
+        assertEq(noms.length, 0);
+    }
+
+    function testPendingAllowlistAdditionsAreCapped() public {
+        _enable();
+        vm.startPrank(user);
+        for (uint256 i; i < LibProtectedAccount.MAX_ALLOWLIST; ++i) {
+            _prot().addAllowlisted(user, address(uint160(0xD000 + i)));
+        }
+        vm.expectRevert(LibProtectedAccount.TooManyAllowlisted.selector);
+        _prot().addAllowlisted(user, address(0xDEAD));
+        // Asking again for one already pending is not a new entry.
+        _prot().addAllowlisted(user, address(uint160(0xD000)));
+        vm.stopPrank();
+    }
+
     function testAllowlistAdditionExpiresOneDelayAfterItMatures() public {
         _enable();
         vm.prank(user);
@@ -589,6 +632,43 @@ contract ProtectedVaultTest is Test {
         assertEq(token.balanceOf(nominee), 4 ether);
     }
 
+    function testReplacementDropsEveryPendingChangeTheOldKeyRequested() public {
+        _enable();
+        _threeSigners();
+        // The outgoing primary asks for loosening changes just before it is
+        // replaced: a signer removal, an allowlist addition, co-sign off and
+        // NFT protection off.
+        vm.startPrank(user);
+        _prot().setRequireCosign(user, true);
+        _prot().requestRemoveSigner(user, s3);
+        _prot().addAllowlisted(user, thief);
+        _prot().setRequireCosign(user, false);
+        _prot().setProtectNfts(user, false);
+        vm.stopPrank();
+
+        vm.prank(s1);
+        _prot().proposeReplacement(user, nominee);
+        vm.prank(s2);
+        _prot().approveReplacement(user);
+        vm.warp(block.timestamp + DELAY);
+        _prot().finalizeReplacement(user);
+
+        // Nothing the old key asked for survives the handover.
+        assertEq(_prot().getSignerChange(user, s3).removeAt, 0);
+        assertEq(_prot().getAllowlistPendingAt(user, thief), 0);
+        LibVaipakam.ProtectedAccount memory a = _prot().getProtectedAccount(user);
+        assertEq(a.pendingCosignOffAt, 0);
+        assertEq(a.pendingNftOffAt, 0);
+        vm.expectRevert();
+        _prot().finalizeRemoveSigner(user, s3);
+        vm.expectRevert();
+        _prot().finalizeAddAllowlisted(user, thief);
+        _prot().finalizeSettingChanges(user);
+        a = _prot().getProtectedAccount(user);
+        assertTrue(a.requireCosign);
+        assertTrue(a.protectNfts);
+    }
+
     function testTwoSignersCannotRecover() public {
         _enable();
         _addSigner(s1);
@@ -642,6 +722,24 @@ contract ProtectedVaultTest is Test {
         assertEq(token.balanceOf(user), 1_000 ether);
     }
 
+    function testAutoPauseDuringAManualPauseDoesNotRestartTheEscapeGrace() public {
+        _deposit20(10 ether);
+        AccessControlFacet(address(diamond)).grantRole(keccak256("WATCHER_ROLE"), address(this));
+        AdminFacet(address(diamond)).pause();
+        uint256 start = block.timestamp;
+        // A watcher fires twice during the manual pause; each restamps the
+        // pause boundary, but the escape grace runs from the manual pause.
+        vm.warp(start + 1 days);
+        AdminFacet(address(diamond)).autoPause("probe");
+        vm.warp(start + 2 days + 12 hours);
+        AdminFacet(address(diamond)).autoPause("probe again");
+        vm.warp(start + LibProtectedAccount.ESCAPE_GRACE);
+        assertTrue(_pay().isEscapeOpen());
+        vm.prank(user);
+        _pay().escapeWithdraw(K20, address(token), 0, 10 ether);
+        assertEq(token.balanceOf(user), 1_000 ether);
+    }
+
     function testProtectedPayoutStillReleasesDuringEscape() public {
         _deposit20(10 ether);
         _enable();
@@ -668,6 +766,23 @@ contract ProtectedVaultTest is Test {
         vm.warp(block.timestamp + DELAY);
         _prot().finalizeSettingChanges(user);
         assertEq(_depo().getVaultPin(user), address(0));
+    }
+
+    function testProtectedPinIsNotClearedByAnUpgrade() public {
+        vm.prank(user);
+        _depo().pinVaultImplementation();
+        _enable();
+        // A stolen primary key cannot skip the unpin delay with an upgrade.
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(VaultFactoryFacet.VaultPinned.selector, user));
+        VaultFactoryFacet(address(diamond)).upgradeUserVault(user);
+        assertTrue(_depo().getVaultPin(user) != address(0));
+        // After the delayed unpin, the vault upgrades normally.
+        vm.prank(user);
+        _depo().unpinVaultImplementation();
+        vm.warp(block.timestamp + DELAY);
+        _prot().finalizeSettingChanges(user);
+        VaultFactoryFacet(address(diamond)).upgradeUserVault(user);
     }
 
     // ─── Position NFTs ───────────────────────────────────────────────────

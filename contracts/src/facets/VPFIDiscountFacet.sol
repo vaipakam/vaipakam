@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -191,6 +192,9 @@ contract VPFIDiscountFacet is
             ),
             VaultDepositFailed.selector
         );
+        // Staked VPFI is the owner's own deposit: it joins the depository
+        // holding, so a replacement controller can withdraw it too.
+        LibDepositoryLedger.credit(msg.sender, vpfi, 0, amount);
         emit VPFIDepositedToVault(msg.sender, amount, LibVPFIDiscount.vaultVpfiBalance(msg.sender));
     }
 
@@ -245,6 +249,9 @@ contract VPFIDiscountFacet is
             ),
             VaultDepositFailed.selector
         );
+        // Staked VPFI is the owner's own deposit: it joins the depository
+        // holding, so a replacement controller can withdraw it too.
+        LibDepositoryLedger.credit(msg.sender, vpfi, 0, amount);
         emit VPFIDepositedToVault(msg.sender, amount, LibVPFIDiscount.vaultVpfiBalance(msg.sender));
     }
 
@@ -338,6 +345,9 @@ contract VPFIDiscountFacet is
             msg.sender,
             amount
         );
+        // Taken from the depository holding first (a queued protected payout
+        // that is cancelled is credited back, as for any withdrawal).
+        LibDepositoryLedger.spend(msg.sender, vpfi, 0, amount);
 
         emit VPFIWithdrawnFromVault(msg.sender, amount, LibVPFIDiscount.vaultVpfiBalance(msg.sender));
     }

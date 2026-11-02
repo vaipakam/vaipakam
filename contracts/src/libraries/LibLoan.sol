@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibProtectedAccount} from "./LibProtectedAccount.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibRevert} from "./LibRevert.sol";
 import {LibInterestLedger} from "./LibInterestLedger.sol";
@@ -31,6 +32,10 @@ library LibLoan {
         address newLender,
         address seller
     ) internal returns (uint256 newTokenId) {
+        // A locked or replaced protected account opens no new position, and
+        // taking over a lender position is one: refused here, the one place
+        // a lender position changes hands, so every sale route holds it.
+        LibProtectedAccount.requireCanOpen(newLender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         // Both sale routes have moved the held balance into the buyer's vault
@@ -235,6 +240,9 @@ library LibLoan {
         address newBorrower,
         address previousBorrower
     ) internal returns (uint256 newTokenId) {
+        // Same rule as {migrateLenderPosition}: a locked or replaced
+        // protected account takes over no obligation.
+        LibProtectedAccount.requireCanOpen(newBorrower);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         address diamond = address(this);

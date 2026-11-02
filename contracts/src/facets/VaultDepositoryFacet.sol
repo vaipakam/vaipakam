@@ -213,9 +213,7 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
         if (
             LibPausable.paused()
                 && !(LibProtectedAccount.isEnabled(account)
-                    && LibProtectedAccount.escapeOpen(
-                        LibPausable.manuallyPaused(), LibPausable.everUnpaused(), LibPausable.lastPauseBoundaryAt()
-                    ))
+                    && LibProtectedAccount.escapeOpen())
         ) revert LibPausable.EnforcedPause();
         if (msg.sender != LibProtectedAccount.manager(account)) revert NotAccountOwner(account, msg.sender);
         LibVaipakam._assertNotSanctioned(msg.sender);

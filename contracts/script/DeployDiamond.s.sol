@@ -2355,7 +2355,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// @dev Selectors for `ProtectedAccountFacet` — protected account mode: settings, allowlist, signers, lock and replacement.
     function _getProtectedAccountSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](33);
+        s = new bytes4[](35);
         s[0] = ProtectedAccountFacet.acceptSignerRole.selector;
         s[1] = ProtectedAccountFacet.addAllowlisted.selector;
         s[2] = ProtectedAccountFacet.addSigner.selector;
@@ -2389,6 +2389,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[30] = ProtectedAccountFacet.setProtectNfts.selector;
         s[31] = ProtectedAccountFacet.setProtectedDelay.selector;
         s[32] = ProtectedAccountFacet.setRequireCosign.selector;
+        s[33] = ProtectedAccountFacet.getPendingAllowlistAdditions.selector;
+        s[34] = ProtectedAccountFacet.getPendingSignerAdditions.selector;
     }
 
     /// @dev Selectors for `VaultPayoutFacet` — the payout queue, the vault credit and the escape route.
