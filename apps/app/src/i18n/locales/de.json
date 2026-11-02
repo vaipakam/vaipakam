@@ -3683,7 +3683,7 @@
       "retiredNote": "Das Konto dieser Wallet wurde zu {{controller}} verschoben. Diese Wallet verwaltet es jetzt: Diese Wallet kann nicht mehr einzahlen oder abheben.",
       "rawUnitsNote": "Dieser Token meldet seine Dezimalstellen nicht, daher sind die Beträge hier in seinen kleinsten Roh-Einheiten angegeben.",
       "escapeNote": "Das Protokoll ist seit mehr als drei Tagen pausiert, daher ist der Notausgang offen: Ihre Auszahlung geht direkt an Ihre eigene Wallet.",
-      "protectionUnknown": "Wir konnten die Schutzeinstellungen nicht lesen, daher ist Abheben aus, bis wir sagen können, ob es sofort zahlt oder wartet.",
+      "protectionUnknown": "Wir konnten die Schutzeinstellungen oder die Warteschlange der wartenden Auszahlungen nicht lesen. Abhebungen sind deaktiviert, bis klar ist, ob eine Abhebung sofort ausgezahlt wird, wartet oder abgelehnt wird.",
       "escapeUnknown": "Wir konnten nicht prüfen, ob der Notausgang offen ist, daher ist Abheben aus, bis wir wissen, über welchen Weg Sie bezahlt werden.",
       "untrackedNote": "Ein Teil dieses Assets kam außerhalb der App in deinen Vault und kann deshalb noch nicht abgehoben werden.",
       "untrackedLink": "Zu deinem Vault hinzufügen",

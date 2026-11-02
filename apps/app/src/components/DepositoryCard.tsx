@@ -245,7 +245,6 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
   // keeps the old figure beside the error), and a locked account queues
   // nothing, so neither is a withdrawal the card may start.
   const balanceFresh = free.data !== undefined && !free.isError;
-  const locked = record?.locked === true;
   // The connected wallet's own account was moved to a new wallet: the
   // contract refuses this wallet's deposits and withdrawals, so neither is
   // offered, and the card names the wallet that manages the account now.
@@ -451,9 +450,11 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
       {escape ? <p className="banner banner-warn">{d.escapeNote}</p> : null}
       {protectedOn ? <p>{d.queuedNote(formatExactSpan(delaySec))}</p> : null}
       {protectedOn && record?.requireCosign ? <p>{d.cosignNote}</p> : null}
-      {locked ? <p className="banner banner-warn">{d.lockedNote}</p> : null}
+      {/* One note per refusal of the withdrawal rule, so a withdrawal that is
+          not offered always says why (a retired wallet's note is above). */}
+      {withdrawal.kind === 'locked' ? <p className="banner banner-warn">{d.lockedNote}</p> : null}
       {withdrawal.kind === 'queueFull' ? <p className="banner banner-warn">{d.queueFullNote}</p> : null}
-      {!protectionKnown && !protection.isLoading ? <p className="muted">{d.protectionUnknown}</p> : null}
+      {withdrawal.kind === 'unread' && !protection.isLoading ? <p className="muted">{d.protectionUnknown}</p> : null}
       {protectionKnown && !escapeKnown ? <p className="muted">{d.escapeUnknown}</p> : null}
       <div className="cluster">
         {!managed ? (

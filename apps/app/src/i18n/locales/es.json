@@ -3683,7 +3683,7 @@
       "retiredNote": "La cuenta de esta billetera se trasladó a {{controller}}. Ahora la gestiona esa billetera: esta ya no puede depositar en ella ni retirar de ella.",
       "rawUnitsNote": "Este token no indica sus decimales, así que las cantidades aquí están en sus unidades base más pequeñas.",
       "escapeNote": "El protocolo lleva más de tres días en pausa, así que la salida de emergencia está abierta: tu retiro va directamente a tu propia billetera.",
-      "protectionUnknown": "No pudimos leer la configuración de protección, así que retirar está desactivado hasta que podamos saber si se paga ahora o espera.",
+      "protectionUnknown": "No pudimos leer la configuración de protección ni la cola de pagos en espera, así que los retiros están desactivados hasta saber si un retiro se paga ya, espera o se rechaza.",
       "escapeUnknown": "No pudimos comprobar si la salida de emergencia está abierta, así que retirar está desactivado hasta saber por qué vía se le paga.",
       "untrackedNote": "Parte de este activo llegó a tu bóveda fuera de la app, así que todavía no se puede retirar.",
       "untrackedLink": "Añadirlo a tu bóveda",
