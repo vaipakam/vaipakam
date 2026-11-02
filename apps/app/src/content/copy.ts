@@ -203,7 +203,7 @@ const copySource = {
     },
     settings: { title: 'Settings — Vaipakam' },
     riskAccess: { title: 'Risk access — Vaipakam' },
-    recover: { title: 'Recover stuck tokens — Vaipakam' },
+    recover: { title: 'Claim stuck tokens — Vaipakam' },
     faucet: { title: 'Test assets — Vaipakam' },
     notFound: { title: 'Page not found — Vaipakam' },
   },
@@ -2479,9 +2479,9 @@ const copySource = {
   // friction constant, not translatable copy (same rule as signing
   // text).
   recover: {
-    title: 'Recover stuck tokens',
+    title: 'Claim stuck tokens',
     lede:
-      'For tokens that were sent straight to your vault address outside the app. They aren’t part of any deal and never affect your balances — this flow returns them to your wallet after you declare where they came from.',
+      'For tokens that were sent straight to your vault address outside the app. Until you claim them they aren’t part of your vault balance and can’t be used or withdrawn. This flow adds them to your vault balance after you declare where they came from; you can then withdraw them like anything else in your vault.',
     // Same alignment as the Help card (Codex #1547 r2): the
     // consequence is a wallet-wide new-position block, not a
     // feature-level lock.
@@ -2551,7 +2551,7 @@ const copySource = {
     // and every new-position action is blocked — not just this feature.
     warnings: [
       'If the sender you declare is on the sanctions list, your wallet is flagged and every new-position action is blocked — creating or accepting offers, deposits, recovery and the like. Existing loans can still be repaid or closed. The flag lifts only if that address is later removed from the sanctions oracle.',
-      'Recovered tokens can only go to YOUR connected wallet — no other recipient is possible.',
+      'Nothing leaves your vault here: the tokens are added to your vault balance, and from then on they can only leave through an ordinary withdrawal from your vault.',
       'If you did not send these tokens yourself, do not recover them. Unsolicited “dust” never affects your balances or deals — leaving it in place costs you nothing.',
     ],
     reviewTitle: 'Confirm your declaration',
@@ -2589,20 +2589,19 @@ const copySource = {
     // Guide's stuck-token section — so the review card (and the Help
     // explainer) must LINK it (Codex #1547 r5). Named exactly as the
     // signed text calls it so the two are unmistakably the same thing.
-    guideLinkLabel: 'Read the Advanced User Guide section on stuck-token recovery',
+    guideLinkLabel: 'Read the Advanced User Guide section on stuck tokens',
     confirmPrompt: 'Type CONFIRM to enable signing',
-    sign: 'Sign & recover',
+    sign: 'Sign & add to vault',
     // Distinct busy label for the pre-sign checks + wallet-signature
     // window (Codex #1547 r1): the review controls lock from the moment
     // the sign button is pressed, before the transaction exists.
     signing: 'Waiting for your wallet…',
     submitting: 'Submitting…',
-    successTitle: 'Recovery complete',
-    // Claims the SEND, not the arrival (Codex #1547 r2): fee-on-
-    // transfer tokens deliver less than the transferred amount, so
-    // "X returned to your wallet" would overstate what arrived.
+    successTitle: 'Tokens added to your vault',
+    // Nothing moves on an adoption: the tokens are already in the
+    // vault, and the vault balance rises by exactly the amount adopted.
     successBody: tmpl(
-      'Sent {{amount}} {{symbol}} back to your wallet — fee-on-transfer tokens may deliver slightly less.',
+      '{{amount}} {{symbol}} is now part of your vault balance. Withdraw it from your vault whenever you like.',
       ['amount', 'symbol'],
     ),
     // The outcome the network recorded names a DIFFERENT token from the
@@ -2612,7 +2611,7 @@ const copySource = {
     // plus the address, never this attempt's formatting applied to
     // someone else's numbers.
     successBodyUnknownToken: tmpl(
-      'Sent {{amount}} of the token at {{token}} back to your wallet. That isn’t the token this page looked up — your wallet appears to have replaced the transaction — so the amount is shown in the token’s smallest units. Open the transaction to see the full detail.',
+      '{{amount}} of the token at {{token}} is now part of your vault balance. That isn’t the token this page looked up — your wallet appears to have replaced the transaction — so the amount is shown in the token’s smallest units. Open the transaction to see the full detail.',
       ['amount', 'token'],
     ),
     viewTx: 'View the transaction',
@@ -2727,7 +2726,7 @@ const copySource = {
     // of the two outcomes it had, so this must say both.
     recoveryLandedTitle: 'Your recovery attempt went through',
     recoveryLandedBody:
-      'We still can’t read the transaction itself, but the network shows your attempt was processed — so do not sign again. Check your wallet: if the tokens arrived, you’re done. If they didn’t, the sender you declared was on the sanctions list, which blocks your wallet from new positions until that address is de-listed; existing loans can still be repaid or closed.',
+      'We still can’t read the transaction itself, but the network shows your attempt was processed — so do not sign again. Check your vault: if the tokens now show in your vault balance, you’re done. If they don’t, the sender you declared was on the sanctions list, which blocks your wallet from new positions until that address is de-listed; existing loans can still be repaid or closed.',
     // TERMINAL LOCK (Codex #1547 r7): a processed attempt must NOT
     // unlock a fresh recovery from this card. We can't read how much
     // of the surplus it moved, so a blind second attempt over whatever
@@ -2736,8 +2735,8 @@ const copySource = {
     // reload can't step around it; the only way out is the two-step
     // acknowledgement below.
     executedLockNote:
-      'Starting another recovery from here is switched off on purpose: the attempt that was processed used up the approval you signed, and we can’t read how much it moved. Check your wallet before you do anything else.',
-    executedAck: 'I’ve checked my wallet',
+      'Starting another recovery from here is switched off on purpose: the attempt that was processed used up the approval you signed, and we can’t read how much it added. Check your vault balance before you do anything else.',
+    executedAck: 'I’ve checked my vault',
     executedAckPrompt:
       'One more tap to confirm. This begins a completely separate recovery — a new declaration, a new signature, and it can only move what is still sitting in your vault. The earlier attempt stays done; nothing here undoes or repeats it.',
     executedAckConfirm: 'Start a new recovery',
@@ -2817,7 +2816,7 @@ const copySource = {
       // declaration flags the WALLET and blocks every new-position
       // action until the address is de-listed.
       body2:
-        'If you sent them yourself (or the sender acted for you), a careful recovery flow can return them to your wallet. If a stranger sent them, leave them alone: if the sender you declare turns out to be sanctions-listed, your wallet is flagged and every new-position action is blocked — creating or accepting offers, deposits, recovery and the like — until that address is de-listed (existing loans can still be repaid or closed). It’s a trap known as dust poisoning.',
+        'If you sent them yourself (or the sender acted for you), a careful flow can add them to your vault, from where you withdraw them as usual. If a stranger sent them, leave them alone: if the sender you declare turns out to be sanctions-listed, your wallet is flagged and every new-position action is blocked — creating or accepting offers, deposits, recovery and the like — until that address is de-listed (existing loans can still be repaid or closed). It’s a trap known as dust poisoning.',
       link: 'Open the recovery flow',
     },
   },
@@ -6197,8 +6196,50 @@ const copySource = {
       IlliquidPairConsentSet: 'Consent for an illiquid asset pairing updated',
       MidTierPairAckSet: 'Mid-tier asset pairing confirmed',
       RiskStrictModeSet: 'Strict mode setting updated',
-      TokenDisowned: 'Unsolicited tokens disowned',
-      StuckERC20Recovered: 'Stuck tokens recovered',
+      VaultDeposited: 'Deposited to vault',
+      VaultWithdrawRequested: 'Vault withdrawal requested',
+      UntrackedAdopted: 'Tokens added to vault',
+      UntrackedDisowned: 'Unsolicited tokens disowned',
+      VaultPinned: 'Vault version pinned',
+      VaultUnpinRequested: 'Vault version unpin requested',
+      VaultUnpinned: 'Vault version unpinned',
+      PayoutQueued: 'Payout queued',
+      PayoutReleased: 'Payout released',
+      PayoutCancelled: 'Payout cancelled',
+      PayoutHeldInVault: 'Payout kept in vault',
+      PaymentCreditedToVault: 'Payment credited to vault',
+      PositionTransferQueued: 'Position NFT transfer queued',
+      PositionTransferReleased: 'Position NFT transfer released',
+      PositionTransferCancelled: 'Position NFT transfer cancelled',
+      EscapeWithdrawal: 'Withdrawal during protocol pause',
+      PayoutCosigned: 'Payout co-signed',
+      PositionTransferCosigned: 'Position transfer co-signed',
+      ProtectedModeEnabled: 'Protected mode turned on',
+      ProtectedModeDisabled: 'Protected mode turned off',
+      SettingChangeRequested: 'Protected setting change requested',
+      SettingChangeCancelled: 'Protected setting change cancelled',
+      SettingChangeApplied: 'Protected setting change applied',
+      ProtectedDelaySet: 'Payout delay changed',
+      ProtectNftsSet: 'Position NFT protection changed',
+      CosignRequirementSet: 'Co-signing requirement changed',
+      AllowlistAddRequested: 'Payout address addition requested',
+      AllowlistAddCancelled: 'Payout address addition cancelled',
+      AllowlistAdded: 'Payout address added',
+      AllowlistRemoved: 'Payout address removed',
+      SignerAddRequested: 'Recovery signer invited',
+      SignerAccepted: 'Recovery signer accepted',
+      SignerAddCancelled: 'Recovery signer invitation cancelled',
+      SignerAdded: 'Recovery signer added',
+      SignerRemoveRequested: 'Recovery signer removal requested',
+      SignerRemoveCancelled: 'Recovery signer removal cancelled',
+      SignerRemoved: 'Recovery signer removed',
+      VaultLocked: 'Vault locked',
+      VaultUnlocked: 'Vault unlocked',
+      ReplacementProposed: 'Wallet replacement proposed',
+      ReplacementApproved: 'Wallet replacement approved',
+      ReplacementScheduled: 'Wallet replacement scheduled',
+      ReplacementCancelled: 'Wallet replacement cancelled',
+      PrimaryReplaced: 'Wallet replaced',
       AutoLendConsentChanged: 'Auto-lend setting updated',
       AutoOptInOnNewLoanChanged: 'Automatic refinance setting for new loans updated',
       DefaultAutoRefinanceCapsChanged: 'Default automatic refinance limits updated',

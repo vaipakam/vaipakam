@@ -72,6 +72,10 @@ import RateModelFacetABI from './RateModelFacet.json';
 import RiskSplitLiquidationFacetABI from './RiskSplitLiquidationFacet.json';
 // The discounted liquidation route, moved off RiskFacet (EIP-170 headroom).
 import RiskDiscountedLiquidationFacetABI from './RiskDiscountedLiquidationFacet.json';
+// Protected account mode and the depository vault.
+import ProtectedAccountFacetABI from './ProtectedAccountFacet.json';
+import VaultPayoutFacetABI from './VaultPayoutFacet.json';
+import VaultDepositoryFacetABI from './VaultDepositoryFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
@@ -242,6 +246,9 @@ export {
   RateModelFacetABI,
   RiskSplitLiquidationFacetABI,
   RiskDiscountedLiquidationFacetABI,
+  ProtectedAccountFacetABI,
+  VaultPayoutFacetABI,
+  VaultDepositoryFacetABI,
   ClaimFacetABI,
   OracleFacetABI,
   OracleAdminFacetABI,

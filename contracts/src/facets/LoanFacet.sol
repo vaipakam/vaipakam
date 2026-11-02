@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
@@ -198,6 +199,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // accept path already screens `offerCancelled`, but initiateLoan is the
         // load-bearing loan-creation chokepoint).
         if (offer.id == 0 || offer.accepted || s.offerCancelled[offerId]) revert InvalidOffer();
+        // Protected account mode — a locked or retired account takes no new
+        // position on either side, whichever route opens the loan.
+        LibProtectedAccount.requireCanOpen(offer.creator);
+        LibProtectedAccount.requireCanOpen(acceptor);
 
         // Detect if this offer is a lender-sale vehicle (created by
         // createLoanSaleOffer).  The temporary loan it creates is not a real

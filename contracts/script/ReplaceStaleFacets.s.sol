@@ -33,6 +33,7 @@ import {Deployments} from "./lib/Deployments.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
+import {TrackedHoldingRollout} from "./lib/TrackedHoldingRollout.sol";
 import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
 import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 
@@ -116,6 +117,9 @@ contract ReplaceStaleFacets is DeployDiamond {
         StorageLayoutRecord.requireAppendOnly("ReplaceStaleFacets", diamond);
         // #2407 / #3042 — see RefinanceRecordRollout.
         RefinanceRecordRollout.assertInstalled(diamond);
+        // The per-token tracked vault ledger is fresh-deploy only; see
+        // TrackedHoldingRollout.
+        TrackedHoldingRollout.assertInstalled(diamond);
         // #902 - refuse a Diamond from before the per-rental renter rows; see
         // {_requirePerRentalRenterRows}.
         _requirePerRentalRenterRows(diamond);

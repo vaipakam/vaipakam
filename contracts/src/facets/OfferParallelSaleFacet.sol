@@ -227,7 +227,7 @@ contract OfferParallelSaleFacet is
         // a sanctioned address. (Caller == the offer creator, enforced inside
         // `_validatePostParallelSale`.)
         LibVaipakam._assertNotSanctioned(msg.sender);
-        LibPrepayListingWiring.assertFeeLegRecipientsNotSanctioned(feeLegs);
+        LibPrepayListingWiring.assertListingAuthorized(msg.sender, feeLegs);
         _validatePostParallelSale(offerId, askPrice, conduitKey, feeLegs);
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();

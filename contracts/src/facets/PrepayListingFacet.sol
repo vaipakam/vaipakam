@@ -568,6 +568,20 @@ contract PrepayListingFacet is
 
         _closeSoldLoan(loan);
 
+        // The sold collateral leaves the borrower's vault through the
+        // marketplace conduit, not through a vault withdrawal route, so its
+        // outflow is recorded here, once, for both listing types. Without
+        // it the tracked holding would keep a token the vault no longer
+        // holds, and a later untracked arrival of the same token could not
+        // be adopted. The listing accepts only ERC-721 and ERC-1155
+        // collateral (`NFTPrepayListingFacet`).
+        LibVaipakam.recordVaultWithdraw(
+            loan.borrower,
+            loan.collateralAsset,
+            loan.collateralTokenId,
+            loan.collateralAssetType == LibVaipakam.AssetType.ERC721 ? 1 : loan.collateralQuantity
+        );
+
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 lenderAmount = plan.lenderDue + lenderExtra;
         LibCloseoutFreeze.freezeLenderProceeds(s, loanId, loan, lenderAmount);

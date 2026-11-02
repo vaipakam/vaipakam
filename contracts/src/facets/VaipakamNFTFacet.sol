@@ -5,6 +5,8 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
+import {LibPausable} from "../libraries/LibPausable.sol";
 import {LibRevert} from "../libraries/LibRevert.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
@@ -353,6 +355,87 @@ contract VaipakamNFTFacet is IERC721, IERC721Enumerable, DiamondReentrancyGuard,
      */
     function positionLock(uint256 tokenId) external view returns (LibERC721.LockReason) {
         return LibERC721.lockOf(tokenId);
+    }
+
+    // ==================== Protected account mode: queued transfers ====================
+
+    /// @dev A queued transfer may run while the Diamond is live, or during a
+    ///      long manual pause once the escape route is open.
+    function _requireLiveOrEscape() private view {
+        if (
+            LibPausable.paused()
+                && !LibProtectedAccount.escapeOpen()
+        ) revert LibPausable.EnforcedPause();
+    }
+
+    /**
+     * @notice Queue a transfer of position NFT `tokenId`, held by a protected
+     *         account, to `to`. It completes after the account's delay, by
+     *         anyone's {releasePositionTransfer}, unless cancelled or caught by
+     *         a lock first. With NFT protection on this is the ONLY way such a
+     *         token moves.
+     * @dev    Caller: the account's manager (its wallet, or the controller of a
+     *         retired account, whose transfers may go only to the controller).
+     *         A token held by a stored lock (a sale, an offset, a listing, an
+     *         intent) cannot be queued. Tier-1: screens the caller and `to`.
+     *         A second queue for the same token replaces the first.
+     * @param tokenId The position NFT.
+     * @param to      Where it goes once released.
+     * @return id     The pending row.
+     */
+    function queuePositionTransfer(uint256 tokenId, address to) external nonReentrant returns (uint256 id) {
+        LibPausable.requireNotPaused();
+        address account = LibERC721.ownerOf(tokenId);
+        if (!LibProtectedAccount.isEnabled(account)) revert LibProtectedAccount.ProtectedModeOff(account);
+        address manager = LibProtectedAccount.manager(account);
+        if (msg.sender != manager) revert LibProtectedAccount.NotAccountManager(account, msg.sender);
+        // The payout destination rule: the manager's own wallet or an
+        // allowlisted address (a replaced account: its controller only).
+        if (!LibProtectedAccount.isAllowed(account, to)) {
+            revert LibProtectedAccount.RecipientNotAllowlisted(account, to);
+        }
+        if (to == address(0) || to == account) revert LibERC721.ERC721InvalidReceiver(to);
+        LibERC721.LockReason stored = LibERC721.storedLockOf(tokenId);
+        if (stored != LibERC721.LockReason.None) revert LibERC721.ERC721Locked(tokenId, stored);
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        LibVaipakam._assertNotSanctioned(to);
+        id = LibProtectedAccount.queueTransfer(account, tokenId, to);
+    }
+
+    /**
+     * @notice Cancel queued position transfer `id`. Works during a pause:
+     *         cancelling moves nothing.
+     * @dev    Caller: the account's manager or one of its secondary signers.
+     */
+    function cancelPositionTransfer(uint256 id) external nonReentrant {
+        address account = LibVaipakam.storageSlot().pendingPositionTransfers[id].from;
+        if (msg.sender != LibProtectedAccount.manager(account) && !LibProtectedAccount.isSigner(account, msg.sender)) {
+            revert LibProtectedAccount.NotManagerOrSigner(account, msg.sender);
+        }
+        LibProtectedAccount.cancelTransfer(id, msg.sender);
+    }
+
+    /**
+     * @notice Complete queued position transfer `id` once its delay has
+     *         passed. Permissionless (the keeper backs it).
+     * @dev    Refused while the account is locked, while a stored lock holds
+     *         the token, or if the token is no longer the account's. Runs the
+     *         same sanctions screen and fee-tier sync as an ordinary transfer
+     *         and emits the standard `Transfer`.
+     */
+    function releasePositionTransfer(uint256 id) external nonReentrant {
+        _requireLiveOrEscape();
+        LibVaipakam.PendingPositionTransfer storage t = LibProtectedAccount.beginTransferRelease(id);
+        uint256 tokenId = t.tokenId;
+        address from = t.from;
+        address to = t.to;
+        address owner = LibERC721.ownerOf(tokenId);
+        if (owner != from) revert LibERC721.ERC721IncorrectOwner(from, tokenId, owner);
+        LibERC721.LockReason stored = LibERC721.storedLockOf(tokenId);
+        if (stored != LibERC721.LockReason.None) revert LibERC721.ERC721Locked(tokenId, stored);
+        _assertTransferNotSanctioned(from, to);
+        LibERC721._transfer(from, to, tokenId);
+        _syncTierExclusion(LibERC721._storage().loanIds[tokenId]);
     }
 
     // ==================== EIP-2981 Royalties ====================

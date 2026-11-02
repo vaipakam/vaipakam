@@ -1408,19 +1408,9 @@ contract OfferAcceptFacet is
                 // Borrower-type NFT offer accepted by lender: vault the lender's NFT.
                 // The lender (msg.sender/acceptor) must custody the NFT in their vault
                 // for the rental duration, matching the Lender-offer model.
-                if (offer.assetType == LibVaipakam.AssetType.ERC721) {
-                    IERC721(offer.lendingAsset).safeTransferFrom(
-                        lender,
-                        lenderVault,
-                        offer.tokenId
-                    );
-                } else if (offer.assetType == LibVaipakam.AssetType.ERC1155) {
-                    IERC1155(offer.lendingAsset).safeTransferFrom(
-                        lender,
-                        lenderVault,
-                        offer.tokenId,
-                        offer.quantity,
-                        ""
+                if (offer.assetType != LibVaipakam.AssetType.ERC20) {
+                    _pullNftIntoVault(
+                        offer.assetType, offer.lendingAsset, lender, lenderVault, offer.tokenId, offer.quantity
                     );
                 }
             }
@@ -1467,19 +1457,14 @@ contract OfferAcceptFacet is
                             VaultDepositFailed.selector
                         );
                     }
-                } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-                    IERC721(offer.collateralAsset).safeTransferFrom(
-                        borrower,
-                        borrowerVault,
-                        offer.collateralTokenId
-                    );
-                } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
-                    IERC1155(offer.collateralAsset).safeTransferFrom(
+                } else {
+                    _pullNftIntoVault(
+                        offer.collateralAssetType,
+                        offer.collateralAsset,
                         borrower,
                         borrowerVault,
                         offer.collateralTokenId,
-                        offer.collateralQuantity,
-                        ""
+                        offer.collateralQuantity
                     );
                 }
             }
@@ -2079,4 +2064,24 @@ contract OfferAcceptFacet is
         AcceptError errorCode;
     }
 
+
+    /// @dev Pull a rental or collateral NFT from `owner`'s wallet into
+    ///      `owner`'s vault (the Diamond as approved operator) and record it
+    ///      in the tracked ledger, which bounds every vault withdrawal.
+    function _pullNftIntoVault(
+        LibVaipakam.AssetType kind,
+        address asset,
+        address owner,
+        address vault,
+        uint256 tokenId,
+        uint256 quantity
+    ) private {
+        if (kind == LibVaipakam.AssetType.ERC721) {
+            IERC721(asset).safeTransferFrom(owner, vault, tokenId);
+            quantity = 1;
+        } else {
+            IERC1155(asset).safeTransferFrom(owner, vault, tokenId, quantity, "");
+        }
+        LibVaipakam.recordVaultDeposit(owner, asset, tokenId, quantity);
+    }
 }

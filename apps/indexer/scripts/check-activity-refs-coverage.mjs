@@ -70,8 +70,8 @@ const { carries, aliasNames, abiConflicts } = surface;
 
 // ── ABI problems the derivation cannot reason around ────────────────────
 // The one tolerated shape: an overload on an event that carries no reference
-// (the live ABI has `StuckERC20Recovered`, an ops recovery event mapped
-// nowhere). Whether an overloaded no-reference event is MAPPED is a
+// and is mapped nowhere (the ABI has none today; the stuck-token recovery
+// event that was one is retired). Whether an overloaded no-reference event is MAPPED is a
 // behavioral question and is asserted by the execution suite; everything
 // else is reported here unconditionally.
 const relevantAbiConflicts = abiConflicts.filter(

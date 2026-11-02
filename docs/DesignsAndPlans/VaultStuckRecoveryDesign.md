@@ -1,6 +1,20 @@
 # Vault Stuck-Token Recovery — Design Spec
 
-Status: **Locked design — ready for implementation.**
+Status: **SUPERSEDED by the depository vault and protected account mode.**
+
+> **Superseded.** The stuck-ERC-20 recovery this document specifies, which
+> withdrew an untracked balance straight to the owner's wallet, is removed.
+> In its place an untracked asset of any kind (ERC-20, ERC-721 or ERC-1155)
+> is ADOPTED: the owner declares its source and signs an acknowledgement,
+> and the asset is credited to the vault's tracked holding without moving.
+> It then leaves only through an ordinary vault withdrawal, so protected
+> account mode's delay covers it. The sanctions screen of the declared
+> source, the ban marker and its auto-unlock, the nonce and the deadline
+> carry over unchanged. Disowning stays event-only. The intended behaviour
+> is stated in `docs/FunctionalSpecs/ProjectDetailsREADME.md` under the
+> security considerations (tracked vault holdings, depository vault,
+> adopting and disowning untracked assets). What follows is kept as the
+> record of the original design.
 
 Audience: contracts engineer implementing the recovery flow + frontend
 engineer wiring the discoverability gating + ops engineer running the

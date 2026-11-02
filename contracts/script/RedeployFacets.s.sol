@@ -39,6 +39,7 @@ import {Deployments} from "./lib/Deployments.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
+import {TrackedHoldingRollout} from "./lib/TrackedHoldingRollout.sol";
 import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
 import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
@@ -149,6 +150,9 @@ contract RedeployFacets is Script {
         // span facets this curated set does not carry; refuse a Diamond that
         // has not had them rolled out.
         RefinanceRecordRollout.assertInstalled(diamond);
+        // The per-token tracked vault ledger is fresh-deploy only; see
+        // TrackedHoldingRollout.
+        TrackedHoldingRollout.assertInstalled(diamond);
         // #1566 S2b - refuse a Diamond from before vault-held fallback
         // custody, before anything is broadcast; see
         // {_requireVaultHeldFallbackCustody}.

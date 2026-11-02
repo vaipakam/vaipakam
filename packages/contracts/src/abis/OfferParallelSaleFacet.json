@@ -249,6 +249,17 @@
   },
   {
     "type": "error",
+    "name": "AccountRetired",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "AlreadyLaunched",
     "inputs": []
   },
@@ -2386,6 +2397,17 @@
   },
   {
     "type": "error",
+    "name": "ProtectedVaultLocked",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RateShortfallTooHigh",
     "inputs": []
   },
@@ -2413,6 +2435,22 @@
         "name": "recordedSrcChainId",
         "type": "uint32",
         "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RecipientNotAllowlisted",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "recipient",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },

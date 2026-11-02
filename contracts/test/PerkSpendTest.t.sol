@@ -14,6 +14,8 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibVpfiRecycle} from "../src/libraries/LibVpfiRecycle.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
+import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
 
 /**
  * @title  PerkSpendTest
@@ -128,6 +130,25 @@ contract PerkSpendTest is SetupTest {
     }
 
     // ── the absorption property ─────────────────────────────────────────
+
+    /// Protected account mode: once a replacement retires the buyer's
+    /// wallet, that wallet can no longer spend the account's vault VPFI on
+    /// perks; it lost every right over the account.
+    function testRetiredWalletCannotSpendTheAccountOnPerks() public {
+        _perk().setPerkConfig(PERK_TIMED, 1e18, 1 days);
+        ProtectedAccountFacet pa = ProtectedAccountFacet(address(diamond));
+        address nominee = makeAddr("perkNominee");
+        vm.startPrank(buyer);
+        pa.enableProtectedMode(2 days, false);
+        pa.proposeReplacement(buyer, nominee);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 2 days);
+        pa.finalizeReplacement(buyer);
+
+        vm.prank(buyer);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.NotAccountManager.selector, buyer, buyer));
+        _perk().purchasePerk(PERK_TIMED, 1, 1e18, 1 days);
+    }
 
     function testPurchaseMovesVaultVpfiIntoTheRecycleBucket() public {
         _perk().setPerkConfig(PERK_TIMED, 3e18, 1 days);

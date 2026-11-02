@@ -326,7 +326,7 @@ library LibConsolidation {
             }
         } else if (t == LibVaipakam.AssetType.ERC721) {
             amount = 1;
-            _moveNFT(s, stored, asset, loan.collateralTokenId, 1, toProxy, true);
+            _moveNFT(s, stored, current, asset, loan.collateralTokenId, 1, toProxy, true);
         } else {
             // ERC1155
             amount = loan.collateralQuantity;
@@ -334,6 +334,7 @@ library LibConsolidation {
             _moveNFT(
                 s,
                 stored,
+                current,
                 asset,
                 loan.collateralTokenId,
                 amount,
@@ -427,11 +428,14 @@ library LibConsolidation {
     /// @dev ERC-721/1155 Diamond-mediated two-leg move (§2 step 6 / D-6). Arm
     ///      the receiver pin, withdraw NFT `stored` → Diamond (leg 1, accepted +
     ///      pin consumed by {ReceiverFacet}), then push Diamond → `toProxy`
-    ///      (leg 2; operator == Diamond, accepted by the dest gate). No
-    ///      tracked-balance bump (NFTs are not in the ERC-20 counter — iWB).
+    ///      (leg 2; operator == Diamond, accepted by the dest gate). The
+    ///      tracked ledger follows both legs: leg 1's route records the
+    ///      withdrawal from `stored`, and leg 2 records the deposit for
+    ///      `current`.
     function _moveNFT(
         LibVaipakam.Storage storage s,
         address stored,
+        address current,
         address asset,
         uint256 tokenId,
         uint256 amount,
@@ -452,6 +456,7 @@ library LibConsolidation {
                 address(this) // leg 1 → Diamond
             );
             IERC721(asset).safeTransferFrom(address(this), toProxy, tokenId); // leg 2
+            LibVaipakam.recordVaultDeposit(current, asset, tokenId, 1);
         } else {
             VaultFactoryFacet(address(this)).vaultWithdrawERC1155(
                 stored,
@@ -467,6 +472,7 @@ library LibConsolidation {
                 amount,
                 ""
             ); // leg 2
+            LibVaipakam.recordVaultDeposit(current, asset, tokenId, amount);
         }
 
         // Defensive: the ReceiverFacet consumes the pin on accept; clear it

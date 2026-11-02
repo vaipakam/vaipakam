@@ -50,6 +50,9 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
 import {RiskDiscountedLiquidationFacet} from "../src/facets/RiskDiscountedLiquidationFacet.sol";
+import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
+import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
@@ -360,6 +363,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // headroom (same selector).
         RiskDiscountedLiquidationFacet riskDiscountedLiquidationFacet =
             RiskDiscountedLiquidationFacet(ArtifactDeploy.deploy(type(RiskDiscountedLiquidationFacet).name));
+        // Protected account mode and the depository vault.
+        ProtectedAccountFacet protectedAccountFacet = ProtectedAccountFacet(ArtifactDeploy.deploy(type(ProtectedAccountFacet).name));
+        VaultPayoutFacet vaultPayoutFacet = VaultPayoutFacet(ArtifactDeploy.deploy(type(VaultPayoutFacet).name));
+        VaultDepositoryFacet vaultDepositoryFacet = VaultDepositoryFacet(ArtifactDeploy.deploy(type(VaultDepositoryFacet).name));
         ClaimFacet claimFacet = ClaimFacet(ArtifactDeploy.deploy(type(ClaimFacet).name));
         AddCollateralFacet addCollateralFacet = AddCollateralFacet(ArtifactDeploy.deploy(type(AddCollateralFacet).name));
         TreasuryFacet treasuryFacet = TreasuryFacet(ArtifactDeploy.deploy(type(TreasuryFacet).name));
@@ -502,7 +509,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](106);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](109);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -609,6 +616,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
             address(riskDiscountedLiquidationFacet),
             _getRiskDiscountedLiquidationSelectors()
         );
+        // Protected account mode and the depository vault.
+        cuts[106] = _buildCut(address(protectedAccountFacet), _getProtectedAccountSelectors());
+        cuts[107] = _buildCut(address(vaultPayoutFacet), _getVaultPayoutSelectors());
+        cuts[108] = _buildCut(address(vaultDepositoryFacet), _getVaultDepositorySelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1202,6 +1213,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("riskMatchLiquidationFacet", address(riskMatchLiquidationFacet));
         Deployments.writeFacet("riskSplitLiquidationFacet", address(riskSplitLiquidationFacet));
         Deployments.writeFacet("riskDiscountedLiquidationFacet", address(riskDiscountedLiquidationFacet));
+        Deployments.writeFacet("protectedAccountFacet", address(protectedAccountFacet));
+        Deployments.writeFacet("vaultPayoutFacet", address(vaultPayoutFacet));
+        Deployments.writeFacet("vaultDepositoryFacet", address(vaultDepositoryFacet));
         Deployments.writeFacet("claimFacet",              address(claimFacet));
         Deployments.writeFacet("addCollateralFacet",      address(addCollateralFacet));
         Deployments.writeFacet("treasuryFacet",           address(treasuryFacet));
@@ -1649,7 +1663,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // returns true for them. The token's metadata (tokenURI, contractURI
         // and their image / external_url configuration) is cut to
         // VaipakamNFTMetadataFacet (#2957), see {_getNftMetadataSelectors}.
-        s = new bytes4[](23);
+        s = new bytes4[](26);
         s[0] = VaipakamNFTFacet.mintNFT.selector;
         s[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         s[2] = VaipakamNFTFacet.burnNFT.selector;
@@ -1676,6 +1690,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[20] = bytes4(keccak256("tokenOfOwnerByIndex(address,uint256)"));
         s[21] = VaipakamNFTFacet.nftStatusOf.selector;
         s[22] = VaipakamNFTFacet.highestTokenId.selector;
+        // Protected account mode: a protected owner's position moves only
+        // through a delayed transfer.
+        s[23] = VaipakamNFTFacet.queuePositionTransfer.selector;
+        s[24] = VaipakamNFTFacet.cancelPositionTransfer.selector;
+        s[25] = VaipakamNFTFacet.releasePositionTransfer.selector;
     }
 
     /// @dev #2957 - the position NFT's public metadata: the token and
@@ -1697,7 +1716,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getVaultFactorySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](34);
+        s = new bytes4[](28);
         s[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         s[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -1731,21 +1750,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // ERC-20 loan repayment reverts with FunctionDoesNotExist.
         s[22] = VaultFactoryFacet.vaultDepositERC20From.selector;
         s[23] = VaultFactoryFacet.recordVaultDepositERC20.selector;
-        s[24] = VaultFactoryFacet.getProtocolTrackedVaultBalance.selector;
-        // T-054 PR-3 — stuck-token recovery EIP-712 surface.
-        s[25] = VaultFactoryFacet.recoverStuckERC20.selector;
-        s[26] = VaultFactoryFacet.disown.selector;
-        s[27] = VaultFactoryFacet.recoveryDomainSeparator.selector;
-        s[28] = VaultFactoryFacet.recoveryAckTextHash.selector;
-        s[29] = VaultFactoryFacet.recoveryNonce.selector;
-        s[30] = VaultFactoryFacet.vaultBannedSource.selector;
+        s[24] = VaultFactoryFacet.getTrackedHolding.selector;
         // RL-1 — Diamond-funded vault credit primitive (reward
         // claim-to-vault delivery).
-        s[31] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
+        s[25] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
         // #1566 slice 4 PR B — the holder-sourced reward payout into a vault.
-        s[32] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
+        s[26] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
-        s[33] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        s[27] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
     }
 
     /// @dev Issue #67 — `OfferFacet` was split into `OfferCreateFacet`
@@ -2339,6 +2351,89 @@ contract DeployDiamond is Script, ArtifactRootBase {
     {
         s = new bytes4[](1);
         s[0] = RiskDiscountedLiquidationFacet.triggerLiquidationDiscounted.selector;
+    }
+
+    /// @dev Selectors for `ProtectedAccountFacet` — protected account mode: settings, allowlist, signers, lock and replacement.
+    function _getProtectedAccountSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](36);
+        s[0] = ProtectedAccountFacet.acceptSignerRole.selector;
+        s[1] = ProtectedAccountFacet.addAllowlisted.selector;
+        s[2] = ProtectedAccountFacet.addSigner.selector;
+        s[3] = ProtectedAccountFacet.approveReplacement.selector;
+        s[4] = ProtectedAccountFacet.cancelAddAllowlisted.selector;
+        s[5] = ProtectedAccountFacet.cancelAddSigner.selector;
+        s[6] = ProtectedAccountFacet.cancelRemoveSigner.selector;
+        s[7] = ProtectedAccountFacet.cancelReplacement.selector;
+        s[8] = ProtectedAccountFacet.cancelSettingChange.selector;
+        s[9] = ProtectedAccountFacet.enableProtectedMode.selector;
+        s[10] = ProtectedAccountFacet.finalizeAddAllowlisted.selector;
+        s[11] = ProtectedAccountFacet.finalizeAddSigner.selector;
+        s[12] = ProtectedAccountFacet.finalizeRemoveSigner.selector;
+        s[13] = ProtectedAccountFacet.finalizeReplacement.selector;
+        s[14] = ProtectedAccountFacet.finalizeSettingChanges.selector;
+        s[15] = ProtectedAccountFacet.getAllowlist.selector;
+        s[16] = ProtectedAccountFacet.getAllowlistPendingAt.selector;
+        s[17] = ProtectedAccountFacet.getProtectedAccount.selector;
+        s[18] = ProtectedAccountFacet.getProtectedDelayBounds.selector;
+        s[19] = ProtectedAccountFacet.getProtectedSigners.selector;
+        s[20] = ProtectedAccountFacet.getReplacement.selector;
+        s[21] = ProtectedAccountFacet.getRetiredAccountOf.selector;
+        s[22] = ProtectedAccountFacet.getSignerChange.selector;
+        s[23] = ProtectedAccountFacet.lockVault.selector;
+        s[24] = ProtectedAccountFacet.lockVaultFor.selector;
+        s[25] = ProtectedAccountFacet.proposeReplacement.selector;
+        s[26] = ProtectedAccountFacet.removeAllowlisted.selector;
+        s[27] = ProtectedAccountFacet.requestDisableProtectedMode.selector;
+        s[28] = ProtectedAccountFacet.requestRemoveSigner.selector;
+        s[29] = ProtectedAccountFacet.requestUnlock.selector;
+        s[30] = ProtectedAccountFacet.setProtectNfts.selector;
+        s[31] = ProtectedAccountFacet.setProtectedDelay.selector;
+        s[32] = ProtectedAccountFacet.setRequireCosign.selector;
+        s[33] = ProtectedAccountFacet.getPendingAllowlistAdditions.selector;
+        s[34] = ProtectedAccountFacet.getPendingSignerAdditions.selector;
+        s[35] = ProtectedAccountFacet.isListingLegAllowed.selector;
+    }
+
+    /// @dev Selectors for `VaultPayoutFacet` — the payout queue, the vault credit and the escape route.
+    function _getVaultPayoutSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](14);
+        s[0] = VaultPayoutFacet.applyPayoutGate.selector;
+        s[1] = VaultPayoutFacet.cancelPayout.selector;
+        s[2] = VaultPayoutFacet.cosignPayout.selector;
+        s[3] = VaultPayoutFacet.creditOwnerVault.selector;
+        s[4] = VaultPayoutFacet.escapeWithdraw.selector;
+        s[5] = VaultPayoutFacet.getPayoutEarmark.selector;
+        s[6] = VaultPayoutFacet.getPendingPayout.selector;
+        s[7] = VaultPayoutFacet.getPendingPayoutIds.selector;
+        s[8] = VaultPayoutFacet.getPendingPositionTransfer.selector;
+        s[9] = VaultPayoutFacet.getPendingTransferIds.selector;
+        s[10] = VaultPayoutFacet.isEscapeOpen.selector;
+        s[11] = VaultPayoutFacet.releasePayout.selector;
+        s[12] = VaultPayoutFacet.requestCode.selector;
+        s[13] = VaultPayoutFacet.cosignPositionTransfer.selector;
+    }
+
+    /// @dev Selectors for `VaultDepositoryFacet` — the depository vault: deposit, withdraw, adopt, disown and the upgrade pin.
+    function _getVaultDepositorySelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](18);
+        s[0] = VaultDepositoryFacet.adoptUntracked.selector;
+        s[1] = VaultDepositoryFacet.adoptionAckTextHash.selector;
+        s[2] = VaultDepositoryFacet.adoptionDigest.selector;
+        s[3] = VaultDepositoryFacet.adoptionDomainSeparator.selector;
+        s[4] = VaultDepositoryFacet.adoptionNonce.selector;
+        s[5] = VaultDepositoryFacet.depositToVault.selector;
+        s[6] = VaultDepositoryFacet.disownUntracked.selector;
+        s[7] = VaultDepositoryFacet.freeHolding.selector;
+        s[8] = VaultDepositoryFacet.getVaultPin.selector;
+        s[9] = VaultDepositoryFacet.pinVaultImplementation.selector;
+        s[10] = VaultDepositoryFacet.unpinVaultImplementation.selector;
+        s[11] = VaultDepositoryFacet.untrackedHolding.selector;
+        s[12] = VaultDepositoryFacet.vaultBannedSource.selector;
+        s[13] = VaultDepositoryFacet.withdrawFromVault.selector;
+        s[14] = VaultDepositoryFacet.withdrawableNow.selector;
+        s[15] = VaultDepositoryFacet.getDepositoryHolding.selector;
+        s[16] = VaultDepositoryFacet.getDepositoryAssets.selector;
+        s[17] = VaultDepositoryFacet.getVaultOwner.selector;
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {

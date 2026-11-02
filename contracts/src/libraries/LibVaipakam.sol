@@ -3943,7 +3943,7 @@ library LibVaipakam {
         // ── Stuck-token recovery (T-054 PR-3) ──────────────────────
         // Per-user replay-protection nonce for the EIP-712 recovery
         // acknowledgment. Incremented on every successful
-        // `recoverStuckERC20` call so a previously-signed payload
+        // `VaultDepositoryFacet.adoptUntracked` call so a previously-signed payload
         // can't be re-submitted. See
         // `docs/DesignsAndPlans/VaultStuckRecoveryDesign.md` §5.
         mapping(address => uint256) recoveryNonce;
@@ -3954,6 +3954,13 @@ library LibVaipakam {
         // de-listed without any on-chain action by us. Zero ⇒ no
         // recovery-induced ban.
         mapping(address => address) vaultBannedSource;
+        // ── RETIRED: the ERC-20-only tracked balance (T-051 / T-054) ──
+        // Replaced by `protocolTrackedVaultHolding[user][asset][tokenId]`
+        // (depository vault), which tracks every asset kind under the same
+        // key as `encumbered`. The slot keeps its place under this retired
+        // name (declared in storage-layout/renames.json) and nothing reads or
+        // writes it. The history below describes the rule the new ledger
+        // carries on.
         // ── Vault protocol-tracked balance counter (T-051 / T-054) ──
         // Per-(user, token) running counter of ERC-20 amount the
         // protocol has deposited into / withdrawn from the user's
@@ -3986,7 +3993,7 @@ library LibVaipakam {
         // matching deposit — that's an accounting bug somewhere upstream
         // and we want it to revert loudly rather than silently rolling
         // negative.
-        mapping(address => mapping(address => uint256)) protocolTrackedVaultBalance;
+        mapping(address => mapping(address => uint256)) retiredProtocolTrackedVaultBalance;
         // ── Depth-tiered LTV (Piece B) — Predominantly Available Assets ─
         // Per-chain list of the "predominantly available" quote tokens
         // the liquidity check probes an asset's pools against — the
@@ -5428,7 +5435,7 @@ library LibVaipakam {
         ///      deposit may resolve through despite a sanctions flag. Unlike the
         ///      move-out exemption (where the flagged party loses custody), here
         ///      the flagged party RECEIVES — but the proceeds are LOCKED: the
-        ///      deposit is protocol-tracked (so `recoverStuckERC20` can't reach
+        ///      deposit is protocol-tracked (so `adoptUntracked` cannot take
         ///      it) and `claimAsLender` / `claimAsBorrower` screen the stored
         ///      vault owner, so nothing leaves the vault until the flag clears.
         ///      This lets a Tier-2 close-out complete (the unflagged counterparty
@@ -5561,7 +5568,7 @@ library LibVaipakam {
         // laundering-chain class (#1006). Mutated ONLY from strict reads
         // (`sanctionsStatus`): registered at non-reverting oracle-up flag
         // observations (the S10 `recordFrozenClaimant` park hook below, sale-buyer
-        // receives, and `recoverStuckERC20`'s recovery-ban) + the permissionless
+        // receives, and `adoptUntracked`'s adoption ban) + the permissionless
         // `ProfileFacet.refreshSanctionsFlag`; cleared on a confirmed de-list.
         // Appended (Codex #1126 r1 P1) — no existing slot shifts.
         mapping(address => bool) sanctionsConfirmedFlagged;
@@ -8197,6 +8204,230 @@ library LibVaipakam {
         ///      Only added to. Written only by `LibMetricsHooks`. Appended —
         ///      append-only.
         EnumerableSet.AddressSet lifetimeLendingAssets;
+        /// @dev Protected account mode — per owner wallet, the account's
+        ///      settings, lock and pending setting changes. Written only by
+        ///      `LibProtectedAccount`. Appended — append-only.
+        mapping(address => ProtectedAccount) protectedAccount;
+        /// @dev Protected account mode — per owner, the active secondary
+        ///      signers (at most `LibProtectedAccount.MAX_SIGNERS`). Written
+        ///      only by `LibProtectedAccount`. Appended — append-only.
+        mapping(address => EnumerableSet.AddressSet) protectedSigners;
+        /// @dev Protected account mode — per owner and signer, a pending
+        ///      signer addition or removal. Written only by
+        ///      `LibProtectedAccount`. Appended — append-only.
+        mapping(address => mapping(address => ProtectedSignerChange)) protectedSignerChange;
+        /// @dev Protected account mode — per owner, the addresses a payout
+        ///      may be sent to (at most `LibProtectedAccount.MAX_ALLOWLIST`).
+        ///      Written only by `LibProtectedAccount`. Appended — append-only.
+        mapping(address => EnumerableSet.AddressSet) protectedAllowlist;
+        /// @dev Protected account mode — per owner and destination, a
+        ///      pending allowlist addition: when it matures (zero means none)
+        ///      and the change epoch it was requested in. Written only by
+        ///      `ProtectedAccountFacet`. Appended — append-only.
+        mapping(address => mapping(address => ProtectedAllowlistChange)) protectedAllowlistChange;
+        /// @dev Protected account mode — per owner, the change epoch. A
+        ///      lock, a primary replacement and a switch-off each advance it,
+        ///      which voids every pending allowlist addition and signer
+        ///      addition or removal requested before (they are mappings, so
+        ///      they are voided by epoch, not swept). Survives a switch-off.
+        ///      Written only by `ProtectedAccountFacet`. Appended —
+        ///      append-only.
+        mapping(address => uint64) protectedChangeEpoch;
+        /// @dev Protected account mode — per owner and change epoch, the
+        ///      destinations with a pending allowlist addition (at most
+        ///      `LibProtectedAccount.MAX_ALLOWLIST`), so every pending
+        ///      addition can be listed and cancelled. Keyed by epoch: a new
+        ///      epoch starts from an empty set, so voiding needs no sweep.
+        ///      Written only by `ProtectedAccountFacet`. Appended —
+        ///      append-only.
+        mapping(address => mapping(uint64 => EnumerableSet.AddressSet)) protectedPendingAllowlist;
+        /// @dev Protected account mode — per owner and change epoch, the
+        ///      nominees with a pending signer addition (at most
+        ///      `LibProtectedAccount.MAX_SIGNERS`). Same epoch keying as
+        ///      `protectedPendingAllowlist`. Written only by
+        ///      `ProtectedAccountFacet`. Appended — append-only.
+        mapping(address => mapping(uint64 => EnumerableSet.AddressSet)) protectedPendingSigners;
+        /// @dev Protected account mode — every pending payout row by id.
+        ///      Written only by `LibProtectedAccount`. Appended — append-only.
+        mapping(uint256 => PendingPayout) pendingPayouts;
+        /// @dev Protected account mode — per owner, the ids of the payout
+        ///      rows still queued. Written only by `LibProtectedAccount`.
+        ///      Appended — append-only.
+        mapping(address => EnumerableSet.UintSet) pendingPayoutIds;
+        /// @dev Protected account mode — per owner, asset and token id, the
+        ///      amount held back in the owner's vault for queued payouts.
+        ///      `LibEncumbrance.freeBalance` subtracts it beside the liens, so
+        ///      an earmarked amount cannot be queued twice, lent or pledged.
+        ///      Same key as `encumbered`. Written only by
+        ///      `LibProtectedAccount`. Appended — append-only.
+        mapping(address => mapping(address => mapping(uint256 => uint256))) pendingPayoutEarmark;
+        /// @dev Protected account mode — every pending position-NFT transfer
+        ///      row by id. Written only by `LibProtectedAccount`. Appended —
+        ///      append-only.
+        mapping(uint256 => PendingPositionTransfer) pendingPositionTransfers;
+        /// @dev Protected account mode — per owner, the ids of the position
+        ///      transfer rows still queued. Written only by
+        ///      `LibProtectedAccount`. Appended — append-only.
+        mapping(address => EnumerableSet.UintSet) pendingTransferIds;
+        /// @dev Protected account mode — per position token id, the one open
+        ///      transfer row for it; zero means none. Written only by
+        ///      `LibProtectedAccount`. Appended — append-only.
+        mapping(uint256 => uint256) pendingTransferByToken;
+        /// @dev Protected account mode — per owner, the open proposal to
+        ///      replace the primary wallet. Written only by
+        ///      `LibProtectedAccount`. Appended — append-only.
+        mapping(address => ReplacementProposal) replacementProposal;
+        /// @dev Protected account mode — per owner, proposal round and signer:
+        ///      whether that signer approved that round's nominee. Written
+        ///      only by `LibProtectedAccount`. Appended — append-only.
+        mapping(address => mapping(uint32 => mapping(address => bool))) replacementApproved;
+        /// @dev Protected account mode — per replacement wallet, the retired
+        ///      account it controls (one per wallet); zero means none.
+        ///      Written only by `LibProtectedAccount`. Appended — append-only.
+        mapping(address => address) protectedRetiredAccountOf;
+        /// @dev Protected account mode — the last id handed to a pending
+        ///      payout or position-transfer row (one sequence for both).
+        ///      Written only by `LibProtectedAccount`. Appended — append-only.
+        uint256 protectedRowSeq;
+        /// @dev Depository vault — per owner, the vault implementation the
+        ///      owner pinned their vault to; zero means not pinned. A pinned
+        ///      vault is upgraded only by its owner. Written only by
+        ///      `VaultDepositoryFacet`. Appended — append-only.
+        mapping(address => address) vaultPinnedImplementation;
+        /// @dev Depository vault — the one tracked ledger: per owner, asset
+        ///      and token id (zero for an ERC-20), what the protocol put into
+        ///      the owner's vault and has not taken out. Every kind of asset
+        ///      the vault holds is bounded by it, so an asset that arrived
+        ///      outside the protocol is never paid out until its owner adopts
+        ///      it. Same key as `encumbered`. Written only by
+        ///      `LibVaipakam.recordVaultDeposit` / `recordVaultWithdraw`;
+        ///      read through `LibVaipakam.trackedHolding`. Replaces the
+        ///      ERC-20-only `retiredProtocolTrackedVaultBalance`. Appended —
+        ///      append-only.
+        mapping(address => mapping(address => mapping(uint256 => uint256))) protocolTrackedVaultHolding;
+        /// @dev Depository vault — the depository ledger: per owner, asset
+        ///      and token id (zero for an ERC-20), what is the owner's to take
+        ///      out through `VaultDepositoryFacet.withdrawFromVault`: what the
+        ///      owner deposited or adopted, what the protocol credited to the
+        ///      owner's vault as a payment to the owner, and payouts to the
+        ///      owner that were kept in the vault or cancelled; less what the
+        ///      owner withdrew or spent from the vault. A loan, offer, claim or
+        ///      reserve balance is never in it, so the depository withdraw can
+        ///      reach none of them whether or not they are liened. Same key as
+        ///      `encumbered`. Written only by `LibDepositoryLedger`. Appended —
+        ///      append-only.
+        mapping(address => mapping(address => mapping(uint256 => uint256))) depositoryHolding;
+        /// @dev Depository vault — every asset contract that has ever had a
+        ///      depository-ledger credit for the owner, in first-credit order,
+        ///      so the app can find a deposited asset no loan or offer names.
+        ///      Never shrinks: an asset stays listed after its holding returns
+        ///      to zero (the holding view says what is there now). Written only
+        ///      by `LibDepositoryLedger.credit`. Appended — append-only.
+        mapping(address => address[]) depositoryAssets;
+        /// @dev Whether `asset` is already in `depositoryAssets[owner]`.
+        ///      Written only by `LibDepositoryLedger.credit`. Appended —
+        ///      append-only.
+        mapping(address => mapping(address => bool)) depositoryAssetListed;
+        /// @dev Per vault proxy, the user it was created for (the reverse
+        ///      of `userVaipakamVaults`); zero for any address that is not a
+        ///      Vaipakam vault. Lets a vault accept an NFT another Vaipakam
+        ///      vault delivers to it (a protocol move between two users'
+        ///      vaults: a default to the lender, a payment credited to a
+        ///      protected account's vault). Written only by
+        ///      `VaultFactoryFacet.getOrCreateUserVault`. Appended —
+        ///      append-only.
+        mapping(address => address) vaultUserOf;
+    }
+
+    /// @notice Protected account mode — one owner wallet's settings.
+    ///         See `Storage.protectedAccount` and `LibProtectedAccount`.
+    /// @dev    Every time is a unix second; zero means "none pending".
+    ///         `retired` is set when a replacement primary takes over: the
+    ///         account then opens nothing new, and `controller` (the new
+    ///         primary) is the only wallet that may manage it or move what
+    ///         it still holds, always through the delay.
+    struct ProtectedAccount {
+        bool enabled;
+        bool locked;
+        bool protectNfts;
+        bool requireCosign;
+        bool retired;
+        uint32 delaySeconds;
+        uint32 pendingDelay;
+        uint64 pendingDelayAt;
+        uint64 pendingDisableAt;
+        uint64 pendingUnlockAt;
+        uint64 pendingNftOffAt;
+        uint64 pendingCosignOffAt;
+        uint64 cooldownUntil;
+        uint64 lockedAt;
+        address lockedBy;
+        address controller;
+        uint64 pendingUnpinAt;
+    }
+
+    /// @notice Protected account mode — a pending change to one signer.
+    /// @dev    `addAt` matures an addition (which also needs `accepted`,
+    ///         set only by the nominee's own key); `removeAt` matures a
+    ///         removal. Zero means none pending. `epoch` is the account's
+    ///         change epoch when the change was requested: a change from an
+    ///         earlier epoch (before a lock or a switch-off) is void.
+    struct ProtectedSignerChange {
+        uint64 addAt;
+        bool accepted;
+        uint64 removeAt;
+        uint64 epoch;
+    }
+
+    /// @notice Protected account mode — a pending allowlist addition.
+    /// @dev    `at` is when it matures (zero means none); `epoch` as in
+    ///         `ProtectedSignerChange`.
+    struct ProtectedAllowlistChange {
+        uint64 at;
+        uint64 epoch;
+    }
+
+    /// @notice Protected account mode — a payout held back in its owner's
+    ///         vault until `releaseAt`. The asset never leaves the vault
+    ///         while queued; `Storage.pendingPayoutEarmark` holds it back.
+    /// @dev    `state`: 1 queued, 2 released, 3 cancelled. `kind` is the
+    ///         `AssetType` as a `uint8`. `delivered` is what the recipient
+    ///         measurably received at release (ERC-20) or the amount (NFT).
+    struct PendingPayout {
+        address user;
+        uint8 kind;
+        uint8 state;
+        bool cosigned;
+        uint64 releaseAt;
+        address asset;
+        address recipient;
+        uint256 tokenId;
+        uint256 amount;
+        uint256 delivered;
+    }
+
+    /// @notice Protected account mode — a position-NFT transfer held back
+    ///         until `releaseAt`. `state`: 1 queued, 2 released, 3 cancelled.
+    struct PendingPositionTransfer {
+        address from;
+        uint8 state;
+        bool cosigned;
+        uint64 releaseAt;
+        address to;
+        uint256 tokenId;
+    }
+
+    /// @notice Protected account mode — the open proposal to replace the
+    ///         primary wallet. `readyAt` is zero until the proposal has the
+    ///         approvals it needs; it is then when the replacement may be
+    ///         finalized. `round` increments on every new proposal so
+    ///         approvals of an older nominee never count.
+    struct ReplacementProposal {
+        address nominee;
+        address proposedBy;
+        uint64 readyAt;
+        uint32 round;
+        uint8 approvals;
     }
 
     /// @notice #1558 — a borrower's signed authorisation to pay off the loan a
@@ -9945,7 +10176,14 @@ library LibVaipakam {
     ///      AUTO_ROLL. #3042 then retired bit 4 (REFINANCE), leaving 0xEF. The
     ///      container is now uint16 (#1221); a bit 8–15 action, when defined,
     ///      is OR'd in here.
-    uint16 internal constant KEEPER_ACTION_ALL = 0xEF;
+    /// @dev Protected account mode — the one delegation that may LOCK the
+    ///      principal's protected account (`ProtectedAccountFacet.lockVaultFor`),
+    ///      so a keeper acting on a linked chat's LOCK command can freeze an
+    ///      account whose owner key may be stolen. Locking only stops movement;
+    ///      no entry accepts this bit for an unlock or for any payout.
+    ///      Principal-keyed, checked via `requireKeeperForPrincipal`.
+    uint16 internal constant KEEPER_ACTION_LOCK_VAULT = 1 << 8; // 0x100
+    uint16 internal constant KEEPER_ACTION_ALL = 0x1EF;
 
     /**
      * @notice Retrieves the Vaipakam storage slot.
@@ -12409,7 +12647,7 @@ library LibVaipakam {
     ///         sanctions-oracle outage. Ordinary (never-locked) claims keep using
     ///         the fail-open {_assertNotSanctioned} on `msg.sender`, so an oracle
     ///         blip never bricks honest users. Mirrors the fail-closed pattern in
-    ///         `VaultFactoryFacet.recoverStuckERC20`. Reuses the shared
+    ///         `VaultDepositoryFacet.adoptUntracked`. Reuses the shared
     ///         `IVaipakamErrors.SanctionsOracleUnavailable` + local
     ///         `SanctionedAddress` errors.
     function assertNotSanctionedFailClosed(address who) internal view {
@@ -12489,45 +12727,70 @@ library LibVaipakam {
         if (isRecipientBarred(who)) revert SanctionedAddress(who);
     }
 
-    /// @notice Internal accountant for protocol-deposited ERC-20
-    ///         tokens in a user's vault. Increments the per-(user,
-    ///         token) counter that the Asset Viewer and the future
-    ///         stuck-token recovery flow read.
-    /// @dev    Library-internal helper called from
-    ///         `VaultFactoryFacet.vaultDepositERC20` and
-    ///         `recordVaultDepositERC20` (the counter-only sibling
-    ///         used after Permit2 pulls). Solidity 0.8+ checked
-    ///         arithmetic protects against overflow.
-    function recordVaultDeposit(
-        address user,
-        address token,
-        uint256 amount
-    ) internal {
-        Storage storage s = storageSlot();
-        s.protocolTrackedVaultBalance[user][token] += amount;
-        // #1820 — this and {recordVaultWithdraw} are the only writers of the
-        // tracked balance the VPFI fee-discount tier reads, so a change to a
-        // user's tracked VPFI refreshes their tier record here, on every
-        // path, instead of at each facet that moves VPFI (see LibTierRecord).
-        if (amount != 0 && token == s.vpfiToken && token != address(0)) LibTierRecord.refresh(user);
+    /// @notice The tracked holding of `asset` / `tokenId` in `user`'s vault:
+    ///         what the protocol put in and has not taken out (zero `tokenId`
+    ///         for an ERC-20). The one accessor every reader uses; nothing
+    ///         else indexes `protocolTrackedVaultHolding`.
+    /// @dev    Excludes anything that reached the vault outside the protocol
+    ///         (an unsolicited transfer), which only an adoption
+    ///         (`VaultDepositoryFacet.adoptUntracked`) brings into it.
+    function trackedHolding(address user, address asset, uint256 tokenId)
+        internal
+        view
+        returns (uint256)
+    {
+        return storageSlot().protocolTrackedVaultHolding[user][asset][tokenId];
     }
 
-    /// @notice Internal accountant for protocol-withdrawn ERC-20
-    ///         tokens from a user's vault.
-    /// @dev    Called from `VaultFactoryFacet.vaultWithdrawERC20`.
-    ///         Underflow reverts — a decrement greater than the
-    ///         tracked balance means a withdraw fired without a
-    ///         matching deposit somewhere, which is an accounting
-    ///         bug upstream that we want to surface loudly.
-    function recordVaultWithdraw(
+    /// @notice Record an ERC-20 the protocol put into `user`'s vault.
+    function recordVaultDeposit(address user, address token, uint256 amount) internal {
+        recordVaultDeposit(user, token, 0, amount);
+    }
+
+    /// @notice Record an ERC-20 the protocol took out of `user`'s vault.
+    function recordVaultWithdraw(address user, address token, uint256 amount) internal {
+        recordVaultWithdraw(user, token, 0, amount);
+    }
+
+    /// @notice Internal accountant for every asset kind the protocol puts
+    ///         into a user's vault: raises the tracked holding of
+    ///         `(asset, tokenId)` by `amount` (one for an ERC-721).
+    /// @dev    Called by the vault deposit routes on `VaultFactoryFacet`
+    ///         and by an adoption. Checked arithmetic.
+    function recordVaultDeposit(
         address user,
-        address token,
+        address asset,
+        uint256 tokenId,
         uint256 amount
     ) internal {
         Storage storage s = storageSlot();
-        s.protocolTrackedVaultBalance[user][token] -= amount;
+        s.protocolTrackedVaultHolding[user][asset][tokenId] += amount;
+        // #1820 — this and {recordVaultWithdraw} are the only writers of the
+        // tracked holding the VPFI fee-discount tier reads, so a change to a
+        // user's tracked VPFI refreshes their tier record here, on every
+        // path, instead of at each facet that moves VPFI (see LibTierRecord).
+        if (amount != 0 && tokenId == 0 && asset == s.vpfiToken && asset != address(0)) {
+            LibTierRecord.refresh(user);
+        }
+    }
+
+    /// @notice Internal accountant for every asset kind the protocol takes
+    ///         out of a user's vault.
+    /// @dev    Underflow reverts — a decrement greater than the tracked
+    ///         holding means a withdraw fired without a matching deposit,
+    ///         an accounting bug upstream that must surface loudly.
+    function recordVaultWithdraw(
+        address user,
+        address asset,
+        uint256 tokenId,
+        uint256 amount
+    ) internal {
+        Storage storage s = storageSlot();
+        s.protocolTrackedVaultHolding[user][asset][tokenId] -= amount;
         // #1820 — see {recordVaultDeposit}.
-        if (amount != 0 && token == s.vpfiToken && token != address(0)) LibTierRecord.refresh(user);
+        if (amount != 0 && tokenId == 0 && asset == s.vpfiToken && asset != address(0)) {
+            LibTierRecord.refresh(user);
+        }
     }
 
     // ─── #1123 — fail-closed position-movement restriction ─────────────

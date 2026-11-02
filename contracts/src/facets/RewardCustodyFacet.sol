@@ -5,6 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
@@ -1235,6 +1236,17 @@ contract RewardCustodyFacet is DiamondAccessControl {
         LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.LiveFresh, fresh, user);
         LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.Recycled, recycled, user);
         LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.Unclassified, epoch, user);
+        // Protected account mode: a protected wallet is never paid directly,
+        // so when its vault could not take the credit above (a mandatory
+        // vault upgrade it has not made), the delivery goes to its vault
+        // anyway, recorded as tracked, and leaves only through the delay.
+        if (s.protectedAccount[user].enabled) {
+            address proxy = s.userVaipakamVaults[user];
+            uint256 amount = fresh + recycled + epoch;
+            LibRewardCustody.releaseMeasured(token, holder, proxy, amount);
+            LibProtectedAccount.creditPayment(user, token, 0, amount, amount);
+            return true;
+        }
         LibRewardCustody.releaseMeasured(token, holder, user, fresh + recycled + epoch);
     }
 

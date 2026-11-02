@@ -293,6 +293,10 @@ FACETS=(
   "RiskSplitLiquidationFacet"
   # The discounted liquidation route, moved off RiskFacet (EIP-170 headroom).
   "RiskDiscountedLiquidationFacet"
+  # Protected account mode and the depository vault.
+  "ProtectedAccountFacet"
+  "VaultPayoutFacet"
+  "VaultDepositoryFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

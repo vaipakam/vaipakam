@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibPriorityRouting} from "../libraries/LibPriorityRouting.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
@@ -217,6 +218,9 @@ contract PerkFacet is
         uint32 expectedDurationSeconds
     ) external nonReentrant whenNotPaused {
         LibVaipakam._assertNotSanctioned(msg.sender);
+        // Protected account mode: a wallet a replacement retired lost every
+        // right over its account, spending its vault included.
+        LibProtectedAccount.requireManager(msg.sender);
         if (units == 0) revert PerkUnitsZero();
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();

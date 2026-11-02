@@ -356,7 +356,7 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
         address vault = _vaultOf(loanId);
         address borrower = LoanFacet(address(diamond)).getLoanDetails(loanId).borrower;
-        uint256 trackedBefore = VaultFactoryFacet(address(diamond)).getProtocolTrackedVaultBalance(borrower, weth);
+        uint256 trackedBefore = VaultFactoryFacet(address(diamond)).getTrackedHolding(borrower, weth, 0);
         uint256 collateral = LoanFacet(address(diamond)).getLoanDetails(loanId).collateralAmount;
         uint256 diamondBefore = IERC20(weth).balanceOf(address(diamond));
         uint256 vaultBefore = IERC20(weth).balanceOf(vault);
@@ -374,7 +374,7 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         assertEq(IERC20(weth).balanceOf(vault), vaultBefore - r.makerAmount, "the vault is down by the lot");
         assertEq(IERC20(weth).balanceOf(taker), r.makerAmount, "the taker has the lot");
         assertEq(
-            VaultFactoryFacet(address(diamond)).getProtocolTrackedVaultBalance(borrower, weth),
+            VaultFactoryFacet(address(diamond)).getTrackedHolding(borrower, weth, 0),
             trackedBefore - r.makerAmount,
             "the vault's tracked balance is down by the lot"
         );
@@ -650,11 +650,11 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         address borrower = LoanFacet(address(diamond)).getLoanDetails(loanId).borrower;
         SwapToRepayIntentFacet.FusionOrderRead memory r = _commitOn(loanId);
         assertEq(r.makerAsset, vpfi, "fixture-live: VPFI collateral");
-        uint256 trackedBefore = VaultFactoryFacet(address(diamond)).getProtocolTrackedVaultBalance(borrower, vpfi);
+        uint256 trackedBefore = VaultFactoryFacet(address(diamond)).getTrackedHolding(borrower, vpfi, 0);
 
         _fill(r, "");
 
-        uint256 tracked = VaultFactoryFacet(address(diamond)).getProtocolTrackedVaultBalance(borrower, vpfi);
+        uint256 tracked = VaultFactoryFacet(address(diamond)).getTrackedHolding(borrower, vpfi, 0);
         assertEq(tracked, trackedBefore - r.makerAmount, "fixture-live: the lot left the tracked balance");
         (,, uint120 dayClose,) = TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(borrower);
         assertEq(
@@ -791,7 +791,7 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         uint256 diamondBefore = IERC20(weth).balanceOf(address(diamond));
         uint256 lienBefore = _lien(loanId);
         address borrower = LoanFacet(address(diamond)).getLoanDetails(loanId).borrower;
-        uint256 trackedBefore = VaultFactoryFacet(address(diamond)).getProtocolTrackedVaultBalance(borrower, weth);
+        uint256 trackedBefore = VaultFactoryFacet(address(diamond)).getTrackedHolding(borrower, weth, 0);
         address stranger = makeAddr("stranger");
 
         vm.prank(stranger);
@@ -806,7 +806,7 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         assertEq(IERC20(weth).balanceOf(address(diamond)), diamondBefore, "the Diamond is untouched");
         assertEq(_lien(loanId), lienBefore, "the lien is untouched");
         assertEq(
-            VaultFactoryFacet(address(diamond)).getProtocolTrackedVaultBalance(borrower, weth),
+            VaultFactoryFacet(address(diamond)).getTrackedHolding(borrower, weth, 0),
             trackedBefore,
             "the vault's tracked balance is untouched"
         );

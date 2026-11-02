@@ -1866,14 +1866,14 @@ Tu as envoyé les jetons toi-même par erreur, tu contrôles le wallet source et
 
 Deux résultats possibles :
 
-- **Source propre** → les jetons reviennent vers ton EOA.
+- **Source propre** → les jetons sont ajoutés au solde suivi de ton vault. Retire-les de ton vault comme d’habitude ; si le mode compte protégé est actif, son délai de versement s’applique.
 - **Source signalée** → les jetons restent dans l'vault, ton vault est verrouillé en vertu de la politique de sanctions du protocole. Le verrou se lève automatiquement si l'adresse est ultérieurement retirée de l'oracle de sanctions.
 
 <a id="stuck-recovery.disown"></a>
 
 ### Désavouer des jetons non sollicités (piste d'audit de conformité)
 
-Si tu souhaites un enregistrement public on-chain affirmant qu'un certain solde de jetons dans ton vault n'est PAS le tien, le protocole fournit une fonction `disown(token)`. Elle émet un événement (`TokenDisowned`) et ne change rien d'autre — les jetons restent dans l'vault comme avant. Utile lors de litiges de conformité si un CEX ou un régulateur demande « avez-vous reçu ces fonds ? » : tu peux pointer vers l'événement on-chain.
+Si tu souhaites un enregistrement public on-chain affirmant qu'un certain solde de jetons dans ton vault n'est PAS le tien, le protocole fournit une fonction `disownUntracked(kind, asset, tokenId)`. Elle émet un événement (`UntrackedDisowned`) et ne change rien d'autre — les jetons restent dans l'vault comme avant. Utile lors de litiges de conformité si un CEX ou un régulateur demande « avez-vous reçu ces fonds ? » : tu peux pointer vers l'événement on-chain.
 
 La fonction disown est exposée uniquement via un appel direct au contrat pour l'instant ; le frontend Vaipakam ne la propose pas sous forme de bouton. Utilise l'interface « Write Contract » d'un explorateur de blocs ou un outil d'interaction avec les contrats pour l'appeler.
 

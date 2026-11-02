@@ -115,7 +115,7 @@ library LibVPFIDiscount {
     function trackedVpfiBalance(address user) internal view returns (uint256) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.vpfiToken == address(0)) return 0;
-        return s.protocolTrackedVaultBalance[user][s.vpfiToken];
+        return LibVaipakam.trackedHolding(user, s.vpfiToken, 0);
     }
 
     /**
@@ -685,7 +685,7 @@ library LibVPFIDiscount {
         if (lenderVault == address(0) || vpfi == address(0)) return (false, 0);
 
         uint256 vaultBal = IERC20(vpfi).balanceOf(lenderVault);
-        uint256 prevTracked = s.protocolTrackedVaultBalance[lender][vpfi];
+        uint256 prevTracked = LibVaipakam.trackedHolding(lender, vpfi, 0);
 
         // Quote from the lender's EFFECTIVE tier, read live. This
         // comment asserted the exact opposite until #1981 — "the

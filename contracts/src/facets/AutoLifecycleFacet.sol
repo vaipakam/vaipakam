@@ -3,12 +3,14 @@ pragma solidity ^0.8.29;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -446,7 +448,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) revert LoanNotActive();
-        LibAuth.requireBorrowerNftOwner(loan);
+        LibAuth.requirePositionManager(loan.borrowerTokenId);
 
         _validateExtendCaps(enabled, minRateBps, maxRateBps, maxNewExpiry);
 
@@ -487,7 +489,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) revert LoanNotActive();
-        LibAuth.requireLenderNftOwner(loan);
+        LibAuth.requirePositionManager(loan.lenderTokenId);
 
         _validateExtendCaps(enabled, minRateBps, maxRateBps, maxNewExpiry);
 
@@ -595,6 +597,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         whenNotPaused
     {
         LibVaipakam._assertNotSanctioned(msg.sender);
+        LibProtectedAccount.requireManager(msg.sender); // a retired wallet funds nothing
         if (amount == 0) revert ExtendReserveZeroAmount();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
@@ -622,27 +625,34 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         emit ExtendReserveFunded(loanId, msg.sender, asset, amount, s.extendReserve[loanId][msg.sender]);
     }
 
-    /// @notice #2814 — withdraw `amount` of the caller's unused extension
-    ///         reserve for `loanId` from their vault to their wallet.
+    /// @notice #2814 — withdraw `amount` of `account`'s unused extension
+    ///         reserve for `loanId` from its vault to the caller, who must be
+    ///         the account's manager (its own wallet, or its controller once
+    ///         a replacement retired it).
     /// @dev    Open whatever the loan's state, and whether or not the caller
     ///         still holds the borrower position: the reserve is the
     ///         depositor's own money. Tier-1 sanctions-gated (funds leave to
     ///         the caller), like {LenderIntentFacet.withdrawLenderIntentCapital}.
     ///         Reverts {LibEncumbrance.ExtendReserveInsufficient} past what is
     ///         reserved.
-    function withdrawExtendReserve(uint256 loanId, uint256 amount)
+    function withdrawExtendReserve(address account, uint256 loanId, uint256 amount)
         external
         nonReentrant
         whenNotPaused
     {
+        // The account's manager: its own wallet, or its controller once a
+        // replacement retired it, so a recovered account's reserve is never
+        // stranded behind the lost key. Paid to the manager (a protected
+        // account's payout queues behind the delay).
+        LibProtectedAccount.requireManager(account);
         LibVaipakam._assertNotSanctioned(msg.sender);
         if (amount == 0) revert ExtendReserveZeroAmount();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address asset = s.loans[loanId].principalAsset;
         // Released BEFORE the withdraw, so the chokepoint's guard sees it free.
-        LibEncumbrance.unlienExtendReserve(loanId, msg.sender, asset, amount);
-        VaultFactoryFacet(address(this)).vaultWithdrawERC20(msg.sender, asset, msg.sender, amount);
-        emit ExtendReserveWithdrawn(loanId, msg.sender, asset, amount, s.extendReserve[loanId][msg.sender]);
+        LibEncumbrance.unlienExtendReserve(loanId, account, asset, amount);
+        VaultFactoryFacet(address(this)).vaultWithdrawERC20(account, asset, msg.sender, amount);
+        emit ExtendReserveWithdrawn(loanId, account, asset, amount, s.extendReserve[loanId][account]);
     }
 
     /// @notice #2814 — what `holder` has ready for `loanId`'s next
@@ -686,7 +696,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         address vault = s.userVaipakamVaults[holder];
         if (erc20 && vault != address(0) && asset != address(0)) {
             uint256 raw = IERC20(asset).balanceOf(vault);
-            uint256 tracked = s.protocolTrackedVaultBalance[holder][asset];
+            uint256 tracked = LibVaipakam.trackedHolding(holder, asset, 0);
             otherFree = LibEncumbrance.freeBalance(holder, asset, 0, tracked < raw ? tracked : raw);
         }
         if (
@@ -838,11 +848,15 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         if (block.timestamp > graceEndNow) revert ExtensionGraceExpired();
 
         // ── Auth: keeper-side bit + Tier-1 sanctions on all parties ──
-        if (LibAuth.requireKeeperFor(
+        // One verdict for "a keeper acted": it is charged here and rewarded
+        // below. The holder's manager (the holder, or its controller once a
+        // protected-account replacement retired it) is never a keeper.
+        bool keeperActed = LibAuth.requireKeeperFor(
             LibVaipakam.KEEPER_ACTION_EXTEND,
             loan,
             /* lenderSide */ false
-        )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
+        );
+        if (keeperActed) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
         LibVaipakam._assertNotSanctioned(msg.sender);
         address borrowerNftOwner = LibERC721.ownerOf(loan.borrowerTokenId);
         address lenderNftOwner = LibERC721.ownerOf(loan.lenderTokenId);
@@ -854,10 +868,12 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             s.autoExtendBorrowerCaps[loanId];
         LibVaipakam.AutoExtendCaps storage lenderCaps =
             s.autoExtendLenderCaps[loanId];
+        // A consent is fresh only while its setter still manages the holder,
+        // so a replacement voids the caps the retired wallet set.
         bool borrowerFresh = borrowerCaps.setter == address(0) ||
-            borrowerCaps.setter == borrowerNftOwner;
+            borrowerCaps.setter == LibProtectedAccount.manager(borrowerNftOwner);
         bool lenderFresh = lenderCaps.setter == address(0) ||
-            lenderCaps.setter == lenderNftOwner;
+            lenderCaps.setter == LibProtectedAccount.manager(lenderNftOwner);
         if (
             !borrowerCaps.enabled || !lenderCaps.enabled ||
             !borrowerFresh || !lenderFresh
@@ -1089,8 +1105,9 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // reward exists to compensate THIRD-PARTY housekeeping; a
         // self-extension isn't a keeper service and would otherwise
         // let a borrower drain the 2x gas multiplier in VPFI on every
-        // self-driven extend.
-        if (msg.sender != borrowerNftOwner) {
+        // self-driven extend. The auth verdict above decides it, so the
+        // holder's controller is excluded by the same rule as the holder.
+        if (keeperActed) {
             LibKeeperReward.payVpfiReward(
                 msg.sender,
                 keccak256("extendLoanInPlace"),
@@ -1168,6 +1185,9 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             uint256 reserved = s.extendReserve[loan.id][borrowerNftOwner];
             uint256 fromReserve = reserved < charge ? reserved : charge;
             LibEncumbrance.unlienExtendReserve(loan.id, borrowerNftOwner, principalAsset, fromReserve);
+            // The rest is the holder's other free vault balance: the depository
+            // ledger (what of it they may withdraw) pays first.
+            LibDepositoryLedger.spend(borrowerNftOwner, principalAsset, 0, charge - fromReserve);
             emit ExtendChargeDrawn(
                 loan.id, borrowerNftOwner, principalAsset, fromReserve, charge - fromReserve, reserved - fromReserve
             );
@@ -1194,6 +1214,9 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             // arrival is refused like step 1's withdrawal.
             LibDelivery.pushExact(principalAsset, lenderVault, holderShare);
             LibVaipakam.recordVaultDeposit(lenderNftOwner, principalAsset, holderShare);
+            // Paid outright to the holder (no claim row follows), so it is
+            // theirs to withdraw.
+            LibDepositoryLedger.credit(lenderNftOwner, principalAsset, 0, holderShare);
         }
         LibInterestLedger.holderPaid(s, loan, interestGross - sellersGross);
     }
@@ -1236,7 +1259,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // NFT). Read the storage slot directly so the reader returns
         // disabled-caps cleanly instead of bubbling a revert.
         address current = LibERC721._ownerOfRaw(loan.borrowerTokenId);
-        return current != address(0) && current == setter;
+        return current != address(0) && LibProtectedAccount.manager(current) == setter;
     }
 
     function _isCurrentLenderNft(
@@ -1245,6 +1268,6 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     ) internal view returns (bool) {
         if (setter == address(0)) return true;
         address current = LibERC721._ownerOfRaw(loan.lenderTokenId);
-        return current != address(0) && current == setter;
+        return current != address(0) && LibProtectedAccount.manager(current) == setter;
     }
 }

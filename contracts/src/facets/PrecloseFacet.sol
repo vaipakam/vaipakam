@@ -217,11 +217,7 @@ contract PrecloseFacet is
         // Phase 6: borrower-entitled strategic flow. Authority follows the
         // current borrower-NFT owner OR a keeper with the InitPreclose
         // action bit.
-        if (LibAuth.requireKeeperFor(
-            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE,
-            loan,
-            /* lenderSide */ false
-        )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
+        _authorizeBorrowerSide(LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE, loan); // #1219 — a keeper action is charged
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
 
@@ -644,11 +640,7 @@ contract PrecloseFacet is
         // Phase 6: borrower-entitled strategic flow (Preclose Option 2).
         // Authority binds to the current borrower-NFT owner OR a keeper
         // with the InitPreclose action bit.
-        if (LibAuth.requireKeeperFor(
-            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE,
-            loan,
-            /* lenderSide */ false
-        )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
+        _authorizeBorrowerSide(LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE, loan); // #1219 — a keeper action is charged
         // #819 Tier-1 sanctions on the EXITING borrower-position holder.
         // `requireKeeperFor` authorises against the borrower NFT owner, but a
         // keeper caller leaves that holder unscreened — and the exiting
@@ -1228,7 +1220,7 @@ contract PrecloseFacet is
             // or liquidate it.
             uint256 rawBal = IERC20(loan.collateralAsset).balanceOf(newBorrowerVault);
             uint256 trackedBal =
-                s.protocolTrackedVaultBalance[newBorrower][loan.collateralAsset];
+                LibVaipakam.trackedHolding(newBorrower, loan.collateralAsset, 0);
             if (trackedBal < rawBal) {
                 rawBal = trackedBal;
             }
@@ -1488,11 +1480,7 @@ contract PrecloseFacet is
         // Phase 6: borrower-entitled strategic flow (Preclose Option 3).
         // Authority binds to current borrower-NFT owner OR a keeper with
         // the InitPreclose action bit.
-        if (LibAuth.requireKeeperFor(
-            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE,
-            loan,
-            /* lenderSide */ false
-        )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
+        _authorizeBorrowerSide(LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE, loan); // #1219 — a keeper action is charged
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
         // NFT rentals cannot use the offset path: the NFT is in the lender's
@@ -2046,11 +2034,7 @@ contract PrecloseFacet is
         // Phase 6: borrower-entitled action. Authority resolves against
         // the current borrower-NFT holder OR a keeper with the
         // CompleteOffset action bit.
-        if (LibAuth.requireKeeperFor(
-            LibVaipakam.KEEPER_ACTION_COMPLETE_OFFSET,
-            loan,
-            /* lenderSide */ false
-        )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
+        _authorizeBorrowerSide(LibVaipakam.KEEPER_ACTION_COMPLETE_OFFSET, loan); // #1219 — a keeper action is charged
 
         // #1001 (S3, Codex #1070 r8 P2) — clear any parallel-sale listing BEFORE
         // the consolidation below. A borrower-side listing (`prepayListingOrderHash`
@@ -2263,5 +2247,14 @@ contract PrecloseFacet is
             ),
             IVaipakamErrors.NFTStatusUpdateFailed.selector
         );
+    }
+
+    /// @dev The borrower-side authority check every preclose entry runs: the
+    ///      position's holder (or, once a protected-account replacement
+    ///      retired it, its controller) or a keeper it granted `action`; a
+    ///      keeper's action is charged against its service capacity (#1219).
+    ///      One body for the four entries, so the check is compiled once.
+    function _authorizeBorrowerSide(uint16 action, LibVaipakam.Loan storage loan) private {
+        if (LibAuth.requireKeeperFor(action, loan, /* lenderSide */ false)) LibServiceCapacity.chargeKeeper();
     }
 }

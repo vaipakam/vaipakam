@@ -49,8 +49,8 @@ describe('activity-refs coverage — executed against the real mapper', () => {
 
   it('has no ABI problems the derivation cannot reason around', () => {
     // The one tolerated shape: an overload on an event that carries no
-    // reference (the live ABI has `StuckERC20Recovered`, an ops recovery
-    // event mapped nowhere). Tolerated only while it stays UNMAPPED — the
+    // reference and is mapped nowhere (none today; the retired stuck-token
+    // recovery event was one). Tolerated only while it stays UNMAPPED — the
     // test below executes exactly that. Everything else is a real problem.
     const relevant = abiConflicts.filter(
       (c) => c.kind !== 'overload' || carries.has(c.event),

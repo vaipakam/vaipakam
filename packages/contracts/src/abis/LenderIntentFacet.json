@@ -480,6 +480,11 @@
     "name": "withdrawLenderIntentCapital",
     "inputs": [
       {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
         "name": "lendingAsset",
         "type": "address",
         "internalType": "address"
@@ -820,6 +825,17 @@
   },
   {
     "type": "error",
+    "name": "AccountRetired",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "AssetPaused",
     "inputs": [
       {
@@ -986,6 +1002,22 @@
   },
   {
     "type": "error",
+    "name": "NotAccountManager",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "OnlyDiamondInternal",
     "inputs": []
   },
@@ -1012,6 +1044,17 @@
         "name": "max",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ProtectedVaultLocked",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },

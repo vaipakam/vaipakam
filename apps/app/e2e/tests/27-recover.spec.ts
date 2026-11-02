@@ -1,5 +1,6 @@
-/** Stuck-token recovery (T-054 port) — driven end-to-end on the fork
- *  against the real VaultFactoryFacet recovery surface.
+/** Claiming stuck tokens by adoption (formerly T-054 recovery) — driven
+ *  end-to-end on the fork against the real VaultDepositoryFacet
+ *  adoption surface.
  *
  *  Asserts the load-bearing behaviours: (1) the page is reachable ONLY
  *  via the Help explainer's deep link (the discoverability gate — no
@@ -7,9 +8,9 @@
  *  on-chain `balanceOf(vault) − tracked` (dust minted straight to the
  *  vault shows up; the amount is capped against it); (3) the typed
  *  CONFIRM friction arms the sign button; (4) the EIP-712 ack +
- *  `recoverStuckERC20` submit round-trips and the SUCCESS outcome is
- *  read from the `StuckERC20Recovered` event, with the tokens landing
- *  in the connected wallet.
+ *  `adoptUntracked` submit round-trips and the SUCCESS outcome is read
+ *  from the `UntrackedAdopted` event, with the tokens credited to the
+ *  vault's tracked holding (nothing moves to the wallet).
  *
  *  Also pinned: the FAIL-SAFE blocked state — recovery hard-requires a
  *  sanctions oracle (SanctionsOracleUnavailable), so with none
@@ -45,7 +46,6 @@ import { sendAsAdmin } from '../lib/admin';
 import { parseAbi, parseUnits, type Address } from 'viem';
 
 const MINT_ABI = parseAbi(['function mint(address to, uint256 amount)']);
-const BAL_ABI = parseAbi(['function balanceOf(address) view returns (uint256)']);
 
 /** A benign sanctions oracle, installed via anvil_setCode: its runtime
  *  bytecode returns one 32-byte zero word for ANY call — every
@@ -61,7 +61,7 @@ async function setSanctionsOracle(target: Address): Promise<void> {
   await sendAsAdmin('setSanctionsOracle', [target]);
 }
 
-test('help explainer gates the flow; dusted vault recovers to the wallet', async ({
+test('help explainer gates the flow; dusted vault is adopted into the vault balance', async ({
   launchWallet,
 }) => {
   const { page, account } = await launchWallet('borrower');
@@ -131,11 +131,11 @@ test('help explainer gates the flow; dusted vault recovers to the wallet', async
   });
   await confirm(mintHash, 'mint (recover seeding)');
 
-  const walletBalBefore = (await pub.readContract({
-    address: token,
-    abi: BAL_ABI,
-    functionName: 'balanceOf',
-    args: [account.address],
+  const trackedBefore = (await pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'getTrackedHolding',
+    args: [account.address, token, 0n],
   })) as bigint;
 
   // In via the ONLY in-app path: the Help explainer's deep link.
@@ -181,35 +181,35 @@ test('help explainer gates the flow; dusted vault recovers to the wallet', async
 
   // The typed-CONFIRM friction: sign stays disabled until the literal
   // is typed.
-  const sign = page.getByRole('button', { name: /sign & recover/i });
+  const sign = page.getByRole('button', { name: /sign & add to vault/i });
   await expect(sign).toBeDisabled();
   await page.getByLabel(/type confirm/i).fill('confirm');
   await expect(sign).toBeEnabled(); // case-insensitive on purpose
   await sign.click();
 
-  // Success outcome — decoded from StuckERC20Recovered, tokens back in
-  // the connected wallet.
-  await expect(page.getByText(/recovery complete/i)).toBeVisible({
+  // Success outcome — decoded from UntrackedAdopted, tokens credited to
+  // the vault's tracked holding.
+  await expect(page.getByText(/tokens added to your vault/i)).toBeVisible({
     timeout: 90_000,
   });
   await expect(
     page.getByRole('link', { name: /view the transaction/i }),
   ).toBeVisible();
 
-  const walletBalAfter = (await pub.readContract({
-    address: token,
-    abi: BAL_ABI,
-    functionName: 'balanceOf',
-    args: [account.address],
+  const trackedAfter = (await pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'getTrackedHolding',
+    args: [account.address, token, 0n],
   })) as bigint;
-  expect(walletBalAfter - walletBalBefore).toBe(dust);
+  expect(trackedAfter - trackedBefore).toBe(dust);
 
   // The completed-recovery card offers the way back to a blank form
   // (Codex #1547 r15). The route stays mounted and the stored record is
   // already forgotten, so without this action a wallet holding a SECOND
   // unsolicited token had to reload or navigate away and back.
   await page.getByRole('button', { name: /recover another token/i }).click();
-  await expect(page.getByText(/recovery complete/i)).toHaveCount(0);
+  await expect(page.getByText(/tokens added to your vault/i)).toHaveCount(0);
   const tokenField = page.getByLabel(/token contract address/i);
   await expect(tokenField).toBeVisible();
   await expect(tokenField).toHaveValue('');
@@ -287,7 +287,7 @@ test('a processed-but-unreadable recovery stays locked across a reload', async (
 
   // Two-step way out: acknowledge having checked the wallet, THEN the
   // explicit "this is a separate recovery" action.
-  await page.getByRole('button', { name: /checked my wallet/i }).click();
+  await page.getByRole('button', { name: /checked my vault/i }).click();
   await page.getByRole('button', { name: /start a new recovery/i }).click();
   await expect(
     page.getByText(/your recovery attempt went through/i),

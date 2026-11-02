@@ -1858,14 +1858,14 @@ Enviaste los tokens tú mismo por error, controlas la billetera de origen y sabe
 
 Dos resultados:
 
-- **Origen limpio** → los tokens vuelven a tu EOA.
+- **Origen limpio** → los tokens se añaden al saldo registrado de tu vault. Retíralos de tu vault como de costumbre; si el modo de cuenta protegida está activo, se aplica su retraso de pago.
 - **Origen marcado** → los tokens se quedan en el vault, tu vault queda bloqueado bajo la política de sanciones del protocolo. El bloqueo se levanta automáticamente si la dirección es eliminada posteriormente del oráculo de sanciones.
 
 <a id="stuck-recovery.disown"></a>
 
 ### Desautorización de tokens no solicitados (registro de auditoría de cumplimiento)
 
-Si deseas un registro público on-chain que afirme que cierto saldo de tokens en tu vault NO es tuyo, el protocolo proporciona una función `disown(token)`. Emite un evento (`TokenDisowned`) y no cambia nada más — los tokens se quedan en el vault como antes. Útil en disputas de cumplimiento si un CEX o regulador pregunta "¿recibió estos fondos?": puedes señalar el evento on-chain.
+Si deseas un registro público on-chain que afirme que cierto saldo de tokens en tu vault NO es tuyo, el protocolo proporciona una función `disownUntracked(kind, asset, tokenId)`. Emite un evento (`UntrackedDisowned`) y no cambia nada más — los tokens se quedan en el vault como antes. Útil en disputas de cumplimiento si un CEX o regulador pregunta "¿recibió estos fondos?": puedes señalar el evento on-chain.
 
 La función disown está expuesta solo a través de llamada directa al contrato por ahora; el frontend de Vaipakam no la muestra como un botón. Usa una interfaz "Write Contract" de un explorador de bloques o una herramienta de interacción con contratos para llamarla.
 

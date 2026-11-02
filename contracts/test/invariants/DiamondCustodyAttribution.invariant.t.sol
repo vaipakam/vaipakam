@@ -352,7 +352,7 @@ contract DiamondCustodyAttributionInvariant is CustodyInvariantBase {
         for (uint256 o; o < owners.length; ++o) {
             for (uint256 j; j < 3; ++j) {
                 uint256 tracked =
-                    VaultFactoryFacet(address(diamond)).getProtocolTrackedVaultBalance(owners[o], tokens[j]);
+                    VaultFactoryFacet(address(diamond)).getTrackedHolding(owners[o], tokens[j], 0);
                 uint256 encumbered = MetricsFacet(address(diamond)).getEncumbered(owners[o], tokens[j], 0);
                 assertGe(tracked, encumbered, "V3a: encumbrance exceeds the tracked vault balance");
             }

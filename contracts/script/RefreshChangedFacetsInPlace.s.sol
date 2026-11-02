@@ -6,6 +6,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
+import {TrackedHoldingRollout} from "./lib/TrackedHoldingRollout.sol";
 import {RefreshAllFacetsInPlace, IOwnable} from "./RefreshAllFacetsInPlace.s.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
@@ -127,6 +128,9 @@ contract RefreshChangedFacetsInPlace is RefreshAllFacetsInPlace {
         _requireSlice3Diamond(diamond);
         _requireNoOpenErc1155RentalAcross902(diamond);
         _requireNoOpenLoanAcrossInterestLedger(diamond);
+        // The per-token tracked vault ledger is fresh-deploy only; see
+        // TrackedHoldingRollout.
+        TrackedHoldingRollout.assertInstalled(diamond);
         // #2092 item 1 — refuse code that drops a storage-layout fact this
         // chain records, before anything is broadcast (needs `--ffi`). Here in
         // the shared body, so neither entry skips it; `forge test` skips it by

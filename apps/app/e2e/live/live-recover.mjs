@@ -167,7 +167,7 @@ const POSTURES = [
   { key: 'wrongChain', find: (p) => p.getByText(/switch your wallet to a supported network to use recovery/i) },
   // An unresolved attempt on record: the page withholds the form on
   // purpose until the user resolves it.
-  { key: 'pending', find: (p) => p.getByText(/check the transaction again|start over|i[’']ve checked my wallet/i) },
+  { key: 'pending', find: (p) => p.getByText(/check the transaction again|start over|i[’']ve checked my vault/i) },
 ];
 
 /** Poll until one of `POSTURES` is visible, or time out. Returns the

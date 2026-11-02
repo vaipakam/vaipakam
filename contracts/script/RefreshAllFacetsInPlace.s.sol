@@ -78,7 +78,11 @@ import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
+import {TrackedHoldingRollout} from "./lib/TrackedHoldingRollout.sol";
 import {RiskDiscountedLiquidationFacet} from "../src/facets/RiskDiscountedLiquidationFacet.sol";
+import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
+import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
@@ -280,7 +284,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // is already routed (to RiskFacet), so it is cut as a Replace pointing
     // here. Until that batch lands the selector stays on the previous
     // RiskFacet build, which still carries the route unchanged.
-    uint256 public constant EXPECTED_FACETS = 106;
+    // 106 -> 109: ProtectedAccountFacet, VaultPayoutFacet and
+    // VaultDepositoryFacet - protected account mode and the depository
+    // vault; their selectors are new, so they are cut as Adds.
+    uint256 public constant EXPECTED_FACETS = 109;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -465,6 +472,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         _requireSlice3Diamond(diamond);
         _requireNoOpenErc1155RentalAcross902(diamond);
         _requireNoOpenLoanAcrossInterestLedger(diamond);
+        // The per-token tracked vault ledger is fresh-deploy only; see
+        // TrackedHoldingRollout.
+        TrackedHoldingRollout.assertInstalled(diamond);
         _requireD1RootTopology(diamond, currentOwner);
         // #2092 item 1 — the code this run cuts must keep every storage-layout
         // fact recorded for this chain. Before the first transaction, so a
@@ -1317,6 +1327,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             ArtifactDeploy.deploy(type(RiskDiscountedLiquidationFacet).name),
             _getRiskDiscountedLiquidationSelectors()
         );
+        // Protected account mode and the depository vault.
+        items[106] = Item("protectedAccountFacet", ArtifactDeploy.deploy(type(ProtectedAccountFacet).name), _getProtectedAccountSelectors());
+        items[107] = Item("vaultPayoutFacet", ArtifactDeploy.deploy(type(VaultPayoutFacet).name), _getVaultPayoutSelectors());
+        items[108] = Item("vaultDepositoryFacet", ArtifactDeploy.deploy(type(VaultDepositoryFacet).name), _getVaultDepositorySelectors());
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

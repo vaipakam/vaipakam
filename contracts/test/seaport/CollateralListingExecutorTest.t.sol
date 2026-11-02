@@ -147,6 +147,18 @@ contract MockVaipakamDiamond is IVaipakamPrepayContext, IVaipakamPrepayCallbacks
     function isRecipientBarred(address who) external view returns (bool) {
         return sanctioned[who];
     }
+
+    // Protected-account listing rule: the mock has no protected accounts,
+    // so every leg is allowed unless a test refuses one.
+    mapping(address => mapping(address => bool)) public refusedLeg;
+
+    function setRefusedLeg(address seller, address recipient, bool refused) external {
+        refusedLeg[seller][recipient] = refused;
+    }
+
+    function isListingLegAllowed(address seller, address recipient) external view returns (bool) {
+        return !refusedLeg[seller][recipient];
+    }
 }
 
 /// @notice #2440 — stands in for Seaport at the `seaport` address (etched
@@ -812,6 +824,62 @@ contract CollateralListingExecutorTest is Test {
             abi.encodeWithSelector(
                 CollateralListingExecutor.SanctionedListingRecipient.selector,
                 flaggedFee
+            )
+        );
+        executor.authorizeOrder(p);
+    }
+
+    /// @notice Protected account mode — a fee leg is paid outside the
+    ///         Diamond's payout queue, so the seller's protection settings
+    ///         are read live at fill: a leg to a destination the seller has
+    ///         not allowlisted aborts the fill.
+    function test_authorizeOrder_revertsWhenProtectionRefusesAFeeLeg() public {
+        _setDefaultContext();
+        address feeTo = makeAddr("notAllowlistedFeeRecipient");
+        FeeLeg[] memory legs = new FeeLeg[](1);
+        legs[0] = FeeLeg({recipient: feeTo, startAmount: 1, endAmount: 1});
+        vm.prank(address(diamond));
+        executor.recordOrder(
+            TEST_ORDER_HASH,
+            TEST_LOAN_ID,
+            conduit,
+            bytes32(0),
+            uint256(0),
+            uint256(block.timestamp),
+            TEST_ASK_PRICE,
+            TEST_ASK_PRICE,
+            0,
+            PREPAY_MODE_FIXED_PRICE,
+            legs
+        );
+        diamond.setRefusedLeg(borrowerHolder, feeTo, true);
+
+        ZoneParameters memory p = _validZoneParams();
+        vm.prank(seaport);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CollateralListingExecutor.ProtectedListingLegRefused.selector,
+                borrowerHolder,
+                feeTo
+            )
+        );
+        executor.authorizeOrder(p);
+    }
+
+    /// @notice Protected account mode — a locked or retired seller's listing
+    ///         cannot fill (the Diamond answers `seller -> seller` false).
+    function test_authorizeOrder_revertsWhenTheSellerIsLocked() public {
+        _setDefaultContext();
+        _recordValidOrder();
+        diamond.setRefusedLeg(borrowerHolder, borrowerHolder, true);
+
+        ZoneParameters memory p = _validZoneParams();
+        vm.prank(seaport);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CollateralListingExecutor.ProtectedListingLegRefused.selector,
+                borrowerHolder,
+                borrowerHolder
             )
         );
         executor.authorizeOrder(p);

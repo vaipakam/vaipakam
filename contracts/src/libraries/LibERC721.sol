@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibProtectedAccount} from "./LibProtectedAccount.sol";
 
 /**
  * @title LibERC721
@@ -34,7 +35,12 @@ library LibERC721 {
     ///      `SwapToRepayIntent` (#2322) — the borrower position is locked for
     ///      the life of a swap-to-repay intent commit, so the holder the commit
     ///      consolidated to is the holder at settlement.
-    enum LockReason { None, PrecloseOffset, EarlyWithdrawalSale, PrepayCollateralListing, SwapToRepayIntent }
+    ///      `ProtectedOwner` (protected account mode) is DERIVED, never
+    ///      stored: {lockOf} reports it for every token whose owner has the
+    ///      mode on with NFT protection, unless a stored reason takes
+    ///      precedence. Such a token moves only through a queued transfer
+    ///      (`VaipakamNFTFacet.queuePositionTransfer`).
+    enum LockReason { None, PrecloseOffset, EarlyWithdrawalSale, PrepayCollateralListing, SwapToRepayIntent, ProtectedOwner }
 
     /// @dev APPEND-ONLY POST-LAUNCH. New fields go at the end; never reorder,
     ///      rename, or change types of existing fields on live diamonds.
@@ -155,6 +161,9 @@ library LibERC721 {
     ///         immediately `transferFrom` on lock release, even though
     ///         `transferFrom` itself is `_requireNotLocked`-guarded.
     error ApprovalForbiddenWhileTokensLocked(address owner, uint256 lockedCount);
+    /// @dev Protected account mode — an owner with NFT protection on grants
+    ///      no operator approval.
+    error ProtectedOwnerApprovalForbidden(address owner);
 
     function _storage() internal pure returns (ERC721Storage storage es) {
         bytes32 position = ERC721_STORAGE_POSITION;
@@ -243,13 +252,35 @@ library LibERC721 {
         delete es.locks[tokenId];
     }
 
+    /// @notice The reason `tokenId` cannot move now: a stored reason, else
+    ///         `ProtectedOwner` when its owner runs protected account mode
+    ///         with NFT protection, else `None`.
     function lockOf(uint256 tokenId) internal view returns (LockReason) {
+        ERC721Storage storage es = _storage();
+        LockReason r = es.locks[tokenId];
+        if (r != LockReason.None) return r;
+        if (_protectsNfts(es.owners[tokenId])) return LockReason.ProtectedOwner;
+        return LockReason.None;
+    }
+
+    /// @notice The STORED lock reason of `tokenId` only (a flow in progress:
+    ///         an offset, a sale, a listing, an intent), without the derived
+    ///         `ProtectedOwner`. For a flow checking that no other flow holds
+    ///         the token.
+    function storedLockOf(uint256 tokenId) internal view returns (LockReason) {
         return _storage().locks[tokenId];
     }
 
     function _requireNotLocked(uint256 tokenId) internal view {
-        LockReason r = _storage().locks[tokenId];
+        LockReason r = lockOf(tokenId);
         if (r != LockReason.None) revert ERC721Locked(tokenId, r);
+    }
+
+    /// @dev Whether `owner`'s position NFTs carry the owner-level lock —
+    ///      {LibProtectedAccount.protectsNfts}, the one rule (NFT protection
+    ///      chosen, or the account retired by a replacement).
+    function _protectsNfts(address owner) private view returns (bool) {
+        return LibProtectedAccount.protectsNfts(owner);
     }
 
     /// @dev Initialize the ERC721 surface for a fresh diamond. Only
@@ -309,6 +340,9 @@ library LibERC721 {
     function isApprovedForAll(address owner, address operator) internal view returns (bool) {
         ERC721Storage storage es = _storage();
         if (!es.operatorApprovals[owner][operator]) return false;
+        // An operator granted before the owner turned on NFT protection
+        // is not honoured while it is on.
+        if (_protectsNfts(owner)) return false;
         // An approval is only honored if it was granted in the owner's
         // CURRENT epoch — any approval granted before the owner's most
         // recent {_lock} is treated as stale. Closes the pre-approved-
@@ -339,6 +373,9 @@ library LibERC721 {
         // `_requireNotLocked`-guarded. Revocations are unrestricted so a
         // user can always withdraw a prior approval.
         if (approved) {
+            // A protected owner grants no operator: its tokens move only
+            // through the queued transfer.
+            if (_protectsNfts(msg.sender)) revert ProtectedOwnerApprovalForbidden(msg.sender);
             uint256 lockedCount = es.lockedTokenCount[msg.sender];
             if (lockedCount > 0) {
                 revert ApprovalForbiddenWhileTokensLocked(msg.sender, lockedCount);

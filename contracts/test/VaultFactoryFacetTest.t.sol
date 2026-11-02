@@ -269,7 +269,7 @@ contract VaultFactoryFacetTest is Test {
         // the 200 ether withdraw.
         assertEq(
             VaultFactoryFacet(address(diamond))
-                .getProtocolTrackedVaultBalance(user1, mockERC20),
+                .getTrackedHolding(user1, mockERC20, 0),
             300 ether
         );
     }
@@ -292,9 +292,12 @@ contract VaultFactoryFacetTest is Test {
     function testVaultDepositAndWithdrawERC721() public {
         address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
 
-        // Transfer NFT directly to vault (simulates deposit)
+        // Deposit through the chokepoint so the tracked ledger records it:
+        // a plain transfer into the vault is not withdrawable until adopted.
         vm.prank(user1);
-        IERC721(mockNft721).transferFrom(user1, vault, 1);
+        IERC721(mockNft721).approve(address(diamond), 1);
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultDepositERC721(user1, user1, mockNft721, 1);
         assertEq(IERC721(mockNft721).ownerOf(1), vault);
 
         // Withdraw NFT back to user1 via diamond facet
@@ -608,13 +611,13 @@ contract VaultFactoryFacetTest is Test {
         address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
         uint256 vaultBefore = ERC20(mockERC20).balanceOf(vault);
         uint256 trackedBefore = VaultFactoryFacet(address(diamond))
-            .getProtocolTrackedVaultBalance(user1, mockERC20);
+            .getTrackedHolding(user1, mockERC20, 0);
         vm.prank(address(diamond));
         VaultFactoryFacet(address(diamond)).vaultDepositERC20(user1, mockERC20, 50 ether);
         assertEq(ERC20(mockERC20).balanceOf(vault) - vaultBefore, 50 ether);
         // Counter ticks up under user1.
         uint256 trackedAfter = VaultFactoryFacet(address(diamond))
-            .getProtocolTrackedVaultBalance(user1, mockERC20);
+            .getTrackedHolding(user1, mockERC20, 0);
         assertEq(trackedAfter - trackedBefore, 50 ether);
     }
 
@@ -626,9 +629,9 @@ contract VaultFactoryFacetTest is Test {
         address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
         uint256 vaultBefore = ERC20(mockERC20).balanceOf(vault);
         uint256 user1TrackedBefore = VaultFactoryFacet(address(diamond))
-            .getProtocolTrackedVaultBalance(user1, mockERC20);
+            .getTrackedHolding(user1, mockERC20, 0);
         uint256 user2TrackedBefore = VaultFactoryFacet(address(diamond))
-            .getProtocolTrackedVaultBalance(user2, mockERC20);
+            .getTrackedHolding(user2, mockERC20, 0);
         vm.prank(address(diamond));
         VaultFactoryFacet(address(diamond)).vaultDepositERC20From(
             user2, // payer
@@ -640,9 +643,9 @@ contract VaultFactoryFacetTest is Test {
         // Counter ticks under user1 ONLY — user2 is the payer, not
         // the vault owner.
         uint256 user1TrackedAfter = VaultFactoryFacet(address(diamond))
-            .getProtocolTrackedVaultBalance(user1, mockERC20);
+            .getTrackedHolding(user1, mockERC20, 0);
         uint256 user2TrackedAfter = VaultFactoryFacet(address(diamond))
-            .getProtocolTrackedVaultBalance(user2, mockERC20);
+            .getTrackedHolding(user2, mockERC20, 0);
         assertEq(user1TrackedAfter - user1TrackedBefore, 40 ether);
         assertEq(user2TrackedAfter, user2TrackedBefore);
     }
@@ -657,14 +660,14 @@ contract VaultFactoryFacetTest is Test {
         address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
         uint256 vaultBefore = ERC20(mockERC20).balanceOf(vault);
         uint256 trackedBefore = VaultFactoryFacet(address(diamond))
-            .getProtocolTrackedVaultBalance(user1, mockERC20);
+            .getTrackedHolding(user1, mockERC20, 0);
         vm.prank(address(diamond));
         VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(user1, mockERC20, 25 ether);
         // No token movement.
         assertEq(ERC20(mockERC20).balanceOf(vault), vaultBefore);
         // Counter incremented.
         uint256 trackedAfter = VaultFactoryFacet(address(diamond))
-            .getProtocolTrackedVaultBalance(user1, mockERC20);
+            .getTrackedHolding(user1, mockERC20, 0);
         assertEq(trackedAfter - trackedBefore, 25 ether);
     }
 
@@ -680,7 +683,7 @@ contract VaultFactoryFacetTest is Test {
         IERC721(mockNft721).approve(vault, 2);
 
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultDepositERC721(user1, mockNft721, 2);
+        VaultFactoryFacet(address(diamond)).vaultDepositERC721(user1, address(diamond), mockNft721, 2);
         assertEq(IERC721(mockNft721).ownerOf(2), vault);
     }
 
@@ -698,7 +701,7 @@ contract VaultFactoryFacetTest is Test {
         mock1155.setApprovalForAll(vault, true);
 
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultDepositERC1155(user1, address(mock1155), 1, 50);
+        VaultFactoryFacet(address(diamond)).vaultDepositERC1155(user1, address(diamond), address(mock1155), 1, 50);
         assertEq(mock1155.balanceOf(vault, 1), 50);
     }
 
@@ -706,10 +709,12 @@ contract VaultFactoryFacetTest is Test {
         address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
         ERC1155Mock mock1155 = new ERC1155Mock();
 
-        // Force-mint tokens directly to vault proxy so it can withdraw —
-        // `mint` would call safeTransferFrom whose receiver hook now
-        // rejects non-Diamond operators (operator = mock1155 here).
-        mock1155.forceMint(vault, 1, 100);
+        // Force-mint to the Diamond, then deposit through the chokepoint so
+        // the tracked ledger records the units (units that reach the vault
+        // outside the protocol are not withdrawable until adopted).
+        mock1155.forceMint(address(diamond), 1, 100);
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultDepositERC1155(user1, address(diamond), address(mock1155), 1, 100);
 
         uint256 user2Before = mock1155.balanceOf(user2, 1);
         vm.prank(address(diamond));
@@ -747,18 +752,29 @@ contract VaultFactoryFacetTest is Test {
 
     /// @dev Tests vaultDepositERC721 failure branch (ProxyCallFailed).
     function testVaultDepositERC721RevertsWhenFails() public {
-        // Try to deposit NFT that we don't own (token 999 doesn't exist) → proxy call should fail
+        // Token 999 doesn't exist: the Diamond's own transfer reverts inside
+        // the token contract before any ledger write.
         vm.prank(address(diamond));
-        vm.expectRevert(abi.encodeWithSelector(VaultFactoryFacet.ProxyCallFailed.selector, "Deposit ERC721 failed"));
-        VaultFactoryFacet(address(diamond)).vaultDepositERC721(user1, mockNft721, 999);
+        vm.expectRevert(abi.encodeWithSignature("ERC721NonexistentToken(uint256)", uint256(999)));
+        VaultFactoryFacet(address(diamond)).vaultDepositERC721(user1, address(diamond), mockNft721, 999);
     }
 
     /// @dev Tests vaultWithdrawERC721 failure branch (ProxyCallFailed).
     function testVaultWithdrawERC721RevertsWhenFails() public {
-        // Create vault but don't put NFT inside → withdraw should fail
+        // Create vault but don't put NFT inside → the tracked-ledger guard
+        // refuses before the proxy call (nothing tracked for token 999).
         VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
         vm.prank(address(diamond));
-        vm.expectRevert(abi.encodeWithSelector(VaultFactoryFacet.ProxyCallFailed.selector, "Withdraw ERC721 failed"));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaultFactoryFacet.WithdrawWouldUnderflowLien.selector,
+                user1,
+                mockNft721,
+                uint256(999),
+                uint256(1),
+                uint256(0)
+            )
+        );
         VaultFactoryFacet(address(diamond)).vaultWithdrawERC721(user1, mockNft721, 999, user1);
     }
 
@@ -875,10 +891,19 @@ contract VaultFactoryFacetTest is Test {
     ///      so the depositERC1155 call fails → ProxyCallFailed revert.
     function testVaultDepositERC1155RevertsWhenFails() public {
         ERC1155Mock mock1155 = new ERC1155Mock();
-        // Don't mint tokens to the vault or give approval → deposit will fail
+        // The Diamond holds no units → the token contract refuses the
+        // transfer before any ledger write.
         vm.prank(address(diamond));
-        vm.expectRevert(abi.encodeWithSelector(VaultFactoryFacet.ProxyCallFailed.selector, "Deposit ERC1155 failed"));
-        VaultFactoryFacet(address(diamond)).vaultDepositERC1155(user1, address(mock1155), 1, 100);
+        vm.expectRevert(
+            abi.encodeWithSignature(
+                "ERC1155InsufficientBalance(address,uint256,uint256,uint256)",
+                address(diamond),
+                uint256(0),
+                uint256(100),
+                uint256(1)
+            )
+        );
+        VaultFactoryFacet(address(diamond)).vaultDepositERC1155(user1, address(diamond), address(mock1155), 1, 100);
     }
 
     /// @dev Tests vaultApproveNFT721 failure branch (ProxyCallFailed "Approve ERC721 failed").

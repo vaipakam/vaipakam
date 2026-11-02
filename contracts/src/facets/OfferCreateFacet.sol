@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
@@ -31,6 +32,7 @@ import {LibUserVault} from "../libraries/LibUserVault.sol";
 import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 
 /**
@@ -604,12 +606,14 @@ contract OfferCreateFacet is
             // balance; the immediate accept (caller side) consumes + releases
             // it. No `recordVaultDepositERC20` — the balance was tracked when
             // the signer originally deposited it.
-            uint256 raw = LibVaipakam.storageSlot()
-                .protocolTrackedVaultBalance[creator][fundedAsset];
+            uint256 raw = LibVaipakam.trackedHolding(creator, fundedAsset, 0);
             uint256 free = LibEncumbrance.freeBalance(creator, fundedAsset, 0, raw);
             if (free < amount) {
                 revert SignedOfferInsufficientFreeBalance(fundedAsset, free, amount);
             }
+            // The signer spends free vault balance: the depository ledger
+            // (what of it the signer may withdraw) pays first.
+            LibDepositoryLedger.spend(creator, fundedAsset, 0, amount);
         } else {
             // Wallet-witness: one Permit2 signature binds the pull + the terms.
             LibPermit2.pullWithWitness(
@@ -1059,19 +1063,12 @@ contract OfferCreateFacet is
                     ),
                     VaultDepositFailed.selector
                 );
-            } else if (params.assetType == LibVaipakam.AssetType.ERC721) {
-                IERC721(params.lendingAsset).safeTransferFrom(
-                    creator,
-                    vault,
-                    params.tokenId
-                );
-            } else if (params.assetType == LibVaipakam.AssetType.ERC1155) {
-                IERC1155(params.lendingAsset).safeTransferFrom(
-                    creator,
-                    vault,
-                    params.tokenId,
-                    params.quantity,
-                    ""
+            } else if (
+                params.assetType == LibVaipakam.AssetType.ERC721
+                    || params.assetType == LibVaipakam.AssetType.ERC1155
+            ) {
+                _pullNftIntoVault(
+                    params.assetType, params.lendingAsset, creator, vault, params.tokenId, params.quantity
                 );
             } else {
                 revert InvalidAssetType();
@@ -1121,19 +1118,17 @@ contract OfferCreateFacet is
                         ),
                         VaultDepositFailed.selector
                     );
-                } else if (params.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-                    IERC721(params.collateralAsset).safeTransferFrom(
-                        creator,
-                        vault,
-                        params.collateralTokenId
-                    );
-                } else if (params.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
-                    IERC1155(params.collateralAsset).safeTransferFrom(
+                } else if (
+                    params.collateralAssetType == LibVaipakam.AssetType.ERC721
+                        || params.collateralAssetType == LibVaipakam.AssetType.ERC1155
+                ) {
+                    _pullNftIntoVault(
+                        params.collateralAssetType,
+                        params.collateralAsset,
                         creator,
                         vault,
                         params.collateralTokenId,
-                        params.collateralQuantity,
-                        ""
+                        params.collateralQuantity
                     );
                 } else {
                     revert InvalidAssetType();
@@ -1220,6 +1215,8 @@ contract OfferCreateFacet is
         uint256 offerId,
         LibVaipakam.CreateOfferParams calldata params
     ) private {
+        // Protected account mode — a locked or retired account posts no offer.
+        LibProtectedAccount.requireCanOpen(creator);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
 
@@ -1710,4 +1707,24 @@ contract OfferCreateFacet is
         return LibUserVault.getOrCreate(user);
     }
 
+
+    /// @dev Pull a rental or collateral NFT from `owner`'s wallet into
+    ///      `owner`'s vault (the Diamond as approved operator) and record it
+    ///      in the tracked ledger, which bounds every vault withdrawal.
+    function _pullNftIntoVault(
+        LibVaipakam.AssetType kind,
+        address asset,
+        address owner,
+        address vault,
+        uint256 tokenId,
+        uint256 quantity
+    ) private {
+        if (kind == LibVaipakam.AssetType.ERC721) {
+            IERC721(asset).safeTransferFrom(owner, vault, tokenId);
+            quantity = 1;
+        } else {
+            IERC1155(asset).safeTransferFrom(owner, vault, tokenId, quantity, "");
+        }
+        LibVaipakam.recordVaultDeposit(owner, asset, tokenId, quantity);
+    }
 }

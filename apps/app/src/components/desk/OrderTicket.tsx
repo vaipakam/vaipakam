@@ -906,8 +906,8 @@ export function OrderTicket({
           publicClient.readContract({
             address: walletChain.diamondAddress,
             abi: DIAMOND_ABI_VIEM,
-            functionName: 'getProtocolTrackedVaultBalance',
-            args: [address, stakeToken],
+            functionName: 'getTrackedHolding',
+            args: [address, stakeToken, 0n],
           }) as Promise<bigint>,
           publicClient.readContract({
             address: walletChain.diamondAddress,

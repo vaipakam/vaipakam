@@ -13,6 +13,7 @@ import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../../src/facets/RepayFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
+import {VaultDepositoryFacet} from "../../src/facets/VaultDepositoryFacet.sol";
 import {VPFITokenFacet} from "../../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../../src/facets/VPFIDiscountFacet.sol";
 import {ERC20Mock} from "../../test/mocks/ERC20Mock.sol";
@@ -63,255 +64,117 @@ contract PositiveFlowsVaultAndVpfi is PositiveFlowsBase {
         _restoreVpfiConfig();
     }
 
-    // ─── PF-280: Stuck-Token Recovery (happy path) ────────────────────────────
+    // ─── PF-280: Adopting an untracked asset (happy path) ─────────────────────
 
-    /// @dev A random USDC transfer lands directly on alice's vault
-    ///      proxy (e.g., someone confused a contract address for a
-    ///      wallet). The funds aren't accounted for in
-    ///      `protocolTrackedVaultBalance` because they didn't flow
-    ///      through the chokepoint, so they're "stuck" — the loan /
-    ///      offer paths can't move them. alice notices via the Asset
-    ///      Viewer page and uses the Recovery flow:
-    ///        1. Look up `recoveryDomainSeparator()` + `recoveryNonce`.
-    ///        2. Sign the EIP-712 `RecoveryAcknowledgment` for
-    ///           (token, declaredSource, amount, deadline).
-    ///        3. Call `recoverStuckERC20(token, declaredSource, amount,
-    ///           deadline, signature)` with `declaredSource ≠ herself`
-    ///           and not on the sanctions oracle.
-    ///        4. Tokens transfer from her vault back to her wallet.
+    /// @dev A stray USDC transfer lands directly on alice's vault proxy. It
+    ///      did not arrive through the protocol, so it is outside the tracked
+    ///      ledger and nothing can pay it out. alice adopts it:
+    ///        1. Sign the EIP-712 adoption acknowledgement
+    ///           (`VaultDepositoryFacet.adoptionDigest`) naming the sender.
+    ///        2. Call `adoptUntracked` with a declared source that is not on
+    ///           the sanctions list: the ledger is credited, nothing moves.
+    ///        3. Withdraw it to her wallet through `withdrawFromVault`.
     ///
-    ///      End-state: alice's wallet balance increases by the stray
-    ///      amount; recovery nonce increments; no ban activates
-    ///      (sanctioned-source path is PF-281, separate scenario).
+    ///      End-state: the wallet rises by the stray amount, the adoption
+    ///      nonce increments, no ban (the sanctioned-source path is PF-281).
     function _recoveryHappyPath() internal {
-        // alice (borrower) needs an vault already created for the
-        // stray transfer to have a target. createOffer is the simplest
-        // way — she can cancel afterward to clean up. Faster: deposit
-        // a token via a no-op deposit. Even faster: just call
-        // `getOrCreateUserVault` from the Diamond's perspective.
-        // We use a thin createOffer + cancelOffer dance to ensure the
-        // vault proxy exists and alice is a known user.
-        // Faster path actually used: lender or any other actor calls
-        // getOrCreateUserVault on alice's behalf via cross-facet ...
-        // but that's diamond-internal. So we use `createOffer` for
-        // alice (we just need her vault to exist).
-        //
-        // Actually `getOrCreateUserVault` is publicly callable per
-        // the deploy-script selector list — alice can call it
-        // directly to provision her vault.
         vm.startBroadcast(borrowerKey);
         address aliceVault = VaultFactoryFacet(diamond).getOrCreateUserVault(borrower);
         vm.stopBroadcast();
         console.log("Alice vault:", aliceVault);
 
-        // The stray sender — we use `newBorrower` to play the role of
-        // the third party who accidentally transferred to alice's vault.
-        // declaredSource in alice's recovery sig must match this address.
         uint256 strayAmount = 50e6; // 50 USDC stuck
         vm.startBroadcast(newBorrowerKey);
         usdc.transfer(aliceVault, strayAmount);
         vm.stopBroadcast();
         console.log("Stray USDC transferred to Alice's vault:", strayAmount);
 
-        // Build the EIP-712 digest and sign. Recovery typehash:
-        //   RecoveryAcknowledgment(address user, address token,
-        //                          address declaredSource, uint256 amount,
-        //                          uint256 nonce, uint256 deadline,
-        //                          bytes32 ackTextHash)
-        bytes32 recTypehash = keccak256(
-            "RecoveryAcknowledgment(address user,address token,address declaredSource,uint256 amount,uint256 nonce,uint256 deadline,bytes32 ackTextHash)"
-        );
-        bytes32 domainSep = VaultFactoryFacet(diamond).recoveryDomainSeparator();
-        bytes32 ackText = VaultFactoryFacet(diamond).recoveryAckTextHash();
-        uint256 nonce = VaultFactoryFacet(diamond).recoveryNonce(borrower);
+        VaultDepositoryFacet depo = VaultDepositoryFacet(diamond);
+        uint8 kind = uint8(LibVaipakam.AssetType.ERC20);
+        uint256 nonce = depo.adoptionNonce(borrower);
         uint256 deadline = block.timestamp + 1 hours;
-
-        bytes32 structHash = keccak256(
-            abi.encode(
-                recTypehash,
-                borrower,
-                address(usdc),
-                newBorrower, // declaredSource (the address that sent the stray)
-                strayAmount,
-                nonce,
-                deadline,
-                ackText
-            )
-        );
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSep, structHash));
+        bytes32 digest = depo.adoptionDigest(borrower, kind, address(usdc), 0, newBorrower, strayAmount, nonce, deadline);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(borrowerKey, digest);
-        bytes memory sig = abi.encodePacked(r, s, v);
 
-        // Snapshot wallet balance pre-recovery.
         uint256 walletBefore = usdc.balanceOf(borrower);
-
         vm.startBroadcast(borrowerKey);
-        VaultFactoryFacet(diamond).recoverStuckERC20(
-            address(usdc),
-            newBorrower,
-            strayAmount,
-            deadline,
-            sig
-        );
+        depo.adoptUntracked(kind, address(usdc), 0, strayAmount, newBorrower, deadline, abi.encodePacked(r, s, v));
+        depo.withdrawFromVault(borrower, kind, address(usdc), 0, strayAmount, borrower);
         vm.stopBroadcast();
 
-        uint256 walletAfter = usdc.balanceOf(borrower);
-        require(
-            walletAfter == walletBefore + strayAmount,
-            "PF-280: stray amount not recovered to wallet"
-        );
-
-        // Nonce should have incremented.
-        uint256 nonceAfter = VaultFactoryFacet(diamond).recoveryNonce(borrower);
-        require(nonceAfter == nonce + 1, "PF-280: recovery nonce did not increment");
-
-        console.log("Recovered to wallet (delta):", strayAmount);
-        console.log("Recovery nonce:", nonce, "->", nonceAfter);
+        require(usdc.balanceOf(borrower) == walletBefore + strayAmount, "PF-280: adopted amount not withdrawn to wallet");
+        uint256 nonceAfter = depo.adoptionNonce(borrower);
+        require(nonceAfter == nonce + 1, "PF-280: adoption nonce did not increment");
+        console.log("Adopted and withdrawn (delta):", strayAmount);
+        console.log("Adoption nonce:", nonce, "->", nonceAfter);
     }
 
-    // ─── PF-281: Stuck-Token Recovery — Sanctioned-Source Ban ────────────────
+    // ─── PF-281: Adopting from a sanctioned source — ban ─────────────────────
 
-    /// @dev Same EIP-712 + recoverStuckERC20 path as PF-280, but the
-    ///      `declaredSource` is on the sanctions oracle. Per T-054
-    ///      design (`docs/DesignsAndPlans/VaultStuckRecoveryDesign.md`):
-    ///        - oracle.isSanctioned(declaredSource) returns true
-    ///        - recoverStuckERC20 does NOT execute (tokens stay)
-    ///        - vaultBannedSource[user] is set to declaredSource
-    ///        - VaultBannedFromRecoveryAttempt event is emitted
-    ///        - subsequent recovery attempts revert until oracle un-flags
-    ///
-    ///      Scenario uses `newLender` as the user this time (clean
-    ///      vault); `newBorrower` (already used in PF-280 as the stray
-    ///      sender — clean address) is flagged on the oracle.
+    /// @dev Same acknowledgement as PF-280, but the declared source is on the
+    ///      sanctions list: the ledger is NOT credited, the vault records the
+    ///      source as its ban (`vaultBannedSource`), the nonce is burned, and
+    ///      the ban lifts by itself once the source is de-listed.
     function _recoverySanctionedBan() internal {
         address user = newLender;
         uint256 userKey = newLenderKey;
-        // A dummy stray sender we flag, fresh on every run. The ban this
-        // scenario records stays on `user`'s vault, so a fixed address would
-        // make a second run on the same Diamond flag the source of the FIRST
-        // run's ban, which sanctions `user` before it can sign the recovery.
+        // A fresh flagged source on every run, so a second run on the same
+        // Diamond does not find `user` already banned by the first.
         address strayer = address(uint160(uint256(keccak256(
             abi.encode("PF-281 stray source", block.chainid, block.number, block.timestamp)
         ))));
 
-        // Provision user's vault.
         vm.startBroadcast(userKey);
         address userVault = VaultFactoryFacet(diamond).getOrCreateUserVault(user);
         vm.stopBroadcast();
 
-        // Stray transfer from `strayer`. We don't have a key for the
-        // dummy strayer address. Mint mock USDC directly into the
-        // user's vault via the deployer (ERC20Mock allows public
-        // mint). The source-of-funds is what gets attested to in the
-        // EIP-712 sig, not the actual transfer path — what matters for
-        // the test is that the vault has tokens NOT recorded in the
-        // protocolTrackedVaultBalance counter.
         vm.startBroadcast(deployerKey);
         usdc.mint(userVault, 25e6);
-        vm.stopBroadcast();
-        console.log("Stray USDC parked in vault:", uint256(25e6));
-
-        // Flag the strayer on the sanctions oracle.
-        vm.startBroadcast(deployerKey);  // sanctions deployed by deployer in setup
         sanctions.setFlagged(strayer, true);
         vm.stopBroadcast();
         console.log("Flagged stray source on sanctions oracle:", strayer);
 
-        // User signs recovery for the flagged source.
-        bytes32 recTypehash = keccak256(
-            "RecoveryAcknowledgment(address user,address token,address declaredSource,uint256 amount,uint256 nonce,uint256 deadline,bytes32 ackTextHash)"
-        );
-        bytes32 domainSep = VaultFactoryFacet(diamond).recoveryDomainSeparator();
-        bytes32 ackText = VaultFactoryFacet(diamond).recoveryAckTextHash();
-        uint256 nonce = VaultFactoryFacet(diamond).recoveryNonce(user);
+        VaultDepositoryFacet depo = VaultDepositoryFacet(diamond);
+        uint8 kind = uint8(LibVaipakam.AssetType.ERC20);
+        uint256 nonce = depo.adoptionNonce(user);
         uint256 deadline = block.timestamp + 1 hours;
-        bytes32 structHash = keccak256(
-            abi.encode(
-                recTypehash,
-                user,
-                address(usdc),
-                strayer,
-                uint256(25e6),
-                nonce,
-                deadline,
-                ackText
-            )
-        );
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSep, structHash));
+        bytes32 digest = depo.adoptionDigest(user, kind, address(usdc), 0, strayer, 25e6, nonce, deadline);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(userKey, digest);
-        bytes memory sig = abi.encodePacked(r, s, v);
-
-        uint256 walletBefore = usdc.balanceOf(user);
-        uint256 vaultBefore = usdc.balanceOf(userVault);
 
         vm.startBroadcast(userKey);
-        VaultFactoryFacet(diamond).recoverStuckERC20(
-            address(usdc),
-            strayer,
-            25e6,
-            deadline,
-            sig
-        );
+        depo.adoptUntracked(kind, address(usdc), 0, 25e6, strayer, deadline, abi.encodePacked(r, s, v));
         vm.stopBroadcast();
 
-        // Verify ban activated, tokens stayed in vault, no transfer.
         require(
-            usdc.balanceOf(user) == walletBefore,
-            "PF-281: user wallet balance should be unchanged after sanctioned-ban"
+            VaultFactoryFacet(diamond).getTrackedHolding(user, address(usdc), 0) == 0,
+            "PF-281: a banned adoption must not credit the ledger"
         );
-        require(
-            usdc.balanceOf(userVault) == vaultBefore,
-            "PF-281: vault balance should be unchanged after sanctioned-ban"
-        );
-        address ban = VaultFactoryFacet(diamond).vaultBannedSource(user);
-        require(ban == strayer, "PF-281: vaultBannedSource should record the sanctioned source");
+        require(depo.vaultBannedSource(user) == strayer, "PF-281: vaultBannedSource should record the sanctioned source");
+        require(depo.adoptionNonce(user) == nonce + 1, "PF-281: nonce should increment on ban path");
 
-        // Nonce DOES increment on the sanctioned-ban path (per T-054
-        // design — the call records state and burns the nonce so the
-        // sig can't be replayed).
-        uint256 nonceAfter = VaultFactoryFacet(diamond).recoveryNonce(user);
-        require(nonceAfter == nonce + 1, "PF-281: nonce should increment on ban path");
-
-        console.log("Banned source recorded:", ban);
-        console.log("Nonce burned:", nonce, "->", nonceAfter);
-
-        // T-054 auto-unlock: while the banned source remains flagged on
-        // the oracle, `LibVaipakam.isSanctionedAddress(user)` returns
-        // true via the source-tracked clause (LibVaipakam.sol:3288-3299).
-        // Downstream scenarios (the operator scenarios) re-use `newLender` as a Tier-1
-        // entry-point caller (createOffer, etc.), so de-list the
-        // strayer here to lift the recovery-induced ban. This also
-        // exercises the auto-unlock branch end-to-end.
+        // Later scenarios reuse `newLender` as a Tier-1 caller, so de-list the
+        // source: this also drives the ban's auto-unlock end to end.
         vm.startBroadcast(deployerKey);
         sanctions.setFlagged(strayer, false);
         vm.stopBroadcast();
         require(
             !ProfileFacet(diamond).isSanctionedAddress(user),
-            "PF-281: auto-unlock should clear newLender's recovery-induced ban"
+            "PF-281: auto-unlock should clear newLender's adoption-induced ban"
         );
-        console.log("Strayer de-listed; recovery-induced ban auto-unlocked for user");
+        console.log("Strayer de-listed; adoption-induced ban auto-unlocked for user");
     }
 
-    // ─── PF-282: Disown Unsolicited Tokens ────────────────────────────────────
+    // ─── PF-282: Disown an untracked asset ────────────────────────────────────
 
-    /// @dev User's vault received tokens they don't want to claim
-    ///      (event-only audit trail, no state mutation beyond the
-    ///      event). Per Advanced Guide § Disowning unsolicited tokens.
-    ///      Tier-2 entry point — sanctioned users can still disown
-    ///      (it's purely informational, no funds move).
+    /// @dev Event-only: the owner publicly disowns an untracked asset in their
+    ///      vault without adopting it. Tier-2: a sanctioned user may still
+    ///      disown. Uses newLender's vault, which still holds PF-281's
+    ///      unadopted USDC.
     function _disown() internal {
-        // borrower's vault already has the recovered amount from PF-280
-        // (recovery moved it to wallet); use newBorrower for a clean
-        // disown event. They have no vault yet — disown takes a token
-        // address only, so doesn't need an existing vault.
-        vm.startBroadcast(newBorrowerKey);
-        VaultFactoryFacet(diamond).disown(address(usdc));
+        vm.startBroadcast(newLenderKey);
+        VaultDepositoryFacet(diamond).disownUntracked(uint8(LibVaipakam.AssetType.ERC20), address(usdc), 0);
         vm.stopBroadcast();
-
-        // disown is event-only — no on-chain state to verify beyond the
-        // event being emitted. The Anvil run captures it in the
-        // broadcast logs; existence of a successful tx is the assertion.
-        console.log("disown(USDC) by newBorrower emitted (audit-trail only)");
+        console.log("disownUntracked(USDC) by newLender emitted (audit-trail only)");
     }
 
     // ─── PF-250: VPFI Deposit + Fee-Discount consent + HoldOnly loan ────────

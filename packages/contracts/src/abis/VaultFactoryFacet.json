@@ -1,19 +1,6 @@
 [
   {
     "type": "function",
-    "name": "disown",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "getDiamondAddress",
     "inputs": [],
     "outputs": [
@@ -65,7 +52,7 @@
   },
   {
     "type": "function",
-    "name": "getProtocolTrackedVaultBalance",
+    "name": "getTrackedHolding",
     "inputs": [
       {
         "name": "user",
@@ -73,9 +60,14 @@
         "internalType": "address"
       },
       {
-        "name": "token",
+        "name": "asset",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -213,84 +205,6 @@
   },
   {
     "type": "function",
-    "name": "recoverStuckERC20",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "declaredSource",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "deadline",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "signature",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "recoveryAckTextHash",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "pure"
-  },
-  {
-    "type": "function",
-    "name": "recoveryDomainSeparator",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "recoveryNonce",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "setMandatoryVaultUpgrade",
     "inputs": [
       {
@@ -350,25 +264,6 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "vaultBannedSource",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -464,6 +359,11 @@
         "internalType": "address"
       },
       {
+        "name": "from",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
         "name": "nftContract",
         "type": "address",
         "internalType": "address"
@@ -539,6 +439,11 @@
     "inputs": [
       {
         "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "from",
         "type": "address",
         "internalType": "address"
       },
@@ -782,6 +687,43 @@
   },
   {
     "type": "event",
+    "name": "PaymentCreditedToVault",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "received",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RewardCustodyRowDebited",
     "inputs": [
       {
@@ -807,105 +749,6 @@
   },
   {
     "type": "event",
-    "name": "StuckERC20Recovered",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "token",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "admin",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "StuckERC20Recovered",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "token",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "declaredSource",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "nonce",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TokenDisowned",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "token",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "observedAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "blockNumber",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "UserVaultCreated",
     "inputs": [
       {
@@ -919,37 +762,6 @@
         "type": "address",
         "indexed": false,
         "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "VaultBannedFromRecoveryAttempt",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "token",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "declaredSource",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1048,6 +860,19 @@
   },
   {
     "type": "event",
+    "name": "VaultUnpinned",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "VaultVpfiDebited",
     "inputs": [
       {
@@ -1095,11 +920,6 @@
   {
     "type": "error",
     "name": "AlreadyLaunched",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "AmountZero",
     "inputs": []
   },
   {
@@ -1266,11 +1086,6 @@
         "internalType": "uint8"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "CannotRecoverVPFI",
-    "inputs": []
   },
   {
     "type": "error",
@@ -2196,33 +2011,6 @@
         "name": "chainId",
         "type": "uint32",
         "internalType": "uint32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ECDSAInvalidSignature",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ECDSAInvalidSignatureLength",
-    "inputs": [
-      {
-        "name": "length",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ECDSAInvalidSignatureS",
-    "inputs": [
-      {
-        "name": "s",
-        "type": "bytes32",
-        "internalType": "bytes32"
       }
     ]
   },
@@ -5442,11 +5230,6 @@
   },
   {
     "type": "error",
-    "name": "TokenIsProtocolConfigured",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "TokenOverDebit",
     "inputs": [
       {
@@ -5870,11 +5653,6 @@
   },
   {
     "type": "error",
-    "name": "UserHasNoVault",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "VPFITokenNotSet",
     "inputs": []
   },
@@ -5897,6 +5675,17 @@
     "type": "error",
     "name": "VaultDepositFailed",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultPinned",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",

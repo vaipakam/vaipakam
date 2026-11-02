@@ -153,9 +153,22 @@ describe('activityParticipants — every address in the Diamond ABI is classifie
   });
 
   it('classifies every definition of an overloaded event name', () => {
-    // `StuckERC20Recovered` has two definitions; the second carries
-    // `declaredSource`, which a first-definition-only read never saw.
-    expect(EVENTS.get('StuckERC20Recovered')?.some((p) => p.name === 'declaredSource')).toBe(true);
+    // An overloaded name is checked as the union of its definitions, so every
+    // address input of EVERY definition must be in the merged set a
+    // first-definition-only read would have missed. Generic on purpose: the
+    // overload that motivated this (the retired stuck-token recovery event)
+    // is gone, and a named case would stop checking anything.
+    const missing: string[] = [];
+    for (const item of DIAMOND_ABI_VIEM as Abi) {
+      if (item.type !== 'event') continue;
+      for (const p of (item as AbiEvent).inputs as readonly Param[]) {
+        if (!isAddress(p)) continue;
+        if (!EVENTS.get(item.name)?.some((m) => m.name === p.name && m.type === p.type)) {
+          missing.push(`${item.name}.${p.name}`);
+        }
+      }
+    }
+    expect(missing).toEqual([]);
   });
 
   it('no actor reads an address the rule classes as never a party', () => {
