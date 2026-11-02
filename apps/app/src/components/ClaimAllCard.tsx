@@ -71,7 +71,7 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
   // refuses that leg for a locked account or a full queue, which would
   // revert the whole batch.
   const protection = useProtectedAccount(address ?? undefined);
-  const payoutRouteNote = payoutRouteText(ownPayoutRoute(protection.data, protection.isError));
+  const payoutRoute = ownPayoutRoute(protection.data, protection.isError);
   const vpfiWithdrawal = ownWithdrawalVerdict(protection.data, protection.isError);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -126,6 +126,21 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
   const selectedCount = selectedKeys.length;
 
   const hasVpfiVault = items.some((i) => i.kind === 'vpfi-vault');
+  // Where the batch pays, per leg: the loan claims and the vault-VPFI
+  // withdrawal follow the account's payout route, while a protected
+  // account's interaction rewards are always credited to its vault (the
+  // reward claim's own rule), so they never queue. Each note shows only
+  // when a selected leg takes that route.
+  const selectedKinds = new Set(selectedKeys.map((k) => items.find((i) => i.key === k)?.kind));
+  const routedLegSelected =
+    selectedKinds.has('loan-lender') || selectedKinds.has('loan-borrower') || selectedKinds.has('vpfi-vault');
+  const payoutRouteNote =
+    payoutRoute.kind === 'unread' ? (selectedCount > 0 ? payoutRouteText(payoutRoute) : null)
+      : routedLegSelected ? payoutRouteText(payoutRoute) : null;
+  const rewardsToVaultNote =
+    selectedKinds.has('rewards') && (payoutRoute.kind === 'queued' || payoutRoute.kind === 'vault')
+      ? copy.protection.payoutRouteRewardsToVault
+      : null;
   const tooMany = selectedCount > MAX_CLAIM_ALL;
   const vpfiLegBlocked = selectedKeys.some((k) => items.find((i) => i.key === k)?.kind === 'vpfi-vault') &&
     vpfiWithdrawal.kind !== 'open';
@@ -211,6 +226,11 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
       {payoutRouteNote ? (
         <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
           {payoutRouteNote}
+        </p>
+      ) : null}
+      {rewardsToVaultNote ? (
+        <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
+          {rewardsToVaultNote}
         </p>
       ) : null}
       {vpfiLegBlocked ? (

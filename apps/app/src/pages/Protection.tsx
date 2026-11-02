@@ -336,7 +336,16 @@ function AccountView({
     pending.push({ key: 'cosign', label: p.changeCosignOff, at: record.pendingCosignOffAt, kind: 4 });
   if (record.pendingUnpinAt > 0n)
     pending.push({ key: 'unpin', label: p.changeUnpin, at: record.pendingUnpinAt, kind: 6 });
-  const anyDue = pending.some((c) => isDue(c.at, now));
+  // Switching protection off completes only once no payout or position
+  // transfer is open (the contract's finalize applies every other due change
+  // and leaves the switch-off waiting, or refuses when it is the only one).
+  // So a due switch-off counts as ready only when both queues are read and
+  // empty; otherwise its row says what it waits for.
+  const openRows =
+    snap.payouts === null || snap.transfers === null ? null : snap.payouts.length + snap.transfers.length;
+  const disableWaits = (c: { key: string; at: bigint }) =>
+    c.key === 'disable' && isDue(c.at, now) && openRows !== 0;
+  const anyDue = pending.some((c) => isDue(c.at, now) && !disableWaits(c));
   const repl = snap.replacement;
   // One verdict for where the move stands, by the contract's completion rule.
   const replStage = repl && hasReplacement(repl) ? replacementStage(repl, record, account, snap.signers, now) : null;
@@ -380,7 +389,15 @@ function AccountView({
               <span className="row-main">
                 <span className="row-title">{c.label}</span>
                 <br />
-                <span className="row-sub">{isDue(c.at, now) ? p.changeDue : p.changeAt(when(c.at))}</span>
+                <span className="row-sub">
+                  {disableWaits(c)
+                    ? openRows === null
+                      ? p.changeDisableRowsUnknown
+                      : p.changeDisableWaitsForRows(String(openRows))
+                    : isDue(c.at, now)
+                      ? p.changeDue
+                      : p.changeAt(when(c.at))}
+                </span>
               </span>
               {canGuard ? (
                 <button
