@@ -2722,6 +2722,7 @@
         "PositionTransferCancelled": "ポジションNFTの移転を取り消し",
         "EscapeWithdrawal": "プロトコル一時停止中の出金",
         "PayoutCosigned": "支払いに共同署名",
+        "PositionTransferCosigned": "ポジション移転に共同署名",
         "ProtectedModeEnabled": "保護モードをオン",
         "ProtectedModeDisabled": "保護モードをオフ",
         "SettingChangeRequested": "保護設定の変更を申請",

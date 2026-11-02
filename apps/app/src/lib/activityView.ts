@@ -279,6 +279,7 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   PositionTransferCancelled: { label: 'Position NFT transfer cancelled', category: 'other', priority: 40 },
   EscapeWithdrawal: { label: 'Withdrawal during protocol pause', category: 'other', priority: 60 },
   PayoutCosigned: { label: 'Payout co-signed', category: 'other', priority: 40 },
+  PositionTransferCosigned: { label: 'Position transfer co-signed', category: 'other', priority: 40 },
   ProtectedModeEnabled: { label: 'Protected mode turned on', category: 'other', priority: 40 },
   ProtectedModeDisabled: { label: 'Protected mode turned off', category: 'other', priority: 40 },
   SettingChangeRequested: { label: 'Protected setting change requested', category: 'other', priority: 40 },

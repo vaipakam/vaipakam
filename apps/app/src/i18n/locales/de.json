@@ -2722,6 +2722,7 @@
         "PositionTransferCancelled": "Übertragung der Positions-NFT storniert",
         "EscapeWithdrawal": "Auszahlung während einer Protokollpause",
         "PayoutCosigned": "Auszahlung mitsigniert",
+        "PositionTransferCosigned": "Positionsübertragung mitsigniert",
         "ProtectedModeEnabled": "Geschützter Modus aktiviert",
         "ProtectedModeDisabled": "Geschützter Modus deaktiviert",
         "SettingChangeRequested": "Änderung einer geschützten Einstellung beantragt",

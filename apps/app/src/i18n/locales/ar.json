@@ -2722,6 +2722,7 @@
         "PositionTransferCancelled": "أُلغي نقل NFT المركز",
         "EscapeWithdrawal": "سحب أثناء إيقاف البروتوكول مؤقتًا",
         "PayoutCosigned": "وُقّعت الدفعة توقيعًا مشتركًا",
+        "PositionTransferCosigned": "وُقّع نقل المركز توقيعًا مشتركًا",
         "ProtectedModeEnabled": "فُعّل الوضع المحمي",
         "ProtectedModeDisabled": "أُوقف الوضع المحمي",
         "SettingChangeRequested": "طُلب تغيير إعداد محمي",
