@@ -337,7 +337,13 @@
   {
     "type": "function",
     "name": "unpinVaultImplementation",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -789,17 +795,6 @@
   },
   {
     "type": "error",
-    "name": "AccountRetired",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "AmountExceedsFree",
     "inputs": [
       {
@@ -880,7 +875,7 @@
   },
   {
     "type": "error",
-    "name": "NotAccountOwner",
+    "name": "NotAccountManager",
     "inputs": [
       {
         "name": "account",

@@ -66,7 +66,6 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
     error AmountZero();
     error InvalidAssetKind(uint8 kind);
     error NotUntracked(address asset, uint256 tokenId);
-    error NotAccountOwner(address account, address caller);
 
     /// @notice `amount` of `asset` / `tokenId` entered `account`'s vault from
     ///         the account's own wallet.
@@ -215,7 +214,7 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
                 && !(LibProtectedAccount.isEnabled(account)
                     && LibProtectedAccount.escapeOpen())
         ) revert LibPausable.EnforcedPause();
-        if (msg.sender != LibProtectedAccount.manager(account)) revert NotAccountOwner(account, msg.sender);
+        LibProtectedAccount.requireManager(account);
         LibVaipakam._assertNotSanctioned(msg.sender);
         if (kind > uint8(LibVaipakam.AssetType.ERC1155)) revert InvalidAssetKind(kind);
         if (kind == uint8(LibVaipakam.AssetType.ERC20)) tokenId = 0;
@@ -282,6 +281,9 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
     ) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam._assertNotSanctioned(msg.sender);
+        // A replaced wallet lost every right over its account, adoption
+        // included (an adoption from a flagged source would ban the vault).
+        LibProtectedAccount.requireManager(msg.sender);
         if (kind > uint8(LibVaipakam.AssetType.ERC1155)) revert InvalidAssetKind(kind);
         if (kind == uint8(LibVaipakam.AssetType.ERC20)) tokenId = 0;
         if (kind == uint8(LibVaipakam.AssetType.ERC721)) amount = 1;
@@ -349,6 +351,7 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
      *         is then `vaipakamVaultTemplate`).
      */
     function pinVaultImplementation() external nonReentrant whenNotPaused {
+        LibProtectedAccount.requireManager(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         IVaultRoutes(address(this)).getOrCreateUserVault(msg.sender);
         s.vaultPinnedImplementation[msg.sender] = s.vaipakamVaultTemplate;
@@ -356,23 +359,25 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
     }
 
     /**
-     * @notice Remove your vault's pin. Immediate without protected mode; with
-     *         it, waits the delay (applied by `finalizeSettingChanges`) and
-     *         can be cancelled.
+     * @notice Remove `account`'s vault pin. Caller: the account's manager
+     *         (its own wallet, or its controller once replaced). Immediate
+     *         without protected mode; with it, waits the delay (applied by
+     *         `finalizeSettingChanges`), can be cancelled, and is refused
+     *         while locked or during a new controller's cool-down.
      */
-    function unpinVaultImplementation() external nonReentrant whenNotPaused {
+    function unpinVaultImplementation(address account) external nonReentrant whenNotPaused {
+        LibProtectedAccount.requireManager(account);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.ProtectedAccount storage a = s.protectedAccount[msg.sender];
+        LibVaipakam.ProtectedAccount storage a = s.protectedAccount[account];
         if (a.enabled) {
-            if (a.retired) revert LibProtectedAccount.AccountRetired(msg.sender);
             if (block.timestamp < a.cooldownUntil) revert LibProtectedAccount.PrimaryInCooldown(a.cooldownUntil);
-            if (a.locked) revert LibProtectedAccount.ProtectedVaultLocked(msg.sender);
+            if (a.locked) revert LibProtectedAccount.ProtectedVaultLocked(account);
             a.pendingUnpinAt = uint64(block.timestamp) + a.delaySeconds;
-            emit VaultUnpinRequested(msg.sender, a.pendingUnpinAt);
+            emit VaultUnpinRequested(account, a.pendingUnpinAt);
             return;
         }
-        delete s.vaultPinnedImplementation[msg.sender];
-        emit VaultUnpinned(msg.sender);
+        delete s.vaultPinnedImplementation[account];
+        emit VaultUnpinned(account);
     }
 
     // ─── Views ───────────────────────────────────────────────────────────

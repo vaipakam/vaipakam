@@ -170,6 +170,48 @@ contract PrepayListingFacetTest is SetupTest {
         );
     }
 
+    /// @notice The sold collateral leaves the borrower's vault through the
+    ///         marketplace conduit, so the settlement records its outflow:
+    ///         the tracked holding drops by the sold quantity.
+    function test_executorFinalizePrepaySale_debitsTheSoldCollateral() public {
+        vm.prank(owner);
+        PrepayListingFacet(address(diamond)).setCollateralListingExecutor(mockExecutor);
+        address nftAsset = makeAddr("collateralNft");
+        LibVaipakam.Loan memory loan;
+        loan.id = TEST_LOAN_ID;
+        loan.lender = _scLender;
+        loan.borrower = _scBorrower;
+        loan.status = LibVaipakam.LoanStatus.Active;
+        loan.principal = 100e18;
+        loan.principalAsset = mockERC20;
+        loan.lenderTokenId = 91_001;
+        loan.borrowerTokenId = 91_002;
+        loan.interestRateBps = 1_200;
+        loan.startTime = uint64(block.timestamp);
+        loan.durationDays = 30;
+        loan.collateralAssetType = LibVaipakam.AssetType.ERC1155;
+        loan.collateralAsset = nftAsset;
+        loan.collateralTokenId = 5;
+        loan.collateralQuantity = 4;
+        TestMutatorFacet(address(diamond)).setLoan(TEST_LOAN_ID, loan);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(_scLender, loan.lenderTokenId);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(_scBorrower, loan.borrowerTokenId);
+        TestMutatorFacet(address(diamond)).setTrackedHoldingRaw(_scBorrower, nftAsset, 5, 6);
+
+        IVaipakamPrepayContext.PrepayContext memory pctx =
+            IVaipakamPrepayContext(address(diamond)).getPrepayContext(TEST_LOAN_ID, block.timestamp);
+        uint256 proceeds = pctx.lenderLeg + pctx.treasuryLeg;
+        ERC20Mock(mockERC20).mint(address(diamond), proceeds);
+        vm.prank(mockExecutor);
+        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(TEST_LOAN_ID, proceeds);
+
+        assertEq(
+            VaultFactoryFacet(address(diamond)).getTrackedHolding(_scBorrower, nftAsset, 5),
+            2,
+            "only the sold quantity left the tracked holding"
+        );
+    }
+
     // ─── Internal helpers ───────────────────────────────────────────────
 
     function _scaffoldLoan(uint256 id, LibVaipakam.LoanStatus status) internal {

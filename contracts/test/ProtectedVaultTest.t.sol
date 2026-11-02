@@ -238,7 +238,7 @@ contract ProtectedVaultTest is Test {
     function testOnlyTheOwnerWithdraws() public {
         _deposit20(10 ether);
         vm.prank(thief);
-        vm.expectRevert(abi.encodeWithSelector(VaultDepositoryFacet.NotAccountOwner.selector, user, thief));
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.NotAccountManager.selector, user, thief));
         _depo().withdrawFromVault(user, K20, address(token), 0, 1 ether, thief);
     }
 
@@ -618,7 +618,7 @@ contract ProtectedVaultTest is Test {
 
         // The old wallet has lost the account.
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(VaultDepositoryFacet.NotAccountOwner.selector, user, user));
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.NotAccountManager.selector, user, user));
         _depo().withdrawFromVault(user, K20, address(token), 0, 1 ether, user);
 
         // The controller withdraws through the delay; loosening waits out the cool-down.
@@ -667,6 +667,56 @@ contract ProtectedVaultTest is Test {
         a = _prot().getProtectedAccount(user);
         assertTrue(a.requireCosign);
         assertTrue(a.protectNfts);
+    }
+
+    function _replaceWithNominee() internal {
+        _threeSigners();
+        vm.prank(s1);
+        _prot().proposeReplacement(user, nominee);
+        vm.prank(s2);
+        _prot().approveReplacement(user);
+        vm.warp(block.timestamp + DELAY);
+        _prot().finalizeReplacement(user);
+    }
+
+    function testRetiredWalletCannotLockOrAdoptButTheControllerLocks() public {
+        _enable();
+        _replaceWithNominee();
+        // The replaced wallet no longer manages the account: no lock in its
+        // name, no adoption into the vault it lost.
+        vm.prank(user);
+        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
+        _prot().lockVaultFor(user);
+        address v = _vault(user);
+        vm.prank(user);
+        nft.transferFrom(user, v, 7);
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig = _adoptSig(address(nft), K721, 7, user, 1, deadline);
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.NotAccountManager.selector, user, user));
+        _depo().adoptUntracked(K721, address(nft), 7, 1, user, deadline, sig);
+        // The controller can lock the account it now manages.
+        vm.prank(nominee);
+        _prot().lockVaultFor(user);
+        assertTrue(_prot().getProtectedAccount(user).locked);
+    }
+
+    function testControllerUnpinsARetiredAccountThroughTheDelay() public {
+        vm.prank(user);
+        _depo().pinVaultImplementation();
+        _enable();
+        _replaceWithNominee();
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.NotAccountManager.selector, user, user));
+        _depo().unpinVaultImplementation(user);
+        // The controller loosens only after its cool-down.
+        vm.warp(block.timestamp + DELAY);
+        vm.prank(nominee);
+        _depo().unpinVaultImplementation(user);
+        assertTrue(_depo().getVaultPin(user) != address(0));
+        vm.warp(block.timestamp + DELAY);
+        _prot().finalizeSettingChanges(user);
+        assertEq(_depo().getVaultPin(user), address(0));
     }
 
     function testTwoSignersCannotRecover() public {
@@ -761,7 +811,7 @@ contract ProtectedVaultTest is Test {
         assertTrue(_depo().getVaultPin(user) != address(0));
         _enable();
         vm.prank(user);
-        _depo().unpinVaultImplementation();
+        _depo().unpinVaultImplementation(user);
         assertTrue(_depo().getVaultPin(user) != address(0));
         vm.warp(block.timestamp + DELAY);
         _prot().finalizeSettingChanges(user);
@@ -779,7 +829,7 @@ contract ProtectedVaultTest is Test {
         assertTrue(_depo().getVaultPin(user) != address(0));
         // After the delayed unpin, the vault upgrades normally.
         vm.prank(user);
-        _depo().unpinVaultImplementation();
+        _depo().unpinVaultImplementation(user);
         vm.warp(block.timestamp + DELAY);
         _prot().finalizeSettingChanges(user);
         VaultFactoryFacet(address(diamond)).upgradeUserVault(user);

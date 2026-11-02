@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
@@ -623,27 +624,34 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         emit ExtendReserveFunded(loanId, msg.sender, asset, amount, s.extendReserve[loanId][msg.sender]);
     }
 
-    /// @notice #2814 — withdraw `amount` of the caller's unused extension
-    ///         reserve for `loanId` from their vault to their wallet.
+    /// @notice #2814 — withdraw `amount` of `account`'s unused extension
+    ///         reserve for `loanId` from its vault to the caller, who must be
+    ///         the account's manager (its own wallet, or its controller once
+    ///         a replacement retired it).
     /// @dev    Open whatever the loan's state, and whether or not the caller
     ///         still holds the borrower position: the reserve is the
     ///         depositor's own money. Tier-1 sanctions-gated (funds leave to
     ///         the caller), like {LenderIntentFacet.withdrawLenderIntentCapital}.
     ///         Reverts {LibEncumbrance.ExtendReserveInsufficient} past what is
     ///         reserved.
-    function withdrawExtendReserve(uint256 loanId, uint256 amount)
+    function withdrawExtendReserve(address account, uint256 loanId, uint256 amount)
         external
         nonReentrant
         whenNotPaused
     {
+        // The account's manager: its own wallet, or its controller once a
+        // replacement retired it, so a recovered account's reserve is never
+        // stranded behind the lost key. Paid to the manager (a protected
+        // account's payout queues behind the delay).
+        LibProtectedAccount.requireManager(account);
         LibVaipakam._assertNotSanctioned(msg.sender);
         if (amount == 0) revert ExtendReserveZeroAmount();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address asset = s.loans[loanId].principalAsset;
         // Released BEFORE the withdraw, so the chokepoint's guard sees it free.
-        LibEncumbrance.unlienExtendReserve(loanId, msg.sender, asset, amount);
-        VaultFactoryFacet(address(this)).vaultWithdrawERC20(msg.sender, asset, msg.sender, amount);
-        emit ExtendReserveWithdrawn(loanId, msg.sender, asset, amount, s.extendReserve[loanId][msg.sender]);
+        LibEncumbrance.unlienExtendReserve(loanId, account, asset, amount);
+        VaultFactoryFacet(address(this)).vaultWithdrawERC20(account, asset, msg.sender, amount);
+        emit ExtendReserveWithdrawn(loanId, account, asset, amount, s.extendReserve[loanId][account]);
     }
 
     /// @notice #2814 — what `holder` has ready for `loanId`'s next

@@ -42,6 +42,7 @@ interface IVaipakamIntentSurface {
     ) external;
 
     function withdrawLenderIntentCapital(
+        address account,
         address lendingAsset,
         address collateralAsset,
         uint256 amount
@@ -511,7 +512,10 @@ contract AggregatorAdapterImplementation is
         // screen the REAL principal here. Funds stay locked (not released to an
         // OFAC-listed wallet) until the screen clears.
         _screenPrincipal();
+        // The adapter is the intent's own account, so it withdraws its own
+        // capital (`account` = this adapter, which manages itself).
         IVaipakamIntentSurface(diamond).withdrawLenderIntentCapital(
+            address(this),
             asset(),
             collateralAsset,
             assets

@@ -119,7 +119,7 @@ contract LenderIntentFacetTest is SetupTest {
         // Withdraw the other's capital to 0 → de-lists (depleted, still active).
         vm.prank(user);
         LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
-            mockCollateralERC20, mockERC20, 2_000 ether
+            user, mockCollateralERC20, mockERC20, 2_000 ether
         );
         assertEq(_activeCount(), 0, "depleted intent de-listed");
 

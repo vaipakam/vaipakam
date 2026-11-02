@@ -3,6 +3,9 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
+import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
+import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
@@ -218,7 +221,7 @@ contract LenderIntentCapitalTest is SetupTest {
         uint256 walletBefore = ERC20(mockERC20).balanceOf(lender);
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
-            mockERC20, mockCollateralERC20, PRINCIPAL
+            lender, mockERC20, mockCollateralERC20, PRINCIPAL
         );
         assertEq(_capital(), 0, "capital drained");
         assertEq(
@@ -228,17 +231,68 @@ contract LenderIntentCapitalTest is SetupTest {
         );
     }
 
+    /// @dev Protected account mode — once a signer majority has replaced the
+    ///      lender's wallet, the old wallet can no longer take the intent's
+    ///      capital out, and the controller can: the payout queues to the
+    ///      controller behind the account's delay.
+    function test_withdraw_byControllerAfterReplacement() public {
+        _setIntent();
+        _fund(PRINCIPAL);
+        address nominee = makeAddr("intentNominee");
+        _replaceLender(nominee);
+
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibProtectedAccount.NotAccountManager.selector, lender, lender)
+        );
+        LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
+            lender, mockERC20, mockCollateralERC20, PRINCIPAL
+        );
+
+        vm.prank(nominee);
+        LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
+            lender, mockERC20, mockCollateralERC20, PRINCIPAL
+        );
+        assertEq(_capital(), 0, "capital released");
+        assertEq(ERC20(mockERC20).balanceOf(nominee), 0, "queued, not paid");
+        uint256 id = VaultPayoutFacet(address(diamond)).getPendingPayoutIds(lender)[0];
+        vm.warp(vm.getBlockTimestamp() + 2 days);
+        VaultPayoutFacet(address(diamond)).releasePayout(id);
+        assertEq(ERC20(mockERC20).balanceOf(nominee), PRINCIPAL, "paid to the controller");
+    }
+
+    function _replaceLender(address nominee) internal {
+        ProtectedAccountFacet p = ProtectedAccountFacet(address(diamond));
+        vm.prank(lender);
+        p.enableProtectedMode(2 days, true);
+        address[3] memory signers = [makeAddr("is1"), makeAddr("is2"), makeAddr("is3")];
+        for (uint256 i; i < 3; ++i) {
+            vm.prank(lender);
+            p.addSigner(lender, signers[i]);
+            vm.prank(signers[i]);
+            p.acceptSignerRole(lender);
+            vm.warp(vm.getBlockTimestamp() + 2 days);
+            p.finalizeAddSigner(lender, signers[i]);
+        }
+        vm.prank(signers[0]);
+        p.proposeReplacement(lender, nominee);
+        vm.prank(signers[1]);
+        p.approveReplacement(lender);
+        vm.warp(vm.getBlockTimestamp() + 2 days);
+        p.finalizeReplacement(lender);
+    }
+
     function test_withdraw_partial_thenRemainder() public {
         _setIntent();
         _fund(PRINCIPAL);
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
-            mockERC20, mockCollateralERC20, PRINCIPAL / 4
+            lender, mockERC20, mockCollateralERC20, PRINCIPAL / 4
         );
         assertEq(_capital(), 3 * PRINCIPAL / 4, "partial withdraw");
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
-            mockERC20, mockCollateralERC20, 3 * PRINCIPAL / 4
+            lender, mockERC20, mockCollateralERC20, 3 * PRINCIPAL / 4
         );
         assertEq(_capital(), 0, "remainder withdrawn");
     }
@@ -255,7 +309,7 @@ contract LenderIntentCapitalTest is SetupTest {
             )
         );
         LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
-            mockERC20, mockCollateralERC20, PRINCIPAL + 1
+            lender, mockERC20, mockCollateralERC20, PRINCIPAL + 1
         );
     }
 
@@ -265,7 +319,7 @@ contract LenderIntentCapitalTest is SetupTest {
         vm.prank(lender);
         vm.expectRevert(LenderIntentFacet.LenderIntentInvalidBounds.selector);
         LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
-            mockERC20, mockCollateralERC20, 0
+            lender, mockERC20, mockCollateralERC20, 0
         );
     }
 
@@ -280,7 +334,7 @@ contract LenderIntentCapitalTest is SetupTest {
         );
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
-            mockERC20, mockCollateralERC20, PRINCIPAL
+            lender, mockERC20, mockCollateralERC20, PRINCIPAL
         );
         assertEq(_capital(), 0, "residual withdrawable after cancel");
     }
@@ -330,7 +384,7 @@ contract LenderIntentCapitalTest is SetupTest {
         AdminFacet(address(diamond)).pauseAsset(mockERC20);
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
-            mockERC20, mockCollateralERC20, PRINCIPAL
+            lender, mockERC20, mockCollateralERC20, PRINCIPAL
         );
         assertEq(_capital(), 0, "exit succeeds despite asset pause");
     }
@@ -348,7 +402,7 @@ contract LenderIntentCapitalTest is SetupTest {
 
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
-            mockERC20, mockCollateralERC20, PRINCIPAL
+            lender, mockERC20, mockCollateralERC20, PRINCIPAL
         );
         assertEq(_capital(), 0, "VPFI capital withdrawn");
         assertEq(_tierDayClose(lender), 0, "tier record follows the withdrawal");
@@ -445,7 +499,7 @@ contract LenderIntentCapitalTest is SetupTest {
             )
         );
         LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
-            mockERC20, mockCollateralERC20, 1
+            lender, mockERC20, mockCollateralERC20, 1
         );
 
         // The legitimate exit for the proceeds is the NFT claim → to wallet.
@@ -718,7 +772,7 @@ contract LenderIntentCapitalTest is SetupTest {
         // Withdraw all ⇒ inactive AND zero capital ⇒ fully torn down ⇒ de-listed.
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
-            mockERC20, mockCollateralERC20, PRINCIPAL
+            lender, mockERC20, mockCollateralERC20, PRINCIPAL
         );
         (, total) = _byOwner(lender);
         assertEq(total, 0, "fully torn-down intent de-listed");

@@ -25,6 +25,7 @@ import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
+import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
 import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
@@ -1709,14 +1710,28 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
                 LibEncumbrance.ExtendReserveInsufficient.selector, loanId, borrower, 4 ether, 3 ether
             )
         );
-        _f().withdrawExtendReserve(loanId, 4 ether);
+        _f().withdrawExtendReserve(borrower, loanId, 4 ether);
         vm.expectEmit(true, true, false, true, address(diamond));
         emit AutoLifecycleFacet.ExtendReserveWithdrawn(loanId, borrower, mockERC20, 3 ether, 0);
         vm.prank(borrower);
-        _f().withdrawExtendReserve(loanId, 3 ether);
+        _f().withdrawExtendReserve(borrower, loanId, 3 ether);
         assertEq(ERC20(mockERC20).balanceOf(borrower), walletBefore + 3 ether, "back in the wallet");
         (, uint256 reserved, , , ) = _f().getExtendFunding(loanId, borrower);
         assertEq(reserved, 0, "nothing left reserved");
+    }
+
+    /// @notice Only the depositor's account manager (its own wallet, or its
+    ///         controller after a protected-account replacement) can take a
+    ///         reserve out.
+    function test_2814_withdraw_refusesAnyoneButTheManager() public {
+        uint256 loanId = _buildActiveLoan();
+        _fundReserve(loanId, borrower, 3 ether);
+        address stranger = makeAddr("reserveStranger");
+        vm.prank(stranger);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibProtectedAccount.NotAccountManager.selector, borrower, stranger)
+        );
+        _f().withdrawExtendReserve(borrower, loanId, 3 ether);
     }
 
     /// @notice #2814 — a repayment leaves the reserve alone, and the depositor
@@ -1735,7 +1750,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         assertEq(chargeNow, 0, "a closed loan cannot be extended");
         uint256 walletBefore = ERC20(mockERC20).balanceOf(borrower);
         vm.prank(borrower);
-        _f().withdrawExtendReserve(loanId, 2 ether);
+        _f().withdrawExtendReserve(borrower, loanId, 2 ether);
         assertEq(ERC20(mockERC20).balanceOf(borrower), walletBefore + 2 ether, "withdrawn after the close");
     }
 
@@ -1776,9 +1791,9 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
                 LibEncumbrance.ExtendReserveInsufficient.selector, loanId, newHolder, 1, 0
             )
         );
-        _f().withdrawExtendReserve(loanId, 1);
+        _f().withdrawExtendReserve(newHolder, loanId, 1);
         vm.prank(borrower);
-        _f().withdrawExtendReserve(loanId, 2 ether);
+        _f().withdrawExtendReserve(borrower, loanId, 2 ether);
     }
 
     /// @notice #2814 Codex r1 — a rental loan's principal is the NFT contract,

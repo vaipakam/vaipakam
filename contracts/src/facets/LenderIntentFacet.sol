@@ -441,41 +441,49 @@ contract LenderIntentFacet is
     ///         vault chokepoint's free-balance guard sees the amount as free
     ///         (same ordering as `ClaimFacet` releasing the proceeds
     ///         reservation before paying out).
+    /// @param account         The intent's owner; the caller must be its
+    ///                        manager (`LibProtectedAccount.requireManager`).
     /// @param lendingAsset    The intent's lending asset (intent key).
     /// @param collateralAsset The intent's collateral asset (intent key).
     /// @param amount          Un-lent capital to return wallet-ward (> 0,
     ///                        <= the liened capital).
     function withdrawLenderIntentCapital(
+        address account,
         address lendingAsset,
         address collateralAsset,
         uint256 amount
     ) external nonReentrant whenNotPaused {
+        // The account's manager: its own wallet, or its controller once a
+        // replacement retired it, so a recovered account's capital is never
+        // stranded behind the lost key. Paid to the manager (a protected
+        // account's payout queues behind the delay).
+        LibProtectedAccount.requireManager(account);
         LibVaipakam._assertNotSanctioned(msg.sender);
         if (amount == 0) revert LenderIntentInvalidBounds();
         // Release from the lien (reverts `IntentCapitalInsufficient` if it
         // exceeds the un-lent capital) BEFORE the withdraw, so the chokepoint
         // guard sees the amount as free balance.
         LibEncumbrance.unlienIntentCapital(
-            msg.sender, lendingAsset, collateralAsset, amount
+            account, lendingAsset, collateralAsset, amount
         );
         // A VPFI-denominated intent withdraws like any other asset: the
         // withdraw below refreshes the lender's VPFI tier record itself
         // (#1820), so pulling VPFI out lowers their tier at once.
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         VaultFactoryFacet(address(this)).vaultWithdrawERC20(
-            msg.sender,
+            account,
             lendingAsset,
             msg.sender,
             amount
         );
         // #625 WI-2a — capital may now be 0 ⇒ de-list the intent if depleted.
-        LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset);
+        LibVaipakam.syncIntentRegistry(account, lendingAsset, collateralAsset);
         emit LenderIntentCapitalWithdrawn(
-            msg.sender,
+            account,
             lendingAsset,
             collateralAsset,
             amount,
-            s.lenderIntentCapital[msg.sender][lendingAsset][collateralAsset]
+            s.lenderIntentCapital[account][lendingAsset][collateralAsset]
         );
     }
 
