@@ -118,12 +118,23 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
   if (prevIdentity !== identity) {
     setPrevIdentity(identity);
     setOverrides({});
+    setOutcomeNote(null);
   }
 
   // Wait for rewards + vault VPFI to SETTLE before offering the batch:
   // a still-loading read defaults its amount to 0n, which would silently
   // drop that leg from a batch the user thinks is complete.
-  if (rewards.isPending || vpfi.isPending) return null;
+  // The last batch's outcome stays on screen even once its claims leave the
+  // list and no further batch is on offer: it may be the only place a
+  // payment kept in the vault is explained.
+  const outcomeOnly = outcomeNote ? (
+    <section className="card" style={{ marginBottom: 16 }}>
+      <div className="banner banner-info" role="status">
+        <span className="banner-body">{outcomeNote}</span>
+      </div>
+    </section>
+  ) : null;
+  if (rewards.isPending || vpfi.isPending) return outcomeOnly;
 
   const items = buildClaimAllItems({
     loans,
@@ -136,7 +147,7 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
   // already has its own button/row. (Claims.tsx suppresses the "no
   // claims yet" empty state when there ARE non-loan payouts, so a pure
   // rewards+vault batch no longer contradicts it — Codex #1291 r1.)
-  if (items.length < 2) return null;
+  if (items.length < 2) return outcomeOnly;
 
   // Pre-check defaults only up to the FIRST window page: seeding up to
   // MAX_CLAIM_ALL (30) while the checklist initially renders one page
