@@ -389,7 +389,9 @@ contract VaipakamNFTFacet is IERC721, IERC721Enumerable, DiamondReentrancyGuard,
         if (!LibProtectedAccount.isEnabled(account)) revert LibProtectedAccount.ProtectedModeOff(account);
         address manager = LibProtectedAccount.manager(account);
         if (msg.sender != manager) revert LibProtectedAccount.NotAccountManager(account, msg.sender);
-        if (LibVaipakam.storageSlot().protectedAccount[account].retired && to != manager) {
+        // The payout destination rule: the manager's own wallet or an
+        // allowlisted address (a replaced account: its controller only).
+        if (!LibProtectedAccount.isAllowed(account, to)) {
             revert LibProtectedAccount.RecipientNotAllowlisted(account, to);
         }
         if (to == address(0) || to == account) revert LibERC721.ERC721InvalidReceiver(to);

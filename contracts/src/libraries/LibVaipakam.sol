@@ -8411,6 +8411,7 @@ library LibVaipakam {
     struct PendingPositionTransfer {
         address from;
         uint8 state;
+        bool cosigned;
         uint64 releaseAt;
         address to;
         uint256 tokenId;

@@ -857,11 +857,60 @@ contract ProtectedVaultTest is Test {
         vm.expectRevert(abi.encodeWithSelector(LibERC721.ProtectedOwnerApprovalForbidden.selector, user));
         _nftFacet().setApprovalForAll(friend, true);
 
+        // The destination rule of a payout: an address not on the
+        // allowlist is refused.
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.RecipientNotAllowlisted.selector, user, friend));
+        _nftFacet().queuePositionTransfer(1, friend);
+        vm.prank(user);
+        _prot().addAllowlisted(user, friend);
+        vm.warp(block.timestamp + DELAY);
+        _prot().finalizeAddAllowlisted(user, friend);
+
         vm.prank(user);
         uint256 id = _nftFacet().queuePositionTransfer(1, friend);
         vm.warp(block.timestamp + DELAY);
         _nftFacet().releasePositionTransfer(id);
         assertEq(_nftFacet().ownerOf(1), friend);
+    }
+
+    function testPositionTransferNeedsTheCosignAndFollowsTheAllowlist() public {
+        vm.prank(address(diamond));
+        _nftFacet().mintNFT(user, 1, 1, 0, true, LibVaipakam.LoanPositionStatus.OfferCreated);
+        _enable();
+        _addSigner(s1);
+        vm.startPrank(user);
+        _prot().setRequireCosign(user, true);
+        _prot().addAllowlisted(user, friend);
+        vm.stopPrank();
+        vm.warp(block.timestamp + DELAY);
+        _prot().finalizeAddAllowlisted(user, friend);
+
+        vm.prank(user);
+        uint256 id = _nftFacet().queuePositionTransfer(1, friend);
+        vm.warp(block.timestamp + DELAY);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.CosignRequired.selector, id));
+        _nftFacet().releasePositionTransfer(id);
+        vm.prank(s1);
+        VaultPayoutFacet(address(diamond)).cosignPositionTransfer(id);
+        // Removing the destination from the allowlist cancels the transfer.
+        vm.prank(user);
+        _prot().removeAllowlisted(user, friend);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.RowNotQueued.selector, id));
+        _nftFacet().releasePositionTransfer(id);
+        assertEq(_nftFacet().ownerOf(1), user);
+    }
+
+    function testALockVoidsTheOwnersReplacementProposal() public {
+        _enable();
+        _addSigner(s1);
+        vm.prank(user);
+        _prot().proposeReplacement(user, nominee);
+        vm.prank(s1);
+        _prot().lockVault(user);
+        vm.warp(block.timestamp + DELAY);
+        vm.expectRevert(LibProtectedAccount.NoReplacementProposed.selector);
+        _prot().finalizeReplacement(user);
     }
 
     // ─── The depository ledger ───────────────────────────────────────────

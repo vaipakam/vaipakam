@@ -939,6 +939,21 @@ contract EarlyWithdrawalFacetTest is Test {
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
+    /// @dev Protected account mode: with NFT protection on, a seller's lender
+    ///      position leaves only by a queued transfer. A sale would move it at
+    ///      once and pay any shortfall to the buyer, past the delay, the
+    ///      allowlist and co-signing, so both sale routes refuse it.
+    function testSellLoanViaBuyOfferRefusesAnNftProtectedSeller() public {
+        vm.prank(lender);
+        ProtectedAccountFacet(address(diamond)).enableProtectedMode(2 days, true);
+
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibProtectedAccount.PositionMovesOnlyByQueuedTransfer.selector, lender)
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
     /// @dev #2440 (Codex r2) — the direct sale is voluntary: the seller's net
     ///      (`toLiam`) is refused unless it all arrives, so the seller floor is
     ///      what the seller actually receives. Only transfers out of the Diamond
