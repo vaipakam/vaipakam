@@ -294,6 +294,10 @@ function AccountView({
   // A new primary's cool-down: no loosening change (an unlock included) can
   // be requested until it ends, so none is offered.
   const cooling = now < record.cooldownUntil;
+  // The contract refuses every loosening request while the account is in
+  // that cool-down OR locked (an unlock request aside, which is how a lock
+  // ends), so neither state offers one.
+  const loosenBlocked = cooling || record.locked;
   const signer = Boolean(
     address && snap.signers?.some((s) => s.signer.toLowerCase() === address.toLowerCase()),
   );
@@ -397,6 +401,9 @@ function AccountView({
 
       {manager && cooling ? (
         <p className="banner banner-warn" role="status">{p.cooldownNote(when(record.cooldownUntil))}</p>
+      ) : null}
+      {manager && record.locked && !cooling ? (
+        <p className="muted" role="status">{p.lockedLoosenNote}</p>
       ) : null}
       {(canGuard && !record.locked) || signerMayLockOver ? (
         <section className="card">
@@ -582,7 +589,7 @@ function AccountView({
             <button
               type="button"
               className="btn btn-secondary"
-              disabled={busy || delayChoice * DAY === record.delaySeconds || (cooling && delayChoice * DAY < record.delaySeconds)}
+              disabled={busy || delayChoice * DAY === record.delaySeconds || (loosenBlocked && delayChoice * DAY < record.delaySeconds)}
               onClick={() => tx('setProtectedDelay', [account, delayChoice * DAY])}
             >
               {p.setDelay}
@@ -595,7 +602,7 @@ function AccountView({
               <button
                 type="button"
                 className="btn btn-secondary"
-                disabled={busy || (cooling && record.protectNfts)}
+                disabled={busy || (loosenBlocked && record.protectNfts)}
                 onClick={() => tx('setProtectNfts', [account, !record.protectNfts])}
               >
                 {record.protectNfts ? p.nftsOff : p.nftsOn}
@@ -604,7 +611,7 @@ function AccountView({
             <button
               type="button"
               className="btn btn-secondary"
-              disabled={busy || (!record.requireCosign && (snap.signers?.length ?? 0) === 0) || (cooling && record.requireCosign)}
+              disabled={busy || (!record.requireCosign && (snap.signers?.length ?? 0) === 0) || (loosenBlocked && record.requireCosign)}
               onClick={() => tx('setRequireCosign', [account, !record.requireCosign])}
             >
               {record.requireCosign ? p.cosignOff : p.cosignOn}
@@ -616,7 +623,7 @@ function AccountView({
               <button
                 type="button"
                 className="btn btn-secondary"
-                disabled={busy || cooling}
+                disabled={busy || loosenBlocked}
                 onClick={() => tx('requestDisableProtectedMode', [])}
               >
                 {p.disable}
@@ -666,7 +673,7 @@ function AccountView({
           <AddressAction
             placeholder={p.addressPlaceholder}
             label={p.addAddress}
-            disabled={busy || cooling}
+            disabled={busy || loosenBlocked}
             onSubmit={(a) => tx('addAllowlisted', [account, a])}
           />
         ) : null}
@@ -695,7 +702,7 @@ function AccountView({
                 <button
                   type="button"
                   className="btn btn-secondary"
-                  disabled={busy || cooling}
+                  disabled={busy || loosenBlocked}
                   onClick={() => tx('requestRemoveSigner', [account, s.signer])}
                 >
                   {p.removeSigner}
@@ -742,7 +749,7 @@ function AccountView({
             <AddressAction
               placeholder={p.addressPlaceholder}
               label={p.inviteSigner}
-              disabled={busy || cooling}
+              disabled={busy || loosenBlocked}
               onSubmit={(a) => tx('addSigner', [account, a])}
             />
             <p className="muted">{p.signersMinNote}</p>
@@ -795,7 +802,10 @@ function AccountView({
             ) : null}
           </>
         )}
-        {signer && repl !== null && !hasReplacement(repl) ? (
+        {/* A secondary signer proposes (approved by a signer majority); the
+            manager may also propose its own move, which waits the delay, but
+            not while a signer holds a lock on the account. */}
+        {(signer || (manager && !(record.locked && lockedBySigner))) && repl !== null && !hasReplacement(repl) ? (
           <AddressAction
             placeholder={p.nomineePlaceholder}
             label={p.proposeReplacement}

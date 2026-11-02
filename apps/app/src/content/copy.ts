@@ -2849,6 +2849,12 @@ const copySource = {
     tooPrecise: 'This token doesn’t have that many decimal places.',
     freeNow: tmpl('Yours to withdraw now: {{amount}}', ['amount']),
     freeUnknown: 'We couldn’t read the amount you can withdraw just now.',
+    decimalsUnknown: 'We couldn’t read this token’s decimal places just now, so no amount can be checked yet.',
+    decimalsRetry: 'Check again',
+    retiredNote: tmpl(
+      'This wallet’s account was moved to {{controller}}. That wallet manages it now: this wallet can no longer deposit into it or withdraw from it.',
+      ['controller'],
+    ),
     rawUnitsNote: 'This token doesn’t report its decimal places, so amounts here are in its smallest raw units.',
     escapeNote: 'The protocol has been paused for more than three days, so the emergency exit is open: your withdrawal goes straight to your own wallet.',
     protectionUnknown: 'We couldn’t read the protection settings, so withdrawing is off until we can tell whether it pays now or waits.',
@@ -2941,6 +2947,8 @@ const copySource = {
       'This wallet took over the account recently. Until {{at}} it cannot ask for any change that loosens protection: an unlock, a shorter delay, co-signing or NFT protection off, a new payout address or signer, a signer removal, or switching off. Each of those then waits the delay as usual.',
       ['at'],
     ),
+    lockedLoosenNote:
+      'While the account is locked, no change that loosens protection can be asked for. Request the unlock first; tightening changes still apply at once.',
     transfersUnknown: 'We couldn’t read the transfer queue just now. Don’t assume it is empty.',
     transferLine: tmpl('Position NFT #{{tokenId}} to {{to}}', ['tokenId', 'to']),
     allowlistTitle: 'Payout addresses',
