@@ -121,7 +121,19 @@ export function Vault() {
               </span>
             </div>
           ) : null}
-          {vault.data.assets.length === 0 && vault.data.moreTokens === 0 ? (
+          {vault.data.nftCollections.length > 0 ? (
+            // Deposited NFTs are not listed as token rows; name their
+            // collections so the vault never reads as empty while it
+            // holds them.
+            <div className="banner banner-info" role="status">
+              <span className="banner-body">
+                {copy.vault.nftCollectionsNote(
+                  vault.data.nftCollections.map((t) => shortAddress(t)).join(', '),
+                )}
+              </span>
+            </div>
+          ) : null}
+          {vault.data.assets.length === 0 && vault.data.moreTokens === 0 && vault.data.nftCollections.length > 0 ? null : vault.data.assets.length === 0 && vault.data.moreTokens === 0 ? (
             vault.data.unreadable.length > 0 ? (
               <UnavailableState body={copy.vault.unavailable} />
             ) : (

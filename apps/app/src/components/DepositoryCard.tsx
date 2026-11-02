@@ -31,7 +31,14 @@ import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import { erc20Abi, isAddress, parseEventLogs } from 'viem';
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  ContractFunctionZeroDataError,
+  erc20Abi,
+  isAddress,
+  parseEventLogs,
+} from 'viem';
 import { SECOND_READ_DELAY_MS } from '../chain/receiptSync';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -113,10 +120,24 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
     queryKey: ['depository', 'decimals', walletChain?.chainId, tokenAddr],
     enabled: Boolean(publicClient && tokenAddr && kind === ASSET_KIND.ERC20),
     staleTime: Infinity,
-    queryFn: async () =>
-      Number(await publicClient!.readContract({ address: tokenAddr!, abi: erc20Abi, functionName: 'decimals' })),
+    // `null` = the token answers but has no `decimals()` (a revert or empty
+    // return): amounts are then entered and shown in raw base units, and
+    // the card says so. A transport failure stays an error.
+    queryFn: async (): Promise<number | null> => {
+      try {
+        return Number(await publicClient!.readContract({ address: tokenAddr!, abi: erc20Abi, functionName: 'decimals' }));
+      } catch (err) {
+        const absent =
+          err instanceof BaseError &&
+          (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
+            err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
+        if (absent) return null;
+        throw err;
+      }
+    },
   });
-  const dec = kind === ASSET_KIND.ERC20 ? decimals.data : 0;
+  const rawUnits = kind === ASSET_KIND.ERC20 && decimals.data === null;
+  const dec = kind === ASSET_KIND.ERC20 ? (decimals.data === null ? 0 : decimals.data) : 0;
 
   const free = useQuery({
     queryKey: ['depository', 'free', walletChain?.chainId, owner, kind, tokenAddr, id.toString()],
@@ -329,6 +350,7 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
           {parsed === 'too-precise' ? <span className="field-hint">{d.tooPrecise}</span> : null}
         </div>
       ) : null}
+      {rawUnits ? <p className="muted">{d.rawUnitsNote}</p> : null}
       {freeText !== null ? <p className="muted">{d.freeNow(freeText)}</p> : null}
       {free.isError ? <p className="muted">{d.freeUnknown}</p> : null}
       {free.data && free.data.untracked > 0n ? (

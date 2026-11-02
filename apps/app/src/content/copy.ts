@@ -2849,6 +2849,7 @@ const copySource = {
     tooPrecise: 'This token doesn’t have that many decimal places.',
     freeNow: tmpl('Yours to withdraw now: {{amount}}', ['amount']),
     freeUnknown: 'We couldn’t read the amount you can withdraw just now.',
+    rawUnitsNote: 'This token doesn’t report its decimal places, so amounts here are in its smallest raw units.',
     escapeNote: 'The protocol has been paused for more than three days, so the emergency exit is open: your withdrawal goes straight to your own wallet.',
     protectionUnknown: 'We couldn’t read the protection settings, so withdrawing is off until we can tell whether it pays now or waits.',
     untrackedNote: 'Part of this asset reached your vault outside the app, so it can’t be withdrawn yet.',
@@ -6044,6 +6045,10 @@ const copySource = {
   },
   vault: {
     unreadableCount: tmpl('{{count}} assets', ['count'], { one: 'one asset' }),
+    nftCollectionsNote: tmpl(
+      'Your vault also holds NFTs you deposited from {{list}}. Enter a collection and token id in the deposit card to see what you can withdraw.',
+      ['list'],
+    ),
     unreadableWarn: tmpl(
       'We couldn’t read {{assets}} just now ({{list}}) — the list below may be missing balances. This usually clears on the next refresh.',
       ['assets', 'list'],

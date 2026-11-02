@@ -47,6 +47,10 @@ export interface VaultSnapshot {
   /** Candidate tokens beyond the scanned window (#1247 PAG-001 rider)
    *  — the page offers "check more" to widen the scan. */
   moreTokens: number;
+  /** NFT collections on the wallet's depository list. The token rows above
+   *  are ERC-20 balances only, so these are named separately and the page
+   *  never calls a vault holding deposited NFTs empty. */
+  nftCollections: `0x${string}`[];
 }
 
 export function useVaultAssets(scanWindow: number) {
@@ -109,7 +113,7 @@ export function useVaultAssets(scanWindow: number) {
         args: [address!],
       })) as `0x${string}`;
       if (vault.toLowerCase() === ZERO_ADDRESS) {
-        return { vaultAddress: null, assets: [], unreadable: [], moreTokens: 0 };
+        return { vaultAddress: null, assets: [], unreadable: [], moreTokens: 0, nftCollections: [] };
       }
 
       // VPFI deposits arrive via the VPFI page, not via any loan or
@@ -153,6 +157,7 @@ export function useVaultAssets(scanWindow: number) {
       // (ERC-165); a token that does not answer is read as an ERC-20, so a
       // failed read still lands in `unreadable` rather than vanishing.
       let depositoryMore = 0;
+      const nftCollections: `0x${string}`[] = [];
       try {
         const [listed, listedTotal] = (await publicClient!.readContract({
           address: readChain.diamondAddress,
@@ -164,7 +169,8 @@ export function useVaultAssets(scanWindow: number) {
         const fresh = listed.map((a) => a.toLowerCase()).filter((a) => !scanTokens.includes(a));
         const nftFlags = await Promise.all(fresh.map((a) => saysItIsAnNft(publicClient!, a as `0x${string}`)));
         fresh.forEach((a, i) => {
-          if (!nftFlags[i]) scanTokens.push(a);
+          if (nftFlags[i]) nftCollections.push(a as `0x${string}`);
+          else scanTokens.push(a);
         });
       } catch (err) {
         // Same rule as VPFI: only a revert / zero data means the Diamond
@@ -237,7 +243,7 @@ export function useVaultAssets(scanWindow: number) {
       const assets = rows
         .filter((r): r is VaultAssetRow => r !== null)
         .sort((a, b) => (b.total > a.total ? 1 : b.total < a.total ? -1 : 0));
-      return { vaultAddress: vault, assets, unreadable, moreTokens };
+      return { vaultAddress: vault, assets, unreadable, moreTokens, nftCollections };
     },
   });
 
