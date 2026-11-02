@@ -265,6 +265,21 @@ library LibProtectedAccount {
         if (a.locked) revert ProtectedVaultLocked(account);
     }
 
+    /// @notice Refuse an owner's OWN withdrawal that the payout gate would
+    ///         hold in the vault: a locked account, or one whose queue is
+    ///         full. The gate holds a payout rather than refuse it because a
+    ///         settlement must never revert on the payee's account state; a
+    ///         withdrawal the owner asks for is different, and must end paid,
+    ///         queued or refused, never as a success that moved nothing.
+    ///         Every voluntary withdraw entry that pays through the gate
+    ///         calls this first, as `withdrawFromVault` already refuses.
+    function requirePayoutRoom(address account) internal view {
+        LibVaipakam.ProtectedAccount storage a = _s().protectedAccount[account];
+        if (!a.enabled) return;
+        if (a.locked) revert ProtectedVaultLocked(account);
+        if (openRows(account) >= MAX_OPEN_ROWS) revert TooManyPendingRows();
+    }
+
     /// @notice Open rows (payouts plus position transfers) of `account`.
     function openRows(address account) internal view returns (uint256) {
         return _s().pendingPayoutIds[account].length() + _s().pendingTransferIds[account].length();

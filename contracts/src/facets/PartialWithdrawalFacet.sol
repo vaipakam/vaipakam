@@ -7,6 +7,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibNumeraireValue} from "../libraries/LibNumeraireValue.sol";
@@ -181,6 +182,13 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         // keyed) and deliver to `msg.sender` (the verified current
         // borrower-NFT holder). Sourcing from `msg.sender` would pull the
         // caller's own vault — wrong after a position transfer.
+        // Protected account mode: a release to the account's own manager is
+        // paid through the payout gate, so it is queued or refused, never
+        // held in the vault as a success that moved nothing. A release to
+        // another holder of the position is not gated.
+        if (msg.sender == LibProtectedAccount.manager(loan.borrower)) {
+            LibProtectedAccount.requirePayoutRoom(loan.borrower);
+        }
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultWithdrawERC20.selector,

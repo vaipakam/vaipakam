@@ -346,6 +346,9 @@ contract VPFIDiscountFacet is
         }
         // The withdraw refreshes the caller's tier record at the write
         // (#1820); the tracked counter alone feeds it, so dust never counts.
+        // Protected account mode: this withdrawal is paid now or queued,
+        // never held in the vault as a success that moved nothing.
+        LibProtectedAccount.requirePayoutRoom(msg.sender);
         VaultFactoryFacet(address(this)).vaultWithdrawERC20(
             msg.sender,
             vpfi,

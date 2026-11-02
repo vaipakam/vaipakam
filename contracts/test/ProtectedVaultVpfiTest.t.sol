@@ -118,4 +118,33 @@ contract ProtectedVaultVpfiTest is SetupTest {
         VaultPayoutFacet(address(diamond)).releasePayout(id);
         assertEq(vpfi.balanceOf(nominee), 100 ether);
     }
+
+    /// A withdrawal the owner asks for ends paid, queued or refused, never
+    /// held in the vault as a success that moved nothing: with the queue
+    /// full the VPFI withdrawal is refused, and it queues again once a row
+    /// clears.
+    function testOwnVpfiWithdrawalIsRefusedWhenTheQueueIsFull() public {
+        vm.prank(alice);
+        _f().depositVPFIToVault(100 ether);
+        vm.prank(alice);
+        _prot().enableProtectedMode(DELAY, false);
+        uint256 first;
+        for (uint256 i; i < 16; ++i) {
+            vm.prank(alice);
+            uint256 id = _depo().withdrawFromVault(alice, K20, address(vpfi), 0, 1 ether, alice);
+            if (i == 0) first = id;
+        }
+        vm.prank(alice);
+        vm.expectRevert(LibProtectedAccount.TooManyPendingRows.selector);
+        _f().withdrawVPFIFromVault(1 ether);
+
+        vm.warp(block.timestamp + DELAY);
+        VaultPayoutFacet(address(diamond)).releasePayout(first);
+        uint256 walletBefore = vpfi.balanceOf(alice);
+        vm.prank(alice);
+        _f().withdrawVPFIFromVault(1 ether);
+        // Queued, not paid now and not held.
+        assertEq(vpfi.balanceOf(alice), walletBefore, "queued behind the delay");
+        assertEq(_depo().getDepositoryHolding(alice, address(vpfi), 0), 100 ether - 17 ether, "debited when asked");
+    }
 }
