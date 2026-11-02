@@ -2249,6 +2249,8 @@
       "withdrawQueuedDone": "Retrait mis en file. Il est payé à votre portefeuille une fois le délai écoulé ; suivez-le sur la page Protection.",
       "withdrawProtectionUnknown": "Nous n’avons pas pu lire les réglages de protection de ce compte : le retrait reste désactivé tant que nous ne savons pas s’il paie tout de suite ou s’il attend.",
       "withdrawProtectionBlocked": "Ce compte est verrouillé ou a été transféré vers un nouveau portefeuille : le VPFI ne peut pas être retiré d’ici. Gérez-le sur la page Protection.",
+      "depositProtectionUnknown": "Nous n’avons pas pu lire les paramètres de protection de ce compte : le dépôt est désactivé jusqu’à ce que nous sachions si ce portefeuille peut l’alimenter.",
+      "depositRetired": "Ce compte a été transféré vers un nouveau portefeuille : ce portefeuille ne peut donc pas y déposer. Il est désormais géré par {{controller}}.",
       "checkingAvailability": "Vérification de la disponibilité de VPFI sur {{chain}}…",
       "availabilityCheckFailed": "Impossible de vérifier la disponibilité de VPFI sur {{chain}} pour le moment. Réessayez dans un instant.",
       "walletBalanceHint": "Dans votre wallet : {{amount}} VPFI",

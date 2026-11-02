@@ -47,7 +47,7 @@ import { ensureAllowance } from '../contracts/erc20';
 import { captureTxError } from '../lib/errors';
 import { formatExactSpan, formatTokenAmount, parseExactUnits, shortAddress } from '../lib/format';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
-import { ASSET_KIND, useProtectedAccount, type AssetKind } from '../data/protectedAccount';
+import { ASSET_KIND, ownFundingVerdict, useProtectedAccount, type AssetKind } from '../data/protectedAccount';
 
 const NFT_APPROVAL_ABI = [
   {
@@ -200,7 +200,8 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
   // The connected wallet's own account was moved to a new wallet: the
   // contract refuses this wallet's deposits and withdrawals, so neither is
   // offered, and the card names the wallet that manages the account now.
-  const retiredSelf = !managed && record?.retired === true;
+  const funding = ownFundingVerdict(protection.data, protection.isError);
+  const retiredSelf = !managed && funding.kind === 'retired';
   const canWithdraw =
     ready && protectionKnown && escapeKnown && !locked && !retiredSelf && balanceFresh && amt !== null && amt <= free.data!.free;
   // A deposit is offered only once protection is read, so the card can say
@@ -388,7 +389,7 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
           </button>
         </p>
       ) : null}
-      {retiredSelf && record ? <p className="banner banner-warn">{d.retiredNote(shortAddress(record.controller))}</p> : null}
+      {!managed && funding.kind === 'retired' ? <p className="banner banner-warn">{d.retiredNote(shortAddress(funding.controller))}</p> : null}
       {freeText !== null ? <p className="muted">{d.freeNow(freeText)}</p> : null}
       {free.isError ? <p className="muted">{d.freeUnknown}</p> : null}
       {free.data && free.data.untracked > 0n ? (

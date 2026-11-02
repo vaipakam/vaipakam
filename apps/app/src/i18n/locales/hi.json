@@ -2249,6 +2249,8 @@
       "withdrawQueuedDone": "निकासी कतार में है। विलंब बीतने पर यह आपके वॉलेट में भुगतान होगी; सुरक्षा पेज पर इसे देखें।",
       "withdrawProtectionUnknown": "हम इस खाते की सुरक्षा सेटिंग नहीं पढ़ पाए, इसलिए निकासी तब तक बंद है जब तक हम न बता सकें कि यह अभी भुगतान होगी या इंतज़ार करेगी।",
       "withdrawProtectionBlocked": "यह खाता लॉक है या नए वॉलेट में ले जाया गया है, इसलिए यहाँ से VPFI नहीं निकाला जा सकता। इसे सुरक्षा पेज पर प्रबंधित करें।",
+      "depositProtectionUnknown": "हम इस खाते की सुरक्षा सेटिंग्स नहीं पढ़ सके, इसलिए यह पता चलने तक कि यह वॉलेट इसमें राशि डाल सकता है या नहीं, जमा बंद है।",
+      "depositRetired": "यह खाता एक नए वॉलेट में ले जाया गया है, इसलिए यह वॉलेट इसमें जमा नहीं कर सकता। अब इसे {{controller}} प्रबंधित करता है।",
       "checkingAvailability": "{{chain}} पर VPFI availability check हो रही है…",
       "availabilityCheckFailed": "हम अभी {{chain}} पर VPFI availability check नहीं कर सके। कृपया थोड़ी देर बाद retry करें।",
       "walletBalanceHint": "आपके wallet में: {{amount}} VPFI",

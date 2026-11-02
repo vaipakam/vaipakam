@@ -2249,6 +2249,8 @@
       "withdrawQueuedDone": "出金を予約しました。遅延期間が過ぎるとウォレットに支払われます。保護ページで確認できます。",
       "withdrawProtectionUnknown": "このアカウントの保護設定を読み取れなかったため、すぐ支払われるか待機するかが分かるまで出金はオフです。",
       "withdrawProtectionBlocked": "このアカウントはロック中か新しいウォレットに移されたため、ここから VPFI を出金できません。保護ページで管理してください。",
+      "depositProtectionUnknown": "このアカウントの保護設定を読み取れなかったため、このウォレットが入金できるか判断できるまで入金は無効です。",
+      "depositRetired": "このアカウントは新しいウォレットに移されたため、このウォレットからは入金できません。現在は {{controller}} が管理しています。",
       "checkingAvailability": "{{chain}} での VPFI 利用可否を確認中…",
       "availabilityCheckFailed": "現在 {{chain}} での VPFI 利用可否を確認できませんでした。しばらくして再試行してください。",
       "walletBalanceHint": "ウォレット内: {{amount}} VPFI",

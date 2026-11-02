@@ -5613,6 +5613,11 @@ const copySource = {
     withdrawQueuedDone: 'Withdrawal queued. It is paid to your wallet once the delay passes; follow it on the Protection page.',
     withdrawProtectionUnknown: 'We couldn’t read this account’s protection settings, so withdrawing is off until we can tell whether it pays now or waits.',
     withdrawProtectionBlocked: 'This account is locked or was moved to a new wallet, so VPFI can’t be withdrawn from here. Manage it on the Protection page.',
+    depositProtectionUnknown: 'We couldn’t read this account’s protection settings, so depositing is off until we can tell whether this wallet may fund it.',
+    depositRetired: tmpl(
+      'This account was moved to a new wallet, so this wallet can’t deposit into it. It is now managed by {{controller}}.',
+      ['controller'],
+    ),
     checkingAvailability: tmpl('Checking VPFI availability on {{chain}}…', ['chain']),
     availabilityCheckFailed: tmpl(
       'We couldn’t check VPFI availability on {{chain}} right now. Please try again in a moment.',

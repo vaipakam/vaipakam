@@ -5,7 +5,7 @@
  * the FIRST thing that would refuse its release.
  */
 import { describe, expect, it } from 'vitest';
-import { additionStatus, chainNowOf, hasReplacement, isDue, isManager, payoutStatus, replacementStage, type ProtectedAccountRecord } from './protectedAccount';
+import { additionStatus, ownFundingVerdict, chainNowOf, hasReplacement, isDue, isManager, payoutStatus, replacementStage, type ProtectedAccountRecord } from './protectedAccount';
 
 const ACCOUNT = '0x00000000000000000000000000000000000000a1';
 const CONTROLLER = '0x00000000000000000000000000000000000000c2';
@@ -144,5 +144,25 @@ describe('replacementStage', () => {
   it('refuses a nominee who became a signer, and is unknown without the signer list', () => {
     expect(replacementStage({ ...base, nominee: s(3)[2].signer }, rec, account, s(3), 200n)).toBe('nomineeIsSigner');
     expect(replacementStage(base, rec, account, null, 200n)).toBeNull();
+  });
+});
+
+describe('ownFundingVerdict', () => {
+  const rec = (retired: boolean) =>
+    ({ retired, controller: '0x00000000000000000000000000000000000000c1' }) as unknown as ProtectedAccountRecord;
+  it('is unread until the record is read', () => {
+    expect(ownFundingVerdict(undefined, false).kind).toBe('unread');
+    expect(ownFundingVerdict({ supported: true, recordFailed: false, record: rec(false) }, true).kind).toBe('unread');
+    expect(ownFundingVerdict({ supported: true, recordFailed: true, record: null }, false).kind).toBe('unread');
+  });
+  it('is open on a Diamond without protected account mode', () => {
+    expect(ownFundingVerdict({ supported: false, recordFailed: false, record: null }, false).kind).toBe('open');
+  });
+  it('refuses a retired wallet and names its controller', () => {
+    expect(ownFundingVerdict({ supported: true, recordFailed: false, record: rec(true) }, false)).toEqual({
+      kind: 'retired',
+      controller: '0x00000000000000000000000000000000000000c1',
+    });
+    expect(ownFundingVerdict({ supported: true, recordFailed: false, record: rec(false) }, false).kind).toBe('open');
   });
 });

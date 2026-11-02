@@ -170,6 +170,29 @@ export function isManager(account: string, record: ProtectedAccountRecord, who: 
   return account.toLowerCase() === w;
 }
 
+/**
+ * Whether the connected wallet may put funds into its OWN account, the one
+ * rule every funding surface reads (the depository card, the VPFI deposit):
+ * the contract refuses each funding entry point from a wallet whose account
+ * a replacement retired, so such a deposit is never offered, nor an approval
+ * for one. `unread` until the account record is read; a Diamond without
+ * protected account mode retires nothing, so it is `open`.
+ */
+export type OwnFundingVerdict =
+  | { kind: 'unread' }
+  | { kind: 'open' }
+  | { kind: 'retired'; controller: `0x${string}` };
+
+export function ownFundingVerdict(
+  snap: Pick<ProtectedAccountSnapshot, 'supported' | 'recordFailed' | 'record'> | undefined,
+  readFailed: boolean,
+): OwnFundingVerdict {
+  if (!snap || readFailed) return { kind: 'unread' };
+  if (!snap.supported) return { kind: 'open' };
+  if (snap.recordFailed || snap.record === null) return { kind: 'unread' };
+  return snap.record.retired ? { kind: 'retired', controller: snap.record.controller } : { kind: 'open' };
+}
+
 export function hasReplacement(r: ReplacementState | null): boolean {
   return Boolean(r && r.nominee.toLowerCase() !== ZERO);
 }

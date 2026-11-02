@@ -22,8 +22,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { encodeFunctionData, parseEventLogs } from 'viem';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { copy } from '../content/copy';
-import { useProtectedAccount } from '../data/protectedAccount';
-import { formatExactSpan } from '../lib/format';
+import { ownFundingVerdict, useProtectedAccount } from '../data/protectedAccount';
+import { formatExactSpan, shortAddress } from '../lib/format';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useLatestAttempt } from '../lib/useLatestAttempt';
 import { SUPPORTED_CHAINS } from '../chain/chains';
@@ -88,6 +88,19 @@ export function Vpfi() {
           ? copy.vpfi.withdrawProtectionBlocked
           : null;
   const withdrawReady = protKnown && !protBlocked;
+  // A deposit reads the same funding rule as the depository card: a wallet
+  // whose account was moved to a new wallet cannot fund it (the contract
+  // refuses), so neither the deposit nor its approval is offered.
+  const funding = ownFundingVerdict(protection.data, protection.isError);
+  const depositRefusal =
+    !address || protection.isLoading
+      ? null
+      : funding.kind === 'unread'
+        ? copy.vpfi.depositProtectionUnknown
+        : funding.kind === 'retired'
+          ? copy.vpfi.depositRetired(shortAddress(funding.controller))
+          : null;
+  const depositReady = funding.kind === 'open';
   const termsBlocked = useTermsBlockNonExitWrites();
   const permit2 = usePermit2Signing();
   const { data: walletClient } = useWalletClient();
@@ -808,6 +821,9 @@ export function Vpfi() {
             {action === 'withdraw' && withdrawRefusal ? (
               <p className="muted" role="status">{withdrawRefusal}</p>
             ) : null}
+            {action === 'deposit' && depositRefusal ? (
+              <p className="muted" role="status">{depositRefusal}</p>
+            ) : null}
 
             {reviewing && receipt ? (
               <div style={{ marginTop: 8 }}>
@@ -839,7 +855,8 @@ export function Vpfi() {
                 type="button"
                 className="btn btn-primary btn-block"
                 style={{ marginTop: 8 }}
-                disabled={!amountWei || overMax || (action === 'withdraw' && !withdrawReady)}
+                disabled={!amountWei || overMax || (action === 'withdraw' && !withdrawReady) ||
+                  (action === 'deposit' && !depositReady)}
                 onClick={() => {
                   setDone(null);
                   setReviewing(true);
@@ -864,7 +881,8 @@ export function Vpfi() {
                   !publicClient ||
                   !amountWei ||
                   overMax ||
-                  (action === 'withdraw' && !withdrawReady)
+                  (action === 'withdraw' && !withdrawReady) ||
+                  (action === 'deposit' && !depositReady)
                 }
                 onClick={() => void runVaultAction()}
               >

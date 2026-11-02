@@ -2249,6 +2249,8 @@
       "withdrawQueuedDone": "取款已排队。延迟期过后将支付到您的钱包；可在保护页面跟踪。",
       "withdrawProtectionUnknown": "无法读取此账户的保护设置，因此在确认是立即支付还是需要等待之前，取款处于关闭状态。",
       "withdrawProtectionBlocked": "此账户已锁定或已转移到新钱包，因此无法在此取出 VPFI。请在保护页面管理。",
+      "depositProtectionUnknown": "我们无法读取该账户的保护设置，因此在确认此钱包能否为其注资之前，存入功能已关闭。",
+      "depositRetired": "该账户已转移到新钱包，因此此钱包无法向其存入。它现在由 {{controller}} 管理。",
       "checkingAvailability": "正在检查 {{chain}} 上的 VPFI 可用性…",
       "availabilityCheckFailed": "我们现在无法检查 {{chain}} 上的 VPFI 可用性。请稍后再试。",
       "walletBalanceHint": "你的钱包中: {{amount}} VPFI",

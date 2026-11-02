@@ -2249,6 +2249,8 @@
       "withdrawQueuedDone": "Retiro en cola. Se paga a su billetera cuando pase el plazo; sígalo en la página de Protección.",
       "withdrawProtectionUnknown": "No pudimos leer la configuración de protección de esta cuenta, así que retirar está desactivado hasta saber si se paga ahora o espera.",
       "withdrawProtectionBlocked": "Esta cuenta está bloqueada o se trasladó a una nueva billetera, así que no se puede retirar VPFI desde aquí. Gestiónela en la página de Protección.",
+      "depositProtectionUnknown": "No pudimos leer la configuración de protección de esta cuenta, así que los depósitos están desactivados hasta saber si esta billetera puede financiarla.",
+      "depositRetired": "Esta cuenta se traspasó a una nueva billetera, así que esta billetera no puede depositar en ella. Ahora la gestiona {{controller}}.",
       "checkingAvailability": "Comprobando disponibilidad de VPFI en {{chain}}…",
       "availabilityCheckFailed": "No pudimos comprobar la disponibilidad de VPFI en {{chain}} ahora. Inténtalo de nuevo en un momento.",
       "walletBalanceHint": "En tu wallet: {{amount}} VPFI",
