@@ -541,7 +541,7 @@ function AccountView({
 
       <section className="card">
         <h2 className="card-title">{p.allowlistTitle}</h2>
-        <p>{p.allowlistBody}</p>
+        <p>{record.retired ? p.allowlistRetired : p.allowlistBody}</p>
         {snap.allowlist === null ? (
           <p className="banner banner-warn">{p.allowlistUnknown}</p>
         ) : snap.allowlist.length === 0 ? (
@@ -572,7 +572,9 @@ function AccountView({
           onCancel={(a) => tx('cancelAddAllowlisted', [account, a])}
           onActivate={(a) => tx('finalizeAddAllowlisted', [account, a])}
         />
-        {manager ? (
+        {manager && !record.retired ? (
+          // A replaced account's payouts go only to its controller: the
+          // contract refuses every allowlist addition for it.
           <AddressAction
             placeholder={p.addressPlaceholder}
             label={p.addAddress}

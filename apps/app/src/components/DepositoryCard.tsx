@@ -180,6 +180,10 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
   // ordinary withdrawal stays paused for them). A protected account's
   // withdrawal keeps queueing through the ordinary route.
   const escape = !managed && protectionKnown && !protectedOn && protection.data?.escapeOpen === true;
+  // An unprotected owner's route depends on the escape read: open means
+  // the escape entry point, closed means the ordinary withdrawal. An unread
+  // escape state is neither, so no route is offered until it is read.
+  const escapeKnown = managed || protectedOn || typeof protection.data?.escapeOpen === 'boolean';
   const ready = Boolean(address && tokenAddr && idOk && amt !== null && !busy);
   // One verdict for whether a withdrawal can succeed now, from FRESH reads
   // only: a balance whose last refresh failed is not offered (React Query
@@ -188,7 +192,7 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
   const balanceFresh = free.data !== undefined && !free.isError;
   const locked = record?.locked === true;
   const canWithdraw =
-    ready && protectionKnown && !locked && balanceFresh && amt !== null && amt <= free.data!.free;
+    ready && protectionKnown && escapeKnown && !locked && balanceFresh && amt !== null && amt <= free.data!.free;
 
   async function run(fn: () => Promise<string>) {
     setBusy(true);
@@ -369,6 +373,7 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
       {protectedOn && record?.requireCosign ? <p>{d.cosignNote}</p> : null}
       {locked ? <p className="banner banner-warn">{d.lockedNote}</p> : null}
       {!protectionKnown && !protection.isLoading ? <p className="muted">{d.protectionUnknown}</p> : null}
+      {protectionKnown && !escapeKnown ? <p className="muted">{d.escapeUnknown}</p> : null}
       <div className="cluster">
         {!managed ? (
           <button type="button" className="btn btn-primary" disabled={!ready} onClick={() => run(deposit)}>
