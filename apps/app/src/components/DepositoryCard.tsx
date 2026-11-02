@@ -143,6 +143,11 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
   const free = useQuery({
     queryKey: ['depository', 'free', walletChain?.chainId, owner, kind, tokenAddr, id.toString()],
     enabled: Boolean(publicClient && owner && tokenAddr && idOk && walletChain?.diamondAddress),
+    // Another wallet can change this balance (a signer cancelling a queued
+    // withdrawal returns it; a protocol payment credits it), and no chain
+    // event refreshes it here, so it is re-read on the same cadence as the
+    // account's protection state.
+    refetchInterval: 30_000,
     queryFn: async () => {
       const [freeAmt, untracked] = await Promise.all([
         publicClient!.readContract({

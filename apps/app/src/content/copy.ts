@@ -2977,7 +2977,12 @@ const copySource = {
     replacementNone: 'No move is proposed.',
     replacementUnknown: 'We couldn’t read whether a move to a new wallet is proposed, so its controls are hidden. Try again in a moment.',
     replacementLine: tmpl('Proposed: move to {{nominee}}, {{approvals}} of {{threshold}} approvals.', ['nominee', 'approvals', 'threshold']),
-    replacementReady: tmpl('Approved. It can complete from {{when}}.', ['when']),
+    replacementReady: tmpl('It can complete from {{when}}.', ['when']),
+    replacementQuorumLost:
+      'This move no longer has the majority it needs among the signers active now (or fewer than three signers remain), so it cannot complete until enough current signers approve it.',
+    replacementNomineeIsSigner:
+      'The proposed wallet has since become one of this account’s signers, so the move cannot complete. Cancel it and propose a wallet that is not a signer.',
+    replacementStageUnknown: 'We couldn’t read the signer list just now, so we can’t say whether this move can complete.',
     finalizeReplacement: 'Complete the move',
     escapeTitle: 'Escape route open',
     escapeBody: 'The protocol has been paused for three days. Payouts already queued keep releasing when they are due. Protection still applies to you: a new withdrawal is queued and waits your delay as usual.',

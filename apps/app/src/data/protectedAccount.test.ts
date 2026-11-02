@@ -5,7 +5,7 @@
  * the FIRST thing that would refuse its release.
  */
 import { describe, expect, it } from 'vitest';
-import { additionStatus, chainNowOf, hasReplacement, isDue, isManager, payoutStatus, type ProtectedAccountRecord } from './protectedAccount';
+import { additionStatus, chainNowOf, hasReplacement, isDue, isManager, payoutStatus, replacementStage, type ProtectedAccountRecord } from './protectedAccount';
 
 const ACCOUNT = '0x00000000000000000000000000000000000000a1';
 const CONTROLLER = '0x00000000000000000000000000000000000000c2';
@@ -113,5 +113,36 @@ describe('hasReplacement', () => {
     expect(
       hasReplacement({ nominee: CONTROLLER, proposedBy: ACCOUNT, readyAt: 0n, round: 1, approvals: 1, threshold: 2 }),
     ).toBe(true);
+  });
+});
+
+describe('replacementStage', () => {
+  const account = '0x00000000000000000000000000000000000000a1' as const;
+  const nominee = '0x00000000000000000000000000000000000000b2' as const;
+  const s = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      signer: `0x${(0xc0 + i).toString(16).padStart(40, '0')}` as `0x${string}`,
+      removeAt: 0n,
+    }));
+  const rec = { retired: false, controller: '0x0000000000000000000000000000000000000000' } as unknown as Parameters<
+    typeof replacementStage
+  >[1];
+  const base = { nominee, proposedBy: s(1)[0].signer, readyAt: 100n, round: 1, approvals: 2, threshold: 2 };
+
+  it('is due once a signer-led move keeps its majority past readyAt', () => {
+    expect(replacementStage(base, rec, account, s(3), 100n)).toBe('due');
+    expect(replacementStage(base, rec, account, s(3), 99n)).toBe('scheduled');
+  });
+  it('reports a lost quorum instead of offering completion', () => {
+    expect(replacementStage({ ...base, approvals: 1 }, rec, account, s(3), 200n)).toBe('quorumLost');
+    expect(replacementStage(base, rec, account, s(2), 200n)).toBe('quorumLost');
+    expect(replacementStage({ ...base, readyAt: 0n, approvals: 1 }, rec, account, s(3), 200n)).toBe('collecting');
+  });
+  it('needs no signer approval for the manager’s own move', () => {
+    expect(replacementStage({ ...base, proposedBy: account, approvals: 0 }, rec, account, [], 200n)).toBe('due');
+  });
+  it('refuses a nominee who became a signer, and is unknown without the signer list', () => {
+    expect(replacementStage({ ...base, nominee: s(3)[2].signer }, rec, account, s(3), 200n)).toBe('nomineeIsSigner');
+    expect(replacementStage(base, rec, account, null, 200n)).toBeNull();
   });
 });

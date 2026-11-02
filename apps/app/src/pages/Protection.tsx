@@ -38,6 +38,7 @@ import {
   isDue,
   isManager,
   payoutStatus,
+  replacementStage,
   useProtectedAccount,
   useRetiredAccountOf,
   type PendingAddition,
@@ -332,6 +333,8 @@ function AccountView({
     pending.push({ key: 'unpin', label: p.changeUnpin, at: record.pendingUnpinAt, kind: 6 });
   const anyDue = pending.some((c) => isDue(c.at, now));
   const repl = snap.replacement;
+  // One verdict for where the move stands, by the contract's completion rule.
+  const replStage = repl && hasReplacement(repl) ? replacementStage(repl, record, account, snap.signers, now) : null;
 
   return (
     <div className="stack">
@@ -769,7 +772,10 @@ function AccountView({
         ) : (
           <>
             <p>{p.replacementLine(shortAddress(repl!.nominee), repl!.approvals, repl!.threshold)}</p>
-            {repl!.readyAt > 0n ? <p>{p.replacementReady(when(repl!.readyAt))}</p> : null}
+            {replStage === 'scheduled' || replStage === 'due' ? <p>{p.replacementReady(when(repl!.readyAt))}</p> : null}
+            {replStage === 'quorumLost' ? <p className="banner banner-warn">{p.replacementQuorumLost}</p> : null}
+            {replStage === 'nomineeIsSigner' ? <p className="banner banner-warn">{p.replacementNomineeIsSigner}</p> : null}
+            {replStage === null ? <p className="banner banner-warn">{p.replacementStageUnknown}</p> : null}
             {signer ? (
               <button
                 type="button"
@@ -790,7 +796,7 @@ function AccountView({
                 {p.cancel}
               </button>
             ) : null}
-            {isDue(repl!.readyAt, now) ? (
+            {replStage === 'due' ? (
               <button
                 type="button"
                 className="btn btn-primary"

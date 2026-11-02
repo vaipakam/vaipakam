@@ -174,6 +174,45 @@ export function hasReplacement(r: ReplacementState | null): boolean {
   return Boolean(r && r.nominee.toLowerCase() !== ZERO);
 }
 
+/** The fewest active secondary signers a signer-led replacement needs
+ *  (`LibProtectedAccount.MIN_RECOVERY_SIGNERS`). */
+export const MIN_RECOVERY_SIGNERS = 3;
+
+/**
+ * Where an open replacement proposal stands, by the rule
+ * `ProtectedAccountFacet.finalizeReplacement` applies:
+ * - `collecting`: a signer-led proposal still gathering its majority;
+ * - `quorumLost`: it reached its majority once, but the signers active NOW
+ *   no longer give it one (too few signers, or too few of the current
+ *   signers approve), so completion would be refused;
+ * - `nomineeIsSigner`: the nominee has since become a signer, which the
+ *   contract refuses at completion;
+ * - `scheduled`: it will be completable from `readyAt`;
+ * - `due`: completable now.
+ * A proposal by the account's manager needs no signer approval.
+ * `null` when the signer list could not be read: the stage is unknown.
+ */
+export type ReplacementStage = 'collecting' | 'quorumLost' | 'nomineeIsSigner' | 'scheduled' | 'due';
+
+export function replacementStage(
+  repl: ReplacementState,
+  record: ProtectedAccountRecord,
+  account: string,
+  signers: SignerEntry[] | null,
+  chainNow: bigint,
+): ReplacementStage | null {
+  if (signers === null) return null;
+  const nominee = repl.nominee.toLowerCase();
+  if (signers.some((x) => x.signer.toLowerCase() === nominee)) return 'nomineeIsSigner';
+  const manager = (record.retired ? record.controller : account).toLowerCase();
+  const bySigner = repl.proposedBy.toLowerCase() !== manager;
+  if (bySigner && (signers.length < MIN_RECOVERY_SIGNERS || repl.approvals < repl.threshold)) {
+    return repl.readyAt > 0n ? 'quorumLost' : 'collecting';
+  }
+  if (repl.readyAt === 0n) return 'collecting';
+  return chainNow >= repl.readyAt ? 'due' : 'scheduled';
+}
+
 /**
  * Reads `account`'s protection state (default: the connected wallet).
  * Pass another account to act on it as one of its secondary signers.
